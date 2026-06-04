@@ -166,7 +166,7 @@ def get_scene_fps():
     return TIME_UNIT_TO_FPS.get(unit, 30)
 
 
-def export_file(source_path, output_folder, key_range=None):
+def export_file(source_path, output_folder, key_range=None, settings=None):
     ensure_folder(output_folder)
     name = os.path.basename(source_path)
     out = os.path.join(output_folder, name)
@@ -179,14 +179,15 @@ def export_file(source_path, output_folder, key_range=None):
             mel.eval("FBXExportFrameRate -v {};".format(fps))
         except Exception as e:
             cmds.warning("FBX FPS set error: {}".format(e))
-        if key_range:
-            try:
-                mel.eval("FBXExportBakeComplexAnimation -v true;")
+        bake = settings.get("bake_animation", False) if settings else False
+        try:
+            mel.eval("FBXExportBakeComplexAnimation -v {};".format("true" if bake else "false"))
+            if bake and key_range:
                 mel.eval("FBXExportBakeComplexStart -v {};".format(key_range["min"]))
                 mel.eval("FBXExportBakeComplexEnd -v {};".format(key_range["max"]))
                 mel.eval("FBXExportBakeComplexStep -v 1;")
-            except Exception as e:
-                cmds.warning("FBX bake range error: {}".format(e))
+        except Exception as e:
+            cmds.warning("FBX bake error: {}".format(e))
         cmds.select(all=True)
         cmds.file(out, force=True, options="v=0;", type="FBX export", exportAll=True)
 
@@ -309,7 +310,7 @@ def run_on_current_scene(settings):
     key_range = apply_operations(settings)
 
     if settings["output_folder"] and source:
-        export_file(source, settings["output_folder"], key_range)
+        export_file(source, settings["output_folder"], key_range, settings)
     elif not source:
         cmds.warning("Текущая сцена не сохранена, экспорт пропущен.")
 
@@ -344,7 +345,7 @@ def run_on_folder(settings):
                 continue
 
             key_range = apply_operations(settings)
-            export_file(path, settings["output_folder"], key_range)
+            export_file(path, settings["output_folder"], key_range, settings)
             ok += 1
 
         except Exception as e:
@@ -390,6 +391,7 @@ def get_ui_settings():
         "use_camera_position": cmds.checkBox("cbCamPos",  query=True, value=True),
         "use_clean_scene":   cmds.checkBox("cbClean",      query=True, value=True),
         "snap_keys":         cmds.checkBox("cbSnapKeys",   query=True, value=True),
+        "bake_animation":    cmds.checkBox("cbBake",       query=True, value=True),
         "height_value":      cmds.floatFieldGrp("ffHeight", query=True, value1=True),
         "height_axis":       cmds.optionMenuGrp("omAxis",   query=True, value=True),
     }
@@ -423,7 +425,8 @@ def show_ui():
     cmds.menuItem(label="X")
 
     cmds.checkBox("cbClean",    label="Clean scene (удалить всё кроме root)", value=True)
-    cmds.checkBox("cbSnapKeys", label="Snap root keys to frames",             value=True)
+    cmds.checkBox("cbSnapKeys", label="Snap root keys to frames", value=True)
+    cmds.checkBox("cbBake",     label="Bake animation on FBX export",         value=False)
 
     cmds.separator(height=10, style="in")
     cmds.button(label="GO", height=42, command=run_tool)
