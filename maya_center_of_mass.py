@@ -349,27 +349,55 @@ def show_ui():
               align="left", font="boldLabelFont")
     cmds.separator(height=4, style="none")
 
-    cmds.scrollLayout(height=380, childResizable=True)
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+    # Column headers
+    cmds.rowLayout(numberOfColumns=4,
+                   columnWidth4=(115, 160, 60, 36),
+                   columnAlign4=("right", "left", "center", "center"))
+    cmds.text(label="Segment",    font="boldLabelFont")
+    cmds.text(label="Controller", font="boldLabelFont")
+    cmds.text(label="Mass %",     font="boldLabelFont")
+    cmds.text(label="")
+    cmds.setParent("..")
+
+    cmds.separator(height=4, style="in")
+
+    cmds.scrollLayout("comScrollLayout", height=360, childResizable=True)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=1)
 
     for seg, default_weight in BODY_SEGMENTS:
         safe = seg.replace(" ", "_")
-        cmds.rowLayout(numberOfColumns=5,
-                       columnWidth5=(110, 140, 32, 58, 32),
-                       adjustableColumn=2)
 
-        cmds.text(label=seg, align="right")
-        cmds.textField("comCtrl_{}".format(safe), text="", editable=False)
-        cmds.button(label="<", width=30,
+        cmds.rowLayout(numberOfColumns=5,
+                       columnWidth5=(115, 130, 34, 60, 34),
+                       columnAlign5=("right", "left", "center", "center", "center"),
+                       height=24)
+
+        cmds.text(label=seg + "  ", align="right")
+
+        cmds.textField("comCtrl_{}".format(safe),
+                       text="-- none --",
+                       editable=False,
+                       width=128,
+                       backgroundColor=(0.25, 0.25, 0.25))
+
+        cmds.button(label="Set", width=32,
+                    backgroundColor=(0.25, 0.4, 0.25),
                     command=lambda s=seg: assign_selected(s),
-                    annotation="Assign selected")
+                    annotation="Assign selected controller to this segment")
+
         cmds.floatField("comWeight_{}".format(safe),
-                        value=default_weight, precision=2,
-                        minValue=0.0, maxValue=100.0, width=56,
-                        annotation="Mass % for this segment")
-        cmds.button(label="X", width=30,
+                        value=default_weight,
+                        precision=2,
+                        minValue=0.0,
+                        maxValue=100.0,
+                        width=58,
+                        annotation="Body segment mass percentage")
+
+        cmds.button(label="X", width=32,
+                    backgroundColor=(0.4, 0.25, 0.25),
                     command=lambda s=seg: clear_assignment(s),
-                    annotation="Clear assignment")
+                    annotation="Clear this assignment")
+
         cmds.setParent("..")
 
     cmds.setParent("..")  # columnLayout
