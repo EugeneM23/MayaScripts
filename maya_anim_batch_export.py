@@ -216,13 +216,17 @@ def op_set_camera_position(height_value, height_axis):
         cmds.warning("camera_root не найден в иерархии root.")
         return False
 
+    # Read position at frame 0 BEFORE deleting curves
+    cmds.currentTime(0)
+    pos = list(cmds.xform(camera_root, query=True, objectSpace=True, translation=True))
+
     # Remove all animation keys from camera_root
     curves = cmds.listConnections(camera_root, type="animCurve", source=True, destination=False) or []
     if curves:
         cmds.delete(curves)
 
+    # Override the requested axis with the user value
     axis_index = {"X": 0, "Y": 1, "Z": 2}[height_axis]
-    pos = list(cmds.xform(camera_root, query=True, objectSpace=True, translation=True))
     pos[axis_index] = height_value
     cmds.xform(camera_root, objectSpace=True, translation=pos)
     return True
