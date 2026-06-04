@@ -12,6 +12,9 @@ COM_LOCATOR  = "COM_Marker"
 AXIS_CURVE   = "COM_SupportAxis"
 SCRIPT_JOB_ATTR = "COM_Marker.scriptJobId"
 
+# Stores OpenMaya callback IDs for attribute-change callbacks
+_attr_callbacks = []
+
 # Body segments with default biomechanical mass percentages (De Leva, 1996)
 BODY_SEGMENTS = [
     ("Head",         8.1),
@@ -202,8 +205,45 @@ def update_com(*args):
             pass
 
 
+def _on_attr_changed(msg, plug, other_plug, client_data):
+    """OpenMaya callback — fires when any assigned controller attribute changes."""
+    # Only react to world-space relevant attribute changes (translate/rotate)
+    if msg & om.MNodeMessage.kAttributeSet:
+        update_com()
+
+
+def register_attr_callbacks():
+    """Register real-time attribute-change callbacks on all assigned controllers."""
+    global _attr_callbacks
+    remove_attr_callbacks()
+
+    for seg, _ in BODY_SEGMENTS:
+        ctrl = _assignments.get(seg)
+        if not ctrl or not cmds.objExists(ctrl):
+            continue
+        try:
+            sel = om.MSelectionList()
+            sel.add(ctrl)
+            node = sel.getDependNode(0)
+            cb_id = om.MNodeMessage.addAttributeChangedCallback(node, _on_attr_changed)
+            _attr_callbacks.append(cb_id)
+        except Exception as e:
+            cmds.warning("Could not add callback for {}: {}".format(ctrl, e))
+
+
+def remove_attr_callbacks():
+    """Remove all registered attribute-change callbacks."""
+    global _attr_callbacks
+    for cb_id in _attr_callbacks:
+        try:
+            om.MMessage.removeCallback(cb_id)
+        except Exception:
+            pass
+    _attr_callbacks = []
+
+
 def start_update_job():
-    """Register scriptJob to update CoM on every frame change."""
+    """Register scriptJob (timeChanged) + real-time attr callbacks."""
     stop_update_job()
 
     job_id = cmds.scriptJob(
@@ -214,15 +254,20 @@ def start_update_job():
     if cmds.objExists(COM_LOCATOR):
         cmds.setAttr("{}.scriptJobId".format(COM_LOCATOR), job_id)
 
+    # Real-time callbacks for viewport manipulation
+    register_attr_callbacks()
+
     cmds.inViewMessage(
-        amg="<hl>CoM Tracker:</hl> started (job {})".format(job_id),
+        amg="<hl>CoM Tracker:</hl> real-time ON".format(job_id),
         pos="topCenter", fade=True
     )
     return job_id
 
 
 def stop_update_job():
-    """Kill the existing scriptJob if any."""
+    """Kill scriptJob and remove all attr callbacks."""
+    remove_attr_callbacks()
+
     if not cmds.objExists(COM_LOCATOR):
         return
 
@@ -254,6 +299,10 @@ def assign_selected(segment, *args):
         cmds.textField(field_name, edit=True, text=ctrl)
     except Exception:
         pass
+
+    # Re-register callbacks so new controller is tracked in real-time
+    if cmds.objExists(COM_LOCATOR):
+        register_attr_callbacks()
 
     cmds.inViewMessage(
         amg="<hl>{}</hl> → {}".format(segment, ctrl),
