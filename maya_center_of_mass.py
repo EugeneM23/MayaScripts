@@ -382,7 +382,7 @@ def show_ui():
 
         cmds.button(label="Set", width=32,
                     backgroundColor=(0.25, 0.4, 0.25),
-                    command=lambda s=seg: assign_selected(s),
+                    command=lambda _, s=seg: assign_selected(s),
                     annotation="Assign selected controller to this segment")
 
         cmds.floatField("comWeight_{}".format(safe),
@@ -395,7 +395,7 @@ def show_ui():
 
         cmds.button(label="X", width=32,
                     backgroundColor=(0.4, 0.25, 0.25),
-                    command=lambda s=seg: clear_assignment(s),
+                    command=lambda _, s=seg: clear_assignment(s),
                     annotation="Clear this assignment")
 
         cmds.setParent("..")
