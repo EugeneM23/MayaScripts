@@ -165,9 +165,9 @@ def get_scene_fps():
 
 def export_file(source_path, output_folder, key_range=None, settings=None):
     ensure_folder(output_folder)
-    name = os.path.basename(source_path)
-    out = os.path.join(output_folder, name)
     ext = os.path.splitext(source_path)[1].lower()
+    base = os.path.splitext(os.path.basename(source_path))[0]
+    out = os.path.join(output_folder, base + ext)
 
     if ext == ".fbx":
         load_fbx_plugin()
