@@ -142,12 +142,9 @@ def open_file(file_path):
 
     if ext == ".fbx":
         load_fbx_plugin()
-        try:
-            cmds.file(file_path, i=True, type="FBX", ignoreVersion=True,
-                      ra=True, mergeNamespacesOnClash=False, namespace=":")
-        except Exception:
-            cmds.file(file_path, i=True, type="FBX import", ignoreVersion=True,
-                      ra=True, mergeNamespacesOnClash=False, namespace=":")
+        # Open FBX directly so Maya reads FPS from the file (import creates a new
+        # scene with default 24fps and ignores the FBX frame rate)
+        cmds.file(file_path, open=True, force=True)
         return True
 
     cmds.warning("Неподдерживаемый формат: {}".format(file_path))
