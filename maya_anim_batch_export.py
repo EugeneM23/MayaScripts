@@ -154,6 +154,18 @@ def open_file(file_path):
     return False
 
 
+TIME_UNIT_TO_FPS = {
+    "game":   15,   "film":   24,   "pal":    25,
+    "ntsc":   30,   "show":   48,   "palf":   50,
+    "ntscf":  60,   "millisec": 1000,
+}
+
+
+def get_scene_fps():
+    unit = cmds.currentUnit(query=True, time=True)
+    return TIME_UNIT_TO_FPS.get(unit, 30)
+
+
 def export_file(source_path, output_folder, key_range=None):
     ensure_folder(output_folder)
     name = os.path.basename(source_path)
@@ -162,6 +174,11 @@ def export_file(source_path, output_folder, key_range=None):
 
     if ext == ".fbx":
         load_fbx_plugin()
+        fps = get_scene_fps()
+        try:
+            mel.eval("FBXExportFrameRate -v {};".format(fps))
+        except Exception as e:
+            cmds.warning("FBX FPS set error: {}".format(e))
         if key_range:
             try:
                 mel.eval("FBXExportBakeComplexAnimation -v true;")
