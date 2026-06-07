@@ -1,479 +1,426 @@
 """
-Maya Center of Mass Tool
-Creates a CoM marker based on assigned rig controllers and body part weights.
-Includes a floor projection (support axis) indicator.
-Run in Maya Script Editor (Python tab).
+Center of Mass Visualizer for Maya
+UE Manny / Advanced Skeleton rigs.
+
+Select any joint, skinned mesh, or rig group, then click
+"Detect from Selection". A yellow marker (COM_Marker) is driven by a
+weighted point constraint to the body's centre of mass.
+
+Because the marker is constraint-driven (a native DG node), it updates
+in real time during playback and rig manipulation — and Maya's motion
+trail works on it directly, with no baking required.
 """
+
 import maya.cmds as cmds
-import maya.api.OpenMaya as om
 
-WINDOW_NAME = "centerOfMassTool"
-COM_LOCATOR  = "COM_Marker"
-AXIS_CURVE   = "COM_SupportAxis"
-SCRIPT_JOB_ATTR = "COM_Marker.scriptJobId"
+# ─────────────────────────────────────────────────────────────────────────────
+# UE Manny skeleton mass-fraction map
+# Based on Winter (2009) body-segment parameters. Total ≈ 1.0.
+# Keys are lowercase name fragments; longest matching key wins.
+# Joints not in the map contribute 0 mass and are skipped.
+# These become the per-target weights of the point constraint, which
+# computes Σ(pos·w) / Σ(w) — exactly the centre of mass.
+# ─────────────────────────────────────────────────────────────────────────────
+MANNY_WEIGHTS = {
+    # Pelvis / spine
+    'pelvis':     0.142,
+    'spine_01':   0.070,
+    'spine_02':   0.070,
+    'spine_03':   0.070,
+    'spine_04':   0.070,
+    'spine_05':   0.070,
+    # Head / neck
+    'neck_01':    0.010,
+    'neck_02':    0.010,
+    'head':       0.048,
+    # Left arm
+    'clavicle_l': 0.005,
+    'upperarm_l': 0.028,
+    'lowerarm_l': 0.016,
+    'hand_l':     0.006,
+    # Right arm
+    'clavicle_r': 0.005,
+    'upperarm_r': 0.028,
+    'lowerarm_r': 0.016,
+    'hand_r':     0.006,
+    # Left leg
+    'thigh_l':    0.100,
+    'calf_l':     0.047,
+    'foot_l':     0.015,
+    'ball_l':     0.003,
+    # Right leg
+    'thigh_r':    0.100,
+    'calf_r':     0.047,
+    'foot_r':     0.015,
+    'ball_r':     0.003,
+}
 
-# Stores OpenMaya callback IDs for attribute-change callbacks
-_attr_callbacks = []
-
-# Body segments with default biomechanical mass percentages (De Leva, 1996)
-BODY_SEGMENTS = [
-    ("Head",         8.1),
-    ("Chest",       20.1),
-    ("Mid Trunk",   14.9),
-    ("Pelvis",      14.2),
-    ("Upper Arm L",  2.55),
-    ("Upper Arm R",  2.55),
-    ("Forearm L",    1.38),
-    ("Forearm R",    1.38),
-    ("Hand L",       0.56),
-    ("Hand R",       0.56),
-    ("Thigh L",     10.0),
-    ("Thigh R",     10.0),
-    ("Lower Leg L",  4.65),
-    ("Lower Leg R",  4.65),
-    ("Foot L",       1.45),
-    ("Foot R",       1.45),
-]
-
-# Store controller assignments: {segment_name: controller_name}
-_assignments = {}
-
-
-# -------------------------
-# MATH
-# -------------------------
-
-def get_world_position(node):
-    """Get world-space position of a node."""
-    pos = cmds.xform(node, query=True, worldSpace=True, translation=True)
-    return om.MVector(pos[0], pos[1], pos[2])
-
-
-def compute_com():
-    """Compute center of mass from assigned controllers and their weights."""
-    total_weight = 0.0
-    weighted_pos = om.MVector(0, 0, 0)
-
-    for seg, default_weight in BODY_SEGMENTS:
-        ctrl = _assignments.get(seg)
-        if not ctrl or not cmds.objExists(ctrl):
-            continue
-
-        # Read weight from UI field (user may have tweaked it)
-        field_name = "comWeight_{}".format(seg.replace(" ", "_"))
-        try:
-            weight = cmds.floatField(field_name, query=True, value=True)
-        except Exception:
-            weight = default_weight
-
-        pos = get_world_position(ctrl)
-        weighted_pos += pos * weight
-        total_weight  += weight
-
-    if total_weight < 0.001:
-        return None, 0.0
-
-    return weighted_pos / total_weight, total_weight
+COM_MARKER_NAME = 'COM_Marker'
+COM_CONSTRAINT_NAME = 'COM_pointConstraint'
+COM_TRAIL_NAME = 'COM_Trail'
+COM_MARKER_RADIUS = 5  # scene units (Maya default = cm)
 
 
-def get_foot_bounds():
-    """Return XZ bounding box of assigned feet for stability check."""
-    foot_names = ["Foot L", "Foot R"]
-    positions = []
-    for seg in foot_names:
-        ctrl = _assignments.get(seg)
-        if ctrl and cmds.objExists(ctrl):
-            pos = get_world_position(ctrl)
-            positions.append(pos)
-    return positions
+# ─────────────────────────────────────────────────────────────────────────────
+# Weight lookup
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _bare_name(full_path):
+    """Strip DAG path separators and namespaces → bare bone name."""
+    return full_path.split('|')[-1].split(':')[-1]
 
 
-def is_com_stable(com_pos, margin=20.0):
+def _resolve_weight(joint_full_path):
     """
-    Simple stability: CoM XZ within margin of feet midpoint.
-    Returns True if balanced.
+    Match the bare joint name against MANNY_WEIGHTS.
+    Longest matching key wins. Works with prefixes/namespaces because the
+    match is a substring test. Returns 0.0 when no key matches.
     """
-    feet = get_foot_bounds()
-    if not feet:
-        return True  # can't determine
-
-    mid_x = sum(p.x for p in feet) / len(feet)
-    mid_z = sum(p.z for p in feet) / len(feet)
-    dist = ((com_pos.x - mid_x) ** 2 + (com_pos.z - mid_z) ** 2) ** 0.5
-    return dist < margin
-
-
-# -------------------------
-# SCENE OBJECTS
-# -------------------------
-
-def create_com_marker():
-    """Create or get the CoM locator."""
-    if cmds.objExists(COM_LOCATOR):
-        return COM_LOCATOR
-
-    loc = cmds.spaceLocator(name=COM_LOCATOR)[0]
-
-    # Scale locator shape for visibility
-    cmds.setAttr("{}.localScaleX".format(loc), 10)
-    cmds.setAttr("{}.localScaleY".format(loc), 10)
-    cmds.setAttr("{}.localScaleZ".format(loc), 10)
-
-    # Yellow color
-    cmds.setAttr("{}.overrideEnabled".format(loc), 1)
-    cmds.setAttr("{}.overrideColor".format(loc), 17)  # yellow
-
-    # Lock & hide rotate/scale so it's clear this is read-only
-    for attr in ["rx", "ry", "rz", "sx", "sy", "sz"]:
-        cmds.setAttr("{}.{}".format(loc, attr), lock=True, keyable=False)
-
-    cmds.addAttr(loc, longName="scriptJobId", attributeType="long", defaultValue=-1)
-
-    return loc
+    low = _bare_name(joint_full_path).lower()
+    best_key = ''
+    best_w = 0.0
+    for key, w in MANNY_WEIGHTS.items():
+        if key in low and len(key) > len(best_key):
+            best_key = key
+            best_w = w
+    return best_w
 
 
-def create_support_axis():
-    """Create or get the vertical support axis curve (CoM to floor)."""
-    if cmds.objExists(AXIS_CURVE):
-        return AXIS_CURVE
-
-    curve = cmds.curve(
-        name=AXIS_CURVE,
-        degree=1,
-        point=[(0, 0, 0), (0, 0, 0)]
-    )
-
-    # Cyan color
-    cmds.setAttr("{}.overrideEnabled".format(curve), 1)
-    cmds.setAttr("{}.overrideColor".format(curve), 18)  # cyan
-
-    # Not selectable in viewport — just visual
-    cmds.setAttr("{}.template".format(curve), 1)
-
-    return curve
+def _weighted_joints(joints):
+    """Return [(joint, weight), ...] for joints that matched the map."""
+    out = []
+    for j in joints:
+        w = _resolve_weight(j)
+        if w > 0.0:
+            out.append((j, w))
+    return out
 
 
-def update_support_axis(com_pos, stable):
-    """Update the support axis curve from CoM straight down to floor (Y=0)."""
-    if not cmds.objExists(AXIS_CURVE):
-        return
+# ─────────────────────────────────────────────────────────────────────────────
+# Joint hierarchy utilities
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Update curve CVs
-    cmds.move(com_pos.x, com_pos.y, com_pos.z,
-              "{}.cv[0]".format(AXIS_CURVE), absolute=True, worldSpace=True)
-    cmds.move(com_pos.x, 0, com_pos.z,
-              "{}.cv[1]".format(AXIS_CURVE), absolute=True, worldSpace=True)
-
-    # Color: green = stable, red = unstable
-    color = 14 if stable else 13  # 14=green, 13=red
-    cmds.setAttr("{}.overrideColor".format(AXIS_CURVE), color)
-
-
-# -------------------------
-# UPDATE LOOP
-# -------------------------
-
-def update_com(*args):
-    """Called every frame change — recompute CoM and update scene objects."""
-    if not cmds.objExists(COM_LOCATOR):
-        return
-
-    com_pos, total_weight = compute_com()
-    if com_pos is None:
-        return
-
-    # Move locator
-    cmds.move(com_pos.x, com_pos.y, com_pos.z,
-              COM_LOCATOR, absolute=True, worldSpace=True)
-
-    # Update support axis
-    stable = is_com_stable(com_pos)
-    update_support_axis(com_pos, stable)
-
-    # Update CoM locator color: yellow=stable, red=unstable
-    color = 17 if stable else 13
-    cmds.setAttr("{}.overrideColor".format(COM_LOCATOR), color)
-
-    # Update status label in UI
-    if cmds.window(WINDOW_NAME, exists=True):
-        status = "STABLE" if stable else "UNSTABLE"
-        color_val = (0.2, 0.8, 0.2) if stable else (0.9, 0.2, 0.2)
-        try:
-            cmds.text("comStatusText", edit=True, label=status,
-                      backgroundColor=color_val)
-        except Exception:
-            pass
+def _find_root_joint(joint):
+    """Walk up the DAG until no parent joint exists."""
+    root = joint
+    while True:
+        parents = cmds.listRelatives(root, parent=True, type='joint')
+        if not parents:
+            break
+        root = parents[0]
+    return root
 
 
-def _on_attr_changed(msg, plug, other_plug, client_data):
-    """OpenMaya callback — fires when any assigned controller attribute changes."""
-    # Only react to world-space relevant attribute changes (translate/rotate)
-    if msg & om.MNodeMessage.kAttributeSet:
-        update_com()
+def _collect_joints(root):
+    """Return [root] + all joint descendants, top-to-bottom (full paths)."""
+    desc = cmds.listRelatives(
+        root, allDescendents=True, type='joint', fullPath=True
+    ) or []
+    return [root] + list(reversed(desc))
 
 
-def register_attr_callbacks():
-    """Register real-time attribute-change callbacks on all assigned controllers."""
-    global _attr_callbacks
-    remove_attr_callbacks()
-
-    for seg, _ in BODY_SEGMENTS:
-        ctrl = _assignments.get(seg)
-        if not ctrl or not cmds.objExists(ctrl):
-            continue
-        try:
-            sel = om.MSelectionList()
-            sel.add(ctrl)
-            node = sel.getDependNode(0)
-            cb_id = om.MNodeMessage.addAttributeChangedCallback(node, _on_attr_changed)
-            _attr_callbacks.append(cb_id)
-        except Exception as e:
-            cmds.warning("Could not add callback for {}: {}".format(ctrl, e))
+def _find_skin_cluster(node):
+    """Return the first skinCluster in node's history, or None."""
+    for n in (cmds.listHistory(node, pruneDagObjects=True) or []):
+        if cmds.nodeType(n) == 'skinCluster':
+            return n
+    return None
 
 
-def remove_attr_callbacks():
-    """Remove all registered attribute-change callbacks."""
-    global _attr_callbacks
-    for cb_id in _attr_callbacks:
-        try:
-            om.MMessage.removeCallback(cb_id)
-        except Exception:
-            pass
-    _attr_callbacks = []
+def _resolve_joints_from_selection():
+    """
+    Inspect the Maya selection and return a joint list.
 
-
-def start_update_job():
-    """Register scriptJob (timeChanged) + real-time attr callbacks."""
-    stop_update_job()
-
-    job_id = cmds.scriptJob(
-        event=["timeChanged", update_com],
-        protected=True
-    )
-
-    if cmds.objExists(COM_LOCATOR):
-        cmds.setAttr("{}.scriptJobId".format(COM_LOCATOR), job_id)
-
-    # Real-time callbacks for viewport manipulation
-    register_attr_callbacks()
-
-    cmds.inViewMessage(
-        amg="<hl>CoM Tracker:</hl> real-time ON".format(job_id),
-        pos="topCenter", fade=True
-    )
-    return job_id
-
-
-def stop_update_job():
-    """Kill scriptJob and remove all attr callbacks."""
-    remove_attr_callbacks()
-
-    if not cmds.objExists(COM_LOCATOR):
-        return
-
-    job_id = cmds.getAttr("{}.scriptJobId".format(COM_LOCATOR))
-    if job_id > 0:
-        try:
-            cmds.scriptJob(kill=job_id, force=True)
-        except Exception:
-            pass
-        cmds.setAttr("{}.scriptJobId".format(COM_LOCATOR), -1)
-
-
-# -------------------------
-# UI ACTIONS
-# -------------------------
-
-def assign_selected(segment, *args):
-    """Assign currently selected object to a body segment."""
-    sel = cmds.ls(selection=True)
+    Three strategies, tried in order:
+      1. Joint selected          → walk to root, collect full hierarchy
+      2. Skinned mesh selected   → read skinCluster influences, same walk
+      3. Group / transform       → search for joint descendants, same walk
+    """
+    sel = cmds.ls(selection=True, long=True)
     if not sel:
-        cmds.warning("Select a controller first.")
+        return []
+
+    obj = sel[0]
+
+    # ── 1. Direct joint selection ────────────────────────────────────────────
+    if cmds.nodeType(obj) == 'joint':
+        return _collect_joints(_find_root_joint(obj))
+
+    # ── 2. Skinned mesh ──────────────────────────────────────────────────────
+    shapes = cmds.listRelatives(
+        obj, shapes=True, noIntermediate=True, fullPath=True
+    ) or []
+    for sh in shapes:
+        skin = _find_skin_cluster(sh)
+        if skin:
+            influences = cmds.skinCluster(skin, query=True, influence=True) or []
+            if influences:
+                return _collect_joints(_find_root_joint(influences[0]))
+
+    # ── 3. Group containing joints ───────────────────────────────────────────
+    joint_desc = cmds.listRelatives(
+        obj, allDescendents=True, type='joint', fullPath=True
+    ) or []
+    if joint_desc:
+        return _collect_joints(_find_root_joint(joint_desc[0]))
+
+    return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COM marker
+#
+# The marker is a JOINT, not a NURBS sphere. Reason: Maya's only reliable
+# no-plugin "always draw on top" mechanism is X-Ray Joints, which forces
+# joints to render over all geometry. A joint draws as a sphere of its
+# .radius, so we get a clean yellow sphere that is never occluded.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _enable_joint_xray():
+    """Turn on X-Ray Joints in every model panel so the marker draws on top."""
+    for panel in (cmds.getPanel(type='modelPanel') or []):
+        try:
+            cmds.modelEditor(panel, edit=True, jointXray=True)
+        except Exception:
+            pass
+
+
+def _ensure_com_marker():
+    """Create the COM_Marker joint if it doesn't exist yet (return its name)."""
+    # Migrate any pre-existing non-joint marker (e.g. an old NURBS sphere).
+    if cmds.objExists(COM_MARKER_NAME):
+        if cmds.nodeType(COM_MARKER_NAME) == 'joint':
+            _enable_joint_xray()
+            return COM_MARKER_NAME
+        cmds.delete(COM_MARKER_NAME)
+
+    # Create the joint at the origin, unparented from any selected node.
+    cmds.select(clear=True)
+    jnt = cmds.joint(name=COM_MARKER_NAME, radius=COM_MARKER_RADIUS)
+
+    # Bright yellow display colour (Maya index 17)
+    cmds.setAttr(jnt + '.overrideEnabled', 1)
+    cmds.setAttr(jnt + '.overrideColor', 17)
+
+    # Draw on top of all geometry.
+    _enable_joint_xray()
+
+    cmds.select(clear=True)
+    return jnt
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Constraint
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _remove_com_constraint():
+    """Delete the point constraint driving the marker, if present."""
+    if cmds.objExists(COM_CONSTRAINT_NAME):
+        cmds.delete(COM_CONSTRAINT_NAME)
+    # Catch any stray point constraints parented under the marker.
+    if cmds.objExists(COM_MARKER_NAME):
+        for c in (cmds.listRelatives(
+                COM_MARKER_NAME, type='pointConstraint', fullPath=True) or []):
+            cmds.delete(c)
+
+
+def _build_com_constraint(weighted):
+    """
+    Drive the marker with a single weighted point constraint.
+
+    A point constraint positions its object at Σ(target·weight) / Σ(weight),
+    so feeding the mass fractions as per-target weights yields the centre
+    of mass — evaluated natively by the DG every frame.
+    """
+    targets = [j for j, _ in weighted]
+
+    con = cmds.pointConstraint(targets, COM_MARKER_NAME, maintainOffset=False)[0]
+
+    # Set each target's weight to its mass fraction. weightAliasList comes
+    # back in the same order the targets were added.
+    aliases = cmds.pointConstraint(con, query=True, weightAliasList=True) or []
+    for alias, (_, w) in zip(aliases, weighted):
+        cmds.setAttr(con + '.' + alias, w)
+
+    if con != COM_CONSTRAINT_NAME:
+        con = cmds.rename(con, COM_CONSTRAINT_NAME)
+    return con
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+def detect_from_selection(*_args):
+    joints = _resolve_joints_from_selection()
+    if not joints:
+        cmds.warning(
+            '[COM] Nothing usable selected. '
+            'Select a joint, skinned mesh, or rig group.'
+        )
         return
 
-    ctrl = sel[0]
-    _assignments[segment] = ctrl
+    weighted = _weighted_joints(joints)
+    if not weighted:
+        sample = [_bare_name(j) for j in joints[:8]]
+        cmds.warning(
+            '[COM] No joints matched the Manny weight map. '
+            'Sample bone names found: {}'.format(', '.join(sample))
+        )
+        return
 
-    field_name = "comCtrl_{}".format(segment.replace(" ", "_"))
-    try:
-        cmds.textField(field_name, edit=True, text=ctrl)
-    except Exception:
-        pass
+    _ensure_com_marker()
+    _remove_com_constraint()          # rebuild cleanly if re-detecting
+    _build_com_constraint(weighted)
 
-    # Re-register callbacks so new controller is tracked in real-time
-    if cmds.objExists(COM_LOCATOR):
-        register_attr_callbacks()
-
-    cmds.inViewMessage(
-        amg="<hl>{}</hl> → {}".format(segment, ctrl),
-        pos="topCenter", fade=True
+    total_w = sum(w for _, w in weighted)
+    msg = 'COM constraint built  |  {}/{} joints matched  |  {:.0f}% mass coverage'.format(
+        len(weighted), len(joints), total_w * 100
     )
+    cmds.headsUpMessage(msg)
+    print('[COM] ' + msg)
 
 
-def clear_assignment(segment, *args):
-    """Clear assignment for a segment."""
-    if segment in _assignments:
-        del _assignments[segment]
-    field_name = "comCtrl_{}".format(segment.replace(" ", "_"))
-    try:
-        cmds.textField(field_name, edit=True, text="")
-    except Exception:
-        pass
+def update_motion_trail(*_args):
+    """
+    Build a lightweight, static motion trail for the COM.
 
-
-def build_com(*args):
-    """Create markers and start tracking."""
-    create_com_marker()
-    create_support_axis()
-    update_com()
-    start_update_job()
-
-
-def add_motion_trail(*args):
-    """Add Maya motion trail to the CoM locator."""
-    if not cmds.objExists(COM_LOCATOR):
-        cmds.warning("Build CoM first.")
+    The heavy rig evaluation happens ONCE here: we step through the
+    playback range, read the marker's world position per frame, then draw
+    a single degree-1 curve through those points. The curve evaluates
+    nothing afterwards, so it displays instantly — click again to refresh
+    it after the animation changes.
+    """
+    if not cmds.objExists(COM_MARKER_NAME):
+        cmds.warning('[COM] Click "Detect from Selection" first.')
         return
-
-    cmds.select(COM_LOCATOR)
 
     start = int(cmds.playbackOptions(query=True, minTime=True))
-    end   = int(cmds.playbackOptions(query=True, maxTime=True))
+    end = int(cmds.playbackOptions(query=True, maxTime=True))
+    if end <= start:
+        cmds.warning('[COM] Playback range is empty.')
+        return
 
+    original_time = cmds.currentTime(query=True)
+
+    # Sample the marker position at every frame (one fast offline pass).
+    points = []
+    cmds.refresh(suspend=True)
     try:
-        cmds.snapshot(
-            name="COM_Trail",
-            constructionHistory=True,
-            startTime=start,
-            endTime=end,
-            increment=1,
-            update="animCurve"
-        )
-        cmds.inViewMessage(
-            amg="<hl>Motion Trail</hl> added to CoM",
-            pos="topCenter", fade=True
-        )
-    except Exception as e:
-        cmds.warning("Motion trail error: {}".format(e))
+        for frame in range(start, end + 1):
+            cmds.currentTime(frame, edit=True)
+            p = cmds.xform(
+                COM_MARKER_NAME, query=True, worldSpace=True, translation=True
+            )
+            points.append((p[0], p[1], p[2]))
+    finally:
+        cmds.refresh(suspend=False)
+        cmds.currentTime(original_time, edit=True)
+
+    if len(points) < 2:
+        cmds.warning('[COM] Not enough frames to build a trail.')
+        return
+
+    # Rebuild the trail curve from scratch.
+    if cmds.objExists(COM_TRAIL_NAME):
+        cmds.delete(COM_TRAIL_NAME)
+
+    crv = cmds.curve(degree=1, point=points, name=COM_TRAIL_NAME)
+
+    # Bright light-blue wireframe. Kept on normal display type so the colour
+    # actually shows (reference/template display would override it with grey).
+    cmds.setAttr(crv + '.overrideEnabled', 1)
+    cmds.setAttr(crv + '.overrideColor', 18)   # light blue
+
+    msg = 'COM trail updated  ({}-{}, {} frames)'.format(start, end, len(points))
+    cmds.headsUpMessage(msg)
+    print('[COM] ' + msg)
 
 
-def delete_all(*args):
-    """Stop tracking and remove scene objects."""
-    stop_update_job()
-    for obj in [COM_LOCATOR, AXIS_CURVE, "COM_Trail"]:
-        if cmds.objExists(obj):
-            cmds.delete(obj)
-    cmds.inViewMessage(amg="<hl>CoM</hl> removed", pos="topCenter", fade=True)
+def remove_com(*_args):
+    """Delete the marker, its constraint, and the trail — clean scene."""
+    _remove_com_constraint()
+    for node in (COM_MARKER_NAME, COM_TRAIL_NAME):
+        if cmds.objExists(node):
+            cmds.delete(node)
+    cmds.headsUpMessage('COM_Marker removed')
 
 
-# -------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # UI
-# -------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
-def show_ui():
-    if cmds.window(WINDOW_NAME, exists=True):
-        cmds.deleteUI(WINDOW_NAME)
+def show_com_visualizer():
+    win_id = 'comVisualizerWin'
+    if cmds.window(win_id, exists=True):
+        cmds.deleteUI(win_id)
 
-    cmds.window(WINDOW_NAME, title="Center of Mass Tool", widthHeight=(460, 640),
-                sizeable=True)
+    cmds.window(
+        win_id,
+        title='Center of Mass',
+        widthHeight=(300, 260),
+        sizeable=True,
+    )
 
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=4)
+    # Wrap everything in a scroll layout so the buttons are always reachable,
+    # no matter how the window gets resized by the OS / Maya.
+    form = cmds.formLayout()
+    scroll = cmds.scrollLayout(childResizable=True)
+    cmds.formLayout(
+        form, edit=True,
+        attachForm=[
+            (scroll, 'top', 0), (scroll, 'bottom', 0),
+            (scroll, 'left', 0), (scroll, 'right', 0),
+        ],
+    )
 
-    # ----- Header -----
-    cmds.text(label="CENTER OF MASS TRACKER", height=28,
-              backgroundColor=(0.2, 0.2, 0.2), font="boldLabelFont")
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6, columnOffset=('both', 10))
+    cmds.separator(height=8, style='none')
+    cmds.text(label='Center of Mass Visualizer', font='boldLabelFont', align='center')
+    cmds.separator(height=6, style='in')
 
-    # ----- Status -----
-    cmds.rowLayout(numberOfColumns=2, columnWidth2=(120, 320),
-                   adjustableColumn=2)
-    cmds.text(label="Balance status:", align="right")
-    cmds.text("comStatusText", label="---",
-              backgroundColor=(0.3, 0.3, 0.3), height=22)
-    cmds.setParent("..")
+    cmds.button(
+        label='Detect from Selection',
+        height=42,
+        backgroundColor=(0.35, 0.65, 0.95),
+        annotation=(
+            'Select any joint, skinned mesh, or rig group.\n'
+            'A yellow marker (COM_Marker) is point-constrained to the\n'
+            'weighted centre of mass and updates live — no baking.'
+        ),
+        command=detect_from_selection,
+    )
 
-    cmds.separator(height=8, style="in")
+    cmds.separator(height=4, style='none')
+    cmds.text(
+        label='Select joint / mesh / group  →  click the button',
+        font='smallFixedWidthFont',
+        align='center',
+    )
+    cmds.separator(height=6, style='in')
 
-    # ----- Body segments -----
-    cmds.text(label="Assign controllers to body segments:",
-              align="left", font="boldLabelFont")
-    cmds.separator(height=4, style="none")
+    cmds.button(
+        label='Update Motion Trail',
+        height=32,
+        backgroundColor=(0.45, 0.75, 0.45),
+        annotation=(
+            'Sample the COM over the playback range and draw a lightweight\n'
+            'curve through it. Static and instant to display — click again\n'
+            'to refresh after the animation changes.'
+        ),
+        command=update_motion_trail,
+    )
 
-    # Column headers
-    cmds.rowLayout(numberOfColumns=4,
-                   columnWidth4=(115, 160, 60, 36),
-                   columnAlign4=("right", "left", "center", "center"))
-    cmds.text(label="Segment",    font="boldLabelFont")
-    cmds.text(label="Controller", font="boldLabelFont")
-    cmds.text(label="Mass %",     font="boldLabelFont")
-    cmds.text(label="")
-    cmds.setParent("..")
+    cmds.button(
+        label='Remove COM',
+        height=28,
+        backgroundColor=(0.7, 0.45, 0.35),
+        annotation='Delete the marker and its constraint.',
+        command=remove_com,
+    )
 
-    cmds.separator(height=4, style="in")
-
-    cmds.scrollLayout("comScrollLayout", height=360, childResizable=True)
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=1)
-
-    for seg, default_weight in BODY_SEGMENTS:
-        safe = seg.replace(" ", "_")
-
-        cmds.rowLayout(numberOfColumns=5,
-                       columnWidth5=(115, 130, 34, 60, 34),
-                       columnAlign5=("right", "left", "center", "center", "center"),
-                       height=24)
-
-        cmds.text(label=seg + "  ", align="right")
-
-        cmds.textField("comCtrl_{}".format(safe),
-                       text="-- none --",
-                       editable=False,
-                       width=128,
-                       backgroundColor=(0.25, 0.25, 0.25))
-
-        cmds.button(label="Set", width=32,
-                    backgroundColor=(0.25, 0.4, 0.25),
-                    command=lambda _, s=seg: assign_selected(s),
-                    annotation="Assign selected controller to this segment")
-
-        cmds.floatField("comWeight_{}".format(safe),
-                        value=default_weight,
-                        precision=2,
-                        minValue=0.0,
-                        maxValue=100.0,
-                        width=58,
-                        annotation="Body segment mass percentage")
-
-        cmds.button(label="X", width=32,
-                    backgroundColor=(0.4, 0.25, 0.25),
-                    command=lambda _, s=seg: clear_assignment(s),
-                    annotation="Clear this assignment")
-
-        cmds.setParent("..")
-
-    cmds.setParent("..")  # columnLayout
-    cmds.setParent("..")  # scrollLayout
-
-    cmds.separator(height=8, style="in")
-
-    # ----- Controls -----
-    cmds.gridLayout(numberOfColumns=2, cellWidthHeight=(224, 32))
-    cmds.button(label="BUILD / START TRACKING", height=32,
-                backgroundColor=(0.2, 0.5, 0.2),
-                command=build_com)
-    cmds.button(label="Add Motion Trail", height=32,
-                command=add_motion_trail)
-    cmds.button(label="Update Once", height=32,
-                command=update_com)
-    cmds.button(label="Remove All", height=32,
-                backgroundColor=(0.5, 0.2, 0.2),
-                command=delete_all)
-    cmds.setParent("..")
-
-    cmds.separator(height=6, style="none")
-    cmds.text(label="Tip: '<' assigns selected ctrl  |  weight = body mass %",
-              align="center", font="smallObliqueLabelFont",
-              backgroundColor=(0.18, 0.18, 0.18))
-
-    cmds.showWindow(WINDOW_NAME)
+    cmds.separator(height=6, style='none')
+    cmds.showWindow(win_id)
 
 
-show_ui()
+show_com_visualizer()
