@@ -69,6 +69,35 @@ def rollup(influences, targets, parent_of):
     return owner
 
 
+# Joints the measurement gets wrong, and what to do about them.
+#
+# spine_05 loses every vertex to the clavicles and spine_03, measuring about 4
+# in a chest that is 16 across, which buries its ring inside the geometry. It
+# borrows its neighbour's size instead, slightly larger so it stays visible.
+_BORROW = {"spine_05": ("spine_04", 1.05)}
+
+# The feet measure their length rather than their girth: the bone axis runs
+# along the foot, so the perpendicular spread picks up the whole sole.
+_SCALE = {"foot_l": 0.5, "foot_r": 0.5}
+
+
+def apply_size_rules(radii):
+    """Correct the radii the skin measurement gets wrong.
+
+    Pure: takes and returns a {joint: radius} mapping. Borrowing happens before
+    scaling, and a joint borrows from the measured value, not a corrected one,
+    so the rules cannot chain into each other.
+    """
+    corrected = dict(radii)
+    for joint, (source, factor) in _BORROW.items():
+        if joint in corrected and radii.get(source):
+            corrected[joint] = radii[source] * factor
+    for joint, factor in _SCALE.items():
+        if joint in corrected:
+            corrected[joint] *= factor
+    return corrected
+
+
 def stagger(index):
     """Alternating size factor for rings along a chain.
 
@@ -250,19 +279,29 @@ def build_fk(scene_map):
         height = max(max(heights) - min(heights), 1.0)
         floor = height * 0.004
 
-        created = []
+        # Measure everything first: the correction rules let one joint borrow
+        # another's size, so they need the whole picture before anything is
+        # built.
+        buildable = [b for b in bodymap.BUTTONS
+                     if b.joint in scene_map
+                     and cmds.objExists(scene_map[b.joint])]
+        radii = {}
         guessed = []
-        seen_in_region = {}
-        for button in bodymap.BUTTONS:
+        for button in buildable:
             joint = button.joint
-            if joint not in scene_map or not cmds.objExists(scene_map[joint]):
-                continue
-
             radius = _radius_for(joint, scene_map[joint], dominant, shared,
                                  floor)
             if radius is None:
                 radius = floor * 6.0
                 guessed.append(joint)
+            radii[joint] = radius
+        radii = apply_size_rules(radii)
+
+        created = []
+        seen_in_region = {}
+        for button in buildable:
+            joint = button.joint
+            radius = radii[joint]
 
             index = seen_in_region.get(button.region, 0)
             seen_in_region[button.region] = index + 1

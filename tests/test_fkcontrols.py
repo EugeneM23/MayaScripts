@@ -82,6 +82,42 @@ class TestRollup(unittest.TestCase):
         self.assertEqual(sorted(self.roll(influences)), sorted(influences))
 
 
+class TestApplySizeRules(unittest.TestCase):
+
+    def test_spine_05_borrows_from_its_neighbour(self):
+        """It measures ~4 in a 16-wide chest, which buries it in the geometry."""
+        found = fkcontrols.apply_size_rules({"spine_05": 3.9, "spine_04": 16.3})
+        self.assertGreater(found["spine_05"], 16.3)
+
+    def test_feet_are_halved(self):
+        found = fkcontrols.apply_size_rules({"foot_l": 12.3, "foot_r": 12.3})
+        self.assertAlmostEqual(found["foot_l"], 6.15, places=6)
+        self.assertAlmostEqual(found["foot_r"], 6.15, places=6)
+
+    def test_untouched_joints_pass_through(self):
+        found = fkcontrols.apply_size_rules({"hand_l": 5.5, "pelvis": 15.9})
+        self.assertEqual(found["hand_l"], 5.5)
+        self.assertEqual(found["pelvis"], 15.9)
+
+    def test_borrowing_uses_the_measured_value_not_a_corrected_one(self):
+        """Rules must not chain, or one correction would feed another."""
+        found = fkcontrols.apply_size_rules({"spine_05": 3.9, "spine_04": 10.0,
+                                             "foot_l": 12.0})
+        self.assertAlmostEqual(found["spine_05"], 10.5, places=6)
+
+    def test_missing_source_leaves_the_joint_alone(self):
+        found = fkcontrols.apply_size_rules({"spine_05": 3.9})
+        self.assertEqual(found["spine_05"], 3.9)
+
+    def test_the_input_is_not_mutated(self):
+        original = {"foot_l": 12.0}
+        fkcontrols.apply_size_rules(original)
+        self.assertEqual(original["foot_l"], 12.0)
+
+    def test_empty_input(self):
+        self.assertEqual(fkcontrols.apply_size_rules({}), {})
+
+
 class TestStagger(unittest.TestCase):
 
     def test_alternates(self):
