@@ -104,10 +104,23 @@ def strip_prefix(mapping, prefix):
     return stripped
 
 
-def find_skeleton_roots():
-    """Every topmost joint in the scene -- one per skeleton."""
+def find_skeleton_roots(exclude_under=()):
+    """Every topmost joint in the scene -- one per skeleton.
+
+    `exclude_under` lists DAG paths whose contents should be ignored, along
+    with the paths themselves. Rig setups built over a skeleton carry joints of
+    their own: OverRig's IK puts `fin_jnt` and `knee_ctrl` joints inside the
+    groups it creates, and since none of them has a joint parent, every one
+    would otherwise register as another skeleton -- which stops the picker
+    auto-connecting the moment anything has been built.
+    """
+    excluded = tuple(exclude_under)
+    inside = tuple(path + "|" for path in excluded)
+
     roots = []
     for joint in cmds.ls(type="joint", long=True) or []:
+        if joint in excluded or (inside and joint.startswith(inside)):
+            continue
         if not cmds.listRelatives(joint, parent=True, type="joint",
                                   fullPath=True):
             roots.append(joint)

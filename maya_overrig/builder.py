@@ -8,7 +8,7 @@ from collections import namedtuple
 
 import maya.cmds as cmds
 
-from maya_overrig import overrig
+from maya_overrig import naming, overrig
 
 BUILD_SET = "RigPicker_build"
 
@@ -41,6 +41,17 @@ def missing_limbs(scene_map):
     """Names of limbs that cannot be built because a joint is absent."""
     return [name for name, joints in LIMBS
             if not all(joint in scene_map for joint in joints)]
+
+
+def character_roots():
+    """Skeleton roots that are characters, not rig helpers.
+
+    Anything OverRig created is skipped. Its IK groups contain joints of their
+    own, and without this a scene with a build in it reports a dozen skeletons
+    instead of one, so the picker refuses to auto-connect.
+    """
+    return naming.find_skeleton_roots(
+        exclude_under=overrig.set_members(overrig.KNOT_SET))
 
 
 def _ensure_build_set():

@@ -137,6 +137,24 @@ dismantled the way it expects:
 
 ## Error handling
 
+## What OverRig's IK adds to the scene
+
+Beyond the three renamed nodes, the IK setup contains joints of its own —
+`fin_jnt11`, `fin_jnt21` and a `knee_ctrl` per limb, sitting inside the
+`_IK_strech_gr` groups. None of them has a joint parent.
+
+That matters more than it looks. Skeleton-root detection asks exactly that
+question — "a joint with no joint parent" — so after a four-limb build the
+scene reports **thirteen** skeleton roots instead of one, the picker decides it
+cannot tell which character is meant, and refuses to auto-connect. Build then
+reports "no limb joints found" on a skeleton that is plainly there.
+
+Root detection therefore takes an exclusion list, and the caller passes
+OverRig's `OverRig_knots` members. Anything OverRig created is skipped, which
+covers setups the user built by hand as well as ours.
+
+## Error handling
+
 | Situation | Behaviour |
 |---|---|
 | Picker not bound to a skeleton | Refuse, status line says to press Connect first |

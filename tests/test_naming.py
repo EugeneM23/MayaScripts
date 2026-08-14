@@ -283,6 +283,19 @@ class TestPrefixedHierarchyEndToEnd(unittest.TestCase):
         self.assertEqual(naming.strip_prefix(raw, prefix), raw)
 
 
+# A character plus the joints OverRig's IK leaves inside the groups it builds.
+WITH_IK_RIG = FakeCmds(
+    joints=[
+        "|SKM_Manny|root",
+        "|SKM_Manny|root|pelvis",
+        "|thigh_l_IK_strech_gr|base_IK_strech3|fin_jnt11",
+        "|thigh_l_IK_strech_gr|base_IK_strech3|fin_jnt21",
+        "|thigh_l_IK_strech_gr|base_IK_strech3|soft_knee_gr3|knee_ctrl3",
+    ],
+    transforms=["|SKM_Manny", "|thigh_l_IK_strech_gr"],
+)
+
+
 class TestSkeletonRoots(unittest.TestCase):
 
     def test_finds_one_root_per_skeleton(self):
@@ -297,6 +310,34 @@ class TestSkeletonRoots(unittest.TestCase):
     def test_empty_scene_gives_nothing(self):
         naming = use(FakeCmds())
         self.assertEqual(naming.find_skeleton_roots(), [])
+
+    def test_rig_helper_joints_look_like_extra_skeletons(self):
+        """Documents the trap: OverRig's IK joints have no joint parent."""
+        naming = use(WITH_IK_RIG)
+        self.assertEqual(len(naming.find_skeleton_roots()), 4)
+
+    def test_excluding_the_rig_leaves_only_the_character(self):
+        naming = use(WITH_IK_RIG)
+        roots = naming.find_skeleton_roots(
+            exclude_under=["|thigh_l_IK_strech_gr"])
+        self.assertEqual(roots, ["|SKM_Manny|root"])
+
+    def test_excluding_an_absent_node_changes_nothing(self):
+        naming = use(ONE_CHARACTER)
+        self.assertEqual(naming.find_skeleton_roots(exclude_under=["|nope"]),
+                         ["|SKM_Manny|root"])
+
+    def test_empty_exclusion_behaves_as_before(self):
+        naming = use(ONE_CHARACTER)
+        self.assertEqual(naming.find_skeleton_roots(exclude_under=[]),
+                         ["|SKM_Manny|root"])
+
+    def test_an_excluded_node_that_is_itself_a_joint_is_dropped(self):
+        naming = use(WITH_IK_RIG)
+        roots = naming.find_skeleton_roots(
+            exclude_under=["|thigh_l_IK_strech_gr|base_IK_strech3|fin_jnt11"])
+        self.assertNotIn("|thigh_l_IK_strech_gr|base_IK_strech3|fin_jnt11",
+                         roots)
 
 
 class TestUuidBinding(unittest.TestCase):

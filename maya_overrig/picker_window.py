@@ -161,7 +161,7 @@ class PickerWindow(QtWidgets.QMainWindow):
 
     def auto_connect(self):
         """Bind without asking when the scene holds exactly one skeleton."""
-        roots = naming.find_skeleton_roots()
+        roots = builder.character_roots()
         if len(roots) == 1:
             self._bind(roots[0])
             return
