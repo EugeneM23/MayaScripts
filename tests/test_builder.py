@@ -85,5 +85,86 @@ class TestMissingLimbs(unittest.TestCase):
                          ["arm_l", "arm_r", "leg_l", "leg_r"])
 
 
+class TestLimbSet(unittest.TestCase):
+
+    def test_name_is_prefixed(self):
+        self.assertEqual(builder.limb_set("leg_l"), "RigPicker_build_leg_l")
+
+    def test_every_limb_gets_a_distinct_set(self):
+        names = [builder.limb_set(name) for name, _ in builder.LIMBS]
+        self.assertEqual(len(set(names)), 4)
+
+
+class TestResolveLimbs(unittest.TestCase):
+
+    SCENE_MAP = {
+        "upperarm_l": "|rig|upperarm_l", "lowerarm_l": "|rig|lowerarm_l",
+        "hand_l": "|rig|hand_l",
+        "upperarm_r": "|rig|upperarm_r", "lowerarm_r": "|rig|lowerarm_r",
+        "hand_r": "|rig|hand_r",
+        "thigh_l": "|rig|thigh_l", "calf_l": "|rig|calf_l",
+        "foot_l": "|rig|foot_l",
+        "thigh_r": "|rig|thigh_r", "calf_r": "|rig|calf_r",
+        "foot_r": "|rig|foot_r",
+    }
+
+    MEMBERS = {
+        "leg_l": ["|thigh_l_IK_strech_gr", "|foot_l_IK_feet",
+                  "|calf_l_IK_knee"],
+        "leg_r": ["|thigh_r_IK_strech_gr", "|foot_r_IK_feet",
+                  "|calf_r_IK_knee"],
+    }
+
+    def resolve(self, nodes):
+        return builder.resolve_limbs(nodes, self.MEMBERS, self.SCENE_MAP)
+
+    def test_recorded_node_resolves(self):
+        self.assertEqual(self.resolve(["|foot_l_IK_feet"]), ["leg_l"])
+
+    def test_descendant_of_a_recorded_node_resolves(self):
+        self.assertEqual(
+            self.resolve(["|thigh_l_IK_strech_gr|base_IK_strech3|fin_jnt11"]),
+            ["leg_l"])
+
+    def test_shape_under_a_control_resolves(self):
+        self.assertEqual(
+            self.resolve(["|foot_l_IK_feet|foot_l_IK_feetShape"]), ["leg_l"])
+
+    def test_source_joint_resolves(self):
+        """Lets the picker's own limb buttons drive the bake."""
+        self.assertEqual(self.resolve(["|rig|calf_l"]), ["leg_l"])
+
+    def test_source_joint_resolves_without_any_manifest(self):
+        self.assertEqual(
+            builder.resolve_limbs(["|rig|hand_r"], {}, self.SCENE_MAP),
+            ["arm_r"])
+
+    def test_unrelated_node_resolves_to_nothing(self):
+        self.assertEqual(self.resolve(["|persp"]), [])
+
+    def test_two_limbs_give_both(self):
+        self.assertEqual(
+            self.resolve(["|foot_l_IK_feet", "|foot_r_IK_feet"]),
+            ["leg_l", "leg_r"])
+
+    def test_duplicates_collapse(self):
+        self.assertEqual(
+            self.resolve(["|foot_l_IK_feet", "|calf_l_IK_knee",
+                          "|rig|thigh_l"]),
+            ["leg_l"])
+
+    def test_results_come_back_in_limb_table_order(self):
+        found = self.resolve(["|foot_r_IK_feet", "|rig|hand_l",
+                              "|foot_l_IK_feet"])
+        self.assertEqual(found, ["arm_l", "leg_l", "leg_r"])
+
+    def test_a_prefix_that_is_not_a_path_boundary_does_not_match(self):
+        """`|foot_l_IK_feet_extra` is a different node, not a descendant."""
+        self.assertEqual(self.resolve(["|foot_l_IK_feet_extra"]), [])
+
+    def test_empty_selection_resolves_to_nothing(self):
+        self.assertEqual(self.resolve([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
