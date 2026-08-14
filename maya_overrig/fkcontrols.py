@@ -20,8 +20,12 @@ import maya.api.OpenMayaAnim as oma
 
 from maya_overrig import bodymap, builder, naming, overrig
 
-FK_SET = "RigPicker_fk"
+FK_SET = "RigPicker_fk"          # legacy flat set; absorbed by a full bake
+FK_SET_PREFIX = "RigPicker_fk_"  # one set per chain, the switchable unit
 SUFFIX = "_FK_ctrl"
+
+# The chains Switch FK/IK may convert. Spine comes later.
+LIMB_CHAINS = ("arm_l", "arm_r", "leg_l", "leg_r")
 
 
 def _finger_chains():
@@ -71,6 +75,25 @@ _LINE_WIDTH = 2.0
 def controller_name(joint):
     """Name of the controller for a joint."""
     return joint + SUFFIX
+
+
+def chain_set(chain):
+    """Name of the object set recording one chain's created nodes."""
+    return FK_SET_PREFIX + chain
+
+
+def finger_chains_for(limb):
+    """The finger chains riding on an arm's hand; empty for legs.
+
+    These hang inside the hand controller, so an arm switch must lift them out
+    first or they die with the arm's rig.
+    """
+    if limb not in ("arm_l", "arm_r"):
+        return []
+    side = limb[-1]
+    fingers = ("index", "middle", "ring", "pinky", "thumb")
+    return [name for name, _ in CHAINS
+            if name.endswith("_" + side) and name.split("_")[0] in fingers]
 
 
 def colour_for(region):
@@ -292,22 +315,56 @@ def _make_ring(name, radius, normal, colour):
     return ring
 
 
+def chain_members(chain):
+    """Long paths recorded against one chain, [] if none."""
+    return overrig.set_members(chain_set(chain))
+
+
+def built_fk_chains():
+    """Chains that currently have nodes recorded against them."""
+    return [name for name, _ in CHAINS if chain_members(name)]
+
+
+def _legacy_members():
+    return overrig.set_members(FK_SET)
+
+
 def has_fk():
-    """True when FK markers are recorded in the scene."""
-    return bool(cmds.objExists(FK_SET) and cmds.sets(FK_SET, query=True))
+    """True when any FK is recorded — per-chain sets or the legacy flat one."""
+    return bool(built_fk_chains() or _legacy_members())
+
+
+def _ensure_chain_set(chain):
+    name = chain_set(chain)
+    if not cmds.objExists(name):
+        cmds.sets(name=name, empty=True)
+    return name
+
+
+def _record_fresh(chain, before):
+    """Record (and visually mute) everything created since `before`."""
+    fresh = sorted(n for n in (builder._scene_nodes() - before)
+                   if builder._recordable(n))
+    if fresh:
+        cmds.sets(fresh, addElement=_ensure_chain_set(chain))
+        _hide_rig_machinery(fresh)
+    return fresh
 
 
 def remove_fk():
-    """Delete the markers and their set. Returns how many went."""
-    if not cmds.objExists(FK_SET):
-        return 0
-    members = [m for m in (cmds.ls(cmds.sets(FK_SET, query=True) or [],
-                                   long=True) or []) if cmds.objExists(m)]
-    if members:
-        cmds.delete(members)
+    """Delete every recorded FK node and set, without baking. Returns count."""
+    doomed = list(_legacy_members())
+    for name, _ in CHAINS:
+        doomed.extend(chain_members(name))
+    doomed = [d for d in doomed if cmds.objExists(d)]
+    if doomed:
+        cmds.delete(doomed)
+    for name, _ in CHAINS:
+        if cmds.objExists(chain_set(name)):
+            cmds.delete(chain_set(name))
     if cmds.objExists(FK_SET):
         cmds.delete(FK_SET)
-    return len(members)
+    return len(doomed)
 
 
 def _final_radii(scene_map):
@@ -457,86 +514,121 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
     return dressed
 
 
-def _attach_chains(scene_map):
-    """Hang every chain's root controller off its parent bone's controller.
+def _attach_chain(chain_name, chain, parent_of, targeted):
+    """Hang one chain's root controller off its parent bone's controller.
 
     OverRig's apply_Parent_in does the heavy lifting: the child knot becomes a
     DAG child of the parent knot and its animation is re-baked into the new
     local space, so world motion is unchanged (verified: zero drift). Selection
-    order is child first, parent last.
-
-    Without this the chains are independent world-space knots, and moving the
-    pelvis tears the skeleton apart at every chain boundary.
+    order is child first, parent last. Returns True when coupled.
     """
-    parent_of = _parent_map()
-    targeted = {j for _, chain in CHAINS for j in chain}
-    attached = 0
-    for _chain_name, chain in CHAINS:
-        first = chain[0]
-        parent = attach_parent(first, parent_of, targeted)
-        if parent is None:
-            continue
-        child_ctrl = controller_name(first)
-        parent_ctrl = controller_name(parent)
-        if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
-            continue
-        cmds.select([child_ctrl, parent_ctrl], replace=True)
-        mel.eval("apply_Parent_in()")
-        attached += 1
-    return attached
+    parent = attach_parent(chain[0], parent_of, targeted)
+    if parent is None:
+        return False
+    child_ctrl = controller_name(chain[0])
+    parent_ctrl = controller_name(parent)
+    if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
+        return False
+    cmds.select([child_ctrl, parent_ctrl], replace=True)
+    mel.eval("apply_Parent_in()")
+    return True
 
 
-def _teardown_fk(scene_map):
-    """Bake the FK back onto the bones and remove every trace of it.
+def _bake_fk_chains(scene_map, chains=None):
+    """Bake FK chains back onto the bones and remove their nodes. No undo chunk.
 
-    Order matters: bake while the knots still drive, then delete. The reclaim
-    pass at the end is a safety net for anything the manifest diff missed.
+    `chains=None` means everything recorded, including the legacy flat set.
+    The requested list is expanded with chains nested inside it, order does not
+    matter beyond that: bones are baked while the knots still drive, then every
+    doomed node goes at once.
     """
-    joints = [scene_map[j] for _, chain in CHAINS for j in chain
-              if j in scene_map and cmds.objExists(scene_map[j])]
-    constrained = [j for j in joints
+    members_by_chain = {name: chain_members(name) for name, _ in CHAINS}
+    legacy = []
+    if chains is None:
+        wanted = [name for name, _ in CHAINS if members_by_chain[name]]
+        legacy = [m for m in _legacy_members() if cmds.objExists(m)]
+    else:
+        wanted = [c for c in chains if members_by_chain.get(c)]
+
+    wanted = [c for c in builder.order_by_nesting(wanted, members_by_chain)
+              if members_by_chain.get(c)]
+    if not wanted and not legacy:
+        return 0, []
+
+    table = dict(CHAINS)
+    if legacy:
+        joints = [scene_map[j] for _, chain in CHAINS for j in chain
+                  if j in scene_map and cmds.objExists(scene_map[j])]
+    else:
+        joints = [scene_map[j] for c in wanted for j in table[c]
+                  if j in scene_map and cmds.objExists(scene_map[j])]
+    constrained = [j for j in dict.fromkeys(joints)
                    if cmds.listRelatives(j, children=True, type="constraint")]
     if constrained:
         overrig.fast_bake(constrained)
         overrig.delete_constraint_attributes(constrained)
 
-    removed = remove_fk()
+    doomed = list(legacy)
+    for c in wanted:
+        doomed.extend(members_by_chain[c])
+    doomed = [d for d in doomed if cmds.objExists(d)]
+    if doomed:
+        cmds.delete(doomed)
+    for c in wanted:
+        if cmds.objExists(chain_set(c)):
+            cmds.delete(chain_set(c))
+    if legacy and cmds.objExists(FK_SET):
+        cmds.delete(FK_SET)
+
+    removed = len(doomed)
     if constrained:
         extra, _foreign = builder._reclaim(constrained)
         removed += extra
-    return removed
+    return removed, wanted
 
 
-def bake_fk(scene_map):
-    """Bake the whole FK build back to the bones. Returns (removed, message)."""
+def bake_fk(scene_map, chains=None):
+    """Bake FK back to the bones -- everything, or just the given chains."""
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK bake")
     try:
-        removed = _teardown_fk(scene_map)
+        removed, wanted = _bake_fk_chains(scene_map, chains)
     finally:
         cmds.undoInfo(closeChunk=True)
-    return removed, "FK baked back - {0} node(s) removed".format(removed)
+    what = ", ".join(wanted) if wanted else "FK"
+    return removed, "{0} baked back - {1} node(s) removed".format(what, removed)
 
 
-def build_fk(scene_map):
+def build_fk(scene_map, only=None):
     """Build FK controllers through OverRig knots. Returns (count, message).
 
-    The caller guards against an existing IK build; this function assumes the
-    bones are free apart from a previous FK, which it bakes back first.
+    `only` restricts the build to the named chains (used by Switch); None
+    builds all 17. A previous build of the affected chains is baked back
+    first. The caller guards against an existing IK build on the same bones.
     """
     if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return 0, "Not connected to a skeleton"
 
     region_of = {b.joint: b.region for b in bodymap.BUTTONS}
+    parent_of = _parent_map()
+    targeted = {j for _, chain in CHAINS for j in chain}
 
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK")
     try:
-        replaced = _teardown_fk(scene_map) if has_fk() else 0
+        if only is None:
+            replaced = _bake_fk_chains(scene_map)[0] if has_fk() else 0
+        else:
+            existing = [c for c in only if chain_members(c)]
+            replaced = (_bake_fk_chains(scene_map, existing)[0]
+                        if existing else 0)
 
         radii, guessed, skinned = _final_radii(scene_map)
 
         created = 0
-        recorded = []
-        for _chain_name, chain in CHAINS:
+        recorded = 0
+        attached = 0
+        for chain_name, chain in CHAINS:
+            if only is not None and chain_name not in only:
+                continue
             paths = [scene_map[j] for j in chain
                      if j in scene_map and cmds.objExists(scene_map[j])]
             if not paths:
@@ -555,30 +647,19 @@ def build_fk(scene_map):
                            if k not in before_knots]
             created += _dress_knots(fresh_knots, paths, radii, region_of)
 
-            fresh = sorted(n for n in (builder._scene_nodes() - before)
-                           if builder._recordable(n))
-            if fresh:
-                if not cmds.objExists(FK_SET):
-                    cmds.sets(name=FK_SET, empty=True)
-                cmds.sets(fresh, addElement=FK_SET)
-                _hide_rig_machinery(fresh)
-                recorded.extend(fresh)
+            # Couple inside the same diff window so the coupling nodes land in
+            # this chain's manifest. Parents precede children in CHAINS, so a
+            # full build always finds its target; a restricted build couples
+            # only if the target controller happens to exist.
+            if _attach_chain(chain_name, chain, parent_of, targeted):
+                attached += 1
 
-        # Couple the chains: neck and arms onto the spine, legs onto the
-        # pelvis, fingers onto the hands, spine onto root.
-        before = builder._scene_nodes()
-        attached = _attach_chains(scene_map)
-        fresh = sorted(n for n in (builder._scene_nodes() - before)
-                       if builder._recordable(n))
-        if fresh:
-            cmds.sets(fresh, addElement=FK_SET)
-            _hide_rig_machinery(fresh)
-            recorded.extend(fresh)
+            recorded += len(_record_fresh(chain_name, before))
     finally:
         cmds.undoInfo(closeChunk=True)
 
     message = "Built {0} FK controller(s), {1} chain(s) coupled, " \
-              "{2} node(s) recorded".format(created, attached, len(recorded))
+              "{2} node(s) recorded".format(created, attached, recorded)
     if replaced:
         message += ", previous FK baked back"
     if not skinned:
@@ -586,3 +667,96 @@ def build_fk(scene_map):
     elif guessed:
         message += " - {0} ring(s) sized from neighbours".format(len(guessed))
     return created, message
+
+
+# ---------------------------------------------------------------------------
+# Switch FK/IK
+# ---------------------------------------------------------------------------
+
+def _parent_out(ctrl, record_chain):
+    """Lift a nested controller to world through OverRig, re-baked."""
+    before = builder._scene_nodes()
+    cmds.select(ctrl, replace=True)
+    mel.eval("apply_Parent_out()")
+    _record_fresh(record_chain, before)
+
+
+def _parent_in(child_ctrl, parent_ctrl, record_chain):
+    """Hang a controller inside another through OverRig, re-baked."""
+    before = builder._scene_nodes()
+    cmds.select([child_ctrl, parent_ctrl], replace=True)
+    mel.eval("apply_Parent_in()")
+    _record_fresh(record_chain, before)
+
+
+def _ik_hand_control(limb):
+    """The IK end control of a built IK limb, found through its manifest.
+
+    Never by bare name -- OverRig suffixes renames on collision.
+    """
+    for member in overrig.set_members(builder.limb_set(limb)):
+        if not cmds.objExists(member):
+            continue
+        if "_IK_feet" in member.split("|")[-1] and cmds.objectType(member) in (
+                "transform", "joint"):
+            return member
+    return None
+
+
+def switch_limbs(scene_map, limbs):
+    """Convert each limb to the opposite rig type, animation re-baked.
+
+    FK becomes IK, IK becomes FK. Fingers riding on an arm's hand are lifted to
+    world before the arm converts and hung back on the new hand control after
+    -- they are DAG children of what gets deleted, so anything less loses them.
+    Semi-test version by declaration: arms and legs only.
+    """
+    table = dict(CHAINS)
+    done = []
+    skipped = []
+    notes = []
+
+    cmds.undoInfo(openChunk=True, chunkName="Rig Picker switch")
+    try:
+        for limb in limbs:
+            if limb not in LIMB_CHAINS:
+                skipped.append(limb)
+                continue
+            is_ik = limb in builder.built_limbs()
+            is_fk = bool(chain_members(limb))
+            if not is_ik and not is_fk:
+                skipped.append(limb)
+                continue
+
+            fingers = [c for c in finger_chains_for(limb) if chain_members(c)]
+            for chain in fingers:
+                ctrl = controller_name(table[chain][0])
+                if cmds.objExists(ctrl):
+                    _parent_out(ctrl, chain)
+
+            if is_fk:
+                _bake_fk_chains(scene_map, [limb])
+                builder.build(scene_map, only=[limb])
+                target = _ik_hand_control(limb)
+                done.append(limb + " -> IK")
+            else:
+                builder.bake_limbs(scene_map, [limb])
+                _count, build_message = build_fk(scene_map, only=[limb])
+                target = controller_name(table[limb][-1])
+                if "0 chain(s) coupled" in build_message:
+                    notes.append(limb + " uncoupled (no parent control)")
+                done.append(limb + " -> FK")
+
+            for chain in fingers:
+                ctrl = controller_name(table[chain][0])
+                if target and cmds.objExists(ctrl) and cmds.objExists(target):
+                    _parent_in(ctrl, target, chain)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+    message = "Switched: " + ", ".join(done) if done else "Nothing to switch"
+    if skipped:
+        message += ". No rig on: " + ", ".join(skipped)
+    if notes:
+        message += ". " + "; ".join(notes)
+    return done, skipped, message

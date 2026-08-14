@@ -130,6 +130,16 @@ class PickerWindow(QtWidgets.QMainWindow):
             lambda _checked=False: self.build_fk_controls())
         row.addWidget(self.fk_button)
 
+        self.switch_button = QtWidgets.QPushButton("Switch FK/IK", bar)
+        self.switch_button.setStyleSheet(_BUTTON_STYLE)
+        self.switch_button.setToolTip(
+            "Convert the selected arm or leg to the opposite rig type.\n"
+            "FK becomes IK, IK becomes FK; animation is re-baked.\n"
+            "Fingers survive an arm switch on the new hand control.")
+        self.switch_button.clicked.connect(
+            lambda _checked=False: self.switch_selected_limbs())
+        row.addWidget(self.switch_button)
+
         self.bake_button = QtWidgets.QPushButton("Bake+Delete", bar)
         self.bake_button.setStyleSheet(_BUTTON_STYLE)
         self.bake_button.setToolTip(
@@ -312,14 +322,44 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         self.status.showMessage(message)
 
+    def switch_selected_limbs(self):
+        """Convert the selected arms/legs to the opposite rig type."""
+        if not self._scene_map:
+            self.status.showMessage(_UNBOUND_MESSAGE)
+            return
+
+        selected = cmds.ls(selection=True, long=True) or []
+        ik_limbs = builder.limbs_in_selection(self._scene_map)
+        fk_members = {name: fkcontrols.chain_members(name)
+                      for name in fkcontrols.LIMB_CHAINS}
+        fk_limbs = builder.resolve_limbs(selected, fk_members, self._scene_map)
+
+        hit = set(ik_limbs) | set(fk_limbs)
+        limbs = [l for l in fkcontrols.LIMB_CHAINS if l in hit]
+        if not limbs:
+            self.status.showMessage(
+                "Select an arm or leg controller (or its picker button) first")
+            return
+
+        self.switch_button.setEnabled(False)
+        try:
+            _done, _skipped, message = fkcontrols.switch_limbs(
+                self._scene_map, limbs)
+        finally:
+            self.switch_button.setEnabled(True)
+
+        self.status.showMessage(message)
+        self.sync_from_scene()
+
     def bake_selected_limbs(self):
         """Bake back to FK whichever limbs the current selection touches."""
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
 
-        if fkcontrols.has_fk():
-            # The FK build is one unit in this version: bake all of it back.
+        limbs = builder.limbs_in_selection(self._scene_map)
+        if not limbs and fkcontrols.has_fk():
+            # Nothing IK in the selection but FK exists: bake the FK back.
             self.bake_button.setEnabled(False)
             try:
                 _removed, message = fkcontrols.bake_fk(self._scene_map)
@@ -328,8 +368,6 @@ class PickerWindow(QtWidgets.QMainWindow):
             self.status.showMessage(message)
             self.sync_from_scene()
             return
-
-        limbs = builder.limbs_in_selection(self._scene_map)
         if not limbs:
             self.status.showMessage(
                 "Select an IK control or a limb in the picker first")

@@ -70,6 +70,41 @@ class TestColourFor(unittest.TestCase):
                 self.assertLessEqual(channel, 1.0)
 
 
+class TestChainSet(unittest.TestCase):
+
+    def test_name_is_prefixed(self):
+        self.assertEqual(fkcontrols.chain_set("arm_l"), "RigPicker_fk_arm_l")
+
+    def test_distinct_per_chain(self):
+        names = {fkcontrols.chain_set(name) for name, _ in fkcontrols.CHAINS}
+        self.assertEqual(len(names), len(fkcontrols.CHAINS))
+
+    def test_differs_from_the_legacy_flat_set(self):
+        for name, _ in fkcontrols.CHAINS:
+            self.assertNotEqual(fkcontrols.chain_set(name), fkcontrols.FK_SET)
+
+
+class TestFingerChainsFor(unittest.TestCase):
+
+    def test_left_arm_owns_five_finger_chains(self):
+        found = fkcontrols.finger_chains_for("arm_l")
+        self.assertEqual(sorted(found),
+                         ["index_l", "middle_l", "pinky_l", "ring_l",
+                          "thumb_l"])
+
+    def test_right_arm_owns_the_right_side(self):
+        found = fkcontrols.finger_chains_for("arm_r")
+        self.assertTrue(all(c.endswith("_r") for c in found))
+        self.assertEqual(len(found), 5)
+
+    def test_legs_own_nothing(self):
+        self.assertEqual(fkcontrols.finger_chains_for("leg_l"), [])
+        self.assertEqual(fkcontrols.finger_chains_for("leg_r"), [])
+
+    def test_unknown_limb_owns_nothing(self):
+        self.assertEqual(fkcontrols.finger_chains_for("spine"), [])
+
+
 class TestAttachParent(unittest.TestCase):
 
     PARENT_OF = {

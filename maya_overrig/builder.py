@@ -390,8 +390,12 @@ def teardown(scene_map):
     return bake_limbs(scene_map, built_limbs())
 
 
-def build(scene_map):
-    """Build IK on every resolvable limb, replacing any previous build."""
+def build(scene_map, only=None):
+    """Build IK on every resolvable limb, replacing any previous build.
+
+    `only` restricts the build (and the replace pass) to the named limbs --
+    the Switch feature converts one limb without touching the rest.
+    """
     if not overrig.ensure_loaded():
         return BuildResult(
             [], [], 0, 0,
@@ -399,6 +403,9 @@ def build(scene_map):
             "(looked for {0})".format(overrig.MEL_PATH))
 
     resolvable = limb_joints(scene_map)
+    if only is not None:
+        resolvable = [(name, joints) for name, joints in resolvable
+                      if name in only]
     if not resolvable:
         return BuildResult([], [name for name, _ in LIMBS], 0, 0,
                            "No limb joints found on the bound skeleton")
@@ -414,7 +421,11 @@ def build(scene_map):
 
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker build")
     try:
-        if has_build():
+        if only is not None:
+            rebuilt = [l for l in only if l in built_limbs()]
+            if rebuilt:
+                removed = bake_limbs(scene_map, rebuilt).removed
+        elif has_build():
             removed = teardown(scene_map).removed
 
         for name, joints in resolvable:

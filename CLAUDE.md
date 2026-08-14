@@ -156,8 +156,22 @@ channels, not jointOrient — non-zero local rotates are NOT a bent skeleton, an
 skeleton stands in** — verify the pose before building; a proposed safety
 (snapshot a dagPose before every build) is not yet implemented.
 
-Not built: FK/IK coexistence and switching; IK on spine and neck; docking;
-mirror-select; per-chain FK bake (FK bakes back as one unit).
+**Switch FK/IK** converts whatever arms/legs the selection touches to the
+opposite rig type, per limb, animation re-baked at every step
+(`fkcontrols.switch_limbs`). The FK manifest is per-chain
+(`RigPicker_fk_<chain>`; the flat `RigPicker_fk` is legacy, absorbed by a full
+bake). Fingers ride through an arm switch: `apply_Parent_out` lifts them to
+world, the arm converts, `apply_Parent_in` hangs them on the new hand control
+— they are DAG children of what gets deleted, so anything less loses them.
+`apply_Parent_out`/`_in` semantics (both verified by experiment): selection is
+child-then-parent for `_in`, the child alone for `_out`; both re-bake into the
+new space with zero drift. The IK hand control is found through the limb's
+manifest, never by name. Mixed FK/IK states are now normal; `Bake+Delete`
+resolves selection to IK limbs first, then falls back to full-FK bake.
+
+Not built: spine/neck switching; per-chain FK bake from the UI (Switch does it
+internally); IK on spine and neck; docking; mirror-select; the pose-snapshot
+safety before Build FK (proposed, not confirmed).
 
 ## OverRig facts, learned by reading the MEL and by being bitten
 
