@@ -103,6 +103,22 @@ def character_roots():
         exclude_under=overrig.set_members(overrig.KNOT_SET))
 
 
+def top_level(path):
+    """Outermost DAG ancestor of a path: '|a|b|c' -> '|a'."""
+    return "|" + path.lstrip("|").split("|")[0]
+
+
+def unrecorded_rig_roots(driver_paths, overrig_made):
+    """Rig roots among the drivers' top-level ancestors that OverRig created.
+
+    `overrig_made` is OverRig's own `OverRig_knots` membership, and it is what
+    keeps this safe: a constraint the user set up by hand has no ancestor in
+    that set, so it is never a candidate for deletion.
+    """
+    made = set(overrig_made)
+    return sorted({top_level(path) for path in driver_paths} & made)
+
+
 def _scene_nodes():
     return set(cmds.ls(long=True) or [])
 
@@ -138,6 +154,92 @@ def has_build():
     return bool(built_limbs())
 
 
+def _rig_closure(seed_roots, overrig_made):
+    """Grow seed rig roots into every OverRig root wired into the same setup.
+
+    Walking out from a joint's constraints only reaches the part of the rig that
+    drives the joint directly -- the `_IK_strech_gr` group. The `_IK_feet` and
+    `_IK_knee` controls drive the IK handle instead, so they are never reached
+    that way and would be left behind as stray locators.
+
+    The walk only follows a node whose own top-level ancestor is something
+    OverRig created, which is what stops it at the skeleton: the character's
+    joints belong to no OverRig root, so it cannot cross through them into a
+    neighbouring limb's rig.
+    """
+    made = set(overrig_made)
+    found = set(seed_roots) & made
+    frontier = list(found)
+
+    while frontier:
+        root = frontier.pop()
+        for node in cmds.ls(root, dagObjects=True, long=True) or []:
+            connected = cmds.listConnections(node, source=True,
+                                             destination=True) or []
+            for other in connected:
+                paths = cmds.ls(other, long=True) or []
+                if not paths:
+                    continue
+                candidate = top_level(paths[0])
+                if candidate in made and candidate not in found:
+                    found.add(candidate)
+                    frontier.append(candidate)
+
+    return sorted(found)
+
+
+def _reclaim(joint_paths):
+    """Free joints from an OverRig rig this tool never recorded.
+
+    The manifest only covers builds made by the current code. A rig built by an
+    older version, or one whose manifest set was lost, would otherwise keep the
+    joints constrained forever with no way to remove it through the panel.
+
+    Walking out from the limb's own joints bounds this: it can only ever reach a
+    rig that actually drives this limb. Returns (nodes removed, names left
+    alone).
+    """
+    made = overrig.set_members(overrig.KNOT_SET)
+
+    doomed_roots = set()
+    doomed_constraints = []
+    foreign = []
+
+    for path in joint_paths:
+        if not cmds.objExists(path):
+            continue
+        for con in cmds.listRelatives(path, children=True, type="constraint",
+                                      fullPath=True) or []:
+            drivers = [t for t in
+                       (cmds.listConnections(con + ".target", source=True,
+                                             destination=False) or [])
+                       if cmds.objExists(t)]
+            drivers = [cmds.ls(t, long=True)[0] for t in set(drivers)]
+            roots = unrecorded_rig_roots(drivers, made)
+            if roots:
+                doomed_roots.update(roots)
+                doomed_constraints.append(con)
+            else:
+                foreign.append(con.split("|")[-1])
+
+    # A joint's constraints only lead to the part of the rig driving it; expand
+    # to the whole setup so its controls do not survive as stray locators.
+    if doomed_roots:
+        doomed_roots = set(_rig_closure(doomed_roots, made))
+
+    alive_roots = [r for r in sorted(doomed_roots) if cmds.objExists(r)]
+    if alive_roots:
+        cmds.delete(alive_roots)
+
+    # The constraint sits under the source joint, so it outlives its driver --
+    # which is exactly what left joints "freed" but still constrained.
+    alive_constraints = [c for c in doomed_constraints if cmds.objExists(c)]
+    if alive_constraints:
+        cmds.delete(alive_constraints)
+
+    return len(alive_roots) + len(alive_constraints), foreign
+
+
 def bake_limbs(scene_map, limbs):
     """Bake the given limbs back to FK and remove their OverRig setup.
 
@@ -150,6 +252,8 @@ def bake_limbs(scene_map, limbs):
     baked = []
     skipped = []
     removed = 0
+    reclaimed = 0
+    foreign = []
 
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
     try:
@@ -169,15 +273,28 @@ def bake_limbs(scene_map, limbs):
                 removed += len(members)
             if cmds.objExists(limb_set(limb)):
                 cmds.delete(limb_set(limb))
+
+            # Anything still driving these joints was built outside our
+            # bookkeeping -- an older version, or a manifest that got lost.
+            if joints:
+                extra, left = _reclaim(joints)
+                reclaimed += extra
+                foreign.extend(left)
+
             baked.append(limb)
     finally:
         cmds.undoInfo(closeChunk=True)
 
     message = "Baked {0} - {1} node(s) removed".format(
         ", ".join(baked) if baked else "nothing", removed)
+    if reclaimed:
+        message += ", {0} unrecorded".format(reclaimed)
     if skipped:
         message += ". Nothing recorded for: " + ", ".join(skipped)
-    return BuildResult(baked, skipped, 0, removed, message)
+    if foreign:
+        message += ". Left alone (not OverRig's): " + ", ".join(sorted(
+            set(foreign))[:4])
+    return BuildResult(baked, skipped, 0, removed + reclaimed, message)
 
 
 def teardown(scene_map):

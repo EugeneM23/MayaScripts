@@ -166,5 +166,65 @@ class TestResolveLimbs(unittest.TestCase):
         self.assertEqual(self.resolve([]), [])
 
 
+class TestTopLevel(unittest.TestCase):
+
+    def test_nested_path_reduces_to_its_outermost_ancestor(self):
+        self.assertEqual(
+            builder.top_level("|foot_l_IK_feet|base_IK_strech3|locator19"),
+            "|foot_l_IK_feet")
+
+    def test_already_top_level_is_unchanged(self):
+        self.assertEqual(builder.top_level("|foot_l_IK_feet"),
+                         "|foot_l_IK_feet")
+
+    def test_path_without_a_leading_separator(self):
+        self.assertEqual(builder.top_level("group|child"), "|group")
+
+    def test_bare_name(self):
+        self.assertEqual(builder.top_level("locator19"), "|locator19")
+
+
+class TestUnrecordedRigRoots(unittest.TestCase):
+
+    MADE = ["|foot_l_IK_feet", "|calf_l_IK_knee", "|thigh_l_IK_strech_gr"]
+
+    def test_driver_nested_under_a_known_root_resolves_to_it(self):
+        self.assertEqual(
+            builder.unrecorded_rig_roots(
+                ["|foot_l_IK_feet|base_IK_strech3|locator19"], self.MADE),
+            ["|foot_l_IK_feet"])
+
+    def test_driver_that_is_itself_the_root_resolves_to_itself(self):
+        self.assertEqual(
+            builder.unrecorded_rig_roots(["|calf_l_IK_knee"], self.MADE),
+            ["|calf_l_IK_knee"])
+
+    def test_driver_under_something_unknown_yields_nothing(self):
+        """A constraint the user set up by hand must survive."""
+        self.assertEqual(
+            builder.unrecorded_rig_roots(["|my_own_group|my_locator"],
+                                         self.MADE),
+            [])
+
+    def test_duplicates_collapse(self):
+        self.assertEqual(
+            builder.unrecorded_rig_roots(
+                ["|foot_l_IK_feet|a|loc1", "|foot_l_IK_feet|b|loc2"],
+                self.MADE),
+            ["|foot_l_IK_feet"])
+
+    def test_results_are_sorted(self):
+        found = builder.unrecorded_rig_roots(
+            ["|thigh_l_IK_strech_gr|x", "|calf_l_IK_knee|y"], self.MADE)
+        self.assertEqual(found, ["|calf_l_IK_knee", "|thigh_l_IK_strech_gr"])
+
+    def test_no_drivers_yields_nothing(self):
+        self.assertEqual(builder.unrecorded_rig_roots([], self.MADE), [])
+
+    def test_nothing_known_yields_nothing(self):
+        self.assertEqual(
+            builder.unrecorded_rig_roots(["|foot_l_IK_feet|a"], []), [])
+
+
 if __name__ == "__main__":
     unittest.main()
