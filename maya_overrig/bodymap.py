@@ -6,81 +6,94 @@ layout can be tested in plain Python.
 Coordinates live in a fixed body-space of CANVAS_W x CANVAS_H units which the
 view scales to fit, so nothing here depends on window size.
 
-Orientation is a FRONT view of the character: the character's left side (the
-`_l` joints) is drawn on the viewer's RIGHT.
+Orientation is a FRONT view of the character in a T-pose: the character's left
+side (the `_l` joints) is drawn on the viewer's RIGHT, and the arms run
+horizontally outward from the shoulders. Vertical arms were tried first and
+read badly -- they leave the figure narrow, strand the hands, and push the
+finger blocks far from the arm they belong to.
 """
 
 from collections import namedtuple
 
 Button = namedtuple("Button", "id joint x y w h region")
 
-CANVAS_W = 400
-CANVAS_H = 620
+CANVAS_W = 560
+CANVAS_H = 410
 
 REGIONS = ("root", "spine", "head",
            "arm_l", "arm_r", "hand_l", "hand_r", "leg_l", "leg_r")
 
 GROUPS = ("all", "main") + REGIONS
 
-# Fingers carrying a metacarpal joint, ordered inboard to outboard on the hand.
+# Fingers carrying a metacarpal joint, ordered top to bottom below the thumb.
 _FINGERS = ("index", "middle", "ring", "pinky")
 
-_FINGER_W = 20
-_FINGER_H = 17
-_FINGER_STEP_X = 23
-_FINGER_STEP_Y = 20
-_FINGER_X0 = 296
-_FINGER_Y0 = 286
-_THUMB_X = 270
+# One row per finger, one column per joint, running outward from the hand.
+_FINGER_W = 22
+_FINGER_H = 16
+_FINGER_STEP_X = 24
+_FINGER_STEP_Y = 19
+_FINGER_X0 = 462
+_FINGER_Y0 = 86
+_THUMB_Y = 66
 
 
 def _centre_buttons():
     """Root, pelvis, spine stack, neck and head -- all on the midline."""
     rows = [
-        ("head", 178, 28, 44, 40, "head"),
-        ("neck_02", 188, 72, 24, 14, "head"),
-        ("neck_01", 188, 90, 24, 14, "head"),
-        ("spine_05", 168, 110, 64, 17, "spine"),
-        ("spine_04", 168, 131, 64, 17, "spine"),
-        ("spine_03", 168, 152, 64, 17, "spine"),
-        ("spine_02", 168, 173, 64, 17, "spine"),
-        ("spine_01", 168, 194, 64, 17, "spine"),
-        ("pelvis", 162, 215, 76, 24, "root"),
-        ("root", 178, 560, 44, 20, "root"),
+        ("head", 260, 18, 40, 34, "head"),
+        ("neck_02", 269, 56, 22, 12, "head"),
+        ("neck_01", 269, 72, 22, 12, "head"),
+        ("spine_05", 252, 88, 56, 15, "spine"),
+        ("spine_04", 252, 107, 56, 15, "spine"),
+        ("spine_03", 252, 126, 56, 15, "spine"),
+        ("spine_02", 252, 145, 56, 15, "spine"),
+        ("spine_01", 252, 164, 56, 15, "spine"),
+        ("pelvis", 247, 183, 66, 20, "root"),
+        # Wider than the pelvis on purpose: root is the world control, and a
+        # plinth shape keeps it from reading as one more spine segment.
+        ("root", 238, 207, 84, 14, "root"),
     ]
     return [Button(n, n, x, y, w, h, r) for n, x, y, w, h, r in rows]
 
 
 def _left_limb_buttons():
-    """Character-left arm and leg, drawn on the viewer's right."""
+    """Character-left arm and leg, drawn on the viewer's right.
+
+    The arm is a horizontal chain running outward from the shoulder; the leg
+    hangs vertically from the pelvis.
+    """
     rows = [
-        ("clavicle_l", 236, 110, 34, 16, "arm_l"),
-        ("upperarm_l", 252, 130, 28, 58, "arm_l"),
-        ("lowerarm_l", 256, 192, 26, 54, "arm_l"),
-        ("hand_l", 258, 250, 24, 26, "arm_l"),
-        ("thigh_l", 208, 250, 30, 72, "leg_l"),
-        ("calf_l", 210, 326, 28, 70, "leg_l"),
-        ("foot_l", 212, 400, 26, 28, "leg_l"),
-        ("ball_l", 212, 432, 26, 16, "leg_l"),
+        ("clavicle_l", 312, 86, 26, 18, "arm_l"),
+        ("upperarm_l", 342, 86, 42, 18, "arm_l"),
+        ("lowerarm_l", 388, 86, 40, 18, "arm_l"),
+        ("hand_l", 432, 86, 26, 18, "arm_l"),
+        ("thigh_l", 286, 226, 26, 56, "leg_l"),
+        ("calf_l", 286, 286, 24, 54, "leg_l"),
+        ("foot_l", 286, 344, 22, 22, "leg_l"),
+        ("ball_l", 286, 370, 22, 14, "leg_l"),
     ]
     return [Button(n, n, x, y, w, h, r) for n, x, y, w, h, r in rows]
 
 
 def _left_finger_buttons():
-    """Character-left hand: four metacarpal fingers in columns, plus the thumb."""
+    """Character-left hand: a row per finger, a column per joint.
+
+    The thumb sits on its own row above the others and has no metacarpal.
+    """
     out = []
-    for col, finger in enumerate(_FINGERS):
-        x = _FINGER_X0 + col * _FINGER_STEP_X
+    for row, finger in enumerate(_FINGERS):
+        y = _FINGER_Y0 + row * _FINGER_STEP_Y
         joints = ["{0}_metacarpal_l".format(finger)]
         joints += ["{0}_{1:02d}_l".format(finger, i) for i in (1, 2, 3)]
-        for row, joint in enumerate(joints):
-            y = _FINGER_Y0 + row * _FINGER_STEP_Y
+        for col, joint in enumerate(joints):
+            x = _FINGER_X0 + col * _FINGER_STEP_X
             out.append(Button(joint, joint, x, y, _FINGER_W, _FINGER_H, "hand_l"))
 
-    for row, i in enumerate((1, 2, 3)):
+    for col, i in enumerate((1, 2, 3)):
         joint = "thumb_{0:02d}_l".format(i)
-        y = _FINGER_Y0 + (row + 1) * _FINGER_STEP_Y
-        out.append(Button(joint, joint, _THUMB_X, y, _FINGER_W, _FINGER_H, "hand_l"))
+        x = _FINGER_X0 + col * _FINGER_STEP_X
+        out.append(Button(joint, joint, x, _THUMB_Y, _FINGER_W, _FINGER_H, "hand_l"))
 
     return out
 

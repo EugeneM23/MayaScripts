@@ -41,7 +41,7 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.setObjectName(WINDOW_OBJECT_NAME)
         self.setWindowTitle(WINDOW_TITLE)
         self.setWindowFlags(QtCore.Qt.Window)
-        self.resize(420, 720)
+        self.resize(660, 540)
 
         # Guards against the selection feedback loop: we set the scene
         # selection, Maya fires SelectionChanged, we would repaint and could
