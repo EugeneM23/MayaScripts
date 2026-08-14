@@ -1,8 +1,24 @@
-# OverRig Picker — Design
+# Rig Picker — Design
 
 Date: 2026-08-14
-Status: approved
+Status: approved, revised during implementation
 Branch: `feature/overrig-picker`
+
+## Revision, 2026-08-14
+
+Two changes after the first working version was reviewed.
+
+**Named "Rig Picker".** The panel is not tied to OverRig in the user's mind and
+should not carry its name. The package stays `maya_overrig` — the wrapper as a
+whole really is about OverRig, and the picker is one panel of it.
+
+**Multi-character handling replaced.** The original plan deferred this to a
+"character switcher" in future work. Testing showed the interim behaviour was
+not merely limited but actively wrong: clicks silently went to whichever
+character came first in DAG order with no warning, and because the reverse
+mapping compared bare leaf names, selecting another character's `spine_03` lit
+a button that would select ours. Showing one thing and doing another is worse
+than failing loudly, so it is fixed rather than deferred — see Binding below.
 
 ## Context
 
@@ -76,7 +92,7 @@ the package form is the deviation noted above.
 | Module | Responsibility | May import |
 |---|---|---|
 | `bodymap.py` | Pure data: the button table and region definitions | nothing |
-| `naming.py` | Resolve a logical joint name to a scene object | `maya.cmds` |
+| `naming.py` | Find a skeleton root and map its joints; UUID binding | `maya.cmds` |
 | `picker_view.py` | Qt scene, button items, painting, hover, marquee, zoom | Qt only |
 | `picker_window.py` | Window shell, toolbar, wiring signals to Maya selection | Qt + `maya.cmds` |
 | `__init__.py` | `show_picker()` entry point | the above |
@@ -187,9 +203,39 @@ only, not layout or hit-testing.
 |---|---|
 | Joint not in scene | Button dimmed and non-interactive. No exception — the panel stays useful on a partial skeleton. |
 | No skeleton at all | Panel opens, every button dimmed, status line explains why. |
-| Several matches (two characters) | Take the first, log a warning. Character switcher is future work. |
+| Several characters | Nothing is bound automatically; the status line says how many were found and asks for a Connect. |
+| Nothing selected on Connect | Status line asks for a joint. No binding change. |
+| Selection has no skeleton under or above it | Status line names the node and reports no skeleton found. |
+| Bound root deleted | `bound_root()` returns `None`; the next refresh falls back to auto-connect. |
 | `show_picker()` called again | Existing window is destroyed first, so windows do not accumulate. |
 | Window closed | `scriptJob` killed in `closeEvent`. |
+
+## Binding
+
+The panel is bound to exactly one skeleton at a time, chosen explicitly rather
+than guessed.
+
+Pressing **Connect** takes the current selection and walks to the skeleton root:
+a joint climbs through its joint parents to the top of the chain, so any bone
+will do; a non-joint — the enclosing group — yields the shallowest joint beneath
+it. The root is stored by **UUID**, so renaming it or dropping the character
+into a group does not break the link. When the scene holds exactly one skeleton
+the panel connects to it on open without being asked.
+
+Binding produces `_scene_map`, a `leaf name -> long DAG path` dictionary built
+from the root's subtree, and that map is the only route from a button to a scene
+object. Two consequences fall out of scoping to a subtree:
+
+- Namespaces and per-character prefixes stop mattering. `hero:spine_03` and
+  `spine_03` live in different subtrees and never compete, so the map is keyed
+  on the bare name while the values keep their namespace.
+- Highlighting cannot lie. `sync_from_scene` tests membership on the full DAG
+  path, never on the bare name, so another character's selection leaves our
+  buttons alone.
+
+Exact leaf-name matching is still required inside the subtree: a suffix match
+for `hand_l` would hit the UE export helper `ik_hand_l`, which lives in the same
+skeleton.
 
 ## Testing
 
@@ -230,7 +276,6 @@ Ordered roughly by expected sequence, not committed to here:
    manifest rather than OverRig's sets.
 4. Optional dockable `workspaceControl` wrapper.
 5. Mirror-select and chain-select.
-6. Character switcher for namespaced or multiple characters.
 
 ## Note on scene hygiene
 

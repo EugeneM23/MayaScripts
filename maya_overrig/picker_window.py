@@ -1,6 +1,11 @@
-"""Maya-facing shell for the OverRig picker.
+"""Maya-facing shell for the Rig Picker.
 
 Owns every interaction with the scene. The view below it stays Maya-free.
+
+The panel is bound to one skeleton at a time. Binding is explicit: select any
+joint of the character -- or the group holding it -- and press Connect. The
+root is remembered by UUID, so renaming it or dropping the character into a
+group does not break the link.
 """
 
 import maya.cmds as cmds
@@ -11,8 +16,8 @@ from shiboken6 import wrapInstance
 from maya_overrig import bodymap, naming
 from maya_overrig.picker_view import MODE_ADD, MODE_TOGGLE, PickerView, mode_for
 
-WINDOW_OBJECT_NAME = "overRigPickerWindow"
-WINDOW_TITLE = "OverRig Picker"
+WINDOW_OBJECT_NAME = "rigPickerWindow"
+WINDOW_TITLE = "Rig Picker"
 
 _GROUP_BUTTONS = (
     ("All", "all"), ("Main", "main"), ("Spine", "spine"), ("Head", "head"),
@@ -21,11 +26,20 @@ _GROUP_BUTTONS = (
     ("Leg L", "leg_l"), ("Leg R", "leg_r"),
 )
 
-_GROUP_STYLE = (
+_BUTTON_STYLE = (
     "QPushButton { background: #3c3c3c; color: #d8d8d8; border: none; "
     "padding: 4px; border-radius: 3px; }"
     "QPushButton:hover { background: #4a4a4a; }"
+    "QPushButton:disabled { color: #6a6a6a; }"
 )
+
+_CONNECT_STYLE = (
+    "QPushButton { background: #45607a; color: #e8e8e8; border: none; "
+    "padding: 4px 12px; border-radius: 3px; }"
+    "QPushButton:hover { background: #52738f; }"
+)
+
+_UNBOUND_MESSAGE = "Not connected - select the character and press Connect"
 
 
 def maya_main_window():
@@ -41,13 +55,19 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.setObjectName(WINDOW_OBJECT_NAME)
         self.setWindowTitle(WINDOW_TITLE)
         self.setWindowFlags(QtCore.Qt.Window)
-        self.resize(660, 540)
+        self.resize(660, 560)
 
         # Guards against the selection feedback loop: we set the scene
         # selection, Maya fires SelectionChanged, we would repaint and could
         # loop. The callback returns early while this is set.
         self._applying = False
         self._script_job = None
+
+        # The bound skeleton. `_scene_map` is leaf name -> long DAG path and is
+        # the ONLY route from a button to a scene object, which is what keeps a
+        # second character out of the picture.
+        self._root_uuid = None
+        self._scene_map = {}
 
         self._joint_to_id = {b.joint: b.id for b in bodymap.BUTTONS}
 
@@ -65,25 +85,35 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         self.status = self.statusBar()
-        self.status.showMessage("")
 
-        self.refresh_availability()
-        self.sync_from_scene()
+        self.auto_connect()
         self._install_script_job()
+
+    # -- construction --------------------------------------------------------
 
     def _build_toolbar(self):
         bar = QtWidgets.QWidget(self)
         row = QtWidgets.QHBoxLayout(bar)
         row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
 
-        refresh = QtWidgets.QPushButton("Refresh", bar)
-        refresh.setStyleSheet(_GROUP_STYLE)
-        refresh.clicked.connect(lambda _checked=False: self.refresh_availability())
-        row.addWidget(refresh)
+        connect = QtWidgets.QPushButton("Connect", bar)
+        connect.setStyleSheet(_CONNECT_STYLE)
+        connect.setToolTip(
+            "Bind the picker to the selected character.\n"
+            "Any joint of the character will do, or the group holding it.")
+        connect.clicked.connect(lambda _checked=False: self.connect_to_selection())
+        row.addWidget(connect)
+
+        self.bound_label = QtWidgets.QLabel("", bar)
+        self.bound_label.setStyleSheet("QLabel { color: #9a9a9a; }")
+        row.addWidget(self.bound_label)
+
         row.addStretch(1)
 
         for label in ("Build", "Bake+Delete"):
             button = QtWidgets.QPushButton(label, bar)
+            button.setStyleSheet(_BUTTON_STYLE)
             button.setEnabled(False)
             button.setToolTip("Not implemented yet")
             row.addWidget(button)
@@ -97,11 +127,82 @@ class PickerWindow(QtWidgets.QMainWindow):
         grid.setSpacing(3)
         for index, (label, group) in enumerate(_GROUP_BUTTONS):
             button = QtWidgets.QPushButton(label, box)
-            button.setStyleSheet(_GROUP_STYLE)
+            button.setStyleSheet(_BUTTON_STYLE)
             button.clicked.connect(
                 lambda _checked=False, g=group: self._select_group(g))
             grid.addWidget(button, index // 5, index % 5)
         return box
+
+    # -- binding -------------------------------------------------------------
+
+    def connect_to_selection(self):
+        """Bind to the character reachable from the current selection."""
+        selected = cmds.ls(selection=True, long=True) or []
+        if not selected:
+            self.status.showMessage(
+                "Nothing selected - pick a joint of the character first")
+            return
+
+        root = naming.find_root(selected[0])
+        if not root:
+            self.status.showMessage(
+                "No skeleton found under {0}".format(selected[0].split("|")[-1]))
+            return
+
+        self._bind(root)
+
+    def auto_connect(self):
+        """Bind without asking when the scene holds exactly one skeleton."""
+        roots = naming.find_skeleton_roots()
+        if len(roots) == 1:
+            self._bind(roots[0])
+            return
+        self._root_uuid = None
+        self._scene_map = {}
+        self._refresh_view()
+        if len(roots) > 1:
+            self.status.showMessage(
+                "{0} skeletons in the scene - select one and press "
+                "Connect".format(len(roots)))
+        else:
+            self.status.showMessage(_UNBOUND_MESSAGE)
+
+    def _bind(self, root):
+        self._root_uuid = naming.uuid_of(root)
+        self._scene_map = naming.hierarchy_map(root)
+        self._refresh_view()
+        self.sync_from_scene()
+
+        matched = sum(1 for j in self._joint_to_id if j in self._scene_map)
+        self.status.showMessage(
+            "Connected to {0} - {1}/{2} buttons matched".format(
+                root.split("|")[-1], matched, len(bodymap.BUTTONS)))
+
+    def bound_root(self):
+        """Current root's DAG path, re-resolved from its UUID, or None."""
+        return naming.path_from_uuid(self._root_uuid)
+
+    def refresh(self):
+        """Re-read the bound skeleton, following it through renames or moves."""
+        root = self.bound_root()
+        if root is None:
+            self.auto_connect()
+            return
+        self._bind(root)
+
+    # -- view state ----------------------------------------------------------
+
+    def _refresh_view(self):
+        """Dim every button whose joint is missing from the bound skeleton."""
+        available = [self._joint_to_id[j] for j in self._scene_map
+                     if j in self._joint_to_id]
+        self.view.set_available(available)
+
+        root = self.bound_root()
+        if root is None:
+            self.bound_label.setText("not connected")
+        else:
+            self.bound_label.setText(root.split("|")[-1])
 
     def _select_group(self, group):
         modifiers = QtWidgets.QApplication.keyboardModifiers()
@@ -111,26 +212,19 @@ class PickerWindow(QtWidgets.QMainWindow):
     def _on_hover(self, button_id):
         self.status.showMessage(button_id)
 
-    def refresh_availability(self):
-        """Dim buttons whose joint is not in the scene."""
-        found = naming.resolve_many([b.joint for b in bodymap.BUTTONS])
-        available = [self._joint_to_id[j] for j in found]
-        self.view.set_available(available)
-
-        missing = len(bodymap.BUTTONS) - len(available)
-        if not available:
-            self.status.showMessage(
-                "No matching skeleton in the scene - every button disabled")
-        elif missing:
-            self.status.showMessage("{0} joint(s) missing".format(missing))
-        else:
-            self.status.showMessage("")
+    # -- selection -----------------------------------------------------------
 
     def apply_selection(self, ids, mode):
         """Translate a picker request into a Maya selection change."""
-        wanted_joints = [bodymap.button_by_id(i).joint for i in ids]
-        resolved = naming.resolve_many(wanted_joints)
-        paths = [resolved[j] for j in wanted_joints if j in resolved]
+        if not self._scene_map:
+            self.status.showMessage(_UNBOUND_MESSAGE)
+            return
+
+        paths = []
+        for button_id in ids:
+            joint = bodymap.button_by_id(button_id).joint
+            if joint in self._scene_map:
+                paths.append(self._scene_map[joint])
         if not paths:
             return
 
@@ -148,16 +242,24 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.sync_from_scene()
 
     def sync_from_scene(self):
-        """Repaint button states from the current Maya selection."""
-        selected = cmds.ls(selection=True, long=True) or []
-        leaves = {naming.leaf(node) for node in selected}
-        ids = [self._joint_to_id[j] for j in leaves if j in self._joint_to_id]
+        """Repaint button states from the current Maya selection.
+
+        Membership is tested on the full DAG path, never on the bare name --
+        otherwise selecting another character's `spine_03` would light up a
+        button that selects ours.
+        """
+        selected = set(cmds.ls(selection=True, long=True) or [])
+        ids = [self._joint_to_id[joint]
+               for joint, dag in self._scene_map.items()
+               if dag in selected and joint in self._joint_to_id]
         self.view.set_selected(ids)
 
     def _on_scene_selection_changed(self):
         if self._applying:
             return
         self.sync_from_scene()
+
+    # -- lifecycle -----------------------------------------------------------
 
     def _install_script_job(self):
         self._script_job = cmds.scriptJob(
