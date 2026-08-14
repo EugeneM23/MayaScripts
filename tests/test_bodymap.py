@@ -1,6 +1,33 @@
+import os
+import subprocess
+import sys
 import unittest
 
 from maya_overrig import bodymap
+
+
+class TestMayaFreeBoundary(unittest.TestCase):
+    """bodymap must stay importable with no Maya and no Qt loaded.
+
+    Checked in a fresh interpreter because by the time the rest of the suite
+    has run, maya.cmds and Qt are already in this process's sys.modules.
+    """
+
+    def test_importing_bodymap_pulls_in_neither_maya_nor_qt(self):
+        script = (
+            "import sys\n"
+            "from maya_overrig import bodymap\n"
+            "leaked = [m for m in sys.modules\n"
+            "          if m.startswith('maya.') or m.startswith('PySide6')]\n"
+            "print(';'.join(sorted(leaked)))\n"
+        )
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "",
+                         "importing bodymap leaked: " + result.stdout.strip())
 
 
 class TestBodyMap(unittest.TestCase):
