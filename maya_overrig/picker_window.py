@@ -13,7 +13,7 @@ import maya.OpenMayaUI as omui
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import wrapInstance
 
-from maya_overrig import bodymap, builder, naming
+from maya_overrig import bodymap, builder, fkcontrols, naming
 from maya_overrig.picker_view import MODE_ADD, MODE_TOGGLE, PickerView, mode_for
 
 WINDOW_OBJECT_NAME = "rigPickerWindow"
@@ -119,6 +119,16 @@ class PickerWindow(QtWidgets.QMainWindow):
             "Pressing again rebuilds from scratch.")
         self.build_button.clicked.connect(lambda _checked=False: self.build_rig())
         row.addWidget(self.build_button)
+
+        self.fk_button = QtWidgets.QPushButton("Build FK", bar)
+        self.fk_button.setStyleSheet(_BUTTON_STYLE)
+        self.fk_button.setToolTip(
+            "Temporary: put selection markers on every animator bone.\n"
+            "They follow their bone but drive nothing.\n"
+            "Pressing again rebuilds them.")
+        self.fk_button.clicked.connect(
+            lambda _checked=False: self.build_fk_controls())
+        row.addWidget(self.fk_button)
 
         self.bake_button = QtWidgets.QPushButton("Bake+Delete", bar)
         self.bake_button.setStyleSheet(_BUTTON_STYLE)
@@ -277,6 +287,20 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         self.status.showMessage(result.message)
         self.sync_from_scene()
+
+    def build_fk_controls(self):
+        """Put selection markers on every animator bone. They drive nothing."""
+        if not self._scene_map:
+            self.status.showMessage(_UNBOUND_MESSAGE)
+            return
+
+        self.fk_button.setEnabled(False)
+        try:
+            _count, message = fkcontrols.build_fk(self._scene_map)
+        finally:
+            self.fk_button.setEnabled(True)
+
+        self.status.showMessage(message)
 
     def bake_selected_limbs(self):
         """Bake back to FK whichever limbs the current selection touches."""

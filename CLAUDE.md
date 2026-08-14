@@ -126,7 +126,13 @@ makes namespaces and per-joint prefixes a non-issue.
 control, any descendant of one, or the limb's source joints (so the picker's own
 `Leg L` / `Main` buttons drive it). Nested rigs are baked before their container.
 
-Not built: spine, neck, fingers; FK/IK switching; docking; mirror-select.
+**Build FK** (temporary) puts a ring marker on each of the 64 bones for selection
+convenience. The markers are **inert** — parented under their joint, transforms
+locked, driving nothing. Sizing comes from the skinned mesh, not bone length; see
+`fkcontrols.py` and the spec. How these should interact with the IK build is an
+open question.
+
+Not built: IK on spine and neck; FK/IK switching; docking; mirror-select.
 
 ## OverRig facts, learned by reading the MEL and by being bitten
 
