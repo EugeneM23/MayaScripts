@@ -57,6 +57,53 @@ def hierarchy_map(root):
     return mapping
 
 
+def detect_prefix(names, known_names):
+    """Return the name prefix this skeleton carries, or "" if it carries none.
+
+    Rigs are routinely imported with every joint prefixed -- `prefix_root`,
+    `char_spine_01`. The prefix is derived once for the whole skeleton by asking
+    which candidate lines up the most known names, and is adopted only if it
+    beats using no prefix at all.
+
+    Deriving it skeleton-wide rather than per name is what keeps the UE export
+    helpers honest. `ik_hand_l` ends with `hand_l`, so a per-name suffix match
+    would happily read it as a prefixed `hand_l`; here "ik_" only ever wins if
+    it explains more of the skeleton than the plain names do, which on a real
+    UE5 rig it never does.
+    """
+    known = set(known_names)
+    leaves = set(names)
+    baseline = len(leaves & known)
+
+    counts = {}
+    for leaf_name in leaves:
+        for known_name in known:
+            if len(leaf_name) > len(known_name) and leaf_name.endswith(known_name):
+                candidate = leaf_name[:-len(known_name)]
+                counts[candidate] = counts.get(candidate, 0) + 1
+
+    if not counts:
+        return ""
+
+    # sorted() first so ties resolve the same way every run.
+    best = max(sorted(counts), key=lambda candidate: counts[candidate])
+    return best if counts[best] > baseline else ""
+
+
+def strip_prefix(mapping, prefix):
+    """Re-key a hierarchy map with `prefix` removed from each name.
+
+    Names that do not start with the prefix are kept as they are.
+    """
+    if not prefix:
+        return mapping
+    stripped = {}
+    for name, dag in mapping.items():
+        key = name[len(prefix):] if name.startswith(prefix) else name
+        stripped.setdefault(key, dag)
+    return stripped
+
+
 def find_skeleton_roots():
     """Every topmost joint in the scene -- one per skeleton."""
     roots = []

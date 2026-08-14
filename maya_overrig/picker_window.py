@@ -68,6 +68,7 @@ class PickerWindow(QtWidgets.QMainWindow):
         # second character out of the picture.
         self._root_uuid = None
         self._scene_map = {}
+        self._prefix = ""
 
         self._joint_to_id = {b.joint: b.id for b in bodymap.BUTTONS}
 
@@ -159,6 +160,7 @@ class PickerWindow(QtWidgets.QMainWindow):
             return
         self._root_uuid = None
         self._scene_map = {}
+        self._prefix = ""
         self._refresh_view()
         if len(roots) > 1:
             self.status.showMessage(
@@ -169,14 +171,23 @@ class PickerWindow(QtWidgets.QMainWindow):
 
     def _bind(self, root):
         self._root_uuid = naming.uuid_of(root)
-        self._scene_map = naming.hierarchy_map(root)
+
+        # Rigs often arrive with every joint prefixed. The prefix is worked out
+        # once for the whole skeleton, so the body map's plain UE5 names line up
+        # without each button having to guess.
+        raw = naming.hierarchy_map(root)
+        self._prefix = naming.detect_prefix(raw, self._joint_to_id)
+        self._scene_map = naming.strip_prefix(raw, self._prefix)
+
         self._refresh_view()
         self.sync_from_scene()
 
         matched = sum(1 for j in self._joint_to_id if j in self._scene_map)
-        self.status.showMessage(
-            "Connected to {0} - {1}/{2} buttons matched".format(
-                root.split("|")[-1], matched, len(bodymap.BUTTONS)))
+        message = "Connected to {0} - {1}/{2} buttons matched".format(
+            root.split("|")[-1], matched, len(bodymap.BUTTONS))
+        if self._prefix:
+            message += "  (prefix '{0}')".format(self._prefix)
+        self.status.showMessage(message)
 
     def bound_root(self):
         """Current root's DAG path, re-resolved from its UUID, or None."""

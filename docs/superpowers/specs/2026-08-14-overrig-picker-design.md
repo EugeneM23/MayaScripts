@@ -233,9 +233,26 @@ object. Two consequences fall out of scoping to a subtree:
   path, never on the bare name, so another character's selection leaves our
   buttons alone.
 
-Exact leaf-name matching is still required inside the subtree: a suffix match
-for `hand_l` would hit the UE export helper `ik_hand_l`, which lives in the same
-skeleton.
+### Name prefixes
+
+Rigs routinely arrive with every joint prefixed — `prefix_root`,
+`char_spine_01`. Binding alone does not solve that: the root is found, but the
+map is keyed `prefix_root` while the body map asks for `root`, so nothing
+matches and every button dims.
+
+The prefix is therefore derived **once for the whole skeleton**, not guessed per
+name: of all the candidates that would make a body-map name line up, the one
+explaining the most joints wins, and it is adopted only if it beats using no
+prefix at all. The detected prefix is shown in the status line.
+
+Deriving it skeleton-wide is what keeps the UE export helpers honest. `ik_hand_l`
+ends with `hand_l`, so a per-name suffix match would read it as a prefixed
+`hand_l` — the exact reason prefix support was refused earlier. Skeleton-wide,
+`ik_` only wins if it explains more of the skeleton than the plain names do,
+which on a real UE5 rig it never does, and `prefix_ik_hand_l` correctly becomes
+`ik_hand_l` rather than `hand_l`.
+
+Name **suffix** conventions (`root_JNT`) are not handled.
 
 ## Testing
 

@@ -178,6 +178,111 @@ class TestHierarchyMap(unittest.TestCase):
         self.assertNotIn("hand_l", mapping)
 
 
+PREFIXED = FakeCmds(
+    joints=[
+        "|SKM_Manny|prefix_root",
+        "|SKM_Manny|prefix_root|prefix_pelvis",
+        "|SKM_Manny|prefix_root|prefix_pelvis|prefix_spine_01",
+        "|SKM_Manny|prefix_root|prefix_ik_hand_root",
+        "|SKM_Manny|prefix_root|prefix_ik_hand_root|prefix_ik_hand_l",
+        "|SKM_Manny|prefix_root|prefix_pelvis|prefix_hand_l",
+    ],
+    transforms=["|SKM_Manny"],
+)
+
+# Stand-in for the body map's joint names.
+KNOWN = ("root", "pelvis", "spine_01", "hand_l", "head", "thigh_l")
+
+
+class TestDetectPrefix(unittest.TestCase):
+
+    def setUp(self):
+        self.naming = use(ONE_CHARACTER)
+
+    def test_finds_the_prefix_shared_by_the_skeleton(self):
+        names = ["prefix_root", "prefix_pelvis", "prefix_spine_01",
+                 "prefix_hand_l"]
+        self.assertEqual(self.naming.detect_prefix(names, KNOWN), "prefix_")
+
+    def test_unprefixed_skeleton_gets_no_prefix(self):
+        names = ["root", "pelvis", "spine_01", "hand_l"]
+        self.assertEqual(self.naming.detect_prefix(names, KNOWN), "")
+
+    def test_ik_helper_cannot_pose_as_a_prefix(self):
+        """`ik_hand_l` ends with `hand_l`, but plain names already match more."""
+        names = ["root", "pelvis", "spine_01", "hand_l",
+                 "ik_hand_l", "ik_hand_root"]
+        self.assertEqual(self.naming.detect_prefix(names, KNOWN), "")
+
+    def test_prefixed_skeleton_with_ik_helpers_still_finds_the_real_prefix(self):
+        names = ["prefix_root", "prefix_pelvis", "prefix_spine_01",
+                 "prefix_hand_l", "prefix_ik_hand_l"]
+        self.assertEqual(self.naming.detect_prefix(names, KNOWN), "prefix_")
+
+    def test_nothing_recognisable_gives_no_prefix(self):
+        self.assertEqual(self.naming.detect_prefix(["a", "b"], KNOWN), "")
+
+    def test_empty_input_gives_no_prefix(self):
+        self.assertEqual(self.naming.detect_prefix([], KNOWN), "")
+
+
+class TestStripPrefix(unittest.TestCase):
+
+    def setUp(self):
+        self.naming = use(ONE_CHARACTER)
+
+    def test_rekeys_the_mapping(self):
+        mapping = {"prefix_root": "|a|prefix_root",
+                   "prefix_hand_l": "|a|prefix_hand_l"}
+        stripped = self.naming.strip_prefix(mapping, "prefix_")
+        self.assertEqual(stripped,
+                         {"root": "|a|prefix_root",
+                          "hand_l": "|a|prefix_hand_l"})
+
+    def test_empty_prefix_is_identity(self):
+        mapping = {"root": "|a|root"}
+        self.assertEqual(self.naming.strip_prefix(mapping, ""), mapping)
+
+    def test_names_without_the_prefix_are_left_alone(self):
+        mapping = {"prefix_root": "|a|prefix_root", "stray": "|a|stray"}
+        stripped = self.naming.strip_prefix(mapping, "prefix_")
+        self.assertEqual(stripped["root"], "|a|prefix_root")
+        self.assertEqual(stripped["stray"], "|a|stray")
+
+    def test_ik_helper_keeps_its_own_identity_after_stripping(self):
+        """The whole reason prefix detection is skeleton-wide rather than
+        per-name: `prefix_ik_hand_l` must become `ik_hand_l`, never `hand_l`."""
+        mapping = {"prefix_hand_l": "|a|prefix_hand_l",
+                   "prefix_ik_hand_l": "|a|prefix_ik_hand_l"}
+        stripped = self.naming.strip_prefix(mapping, "prefix_")
+        self.assertEqual(stripped["hand_l"], "|a|prefix_hand_l")
+        self.assertEqual(stripped["ik_hand_l"], "|a|prefix_ik_hand_l")
+
+
+class TestPrefixedHierarchyEndToEnd(unittest.TestCase):
+
+    def test_prefixed_skeleton_lines_up_with_known_names(self):
+        naming = use(PREFIXED)
+        raw = naming.hierarchy_map("|SKM_Manny|prefix_root")
+        prefix = naming.detect_prefix(raw, KNOWN)
+        mapping = naming.strip_prefix(raw, prefix)
+
+        self.assertEqual(prefix, "prefix_")
+        self.assertEqual(mapping["root"], "|SKM_Manny|prefix_root")
+        self.assertEqual(mapping["hand_l"],
+                         "|SKM_Manny|prefix_root|prefix_pelvis|prefix_hand_l")
+        self.assertEqual(
+            mapping["ik_hand_l"],
+            "|SKM_Manny|prefix_root|prefix_ik_hand_root|prefix_ik_hand_l")
+
+    def test_unprefixed_skeleton_is_untouched(self):
+        naming = use(ONE_CHARACTER)
+        raw = naming.hierarchy_map("|SKM_Manny|root")
+        prefix = naming.detect_prefix(raw, KNOWN)
+        self.assertEqual(prefix, "")
+        self.assertEqual(naming.strip_prefix(raw, prefix), raw)
+
+
 class TestSkeletonRoots(unittest.TestCase):
 
     def test_finds_one_root_per_skeleton(self):
