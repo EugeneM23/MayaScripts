@@ -47,13 +47,34 @@ Verified live before designing:
 
 **Out**
 
-- Cross-chain coupling: rotating the spine does not carry the arms. Chosen by
-  the user over wiring chains together with `apply_Parent_in` — the standard
-  OverRig behaviour, and any specific coupling can be made with OverRig's own
-  "parent inside" button when needed.
 - FK and IK coexisting on the same skeleton (guarded, see below)
 - Per-chain FK bake — v1 treats FK as one unit
 - The v1 inert-marker mode is gone; this button replaces it
+
+## Revision, same day: coupling, root ring, machinery
+
+Three corrections after the user drove the first build.
+
+**Chains are coupled after all.** Independence was the original choice; in
+practice moving the pelvis tore the skeleton apart at every chain boundary, so
+the user reversed it. After every chain is built, each chain-root controller is
+hung off its parent bone's controller with OverRig's `apply_Parent_in`
+(selection: child first, parent last — established by experiment). The child
+knot becomes a DAG child of the parent knot and its animation is **re-baked
+into the new local space**: verified zero drift at every frame, which is why
+this is done with OverRig's proc and not a bare `parent` — a bare re-parent
+preserves only the current frame. The attach target is derived from the
+skeleton: the chain's first bone walks up to the nearest ancestor carrying a
+controller (`clavicle_l → spine_05`, `thigh_l → pelvis`, metacarpals and thumbs
+→ the hand, `pelvis → root`). 16 couplings; `root` stays in world.
+
+**The root ring lies flat** whatever the knot's own axes are: the circle normal
+is world-up transformed into the knot's local space, not a guessed axis.
+
+**All rig machinery is hidden.** ForwHierarhy's internal locators and helper
+joints (driver locators, attach locators) drowned the rings in cyan crosses.
+Every recorded locator shape is hidden and every recorded joint set to
+`drawStyle` none — display-only, nothing is disconnected.
 
 ## Chains
 

@@ -135,20 +135,29 @@ makes namespaces and per-joint prefixes a non-issue.
 control, any descendant of one, or the limb's source joints (so the picker's own
 `Leg L` / `Main` buttons drive it). Nested rigs are baked before their container.
 
-**Build FK** builds real FK controllers through OverRig knots: 17 independent
-chains over the 64 bones (`apply_ForwHierarhy` per chain, `apply_parentConstrAnim`
-for root), existing animation baked onto the controllers, our sized rings attached
-as shapes on the knots. FK and IK are mutually exclusive (guards in the window
-layer — a guard in `builder` would be an import cycle). `Bake+Delete` with FK
-present bakes the whole FK back. Ring sizing comes from the skinned mesh, not
-bone length; a correction table (`_BORROW`/`_SCALE`) holds user-driven fixes.
-Knot→bone mapping is read from the BONE side (constraint → driver → ancestor
-walk): a ForwHierarhy knot drives its bone through a child locator, so looking
-for constraints on the knot itself finds nothing.
+**Build FK** builds real FK controllers through OverRig knots: 17 chains over
+the 64 bones (`apply_ForwHierarhy` per chain, `apply_parentConstrAnim` for
+root), existing animation baked onto the controllers, our sized rings attached
+as shapes on the knots, machinery locators/joints hidden. Chains are then
+**coupled** with `apply_Parent_in` (selection: child first, parent last): each
+chain-root controller hangs off its parent bone's controller, animation re-baked
+into the new local space (zero drift verified) — never use a bare `parent` for
+this, it preserves only the current frame. FK and IK are mutually exclusive
+(guards in the window layer — a guard in `builder` would be an import cycle).
+`Bake+Delete` with FK present bakes the whole FK back. Ring sizing comes from
+the skinned mesh, not bone length; a correction table (`_BORROW`/`_SCALE`) holds
+user-driven fixes. Knot→bone mapping is read from the BONE side (constraint →
+driver → ancestor walk): a ForwHierarhy knot drives its bone through a child
+locator, so looking for constraints on the knot itself finds nothing.
 
-Not built: FK/IK coexistence and switching; cross-chain FK coupling (chains are
-independent by user choice — OverRig's "parent inside" covers specific cases);
-IK on spine and neck; docking; mirror-select.
+Two hard-won facts about this rig: bind orientation lives in the joints' ROTATE
+channels, not jointOrient — non-zero local rotates are NOT a bent skeleton, and
+`dagPose` restore is the way to check. And **Build FK bakes the pose the
+skeleton stands in** — verify the pose before building; a proposed safety
+(snapshot a dagPose before every build) is not yet implemented.
+
+Not built: FK/IK coexistence and switching; IK on spine and neck; docking;
+mirror-select; per-chain FK bake (FK bakes back as one unit).
 
 ## OverRig facts, learned by reading the MEL and by being bitten
 

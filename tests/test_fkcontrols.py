@@ -70,6 +70,44 @@ class TestColourFor(unittest.TestCase):
                 self.assertLessEqual(channel, 1.0)
 
 
+class TestAttachParent(unittest.TestCase):
+
+    PARENT_OF = {
+        "root": None,
+        "pelvis": "root",
+        "spine_05": "spine_04",
+        "clavicle_l": "spine_05",
+        "thigh_l": "pelvis",
+        "index_metacarpal_l": "hand_l",
+        "neck_01": "spine_05",
+        "oddball": "some_twist",
+        "some_twist": "spine_05",
+    }
+    TARGETED = {"root", "pelvis", "spine_05", "hand_l", "clavicle_l",
+                "thigh_l", "neck_01", "index_metacarpal_l"}
+
+    def find(self, joint):
+        return fkcontrols.attach_parent(joint, self.PARENT_OF, self.TARGETED)
+
+    def test_arm_hangs_from_the_spine_top(self):
+        self.assertEqual(self.find("clavicle_l"), "spine_05")
+
+    def test_leg_hangs_from_the_pelvis(self):
+        self.assertEqual(self.find("thigh_l"), "pelvis")
+
+    def test_finger_hangs_from_the_hand(self):
+        self.assertEqual(self.find("index_metacarpal_l"), "hand_l")
+
+    def test_spine_hangs_from_root(self):
+        self.assertEqual(self.find("pelvis"), "root")
+
+    def test_root_hangs_from_nothing(self):
+        self.assertIsNone(self.find("root"))
+
+    def test_walks_through_untargeted_ancestors(self):
+        self.assertEqual(self.find("oddball"), "spine_05")
+
+
 class TestRollup(unittest.TestCase):
 
     PARENT_OF = {

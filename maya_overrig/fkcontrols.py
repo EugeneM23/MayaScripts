@@ -78,6 +78,25 @@ def colour_for(region):
     return _REGION_COLOURS[region]
 
 
+def attach_parent(chain_first, parent_of, targeted):
+    """The bone whose controller a chain should hang from.
+
+    Walks up from the chain's first bone to the nearest ancestor that carries a
+    controller: clavicle_l -> spine_05, thigh_l -> pelvis, index_metacarpal_l
+    -> hand_l, pelvis -> root. Returns None at the top (root stays in world).
+
+    Pure -- `parent_of` is a plain {joint: parent} mapping.
+    """
+    node = parent_of.get(chain_first)
+    seen = set()
+    while node is not None and node not in seen:
+        if node in targeted:
+            return node
+        seen.add(node)
+        node = parent_of.get(node)
+    return None
+
+
 def rollup(influences, targets, parent_of):
     """Map each influence to the nearest ancestor that gets a controller.
 
@@ -379,6 +398,26 @@ def _hide_native_shapes(knot):
             cmds.setAttr(shape + ".visibility", 0)
 
 
+def _hide_rig_machinery(nodes):
+    """Hide the ForwHierarhy internals -- driver and attach locators, helper
+    joints -- so only the rings show. Display-only; nothing is disconnected.
+
+    Without this, 64 bones' worth of machinery locators drown the rings in
+    cyan crosses, worst around the hands.
+    """
+    for node in nodes:
+        if not cmds.objExists(node):
+            continue
+        node_type = cmds.objectType(node)
+        try:
+            if node_type == "joint":
+                cmds.setAttr(node + ".drawStyle", 2)
+            elif node_type == "locator":
+                cmds.setAttr(node + ".visibility", 0)
+        except RuntimeError:
+            pass  # connected or locked display attr -- cosmetics, skip
+
+
 def _dress_knots(knot_paths, chain_paths, radii, region_of):
     """Rename fresh knots to <bone>_FK_ctrl and put our ring shapes on them.
 
@@ -400,7 +439,15 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
         knot = cmds.ls(cmds.rename(knot, controller_name(bare)), long=True)[0]
         _hide_native_shapes(knot)
 
-        normal = (0, 1, 0) if bare == "root" else (1, 0, 0)
+        if bare == "root":
+            # The ring must lie flat on the ground whatever the knot's own
+            # axes are: transform world-up into the knot's local space.
+            inverse = om.MMatrix(cmds.xform(knot, query=True, worldSpace=True,
+                                            matrix=True)).inverse()
+            up = om.MVector(0, 1, 0) * inverse
+            normal = (up.x, up.y, up.z)
+        else:
+            normal = (1, 0, 0)
         ring = _make_ring(bare + "_FK_ring_tmp", radii.get(bare, 1.0), normal,
                           colour_for(region_of[bare]))
         shape = cmds.listRelatives(ring, shapes=True, fullPath=True)[0]
@@ -408,6 +455,35 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
         cmds.delete(ring)
         dressed += 1
     return dressed
+
+
+def _attach_chains(scene_map):
+    """Hang every chain's root controller off its parent bone's controller.
+
+    OverRig's apply_Parent_in does the heavy lifting: the child knot becomes a
+    DAG child of the parent knot and its animation is re-baked into the new
+    local space, so world motion is unchanged (verified: zero drift). Selection
+    order is child first, parent last.
+
+    Without this the chains are independent world-space knots, and moving the
+    pelvis tears the skeleton apart at every chain boundary.
+    """
+    parent_of = _parent_map()
+    targeted = {j for _, chain in CHAINS for j in chain}
+    attached = 0
+    for _chain_name, chain in CHAINS:
+        first = chain[0]
+        parent = attach_parent(first, parent_of, targeted)
+        if parent is None:
+            continue
+        child_ctrl = controller_name(first)
+        parent_ctrl = controller_name(parent)
+        if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
+            continue
+        cmds.select([child_ctrl, parent_ctrl], replace=True)
+        mel.eval("apply_Parent_in()")
+        attached += 1
+    return attached
 
 
 def _teardown_fk(scene_map):
@@ -485,12 +561,24 @@ def build_fk(scene_map):
                 if not cmds.objExists(FK_SET):
                     cmds.sets(name=FK_SET, empty=True)
                 cmds.sets(fresh, addElement=FK_SET)
+                _hide_rig_machinery(fresh)
                 recorded.extend(fresh)
+
+        # Couple the chains: neck and arms onto the spine, legs onto the
+        # pelvis, fingers onto the hands, spine onto root.
+        before = builder._scene_nodes()
+        attached = _attach_chains(scene_map)
+        fresh = sorted(n for n in (builder._scene_nodes() - before)
+                       if builder._recordable(n))
+        if fresh:
+            cmds.sets(fresh, addElement=FK_SET)
+            _hide_rig_machinery(fresh)
+            recorded.extend(fresh)
     finally:
         cmds.undoInfo(closeChunk=True)
 
-    message = "Built {0} FK controller(s), {1} node(s) recorded".format(
-        created, len(recorded))
+    message = "Built {0} FK controller(s), {1} chain(s) coupled, " \
+              "{2} node(s) recorded".format(created, attached, len(recorded))
     if replaced:
         message += ", previous FK baked back"
     if not skinned:
