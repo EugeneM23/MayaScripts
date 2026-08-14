@@ -120,11 +120,15 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.build_button.clicked.connect(lambda _checked=False: self.build_rig())
         row.addWidget(self.build_button)
 
-        teardown_button = QtWidgets.QPushButton("Bake+Delete", bar)
-        teardown_button.setStyleSheet(_BUTTON_STYLE)
-        teardown_button.setEnabled(False)
-        teardown_button.setToolTip("Not implemented yet")
-        row.addWidget(teardown_button)
+        self.bake_button = QtWidgets.QPushButton("Bake+Delete", bar)
+        self.bake_button.setStyleSheet(_BUTTON_STYLE)
+        self.bake_button.setToolTip(
+            "Bake the selected limbs back to FK and remove their IK.\n"
+            "Select an IK control, or use a limb button above.\n"
+            "Main selects all four limbs.")
+        self.bake_button.clicked.connect(
+            lambda _checked=False: self.bake_selected_limbs())
+        row.addWidget(self.bake_button)
 
         return bar
 
@@ -270,6 +274,27 @@ class PickerWindow(QtWidgets.QMainWindow):
             result = builder.build(self._scene_map)
         finally:
             self.build_button.setEnabled(True)
+
+        self.status.showMessage(result.message)
+        self.sync_from_scene()
+
+    def bake_selected_limbs(self):
+        """Bake back to FK whichever limbs the current selection touches."""
+        if not self._scene_map:
+            self.status.showMessage(_UNBOUND_MESSAGE)
+            return
+
+        limbs = builder.limbs_in_selection(self._scene_map)
+        if not limbs:
+            self.status.showMessage(
+                "Select an IK control or a limb in the picker first")
+            return
+
+        self.bake_button.setEnabled(False)
+        try:
+            result = builder.bake_limbs(self._scene_map, limbs)
+        finally:
+            self.bake_button.setEnabled(True)
 
         self.status.showMessage(result.message)
         self.sync_from_scene()

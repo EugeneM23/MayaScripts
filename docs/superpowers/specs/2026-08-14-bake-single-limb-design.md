@@ -80,6 +80,29 @@ A node counts for a limb when it is one of that limb's recorded nodes, a
 descendant of one (so a curve shape or an internal handle resolves), or one of
 that limb's three source joints.
 
+## The manifest cannot come from OverRig's own set
+
+`OverRig_knots` records only the three renamed groups per limb. Everything else
+the IK setup creates — the locators that drive it, the expressions, the
+`pairBlend` nodes, and **two** parentConstraints per source joint rather than one
+— is in no set at all.
+
+Building the manifest by diffing that set therefore inherited the gap: baking a
+limb removed the control and one constraint, and left the other constraint alive,
+driven by a locator nothing knew about. The joint stayed constrained after being
+"freed", and leftovers accumulated across builds until they started stealing
+node names — which is why `foot_l_IK_feet` came back as `foot_l_IK_feet1`.
+
+The manifest is therefore a diff of **every node in the scene** across the
+limb's build, excluding `animCurve` types. That comes to roughly 68 nodes per
+limb instead of three. animCurves are excluded because baking writes the
+transferred animation into animCurves on the source joints, and those must
+outlive the rig.
+
+Measured on the working scene: build creates 271 nodes, baking one limb removes
+68 and frees only that limb, baking the remaining three removes 203, and the
+scene returns to exactly the node count it started at.
+
 ## The bake operation
 
 Per limb, inside a single undo chunk covering all of them:

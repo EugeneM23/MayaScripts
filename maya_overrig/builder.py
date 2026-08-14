@@ -103,6 +103,29 @@ def character_roots():
         exclude_under=overrig.set_members(overrig.KNOT_SET))
 
 
+def _scene_nodes():
+    return set(cmds.ls(long=True) or [])
+
+
+def _recordable(node):
+    """Whether a node that appeared during a build is ours to delete later.
+
+    animCurves are excluded on purpose: baking transfers the animation into
+    animCurves on the source joints, and those have to outlive the rig.
+    Everything else OverRig conjures up -- the IK groups, the locators driving
+    them, the constraint and blend nodes it leaves on the source joints -- is
+    ours to clean up.
+
+    The manifest cannot be built from OverRig's own `OverRig_knots` set: that
+    records only the three renamed groups per limb, so the locators and the
+    first layer of constraints are invisible to it. Baking a limb then left a
+    live constraint behind, driven by a locator nothing knew about.
+    """
+    if not cmds.objExists(node):
+        return False
+    return not cmds.objectType(node).startswith("animCurve")
+
+
 def _ensure_limb_set(limb):
     name = limb_set(limb)
     if not cmds.objExists(name):
@@ -190,11 +213,11 @@ def build(scene_map):
             removed = teardown(scene_map).removed
 
         for name, joints in resolvable:
-            before = set(overrig.set_members(overrig.KNOT_SET))
+            before = _scene_nodes()
             overrig.build_ik(joints)
-            after = set(overrig.set_members(overrig.KNOT_SET))
+            after = _scene_nodes()
 
-            fresh = sorted(after - before)
+            fresh = sorted(n for n in (after - before) if _recordable(n))
             if fresh:
                 cmds.sets(fresh, addElement=_ensure_limb_set(name))
                 created.extend(fresh)
