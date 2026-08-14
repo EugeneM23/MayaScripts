@@ -83,5 +83,62 @@ class TestPickerView(unittest.TestCase):
         self.assertEqual(rect.height(), bodymap.CANVAS_H)
 
 
+class TestInteraction(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def setUp(self):
+        self.view = picker_view.PickerView()
+        self.view.resize(400, 620)
+        self.emitted = []
+        self.view.selection_requested.connect(
+            lambda ids, mode: self.emitted.append((list(ids), mode)))
+
+    def test_ids_in_rect_finds_a_whole_finger_column(self):
+        b = bodymap.button_by_id("index_metacarpal_l")
+        rect = QtCore.QRectF(b.x - 1, b.y - 1, b.w + 2, 4 * 20 + 2)
+        found = self.view.ids_in_rect(rect)
+        for expected in ("index_metacarpal_l", "index_01_l",
+                         "index_02_l", "index_03_l"):
+            self.assertIn(expected, found)
+
+    def test_ids_in_rect_skips_unavailable(self):
+        self.view.set_available(["index_01_l"])
+        b = bodymap.button_by_id("index_metacarpal_l")
+        rect = QtCore.QRectF(b.x - 1, b.y - 1, b.w + 2, 4 * 20 + 2)
+        found = self.view.ids_in_rect(rect)
+        self.assertEqual(found, ["index_01_l"])
+
+    def test_ids_in_rect_empty_outside_the_body(self):
+        self.assertEqual(self.view.ids_in_rect(QtCore.QRectF(0, 600, 4, 4)), [])
+
+    def test_modifier_mapping(self):
+        self.assertEqual(picker_view.mode_for(QtCore.Qt.NoModifier),
+                         picker_view.MODE_REPLACE)
+        self.assertEqual(picker_view.mode_for(QtCore.Qt.ShiftModifier),
+                         picker_view.MODE_ADD)
+        self.assertEqual(picker_view.mode_for(QtCore.Qt.ControlModifier),
+                         picker_view.MODE_TOGGLE)
+
+    def test_click_emits_replace_for_that_button(self):
+        self.view.emit_click("head", picker_view.MODE_REPLACE)
+        self.assertEqual(self.emitted, [(["head"], "replace")])
+
+    def test_marquee_emits_every_covered_id(self):
+        b = bodymap.button_by_id("index_metacarpal_l")
+        rect = QtCore.QRectF(b.x - 1, b.y - 1, b.w + 2, 4 * 20 + 2)
+        self.view.emit_marquee(rect, picker_view.MODE_ADD)
+        ids, mode = self.emitted[0]
+        self.assertEqual(mode, "add")
+        self.assertIn("index_03_l", ids)
+
+    def test_marquee_covering_nothing_emits_nothing(self):
+        self.view.emit_marquee(QtCore.QRectF(0, 600, 4, 4),
+                               picker_view.MODE_REPLACE)
+        self.assertEqual(self.emitted, [])
+
+
 if __name__ == "__main__":
     unittest.main()

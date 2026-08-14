@@ -12,6 +12,22 @@ from maya_overrig import bodymap
 STATE_NEUTRAL = "neutral"
 STATE_SELECTED = "selected"
 
+MODE_REPLACE = "replace"
+MODE_ADD = "add"
+MODE_TOGGLE = "toggle"
+
+_CLICK_SLOP = 3.0  # a drag shorter than this is treated as a click
+
+
+def mode_for(modifiers):
+    """Map Qt keyboard modifiers to a selection mode."""
+    if modifiers & QtCore.Qt.ControlModifier:
+        return MODE_TOGGLE
+    if modifiers & QtCore.Qt.ShiftModifier:
+        return MODE_ADD
+    return MODE_REPLACE
+
+
 BACKGROUND = "#2b2b2b"
 
 _CENTRE = "#8a8378"
@@ -119,6 +135,7 @@ class ButtonItem(QtWidgets.QGraphicsRectItem):
 class PickerView(QtWidgets.QGraphicsView):
     """Renders the body map. Emits button ids; never touches Maya."""
 
+    selection_requested = QtCore.Signal(list, str)
     hovered = QtCore.Signal(str)
 
     def __init__(self, parent=None):
@@ -141,6 +158,68 @@ class PickerView(QtWidgets.QGraphicsView):
             item.view = self
             scene.addItem(item)
             self.items_by_id[button.id] = item
+
+        self.setDragMode(QtWidgets.QGraphicsView.RubberBandDrag)
+        self.setMouseTracking(True)
+        self._press_pos = None
+
+    def ids_in_rect(self, rect):
+        """Ids of available buttons intersecting a rect in scene coordinates."""
+        found = []
+        for item in self.scene().items(rect):
+            if isinstance(item, ButtonItem) and item.available:
+                found.append(item.button_id)
+        return found
+
+    def emit_click(self, button_id, mode):
+        """Emit a single-button selection request. Separated out for testing."""
+        self.selection_requested.emit([button_id], mode)
+
+    def emit_marquee(self, rect, mode):
+        """Emit a rect selection request, unless it covers nothing."""
+        ids = self.ids_in_rect(rect)
+        if ids:
+            self.selection_requested.emit(ids, mode)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton:
+            self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+        elif event.button() == QtCore.Qt.LeftButton:
+            self._press_pos = event.position().toPoint()
+        super(PickerView, self).mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.MiddleButton:
+            super(PickerView, self).mouseReleaseEvent(event)
+            self.setDragMode(QtWidgets.QGraphicsView.RubberBandDrag)
+            return
+
+        if event.button() != QtCore.Qt.LeftButton or self._press_pos is None:
+            super(PickerView, self).mouseReleaseEvent(event)
+            return
+
+        release = event.position().toPoint()
+        travelled = release - self._press_pos
+        is_click = (abs(travelled.x()) < _CLICK_SLOP
+                    and abs(travelled.y()) < _CLICK_SLOP)
+        mode = mode_for(event.modifiers())
+
+        if is_click:
+            item = self.itemAt(release)
+            if isinstance(item, ButtonItem) and item.available:
+                self.emit_click(item.button_id, mode)
+        else:
+            rect = QtCore.QRectF(self.mapToScene(self._press_pos),
+                                 self.mapToScene(release)).normalized()
+            self.emit_marquee(rect, mode)
+
+        self._press_pos = None
+        super(PickerView, self).mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
+        self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
+        self.scale(factor, factor)
 
     def set_selected(self, ids):
         """Mark exactly these button ids selected; everything else neutral."""
