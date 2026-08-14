@@ -226,5 +226,100 @@ class TestUnrecordedRigRoots(unittest.TestCase):
             builder.unrecorded_rig_roots(["|foot_l_IK_feet|a"], []), [])
 
 
+class TestOrderByNesting(unittest.TestCase):
+
+    FLAT = {
+        "arm_l": ["|hand_l_IK_feet", "|upperarm_l_IK_strech_gr"],
+        "leg_l": ["|foot_l_IK_feet", "|thigh_l_IK_strech_gr"],
+        "leg_r": ["|foot_r_IK_feet"],
+    }
+
+    # The reported failure: the arm's control parked under the leg's.
+    NESTED = {
+        "arm_l": ["|foot_l_IK_feet|hand_l_IK_feet",
+                  "|upperarm_l_IK_strech_gr"],
+        "leg_l": ["|foot_l_IK_feet", "|thigh_l_IK_strech_gr"],
+        "leg_r": ["|foot_r_IK_feet"],
+    }
+
+    def test_nothing_nested_returns_the_request(self):
+        self.assertEqual(builder.order_by_nesting(["leg_l"], self.FLAT),
+                         ["leg_l"])
+
+    def test_nested_limb_is_added_and_comes_first(self):
+        self.assertEqual(builder.order_by_nesting(["leg_l"], self.NESTED),
+                         ["arm_l", "leg_l"])
+
+    def test_requesting_the_inner_limb_does_not_drag_in_its_container(self):
+        self.assertEqual(builder.order_by_nesting(["arm_l"], self.NESTED),
+                         ["arm_l"])
+
+    def test_three_deep_chain_comes_out_innermost_first(self):
+        chain = {
+            "leg_r": ["|foot_r_IK_feet"],
+            "leg_l": ["|foot_r_IK_feet|foot_l_IK_feet"],
+            "arm_l": ["|foot_r_IK_feet|foot_l_IK_feet|hand_l_IK_feet"],
+        }
+        self.assertEqual(builder.order_by_nesting(["leg_r"], chain),
+                         ["arm_l", "leg_l", "leg_r"])
+
+    def test_two_independent_nestings_both_resolve(self):
+        both = {
+            "leg_l": ["|foot_l_IK_feet"],
+            "arm_l": ["|foot_l_IK_feet|hand_l_IK_feet"],
+            "leg_r": ["|foot_r_IK_feet"],
+            "arm_r": ["|foot_r_IK_feet|hand_r_IK_feet"],
+        }
+        found = builder.order_by_nesting(["leg_l", "leg_r"], both)
+        self.assertLess(found.index("arm_l"), found.index("leg_l"))
+        self.assertLess(found.index("arm_r"), found.index("leg_r"))
+
+    def test_limb_without_a_manifest_survives_the_call(self):
+        self.assertEqual(builder.order_by_nesting(["leg_r"], {}), ["leg_r"])
+
+    def test_shared_prefix_without_a_separator_is_not_nesting(self):
+        lookalike = {
+            "leg_l": ["|foot_l_IK_feet"],
+            "arm_l": ["|foot_l_IK_feet_extra"],
+        }
+        self.assertEqual(builder.order_by_nesting(["leg_l"], lookalike),
+                         ["leg_l"])
+
+
+class TestForeignKnotsInside(unittest.TestCase):
+
+    DOOMED = ["|foot_l_IK_feet", "|thigh_l_IK_strech_gr"]
+    OURS = ["|foot_l_IK_feet", "|thigh_l_IK_strech_gr",
+            "|foot_l_IK_feet|hand_l_IK_feet"]
+
+    def test_foreign_knot_inside_is_reported(self):
+        made = ["|foot_l_IK_feet", "|foot_l_IK_feet|my_spine_knot"]
+        self.assertEqual(
+            builder.foreign_knots_inside(self.DOOMED, self.OURS, made),
+            ["|foot_l_IK_feet|my_spine_knot"])
+
+    def test_our_own_nested_limb_is_not_foreign(self):
+        made = ["|foot_l_IK_feet", "|foot_l_IK_feet|hand_l_IK_feet"]
+        self.assertEqual(
+            builder.foreign_knots_inside(self.DOOMED, self.OURS, made), [])
+
+    def test_knot_outside_the_doomed_rigs_is_ignored(self):
+        made = ["|somewhere_else|my_knot"]
+        self.assertEqual(
+            builder.foreign_knots_inside(self.DOOMED, self.OURS, made), [])
+
+    def test_a_rig_root_is_not_nested_inside_itself(self):
+        made = ["|foot_l_IK_feet"]
+        self.assertEqual(
+            builder.foreign_knots_inside(self.DOOMED, [], made), [])
+
+    def test_results_are_sorted_and_deduplicated(self):
+        made = ["|foot_l_IK_feet|b_knot", "|foot_l_IK_feet|a_knot",
+                "|foot_l_IK_feet|b_knot"]
+        self.assertEqual(
+            builder.foreign_knots_inside(self.DOOMED, [], made),
+            ["|foot_l_IK_feet|a_knot", "|foot_l_IK_feet|b_knot"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -119,6 +119,75 @@ def unrecorded_rig_roots(driver_paths, overrig_made):
     return sorted({top_level(path) for path in driver_paths} & made)
 
 
+def _is_inside(path, container):
+    """Whether `path` is a DAG descendant of `container`.
+
+    The separator matters: `|foot_l_IK_feet_extra` is a different node, not a
+    child of `|foot_l_IK_feet`.
+    """
+    return path.startswith(container + "|")
+
+
+def order_by_nesting(limbs, limb_members):
+    """Requested limbs plus any recorded limb nested inside them, innermost first.
+
+    Animators park one control under another -- the hand's IK control hung off
+    the foot's, so the arm follows the leg. Baking the outer limb destroys the
+    inner limb's rig with it, and if the inner limb was not baked first its
+    animation goes too.
+
+    Pure: `limb_members` is a {limb: [paths]} mapping supplied by the caller.
+    """
+    contains = {name: set() for name in limb_members}
+    for outer, outer_paths in limb_members.items():
+        for inner, inner_paths in limb_members.items():
+            if inner == outer:
+                continue
+            if any(_is_inside(path, container)
+                   for container in outer_paths for path in inner_paths):
+                contains[outer].add(inner)
+
+    wanted = []
+    frontier = list(limbs)
+    while frontier:
+        limb = frontier.pop(0)
+        if limb in wanted:
+            continue
+        wanted.append(limb)
+        frontier.extend(sorted(contains.get(limb, ())))
+
+    ordered = []
+    remaining = list(wanted)
+    while remaining:
+        free = [limb for limb in remaining
+                if not (contains.get(limb, set()) & set(remaining))]
+        if not free:
+            # A DAG hierarchy cannot contain a cycle; bail out rather than loop.
+            ordered.extend(remaining)
+            break
+        for limb in sorted(free):
+            ordered.append(limb)
+            remaining.remove(limb)
+    return ordered
+
+
+def foreign_knots_inside(rig_paths, our_paths, overrig_made):
+    """OverRig knots sitting inside these rigs that belong to no recorded limb.
+
+    Such a knot is a child of something we are about to delete, so leaving it
+    alone is not physically available -- removing the parent takes it. Reporting
+    it lets the caller refuse rather than destroy work the user built by hand.
+    """
+    ours = set(our_paths)
+    found = set()
+    for knot in overrig_made:
+        if knot in ours:
+            continue
+        if any(_is_inside(knot, container) for container in rig_paths):
+            found.add(knot)
+    return sorted(found)
+
+
 def _scene_nodes():
     return set(cmds.ls(long=True) or [])
 
@@ -248,12 +317,31 @@ def bake_limbs(scene_map, limbs):
     and barn_fast_bake_source_obj_and_delete_knots() is never called -- that one
     is scene-global and would take the user's hand-made setups with it.
     """
+    members_by_limb = {name: overrig.set_members(limb_set(name))
+                       for name, _ in LIMBS}
+
+    # A rig parked inside another must be baked before its container is
+    # deleted, or its animation goes with the parent.
+    limbs = order_by_nesting(limbs, members_by_limb)
+
+    doomed = [path for limb in limbs for path in members_by_limb.get(limb, [])]
+    ours = [path for paths in members_by_limb.values() for path in paths]
+    intruders = foreign_knots_inside(doomed, ours,
+                                     overrig.set_members(overrig.KNOT_SET))
+    if intruders:
+        return BuildResult(
+            [], list(limbs), 0, 0,
+            "Aborted - {0} holds OverRig node(s) we did not build: {1}. "
+            "Move them out first.".format(
+                ", ".join(limbs),
+                ", ".join(n.split("|")[-1] for n in intruders[:4])))
+
     resolved = dict(limb_joints(scene_map))
     baked = []
     skipped = []
     removed = 0
     reclaimed = 0
-    foreign = []
+    left_alone = []
 
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
     try:
@@ -279,7 +367,7 @@ def bake_limbs(scene_map, limbs):
             if joints:
                 extra, left = _reclaim(joints)
                 reclaimed += extra
-                foreign.extend(left)
+                left_alone.extend(left)
 
             baked.append(limb)
     finally:
@@ -291,9 +379,9 @@ def bake_limbs(scene_map, limbs):
         message += ", {0} unrecorded".format(reclaimed)
     if skipped:
         message += ". Nothing recorded for: " + ", ".join(skipped)
-    if foreign:
+    if left_alone:
         message += ". Left alone (not OverRig's): " + ", ".join(sorted(
-            set(foreign))[:4])
+            set(left_alone))[:4])
     return BuildResult(baked, skipped, 0, removed + reclaimed, message)
 
 
