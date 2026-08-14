@@ -13,7 +13,7 @@ import maya.OpenMayaUI as omui
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import wrapInstance
 
-from maya_overrig import bodymap, naming
+from maya_overrig import bodymap, builder, naming
 from maya_overrig.picker_view import MODE_ADD, MODE_TOGGLE, PickerView, mode_for
 
 WINDOW_OBJECT_NAME = "rigPickerWindow"
@@ -112,12 +112,19 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         row.addStretch(1)
 
-        for label in ("Build", "Bake+Delete"):
-            button = QtWidgets.QPushButton(label, bar)
-            button.setStyleSheet(_BUTTON_STYLE)
-            button.setEnabled(False)
-            button.setToolTip("Not implemented yet")
-            row.addWidget(button)
+        self.build_button = QtWidgets.QPushButton("Build", bar)
+        self.build_button.setStyleSheet(_BUTTON_STYLE)
+        self.build_button.setToolTip(
+            "Create IK on both arms and both legs.\n"
+            "Pressing again rebuilds from scratch.")
+        self.build_button.clicked.connect(lambda _checked=False: self.build_rig())
+        row.addWidget(self.build_button)
+
+        teardown_button = QtWidgets.QPushButton("Bake+Delete", bar)
+        teardown_button.setStyleSheet(_BUTTON_STYLE)
+        teardown_button.setEnabled(False)
+        teardown_button.setToolTip("Not implemented yet")
+        row.addWidget(teardown_button)
 
         return bar
 
@@ -250,6 +257,21 @@ class PickerWindow(QtWidgets.QMainWindow):
         finally:
             self._applying = False
 
+        self.sync_from_scene()
+
+    def build_rig(self):
+        """Create IK on both arms and both legs of the bound skeleton."""
+        if not self._scene_map:
+            self.status.showMessage(_UNBOUND_MESSAGE)
+            return
+
+        self.build_button.setEnabled(False)
+        try:
+            result = builder.build(self._scene_map)
+        finally:
+            self.build_button.setEnabled(True)
+
+        self.status.showMessage(result.message)
         self.sync_from_scene()
 
     def sync_from_scene(self):
