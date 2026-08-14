@@ -31,8 +31,17 @@ They run this once per Maya session:
 ```python
 import maya.cmds as cmds
 if not cmds.commandPort(":7001", query=True):
-    cmds.commandPort(name=":7001", sourceType="python", echoOutput=True)
+    cmds.commandPort(name=":7001", sourceType="python", echoOutput=False)
 ```
+
+`echoOutput=False` matters: with echo on, heavy operations (OverRig bakes echo
+every `autoKeyframe`) push megabytes at the client, and a client that stops
+reading breaks the pipe under the running command. Results travel through the
+output file anyway, so the echo buys nothing. If echo is on, the sender must
+DRAIN the socket while polling for the output file, never close early. And do
+not try to close/reopen the port from a command sent over that same port — the
+reopen races the still-connected client and fails with "address in use",
+locking you out until the user re-runs the one-liner.
 
 Then code goes over TCP to `127.0.0.1:7001`. The working pattern is: write the
 code to a file, send a one-line `exec(open(...).read())`, and have a runner
@@ -126,13 +135,20 @@ makes namespaces and per-joint prefixes a non-issue.
 control, any descendant of one, or the limb's source joints (so the picker's own
 `Leg L` / `Main` buttons drive it). Nested rigs are baked before their container.
 
-**Build FK** (temporary) puts a ring marker on each of the 64 bones for selection
-convenience. The markers are **inert** — parented under their joint, transforms
-locked, driving nothing. Sizing comes from the skinned mesh, not bone length; see
-`fkcontrols.py` and the spec. How these should interact with the IK build is an
-open question.
+**Build FK** builds real FK controllers through OverRig knots: 17 independent
+chains over the 64 bones (`apply_ForwHierarhy` per chain, `apply_parentConstrAnim`
+for root), existing animation baked onto the controllers, our sized rings attached
+as shapes on the knots. FK and IK are mutually exclusive (guards in the window
+layer — a guard in `builder` would be an import cycle). `Bake+Delete` with FK
+present bakes the whole FK back. Ring sizing comes from the skinned mesh, not
+bone length; a correction table (`_BORROW`/`_SCALE`) holds user-driven fixes.
+Knot→bone mapping is read from the BONE side (constraint → driver → ancestor
+walk): a ForwHierarhy knot drives its bone through a child locator, so looking
+for constraints on the knot itself finds nothing.
 
-Not built: IK on spine and neck; FK/IK switching; docking; mirror-select.
+Not built: FK/IK coexistence and switching; cross-chain FK coupling (chains are
+independent by user choice — OverRig's "parent inside" covers specific cases);
+IK on spine and neck; docking; mirror-select.
 
 ## OverRig facts, learned by reading the MEL and by being bitten
 

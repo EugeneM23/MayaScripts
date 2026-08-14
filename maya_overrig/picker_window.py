@@ -123,9 +123,9 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.fk_button = QtWidgets.QPushButton("Build FK", bar)
         self.fk_button.setStyleSheet(_BUTTON_STYLE)
         self.fk_button.setToolTip(
-            "Temporary: put selection markers on every animator bone.\n"
-            "They follow their bone but drive nothing.\n"
-            "Pressing again rebuilds them.")
+            "Build FK controllers over the current animation via OverRig.\n"
+            "Real FK within each chain; existing motion moves onto the rings.\n"
+            "Pressing again bakes back and rebuilds.")
         self.fk_button.clicked.connect(
             lambda _checked=False: self.build_fk_controls())
         row.addWidget(self.fk_button)
@@ -278,6 +278,12 @@ class PickerWindow(QtWidgets.QMainWindow):
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
+        if fkcontrols.has_fk():
+            # Two drivers on one bone; FK/IK coexistence is deliberately
+            # unresolved, so refuse rather than stack them.
+            self.status.showMessage(
+                "FK build present - bake it back first (Bake+Delete)")
+            return
 
         self.build_button.setEnabled(False)
         try:
@@ -289,9 +295,13 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.sync_from_scene()
 
     def build_fk_controls(self):
-        """Put selection markers on every animator bone. They drive nothing."""
+        """Build FK controllers over the current animation via OverRig knots."""
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
+            return
+        if builder.has_build():
+            self.status.showMessage(
+                "IK build present - bake it back first (Bake+Delete)")
             return
 
         self.fk_button.setEnabled(False)
@@ -306,6 +316,17 @@ class PickerWindow(QtWidgets.QMainWindow):
         """Bake back to FK whichever limbs the current selection touches."""
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
+            return
+
+        if fkcontrols.has_fk():
+            # The FK build is one unit in this version: bake all of it back.
+            self.bake_button.setEnabled(False)
+            try:
+                _removed, message = fkcontrols.bake_fk(self._scene_map)
+            finally:
+                self.bake_button.setEnabled(True)
+            self.status.showMessage(message)
+            self.sync_from_scene()
             return
 
         limbs = builder.limbs_in_selection(self._scene_map)

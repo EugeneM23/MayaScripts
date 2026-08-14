@@ -1,24 +1,55 @@
-"""FK-looking selection markers on every animator bone.
+"""FK controllers on every animator bone, built through OverRig knots.
 
-The controllers are inert on purpose: they sit on their bone, follow it and can
-be clicked, but drive nothing. How they should interact with the IK build is a
-separate decision, and building them inert avoids putting two drivers on one
-joint before that decision is made.
+Each chain is run through OverRig's `apply_ForwHierarhy`, so the knots form a
+real FK hierarchy within the chain and the bones' existing animation is baked
+onto the controllers -- adjusting a ring adjusts the bone without losing the
+motion that was already there. Chains are deliberately independent of each
+other (the user's call): rotating the spine does not carry the arms, and any
+specific coupling can be made with OverRig's own "parent inside".
 
-Sizing comes from the skinned mesh rather than from bone length. On this
+Ring sizing comes from the skinned mesh rather than from bone length. On this
 skeleton bone length is meaningless: `pelvis` measures 3.68 because its first
 child sits on top of it, `lowerarm_l` measures 9.08 because its first child is a
 twist joint, and `head` measures 0 for having no children at all.
 """
 
 import maya.cmds as cmds
+import maya.mel as mel
 import maya.api.OpenMaya as om
 import maya.api.OpenMayaAnim as oma
 
-from maya_overrig import bodymap
+from maya_overrig import bodymap, builder, naming, overrig
 
 FK_SET = "RigPicker_fk"
 SUFFIX = "_FK_ctrl"
+
+
+def _finger_chains():
+    chains = []
+    for side in ("l", "r"):
+        for finger in ("index", "middle", "ring", "pinky"):
+            joints = tuple(["{0}_metacarpal_{1}".format(finger, side)]
+                           + ["{0}_{1:02d}_{2}".format(finger, i, side)
+                              for i in (1, 2, 3)])
+            chains.append(("{0}_{1}".format(finger, side), joints))
+        chains.append(("thumb_" + side,
+                       tuple("thumb_{0:02d}_{1}".format(i, side)
+                             for i in (1, 2, 3))))
+    return chains
+
+
+# Selection order for apply_ForwHierarhy IS the chain order, root first.
+# Chains are independent of each other on purpose.
+CHAINS = tuple([
+    ("root", ("root",)),
+    ("spine", ("pelvis", "spine_01", "spine_02", "spine_03",
+               "spine_04", "spine_05")),
+    ("neck", ("neck_01", "neck_02", "head")),
+    ("arm_l", ("clavicle_l", "upperarm_l", "lowerarm_l", "hand_l")),
+    ("arm_r", ("clavicle_r", "upperarm_r", "lowerarm_r", "hand_r")),
+    ("leg_l", ("thigh_l", "calf_l", "foot_l", "ball_l")),
+    ("leg_r", ("thigh_r", "calf_r", "foot_r", "ball_r")),
+] + _finger_chains())
 
 # Rigging convention, matching the picker so the two share one language.
 _LEFT = (0.25, 0.55, 1.0)
@@ -260,79 +291,210 @@ def remove_fk():
     return len(members)
 
 
+def _final_radii(scene_map):
+    """One {joint: ring radius} map for every buildable bone.
+
+    Everything is measured before anything is built: the correction rules let
+    one joint borrow another's size, and the stagger walks the body-map order.
+    """
+    buildable = [b for b in bodymap.BUTTONS
+                 if b.joint in scene_map and cmds.objExists(scene_map[b.joint])]
+    targets = {b.joint for b in buildable}
+
+    skinned = bool(cmds.ls(type="skinCluster"))
+    dominant, shared = _vertex_buckets(targets) if skinned else ({}, {})
+
+    # Character height from the spread of the joints themselves. A bounding
+    # box of one joint gives a box of nothing.
+    heights = [_world_position(scene_map[b.joint]).y for b in buildable]
+    height = max(max(heights) - min(heights), 1.0) if heights else 1.0
+    floor = height * 0.004
+
+    radii = {}
+    guessed = []
+    for button in buildable:
+        radius = _radius_for(button.joint, scene_map[button.joint],
+                             dominant, shared, floor)
+        if radius is None:
+            radius = floor * 6.0
+            guessed.append(button.joint)
+        radii[button.joint] = radius
+    radii = apply_size_rules(radii)
+
+    seen_in_region = {}
+    for button in buildable:
+        index = seen_in_region.get(button.region, 0)
+        seen_in_region[button.region] = index + 1
+        if button.region in ("spine", "head"):
+            radii[button.joint] *= stagger(index)
+
+    if "root" in radii:
+        radii["root"] = max(radii["root"], height * 0.16)
+    return radii, guessed, skinned
+
+
+def _bone_knot_map(chain_paths, fresh_knots):
+    """Map each chain bone to the fresh knot that drives it.
+
+    Read from the bone side: constraint -> driver -> up the driver's ancestors
+    until a fresh knot is hit. A ForwHierarhy knot drives its bone through a
+    child locator (`joint2 -> locator8 -> parentConstraint -> spine_01`), while
+    a single parentConstrAnim knot drives directly -- the ancestor walk covers
+    both. Never map by name or creation order: OverRig names knots `joint1..N`
+    and suffixes on collision.
+    """
+    knots = set(fresh_knots)
+    mapping = {}
+    for bone in chain_paths:
+        found = None
+        for con in cmds.listRelatives(bone, children=True, type="constraint",
+                                      fullPath=True) or []:
+            for driver in cmds.listConnections(con + ".target", source=True,
+                                               destination=False) or []:
+                if cmds.objectType(driver).endswith("Constraint"):
+                    continue
+                paths = cmds.ls(driver, long=True) or []
+                node = paths[0] if paths else None
+                while node:
+                    if node in knots:
+                        found = node
+                        break
+                    trimmed = node.rsplit("|", 1)[0]
+                    node = trimmed if trimmed else None
+                if found:
+                    break
+            if found:
+                break
+        if found:
+            mapping[bone] = found
+    return mapping
+
+
+def _hide_native_shapes(knot):
+    """Hide what the knot draws on its own; only our ring should show."""
+    if cmds.objectType(knot) == "joint":
+        cmds.setAttr(knot + ".drawStyle", 2)
+    for shape in cmds.listRelatives(knot, shapes=True, fullPath=True) or []:
+        if cmds.objectType(shape) != "nurbsCurve":
+            cmds.setAttr(shape + ".visibility", 0)
+
+
+def _dress_knots(knot_paths, chain_paths, radii, region_of):
+    """Rename fresh knots to <bone>_FK_ctrl and put our ring shapes on them.
+
+    Works through UUIDs: renaming a chain parent changes every descendant's
+    path, so each knot's path is re-resolved just before its own rename.
+    """
+    by_bone = _bone_knot_map(chain_paths, knot_paths)
+    # UUIDs for every mapped knot BEFORE any rename: renaming the chain root
+    # invalidates the stored paths of every knot beneath it.
+    uuid_by_bone = {bone: naming.uuid_of(knot)
+                    for bone, knot in by_bone.items()}
+    dressed = 0
+    for bone, uuid in sorted(uuid_by_bone.items()):
+        knot = naming.path_from_uuid(uuid)
+        if not knot:
+            continue
+        bare = naming.leaf(bone)
+
+        knot = cmds.ls(cmds.rename(knot, controller_name(bare)), long=True)[0]
+        _hide_native_shapes(knot)
+
+        normal = (0, 1, 0) if bare == "root" else (1, 0, 0)
+        ring = _make_ring(bare + "_FK_ring_tmp", radii.get(bare, 1.0), normal,
+                          colour_for(region_of[bare]))
+        shape = cmds.listRelatives(ring, shapes=True, fullPath=True)[0]
+        cmds.parent(shape, knot, relative=True, shape=True)
+        cmds.delete(ring)
+        dressed += 1
+    return dressed
+
+
+def _teardown_fk(scene_map):
+    """Bake the FK back onto the bones and remove every trace of it.
+
+    Order matters: bake while the knots still drive, then delete. The reclaim
+    pass at the end is a safety net for anything the manifest diff missed.
+    """
+    joints = [scene_map[j] for _, chain in CHAINS for j in chain
+              if j in scene_map and cmds.objExists(scene_map[j])]
+    constrained = [j for j in joints
+                   if cmds.listRelatives(j, children=True, type="constraint")]
+    if constrained:
+        overrig.fast_bake(constrained)
+        overrig.delete_constraint_attributes(constrained)
+
+    removed = remove_fk()
+    if constrained:
+        extra, _foreign = builder._reclaim(constrained)
+        removed += extra
+    return removed
+
+
+def bake_fk(scene_map):
+    """Bake the whole FK build back to the bones. Returns (removed, message)."""
+    cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK bake")
+    try:
+        removed = _teardown_fk(scene_map)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return removed, "FK baked back - {0} node(s) removed".format(removed)
+
+
 def build_fk(scene_map):
-    """Put a ring marker on every animator bone. Returns (count, message)."""
-    targets = {b.joint for b in bodymap.BUTTONS if b.joint in scene_map}
-    if not targets:
+    """Build FK controllers through OverRig knots. Returns (count, message).
+
+    The caller guards against an existing IK build; this function assumes the
+    bones are free apart from a previous FK, which it bakes back first.
+    """
+    if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return 0, "Not connected to a skeleton"
+
+    region_of = {b.joint: b.region for b in bodymap.BUTTONS}
 
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK")
     try:
-        removed = remove_fk()
+        replaced = _teardown_fk(scene_map) if has_fk() else 0
 
-        skinned = bool(cmds.ls(type="skinCluster"))
-        dominant, shared = _vertex_buckets(targets) if skinned else ({}, {})
+        radii, guessed, skinned = _final_radii(scene_map)
 
-        # Character height, from the spread of the joints themselves. Taking a
-        # bounding box of one joint gives a box of nothing.
-        heights = [_world_position(scene_map[j]).y for j in targets]
-        height = max(max(heights) - min(heights), 1.0)
-        floor = height * 0.004
+        created = 0
+        recorded = []
+        for _chain_name, chain in CHAINS:
+            paths = [scene_map[j] for j in chain
+                     if j in scene_map and cmds.objExists(scene_map[j])]
+            if not paths:
+                continue
 
-        # Measure everything first: the correction rules let one joint borrow
-        # another's size, so they need the whole picture before anything is
-        # built.
-        buildable = [b for b in bodymap.BUTTONS
-                     if b.joint in scene_map
-                     and cmds.objExists(scene_map[b.joint])]
-        radii = {}
-        guessed = []
-        for button in buildable:
-            joint = button.joint
-            radius = _radius_for(joint, scene_map[joint], dominant, shared,
-                                 floor)
-            if radius is None:
-                radius = floor * 6.0
-                guessed.append(joint)
-            radii[joint] = radius
-        radii = apply_size_rules(radii)
+            before = builder._scene_nodes()
+            before_knots = set(overrig.set_members(overrig.KNOT_SET))
 
-        created = []
-        seen_in_region = {}
-        for button in buildable:
-            joint = button.joint
-            radius = radii[joint]
+            cmds.select(paths, replace=True)
+            if len(paths) == 1:
+                mel.eval("apply_parentConstrAnim(1)")
+            else:
+                mel.eval("apply_ForwHierarhy(1)")
 
-            index = seen_in_region.get(button.region, 0)
-            seen_in_region[button.region] = index + 1
-            if button.region in ("spine", "head"):
-                radius *= stagger(index)
+            fresh_knots = [k for k in overrig.set_members(overrig.KNOT_SET)
+                           if k not in before_knots]
+            created += _dress_knots(fresh_knots, paths, radii, region_of)
 
-            normal = (0, 1, 0) if joint == "root" else (1, 0, 0)
-            if joint == "root":
-                radius = max(radius, height * 0.16)
-
-            ring = _make_ring(controller_name(joint), radius, normal,
-                              colour_for(button.region))
-            ring = cmds.parent(ring, scene_map[joint], relative=True)[0]
-            ring = cmds.ls(ring, long=True)[0]
-            for attr in ("translate", "rotate", "scale"):
-                for axis in "XYZ":
-                    cmds.setAttr("%s.%s%s" % (ring, attr, axis), lock=True)
-            created.append(ring)
-
-        if created:
-            if not cmds.objExists(FK_SET):
-                cmds.sets(name=FK_SET, empty=True)
-            cmds.sets(created, addElement=FK_SET)
+            fresh = sorted(n for n in (builder._scene_nodes() - before)
+                           if builder._recordable(n))
+            if fresh:
+                if not cmds.objExists(FK_SET):
+                    cmds.sets(name=FK_SET, empty=True)
+                cmds.sets(fresh, addElement=FK_SET)
+                recorded.extend(fresh)
     finally:
         cmds.undoInfo(closeChunk=True)
 
-    message = "Built {0} FK marker(s)".format(len(created))
-    if removed:
-        message += ", {0} replaced".format(removed)
+    message = "Built {0} FK controller(s), {1} node(s) recorded".format(
+        created, len(recorded))
+    if replaced:
+        message += ", previous FK baked back"
     if not skinned:
-        message += " - no skinCluster, sizes are guesses"
+        message += " - no skinCluster, ring sizes are guesses"
     elif guessed:
-        message += " - {0} sized from neighbours".format(len(guessed))
-    return len(created), message
+        message += " - {0} ring(s) sized from neighbours".format(len(guessed))
+    return created, message

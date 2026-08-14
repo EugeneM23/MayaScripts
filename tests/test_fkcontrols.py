@@ -3,6 +3,35 @@ import unittest
 from maya_overrig import bodymap, fkcontrols
 
 
+class TestChains(unittest.TestCase):
+
+    def test_chains_cover_the_body_map_exactly_once(self):
+        chained = [j for _, chain in fkcontrols.CHAINS for j in chain]
+        self.assertEqual(len(chained), len(set(chained)))
+        self.assertEqual(set(chained), {b.joint for b in bodymap.BUTTONS})
+
+    def test_root_is_a_single_knot_chain(self):
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(table["root"], ("root",))
+
+    def test_seventeen_chains(self):
+        self.assertEqual(len(fkcontrols.CHAINS), 17)
+
+    def test_chain_names_are_unique(self):
+        names = [name for name, _ in fkcontrols.CHAINS]
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_spine_chain_runs_pelvis_upward(self):
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(table["spine"][0], "pelvis")
+        self.assertEqual(table["spine"][-1], "spine_05")
+
+    def test_leg_chains_include_the_ball(self):
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(table["leg_l"][-1], "ball_l")
+        self.assertEqual(table["leg_r"][-1], "ball_r")
+
+
 class TestControllerName(unittest.TestCase):
 
     def test_suffixes_the_joint(self):
