@@ -197,6 +197,16 @@ Not built: spine/neck switching; per-chain FK bake from the UI (Switch does it
 internally); IK on spine and neck; docking; mirror-select; the pose-snapshot
 safety before Build FK (proposed, not confirmed).
 
+Known gap in the axis alignment: **the reference is the pose at build time**, so
+`Switch FK/IK` — which rebuilds one limb through `build_fk(only=[limb])` — zeroes
+that limb against whatever pose the character is in at the moment of the switch,
+while the opposite limb keeps the zero of the original build. Equal values then
+stop meaning a mirrored pose for that pair. Referencing the skeleton's bind pose
+instead of the current one would close this and would also make Build FK
+mirror-correct from a lopsided pose; it needs the bind local rotations read from
+the `bindPose` node (readable without restoring it) and a `T_ref = C⁻¹ · b_bind ·
+C_parent` construction rather than a measurement.
+
 ## OverRig facts, learned by reading the MEL and by being bitten
 
 - **Most procs are selection-driven.** `apply_Fast_Bake`, `apply_range_Fast_Bake`,
