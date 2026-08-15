@@ -186,3 +186,79 @@ def remove_retarget(retarget_set=RETARGET_SET):
         cmds.undoInfo(closeChunk=True)
     print("retarget: removed %d constraint node(s)" % len(alive))
     return len(alive)
+
+
+def set_side_offset(x, retarget_set=RETARGET_SET):
+    """Move the suit sideways relative to Manny. 0 puts it exactly inside him.
+
+    Rewrites the world offset held by every point constraint, so it costs no
+    rebuild and keeps each bone's own rest delta in Y and Z.
+    """
+    if not cmds.objExists(retarget_set):
+        raise RuntimeError("no retarget in the scene - run build_retarget()")
+    current = cmds.getAttr(retarget_set + ".retargetSideOffset")
+    delta = x - current
+    moved = 0
+    for member in cmds.sets(retarget_set, query=True) or []:
+        if not cmds.objExists(member):
+            continue
+        if cmds.nodeType(member) != "pointConstraint":
+            continue
+        attr = member + ".offsetX"
+        cmds.setAttr(attr, cmds.getAttr(attr) + delta)
+        moved += 1
+    cmds.setAttr(retarget_set + ".retargetSideOffset", x)
+    print("retarget: side offset %.3f -> %.3f cm on %d constraint(s)"
+          % (current, x, moved))
+    return x
+
+
+def _ui_build(*_args):
+    fingers = ABSOLUTE if cmds.checkBox("retargetFingerAbs", query=True,
+                                        value=True) else OFFSET
+    remove_retarget()
+    build_retarget(finger_mode=fingers)
+
+
+def _ui_overlay(*_args):
+    set_side_offset(0.0)
+
+
+def _ui_apart(*_args):
+    set_side_offset(cmds.getAttr(TARGET_ROOT + ".translateX"))
+
+
+def show_retarget_ui():
+    """Open the retarget window."""
+    win = "mannyToSuitRetargetWin"
+    if cmds.window(win, exists=True):
+        cmds.deleteUI(win)
+
+    cmds.window(win, title="Manny -> Suit Retarget",
+                widthHeight=(340, 210), sizeable=True)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                      columnOffset=("both", 10))
+    cmds.separator(height=8, style="none")
+    cmds.text(label="SKM_Manny_Simple  ->  Mesh_protective_suit",
+              font="boldLabelFont", align="center")
+    cmds.separator(height=4, style="none")
+    cmds.checkBox("retargetFingerAbs",
+                  label="Fingers copy Manny absolutely (grip transfers)",
+                  value=True)
+    cmds.button(label="Build Retarget", height=36,
+                backgroundColor=(0.5, 0.75, 0.5), command=_ui_build)
+    cmds.button(label="Remove Retarget", height=28,
+                backgroundColor=(0.8, 0.55, 0.5),
+                command=lambda *a: remove_retarget())
+    cmds.separator(height=6, style="in")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnWidth2=(160, 160))
+    cmds.button(label="Overlay on Manny", command=_ui_overlay)
+    cmds.button(label="Stand Apart", command=_ui_apart)
+    cmds.setParent("..")
+    cmds.showWindow(win)
+    return win
+
+
+if __name__ == "__main__":
+    show_retarget_ui()
