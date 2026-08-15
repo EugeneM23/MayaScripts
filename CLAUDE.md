@@ -74,7 +74,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 122 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 265 tests at time of writing, all passing.
 
 Testing code that needs `maya.cmds` without a Maya session: inject a fake into
 `sys.modules` and **rebind the module attribute** (`naming.cmds = fake`). Do not
@@ -241,7 +241,32 @@ the bone stops, and fingers riding the control tore off the hand (measured:
 hand-to-metacarpal 33 cm on a 40 cm overpull; with the anchor it stays at
 the 4.2 cm rest). The limbs themselves do NOT stretch — OverRig's rebike
 keeps bone lengths constant (measured identical under overpull) — so no
-extra no-stretch work was needed.
+extra no-stretch work was needed. The anchor hides its SHAPE, never its
+transform — see trap 15.
+
+**Every IK limb rides `root_FK_ctrl`** — all three OverRig top groups
+(`_IK_strech_gr`, `_IK_knee`, `_IK_feet`) hung with `apply_Parent_in`
+(`fkcontrols.hang_ik_on_root`), so the root control carries the whole
+character. All three, machinery included: the IK rig is anchored in world
+end to end (measured — moving the root BONE moved neither the controls nor
+the `upperarm` bone), so carrying only the two animator controls drags the
+effector targets while the chain base stays pinned and the shoulder tears
+off. The coupling nodes go into the LIMB manifest, so they die with the IK
+rig. No root controller in the scene (IK built by Switch after a full bake)
+means the rig stays in world; the next Build re-hangs it. Verified: bones,
+IK controls and finger rings all travel 50.000 cm with the root control.
+
+The reverse is automatic. `_bake_fk_chains` **lifts** any riding IK limb to
+world (`lift_ik_off_root`) before deleting a chain that contains it, so
+Bake+Delete on root leaves the IK limbs alive and working, and the FK-first
+teardown inside every full Build no longer destroys four IK rigs unbaked.
+Two ordering rules there, both paid for in a live run: **re-read the
+manifests after lifting** — `overrig.set_members` resolves long paths at
+call time, and a stale path deletes nothing while leaving a live rig
+orphaned and unrecorded — and **lift before expanding by nesting**, because
+a finger chain sits inside the root controller only by way of the IK hand,
+and that hand survives. Containment through a surviving rig is not
+ownership (trap 9 again, from the other side).
 
 Not built: spine IK (removed, see above) and neck IK; per-chain FK bake
 from the UI (Switch does it internally); docking; mirror-select; the
@@ -249,7 +274,8 @@ pose-snapshot safety before Build (proposed, not confirmed).
 
 **Live verification: all green** (run in the Manny scene):
 `verify_arm_switch.py`, `verify_capture_edges.py`,
-`verify_hybrid_build.py` in `docs/superpowers/plans/`. Bridge-script
+`verify_hybrid_build.py`, `verify_ik_under_root.py` in
+`docs/superpowers/plans/`. Bridge-script
 hygiene, learned the hard way: never `cmds.undo()` inside a bridge script
 (the whole script is one command — undo reverts a whole prior chunk and the
 damage gets baked in), and never write literal rest values into constrained
@@ -392,6 +418,26 @@ C_parent` construction rather than a measurement.
    or, restored via setKeyframe, rewrites tangents and damages neighbours.
    Verify scripts wiggle time to settle, disable autoKey around pokes, and
    never mutate keyed curves.
+15. **Hiding a rig helper's TRANSFORM hides whatever is parented under it.**
+   `_limb_anchor` hid the anchor locator's transform, and the finger
+   controllers hung on it inherited the invisibility — the rings existed and
+   the picker selected them happily, but the viewport showed nothing
+   ("переключаешь руку в ИК — ФК контролы пальцев не отображаются"). Hide
+   the SHAPE, which is what `_hide_rig_machinery` already does for locators;
+   `_mute_anchor` repairs anchors rigged by the old code on every lookup.
+16. **A recorded long path is only valid until something re-parents it.**
+   `overrig.set_members` resolves paths at call time, so any manifest read
+   before an `apply_Parent_in`/`_out` is stale afterwards. The existence
+   filter in front of `cmds.delete` then silently drops those nodes: a whole
+   rig survived unrecorded, and the next bake correctly refused to touch
+   strangers ("holds OverRig node(s) we did not build"). Re-read manifests
+   after any re-parenting.
+17. **A file exec'd over the command port may not see its own module-level
+   names.** `exec(open(path).read())` sent as a one-liner runs where
+   `globals()` is not `locals()`, so functions defined in that file raise
+   `NameError` on module-level imports — which reads like a broken import
+   rather than a harness bug. The runner must pass an explicit globals dict:
+   `exec(compile(src, path, "exec"), {"__name__": "__main__"})`.
 
 ## Conventions
 
