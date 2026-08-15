@@ -194,6 +194,19 @@ def radius_from(distances, percentile=0.75, margin=1.1):
     return ordered[index] * margin
 
 
+def merge_key_times(per_channel):
+    """Sorted union of key times across channels.
+
+    All three rotate channels are rewritten together -- a value is only
+    meaningful as part of a whole rotation -- so they need one shared list of
+    times. `cmds.keyframe` returns None for an unkeyed channel.
+    """
+    times = set()
+    for channel in per_channel:
+        times.update(channel or ())
+    return sorted(times)
+
+
 # Bones whose controller draws as a square instead of a ring. The pelvis sits
 # in a stack of near-equal spine rings and disappears among them.
 _SQUARE = frozenset({"pelvis"})

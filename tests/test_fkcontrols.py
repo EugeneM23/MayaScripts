@@ -272,6 +272,25 @@ class TestRadiusFrom(unittest.TestCase):
             9.0, places=6)
 
 
+class TestMergeKeyTimes(unittest.TestCase):
+
+    def test_union_of_channels_sorted(self):
+        self.assertEqual(
+            fkcontrols.merge_key_times([[3.0, 1.0], [2.0], [1.0]]),
+            [1.0, 2.0, 3.0])
+
+    def test_duplicates_collapse(self):
+        self.assertEqual(
+            fkcontrols.merge_key_times([[1.0, 2.0], [1.0, 2.0]]),
+            [1.0, 2.0])
+
+    def test_empty_channels_are_skipped(self):
+        self.assertEqual(fkcontrols.merge_key_times([[], None, [5.0]]), [5.0])
+
+    def test_no_keys_at_all(self):
+        self.assertEqual(fkcontrols.merge_key_times([None, None]), [])
+
+
 class TestIsSquare(unittest.TestCase):
 
     def test_pelvis_draws_as_a_square(self):

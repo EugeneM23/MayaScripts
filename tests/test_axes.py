@@ -84,5 +84,59 @@ class TestOrientValues(unittest.TestCase):
         self.assertTrue(_close(joint_orient, offset * reference))
 
 
+class TestEulerDegrees(unittest.TestCase):
+
+    def test_round_trips_a_rotation(self):
+        values = axes.euler_degrees(_rot(10.0, 20.0, 30.0))
+        for got, want in zip(values, (10.0, 20.0, 30.0)):
+            self.assertAlmostEqual(got, want, places=6)
+
+    def test_identity_is_zero(self):
+        for value in axes.euler_degrees(om.MMatrix()):
+            self.assertAlmostEqual(value, 0.0, places=9)
+
+    def test_stays_near_the_previous_value(self):
+        """A baked curve must not flip by 360 between neighbouring keys."""
+        near = axes.euler_degrees(_rot(170.0, 0.0, 0.0),
+                                  previous=(530.0, 0.0, 0.0))
+        self.assertAlmostEqual(near[0], 530.0, places=6)
+
+    def test_the_flipped_solution_describes_the_same_rotation(self):
+        matrix = _rot(170.0, 0.0, 0.0)
+        near = axes.euler_degrees(matrix, previous=(530.0, 0.0, 0.0))
+        self.assertTrue(_close(_rot(*near), matrix, tol=1e-6))
+
+
+class TestMirrorSigns(unittest.TestCase):
+
+    IDENTITY = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+
+    def test_behaviour_mirror_reads_all_negative(self):
+        """What the UE skeleton uses: mirror, then negate every axis."""
+        right = ((1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0))
+        self.assertEqual(axes.mirror_signs(self.IDENTITY, right),
+                         (-1, -1, -1))
+
+    def test_the_convention_our_knots_used_to_have(self):
+        right = ((-1.0, 0.0, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, 1.0))
+        self.assertEqual(axes.mirror_signs(self.IDENTITY, right), (1, -1, 1))
+
+    def test_unrelated_frames_give_none(self):
+        right = ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0))
+        self.assertIsNone(axes.mirror_signs(self.IDENTITY, right))
+
+    def test_tolerates_a_small_measurement_error(self):
+        right = ((0.999, 0.01, 0.0), (0.0, -1.0, 0.0), (0.0, 0.0, -1.0))
+        self.assertEqual(axes.mirror_signs(self.IDENTITY, right),
+                         (-1, -1, -1))
+
+    def test_skewed_frames_are_handled(self):
+        """Real bones are not axis-aligned; the measure must not assume it."""
+        left = ((0.576, -0.817, 0.023), (-0.033, -0.052, -0.998),
+                (0.817, 0.574, -0.056))
+        right = tuple(tuple(-c for c in (-a[0], a[1], a[2])) for a in left)
+        self.assertEqual(axes.mirror_signs(left, right), (-1, -1, -1))
+
+
 if __name__ == "__main__":
     unittest.main()

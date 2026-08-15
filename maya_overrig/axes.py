@@ -43,3 +43,36 @@ def retarget(rotation, offset, reference):
     away from the build pose measured in the bone's own axes.
     """
     return offset * rotation * reference.inverse() * offset.inverse()
+
+
+def euler_degrees(matrix, order=0, previous=None):
+    """A matrix as degrees in `order`, nearest to `previous` if given.
+
+    Every rotation has infinitely many euler representations. Picking blindly
+    puts 360-degree jumps into a rewritten curve, which reads as the rig
+    snapping between two keys.
+    """
+    rotation = om.MTransformationMatrix(om.MMatrix(matrix)).rotation()
+    rotation.reorderIt(order)
+    if previous is not None:
+        rotation.setToClosestSolution(
+            om.MEulerRotation([math.radians(v) for v in previous], order))
+    return tuple(math.degrees(v) for v in (rotation.x, rotation.y, rotation.z))
+
+
+def mirror_signs(left_axes, right_axes, tolerance=0.02):
+    """Sign triple relating two frames across the YZ plane, None if unrelated.
+
+    Each entry is `mirror(left_axis) . right_axis` rounded to +-1: the sign of
+    each axis after reflecting the left frame. `(-1, -1, -1)` is the classic
+    behaviour mirror the UE skeleton uses, and the convention this project
+    targets.
+    """
+    signs = []
+    for left, right in zip(left_axes, right_axes):
+        mirrored = (-left[0], left[1], left[2])
+        dot = sum(a * b for a, b in zip(mirrored, right))
+        if abs(abs(dot) - 1.0) > tolerance:
+            return None
+        signs.append(1 if dot > 0 else -1)
+    return tuple(signs)
