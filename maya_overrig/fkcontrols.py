@@ -194,6 +194,28 @@ def radius_from(distances, percentile=0.75, margin=1.1):
     return ordered[index] * margin
 
 
+# Bones whose controller draws as a square instead of a ring. The pelvis sits
+# in a stack of near-equal spine rings and disappears among them.
+_SQUARE = frozenset({"pelvis"})
+
+
+def is_square(joint):
+    """True when the joint's controller draws as a square, not a ring."""
+    return joint in _SQUARE
+
+
+def square_points(radius):
+    """Closed square in the plane perpendicular to the bone axis (local X).
+
+    Corners at (0, +-r, +-r): the sides face the local axes and span the
+    diameter of the ring the square replaces, so it reads as the same size
+    with the corners standing slightly proud of the neighbouring rings.
+    """
+    r = float(radius)
+    return [(0.0, -r, -r), (0.0, -r, r), (0.0, r, r), (0.0, r, -r),
+            (0.0, -r, -r)]
+
+
 # ---------------------------------------------------------------------------
 # scene side
 # ---------------------------------------------------------------------------
@@ -303,16 +325,26 @@ def _radius_for(joint, joint_path, dominant, shared, floor):
     return None
 
 
-def _make_ring(name, radius, normal, colour):
-    ring = cmds.circle(name=name, normal=normal, radius=radius,
-                       sections=_SECTIONS, constructionHistory=False)[0]
-    shape = cmds.listRelatives(ring, shapes=True, fullPath=True)[0]
+def _style_curve(transform, colour):
+    shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
     cmds.setAttr(shape + ".overrideEnabled", 1)
     cmds.setAttr(shape + ".overrideRGBColors", 1)
     cmds.setAttr(shape + ".overrideColorRGB", *colour)
     if cmds.attributeQuery("lineWidth", node=shape, exists=True):
         cmds.setAttr(shape + ".lineWidth", _LINE_WIDTH)
+
+
+def _make_ring(name, radius, normal, colour):
+    ring = cmds.circle(name=name, normal=normal, radius=radius,
+                       sections=_SECTIONS, constructionHistory=False)[0]
+    _style_curve(ring, colour)
     return ring
+
+
+def _make_square(name, radius, colour):
+    square = cmds.curve(name=name, degree=1, point=square_points(radius))
+    _style_curve(square, colour)
+    return square
 
 
 def chain_members(chain):
@@ -505,8 +537,12 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
             normal = (up.x, up.y, up.z)
         else:
             normal = (1, 0, 0)
-        ring = _make_ring(bare + "_FK_ring_tmp", radii.get(bare, 1.0), normal,
-                          colour_for(region_of[bare]))
+        if is_square(bare):
+            ring = _make_square(bare + "_FK_ring_tmp", radii.get(bare, 1.0),
+                                colour_for(region_of[bare]))
+        else:
+            ring = _make_ring(bare + "_FK_ring_tmp", radii.get(bare, 1.0),
+                              normal, colour_for(region_of[bare]))
         shape = cmds.listRelatives(ring, shapes=True, fullPath=True)[0]
         cmds.parent(shape, knot, relative=True, shape=True)
         cmds.delete(ring)

@@ -146,7 +146,8 @@ this, it preserves only the current frame. FK and IK are mutually exclusive
 (guards in the window layer — a guard in `builder` would be an import cycle).
 `Bake+Delete` with FK present bakes the whole FK back. Ring sizing comes from
 the skinned mesh, not bone length; a correction table (`_BORROW`/`_SCALE`) holds
-user-driven fixes. Knot→bone mapping is read from the BONE side (constraint →
+user-driven fixes, and `_SQUARE` lists bones drawn as a square instead of a ring
+(pelvis, so it reads among the same-size spine rings). Knot→bone mapping is read from the BONE side (constraint →
 driver → ancestor walk): a ForwHierarhy knot drives its bone through a child
 locator, so looking for constraints on the knot itself finds nothing.
 

@@ -272,5 +272,43 @@ class TestRadiusFrom(unittest.TestCase):
             9.0, places=6)
 
 
+class TestIsSquare(unittest.TestCase):
+
+    def test_pelvis_draws_as_a_square(self):
+        self.assertTrue(fkcontrols.is_square("pelvis"))
+
+    def test_every_other_bone_stays_a_ring(self):
+        for button in bodymap.BUTTONS:
+            if button.joint == "pelvis":
+                continue
+            self.assertFalse(fkcontrols.is_square(button.joint), button.joint)
+
+
+class TestSquarePoints(unittest.TestCase):
+
+    def test_closed_with_four_corners(self):
+        points = fkcontrols.square_points(2.0)
+        self.assertEqual(len(points), 5)
+        self.assertEqual(points[0], points[-1])
+        self.assertEqual(len(set(points)), 4)
+
+    def test_corners_sit_on_the_plane_diagonals(self):
+        """Corners at (0, +-r, +-r): sides face the local axes, so on the
+        pelvis they run front/back and side to side, not diagonally."""
+        radius = 1.5
+        corners = set(fkcontrols.square_points(radius)[:4])
+        self.assertEqual(corners, {(0.0, radius, radius),
+                                   (0.0, radius, -radius),
+                                   (0.0, -radius, -radius),
+                                   (0.0, -radius, radius)})
+
+    def test_sides_match_the_ring_diameter(self):
+        radius = 2.5
+        points = fkcontrols.square_points(radius)
+        for a, b in zip(points, points[1:]):
+            length = sum((p - q) ** 2 for p, q in zip(a, b)) ** 0.5
+            self.assertAlmostEqual(length, radius * 2.0, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()
