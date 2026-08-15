@@ -57,13 +57,20 @@ def region_colour(region):
 
 
 class ButtonItem(QtWidgets.QGraphicsRectItem):
-    """One body-map button. Paints itself from state, availability and hover."""
+    """One body-map button. Paints itself from state, availability and hover.
 
-    def __init__(self, button):
+    Takes either kind of bodymap button: FK buttons (with a `joint`) draw as
+    rounded rects, IK buttons (with `limb` and `role`) as ellipses -- the
+    `kind` hint decides. (Named `kind`, not `shape`: QGraphicsItem.shape() is
+    a virtual method, and assigning a string over it breaks hit testing.)
+    """
+
+    def __init__(self, button, kind="rect"):
         super(ButtonItem, self).__init__(0.0, 0.0, float(button.w), float(button.h))
         self.button_id = button.id
-        self.joint = button.joint
+        self.joint = getattr(button, "joint", None)
         self.region = button.region
+        self.kind = kind
         self.state = STATE_NEUTRAL
         self.available = True
         self.view = None
@@ -71,7 +78,10 @@ class ButtonItem(QtWidgets.QGraphicsRectItem):
 
         self.setPos(float(button.x), float(button.y))
         self.setAcceptHoverEvents(True)
-        self.setToolTip(button.joint)
+        if self.joint is not None:
+            self.setToolTip(button.joint)
+        else:
+            self.setToolTip("{0} IK {1}".format(button.limb, button.role))
 
     def set_state(self, state):
         if state != self.state:
@@ -129,7 +139,10 @@ class ButtonItem(QtWidgets.QGraphicsRectItem):
 
         painter.setBrush(QtGui.QBrush(gradient))
         painter.setPen(self._pen())
-        painter.drawRoundedRect(self.rect(), _CORNER_RADIUS, _CORNER_RADIUS)
+        if self.kind == "ellipse":
+            painter.drawEllipse(self.rect())
+        else:
+            painter.drawRoundedRect(self.rect(), _CORNER_RADIUS, _CORNER_RADIUS)
 
 
 class PickerView(QtWidgets.QGraphicsView):
@@ -155,6 +168,11 @@ class PickerView(QtWidgets.QGraphicsView):
         self.items_by_id = {}
         for button in bodymap.BUTTONS:
             item = ButtonItem(button)
+            item.view = self
+            scene.addItem(item)
+            self.items_by_id[button.id] = item
+        for button in bodymap.IK_BUTTONS:
+            item = ButtonItem(button, kind="ellipse")
             item.view = self
             scene.addItem(item)
             self.items_by_id[button.id] = item

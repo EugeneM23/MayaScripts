@@ -21,8 +21,9 @@ class TestPickerView(unittest.TestCase):
     def setUp(self):
         self.view = picker_view.PickerView()
 
-    def test_one_item_per_button(self):
-        self.assertEqual(len(self.view.items_by_id), len(bodymap.BUTTONS))
+    def test_one_item_per_button_of_either_kind(self):
+        self.assertEqual(len(self.view.items_by_id),
+                         len(bodymap.BUTTONS) + len(bodymap.IK_BUTTONS))
 
     def test_item_geometry_matches_bodymap(self):
         b = bodymap.button_by_id("head")
@@ -81,6 +82,47 @@ class TestPickerView(unittest.TestCase):
         rect = self.view.scene().sceneRect()
         self.assertEqual(rect.width(), bodymap.CANVAS_W)
         self.assertEqual(rect.height(), bodymap.CANVAS_H)
+
+
+class TestIkItems(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+
+    def setUp(self):
+        self.view = picker_view.PickerView()
+
+    def test_view_holds_an_item_per_ik_button(self):
+        for button in bodymap.IK_BUTTONS:
+            self.assertIn(button.id, self.view.items_by_id)
+
+    def test_ik_items_are_ellipses_fk_items_rects(self):
+        self.assertEqual(self.view.items_by_id["spine_ik_top"].kind,
+                         "ellipse")
+        self.assertEqual(self.view.items_by_id["pelvis"].kind, "rect")
+
+    def test_ik_item_geometry_matches_bodymap(self):
+        b = bodymap.ik_button_by_id("leg_l_ik_end")
+        item = self.view.items_by_id["leg_l_ik_end"]
+        self.assertEqual(item.rect().width(), b.w)
+        self.assertEqual(item.pos().x(), b.x)
+        self.assertEqual(item.pos().y(), b.y)
+
+    def test_ik_tooltip_names_the_control(self):
+        tip = self.view.items_by_id["arm_l_ik_pole"].toolTip()
+        self.assertIn("arm_l", tip)
+        self.assertIn("IK", tip)
+
+    def test_ik_items_dim_like_fk_items(self):
+        self.view.set_available(["spine_ik_top"])
+        self.assertTrue(self.view.items_by_id["spine_ik_top"].available)
+        self.assertFalse(self.view.items_by_id["leg_l_ik_end"].available)
+
+    def test_marquee_finds_available_ik_items(self):
+        b = bodymap.ik_button_by_id("leg_l_ik_end")
+        rect = QtCore.QRectF(b.x - 1, b.y - 1, b.w + 2, b.h + 2)
+        self.assertIn("leg_l_ik_end", self.view.ids_in_rect(rect))
 
 
 class TestInteraction(unittest.TestCase):
