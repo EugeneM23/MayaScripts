@@ -13,12 +13,14 @@ child sits on top of it, `lowerarm_l` measures 9.08 because its first child is a
 twist joint, and `head` measures 0 for having no children at all.
 """
 
+import math
+
 import maya.cmds as cmds
 import maya.mel as mel
 import maya.api.OpenMaya as om
 import maya.api.OpenMayaAnim as oma
 
-from maya_overrig import bodymap, builder, naming, overrig
+from maya_overrig import axes, bodymap, builder, naming, overrig
 
 FK_SET = "RigPicker_fk"          # legacy flat set; absorbed by a full bake
 FK_SET_PREFIX = "RigPicker_fk_"  # one set per chain, the switchable unit
@@ -567,6 +569,95 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
     return dressed
 
 
+_ROTATE_CHANNELS = ("rotateX", "rotateY", "rotateZ")
+
+
+def _world_rotation(node):
+    """A node's world rotation, translation dropped."""
+    return axes._rotation_only(
+        om.MMatrix(cmds.xform(node, query=True, worldSpace=True, matrix=True)))
+
+
+def _local_rotation(node):
+    """A node's `rotate` channel as a matrix, in its own rotate order."""
+    values = cmds.getAttr(node + ".rotate")[0]
+    return om.MEulerRotation([math.radians(v) for v in values],
+                             cmds.getAttr(node + ".rotateOrder")).asMatrix()
+
+
+def _align_one(ctrl, bone):
+    """Re-express one controller in its bone's axes. True when changed.
+
+    `rotateAxis` takes the inverse of the knot-to-bone offset, `jointOrient`
+    takes what the controller reads at the build pose, and every rotate key is
+    conjugated into the new frame. The product the DAG consumes --
+    rotateAxis * rotate * jointOrient -- is unchanged by construction, so
+    nothing in the scene moves.
+    """
+    offset = axes.frame_offset(_world_rotation(bone), _world_rotation(ctrl))
+    reference = _local_rotation(ctrl)
+    rotate_axis, joint_orient = axes.orient_values(offset, reference)
+    order = cmds.getAttr(ctrl + ".rotateOrder")
+
+    times = merge_key_times([
+        cmds.keyframe(ctrl, attribute=attr, query=True, timeChange=True)
+        for attr in _ROTATE_CHANNELS])
+
+    # Read every key before writing any: the curves are the input.
+    poses = []
+    for time in times:
+        values = [cmds.keyframe(ctrl, attribute=attr, query=True,
+                                time=(time, time), valueChange=True)
+                  for attr in _ROTATE_CHANNELS]
+        if any(not v for v in values):
+            return False  # a channel is missing this key; leave it alone
+        poses.append((time, [v[0] for v in values]))
+
+    retargeted = []
+    previous = None
+    for time, values in poses:
+        rotation = om.MEulerRotation(
+            [math.radians(v) for v in values], order).asMatrix()
+        previous = axes.euler_degrees(
+            axes.retarget(rotation, offset, reference), order, previous)
+        retargeted.append((time, previous))
+
+    cmds.setAttr(ctrl + ".rotateAxis", *axes.euler_degrees(rotate_axis))
+    cmds.setAttr(ctrl + ".jointOrient", *axes.euler_degrees(joint_orient))
+    for time, values in retargeted:
+        for attr, value in zip(_ROTATE_CHANNELS, values):
+            cmds.keyframe(ctrl, attribute=attr, time=(time, time),
+                          valueChange=value, absolute=True)
+    if not times:
+        cmds.setAttr(ctrl + ".rotate", *axes.euler_degrees(
+            axes.retarget(reference, offset, reference), order))
+    return True
+
+
+def align_controllers(scene_map, only=None):
+    """Re-express every built FK controller in its bone's axes. Nothing moves.
+
+    Puts the controllers on the skeleton's own mirror convention, so a
+    mirrored pose reads as equal channel values on both sides -- which is what
+    Animbot's mirror and plain copy-paste between sides both need.
+
+    Order does not matter: every input is read from world transforms this
+    operation provably leaves alone.
+    """
+    aligned = 0
+    for chain_name, chain in CHAINS:
+        if only is not None and chain_name not in only:
+            continue
+        for joint in chain:
+            ctrl = controller_name(joint)
+            bone = scene_map.get(joint)
+            if not (cmds.objExists(ctrl) and bone and cmds.objExists(bone)):
+                continue
+            if _align_one(ctrl, bone):
+                aligned += 1
+    return aligned
+
+
 def _attach_chain(chain_name, chain, parent_of, targeted):
     """Hang one chain's root controller off its parent bone's controller.
 
@@ -708,11 +799,17 @@ def build_fk(scene_map, only=None):
                 attached += 1
 
             recorded += len(_record_fresh(chain_name, before))
+
+        # Last, once every chain is built and coupled: put the controllers on
+        # the skeleton's mirror convention. Creates nothing, so it stays out
+        # of the manifests, and moves nothing, so the animation is untouched.
+        aligned = align_controllers(scene_map, only)
     finally:
         cmds.undoInfo(closeChunk=True)
 
     message = "Built {0} FK controller(s), {1} chain(s) coupled, " \
-              "{2} node(s) recorded".format(created, attached, recorded)
+              "{2} node(s) recorded, {3} on bone axes".format(
+                  created, attached, recorded, aligned)
     if replaced:
         message += ", previous FK baked back"
     if not skinned:
