@@ -84,6 +84,59 @@ class TestOrientValues(unittest.TestCase):
         self.assertTrue(_close(joint_orient, offset * reference))
 
 
+class TestTotalRotation(unittest.TestCase):
+
+    def test_composes_in_the_order_maya_consumes(self):
+        rotate_axis, rotate, joint_orient = (_rot(5.0, 0.0, 0.0),
+                                             _rot(0.0, 10.0, 0.0),
+                                             _rot(0.0, 0.0, 15.0))
+        self.assertTrue(_close(
+            axes.total_rotation(rotate_axis, rotate, joint_orient),
+            rotate_axis * rotate * joint_orient))
+
+
+class TestRealignAnAlignedController(unittest.TestCase):
+    """The controller may already carry a rotateAxis and a jointOrient -- from
+    an earlier alignment, or from the rig it came out of. Working from the
+    total rotation rather than the rotate channel alone keeps the world
+    preserved in that case too, and makes a second pass a no-op."""
+
+    def setUp(self):
+        self.offset = _rot(90.0, 15.0, -40.0)
+        self.rotate_axis = _rot(7.0, -3.0, 21.0)
+        self.joint_orient = _rot(-12.0, 40.0, 4.0)
+
+    def _total(self, rotate):
+        return axes.total_rotation(self.rotate_axis, rotate, self.joint_orient)
+
+    def test_world_is_preserved_over_a_prior_orientation(self):
+        reference = self._total(_rot(11.0, -22.0, 33.0))
+        new_axis, new_orient = axes.orient_values(self.offset, reference)
+        for pose in (_rot(0.0, 0.0, 0.0), _rot(-30.0, 60.0, 120.0)):
+            total = self._total(pose)
+            retargeted = axes.retarget(total, self.offset, reference)
+            self.assertTrue(_close(new_axis * retargeted * new_orient, total),
+                            "world moved for a pose")
+
+    def test_a_second_pass_changes_nothing(self):
+        reference = self._total(_rot(11.0, -22.0, 33.0))
+        first_axis, first_orient = axes.orient_values(self.offset, reference)
+        pose = axes.retarget(self._total(_rot(-30.0, 60.0, 120.0)),
+                             self.offset, reference)
+
+        again_reference = axes.total_rotation(
+            first_axis, axes.retarget(reference, self.offset, reference),
+            first_orient)
+        second_axis, second_orient = axes.orient_values(self.offset,
+                                                        again_reference)
+        self.assertTrue(_close(second_axis, first_axis))
+        self.assertTrue(_close(second_orient, first_orient))
+        self.assertTrue(_close(
+            axes.retarget(axes.total_rotation(first_axis, pose, first_orient),
+                          self.offset, again_reference),
+            pose))
+
+
 class TestEulerDegrees(unittest.TestCase):
 
     def test_round_trips_a_rotation(self):

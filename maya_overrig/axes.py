@@ -30,6 +30,17 @@ def frame_offset(bone_matrix, knot_matrix):
     return _rotation_only(bone_matrix) * _rotation_only(knot_matrix).inverse()
 
 
+def total_rotation(rotate_axis, rotate, joint_orient):
+    """The local rotation the DAG consumes: rotateAxis * rotate * jointOrient.
+
+    Everything here works from this product rather than the rotate channel
+    alone, so a controller that already carries an orientation -- from an
+    earlier alignment, or from the rig it came out of -- is handled the same
+    as a fresh one, and a second pass is a no-op.
+    """
+    return rotate_axis * rotate * joint_orient
+
+
 def orient_values(offset, reference):
     """`(rotateAxis, jointOrient)` for a controller re-expressed against
     `reference`, the rotation it holds at the build pose."""

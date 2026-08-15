@@ -578,24 +578,38 @@ def _world_rotation(node):
         om.MMatrix(cmds.xform(node, query=True, worldSpace=True, matrix=True)))
 
 
-def _local_rotation(node):
-    """A node's `rotate` channel as a matrix, in its own rotate order."""
-    values = cmds.getAttr(node + ".rotate")[0]
+def _euler_matrix(values, order=0):
     return om.MEulerRotation([math.radians(v) for v in values],
-                             cmds.getAttr(node + ".rotateOrder")).asMatrix()
+                             order).asMatrix()
+
+
+def _local_total(node, rotate_values=None):
+    """The local rotation the DAG consumes: rotateAxis * rotate * jointOrient.
+
+    Working from the whole product rather than the rotate channel alone means
+    a controller that already carries an orientation is handled correctly, and
+    running the alignment twice changes nothing.
+    """
+    order = cmds.getAttr(node + ".rotateOrder")
+    if rotate_values is None:
+        rotate_values = cmds.getAttr(node + ".rotate")[0]
+    return axes.total_rotation(
+        _euler_matrix(cmds.getAttr(node + ".rotateAxis")[0]),
+        _euler_matrix(rotate_values, order),
+        _euler_matrix(cmds.getAttr(node + ".jointOrient")[0]))
 
 
 def _align_one(ctrl, bone):
     """Re-express one controller in its bone's axes. True when changed.
 
     `rotateAxis` takes the inverse of the knot-to-bone offset, `jointOrient`
-    takes what the controller reads at the build pose, and every rotate key is
+    takes what the controller holds at the build pose, and every rotate key is
     conjugated into the new frame. The product the DAG consumes --
     rotateAxis * rotate * jointOrient -- is unchanged by construction, so
     nothing in the scene moves.
     """
     offset = axes.frame_offset(_world_rotation(bone), _world_rotation(ctrl))
-    reference = _local_rotation(ctrl)
+    reference = _local_total(ctrl)
     rotate_axis, joint_orient = axes.orient_values(offset, reference)
     order = cmds.getAttr(ctrl + ".rotateOrder")
 
@@ -611,15 +625,13 @@ def _align_one(ctrl, bone):
                   for attr in _ROTATE_CHANNELS]
         if any(not v for v in values):
             return False  # a channel is missing this key; leave it alone
-        poses.append((time, [v[0] for v in values]))
+        poses.append((time, _local_total(ctrl, [v[0] for v in values])))
 
     retargeted = []
     previous = None
-    for time, values in poses:
-        rotation = om.MEulerRotation(
-            [math.radians(v) for v in values], order).asMatrix()
+    for time, total in poses:
         previous = axes.euler_degrees(
-            axes.retarget(rotation, offset, reference), order, previous)
+            axes.retarget(total, offset, reference), order, previous)
         retargeted.append((time, previous))
 
     cmds.setAttr(ctrl + ".rotateAxis", *axes.euler_degrees(rotate_axis))
