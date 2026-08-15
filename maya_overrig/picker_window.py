@@ -13,7 +13,7 @@ import maya.OpenMayaUI as omui
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import wrapInstance
 
-from maya_overrig import bodymap, builder, fkcontrols, naming
+from maya_overrig import bodymap, builder, fkcontrols, naming, pickerstate
 from maya_overrig.picker_view import MODE_ADD, MODE_TOGGLE, PickerView, mode_for
 
 WINDOW_OBJECT_NAME = "rigPickerWindow"
@@ -31,6 +31,10 @@ _BUTTON_STYLE = (
     "padding: 4px; border-radius: 3px; }"
     "QPushButton:hover { background: #4a4a4a; }"
     "QPushButton:disabled { color: #6a6a6a; }"
+)
+
+_TOGGLE_STYLE = _BUTTON_STYLE + (
+    "QPushButton:checked { background: #5a4a7a; color: #f0e8ff; }"
 )
 
 _CONNECT_STYLE = (
@@ -115,27 +119,26 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.build_button = QtWidgets.QPushButton("Build", bar)
         self.build_button.setStyleSheet(_BUTTON_STYLE)
         self.build_button.setToolTip(
-            "Create IK on both arms and both legs.\n"
-            "Pressing again rebuilds from scratch.")
+            "Build the rig over the current animation, replacing whatever\n"
+            "is there. Default: IK arms and legs, FK spine, head and\n"
+            "fingers. With FK Limbs on: FK controllers on every chain.")
         self.build_button.clicked.connect(lambda _checked=False: self.build_rig())
         row.addWidget(self.build_button)
 
-        self.fk_button = QtWidgets.QPushButton("Build FK", bar)
-        self.fk_button.setStyleSheet(_BUTTON_STYLE)
-        self.fk_button.setToolTip(
-            "Build FK controllers over the current animation via OverRig.\n"
-            "Real FK within each chain; existing motion moves onto the rings.\n"
-            "Pressing again bakes back and rebuilds.")
-        self.fk_button.clicked.connect(
-            lambda _checked=False: self.build_fk_controls())
-        row.addWidget(self.fk_button)
+        self.fk_limbs_button = QtWidgets.QPushButton("FK Limbs", bar)
+        self.fk_limbs_button.setStyleSheet(_TOGGLE_STYLE)
+        self.fk_limbs_button.setCheckable(True)
+        self.fk_limbs_button.setToolTip(
+            "When on, Build makes the arms and legs FK as well.")
+        row.addWidget(self.fk_limbs_button)
 
         self.switch_button = QtWidgets.QPushButton("Switch FK/IK", bar)
         self.switch_button.setStyleSheet(_BUTTON_STYLE)
         self.switch_button.setToolTip(
-            "Convert the selected arm or leg to the opposite rig type.\n"
-            "FK becomes IK, IK becomes FK; animation is re-baked.\n"
-            "Fingers survive an arm switch on the new hand control.")
+            "Convert the selected arms, legs or spine to the opposite rig\n"
+            "type. FK becomes IK, IK becomes FK; animation is re-baked.\n"
+            "Whatever hangs on the converted part survives on its new "
+            "control.")
         self.switch_button.clicked.connect(
             lambda _checked=False: self.switch_selected_limbs())
         row.addWidget(self.switch_button)
@@ -211,7 +214,6 @@ class PickerWindow(QtWidgets.QMainWindow):
         self._scene_map = naming.strip_prefix(raw, self._prefix)
 
         self._refresh_view()
-        self.sync_from_scene()
 
         matched = sum(1 for j in self._joint_to_id if j in self._scene_map)
         message = "Connected to {0} - {1}/{2} buttons matched".format(
@@ -234,17 +236,35 @@ class PickerWindow(QtWidgets.QMainWindow):
 
     # -- view state ----------------------------------------------------------
 
-    def _refresh_view(self):
-        """Dim every button whose joint is missing from the bound skeleton."""
-        available = [self._joint_to_id[j] for j in self._scene_map
-                     if j in self._joint_to_id]
-        self.view.set_available(available)
+    def _resolution(self):
+        """Button id -> controller path, for every control that exists now.
 
+        FK controllers are our own renames, so the name lookup is trusted --
+        the same trust align and Switch already place in it. IK controls go
+        through the limb manifests, never by bare name.
+        """
+        fk_nodes = {}
+        for joint in self._scene_map:
+            if joint not in self._joint_to_id:
+                continue
+            paths = cmds.ls(fkcontrols.controller_name(joint),
+                            long=True) or []
+            fk_nodes[joint] = paths[0] if paths else None
+
+        ik_nodes = {}
+        for button in bodymap.IK_BUTTONS:
+            ik_nodes[(button.limb, button.role)] = builder.ik_control(
+                button.limb, button.role)
+
+        return pickerstate.resolve(fk_nodes, ik_nodes)
+
+    def _refresh_view(self):
         root = self.bound_root()
         if root is None:
             self.bound_label.setText("not connected")
         else:
             self.bound_label.setText(root.split("|")[-1])
+        self.sync_from_scene()
 
     def _select_group(self, group):
         modifiers = QtWidgets.QApplication.keyboardModifiers()
@@ -257,17 +277,20 @@ class PickerWindow(QtWidgets.QMainWindow):
     # -- selection -----------------------------------------------------------
 
     def apply_selection(self, ids, mode):
-        """Translate a picker request into a Maya selection change."""
+        """Translate a picker request into a Maya selection of controllers.
+
+        Bones are never selected -- a button acts only when its controller
+        exists, which is also what the availability dimming shows.
+        """
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
 
-        paths = []
-        for button_id in ids:
-            joint = bodymap.button_by_id(button_id).joint
-            if joint in self._scene_map:
-                paths.append(self._scene_map[joint])
+        resolution = self._resolution()
+        paths = [resolution[b] for b in ids if b in resolution]
         if not paths:
+            self.status.showMessage(
+                "No controller built there yet - press Build first")
             return
 
         self._applying = True
@@ -284,43 +307,25 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.sync_from_scene()
 
     def build_rig(self):
-        """Create IK on both arms and both legs of the bound skeleton."""
+        """Build the rig, replacing any previous build of either kind.
+
+        Hybrid by default -- IK arms and legs, FK everything else; full FK
+        when the FK Limbs toggle is on. The teardown of whatever exists
+        happens inside `rebuild`, so mixed post-Switch states are fine.
+        """
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
-            return
-        if fkcontrols.has_fk():
-            # Two drivers on one bone; FK/IK coexistence is deliberately
-            # unresolved, so refuse rather than stack them.
-            self.status.showMessage(
-                "FK build present - bake it back first (Bake+Delete)")
             return
 
         self.build_button.setEnabled(False)
         try:
-            result = builder.build(self._scene_map)
+            message = fkcontrols.rebuild(
+                self._scene_map, fk_limbs=self.fk_limbs_button.isChecked())
         finally:
             self.build_button.setEnabled(True)
 
-        self.status.showMessage(result.message)
-        self.sync_from_scene()
-
-    def build_fk_controls(self):
-        """Build FK controllers over the current animation via OverRig knots."""
-        if not self._scene_map:
-            self.status.showMessage(_UNBOUND_MESSAGE)
-            return
-        if builder.has_build():
-            self.status.showMessage(
-                "IK build present - bake it back first (Bake+Delete)")
-            return
-
-        self.fk_button.setEnabled(False)
-        try:
-            _count, message = fkcontrols.build_fk(self._scene_map)
-        finally:
-            self.fk_button.setEnabled(True)
-
         self.status.showMessage(message)
+        self.sync_from_scene()
 
     def switch_selected_limbs(self):
         """Convert the selected arms/legs to the opposite rig type."""
@@ -384,17 +389,20 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.sync_from_scene()
 
     def sync_from_scene(self):
-        """Repaint button states from the current Maya selection.
+        """Repaint availability and selection from the scene as it is now.
 
-        Membership is tested on the full DAG path, never on the bare name --
-        otherwise selecting another character's `spine_03` would light up a
-        button that selects ours.
+        Availability is recomputed on every sync -- builds, bakes, switches
+        and manual deletes all change which controllers exist, and the sync
+        after each is what keeps the dimming honest. Selection membership is
+        tested on full DAG paths, never bare names -- otherwise another
+        character's same-named controller would light our buttons up.
         """
+        resolution = self._resolution()
+        self.view.set_available(list(resolution))
+
         selected = set(cmds.ls(selection=True, long=True) or [])
-        ids = [self._joint_to_id[joint]
-               for joint, dag in self._scene_map.items()
-               if dag in selected and joint in self._joint_to_id]
-        self.view.set_selected(ids)
+        self.view.set_selected(
+            pickerstate.selected_ids(resolution, selected))
 
     def _on_scene_selection_changed(self):
         if self._applying:
