@@ -48,14 +48,24 @@ def _world_pos(node):
     return cmds.xform(node, query=True, worldSpace=True, translation=True)
 
 
-def _make_control(name, position, radius):
-    """A flat ring at a world position, world-aligned axes.
+def _bone_axis_world(joint):
+    """The joint's local X (the bone axis) in world space."""
+    m = om.MMatrix(cmds.xform(joint, query=True, worldSpace=True,
+                              matrix=True))
+    x = om.MVector(m[0], m[1], m[2]).normal()
+    return (x.x, x.y, x.z)
 
-    World alignment matters twice: the twist up-vectors are expressed in the
-    up objects' spaces, and equal axes on the blend targets keep the mid
-    interpolation sane.
+
+def _make_control(name, position, radius, normal=(0, 1, 0)):
+    """A ring at a world position; world-aligned TRANSFORM, bone-facing SHAPE.
+
+    The transform stays world-aligned on purpose: capturing animation into
+    a bone-basis control ran its euler curves through gimbal zones and
+    cost degrees of chest rotation on deep bends (measured 1.1 -> 3.6 cm).
+    Only the drawn ring takes the bone's axis as its normal, so a bent or
+    twisted build pose still LOOKS like the pose.
     """
-    ctrl = cmds.circle(name=name, normal=(0, 1, 0), radius=radius,
+    ctrl = cmds.circle(name=name, normal=normal, radius=radius,
                        sections=_SECTIONS, constructionHistory=False)[0]
     shape = cmds.listRelatives(ctrl, shapes=True, fullPath=True)[0]
     cmds.setAttr(shape + ".overrideEnabled", 1)
@@ -67,11 +77,11 @@ def _make_control(name, position, radius):
     return ctrl
 
 
-def _buffered(name, position, radius):
+def _buffered(name, position, radius, normal=(0, 1, 0)):
     """Control under a zero group: the control's own channels start clean."""
     zero = cmds.group(empty=True, name=name + "_zero")
     cmds.xform(zero, worldSpace=True, translation=position)
-    ctrl = _make_control(name, position, radius)
+    ctrl = _make_control(name, position, radius, normal=normal)
     ctrl = cmds.parent(ctrl, zero)[0]
     return zero, ctrl
 
@@ -100,6 +110,21 @@ def _joint_up_vector(joint):
                               matrix=True))
     up = om.MVector(m[8], m[9], m[10]).normal()
     return (up.x, up.y, up.z)
+
+
+def _vector_in(node, world_vector):
+    """A world direction expressed in the node's space at the build pose.
+
+    The up vectors are read by the solver in the up OBJECTS' spaces, and
+    each end must reference ITS OWN joint: one shared world vector made the
+    solver un-twist a spine whose baked pose twisted more at the chest than
+    at the waist -- the second IK conversion after a twist shifted the
+    chest.
+    """
+    inverse = om.MMatrix(cmds.xform(node, query=True, worldSpace=True,
+                                    matrix=True)).inverse()
+    v = (om.MVector(*world_vector) * inverse).normal()
+    return (v.x, v.y, v.z)
 
 
 def _pelvis_driver_knot(pelvis):
@@ -159,8 +184,10 @@ def build_spine(joint_paths):
 
     grp = cmds.group(empty=True, name=GROUP)
 
-    bot_zero, bot = _buffered(BOT, p_bot, radius)
-    top_zero, top = _buffered(TOP, p_end, radius * 0.9)
+    bot_zero, bot = _buffered(BOT, p_bot, radius,
+                              normal=_bone_axis_world(pelvis or start))
+    top_zero, top = _buffered(TOP, p_end, radius * 0.9,
+                              normal=_bone_axis_world(end))
     bot_zero, top_zero = cmds.parent(bot_zero, top_zero, grp)
 
     # The zero groups ride the ROOT bone: the chest stays planted while the
@@ -185,7 +212,8 @@ def build_spine(joint_paths):
     cmds.pointConstraint(hip, top, blend, maintainOffset=True)
     orient = cmds.orientConstraint(hip, top, blend, maintainOffset=True)[0]
     cmds.setAttr(orient + ".interpType", 2)  # shortest -- no blend flips
-    mid_zero, mid = _buffered(MID, p_mid, radius * 0.7)
+    mid_zero, mid = _buffered(MID, p_mid, radius * 0.7,
+                              normal=_bone_axis_world(mid_joint))
     mid_zero = cmds.parent(mid_zero, blend)[0]
 
     # Capture: the controls take over the bones' current animation -- the
@@ -231,14 +259,17 @@ def build_spine(joint_paths):
 
     # Advanced twist, start/end -- this is what replaces any aim setup: the
     # roll interpolates from the hips (wherever their motion comes from) to
-    # the top control.
-    up = _joint_up_vector(mid_joint)
+    # the top control. Each end references ITS OWN joint's up axis in ITS
+    # OWN up object's space -- a twisted build pose twists more at the
+    # chest than at the waist.
     cmds.setAttr(ik + ".dTwistControlEnable", 1)
     cmds.setAttr(ik + ".dWorldUpType", 4)  # object rotation up (start/end)
     cmds.setAttr(ik + ".dForwardAxis", 0)  # bones aim +X on this skeleton
     cmds.setAttr(ik + ".dWorldUpAxis", 3)  # joint-local +Z is "up"
-    cmds.setAttr(ik + ".dWorldUpVector", *up)
-    cmds.setAttr(ik + ".dWorldUpVectorEnd", *up)
+    cmds.setAttr(ik + ".dWorldUpVector",
+                 *_vector_in(hip, _joint_up_vector(start)))
+    cmds.setAttr(ik + ".dWorldUpVectorEnd",
+                 *_vector_in(top, _joint_up_vector(end)))
     cmds.connectAttr(hip + ".worldMatrix[0]", ik + ".dWorldUpMatrix",
                      force=True)
     cmds.connectAttr(top + ".worldMatrix[0]", ik + ".dWorldUpMatrixEnd",
