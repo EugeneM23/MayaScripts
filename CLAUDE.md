@@ -152,15 +152,18 @@ the post-Switch IK state; switching a limb to FK brings them back.
 
 **Spine IK** is OUR spline rig (`spineik.py`), not an OverRig proc — the
 rebike version was built first and rejected by the user; see
-`2026-08-15-spline-ik-spine-design.md` (v3). Mechanism: degree-2 curve,
-clusters under world-aligned controls, `ikSplineSolver`
-**spine_01→spine_04** (the top control sits one bone below the chest tip by
-the user's request; spine_05 rides above it keeping its own local keys)
-with advanced twist (Object Rotation Up start/end, forward axis +X — the
-only axis the twist supports, and the bones' axis here); spine_04 is
-parent-constrained (position AND orientation) to the top control — solver-
-only placement left the chest up to 1.3 cm off the curve end and the error
-baked into every conversion. The middle control rides a blend group
+`2026-08-15-spline-ik-spine-design.md` (v4). Mechanism: a **degree-3 curve
+with one CV per driven bone** (spine_01..04, carriers hip/mid/mid/top) —
+the first cut used 3 CVs at degree 2, and a deep FK bend left that curve
+far shorter than the chain: the solver ran out of curve, the bones bunched
+up, and the then-position-pinned chest stretched the top segment ("the
+spine scales"). `ikSplineSolver` runs **spine_01→spine_04** (the top
+control sits one bone below the chest tip by the user's request; spine_05
+rides above it keeping its own local keys) with advanced twist (Object
+Rotation Up start/end, forward axis +X — the only axis the twist supports,
+and the bones' axis here); spine_04 takes the top control's ORIENTATION
+only — bone lengths are untouchable (verified: 0.000 segment deviation
+under a 74 cm bend). The middle control rides a blend group
 point+orient-constrained 50/50 between the hips and the top and stays
 animatable on top of that. **The bottom node carries the pelvis through
 `IKSpine_hipdrive`**: an identity group slipped above the pelvis controller
@@ -169,7 +172,10 @@ bottom node with the rest offset kept; the chain bot_zero ← root bone ←
 root controller is rigid, so the offset is exact on every frame by
 construction. `apply_Parent_in` was used here first and its attach
 machinery LATCHED under interaction — one push-and-restore of the bottom
-node shifted the pose permanently. Hidden
+node shifted the pose permanently. On a bare skeleton (Switch on a plain
+bone, no FK anywhere) the bottom node captures the pelvis animation and
+drives the bone directly; the bone's keys stay under the pairBlend and
+come straight back on teardown. Hidden
 followers: `IKSpine_hip` rides the pelvis BONE (carries the curve base CV
 and the mid blend); `IKSpine_chest` rides the spine_05 BONE (what neck and
 clavicle chains re-hang on, so spine_05's local keys keep carrying them);

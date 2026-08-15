@@ -148,9 +148,10 @@ def build_spine(joint_paths):
     range_start = cmds.playbackOptions(query=True, minTime=True)
     cmds.currentTime(range_start)
 
-    p_start = _world_pos(start)
+    positions = [_world_pos(j) for j in driven]
+    p_start = positions[0]
     p_mid = _world_pos(mid_joint)
-    p_end = _world_pos(end)
+    p_end = positions[-1]
     p_bot = _world_pos(pelvis) if pelvis else p_start
 
     height = abs(_world_pos(chest_bone)[1] - p_bot[1]) or 1.0
@@ -205,12 +206,17 @@ def build_spine(joint_paths):
     cmds.cutKey(driven, attribute=("rotateX", "rotateY", "rotateZ"),
                 clear=True)
 
-    # Drive: curve -> clusters (hip follower, mid, top) -> spline solver.
-    curve = cmds.curve(degree=2, point=[p_start, p_mid, p_end],
-                       name="IKSpine_curve")
+    # Drive: curve -> clusters (hip follower, mid, mid, top) -> solver.
+    # One CV per driven bone, degree 3: the curve hugs the bone polyline
+    # even in a deep bend. The first cut used 3 CVs at degree 2, and a
+    # strong FK bend left that curve much shorter than the chain -- the
+    # solver ran out of curve, the bones bunched up, and the pinned chest
+    # stretched the top segment: "the spine scales".
+    curve = cmds.curve(degree=3, point=positions, name="IKSpine_curve")
     cmds.setAttr(curve + ".inheritsTransform", 0)
     curve = cmds.parent(curve, grp)[0]
-    for index, carrier in ((0, hip), (1, mid), (2, top)):
+    carriers = [hip] + [mid] * (len(driven) - 2) + [top]
+    for index, carrier in enumerate(carriers):
         handle = cmds.cluster(curve + ".cv[{0}]".format(index),
                               name="IKSpine_cluster{0}".format(index))[1]
         handle = cmds.parent(handle, carrier)[0]
@@ -238,15 +244,13 @@ def build_spine(joint_paths):
     cmds.connectAttr(top + ".worldMatrix[0]", ik + ".dWorldUpMatrixEnd",
                      force=True)
 
-    # The last driven joint belongs to the top control EXACTLY -- position
-    # and orientation. The solver walks the chain along a degree-2 curve
-    # whose shape is only an approximation of the bone polyline, so left to
-    # the solver alone the chest landed up to 1.3 cm off and the error
-    # baked into every later conversion. Pinning spine_04 hides that
-    # difference as an invisible micro-stretch between spine_03 and
-    # spine_04 instead of a visible pose shift; spine_05, the anchor, the
-    # neck and the arms all ride it, so the visible body converts exactly.
-    cmds.parentConstraint(top, end, maintainOffset=True)
+    # The last driven joint takes the top control's ORIENTATION exactly;
+    # its position stays with the solver. A full position pin was tried
+    # and rejected: under a deep bend the curve-versus-chain mismatch
+    # grows, and the pin stretched the top spine segment to cover it --
+    # visible "scaling". With one CV per bone the solver's own placement
+    # is close, and bone lengths stay untouchable.
+    cmds.orientConstraint(top, end, maintainOffset=True)
 
     # The bottom node carries the hips WITHOUT re-baking anything: a drive
     # group slips above the pelvis controller at identity (relative
@@ -267,6 +271,16 @@ def build_spine(joint_paths):
             drive = cmds.parent(drive, parent, relative=True)[0]
         cmds.parent(cmds.ls(passenger, long=True)[0], drive, relative=True)
         cmds.parentConstraint(bot, drive, maintainOffset=True)
+    elif pelvis:
+        # Bare skeleton (Switch on a plain bone, no FK anywhere): the
+        # bottom node captures the pelvis animation and drives the bone
+        # directly. The bone's own keys stay underneath the pairBlend, so
+        # tearing the rig down hands them straight back.
+        temp = cmds.parentConstraint(pelvis, bot, maintainOffset=True)[0]
+        overrig.fast_bake([bot])
+        if cmds.objExists(temp):
+            cmds.delete(temp)
+        cmds.parentConstraint(bot, pelvis, maintainOffset=True)
 
     cmds.select(clear=True)
     return grp
