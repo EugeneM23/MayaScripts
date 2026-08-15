@@ -836,16 +836,17 @@ def _bake_fk_chains(scene_map, chains=None):
     matter beyond that: bones are baked while the knots still drive, then every
     doomed node goes at once.
     """
-    members_by_chain = {name: chain_members(name) for name, _ in CHAINS}
-    legacy = []
-    if chains is None:
-        wanted = [name for name, _ in CHAINS if members_by_chain[name]]
-        legacy = [m for m in _legacy_members() if cmds.objExists(m)]
-    else:
-        wanted = [c for c in chains if members_by_chain.get(c)]
+    def read_manifests():
+        """The recorded state, freshly resolved. Paths, so re-read after any
+        re-parenting: a stale path deletes nothing and leaks a live rig."""
+        members = {name: chain_members(name) for name, _ in CHAINS}
+        if chains is None:
+            return (members,
+                    [name for name, _ in CHAINS if members[name]],
+                    [m for m in _legacy_members() if cmds.objExists(m)])
+        return members, [c for c in chains if members.get(c)], []
 
-    wanted = [c for c in builder.order_by_nesting(wanted, members_by_chain)
-              if members_by_chain.get(c)]
+    members_by_chain, wanted, legacy = read_manifests()
     if not wanted and not legacy:
         return 0, []
 
@@ -854,13 +855,28 @@ def _bake_fk_chains(scene_map, chains=None):
     # into world space, so the limb keeps working and only its container
     # dies. Without this a Bake+Delete on root -- and the FK-first teardown
     # inside every full Build -- deletes four IK rigs unbaked.
+    #
+    # Lifting BEFORE the nesting expansion is what keeps the fingers alive: a
+    # finger chain sits inside the root controller only by way of the IK hand,
+    # and that hand survives. Expanding first would bake fingers the animator
+    # never selected -- containment through a surviving rig is not ownership
+    # (the same over-lift that once tore the fingers off a switching arm).
     doomed_preview = list(legacy)
     for c in wanted:
         doomed_preview.extend(members_by_chain[c])
     limb_members = {name: overrig.set_members(builder.limb_set(name))
                     for name, _ in builder.LIMBS}
-    for limb in limbs_riding_inside(limb_members, doomed_preview):
+    riding = limbs_riding_inside(limb_members, doomed_preview)
+    for limb in riding:
         lift_ik_off_root(limb)
+    if riding:
+        # Every recorded path under a lifted rig just changed.
+        members_by_chain, wanted, legacy = read_manifests()
+
+    wanted = [c for c in builder.order_by_nesting(wanted, members_by_chain)
+              if members_by_chain.get(c)]
+    if not wanted and not legacy:
+        return 0, []
 
     table = dict(CHAINS)
     if legacy:
