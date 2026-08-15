@@ -46,11 +46,24 @@ def ensure_loaded():
 
 
 def set_members(set_name):
-    """Long DAG paths of an object set's members, or [] if it does not exist."""
+    """Long DAG paths of an object set's members, or [] if it does not exist.
+
+    Resolved member by member: `sets -q` returns shortest-unique names, and
+    pushing the whole list through one `ls` call lets any name that became
+    ambiguous expand to EVERY match. OverRig reuses `fin_jnt1` inside every
+    limb rig, so that expansion put one arm's joints into the other arm's
+    manifest -- a bake then dragged the wrong limb in and aborted. Ambiguous
+    names are settled by actual set membership.
+    """
     if not cmds.objExists(set_name):
         return []
-    members = cmds.sets(set_name, query=True) or []
-    return cmds.ls(members, long=True) or []
+    out = []
+    for member in cmds.sets(set_name, query=True) or []:
+        paths = cmds.ls(member, long=True) or []
+        if len(paths) > 1:
+            paths = [p for p in paths if cmds.sets(p, isMember=set_name)]
+        out.extend(paths)
+    return list(dict.fromkeys(out))
 
 
 def build_ik(joint_paths):

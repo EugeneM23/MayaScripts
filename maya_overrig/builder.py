@@ -178,6 +178,33 @@ def _is_inside(path, container):
     return path.startswith(container + "|")
 
 
+def overlaps_any(path, others):
+    """Whether a path is one of `others`, inside one, or contains one.
+
+    Pure. This is the recorded-nodes shield: a rig root that overlaps
+    anything we have bookkept belongs to some manifest and must never be
+    reclaimed as an "unrecorded" rig.
+    """
+    for other in others:
+        if path == other or _is_inside(path, other) or _is_inside(other,
+                                                                  path):
+            return True
+    return False
+
+
+def recorded_members():
+    """Every node recorded in ANY RigPicker set, of either kind.
+
+    The FK chain sets share the RigPicker_ prefix with the limb sets, so a
+    name scan covers both without builder having to know fkcontrols'
+    constants (importing it would be a cycle).
+    """
+    members = []
+    for set_name in cmds.ls("RigPicker_*", type="objectSet") or []:
+        members.extend(overrig.set_members(set_name))
+    return members
+
+
 def order_by_nesting(limbs, limb_members):
     """Requested limbs plus any recorded limb nested inside them, innermost first.
 
@@ -245,9 +272,17 @@ def _scene_nodes():
     nodes, and a re-parented node's new path reads as a fresh node in a
     path diff. The spine manifest once swallowed the pelvis controller and
     both FK legs that way, and tearing the spine down deleted them all.
-    A UUID survives any re-parenting.
+    A UUID survives any re-parenting -- and any renaming, which a name diff
+    does not: OverRig reuses `fin_jnt1` in every limb rig, and the moment a
+    second one appears, the first one's listed name changes from
+    `fin_jnt11` to `...|fin_jnt11`, reading as a fresh node.
+
+    Two-step on purpose: `cmds.ls(uuid=True)` with NO object arguments
+    silently returns plain names, not uuids (measured in Maya 2027) -- the
+    flag only converts when objects are passed in.
     """
-    return set(cmds.ls(uuid=True) or [])
+    names = cmds.ls() or []
+    return set(cmds.ls(names, uuid=True) or [])
 
 
 def _fresh_paths(before, after):
@@ -335,8 +370,15 @@ def _reclaim(joint_paths):
     Walking out from the limb's own joints bounds this: it can only ever reach a
     rig that actually drives this limb. Returns (nodes removed, names left
     alone).
+
+    Everything recorded in ANY RigPicker set is shielded, before and after
+    the closure. Without the shield, one leftover constraint once led the
+    closure through the coupled FK controllers -- every controller is an
+    OverRig knot now, densely wired to its neighbours -- and it deleted the
+    whole rig except the limb being switched.
     """
     made = overrig.set_members(overrig.KNOT_SET)
+    recorded = recorded_members()
 
     doomed_roots = set()
     doomed_constraints = []
@@ -352,7 +394,8 @@ def _reclaim(joint_paths):
                                              destination=False) or [])
                        if cmds.objExists(t)]
             drivers = [cmds.ls(t, long=True)[0] for t in set(drivers)]
-            roots = unrecorded_rig_roots(drivers, made)
+            roots = [r for r in unrecorded_rig_roots(drivers, made)
+                     if not overlaps_any(r, recorded)]
             if roots:
                 doomed_roots.update(roots)
                 doomed_constraints.append(con)
@@ -362,7 +405,8 @@ def _reclaim(joint_paths):
     # A joint's constraints only lead to the part of the rig driving it; expand
     # to the whole setup so its controls do not survive as stray locators.
     if doomed_roots:
-        doomed_roots = set(_rig_closure(doomed_roots, made))
+        doomed_roots = {r for r in _rig_closure(doomed_roots, made)
+                        if not overlaps_any(r, recorded)}
 
     alive_roots = [r for r in sorted(doomed_roots) if cmds.objExists(r)]
     if alive_roots:
@@ -394,15 +438,28 @@ def bake_limbs(scene_map, limbs):
 
     doomed = [path for limb in limbs for path in members_by_limb.get(limb, [])]
     ours = [path for paths in members_by_limb.values() for path in paths]
-    intruders = foreign_knots_inside(doomed, ours,
+    outsiders = foreign_knots_inside(doomed, ours,
                                      overrig.set_members(overrig.KNOT_SET))
-    if intruders:
+    if outsiders:
+        # Two different refusals: truly foreign knots are the user's own
+        # work parked inside our rig; recorded knots from other sets are
+        # dependent chains (fingers on a hand, the pelvis in the spine's
+        # bottom node) that would die with the container unbaked.
+        recorded = set(recorded_members())
+        foreign = [n for n in outsiders if n not in recorded]
+        if foreign:
+            return BuildResult(
+                [], list(limbs), 0, 0,
+                "Aborted - {0} holds OverRig node(s) we did not build: {1}. "
+                "Move them out first.".format(
+                    ", ".join(limbs),
+                    ", ".join(n.split("|")[-1] for n in foreign[:4])))
         return BuildResult(
             [], list(limbs), 0, 0,
-            "Aborted - {0} holds OverRig node(s) we did not build: {1}. "
-            "Move them out first.".format(
+            "Aborted - recorded chain(s) still hang inside {0}: {1}. "
+            "Switch them across first, or bake everything.".format(
                 ", ".join(limbs),
-                ", ".join(n.split("|")[-1] for n in intruders[:4])))
+                ", ".join(n.split("|")[-1] for n in outsiders[:4])))
 
     resolved = dict(limb_joints(scene_map))
     baked = []

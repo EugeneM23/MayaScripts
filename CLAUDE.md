@@ -251,9 +251,18 @@ an IK spine that carries dependents through Bake+Delete refuses via the
 existing intruder guard — Switch or a full bake is the route.
 `apply_Parent_out`/`_in` semantics (both verified by experiment): selection is
 child-then-parent for `_in`, the child alone for `_out`; both re-bake into the
-new space with zero drift. The IK hand control is found through the limb's
-manifest, never by name. Mixed FK/IK states are now normal; `Bake+Delete`
+new space with zero drift. Mixed FK/IK states are now normal; `Bake+Delete`
 resolves selection to IK limbs first, then falls back to full-FK bake.
+
+**Fingers on an IK arm hang on `<limb>_IK_anchor`** — a hidden locator
+riding the hand BONE, parented under the IK end control (created on demand
+by `fkcontrols._limb_anchor`, recorded in the limb manifest) — never on the
+IK control itself: past full extension the control keeps travelling while
+the bone stops, and fingers riding the control tore off the hand (measured:
+hand-to-metacarpal 33 cm on a 40 cm overpull; with the anchor it stays at
+the 4.2 cm rest). The limbs themselves do NOT stretch — OverRig's rebike
+keeps bone lengths constant (measured identical under overpull) — so no
+extra no-stretch work was needed.
 
 Not built: neck switching and neck IK; per-chain FK bake from the UI (Switch
 does it internally); coupling a fresh FK limb to an IK spine's controls (it
@@ -354,16 +363,35 @@ C_parent` construction rather than a measurement.
    bakes innermost first.
 7. **Path prefixes need the separator.** `|foot_l_IK_feet_extra` is not a child of
    `|foot_l_IK_feet`. `_is_inside` guards this; a test locks it.
-8. **A path-based manifest diff records re-parented nodes as fresh.**
-   `apply_Parent_in` re-parents existing controllers, so their new long
-   paths appeared in the scene diff — the spine manifest swallowed the
-   pelvis controller and both FK legs, and tearing the spine down deleted
-   them. `builder._scene_nodes()` now snapshots UUIDs (survive any
-   re-parent) and `_fresh_paths` maps genuinely new ones back to paths.
+8. **The manifest diff must run on real UUIDs — and getting them is a trap
+   of its own.** A long-path diff records re-parented nodes as fresh
+   (`apply_Parent_in` re-parents controllers; the spine manifest swallowed
+   the pelvis controller and both FK legs). A NAME diff survives
+   re-parenting but breaks on duplicates: OverRig reuses `fin_jnt1` inside
+   every limb rig, and when a second appears, the first one's listed name
+   changes from `fin_jnt11` to `...|fin_jnt11` — both strings read as new,
+   and one arm's joints landed in the other arm's manifest (bakes then
+   dragged the wrong limb in and aborted). And the obvious fix is booby-
+   trapped: **`cmds.ls(uuid=True)` with no object arguments silently
+   returns plain names, not uuids** (measured in Maya 2027) — the flag only
+   converts when objects are passed. `builder._scene_nodes()` therefore
+   does `cmds.ls(cmds.ls(), uuid=True)`.
 9. **The finger chains sit inside the spine containers transitively.**
    Containment alone made a spine switch lift them to world, detaching them
    from the hand ("everything moves except the fingers").
    `spine_dependent_chains` filters riders by their own attach bone.
+10. **`sets -q` plus one bulk `ls` expands ambiguous names to every match.**
+   `overrig.set_members` resolves member by member and settles ambiguity
+   with `sets -isMember`, or duplicate short names leak other rigs' nodes
+   into a manifest.
+11. **A silently ignored bake abort builds FK over live IK.** That was the
+   user's "pieces of IK remain after the switch"; the leftover constraint
+   then led `_reclaim`'s closure through the coupled controllers (every
+   controller is an OverRig knot now) and deleted the whole rig except the
+   limb being switched. `switch_limbs` now respects the abort (riders are
+   re-hung, the reason reaches the status line), `_reclaim` never dooms
+   anything recorded in a RigPicker set, and the bake guard distinguishes
+   foreign knots from recorded dependent chains.
 
 ## Conventions
 

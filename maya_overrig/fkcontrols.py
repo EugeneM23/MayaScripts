@@ -949,11 +949,14 @@ def rebuild(scene_map, fk_limbs=False):
                                    only=list(builder.DEFAULT_IK))
             messages.append(result.message)
 
-            # Fingers must follow the IK hands; apply_Parent_in re-bakes
-            # them into the new space, exactly as a Switch does.
+            # Fingers must follow the IK hands -- via the hand-bone anchor,
+            # never the control: past full extension the control keeps
+            # travelling while the bone stops, and fingers riding the
+            # control tear off the hand.
             hung = 0
             for limb in ("arm_l", "arm_r"):
-                target = builder.ik_control(limb, "end")
+                target = (_limb_anchor(scene_map, limb)
+                          or builder.ik_control(limb, "end"))
                 if not target:
                     continue
                 for chain in finger_chains_for(limb):
@@ -1032,9 +1035,9 @@ def _spine_dependents():
     return riders
 
 
-def _spine_anchor(mark):
-    """A named helper inside the spine IK manifest, exact leaf match."""
-    for member in overrig.set_members(builder.limb_set("spine")):
+def _anchor_in(set_name, mark):
+    """A named helper inside a manifest set, exact leaf match."""
+    for member in overrig.set_members(set_name):
         if not cmds.objExists(member):
             continue
         leaf = member.split("|")[-1]
@@ -1042,6 +1045,66 @@ def _spine_anchor(mark):
                             and leaf[len(mark):].isdigit()):
             return member
     return None
+
+
+def _spine_anchor(mark):
+    """A named helper inside the spine IK manifest, exact leaf match."""
+    return _anchor_in(builder.limb_set("spine"), mark)
+
+
+def _limb_anchor(scene_map, limb):
+    """What finger chains hang on: a locator riding the limb's end BONE.
+
+    Never the IK control itself: past full extension the control keeps
+    travelling while the bone stops, and fingers riding the control tear
+    off the hand (measured live: hand-to-metacarpal 33 cm on a 40 cm
+    overpull, rest 4.2 -- "the fingers stretch"). Created on demand,
+    recorded into the limb's manifest, parented under the IK end control
+    so it lives and dies with the rig.
+    """
+    mark = limb + "_IK_anchor"
+    existing = _anchor_in(builder.limb_set(limb), mark)
+    if existing:
+        return existing
+    ctrl = builder.ik_control(limb, "end")
+    end_bone = scene_map.get(dict(builder.LIMBS)[limb][-1])
+    if not (ctrl and end_bone and cmds.objExists(end_bone)):
+        return None
+    loc = cmds.spaceLocator(name=mark)[0]
+    cmds.xform(loc, worldSpace=True, translation=cmds.xform(
+        end_bone, query=True, worldSpace=True, translation=True))
+    loc = cmds.parent(loc, ctrl)[0]
+    cmds.parentConstraint(end_bone, loc, maintainOffset=True)
+    cmds.setAttr(loc + ".visibility", 0)
+    cmds.sets(loc, addElement=builder.limb_set(limb))
+    return cmds.ls(loc, long=True)[0]
+
+
+def _rehang_riders(scene_map, limb, riders, now_ik):
+    """Hang lifted rider chains back onto whatever the limb offers now.
+
+    Used both by the normal switch tail and by the abort path -- a refused
+    bake must not leave the riders parked in world.
+    """
+    table = dict(CHAINS)
+    if limb == "spine":
+        parent_of = _parent_map()
+        targeted = {j for _, chain in CHAINS for j in chain}
+        for chain in riders:
+            bone = attach_parent(table[chain][0], parent_of, targeted)
+            target = _spine_rehang_target(bone, now_ik=now_ik)
+            ctrl = controller_name(table[chain][0])
+            if target and cmds.objExists(ctrl):
+                _parent_in(ctrl, target, chain)
+        return
+    if now_ik:
+        target = _limb_anchor(scene_map, limb) or _ik_hand_control(limb)
+    else:
+        target = controller_name(table[limb][-1])
+    for chain in riders:
+        ctrl = controller_name(table[chain][0])
+        if target and cmds.objExists(ctrl) and cmds.objExists(target):
+            _parent_in(ctrl, target, chain)
 
 
 def _spine_rehang_target(bone, now_ik):
@@ -1107,36 +1170,25 @@ def switch_limbs(scene_map, limbs):
             if is_fk:
                 _bake_fk_chains(scene_map, [limb])
                 builder.build(scene_map, only=[limb])
-                target = _ik_hand_control(limb)
                 done.append(limb + " -> IK")
+                now_ik = True
             else:
-                builder.bake_limbs(scene_map, [limb])
+                bake = builder.bake_limbs(scene_map, [limb])
+                if bake.message.startswith("Aborted"):
+                    # Building FK over a live IK is exactly how "leftover
+                    # IK pieces" happen. Refuse the limb, surface the
+                    # reason, and put the riders back where they were.
+                    skipped.append(limb)
+                    notes.append(bake.message)
+                    _rehang_riders(scene_map, limb, riders, now_ik=True)
+                    continue
                 _count, build_message = build_fk(scene_map, only=[limb])
-                target = controller_name(table[limb][-1])
                 if "0 chain(s) coupled" in build_message:
                     notes.append(limb + " uncoupled (no parent control)")
                 done.append(limb + " -> FK")
+                now_ik = False
 
-            if limb == "spine":
-                # Each rider goes where its attach bone now lives, not onto
-                # one shared control: the neck and clavicles follow the
-                # chest, the thighs follow the pelvis.
-                parent_of = _parent_map()
-                targeted = {j for _, chain in CHAINS for j in chain}
-                for chain in riders:
-                    bone = attach_parent(table[chain][0], parent_of, targeted)
-                    target = _spine_rehang_target(bone, now_ik=is_fk)
-                    ctrl = controller_name(table[chain][0])
-                    if target and cmds.objExists(ctrl):
-                        _parent_in(ctrl, target, chain)
-                    else:
-                        notes.append(chain + " left in world")
-                continue
-
-            for chain in riders:
-                ctrl = controller_name(table[chain][0])
-                if target and cmds.objExists(ctrl) and cmds.objExists(target):
-                    _parent_in(ctrl, target, chain)
+            _rehang_riders(scene_map, limb, riders, now_ik=now_ik)
     finally:
         cmds.undoInfo(closeChunk=True)
 
