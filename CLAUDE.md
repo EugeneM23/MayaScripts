@@ -96,6 +96,7 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `picker_view.py` | Qt scene, button items, painting, input | **Qt only** |
 | `picker_window.py` | Window, toolbar, Maya selection wiring, scriptJob | Qt + `maya.cmds` |
 | `overrig.py` | Thin binding to the MEL toolset, no policy | `maya.cmds`, `maya.mel` |
+| `spineik.py` | The spline-IK spine rig, self-contained | `maya.cmds`, `maya.api.OpenMaya`, `overrig` |
 | `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig` |
 | `axes.py` | Rotation algebra for controller axes, pure | `maya.api.OpenMaya` only |
 
@@ -149,17 +150,28 @@ rig — IK arms and legs (`builder.DEFAULT_IK`), FK on root/spine/neck/fingers
 chains (the old Build FK). No clavicle or ball controls in hybrid — same as
 the post-Switch IK state; switching a limb to FK brings them back.
 
-**Spine IK** is the same `apply_rebike_3_or_more_object_to_IK` call on exactly
-**(pelvis, spine_03, spine_05)** — the 3-joint form, deliberately: its output
-is the three named controls the user asked for — `pelvis_IK_strech_gr`
-(bottom), `spine_03_IK_knee` (centre), `spine_05_IK_feet` (top). Selecting
-more joints would take the MEL's `>3` "spider" branch (per-vertebra
-`inner_rotate_ctr` twist controls) — a different tool. spine_01/02/04 keep
-their baked animation and ride their driven ancestors. The spine is a fifth
-entry in `builder.LIMBS`, so manifests, bake, resolve and nesting all cover it
-generically; it is NOT in `DEFAULT_IK` — spine IK is reached through Switch.
-IK controls are addressed by role via `builder.ik_control(limb, role)` with
-`IK_ROLES = {end: _IK_feet, pole: _IK_knee, base: _IK_strech_gr}`.
+**Spine IK** is OUR spline rig (`spineik.py`), not an OverRig proc — the
+rebike version was built first and rejected by the user; see
+`2026-08-15-spline-ik-spine-design.md`. Mechanism: degree-2 curve through
+spine_01/03/05, clusters under three world-aligned controls, `ikSplineSolver`
+spine_01→spine_05 with advanced twist (Object Rotation Up start/end, up
+objects = bottom/top controls, forward axis +X — the only axis the twist
+supports, and the bones' axis here), chest orient-constrained to the top
+control. The middle control rides a blend group point+orient-constrained
+50/50 between bottom and top and stays animatable on top of that. All zero
+groups parent-constrain to the pelvis BONE — never a controller by name.
+**The pelvis is its own single-knot FK chain** (`CHAINS` has `pelvis`
+separate from `spine`) so its controller survives a spine switch; thigh
+chains never move during one. The spine is the fifth entry in
+`builder.LIMBS` (all five spine bones), NOT in `DEFAULT_IK` — spine IK is
+reached through Switch. Controls resolve by role via
+`builder.ik_control(limb, role)`: limbs match `IK_ROLES` substrings,
+the spine matches `SPINE_IK_MARKS` leaf names EXACTLY (a substring match
+grabbed `IKSpine_mid_blend` before the control). Build converts animation by
+capture-bake onto the controls, then CUTS the bones' rotation keys — they
+would fight the solver through pairBlends; bake-back restores them. Chest
+and base convert exactly; interior bones are a curve+twist projection
+(measured 0.00–0.08 cm here).
 
 **Bake+Delete** bakes back to FK whichever limbs the selection touches — an IK
 control, any descendant of one, or the limb's source joints (so the picker's own
@@ -218,13 +230,16 @@ the opposite rig type, per limb, animation re-baked at every step
 bake). Fingers ride through an arm switch: `apply_Parent_out` lifts them to
 world, the arm converts, `apply_Parent_in` hangs them on the new hand control
 — they are DAG children of what gets deleted, so anything less loses them.
-The spine carries the same bracket writ large: chains whose root controller
-hangs inside the spine's nodes (neck, FK clavicles, FK thighs — found by
-`dependent_chains`, pure) are lifted out, the spine converts, and each is
-re-hung on the control now driving its attach bone — `spine_05` → the top IK
-control, `pelvis` → the base group (`SPINE_REHANG`), or the FK controllers on
-the way back. Baking an IK spine that carries dependents through Bake+Delete
-refuses via the existing intruder guard — Switch or a full bake is the route.
+The spine carries the same bracket writ large, with one hard-won filter:
+`spine_dependent_chains` (pure) lifts only chains whose OWN attach bone the
+spine re-hangs (`SPINE_REHANG = {spine_05: end}` — neck and FK clavicles).
+Containment alone is NOT enough: finger chains sit inside the spine
+containers transitively through the FK arm, and lifting them detached the
+fingers from the hand — "everything moves except the fingers", a real
+user-reported bug. Deeper chains ride their parent chain's subtree. Thighs
+hang on the pelvis controller, which survives the switch untouched. Baking
+an IK spine that carries dependents through Bake+Delete refuses via the
+existing intruder guard — Switch or a full bake is the route.
 `apply_Parent_out`/`_in` semantics (both verified by experiment): selection is
 child-then-parent for `_in`, the child alone for `_out`; both re-bake into the
 new space with zero drift. The IK hand control is found through the limb's
@@ -236,11 +251,14 @@ does it internally); coupling a fresh FK limb to an IK spine's controls (it
 stays world-space, noted in the status line); docking; mirror-select; the
 pose-snapshot safety before Build (proposed, not confirmed).
 
-**Live verification pending** (written, not yet run — the command port was
-closed while this was built): `verify_spine_ik.py`, `verify_hybrid_build.py`,
-`verify_spine_switch.py` in `docs/superpowers/plans/`. Run all three through
-the bridge before trusting the spine IK and hybrid Build in production; the
-unit suite alone has been wrong before.
+**Live verification: all green** (run in the Manny scene with animated
+pelvis/spine): `verify_spine_ik.py`, `verify_spine_switch.py`,
+`verify_hybrid_build.py` in `docs/superpowers/plans/`. Bridge-script
+hygiene, learned the hard way: never `cmds.undo()` inside a bridge script
+(the whole script is one command — undo reverts a whole prior chunk and the
+damage gets baked in), and never write literal rest values into constrained
+or animated channels — read the value first and write it back (`pushed`
+context manager in the verify scripts).
 
 Known gap in the axis alignment: **the reference is the pose at build time**, so
 `Switch FK/IK` — which rebuilds one limb through `build_fk(only=[limb])` — zeroes
@@ -265,7 +283,8 @@ C_parent` construction rather than a measurement.
   controls branch** — `_IK_strech_gr` / `_IK_knee` / `_IK_feet` renames. Four
   or more takes a different branch entirely ("spider leg": `base_IK_ctrl`,
   `IK_knee_ctr`, one `inner_rotate_ctr` per extra joint, unnamed `Z_IK`
-  groups). The spine IK deliberately uses the 3-joint form.
+  groups). Neither fits a torso — that is why the spine IK is our own
+  spline rig in `spineik.py`.
 - **The IK proc reads the timeline range** (`timeControl -q -ra`) and bakes across
   it. Not a no-op even on an unanimated skeleton.
 - **`OverRig_knots` does not record everything OverRig creates.** It holds the

@@ -12,22 +12,18 @@ from maya_overrig import naming, overrig
 
 BUILD_SET_PREFIX = "RigPicker_build_"
 
-# Three joints per limb, in the order OverRig's IK proc requires:
-# root, middle, end. Any other order produces a wrong chain.
+# Arms and legs: three joints each, in the order OverRig's IK proc requires
+# -- root, middle, end. Any other order produces a wrong chain.
 #
-# The spine deliberately uses the same 3-joint form on (pelvis, spine_03,
-# spine_05): that keeps the rebike proc on the branch whose output is the
-# three named controls -- <root>_IK_strech_gr (bottom), <middle>_IK_knee
-# (centre), <end>_IK_feet (top). Selecting the whole spine instead would take
-# the >3 "spider" branch, which builds per-vertebra twist controls -- a
-# different tool. spine_01/02/04 keep their baked animation and ride on
-# whichever driven joint is their ancestor.
+# The spine is different: all five spine bones, driven by our own spline IK
+# (spineik.py, not an OverRig proc). The pelvis stays out on purpose -- its
+# FK controller survives a spine switch untouched.
 LIMBS = (
     ("arm_l", ("upperarm_l", "lowerarm_l", "hand_l")),
     ("arm_r", ("upperarm_r", "lowerarm_r", "hand_r")),
     ("leg_l", ("thigh_l", "calf_l", "foot_l")),
     ("leg_r", ("thigh_r", "calf_r", "foot_r")),
-    ("spine", ("pelvis", "spine_03", "spine_05")),
+    ("spine", ("spine_01", "spine_02", "spine_03", "spine_04", "spine_05")),
 )
 
 # What the default (hybrid) Build creates as IK. The spine stays FK until the
@@ -37,6 +33,11 @@ DEFAULT_IK = ("arm_l", "arm_r", "leg_l", "leg_r")
 # How apply_rebike_3_or_more_object_to_IK names its three outputs, read
 # verbatim from the MEL's rename lines. Role -> leaf-name mark.
 IK_ROLES = {"end": "_IK_feet", "pole": "_IK_knee", "base": "_IK_strech_gr"}
+
+# The spine IK is ours (spineik.py), so its controls carry our names. Role
+# addressing stays uniform: end = top/chest, pole = mid, base = bottom.
+SPINE_IK_MARKS = {"end": "IKSpine_top", "pole": "IKSpine_mid",
+                  "base": "IKSpine_bot"}
 
 BuildResult = namedtuple("BuildResult", "built skipped created removed message")
 
@@ -73,11 +74,25 @@ def ik_control(limb, role):
     bare scene name -- OverRig suffixes renames on collision, so the search
     space is the limb's own recorded nodes.
     """
-    mark = IK_ROLES[role]
+    if limb == "spine":
+        # Our own nodes: the mark must BE the leaf name (modulo a numeric
+        # suffix), or IKSpine_mid would match its own _blend and _zero
+        # groups before the control itself.
+        mark = SPINE_IK_MARKS[role]
+
+        def hit(leaf):
+            return leaf == mark or (
+                leaf.startswith(mark) and leaf[len(mark):].isdigit())
+    else:
+        mark = IK_ROLES[role]
+
+        def hit(leaf):
+            return mark in leaf
+
     for member in overrig.set_members(limb_set(limb)):
         if not cmds.objExists(member):
             continue
-        if mark in member.split("|")[-1] and cmds.objectType(member) in (
+        if hit(member.split("|")[-1]) and cmds.objectType(member) in (
                 "transform", "joint"):
             return member
     return None
@@ -465,7 +480,12 @@ def build(scene_map, only=None):
 
         for name, joints in resolvable:
             before = _scene_nodes()
-            overrig.build_ik(joints)
+            if name == "spine":
+                # Our own spline IK -- OverRig's rebike is a limb tool.
+                from maya_overrig import spineik
+                spineik.build_spine(joints)
+            else:
+                overrig.build_ik(joints)
             after = _scene_nodes()
 
             fresh = sorted(n for n in (after - before) if _recordable(n))

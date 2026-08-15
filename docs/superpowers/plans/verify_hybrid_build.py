@@ -116,7 +116,8 @@ check("picker: spine IK circles dimmed", "spine_ik_top" not in resolution)
 message = fkcontrols.rebuild(smap, fk_limbs=True)
 print("\nfull FK build:", message, "\n")
 check("no IK left", builder.built_limbs() == [], str(builder.built_limbs()))
-check("all 17 chains FK", len(fkcontrols.built_fk_chains()) == 17,
+check("all chains FK",
+      len(fkcontrols.built_fk_chains()) == len(fkcontrols.CHAINS),
       str(len(fkcontrols.built_fk_chains())))
 check("hand animation survived the flip",
       drift_of("hand_l", hand_ref) < 0.5,

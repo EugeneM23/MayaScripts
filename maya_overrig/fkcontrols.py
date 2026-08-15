@@ -34,10 +34,10 @@ LIMB_CHAINS = ("arm_l", "arm_r", "leg_l", "leg_r")
 SWITCHABLE = LIMB_CHAINS + ("spine",)
 
 # Where a chain re-hangs when the spine it sat on goes IK: the attach bone
-# maps to the IK role that now carries it. spine_05 is driven by the end
-# control; the pelvis follows the base group's attach machinery, so anything
-# hung on the base group follows the pelvis exactly.
-SPINE_REHANG = {"spine_05": "end", "pelvis": "base"}
+# maps to the IK role that now carries it. Only chains on the chest move --
+# the pelvis keeps its own FK controller through a spine switch, so the
+# thigh chains never leave it.
+SPINE_REHANG = {"spine_05": "end"}
 
 
 def _finger_chains():
@@ -58,8 +58,11 @@ def _finger_chains():
 # Chains are independent of each other on purpose.
 CHAINS = tuple([
     ("root", ("root",)),
-    ("spine", ("pelvis", "spine_01", "spine_02", "spine_03",
-               "spine_04", "spine_05")),
+    # The pelvis is deliberately its own single-knot chain: a spine switch
+    # must leave the pelvis controller standing, so they cannot share a
+    # manifest.
+    ("pelvis", ("pelvis",)),
+    ("spine", ("spine_01", "spine_02", "spine_03", "spine_04", "spine_05")),
     ("neck", ("neck_01", "neck_02", "head")),
     ("arm_l", ("clavicle_l", "upperarm_l", "lowerarm_l", "hand_l")),
     ("arm_r", ("clavicle_r", "upperarm_r", "lowerarm_r", "hand_r")),
@@ -134,6 +137,24 @@ def dependent_chains(root_ctrls, containers):
         if any(builder._is_inside(path, container)
                for container in containers):
             found.append(chain_name)
+    return found
+
+
+def spine_dependent_chains(root_ctrls, containers, parent_of, targeted):
+    """Chains a spine switch must lift out and re-hang. Pure.
+
+    Containment alone is not enough: a finger chain inside an FK arm sits
+    inside the spine containers too, transitively -- lifting it detached the
+    fingers from the hand (moving the spine IK moved everything except the
+    fingers). Only chains whose OWN attach bone the spine re-hangs
+    (SPINE_REHANG) are lifted; deeper chains ride their parent chain.
+    """
+    table = dict(CHAINS)
+    found = []
+    for chain in dependent_chains(root_ctrls, containers):
+        bone = attach_parent(table[chain][0], parent_of, targeted)
+        if bone in SPINE_REHANG:
+            found.append(chain)
     return found
 
 
@@ -973,10 +994,12 @@ def _ik_hand_control(limb):
 
 
 def _spine_dependents():
-    """Chains whose root controller currently hangs inside the spine's nodes.
+    """Chains whose root controller currently hangs on the spine's chest.
 
     Both representations count as containers: FK chain members before an
-    FK -> IK switch, IK manifest members before the way back.
+    FK -> IK switch, IK manifest members before the way back. Chains nested
+    deeper (fingers on a hand) are filtered out by attach bone -- they ride
+    their parent chain's subtree.
     """
     containers = [m for m in (chain_members("spine")
                               + overrig.set_members(builder.limb_set("spine")))
@@ -989,7 +1012,9 @@ def _spine_dependents():
             continue
         paths = cmds.ls(controller_name(chain[0]), long=True) or []
         root_ctrls[chain_name] = paths[0] if paths else None
-    return dependent_chains(root_ctrls, containers)
+    targeted = {j for _, chain in CHAINS for j in chain}
+    return spine_dependent_chains(root_ctrls, containers, _parent_map(),
+                                  targeted)
 
 
 def _spine_rehang_target(bone, now_ik):

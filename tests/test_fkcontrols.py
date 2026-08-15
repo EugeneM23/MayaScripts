@@ -14,17 +14,24 @@ class TestChains(unittest.TestCase):
         table = dict(fkcontrols.CHAINS)
         self.assertEqual(table["root"], ("root",))
 
-    def test_seventeen_chains(self):
-        self.assertEqual(len(fkcontrols.CHAINS), 17)
+    def test_pelvis_is_its_own_single_knot_chain(self):
+        """The pelvis controller must survive a spine switch untouched, so
+        it cannot share a chain (and a manifest) with the spine."""
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(table["pelvis"], ("pelvis",))
+
+    def test_eighteen_chains(self):
+        self.assertEqual(len(fkcontrols.CHAINS), 18)
 
     def test_chain_names_are_unique(self):
         names = [name for name, _ in fkcontrols.CHAINS]
         self.assertEqual(len(names), len(set(names)))
 
-    def test_spine_chain_runs_pelvis_upward(self):
+    def test_spine_chain_is_the_five_spine_bones(self):
         table = dict(fkcontrols.CHAINS)
-        self.assertEqual(table["spine"][0], "pelvis")
-        self.assertEqual(table["spine"][-1], "spine_05")
+        self.assertEqual(table["spine"],
+                         ("spine_01", "spine_02", "spine_03",
+                          "spine_04", "spine_05"))
 
     def test_leg_chains_include_the_ball(self):
         table = dict(fkcontrols.CHAINS)
@@ -163,6 +170,7 @@ class TestHybridFkChains(unittest.TestCase):
 
     def test_torso_and_fingers_stay_fk(self):
         self.assertIn("root", fkcontrols.HYBRID_FK_CHAINS)
+        self.assertIn("pelvis", fkcontrols.HYBRID_FK_CHAINS)
         self.assertIn("spine", fkcontrols.HYBRID_FK_CHAINS)
         self.assertIn("neck", fkcontrols.HYBRID_FK_CHAINS)
         self.assertIn("index_l", fkcontrols.HYBRID_FK_CHAINS)
@@ -172,18 +180,64 @@ class TestHybridFkChains(unittest.TestCase):
         for name in fkcontrols.LIMB_CHAINS:
             self.assertNotIn(name, fkcontrols.HYBRID_FK_CHAINS)
 
-    def test_thirteen_chains(self):
-        """17 chains minus the four IK limbs."""
-        self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 13)
+    def test_fourteen_chains(self):
+        """18 chains minus the four IK limbs."""
+        self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 14)
 
 
 class TestSpineRehang(unittest.TestCase):
 
-    def test_targets_cover_both_attach_bones(self):
-        """Chains re-hang where their attach bone now lives: spine_05 is
-        driven by the end control, the pelvis follows the base group."""
-        self.assertEqual(fkcontrols.SPINE_REHANG,
-                         {"spine_05": "end", "pelvis": "base"})
+    def test_only_the_chest_re_hangs(self):
+        """The pelvis keeps its own FK controller through a spine switch, so
+        the thigh chains never move; only chains on spine_05 re-hang, onto
+        the top IK node."""
+        self.assertEqual(fkcontrols.SPINE_REHANG, {"spine_05": "end"})
+
+
+class TestSpineDependentChains(unittest.TestCase):
+    """The bug this guards: dependent_chains alone catches every chain whose
+    controller sits ANYWHERE inside the spine containers -- including finger
+    chains riding inside an FK arm. Lifting those to world detached them from
+    the hand: moving the spine IK moved everything except the fingers."""
+
+    PARENT_OF = {
+        "root": None, "pelvis": "root",
+        "spine_01": "pelvis", "spine_02": "spine_01", "spine_03": "spine_02",
+        "spine_04": "spine_03", "spine_05": "spine_04",
+        "neck_01": "spine_05", "clavicle_l": "spine_05",
+        "upperarm_l": "clavicle_l", "lowerarm_l": "upperarm_l",
+        "hand_l": "lowerarm_l", "index_metacarpal_l": "hand_l",
+        "thigh_l": "pelvis",
+    }
+
+    CTRLS = {
+        "neck": "|spine_01_FK_ctrl|spine_05_FK_ctrl|neck_01_FK_ctrl",
+        "arm_l": "|spine_01_FK_ctrl|spine_05_FK_ctrl|clavicle_l_FK_ctrl",
+        "index_l": "|spine_01_FK_ctrl|spine_05_FK_ctrl|clavicle_l_FK_ctrl"
+                   "|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl",
+        "leg_l": "|pelvis_FK_ctrl|thigh_l_FK_ctrl",
+    }
+
+    def find(self, containers):
+        targeted = set(self.PARENT_OF)
+        return fkcontrols.spine_dependent_chains(
+            self.CTRLS, containers, self.PARENT_OF, targeted)
+
+    def test_chest_chains_are_lifted(self):
+        found = self.find(["|spine_01_FK_ctrl"])
+        self.assertIn("neck", found)
+        self.assertIn("arm_l", found)
+
+    def test_fingers_ride_their_arm_and_are_left_alone(self):
+        found = self.find(["|spine_01_FK_ctrl"])
+        self.assertNotIn("index_l", found)
+
+    def test_thighs_stay_on_the_pelvis_controller(self):
+        found = self.find(["|spine_01_FK_ctrl", "|pelvis_FK_ctrl"])
+        self.assertNotIn("leg_l", found)
+
+    def test_nothing_inside_no_containers(self):
+        self.assertEqual(self.find(["|elsewhere"]), [])
 
 
 class TestAttachParent(unittest.TestCase):

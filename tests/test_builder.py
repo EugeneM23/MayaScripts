@@ -12,14 +12,15 @@ class TestLimbTable(unittest.TestCase):
         self.assertEqual([name for name, _ in builder.LIMBS],
                          ["arm_l", "arm_r", "leg_l", "leg_r", "spine"])
 
-    def test_three_joints_each(self):
+    def test_three_joints_per_arm_and_leg(self):
         for name, joints in builder.LIMBS:
-            self.assertEqual(len(joints), 3, name)
+            if name != "spine":
+                self.assertEqual(len(joints), 3, name)
 
-    def test_fifteen_distinct_joints(self):
+    def test_seventeen_distinct_joints(self):
         every = [j for _, joints in builder.LIMBS for j in joints]
-        self.assertEqual(len(every), 15)
-        self.assertEqual(len(set(every)), 15)
+        self.assertEqual(len(every), 17)
+        self.assertEqual(len(set(every)), 17)
 
     def test_every_joint_exists_in_the_body_map(self):
         known = {b.joint for b in bodymap.BUTTONS}
@@ -32,12 +33,13 @@ class TestLimbTable(unittest.TestCase):
         self.assertEqual(table["leg_l"], ("thigh_l", "calf_l", "foot_l"))
         self.assertEqual(table["arm_r"], ("upperarm_r", "lowerarm_r", "hand_r"))
 
-    def test_spine_runs_pelvis_to_chest(self):
-        """Root, middle, end -- the same 3-joint form the limbs use, so the
-        rebike proc takes the branch whose output is the three named controls
-        the user asked for: bottom, centre, top."""
+    def test_spine_is_the_five_spine_bones(self):
+        """The spline IK drives every spine bone; the pelvis stays out --
+        its FK controller survives a spine switch untouched."""
         table = dict(builder.LIMBS)
-        self.assertEqual(table["spine"], ("pelvis", "spine_03", "spine_05"))
+        self.assertEqual(table["spine"],
+                         ("spine_01", "spine_02", "spine_03",
+                          "spine_04", "spine_05"))
 
 
 class TestDefaultIk(unittest.TestCase):
@@ -68,6 +70,14 @@ class TestIkRoles(unittest.TestCase):
         self.assertEqual(builder.IK_ROLES["end"], "_IK_feet")
         self.assertEqual(builder.IK_ROLES["pole"], "_IK_knee")
         self.assertEqual(builder.IK_ROLES["base"], "_IK_strech_gr")
+
+    def test_spine_marks_are_our_own_spline_nodes(self):
+        """The spine IK is built by spineik.py, not OverRig, so its controls
+        carry our names; role addressing stays uniform for the picker."""
+        self.assertEqual(builder.SPINE_IK_MARKS["end"], "IKSpine_top")
+        self.assertEqual(builder.SPINE_IK_MARKS["pole"], "IKSpine_mid")
+        self.assertEqual(builder.SPINE_IK_MARKS["base"], "IKSpine_bot")
+        self.assertEqual(set(builder.SPINE_IK_MARKS), set(builder.IK_ROLES))
 
 
 class TestLimbJoints(unittest.TestCase):
