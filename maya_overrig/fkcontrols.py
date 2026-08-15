@@ -876,13 +876,7 @@ def _ik_hand_control(limb):
 
     Never by bare name -- OverRig suffixes renames on collision.
     """
-    for member in overrig.set_members(builder.limb_set(limb)):
-        if not cmds.objExists(member):
-            continue
-        if "_IK_feet" in member.split("|")[-1] and cmds.objectType(member) in (
-                "transform", "joint"):
-            return member
-    return None
+    return builder.ik_control(limb, "end")
 
 
 def switch_limbs(scene_map, limbs):

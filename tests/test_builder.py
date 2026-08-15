@@ -5,21 +5,21 @@ from maya_overrig import bodymap, builder
 
 class TestLimbTable(unittest.TestCase):
 
-    def test_four_limbs(self):
-        self.assertEqual(len(builder.LIMBS), 4)
+    def test_five_limbs(self):
+        self.assertEqual(len(builder.LIMBS), 5)
 
-    def test_names_are_the_picker_regions(self):
+    def test_names_are_the_picker_regions_plus_spine(self):
         self.assertEqual([name for name, _ in builder.LIMBS],
-                         ["arm_l", "arm_r", "leg_l", "leg_r"])
+                         ["arm_l", "arm_r", "leg_l", "leg_r", "spine"])
 
     def test_three_joints_each(self):
         for name, joints in builder.LIMBS:
             self.assertEqual(len(joints), 3, name)
 
-    def test_twelve_distinct_joints(self):
+    def test_fifteen_distinct_joints(self):
         every = [j for _, joints in builder.LIMBS for j in joints]
-        self.assertEqual(len(every), 12)
-        self.assertEqual(len(set(every)), 12)
+        self.assertEqual(len(every), 15)
+        self.assertEqual(len(set(every)), 15)
 
     def test_every_joint_exists_in_the_body_map(self):
         known = {b.joint for b in bodymap.BUTTONS}
@@ -32,6 +32,43 @@ class TestLimbTable(unittest.TestCase):
         self.assertEqual(table["leg_l"], ("thigh_l", "calf_l", "foot_l"))
         self.assertEqual(table["arm_r"], ("upperarm_r", "lowerarm_r", "hand_r"))
 
+    def test_spine_runs_pelvis_to_chest(self):
+        """Root, middle, end -- the same 3-joint form the limbs use, so the
+        rebike proc takes the branch whose output is the three named controls
+        the user asked for: bottom, centre, top."""
+        table = dict(builder.LIMBS)
+        self.assertEqual(table["spine"], ("pelvis", "spine_03", "spine_05"))
+
+
+class TestDefaultIk(unittest.TestCase):
+
+    def test_arms_and_legs_only(self):
+        self.assertEqual(builder.DEFAULT_IK,
+                         ("arm_l", "arm_r", "leg_l", "leg_r"))
+
+    def test_subset_of_the_limb_table(self):
+        names = {name for name, _ in builder.LIMBS}
+        self.assertTrue(set(builder.DEFAULT_IK) < names)
+
+
+class TestIkRoles(unittest.TestCase):
+
+    def test_three_roles(self):
+        self.assertEqual(set(builder.IK_ROLES), {"end", "pole", "base"})
+
+    def test_marks_are_distinct_overrig_suffixes(self):
+        marks = list(builder.IK_ROLES.values())
+        self.assertEqual(len(marks), len(set(marks)))
+        for mark in marks:
+            self.assertTrue(mark.startswith("_IK_"))
+
+    def test_marks_match_what_the_rebike_rename_produces(self):
+        """rename lines in apply_rebike_3_or_more_object_to_IK, read verbatim:
+        <root>_IK_strech_gr, <end>_IK_feet, <middle>_IK_knee."""
+        self.assertEqual(builder.IK_ROLES["end"], "_IK_feet")
+        self.assertEqual(builder.IK_ROLES["pole"], "_IK_knee")
+        self.assertEqual(builder.IK_ROLES["base"], "_IK_strech_gr")
+
 
 class TestLimbJoints(unittest.TestCase):
 
@@ -40,9 +77,9 @@ class TestLimbJoints(unittest.TestCase):
         return {j: "|rig|" + j
                 for _, joints in builder.LIMBS for j in joints}
 
-    def test_resolves_all_four_limbs(self):
+    def test_resolves_all_five_limbs(self):
         resolved = builder.limb_joints(self._full_map())
-        self.assertEqual(len(resolved), 4)
+        self.assertEqual(len(resolved), 5)
 
     def test_keeps_joint_order(self):
         resolved = dict(builder.limb_joints(self._full_map()))
@@ -82,7 +119,7 @@ class TestMissingLimbs(unittest.TestCase):
 
     def test_empty_map_misses_everything(self):
         self.assertEqual(builder.missing_limbs({}),
-                         ["arm_l", "arm_r", "leg_l", "leg_r"])
+                         ["arm_l", "arm_r", "leg_l", "leg_r", "spine"])
 
 
 class TestLimbSet(unittest.TestCase):
@@ -92,7 +129,7 @@ class TestLimbSet(unittest.TestCase):
 
     def test_every_limb_gets_a_distinct_set(self):
         names = [builder.limb_set(name) for name, _ in builder.LIMBS]
-        self.assertEqual(len(set(names)), 4)
+        self.assertEqual(len(set(names)), len(builder.LIMBS))
 
 
 class TestResolveLimbs(unittest.TestCase):

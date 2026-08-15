@@ -14,12 +14,29 @@ BUILD_SET_PREFIX = "RigPicker_build_"
 
 # Three joints per limb, in the order OverRig's IK proc requires:
 # root, middle, end. Any other order produces a wrong chain.
+#
+# The spine deliberately uses the same 3-joint form on (pelvis, spine_03,
+# spine_05): that keeps the rebike proc on the branch whose output is the
+# three named controls -- <root>_IK_strech_gr (bottom), <middle>_IK_knee
+# (centre), <end>_IK_feet (top). Selecting the whole spine instead would take
+# the >3 "spider" branch, which builds per-vertebra twist controls -- a
+# different tool. spine_01/02/04 keep their baked animation and ride on
+# whichever driven joint is their ancestor.
 LIMBS = (
     ("arm_l", ("upperarm_l", "lowerarm_l", "hand_l")),
     ("arm_r", ("upperarm_r", "lowerarm_r", "hand_r")),
     ("leg_l", ("thigh_l", "calf_l", "foot_l")),
     ("leg_r", ("thigh_r", "calf_r", "foot_r")),
+    ("spine", ("pelvis", "spine_03", "spine_05")),
 )
+
+# What the default (hybrid) Build creates as IK. The spine stays FK until the
+# user switches it -- part 4 of the request is explicit about the torso.
+DEFAULT_IK = ("arm_l", "arm_r", "leg_l", "leg_r")
+
+# How apply_rebike_3_or_more_object_to_IK names its three outputs, read
+# verbatim from the MEL's rename lines. Role -> leaf-name mark.
+IK_ROLES = {"end": "_IK_feet", "pole": "_IK_knee", "base": "_IK_strech_gr"}
 
 BuildResult = namedtuple("BuildResult", "built skipped created removed message")
 
@@ -46,6 +63,24 @@ def missing_limbs(scene_map):
 def limb_set(limb):
     """Name of the object set recording one limb's created nodes."""
     return BUILD_SET_PREFIX + limb
+
+
+def ik_control(limb, role):
+    """The IK control of a built limb for a role, through its manifest.
+
+    Roles come from IK_ROLES: `end` is the control at the chain tip, `pole`
+    the middle target, `base` the group at the chain root. Never found by
+    bare scene name -- OverRig suffixes renames on collision, so the search
+    space is the limb's own recorded nodes.
+    """
+    mark = IK_ROLES[role]
+    for member in overrig.set_members(limb_set(limb)):
+        if not cmds.objExists(member):
+            continue
+        if mark in member.split("|")[-1] and cmds.objectType(member) in (
+                "transform", "joint"):
+            return member
+    return None
 
 
 def resolve_limbs(nodes, limb_members, scene_map):
