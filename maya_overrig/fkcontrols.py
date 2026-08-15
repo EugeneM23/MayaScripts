@@ -849,6 +849,19 @@ def _bake_fk_chains(scene_map, chains=None):
     if not wanted and not legacy:
         return 0, []
 
+    # IK limbs hang on the root controller. Anything about to be deleted that
+    # contains one must let it go first: apply_Parent_out re-bakes the rig
+    # into world space, so the limb keeps working and only its container
+    # dies. Without this a Bake+Delete on root -- and the FK-first teardown
+    # inside every full Build -- deletes four IK rigs unbaked.
+    doomed_preview = list(legacy)
+    for c in wanted:
+        doomed_preview.extend(members_by_chain[c])
+    limb_members = {name: overrig.set_members(builder.limb_set(name))
+                    for name, _ in builder.LIMBS}
+    for limb in limbs_riding_inside(limb_members, doomed_preview):
+        lift_ik_off_root(limb)
+
     table = dict(CHAINS)
     if legacy:
         joints = [scene_map[j] for _, chain in CHAINS for j in chain

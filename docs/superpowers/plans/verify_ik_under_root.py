@@ -173,6 +173,44 @@ for name in sorted(probes):
     back = dist(wpos(probes[name]), before_move[name])
     check("returns to rest: " + name, back < 0.01, "%.4f cm" % back)
 
+# --- section 3: Bake+Delete on root lifts the IK rigs, does not kill them ---
+cmds.currentTime(0)
+hand_before = wpos(smap["hand_l"])
+foot_before = wpos(smap["foot_r"])
+cmds.select(root_ctrl, replace=True)
+ik_hit, fk_hit = fkcontrols.bake_targets(smap)
+check("root selection resolves to the root chain only",
+      (ik_hit, fk_hit) == ([], ["root"]), "%s %s" % (ik_hit, fk_hit))
+print(fkcontrols.bake_selection(smap, ik_hit, fk_hit), "\n")
+wiggle()
+
+check("root controller is gone", not cmds.objExists(root_ctrl))
+check("ALL FOUR IK LIMBS SURVIVED",
+      set(builder.built_limbs()) == set(builder.DEFAULT_IK),
+      str(builder.built_limbs()))
+for limb in builder.DEFAULT_IK:
+    node = builder.ik_control(limb, "end")
+    check("%s IK end is back in world" % limb,
+          bool(node) and not cmds.listRelatives(node, parent=True),
+          str(node))
+check("hand_l did not drift", dist(wpos(smap["hand_l"]), hand_before) < 0.05,
+      "%.4f cm" % dist(wpos(smap["hand_l"]), hand_before))
+check("foot_r did not drift", dist(wpos(smap["foot_r"]), foot_before) < 0.05,
+      "%.4f cm" % dist(wpos(smap["foot_r"]), foot_before))
+
+# The lifted rig must still DRIVE its bone.
+ik_end = builder.ik_control("arm_l", "end")
+rest_end = cmds.getAttr(ik_end + ".translate")[0]
+cmds.setAttr(ik_end + ".translateY", rest_end[1] - 10.0)
+wiggle()
+moved_hand = dist(wpos(smap["hand_l"]), hand_before)
+cmds.setAttr(ik_end + ".translate", *rest_end)
+wiggle()
+check("LIFTED IK STILL DRIVES THE HAND", moved_hand > 5.0,
+      "%.3f cm" % moved_hand)
+check("hand returns to rest after the poke",
+      dist(wpos(smap["hand_l"]), hand_before) < 0.05)
+
 print("\n%s" % ("SECTIONS SO FAR PASS" if not failures
                 else "FAILURES: %s" % failures))
 cmds.autoKeyframe(state=auto_key)
