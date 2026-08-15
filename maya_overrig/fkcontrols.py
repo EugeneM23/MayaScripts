@@ -343,6 +343,10 @@ def _make_ring(name, radius, normal, colour):
 
 def _make_square(name, radius, colour):
     square = cmds.curve(name=name, degree=1, point=square_points(radius))
+    # cmds.curve names the transform but leaves the shape as curveShapeN;
+    # match the <name>Shape convention the circles get for free.
+    shape = cmds.listRelatives(square, shapes=True, fullPath=True)[0]
+    cmds.rename(shape, name + "Shape")
     _style_curve(square, colour)
     return square
 
