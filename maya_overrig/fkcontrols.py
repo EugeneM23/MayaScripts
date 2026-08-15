@@ -191,6 +191,27 @@ def dependent_chains(root_ctrls, containers):
     return found
 
 
+def limbs_riding_inside(limb_members, containers):
+    """IK limbs whose recorded nodes sit inside one of the container paths.
+
+    The mirror image of `dependent_chains`: there an FK chain rides inside an
+    IK limb, here an IK limb rides inside an FK chain -- which is exactly what
+    hanging the IK rigs on the root controller creates. Deleting the container
+    would take the whole IK rig with it, unbaked, so the caller lifts these
+    limbs to world first.
+
+    Pure -- `limb_members` is a {limb: [long paths]} mapping supplied by the
+    caller; results keep LIMBS order.
+    """
+    found = []
+    for limb, _ in builder.LIMBS:
+        members = limb_members.get(limb) or []
+        if any(builder._is_inside(member, container)
+               for member in members for container in containers):
+            found.append(limb)
+    return found
+
+
 def attach_parent(chain_first, parent_of, targeted):
     """The bone whose controller a chain should hang from.
 

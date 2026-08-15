@@ -158,6 +158,65 @@ class TestDependentChains(unittest.TestCase):
             fkcontrols.dependent_chains({"neck": None}, ["|x"]), [])
 
 
+class TestLimbsRidingInside(unittest.TestCase):
+    """The mirror of dependent_chains: an IK limb riding inside an FK chain,
+    which is what hanging the IK rigs on the root controller creates."""
+
+    MEMBERS = {
+        "arm_l": ["|root_FK_ctrl|upperarm_l_IK_strech_gr",
+                  "|root_FK_ctrl|upperarm_l_IK_strech_gr|locator1",
+                  "|root_FK_ctrl|hand_l_IK_feet"],
+        "arm_r": ["|hand_r_IK_feet", "|upperarm_r_IK_strech_gr"],
+        "leg_l": ["|root_FK_ctrl|thigh_l_IK_strech_gr"],
+        "leg_r": [],
+    }
+
+    def test_finds_limbs_inside_the_container(self):
+        found = fkcontrols.limbs_riding_inside(self.MEMBERS,
+                                               ["|root_FK_ctrl"])
+        self.assertEqual(found, ["arm_l", "leg_l"])
+
+    def test_results_come_back_in_limb_table_order(self):
+        members = {"leg_l": ["|root_FK_ctrl|thigh_l_IK_strech_gr"],
+                   "arm_l": ["|root_FK_ctrl|hand_l_IK_feet"]}
+        self.assertEqual(fkcontrols.limbs_riding_inside(members,
+                                                        ["|root_FK_ctrl"]),
+                         ["arm_l", "leg_l"])
+
+    def test_world_level_limbs_are_not_riding(self):
+        self.assertEqual(
+            fkcontrols.limbs_riding_inside({"arm_r": ["|hand_r_IK_feet"]},
+                                           ["|root_FK_ctrl"]),
+            [])
+
+    def test_separator_matters(self):
+        """`|root_FK_ctrl_extra` is a different node, not a container."""
+        members = {"arm_l": ["|root_FK_ctrl_extra|hand_l_IK_feet"]}
+        self.assertEqual(
+            fkcontrols.limbs_riding_inside(members, ["|root_FK_ctrl"]), [])
+
+    def test_a_member_equal_to_the_container_is_not_riding(self):
+        members = {"arm_l": ["|root_FK_ctrl"]}
+        self.assertEqual(
+            fkcontrols.limbs_riding_inside(members, ["|root_FK_ctrl"]), [])
+
+    def test_any_container_counts(self):
+        members = {"arm_l": ["|pelvis_FK_ctrl|hand_l_IK_feet"]}
+        self.assertEqual(
+            fkcontrols.limbs_riding_inside(
+                members, ["|root_FK_ctrl", "|pelvis_FK_ctrl"]), ["arm_l"])
+
+    def test_missing_and_empty_members_are_skipped(self):
+        self.assertEqual(
+            fkcontrols.limbs_riding_inside({"arm_l": None}, ["|root_FK_ctrl"]),
+            [])
+        self.assertEqual(fkcontrols.limbs_riding_inside({}, ["|root_FK_ctrl"]),
+                         [])
+
+    def test_no_containers_finds_nothing(self):
+        self.assertEqual(fkcontrols.limbs_riding_inside(self.MEMBERS, []), [])
+
+
 class TestHybridFkChains(unittest.TestCase):
 
     def test_everything_but_the_switchable_limbs(self):
