@@ -438,6 +438,52 @@ C_parent` construction rather than a measurement.
    `NameError` on module-level imports — which reads like a broken import
    rather than a harness bug. The runner must pass an explicit globals dict:
    `exec(compile(src, path, "exec"), {"__name__": "__main__"})`.
+18. **Maya deletes an `objectSet` together with its last member.** A
+   teardown that deletes the members and then deletes the set raises
+   `No object matches name` on every *successful* run — which reads like
+   the set was never created. Confirmed in isolation (two locators in a
+   set, delete both, the set is gone). Re-check `objExists` before
+   deleting the set.
+19. **`orientConstraint(mo=True)` keeps its offset in the driven bone's
+   OWN frame, not in world.** It holds `W_target = O · W_source` with `O`
+   constant, and Maya's row-vector convention makes a left-multiplied `O`
+   a local-frame rotation. So the quantity that transfers identically is
+   `W_rest⁻¹ · W_now`, **not** `W_now · W_rest⁻¹` — the latter comes out
+   conjugated by `O`. A verify script with the orders swapped passes on
+   every bone whose rest offset is near zero (pelvis, spine, neck, head)
+   and fails on every limb bone in proportion to its offset, which looks
+   convincingly like a broken rig. It is not.
+
+## Retargeting Manny onto other skeletons
+
+`maya_retarget.py` (root level, standalone, no Qt) drives the referenced
+`Mesh_protective_suit` skeleton from `SKM_Manny_Simple`. Design:
+`docs/superpowers/specs/2026-08-15-manny-to-suit-retarget-design.md`, proof:
+`docs/superpowers/plans/verify_retarget.py` (**21/21 green**).
+
+- The suit is **UE4-schema**, Manny **UE5-schema**, and the difference is
+  purely subtractive: all 67 suit joints have an exact name twin in Manny,
+  which has 26 extra. So the map is derived from the scene, not hardcoded.
+- **Matching the spine by name is wrong.** The suit hangs clavicles and neck
+  on `spine_03`, Manny on `spine_05` — the same bone. `SPINE_MAP` pairs
+  `spine_01→spine_02`, `spine_02→spine_04`, `spine_03→spine_05`, which drops
+  the rest-pose error from 3.5/14.1/5.9° to 0.00/2.75/0.65°.
+- **Hybrid offset policy** (the user's call): body on `maintainOffset=True`
+  so the suit keeps its own silhouette — its clavicle genuinely runs 7 cm
+  further back than Manny's, and that 24° is shape, not an axis artifact —
+  and the 30 finger bones on `maintainOffset=False`, because there the 29°
+  mean gap is *pose* (Manny is an FPS rig resting around a grip) and an
+  offset would leave the suit's fingers idling. `finger_mode` flips it.
+- **Never `parentConstraint` anything carrying the 145 cm side offset.** A
+  parent constraint stores its offset in the source's space, so Manny
+  turning on the spot swings the suit through an arc around him instead of
+  turning it in place, and the world-constrained bones tear off. Pelvis and
+  the two ik roots use `point` + `orient`. `set_side_offset(0)` overlays the
+  two characters by rewriting the point constraints' `offsetX`, keeping each
+  bone's own Y/Z rest delta.
+- Accepted limits: feet do not land in Manny's footprints (calf ratio 0.952,
+  foot 1.168 — inherent to a rotation-only transfer), metacarpal travel is
+  dropped, and the suit has no root joint, so a UE export would need one.
 
 ## Conventions
 
