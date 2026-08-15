@@ -8,6 +8,7 @@ selects first. That is OverRig's interface, not a choice.
 """
 
 import os
+from contextlib import contextmanager
 
 import maya.cmds as cmds
 import maya.mel as mel
@@ -66,6 +67,45 @@ def set_members(set_name):
     return list(dict.fromkeys(out))
 
 
+_PAD_DEPTH = [0]
+
+
+@contextmanager
+def padded_range():
+    """One frame of playback padding around an OverRig capture or bake.
+
+    OverRig's capture bakes clip a frame at each end of the range: a pose
+    keyed only at the first and last frames came out of `apply_ForwHierarhy`
+    as a CONSTANT track holding the interior value -- fingers posed at frame
+    0 fell to where they were on frame 1 after a rebuild. Widening the
+    playback range by one frame on each side keeps the real range fully
+    inside the capture. Re-entrant: only the outermost use pads.
+    """
+    if _PAD_DEPTH[0]:
+        _PAD_DEPTH[0] += 1
+        try:
+            yield
+        finally:
+            _PAD_DEPTH[0] -= 1
+        return
+
+    saved = (cmds.playbackOptions(query=True, animationStartTime=True),
+             cmds.playbackOptions(query=True, animationEndTime=True),
+             cmds.playbackOptions(query=True, minTime=True),
+             cmds.playbackOptions(query=True, maxTime=True))
+    _PAD_DEPTH[0] += 1
+    cmds.playbackOptions(animationStartTime=saved[0] - 1,
+                         animationEndTime=saved[1] + 1,
+                         minTime=saved[2] - 1, maxTime=saved[3] + 1)
+    try:
+        yield
+    finally:
+        _PAD_DEPTH[0] -= 1
+        cmds.playbackOptions(animationStartTime=saved[0],
+                             animationEndTime=saved[1],
+                             minTime=saved[2], maxTime=saved[3])
+
+
 def build_ik(joint_paths):
     """Run OverRig's FK-to-IK on exactly three joints, root to end.
 
@@ -73,13 +113,15 @@ def build_ik(joint_paths):
     selection decides the chain.
     """
     cmds.select(list(joint_paths), replace=True)
-    mel.eval(IK_PROC)
+    with padded_range():
+        mel.eval(IK_PROC)
 
 
 def fast_bake(objects):
     """Bake the given objects using OverRig's own bake."""
     cmds.select(list(objects), replace=True)
-    mel.eval(BAKE_PROC)
+    with padded_range():
+        mel.eval(BAKE_PROC)
 
 
 def delete_constraint_attributes(objects):

@@ -251,7 +251,8 @@ def build_spine(joint_paths):
     passenger = _pelvis_driver_knot(pelvis) if pelvis else None
     if passenger:
         cmds.select([passenger, bot], replace=True)
-        mel.eval("apply_Parent_in()")
+        with overrig.padded_range():
+            mel.eval("apply_Parent_in()")
 
     cmds.select(clear=True)
     return grp

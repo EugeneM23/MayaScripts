@@ -121,6 +121,42 @@ def colour_for(region):
     return _REGION_COLOURS[region]
 
 
+def switchable_bones(scene_map):
+    """{bone path: switchable chain} for every bone of every switchable chain.
+
+    What lets the picker-less workflow work: select any BONE of an arm, a
+    leg or the spine in the viewport, press Switch, and the chain resolves
+    even when no rig exists yet. Pure -- scene_map is plain data.
+    """
+    table = dict(CHAINS)
+    out = {}
+    for name in SWITCHABLE:
+        for joint in table[name]:
+            path = scene_map.get(joint)
+            if path:
+                out[path] = name
+    return out
+
+
+def resolve_chains(nodes, members_by_chain, bone_owner):
+    """Which chains the given nodes touch, in CHAINS order. Pure.
+
+    A node counts for a chain when it is one of the chain's bones, one of
+    its recorded nodes, or a descendant of one -- the FK mirror of
+    builder.resolve_limbs.
+    """
+    hit = set()
+    for node in nodes:
+        if node in bone_owner:
+            hit.add(bone_owner[node])
+            continue
+        for name, members in members_by_chain.items():
+            if any(node == m or node.startswith(m + "|") for m in members):
+                hit.add(name)
+                break
+    return [name for name, _ in CHAINS if name in hit]
+
+
 def dependent_chains(root_ctrls, containers):
     """Chains whose root controller sits inside one of the container paths.
 
@@ -765,7 +801,8 @@ def _attach_chain(chain_name, chain, parent_of, targeted):
     if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
         return False
     cmds.select([child_ctrl, parent_ctrl], replace=True)
-    mel.eval("apply_Parent_in()")
+    with overrig.padded_range():
+        mel.eval("apply_Parent_in()")
     return True
 
 
@@ -873,10 +910,11 @@ def build_fk(scene_map, only=None):
             before_knots = set(overrig.set_members(overrig.KNOT_SET))
 
             cmds.select(paths, replace=True)
-            if len(paths) == 1:
-                mel.eval("apply_parentConstrAnim(1)")
-            else:
-                mel.eval("apply_ForwHierarhy(1)")
+            with overrig.padded_range():
+                if len(paths) == 1:
+                    mel.eval("apply_parentConstrAnim(1)")
+                else:
+                    mel.eval("apply_ForwHierarhy(1)")
 
             fresh_knots = [k for k in overrig.set_members(overrig.KNOT_SET)
                            if k not in before_knots]
@@ -908,6 +946,70 @@ def build_fk(scene_map, only=None):
     elif guessed:
         message += " - {0} ring(s) sized from neighbours".format(len(guessed))
     return created, message
+
+
+def chains_in_selection(scene_map):
+    """FK chains touched by the current Maya selection."""
+    selected = cmds.ls(selection=True, long=True) or []
+    bone_owner = {}
+    for name, chain in CHAINS:
+        for joint in chain:
+            path = scene_map.get(joint)
+            if path:
+                bone_owner[path] = name
+    members_by_chain = {name: chain_members(name) for name, _ in CHAINS}
+    return resolve_chains(selected, members_by_chain, bone_owner)
+
+
+def bake_selection(scene_map, ik_limbs, fk_chains):
+    """Bake exactly what the selection touches back to clean bones.
+
+    Everything else in the scene stays rigged. An IK limb takes its riding
+    FK chains (fingers on the hand anchor) down with it -- they cannot
+    outlive their container, and they belong to the limb from the
+    animator's point of view. The one exception is the pelvis controller
+    riding an IK spine: the general pelvis control survives, re-hung on
+    the root controller. FK chains bake per chain; _bake_fk_chains expands
+    each to whatever rides inside it.
+    """
+    messages = []
+    cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
+    try:
+        for limb in ik_limbs:
+            members = overrig.set_members(builder.limb_set(limb))
+            root_ctrls = {}
+            for chain_name, chain in CHAINS:
+                paths = cmds.ls(controller_name(chain[0]), long=True) or []
+                root_ctrls[chain_name] = paths[0] if paths else None
+            riders = dependent_chains(root_ctrls, members)
+
+            if limb == "spine" and "pelvis" in riders:
+                riders.remove("pelvis")
+                ctrl = controller_name("pelvis")
+                if cmds.objExists(ctrl):
+                    _parent_out(ctrl, "pelvis")
+                    root_ctrl = controller_name("root")
+                    if cmds.objExists(root_ctrl):
+                        _parent_in(ctrl, root_ctrl, "pelvis")
+
+            riders = [c for c in riders if chain_members(c)]
+            if riders:
+                _bake_fk_chains(scene_map, riders)
+                messages.append("{0} riders baked with {1}".format(
+                    len(riders), limb))
+
+        if ik_limbs:
+            result = builder.bake_limbs(scene_map, ik_limbs)
+            messages.append(result.message)
+
+        remaining = [c for c in fk_chains if chain_members(c)]
+        if remaining:
+            removed, wanted = _bake_fk_chains(scene_map, remaining)
+            messages.append("{0} baked back - {1} node(s) removed".format(
+                ", ".join(wanted), removed))
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return " | ".join(messages) if messages else "Nothing to bake"
 
 
 def rebuild(scene_map, fk_limbs=False):
@@ -980,7 +1082,8 @@ def _parent_out(ctrl, record_chain):
     """Lift a nested controller to world through OverRig, re-baked."""
     before = builder._scene_nodes()
     cmds.select(ctrl, replace=True)
-    mel.eval("apply_Parent_out()")
+    with overrig.padded_range():
+        mel.eval("apply_Parent_out()")
     _record_fresh(record_chain, before)
 
 
@@ -988,7 +1091,8 @@ def _parent_in(child_ctrl, parent_ctrl, record_chain):
     """Hang a controller inside another through OverRig, re-baked."""
     before = builder._scene_nodes()
     cmds.select([child_ctrl, parent_ctrl], replace=True)
-    mel.eval("apply_Parent_in()")
+    with overrig.padded_range():
+        mel.eval("apply_Parent_in()")
     _record_fresh(record_chain, before)
 
 
@@ -1154,7 +1258,10 @@ def switch_limbs(scene_map, limbs):
             is_ik = limb in builder.built_limbs()
             is_fk = bool(chain_members(limb))
             if not is_ik and not is_fk:
-                skipped.append(limb)
+                # Nothing on the chain yet: the first Switch press builds
+                # its IK; the next press converts to FK as usual.
+                builder.build(scene_map, only=[limb])
+                done.append(limb + " -> IK (built)")
                 continue
 
             if limb == "spine":

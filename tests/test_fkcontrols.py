@@ -185,6 +185,60 @@ class TestHybridFkChains(unittest.TestCase):
         self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 14)
 
 
+class TestSwitchableBones(unittest.TestCase):
+
+    def test_every_switchable_chain_bone_resolves(self):
+        scene_map = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
+                     for j in chain}
+        owner = fkcontrols.switchable_bones(scene_map)
+        self.assertEqual(owner["|rig|clavicle_l"], "arm_l")
+        self.assertEqual(owner["|rig|calf_r"], "leg_r")
+        self.assertEqual(owner["|rig|ball_l"], "leg_l")
+        self.assertEqual(owner["|rig|spine_02"], "spine")
+
+    def test_non_switchable_bones_stay_out(self):
+        scene_map = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
+                     for j in chain}
+        owner = fkcontrols.switchable_bones(scene_map)
+        self.assertNotIn("|rig|pelvis", owner)
+        self.assertNotIn("|rig|head", owner)
+        self.assertNotIn("|rig|index_01_l", owner)
+
+    def test_missing_joints_are_skipped(self):
+        self.assertEqual(fkcontrols.switchable_bones({}), {})
+
+
+class TestResolveChains(unittest.TestCase):
+
+    BONES = {"|rig|neck_01": "neck", "|rig|spine_03": "spine"}
+    MEMBERS = {"neck": ["|neck_01_FK_ctrl"],
+               "index_l": ["|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl"]}
+
+    def test_bone_resolves_its_chain(self):
+        self.assertEqual(
+            fkcontrols.resolve_chains(["|rig|spine_03"], self.MEMBERS,
+                                      self.BONES),
+            ["spine"])
+
+    def test_member_and_descendant_resolve(self):
+        found = fkcontrols.resolve_chains(
+            ["|neck_01_FK_ctrl|neck_01_FK_ctrlShape",
+             "|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl"],
+            self.MEMBERS, self.BONES)
+        self.assertEqual(found, ["neck", "index_l"])
+
+    def test_results_in_chain_table_order(self):
+        found = fkcontrols.resolve_chains(
+            ["|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl", "|rig|neck_01"],
+            self.MEMBERS, self.BONES)
+        self.assertEqual(found, ["neck", "index_l"])
+
+    def test_unrelated_nodes_resolve_nothing(self):
+        self.assertEqual(
+            fkcontrols.resolve_chains(["|persp"], self.MEMBERS, self.BONES),
+            [])
+
+
 class TestSpineRehang(unittest.TestCase):
 
     def test_only_the_chest_re_hangs(self):

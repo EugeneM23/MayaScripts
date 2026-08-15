@@ -146,9 +146,9 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.bake_button = QtWidgets.QPushButton("Bake+Delete", bar)
         self.bake_button.setStyleSheet(_BUTTON_STYLE)
         self.bake_button.setToolTip(
-            "Bake the selected limbs back to FK and remove their IK.\n"
-            "Select an IK control, or use a limb button above.\n"
-            "Main selects all four limbs.")
+            "Bake ONLY the selected limbs/chains onto clean bones and\n"
+            "remove their rig; everything else stays. Select controllers,\n"
+            "bones, or picker buttons; All bakes the whole rig.")
         self.bake_button.clicked.connect(
             lambda _checked=False: self.bake_selected_limbs())
         row.addWidget(self.bake_button)
@@ -342,13 +342,17 @@ class PickerWindow(QtWidgets.QMainWindow):
         fk_members = {name: fkcontrols.chain_members(name)
                       for name in fkcontrols.SWITCHABLE}
         fk_limbs = builder.resolve_limbs(selected, fk_members, self._scene_map)
+        # Bones resolve too: with no rig on the chain at all, the first
+        # Switch press builds its IK.
+        bone_owner = fkcontrols.switchable_bones(self._scene_map)
+        bone_hits = {bone_owner[p] for p in selected if p in bone_owner}
 
-        hit = set(ik_limbs) | set(fk_limbs)
+        hit = set(ik_limbs) | set(fk_limbs) | bone_hits
         limbs = [l for l in fkcontrols.SWITCHABLE if l in hit]
         if not limbs:
             self.status.showMessage(
-                "Select a limb or spine controller (or its picker button) "
-                "first")
+                "Select a limb or spine - a controller, a bone, or its "
+                "picker button")
             return
 
         self.switch_button.setEnabled(False)
@@ -362,34 +366,33 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.sync_from_scene()
 
     def bake_selected_limbs(self):
-        """Bake back to FK whichever limbs the current selection touches."""
+        """Bake ONLY what the selection touches back to clean bones.
+
+        Everything else in the scene keeps its rig. IK limbs take their
+        riding finger chains down with them; FK chains bake per chain,
+        expanding to whatever rides inside them.
+        """
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
 
-        limbs = builder.limbs_in_selection(self._scene_map)
-        if not limbs and fkcontrols.has_fk():
-            # Nothing IK in the selection but FK exists: bake the FK back.
-            self.bake_button.setEnabled(False)
-            try:
-                _removed, message = fkcontrols.bake_fk(self._scene_map)
-            finally:
-                self.bake_button.setEnabled(True)
-            self.status.showMessage(message)
-            self.sync_from_scene()
-            return
-        if not limbs:
+        ik_limbs = builder.limbs_in_selection(self._scene_map)
+        fk_chains = [c for c in fkcontrols.chains_in_selection(self._scene_map)
+                     if fkcontrols.chain_members(c)]
+        if not ik_limbs and not fk_chains:
             self.status.showMessage(
-                "Select an IK control or a limb in the picker first")
+                "Select a rigged element - a controller, a bone, or a "
+                "picker button")
             return
 
         self.bake_button.setEnabled(False)
         try:
-            result = builder.bake_limbs(self._scene_map, limbs)
+            message = fkcontrols.bake_selection(self._scene_map, ik_limbs,
+                                                fk_chains)
         finally:
             self.bake_button.setEnabled(True)
 
-        self.status.showMessage(result.message)
+        self.status.showMessage(message)
         self.sync_from_scene()
 
     def sync_from_scene(self):
