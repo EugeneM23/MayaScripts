@@ -331,14 +331,15 @@ class PickerWindow(QtWidgets.QMainWindow):
         selected = cmds.ls(selection=True, long=True) or []
         ik_limbs = builder.limbs_in_selection(self._scene_map)
         fk_members = {name: fkcontrols.chain_members(name)
-                      for name in fkcontrols.LIMB_CHAINS}
+                      for name in fkcontrols.SWITCHABLE}
         fk_limbs = builder.resolve_limbs(selected, fk_members, self._scene_map)
 
         hit = set(ik_limbs) | set(fk_limbs)
-        limbs = [l for l in fkcontrols.LIMB_CHAINS if l in hit]
+        limbs = [l for l in fkcontrols.SWITCHABLE if l in hit]
         if not limbs:
             self.status.showMessage(
-                "Select an arm or leg controller (or its picker button) first")
+                "Select a limb or spine controller (or its picker button) "
+                "first")
             return
 
         self.switch_button.setEnabled(False)

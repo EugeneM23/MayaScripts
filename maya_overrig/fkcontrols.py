@@ -26,8 +26,18 @@ FK_SET = "RigPicker_fk"          # legacy flat set; absorbed by a full bake
 FK_SET_PREFIX = "RigPicker_fk_"  # one set per chain, the switchable unit
 SUFFIX = "_FK_ctrl"
 
-# The chains Switch FK/IK may convert. Spine comes later.
+# The four limb chains -- they carry the finger bracket on arm switches.
 LIMB_CHAINS = ("arm_l", "arm_r", "leg_l", "leg_r")
+
+# Everything Switch FK/IK may convert. The spine converts like a limb but
+# carries a different bracket: whole chains hang off its controllers.
+SWITCHABLE = LIMB_CHAINS + ("spine",)
+
+# Where a chain re-hangs when the spine it sat on goes IK: the attach bone
+# maps to the IK role that now carries it. spine_05 is driven by the end
+# control; the pelvis follows the base group's attach machinery, so anything
+# hung on the base group follows the pelvis exactly.
+SPINE_REHANG = {"spine_05": "end", "pelvis": "base"}
 
 
 def _finger_chains():
@@ -101,6 +111,25 @@ def finger_chains_for(limb):
 def colour_for(region):
     """RGB for a body region, by side."""
     return _REGION_COLOURS[region]
+
+
+def dependent_chains(root_ctrls, containers):
+    """Chains whose root controller sits inside one of the container paths.
+
+    `root_ctrls` is {chain: long path or None}, `containers` a list of long
+    paths about to be deleted. A controller that is a DAG descendant of a
+    container dies with it, so the caller must lift these chains out first.
+    Pure -- both arguments are plain data; results keep CHAINS order.
+    """
+    found = []
+    for chain_name, _ in CHAINS:
+        path = root_ctrls.get(chain_name)
+        if not path:
+            continue
+        if any(builder._is_inside(path, container)
+               for container in containers):
+            found.append(chain_name)
+    return found
 
 
 def attach_parent(chain_first, parent_of, targeted):
@@ -879,13 +908,46 @@ def _ik_hand_control(limb):
     return builder.ik_control(limb, "end")
 
 
+def _spine_dependents():
+    """Chains whose root controller currently hangs inside the spine's nodes.
+
+    Both representations count as containers: FK chain members before an
+    FK -> IK switch, IK manifest members before the way back.
+    """
+    containers = [m for m in (chain_members("spine")
+                              + overrig.set_members(builder.limb_set("spine")))
+                  if cmds.objExists(m)]
+    if not containers:
+        return []
+    root_ctrls = {}
+    for chain_name, chain in CHAINS:
+        if chain_name == "spine":
+            continue
+        paths = cmds.ls(controller_name(chain[0]), long=True) or []
+        root_ctrls[chain_name] = paths[0] if paths else None
+    return dependent_chains(root_ctrls, containers)
+
+
+def _spine_rehang_target(bone, now_ik):
+    """The control a dependent chain hangs on after the spine converted."""
+    if bone is None:
+        return None
+    if now_ik:
+        role = SPINE_REHANG.get(bone)
+        return builder.ik_control("spine", role) if role else None
+    ctrl = controller_name(bone)
+    return ctrl if cmds.objExists(ctrl) else None
+
+
 def switch_limbs(scene_map, limbs):
     """Convert each limb to the opposite rig type, animation re-baked.
 
     FK becomes IK, IK becomes FK. Fingers riding on an arm's hand are lifted to
     world before the arm converts and hung back on the new hand control after
     -- they are DAG children of what gets deleted, so anything less loses them.
-    Semi-test version by declaration: arms and legs only.
+    The spine carries the same bracket writ large: whole chains (neck, FK
+    clavicles, FK thighs) hang off its controllers and are re-hung onto
+    whichever control now drives their attach bone.
     """
     table = dict(CHAINS)
     done = []
@@ -895,7 +957,7 @@ def switch_limbs(scene_map, limbs):
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker switch")
     try:
         for limb in limbs:
-            if limb not in LIMB_CHAINS:
+            if limb not in SWITCHABLE:
                 skipped.append(limb)
                 continue
             is_ik = limb in builder.built_limbs()
@@ -904,8 +966,12 @@ def switch_limbs(scene_map, limbs):
                 skipped.append(limb)
                 continue
 
-            fingers = [c for c in finger_chains_for(limb) if chain_members(c)]
-            for chain in fingers:
+            if limb == "spine":
+                riders = _spine_dependents()
+            else:
+                riders = [c for c in finger_chains_for(limb)
+                          if chain_members(c)]
+            for chain in riders:
                 ctrl = controller_name(table[chain][0])
                 if cmds.objExists(ctrl):
                     _parent_out(ctrl, chain)
@@ -923,7 +989,23 @@ def switch_limbs(scene_map, limbs):
                     notes.append(limb + " uncoupled (no parent control)")
                 done.append(limb + " -> FK")
 
-            for chain in fingers:
+            if limb == "spine":
+                # Each rider goes where its attach bone now lives, not onto
+                # one shared control: the neck and clavicles follow the
+                # chest, the thighs follow the pelvis.
+                parent_of = _parent_map()
+                targeted = {j for _, chain in CHAINS for j in chain}
+                for chain in riders:
+                    bone = attach_parent(table[chain][0], parent_of, targeted)
+                    target = _spine_rehang_target(bone, now_ik=is_fk)
+                    ctrl = controller_name(table[chain][0])
+                    if target and cmds.objExists(ctrl):
+                        _parent_in(ctrl, target, chain)
+                    else:
+                        notes.append(chain + " left in world")
+                continue
+
+            for chain in riders:
                 ctrl = controller_name(table[chain][0])
                 if target and cmds.objExists(ctrl) and cmds.objExists(target):
                     _parent_in(ctrl, target, chain)

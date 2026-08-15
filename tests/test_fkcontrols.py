@@ -105,6 +105,63 @@ class TestFingerChainsFor(unittest.TestCase):
         self.assertEqual(fkcontrols.finger_chains_for("spine"), [])
 
 
+class TestSwitchable(unittest.TestCase):
+
+    def test_limbs_plus_spine(self):
+        self.assertEqual(fkcontrols.SWITCHABLE,
+                         ("arm_l", "arm_r", "leg_l", "leg_r", "spine"))
+
+    def test_starts_with_the_limb_chains(self):
+        self.assertEqual(fkcontrols.SWITCHABLE[:len(fkcontrols.LIMB_CHAINS)],
+                         fkcontrols.LIMB_CHAINS)
+
+
+class TestDependentChains(unittest.TestCase):
+
+    def test_finds_chains_rooted_inside_the_containers(self):
+        ctrls = {"neck": "|spine_05_FK_ctrl|neck_01_FK_ctrl",
+                 "arm_l": "|spine_05_FK_ctrl|clavicle_l_FK_ctrl",
+                 "leg_l": "|pelvis_FK_ctrl|thigh_l_FK_ctrl",
+                 "arm_r": "|clavicle_r_FK_ctrl"}
+        found = fkcontrols.dependent_chains(
+            ctrls, ["|spine_05_FK_ctrl", "|pelvis_FK_ctrl"])
+        self.assertEqual(found, ["neck", "arm_l", "leg_l"])
+
+    def test_results_come_back_in_chain_table_order(self):
+        ctrls = {"leg_r": "|pelvis_FK_ctrl|thigh_r_FK_ctrl",
+                 "neck": "|spine_05_FK_ctrl|neck_01_FK_ctrl"}
+        found = fkcontrols.dependent_chains(
+            ctrls, ["|spine_05_FK_ctrl", "|pelvis_FK_ctrl"])
+        self.assertEqual(found, ["neck", "leg_r"])
+
+    def test_separator_matters(self):
+        """`|spine_05_FK_ctrl_extra` is a different node, not a container."""
+        ctrls = {"neck": "|spine_05_FK_ctrl_extra|neck_01_FK_ctrl"}
+        self.assertEqual(
+            fkcontrols.dependent_chains(ctrls, ["|spine_05_FK_ctrl"]), [])
+
+    def test_a_container_itself_is_not_its_own_dependent(self):
+        ctrls = {"spine": "|spine_top_gr|pelvis_FK_ctrl"}
+        self.assertEqual(
+            fkcontrols.dependent_chains(ctrls, ["|spine_top_gr"]), ["spine"])
+
+    def test_missing_controllers_are_skipped(self):
+        self.assertEqual(fkcontrols.dependent_chains({}, ["|x"]), [])
+
+    def test_none_controller_is_skipped(self):
+        self.assertEqual(
+            fkcontrols.dependent_chains({"neck": None}, ["|x"]), [])
+
+
+class TestSpineRehang(unittest.TestCase):
+
+    def test_targets_cover_both_attach_bones(self):
+        """Chains re-hang where their attach bone now lives: spine_05 is
+        driven by the end control, the pelvis follows the base group."""
+        self.assertEqual(fkcontrols.SPINE_REHANG,
+                         {"spine_05": "end", "pelvis": "base"})
+
+
 class TestAttachParent(unittest.TestCase):
 
     PARENT_OF = {
