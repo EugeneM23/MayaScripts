@@ -208,6 +208,50 @@ class TestSwitchableBones(unittest.TestCase):
         self.assertEqual(fkcontrols.switchable_bones({}), {})
 
 
+class TestInnermostOwner(unittest.TestCase):
+    """The bug this guards: FK controllers nest, so 'descendant of any
+    member' resolved a hand-controller click into root, pelvis, spine AND
+    the arm at once -- and Bake+Delete wiped the whole FK rig."""
+
+    CANDIDATES = [
+        ("|root_FK_ctrl", "fk", "root"),
+        ("|root_FK_ctrl|pelvis_FK_ctrl", "fk", "pelvis"),
+        ("|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl", "fk", "spine"),
+        ("|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl|spine_05_FK_ctrl"
+         "|clavicle_l_FK_ctrl", "fk", "arm_l"),
+        ("|hand_l_IK_feet", "ik", "arm_l"),
+        ("|hand_l_IK_feet|arm_l_IK_anchor|index_metacarpal_l_FK_ctrl",
+         "fk", "index_l"),
+    ]
+
+    def test_deep_arm_controller_resolves_to_the_arm_only(self):
+        node = ("|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl"
+                "|spine_05_FK_ctrl|clavicle_l_FK_ctrl|upperarm_l_FK_ctrl")
+        self.assertEqual(fkcontrols.innermost_owner(node, self.CANDIDATES),
+                         ("fk", "arm_l"))
+
+    def test_spine_controller_resolves_to_the_spine(self):
+        node = "|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl|spine_03_FK_ctrl"
+        self.assertEqual(fkcontrols.innermost_owner(node, self.CANDIDATES),
+                         ("fk", "spine"))
+
+    def test_finger_inside_the_ik_anchor_is_the_finger_not_the_arm(self):
+        node = ("|hand_l_IK_feet|arm_l_IK_anchor|index_metacarpal_l_FK_ctrl"
+                "|index_01_l_FK_ctrl")
+        self.assertEqual(fkcontrols.innermost_owner(node, self.CANDIDATES),
+                         ("fk", "index_l"))
+
+    def test_ik_control_resolves_to_the_ik_limb(self):
+        self.assertEqual(
+            fkcontrols.innermost_owner("|hand_l_IK_feet|hand_l_IK_feetShape",
+                                       self.CANDIDATES),
+            ("ik", "arm_l"))
+
+    def test_unrelated_node_resolves_to_nothing(self):
+        self.assertIsNone(fkcontrols.innermost_owner("|persp",
+                                                     self.CANDIDATES))
+
+
 class TestResolveChains(unittest.TestCase):
 
     BONES = {"|rig|neck_01": "neck", "|rig|spine_03": "spine"}

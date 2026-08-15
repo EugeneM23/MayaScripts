@@ -138,22 +138,42 @@ def switchable_bones(scene_map):
     return out
 
 
+def innermost_owner(node, candidates):
+    """The (kind, name) whose member is the node's NEAREST recorded ancestor.
+
+    Pure. `candidates` is [(member path, kind, name)]. FK controllers nest
+    -- the hand controller lives inside spine_05's, which lives inside the
+    pelvis's and the root's -- so "descendant of any member" resolves a
+    hand click to four chains at once, and a bake wipes the whole rig. The
+    longest matching member path is the chain the user actually clicked.
+    """
+    best = None
+    best_len = -1
+    for member, kind, name in candidates:
+        if node == member or node.startswith(member + "|"):
+            if len(member) > best_len:
+                best = (kind, name)
+                best_len = len(member)
+    return best
+
+
 def resolve_chains(nodes, members_by_chain, bone_owner):
     """Which chains the given nodes touch, in CHAINS order. Pure.
 
-    A node counts for a chain when it is one of the chain's bones, one of
-    its recorded nodes, or a descendant of one -- the FK mirror of
-    builder.resolve_limbs.
+    A node counts for a chain when it is one of the chain's bones or when
+    that chain's recorded node is its nearest recorded ancestor.
     """
+    candidates = [(m, "fk", name)
+                  for name, members in members_by_chain.items()
+                  for m in members]
     hit = set()
     for node in nodes:
         if node in bone_owner:
             hit.add(bone_owner[node])
             continue
-        for name, members in members_by_chain.items():
-            if any(node == m or node.startswith(m + "|") for m in members):
-                hit.add(name)
-                break
+        owner = innermost_owner(node, candidates)
+        if owner:
+            hit.add(owner[1])
     return [name for name, _ in CHAINS if name in hit]
 
 
@@ -801,8 +821,7 @@ def _attach_chain(chain_name, chain, parent_of, targeted):
     if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
         return False
     cmds.select([child_ctrl, parent_ctrl], replace=True)
-    with overrig.padded_range():
-        mel.eval("apply_Parent_in()")
+    mel.eval("apply_Parent_in()")
     return True
 
 
@@ -948,17 +967,50 @@ def build_fk(scene_map, only=None):
     return created, message
 
 
-def chains_in_selection(scene_map):
-    """FK chains touched by the current Maya selection."""
+def bake_targets(scene_map):
+    """(ik_limbs, fk_chains) the current selection touches.
+
+    One resolution across BOTH kinds of manifest, innermost owner winning:
+    a hand controller inside the spine's controllers belongs to the arm, a
+    finger controller inside the IK hand anchor belongs to the finger --
+    never to everything on the way up. Bones resolve to whichever
+    representation their chain currently has.
+    """
     selected = cmds.ls(selection=True, long=True) or []
-    bone_owner = {}
+
+    candidates = []
+    for name, _ in builder.LIMBS:
+        for m in overrig.set_members(builder.limb_set(name)):
+            candidates.append((m, "ik", name))
+    for name, _ in CHAINS:
+        for m in chain_members(name):
+            candidates.append((m, "fk", name))
+
+    bone_names = {}
     for name, chain in CHAINS:
         for joint in chain:
             path = scene_map.get(joint)
             if path:
-                bone_owner[path] = name
-    members_by_chain = {name: chain_members(name) for name, _ in CHAINS}
-    return resolve_chains(selected, members_by_chain, bone_owner)
+                bone_names[path] = name
+    built = set(builder.built_limbs())
+
+    ik_hit = set()
+    fk_hit = set()
+    for node in selected:
+        if node in bone_names:
+            name = bone_names[node]
+            if name in built:
+                ik_hit.add(name)
+            elif chain_members(name):
+                fk_hit.add(name)
+            continue
+        owner = innermost_owner(node, candidates)
+        if owner is None:
+            continue
+        (ik_hit if owner[0] == "ik" else fk_hit).add(owner[1])
+
+    return ([name for name, _ in builder.LIMBS if name in ik_hit],
+            [name for name, _ in CHAINS if name in fk_hit])
 
 
 def bake_selection(scene_map, ik_limbs, fk_chains):
@@ -1082,8 +1134,7 @@ def _parent_out(ctrl, record_chain):
     """Lift a nested controller to world through OverRig, re-baked."""
     before = builder._scene_nodes()
     cmds.select(ctrl, replace=True)
-    with overrig.padded_range():
-        mel.eval("apply_Parent_out()")
+    mel.eval("apply_Parent_out()")
     _record_fresh(record_chain, before)
 
 
@@ -1091,8 +1142,7 @@ def _parent_in(child_ctrl, parent_ctrl, record_chain):
     """Hang a controller inside another through OverRig, re-baked."""
     before = builder._scene_nodes()
     cmds.select([child_ctrl, parent_ctrl], replace=True)
-    with overrig.padded_range():
-        mel.eval("apply_Parent_in()")
+    mel.eval("apply_Parent_in()")
     _record_fresh(record_chain, before)
 
 

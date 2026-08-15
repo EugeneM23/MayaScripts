@@ -74,12 +74,18 @@ _PAD_DEPTH = [0]
 def padded_range():
     """One frame of playback padding around an OverRig capture or bake.
 
-    OverRig's capture bakes clip a frame at each end of the range: a pose
-    keyed only at the first and last frames came out of `apply_ForwHierarhy`
-    as a CONSTANT track holding the interior value -- fingers posed at frame
-    0 fell to where they were on frame 1 after a rebuild. Widening the
-    playback range by one frame on each side keeps the real range fully
-    inside the capture. Re-entrant: only the outermost use pads.
+    OverRig's CHAIN CAPTURE procs clip a frame at each end of the range: a
+    pose keyed only at the first and last frames came out of
+    `apply_ForwHierarhy` as a CONSTANT track holding the interior value --
+    fingers posed at frame 0 fell to where they were on frame 1 after a
+    rebuild. Widening the playback range by one frame on each side keeps
+    the real range fully inside the capture.
+
+    Scope this to the capture procs ONLY (ForwHierarhy, parentConstrAnim,
+    the rebike IK): `apply_Fast_Bake` and `apply_Parent_in/out` measured
+    zero drift for weeks without padding, and blanket padding introduced
+    one-frame glitches around the current frame. Re-entrant: only the
+    outermost use pads.
     """
     if _PAD_DEPTH[0]:
         _PAD_DEPTH[0] += 1
@@ -120,8 +126,7 @@ def build_ik(joint_paths):
 def fast_bake(objects):
     """Bake the given objects using OverRig's own bake."""
     cmds.select(list(objects), replace=True)
-    with padded_range():
-        mel.eval(BAKE_PROC)
+    mel.eval(BAKE_PROC)
 
 
 def delete_constraint_attributes(objects):

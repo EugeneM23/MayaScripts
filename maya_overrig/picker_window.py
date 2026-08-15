@@ -338,16 +338,15 @@ class PickerWindow(QtWidgets.QMainWindow):
             return
 
         selected = cmds.ls(selection=True, long=True) or []
-        ik_limbs = builder.limbs_in_selection(self._scene_map)
-        fk_members = {name: fkcontrols.chain_members(name)
-                      for name in fkcontrols.SWITCHABLE}
-        fk_limbs = builder.resolve_limbs(selected, fk_members, self._scene_map)
+        # One innermost-owner resolution for both kinds -- an arm controller
+        # nested inside the spine's controllers must NOT drag the spine in.
+        ik_limbs, fk_chains = fkcontrols.bake_targets(self._scene_map)
         # Bones resolve too: with no rig on the chain at all, the first
         # Switch press builds its IK.
         bone_owner = fkcontrols.switchable_bones(self._scene_map)
         bone_hits = {bone_owner[p] for p in selected if p in bone_owner}
 
-        hit = set(ik_limbs) | set(fk_limbs) | bone_hits
+        hit = set(ik_limbs) | set(fk_chains) | bone_hits
         limbs = [l for l in fkcontrols.SWITCHABLE if l in hit]
         if not limbs:
             self.status.showMessage(
@@ -376,9 +375,7 @@ class PickerWindow(QtWidgets.QMainWindow):
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
 
-        ik_limbs = builder.limbs_in_selection(self._scene_map)
-        fk_chains = [c for c in fkcontrols.chains_in_selection(self._scene_map)
-                     if fkcontrols.chain_members(c)]
+        ik_limbs, fk_chains = fkcontrols.bake_targets(self._scene_map)
         if not ik_limbs and not fk_chains:
             self.status.showMessage(
                 "Select a rigged element - a controller, a bone, or a "

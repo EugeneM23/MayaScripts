@@ -158,12 +158,18 @@ clusters under world-aligned controls, `ikSplineSolver`
 the user's request; spine_05 rides above it keeping its own local keys)
 with advanced twist (Object Rotation Up start/end, forward axis +X — the
 only axis the twist supports, and the bones' axis here); spine_04 is
-orient-constrained to the top control. The middle control rides a blend
-group point+orient-constrained 50/50 between the hips and the top and stays
-animatable on top of that. **The bottom node carries the pelvis**: the
-pelvis's FK controller is re-hung INSIDE `IKSpine_bot` via `apply_Parent_in`
-(re-baked, zero drift), so the general pelvis control keeps working and the
-bottom node moves the pelvis plus every FK chain riding it. Hidden
+parent-constrained (position AND orientation) to the top control — solver-
+only placement left the chest up to 1.3 cm off the curve end and the error
+baked into every conversion. The middle control rides a blend group
+point+orient-constrained 50/50 between the hips and the top and stays
+animatable on top of that. **The bottom node carries the pelvis through
+`IKSpine_hipdrive`**: an identity group slipped above the pelvis controller
+(relative parenting — its keys are untouched), parent-constrained to the
+bottom node with the rest offset kept; the chain bot_zero ← root bone ←
+root controller is rigid, so the offset is exact on every frame by
+construction. `apply_Parent_in` was used here first and its attach
+machinery LATCHED under interaction — one push-and-restore of the bottom
+node shifted the pose permanently. Hidden
 followers: `IKSpine_hip` rides the pelvis BONE (carries the curve base CV
 and the mid blend); `IKSpine_chest` rides the spine_05 BONE (what neck and
 clavicle chains re-hang on, so spine_05's local keys keep carrying them);
@@ -182,9 +188,22 @@ they would fight the solver through pairBlends; bake-back restores them.
 spine_04, spine_05 and the pelvis convert exactly; interior bones are a
 curve+twist projection (measured 0.00–0.13 cm here).
 
-**Bake+Delete** bakes back to FK whichever limbs the selection touches — an IK
-control, any descendant of one, or the limb's source joints (so the picker's own
-`Leg L` / `Main` buttons drive it). Nested rigs are baked before their container.
+**Bake+Delete bakes ONLY what the selection touches** onto clean bones —
+controllers, bones, or picker buttons — and everything else stays rigged
+(`fkcontrols.bake_targets` resolves, `bake_selection` orchestrates). One
+resolution across BOTH manifest kinds with the **innermost owner winning**
+(`innermost_owner`): FK controllers nest, and "descendant of any member"
+once resolved a hand-controller click into root+pelvis+spine+arm at once —
+Bake+Delete then wiped the whole FK rig. An IK limb takes its riding finger
+chains down with it; the pelvis controller on an IK spine survives, re-hung
+on the root; FK chains bake per chain, expanding to whatever rides inside
+them (a chain cannot outlive its container). Nested rigs are baked before
+their container.
+
+**Switch auto-builds**: selecting any bone of a switchable chain (viewport
+or picker) with no rig on that chain makes the first Switch press build its
+IK; the next press converts to FK as usual (`switchable_bones` resolves
+bones to chains, including clavicles and balls).
 
 **The FK engine** (`fkcontrols.build_fk`, driven by Build) builds real FK
 controllers through OverRig knots: up to 17 chains over the 64 bones
@@ -392,6 +411,26 @@ C_parent` construction rather than a measurement.
    re-hung, the reason reaches the status line), `_reclaim` never dooms
    anything recorded in a RigPicker set, and the bake guard distinguishes
    foreign knots from recorded dependent chains.
+12. **OverRig's capture procs clip a frame at each end of the range.** A
+   pose keyed only at the edge frames (exactly what posing over dense
+   baked keys produces) came out of `apply_ForwHierarhy` as a constant
+   interior track — fingers "fell" on rebuild. `overrig.padded_range()`
+   pads by one frame around the CHAIN CAPTURE procs only
+   (ForwHierarhy/parentConstrAnim/rebike); Fast_Bake and Parent_in/out
+   measured clean without it and blanket padding caused its own glitches.
+13. **First build of a session records OverRig's own sets.** OverRig_knots
+   and OverRig_rig_objects are CREATED by the first build, so they landed
+   in that limb's manifest diff and died with it. `_recordable` skips
+   OverRig*/RigPicker* objectSets, and bake_limbs re-filters members for
+   existence right before deleting (stripping constraint channels already
+   kills recorded pairBlends).
+14. **Interactive probes over the port lie without a time change, and the
+   user runs autoKey ON.** Reads after a bare setAttr return stale
+   mixtures across nodes (phantom "leaks" of 3-11 cm that vanished under a
+   time wiggle), and a scripted poke at a KEYED channel writes real keys —
+   or, restored via setKeyframe, rewrites tangents and damages neighbours.
+   Verify scripts wiggle time to settle, disable autoKey around pokes, and
+   never mutate keyed curves.
 
 ## Conventions
 

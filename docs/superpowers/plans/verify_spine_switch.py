@@ -64,16 +64,39 @@ def is_under(child, parent):
 
 
 class pushed(object):
+    """Temporarily add to an attribute, with clean measurement hygiene.
+
+    autoKeyframe goes off for the duration -- the user runs with it ON,
+    and a scripted poke at a keyed channel writes real keys otherwise.
+    A time wiggle after each write forces a full evaluation: reads without
+    a time change return stale mixtures over the port.
+    """
+
     def __init__(self, plug, delta):
         self.plug = plug
         self.delta = delta
 
+    def _settle(self):
+        now = cmds.currentTime(query=True)
+        cmds.currentTime(now + 1)
+        cmds.currentTime(now)
+
     def __enter__(self):
+        self.autokey = cmds.autoKeyframe(query=True, state=True)
+        cmds.autoKeyframe(state=False)
         self.rest = cmds.getAttr(self.plug)
+        self.keyed = bool(cmds.keyframe(self.plug, query=True,
+                                        timeChange=True))
         cmds.setAttr(self.plug, self.rest + self.delta)
+        if not self.keyed:
+            # A keyed channel would snap back to its curve on the wiggle;
+            # for those the plain DG pull is the measurement.
+            self._settle()
 
     def __exit__(self, *_exc):
         cmds.setAttr(self.plug, self.rest)
+        self._settle()
+        cmds.autoKeyframe(state=self.autokey)
 
 
 window = maya_overrig.show_picker()
@@ -123,8 +146,9 @@ top = builder.ik_control("spine", "end")
 mid = builder.ik_control("spine", "pole")
 bot = builder.ik_control("spine", "base")
 check("three spine controls exist", all([top, mid, bot]))
-check("pelvis controller rides the bottom node",
-      is_under(pelvis_ctrl, bot))
+hipdrive = fkcontrols._spine_anchor("IKSpine_hipdrive")
+check("pelvis controller rides the bottom node's drive group",
+      bool(hipdrive) and is_under(pelvis_ctrl, hipdrive), str(hipdrive))
 
 neck_ctrl = fkcontrols.controller_name("neck_01")
 clav_l = fkcontrols.controller_name("clavicle_l")
@@ -178,7 +202,7 @@ with pushed(bot + ".translateZ", 8):
     s4_moved = dist(s4_0, wpos(smap["spine_04"]))
 check("BOTTOM MOVES THE PELVIS", pelvis_moved > 6, "%.2f cm" % pelvis_moved)
 check("thighs ride the hip sway", thigh_moved > 6, "%.2f cm" % thigh_moved)
-check("chest stays planted during the hip sway", s4_moved < 2.5,
+check("chest stays planted during the hip sway", s4_moved < 1.0,
       "%.2f cm" % s4_moved)
 
 # --- switch back to FK ---------------------------------------------------------

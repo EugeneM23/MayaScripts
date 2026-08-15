@@ -311,6 +311,13 @@ def _recordable(node):
     """
     if not cmds.objExists(node):
         return False
+    # Bookkeeping sets are nobody's rig nodes: OverRig creates its own on
+    # the first build of a session, and a manifest that swallowed
+    # OverRig_knots deleted OverRig's bookkeeping with the limb.
+    leaf = node.split("|")[-1]
+    if (leaf.startswith(("OverRig", "RigPicker"))
+            and cmds.objectType(node) == "objectSet"):
+        return False
     return not cmds.objectType(node).startswith("animCurve")
 
 
@@ -481,6 +488,10 @@ def bake_limbs(scene_map, limbs):
             if joints:
                 overrig.fast_bake(joints)
                 overrig.delete_constraint_attributes(joints)
+            # Re-check existence: stripping the constraint channels above
+            # already deletes the pairBlends and constraints the manifest
+            # recorded, and cmds.delete refuses a list with a dead name.
+            members = [m for m in members if cmds.objExists(m)]
             if members:
                 cmds.delete(members)
                 removed += len(members)

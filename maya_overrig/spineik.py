@@ -26,7 +26,6 @@ whole rig rides root motion.
 """
 
 import maya.cmds as cmds
-import maya.mel as mel
 import maya.api.OpenMaya as om
 
 from maya_overrig import overrig
@@ -239,20 +238,35 @@ def build_spine(joint_paths):
     cmds.connectAttr(top + ".worldMatrix[0]", ik + ".dWorldUpMatrixEnd",
                      force=True)
 
-    # The solver orients the chain, not its last driven joint: spine_04
-    # belongs to the top control, exactly. spine_05 rides it.
-    cmds.orientConstraint(top, end, maintainOffset=True)
+    # The last driven joint belongs to the top control EXACTLY -- position
+    # and orientation. The solver walks the chain along a degree-2 curve
+    # whose shape is only an approximation of the bone polyline, so left to
+    # the solver alone the chest landed up to 1.3 cm off and the error
+    # baked into every later conversion. Pinning spine_04 hides that
+    # difference as an invisible micro-stretch between spine_03 and
+    # spine_04 instead of a visible pose shift; spine_05, the anchor, the
+    # neck and the arms all ride it, so the visible body converts exactly.
+    cmds.parentConstraint(top, end, maintainOffset=True)
 
-    # The bottom node carries the hips: the pelvis's own controller is
-    # re-hung inside it, animation re-baked -- the general pelvis control
-    # keeps working, and moving the bottom node now moves the pelvis and
-    # everything it carries. Without a pelvis controller (bare-skeleton
+    # The bottom node carries the hips WITHOUT re-baking anything: a drive
+    # group slips above the pelvis controller at identity (relative
+    # parenting -- the controller's keys are not touched), and the group is
+    # parent-constrained to the bottom node with the rest offset kept. The
+    # chain bot_zero <- root bone <- root controller is rigid, so that
+    # offset is exact on every frame by construction. OverRig's
+    # apply_Parent_in was used here first and its attach machinery LATCHED
+    # under interaction: one push-and-restore of the bottom node shifted
+    # the pose permanently. Without a pelvis controller (bare-skeleton
     # builds) the bottom node simply has no passenger.
     passenger = _pelvis_driver_knot(pelvis) if pelvis else None
     if passenger:
-        cmds.select([passenger, bot], replace=True)
-        with overrig.padded_range():
-            mel.eval("apply_Parent_in()")
+        parent = (cmds.listRelatives(passenger, parent=True, fullPath=True)
+                  or [None])[0]
+        drive = cmds.group(empty=True, name="IKSpine_hipdrive")
+        if parent:
+            drive = cmds.parent(drive, parent, relative=True)[0]
+        cmds.parent(cmds.ls(passenger, long=True)[0], drive, relative=True)
+        cmds.parentConstraint(bot, drive, maintainOffset=True)
 
     cmds.select(clear=True)
     return grp
