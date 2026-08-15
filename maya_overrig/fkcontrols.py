@@ -1154,6 +1154,23 @@ def _anchor_in(set_name, mark):
     return None
 
 
+def _mute_anchor(loc):
+    """Hide the anchor's SHAPE and keep its transform visible.
+
+    Finger controllers are DAG children of this locator and visibility
+    inherits down a transform: hiding the transform made every finger ring on
+    an IK arm invisible in the viewport while the picker still selected it
+    happily. Repairing on every lookup heals scenes rigged by the old code.
+    """
+    for plug, value in [(loc + ".visibility", 1)] + [
+            (shape + ".visibility", 0) for shape in
+            cmds.listRelatives(loc, shapes=True, fullPath=True) or []]:
+        try:
+            cmds.setAttr(plug, value)
+        except RuntimeError:
+            pass  # connected or locked display attr -- cosmetics, skip
+
+
 def _limb_anchor(scene_map, limb):
     """What finger chains hang on: a locator riding the limb's end BONE.
 
@@ -1167,6 +1184,7 @@ def _limb_anchor(scene_map, limb):
     mark = limb + "_IK_anchor"
     existing = _anchor_in(builder.limb_set(limb), mark)
     if existing:
+        _mute_anchor(existing)
         return existing
     ctrl = builder.ik_control(limb, "end")
     end_bone = scene_map.get(dict(builder.LIMBS)[limb][-1])
@@ -1177,7 +1195,7 @@ def _limb_anchor(scene_map, limb):
         end_bone, query=True, worldSpace=True, translation=True))
     loc = cmds.parent(loc, ctrl)[0]
     cmds.parentConstraint(end_bone, loc, maintainOffset=True)
-    cmds.setAttr(loc + ".visibility", 0)
+    _mute_anchor(loc)
     cmds.sets(loc, addElement=builder.limb_set(limb))
     return cmds.ls(loc, long=True)[0]
 
