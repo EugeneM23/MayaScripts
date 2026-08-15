@@ -153,6 +153,30 @@ class TestDependentChains(unittest.TestCase):
             fkcontrols.dependent_chains({"neck": None}, ["|x"]), [])
 
 
+class TestHybridFkChains(unittest.TestCase):
+
+    def test_everything_but_the_switchable_limbs(self):
+        names = [name for name, _ in fkcontrols.CHAINS]
+        expected = tuple(n for n in names
+                         if n not in fkcontrols.LIMB_CHAINS)
+        self.assertEqual(fkcontrols.HYBRID_FK_CHAINS, expected)
+
+    def test_torso_and_fingers_stay_fk(self):
+        self.assertIn("root", fkcontrols.HYBRID_FK_CHAINS)
+        self.assertIn("spine", fkcontrols.HYBRID_FK_CHAINS)
+        self.assertIn("neck", fkcontrols.HYBRID_FK_CHAINS)
+        self.assertIn("index_l", fkcontrols.HYBRID_FK_CHAINS)
+        self.assertIn("thumb_r", fkcontrols.HYBRID_FK_CHAINS)
+
+    def test_no_limb_chain_slips_in(self):
+        for name in fkcontrols.LIMB_CHAINS:
+            self.assertNotIn(name, fkcontrols.HYBRID_FK_CHAINS)
+
+    def test_thirteen_chains(self):
+        """17 chains minus the four IK limbs."""
+        self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 13)
+
+
 class TestSpineRehang(unittest.TestCase):
 
     def test_targets_cover_both_attach_bones(self):

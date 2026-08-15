@@ -67,6 +67,11 @@ CHAINS = tuple([
     ("leg_r", ("thigh_r", "calf_r", "foot_r", "ball_r")),
 ] + _finger_chains())
 
+# What the default (hybrid) Build keeps as FK: everything that is not an IK
+# limb -- root, spine, neck and the ten finger chains.
+HYBRID_FK_CHAINS = tuple(name for name, _ in CHAINS
+                         if name not in LIMB_CHAINS)
+
 # Rigging convention, matching the picker so the two share one language.
 _LEFT = (0.25, 0.55, 1.0)
 _RIGHT = (1.0, 0.30, 0.30)
@@ -878,6 +883,65 @@ def build_fk(scene_map, only=None):
     elif guessed:
         message += " - {0} ring(s) sized from neighbours".format(len(guessed))
     return created, message
+
+
+def rebuild(scene_map, fk_limbs=False):
+    """One Build entry point: tear down whatever exists, then build fresh.
+
+    `fk_limbs=False` (the default) builds the hybrid rig -- IK arms and legs,
+    FK everything else, finger chains hung on the IK hand controls.
+    `fk_limbs=True` builds full FK on all 17 chains.
+
+    FK is baked back before IK on purpose: finger controls can hang inside IK
+    hand controls after a Switch, and the reverse order would delete them
+    with the arm's rig before they were baked.
+    """
+    if not any(j in scene_map for _, chain in CHAINS for j in chain):
+        return "Not connected to a skeleton"
+
+    table = dict(CHAINS)
+    messages = []
+    cmds.undoInfo(openChunk=True, chunkName="Rig Picker build")
+    try:
+        if has_fk():
+            removed, _ = _bake_fk_chains(scene_map)
+            messages.append("FK baked back ({0} nodes)".format(removed))
+        if builder.has_build():
+            result = builder.bake_limbs(scene_map, builder.built_limbs())
+            if result.message.startswith("Aborted"):
+                # Something we did not build sits inside the old rig; refuse
+                # to stack a new rig on top of a half-removed one.
+                return result.message
+            messages.append("IK baked back ({0} nodes)".format(result.removed))
+
+        if fk_limbs:
+            _count, message = build_fk(scene_map)
+            messages.append(message)
+        else:
+            _count, message = build_fk(scene_map, only=HYBRID_FK_CHAINS)
+            messages.append(message)
+            result = builder.build(scene_map,
+                                   only=list(builder.DEFAULT_IK))
+            messages.append(result.message)
+
+            # Fingers must follow the IK hands; apply_Parent_in re-bakes
+            # them into the new space, exactly as a Switch does.
+            hung = 0
+            for limb in ("arm_l", "arm_r"):
+                target = builder.ik_control(limb, "end")
+                if not target:
+                    continue
+                for chain in finger_chains_for(limb):
+                    ctrl = controller_name(table[chain][0])
+                    if chain_members(chain) and cmds.objExists(ctrl):
+                        _parent_in(ctrl, target, chain)
+                        hung += 1
+            if hung:
+                messages.append(
+                    "{0} finger chain(s) on the IK hands".format(hung))
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return " | ".join(messages)
 
 
 # ---------------------------------------------------------------------------
