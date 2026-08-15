@@ -140,6 +140,39 @@ for limb in ("arm_l", "arm_r"):
           is_under(fkcontrols.controller_name(
               "index_metacarpal_" + limb[-1]), anchor))
 
+# --- section 2: every IK group rides the root control -----------------------
+root_ctrl = fkcontrols.controller_name("root")
+check("root controller exists", cmds.objExists(root_ctrl))
+for limb in builder.DEFAULT_IK:
+    for role in fkcontrols.IK_TOP_ROLES:
+        node = builder.ik_control(limb, role)
+        check("%s %s rides the root control" % (limb, role),
+              is_under(node, root_ctrl), str(node))
+
+# The whole character must travel with the root control: bones, IK controls
+# and finger rings alike. Read the value first, then put it back.
+cmds.currentTime(0)
+probes = {"upperarm_l bone": smap["upperarm_l"],
+          "hand_l bone": smap["hand_l"],
+          "foot_r bone": smap["foot_r"],
+          "arm_l IK end": builder.ik_control("arm_l", "end"),
+          "leg_r IK pole": builder.ik_control("leg_r", "pole"),
+          "index_l ring": fkcontrols.controller_name("index_metacarpal_l")}
+before_move = {k: wpos(v) for k, v in probes.items()}
+rest = cmds.getAttr(root_ctrl + ".translate")[0]
+cmds.setAttr(root_ctrl + ".translateX", rest[0] + 50.0)
+wiggle()
+after_move = {k: wpos(v) for k, v in probes.items()}
+cmds.setAttr(root_ctrl + ".translate", *rest)
+wiggle()
+for name in sorted(probes):
+    moved = dist(after_move[name], before_move[name])
+    check("MOVES WITH THE ROOT CONTROL: " + name, abs(moved - 50.0) < 0.5,
+          "%.3f cm" % moved)
+for name in sorted(probes):
+    back = dist(wpos(probes[name]), before_move[name])
+    check("returns to rest: " + name, back < 0.01, "%.4f cm" % back)
+
 print("\n%s" % ("SECTIONS SO FAR PASS" if not failures
                 else "FAILURES: %s" % failures))
 cmds.autoKeyframe(state=auto_key)

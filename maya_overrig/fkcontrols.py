@@ -501,7 +501,7 @@ def _ensure_chain_set(chain):
     return name
 
 
-def _record_fresh(chain, before):
+def _record_into(set_name, before):
     """Record (and visually mute) everything created since `before`.
 
     `before` is a UUID snapshot: re-parented nodes must NOT read as fresh,
@@ -510,9 +510,14 @@ def _record_fresh(chain, before):
     fresh = [n for n in builder._fresh_paths(before, builder._scene_nodes())
              if builder._recordable(n)]
     if fresh:
-        cmds.sets(fresh, addElement=_ensure_chain_set(chain))
+        cmds.sets(fresh, addElement=set_name)
         _hide_rig_machinery(fresh)
     return fresh
+
+
+def _record_fresh(chain, before):
+    """Record everything created since `before` against one FK chain."""
+    return _record_into(_ensure_chain_set(chain), before)
 
 
 def remove_fk():
@@ -1091,6 +1096,13 @@ def rebuild(scene_map, fk_limbs=False):
                                    only=list(builder.DEFAULT_IK))
             messages.append(result.message)
 
+            # The IK rigs are anchored in world; hang them on the root
+            # controller so the root carries the whole character.
+            hung_ik = sum(hang_ik_on_root(limb) for limb in result.built)
+            if hung_ik:
+                messages.append(
+                    "{0} IK group(s) on the root control".format(hung_ik))
+
             # Fingers must follow the IK hands -- via the hand-bone anchor,
             # never the control: past full extension the control keeps
             # travelling while the bone stops, and fingers riding the
@@ -1104,7 +1116,7 @@ def rebuild(scene_map, fk_limbs=False):
                 for chain in finger_chains_for(limb):
                     ctrl = controller_name(table[chain][0])
                     if chain_members(chain) and cmds.objExists(ctrl):
-                        _parent_in(ctrl, target, chain)
+                        _parent_in(ctrl, target, _ensure_chain_set(chain))
                         hung += 1
             if hung:
                 messages.append(
@@ -1118,20 +1130,23 @@ def rebuild(scene_map, fk_limbs=False):
 # Switch FK/IK
 # ---------------------------------------------------------------------------
 
-def _parent_out(ctrl, record_chain):
-    """Lift a nested controller to world through OverRig, re-baked."""
+def _parent_out(ctrl, set_name):
+    """Lift a nested knot to world through OverRig, animation re-baked."""
     before = builder._scene_nodes()
     cmds.select(ctrl, replace=True)
     mel.eval("apply_Parent_out()")
-    _record_fresh(record_chain, before)
+    _record_into(set_name, before)
 
 
-def _parent_in(child_ctrl, parent_ctrl, record_chain):
-    """Hang a controller inside another through OverRig, re-baked."""
+def _parent_in(child_ctrl, parent_ctrl, set_name):
+    """Hang a knot inside another through OverRig, animation re-baked.
+
+    Selection order is child first, parent last -- verified by experiment.
+    """
     before = builder._scene_nodes()
     cmds.select([child_ctrl, parent_ctrl], replace=True)
     mel.eval("apply_Parent_in()")
-    _record_fresh(record_chain, before)
+    _record_into(set_name, before)
 
 
 def _ik_hand_control(limb):
@@ -1200,6 +1215,61 @@ def _limb_anchor(scene_map, limb):
     return cmds.ls(loc, long=True)[0]
 
 
+# The three groups apply_rebike_3_or_more_object_to_IK leaves at world root.
+IK_TOP_ROLES = ("base", "pole", "end")
+
+
+def hang_ik_on_root(limb):
+    """Hang a limb's three IK top groups under the root controller.
+
+    All three, machinery included. Measured on a live build: the IK rig is
+    anchored in world end to end -- moving the root BONE moved neither the
+    controls nor the upperarm bone. Parenting only the two animator controls
+    would carry the effector targets while the chain base stayed pinned, and
+    the shoulder tears off the body.
+
+    apply_Parent_in re-bakes the animation into the new local space, so
+    nothing moves. Fresh nodes go into the LIMB manifest: the coupling lives
+    and dies with the IK rig, not with the root chain.
+
+    Returns the number of groups moved. Zero when there is no root controller
+    -- IK built by Switch after a full bake stays in world, and the next
+    Build re-hangs it.
+    """
+    root_ctrl = controller_name("root")
+    if not cmds.objExists(root_ctrl):
+        return 0
+    root_path = cmds.ls(root_ctrl, long=True)[0]
+    hung = 0
+    for role in IK_TOP_ROLES:
+        node = builder.ik_control(limb, role)
+        if not node or not cmds.objExists(node):
+            continue
+        if builder._is_inside(cmds.ls(node, long=True)[0], root_path):
+            continue  # already there; the operation is idempotent
+        _parent_in(node, root_ctrl, builder._ensure_limb_set(limb))
+        hung += 1
+    return hung
+
+
+def lift_ik_off_root(limb):
+    """Lift a limb's IK top groups back to world, animation re-baked.
+
+    Run before whatever they hang inside is deleted: the rig keeps working
+    and only its container dies.
+    """
+    lifted = 0
+    for role in IK_TOP_ROLES:
+        node = builder.ik_control(limb, role)
+        if not node or not cmds.objExists(node):
+            continue
+        if not cmds.listRelatives(node, parent=True):
+            continue  # already in world
+        _parent_out(node, builder._ensure_limb_set(limb))
+        lifted += 1
+    return lifted
+
+
 def _rehang_riders(scene_map, limb, riders, now_ik):
     """Hang lifted rider chains back onto whatever the limb offers now.
 
@@ -1214,7 +1284,7 @@ def _rehang_riders(scene_map, limb, riders, now_ik):
     for chain in riders:
         ctrl = controller_name(table[chain][0])
         if target and cmds.objExists(ctrl) and cmds.objExists(target):
-            _parent_in(ctrl, target, chain)
+            _parent_in(ctrl, target, _ensure_chain_set(chain))
 
 
 def switch_limbs(scene_map, limbs):
@@ -1241,6 +1311,7 @@ def switch_limbs(scene_map, limbs):
                 # Nothing on the chain yet: the first Switch press builds
                 # its IK; the next press converts to FK as usual.
                 builder.build(scene_map, only=[limb])
+                hang_ik_on_root(limb)
                 done.append(limb + " -> IK (built)")
                 continue
 
@@ -1249,11 +1320,12 @@ def switch_limbs(scene_map, limbs):
             for chain in riders:
                 ctrl = controller_name(table[chain][0])
                 if cmds.objExists(ctrl):
-                    _parent_out(ctrl, chain)
+                    _parent_out(ctrl, _ensure_chain_set(chain))
 
             if is_fk:
                 _bake_fk_chains(scene_map, [limb])
                 builder.build(scene_map, only=[limb])
+                hang_ik_on_root(limb)
                 done.append(limb + " -> IK")
                 now_ik = True
             else:
