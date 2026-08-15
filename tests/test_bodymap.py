@@ -75,15 +75,19 @@ class TestBodyMap(unittest.TestCase):
         self.assertGreater(by_id["hand_l"].x, bodymap.CANVAS_W / 2)
         self.assertLess(by_id["hand_r"].x, bodymap.CANVAS_W / 2)
 
-    def test_group_all_covers_every_button(self):
-        self.assertEqual(len(bodymap.group_members("all")), 64)
+    def test_group_all_covers_every_button_of_both_kinds(self):
+        self.assertEqual(len(bodymap.group_members("all")),
+                         len(bodymap.BUTTONS) + len(bodymap.IK_BUTTONS))
 
     def test_group_main_excludes_fingers(self):
         main = bodymap.group_members("main")
-        self.assertEqual(len(main), 26)
-        by_id = {b.id: b for b in bodymap.BUTTONS}
+        self.assertEqual(
+            len(main),
+            26 + len(bodymap.IK_BUTTONS))  # no IK button sits on a hand
+        regions = {b.id: b.region for b in bodymap.BUTTONS}
+        regions.update({b.id: b.region for b in bodymap.IK_BUTTONS})
         for bid in main:
-            self.assertNotIn(by_id[bid].region, ("hand_l", "hand_r"))
+            self.assertNotIn(regions[bid], ("hand_l", "hand_r"))
 
     def test_finger_groups_hold_19_each(self):
         self.assertEqual(len(bodymap.group_members("hand_l")), 19)
@@ -116,6 +120,84 @@ class TestBodyMap(unittest.TestCase):
                           "center_of_mass", "camera_root", "camera_bone",
                           "weapon_l", "lowerarm_twist_01_l", "calf_twist_02_r"):
             self.assertNotIn(forbidden, names)
+
+
+class TestIkButtons(unittest.TestCase):
+
+    def test_eleven_buttons(self):
+        """End + pole per limb, top/mid/bot for the spine."""
+        self.assertEqual(len(bodymap.IK_BUTTONS), 11)
+
+    def test_ids_unique_and_disjoint_from_fk(self):
+        ids = [b.id for b in bodymap.IK_BUTTONS]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertFalse(set(ids) & {b.id for b in bodymap.BUTTONS})
+
+    def test_roles_are_known(self):
+        for b in bodymap.IK_BUTTONS:
+            self.assertIn(b.role, ("end", "pole", "base"), b.id)
+
+    def test_limbs_and_roles_cover_the_ik_table(self):
+        self.assertEqual(
+            {(b.limb, b.role) for b in bodymap.IK_BUTTONS},
+            {("arm_l", "end"), ("arm_l", "pole"),
+             ("arm_r", "end"), ("arm_r", "pole"),
+             ("leg_l", "end"), ("leg_l", "pole"),
+             ("leg_r", "end"), ("leg_r", "pole"),
+             ("spine", "end"), ("spine", "pole"), ("spine", "base")})
+
+    def test_right_side_mirrors_the_left(self):
+        by_id = {b.id: b for b in bodymap.IK_BUTTONS}
+        left = [b for b in bodymap.IK_BUTTONS if b.limb.endswith("_l")]
+        self.assertTrue(left)
+        for lb in left:
+            rb = by_id[lb.id.replace("_l_", "_r_")]
+            self.assertEqual(rb.limb, lb.limb[:-2] + "_r", lb.id)
+            self.assertEqual(rb.x, bodymap.CANVAS_W - lb.x - lb.w, lb.id)
+            self.assertEqual((rb.y, rb.w, rb.h), (lb.y, lb.w, lb.h), lb.id)
+
+    def test_regions_are_known(self):
+        for b in bodymap.IK_BUTTONS:
+            self.assertIn(b.region, bodymap.REGIONS, b.id)
+
+    def test_stay_on_the_canvas(self):
+        for b in bodymap.IK_BUTTONS:
+            self.assertGreaterEqual(b.x, 0, b.id)
+            self.assertGreaterEqual(b.y, 0, b.id)
+            self.assertLessEqual(b.x + b.w, bodymap.CANVAS_W, b.id)
+            self.assertLessEqual(b.y + b.h, bodymap.CANVAS_H, b.id)
+
+    def test_never_overlap_fk_buttons(self):
+        for ik in bodymap.IK_BUTTONS:
+            for fk in bodymap.BUTTONS:
+                clear = (ik.x + ik.w <= fk.x or fk.x + fk.w <= ik.x
+                         or ik.y + ik.h <= fk.y or fk.y + fk.h <= ik.y)
+                self.assertTrue(clear, "{0} overlaps {1}".format(ik.id, fk.id))
+
+    def test_never_overlap_each_other(self):
+        for i, a in enumerate(bodymap.IK_BUTTONS):
+            for b in bodymap.IK_BUTTONS[i + 1:]:
+                clear = (a.x + a.w <= b.x or b.x + b.w <= a.x
+                         or a.y + a.h <= b.y or b.y + b.h <= a.y)
+                self.assertTrue(clear, "{0} overlaps {1}".format(a.id, b.id))
+
+    def test_ik_button_by_id_round_trips(self):
+        button = bodymap.ik_button_by_id("spine_ik_top")
+        self.assertEqual((button.limb, button.role), ("spine", "end"))
+
+    def test_ik_button_by_id_rejects_unknown(self):
+        with self.assertRaises(KeyError):
+            bodymap.ik_button_by_id("pelvis")
+
+    def test_groups_include_ik_ids(self):
+        spine = bodymap.group_members("spine")
+        self.assertIn("spine_ik_top", spine)
+        self.assertIn("spine_ik_mid", spine)
+        self.assertIn("spine_ik_bot", spine)
+        self.assertIn("leg_l_ik_end", bodymap.group_members("leg_l"))
+        self.assertIn("arm_r_ik_pole", bodymap.group_members("arm_r"))
+        self.assertIn("spine_ik_bot", bodymap.group_members("main"))
+        self.assertIn("arm_l_ik_end", bodymap.group_members("all"))
 
 
 if __name__ == "__main__":

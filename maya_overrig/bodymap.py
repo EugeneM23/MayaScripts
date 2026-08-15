@@ -17,6 +17,10 @@ from collections import namedtuple
 
 Button = namedtuple("Button", "id joint x y w h region")
 
+# An IK control's spot on the map. `limb` and `role` address the control
+# through the build manifest (builder.ik_control); no joint is involved.
+IkButton = namedtuple("IkButton", "id limb role x y w h region")
+
 CANVAS_W = 560
 CANVAS_H = 410
 
@@ -125,13 +129,70 @@ BUTTONS = _build()
 _BY_ID = {b.id: b for b in BUTTONS}
 
 
+# IK controls drawn as circles beside the body part they move. Character-left
+# buttons sit outward of the limb; the spine column runs down the viewer-left
+# side of the FK spine stack, clear of the right arm's row.
+_IK_SIZE = 18
+
+
+def _left_ik_buttons():
+    rows = [
+        ("arm_l_ik_end", "arm_l", "end", 436, 112),
+        ("arm_l_ik_pole", "arm_l", "pole", 392, 112),
+        ("leg_l_ik_end", "leg_l", "end", 314, 346),
+        ("leg_l_ik_pole", "leg_l", "pole", 314, 292),
+    ]
+    return [IkButton(i, l, r, x, y, _IK_SIZE, _IK_SIZE, l)
+            for i, l, r, x, y in rows]
+
+
+def _mirrored_ik(buttons):
+    """Mirror character-left IK buttons into their character-right twins."""
+    out = []
+    for b in buttons:
+        out.append(IkButton(
+            b.id.replace("_l_", "_r_"),
+            b.limb[:-2] + "_r",
+            b.role,
+            CANVAS_W - b.x - b.w,
+            b.y, b.w, b.h,
+            b.region[:-2] + "_r",
+        ))
+    return out
+
+
+def _spine_ik_buttons():
+    rows = [
+        ("spine_ik_top", "end", 106),
+        ("spine_ik_mid", "pole", 144),
+        ("spine_ik_bot", "base", 184),
+    ]
+    return [IkButton(i, "spine", role, 226, y, _IK_SIZE, _IK_SIZE, "spine")
+            for i, role, y in rows]
+
+
+def _build_ik():
+    left = _left_ik_buttons()
+    return tuple(left + _mirrored_ik(left) + _spine_ik_buttons())
+
+
+IK_BUTTONS = _build_ik()
+
+_IK_BY_ID = {b.id: b for b in IK_BUTTONS}
+
+
 def button_by_id(bid):
     """Return the Button with this id. Raises KeyError if unknown."""
     return _BY_ID[bid]
 
 
+def ik_button_by_id(bid):
+    """Return the IkButton with this id. Raises KeyError if unknown."""
+    return _IK_BY_ID[bid]
+
+
 def group_members(group):
-    """Return the button ids belonging to a group.
+    """Return the button ids belonging to a group, FK buttons then IK.
 
     `all` is every button; `main` is everything except fingers; any other name
     must be a region. Raises KeyError for unknown groups.
@@ -139,8 +200,12 @@ def group_members(group):
     if group not in GROUPS:
         raise KeyError(group)
     if group == "all":
-        return tuple(b.id for b in BUTTONS)
+        return tuple([b.id for b in BUTTONS]
+                     + [b.id for b in IK_BUTTONS])
     if group == "main":
-        return tuple(b.id for b in BUTTONS
-                     if b.region not in ("hand_l", "hand_r"))
-    return tuple(b.id for b in BUTTONS if b.region == group)
+        return tuple([b.id for b in BUTTONS
+                      if b.region not in ("hand_l", "hand_r")]
+                     + [b.id for b in IK_BUTTONS
+                        if b.region not in ("hand_l", "hand_r")])
+    return tuple([b.id for b in BUTTONS if b.region == group]
+                 + [b.id for b in IK_BUTTONS if b.region == group])
