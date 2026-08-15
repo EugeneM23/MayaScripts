@@ -152,26 +152,35 @@ the post-Switch IK state; switching a limb to FK brings them back.
 
 **Spine IK** is OUR spline rig (`spineik.py`), not an OverRig proc — the
 rebike version was built first and rejected by the user; see
-`2026-08-15-spline-ik-spine-design.md`. Mechanism: degree-2 curve through
-spine_01/03/05, clusters under three world-aligned controls, `ikSplineSolver`
-spine_01→spine_05 with advanced twist (Object Rotation Up start/end, up
-objects = bottom/top controls, forward axis +X — the only axis the twist
-supports, and the bones' axis here), chest orient-constrained to the top
-control. The middle control rides a blend group point+orient-constrained
-50/50 between bottom and top and stays animatable on top of that. All zero
-groups parent-constrain to the pelvis BONE — never a controller by name.
-**The pelvis is its own single-knot FK chain** (`CHAINS` has `pelvis`
-separate from `spine`) so its controller survives a spine switch; thigh
-chains never move during one. The spine is the fifth entry in
-`builder.LIMBS` (all five spine bones), NOT in `DEFAULT_IK` — spine IK is
-reached through Switch. Controls resolve by role via
-`builder.ik_control(limb, role)`: limbs match `IK_ROLES` substrings,
-the spine matches `SPINE_IK_MARKS` leaf names EXACTLY (a substring match
-grabbed `IKSpine_mid_blend` before the control). Build converts animation by
-capture-bake onto the controls, then CUTS the bones' rotation keys — they
-would fight the solver through pairBlends; bake-back restores them. Chest
-and base convert exactly; interior bones are a curve+twist projection
-(measured 0.00–0.08 cm here).
+`2026-08-15-spline-ik-spine-design.md` (v3). Mechanism: degree-2 curve,
+clusters under world-aligned controls, `ikSplineSolver`
+**spine_01→spine_04** (the top control sits one bone below the chest tip by
+the user's request; spine_05 rides above it keeping its own local keys)
+with advanced twist (Object Rotation Up start/end, forward axis +X — the
+only axis the twist supports, and the bones' axis here); spine_04 is
+orient-constrained to the top control. The middle control rides a blend
+group point+orient-constrained 50/50 between the hips and the top and stays
+animatable on top of that. **The bottom node carries the pelvis**: the
+pelvis's FK controller is re-hung INSIDE `IKSpine_bot` via `apply_Parent_in`
+(re-baked, zero drift), so the general pelvis control keeps working and the
+bottom node moves the pelvis plus every FK chain riding it. Hidden
+followers: `IKSpine_hip` rides the pelvis BONE (carries the curve base CV
+and the mid blend); `IKSpine_chest` rides the spine_05 BONE (what neck and
+clavicle chains re-hang on, so spine_05's local keys keep carrying them);
+zero groups follow the ROOT bone (chest planted during hip sway, root
+motion carries all). **The pelvis is its own single-knot FK chain**
+(`CHAINS` has `pelvis` separate from `spine`) so its controller survives a
+spine switch; the switch lifts it out of the bottom node before teardown
+and re-hangs it on the root controller. The spine is the fifth entry in
+`builder.LIMBS` (spine_01..05), NOT in `DEFAULT_IK` — spine IK is reached
+through Switch. Controls resolve by role via `builder.ik_control(limb,
+role)`: limbs match `IK_ROLES` substrings, the spine matches
+`SPINE_IK_MARKS` leaf names EXACTLY (a substring match grabbed
+`IKSpine_mid_blend` before the control). Build converts animation by
+capture-bake onto the controls, then CUTS the driven bones' rotation keys —
+they would fight the solver through pairBlends; bake-back restores them.
+spine_04, spine_05 and the pelvis convert exactly; interior bones are a
+curve+twist projection (measured 0.00–0.13 cm here).
 
 **Bake+Delete** bakes back to FK whichever limbs the selection touches — an IK
 control, any descendant of one, or the limb's source joints (so the picker's own
@@ -345,6 +354,16 @@ C_parent` construction rather than a measurement.
    bakes innermost first.
 7. **Path prefixes need the separator.** `|foot_l_IK_feet_extra` is not a child of
    `|foot_l_IK_feet`. `_is_inside` guards this; a test locks it.
+8. **A path-based manifest diff records re-parented nodes as fresh.**
+   `apply_Parent_in` re-parents existing controllers, so their new long
+   paths appeared in the scene diff — the spine manifest swallowed the
+   pelvis controller and both FK legs, and tearing the spine down deleted
+   them. `builder._scene_nodes()` now snapshots UUIDs (survive any
+   re-parent) and `_fresh_paths` maps genuinely new ones back to paths.
+9. **The finger chains sit inside the spine containers transitively.**
+   Containment alone made a spine switch lift them to world, detaching them
+   from the hand ("everything moves except the fingers").
+   `spine_dependent_chains` filters riders by their own attach bone.
 
 ## Conventions
 

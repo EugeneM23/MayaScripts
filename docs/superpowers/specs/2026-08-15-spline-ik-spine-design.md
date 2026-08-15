@@ -81,13 +81,43 @@ and Riham Toulan's advanced-twist tutorial:
 - `verify_hybrid_build.py` — HYBRID BUILD WORKS with the pelvis chain in
   `HYBRID_FK_CHAINS` (14 chains + 4 IK limbs, 18 full-FK).
 
+## v3 — the user's corrections (same day)
+
+Two changes requested after trying v2 in the scene, both live-verified:
+
+1. **The bottom node moves the pelvis.** The pelvis's own FK controller is
+   re-hung INSIDE `IKSpine_bot` through `apply_Parent_in` (animation
+   re-baked, zero drift): the general pelvis control keeps working, and the
+   bottom node now carries the pelvis bone and every FK chain riding it
+   (thighs measured following 8.00/8.00). Two hidden followers close the
+   loops: `IKSpine_hip` rides the pelvis BONE and carries the curve base CV
+   and the mid blend, so the spine base tracks the hips wherever their
+   motion comes from; the zero groups follow the ROOT bone, so the chest
+   stays planted while the hips sway and root motion carries everything.
+   The switch lifts the pelvis controller back out (containment adds it to
+   the riders past the attach-bone filter) and re-hangs it on the root
+   controller.
+2. **The top control drives spine_04, one bone below the chest tip.** The
+   solver runs spine_01→spine_04; spine_05 rides above with its own local
+   keys (they are not cut). Dependent chains (neck, clavicles) hang on a
+   hidden `IKSpine_chest` follower riding the spine_05 BONE, so its local
+   animation keeps carrying them; the visible top control stays the
+   picker's `end` role.
+
+**The bug v3 exposed — path-based manifest diffs.** `apply_Parent_in`
+re-parents existing nodes, and a re-parented node's new long path read as a
+freshly created node: the spine manifest swallowed the pelvis controller
+and both FK legs, and tearing the spine down deleted them. The manifest
+diff now runs on UUIDs (`builder._scene_nodes` returns UUIDs,
+`_fresh_paths` maps the new ones back to paths) — a UUID survives any
+re-parenting. This also stopped chains from re-recording their own
+subtrees on every coupling.
+
 ## Notes
 
-- "Нижний ... смещает таз" is read as the AS hip-sway: the bottom node
-  moves the lower spine mass; the pelvis BONE stays owned by the pelvis
-  controller. If the user meant literal pelvis translation on the bottom
-  node, that is a one-line re-wire (add pelvis to the capture/orient set) —
-  flagged for review.
+- Without a pelvis controller in the scene the bottom node simply has no
+  passenger (bare-skeleton builds); every real flow builds the pelvis FK
+  chain first.
 - Stretch (curve longer than the chain) is not built; the solver just runs
   out, matching the no-stretch limbs.
 - Switching a limb to FK while the spine is IK still couples to nothing

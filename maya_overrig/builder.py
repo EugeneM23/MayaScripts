@@ -239,7 +239,25 @@ def foreign_knots_inside(rig_paths, our_paths, overrig_made):
 
 
 def _scene_nodes():
-    return set(cmds.ls(long=True) or [])
+    """UUIDs of every node in the scene -- the manifest diff's currency.
+
+    UUIDs, not long paths: OverRig's apply_Parent_in re-parents EXISTING
+    nodes, and a re-parented node's new path reads as a fresh node in a
+    path diff. The spine manifest once swallowed the pelvis controller and
+    both FK legs that way, and tearing the spine down deleted them all.
+    A UUID survives any re-parenting.
+    """
+    return set(cmds.ls(uuid=True) or [])
+
+
+def _fresh_paths(before, after):
+    """Long paths of the nodes created between two _scene_nodes snapshots."""
+    fresh = []
+    for uuid in after - before:
+        paths = cmds.ls(uuid, long=True) or []
+        if paths:
+            fresh.append(paths[0])
+    return sorted(fresh)
 
 
 def _recordable(node):
@@ -488,7 +506,8 @@ def build(scene_map, only=None):
                 overrig.build_ik(joints)
             after = _scene_nodes()
 
-            fresh = sorted(n for n in (after - before) if _recordable(n))
+            fresh = [n for n in _fresh_paths(before, after)
+                     if _recordable(n)]
             if fresh:
                 cmds.sets(fresh, addElement=_ensure_limb_set(name))
                 created.extend(fresh)

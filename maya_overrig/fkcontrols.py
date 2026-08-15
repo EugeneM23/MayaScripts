@@ -448,9 +448,13 @@ def _ensure_chain_set(chain):
 
 
 def _record_fresh(chain, before):
-    """Record (and visually mute) everything created since `before`."""
-    fresh = sorted(n for n in (builder._scene_nodes() - before)
-                   if builder._recordable(n))
+    """Record (and visually mute) everything created since `before`.
+
+    `before` is a UUID snapshot: re-parented nodes must NOT read as fresh,
+    or a chain's manifest swallows another chain's controllers.
+    """
+    fresh = [n for n in builder._fresh_paths(before, builder._scene_nodes())
+             if builder._recordable(n)]
     if fresh:
         cmds.sets(fresh, addElement=_ensure_chain_set(chain))
         _hide_rig_machinery(fresh)
@@ -1013,17 +1017,52 @@ def _spine_dependents():
         paths = cmds.ls(controller_name(chain[0]), long=True) or []
         root_ctrls[chain_name] = paths[0] if paths else None
     targeted = {j for _, chain in CHAINS for j in chain}
-    return spine_dependent_chains(root_ctrls, containers, _parent_map(),
-                                  targeted)
+    riders = spine_dependent_chains(root_ctrls, containers, _parent_map(),
+                                    targeted)
+
+    # The pelvis controller rides INSIDE the bottom node while the spine is
+    # IK (that is how the bottom node moves the pelvis). It must be lifted
+    # out before the rig dies and re-hangs on its own attach controller (the
+    # root); the attach-bone filter would drop it, so containment adds it
+    # explicitly.
+    pelvis_path = root_ctrls.get("pelvis")
+    if (pelvis_path and "pelvis" not in riders
+            and any(builder._is_inside(pelvis_path, c) for c in containers)):
+        riders.append("pelvis")
+    return riders
+
+
+def _spine_anchor(mark):
+    """A named helper inside the spine IK manifest, exact leaf match."""
+    for member in overrig.set_members(builder.limb_set("spine")):
+        if not cmds.objExists(member):
+            continue
+        leaf = member.split("|")[-1]
+        if leaf == mark or (leaf.startswith(mark)
+                            and leaf[len(mark):].isdigit()):
+            return member
+    return None
 
 
 def _spine_rehang_target(bone, now_ik):
-    """The control a dependent chain hangs on after the spine converted."""
+    """The control a dependent chain hangs on after the spine converted.
+
+    Chest chains prefer the IKSpine_chest follower over the top control:
+    the follower rides the spine_05 BONE, whose own local keys keep
+    animating under the solver-driven spine_04, and the neck must carry
+    that motion too.
+    """
     if bone is None:
         return None
     if now_ik:
         role = SPINE_REHANG.get(bone)
-        return builder.ik_control("spine", role) if role else None
+        if role is None:
+            return None
+        if role == "end":
+            anchor = _spine_anchor("IKSpine_chest")
+            if anchor:
+                return anchor
+        return builder.ik_control("spine", role)
     ctrl = controller_name(bone)
     return ctrl if cmds.objExists(ctrl) else None
 

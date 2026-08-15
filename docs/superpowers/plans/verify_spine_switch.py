@@ -96,6 +96,7 @@ head_ref = snap("head")
 thigh_ref = snap("thigh_l")
 chest_ref = snap("spine_05")
 finger_ref = snap("index_03_l")
+pelvis_ref = snap("pelvis")
 
 # --- full FK, then switch the spine to IK ------------------------------------
 count, message = fkcontrols.build_fk(smap)
@@ -122,6 +123,8 @@ top = builder.ik_control("spine", "end")
 mid = builder.ik_control("spine", "pole")
 bot = builder.ik_control("spine", "base")
 check("three spine controls exist", all([top, mid, bot]))
+check("pelvis controller rides the bottom node",
+      is_under(pelvis_ctrl, bot))
 
 neck_ctrl = fkcontrols.controller_name("neck_01")
 clav_l = fkcontrols.controller_name("clavicle_l")
@@ -130,9 +133,11 @@ thigh_l = fkcontrols.controller_name("thigh_l")
 index_ctrl = fkcontrols.controller_name("index_metacarpal_l")
 hand_ctrl = fkcontrols.controller_name("hand_l")
 
-check("neck hangs on the top control", is_under(neck_ctrl, top))
-check("clavicles hang on the top control",
-      is_under(clav_l, top) and is_under(clav_r, top))
+anchor = fkcontrols._spine_anchor("IKSpine_chest")
+check("chest anchor exists", bool(anchor), str(anchor))
+check("neck hangs on the chest anchor", is_under(neck_ctrl, anchor))
+check("clavicles hang on the chest anchor",
+      is_under(clav_l, anchor) and is_under(clav_r, anchor))
 check("thighs still hang on the pelvis controller",
       is_under(thigh_l, pelvis_ctrl))
 check("fingers still hang on the hand (never lifted)",
@@ -163,6 +168,19 @@ check("head follows the top control", head_moved > 5,
 check("FINGERS FOLLOW THE TOP CONTROL (the bug)", tip_moved > 5,
       "%.2f cm" % tip_moved)
 
+# The bottom node moves the pelvis and everything riding it.
+pelvis0 = wpos(smap["pelvis"])
+thigh0 = wpos(smap["thigh_l"])
+s4_0 = wpos(smap["spine_04"])
+with pushed(bot + ".translateZ", 8):
+    pelvis_moved = dist(pelvis0, wpos(smap["pelvis"]))
+    thigh_moved = dist(thigh0, wpos(smap["thigh_l"]))
+    s4_moved = dist(s4_0, wpos(smap["spine_04"]))
+check("BOTTOM MOVES THE PELVIS", pelvis_moved > 6, "%.2f cm" % pelvis_moved)
+check("thighs ride the hip sway", thigh_moved > 6, "%.2f cm" % thigh_moved)
+check("chest stays planted during the hip sway", s4_moved < 2.5,
+      "%.2f cm" % s4_moved)
+
 # --- switch back to FK ---------------------------------------------------------
 done, skipped, message = fkcontrols.switch_limbs(smap, ["spine"])
 print("\nswitch spine back:", message, "\n")
@@ -173,11 +191,17 @@ check("spine FK chain recorded again",
 check("pelvis controller still standing", cmds.objExists(pelvis_ctrl))
 
 spine05_ctrl = fkcontrols.controller_name("spine_05")
+root_ctrl = fkcontrols.controller_name("root")
 check("neck back on the spine_05 control", is_under(neck_ctrl, spine05_ctrl))
 check("clavicles back on the spine_05 control",
       is_under(clav_l, spine05_ctrl) and is_under(clav_r, spine05_ctrl))
+check("pelvis controller back on the root control",
+      is_under(pelvis_ctrl, root_ctrl))
 check("thighs never moved", is_under(thigh_l, pelvis_ctrl))
 check("fingers never moved", is_under(index_ctrl, hand_ctrl))
+check("pelvis animation intact after the round trip",
+      drift_of("pelvis", pelvis_ref) < 0.5,
+      "%.3f cm" % drift_of("pelvis", pelvis_ref))
 check("chest animation survived the round trip",
       drift_of("spine_05", chest_ref) < 1.0,
       "%.3f cm" % drift_of("spine_05", chest_ref))
