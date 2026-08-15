@@ -90,7 +90,8 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 
 | Module | Responsibility | May import |
 |---|---|---|
-| `bodymap.py` | 64-button body map, pure data | **stdlib only** |
+| `bodymap.py` | 64 FK buttons + 11 IK circles, pure data | **stdlib only** |
+| `pickerstate.py` | Button-to-controller resolution, pure | **stdlib only** |
 | `naming.py` | Skeleton root discovery, name resolution, prefix detection, UUID binding | `maya.cmds` |
 | `picker_view.py` | Qt scene, button items, painting, input | **Qt only** |
 | `picker_window.py` | Window, toolbar, Maya selection wiring, scriptJob | Qt + `maya.cmds` |
@@ -119,9 +120,19 @@ import maya_overrig; maya_overrig.show_picker()
 
 ## What the tool does today
 
-**Rig Picker** — an anatomical T-pose body map, 64 buttons, front view with the
+**Rig Picker** — an anatomical T-pose body map, 64 FK buttons plus 11 IK
+circles (end + pole per limb, top/mid/bot for the spine), front view with the
 character's left on the viewer's right. Click selects, `shift` adds, `ctrl`
 toggles, drag marquee-selects, wheel zooms, middle-drag pans.
+
+**The picker selects controllers, never bones.** A button is live exactly when
+its controller exists right now — FK buttons resolve `<joint>_FK_ctrl` by
+name, IK circles resolve through `builder.ik_control(limb, role)` and the limb
+manifests. Everything else is dimmed and unclickable: before a build the whole
+map is inert, a limb switched to IK dims its FK buttons and lights its
+circles. Availability is recomputed on every selection sync
+(`picker_window.sync_from_scene` → `_resolution` → `pickerstate.resolve`), so
+builds, bakes, switches and manual deletes all show up immediately.
 
 **Connect** binds the panel to one skeleton. Any joint of the character works —
 it climbs to the root — as does the enclosing group. The root is remembered by
@@ -129,22 +140,42 @@ UUID so renaming or regrouping does not break the link. A single-skeleton scene
 connects on open. Every lookup goes through the bound subtree, which is what
 makes namespaces and per-joint prefixes a non-issue.
 
-**Build** creates IK on both arms and both legs via
-`apply_rebike_3_or_more_object_to_IK`, one undo step, rebuilding if pressed again.
+**Build** (the only build button) tears down whatever exists — FK baked back
+first, then IK, because finger controls can hang inside IK hand controls —
+and builds fresh in one undo step (`fkcontrols.rebuild`). Default: the hybrid
+rig — IK arms and legs (`builder.DEFAULT_IK`), FK on root/spine/neck/fingers
+(`HYBRID_FK_CHAINS`), finger chains hung on the IK hand controls via
+`apply_Parent_in`. With the **FK Limbs** toggle pressed: full FK on all 17
+chains (the old Build FK). No clavicle or ball controls in hybrid — same as
+the post-Switch IK state; switching a limb to FK brings them back.
+
+**Spine IK** is the same `apply_rebike_3_or_more_object_to_IK` call on exactly
+**(pelvis, spine_03, spine_05)** — the 3-joint form, deliberately: its output
+is the three named controls the user asked for — `pelvis_IK_strech_gr`
+(bottom), `spine_03_IK_knee` (centre), `spine_05_IK_feet` (top). Selecting
+more joints would take the MEL's `>3` "spider" branch (per-vertebra
+`inner_rotate_ctr` twist controls) — a different tool. spine_01/02/04 keep
+their baked animation and ride their driven ancestors. The spine is a fifth
+entry in `builder.LIMBS`, so manifests, bake, resolve and nesting all cover it
+generically; it is NOT in `DEFAULT_IK` — spine IK is reached through Switch.
+IK controls are addressed by role via `builder.ik_control(limb, role)` with
+`IK_ROLES = {end: _IK_feet, pole: _IK_knee, base: _IK_strech_gr}`.
 
 **Bake+Delete** bakes back to FK whichever limbs the selection touches — an IK
 control, any descendant of one, or the limb's source joints (so the picker's own
 `Leg L` / `Main` buttons drive it). Nested rigs are baked before their container.
 
-**Build FK** builds real FK controllers through OverRig knots: 17 chains over
-the 64 bones (`apply_ForwHierarhy` per chain, `apply_parentConstrAnim` for
-root), existing animation baked onto the controllers, our sized rings attached
-as shapes on the knots, machinery locators/joints hidden. Chains are then
+**The FK engine** (`fkcontrols.build_fk`, driven by Build) builds real FK
+controllers through OverRig knots: up to 17 chains over the 64 bones
+(`apply_ForwHierarhy` per chain, `apply_parentConstrAnim` for root), existing
+animation baked onto the controllers, our sized rings attached as shapes on
+the knots, machinery locators/joints hidden. `only=` restricts it to named
+chains — the hybrid Build and Switch both use that. Chains are then
 **coupled** with `apply_Parent_in` (selection: child first, parent last): each
 chain-root controller hangs off its parent bone's controller, animation re-baked
 into the new local space (zero drift verified) — never use a bare `parent` for
-this, it preserves only the current frame. FK and IK are mutually exclusive
-(guards in the window layer — a guard in `builder` would be an import cycle).
+this, it preserves only the current frame. FK/IK exclusivity per bone is kept
+by `rebuild`'s teardown; mixed scenes (per limb) are normal after Switch.
 `Bake+Delete` with FK present bakes the whole FK back. Ring sizing comes from
 the skinned mesh, not bone length; a correction table (`_BORROW`/`_SCALE`) holds
 user-driven fixes, and `_SQUARE` lists bones drawn as a square instead of a ring
@@ -180,22 +211,36 @@ skeleton stands in** — verify the pose before building; a proposed safety
 is also the reference the axis alignment zeroes against, so a lopsided build
 pose costs the mirror symmetry as well as the animation.
 
-**Switch FK/IK** converts whatever arms/legs the selection touches to the
-opposite rig type, per limb, animation re-baked at every step
-(`fkcontrols.switch_limbs`). The FK manifest is per-chain
+**Switch FK/IK** converts whatever arms/legs/spine the selection touches to
+the opposite rig type, per limb, animation re-baked at every step
+(`fkcontrols.switch_limbs`, table `SWITCHABLE`). The FK manifest is per-chain
 (`RigPicker_fk_<chain>`; the flat `RigPicker_fk` is legacy, absorbed by a full
 bake). Fingers ride through an arm switch: `apply_Parent_out` lifts them to
 world, the arm converts, `apply_Parent_in` hangs them on the new hand control
 — they are DAG children of what gets deleted, so anything less loses them.
+The spine carries the same bracket writ large: chains whose root controller
+hangs inside the spine's nodes (neck, FK clavicles, FK thighs — found by
+`dependent_chains`, pure) are lifted out, the spine converts, and each is
+re-hung on the control now driving its attach bone — `spine_05` → the top IK
+control, `pelvis` → the base group (`SPINE_REHANG`), or the FK controllers on
+the way back. Baking an IK spine that carries dependents through Bake+Delete
+refuses via the existing intruder guard — Switch or a full bake is the route.
 `apply_Parent_out`/`_in` semantics (both verified by experiment): selection is
 child-then-parent for `_in`, the child alone for `_out`; both re-bake into the
 new space with zero drift. The IK hand control is found through the limb's
 manifest, never by name. Mixed FK/IK states are now normal; `Bake+Delete`
 resolves selection to IK limbs first, then falls back to full-FK bake.
 
-Not built: spine/neck switching; per-chain FK bake from the UI (Switch does it
-internally); IK on spine and neck; docking; mirror-select; the pose-snapshot
-safety before Build FK (proposed, not confirmed).
+Not built: neck switching and neck IK; per-chain FK bake from the UI (Switch
+does it internally); coupling a fresh FK limb to an IK spine's controls (it
+stays world-space, noted in the status line); docking; mirror-select; the
+pose-snapshot safety before Build (proposed, not confirmed).
+
+**Live verification pending** (written, not yet run — the command port was
+closed while this was built): `verify_spine_ik.py`, `verify_hybrid_build.py`,
+`verify_spine_switch.py` in `docs/superpowers/plans/`. Run all three through
+the bridge before trusting the spine IK and hybrid Build in production; the
+unit suite alone has been wrong before.
 
 Known gap in the axis alignment: **the reference is the pose at build time**, so
 `Switch FK/IK` — which rebuilds one limb through `build_fk(only=[limb])` — zeroes
@@ -216,7 +261,11 @@ C_parent` construction rather than a measurement.
   destroys the user's hand-made OverRig setups.
 - **`return_constrained_object(1)`** maps a selected knot back to the object it
   drives. Useful; the `SelCon` button on the OverRig dock.
-- **IK needs exactly three joints selected in order** root, middle, end.
+- **IK: exactly three joints selected (root, middle, end) takes the named-
+  controls branch** — `_IK_strech_gr` / `_IK_knee` / `_IK_feet` renames. Four
+  or more takes a different branch entirely ("spider leg": `base_IK_ctrl`,
+  `IK_knee_ctr`, one `inner_rotate_ctr` per extra joint, unnamed `Z_IK`
+  groups). The spine IK deliberately uses the 3-joint form.
 - **The IK proc reads the timeline range** (`timeControl -q -ra`) and bakes across
   it. Not a no-op even on an unanimated skeleton.
 - **`OverRig_knots` does not record everything OverRig creates.** It holds the

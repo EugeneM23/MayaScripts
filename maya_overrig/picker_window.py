@@ -241,8 +241,12 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         FK controllers are our own renames, so the name lookup is trusted --
         the same trust align and Switch already place in it. IK controls go
-        through the limb manifests, never by bare name.
+        through the limb manifests, never by bare name. Unbound resolves
+        nothing: an unconnected picker is inert by design.
         """
+        if not self._scene_map:
+            return {}
+
         fk_nodes = {}
         for joint in self._scene_map:
             if joint not in self._joint_to_id:
