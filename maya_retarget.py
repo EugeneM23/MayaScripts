@@ -77,3 +77,112 @@ def build_bone_map(target_names, source_names, finger_mode=ABSOLUTE):
             continue
         mapping[name] = (source, finger_mode if is_finger(name) else OFFSET)
     return mapping, sorted(unmatched)
+
+
+def joints_under(root):
+    """{short name, namespace stripped: full DAG path} for joints under root."""
+    found = {}
+    for path in cmds.ls(root, dag=True, type="joint", long=True) or []:
+        found[path.split("|")[-1].split(":")[-1]] = path
+    return found
+
+
+def _record(created, nodes, parent_path=None):
+    """Store created nodes as full paths - a short name can be ambiguous."""
+    for node in nodes or []:
+        matches = cmds.ls(node, long=True) or []
+        if parent_path and len(matches) > 1:
+            inside = [m for m in matches if m.startswith(parent_path + "|")]
+            matches = inside or matches
+        created.append(matches[0] if matches else node)
+
+
+def build_retarget(source_root=SOURCE_ROOT, target_root=TARGET_ROOT,
+                   finger_mode=ABSOLUTE, include_ik_helpers=True,
+                   retarget_set=RETARGET_SET):
+    """Constrain the suit skeleton to Manny's. Returns a summary dict."""
+    for node in (source_root, target_root):
+        if not cmds.objExists(node):
+            raise RuntimeError("not in the scene: %s" % node)
+    if cmds.objExists(retarget_set):
+        raise RuntimeError(
+            "%s already exists - run remove_retarget() first" % retarget_set)
+
+    source = joints_under(source_root)
+    target = joints_under(target_root)
+    if SOURCE_SKEL not in source:
+        raise RuntimeError("no %r joint under %s" % (SOURCE_SKEL, source_root))
+
+    mapping, unmatched = build_bone_map(sorted(target), sorted(source),
+                                        finger_mode)
+    side_offset = cmds.getAttr(target_root + ".translateX")
+    created = []
+
+    cmds.undoInfo(openChunk=True, chunkName="build_retarget")
+    try:
+        # Pelvis carries the world position. point + orient, never parent:
+        # a parent constraint stores its offset in the source's space and
+        # swings the suit through an arc when Manny turns on the spot.
+        _record(created, cmds.pointConstraint(
+            source["pelvis"], target["pelvis"], maintainOffset=True),
+            target["pelvis"])
+
+        for name in sorted(mapping):
+            src_name, mode = mapping[name]
+            _record(created, cmds.orientConstraint(
+                source[src_name], target[name],
+                maintainOffset=(mode == OFFSET)), target[name])
+
+        if include_ik_helpers:
+            for name in IK_ROOTS:
+                if name not in target:
+                    continue
+                _record(created, cmds.pointConstraint(
+                    source[SOURCE_SKEL], target[name], maintainOffset=True),
+                    target[name])
+                _record(created, cmds.orientConstraint(
+                    source[SOURCE_SKEL], target[name], maintainOffset=True),
+                    target[name])
+            # Both ends live inside the suit, so no side offset is involved
+            # and parentConstraint is safe here - it is what Manny uses.
+            for name, driver in IK_DRIVEN:
+                if name in target and driver in target:
+                    _record(created, cmds.parentConstraint(
+                        target[driver], target[name], maintainOffset=True),
+                        target[name])
+
+        cmds.sets(created, name=retarget_set)
+        cmds.addAttr(retarget_set, longName="retargetSideOffset",
+                     attributeType="double")
+        cmds.setAttr(retarget_set + ".retargetSideOffset", side_offset)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+    summary = {"constraints": len(created), "bones": len(mapping),
+               "unmatched": unmatched, "side_offset": side_offset}
+    print("retarget: %d constraints over %d bones, side offset %.3f cm"
+          % (summary["constraints"], summary["bones"], side_offset))
+    if unmatched:
+        print("retarget: UNMATCHED target bones: %s" % ", ".join(unmatched))
+    return summary
+
+
+def remove_retarget(retarget_set=RETARGET_SET):
+    """Delete every node this tool created. Returns how many were deleted."""
+    if not cmds.objExists(retarget_set):
+        print("retarget: nothing to remove")
+        return 0
+    members = cmds.sets(retarget_set, query=True) or []
+    alive = [m for m in members if cmds.objExists(m)]
+    cmds.undoInfo(openChunk=True, chunkName="remove_retarget")
+    try:
+        if alive:
+            cmds.delete(alive)
+        # Maya takes the set down with its last member, so it may already be
+        # gone here - deleting it unconditionally raises on a clean teardown.
+        if cmds.objExists(retarget_set):
+            cmds.delete(retarget_set)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    print("retarget: removed %d constraint node(s)" % len(alive))
+    return len(alive)
