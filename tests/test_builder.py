@@ -5,22 +5,23 @@ from maya_overrig import bodymap, builder
 
 class TestLimbTable(unittest.TestCase):
 
-    def test_five_limbs(self):
-        self.assertEqual(len(builder.LIMBS), 5)
+    def test_four_limbs(self):
+        """No spine: the spline-IK spine was removed at the user's call
+        (2026-08-15); git history holds it at 0e0794f."""
+        self.assertEqual(len(builder.LIMBS), 4)
 
-    def test_names_are_the_picker_regions_plus_spine(self):
+    def test_names_are_the_picker_regions(self):
         self.assertEqual([name for name, _ in builder.LIMBS],
-                         ["arm_l", "arm_r", "leg_l", "leg_r", "spine"])
+                         ["arm_l", "arm_r", "leg_l", "leg_r"])
 
-    def test_three_joints_per_arm_and_leg(self):
+    def test_three_joints_each(self):
         for name, joints in builder.LIMBS:
-            if name != "spine":
-                self.assertEqual(len(joints), 3, name)
+            self.assertEqual(len(joints), 3, name)
 
-    def test_seventeen_distinct_joints(self):
+    def test_twelve_distinct_joints(self):
         every = [j for _, joints in builder.LIMBS for j in joints]
-        self.assertEqual(len(every), 17)
-        self.assertEqual(len(set(every)), 17)
+        self.assertEqual(len(every), 12)
+        self.assertEqual(len(set(every)), 12)
 
     def test_every_joint_exists_in_the_body_map(self):
         known = {b.joint for b in bodymap.BUTTONS}
@@ -33,24 +34,16 @@ class TestLimbTable(unittest.TestCase):
         self.assertEqual(table["leg_l"], ("thigh_l", "calf_l", "foot_l"))
         self.assertEqual(table["arm_r"], ("upperarm_r", "lowerarm_r", "hand_r"))
 
-    def test_spine_is_the_five_spine_bones(self):
-        """The spline IK drives every spine bone; the pelvis stays out --
-        its FK controller survives a spine switch untouched."""
-        table = dict(builder.LIMBS)
-        self.assertEqual(table["spine"],
-                         ("spine_01", "spine_02", "spine_03",
-                          "spine_04", "spine_05"))
-
 
 class TestDefaultIk(unittest.TestCase):
 
-    def test_arms_and_legs_only(self):
+    def test_arms_and_legs(self):
         self.assertEqual(builder.DEFAULT_IK,
                          ("arm_l", "arm_r", "leg_l", "leg_r"))
 
-    def test_subset_of_the_limb_table(self):
+    def test_within_the_limb_table(self):
         names = {name for name, _ in builder.LIMBS}
-        self.assertTrue(set(builder.DEFAULT_IK) < names)
+        self.assertTrue(set(builder.DEFAULT_IK) <= names)
 
 
 class TestIkRoles(unittest.TestCase):
@@ -71,14 +64,6 @@ class TestIkRoles(unittest.TestCase):
         self.assertEqual(builder.IK_ROLES["pole"], "_IK_knee")
         self.assertEqual(builder.IK_ROLES["base"], "_IK_strech_gr")
 
-    def test_spine_marks_are_our_own_spline_nodes(self):
-        """The spine IK is built by spineik.py, not OverRig, so its controls
-        carry our names; role addressing stays uniform for the picker."""
-        self.assertEqual(builder.SPINE_IK_MARKS["end"], "IKSpine_top")
-        self.assertEqual(builder.SPINE_IK_MARKS["pole"], "IKSpine_mid")
-        self.assertEqual(builder.SPINE_IK_MARKS["base"], "IKSpine_bot")
-        self.assertEqual(set(builder.SPINE_IK_MARKS), set(builder.IK_ROLES))
-
 
 class TestLimbJoints(unittest.TestCase):
 
@@ -87,9 +72,9 @@ class TestLimbJoints(unittest.TestCase):
         return {j: "|rig|" + j
                 for _, joints in builder.LIMBS for j in joints}
 
-    def test_resolves_all_five_limbs(self):
+    def test_resolves_all_four_limbs(self):
         resolved = builder.limb_joints(self._full_map())
-        self.assertEqual(len(resolved), 5)
+        self.assertEqual(len(resolved), 4)
 
     def test_keeps_joint_order(self):
         resolved = dict(builder.limb_joints(self._full_map()))
@@ -129,7 +114,7 @@ class TestMissingLimbs(unittest.TestCase):
 
     def test_empty_map_misses_everything(self):
         self.assertEqual(builder.missing_limbs({}),
-                         ["arm_l", "arm_r", "leg_l", "leg_r", "spine"])
+                         ["arm_l", "arm_r", "leg_l", "leg_r"])
 
 
 class TestLimbSet(unittest.TestCase):

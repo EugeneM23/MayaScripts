@@ -135,10 +135,10 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.switch_button = QtWidgets.QPushButton("Switch FK/IK", bar)
         self.switch_button.setStyleSheet(_BUTTON_STYLE)
         self.switch_button.setToolTip(
-            "Convert the selected arms, legs or spine to the opposite rig\n"
-            "type. FK becomes IK, IK becomes FK; animation is re-baked.\n"
-            "Whatever hangs on the converted part survives on its new "
-            "control.")
+            "Convert the selected arms or legs to the opposite rig type.\n"
+            "With no rig on the limb, the first press builds its IK.\n"
+            "FK becomes IK, IK becomes FK; animation is re-baked, and\n"
+            "fingers survive on the new hand control.")
         self.switch_button.clicked.connect(
             lambda _checked=False: self.switch_selected_limbs())
         row.addWidget(self.switch_button)
@@ -339,7 +339,7 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         selected = cmds.ls(selection=True, long=True) or []
         # One innermost-owner resolution for both kinds -- an arm controller
-        # nested inside the spine's controllers must NOT drag the spine in.
+        # nested inside the torso's controllers must NOT drag those in.
         ik_limbs, fk_chains = fkcontrols.bake_targets(self._scene_map)
         # Bones resolve too: with no rig on the chain at all, the first
         # Switch press builds its IK.
@@ -350,7 +350,7 @@ class PickerWindow(QtWidgets.QMainWindow):
         limbs = [l for l in fkcontrols.SWITCHABLE if l in hit]
         if not limbs:
             self.status.showMessage(
-                "Select a limb or spine - a controller, a bone, or its "
+                "Select an arm or leg - a controller, a bone, or its "
                 "picker button")
             return
 

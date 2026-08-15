@@ -161,19 +161,11 @@ def _mirrored_ik(buttons):
     return out
 
 
-def _spine_ik_buttons():
-    rows = [
-        ("spine_ik_top", "end", 106),
-        ("spine_ik_mid", "pole", 144),
-        ("spine_ik_bot", "base", 184),
-    ]
-    return [IkButton(i, "spine", role, 226, y, _IK_SIZE, _IK_SIZE, "spine")
-            for i, role, y in rows]
-
-
 def _build_ik():
+    # No spine circles: the spline-IK spine was removed at the user's call
+    # (2026-08-15); git history holds it at 0e0794f for when it returns.
     left = _left_ik_buttons()
-    return tuple(left + _mirrored_ik(left) + _spine_ik_buttons())
+    return tuple(left + _mirrored_ik(left))
 
 
 IK_BUTTONS = _build_ik()

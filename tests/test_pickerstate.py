@@ -41,15 +41,6 @@ class TestResolve(unittest.TestCase):
         found = pickerstate.resolve({}, {("leg_l", "end"): "|foot_l_IK_feet"})
         self.assertEqual(found["leg_l_ik_end"], "|foot_l_IK_feet")
 
-    def test_spine_roles_land_on_their_buttons(self):
-        found = pickerstate.resolve(
-            {}, {("spine", "end"): "|spine_05_IK_feet",
-                 ("spine", "pole"): "|spine_03_IK_knee",
-                 ("spine", "base"): "|pelvis_IK_strech_gr"})
-        self.assertEqual(found["spine_ik_top"], "|spine_05_IK_feet")
-        self.assertEqual(found["spine_ik_mid"], "|spine_03_IK_knee")
-        self.assertEqual(found["spine_ik_bot"], "|pelvis_IK_strech_gr")
-
     def test_missing_ik_control_leaves_the_button_out(self):
         found = pickerstate.resolve({}, {("leg_l", "end"): None})
         self.assertNotIn("leg_l_ik_end", found)

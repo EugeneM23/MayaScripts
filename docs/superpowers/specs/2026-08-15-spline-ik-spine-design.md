@@ -1,7 +1,11 @@
 # Spline-IK spine v2 — three controls, surviving pelvis, no aim
 
 Date: 2026-08-15
-Status: built and live-verified (all three verify scripts green in the scene)
+Status: **REMOVED at the user's call the same day** ("давай весь функционал
+IK спины удалим... в будущем вернёмся"). The complete working
+implementation — module, switch integration, picker circles, verify
+scripts — lives at commit `0e0794f`. This spec stays as the design record
+for the return: everything below was built, live-verified and then parked.
 Branch: `feature/overrig-picker`
 Supersedes: the spine section of `2026-08-15-spine-ik-picker-controls-design.md`
 

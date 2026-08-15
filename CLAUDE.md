@@ -96,7 +96,6 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `picker_view.py` | Qt scene, button items, painting, input | **Qt only** |
 | `picker_window.py` | Window, toolbar, Maya selection wiring, scriptJob | Qt + `maya.cmds` |
 | `overrig.py` | Thin binding to the MEL toolset, no policy | `maya.cmds`, `maya.mel` |
-| `spineik.py` | The spline-IK spine rig, self-contained | `maya.cmds`, `maya.api.OpenMaya`, `overrig` |
 | `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig` |
 | `axes.py` | Rotation algebra for controller axes, pure | `maya.api.OpenMaya` only |
 
@@ -150,49 +149,15 @@ rig — IK arms and legs (`builder.DEFAULT_IK`), FK on root/spine/neck/fingers
 chains (the old Build FK). No clavicle or ball controls in hybrid — same as
 the post-Switch IK state; switching a limb to FK brings them back.
 
-**Spine IK** is OUR spline rig (`spineik.py`), not an OverRig proc — the
-rebike version was built first and rejected by the user; see
-`2026-08-15-spline-ik-spine-design.md` (v4). Mechanism: a **degree-3 curve
-with one CV per driven bone** (spine_01..04, carriers hip/mid/mid/top) —
-the first cut used 3 CVs at degree 2, and a deep FK bend left that curve
-far shorter than the chain: the solver ran out of curve, the bones bunched
-up, and the then-position-pinned chest stretched the top segment ("the
-spine scales"). `ikSplineSolver` runs **spine_01→spine_04** (the top
-control sits one bone below the chest tip by the user's request; spine_05
-rides above it keeping its own local keys) with advanced twist (Object
-Rotation Up start/end, forward axis +X — the only axis the twist supports,
-and the bones' axis here); spine_04 takes the top control's ORIENTATION
-only — bone lengths are untouchable (verified: 0.000 segment deviation
-under a 74 cm bend). The middle control rides a blend group
-point+orient-constrained 50/50 between the hips and the top and stays
-animatable on top of that. **The bottom node carries the pelvis through
-`IKSpine_hipdrive`**: an identity group slipped above the pelvis controller
-(relative parenting — its keys are untouched), parent-constrained to the
-bottom node with the rest offset kept; the chain bot_zero ← root bone ←
-root controller is rigid, so the offset is exact on every frame by
-construction. `apply_Parent_in` was used here first and its attach
-machinery LATCHED under interaction — one push-and-restore of the bottom
-node shifted the pose permanently. On a bare skeleton (Switch on a plain
-bone, no FK anywhere) the bottom node captures the pelvis animation and
-drives the bone directly; the bone's keys stay under the pairBlend and
-come straight back on teardown. Hidden
-followers: `IKSpine_hip` rides the pelvis BONE (carries the curve base CV
-and the mid blend); `IKSpine_chest` rides the spine_05 BONE (what neck and
-clavicle chains re-hang on, so spine_05's local keys keep carrying them);
-zero groups follow the ROOT bone (chest planted during hip sway, root
-motion carries all). **The pelvis is its own single-knot FK chain**
-(`CHAINS` has `pelvis` separate from `spine`) so its controller survives a
-spine switch; the switch lifts it out of the bottom node before teardown
-and re-hangs it on the root controller. The spine is the fifth entry in
-`builder.LIMBS` (spine_01..05), NOT in `DEFAULT_IK` — spine IK is reached
-through Switch. Controls resolve by role via `builder.ik_control(limb,
-role)`: limbs match `IK_ROLES` substrings, the spine matches
-`SPINE_IK_MARKS` leaf names EXACTLY (a substring match grabbed
-`IKSpine_mid_blend` before the control). Build converts animation by
-capture-bake onto the controls, then CUTS the driven bones' rotation keys —
-they would fight the solver through pairBlends; bake-back restores them.
-spine_04, spine_05 and the pelvis convert exactly; interior bones are a
-curve+twist projection (measured 0.00–0.13 cm here).
+**The spine is FK-only for now.** A full spline-IK spine (own module
+`spineik.py`, three controls, hipdrive pelvis carry, per-end advanced
+twist) was built, live-verified and then REMOVED at the user's call
+(2026-08-15, "в будущем вернемся"). The complete implementation, its
+verify scripts and the design spec history live at commit `0e0794f`; the
+spec `2026-08-15-spline-ik-spine-design.md` documents every decision and
+every trap it fought. The `CHAINS` split of `pelvis` from `spine` is KEPT —
+it is harmless in FK and is a prerequisite for the IK's return. Selecting
+a spine bone and pressing Switch now says "select an arm or leg".
 
 **Bake+Delete bakes ONLY what the selection touches** onto clean bones —
 controllers, bones, or picker buttons — and everything else stays rigged
@@ -201,10 +166,9 @@ resolution across BOTH manifest kinds with the **innermost owner winning**
 (`innermost_owner`): FK controllers nest, and "descendant of any member"
 once resolved a hand-controller click into root+pelvis+spine+arm at once —
 Bake+Delete then wiped the whole FK rig. An IK limb takes its riding finger
-chains down with it; the pelvis controller on an IK spine survives, re-hung
-on the root; FK chains bake per chain, expanding to whatever rides inside
-them (a chain cannot outlive its container). Nested rigs are baked before
-their container.
+chains down with it; FK chains bake per chain, expanding to whatever rides
+inside them (a chain cannot outlive its container). Nested rigs are baked
+before their container.
 
 **Switch auto-builds**: selecting any bone of a switchable chain (viewport
 or picker) with no rig on that chain makes the first Switch press build its
@@ -264,20 +228,10 @@ the opposite rig type, per limb, animation re-baked at every step
 bake). Fingers ride through an arm switch: `apply_Parent_out` lifts them to
 world, the arm converts, `apply_Parent_in` hangs them on the new hand control
 — they are DAG children of what gets deleted, so anything less loses them.
-The spine carries the same bracket writ large, with one hard-won filter:
-`spine_dependent_chains` (pure) lifts only chains whose OWN attach bone the
-spine re-hangs (`SPINE_REHANG = {spine_05: end}` — neck and FK clavicles).
-Containment alone is NOT enough: finger chains sit inside the spine
-containers transitively through the FK arm, and lifting them detached the
-fingers from the hand — "everything moves except the fingers", a real
-user-reported bug. Deeper chains ride their parent chain's subtree. Thighs
-hang on the pelvis controller, which survives the switch untouched. Baking
-an IK spine that carries dependents through Bake+Delete refuses via the
-existing intruder guard — Switch or a full bake is the route.
+A chain with no rig at all auto-builds its IK on the first Switch press.
 `apply_Parent_out`/`_in` semantics (both verified by experiment): selection is
 child-then-parent for `_in`, the child alone for `_out`; both re-bake into the
-new space with zero drift. Mixed FK/IK states are now normal; `Bake+Delete`
-resolves selection to IK limbs first, then falls back to full-FK bake.
+new space with zero drift. Mixed FK/IK states are normal.
 
 **Fingers on an IK arm hang on `<limb>_IK_anchor`** — a hidden locator
 riding the hand BONE, parented under the IK end control (created on demand
@@ -289,13 +243,12 @@ the 4.2 cm rest). The limbs themselves do NOT stretch — OverRig's rebike
 keeps bone lengths constant (measured identical under overpull) — so no
 extra no-stretch work was needed.
 
-Not built: neck switching and neck IK; per-chain FK bake from the UI (Switch
-does it internally); coupling a fresh FK limb to an IK spine's controls (it
-stays world-space, noted in the status line); docking; mirror-select; the
+Not built: spine IK (removed, see above) and neck IK; per-chain FK bake
+from the UI (Switch does it internally); docking; mirror-select; the
 pose-snapshot safety before Build (proposed, not confirmed).
 
-**Live verification: all green** (run in the Manny scene with animated
-pelvis/spine): `verify_spine_ik.py`, `verify_spine_switch.py`,
+**Live verification: all green** (run in the Manny scene):
+`verify_arm_switch.py`, `verify_capture_edges.py`,
 `verify_hybrid_build.py` in `docs/superpowers/plans/`. Bridge-script
 hygiene, learned the hard way: never `cmds.undo()` inside a bridge script
 (the whole script is one command — undo reverts a whole prior chunk and the
@@ -326,8 +279,8 @@ C_parent` construction rather than a measurement.
   controls branch** — `_IK_strech_gr` / `_IK_knee` / `_IK_feet` renames. Four
   or more takes a different branch entirely ("spider leg": `base_IK_ctrl`,
   `IK_knee_ctr`, one `inner_rotate_ctr` per extra joint, unnamed `Z_IK`
-  groups). Neither fits a torso — that is why the spine IK is our own
-  spline rig in `spineik.py`.
+  groups). Neither fits a torso — that is why the (since removed) spine IK
+  was a custom spline rig, preserved at `0e0794f`.
 - **The IK proc reads the timeline range** (`timeControl -q -ra`) and bakes across
   it. Not a no-op even on an unanimated skeleton.
 - **`OverRig_knots` does not record everything OverRig creates.** It holds the
@@ -401,10 +354,12 @@ C_parent` construction rather than a measurement.
    returns plain names, not uuids** (measured in Maya 2027) — the flag only
    converts when objects are passed. `builder._scene_nodes()` therefore
    does `cmds.ls(cmds.ls(), uuid=True)`.
-9. **The finger chains sit inside the spine containers transitively.**
-   Containment alone made a spine switch lift them to world, detaching them
-   from the hand ("everything moves except the fingers").
-   `spine_dependent_chains` filters riders by their own attach bone.
+9. **Rider detection by containment alone over-lifts.** Finger chains sat
+   inside the (since removed) spine IK's containers transitively, got
+   lifted to world and detached from the hand ("everything moves except
+   the fingers"). The rule that fixed it: lift only chains whose OWN
+   attach bone belongs to what is being converted; deeper chains ride
+   their parent chain's subtree.
 10. **`sets -q` plus one bulk `ls` expands ambiguous names to every match.**
    `overrig.set_members` resolves member by member and settles ambiguity
    with `sets -isMember`, or duplicate short names leak other rigs' nodes

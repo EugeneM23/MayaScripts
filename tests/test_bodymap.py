@@ -124,9 +124,10 @@ class TestBodyMap(unittest.TestCase):
 
 class TestIkButtons(unittest.TestCase):
 
-    def test_eleven_buttons(self):
-        """End + pole per limb, top/mid/bot for the spine."""
-        self.assertEqual(len(bodymap.IK_BUTTONS), 11)
+    def test_eight_buttons(self):
+        """End + pole per limb. No spine circles: the spline-IK spine was
+        removed at the user's call (2026-08-15); git history has it."""
+        self.assertEqual(len(bodymap.IK_BUTTONS), 8)
 
     def test_ids_unique_and_disjoint_from_fk(self):
         ids = [b.id for b in bodymap.IK_BUTTONS]
@@ -143,8 +144,7 @@ class TestIkButtons(unittest.TestCase):
             {("arm_l", "end"), ("arm_l", "pole"),
              ("arm_r", "end"), ("arm_r", "pole"),
              ("leg_l", "end"), ("leg_l", "pole"),
-             ("leg_r", "end"), ("leg_r", "pole"),
-             ("spine", "end"), ("spine", "pole"), ("spine", "base")})
+             ("leg_r", "end"), ("leg_r", "pole")})
 
     def test_right_side_mirrors_the_left(self):
         by_id = {b.id: b for b in bodymap.IK_BUTTONS}
@@ -182,21 +182,17 @@ class TestIkButtons(unittest.TestCase):
                 self.assertTrue(clear, "{0} overlaps {1}".format(a.id, b.id))
 
     def test_ik_button_by_id_round_trips(self):
-        button = bodymap.ik_button_by_id("spine_ik_top")
-        self.assertEqual((button.limb, button.role), ("spine", "end"))
+        button = bodymap.ik_button_by_id("leg_l_ik_end")
+        self.assertEqual((button.limb, button.role), ("leg_l", "end"))
 
     def test_ik_button_by_id_rejects_unknown(self):
         with self.assertRaises(KeyError):
             bodymap.ik_button_by_id("pelvis")
 
     def test_groups_include_ik_ids(self):
-        spine = bodymap.group_members("spine")
-        self.assertIn("spine_ik_top", spine)
-        self.assertIn("spine_ik_mid", spine)
-        self.assertIn("spine_ik_bot", spine)
         self.assertIn("leg_l_ik_end", bodymap.group_members("leg_l"))
         self.assertIn("arm_r_ik_pole", bodymap.group_members("arm_r"))
-        self.assertIn("spine_ik_bot", bodymap.group_members("main"))
+        self.assertIn("leg_r_ik_pole", bodymap.group_members("main"))
         self.assertIn("arm_l_ik_end", bodymap.group_members("all"))
 
 

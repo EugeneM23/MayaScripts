@@ -114,13 +114,11 @@ class TestFingerChainsFor(unittest.TestCase):
 
 class TestSwitchable(unittest.TestCase):
 
-    def test_limbs_plus_spine(self):
+    def test_limbs_only(self):
+        """The spine is deliberately absent: its spline IK was removed at
+        the user's call (2026-08-15); git history holds it at 0e0794f."""
         self.assertEqual(fkcontrols.SWITCHABLE,
-                         ("arm_l", "arm_r", "leg_l", "leg_r", "spine"))
-
-    def test_starts_with_the_limb_chains(self):
-        self.assertEqual(fkcontrols.SWITCHABLE[:len(fkcontrols.LIMB_CHAINS)],
-                         fkcontrols.LIMB_CHAINS)
+                         ("arm_l", "arm_r", "leg_l", "leg_r"))
 
 
 class TestDependentChains(unittest.TestCase):
@@ -194,13 +192,13 @@ class TestSwitchableBones(unittest.TestCase):
         self.assertEqual(owner["|rig|clavicle_l"], "arm_l")
         self.assertEqual(owner["|rig|calf_r"], "leg_r")
         self.assertEqual(owner["|rig|ball_l"], "leg_l")
-        self.assertEqual(owner["|rig|spine_02"], "spine")
 
     def test_non_switchable_bones_stay_out(self):
         scene_map = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
                      for j in chain}
         owner = fkcontrols.switchable_bones(scene_map)
         self.assertNotIn("|rig|pelvis", owner)
+        self.assertNotIn("|rig|spine_02", owner)
         self.assertNotIn("|rig|head", owner)
         self.assertNotIn("|rig|index_01_l", owner)
 
@@ -281,61 +279,6 @@ class TestResolveChains(unittest.TestCase):
         self.assertEqual(
             fkcontrols.resolve_chains(["|persp"], self.MEMBERS, self.BONES),
             [])
-
-
-class TestSpineRehang(unittest.TestCase):
-
-    def test_only_the_chest_re_hangs(self):
-        """The pelvis keeps its own FK controller through a spine switch, so
-        the thigh chains never move; only chains on spine_05 re-hang, onto
-        the top IK node."""
-        self.assertEqual(fkcontrols.SPINE_REHANG, {"spine_05": "end"})
-
-
-class TestSpineDependentChains(unittest.TestCase):
-    """The bug this guards: dependent_chains alone catches every chain whose
-    controller sits ANYWHERE inside the spine containers -- including finger
-    chains riding inside an FK arm. Lifting those to world detached them from
-    the hand: moving the spine IK moved everything except the fingers."""
-
-    PARENT_OF = {
-        "root": None, "pelvis": "root",
-        "spine_01": "pelvis", "spine_02": "spine_01", "spine_03": "spine_02",
-        "spine_04": "spine_03", "spine_05": "spine_04",
-        "neck_01": "spine_05", "clavicle_l": "spine_05",
-        "upperarm_l": "clavicle_l", "lowerarm_l": "upperarm_l",
-        "hand_l": "lowerarm_l", "index_metacarpal_l": "hand_l",
-        "thigh_l": "pelvis",
-    }
-
-    CTRLS = {
-        "neck": "|spine_01_FK_ctrl|spine_05_FK_ctrl|neck_01_FK_ctrl",
-        "arm_l": "|spine_01_FK_ctrl|spine_05_FK_ctrl|clavicle_l_FK_ctrl",
-        "index_l": "|spine_01_FK_ctrl|spine_05_FK_ctrl|clavicle_l_FK_ctrl"
-                   "|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl",
-        "leg_l": "|pelvis_FK_ctrl|thigh_l_FK_ctrl",
-    }
-
-    def find(self, containers):
-        targeted = set(self.PARENT_OF)
-        return fkcontrols.spine_dependent_chains(
-            self.CTRLS, containers, self.PARENT_OF, targeted)
-
-    def test_chest_chains_are_lifted(self):
-        found = self.find(["|spine_01_FK_ctrl"])
-        self.assertIn("neck", found)
-        self.assertIn("arm_l", found)
-
-    def test_fingers_ride_their_arm_and_are_left_alone(self):
-        found = self.find(["|spine_01_FK_ctrl"])
-        self.assertNotIn("index_l", found)
-
-    def test_thighs_stay_on_the_pelvis_controller(self):
-        found = self.find(["|spine_01_FK_ctrl", "|pelvis_FK_ctrl"])
-        self.assertNotIn("leg_l", found)
-
-    def test_nothing_inside_no_containers(self):
-        self.assertEqual(self.find(["|elsewhere"]), [])
 
 
 class TestAttachParent(unittest.TestCase):

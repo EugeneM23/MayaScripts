@@ -98,7 +98,7 @@ class TestIkItems(unittest.TestCase):
             self.assertIn(button.id, self.view.items_by_id)
 
     def test_ik_items_are_ellipses_fk_items_rects(self):
-        self.assertEqual(self.view.items_by_id["spine_ik_top"].kind,
+        self.assertEqual(self.view.items_by_id["arm_l_ik_end"].kind,
                          "ellipse")
         self.assertEqual(self.view.items_by_id["pelvis"].kind, "rect")
 
@@ -115,8 +115,8 @@ class TestIkItems(unittest.TestCase):
         self.assertIn("IK", tip)
 
     def test_ik_items_dim_like_fk_items(self):
-        self.view.set_available(["spine_ik_top"])
-        self.assertTrue(self.view.items_by_id["spine_ik_top"].available)
+        self.view.set_available(["arm_l_ik_end"])
+        self.assertTrue(self.view.items_by_id["arm_l_ik_end"].available)
         self.assertFalse(self.view.items_by_id["leg_l_ik_end"].available)
 
     def test_marquee_finds_available_ik_items(self):
