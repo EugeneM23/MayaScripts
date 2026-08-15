@@ -96,6 +96,7 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `picker_window.py` | Window, toolbar, Maya selection wiring, scriptJob | Qt + `maya.cmds` |
 | `overrig.py` | Thin binding to the MEL toolset, no policy | `maya.cmds`, `maya.mel` |
 | `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig` |
+| `axes.py` | Rotation algebra for controller axes, pure | `maya.api.OpenMaya` only |
 
 **Load-bearing rules — do not break these:**
 
@@ -151,11 +152,33 @@ user-driven fixes, and `_SQUARE` lists bones drawn as a square instead of a ring
 driver → ancestor walk): a ForwHierarhy knot drives its bone through a child
 locator, so looking for constraints on the knot itself finds nothing.
 
+The last step of a build **re-expresses every controller in its bone's axes**
+(`axes.py`, `fkcontrols.align_controllers`). OverRig's knots come out on a
+convention of their own, so a mirrored pose read as unequal values and no
+mirroring tool could make sense of them. The fix rests on two measured facts: a
+joint's world rotation is `rotateAxis · rotate · jointOrient · parent`, and the
+rotation offset `C` between a knot and the bone it drives is constant over time
+(1e-14 across frames). So `rotateAxis` takes `C⁻¹`, `jointOrient` takes what the
+controller held at the build pose, and every rotate key is conjugated into the
+new frame. The product the DAG consumes is unchanged **by construction** —
+nothing moves, no constraint is touched, no node is created — and the operation
+is idempotent because it works from the whole `rotateAxis · rotate ·
+jointOrient` product rather than the rotate channel alone. Afterwards every
+controller reads zero at the build pose and **equal values on both sides give a
+mirrored pose** (verified: 0.0004). Two things to know: OverRig **locks
+`jointOrient`** on its knots, so it is unlocked and re-locked around the write,
+and the write order matters — a `rotateAxis` without its `jointOrient` moves the
+bone. `root` is skipped: `apply_parentConstrAnim` builds it as a plain
+transform with no `jointOrient`, and a lone centre control has nothing to be
+symmetric with.
+
 Two hard-won facts about this rig: bind orientation lives in the joints' ROTATE
 channels, not jointOrient — non-zero local rotates are NOT a bent skeleton, and
 `dagPose` restore is the way to check. And **Build FK bakes the pose the
 skeleton stands in** — verify the pose before building; a proposed safety
-(snapshot a dagPose before every build) is not yet implemented.
+(snapshot a dagPose before every build) is not yet implemented. The build pose
+is also the reference the axis alignment zeroes against, so a lopsided build
+pose costs the mirror symmetry as well as the animation.
 
 **Switch FK/IK** converts whatever arms/legs the selection touches to the
 opposite rig type, per limb, animation re-baked at every step
@@ -194,6 +217,27 @@ safety before Build FK (proposed, not confirmed).
   `foot_l_IK_feet1`. Never identify rig nodes by name — use manifest membership.
 - **The IK rig contains joints of its own** (`fin_jnt11`, `knee_ctrl`) with no
   joint parent.
+
+## Animbot, which the user has installed and mirrors animation with
+
+- **Its buttons cannot be clicked from script.** `CORE.Tool_mirror_mirrorPose`
+  is a Qt widget, and `click()`, `animateClick()`, `trigger()` and emitting
+  `clicked`/`clicked_` all return quietly having done **nothing**. That reads
+  exactly like "the tool ran and decided not to act", and it cost most of a
+  session. The route that works is the module instance:
+  `from animBot._api.core import CORE; CORE.mirror.mirrorAllKeys_click()`.
+  Flush the idle queue afterwards (`QApplication.processEvents()` plus
+  `maya.utils.processIdleEvents()`) before measuring.
+- **`snapshotMirrorSettings_click()` blocks Maya from a command-port call** —
+  it puts up a modal dialog with nothing to click it. Do not send it through
+  the bridge; ask the user to press the button.
+- **It pairs our controllers by name already**: `Select Opposite` finds
+  `upperarm_r_FK_ctrl` from `upperarm_l_FK_ctrl` with no setup.
+- **It guesses a per-channel sign pattern from the rig** and caches what it
+  learns per controller, so a stale guess can outlive the rig that produced it.
+  `Clear Mirror Settings Data` is the reset. Four rest-frame conventions were
+  built as isolated control pairs and mirrored: `(-1,-1,-1)` and `(-1,+1,+1)`
+  mirror exactly, `(+1,-1,+1)` — what OverRig's raw knots use — does not.
 
 ## Traps already hit — each cost a debugging round
 

@@ -67,20 +67,36 @@ off the other.
 `Build FK` gains one step, between building a chain's knots and coupling the
 chains together: **align each fresh knot's rest frame to the bone it drives.**
 
-The knots are joints with `jointOrient` and `rotateAxis` at zero, so the
-alignment has a natural home — the orientation moves into `jointOrient`, and the
-animation moves with it:
+The knots are joints, so the alignment has a natural home in their static
+orientation attributes. Two facts, both measured on the live rig, make it a
+purely local edit:
 
-1. Walk the chain root-down. A parent's realignment changes every descendant's
-   world frame, so parents must settle before their children are measured.
-2. For each knot, record its world matrix at every keyed frame. That matrix is
-   what drives the bone; preserving it preserves the animation exactly.
-3. Set `jointOrient` so that with `rotate` at zero the knot's world orientation
-   equals its bone's world orientation.
-4. Recompute `rotate` at every recorded frame to reproduce the recorded world
-   matrix under the new rest frame.
+- a joint's world rotation is `rotateAxis · rotate · jointOrient · parent`;
+- the rotation offset `C` between a knot and the bone it drives is constant over
+  time (deviation 1e-14 across frames).
 
-Chain coupling (`apply_Parent_in`) and ring dressing then run as they do today.
+So, per controller: `rotateAxis` takes `C⁻¹`, `jointOrient` takes the total
+local rotation the controller holds at the build pose, and every rotate key
+becomes `C · T(t) · T(ref)⁻¹ · C⁻¹`. The product `rotateAxis · rotate ·
+jointOrient` is then algebraically unchanged, which is the whole safety
+argument: no world transform moves, no constraint is touched, no node is
+created or deleted. Working from that whole product rather than the rotate
+channel alone also makes a second pass a no-op.
+
+**Ordering is irrelevant**, because every input is read from world transforms
+the operation provably leaves alone. An earlier draft of this spec called for a
+root-down walk; that was written for a formulation that moved world transforms,
+and it is not needed here.
+
+Two scene details the implementation must respect: OverRig **locks
+`jointOrient`** on its knots, so it is unlocked and re-locked around the write,
+and the two attributes must be written together — a `rotateAxis` without its
+`jointOrient` moves the bone. The `root` controller is skipped: built by
+`apply_parentConstrAnim` as a plain transform, it has no `jointOrient` to carry
+the change, and as a lone centre control it has no mirror partner.
+
+The step runs once at the end of `build_fk`, after every chain is built and
+coupled. Chain coupling (`apply_Parent_in`) and ring dressing are untouched.
 
 ## Verification
 
@@ -92,28 +108,43 @@ measurements that exposed the problem:
 
 - **Zero drift.** Every bone's world matrix, at every frame, is unchanged by the
   alignment step. This is the gate — a mirror that costs the animation is worth
-  nothing.
-- **Symmetric values.** In the build pose, left and right controllers carry
-  equal rotate values.
-- **Frames.** Every left/right controller pair measures `(-1, -1, -1)`, matching
-  the bones.
+  nothing. *Measured: 2.8e-07 across 31 frames and 64 bones.*
+- **Symmetric values.** Setting both sides to the same channel values produces a
+  mirrored pose. *Measured: 0.0004.* Every controller reads zero at the build
+  pose.
 - **Animbot.** Pose the left arm, select both arms, run Animbot's mirror, and
   the right arm's joints land within tolerance of the mirror of where the left
   arm's joints were. The scripted entry point is
   `CORE.mirror.mirrorAllKeys_click()` — reached through `animBot._api.core`, not
   through the tool button, whose `click()` never arrives.
 
+A check that was specified and then **retired**: comparing the rest frames of
+each left/right pair and demanding `(-1, -1, -1)`. The algebra says it cannot
+happen. The rest frame is `rotateAxis · jointOrient · parent`, and requiring the
+controller to read zero at the build pose forces `rotateAxis · jointOrient` to
+be exactly what it held there — so the rest frame stays the knot's own frame.
+Symmetric values and bone-convention rest frames are not both reachable through
+`rotateAxis` and `jointOrient`: the first needs `rotateAxis = C⁻¹`, and then the
+rest frame carries `C⁻¹` whatever `jointOrient` does. Symmetric values are the
+half that animators actually use, so that is the half this design keeps.
+
 ## Risks
 
 - **Re-baking is where this can go wrong.** Every past bug in this project that
   survived a green test run was a scene bug. The drift check runs against the
   bones, across the whole timeline, not against the controllers.
-- **Ordering.** Realigning a parent invalidates a child's measurement. Root-down
-  order is a correctness requirement, not a preference, and gets its own test.
+- **A half-written controller moves its bone.** `rotateAxis` and `jointOrient`
+  only make sense as a pair, and OverRig locks the second one. Unlock first, so
+  a refused write cannot leave the first one applied on its own.
 - **Animbot caches what it learns per controller.** Settings taught by an
   earlier experiment can outlive it. If a mirror behaves inconsistently between
   runs, `Clear Mirror Settings Data` is the reset, and verification should start
   from it.
+- **Animbot may still need teaching.** It picks its channel signs by guessing at
+  the rig, and the rest frames it reads are the knots' — which this design
+  cannot change. `Snapshot Mirror Settings` is its own answer to that, and it is
+  a button the user presses: called from a command port it puts up a modal
+  dialog and blocks Maya.
 - **The build pose is still whatever the skeleton stands in.** Unchanged by this
   work, and still worth the snapshot safety proposed earlier.
 

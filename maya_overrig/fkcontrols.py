@@ -608,6 +608,14 @@ def _align_one(ctrl, bone):
     rotateAxis * rotate * jointOrient -- is unchanged by construction, so
     nothing in the scene moves.
     """
+    # A plain transform has no jointOrient, and rotateAxis alone cannot carry
+    # the change: the leftover would have to vary with time. The `root`
+    # controller is the only one -- built by apply_parentConstrAnim rather
+    # than ForwHierarhy -- and being a lone centre control it has no mirror
+    # partner to be symmetric with anyway.
+    if not cmds.attributeQuery("jointOrient", node=ctrl, exists=True):
+        return False
+
     offset = axes.frame_offset(_world_rotation(bone), _world_rotation(ctrl))
     reference = _local_total(ctrl)
     rotate_axis, joint_orient = axes.orient_values(offset, reference)
@@ -634,15 +642,27 @@ def _align_one(ctrl, bone):
             axes.retarget(total, offset, reference), order, previous)
         retargeted.append((time, previous))
 
-    cmds.setAttr(ctrl + ".rotateAxis", *axes.euler_degrees(rotate_axis))
-    cmds.setAttr(ctrl + ".jointOrient", *axes.euler_degrees(joint_orient))
-    for time, values in retargeted:
-        for attr, value in zip(_ROTATE_CHANNELS, values):
-            cmds.keyframe(ctrl, attribute=attr, time=(time, time),
-                          valueChange=value, absolute=True)
-    if not times:
-        cmds.setAttr(ctrl + ".rotate", *axes.euler_degrees(
-            axes.retarget(reference, offset, reference), order))
+    # OverRig locks jointOrient on its knots. Unlock before touching anything,
+    # so a refused write cannot leave a controller carrying half the change --
+    # a rotateAxis without its jointOrient moves the bone it drives.
+    locked = [plug for plug in
+              (ctrl + ".jointOrient" + axis for axis in "XYZ")
+              if cmds.getAttr(plug, lock=True)]
+    for plug in locked:
+        cmds.setAttr(plug, lock=False)
+    try:
+        cmds.setAttr(ctrl + ".rotateAxis", *axes.euler_degrees(rotate_axis))
+        cmds.setAttr(ctrl + ".jointOrient", *axes.euler_degrees(joint_orient))
+        for time, values in retargeted:
+            for attr, value in zip(_ROTATE_CHANNELS, values):
+                cmds.keyframe(ctrl, attribute=attr, time=(time, time),
+                              valueChange=value, absolute=True)
+        if not times:
+            cmds.setAttr(ctrl + ".rotate", *axes.euler_degrees(
+                axes.retarget(reference, offset, reference), order))
+    finally:
+        for plug in locked:
+            cmds.setAttr(plug, lock=True)
     return True
 
 
