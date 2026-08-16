@@ -25,17 +25,21 @@ REMOTE_EXEC_RELPATH = os.path.join(
     "Engine", "Plugins", "Experimental", "PythonScriptPlugin", "Content",
     "Python", "remote_execution.py")
 
-DEFAULT_TIMEOUT = 8.0
+DEFAULT_TIMEOUT = 15.0
 
 NO_ENGINE_MESSAGE = (
     "Unreal engine install not found - could not locate remote_execution.py "
     "under any known engine root. Set the engine path explicitly.")
 
+# Two very different causes produce the same silence, so the message names
+# both. Discovery is answered on the editor's game thread, which means any
+# modal dialog - 'Restore Packages' after a crash is the common one - looks
+# exactly like the plugin being switched off.
 NO_EDITOR_MESSAGE = (
-    "No Unreal editor answered. Enable Remote Execution "
-    "(Project Settings > Plugins > Python > Enable Remote Execution, or "
-    "bRemoteExecution=True under [/Script/PythonScriptPlugin.PythonScriptPluginSettings]) "
-    "and restart the editor.")
+    "No Unreal editor answered. Either Remote Execution is off (Project "
+    "Settings > Plugins > Python > Enable Remote Execution), or the editor is "
+    "blocked: a modal dialog such as 'Restore Packages' after a crash, or a "
+    "long import, stops it answering until you dismiss it.")
 
 _PROGRAM_FILES_GLOBS = (
     "C:\\Program Files\\Epic Games\\UE_*",

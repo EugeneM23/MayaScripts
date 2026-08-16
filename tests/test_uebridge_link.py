@@ -144,9 +144,16 @@ class EngineDiscovery(unittest.TestCase):
 
 class Messages(unittest.TestCase):
 
-    def test_the_no_editor_message_names_the_likeliest_cause(self):
+    def test_the_no_editor_message_names_both_causes(self):
+        """A blocked editor and a disabled plugin are silent in the same way,
+        so a message naming only one sends the user down the wrong path."""
         self.assertIn("Remote Execution", uelink.NO_EDITOR_MESSAGE)
-        self.assertIn("restart", uelink.NO_EDITOR_MESSAGE.lower())
+        self.assertIn("dialog", uelink.NO_EDITOR_MESSAGE.lower())
+
+    def test_the_timeout_survives_a_briefly_busy_editor(self):
+        """Discovery answers on the game thread, which stalls during DDC
+        maintenance and asset scans; 8s was measured too short."""
+        self.assertGreaterEqual(uelink.DEFAULT_TIMEOUT, 15.0)
 
     def test_the_no_engine_message_says_what_was_not_found(self):
         self.assertIn("engine", uelink.NO_ENGINE_MESSAGE.lower())
