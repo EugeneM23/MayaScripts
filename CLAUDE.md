@@ -142,7 +142,11 @@ makes namespaces and per-joint prefixes a non-issue.
 
 **Build** (the only build button) tears down whatever exists — FK baked back
 first, then IK, because finger controls can hang inside IK hand controls —
-and builds fresh in one undo step (`fkcontrols.rebuild`). Default: the hybrid
+and builds fresh in one undo step (`fkcontrols.rebuild`). Every entry point
+that runs MEL — `build_fk`, `rebuild`, `switch_limbs`, `bake_fk`,
+`bake_selection`, `builder.build`, `builder.bake_limbs` — calls
+`overrig.ensure_loaded()` first and returns `overrig.NOT_LOADED_MESSAGE`
+when the toolset cannot be found at all (trap 20). Default: the hybrid
 rig — IK arms and legs (`builder.DEFAULT_IK`), FK on root/spine/neck/fingers
 (`HYBRID_FK_CHAINS`), finger chains hung on the IK hand controls via
 `apply_Parent_in`. With the **FK Limbs** toggle pressed: full FK on all 17
@@ -221,6 +225,17 @@ skeleton stands in** — verify the pose before building; a proposed safety
 is also the reference the axis alignment zeroes against, so a lopsided build
 pose costs the mirror symmetry as well as the animation.
 
+**A chain starts at the first bone the skeleton HAS, not at the first bone
+of the table.** `chain_root` / `chain_tip` / `chain_root_control` (pure) are
+what every step asks: coupling, the finger hang in `rebuild`, the rider lift
+and re-hang in `switch_limbs`, and the rider detection in `bake_selection`.
+UE4-schema rigs have no metacarpals, stop the spine at `spine_03` and carry
+no `neck_02`, and some have no `root` joint at all — see trap 21. With no
+`root` bone there is no whole-character control, so the IK limbs stay
+anchored in world and Build says so ("no root bone - IK limbs stay in
+world"); hanging them on the pelvis instead would drag the planted feet, so
+that is deliberate, and a synthetic master control is not built.
+
 **Switch FK/IK** converts whatever arms/legs/spine the selection touches to
 the opposite rig type, per limb, animation re-baked at every step
 (`fkcontrols.switch_limbs`, table `SWITCHABLE`). The FK manifest is per-chain
@@ -275,7 +290,11 @@ pose-snapshot safety before Build (proposed, not confirmed).
 **Live verification: all green** (run in the Manny scene):
 `verify_arm_switch.py`, `verify_capture_edges.py`,
 `verify_hybrid_build.py`, `verify_ik_under_root.py` in
-`docs/superpowers/plans/`. Bridge-script
+`docs/superpowers/plans/`. `verify_missing_bones.py` runs in an EMPTY
+scene instead — it builds its own UE4-schema skeleton (no root, no
+metacarpals, spine to `spine_03`) and is the proof for traps 20 and 21;
+run it in a FRESH Maya, since half of what it proves is that the first
+Build of a session sources OverRig by itself. Bridge-script
 hygiene, learned the hard way: never `cmds.undo()` inside a bridge script
 (the whole script is one command — undo reverts a whole prior chunk and the
 damage gets baked in), and never write literal rest values into constrained
@@ -453,6 +472,27 @@ C_parent` construction rather than a measurement.
    every bone whose rest offset is near zero (pelvis, spine, neck, head)
    and fails on every limb bone in proportion to its offset, which looks
    convincingly like a broken rig. It is not.
+
+20. **A tool that only sources OverRig on SOME paths has a first-press
+   bug, and a Qt slot hides it.** `build_fk` ran `apply_ForwHierarhy` /
+   `apply_parentConstrAnim` without ever calling `ensure_loaded()`. In a
+   fresh Maya — the OverRig shelf button unpressed, and there is no
+   `userSetup.py` on this machine to press it — Build raised `Cannot find
+   procedure` out of the Qt slot into the Script Editor, so the panel
+   looked dead: "жму билд и ничего не происходит". `builder.build` DID
+   source it, so pressing Switch once fixed Build for the rest of the
+   session, which reads like a state bug and is not one. Two fixes, both
+   needed: the guard on every MEL entry point, and `PickerWindow._run`,
+   which puts any exception on the status bar instead of nowhere.
+21. **The first bone of a chain is often not in the skeleton.** Everything
+   that hangs a chain asked for `controller_name(chain[0])` —
+   `index_metacarpal_l_FK_ctrl` on a rig that has no metacarpals. The
+   lookup silently found nothing, so the four fingers of each hand were
+   never hung on the IK hand and stood still in world space while the arm
+   moved ("ФК контролы пальцев отвалились"). Only the thumbs, which start
+   at `thumb_01`, followed. Resolve through `chain_root`, never `chain[0]`
+   — and note the failure mode is SILENT: every call site guarded the
+   lookup with `objExists` and skipped quietly.
 
 ## Retargeting Manny onto other skeletons
 

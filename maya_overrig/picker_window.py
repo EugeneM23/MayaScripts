@@ -8,6 +8,8 @@ root is remembered by UUID, so renaming it or dropping the character into a
 group does not break the link.
 """
 
+import traceback
+
 import maya.cmds as cmds
 import maya.OpenMayaUI as omui
 from PySide6 import QtCore, QtWidgets
@@ -310,6 +312,28 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         self.sync_from_scene()
 
+    def _run(self, label, button, action):
+        """Run a toolbar action, reporting whatever it does -- or fails at.
+
+        An exception thrown out of a Qt slot lands in the Script Editor and
+        nowhere else, so the panel looked like it had simply done nothing.
+        That is exactly how a missing OverRig read as "Build does nothing":
+        `apply_ForwHierarhy` was not there, the RuntimeError went where the
+        user was not looking, and the status bar kept its old message.
+        """
+        button.setEnabled(False)
+        try:
+            message = action()
+        except Exception as error:  # noqa: BLE001 - the panel is the report
+            traceback.print_exc()   # full trace still goes to the Script Editor
+            message = "{0} failed: {1}".format(label, error)
+        finally:
+            button.setEnabled(True)
+
+        self.status.showMessage(message)
+        self.sync_from_scene()
+        return message
+
     def build_rig(self):
         """Build the rig, replacing any previous build of either kind.
 
@@ -321,15 +345,8 @@ class PickerWindow(QtWidgets.QMainWindow):
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
 
-        self.build_button.setEnabled(False)
-        try:
-            message = fkcontrols.rebuild(
-                self._scene_map, fk_limbs=self.fk_limbs_button.isChecked())
-        finally:
-            self.build_button.setEnabled(True)
-
-        self.status.showMessage(message)
-        self.sync_from_scene()
+        self._run("Build", self.build_button, lambda: fkcontrols.rebuild(
+            self._scene_map, fk_limbs=self.fk_limbs_button.isChecked()))
 
     def switch_selected_limbs(self):
         """Convert the selected arms/legs to the opposite rig type."""
@@ -354,15 +371,8 @@ class PickerWindow(QtWidgets.QMainWindow):
                 "picker button")
             return
 
-        self.switch_button.setEnabled(False)
-        try:
-            _done, _skipped, message = fkcontrols.switch_limbs(
-                self._scene_map, limbs)
-        finally:
-            self.switch_button.setEnabled(True)
-
-        self.status.showMessage(message)
-        self.sync_from_scene()
+        self._run("Switch", self.switch_button,
+                  lambda: fkcontrols.switch_limbs(self._scene_map, limbs)[2])
 
     def bake_selected_limbs(self):
         """Bake ONLY what the selection touches back to clean bones.
@@ -382,15 +392,9 @@ class PickerWindow(QtWidgets.QMainWindow):
                 "picker button")
             return
 
-        self.bake_button.setEnabled(False)
-        try:
-            message = fkcontrols.bake_selection(self._scene_map, ik_limbs,
-                                                fk_chains)
-        finally:
-            self.bake_button.setEnabled(True)
-
-        self.status.showMessage(message)
-        self.sync_from_scene()
+        self._run("Bake+Delete", self.bake_button,
+                  lambda: fkcontrols.bake_selection(self._scene_map, ik_limbs,
+                                                    fk_chains))
 
     def sync_from_scene(self):
         """Repaint availability and selection from the scene as it is now.

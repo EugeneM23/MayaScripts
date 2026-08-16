@@ -415,6 +415,9 @@ def bake_limbs(scene_map, limbs):
     and barn_fast_bake_source_obj_and_delete_knots() is never called -- that one
     is scene-global and would take the user's hand-made setups with it.
     """
+    if not overrig.ensure_loaded():
+        return BuildResult([], list(limbs), 0, 0, overrig.NOT_LOADED_MESSAGE)
+
     members_by_limb = {name: overrig.set_members(limb_set(name))
                        for name, _ in LIMBS}
 
@@ -512,10 +515,7 @@ def build(scene_map, only=None):
     the Switch feature converts one limb without touching the rest.
     """
     if not overrig.ensure_loaded():
-        return BuildResult(
-            [], [], 0, 0,
-            "OverRig is not loaded - press the OverRig shelf button "
-            "(looked for {0})".format(overrig.MEL_PATH))
+        return BuildResult([], [], 0, 0, overrig.NOT_LOADED_MESSAGE)
 
     resolvable = limb_joints(scene_map)
     if only is not None:

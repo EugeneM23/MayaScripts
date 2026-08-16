@@ -116,6 +116,50 @@ def colour_for(region):
     return _REGION_COLOURS[region]
 
 
+def chain_root(chain, scene_map):
+    """The chain's first bone that this skeleton actually HAS, or None.
+
+    Skeletons arrive with bones missing, and a chain is built from whatever
+    of it is there: a UE4-schema rig has no metacarpals, so its finger chains
+    start at `<finger>_01_<side>`, and one that stops at `spine_03` has no
+    `spine_04` to root anything on.
+
+    The controller at the top of a built chain belongs to THIS bone, never to
+    the nominal first one. Asking for the nominal name instead is what left
+    eight finger chains standing in world space while the hand walked away:
+    `index_metacarpal_l_FK_ctrl` does not exist on such a rig, so nothing
+    hung them on the hand and nothing lifted them off it either.
+
+    Pure -- `scene_map` is the picker's {bone name: DAG path} binding.
+    """
+    for joint in chain:
+        if joint in scene_map:
+            return joint
+    return None
+
+
+def chain_tip(chain, scene_map):
+    """The chain's last bone that this skeleton actually HAS, or None.
+
+    The other end of `chain_root`: what an arm offers a finger to hang on
+    once it is FK again, and the bone a leg ends at when there is no ball.
+    """
+    for joint in reversed(chain):
+        if joint in scene_map:
+            return joint
+    return None
+
+
+def chain_root_control(chain, scene_map):
+    """Name of the controller at the top of this chain, or None.
+
+    None means the skeleton has none of the chain's bones -- there is nothing
+    to build, hang or lift, and every caller treats it that way.
+    """
+    first = chain_root(chain, scene_map)
+    return controller_name(first) if first else None
+
+
 def switchable_bones(scene_map):
     """{bone path: switchable chain} for every bone of every switchable chain.
 
@@ -808,18 +852,24 @@ def align_controllers(scene_map, only=None):
     return aligned
 
 
-def _attach_chain(chain_name, chain, parent_of, targeted):
+def _attach_chain(chain, scene_map, parent_of, targeted):
     """Hang one chain's root controller off its parent bone's controller.
 
     OverRig's apply_Parent_in does the heavy lifting: the child knot becomes a
     DAG child of the parent knot and its animation is re-baked into the new
     local space, so world motion is unchanged (verified: zero drift). Selection
     order is child first, parent last. Returns True when coupled.
+
+    The chain starts at the first bone the skeleton HAS, so a rig without
+    metacarpals still hangs its fingers off the hand.
     """
-    parent = attach_parent(chain[0], parent_of, targeted)
+    first = chain_root(chain, scene_map)
+    if first is None:
+        return False
+    parent = attach_parent(first, parent_of, targeted)
     if parent is None:
         return False
-    child_ctrl = controller_name(chain[0])
+    child_ctrl = controller_name(first)
     parent_ctrl = controller_name(parent)
     if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
         return False
@@ -912,6 +962,8 @@ def _bake_fk_chains(scene_map, chains=None):
 
 def bake_fk(scene_map, chains=None):
     """Bake FK back to the bones -- everything, or just the given chains."""
+    if not overrig.ensure_loaded():
+        return 0, overrig.NOT_LOADED_MESSAGE
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK bake")
     try:
         removed, wanted = _bake_fk_chains(scene_map, chains)
@@ -930,10 +982,20 @@ def build_fk(scene_map, only=None):
     """
     if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return 0, "Not connected to a skeleton"
+    # Every knot below comes out of a MEL proc. Without this the first Build
+    # of a session -- the OverRig shelf button unpressed -- threw "Cannot
+    # find procedure" out of the Qt slot, where nobody saw it, and the panel
+    # looked dead. Switch went through builder.build, which does source the
+    # toolset, so the cure looked like "press Switch first".
+    if not overrig.ensure_loaded():
+        return 0, overrig.NOT_LOADED_MESSAGE
 
     region_of = {b.joint: b.region for b in bodymap.BUTTONS}
     parent_of = _parent_map()
-    targeted = {j for _, chain in CHAINS for j in chain}
+    # Only bones this skeleton has can be an attach target: a chain hangs
+    # from the nearest ancestor that gets a controller, and one that is
+    # missing gets none.
+    targeted = {j for _, chain in CHAINS for j in chain if j in scene_map}
 
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK")
     try:
@@ -975,7 +1037,7 @@ def build_fk(scene_map, only=None):
             # this chain's manifest. Parents precede children in CHAINS, so a
             # full build always finds its target; a restricted build couples
             # only if the target controller happens to exist.
-            if _attach_chain(chain_name, chain, parent_of, targeted):
+            if _attach_chain(chain, scene_map, parent_of, targeted):
                 attached += 1
 
             recorded += len(_record_fresh(chain_name, before))
@@ -1056,6 +1118,9 @@ def bake_selection(scene_map, ik_limbs, fk_chains):
     the root controller. FK chains bake per chain; _bake_fk_chains expands
     each to whatever rides inside it.
     """
+    if not overrig.ensure_loaded():
+        return overrig.NOT_LOADED_MESSAGE
+
     messages = []
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
     try:
@@ -1063,7 +1128,8 @@ def bake_selection(scene_map, ik_limbs, fk_chains):
             members = overrig.set_members(builder.limb_set(limb))
             root_ctrls = {}
             for chain_name, chain in CHAINS:
-                paths = cmds.ls(controller_name(chain[0]), long=True) or []
+                ctrl = chain_root_control(chain, scene_map)
+                paths = (cmds.ls(ctrl, long=True) or []) if ctrl else []
                 root_ctrls[chain_name] = paths[0] if paths else None
             riders = dependent_chains(root_ctrls, members)
             riders = [c for c in riders if chain_members(c)]
@@ -1099,6 +1165,8 @@ def rebuild(scene_map, fk_limbs=False):
     """
     if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return "Not connected to a skeleton"
+    if not overrig.ensure_loaded():
+        return overrig.NOT_LOADED_MESSAGE
 
     table = dict(CHAINS)
     messages = []
@@ -1131,6 +1199,11 @@ def rebuild(scene_map, fk_limbs=False):
             if hung_ik:
                 messages.append(
                     "{0} IK group(s) on the root control".format(hung_ik))
+            elif result.built and "root" not in scene_map:
+                # Say it rather than leave it a mystery: with no root bone
+                # there is no whole-character control to carry the IK, so it
+                # stays anchored in world.
+                messages.append("no root bone - IK limbs stay in world")
 
             # Fingers must follow the IK hands -- via the hand-bone anchor,
             # never the control: past full extension the control keeps
@@ -1143,8 +1216,11 @@ def rebuild(scene_map, fk_limbs=False):
                 if not target:
                     continue
                 for chain in finger_chains_for(limb):
-                    ctrl = controller_name(table[chain][0])
-                    if chain_members(chain) and cmds.objExists(ctrl):
+                    # The chain's own top controller, which on a skeleton
+                    # without metacarpals is the one on <finger>_01_<side>.
+                    ctrl = chain_root_control(table[chain], scene_map)
+                    if (chain_members(chain) and ctrl
+                            and cmds.objExists(ctrl)):
                         _parent_in(ctrl, target, _ensure_chain_set(chain))
                         hung += 1
             if hung:
@@ -1309,10 +1385,12 @@ def _rehang_riders(scene_map, limb, riders, now_ik):
     if now_ik:
         target = _limb_anchor(scene_map, limb) or _ik_hand_control(limb)
     else:
-        target = controller_name(table[limb][-1])
+        tip = chain_tip(table[limb], scene_map)
+        target = controller_name(tip) if tip else None
     for chain in riders:
-        ctrl = controller_name(table[chain][0])
-        if target and cmds.objExists(ctrl) and cmds.objExists(target):
+        ctrl = chain_root_control(table[chain], scene_map)
+        if (target and ctrl and cmds.objExists(ctrl)
+                and cmds.objExists(target)):
             _parent_in(ctrl, target, _ensure_chain_set(chain))
 
 
@@ -1323,6 +1401,9 @@ def switch_limbs(scene_map, limbs):
     world before the arm converts and hung back on the new hand control after
     -- they are DAG children of what gets deleted, so anything less loses them.
     """
+    if not overrig.ensure_loaded():
+        return [], list(limbs), overrig.NOT_LOADED_MESSAGE
+
     table = dict(CHAINS)
     done = []
     skipped = []
@@ -1347,8 +1428,8 @@ def switch_limbs(scene_map, limbs):
             riders = [c for c in finger_chains_for(limb)
                       if chain_members(c)]
             for chain in riders:
-                ctrl = controller_name(table[chain][0])
-                if cmds.objExists(ctrl):
+                ctrl = chain_root_control(table[chain], scene_map)
+                if ctrl and cmds.objExists(ctrl):
                     _parent_out(ctrl, _ensure_chain_set(chain))
 
             if is_fk:

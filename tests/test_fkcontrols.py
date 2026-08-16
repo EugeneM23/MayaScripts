@@ -112,6 +112,161 @@ class TestFingerChainsFor(unittest.TestCase):
         self.assertEqual(fkcontrols.finger_chains_for("spine"), [])
 
 
+class TestChainRoot(unittest.TestCase):
+    """A chain starts at the first bone the skeleton actually HAS.
+
+    The bug this guards: a UE4-schema skeleton has no metacarpals, so
+    `index_metacarpal_l_FK_ctrl` never existed -- and every step that hangs a
+    finger chain looked for exactly that name. The eight metacarpal-rooted
+    chains were left standing in world space while the hand moved away.
+    """
+
+    FULL = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS for j in chain}
+
+    def test_full_skeleton_uses_the_nominal_first_bone(self):
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(
+            fkcontrols.chain_root(table["index_l"], self.FULL),
+            "index_metacarpal_l")
+
+    def test_missing_metacarpal_moves_the_root_down_the_chain(self):
+        scene_map = {j: p for j, p in self.FULL.items()
+                     if "metacarpal" not in j}
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(fkcontrols.chain_root(table["index_l"], scene_map),
+                         "index_01_l")
+        self.assertEqual(fkcontrols.chain_root(table["pinky_r"], scene_map),
+                         "pinky_01_r")
+
+    def test_missing_clavicle_moves_the_arm_root_to_the_upperarm(self):
+        scene_map = {j: p for j, p in self.FULL.items()
+                     if not j.startswith("clavicle")}
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(fkcontrols.chain_root(table["arm_l"], scene_map),
+                         "upperarm_l")
+
+    def test_a_chain_with_no_bones_at_all_has_no_root(self):
+        self.assertIsNone(fkcontrols.chain_root(("root",), {}))
+
+    def test_root_chain_on_a_rootless_skeleton(self):
+        scene_map = {j: p for j, p in self.FULL.items() if j != "root"}
+        self.assertIsNone(fkcontrols.chain_root(("root",), scene_map))
+
+
+class TestChainTip(unittest.TestCase):
+
+    FULL = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS for j in chain}
+
+    def test_full_chain_ends_at_the_nominal_last_bone(self):
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(fkcontrols.chain_tip(table["arm_l"], self.FULL),
+                         "hand_l")
+        self.assertEqual(fkcontrols.chain_tip(table["leg_l"], self.FULL),
+                         "ball_l")
+
+    def test_missing_ball_moves_the_leg_tip_to_the_foot(self):
+        scene_map = {j: p for j, p in self.FULL.items()
+                     if not j.startswith("ball")}
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(fkcontrols.chain_tip(table["leg_r"], scene_map),
+                         "foot_r")
+
+    def test_missing_spine_top_moves_the_tip_down(self):
+        """UE4 stops at spine_03 where UE5 runs to spine_05."""
+        scene_map = {j: p for j, p in self.FULL.items()
+                     if j not in ("spine_04", "spine_05")}
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(fkcontrols.chain_tip(table["spine"], scene_map),
+                         "spine_03")
+
+    def test_a_chain_with_no_bones_at_all_has_no_tip(self):
+        self.assertIsNone(fkcontrols.chain_tip(("root",), {}))
+
+
+class TestChainRootControl(unittest.TestCase):
+
+    FULL = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS for j in chain}
+
+    def test_names_the_controller_of_the_first_bone_present(self):
+        scene_map = {j: p for j, p in self.FULL.items()
+                     if "metacarpal" not in j}
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(
+            fkcontrols.chain_root_control(table["middle_l"], scene_map),
+            "middle_01_l_FK_ctrl")
+
+    def test_full_skeleton_names_the_metacarpal_controller(self):
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(
+            fkcontrols.chain_root_control(table["middle_l"], self.FULL),
+            "middle_metacarpal_l_FK_ctrl")
+
+    def test_no_bones_names_no_controller(self):
+        self.assertIsNone(fkcontrols.chain_root_control(("root",), {}))
+
+
+class TestOverRigGuard(unittest.TestCase):
+    """Every entry point that runs MEL must say so when OverRig is absent.
+
+    The bug this guards: `build_fk` called `apply_ForwHierarhy` without ever
+    asking whether OverRig was in the session. In a fresh Maya -- the shelf
+    button unpressed -- Build raised out of the Qt slot into the Script
+    Editor and the panel simply looked dead. Switch went through
+    `builder.build`, which does source the toolset, so the user's fix was
+    "press Switch once, then Build works".
+    """
+
+    class FakeOverRig(object):
+        NOT_LOADED_MESSAGE = "OverRig is not loaded - press the shelf button"
+
+        def __init__(self):
+            self.asked = 0
+
+        def ensure_loaded(self):
+            self.asked += 1
+            return False
+
+    SCENE_MAP = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
+                 for j in chain}
+
+    def setUp(self):
+        self.fake = self.FakeOverRig()
+        self.real = fkcontrols.overrig
+        fkcontrols.overrig = self.fake
+
+    def tearDown(self):
+        fkcontrols.overrig = self.real
+
+    def test_build_fk_refuses_and_explains(self):
+        count, message = fkcontrols.build_fk(self.SCENE_MAP)
+        self.assertEqual(count, 0)
+        self.assertIn("OverRig", message)
+        self.assertEqual(self.fake.asked, 1)
+
+    def test_rebuild_refuses_and_explains(self):
+        self.assertIn("OverRig", fkcontrols.rebuild(self.SCENE_MAP))
+
+    def test_switch_refuses_and_explains(self):
+        done, skipped, message = fkcontrols.switch_limbs(self.SCENE_MAP,
+                                                         ["arm_l"])
+        self.assertEqual(done, [])
+        self.assertEqual(skipped, ["arm_l"])
+        self.assertIn("OverRig", message)
+
+    def test_bake_fk_refuses_and_explains(self):
+        removed, message = fkcontrols.bake_fk(self.SCENE_MAP)
+        self.assertEqual(removed, 0)
+        self.assertIn("OverRig", message)
+
+    def test_bake_selection_refuses_and_explains(self):
+        self.assertIn("OverRig",
+                      fkcontrols.bake_selection(self.SCENE_MAP, ["arm_l"], []))
+
+    def test_an_unbound_panel_still_reports_the_binding_first(self):
+        """No skeleton is the more useful complaint of the two."""
+        self.assertIn("Not connected", fkcontrols.rebuild({}))
+
+
 class TestSwitchable(unittest.TestCase):
 
     def test_limbs_only(self):

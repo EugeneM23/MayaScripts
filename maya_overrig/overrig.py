@@ -25,6 +25,12 @@ IK_PROC = "apply_rebike_3_or_more_object_to_IK"
 BAKE_PROC = "apply_Fast_Bake"
 CLEAN_PROC = "delete_constraint_attributes_on_objects"
 
+# What every entry point says when the toolset is not in the session. One
+# wording, because there is one cure: nothing here works without the procs.
+NOT_LOADED_MESSAGE = (
+    "OverRig is not loaded - press the OverRig shelf button "
+    "(looked for {0})".format(MEL_PATH))
+
 
 def is_loaded():
     """True when OverRig's procs are available in this Maya session."""
