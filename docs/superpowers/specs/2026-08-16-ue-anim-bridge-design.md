@@ -1,9 +1,9 @@
 # UE → Maya animation bridge — design
 
 **Date:** 2026-08-16
-**Status:** implemented and live-verified (25/25 green against a running
-editor with 470 animations). Traps found on the way are recorded in
-`CLAUDE.md` as 22-26.
+**Status:** implemented and live-verified — 25/25 for the listing and export
+path, 25/25 for the merge onto a scene skeleton, 438 unit tests. Traps found
+on the way are recorded in `CLAUDE.md` as 22-28.
 
 ## The ask
 
@@ -95,9 +95,23 @@ during the spike rather than written from memory.
 
 ## The Maya side
 
-The FBX is imported into a **namespace derived from the asset name**, uniquified
-if taken. Nothing already in the scene is touched and no bone name collides with
-a character already standing there.
+Two modes, chosen by a radio button.
+
+**Onto the skeleton already in the scene** — the default, and what the tool is
+for. FBX exclusive merge matches bone names against what is there and writes
+the animation onto it, creating nothing. The clip must not go into a namespace:
+a namespace is exactly what stops the names matching. The target is chosen
+rather than assumed — the selection wins, else the only skeleton, else the one
+named `root`; two plausible skeletons with no hint is refused, since guessing
+animates the wrong character in silence. The target's existing animation is
+cleared first, because the importer rewrites curves in place and otherwise
+nothing about the result can be measured (see trap 27).
+
+**As a new skeleton** — the original behaviour, imported into a **namespace
+derived from the asset name**, uniquified if taken. Nothing already in the
+scene is touched and no bone name collides with a character already standing
+there. Useful as a reference beside the working character, and it is what the
+merge is verified against.
 
 **Scene frame rate is never changed silently.** A UE clip is almost certainly 30
 fps and the scene may not be; on a mismatch the import still proceeds and the

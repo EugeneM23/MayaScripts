@@ -152,6 +152,33 @@ class Rows(unittest.TestCase):
         self.assertIn("/Game/Manny", row)
         self.assertNotIn("...", row)
 
+    def test_long_names_keep_both_ends(self):
+        """These names say what they are at the head and which one at the tail;
+        six Longsword rows read identically if either end is cut."""
+        names = ["AS_Longsword_Attack_Back_Light_Combo_v2_1_3P",
+                 "AS_Longsword_Attack_Back_Light_Combo_v2_2_1P",
+                 "AS_Longsword_Attack_Forward_Combo_2_Hold_2_Stand_Right_3P",
+                 "AS_Longsword_Attack_Forward_Combo_2_Hold_1_Stand_Left_1P"]
+        parsed = records.parse_payload({"assets": [
+            {"name": n, "package": "/Game/A/" + n} for n in names]})
+        rows = [records.format_row(rec).split("  ")[0] for rec in parsed]
+        self.assertEqual(len(set(rows)), len(names), rows)
+
+    def test_a_truncated_name_shows_its_ending(self):
+        (rec,) = records.parse_payload({"assets": [{
+            "name": "AS_Longsword_Attack_Forward_Combo_2_Hold_2_Stand_Right_3P",
+            "package": "/Game/A/x"}]})
+        row = records.format_row(rec)
+        self.assertIn("AS_Longsword", row)
+        self.assertIn("Right_3P", row)
+        self.assertIn("...", row)
+
+    def test_a_name_that_fits_is_untouched(self):
+        (rec,) = records.parse_payload({"assets": [
+            {"name": "AS_Jump", "package": "/Game/A/AS_Jump"}]})
+        self.assertIn("AS_Jump", records.format_row(rec))
+        self.assertNotIn("...", records.format_row(rec).split("  ")[0])
+
     def test_two_animations_in_different_deep_folders_read_differently(self):
         deep = records.parse_payload({"assets": [
             {"name": "Jump", "package":

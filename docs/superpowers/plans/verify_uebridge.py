@@ -157,7 +157,7 @@ else:
 before = set(cmds.ls(long=True))
 namespace = records.namespace_for(target.name, animimport.existing_namespaces())
 info = animimport.import_clip(fbx, namespace, set_timeline=False,
-                              clip_fps=exported.get("fps"))
+                              clip_fps=exported.get("fps"), merge=False)
 made_namespaces.append(info["namespace"])
 
 check("joints arrived", info["joints"] > 0, "{0} joints".format(info["joints"]))
@@ -186,7 +186,7 @@ check("the scene frame rate was left alone",
 
 # A second import of the same clip must not collide with the first.
 second = records.namespace_for(target.name, animimport.existing_namespaces())
-info2 = animimport.import_clip(fbx, second, set_timeline=False)
+info2 = animimport.import_clip(fbx, second, set_timeline=False, merge=False)
 made_namespaces.append(info2["namespace"])
 check("a second import gets its own namespace",
       info2["namespace"] != info["namespace"],

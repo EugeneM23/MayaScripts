@@ -84,8 +84,22 @@ def namespace_for(asset_name, taken):
     return "{0}{1}".format(base, index)
 
 
-NAME_WIDTH = 34
-FOLDER_WIDTH = 58
+NAME_WIDTH = 46
+FOLDER_WIDTH = 44
+
+
+def _middle(text, width):
+    """Drop the MIDDLE of a name that will not fit.
+
+    UE animation names carry meaning at both ends - the head says what it is
+    (AS_Longsword_Attack_Back...) and the tail says which one
+    (...Combo_v2_2_1P). Cutting either end makes a dozen rows read alike.
+    """
+    if len(text) <= width:
+        return text
+    keep = width - 3
+    head = (keep + 1) // 2
+    return text[:head] + "..." + text[len(text) - (keep - head):]
 
 
 def _tail(text, width):
@@ -104,6 +118,6 @@ def format_row(record):
     folder = record.package.rsplit("/", 1)[0]
     frames = "{0} fr".format(record.frames) if record.frames is not None else ""
     return "{0:<{1}} {2:<{3}} {4}".format(
-        record.name[:NAME_WIDTH], NAME_WIDTH,
+        _middle(record.name, NAME_WIDTH), NAME_WIDTH,
         _tail(folder, FOLDER_WIDTH), FOLDER_WIDTH,
         frames)

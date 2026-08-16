@@ -145,6 +145,22 @@ class TargetSkeleton(unittest.TestCase):
         self.assertIn("select", animimport.NO_TARGET_MESSAGE.lower())
 
 
+class MergeDefault(unittest.TestCase):
+    """`merge` left unset must follow the namespace, or a caller asking for a
+    named skeleton silently gets its scene overwritten instead."""
+
+    def test_a_namespace_means_a_separate_skeleton(self):
+        self.assertFalse(animimport.wants_merge(namespace="AS_Clip", merge=None))
+
+    def test_no_namespace_means_merge(self):
+        self.assertTrue(animimport.wants_merge(namespace=None, merge=None))
+        self.assertTrue(animimport.wants_merge(namespace="", merge=None))
+
+    def test_an_explicit_choice_is_obeyed_either_way(self):
+        self.assertTrue(animimport.wants_merge(namespace="AS_Clip", merge=True))
+        self.assertFalse(animimport.wants_merge(namespace=None, merge=False))
+
+
 class MergeReporting(unittest.TestCase):
 
     def test_nothing_matched_is_explained_not_silent(self):

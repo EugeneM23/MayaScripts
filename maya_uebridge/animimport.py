@@ -123,6 +123,13 @@ def _joints_with_curves():
     return driven
 
 
+def wants_merge(namespace, merge):
+    """Resolve the import mode: an explicit choice, else follow the namespace."""
+    if merge is None:
+        return not namespace
+    return bool(merge)
+
+
 def import_mode_command(merge):
     """How the importer treats what is already in the scene.
 
@@ -265,17 +272,23 @@ def import_command(fbx_path):
 
 
 def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
-                merge=True):
+                merge=None):
     """Bring `fbx_path` into the scene and report what actually arrived.
 
     With `merge` the clip lands on the skeleton already in the scene, matched
     by bone name, with no namespace - press Import and your own skeleton moves.
     Without it the clip arrives as its own skeleton under `namespace`.
 
+    `merge` left unset follows the namespace: asking for a namespace means
+    asking for a separate skeleton. Defaulting to merge regardless would make
+    `import_clip(fbx, "SomeName")` quietly ignore the name it was given and
+    write over the scene instead.
+
     What arrived is measured as a scene delta either way, because FBXImport -
     unlike cmds.file - has no way to report what it touched. In merge mode
     there are no new nodes at all, so the delta that matters is the curves.
     """
+    merge = wants_merge(namespace, merge)
     if not os.path.isfile(fbx_path):
         raise RuntimeError("no FBX at {0}".format(fbx_path))
 

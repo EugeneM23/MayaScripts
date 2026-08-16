@@ -585,6 +585,31 @@ reply file is deleted **before** the run — reading the previous answer would
 report success for a script that died, which looks like a working tool
 returning stale data.
 
+**Import lands on the skeleton already in the scene** — the default and the
+point of the tool. FBX **exclusive merge** (`FBXImportMode -v exmerge`) matches
+bone names against what is already there, creates nothing, and writes the
+animation onto it; measured on the Manny scene, 92 of 93 bones (only
+`weapon_l` is absent from UE clips). The clip therefore must **not** go into a
+namespace — a namespace is exactly what stops the names matching. The second
+radio button keeps the old behaviour, a separate namespaced skeleton, and
+`import_clip` with a namespace but no explicit `merge` follows the namespace
+rather than overwriting the scene.
+
+**The target skeleton is chosen, never assumed** (`choose_target_root`, pure):
+the selection wins, else the only skeleton, else the one named `root`.
+Namespaced roots are never candidates — they cannot receive a plain-name merge,
+and in this tool they *are* the reference imports of earlier clips. Two
+plausible skeletons with no hint is refused, because guessing animates the
+wrong character in silence.
+
+**The target's animation is cleared first**, and that is load-bearing rather
+than tidiness — see trap 27. Bones the clip has no keys for end up unanimated
+and are named in the status line.
+
+Proof: `docs/superpowers/plans/verify_uebridge_merge.py` (**25/25 green**). It
+imports one clip twice — merged, and as a reference skeleton — and compares
+them frame by frame: 120 samples, worst 0.000000°, root motion 0.000000 cm.
+
 Traps, each paid for:
 
 22. **`cmds.file(i=True, type="FBX")` imports the skeleton and silently drops
@@ -616,6 +641,20 @@ Traps, each paid for:
     the other. The engine root is taken from the **running editor process**
     (`EnumProcesses` + `QueryFullProcessImageNameW`; `OpenProcess` needs an
     explicit `HANDLE` restype or the handle truncates on 64-bit).
+
+27. **An FBX merge rewrites animation curves IN PLACE.** Same node names and
+    the same UUIDs — measured, 836 curves before and 836 after, zero fresh
+    either way. So no scene diff can report what a merge touched: the status
+    said "0 bones animated" over a fully animated skeleton, and the timeline
+    was never set because the code found no new curves to read a range from.
+    Deleting the target's animation before the merge is what makes the delta
+    exact, the result idempotent, and stray bones stop carrying frames from
+    whatever clip ran before.
+28. **`listConnections` answers with short names.** Comparing them against the
+    long paths a hierarchy walk produces matches nothing, silently, so every
+    bone reads as untouched — the status claimed 92 animated and 93 untouched
+    in the same sentence. Normalise with `cmds.ls(node, long=True)`. The
+    live check now asserts animated + untouched equals the skeleton.
 
 Measured facts about the listing: asset-registry tags are read **without
 loading assets**, and the real tag names on 5.8 are `Number of Frames`,
