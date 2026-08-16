@@ -99,6 +99,38 @@ class CountLine(unittest.TestCase):
         self.assertEqual(window.count_line(470, 470, "   "), "470 animations")
 
 
+class ImportLine(unittest.TestCase):
+
+    def merged(self, **over):
+        info = {"merged": True, "joints": 92, "start": 0.0, "end": 62.0,
+                "namespace": "", "warning": ""}
+        info.update(over)
+        return info
+
+    def test_a_merge_says_it_went_onto_the_scene_skeleton(self):
+        line = window.import_line("AS_Attack", self.merged())
+        self.assertIn("scene skeleton", line)
+        self.assertIn("92", line)
+        self.assertIn("AS_Attack", line)
+
+    def test_a_merge_reports_the_frame_range(self):
+        self.assertIn("0-62", window.import_line("A", self.merged()))
+
+    def test_a_new_skeleton_names_its_namespace(self):
+        line = window.import_line("A", {"merged": False, "joints": 116,
+                                        "namespace": "A", "start": 0.0,
+                                        "end": 62.0, "warning": ""})
+        self.assertIn("into A", line)
+
+    def test_a_warning_is_appended_not_swallowed(self):
+        line = window.import_line("A", self.merged(warning="no bone names matched"))
+        self.assertIn("no bone names matched", line)
+
+    def test_no_keys_does_not_print_a_broken_range(self):
+        line = window.import_line("A", self.merged(start=None, end=None))
+        self.assertNotIn("None", line)
+
+
 class ProjectLabel(unittest.TestCase):
 
     def test_shows_the_project_name_not_the_path(self):

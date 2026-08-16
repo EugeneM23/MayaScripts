@@ -86,6 +86,96 @@ class ImportCommand(unittest.TestCase):
         self.assertIn('"C:/My Docs/x.fbx"', command)
 
 
+class ImportMode(unittest.TestCase):
+
+    def test_merging_uses_exclusive_merge(self):
+        """exmerge writes animation onto nodes that already exist and creates
+        none - measured: 0 new joints, 819 new curves, 92/93 joints keyed."""
+        self.assertIn("exmerge", animimport.import_mode_command(merge=True))
+
+    def test_a_separate_skeleton_uses_add(self):
+        self.assertIn("add", animimport.import_mode_command(merge=False))
+        self.assertNotIn("exmerge", animimport.import_mode_command(merge=False))
+
+
+class TargetSkeleton(unittest.TestCase):
+    """Which skeleton a merge lands on.
+
+    It has to be decided rather than assumed: the merge clears the target's
+    animation first, because the FBX importer edits existing curves in place
+    (measured: 836 curves before, 836 after, same names AND same uuids), so
+    without clearing there is no way to tell what the clip touched - or even
+    whether it touched anything.
+    """
+
+    def test_the_only_skeleton_wins(self):
+        self.assertEqual(animimport.choose_target_root(["|root"]), "|root")
+
+    def test_nothing_in_the_scene_is_no_target(self):
+        self.assertIsNone(animimport.choose_target_root([]))
+
+    def test_a_selected_skeleton_beats_everything(self):
+        chosen = animimport.choose_target_root(
+            ["|root", "|other"], selected_roots=["|other"])
+        self.assertEqual(chosen, "|other")
+
+    def test_the_one_called_root_wins_among_several(self):
+        chosen = animimport.choose_target_root(["|rig_root", "|root"])
+        self.assertEqual(chosen, "|root")
+
+    def test_two_plausible_skeletons_with_no_hint_is_no_answer(self):
+        """Guessing here would animate the wrong character in silence."""
+        self.assertIsNone(animimport.choose_target_root(["|hero", "|enemy"]))
+
+    def test_namespaced_skeletons_are_never_the_target(self):
+        """A merge matches plain bone names, so a namespaced skeleton could
+        not receive it anyway - and ours sit there as reference imports."""
+        chosen = animimport.choose_target_root(["|AS_Clip:root", "|root"])
+        self.assertEqual(chosen, "|root")
+
+    def test_only_namespaced_skeletons_means_no_target(self):
+        self.assertIsNone(animimport.choose_target_root(["|AS_Clip:root"]))
+
+    def test_a_namespaced_selection_does_not_override(self):
+        chosen = animimport.choose_target_root(
+            ["|root", "|AS_Clip:root"], selected_roots=["|AS_Clip:root"])
+        self.assertEqual(chosen, "|root")
+
+    def test_the_no_target_message_says_what_to_do(self):
+        self.assertIn("select", animimport.NO_TARGET_MESSAGE.lower())
+
+
+class MergeReporting(unittest.TestCase):
+
+    def test_nothing_matched_is_explained_not_silent(self):
+        """A name mismatch imports cleanly and moves nothing at all, which
+        reads as a broken tool unless we say what happened."""
+        message = animimport.merge_warning(0)
+        self.assertIn("no bone", message.lower())
+        self.assertTrue(message)
+
+    def test_a_namespace_is_named_as_the_likely_cause(self):
+        self.assertIn("namespace", animimport.merge_warning(0).lower())
+
+    def test_matches_are_not_warned_about(self):
+        self.assertEqual(animimport.merge_warning(92), "")
+
+    def test_bones_the_clip_had_nothing_for_are_reported(self):
+        """A hand that does not move while the arm does is a mystery unless
+        the tool says the clip carried no keys for it."""
+        line = animimport.stale_line(["weapon_l", "weapon_r"])
+        self.assertIn("2", line)
+        self.assertIn("weapon_l", line)
+
+    def test_nothing_stale_is_silent(self):
+        self.assertEqual(animimport.stale_line([]), "")
+
+    def test_a_long_stale_list_is_trimmed(self):
+        line = animimport.stale_line(["b{0}".format(i) for i in range(30)])
+        self.assertIn("30", line)
+        self.assertLess(len(line), 200)
+
+
 class ClipRange(unittest.TestCase):
 
     def test_takes_the_outermost_keys(self):

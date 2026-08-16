@@ -28,6 +28,7 @@ _STATUS = "ueAnimBridgeStatus"
 _HEADER = "ueAnimBridgeHeader"
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
+_MODE = "ueAnimBridgeMode"
 
 CACHE_NAME = "maya_uebridge_cache.json"
 
@@ -230,7 +231,10 @@ def import_selected():
     payload = uelink.run_script(uescripts.export_script(out, record.package, fbx),
                                 out, project=project_choice())
 
-    namespace = records.namespace_for(record.name, animimport.existing_namespaces())
+    merge = merge_selected()
+    namespace = ("" if merge else
+                 records.namespace_for(record.name,
+                                       animimport.existing_namespaces()))
     set_timeline = cmds.checkBox(_TIMELINE, query=True, value=True)
 
     cmds.undoInfo(openChunk=True, chunkName="UE anim import")
@@ -239,18 +243,36 @@ def import_selected():
             payload.get("path") or fbx,
             namespace,
             set_timeline=set_timeline,
-            clip_fps=payload.get("fps") or record.fps)
+            clip_fps=payload.get("fps") or record.fps,
+            merge=merge)
     finally:
         cmds.undoInfo(closeChunk=True)
 
+    _status(import_line(record.name, info))
+
+
+def import_line(name, info):
+    """What the status says after an import. Pure, so the wording is tested."""
     span = ""
-    if info["start"] is not None:
-        span = " frames {0:g}-{1:g}".format(info["start"], info["end"])
-    message = "imported {0} into {1}: {2} joints{3}".format(
-        record.name, info["namespace"], info["joints"], span)
-    if info["warning"]:
-        message = "{0}  |  {1}".format(message, info["warning"])
-    _status(message)
+    if info.get("start") is not None:
+        span = ", frames {0:g}-{1:g}".format(info["start"], info["end"])
+    if info.get("merged"):
+        head = "{0} onto {1}: {2} bones animated{3}".format(
+            name, info.get("target") or "the scene skeleton",
+            info.get("joints", 0), span)
+    else:
+        head = "{0} into {1}: {2} joints{3}".format(
+            name, info.get("namespace", ""), info.get("joints", 0), span)
+    if info.get("warning"):
+        return "{0}  |  {1}".format(head, info["warning"])
+    return head
+
+
+def merge_selected():
+    """True when the clip should land on the skeleton already in the scene."""
+    if not cmds.radioButtonGrp(_MODE, exists=True):
+        return True
+    return cmds.radioButtonGrp(_MODE, query=True, select=True) == 1
 
 
 # ---------------------------------------------------------------- window
@@ -281,6 +303,10 @@ def show_window():
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 
+    mode = cmds.radioButtonGrp(
+        _MODE, numberOfRadioButtons=2, label="Import:",
+        labelArray2=["onto the skeleton in the scene", "as a new skeleton"],
+        columnWidth3=(52, 216, 160), select=1)
     timeline = cmds.checkBox(_TIMELINE, label="set timeline to clip range",
                              value=True)
     import_button = cmds.button(
@@ -298,6 +324,7 @@ def show_window():
             (search_label, "left", 8),
             (search, "right", 8),
             (scroll, "left", 8), (scroll, "right", 8),
+            (mode, "left", 4),
             (timeline, "left", 8),
             (import_button, "right", 8),
             (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
@@ -309,7 +336,8 @@ def show_window():
             (search, "top", 8, project_menu),
             (search, "left", 6, search_label),
             (scroll, "top", 8, search),
-            (scroll, "bottom", 8, import_button),
+            (scroll, "bottom", 8, mode),
+            (mode, "bottom", 6, timeline),
             (import_button, "bottom", 6, status),
             (timeline, "bottom", 18, status),
         ])
