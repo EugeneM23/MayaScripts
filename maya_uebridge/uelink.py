@@ -60,6 +60,78 @@ def pick_engine_root(candidates, exists):
     return None
 
 
+def engine_root_from_exe(exe_path):
+    """C:/X/Engine/Binaries/Win64/UnrealEditor.exe -> C:/X."""
+    parts = os.path.normpath(exe_path or "").split(os.sep)
+    for index in range(len(parts) - 1, -1, -1):
+        if parts[index].lower() == "engine":
+            return os.sep.join(parts[:index]) or os.sep
+    return None
+
+
+def running_editor_exes():
+    """Executable paths of running Unreal editors, straight from the Win32 API.
+
+    This is the only source that cannot be wrong. The registry lists every
+    engine ever registered - this machine has two - and picking among them by
+    enumeration order is a coin flip that lands on the wrong build.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except (ImportError, ValueError):
+        return []
+
+    try:
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    except OSError:
+        return []
+
+    # Without an explicit restype the HANDLE comes back truncated on 64-bit.
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD)]
+
+    slots = (wintypes.DWORD * 4096)()
+    needed = wintypes.DWORD()
+    if not psapi.EnumProcesses(ctypes.byref(slots), ctypes.sizeof(slots),
+                               ctypes.byref(needed)):
+        return []
+
+    query_limited_information = 0x1000
+    buffer = ctypes.create_unicode_buffer(32768)
+    found = []
+    for pid in slots[:needed.value // ctypes.sizeof(wintypes.DWORD)]:
+        if not pid:
+            continue
+        handle = kernel32.OpenProcess(query_limited_information, False, pid)
+        if not handle:
+            continue
+        try:
+            size = wintypes.DWORD(len(buffer))
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buffer,
+                                                   ctypes.byref(size)):
+                name = os.path.basename(buffer.value).lower()
+                if name.startswith("unrealeditor") and name.endswith(".exe"):
+                    found.append(buffer.value)
+        finally:
+            kernel32.CloseHandle(handle)
+    return found
+
+
+def running_editor_roots():
+    roots = []
+    for exe in running_editor_exes():
+        root = engine_root_from_exe(exe)
+        if root and root not in roots:
+            roots.append(root)
+    return roots
+
+
 def _registry_build_paths():
     """Engine roots the launcher and source builds registered for this user."""
     try:
@@ -88,10 +160,15 @@ def _registry_build_paths():
 
 
 def engine_candidates(override=None):
-    """Roots to try, most specific first."""
+    """Roots to try, most specific first.
+
+    The running editor comes before the registry: we want the build we are
+    about to talk to, not whichever one Windows happens to enumerate first.
+    """
     candidates = []
     if override:
         candidates.append(override)
+    candidates.extend(running_editor_roots())
     candidates.extend(_registry_build_paths())
     for pattern in _PROGRAM_FILES_GLOBS:
         candidates.extend(sorted(glob.glob(pattern), reverse=True))

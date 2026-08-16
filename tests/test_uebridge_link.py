@@ -96,6 +96,47 @@ class EngineDiscovery(unittest.TestCase):
     def test_an_empty_candidate_list_is_not_an_error(self):
         self.assertIsNone(uelink.pick_engine_root([], lambda p: True))
 
+    def test_the_engine_root_is_read_off_the_editor_executable(self):
+        got = uelink.engine_root_from_exe(
+            "C:\\Src\\Engine\\Binaries\\Win64\\UnrealEditor.exe")
+        self.assertEqual(got, "C:\\Src")
+
+    def test_a_path_with_no_engine_folder_yields_nothing(self):
+        self.assertIsNone(uelink.engine_root_from_exe("C:\\Src\\UnrealEditor.exe"))
+
+    def test_an_empty_exe_path_yields_nothing(self):
+        self.assertIsNone(uelink.engine_root_from_exe(""))
+
+    def test_the_deepest_engine_folder_wins(self):
+        """A project can live inside the engine tree and repeat the name."""
+        got = uelink.engine_root_from_exe(
+            "C:\\Engine\\Src\\Engine\\Binaries\\Win64\\UnrealEditor.exe")
+        self.assertEqual(got, "C:\\Engine\\Src")
+
+    def test_a_running_editor_is_preferred_over_the_registry(self):
+        """Two engines are registered on this machine; enumeration order must
+        not decide which one we load Epic's client from."""
+        original_running = uelink.running_editor_roots
+        original_registry = uelink._registry_build_paths
+        uelink.running_editor_roots = lambda: ["C:\\Live"]
+        uelink._registry_build_paths = lambda: ["C:\\RegistryA", "C:\\RegistryB"]
+        try:
+            candidates = uelink.engine_candidates()
+        finally:
+            uelink.running_editor_roots = original_running
+            uelink._registry_build_paths = original_registry
+        self.assertEqual(candidates[0], "C:\\Live")
+        self.assertIn("C:\\RegistryA", candidates)
+
+    def test_an_override_still_beats_the_running_editor(self):
+        original_running = uelink.running_editor_roots
+        uelink.running_editor_roots = lambda: ["C:\\Live"]
+        try:
+            candidates = uelink.engine_candidates(override="C:\\Chosen")
+        finally:
+            uelink.running_editor_roots = original_running
+        self.assertEqual(candidates[0], "C:\\Chosen")
+
     def test_the_relative_path_is_where_epic_ships_the_client(self):
         self.assertIn("PythonScriptPlugin", uelink.REMOTE_EXEC_RELPATH)
         self.assertTrue(uelink.REMOTE_EXEC_RELPATH.endswith("remote_execution.py"))
