@@ -104,6 +104,15 @@ def _run(action, busy=None):
         print(traceback.format_exc())
 
 
+def count_line(total, shown, query):
+    """What the status says about the list. Pure, so the arithmetic is tested."""
+    if not (query or "").strip():
+        return "{0} animations".format(total)
+    if shown == 0:
+        return "nothing matches '{0}' ({1} animations)".format(query, total)
+    return "{0} of {1} animations match '{2}'".format(shown, total, query)
+
+
 def _project_label(project_path):
     if not project_path:
         return "no project"
@@ -118,6 +127,7 @@ def _repopulate():
     cmds.textScrollList(_LIST, edit=True, removeAll=True)
     for record in shown:
         cmds.textScrollList(_LIST, edit=True, append=records.format_row(record))
+    _status(count_line(len(_STATE["records"]), len(shown), query))
     return shown
 
 
@@ -148,8 +158,10 @@ def refresh():
     save_cache(found, _STATE["project"])
 
     _header("Project: {0}     connected".format(_project_label(_STATE["project"])))
-    shown = _repopulate()
-    _status("{0} animations ({1} shown)".format(len(found), len(shown)))
+    # _repopulate writes the count itself, honouring whatever is in the search
+    # box - overwriting it here would report the unfiltered total over a
+    # filtered list.
+    _repopulate()
 
 
 def import_selected():

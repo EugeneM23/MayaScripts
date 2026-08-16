@@ -54,6 +54,27 @@ class CacheRoundTrip(unittest.TestCase):
         self.assertEqual(window.records_from_cache({"assets": []}), [])
 
 
+class CountLine(unittest.TestCase):
+
+    def test_no_query_reports_the_total(self):
+        self.assertEqual(window.count_line(470, 470, ""), "470 animations")
+
+    def test_a_query_reports_both_numbers(self):
+        """Saying '470 shown' over a list of 34 rows is simply a lie."""
+        line = window.count_line(470, 34, "jump")
+        self.assertIn("34", line)
+        self.assertIn("470", line)
+        self.assertIn("jump", line)
+
+    def test_no_match_says_so(self):
+        line = window.count_line(470, 0, "zzz")
+        self.assertIn("nothing matches", line)
+        self.assertIn("zzz", line)
+
+    def test_whitespace_counts_as_no_query(self):
+        self.assertEqual(window.count_line(470, 470, "   "), "470 animations")
+
+
 class ProjectLabel(unittest.TestCase):
 
     def test_shows_the_project_name_not_the_path(self):

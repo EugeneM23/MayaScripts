@@ -84,8 +84,26 @@ def namespace_for(asset_name, taken):
     return "{0}{1}".format(base, index)
 
 
+NAME_WIDTH = 34
+FOLDER_WIDTH = 58
+
+
+def _tail(text, width):
+    """Keep the END of a path when it will not fit.
+
+    A UE folder says what the animation is at its tail - Characters/Heroes/Sevarog
+    - and nothing at its head, where every row reads /Game/... alike.
+    """
+    if len(text) <= width:
+        return text
+    return "..." + text[-(width - 3):]
+
+
 def format_row(record):
     """One line for the scroll list: name, folder, and length if we know it."""
     folder = record.package.rsplit("/", 1)[0]
     frames = "{0} fr".format(record.frames) if record.frames is not None else ""
-    return "{0:<38} {1:<44} {2}".format(record.name[:38], folder[:44], frames)
+    return "{0:<{1}} {2:<{3}} {4}".format(
+        record.name[:NAME_WIDTH], NAME_WIDTH,
+        _tail(folder, FOLDER_WIDTH), FOLDER_WIDTH,
+        frames)

@@ -134,6 +134,33 @@ class Rows(unittest.TestCase):
             {"name": "A_Jump", "package": "/Game/Manny/A_Jump"}]})
         self.assertNotIn("None", records.format_row(rec))
 
+    def test_a_long_folder_keeps_its_tail_not_its_head(self):
+        """Every UE path starts /Game/...; what tells rows apart is the end."""
+        (rec,) = records.parse_payload({"assets": [{
+            "name": "Jump_Apex",
+            "package": "/Game/ParagonSevarog/Characters/Heroes/Sevarog/"
+                       "Animations/Locomotion/Jump/Jump_Apex"}]})
+        row = records.format_row(rec)
+        self.assertIn("Locomotion/Jump", row)
+        self.assertIn("...", row)
+        self.assertNotIn("ParagonSevarog", row)
+
+    def test_a_short_folder_is_not_mangled(self):
+        (rec,) = records.parse_payload({"assets": [
+            {"name": "A_Jump", "package": "/Game/Manny/A_Jump"}]})
+        row = records.format_row(rec)
+        self.assertIn("/Game/Manny", row)
+        self.assertNotIn("...", row)
+
+    def test_two_animations_in_different_deep_folders_read_differently(self):
+        deep = records.parse_payload({"assets": [
+            {"name": "Jump", "package":
+             "/Game/ParagonSevarog/Characters/Heroes/Sevarog/Anims/Jump"},
+            {"name": "Jump", "package":
+             "/Game/ParagonKwang/Characters/Heroes/Kwang/Anims/Jump"}]})
+        rows = [records.format_row(rec) for rec in deep]
+        self.assertNotEqual(rows[0], rows[1])
+
 
 class Purity(unittest.TestCase):
 
