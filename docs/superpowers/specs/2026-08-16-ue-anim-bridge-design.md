@@ -1,7 +1,9 @@
 # UE → Maya animation bridge — design
 
 **Date:** 2026-08-16
-**Status:** approved, not yet implemented
+**Status:** implemented and live-verified (25/25 green against a running
+editor with 470 animations). Traps found on the way are recorded in
+`CLAUDE.md` as 22-26.
 
 ## The ask
 
@@ -139,11 +141,14 @@ reasoning that justifies `maya_overrig/`.
 | Module | Responsibility | May import |
 |---|---|---|
 | `uelink.py` | engine discovery, connection, running Python in the editor | **stdlib only** |
-| `uescripts.py` | UE-side script text, parsing their JSON replies | **stdlib only** |
+| `uescripts.py` | UE-side script text | **stdlib only** |
+| `records.py` | record model, search, namespace naming, row text | **stdlib only** |
 | `animimport.py` | FBX import into a namespace, timeline, fps policy | `maya.cmds` |
 | `window.py` | the `cmds` window | `maya.cmds` |
 
-`uelink` and `uescripts` are testable with neither Maya nor Unreal running.
+The first three are testable with neither Maya nor Unreal running. The record
+model was split out of `uescripts.py` during implementation so that module
+holds only UE source text.
 
 ## Errors
 
@@ -172,11 +177,21 @@ reports, export one named animation, import it, and assert the bones exist, the
 keys exist, and the range matches what UE said. Unit tests in this project have
 repeatedly passed while the scene was broken.
 
-## Risks to settle by hand before writing code
+## Risks, as they actually resolved
 
-- `bRemoteExecution` goes into the **personal** `Saved\Config\WindowsEditor\Engine.ini`,
-  not the Perforce-managed `DefaultEngine.ini`, and needs one editor restart.
-- Multicast `239.0.0.1:6766` may be blocked by the corporate firewall.
-- `AnimSequenceExporterFBX` fails when the Skeleton asset has no preview mesh
-  set; needs checking against Atone's skeletons.
-- `FbxExportOption` field names on 5.8 confirmed live, not from memory.
+- **`bRemoteExecution`** — no restart needed after all. The checkbox calls
+  `SyncRemoteExecutionToSettings()` straight from `PostEditChangeProperty`
+  (read in `PythonScriptPluginSettings.cpp`). It writes `DefaultEngine.ini`
+  though, which is shared under Perforce, so personal persistence belongs in
+  `Saved\Config\WindowsEditor\Engine.ini`.
+- **Multicast** was never blocked on this machine; the editor binds
+  `127.0.0.1:6766` and Epic's client binds the same by default.
+- **The preview mesh** was not a problem: the exporter falls back to
+  `FindCompatibleMesh()` and every asset tried exported cleanly.
+- **`FbxExportOption` field names** — every field we set exists on 5.8; the
+  script reports any it cannot set rather than failing.
+
+Two risks that were not on the list turned out to be the real ones: the engine
+root has to come from the running editor process rather than the registry,
+and `cmds.file` imports FBX skeletons without their animation. Both are
+recorded in `CLAUDE.md` (traps 22 and 26).

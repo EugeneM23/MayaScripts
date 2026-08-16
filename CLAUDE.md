@@ -525,6 +525,101 @@ C_parent` construction rather than a measurement.
   foot 1.168 — inherent to a rotation-only transfer), metacarpal travel is
   dropped, and the suit has no root joint, so a UE export would need one.
 
+## `maya_uebridge` — animations out of a running Unreal editor
+
+A window listing every `AnimSequence` in the project the animator has open,
+searchable, importing the selected one into the scene as its own keyed
+skeleton. Design:
+`docs/superpowers/specs/2026-08-16-ue-anim-bridge-design.md`, proof:
+`docs/superpowers/plans/verify_uebridge.py` (**25/25 green**, run against a
+live editor with 470 animations).
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import maya_uebridge; maya_uebridge.show_window()
+```
+
+**Reading `.uasset` directly is not buildable** — closed format, versioned
+against the engine build, curves under UE's compression codecs. The engine
+does the reading: Epic's **Python Remote Execution** (UDP multicast discovery
+on `239.0.0.1:6766` plus a TCP command channel — the exact counterpart of the
+`commandPort :7001` we drive Maya with) runs an Asset Registry query for the
+list and an FBX export for the import.
+
+| Module | Responsibility | May import |
+|---|---|---|
+| `uelink.py` | engine discovery, session, running Python in the editor | **stdlib only** |
+| `uescripts.py` | UE-side script text | **stdlib only** |
+| `records.py` | record model, search, namespace naming, row text | **stdlib only** |
+| `animimport.py` | FBX import, timeline, fps policy | `maya.cmds` |
+| `window.py` | the `cmds` window | `maya.cmds` |
+
+The first three are testable with neither application running; a subprocess
+test enforces it. `__init__.py` resolves `show_window` through `__getattr__`
+for the same reason as `maya_overrig`.
+
+**Turning it on:** `bRemoteExecution` is off by default. The checkbox
+(Project Settings > Plugins > Python > Enable Remote Execution) applies
+**immediately, no restart** — read the source: `PostEditChangeProperty` in
+`PythonScriptPluginSettings.cpp` calls `SyncRemoteExecutionToSettings()`. But
+the class is `UCLASS(config=Engine, defaultconfig)`, so the checkbox writes
+`DefaultEngine.ini`, which on a Perforce project is shared and read-only; for
+personal persistence put the setting in `Saved/Config/WindowsEditor/Engine.ini`
+instead. `PythonScriptPlugin` and `EditorScriptingUtilities` are already
+enabled in Atone.
+
+**Results never travel through the socket.** The UE script writes JSON to a
+path we chose and prints a marker; both processes are on one machine, and 470
+assets would otherwise push a large payload through the command channel. The
+reply file is deleted **before** the run — reading the previous answer would
+report success for a script that died, which looks like a working tool
+returning stale data.
+
+Traps, each paid for:
+
+22. **`cmds.file(i=True, type="FBX")` imports the skeleton and silently drops
+    every animation curve.** It does not apply the `FBXImport*` settings, and
+    it reports success either way. Measured on one file: `FBXImport -f` gives
+    **1081 curves**, `cmds.file` gives **0** — with or without the namespace
+    flag, with or without an options string. Use the plugin's own `FBXImport`.
+    It has no namespace flag but honours the **current** namespace (verified:
+    116/116 joints and 1081/1081 curves landed inside), and no way to report
+    what it created, so new nodes are measured as a scene delta. Note the MEL
+    string needs forward slashes — a backslash starts an escape.
+23. **A modal dialog in the editor is indistinguishable from the plugin being
+    off.** Discovery is answered on the game thread, so `Restore Packages`
+    after a crash — or DDC maintenance, measured holding the thread 40 s —
+    leaves UDP 6766 bound and answers nothing. The error message names both
+    causes; the timeout is 15 s for the same reason.
+24. **`AssetExportTask` with a null `Object` crashes the editor**, it does not
+    raise: `Assertion failed: Object [UnrealExporter.cpp:168]`. `load_asset`
+    returns None for a package that does not exist, so guard it before
+    building the task. `automated=True`/`prompt=False` are equally
+    load-bearing — without them UE raises a modal nobody can click.
+25. **`AnimSequenceExporterFBX` needs a preview mesh** and warns instead of
+    exporting without one (`EditorExporters.cpp`, `UAnimSequenceExporterFBX::ExportBinary`):
+    it falls back to `FindCompatibleMesh()`, so a skeleton with no compatible
+    mesh anywhere cannot be exported at all.
+26. **Two engines registered in the registry means picking one is a coin
+    flip.** `HKCU\Software\Epic Games\Unreal Engine\Builds` enumeration order
+    is arbitrary — mayapy chose one root and the same code inside Maya chose
+    the other. The engine root is taken from the **running editor process**
+    (`EnumProcesses` + `QueryFullProcessImageNameW`; `OpenProcess` needs an
+    explicit `HANDLE` restype or the handle truncates on 64-bit).
+
+Measured facts about the listing: asset-registry tags are read **without
+loading assets**, and the real tag names on 5.8 are `Number of Frames`,
+`Number of Keys`, `SequenceLength`, `Target Frame Rate`, `Skeleton` — but only
+about a third of assets carry them, so a missing frame count must never drop
+the row. The listing is scoped to `/Game` on purpose; engine and plugin
+content (MetaHuman, Engine tutorials) is excluded. Maya's imported key range
+runs a frame or two past UE's reported frame count — the exporter's doing, not
+worth "fixing" by trimming keys.
+
+The scene's frame rate is **never** written: `FBXImportSetMayaFrameRate` is
+forced off and a mismatch is reported instead. The animator is working in that
+scene while the tool runs.
+
 ## Conventions
 
 - Branch `feature/overrig-picker`, remote `github.com/EugeneM23/MayaScripts`.
