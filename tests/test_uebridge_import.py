@@ -67,6 +67,25 @@ class SceneFps(unittest.TestCase):
         self.assertIsNone(animimport.fps_from_unit("whatever"))
 
 
+class ImportCommand(unittest.TestCase):
+
+    def test_uses_the_plugin_own_importer(self):
+        """cmds.file with the FBX translator brings the skeleton and drops every
+        animation curve - measured 1081 curves against 0."""
+        self.assertIn("FBXImport", animimport.import_command("C:/a/x.fbx"))
+
+    def test_windows_paths_are_converted_to_forward_slashes(self):
+        r"""Inside a MEL string a backslash starts an escape, so C:\anim mangles."""
+        command = animimport.import_command("C:\\temp\\anim\\x.fbx")
+        self.assertIn("C:/temp/anim/x.fbx", command)
+        self.assertNotIn("\\", command)
+
+    def test_the_path_is_quoted(self):
+        """Paths on this machine contain spaces and exclamation marks."""
+        command = animimport.import_command("C:/My Docs/x.fbx")
+        self.assertIn('"C:/My Docs/x.fbx"', command)
+
+
 class ClipRange(unittest.TestCase):
 
     def test_takes_the_outermost_keys(self):

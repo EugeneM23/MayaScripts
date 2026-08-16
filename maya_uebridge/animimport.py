@@ -22,17 +22,15 @@ TIME_UNIT_TO_FPS = {
 _NUMERIC_UNIT = re.compile(r"^([0-9]+(?:\.[0-9]+)?)fps$")
 
 # The FBX importer options we care about. Each is applied on its own so an
-# unknown flag on some Maya build cannot abort the whole import.
+# unknown flag on some Maya build cannot abort the whole import. These
+# configure the plugin's own FBXImport command - which is the only reason they
+# take effect at all; through cmds.file they are ignored.
 _IMPORT_OPTIONS = (
     "FBXImportMode -v add",
     # Never let the importer rewrite the scene's frame rate.
     "FBXImportSetMayaFrameRate -v false",
     # We set the timeline ourselves, from the keys that actually arrived.
     "FBXImportFillTimeline -v false",
-    "FBXImportProtectDrivenKeys -v false",
-    "FBXImportMergeAnimationLayers -v true",
-    "FBXImportSkins -v false",
-    "FBXImportShapes -v false",
     "FBXImportCameras -v false",
     "FBXImportLights -v false",
     "FBXImportConstraints -v false",
@@ -100,13 +98,26 @@ def _apply_import_options():
     return missing
 
 
+def import_command(fbx_path):
+    """MEL for the FBX plugin's own importer.
+
+    `cmds.file(i=True, type="FBX")` looks like the obvious call and is wrong:
+    it brings the skeleton and silently drops every animation curve, because
+    the FBXImport* settings do not reach the file translator. Measured on the
+    same file - 1081 curves through FBXImport, 0 through cmds.file.
+
+    Forward slashes only: inside a MEL string a backslash starts an escape, so
+    a Windows path would mangle before the importer ever saw it.
+    """
+    return 'FBXImport -f "{0}";'.format(fbx_path.replace("\\", "/"))
+
+
 def import_clip(fbx_path, namespace, set_timeline=True, clip_fps=None):
     """Import `fbx_path` under `namespace` and report what arrived.
 
     Returns a dict with the namespace used, the joint count, the key range and
-    any frame-rate warning. The node list comes from the import itself rather
-    than a scene scan, so nothing already in the scene can be mistaken for part
-    of the clip.
+    any frame-rate warning. What arrived is measured as a scene delta, because
+    FBXImport - unlike cmds.file - has no way to report the nodes it made.
     """
     if not os.path.isfile(fbx_path):
         raise RuntimeError("no FBX at {0}".format(fbx_path))
@@ -114,15 +125,19 @@ def import_clip(fbx_path, namespace, set_timeline=True, clip_fps=None):
     ensure_fbx_plugin()
     notes = _apply_import_options()
 
-    new_nodes = cmds.file(
-        fbx_path,
-        i=True,
-        type="FBX",
-        namespace=namespace,
-        mergeNamespacesOnClash=False,
-        ignoreVersion=True,
-        options="fbx",
-        returnNewNodes=True) or []
+    before = set(cmds.ls(long=True))
+
+    # FBXImport has no namespace flag, but it honours the current one
+    # (verified: 116/116 joints and 1081/1081 curves landed inside).
+    if not cmds.namespace(exists=namespace):
+        cmds.namespace(addNamespace=namespace)
+    cmds.namespace(setNamespace=namespace)
+    try:
+        mel.eval(import_command(fbx_path))
+    finally:
+        cmds.namespace(setNamespace=":")
+
+    new_nodes = [node for node in (set(cmds.ls(long=True)) - before)]
 
     joints = [node for node in new_nodes
               if cmds.objExists(node) and cmds.objectType(node) == "joint"]

@@ -95,20 +95,32 @@ count_out = temp("verify_count.json")
 count_src = (
     "import json, unreal\n"
     "registry = unreal.AssetRegistryHelpers.get_asset_registry()\n"
-    "everything = registry.get_all_assets()\n"
-    "total = 0\n"
-    "for data in everything:\n"
-    "    if str(data.asset_class_path.asset_name) == 'AnimSequence':\n"
-    "        total += 1\n"
-    "result = {'ok': True, 'error': '', 'total': total}\n"
+    "inside, outside = 0, []\n"
+    "for data in registry.get_all_assets():\n"
+    "    if str(data.asset_class_path.asset_name) != 'AnimSequence':\n"
+    "        continue\n"
+    "    package = str(data.package_name)\n"
+    "    if package.startswith('/Game'):\n"
+    "        inside += 1\n"
+    "    else:\n"
+    "        outside.append(package)\n"
+    "result = {'ok': True, 'error': '', 'inside': inside, 'outside': outside}\n"
     "json.dump(result, open(%s, 'w'))\n"
     "print('done')\n" % repr(count_out))
 try:
-    counted = uelink.run_script(count_src, count_out)["total"]
-    check("count matches an independent scan", counted == len(found),
-          "filter {0} vs scan {1}".format(len(found), counted))
+    scan = uelink.run_script(count_src, count_out)
+    # Compare like with like: the listing is scoped to /Game on purpose, so an
+    # unscoped scan would always look bigger and hide a real filter bug.
+    check("count matches an independent scan of /Game",
+          scan["inside"] == len(found),
+          "filter {0} vs scan {1}".format(len(found), scan["inside"]))
+    if scan["outside"]:
+        print("    {0} AnimSequence(s) live outside /Game and are not listed:"
+              .format(len(scan["outside"])))
+        for package in scan["outside"][:6]:
+            print("        {0}".format(package))
 except uelink.UeBridgeError as error:
-    check("count matches an independent scan", False, str(error)[:70])
+    check("count matches an independent scan of /Game", False, str(error)[:70])
 
 check("search narrows", len(records.filter_records(found, found[0].name)) >= 1)
 check("search finds nothing for nonsense",
