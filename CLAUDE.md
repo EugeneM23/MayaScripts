@@ -217,6 +217,31 @@ bone. `root` is skipped: `apply_parentConstrAnim` builds it as a plain
 transform with no `jointOrient`, and a lone centre control has nothing to be
 symmetric with.
 
+That alignment puts the rotate CHANNELS in the bone's axes but leaves the
+knot's **own** frame where OverRig put it — measured 85–97° rolled about the
+bone on the left, ~180° on the right. That frame is everything an animator can
+see of a controller: the rotate manipulator in its default Local mode, the
+local rotation axes, the way a dragged handle turns. So typing numbers worked
+while grabbing the manipulator did not ("оси контролов не совпадают с осями
+костей"). A second step, `fkcontrols.orient_controllers`, **turns each knot in
+place onto its bone's frame**: `rotateAxis` takes `C · rotateAxis` (which,
+after the alignment has left `C⁻¹` there, comes out exactly zero) and every DAG
+child is counter-corrected so nothing below the knot moves. The bone is driven
+from a locator hanging under the knot, so that counter-correction is the whole
+safety argument — and it has **two halves, both required**: the child's local
+rotation takes `C⁻¹`, and its local translation is TURNED by `C⁻¹` (trap 29).
+Constraint nodes are skipped (OverRig parks a dead `aimConstraint` under every
+knot and a constraint never reads its own transform). Idempotent, because it
+works from the measured offset: once the knot stands on its bone the offset is
+identity. Verified live: 180.000° → 0.00002°, bones unmoved to 4.9e-07 over 64
+bones × 60 frames, a finger now turning about exactly the axis you grab
+(85.19° → 0.000°), and — the check the previous design retired as unreachable
+— all 19 left/right pairs' rest frames now mirroring as the skeleton does.
+`root` and `pelvis` are untouched: `apply_parentConstrAnim` builds them as
+plain transforms with no `jointOrient`, their frames already match their bones,
+and putting their CHANNELS on the bone's axes needs an offset group above the
+control — which is what every IK limb hangs on. Deliberately not done.
+
 Two hard-won facts about this rig: bind orientation lives in the joints' ROTATE
 channels, not jointOrient — non-zero local rotates are NOT a bent skeleton, and
 `dagPose` restore is the way to check. And **Build FK bakes the pose the
@@ -289,8 +314,11 @@ pose-snapshot safety before Build (proposed, not confirmed).
 
 **Live verification: all green** (run in the Manny scene):
 `verify_arm_switch.py`, `verify_capture_edges.py`,
-`verify_hybrid_build.py`, `verify_ik_under_root.py` in
-`docs/superpowers/plans/`. `verify_missing_bones.py` runs in an EMPTY
+`verify_control_axes.py`, `verify_hybrid_build.py`,
+`verify_ik_under_root.py` in `docs/superpowers/plans/`.
+`verify_control_axes.py` builds the rig itself in two halves — once with
+`orient_controllers` suppressed, then for real — so the turn is measured on
+its own rather than inside a whole build. `verify_missing_bones.py` runs in an EMPTY
 scene instead — it builds its own UE4-schema skeleton (no root, no
 metacarpals, spine to `spine_03`) and is the proof for traps 20 and 21;
 run it in a FRESH Maya, since half of what it proves is that the first
@@ -493,6 +521,33 @@ C_parent` construction rather than a measurement.
    at `thumb_01`, followed. Resolve through `chain_root`, never `chain[0]`
    — and note the failure mode is SILENT: every call site guarded the
    lookup with `objExists` and skipped quietly.
+
+29. **Turning a node moves its children twice: they face a new way AND they
+   swing to a new place.** `orient_controllers` counter-rotated every child
+   of a turned knot and left the local TRANSLATIONS alone — so each child
+   ended up facing correctly at the wrong position, and since the bone is
+   driven from a child locator, the character came apart by 21 cm. Local
+   translation is applied after the local rotation, so the offset takes the
+   same inverse turn: `R·T·C⁻¹` is `(R·C⁻¹)·T(t·C⁻¹)`. Every gate about
+   ROTATION passed while this was broken — angles are blind to position —
+   and only the bone-drift gate caught it. A drift check that samples world
+   MATRICES, not orientations, is what makes that class of bug visible.
+30. **"The bone has animCurves" is not "the animator has animation".** Every
+   build leaves the bones carrying constant baked curves, so a verify script
+   guarding its reset on `listConnections(bone, type="animCurve")` reads a
+   perfectly idle skeleton as precious and skips the reset for ever after —
+   then measures on whatever bent pose the previous run left. Ask whether a
+   curve MOVES (`fkcontrols.is_constant`). Two more from the same run: a bake
+   walks the timeline, so `cutKey` without returning to the rest frame first
+   freezes every bone at the last baked pose *and the next Build bakes that as
+   the build pose* (the tell is the ring-guess count jumping from 2 to 42);
+   and keying a literal `0` on a bone to make test animation BENDS this
+   skeleton, whose bind orientation lives in its rotate channels — key off the
+   value the bone already holds.
+31. **Comparing euler channel values across a bake reports 360° differences
+   that are not differences.** A bone that read `-336.754` comes back reading
+   `23.246`: the same rotation, written the other way round. Compare world
+   matrices.
 
 ## Retargeting Manny onto other skeletons
 

@@ -681,6 +681,29 @@ class TestMergeKeyTimes(unittest.TestCase):
         self.assertEqual(fkcontrols.merge_key_times([None, None]), [])
 
 
+class TestIsConstant(unittest.TestCase):
+    """The driver locators come out of OverRig fully baked, but their rotation
+    cannot actually vary -- it is the fixed offset between the knot and the
+    bone. Spotting that lets a whole curve be rewritten in one call."""
+
+    def test_a_flat_curve_is_constant(self):
+        self.assertTrue(fkcontrols.is_constant([-85.7318] * 62))
+
+    def test_a_moving_curve_is_not(self):
+        self.assertFalse(fkcontrols.is_constant([0.0, 1.0, 0.0]))
+
+    def test_baking_noise_still_counts_as_constant(self):
+        self.assertTrue(fkcontrols.is_constant([1.0, 1.0000001, 0.9999999]))
+
+    def test_no_keys_at_all_is_constant(self):
+        self.assertTrue(fkcontrols.is_constant([]))
+        self.assertTrue(fkcontrols.is_constant(None))
+
+    def test_the_tolerance_is_adjustable(self):
+        self.assertFalse(fkcontrols.is_constant([0.0, 0.5], tolerance=0.1))
+        self.assertTrue(fkcontrols.is_constant([0.0, 0.5], tolerance=1.0))
+
+
 class TestIsSquare(unittest.TestCase):
 
     def test_pelvis_draws_as_a_square(self):

@@ -47,6 +47,59 @@ def orient_values(offset, reference):
     return offset.inverse(), offset * reference
 
 
+def axis_on_bone(rotate_axis, offset):
+    """`rotateAxis` for a knot turned in place onto its bone's frame.
+
+    The knot's local rotation is `rotateAxis * rotate * jointOrient`, so
+    left-multiplying `rotateAxis` by the knot-to-bone offset turns the whole
+    knot by that offset and leaves the two channels that carry the animation
+    -- `rotate` -- and the rest frame the channels act in -- `jointOrient *
+    parent` -- exactly where they were.
+
+    What this moves is the only thing an animator can see of a controller's
+    frame: the rotate manipulator, the local rotation axes, the direction a
+    dragged handle turns. Working from the measured offset makes the step
+    idempotent -- once the knot stands on its bone the offset is identity.
+    """
+    return offset * rotate_axis
+
+
+def child_held_still(child_local, offset):
+    """A child's local rotation, so its world does not follow the knot's turn.
+
+    The counterpart of `axis_on_bone` and the reason the bone stays put: the
+    bone is driven from a locator hanging under the knot, so the knot cannot
+    turn unless everything below it is counter-rotated. A right-multiplication,
+    which is what makes it absorbable into a child joint's `jointOrient`
+    without touching its animation.
+    """
+    return child_local * offset.inverse()
+
+
+def child_position_held_still(translation, offset):
+    """A child's local translation, so it does not swing with the knot's turn.
+
+    The other half of `child_held_still`, and the half that is easy to miss: a
+    child sits at an offset from its knot, so turning the knot swings it
+    somewhere else entirely. Local translation is applied after the local
+    rotation, so the offset takes the same inverse turn -- correcting only the
+    rotation leaves every child facing the right way in the wrong place.
+    """
+    turned = om.MVector(translation) * offset.inverse()
+    return (turned.x, turned.y, turned.z)
+
+
+def angle_of(matrix):
+    """The rotation angle of a rotation matrix, in degrees.
+
+    One number for "how far apart are these two frames", which is what both
+    the guard against re-turning an already-turned knot and the live checks
+    are asking.
+    """
+    trace = matrix[0] + matrix[5] + matrix[10]
+    return math.degrees(math.acos(max(-1.0, min(1.0, (trace - 1.0) / 2.0))))
+
+
 def retarget(rotation, offset, reference):
     """One rotate value expressed in the new rest frame.
 

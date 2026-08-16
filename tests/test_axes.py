@@ -16,6 +16,13 @@ def _close(a, b, tol=1e-9):
     return max(abs(a[i] - b[i]) for i in range(16)) < tol
 
 
+def _trans(x, y, z):
+    """A translation matrix -- what a child's local offset from its knot is."""
+    matrix = om.MTransformationMatrix()
+    matrix.setTranslation(om.MVector(x, y, z), om.MSpace.kTransform)
+    return matrix.asMatrix()
+
+
 class TestFrameOffset(unittest.TestCase):
 
     def test_offset_maps_the_knot_frame_onto_the_bone(self):
@@ -135,6 +142,167 @@ class TestRealignAnAlignedController(unittest.TestCase):
             axes.retarget(axes.total_rotation(first_axis, pose, first_orient),
                           self.offset, again_reference),
             pose))
+
+
+class TestAngleOf(unittest.TestCase):
+
+    def test_identity_is_zero(self):
+        self.assertAlmostEqual(axes.angle_of(om.MMatrix()), 0.0, places=9)
+
+    def test_a_quarter_turn_reads_ninety(self):
+        self.assertAlmostEqual(axes.angle_of(_rot(0.0, 90.0, 0.0)), 90.0,
+                               places=6)
+
+    def test_the_axis_does_not_matter(self):
+        self.assertAlmostEqual(axes.angle_of(_rot(30.0, 0.0, 0.0)),
+                               axes.angle_of(_rot(0.0, 0.0, 30.0)), places=6)
+
+    def test_a_half_turn_does_not_overflow_the_arccos(self):
+        self.assertAlmostEqual(axes.angle_of(_rot(180.0, 0.0, 0.0)), 180.0,
+                               places=4)
+
+
+class TestTurningAKnotOntoItsBone(unittest.TestCase):
+    """The knot turns in place onto the bone's frame; its children stay.
+
+    What the animator reads off a controller -- the rotate manipulator, the
+    local rotation axes -- is the controller's own frame, and OverRig leaves it
+    rolled about 90 degrees about the bone. Turning the knot is the only way to
+    move it; counter-rotating the children is what keeps the bone still, since
+    the bone is driven from a locator hanging under the knot.
+    """
+
+    def setUp(self):
+        self.parent = _rot(15.0, -8.0, 40.0)    # the knot's parent world
+        self.axis = _rot(90.0, -2.3, 0.4)       # rotateAxis, OverRig's roll
+        self.pose = _rot(-12.0, 30.0, 5.0)      # rotate
+        self.orient = _rot(4.0, -70.0, 11.0)    # jointOrient
+        self.offset = _rot(-88.0, 6.0, -3.0)    # C, knot frame -> bone frame
+
+    def _world(self, axis, orient=None, parent=None):
+        return axes.total_rotation(
+            axis, self.pose,
+            self.orient if orient is None else orient) * (
+                self.parent if parent is None else parent)
+
+    def test_the_knot_lands_on_its_bone(self):
+        bone = self.offset * self._world(self.axis)
+        turned = axes.axis_on_bone(self.axis, self.offset)
+        self.assertTrue(_close(self._world(turned), bone))
+
+    def test_a_child_does_not_move(self):
+        child = _rot(30.0, 10.0, -60.0)
+        before = child * self._world(self.axis)
+        after = (axes.child_held_still(child, self.offset)
+                 * self._world(axes.axis_on_bone(self.axis, self.offset)))
+        self.assertTrue(_close(before, after))
+
+    def test_a_child_does_not_swing_off_its_place(self):
+        """A child sits at an offset from the knot, so the knot's turn swings
+        it somewhere else entirely. Correcting the child's rotation alone
+        leaves it facing the right way in the wrong place -- which reads in a
+        scene as the whole character coming apart.
+        """
+        local = _rot(30.0, 10.0, -60.0) * _trans(12.0, -3.0, 0.5)
+        parent = self._world(self.axis)
+        before = local * parent
+
+        turned_parent = self._world(axes.axis_on_bone(self.axis, self.offset))
+        held = (axes.child_held_still(_rot(30.0, 10.0, -60.0), self.offset)
+                * _trans(*axes.child_position_held_still((12.0, -3.0, 0.5),
+                                                         self.offset)))
+        self.assertTrue(_close(held * turned_parent, before))
+
+    def test_a_child_on_the_knot_itself_does_not_move(self):
+        """The offset is turned, not translated: a child sitting exactly on
+        its knot stays there."""
+        held = axes.child_position_held_still((0.0, 0.0, 0.0), self.offset)
+        for value in held:
+            self.assertAlmostEqual(value, 0.0, places=12)
+
+    def test_the_offset_keeps_its_length(self):
+        held = axes.child_position_held_still((3.0, -4.0, 12.0), self.offset)
+        self.assertAlmostEqual(sum(v * v for v in held) ** 0.5, 13.0,
+                               places=9)
+
+    def test_an_aligned_controller_ends_with_no_rotate_axis(self):
+        """The alignment step leaves rotateAxis holding C inverse, so turning
+        the knot onto its bone cancels it exactly -- a clean control."""
+        self.assertTrue(_close(
+            axes.axis_on_bone(self.offset.inverse(), self.offset),
+            om.MMatrix()))
+
+    def test_a_second_pass_changes_nothing(self):
+        """Once the knot stands on the bone the measured offset is identity."""
+        turned = axes.axis_on_bone(self.axis, self.offset)
+        self.assertTrue(_close(axes.axis_on_bone(turned, om.MMatrix()),
+                               turned))
+
+    def test_the_rotate_channel_still_acts_in_the_bone_axes(self):
+        """The frame the channels act in is jointOrient * parent, and neither
+        is touched -- so this cannot spend what the alignment bought."""
+        turned = axes.axis_on_bone(self.axis, self.offset)
+        self.assertTrue(_close(self.orient * self.parent,
+                               self.orient * self.parent))
+        self.assertTrue(_close(self._world(turned),
+                               self.offset * self._world(self.axis)))
+
+
+class TestTurningAWholeChain(unittest.TestCase):
+    """Two knots, each driving a bone through a locator of its own.
+
+    The child knot is corrected twice: once as its parent's child (so it does
+    not follow the parent's turn) and once on its own account. Both have to
+    land, or a chain comes out right at the root and wrong further down.
+    """
+
+    def setUp(self):
+        self.root_parent = _rot(0.0, 0.0, 0.0)
+        self.first = dict(axis=_rot(90.0, 0.0, 0.0), pose=_rot(3.0, 0.0, 7.0),
+                          orient=_rot(-85.0, 23.0, -0.5),
+                          locator=_rot(-90.0, 0.0, 0.0),
+                          offset=_rot(-90.0, 1.0, 0.0))
+        self.second = dict(axis=_rot(85.2, 0.0, 0.0), pose=_rot(0.0, 4.0, 0.0),
+                           orient=_rot(-85.1, 12.5, 1.1),
+                           locator=_rot(-85.2, 0.0, 0.0),
+                           offset=_rot(-85.0, 0.0, 2.0))
+
+    @staticmethod
+    def _local(knot):
+        return axes.total_rotation(knot["axis"], knot["pose"], knot["orient"])
+
+    def test_both_knots_land_and_neither_locator_moves(self):
+        first_world = self._local(self.first) * self.root_parent
+        second_world = self._local(self.second) * first_world
+        bones = (self.first["offset"] * first_world,
+                 self.second["offset"] * second_world)
+        locators = (self.first["locator"] * first_world,
+                    self.second["locator"] * second_world)
+
+        # The root knot turns; everything hanging under it is held still.
+        first_axis = axes.axis_on_bone(self.first["axis"], self.first["offset"])
+        first_turned = axes.total_rotation(
+            first_axis, self.first["pose"],
+            self.first["orient"]) * self.root_parent
+        second_orient = axes.child_held_still(self.second["orient"],
+                                              self.first["offset"])
+        first_locator = axes.child_held_still(self.first["locator"],
+                                              self.first["offset"])
+
+        # Then the child knot turns on its own account.
+        second_axis = axes.axis_on_bone(self.second["axis"],
+                                        self.second["offset"])
+        second_turned = axes.total_rotation(
+            second_axis, self.second["pose"], second_orient) * first_turned
+        second_locator = axes.child_held_still(self.second["locator"],
+                                               self.second["offset"])
+
+        self.assertTrue(_close(first_turned, bones[0]), "root knot")
+        self.assertTrue(_close(second_turned, bones[1]), "child knot")
+        self.assertTrue(_close(first_locator * first_turned, locators[0]),
+                        "root locator moved")
+        self.assertTrue(_close(second_locator * second_turned, locators[1]),
+                        "child locator moved")
 
 
 class TestEulerDegrees(unittest.TestCase):
