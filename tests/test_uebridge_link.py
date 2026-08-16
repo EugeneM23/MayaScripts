@@ -27,8 +27,10 @@ class FakeRemoteExecution(object):
         self.fail_open = fail_open
         # (path, payload) the "editor" drops on disk, the way the real scripts do
         self.writes = writes
+        self.broken_command_socket = False
         self.started = False
         self.stopped = False
+        self.closed_command = False
         self.opened = None
         self.ran = None
 
@@ -46,6 +48,11 @@ class FakeRemoteExecution(object):
         if self.fail_open:
             raise RuntimeError("refused")
         self.opened = node_id
+
+    def close_command_connection(self):
+        self.closed_command = True
+        if self.broken_command_socket:
+            raise OSError("connection reset by peer")
 
     def run_command(self, command, unattended=True, exec_mode=None,
                     raise_on_failure=False):
@@ -142,6 +149,51 @@ class EngineDiscovery(unittest.TestCase):
         self.assertTrue(uelink.REMOTE_EXEC_RELPATH.endswith("remote_execution.py"))
 
 
+class NodeChoice(unittest.TestCase):
+    """Discovery already reports project_name, so which editor to talk to is
+    decidable before connecting to any of them."""
+
+    def nodes(self):
+        return [{"node_id": "b", "project_name": "Zebra", "machine": "PC"},
+                {"node_id": "a", "project_name": "Atone", "machine": "PC"}]
+
+    def test_labels_a_node_by_its_project(self):
+        self.assertEqual(
+            uelink.node_label({"node_id": "a", "project_name": "Atone"}), "Atone")
+
+    def test_a_node_with_no_project_still_gets_a_label(self):
+        """An editor on the project browser reports no project name."""
+        label = uelink.node_label({"node_id": "a", "machine": "PC",
+                                   "engine_version": "5.8.1"})
+        self.assertTrue(label)
+        self.assertIn("5.8.1", label)
+
+    def test_one_node_is_taken_whatever_the_preference(self):
+        one = [{"node_id": "a", "project_name": "Atone"}]
+        self.assertEqual(uelink.pick_node(one, None)["node_id"], "a")
+        self.assertEqual(uelink.pick_node(one, "Something Else")["node_id"], "a")
+
+    def test_the_preferred_project_wins_among_several(self):
+        chosen = uelink.pick_node(self.nodes(), "Zebra")
+        self.assertEqual(chosen["node_id"], "b")
+
+    def test_without_a_preference_the_choice_is_alphabetical_not_a_race(self):
+        """nodes[0] is whichever editor answered first - a different project
+        run to run. Sorting makes the same scene give the same answer."""
+        chosen = uelink.pick_node(self.nodes(), None)
+        self.assertEqual(chosen["project_name"], "Atone")
+
+    def test_an_unknown_preference_falls_back_deterministically(self):
+        chosen = uelink.pick_node(self.nodes(), "NotOpen")
+        self.assertEqual(chosen["project_name"], "Atone")
+
+    def test_no_nodes_is_no_choice(self):
+        self.assertIsNone(uelink.pick_node([], "Atone"))
+
+    def test_labels_come_back_sorted_for_the_menu(self):
+        self.assertEqual(uelink.node_labels(self.nodes()), ["Atone", "Zebra"])
+
+
 class Messages(unittest.TestCase):
 
     def test_the_no_editor_message_names_both_causes(self):
@@ -196,6 +248,21 @@ class Connecting(unittest.TestCase):
         except ValueError:
             pass
         self.assertTrue(session.stopped)
+
+    def test_a_dead_command_socket_still_releases_the_broadcast_socket(self):
+        """When the editor dies mid-command, closing the TCP side throws. If
+        that throw skips stop(), the multicast socket stays bound for the whole
+        Maya session."""
+        session = FakeRemoteExecution()
+        session.broken_command_socket = True
+        try:
+            with uelink.UeLink(engine_root="C:\\Src",
+                               client=FakeClient(session)) as link:
+                link.run("print(1)")
+        except OSError:
+            self.fail("teardown let the dead socket escape")
+        self.assertTrue(session.closed_command)
+        self.assertTrue(session.stopped, "broadcast socket was never released")
 
     def test_no_editor_answering_raises_the_helpful_message(self):
         session = FakeRemoteExecution(nodes=[])

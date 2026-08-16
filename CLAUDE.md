@@ -568,6 +568,16 @@ personal persistence put the setting in `Saved/Config/WindowsEditor/Engine.ini`
 instead. `PythonScriptPlugin` and `EditorScriptingUtilities` are already
 enabled in Atone.
 
+**Which editor, when several are open:** the pong reply already carries
+`project_name`, `project_root`, `engine_version`, `user` and `machine`
+(`PythonScriptRemoteExecution.cpp:263-270`), so the window fills its project
+dropdown from discovery alone, without connecting to anything. `pick_node`
+takes an exact project match, and otherwise the **first by sorted label** —
+never `nodes[0]`, which is whichever editor won the broadcast race and changes
+run to run. The choice is remembered in the cache, and both the listing and
+the export are pinned to it, or a second project would be asked for an asset
+path it does not have.
+
 **Results never travel through the socket.** The UE script writes JSON to a
 path we chose and prints a marker; both processes are on one machine, and 470
 assets would otherwise push a large payload through the command channel. The

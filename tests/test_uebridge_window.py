@@ -44,6 +44,12 @@ class CacheRoundTrip(unittest.TestCase):
         cached = window.cache_payload([], project="C:/x/Atone.uproject")
         self.assertEqual(cached["project"], "C:/x/Atone.uproject")
 
+    def test_the_cache_remembers_which_editor_was_chosen(self):
+        """With two projects open, reopening the window should not change which
+        one it reads."""
+        cached = window.cache_payload([], project="", choice="Atone")
+        self.assertEqual(cached["choice"], "Atone")
+
     def test_the_cache_is_shaped_like_the_editor_reply(self):
         """One parser reads both, so the shapes must not drift apart."""
         cached = window.cache_payload(records.parse_payload(self.payload()))
@@ -52,6 +58,24 @@ class CacheRoundTrip(unittest.TestCase):
 
     def test_an_empty_cache_loads_as_an_empty_list(self):
         self.assertEqual(window.records_from_cache({"assets": []}), [])
+
+    def test_a_cache_written_before_the_picker_still_loads(self):
+        """An old cache has no 'choice' key; that must not break the window."""
+        self.assertEqual(window.records_from_cache({"assets": []}), [])
+
+
+class EditorsLine(unittest.TestCase):
+
+    def test_silent_with_one_editor(self):
+        self.assertEqual(window.editors_line(["Atone"], "Atone"), "")
+
+    def test_silent_with_none(self):
+        self.assertEqual(window.editors_line([], ""), "")
+
+    def test_names_the_chosen_one_when_several_are_open(self):
+        line = window.editors_line(["Atone", "MarkerLess_02"], "Atone")
+        self.assertIn("2 editors", line)
+        self.assertIn("Atone", line)
 
 
 class CountLine(unittest.TestCase):

@@ -194,6 +194,56 @@ def load_remote_execution(engine_root):
     return module
 
 
+def node_label(node):
+    """How one discovered editor is named in the UI.
+
+    The pong reply carries project_name, project_root, engine_version, user and
+    machine, so an editor can be identified without connecting to it. An editor
+    sitting on the project browser reports no project at all.
+    """
+    node = node or {}
+    project = (node.get("project_name") or "").strip()
+    if project:
+        return project
+    return "no project ({0} {1})".format(
+        node.get("machine", "?"), node.get("engine_version", "?")).strip()
+
+
+def _node_order(node):
+    return (node_label(node).lower(), str(node.get("node_id", "")))
+
+
+def node_labels(nodes):
+    """Labels for the picker, sorted, duplicates kept - two editors can hold
+    the same project open."""
+    return [node_label(node) for node in sorted(nodes or [], key=_node_order)]
+
+
+def pick_node(nodes, project=None):
+    """Which editor to talk to.
+
+    Taking nodes[0] means taking whichever editor answered the broadcast
+    first, so with two projects open the tool talks to a different one run to
+    run. Sorting makes the fallback deterministic, and an exact project match
+    always wins.
+    """
+    ordered = sorted(nodes or [], key=_node_order)
+    if not ordered:
+        return None
+    if project:
+        for node in ordered:
+            if node_label(node) == project:
+                return node
+    return ordered[0]
+
+
+def discover_nodes(engine_root=None, timeout=DEFAULT_TIMEOUT, client=None):
+    """Every editor currently answering, without connecting to any of them."""
+    with UeLink(engine_root=engine_root, timeout=timeout, client=client,
+                connect=False) as link:
+        return link.nodes
+
+
 def output_text(answer):
     """Flatten the protocol's reply into readable text."""
     chunks = []
@@ -212,8 +262,13 @@ class UeLink(object):
     connection dance runs with no editor present.
     """
 
-    def __init__(self, engine_root=None, timeout=DEFAULT_TIMEOUT, client=None):
+    def __init__(self, engine_root=None, timeout=DEFAULT_TIMEOUT, client=None,
+                 project=None, connect=True):
         self.timeout = timeout
+        self.project = project
+        self.nodes = []
+        self.node = None
+        self._connect = connect
         self._client = client
         self._engine_root = engine_root
         self._session = None
@@ -228,32 +283,48 @@ class UeLink(object):
         self._session = self._client.RemoteExecution()
         self._session.start()
 
-        node_id = self._wait_for_node()
-        if node_id is None:
+        self.nodes = self._wait_for_nodes()
+        if not self.nodes:
             self.__exit__(None, None, None)
             raise UeBridgeError(NO_EDITOR_MESSAGE)
 
-        self._session.open_command_connection(node_id)
+        if not self._connect:
+            return self
+
+        self.node = pick_node(self.nodes, self.project)
+        self._session.open_command_connection(self.node["node_id"])
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         session, self._session = self._session, None
-        if session is not None:
+        if session is None:
+            return False
+        # Two steps, each guarded on its own. stop() closes the command
+        # connection before the broadcast one, so when the editor dies
+        # mid-command the throw from the dead TCP socket would take the
+        # multicast socket down with it - and it stays bound for the life of
+        # the Maya session.
+        for step in (session.close_command_connection, session.stop):
             try:
-                session.stop()
+                step()
             except Exception:
                 pass
         return False
 
-    def _wait_for_node(self):
-        """Discovery is a broadcast, so the answer arrives a moment later."""
+    def _wait_for_nodes(self):
+        """Discovery is a broadcast, so answers arrive a moment later.
+
+        Once one editor has answered we keep listening briefly: a second editor
+        is a fraction slower, and returning after the first would hide it.
+        """
         deadline = time.time() + self.timeout
         while True:
-            nodes = self._session.remote_nodes or []
+            nodes = list(self._session.remote_nodes or [])
             if nodes:
-                return nodes[0].get("node_id")
+                time.sleep(0.4)
+                return list(self._session.remote_nodes or []) or nodes
             if time.time() >= deadline:
-                return None
+                return []
             time.sleep(0.1)
 
     def run(self, source):
@@ -262,7 +333,7 @@ class UeLink(object):
 
 
 def run_script(source, out_path, engine_root=None, timeout=DEFAULT_TIMEOUT,
-               client=None, keep_reply=False):
+               client=None, keep_reply=False, project=None):
     """Run `source` in the editor and return the JSON reply it wrote.
 
     The reply file is deleted first. Reading a previous run's answer would
@@ -272,7 +343,8 @@ def run_script(source, out_path, engine_root=None, timeout=DEFAULT_TIMEOUT,
     if os.path.isfile(out_path):
         os.remove(out_path)
 
-    with UeLink(engine_root=engine_root, timeout=timeout, client=client) as link:
+    with UeLink(engine_root=engine_root, timeout=timeout, client=client,
+                project=project) as link:
         answer = link.run(source)
 
     if not os.path.isfile(out_path):

@@ -27,17 +27,19 @@ _SEARCH = "ueAnimBridgeSearch"
 _STATUS = "ueAnimBridgeStatus"
 _HEADER = "ueAnimBridgeHeader"
 _TIMELINE = "ueAnimBridgeTimeline"
+_PROJECT = "ueAnimBridgeProject"
 
 CACHE_NAME = "maya_uebridge_cache.json"
 
-_STATE = {"records": [], "filtered": [], "project": ""}
+_STATE = {"records": [], "filtered": [], "project": "", "choice": ""}
 
 
 # ---------------------------------------------------------------- cache
 
-def cache_payload(record_list, project=""):
+def cache_payload(record_list, project="", choice=""):
     """The cache is stored in the editor's own reply shape, so one parser reads both."""
     return {"project": project,
+            "choice": choice,
             "assets": [{"name": rec.name,
                         "package": rec.package,
                         "skeleton": rec.skeleton,
@@ -54,10 +56,10 @@ def cache_path():
     return os.path.join(cmds.internalVar(userPrefDir=True), CACHE_NAME)
 
 
-def save_cache(record_list, project):
+def save_cache(record_list, project, choice=""):
     try:
         with open(cache_path(), "w") as handle:
-            json.dump(cache_payload(record_list, project), handle)
+            json.dump(cache_payload(record_list, project, choice), handle)
     except (OSError, IOError):
         pass  # a cache we cannot write is not worth failing a refresh over
 
@@ -67,8 +69,10 @@ def load_cache():
         with open(cache_path(), "r") as handle:
             payload = json.load(handle)
     except (OSError, IOError, ValueError):
-        return [], ""
-    return records_from_cache(payload), payload.get("project", "")
+        return [], "", ""
+    return (records_from_cache(payload),
+            payload.get("project", ""),
+            payload.get("choice", ""))
 
 
 def temp_folder():
@@ -102,6 +106,34 @@ def _run(action, busy=None):
     except Exception as error:
         _status("{0}: {1}".format(type(error).__name__, error))
         print(traceback.format_exc())
+
+
+def project_choice():
+    """The project the user picked, falling back to the remembered one."""
+    if not cmds.optionMenu(_PROJECT, exists=True):
+        return _STATE.get("choice") or ""
+    if not (cmds.optionMenu(_PROJECT, query=True, numberOfItems=True) or 0):
+        return _STATE.get("choice") or ""
+    return cmds.optionMenu(_PROJECT, query=True, value=True) or ""
+
+
+def fill_project_menu(labels):
+    """Rebuild the picker, keeping the current choice if that editor is still up."""
+    previous = project_choice()
+    for item in (cmds.optionMenu(_PROJECT, query=True, itemListLong=True) or []):
+        cmds.deleteUI(item)
+    for label in labels:
+        cmds.menuItem(parent=_PROJECT, label=label)
+    if previous and previous in labels:
+        cmds.optionMenu(_PROJECT, edit=True, value=previous)
+    return project_choice()
+
+
+def editors_line(labels, chosen):
+    """What the status says about which editor we are talking to. Pure."""
+    if len(labels) <= 1:
+        return ""
+    return "{0} editors open, reading {1}".format(len(labels), chosen)
 
 
 def count_line(total, shown, query):
@@ -143,10 +175,26 @@ def _selected_record():
 
 # ---------------------------------------------------------------- actions
 
+def _project_changed():
+    """Picking another editor reloads the list from it."""
+    _STATE["choice"] = project_choice()
+    refresh()
+
+
 def refresh():
-    """Ask the editor for every AnimSequence and cache the answer."""
+    """Ask the chosen editor for every AnimSequence and cache the answer."""
+    # Discovery is answered without connecting to anything, so the menu can be
+    # filled before we decide who to talk to.
+    nodes = uelink.discover_nodes()
+    labels = uelink.node_labels(nodes)
+    fill_project_menu(labels)
+    chosen = uelink.node_label(uelink.pick_node(nodes, project_choice()))
+    if cmds.optionMenu(_PROJECT, query=True, numberOfItems=True):
+        cmds.optionMenu(_PROJECT, edit=True, value=chosen)
+    _STATE["choice"] = chosen
+
     out = os.path.join(temp_folder(), "list.json")
-    payload = uelink.run_script(uescripts.list_script(out), out)
+    payload = uelink.run_script(uescripts.list_script(out), out, project=chosen)
 
     if payload.get("scanning"):
         _status("the asset registry is still scanning - try again in a moment")
@@ -155,13 +203,17 @@ def refresh():
     found = records.parse_payload(payload)
     _STATE["records"] = found
     _STATE["project"] = payload.get("project", "")
-    save_cache(found, _STATE["project"])
+    save_cache(found, _STATE["project"], chosen)
 
-    _header("Project: {0}     connected".format(_project_label(_STATE["project"])))
+    _header("connected")
     # _repopulate writes the count itself, honouring whatever is in the search
     # box - overwriting it here would report the unfiltered total over a
     # filtered list.
     _repopulate()
+    extra = editors_line(labels, chosen)
+    if extra:
+        _status("{0}  |  {1}".format(
+            cmds.text(_STATUS, query=True, label=True), extra))
 
 
 def import_selected():
@@ -173,7 +225,10 @@ def import_selected():
 
     out = os.path.join(temp_folder(), "export.json")
     fbx = os.path.join(temp_folder(), "{0}.fbx".format(record.name))
-    payload = uelink.run_script(uescripts.export_script(out, record.package, fbx), out)
+    # Export from the same editor the list came from, or a second open project
+    # would answer with an asset path it does not have.
+    payload = uelink.run_script(uescripts.export_script(out, record.package, fbx),
+                                out, project=project_choice())
 
     namespace = records.namespace_for(record.name, animimport.existing_namespaces())
     set_timeline = cmds.checkBox(_TIMELINE, query=True, value=True)
@@ -207,6 +262,11 @@ def show_window():
     cmds.window(WINDOW, title="UE Animation Bridge", widthHeight=(760, 460))
     form = cmds.formLayout(numberOfDivisions=100)
 
+    project_label = cmds.text(label="Project:", align="left")
+    project_menu = cmds.optionMenu(
+        _PROJECT, width=250,
+        changeCommand=lambda *_: _run(_project_changed,
+                                      busy="switching editor..."))
     header = cmds.text(_HEADER, label="not connected", align="left")
     refresh_button = cmds.button(
         label="Refresh", width=90,
@@ -232,7 +292,8 @@ def show_window():
     cmds.formLayout(
         form, edit=True,
         attachForm=[
-            (header, "top", 8), (header, "left", 8),
+            (project_label, "top", 10), (project_label, "left", 8),
+            (project_menu, "top", 6), (header, "top", 10),
             (refresh_button, "top", 4), (refresh_button, "right", 8),
             (search_label, "left", 8),
             (search, "right", 8),
@@ -242,8 +303,10 @@ def show_window():
             (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
         ],
         attachControl=[
-            (search_label, "top", 10, header),
-            (search, "top", 8, header),
+            (project_menu, "left", 6, project_label),
+            (header, "left", 12, project_menu),
+            (search_label, "top", 10, project_menu),
+            (search, "top", 8, project_menu),
             (search, "left", 6, search_label),
             (scroll, "top", 8, search),
             (scroll, "bottom", 8, import_button),
@@ -251,10 +314,16 @@ def show_window():
             (timeline, "bottom", 18, status),
         ])
 
-    cached, project = load_cache()
+    cached, project, choice = load_cache()
     _STATE["records"] = cached
     _STATE["project"] = project
-    _header("Project: {0}     not connected".format(_project_label(project)))
+    _STATE["choice"] = choice
+    # Show the remembered project straight away; Refresh replaces the menu with
+    # whatever is actually running. Discovery on open would make the window
+    # take a second to appear even with no editor about.
+    if choice or project:
+        fill_project_menu([choice or _project_label(project)])
+    _header("not connected")
     shown = _repopulate()
     if cached:
         _status("{0} animations from the last refresh - press Refresh for the "
