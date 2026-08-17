@@ -18,6 +18,7 @@ import maya.cmds as cmds
 
 from maya_weapons import attach
 from maya_weapons import catalog
+from maya_weapons import connect as linking
 from maya_weapons import skeleton
 
 WINDOW = "mayaWeaponsWindow"
@@ -32,6 +33,12 @@ _OPTIONVAR = "mayaWeapons_offset_{0}"
 NO_CHARACTER = ("no character - open the picker and press Connect, "
                 "or select a joint")
 NOT_ATTACHED = "nothing attached yet - press Add"
+NO_WEAPON = "no weapon in the hand - press Add first"
+NOT_CONNECTED = "not connected - the hands are not on the weapon"
+ALREADY_CONNECTED = "already connected"
+LINKED_NO_ADD = ("the hands ride this weapon - press Disconnect Arms before "
+                 "replacing it")
+LINKED_NO_OFFSETS = "the weapon is animated - its offsets are baked in"
 
 
 # ------------------------------------------------------------------ policy
@@ -77,6 +84,10 @@ def added_message(entry, bone):
     return "{0} added to {1}".format(entry.label, bone.split("|")[-1])
 
 
+def linked_message(entry):
+    return "{0} drives the arms".format(entry.label)
+
+
 # ------------------------------------------------------------------- state
 
 def _entry():
@@ -116,20 +127,30 @@ def _status(message):
 
 
 def _carrier(entry):
-    """Root, bone and carrier for `entry` on the bound character.
+    """Root, bone, carrier, and whether that carrier drives the arms.
 
-    All three are returned so callers can tell "no character" from "character
+    All four are returned so callers can tell "no character" from "character
     has no such bone" from "the bone is bare"; each says something different
     on the status line.
+
+    The carrier is looked for in the bone first and through the link second:
+    once connected it lives out in world space and the bone knows nothing
+    about it any more.
     """
     root = skeleton.current_root()
     cmds.text(_BOUND, edit=True, label=bound_message(root))
     if not root:
-        return None, None, None
+        return None, None, None, False
     bone = skeleton.resolve_bone(root, entry.bone)
     if not bone:
-        return root, None, None
-    return root, bone, attach.find_attached(bone)
+        return root, None, None, False
+
+    in_hand = attach.find_attached(bone)
+    if in_hand:
+        return root, bone, in_hand, False
+
+    linked = linking.linked_carrier()
+    return root, bone, linked, linked is not None
 
 
 # --------------------------------------------------------------- callbacks
@@ -146,12 +167,13 @@ def _run(action):
 def refresh():
     """Re-read the scene: which character, and what the fields should show."""
     entry = _entry()
-    root, bone, carrier = _carrier(entry)
+    root, bone, carrier, linked = _carrier(entry)
 
     if carrier:
         rotate, translate = attach.read_offsets(carrier)
         _set_fields(rotate, translate)
-        _status("{0} on {1}".format(entry.label, bone.split("|")[-1]))
+        _status(linked_message(entry) if linked
+                else "{0} on {1}".format(entry.label, bone.split("|")[-1]))
         return
 
     _set_fields(*_remembered(entry))
@@ -166,12 +188,17 @@ def refresh():
 def add_weapon():
     """Put the chosen weapon into its bone, replacing what we put there before."""
     entry = _entry()
-    root, bone, _carrier_now = _carrier(entry)
+    root, bone, _carrier_now, linked = _carrier(entry)
     if not root:
         _status(NO_CHARACTER)
         return
     if not bone:
         _status(missing_bone_message(root, entry.bone))
+        return
+    if linked:
+        # Replacing deletes the carrier, and the IK hand controls are its DAG
+        # children: this press would take both arm rigs down unbaked.
+        _status(LINKED_NO_ADD)
         return
 
     absent = catalog.missing(entry)
@@ -189,14 +216,52 @@ def offsets_changed():
     """Live edit: write the fields into the attached weapon, and remember them."""
     entry = _entry()
     rotate, translate = _fields()
-    _remember(entry, rotate, translate)
+    _remember(entry, rotate, translate)  # the next Add still wants them
 
-    _root, bone, carrier = _carrier(entry)
+    _root, bone, carrier, _linked = _carrier(entry)
     if not carrier:
         _status(NOT_ATTACHED)
         return
+    if attach.is_animated(carrier):
+        _status(LINKED_NO_OFFSETS)
+        return
     attach.write_offsets(carrier, rotate, translate)
     _status("{0} on {1}".format(entry.label, bone.split("|")[-1]))
+
+
+def connect_arms():
+    """Hand the arms over to the weapon: both to IK, hands onto the prop."""
+    entry = _entry()
+    root, bone, carrier, linked = _carrier(entry)
+    if not root:
+        _status(NO_CHARACTER)
+        return
+    if not bone:
+        _status(missing_bone_message(root, entry.bone))
+        return
+    if linked:
+        _status(ALREADY_CONNECTED)
+        return
+    if not carrier:
+        _status(NO_WEAPON)
+        return
+    _status(linking.connect(carrier, skeleton.scene_map(root)))
+
+
+def disconnect_arms():
+    """Hands back on the root control, weapon back in the hand."""
+    entry = _entry()
+    root, bone, carrier, linked = _carrier(entry)
+    if not root:
+        _status(NO_CHARACTER)
+        return
+    if not bone:
+        _status(missing_bone_message(root, entry.bone))
+        return
+    if not linked:
+        _status(NOT_CONNECTED)
+        return
+    _status(linking.disconnect(carrier, bone))
 
 
 # ------------------------------------------------------------------ window
@@ -206,7 +271,7 @@ def show_window():
     if cmds.window(WINDOW, exists=True):
         cmds.deleteUI(WINDOW)
 
-    cmds.window(WINDOW, title="Weapons", widthHeight=(380, 190),
+    cmds.window(WINDOW, title="Weapons", widthHeight=(380, 280),
                 sizeable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                       columnOffset=("both", 8))
@@ -227,6 +292,17 @@ def show_window():
     cmds.floatFieldGrp(_TRANSLATE, numberOfFields=3, label="Translate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
                        changeCommand=lambda *_args: _run(offsets_changed))
+
+    cmds.separator(height=8, style="in")
+    cmds.button(label="Connect Arms To Weapon", height=28,
+                annotation="Both arms to IK, the weapon out to world, and the "
+                           "IK hands hung on it. Animation is re-baked at "
+                           "every step.",
+                command=lambda *_args: _run(connect_arms))
+    cmds.button(label="Disconnect Arms", height=24,
+                annotation="Hands back on the root control, weapon back in "
+                           "the hand. The weapon keeps its animation.",
+                command=lambda *_args: _run(disconnect_arms))
 
     cmds.text(_STATUS, label="", align="left")
 

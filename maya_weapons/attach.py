@@ -112,6 +112,24 @@ def write_offsets(carrier, rotate, translate):
         cmds.autoKeyframe(state=state)
 
 
+def is_animated(node):
+    """Whether any offset channel of `node` is driven by an animation curve.
+
+    A weapon that has been out in the world comes back with baked curves, and
+    `setAttr` on a connected channel raises. Asking first is what keeps a
+    traceback off the status line.
+    """
+    if not node:
+        return False
+    for channel in ("translate", "rotate"):
+        for axis in "XYZ":
+            plug = "{0}.{1}{2}".format(node, channel, axis)
+            if cmds.listConnections(plug, source=True, destination=False,
+                                    type="animCurve"):
+                return True
+    return False
+
+
 def read_offsets(carrier):
     """The carrier's local rotate and translate, as two triples."""
     rotate = tuple(cmds.getAttr("{0}.rotate{1}".format(carrier, axis))

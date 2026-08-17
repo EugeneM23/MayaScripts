@@ -60,15 +60,20 @@ def bone_in(hierarchy, bone_name):
     return hierarchy.get(bone_name)
 
 
-def resolve_bone(root, bone_name):
-    """Long path of `bone_name` inside `root`'s subtree, or None.
+def scene_map(root):
+    """Leaf name -> long path for the whole skeleton, prefix stripped.
 
-    The prefix is derived once for the whole skeleton, exactly as the picker
-    derives it, so a rig imported as `char_weapon_r` resolves too.
+    The prefix is derived once for the skeleton, exactly as the picker derives
+    it, so a rig imported as `char_weapon_r` resolves too. This is also the
+    shape the rig's own entry points take.
     """
     if not root:
-        return None
+        return {}
     raw = naming.hierarchy_map(root)
     known = [button.joint for button in bodymap.BUTTONS]
-    prefix = naming.detect_prefix(raw, known)
-    return bone_in(naming.strip_prefix(raw, prefix), bone_name)
+    return naming.strip_prefix(raw, naming.detect_prefix(raw, known))
+
+
+def resolve_bone(root, bone_name):
+    """Long path of `bone_name` inside `root`'s subtree, or None."""
+    return bone_in(scene_map(root), bone_name)

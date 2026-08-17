@@ -212,6 +212,41 @@ class ImportMode(unittest.TestCase):
                          ["|LongSwordMesh"])
 
 
+class FakeCurves(object):
+    """maya.cmds enough to answer what carries an animation curve."""
+
+    def __init__(self, curves):
+        self._curves = dict(curves)
+
+    def listConnections(self, plug, source=False, destination=False,
+                        type=None, **kwargs):
+        return list(self._curves.get(plug, [])) or None
+
+
+class IsAnimated(unittest.TestCase):
+    """Once the weapon has been out in the world its channels carry curves.
+
+    setAttr on a connected channel raises, so the window has to ask before it
+    writes -- a traceback on the status line reads like a broken tool.
+    """
+
+    def test_true_when_a_channel_carries_a_curve(self):
+        attach.cmds = FakeCurves({"|c.rotateY": ["curve1"]})
+        self.assertTrue(attach.is_animated("|c"))
+
+    def test_true_for_a_translate_channel_too(self):
+        attach.cmds = FakeCurves({"|c.translateX": ["curve2"]})
+        self.assertTrue(attach.is_animated("|c"))
+
+    def test_false_on_a_clean_node(self):
+        attach.cmds = FakeCurves({})
+        self.assertFalse(attach.is_animated("|c"))
+
+    def test_false_for_nothing(self):
+        attach.cmds = FakeCurves({})
+        self.assertFalse(attach.is_animated(None))
+
+
 class Seat(unittest.TestCase):
     """Zeroing translate and rotate does NOT put a node on its parent.
 

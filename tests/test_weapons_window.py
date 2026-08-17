@@ -94,3 +94,26 @@ class Messages(unittest.TestCase):
 
     def test_bound_says_so_when_nothing_is_bound(self):
         self.assertIn("no", window.bound_message(None).lower())
+
+
+class LinkedMessages(unittest.TestCase):
+    """What the window says once the hands ride the weapon."""
+
+    def test_add_is_refused_with_a_reason(self):
+        """Replacing would delete the carrier, and the IK controls are its
+        children -- the press would take both arm rigs down unbaked."""
+        self.assertIn("disconnect", window.LINKED_NO_ADD.lower())
+
+    def test_offsets_say_the_weapon_is_animated(self):
+        self.assertIn("animated", window.LINKED_NO_OFFSETS.lower())
+
+    def test_disconnect_says_when_there_is_no_link(self):
+        self.assertIn("not connected", window.NOT_CONNECTED.lower())
+
+    def test_connect_needs_a_weapon_first(self):
+        self.assertIn("add", window.NO_WEAPON.lower())
+
+    def test_linked_status_names_the_weapon(self):
+        message = window.linked_message(SWORD)
+        self.assertIn(SWORD.label, message)
+        self.assertIn("arms", message.lower())
