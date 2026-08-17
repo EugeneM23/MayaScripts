@@ -77,48 +77,10 @@ def ik_control(limb, role):
     return None
 
 
-def resolve_limbs(nodes, limb_members, scene_map):
-    """Which limbs the given nodes touch, in LIMBS order.
-
-    A node counts for a limb when it is one of that limb's recorded nodes, a
-    descendant of one, or one of the limb's three source joints. That last
-    route is what lets the picker's own limb buttons drive a bake.
-
-    Pure on purpose: `limb_members` is a {limb: [paths]} mapping supplied by
-    the caller, so all of this is testable without Maya.
-    """
-    owner_of_joint = {}
-    for name, joints in LIMBS:
-        for joint in joints:
-            path = scene_map.get(joint)
-            if path:
-                owner_of_joint[path] = name
-
-    hit = set()
-    for node in nodes:
-        if node in owner_of_joint:
-            hit.add(owner_of_joint[node])
-            continue
-        for name, members in limb_members.items():
-            if any(node == m or node.startswith(m + "|") for m in members):
-                hit.add(name)
-                break
-
-    return [name for name, _ in LIMBS if name in hit]
-
-
 def built_limbs():
     """Limbs that currently have nodes recorded against them."""
     return [name for name, _ in LIMBS
             if overrig.set_members(limb_set(name))]
-
-
-def limbs_in_selection(scene_map):
-    """Limbs touched by the current Maya selection."""
-    members = {name: overrig.set_members(limb_set(name))
-               for name, _ in LIMBS}
-    selected = cmds.ls(selection=True, long=True) or []
-    return resolve_limbs(selected, members, scene_map)
 
 
 def character_roots():

@@ -114,7 +114,7 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
   package does not drag Qt and Maya in. Making that import eager breaks the
   plain-Python tests.
 - The fiddly logic is deliberately pushed into **pure functions taking the scene
-  as data** (`resolve_limbs`, `order_by_nesting`, `foreign_knots_inside`,
+  as data** (`order_by_nesting`, `foreign_knots_inside`,
   `detect_prefix`, `unrecorded_rig_roots`). Test those; keep the Maya-touching
   wrappers thin.
 
