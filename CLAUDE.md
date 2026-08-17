@@ -724,6 +724,72 @@ The scene's frame rate is **never** written: `FBXImportSetMayaFrameRate` is
 forced off and a mismatch is reported instead. The animator is working in that
 scene while the tool runs.
 
+## `maya_weapons` — putting a weapon in the character's hand
+
+A small window: a dropdown of weapon models, an **Add** button that imports the
+chosen one and hangs it on `weapon_r`, and live rotate/translate fields for
+dialling in the grip. Design:
+`docs/superpowers/specs/2026-08-17-weapon-attach-design.md`, proof:
+`docs/superpowers/plans/verify_weapons.py` (**17/17 green** in the Manny scene).
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import maya_weapons; maya_weapons.show_window()
+```
+
+| Module | Responsibility | May import |
+|---|---|---|
+| `catalog.py` | the weapon table and lookups, pure data | **stdlib only** |
+| `skeleton.py` | which character, and where its weapon bone is | `maya.cmds`, `maya_overrig` |
+| `attach.py` | import, replace, parent, read/write offsets | `maya.cmds` |
+| `window.py` | the `cmds` window, offsets, optionVars | `maya.cmds` + the three above |
+
+`catalog.py` stays stdlib-only (subprocess test) and `__init__.py` resolves
+`show_window` through `__getattr__`, both for the same reasons as
+`maya_overrig`. The window is plain `cmds` — a dropdown, a button and two float
+rows need no Qt — and every callback goes through `_run`, which puts the
+failure on the status line instead of the Script Editor (trap 20).
+
+**The character comes from the picker.** `maya_overrig.picker_window` gained one
+module-level `bound_root()`, which finds the open window and returns its bound
+root; the binding lives in the live window and is persisted nowhere else. With
+no picker the module binds as the picker does — the selection, else a lone
+skeleton via `builder.character_roots()` (trap 1: a built rig reports a dozen
+"skeletons") — and **refuses to guess** between two candidates. The bone is
+then resolved inside that root's subtree through `naming.hierarchy_map` +
+`detect_prefix`, never scene-wide: a bare `ls("weapon_r")` would arm whichever
+character Maya listed first.
+
+**The carrier** is a transform of ours between the bone and the imported model,
+holding the offsets and a `mayaWeapon` string attribute with the catalog key.
+Everything finds it by that marker, never by name. One weapon per bone: Add
+deletes the marked carrier first, so the live fields always have exactly one
+thing to move, and a child the animator parented by hand is never touched.
+
+**`cmds.file` here, `FBXImport` in the UE bridge.** The opposite of trap 22 and
+deliberate: trap 22 is about losing animation curves, a weapon model has none,
+and `returnNewNodes` gives the exact node list `FBXImport` cannot report at
+all. Say this out loud in the code, or the next reader "fixes" it into a bug.
+
+Offsets are the carrier's local rotate/translate, written with **autoKey off**
+(trap 14), read back from the scene on open, on Add and on switching the
+dropdown, and remembered per weapon in an optionVar
+(`mayaWeapons_offset_<key>`) so a grip dialled in once survives the session.
+Scale is a catalog field, not a UI control: a model that arrives at the wrong
+size is a fact about the model. Deleting a carrier leaves its shading nodes
+behind, as any Maya delete does — chasing them is how a tool eventually
+deletes something the animator wanted.
+
+32. **Zeroing `translate` and `rotate` does NOT put a node on its parent.**
+    `cmds.group` takes the pivot of what it groups — 42.4 up the sword — and
+    `cmds.parent` compensates for that pivot in `rotatePivotTranslate`. The
+    carrier then read translate 0, rotate 0, and hung **28.5 cm** off the hand,
+    which looks exactly like a wrong bone or a bad import. The local matrix is
+    the thing to check, not the two obvious channels: `attach.seat` zeroes
+    `shear`, both pivots, both pivot translates and `rotateAxis` as well, and
+    the carrier is now built empty and filled rather than grouped around the
+    model. Live: worst world-matrix element 28.5130917 → 0.0000000.
+
 ## Conventions
 
 - Branch `feature/overrig-picker`, remote `github.com/EugeneM23/MayaScripts`.
