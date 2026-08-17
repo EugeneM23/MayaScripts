@@ -435,6 +435,19 @@ class PickerWindow(QtWidgets.QMainWindow):
         super(PickerWindow, self).closeEvent(event)
 
 
+def bound_root():
+    """The open picker's bound skeleton root, or None.
+
+    Companion tools ask this so they act on the character the animator is
+    already driving. The binding lives in the live window and is not persisted
+    anywhere, so there is nothing else to read it out of.
+    """
+    for widget in QtWidgets.QApplication.topLevelWidgets():
+        if widget.objectName() == WINDOW_OBJECT_NAME:
+            return widget.bound_root()
+    return None
+
+
 def show_picker():
     """Open the picker, replacing any window left from a previous call."""
     for widget in QtWidgets.QApplication.topLevelWidgets():
