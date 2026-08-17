@@ -9,7 +9,8 @@ they do not go wrong again.
 Two things, with different conventions:
 
 - **Root-level `maya_*.py`** — standalone single-file tools, pure `maya.cmds`, no
-  Qt, no package. Leave that style alone when touching them.
+  Qt, no package. Leave that style alone when touching them. Tools the packages
+  superseded live in `archive/` (moved 2026-08-17; its README says why each).
 - **`maya_overrig/`** — a Python wrapper around the **OverRig** MEL toolset. This
   is the active work. It uses Qt and is a package, deliberately breaking the
   flat convention; see `docs/superpowers/specs/2026-08-14-overrig-picker-design.md`.
@@ -81,7 +82,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 265 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 564 tests at time of writing, all passing.
 
 Testing code that needs `maya.cmds` without a Maya session: inject a fake into
 `sys.modules` and **rebind the module attribute** (`naming.cmds = fake`). Do not
@@ -105,6 +106,10 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `overrig.py` | Thin binding to the MEL toolset, no policy | `maya.cmds`, `maya.mel` |
 | `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig` |
 | `axes.py` | Rotation algebra for controller axes, pure | `maya.api.OpenMaya` only |
+| `fkchains.py` | Chain tables + pure chain resolution (chain_root, innermost_owner, ...) | stdlib + `builder` (for `_is_inside`/`LIMBS`) |
+| `fkrings.py` | Ring sizing from the skin, knot dressing | `maya.cmds`, OpenMaya, `bodymap`, `naming`, `fkchains` |
+| `fkalign.py` | Controller axis algebra (align/orient) | `maya.cmds`, OpenMaya, `axes`, `fkchains` |
+| `fkcontrols.py` | FK build/bake/switch orchestration; re-exports the three above | `maya.cmds`, `maya.mel`, `bodymap`, `builder`, `overrig` + the three above |
 
 **Load-bearing rules — do not break these:**
 
@@ -206,6 +211,10 @@ user-driven fixes, and `_SQUARE` lists bones drawn as a square instead of a ring
 (pelvis, so it reads among the same-size spine rings). Knot→bone mapping is read from the BONE side (constraint →
 driver → ancestor walk): a ForwHierarhy knot drives its bone through a child
 locator, so looking for constraints on the knot itself finds nothing.
+Since the 2026-08-17 split the implementation lives in three modules —
+chain tables/resolution in `fkchains.py`, sizing/dressing in `fkrings.py`,
+the axis algebra in `fkalign.py` — all re-exported by `fkcontrols`, so
+every `fkcontrols.<name>` below still resolves.
 
 The last step of a build **re-expresses every controller in its bone's axes**
 (`axes.py`, `fkcontrols.align_controllers`). OverRig's knots come out on a
