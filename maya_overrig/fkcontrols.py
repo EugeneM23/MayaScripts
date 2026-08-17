@@ -1170,15 +1170,30 @@ def _bake_fk_chains(scene_map, chains=None):
     return removed, wanted
 
 
-def bake_fk(scene_map, chains=None):
-    """Bake FK back to the bones -- everything, or just the given chains."""
+def _mel_gate():
+    """The refusal every MEL entry point shares, or None to proceed.
+
+    Two guards in this order. The toolset must be in the session: without
+    this the first Build of a fresh Maya threw "Cannot find procedure" out
+    of the Qt slot, where nobody saw it, and the panel looked dead (trap
+    20). And the time slider must not carry a multi-frame highlight:
+    OverRig bakes across it before the playback range, so a capture or
+    teardown bake under one silently clips to the highlighted frames and
+    freezes the rest (trap 36).
+    """
     if not overrig.ensure_loaded():
-        return 0, overrig.NOT_LOADED_MESSAGE
-    # Fast_Bake reads the time slider's highlight too: a teardown under one
-    # would bake only the highlighted frames and freeze the rest.
+        return overrig.NOT_LOADED_MESSAGE
     selection = overrig.slider_selection()
     if selection:
-        return 0, overrig.slider_message(selection)
+        return overrig.slider_message(selection)
+    return None
+
+
+def bake_fk(scene_map, chains=None):
+    """Bake FK back to the bones -- everything, or just the given chains."""
+    message = _mel_gate()
+    if message:
+        return 0, message
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK bake")
     try:
         removed, wanted = _bake_fk_chains(scene_map, chains)
@@ -1197,16 +1212,9 @@ def build_fk(scene_map, only=None):
     """
     if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return 0, "Not connected to a skeleton"
-    # Every knot below comes out of a MEL proc. Without this the first Build
-    # of a session -- the OverRig shelf button unpressed -- threw "Cannot
-    # find procedure" out of the Qt slot, where nobody saw it, and the panel
-    # looked dead. Switch went through builder.build, which does source the
-    # toolset, so the cure looked like "press Switch first".
-    if not overrig.ensure_loaded():
-        return 0, overrig.NOT_LOADED_MESSAGE
-    selection = overrig.slider_selection()
-    if selection:
-        return 0, overrig.slider_message(selection)
+    message = _mel_gate()
+    if message:
+        return 0, message
 
     region_of = {b.joint: b.region for b in bodymap.BUTTONS}
     parent_of = _parent_map()
@@ -1355,11 +1363,9 @@ def bake_selection(scene_map, ik_limbs, fk_chains):
     the root controller. FK chains bake per chain; _bake_fk_chains expands
     each to whatever rides inside it.
     """
-    if not overrig.ensure_loaded():
-        return overrig.NOT_LOADED_MESSAGE
-    selection = overrig.slider_selection()
-    if selection:
-        return overrig.slider_message(selection)
+    message = _mel_gate()
+    if message:
+        return message
 
     messages = []
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
@@ -1405,13 +1411,11 @@ def rebuild(scene_map, fk_limbs=False):
     """
     if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return "Not connected to a skeleton"
-    if not overrig.ensure_loaded():
-        return overrig.NOT_LOADED_MESSAGE
     # Checked before the teardown, not just inside build_fk: Fast_Bake reads
     # the highlight too, and a teardown under one loses everything outside it.
-    selection = overrig.slider_selection()
-    if selection:
-        return overrig.slider_message(selection)
+    message = _mel_gate()
+    if message:
+        return message
 
     table = dict(CHAINS)
     messages = []
@@ -1680,11 +1684,9 @@ def switch_limbs(scene_map, limbs):
     world before the arm converts and hung back on the new hand control after
     -- they are DAG children of what gets deleted, so anything less loses them.
     """
-    if not overrig.ensure_loaded():
-        return [], list(limbs), overrig.NOT_LOADED_MESSAGE
-    selection = overrig.slider_selection()
-    if selection:
-        return [], list(limbs), overrig.slider_message(selection)
+    message = _mel_gate()
+    if message:
+        return [], list(limbs), message
 
     table = dict(CHAINS)
     done = []
