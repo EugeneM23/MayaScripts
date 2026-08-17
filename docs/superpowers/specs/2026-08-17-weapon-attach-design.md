@@ -123,11 +123,11 @@ multiplier — not a control the animator re-enters every time.
 
 ## Module layout
 
-Root-level package `maya_weapons`, entry point:
+Root-level package `maya_scenesetup`, entry point:
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
-import maya_weapons; maya_weapons.show_window()
+import maya_scenesetup; maya_scenesetup.show_window()
 ```
 
 | Module | Responsibility | May import |

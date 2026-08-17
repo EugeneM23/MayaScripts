@@ -6,7 +6,7 @@
 skeleton the Rig Picker is bound to, with live rotate/translate offsets that
 are remembered per weapon between sessions.
 
-**Architecture:** A root-level package `maya_weapons` in four modules —
+**Architecture:** A root-level package `maya_scenesetup` in four modules —
 `catalog.py` (pure weapon table), `skeleton.py` (which character, which bone),
 `attach.py` (import, parent, offsets), `window.py` (the `cmds` UI). The picker
 gains one module-level accessor, `bound_root()`, and nothing else. The fiddly
@@ -45,8 +45,8 @@ Spec: `docs/superpowers/specs/2026-08-17-weapon-attach-design.md`.
 ### Task 1: The weapon catalog
 
 **Files:**
-- Create: `maya_weapons/__init__.py`
-- Create: `maya_weapons/catalog.py`
+- Create: `maya_scenesetup/__init__.py`
+- Create: `maya_scenesetup/catalog.py`
 - Test: `tests/test_weapons_catalog.py`
 
 **Interfaces:**
@@ -73,7 +73,7 @@ import subprocess
 import sys
 import unittest
 
-from maya_weapons import catalog
+from maya_scenesetup import catalog
 
 
 class MayaFreeBoundary(unittest.TestCase):
@@ -86,7 +86,7 @@ class MayaFreeBoundary(unittest.TestCase):
     def test_importing_catalog_pulls_in_neither_maya_nor_qt(self):
         script = (
             "import sys\n"
-            "from maya_weapons import catalog\n"
+            "from maya_scenesetup import catalog\n"
             "leaked = [m for m in sys.modules\n"
             "          if m.startswith('maya.') or m.startswith('PySide6')]\n"
             "print(';'.join(sorted(leaked)))\n"
@@ -161,9 +161,9 @@ class OnDisk(unittest.TestCase):
 '/c/Program Files/Autodesk/Maya2027/bin/mayapy.exe' -m unittest tests.test_weapons_catalog -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'maya_weapons'`.
+Expected: `ModuleNotFoundError: No module named 'maya_scenesetup'`.
 
-- [ ] **Step 3: Write `maya_weapons/__init__.py`**
+- [ ] **Step 3: Write `maya_scenesetup/__init__.py`**
 
 ```python
 """Put weapon models into a character's hands.
@@ -178,13 +178,13 @@ __all__ = ["show_window"]
 
 def __getattr__(name):
     if name == "show_window":
-        from maya_weapons.window import show_window
+        from maya_scenesetup.window import show_window
         return show_window
     raise AttributeError(
         "module {0!r} has no attribute {1!r}".format(__name__, name))
 ```
 
-- [ ] **Step 4: Write `maya_weapons/catalog.py`**
+- [ ] **Step 4: Write `maya_scenesetup/catalog.py`**
 
 ```python
 """The weapon table: what can be attached, and where it goes.
@@ -244,7 +244,7 @@ Expected: 12 tests, all passing.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add maya_weapons/__init__.py maya_weapons/catalog.py tests/test_weapons_catalog.py
+git add maya_scenesetup/__init__.py maya_scenesetup/catalog.py tests/test_weapons_catalog.py
 git commit -F <message file>
 ```
 
@@ -255,7 +255,7 @@ Message: `feat(weapons): the weapon table, and the package around it`
 ### Task 2: Which character, which bone
 
 **Files:**
-- Create: `maya_weapons/skeleton.py`
+- Create: `maya_scenesetup/skeleton.py`
 - Modify: `maya_overrig/picker_window.py` (one module-level function at the
   end of the file, next to `show_picker`)
 - Test: `tests/test_weapons_skeleton.py`
@@ -308,7 +308,7 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
-from maya_weapons import skeleton  # noqa: E402
+from maya_scenesetup import skeleton  # noqa: E402
 
 MANNY = "|SKM_Manny|root"
 SUIT = "|Mesh_protective_suit|root"
@@ -375,7 +375,7 @@ class BoneIn(unittest.TestCase):
 '/c/Program Files/Autodesk/Maya2027/bin/mayapy.exe' -m unittest tests.test_weapons_skeleton -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'maya_weapons.skeleton'`.
+Expected: `ModuleNotFoundError: No module named 'maya_scenesetup.skeleton'`.
 
 - [ ] **Step 3: Add the accessor to the picker**
 
@@ -395,7 +395,7 @@ def bound_root():
     return None
 ```
 
-- [ ] **Step 4: Write `maya_weapons/skeleton.py`**
+- [ ] **Step 4: Write `maya_scenesetup/skeleton.py`**
 
 ```python
 """Which character to arm, and where its weapon bone is.
@@ -493,7 +493,7 @@ Expected: every previously passing test still passes.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add maya_weapons/skeleton.py maya_overrig/picker_window.py tests/test_weapons_skeleton.py
+git add maya_scenesetup/skeleton.py maya_overrig/picker_window.py tests/test_weapons_skeleton.py
 git commit -F <message file>
 ```
 
@@ -504,7 +504,7 @@ Message: `feat(weapons): take the character from the picker, the bone from its s
 ### Task 3: Attaching the model
 
 **Files:**
-- Create: `maya_weapons/attach.py`
+- Create: `maya_scenesetup/attach.py`
 - Test: `tests/test_weapons_attach.py`
 
 **Interfaces:**
@@ -554,7 +554,7 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
-from maya_weapons import attach  # noqa: E402
+from maya_scenesetup import attach  # noqa: E402
 
 BONE = "|SKM_Manny|root|hand_r|weapon_r"
 
@@ -700,9 +700,9 @@ class Offsets(unittest.TestCase):
 '/c/Program Files/Autodesk/Maya2027/bin/mayapy.exe' -m unittest tests.test_weapons_attach -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'maya_weapons.attach'`.
+Expected: `ModuleNotFoundError: No module named 'maya_scenesetup.attach'`.
 
-- [ ] **Step 3: Write `maya_weapons/attach.py`**
+- [ ] **Step 3: Write `maya_scenesetup/attach.py`**
 
 ```python
 """Put a weapon model into a bone, and move it once it is there.
@@ -840,7 +840,7 @@ Expected: 16 tests, all passing.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add maya_weapons/attach.py tests/test_weapons_attach.py
+git add maya_scenesetup/attach.py tests/test_weapons_attach.py
 git commit -F <message file>
 ```
 
@@ -851,7 +851,7 @@ Message: `feat(weapons): import the model and hang it on the bone`
 ### Task 4: The window
 
 **Files:**
-- Create: `maya_weapons/window.py`
+- Create: `maya_scenesetup/window.py`
 - Test: `tests/test_weapons_window.py`
 
 **Interfaces:**
@@ -895,8 +895,8 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
-from maya_weapons import catalog  # noqa: E402
-from maya_weapons import window  # noqa: E402
+from maya_scenesetup import catalog  # noqa: E402
+from maya_scenesetup import window  # noqa: E402
 
 SWORD = catalog.by_key("LongSword_02")
 
@@ -972,9 +972,9 @@ class Messages(unittest.TestCase):
 '/c/Program Files/Autodesk/Maya2027/bin/mayapy.exe' -m unittest tests.test_weapons_window -v
 ```
 
-Expected: `ModuleNotFoundError: No module named 'maya_weapons.window'`.
+Expected: `ModuleNotFoundError: No module named 'maya_scenesetup.window'`.
 
-- [ ] **Step 3: Write `maya_weapons/window.py`**
+- [ ] **Step 3: Write `maya_scenesetup/window.py`**
 
 ```python
 """The window: pick a weapon, press Add, dial in the grip.
@@ -995,9 +995,9 @@ import traceback
 
 import maya.cmds as cmds
 
-from maya_weapons import attach
-from maya_weapons import catalog
-from maya_weapons import skeleton
+from maya_scenesetup import attach
+from maya_scenesetup import catalog
+from maya_scenesetup import skeleton
 
 WINDOW = "mayaWeaponsWindow"
 _MENU = "mayaWeaponsMenu"
@@ -1234,7 +1234,7 @@ Expected: everything green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add maya_weapons/window.py tests/test_weapons_window.py
+git add maya_scenesetup/window.py tests/test_weapons_window.py
 git commit -F <message file>
 ```
 
@@ -1259,7 +1259,7 @@ the scene was broken.
 Create `docs/superpowers/plans/verify_weapons.py`:
 
 ```python
-"""Live proof for maya_weapons, run through the command port.
+"""Live proof for maya_scenesetup, run through the command port.
 
 Bind explicitly rather than trusting whatever the panel last did: the user
 works in the scene between runs. The script leaves the scene as it found it --
@@ -1271,9 +1271,9 @@ undo reverts a chunk of prior work instead.
 
 import maya.cmds as cmds
 
-from maya_weapons import attach
-from maya_weapons import catalog
-from maya_weapons import skeleton
+from maya_scenesetup import attach
+from maya_scenesetup import catalog
+from maya_scenesetup import skeleton
 
 RESULTS = []
 
@@ -1407,7 +1407,7 @@ code, not the check, unless the check is measuring the wrong thing.
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
-import maya_weapons; maya_weapons.show_window()
+import maya_scenesetup; maya_scenesetup.show_window()
 ```
 
 Confirm by screenshot (`widget.grab().save(path)` is for Qt; this is a `cmds`
@@ -1436,7 +1436,7 @@ Message: `test(weapons): live proof that the sword lands in the hand and stays`
 Add to `CLAUDE.md`, in the voice of the surrounding sections — what it is, the
 entry point, the module table, and the load-bearing decisions:
 
-- entry point (`import maya_weapons; maya_weapons.show_window()`);
+- entry point (`import maya_scenesetup; maya_scenesetup.show_window()`);
 - the module table and the stdlib-only rule for `catalog.py`;
 - the skeleton comes from the picker's live binding through the new
   `picker_window.bound_root()`, with the selection and single-skeleton

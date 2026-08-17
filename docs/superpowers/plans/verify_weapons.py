@@ -1,4 +1,4 @@
-"""Live proof for maya_weapons, run through the command port.
+"""Live proof for maya_scenesetup, run through the command port.
 
 Bind explicitly rather than trusting whatever the panel last did: the user
 works in the scene between runs. The script leaves the scene as it found it --
@@ -11,9 +11,9 @@ undo reverts a chunk of prior work instead.
 import maya.cmds as cmds
 import maya.mel as mel
 
-from maya_weapons import attach
-from maya_weapons import catalog
-from maya_weapons import skeleton
+from maya_scenesetup import attach
+from maya_scenesetup import catalog
+from maya_scenesetup import skeleton
 
 RESULTS = []
 

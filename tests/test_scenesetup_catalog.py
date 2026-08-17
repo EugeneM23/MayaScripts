@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unittest
 
-from maya_weapons import catalog
+from maya_scenesetup import catalog
 
 
 class MayaFreeBoundary(unittest.TestCase):
@@ -22,7 +22,7 @@ class MayaFreeBoundary(unittest.TestCase):
     def test_importing_catalog_pulls_in_neither_maya_nor_qt(self):
         script = (
             "import sys\n"
-            "from maya_weapons import catalog\n"
+            "from maya_scenesetup import catalog\n"
             "leaked = [m for m in sys.modules\n"
             "          if m.startswith('maya.') or m.startswith('PySide6')]\n"
             "print(';'.join(sorted(leaked)))\n"

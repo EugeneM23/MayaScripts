@@ -26,8 +26,8 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
-from maya_weapons import catalog  # noqa: E402
-from maya_weapons import window  # noqa: E402
+from maya_scenesetup import catalog  # noqa: E402
+from maya_scenesetup import window  # noqa: E402
 
 SWORD = catalog.by_key("LongSword_02")
 

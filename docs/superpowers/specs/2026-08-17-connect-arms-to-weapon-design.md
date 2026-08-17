@@ -64,7 +64,7 @@ Both record what OverRig creates into the **limb** manifest
 (`builder._ensure_limb_set`), the way `hang_ik_on_root` does: the coupling
 lives and dies with the IK rig rather than with the weapon.
 
-`maya_weapons.connect` orchestrates, and knows nothing about OverRig
+`maya_scenesetup.connect` orchestrates, and knows nothing about OverRig
 internals:
 
 ```python

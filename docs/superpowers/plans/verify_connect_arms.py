@@ -12,10 +12,10 @@ from a bridge script -- the whole script is one command.
 import maya.cmds as cmds
 
 from maya_overrig import builder
-from maya_weapons import attach
-from maya_weapons import catalog
-from maya_weapons import connect as linking
-from maya_weapons import skeleton
+from maya_scenesetup import attach
+from maya_scenesetup import catalog
+from maya_scenesetup import connect as linking
+from maya_scenesetup import skeleton
 
 RESULTS = []
 

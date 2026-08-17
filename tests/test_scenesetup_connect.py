@@ -43,7 +43,7 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
-from maya_weapons import connect  # noqa: E402
+from maya_scenesetup import connect  # noqa: E402
 
 
 class Arms(unittest.TestCase):

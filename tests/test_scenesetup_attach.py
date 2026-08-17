@@ -27,7 +27,7 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
-from maya_weapons import attach  # noqa: E402
+from maya_scenesetup import attach  # noqa: E402
 
 BONE = "|SKM_Manny|root|hand_r|weapon_r"
 

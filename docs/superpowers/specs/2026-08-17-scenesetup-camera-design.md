@@ -6,8 +6,8 @@
 ## Two parts
 
 1. **The module becomes `SceneSetup`.** It is not a weapon tool any more; it
-   sets a shot up. `maya_weapons` → `maya_scenesetup`, window title
-   "Scene Setup".
+   sets a shot up. The package `maya_weapons` becomes `maya_scenesetup` and the
+   window title becomes "Scene Setup".
 2. **A Camera Setup button**: create a camera on `camera_bone`, bake the
    bone's animation onto it, and then drive the bone from the camera.
 

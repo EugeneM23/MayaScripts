@@ -724,7 +724,7 @@ The scene's frame rate is **never** written: `FBXImportSetMayaFrameRate` is
 forced off and a mismatch is reported instead. The animator is working in that
 scene while the tool runs.
 
-## `maya_weapons` — putting a weapon in the character's hand
+## `maya_scenesetup` — SceneSetup: the shot, not just the weapon
 
 A small window: a dropdown of weapon models, an **Add** button that imports the
 chosen one and hangs it on `weapon_r`, and live rotate/translate fields for
@@ -734,7 +734,7 @@ dialling in the grip. Design:
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
-import maya_weapons; maya_weapons.show_window()
+import maya_scenesetup; maya_scenesetup.show_window()
 ```
 
 | Module | Responsibility | May import |
@@ -775,7 +775,7 @@ back — see trap 33, which is what `cmds.file` DOES inherit.
 
 **Connect Arms To Weapon** turns the rig inside out: the weapon leaves the
 skeleton and drives the hands. Three steps, in this order —
-`maya_weapons/connect.py`, proof
+`maya_scenesetup/connect.py`, proof
 `docs/superpowers/plans/verify_connect_arms.py` (**17/17 green**):
 
 1. **both arms brought to IK** — *brought to*, not switched. `switch_limbs`

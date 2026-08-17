@@ -7,7 +7,7 @@ skeleton, put both arms in IK, and hang the IK hand controls on the weapon — a
 put it all back.
 
 **Architecture:** Rig knowledge stays in `maya_overrig.fkcontrols` (two new
-functions beside `hang_ik_on_root`); `maya_weapons.connect` orchestrates the
+functions beside `hang_ik_on_root`); `maya_scenesetup.connect` orchestrates the
 three steps and owns the "is there a link" question; `window.py` grows two
 buttons and two guards.
 
@@ -93,7 +93,7 @@ Expected: 514 tests, OK.
 ### Task 2: The connect module
 
 **Files:**
-- Create: `maya_weapons/connect.py`
+- Create: `maya_scenesetup/connect.py`
 - Test: `tests/test_weapons_connect.py`
 
 **Interfaces:**
@@ -150,7 +150,7 @@ class MarkedAncestor(unittest.TestCase):
 
 - [ ] **Step 2: Run them and watch them fail**
 
-- [ ] **Step 3: Write `maya_weapons/connect.py`**
+- [ ] **Step 3: Write `maya_scenesetup/connect.py`**
 
 Pure parts as tested above; the orchestrators:
 
@@ -210,7 +210,7 @@ def parent_in(child, parent):
 ### Task 3: The buttons and the two guards
 
 **Files:**
-- Modify: `maya_weapons/window.py`, `maya_weapons/attach.py`
+- Modify: `maya_scenesetup/window.py`, `maya_scenesetup/attach.py`
 - Test: `tests/test_weapons_window.py`, `tests/test_weapons_attach.py`
 
 **Interfaces:**

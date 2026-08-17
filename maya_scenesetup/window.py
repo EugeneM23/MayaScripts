@@ -16,19 +16,21 @@ import traceback
 
 import maya.cmds as cmds
 
-from maya_weapons import attach
-from maya_weapons import catalog
-from maya_weapons import connect as linking
-from maya_weapons import skeleton
+from maya_scenesetup import attach
+from maya_scenesetup import catalog
+from maya_scenesetup import connect as linking
+from maya_scenesetup import skeleton
 
-WINDOW = "mayaWeaponsWindow"
-_MENU = "mayaWeaponsMenu"
-_ROTATE = "mayaWeaponsRotate"
-_TRANSLATE = "mayaWeaponsTranslate"
-_STATUS = "mayaWeaponsStatus"
-_BOUND = "mayaWeaponsBound"
+WINDOW = "mayaSceneSetupWindow"
+_LEGACY_WINDOW = "mayaWeaponsWindow"  # left open across the rename
+_MENU = "mayaSceneSetupMenu"
+_ROTATE = "mayaSceneSetupRotate"
+_TRANSLATE = "mayaSceneSetupTranslate"
+_STATUS = "mayaSceneSetupStatus"
+_BOUND = "mayaSceneSetupBound"
 
-_OPTIONVAR = "mayaWeapons_offset_{0}"
+_OPTIONVAR = "mayaSceneSetup_offset_{0}"
+_LEGACY_OPTIONVAR = "mayaWeapons_offset_{0}"
 
 NO_CHARACTER = ("no character - open the picker and press Connect, "
                 "or select a joint")
@@ -109,10 +111,17 @@ def _set_fields(rotate, translate):
 
 
 def _remembered(entry):
-    name = optionvar_name(entry.key)
-    if not cmds.optionVar(exists=name):
-        return unpack_offsets(None)
-    return unpack_offsets(cmds.optionVar(query=name))
+    """The grip remembered for this weapon, reading through the old name.
+
+    The optionVar was called `mayaWeapons_offset_*` before this module became
+    SceneSetup. A grip dialled in yesterday is worth more than a tidy prefix,
+    so the old name is still read; only the new one is written.
+    """
+    for name in (optionvar_name(entry.key),
+                 _LEGACY_OPTIONVAR.format(entry.key)):
+        if cmds.optionVar(exists=name):
+            return unpack_offsets(cmds.optionVar(query=name))
+    return unpack_offsets(None)
 
 
 def _remember(entry, rotate, translate):
@@ -268,10 +277,11 @@ def disconnect_arms():
 
 def show_window():
     """Open the window, replacing one left from a previous call."""
-    if cmds.window(WINDOW, exists=True):
-        cmds.deleteUI(WINDOW)
+    for name in (WINDOW, _LEGACY_WINDOW):
+        if cmds.window(name, exists=True):
+            cmds.deleteUI(name)
 
-    cmds.window(WINDOW, title="Weapons", widthHeight=(380, 280),
+    cmds.window(WINDOW, title="Scene Setup", widthHeight=(380, 330),
                 sizeable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                       columnOffset=("both", 8))

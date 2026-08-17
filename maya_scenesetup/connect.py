@@ -21,7 +21,7 @@ from maya_overrig import builder
 from maya_overrig import fkcontrols
 from maya_overrig import overrig
 
-from maya_weapons import attach
+from maya_scenesetup import attach
 
 ARMS = ("arm_l", "arm_r")
 
