@@ -129,9 +129,14 @@ def _camera_transforms(ours=False):
     return found
 
 
+def our_cameras():
+    """Every camera this tool has made in the scene."""
+    return _camera_transforms(ours=True)
+
+
 def existing_camera():
     """The camera a previous press made, or None."""
-    found = _camera_transforms(ours=True)
+    found = our_cameras()
     return found[0] if found else None
 
 
@@ -224,8 +229,12 @@ def setup(bone, start, end):
         focal = reference_focal(reference)
         teardown(bone, start, end)
 
-        transform, shape = cmds.camera(name=CAMERA_NAME)
-        transform = cmds.ls(transform, long=True)[0]
+        # Created then renamed: `cmds.camera(name=...)` leaves a numbered
+        # transform, and the animator picks this camera out of a menu by name.
+        transform, _shape = cmds.camera()
+        transform = cmds.ls(cmds.rename(transform, CAMERA_NAME), long=True)[0]
+        shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
+        shape = cmds.rename(shape, CAMERA_NAME + "Shape")
         cmds.setAttr(shape + ".focalLength", focal)
         cmds.addAttr(transform, longName=MARKER, attributeType="bool",
                      defaultValue=True)

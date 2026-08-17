@@ -726,6 +726,62 @@ scene while the tool runs.
 
 ## `maya_scenesetup` — SceneSetup: the shot, not just the weapon
 
+Renamed from `maya_weapons` on 2026-08-17 when the camera setup joined it.
+Two things survived the rename deliberately: the scene marker attribute is
+still **`mayaWeapon`** — it is written into the animator's files and a sword in
+the open scene carries it, so renaming it would orphan that carrier and Add
+would import a second sword — and the offset optionVar still **reads**
+`mayaWeapons_offset_*` while writing `mayaSceneSetup_offset_*`, so a grip
+dialled in before the rename survives. `show_window` deletes the legacy window
+id as well, or the panel left open from before stays up wired to dead code.
+
+**Camera Setup** puts a real Maya camera on `camera_bone`, bakes the bone's
+animation onto it, and then drives the bone from the camera — the animator
+animates a camera, the export bone follows. `maya_scenesetup/camera.py`, proof
+`docs/superpowers/plans/verify_camera_setup.py` (**22/22 green**).
+
+**The axis offset is measured, never derived.** A Maya camera looks down its own
+-Z and the UE camera bone does not. Measured in the user's scene: `camera1`
+stands exactly AT `camera_bone`, turned by a constant that reads (90, 0, 180)
+XYZ — kept as `DEFAULT_OFFSET`, with `DEFAULT_FOCAL` 16.494 because that
+framing was a choice, not a default. At run time **a camera the animator has
+placed wins over the constant** (`reference_offset`, any camera that is neither
+one of Maya's own nor ours), and the status line names which was used. That
+reference is measured against **the bone being set up** at the **current
+frame**: a reference camera 64 cm above the bone legitimately means a 64 cm
+offset, which is the point of honouring a placement.
+
+Maya's matrices are row-vector, so the camera's world matrix is
+`OFFSET · bone_world` and the bone's is `OFFSET⁻¹ · camera_world`
+(`placed_matrix` / `bone_matrix_for`). Getting that order backwards gives a
+camera that looks plausible from one angle and is wrong everywhere else.
+
+`camera_bone` is resolved inside the bound character first and scene-wide by
+**leaf name** second — the camera bone often sits outside the character's
+subtree, so the fallback is required, and a leaf comparison is what keeps
+`fake_camera_bone` out where `ls("*camera_bone")` would take it. Two
+candidates and no binding is refused.
+
+The press: bake the bone onto the camera through a temporary
+`parentConstraint(bone, camera, mo=True)` (the camera is already standing in
+the right place, so the offset it captures is ours) and `cmds.bakeResults`;
+then invert — cut the bone's own curves, snap it to `OFFSET⁻¹ · camera_world`,
+and `parentConstraint(camera, bone, mo=True)`. **That order is load-bearing:**
+constraining first and cutting after leaves a `pairBlend` nobody asked for, and
+cutting without the snap lets `maintainOffset` capture the bone's REST pose
+against the camera and bake a wrong offset in for ever. A second press bakes
+the bone back off the old camera **before** deleting it — the animation lives
+there now, and deleting first would take it away. `cmds.bakeResults`, not
+OverRig: a camera is not a rig knot.
+
+The live proof measures the follow in a **sandbox** — a throwaway joint with
+real animation and its own camera — because after the bake the real camera's
+channels are keyed and rewriting the animator's curves to prove a point is not
+on the table. There: bone travels 40.000 for 40 on the camera, returns to
+0.000000000000, animation unchanged 0.000000000. In the real scene the bone's
+motion is unchanged to 0.000000000 across the timeline and the offset holds at
+every frame.
+
 A small window: a dropdown of weapon models, an **Add** button that imports the
 chosen one and hangs it on `weapon_r`, and live rotate/translate fields for
 dialling in the grip. Design:
