@@ -1083,8 +1083,7 @@ def _attach_chain(chain, scene_map, parent_of, targeted):
     parent_ctrl = controller_name(parent)
     if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
         return False
-    cmds.select([child_ctrl, parent_ctrl], replace=True)
-    mel.eval("apply_Parent_in()")
+    overrig.parent_in(child_ctrl, parent_ctrl)
     return True
 
 
@@ -1487,8 +1486,7 @@ def rebuild(scene_map, fk_limbs=False):
 def _parent_out(ctrl, set_name):
     """Lift a nested knot to world through OverRig, animation re-baked."""
     before = builder._scene_nodes()
-    cmds.select(ctrl, replace=True)
-    mel.eval("apply_Parent_out()")
+    overrig.parent_out(ctrl)
     _record_into(set_name, before)
 
 
@@ -1498,8 +1496,7 @@ def _parent_in(child_ctrl, parent_ctrl, set_name):
     Selection order is child first, parent last -- verified by experiment.
     """
     before = builder._scene_nodes()
-    cmds.select([child_ctrl, parent_ctrl], replace=True)
-    mel.eval("apply_Parent_in()")
+    overrig.parent_in(child_ctrl, parent_ctrl)
     _record_into(set_name, before)
 
 
