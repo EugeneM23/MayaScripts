@@ -14,9 +14,25 @@ import maya.cmds as cmds
 
 MARKER = "mayaWeapon"
 
+# Everything that can hold an offset between a node and its parent. Zeroing
+# translate and rotate is not enough: a group's pivot sits at the centre of
+# what it holds, and parenting compensates for it in rotatePivotTranslate --
+# so the carrier reads t=0 r=0 and hangs 28 cm off the bone. Measured.
+_SEATED_AT_ZERO = ("translate", "rotate", "shear",
+                   "rotatePivot", "rotatePivotTranslate",
+                   "scalePivot", "scalePivotTranslate", "rotateAxis")
+
 
 def carrier_name(key):
     return "{0}_weapon".format(key)
+
+
+def seat(carrier, scale=1.0):
+    """Put `carrier` exactly on its parent: local matrix identity, then scale."""
+    for channel in _SEATED_AT_ZERO:
+        cmds.setAttr("{0}.{1}".format(carrier, channel), 0.0, 0.0, 0.0,
+                     type="double3")
+    cmds.setAttr(carrier + ".scale", scale, scale, scale, type="double3")
 
 
 def outermost(paths):
@@ -106,16 +122,17 @@ def attach(entry, bone, rotate=(0.0, 0.0, 0.0), translate=(0.0, 0.0, 0.0)):
         if not roots:
             raise RuntimeError("nothing came out of " + entry.path)
 
-        carrier = cmds.group(roots, name=carrier_name(entry.key), world=True)
+        # Built empty and filled, rather than grouping the model: a group made
+        # around geometry takes that geometry's pivot with it, and the pivot
+        # then has to be undone on the other side.
+        carrier = cmds.group(empty=True, world=True,
+                             name=carrier_name(entry.key))
         cmds.addAttr(carrier, longName=MARKER, dataType="string")
         cmds.setAttr(carrier + "." + MARKER, entry.key, type="string")
+        cmds.parent(roots, carrier)
 
         carrier = cmds.ls(cmds.parent(carrier, bone)[0], long=True)[0]
-        for axis in "XYZ":
-            cmds.setAttr("{0}.translate{1}".format(carrier, axis), 0.0)
-            cmds.setAttr("{0}.rotate{1}".format(carrier, axis), 0.0)
-            cmds.setAttr("{0}.scale{1}".format(carrier, axis), entry.scale)
-
+        seat(carrier, entry.scale)
         write_offsets(carrier, rotate, translate)
         return carrier
     finally:

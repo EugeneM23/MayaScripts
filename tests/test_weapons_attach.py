@@ -133,6 +133,33 @@ class FindAttached(unittest.TestCase):
         self.assertEqual(fake.deleted, [])
 
 
+class Seat(unittest.TestCase):
+    """Zeroing translate and rotate does NOT put a node on its parent.
+
+    Measured 2026-08-17 in the Manny scene: `cmds.group` puts the group's
+    pivot at the bounding-box centre of what it holds (42.4 up the sword), and
+    `cmds.parent` compensates for that pivot in `rotatePivotTranslate`. The
+    carrier then reads translate 0, rotate 0 -- and hangs 28.5 cm off the
+    bone. Every channel that can hold an offset has to go.
+    """
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        attach.cmds = self.fake
+
+    def test_zeroes_every_channel_that_can_hold_an_offset(self):
+        attach.seat("|c", 1.0)
+        for channel in ("translate", "rotate", "shear", "rotatePivot",
+                        "rotatePivotTranslate", "scalePivot",
+                        "scalePivotTranslate", "rotateAxis"):
+            self.assertEqual(self.fake.attrs["|c." + channel],
+                             (0.0, 0.0, 0.0), channel)
+
+    def test_applies_the_entry_scale(self):
+        attach.seat("|c", 0.5)
+        self.assertEqual(self.fake.attrs["|c.scale"], (0.5, 0.5, 0.5))
+
+
 class Offsets(unittest.TestCase):
 
     def setUp(self):
