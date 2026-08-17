@@ -112,6 +112,26 @@ def write_offsets(carrier, rotate, translate):
         cmds.autoKeyframe(state=state)
 
 
+def model_root(carrier):
+    """The imported model inside `carrier` -- the geometry itself.
+
+    What the animator grabs in the viewport is the sword, not the group we
+    keep the offsets on, so anything riding the weapon has to ride this.
+    Measured with the hands hung on the carrier instead: dragging the sword
+    moved it 32.840 and the hands 0.000, which is the sword coming out of the
+    hands.
+
+    Controls already hung here are skipped by asking for a mesh below rather
+    than for any shape -- an IK control is a locator, and locators have
+    shapes too.
+    """
+    for child in cmds.listRelatives(carrier, children=True, type="transform",
+                                    fullPath=True) or []:
+        if cmds.listRelatives(child, allDescendents=True, type="mesh"):
+            return child
+    return carrier
+
+
 def is_animated(node):
     """Whether any offset channel of `node` is driven by an animation curve.
 

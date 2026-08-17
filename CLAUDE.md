@@ -784,9 +784,11 @@ skeleton and drives the hands. Three steps, in this order —
    only the limbs that need it are switched (`connect.limbs_to_switch`);
 2. **the weapon out to world** (`overrig.parent_out`), carrying the world
    motion it had, now baked onto its own channels;
-3. **the IK end controls onto the weapon** (`fkcontrols.hang_ik_end_on`),
-   each lifted to world first — re-parenting a knot in place is not a
-   measured path, and lift-then-hang is what `switch_limbs` does with riders.
+3. **the IK end controls onto the weapon's GEOMETRY**
+   (`fkcontrols.hang_ik_end_on` with `attach.model_root(carrier)`), each
+   lifted to world first — re-parenting a knot in place is not a measured
+   path, and lift-then-hang is what `switch_limbs` does with riders. The
+   geometry, not the carrier: see trap 34.
 
 Only the **end** groups ride the prop. Pole and base stay where they are, so
 elbows keep answering to the body and the shoulder is not pinned to the sword.
@@ -842,6 +844,19 @@ deletes something the animator wanted.
     set the mode it needs and put the previous one back; never inherit.
     `verify_weapons.py` forces `exmerge` before its first attach so the
     regression cannot come back quietly.
+34. **Nesting is not attachment, and a check that never moves anything cannot
+    tell the difference.** Connect hung the IK hand controls on the weapon
+    CARRIER — our offset group — which made them SIBLINGS of the mesh inside
+    it. Every gate passed: `_is_inside(control, carrier)` was true, the hands
+    did not move (1.6e-6 across the timeline), the link resolved, the round
+    trip was clean. Then the animator dragged the sword in the viewport and
+    the hands stayed behind — sword 32.840, hands **0.000** — because what he
+    grabs is the geometry, not our group. Anything riding a prop must hang on
+    the **geometry** (`attach.model_root`, which asks for a mesh below rather
+    than any shape, since an IK control is a locator and locators have shapes
+    too). The verification now turns the sword 50 cm and measures that both
+    hands travel with it; "it is nested and nothing drifted" was never the
+    claim the feature makes.
 
 ## Conventions
 

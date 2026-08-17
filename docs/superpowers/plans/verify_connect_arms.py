@@ -97,17 +97,49 @@ built = builder.built_limbs()
 check("both arms are IK",
       "arm_l" in built and "arm_r" in built, str(sorted(built)))
 
+geometry = attach.model_root(carrier)
+check("the weapon has geometry to hang on", geometry != carrier, str(geometry))
+
 for limb in linking.ARMS:
     node = builder.ik_control(limb, "end")
     inside = bool(node) and builder._is_inside(
-        cmds.ls(node, long=True)[0], carrier)
-    check("{0} hand control rides the weapon".format(limb), inside,
+        cmds.ls(node, long=True)[0], geometry)
+    check("{0} hand control rides the GEOMETRY".format(limb), inside,
           str(node))
 
 drift = worst_drift(before, sample_hands(hands, frames))
 check("the hands did not move", drift < 1e-4,
       "worst world-matrix element {0:.9f} over frames {1}".format(
           drift, frames))
+
+# --- and the point of the whole feature ----------------------------------
+# Nesting and stillness are not the claim. The claim is that dragging the
+# sword drags the hands, and the first version of this script never moved
+# anything -- which is how the hands ended up hung beside the sword instead
+# of on it. The geometry carries no keys of its own, so it can be turned and
+# put back.
+plug = geometry + ".translateX"
+if cmds.listConnections(plug, source=True, destination=False):
+    check("the geometry is free to move", False, plug + " is driven")
+else:
+    autokey = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    rest = cmds.getAttr(plug)
+    still = [world_matrix(hand) for hand in hands]
+    try:
+        cmds.setAttr(plug, rest + 50.0)
+        moved = [world_matrix(hand) for hand in hands]
+    finally:
+        cmds.setAttr(plug, rest)
+        cmds.autoKeyframe(state=autokey)
+
+    travel = [biggest_difference(one, two) for one, two in zip(still, moved)]
+    check("dragging the sword drags both hands",
+          all(distance > 1.0 for distance in travel),
+          "hand travel: {0}".format(
+              ", ".join("{0:.3f}".format(d) for d in travel)))
+    check("and putting it back puts them back",
+          worst_drift([still], [[world_matrix(hand) for hand in hands]]) < 1e-6)
 
 # --- pressing it twice ----------------------------------------------------
 again = linking.connect(carrier, scene_map)

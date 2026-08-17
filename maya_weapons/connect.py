@@ -112,8 +112,14 @@ def connect(carrier, scene_map):
             overrig.parent_out(carrier)
             carrier = cmds.ls(uuid, long=True)[0]
 
+        # On the GEOMETRY, not on the carrier: the carrier is our offset
+        # group, and a control hung there is a SIBLING of the sword. Dragging
+        # the sword then leaves the hands behind -- measured, 32.840 against
+        # 0.000. Hanging deeper also keeps the carrier working as a handle,
+        # since it sits above.
+        target = attach.model_root(carrier)
         hung = [limb for limb in ARMS
-                if fkcontrols.hang_ik_end_on(limb, carrier)]
+                if fkcontrols.hang_ik_end_on(limb, target)]
         return connected_message(switching, hung)
     finally:
         cmds.undoInfo(closeChunk=True)

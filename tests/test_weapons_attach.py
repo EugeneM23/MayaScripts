@@ -212,6 +212,61 @@ class ImportMode(unittest.TestCase):
                          ["|LongSwordMesh"])
 
 
+class FakeModel(object):
+    """A carrier holding an imported model and, later, hung controls."""
+
+    def __init__(self, children, with_mesh):
+        self._children = dict(children)
+        self._with_mesh = set(with_mesh)
+
+    def listRelatives(self, node, children=False, allDescendents=False,
+                      type=None, fullPath=False, **kwargs):
+        if allDescendents and type == "mesh":
+            return ["shape"] if node in self._with_mesh else None
+        if children:
+            return list(self._children.get(node, [])) or None
+        return None
+
+
+class ModelRoot(unittest.TestCase):
+    """What rides the weapon must ride the GEOMETRY, not the offset group.
+
+    Measured 2026-08-17: with the IK hand controls hung on the carrier they
+    were siblings of the mesh, so dragging the sword in the viewport moved it
+    32.840 and the hands 0.000 -- the sword came out of the hands.
+    """
+
+    def test_finds_the_imported_model(self):
+        attach.cmds = FakeModel(
+            {"|weapon": ["|weapon|LongSwordMesh", "|weapon|hand_l_IK_feet"]},
+            with_mesh=["|weapon|LongSwordMesh"])
+        self.assertEqual(attach.model_root("|weapon"),
+                         "|weapon|LongSwordMesh")
+
+    def test_ignores_the_controls_already_hung_on_it(self):
+        """A locator has a shape too; only a mesh below counts as the model."""
+        attach.cmds = FakeModel(
+            {"|weapon": ["|weapon|hand_l_IK_feet", "|weapon|LongSwordMesh"]},
+            with_mesh=["|weapon|LongSwordMesh"])
+        self.assertEqual(attach.model_root("|weapon"),
+                         "|weapon|LongSwordMesh")
+
+    def test_falls_back_to_the_carrier_when_nothing_holds_a_mesh(self):
+        attach.cmds = FakeModel({"|weapon": ["|weapon|locator1"]},
+                                with_mesh=[])
+        self.assertEqual(attach.model_root("|weapon"), "|weapon")
+
+    def test_falls_back_on_an_empty_carrier(self):
+        attach.cmds = FakeModel({}, with_mesh=[])
+        self.assertEqual(attach.model_root("|weapon"), "|weapon")
+
+    def test_takes_the_first_of_several_model_parts(self):
+        attach.cmds = FakeModel(
+            {"|weapon": ["|weapon|blade", "|weapon|scabbard"]},
+            with_mesh=["|weapon|blade", "|weapon|scabbard"])
+        self.assertEqual(attach.model_root("|weapon"), "|weapon|blade")
+
+
 class FakeCurves(object):
     """maya.cmds enough to answer what carries an animation curve."""
 
