@@ -961,8 +961,10 @@ inert until someone deletes those keys.
 **Add Aim** puts OverRig's aim on the weapon with both locators placed for
 you — the thing the native button leaves to hand-dragging. Design:
 `docs/superpowers/specs/2026-08-17-weapon-aim-design.md`, proof:
-`docs/superpowers/plans/verify_weapon_aim.py` (**written, not yet run —
-Maya's idle queue was blocked when it was sent; see bridge note 6**).
+`docs/superpowers/plans/verify_weapon_aim.py` (**the button is confirmed
+working in the live scene by the user; the verify script's ten gates have not
+been run through the bridge yet** — Maya's idle queue was blocked when it was
+first sent, see bridge note 6).
 `maya_scenesetup/aim.py` + `maya_overrig/aimrig.py`. Works wherever the
 weapon is, in the hand or out in world after Connect — the user's call, the
 button does not check.
