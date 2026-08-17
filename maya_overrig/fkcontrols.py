@@ -197,26 +197,6 @@ def innermost_owner(node, candidates):
     return best
 
 
-def resolve_chains(nodes, members_by_chain, bone_owner):
-    """Which chains the given nodes touch, in CHAINS order. Pure.
-
-    A node counts for a chain when it is one of the chain's bones or when
-    that chain's recorded node is its nearest recorded ancestor.
-    """
-    candidates = [(m, "fk", name)
-                  for name, members in members_by_chain.items()
-                  for m in members]
-    hit = set()
-    for node in nodes:
-        if node in bone_owner:
-            hit.add(bone_owner[node])
-            continue
-        owner = innermost_owner(node, candidates)
-        if owner:
-            hit.add(owner[1])
-    return [name for name, _ in CHAINS if name in hit]
-
-
 def dependent_chains(root_ctrls, containers):
     """Chains whose root controller sits inside one of the container paths.
 
@@ -576,22 +556,6 @@ def _record_into(set_name, before):
 def _record_fresh(chain, before):
     """Record everything created since `before` against one FK chain."""
     return _record_into(_ensure_chain_set(chain), before)
-
-
-def remove_fk():
-    """Delete every recorded FK node and set, without baking. Returns count."""
-    doomed = list(_legacy_members())
-    for name, _ in CHAINS:
-        doomed.extend(chain_members(name))
-    doomed = [d for d in doomed if cmds.objExists(d)]
-    if doomed:
-        cmds.delete(doomed)
-    for name, _ in CHAINS:
-        if cmds.objExists(chain_set(name)):
-            cmds.delete(chain_set(name))
-    if cmds.objExists(FK_SET):
-        cmds.delete(FK_SET)
-    return len(doomed)
 
 
 def _final_radii(scene_map):
@@ -1535,14 +1499,6 @@ def _parent_in(child_ctrl, parent_ctrl, set_name):
     _record_into(set_name, before)
 
 
-def _ik_hand_control(limb):
-    """The IK end control of a built IK limb, found through its manifest.
-
-    Never by bare name -- OverRig suffixes renames on collision.
-    """
-    return builder.ik_control(limb, "end")
-
-
 def _anchor_in(set_name, mark):
     """A named helper inside a manifest set, exact leaf match."""
     for member in overrig.set_members(set_name):
@@ -1706,7 +1662,7 @@ def _rehang_riders(scene_map, limb, riders, now_ik):
     """
     table = dict(CHAINS)
     if now_ik:
-        target = _limb_anchor(scene_map, limb) or _ik_hand_control(limb)
+        target = _limb_anchor(scene_map, limb) or builder.ik_control(limb, "end")
     else:
         tip = chain_tip(table[limb], scene_map)
         target = controller_name(tip) if tip else None

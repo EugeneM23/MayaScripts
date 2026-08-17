@@ -112,7 +112,7 @@ check("arm reported switched to IK", done == ["arm_l -> IK"], str(done))
 alive = [c for c in finger_ctrls if cmds.objExists(c)]
 check("all five finger controls survived", len(alive) == 5, str(len(alive)))
 
-ik_hand = fkcontrols._ik_hand_control("arm_l")
+ik_hand = builder.ik_control("arm_l", "end")
 check("IK hand control found", bool(ik_hand), str(ik_hand))
 under = [c for c in alive
          if cmds.ls(c, long=True)[0].startswith(

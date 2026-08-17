@@ -464,37 +464,6 @@ class TestInnermostOwner(unittest.TestCase):
                                                      self.CANDIDATES))
 
 
-class TestResolveChains(unittest.TestCase):
-
-    BONES = {"|rig|neck_01": "neck", "|rig|spine_03": "spine"}
-    MEMBERS = {"neck": ["|neck_01_FK_ctrl"],
-               "index_l": ["|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl"]}
-
-    def test_bone_resolves_its_chain(self):
-        self.assertEqual(
-            fkcontrols.resolve_chains(["|rig|spine_03"], self.MEMBERS,
-                                      self.BONES),
-            ["spine"])
-
-    def test_member_and_descendant_resolve(self):
-        found = fkcontrols.resolve_chains(
-            ["|neck_01_FK_ctrl|neck_01_FK_ctrlShape",
-             "|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl"],
-            self.MEMBERS, self.BONES)
-        self.assertEqual(found, ["neck", "index_l"])
-
-    def test_results_in_chain_table_order(self):
-        found = fkcontrols.resolve_chains(
-            ["|hand_l_FK_ctrl|index_metacarpal_l_FK_ctrl", "|rig|neck_01"],
-            self.MEMBERS, self.BONES)
-        self.assertEqual(found, ["neck", "index_l"])
-
-    def test_unrelated_nodes_resolve_nothing(self):
-        self.assertEqual(
-            fkcontrols.resolve_chains(["|persp"], self.MEMBERS, self.BONES),
-            [])
-
-
 class TestAttachParent(unittest.TestCase):
 
     PARENT_OF = {
