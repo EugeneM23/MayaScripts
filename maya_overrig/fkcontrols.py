@@ -1624,6 +1624,48 @@ def lift_ik_off_root(limb):
     return lifted
 
 
+def hang_ik_end_on(limb, target):
+    """Hang a limb's IK end group on `target`, animation re-baked.
+
+    The end group is where the animator's hand control lives, and it is the
+    only one that rides a prop: the pole keeps answering to the body, and
+    hanging the chain base on a prop pins the shoulder to it.
+
+    A knot that already has a parent -- and after a build every IK group hangs
+    on the root controller -- is lifted to world first. Re-parenting one in
+    place is not a path this repo has measured; lift-then-hang is what
+    `switch_limbs` already does with its rider chains.
+    """
+    node = builder.ik_control(limb, "end")
+    if not node or not cmds.objExists(node):
+        return False
+
+    target_path = cmds.ls(target, long=True)[0]
+    if builder._is_inside(cmds.ls(node, long=True)[0], target_path):
+        return False  # already there; the operation is idempotent
+
+    set_name = builder._ensure_limb_set(limb)
+    if cmds.listRelatives(node, parent=True, fullPath=True):
+        _parent_out(node, set_name)
+        # The path moved, and set_members resolves paths at call time.
+        node = builder.ik_control(limb, "end")
+        if not node or not cmds.objExists(node):
+            return False
+    _parent_in(node, target_path, set_name)
+    return True
+
+
+def lift_ik_end(limb):
+    """Lift a limb's IK end group back to world, animation re-baked."""
+    node = builder.ik_control(limb, "end")
+    if not node or not cmds.objExists(node):
+        return False
+    if not cmds.listRelatives(node, parent=True, fullPath=True):
+        return False
+    _parent_out(node, builder._ensure_limb_set(limb))
+    return True
+
+
 def _rehang_riders(scene_map, limb, riders, now_ik):
     """Hang lifted rider chains back onto whatever the limb offers now.
 
