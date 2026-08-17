@@ -11,15 +11,34 @@ import unittest
 
 
 def _install_fake_maya():
-    """Let window import without Maya. See CLAUDE.md on rebinding."""
-    if "maya.cmds" in sys.modules:
+    """Let window import without Maya. See CLAUDE.md on rebinding.
+
+    Real modules win when they are importable -- under mayapy they always are,
+    and window reaches camera and aim, which need maya.api.OpenMaya. Guarding on
+    `"maya.cmds" in sys.modules` instead is not enough: run on its own, this
+    module then installed a fake `maya` that is not a package and shadowed the
+    real one, so the file only imported as part of the full discover run.
+    """
+    try:
+        import maya.api.OpenMaya  # noqa: F401
+        import maya.cmds  # noqa: F401
+        import maya.mel  # noqa: F401
         return
+    except ImportError:
+        pass
+
     maya = types.ModuleType("maya")
+    api = types.ModuleType("maya.api")
+    openmaya = types.ModuleType("maya.api.OpenMaya")
     cmds = types.ModuleType("maya.cmds")
     mel = types.ModuleType("maya.mel")
     maya.cmds = cmds
     maya.mel = mel
+    maya.api = api
+    api.OpenMaya = openmaya
     sys.modules.setdefault("maya", maya)
+    sys.modules["maya.api"] = api
+    sys.modules["maya.api.OpenMaya"] = openmaya
     sys.modules["maya.cmds"] = cmds
     sys.modules["maya.mel"] = mel
 
@@ -30,6 +49,22 @@ from maya_scenesetup import catalog  # noqa: E402
 from maya_scenesetup import window  # noqa: E402
 
 SWORD = catalog.by_key("LongSword_02")
+
+
+class AimRefusals(unittest.TestCase):
+    """Add deletes the carrier whole, and the aim's locators drive the geometry
+    inside it. Without this refusal the press leaves two locators pointing at a
+    deleted node -- the same reasoning that already makes Add refuse while the
+    hands are connected."""
+
+    def test_add_has_a_refusal_naming_the_cure(self):
+        self.assertIn("Bake+Delete", window.AIMED_NO_ADD)
+
+    def test_the_two_add_refusals_are_different(self):
+        self.assertNotEqual(window.AIMED_NO_ADD, window.LINKED_NO_ADD)
+
+    def test_there_is_an_add_aim_callback(self):
+        self.assertTrue(callable(window.add_aim))
 
 
 class OptionVars(unittest.TestCase):

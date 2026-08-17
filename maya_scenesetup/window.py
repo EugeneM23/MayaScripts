@@ -16,6 +16,9 @@ import traceback
 
 import maya.cmds as cmds
 
+from maya_overrig import aimrig
+
+from maya_scenesetup import aim as weaponaim
 from maya_scenesetup import attach
 from maya_scenesetup import camera as camerarig
 from maya_scenesetup import catalog
@@ -41,6 +44,7 @@ NOT_CONNECTED = "not connected - the hands are not on the weapon"
 ALREADY_CONNECTED = "already connected"
 LINKED_NO_ADD = ("the hands ride this weapon - press Disconnect Arms before "
                  "replacing it")
+AIMED_NO_ADD = "the weapon has an aim - Bake+Delete in the picker first"
 LINKED_NO_OFFSETS = "the weapon is animated - its offsets are baked in"
 
 
@@ -227,11 +231,16 @@ def add_weapon():
     located = _locate(entry)
     if located is None:
         return
-    _root, bone, _carrier_now, linked = located
+    _root, bone, carrier_now, linked = located
     if linked:
         # Replacing deletes the carrier, and the IK hand controls are its DAG
         # children: this press would take both arm rigs down unbaked.
         _status(LINKED_NO_ADD)
+        return
+    if carrier_now and aimrig.aim_for(attach.model_root(carrier_now)):
+        # Same shape of problem: the aim's locators drive the geometry inside
+        # the carrier, so replacing it leaves them pointing at a deleted node.
+        _status(AIMED_NO_ADD)
         return
 
     absent = catalog.missing(entry)
@@ -276,6 +285,23 @@ def connect_arms():
         _status(NO_WEAPON)
         return
     _status(linking.connect(carrier, skeleton.scene_map(root)))
+
+
+def add_aim():
+    """Put OverRig's aim on the attached weapon, both locators placed for you.
+
+    Works wherever the weapon is -- in the hand or out in world after Connect.
+    The user's call: the button does not check and does not care.
+    """
+    entry = _entry()
+    located = _locate(entry)
+    if located is None:
+        return
+    _root, _bone, carrier, _linked = located
+    if not carrier:
+        _status(NO_WEAPON)
+        return
+    _status(weaponaim.add_aim(entry, carrier))
 
 
 def camera_setup():
@@ -349,6 +375,12 @@ def show_window():
                 annotation="Hands back on the root control, weapon back in "
                            "the hand. The weapon keeps its animation.",
                 command=lambda *_args: _run(disconnect_arms))
+    cmds.button(label="Add Aim", height=28,
+                annotation="OverRig's aim on the weapon: one locator a little "
+                           "past the tip, one out to the side at the same "
+                           "distance. Drag them to aim the blade. Remove it "
+                           "with Bake+Delete in the picker.",
+                command=lambda *_args: _run(add_aim))
 
     cmds.separator(height=8, style="in")
     cmds.button(label="Camera Setup", height=28,

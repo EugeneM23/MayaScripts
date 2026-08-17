@@ -15,7 +15,7 @@ import maya.OpenMayaUI as omui
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import wrapInstance
 
-from maya_overrig import bodymap, builder, fkcontrols, naming, pickerstate
+from maya_overrig import aimrig, bodymap, builder, fkcontrols, naming, pickerstate
 from maya_overrig.picker_view import MODE_ADD, MODE_TOGGLE, PickerView, mode_for
 
 WINDOW_OBJECT_NAME = "rigPickerWindow"
@@ -371,22 +371,40 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         Everything else in the scene keeps its rig. IK limbs take their
         riding finger chains down with them; FK chains bake per chain,
-        expanding to whatever rides inside them.
+        expanding to whatever rides inside them; a weapon aim bakes onto its
+        sword and goes.
         """
+        aims = aimrig.aim_targets()
+
+        # An aim needs no scene_map -- the sword is not part of the body map --
+        # so a selected aim is bakeable with no skeleton bound.
         if not self._scene_map:
-            self.status.showMessage(_UNBOUND_MESSAGE)
+            if not aims:
+                self.status.showMessage(_UNBOUND_MESSAGE)
+                return
+            self._run("Bake+Delete", self.bake_button,
+                      lambda: aimrig.bake_aims(aims))
             return
 
         ik_limbs, fk_chains = fkcontrols.bake_targets(self._scene_map)
-        if not ik_limbs and not fk_chains:
+        if not ik_limbs and not fk_chains and not aims:
             self.status.showMessage(
-                "Select a rigged element - a controller, a bone, or a "
-                "picker button")
+                "Select a rigged element - a controller, a bone, a picker "
+                "button, or a weapon with an aim")
             return
 
-        self._run("Bake+Delete", self.bake_button,
-                  lambda: fkcontrols.bake_selection(self._scene_map, ik_limbs,
-                                                    fk_chains))
+        def run():
+            messages = []
+            # The aim first: it is the smaller teardown, and neither order
+            # matters to the other -- the aim drives the sword, not the arm.
+            if aims:
+                messages.append(aimrig.bake_aims(aims))
+            if ik_limbs or fk_chains:
+                messages.append(fkcontrols.bake_selection(
+                    self._scene_map, ik_limbs, fk_chains))
+            return " | ".join(messages)
+
+        self._run("Bake+Delete", self.bake_button, run)
 
     def sync_from_scene(self):
         """Repaint availability and selection from the scene as it is now.
