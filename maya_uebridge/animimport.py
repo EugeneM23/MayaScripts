@@ -115,14 +115,6 @@ def _keyed_joints(curves):
     return joints
 
 
-def _joints_with_curves():
-    """Every joint currently driven by an animCurve, by long name."""
-    driven = set()
-    for curve in (cmds.ls(type="animCurve") or []):
-        driven |= _keyed_joints([curve])
-    return driven
-
-
 def wants_merge(namespace, merge):
     """Resolve the import mode: an explicit choice, else follow the namespace."""
     if merge is None:
@@ -148,6 +140,14 @@ NO_TARGET_MESSAGE = (
     "mean, or switch to 'as a new skeleton'")
 
 
+def _first_few(names):
+    """The first four names, sorted, an ellipsis when there are more."""
+    shown = ", ".join(sorted(names)[:4])
+    if len(names) > 4:
+        shown += ", ..."
+    return shown
+
+
 def rigged_target_message(names):
     """Refusal text for a merge onto a skeleton that is still rigged.
 
@@ -157,9 +157,7 @@ def rigged_target_message(names):
     the new clip, 60 still on the rig's). Naming the cure beats describing
     the mess.
     """
-    shown = ", ".join(sorted(names)[:4])
-    if len(names) > 4:
-        shown += ", ..."
+    shown = _first_few(names)
     return ("the target skeleton is rigged - {0} bone(s) carry constraints "
             "(e.g. {1}); Bake+Delete the rig, then import".format(
                 len(names), shown))
@@ -273,9 +271,7 @@ def stale_line(names):
     """Said about bones of the target the clip carried nothing for."""
     if not names:
         return ""
-    shown = ", ".join(sorted(names)[:4])
-    if len(names) > 4:
-        shown += ", ..."
+    shown = _first_few(names)
     return "{0} bone(s) not in the clip, now unanimated: {1}".format(
         len(names), shown)
 
@@ -321,11 +317,11 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
     cleared = 0
     target_joints = []
     if merge:
-        target = choose_target_root(skeleton_roots(), selected_roots())
+        roots = skeleton_roots()
+        target = choose_target_root(roots, selected_roots())
         if target is None:
             raise RuntimeError(
-                AMBIGUOUS_TARGET_MESSAGE if skeleton_roots()
-                else NO_TARGET_MESSAGE)
+                AMBIGUOUS_TARGET_MESSAGE if roots else NO_TARGET_MESSAGE)
         target_joints = joints_under(target)
         rigged = constrained_joints(target_joints)
         if rigged:
@@ -360,7 +356,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
             cmds.namespace(setNamespace=":")
 
     new_nodes = set(cmds.ls(long=True)) - before_nodes
-    new_curves = [c for c in (set(cmds.ls(type="animCurve") or []) - before_curves)]
+    new_curves = list(set(cmds.ls(type="animCurve") or []) - before_curves)
 
     if merge:
         touched = _keyed_joints(new_curves)
