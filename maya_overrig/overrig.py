@@ -135,6 +135,21 @@ def fast_bake(objects):
     mel.eval(BAKE_PROC)
 
 
+def parent_out(node):
+    """Lift a node to world through OverRig, animation re-baked into it."""
+    cmds.select(node, replace=True)
+    mel.eval("apply_Parent_out()")
+
+
+def parent_in(child, parent):
+    """Hang a node inside another, animation re-baked into the new space.
+
+    Selection is child first, parent last -- verified by experiment.
+    """
+    cmds.select([child, parent], replace=True)
+    mel.eval("apply_Parent_in()")
+
+
 def delete_constraint_attributes(objects):
     """Strip the constraint channels OverRig adds to source objects."""
     cmds.select(list(objects), replace=True)
