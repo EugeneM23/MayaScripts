@@ -19,7 +19,8 @@ MEL_PATH = ("C:/!!!Work/Animations/Scripts/base_OverRig_scripts_V10_2_f1/"
             "base_OverRig_scripts.mel")
 
 KNOT_SET = "OverRig_knots"
-SOURCE_SET = "OverRig_rig_objects"
+# OverRig also keeps a set "OverRig_rig_objects" of the source objects it
+# has rigged; nothing here reads it (builder._recordable skips it by prefix).
 
 IK_PROC = "apply_rebike_3_or_more_object_to_IK"
 BAKE_PROC = "apply_Fast_Bake"
@@ -73,9 +74,6 @@ def set_members(set_name):
     return list(dict.fromkeys(out))
 
 
-_PAD_DEPTH = [0]
-
-
 @contextmanager
 def padded_range():
     """One frame of playback padding around an OverRig capture or bake.
@@ -90,29 +88,18 @@ def padded_range():
     Scope this to the capture procs ONLY (ForwHierarhy, parentConstrAnim,
     the rebike IK): `apply_Fast_Bake` and `apply_Parent_in/out` measured
     zero drift for weeks without padding, and blanket padding introduced
-    one-frame glitches around the current frame. Re-entrant: only the
-    outermost use pads.
+    one-frame glitches around the current frame.
     """
-    if _PAD_DEPTH[0]:
-        _PAD_DEPTH[0] += 1
-        try:
-            yield
-        finally:
-            _PAD_DEPTH[0] -= 1
-        return
-
     saved = (cmds.playbackOptions(query=True, animationStartTime=True),
              cmds.playbackOptions(query=True, animationEndTime=True),
              cmds.playbackOptions(query=True, minTime=True),
              cmds.playbackOptions(query=True, maxTime=True))
-    _PAD_DEPTH[0] += 1
     cmds.playbackOptions(animationStartTime=saved[0] - 1,
                          animationEndTime=saved[1] + 1,
                          minTime=saved[2] - 1, maxTime=saved[3] + 1)
     try:
         yield
     finally:
-        _PAD_DEPTH[0] -= 1
         cmds.playbackOptions(animationStartTime=saved[0],
                              animationEndTime=saved[1],
                              minTime=saved[2], maxTime=saved[3])
