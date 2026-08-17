@@ -118,6 +118,146 @@ def padded_range():
                              minTime=saved[2], maxTime=saved[3])
 
 
+def half_frame_times(times):
+    """The non-integer key times a doubled-time capture leaves behind.
+
+    Pure. `cmds.keyframe` returns None for a curve with no keys.
+    """
+    return [t for t in (times or []) if abs(t - round(t)) > 1e-6]
+
+
+def capture_channel(attr):
+    """True when a captured curve on this channel gets its half-frame keys cut.
+
+    Transform channels only -- rotate/translate/scale, plus the pairBlend
+    input forms of the same. OverRig's `attach` weight keys its fade half a
+    frame outside the range after the rescale; cutting those keys would turn
+    a constant weight of 1 into a ramp across the whole clip.
+    """
+    lowered = (attr or "").lower()
+    return any(word in lowered for word in ("rotate", "translate", "scale"))
+
+
+def slider_message(selection):
+    """What every entry point says when the time slider has a highlight."""
+    return ("time slider has {0:g}..{1:g} highlighted - OverRig bakes across "
+            "the highlight, not the clip; click a single frame on the "
+            "timeline and try again".format(selection[0], selection[1]))
+
+
+def slider_selection():
+    """(start, end) highlighted on the time slider, or None.
+
+    OverRig reads `timeControl -q -ra` in nineteen places and bakes across
+    it. A highlight the animator dragged and forgot silently decides every
+    bake range, so the entry points refuse to run under one.
+    """
+    slider = mel.eval("$gPlayBackSlider=$gPlayBackSlider")
+    if not cmds.timeControl(slider, query=True, rangeVisible=True):
+        return None
+    got = cmds.timeControl(slider, query=True, rangeArray=True) or []
+    if len(got) == 2 and got[1] - got[0] > 1:
+        return (got[0], got[1])
+    return None
+
+
+def _curves_driving(nodes):
+    """animCurve nodes feeding `nodes`, through pairBlends as well.
+
+    A bone mid-switch is driven `curve -> pairBlend -> bone`, and scaling
+    only the directly connected curves would leave that bone playing at the
+    wrong rate inside the doubled window.
+    """
+    curves = set()
+    for node in nodes:
+        if not cmds.objExists(node):
+            continue
+        curves.update(cmds.listConnections(node, source=True,
+                                           destination=False,
+                                           type="animCurve") or [])
+        for blend in cmds.listConnections(node, source=True,
+                                          destination=False,
+                                          type="pairBlend") or []:
+            curves.update(cmds.listConnections(blend, source=True,
+                                               destination=False,
+                                               type="animCurve") or [])
+    return sorted(curves)
+
+
+def _driven_attr(curve):
+    """Leaf attribute name the curve's output lands on, or ''."""
+    plugs = cmds.listConnections(curve + ".output", source=False,
+                                 destination=True, plugs=True) or []
+    return plugs[0].split(".")[-1] if plugs else ""
+
+
+@contextmanager
+def full_rate_capture(nodes):
+    """Run OverRig's chain capture with every real frame on a sampled slot.
+
+    The capture loop inside `apply_ForwHierarhy` advances its frame counter
+    TWICE per iteration (a second `$i++` in the body, base_OverRig_scripts.mel
+    ~5404), so the aim-rig helpers that decide each knot's orientation are
+    snapped on every second frame and LINEARLY INTERPOLATED in between. The
+    dense bake that follows then records an approximation on the skipped
+    frames: with the padded range starting at -1 the sampled frames are the
+    even ones, and every odd frame of a fast clip came out wrong -- measured
+    20.3 cm on a sword-swing's fingers, exactly zero on even frames.
+
+    The cure is to double time around the capture: scale the driving curves
+    and the playback range by two, so "every second frame" of the doubled
+    clip IS every frame of the real one. Afterwards everything is scaled
+    back, and the half-frame keys -- the interpolation artifacts -- are cut
+    from the captured transform channels. `attach` weight curves keep their
+    half-frame keys: their fade sits half a frame outside the range, which is
+    exactly where the unscaled build puts it a whole frame out.
+
+    `nodes` must cover everything whose animation the capture can read:
+    the skeleton AND any rig already driving part of it -- a chain captured
+    against an unscaled parent records a mixture of two timelines.
+    """
+    originals = _curves_driving(nodes)
+    before = set(cmds.ls(type="animCurve") or [])
+    saved = (cmds.playbackOptions(query=True, animationStartTime=True),
+             cmds.playbackOptions(query=True, animationEndTime=True),
+             cmds.playbackOptions(query=True, minTime=True),
+             cmds.playbackOptions(query=True, maxTime=True))
+    saved_time = cmds.currentTime(query=True)
+
+    # The capture's range reader falls back to curves selected in the graph
+    # editor before it falls back to playback.
+    cmds.selectKey(clear=True)
+    for curve in originals:
+        cmds.scaleKey(curve, timeScale=2, timePivot=0)
+    cmds.playbackOptions(animationStartTime=saved[0] * 2,
+                         animationEndTime=saved[1] * 2,
+                         minTime=saved[2] * 2, maxTime=saved[3] * 2)
+    cmds.currentTime(saved_time * 2)
+    try:
+        yield
+    finally:
+        fresh = [c for c in (cmds.ls(type="animCurve") or [])
+                 if c not in before]
+        for curve in fresh:
+            if cmds.objExists(curve):
+                cmds.scaleKey(curve, timeScale=0.5, timePivot=0)
+        for curve in originals:
+            if cmds.objExists(curve):
+                cmds.scaleKey(curve, timeScale=0.5, timePivot=0)
+        cmds.playbackOptions(animationStartTime=saved[0],
+                             animationEndTime=saved[1],
+                             minTime=saved[2], maxTime=saved[3])
+        cmds.currentTime(saved_time)
+        for curve in fresh:
+            if not cmds.objExists(curve):
+                continue
+            if not capture_channel(_driven_attr(curve)):
+                continue
+            for time in half_frame_times(
+                    cmds.keyframe(curve, query=True, timeChange=True)):
+                cmds.cutKey(curve, time=(time, time), clear=True)
+
+
 def build_ik(joint_paths):
     """Run OverRig's FK-to-IK on exactly three joints, root to end.
 

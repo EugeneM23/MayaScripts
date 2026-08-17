@@ -1210,6 +1210,11 @@ def bake_fk(scene_map, chains=None):
     """Bake FK back to the bones -- everything, or just the given chains."""
     if not overrig.ensure_loaded():
         return 0, overrig.NOT_LOADED_MESSAGE
+    # Fast_Bake reads the time slider's highlight too: a teardown under one
+    # would bake only the highlighted frames and freeze the rest.
+    selection = overrig.slider_selection()
+    if selection:
+        return 0, overrig.slider_message(selection)
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK bake")
     try:
         removed, wanted = _bake_fk_chains(scene_map, chains)
@@ -1235,6 +1240,9 @@ def build_fk(scene_map, only=None):
     # toolset, so the cure looked like "press Switch first".
     if not overrig.ensure_loaded():
         return 0, overrig.NOT_LOADED_MESSAGE
+    selection = overrig.slider_selection()
+    if selection:
+        return 0, overrig.slider_message(selection)
 
     region_of = {b.joint: b.region for b in bodymap.BUTTONS}
     parent_of = _parent_map()
@@ -1254,39 +1262,55 @@ def build_fk(scene_map, only=None):
 
         radii, guessed, skinned = _final_radii(scene_map)
 
+        # Everything whose animation the capture can read must ride the
+        # doubled time together: the whole skeleton, and any rig already
+        # driving part of it (a restricted build runs while other chains'
+        # rigs play). A chain captured against an unscaled parent records a
+        # mixture of two timelines.
+        scale_nodes = [p for p in scene_map.values() if cmds.objExists(p)]
+        for name, _ in CHAINS:
+            scale_nodes.extend(chain_members(name))
+        scale_nodes.extend(_legacy_members())
+        for name, _ in builder.LIMBS:
+            scale_nodes.extend(overrig.set_members(builder.limb_set(name)))
+
         created = 0
         recorded = 0
         attached = 0
-        for chain_name, chain in CHAINS:
-            if only is not None and chain_name not in only:
-                continue
-            paths = [scene_map[j] for j in chain
-                     if j in scene_map and cmds.objExists(scene_map[j])]
-            if not paths:
-                continue
+        with overrig.full_rate_capture(scale_nodes):
+            for chain_name, chain in CHAINS:
+                if only is not None and chain_name not in only:
+                    continue
+                paths = [scene_map[j] for j in chain
+                         if j in scene_map and cmds.objExists(scene_map[j])]
+                if not paths:
+                    continue
 
-            before = builder._scene_nodes()
-            before_knots = set(overrig.set_members(overrig.KNOT_SET))
+                before = builder._scene_nodes()
+                before_knots = set(overrig.set_members(overrig.KNOT_SET))
 
-            cmds.select(paths, replace=True)
-            with overrig.padded_range():
-                if len(paths) == 1:
-                    mel.eval("apply_parentConstrAnim(1)")
-                else:
-                    mel.eval("apply_ForwHierarhy(1)")
+                cmds.select(paths, replace=True)
+                with overrig.padded_range():
+                    if len(paths) == 1:
+                        mel.eval("apply_parentConstrAnim(1)")
+                    else:
+                        mel.eval("apply_ForwHierarhy(1)")
 
-            fresh_knots = [k for k in overrig.set_members(overrig.KNOT_SET)
-                           if k not in before_knots]
-            created += _dress_knots(fresh_knots, paths, radii, region_of)
+                fresh_knots = [k for k in
+                               overrig.set_members(overrig.KNOT_SET)
+                               if k not in before_knots]
+                created += _dress_knots(fresh_knots, paths, radii, region_of)
 
-            # Couple inside the same diff window so the coupling nodes land in
-            # this chain's manifest. Parents precede children in CHAINS, so a
-            # full build always finds its target; a restricted build couples
-            # only if the target controller happens to exist.
-            if _attach_chain(chain, scene_map, parent_of, targeted):
-                attached += 1
+                # Couple inside the same diff window so the coupling nodes
+                # land in this chain's manifest -- and inside the doubled
+                # time, so the re-bake reads one consistent timeline.
+                # Parents precede children in CHAINS, so a full build always
+                # finds its target; a restricted build couples only if the
+                # target controller happens to exist.
+                if _attach_chain(chain, scene_map, parent_of, targeted):
+                    attached += 1
 
-            recorded += len(_record_fresh(chain_name, before))
+                recorded += len(_record_fresh(chain_name, before))
 
         # Last, once every chain is built and coupled: put the controllers on
         # the bones' axes. Two steps, and both are needed -- the first puts
@@ -1369,6 +1393,9 @@ def bake_selection(scene_map, ik_limbs, fk_chains):
     """
     if not overrig.ensure_loaded():
         return overrig.NOT_LOADED_MESSAGE
+    selection = overrig.slider_selection()
+    if selection:
+        return overrig.slider_message(selection)
 
     messages = []
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
@@ -1416,6 +1443,11 @@ def rebuild(scene_map, fk_limbs=False):
         return "Not connected to a skeleton"
     if not overrig.ensure_loaded():
         return overrig.NOT_LOADED_MESSAGE
+    # Checked before the teardown, not just inside build_fk: Fast_Bake reads
+    # the highlight too, and a teardown under one loses everything outside it.
+    selection = overrig.slider_selection()
+    if selection:
+        return overrig.slider_message(selection)
 
     table = dict(CHAINS)
     messages = []
@@ -1694,6 +1726,9 @@ def switch_limbs(scene_map, limbs):
     """
     if not overrig.ensure_loaded():
         return [], list(limbs), overrig.NOT_LOADED_MESSAGE
+    selection = overrig.slider_selection()
+    if selection:
+        return [], list(limbs), overrig.slider_message(selection)
 
     table = dict(CHAINS)
     done = []

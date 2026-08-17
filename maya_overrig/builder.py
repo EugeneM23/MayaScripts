@@ -417,6 +417,10 @@ def bake_limbs(scene_map, limbs):
     """
     if not overrig.ensure_loaded():
         return BuildResult([], list(limbs), 0, 0, overrig.NOT_LOADED_MESSAGE)
+    selection = overrig.slider_selection()
+    if selection:
+        return BuildResult([], list(limbs), 0, 0,
+                           overrig.slider_message(selection))
 
     members_by_limb = {name: overrig.set_members(limb_set(name))
                        for name, _ in LIMBS}
@@ -516,6 +520,9 @@ def build(scene_map, only=None):
     """
     if not overrig.ensure_loaded():
         return BuildResult([], [], 0, 0, overrig.NOT_LOADED_MESSAGE)
+    selection = overrig.slider_selection()
+    if selection:
+        return BuildResult([], [], 0, 0, overrig.slider_message(selection))
 
     resolvable = limb_joints(scene_map)
     if only is not None:
