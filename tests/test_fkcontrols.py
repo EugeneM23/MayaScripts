@@ -226,6 +226,18 @@ class TestOverRigGuard(unittest.TestCase):
             self.asked += 1
             return False
 
+        def mel_gate(self):
+            """Mirrors the real gate, which now lives in overrig.
+
+            Shaped like the original on purpose: what these tests pin down is
+            that every entry point asks ONCE before running any MEL, so the
+            fake has to route through its own ensure_loaded rather than count
+            separately.
+            """
+            if not self.ensure_loaded():
+                return self.NOT_LOADED_MESSAGE
+            return None
+
     SCENE_MAP = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
                  for j in chain}
 

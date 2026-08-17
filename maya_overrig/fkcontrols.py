@@ -192,20 +192,11 @@ def _bake_fk_chains(scene_map, chains=None):
 def _mel_gate():
     """The refusal every MEL entry point shares, or None to proceed.
 
-    Two guards in this order. The toolset must be in the session: without
-    this the first Build of a fresh Maya threw "Cannot find procedure" out
-    of the Qt slot, where nobody saw it, and the panel looked dead (trap
-    20). And the time slider must not carry a multi-frame highlight:
-    OverRig bakes across it before the playback range, so a capture or
-    teardown bake under one silently clips to the highlighted frames and
-    freezes the rest (trap 36).
+    Lives in `overrig` now: the aim bake needs the same two guards from a
+    module that cannot import this one, and one wording beats two that drift.
+    Kept as a name here because every entry point in this module calls it.
     """
-    if not overrig.ensure_loaded():
-        return overrig.NOT_LOADED_MESSAGE
-    selection = overrig.slider_selection()
-    if selection:
-        return overrig.slider_message(selection)
-    return None
+    return overrig.mel_gate()
 
 
 def bake_fk(scene_map, chains=None):

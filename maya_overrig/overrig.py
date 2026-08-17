@@ -26,6 +26,29 @@ IK_PROC = "apply_rebike_3_or_more_object_to_IK"
 BAKE_PROC = "apply_Fast_Bake"
 CLEAN_PROC = "delete_constraint_attributes_on_objects"
 
+# The aim. `make_aim_from_selected` only creates the two locators and arms a
+# run-once `scriptJob -cf "SomethingSelected"`; the rig itself is built by
+# AIM_BUILD_PROC, which that job calls on the next deselect -- which is the gap
+# where the animator drags the locators into place by hand. We call the build
+# ourselves so placement and the build land in one undo chunk and inside one
+# node diff. A build that arrives later is outside both, and the job would
+# still be armed to fire a second time.
+AIM_SET_PROC = "BOVER_10_2_4b209c5c00abddc3e3509a14326e2488"
+AIM_CREATE_PROC = "BOVER_10_2_c642429ed9a3aabf65a66eefcd97bfbb"
+AIM_COLOUR_PROC = "BOVER_10_2_2e50fb684e35f7dc58ab390d98530944"
+AIM_SIZE_PROC = "BOVER_10_2_6de8028af587b467034457b4d6349f89"
+AIM_BUILD_PROC = "BOVER_10_2_10df34add5a583f84d24608e860c1b4b"
+
+# In call order, which is also the order the native button uses.
+AIM_PROCS = ("make_aim_from_selected", AIM_SET_PROC, AIM_CREATE_PROC,
+             AIM_COLOUR_PROC, AIM_SIZE_PROC, AIM_BUILD_PROC)
+
+AIM_PROCS_MESSAGE = ("OverRig has no procedure {0} - this is not the OverRig "
+                     "v10.2 the aim was written against")
+
+# What the native aim button paints its locators. Outliner colour only.
+AIM_COLOUR = (0.45, 0.7, 0.45)
+
 # What every entry point says when the toolset is not in the session. One
 # wording, because there is one cure: nothing here works without the procs.
 NOT_LOADED_MESSAGE = (
@@ -51,6 +74,35 @@ def ensure_loaded():
         return False
     mel.eval('source "{0}";'.format(MEL_PATH))
     return is_loaded()
+
+
+def missing_aim_procs():
+    """Which of the aim procs are not in this session. [] means proceed.
+
+    Four of the six are internal and hash-named. They are `global proc` and
+    stable inside v10.2, but an OverRig update can rename them, and the
+    failure has to reach the status line naming the proc rather than throwing
+    "Cannot find procedure" out of a Qt slot where nobody sees it (trap 20).
+    """
+    return [p for p in AIM_PROCS if not mel.eval('exists "{0}"'.format(p))]
+
+
+def mel_gate():
+    """The refusal every MEL entry point shares, or None to proceed.
+
+    Two guards, in this order. The toolset must be in the session: without it
+    the first Build of a fresh Maya threw "Cannot find procedure" out of the
+    Qt slot and the panel just looked dead (trap 20). And the time slider must
+    not carry a multi-frame highlight: OverRig reads it before the playback
+    range in nineteen bakes, so a bake under one silently clips to the
+    highlighted frames and freezes everything outside it (trap 36).
+    """
+    if not ensure_loaded():
+        return NOT_LOADED_MESSAGE
+    selection = slider_selection()
+    if selection:
+        return slider_message(selection)
+    return None
 
 
 def set_members(set_name):
@@ -275,6 +327,65 @@ def parent_in(child, parent):
     """
     cmds.select([child, parent], replace=True)
     mel.eval("apply_Parent_in()")
+
+
+def add_to_set(objects, set_name):
+    """Register objects in one of OverRig's own bookkeeping sets.
+
+    Through OverRig's own proc rather than `cmds.sets`, so the set is created
+    the way OverRig creates it when this is the first thing in the session to
+    need it.
+    """
+    quoted = ",".join('"{0}"'.format(obj) for obj in objects)
+    mel.eval('{0}({{{1}}}, "{2}")'.format(AIM_SET_PROC, quoted, set_name))
+
+
+def aim_outliner_colour():
+    """OverRig's aim colour, on whatever is selected.
+
+    Cosmetic and outliner-only -- the proc sets `useOutlinerColor` and
+    `outlinerColor`, nothing else. Called exactly where the native button
+    calls it: on the selection the create proc leaves behind.
+    """
+    mel.eval("{0}({{{1}, {2}, {3}}})".format(AIM_COLOUR_PROC, *AIM_COLOUR))
+
+
+def aim_locator_size(objects, size=1.0):
+    """OverRig's locator sizing, on the given objects."""
+    cmds.select(list(objects), replace=True)
+    mel.eval("{0}({1})".format(AIM_SIZE_PROC, size))
+
+
+def make_aim_locators(source):
+    """Create OverRig's two aim locators on `source`. Returns (top, side).
+
+    The proc returns every top followed by every side, so one source gives
+    exactly two names -- anything else means the proc is not the one this was
+    written against. It also sets the MEL globals `build_aim` reads.
+    """
+    cmds.select(source, replace=True)
+    created = mel.eval("{0}()".format(AIM_CREATE_PROC)) or []
+    if len(created) != 2:
+        raise RuntimeError(
+            "OverRig returned {0} aim locator(s), expected 2".format(
+                len(created)))
+    return tuple(cmds.ls(name, long=True)[0] for name in created)
+
+
+def build_aim():
+    """Run the half of OverRig's aim that its scriptJob would have run.
+
+    Driven by the MEL globals `make_aim_locators` set, not by the selection:
+    it parent-constrains the locators to the source, bakes so they carry the
+    source's world animation, drops those constraints, and aim-constrains the
+    source to the locators.
+
+    Not wrapped in `padded_range`: this bake reads `playbackOptions -ast/-aet`
+    and never `timeControl -q -ra`, so it neither clips a frame at the ends
+    (trap 12) nor answers to a slider highlight (trap 36). Read from the MEL,
+    not assumed.
+    """
+    mel.eval("{0}()".format(AIM_BUILD_PROC))
 
 
 def delete_constraint_attributes(objects):

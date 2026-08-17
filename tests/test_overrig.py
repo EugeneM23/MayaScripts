@@ -1,6 +1,28 @@
+import contextlib
 import unittest
 
 from maya_overrig import overrig
+
+
+@contextlib.contextmanager
+def _fake_mel(answer):
+    """Stand in for `mel.eval` while the test runs.
+
+    `maya.mel` imports fine under mayapy but grows its `eval` only once a
+    Maya session is initialised, so the attribute is often ABSENT rather than
+    real -- saving and restoring it needs the absent case, or every test that
+    patches mel raises AttributeError before it starts.
+    """
+    missing = object()
+    original = getattr(overrig.mel, "eval", missing)
+    overrig.mel.eval = answer
+    try:
+        yield
+    finally:
+        if original is missing:
+            del overrig.mel.eval
+        else:
+            overrig.mel.eval = original
 
 
 class TestHalfFrameTimes(unittest.TestCase):
@@ -63,6 +85,35 @@ class TestSliderMessage(unittest.TestCase):
         self.assertIn("10", message)
         self.assertIn("25", message)
         self.assertIn("time slider", message)
+
+
+class TestAimProcs(unittest.TestCase):
+    """The aim path leans on four internal, hash-named procs.
+
+    They are global procs and stable inside v10.2, but an OverRig update can
+    rename them -- and a renamed proc must reach the status line by name, not
+    a traceback out of a Qt slot (trap 20).
+    """
+
+    def test_all_six_procs_are_named(self):
+        self.assertEqual(len(overrig.AIM_PROCS), 6)
+        self.assertIn("make_aim_from_selected", overrig.AIM_PROCS)
+
+    def test_create_comes_before_build(self):
+        """The build proc reads MEL globals the create proc sets."""
+        self.assertLess(overrig.AIM_PROCS.index(overrig.AIM_CREATE_PROC),
+                        overrig.AIM_PROCS.index(overrig.AIM_BUILD_PROC))
+
+    def test_missing_procs_are_reported_by_name(self):
+        with _fake_mel(lambda c: 0 if overrig.AIM_BUILD_PROC in c else 1):
+            missing = overrig.missing_aim_procs()
+        self.assertEqual(missing, [overrig.AIM_BUILD_PROC])
+        self.assertIn(overrig.AIM_BUILD_PROC,
+                      overrig.AIM_PROCS_MESSAGE.format(", ".join(missing)))
+
+    def test_nothing_missing_when_they_all_exist(self):
+        with _fake_mel(lambda c: 1):
+            self.assertEqual(overrig.missing_aim_procs(), [])
 
 
 if __name__ == "__main__":
