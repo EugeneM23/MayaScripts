@@ -5,13 +5,15 @@ joint. So the bone's motion is baked onto a real Maya camera and the bone is
 then parent-constrained to it. After the press, the camera is the thing you
 animate and the bone follows it exactly.
 
-**The axis offset is measured, never derived.** A Maya camera looks down its
-own -Z and a UE camera bone does not, and no amount of reasoning about
-conventions beats reading the scene the animator has already set up. Measured
-2026-08-17 from `camera1` against `camera_bone`: the camera stands AT the bone,
-turned by a constant that reads (90, 0, 180) XYZ in the channel box. At run
-time a camera the animator has placed wins over that constant -- they said they
-would place it as it should stand -- and the status line names which was used.
+**The camera jumps into the bone's transform.** Same position, and only the
+axes differ: a Maya camera looks down its own -Z and a UE camera bone does not.
+That turn was measured 2026-08-17 from the animator's own `camera1` against
+`camera_bone` -- (90, 0, 180) XYZ in the channel box -- and it is a rotation and
+nothing else. Nothing in the scene changes it: "the reference camera does not
+matter, only the rotation axes do", so the offset is a constant here and a
+camera lying around somewhere cannot move the result. Any translation that ever
+finds its way into the constant is stripped (`rotation_only`), because the one
+thing the camera must not do is stand away from the bone.
 
 Maya's matrices are row-vector: a child's world matrix is `local · parent`. So
 the camera's world matrix is `OFFSET · bone_world`, and the bone's is
@@ -28,18 +30,17 @@ BONE = "camera_bone"
 MARKER = "mayaSceneSetupCamera"
 CAMERA_NAME = "SceneSetup_camera"
 
-# camera1 in camera_bone's space, measured in the user's scene.
-DEFAULT_OFFSET = (-1.0, 0.0, 0.0, 0.0,
-                  0.0, 0.0, 1.0, 0.0,
-                  0.0, 1.0, 0.0, 0.0,
-                  0.0, 0.0, 0.0, 1.0)
-DEFAULT_FOCAL = 16.493949366848657
+# The turn between camera1 and camera_bone, measured in the user's scene.
+AXIS_OFFSET = (-1.0, 0.0, 0.0, 0.0,
+               0.0, 0.0, 1.0, 0.0,
+               0.0, 1.0, 0.0, 0.0,
+               0.0, 0.0, 0.0, 1.0)
+
+# camera1's lens, which was a framing choice rather than a Maya default.
+FOCAL = 16.493949366848657
 
 CHANNELS = tuple(channel + axis
                  for channel in ("translate", "rotate") for axis in "XYZ")
-
-_DEFAULT_CAMERAS = ("persp", "top", "front", "side",
-                    "back", "bottom", "left", "right")
 
 NO_BONE = "no camera_bone in the scene"
 AMBIGUOUS_BONE = ("several camera_bone candidates - connect the picker to the "
@@ -77,21 +78,9 @@ def offset_between(bone_matrix, camera_matrix):
                  * om.MMatrix(bone_matrix).inverse())
 
 
-def is_default_camera(path):
-    """One of Maya's own cameras, namespace and all."""
-    return leaf(path) in _DEFAULT_CAMERAS
-
-
-def pick_reference(camera_paths):
-    """Which camera defines the offset, or None.
-
-    Sorted first, so two runs of the same scene agree; Maya's own cameras never
-    count. Our own camera is filtered out before this, which would otherwise
-    make the choice circular -- it was built FROM the offset.
-    """
-    named = sorted(path for path in camera_paths
-                   if not is_default_camera(path))
-    return named[0] if named else None
+def rotation_only(matrix):
+    """The same offset with its translation removed."""
+    return tuple(matrix[:12]) + (0.0, 0.0, 0.0, 1.0)
 
 
 def bone_candidates(paths, name=BONE):
@@ -103,11 +92,9 @@ def bone_candidates(paths, name=BONE):
     return [path for path in paths if leaf(path) == name]
 
 
-def setup_message(camera_name, reference, frames):
-    origin = ("offset from " + leaf(reference) if reference
-              else "built-in default offset")
-    return "{0} drives {1} - {2} frames baked, {3}".format(
-        camera_name, BONE, frames, origin)
+def setup_message(camera_name, frames):
+    return "{0} sits on {1} and drives it - {2} frames baked".format(
+        camera_name, BONE, frames)
 
 
 # -------------------------------------------------------------------- scene
@@ -116,46 +103,21 @@ def world_matrix(node):
     return tuple(cmds.xform(node, query=True, matrix=True, worldSpace=True))
 
 
-def _camera_transforms(ours=False):
-    """Transforms of the scene's cameras; ours or everyone else's."""
+def our_cameras():
+    """Every camera this tool has made in the scene, found by its marker."""
     found = []
     for shape in cmds.ls(type="camera", long=True) or []:
         parents = cmds.listRelatives(shape, parent=True, fullPath=True) or []
-        if not parents:
-            continue
-        marked = cmds.attributeQuery(MARKER, node=parents[0], exists=True)
-        if bool(marked) == bool(ours):
+        if parents and cmds.attributeQuery(MARKER, node=parents[0],
+                                           exists=True):
             found.append(parents[0])
     return found
-
-
-def our_cameras():
-    """Every camera this tool has made in the scene."""
-    return _camera_transforms(ours=True)
 
 
 def existing_camera():
     """The camera a previous press made, or None."""
     found = our_cameras()
     return found[0] if found else None
-
-
-def reference_offset(bone):
-    """(offset, reference path). The scene's own camera wins over the default."""
-    reference = pick_reference(_camera_transforms(ours=False))
-    if not reference:
-        return DEFAULT_OFFSET, None
-    return offset_between(world_matrix(bone), world_matrix(reference)), reference
-
-
-def reference_focal(reference):
-    if not reference:
-        return DEFAULT_FOCAL
-    shapes = cmds.listRelatives(reference, shapes=True, fullPath=True) or []
-    for shape in shapes:
-        if cmds.objectType(shape) == "camera":
-            return cmds.getAttr(shape + ".focalLength")
-    return DEFAULT_FOCAL
 
 
 def resolve_bone(scene_map):
@@ -225,8 +187,7 @@ def setup(bone, start, end):
     cmds.autoKeyframe(state=False)  # trap 14: the user works with autoKey on
     cmds.undoInfo(openChunk=True, chunkName="Camera setup")
     try:
-        offset, reference = reference_offset(bone)
-        focal = reference_focal(reference)
+        offset = rotation_only(AXIS_OFFSET)
         teardown(bone, start, end)
 
         # Created then renamed: `cmds.camera(name=...)` leaves a numbered
@@ -235,7 +196,7 @@ def setup(bone, start, end):
         transform = cmds.ls(cmds.rename(transform, CAMERA_NAME), long=True)[0]
         shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
         shape = cmds.rename(shape, CAMERA_NAME + "Shape")
-        cmds.setAttr(shape + ".focalLength", focal)
+        cmds.setAttr(shape + ".focalLength", FOCAL)
         cmds.addAttr(transform, longName=MARKER, attributeType="bool",
                      defaultValue=True)
 
@@ -260,7 +221,7 @@ def setup(bone, start, end):
         cmds.parentConstraint(transform, bone, maintainOffset=True)
 
         frames = int(round(end - start)) + 1
-        return setup_message(leaf(transform), reference, frames)
+        return setup_message(leaf(transform), frames)
     finally:
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=autokey)

@@ -57,16 +57,17 @@ def worst(left, right):
     return max(abs(a - b) for a, b in zip(left, right))
 
 
-class TheMeasuredDefault(unittest.TestCase):
+class TheAxisOffset(unittest.TestCase):
     """Measured in the user's scene on 2026-08-17 from camera1 vs camera_bone.
 
-    The camera stands AT the bone, turned by a constant; a Maya camera looks
-    down its own -Z and the UE camera bone does not, so this offset is the
-    whole reason the button can exist.
+    A Maya camera looks down its own -Z and the UE camera bone does not, so
+    this turn is the whole reason the button can exist. It is a rotation and
+    nothing else: the camera lands ON the bone's transform, by the user's call
+    -- "the reference camera does not matter, only the rotation axes do".
     """
 
     def test_is_a_pure_rotation(self):
-        offset = camera.DEFAULT_OFFSET
+        offset = camera.AXIS_OFFSET
         self.assertAlmostEqual(offset[12], 0.0)
         self.assertAlmostEqual(offset[13], 0.0)
         self.assertAlmostEqual(offset[14], 0.0)
@@ -76,16 +77,42 @@ class TheMeasuredDefault(unittest.TestCase):
                     0.0, 0.0, 1.0, 0.0,
                     0.0, 1.0, 0.0, 0.0,
                     0.0, 0.0, 0.0, 1.0)
-        self.assertLess(worst(camera.DEFAULT_OFFSET, expected), 1e-9)
+        self.assertLess(worst(camera.AXIS_OFFSET, expected), 1e-9)
 
     def test_is_what_the_euler_produces(self):
         """(90, 0, 180) in XYZ is how the same offset reads in the channel box."""
         self.assertLess(
             worst(camera.offset_matrix((90.0, 0.0, 180.0)),
-                  camera.DEFAULT_OFFSET), 1e-9)
+                  camera.AXIS_OFFSET), 1e-9)
 
     def test_the_focal_length_is_the_framing_the_animator_chose(self):
-        self.assertAlmostEqual(camera.DEFAULT_FOCAL, 16.493949366848657)
+        self.assertAlmostEqual(camera.FOCAL, 16.493949366848657)
+
+
+class RotationOnly(unittest.TestCase):
+    """Whatever the offset carries, only its rotation may reach the camera.
+
+    The camera has to land in the bone's transform. An offset with translation
+    in it -- measured from a camera standing somewhere else, or edited by hand
+    -- would park the camera away from the bone, which is the one thing the
+    user ruled out.
+    """
+
+    def test_strips_the_translation(self):
+        carried = (1.0, 0.0, 0.0, 0.0,
+                   0.0, 1.0, 0.0, 0.0,
+                   0.0, 0.0, 1.0, 0.0,
+                   7.0, -3.0, 11.0, 1.0)
+        self.assertEqual(camera.rotation_only(carried)[12:], (0.0, 0.0, 0.0, 1.0))
+
+    def test_keeps_the_rotation(self):
+        self.assertLess(
+            worst(camera.rotation_only(camera.AXIS_OFFSET)[:12],
+                  camera.AXIS_OFFSET[:12]), 1e-12)
+
+    def test_leaves_a_pure_rotation_alone(self):
+        self.assertLess(worst(camera.rotation_only(camera.AXIS_OFFSET),
+                              camera.AXIS_OFFSET), 1e-12)
 
 
 class Placing(unittest.TestCase):
@@ -93,19 +120,19 @@ class Placing(unittest.TestCase):
     def test_an_identity_offset_puts_the_camera_on_the_bone(self):
         self.assertLess(worst(camera.placed_matrix(BONE, IDENTITY), BONE), 1e-9)
 
-    def test_the_camera_lands_at_the_bone_position(self):
-        """The measured offset is a pure rotation, so only the axes change."""
-        placed = camera.placed_matrix(BONE, camera.DEFAULT_OFFSET)
+    def test_the_camera_lands_in_the_bones_transform(self):
+        """The whole point: the camera jumps onto the bone, axes aside."""
+        placed = camera.placed_matrix(BONE, camera.AXIS_OFFSET)
         self.assertLess(worst(placed[12:], BONE[12:]), 1e-9)
 
     def test_the_camera_does_not_land_on_the_bone_axes(self):
-        placed = camera.placed_matrix(BONE, camera.DEFAULT_OFFSET)
+        placed = camera.placed_matrix(BONE, camera.AXIS_OFFSET)
         self.assertGreater(worst(placed[:12], BONE[:12]), 0.5)
 
     def test_the_bone_is_recovered_from_the_camera(self):
         """The round trip is what the constraint reproduces every frame."""
-        placed = camera.placed_matrix(BONE, camera.DEFAULT_OFFSET)
-        back = camera.bone_matrix_for(placed, camera.DEFAULT_OFFSET)
+        placed = camera.placed_matrix(BONE, camera.AXIS_OFFSET)
+        back = camera.bone_matrix_for(placed, camera.AXIS_OFFSET)
         self.assertLess(worst(back, BONE), 1e-9)
 
     def test_the_round_trip_holds_for_an_arbitrary_offset(self):
@@ -115,51 +142,11 @@ class Placing(unittest.TestCase):
                         1e-9)
 
     def test_the_offset_between_two_matrices_is_recoverable(self):
-        """This is how a reference camera in the scene is read."""
-        placed = camera.placed_matrix(BONE, camera.DEFAULT_OFFSET)
+        """How the live check reads back what the setup actually built."""
+        placed = camera.placed_matrix(BONE, camera.AXIS_OFFSET)
         self.assertLess(
-            worst(camera.offset_between(BONE, placed), camera.DEFAULT_OFFSET),
+            worst(camera.offset_between(BONE, placed), camera.AXIS_OFFSET),
             1e-9)
-
-
-class DefaultCameras(unittest.TestCase):
-
-    def test_mayas_own_cameras_are_recognised(self):
-        for name in ("persp", "top", "front", "side"):
-            self.assertTrue(camera.is_default_camera("|" + name), name)
-
-    def test_a_named_camera_is_not(self):
-        self.assertFalse(camera.is_default_camera("|camera1"))
-
-    def test_a_namespaced_persp_still_counts(self):
-        """An imported reference brings its own persp along."""
-        self.assertTrue(camera.is_default_camera("|ref:persp"))
-
-    def test_a_camera_merely_containing_persp_is_not_default(self):
-        self.assertFalse(camera.is_default_camera("|perspective_hero"))
-
-
-class PickReference(unittest.TestCase):
-    """Which camera in the scene defines the offset.
-
-    The user places the camera as it should stand by default, so a camera they
-    placed beats anything baked into the code -- but never Maya's own, and
-    never the one this tool made, which would make the choice circular.
-    """
-
-    def test_takes_the_animator_camera(self):
-        self.assertEqual(
-            camera.pick_reference(["|persp", "|camera1", "|top"]), "|camera1")
-
-    def test_is_none_when_only_defaults_are_there(self):
-        self.assertIsNone(camera.pick_reference(["|persp", "|side"]))
-
-    def test_is_none_for_an_empty_scene(self):
-        self.assertIsNone(camera.pick_reference([]))
-
-    def test_sorted_first_wins_so_two_runs_agree(self):
-        self.assertEqual(
-            camera.pick_reference(["|shotCam", "|aCam"]), "|aCam")
 
 
 class BoneCandidates(unittest.TestCase):
@@ -183,14 +170,11 @@ class BoneCandidates(unittest.TestCase):
 
 class Messages(unittest.TestCase):
 
-    def test_says_where_the_offset_came_from(self):
-        message = camera.setup_message("SceneSetup_camera", "|camera1", 60)
-        self.assertIn("camera1", message)
+    def test_names_the_camera_the_bone_and_the_frames(self):
+        message = camera.setup_message("SceneSetup_camera", 60)
+        self.assertIn("SceneSetup_camera", message)
+        self.assertIn("camera_bone", message)
         self.assertIn("60", message)
-
-    def test_names_the_built_in_default_when_there_is_no_reference(self):
-        message = camera.setup_message("SceneSetup_camera", None, 60)
-        self.assertIn("default", message.lower())
 
     def test_missing_bone_names_the_bone(self):
         self.assertIn("camera_bone", camera.NO_BONE)

@@ -738,18 +738,21 @@ id as well, or the panel left open from before stays up wired to dead code.
 **Camera Setup** puts a real Maya camera on `camera_bone`, bakes the bone's
 animation onto it, and then drives the bone from the camera — the animator
 animates a camera, the export bone follows. `maya_scenesetup/camera.py`, proof
-`docs/superpowers/plans/verify_camera_setup.py` (**22/22 green**).
+`docs/superpowers/plans/verify_camera_setup.py` (**24/24 green**).
 
-**The axis offset is measured, never derived.** A Maya camera looks down its own
--Z and the UE camera bone does not. Measured in the user's scene: `camera1`
-stands exactly AT `camera_bone`, turned by a constant that reads (90, 0, 180)
-XYZ — kept as `DEFAULT_OFFSET`, with `DEFAULT_FOCAL` 16.494 because that
-framing was a choice, not a default. At run time **a camera the animator has
-placed wins over the constant** (`reference_offset`, any camera that is neither
-one of Maya's own nor ours), and the status line names which was used. That
-reference is measured against **the bone being set up** at the **current
-frame**: a reference camera 64 cm above the bone legitimately means a 64 cm
-offset, which is the point of honouring a placement.
+**The camera jumps into the bone's transform, and only the axes differ.** A
+Maya camera looks down its own -Z and the UE camera bone does not. That turn
+was measured in the user's scene from their own `camera1` against
+`camera_bone` — (90, 0, 180) XYZ — and is kept as `AXIS_OFFSET`, with `FOCAL`
+16.494 because that framing was a choice, not a default. It is a rotation and
+nothing else: `rotation_only` strips any translation before use, so the camera
+cannot end up standing away from the bone.
+
+A first version preferred a reference camera in the scene and measured the full
+offset from it, translation included. The user's call retired that: *"the
+reference camera does not matter, only the rotation axes do"* — a camera lying
+around must not be able to move the result, and the camera belongs ON the bone.
+The reference-reading code is gone rather than disabled.
 
 Maya's matrices are row-vector, so the camera's world matrix is
 `OFFSET · bone_world` and the bone's is `OFFSET⁻¹ · camera_world`

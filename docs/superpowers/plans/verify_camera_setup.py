@@ -67,13 +67,7 @@ check("the sandbox bone actually moves",
       worst(wanted[0], wanted[-1]) > 1.0,
       "travel {0:.3f}".format(worst(wanted[0], wanted[-1])))
 
-# The reference relationship is read at the current frame, so the expectation
-# is taken there too. It is measured against THIS bone -- a reference camera
-# 64 cm above the sandbox joint legitimately implies a 64 cm offset, which is
-# the point of honouring a camera the animator has placed.
 cmds.currentTime(start)
-expected_offset, expected_reference = camerarig.reference_offset(sandbox_bone)
-
 message = camerarig.setup(sandbox_bone, start, end)
 print("sandbox setup said:", message)
 
@@ -118,12 +112,18 @@ check("and putting the camera back puts the bone back",
 cmds.currentTime(start)
 offset_now = camerarig.offset_between(camerarig.world_matrix(sandbox_bone),
                                      camerarig.world_matrix(sandbox_camera))
-check("the camera stands at the offset the tool measured",
-      worst(offset_now, expected_offset) < 1e-4,
-      "against {0}, worst {1:.9f}".format(
-          camerarig.leaf(expected_reference) if expected_reference
-          else "the built-in default",
-          worst(offset_now, expected_offset)))
+check("the camera stands at the measured axis offset",
+      worst(offset_now, camerarig.AXIS_OFFSET) < 1e-4,
+      "worst {0:.9f}".format(worst(offset_now, camerarig.AXIS_OFFSET)))
+
+# The correction the user asked for: the camera lands IN the bone's transform,
+# not merely somewhere rigidly attached to it.
+check("the camera sits exactly on the bone",
+      worst(camerarig.world_matrix(sandbox_camera)[12:],
+            camerarig.world_matrix(sandbox_bone)[12:]) < 1e-6,
+      "position gap {0:.9f}".format(
+          worst(camerarig.world_matrix(sandbox_camera)[12:],
+                camerarig.world_matrix(sandbox_bone)[12:])))
 
 # The rigid ride is the real invariant: whatever the offset is, it must not
 # change from frame to frame once the bone hangs off the camera.
@@ -150,12 +150,6 @@ root = skeleton.current_root()
 bone, problem = camerarig.resolve_bone(skeleton.scene_map(root))
 check("camera_bone resolved", bone is not None, problem or str(bone))
 
-reference_before = camerarig.pick_reference(
-    [cmds.listRelatives(shape, parent=True, fullPath=True)[0]
-     for shape in cmds.ls(type="camera", long=True) or []
-     if cmds.listRelatives(shape, parent=True, fullPath=True)])
-print("reference camera:", reference_before)
-
 before = sample(bone, frames)
 
 message = camerarig.setup(bone, start, end)
@@ -163,9 +157,20 @@ print("setup said:", message)
 
 made = camerarig.existing_camera()
 check("the camera exists and is marked", made is not None, str(made))
-check("it took the reference offset, not the built-in one",
-      reference_before is None or camerarig.leaf(reference_before) in message,
-      message)
+check("it jumped into the bone's transform",
+      worst(camerarig.world_matrix(made)[12:],
+            camerarig.world_matrix(bone)[12:]) < 1e-6,
+      "position gap {0:.9f}".format(
+          worst(camerarig.world_matrix(made)[12:],
+                camerarig.world_matrix(bone)[12:])))
+check("with the measured axes",
+      worst(camerarig.offset_between(camerarig.world_matrix(bone),
+                                     camerarig.world_matrix(made)),
+            camerarig.AXIS_OFFSET) < 1e-4,
+      "worst {0:.9f}".format(
+          worst(camerarig.offset_between(camerarig.world_matrix(bone),
+                                         camerarig.world_matrix(made)),
+                camerarig.AXIS_OFFSET)))
 
 after = sample(bone, frames)
 drift = worst([v for m in before for v in m], [v for m in after for v in m])
