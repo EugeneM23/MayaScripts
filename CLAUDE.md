@@ -773,6 +773,44 @@ all. Say this out loud in the code, or the next reader "fixes" it into a bug.
 The import mode is set explicitly on every import and the previous one put
 back — see trap 33, which is what `cmds.file` DOES inherit.
 
+**Connect Arms To Weapon** turns the rig inside out: the weapon leaves the
+skeleton and drives the hands. Three steps, in this order —
+`maya_weapons/connect.py`, proof
+`docs/superpowers/plans/verify_connect_arms.py` (**17/17 green**):
+
+1. **both arms brought to IK** — *brought to*, not switched. `switch_limbs`
+   converts to the OPPOSITE type, so calling it on an arm that is already IK
+   hands back an FK arm; the state is read from `builder.built_limbs()` and
+   only the limbs that need it are switched (`connect.limbs_to_switch`);
+2. **the weapon out to world** (`overrig.parent_out`), carrying the world
+   motion it had, now baked onto its own channels;
+3. **the IK end controls onto the weapon** (`fkcontrols.hang_ik_end_on`),
+   each lifted to world first — re-parenting a knot in place is not a
+   measured path, and lift-then-hang is what `switch_limbs` does with riders.
+
+Only the **end** groups ride the prop. Pole and base stay where they are, so
+elbows keep answering to the body and the shoulder is not pinned to the sword.
+Finger controls need no handling: they ride `<limb>_IK_anchor` under the end
+control. Verified live: the hands do not move — worst world-matrix element
+**0.000001662** across the timeline over the whole Connect, and 0.000000092
+after the round trip.
+
+**The link is found by walking up, never by searching.** The linked weapon is
+the nearest ancestor of an IK hand control carrying the `mayaWeapon` marker
+(`connect.marked_ancestor`), so two characters holding the same sword never
+mix. Two guards fall out of it: **Add is refused while a link exists** (the IK
+controls are the carrier's DAG children — replacing would take both arm rigs
+down unbaked) and the **offset fields go quiet** once the carrier carries
+curves, since `setAttr` on a connected channel raises.
+
+**Disconnect** lifts the hands off and calls `hang_ik_on_root`, which puts them
+back under the root controller *when there is one*. A rig built by Switch after
+a full bake has no root controller and stands in world — so the status line
+says "off the weapon" and never names a destination that may not exist. The
+weapon's animation is re-baked into the bone rather than stripped: whatever was
+animated out in the world survives, at the price of the offset fields staying
+inert until someone deletes those keys.
+
 Offsets are the carrier's local rotate/translate, written with **autoKey off**
 (trap 14), read back from the scene on open, on Add and on switching the
 dropdown, and remembered per weapon in an optionVar

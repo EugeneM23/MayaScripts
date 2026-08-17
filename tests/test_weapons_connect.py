@@ -130,3 +130,13 @@ class Messages(unittest.TestCase):
     def test_connect_reports_hanging_nothing(self):
         """Two arms in IK and neither hung means the link did not happen."""
         self.assertIn("0", connect.connected_message([], []))
+
+    def test_disconnect_counts_the_hands(self):
+        self.assertIn("2", connect.disconnected_message(["arm_l", "arm_r"]))
+
+    def test_disconnect_promises_no_destination(self):
+        """The hands go back under the root controller only if there is one.
+        A rig built by Switch after a full bake has none and stands in world;
+        measured in the user's scene, where the claim would have been false.
+        """
+        self.assertNotIn("root", connect.disconnected_message([]).lower())

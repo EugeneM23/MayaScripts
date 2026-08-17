@@ -57,8 +57,14 @@ def connected_message(switched, hung):
 
 
 def disconnected_message(lifted):
-    return "Disconnected: {0} hand(s) back on the root control".format(
-        len(lifted))
+    """Where the hands went is deliberately not promised.
+
+    `hang_ik_on_root` puts them back under the root controller when there is
+    one, and a rig built by Switch after a full bake has none -- its IK stands
+    in world. Naming a destination that may not exist is how a status line
+    starts lying.
+    """
+    return "Disconnected: {0} hand(s) off the weapon".format(len(lifted))
 
 
 # ------------------------------------------------------------------- scene
@@ -99,9 +105,12 @@ def connect(carrier, scene_map):
 
         carrier = cmds.ls(carrier, long=True)[0]
         if cmds.listRelatives(carrier, parent=True, fullPath=True):
+            # parent_out re-parents, so the path we hold goes stale (trap 16).
+            # A short-name lookup would then be a coin flip between duplicates;
+            # the UUID survives both the move and a rename.
+            uuid = cmds.ls(carrier, uuid=True)[0]
             overrig.parent_out(carrier)
-            # parent_out re-parents, so the recorded path is stale (trap 16).
-            carrier = cmds.ls(carrier.split("|")[-1], long=True)[0]
+            carrier = cmds.ls(uuid, long=True)[0]
 
         hung = [limb for limb in ARMS
                 if fkcontrols.hang_ik_end_on(limb, carrier)]
