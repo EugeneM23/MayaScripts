@@ -206,7 +206,7 @@ only, not layout or hit-testing.
 | Several characters | Nothing is bound automatically; the status line says how many were found and asks for a Connect. |
 | Nothing selected on Connect | Status line asks for a joint. No binding change. |
 | Selection has no skeleton under or above it | Status line names the node and reports no skeleton found. |
-| Bound root deleted | `bound_root()` returns `None`; the next refresh falls back to auto-connect. |
+| Bound root deleted | `bound_root()` returns `None`; every lookup goes dead until the user Connects again (auto-connect still runs on the next `show_picker()`). |
 | `show_picker()` called again | Existing window is destroyed first, so windows do not accumulate. |
 | Window closed | `scriptJob` killed in `closeEvent`. |
 

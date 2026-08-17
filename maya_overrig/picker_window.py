@@ -76,7 +76,7 @@ class PickerWindow(QtWidgets.QMainWindow):
         self._scene_map = {}
         self._prefix = ""
 
-        self._joint_to_id = {b.joint: b.id for b in bodymap.BUTTONS}
+        self._fk_joints = frozenset(b.joint for b in bodymap.BUTTONS)
 
         self.view = PickerView(self)
         self.view.selection_requested.connect(self.apply_selection)
@@ -212,12 +212,12 @@ class PickerWindow(QtWidgets.QMainWindow):
         # once for the whole skeleton, so the body map's plain UE5 names line up
         # without each button having to guess.
         raw = naming.hierarchy_map(root)
-        self._prefix = naming.detect_prefix(raw, self._joint_to_id)
+        self._prefix = naming.detect_prefix(raw, self._fk_joints)
         self._scene_map = naming.strip_prefix(raw, self._prefix)
 
         self._refresh_view()
 
-        matched = sum(1 for j in self._joint_to_id if j in self._scene_map)
+        matched = sum(1 for j in self._fk_joints if j in self._scene_map)
         message = "Connected to {0} - {1}/{2} buttons matched".format(
             root.split("|")[-1], matched, len(bodymap.BUTTONS))
         if self._prefix:
@@ -227,14 +227,6 @@ class PickerWindow(QtWidgets.QMainWindow):
     def bound_root(self):
         """Current root's DAG path, re-resolved from its UUID, or None."""
         return naming.path_from_uuid(self._root_uuid)
-
-    def refresh(self):
-        """Re-read the bound skeleton, following it through renames or moves."""
-        root = self.bound_root()
-        if root is None:
-            self.auto_connect()
-            return
-        self._bind(root)
 
     # -- view state ----------------------------------------------------------
 
@@ -251,7 +243,7 @@ class PickerWindow(QtWidgets.QMainWindow):
 
         fk_nodes = {}
         for joint in self._scene_map:
-            if joint not in self._joint_to_id:
+            if joint not in self._fk_joints:
                 continue
             paths = cmds.ls(fkcontrols.controller_name(joint),
                             long=True) or []

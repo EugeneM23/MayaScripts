@@ -35,10 +35,7 @@ def selected_ids(resolution, selected_paths):
     same-named controller must not light our buttons up.
     """
     found = []
-    for button in bodymap.BUTTONS:
-        if resolution.get(button.id) in selected_paths:
-            found.append(button.id)
-    for button in bodymap.IK_BUTTONS:
+    for button in bodymap.BUTTONS + bodymap.IK_BUTTONS:
         if resolution.get(button.id) in selected_paths:
             found.append(button.id)
     return found
