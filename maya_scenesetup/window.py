@@ -17,6 +17,7 @@ import traceback
 import maya.cmds as cmds
 
 from maya_scenesetup import attach
+from maya_scenesetup import camera as camerarig
 from maya_scenesetup import catalog
 from maya_scenesetup import connect as linking
 from maya_scenesetup import skeleton
@@ -257,6 +258,25 @@ def connect_arms():
     _status(linking.connect(carrier, skeleton.scene_map(root)))
 
 
+def camera_setup():
+    """Bake the camera bone onto a camera, then drive the bone from it.
+
+    No character needs to be bound: the camera bone often sits outside the
+    skeleton's own subtree, so the resolver falls back to the scene.
+    """
+    root = skeleton.current_root()
+    cmds.text(_BOUND, edit=True, label=bound_message(root))
+
+    bone, problem = camerarig.resolve_bone(skeleton.scene_map(root))
+    if problem:
+        _status(problem)
+        return
+
+    start = cmds.playbackOptions(query=True, minTime=True)
+    end = cmds.playbackOptions(query=True, maxTime=True)
+    _status(camerarig.setup(bone, start, end))
+
+
 def disconnect_arms():
     """Hands back on the root control, weapon back in the hand."""
     entry = _entry()
@@ -313,6 +333,14 @@ def show_window():
                 annotation="Hands back on the root control, weapon back in "
                            "the hand. The weapon keeps its animation.",
                 command=lambda *_args: _run(disconnect_arms))
+
+    cmds.separator(height=8, style="in")
+    cmds.button(label="Camera Setup", height=28,
+                annotation="Make a camera on camera_bone, bake the bone's "
+                           "animation onto it, and drive the bone from the "
+                           "camera. The axis offset comes from a camera you "
+                           "have placed, or from the measured default.",
+                command=lambda *_args: _run(camera_setup))
 
     cmds.text(_STATUS, label="", align="left")
 
