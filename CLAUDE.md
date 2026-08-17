@@ -63,6 +63,13 @@ Four things that will waste a run if forgotten:
 4. **The user works in the scene while you do.** Scene state changes between
    runs. Never assume the state a previous run left; re-read it, and make
    verification scripts bind explicitly rather than relying on auto-connect.
+5. **The port executes one sent line TWICE** (measured: run-once guards
+   tripping inside a single send, twice in a row). The second pass runs after
+   the first completes and re-runs the whole script over the scene the first
+   pass just changed — it overwrote result files with trivially-clean numbers
+   and derailed a whole investigation. The runner must be idempotent: create
+   a `<out>.ran` marker first thing, `SystemExit` silently when it exists,
+   and give every run its own output file name.
 
 ## Running tests
 
@@ -183,7 +190,10 @@ bones to chains, including clavicles and balls).
 controllers through OverRig knots: up to 17 chains over the 64 bones
 (`apply_ForwHierarhy` per chain, `apply_parentConstrAnim` for root), existing
 animation baked onto the controllers, our sized rings attached as shapes on
-the knots, machinery locators/joints hidden. `only=` restricts it to named
+the knots, machinery locators/joints hidden. The whole capture loop runs
+inside `overrig.full_rate_capture` — DOUBLED time — because OverRig's capture
+only samples its aim rig on every second frame (trap 35); the entry points
+refuse to run under a time-slider highlight (trap 36). `only=` restricts it to named
 chains — the hybrid Build and Switch both use that. Chains are then
 **coupled** with `apply_Parent_in` (selection: child first, parent last): each
 chain-root controller hangs off its parent bone's controller, animation re-baked
@@ -548,6 +558,44 @@ C_parent` construction rather than a measurement.
    that are not differences.** A bone that read `-336.754` comes back reading
    `23.246`: the same rotation, written the other way round. Compare world
    matrices.
+
+35. **OverRig's chain capture samples its aim rig on every SECOND frame.**
+   The loop inside `apply_ForwHierarhy`'s capture increments its counter
+   twice per iteration (a second `$i++` in the body, ~line 5404), so the
+   `worldUpObject` locators that decide each knot's orientation are snapped
+   every other frame with linear tangents and INTERPOLATED between; the
+   dense bake then records that approximation. With the padded range
+   starting at -1 the sampled frames are the even ones: a fast sword-attack
+   clip measured up to **20.3 cm wrong on every odd frame and exactly zero
+   on every even frame** ("смещение в определённых кадрах"). Slow or baked
+   animation hides it, which is why every earlier live proof passed. Fixed
+   by `overrig.full_rate_capture`: build_fk runs its whole capture loop in
+   DOUBLED time (bone and rig curves scaled x2, playback x2), so every real
+   frame lands on a sampled slot, then everything is scaled back and the
+   half-frame keys are cut from captured transform channels — but never
+   from the `attach` weight curves, whose fade lives half a frame outside
+   the range and must stay. `root`/`pelvis` never suffered: single-bone
+   chains go through `apply_parentConstrAnim`, which has no aim rig.
+   Proof: `verify_capture_full_rate.py`.
+
+36. **OverRig bakes across the time slider's HIGHLIGHT, and the graph
+   editor's curve selection, before the playback range.** Its range reader
+   (`timeControl -q -ra`, then `keyframe -q -n -sl`) sits in front of
+   nineteen bakes. A highlight the animator dragged and forgot silently
+   clips every capture and teardown bake to itself — a teardown under one
+   would freeze everything outside it. Every entry point that runs MEL now
+   refuses under a multi-frame highlight (`overrig.slider_selection`), and
+   `full_rate_capture` clears the graph-editor key selection before
+   capturing.
+
+37. **A bridge merge onto a rigged skeleton lands on part of the bones and
+   says nothing.** Keying a constrained channel splices a `pairBlend` in,
+   and the importer skips other constrained channels entirely: measured in
+   the live scene, 32 unrigged bones took the new clip while 60 rigged
+   bones kept playing the old one — two animations on one character, which
+   reads exactly like "the rig drifted". `animimport.import_clip` now
+   refuses a merge when target joints carry constraints, naming Bake+Delete
+   as the cure.
 
 ## Retargeting Manny onto other skeletons
 
