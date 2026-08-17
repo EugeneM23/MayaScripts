@@ -71,6 +71,20 @@ Four things that will waste a run if forgotten:
    and derailed a whole investigation. The runner must be idempotent: create
    a `<out>.ran` marker first thing, `SystemExit` silently when it exists,
    and give every run its own output file name.
+6. **A port that accepts connections but runs nothing means Maya's idle queue
+   is blocked, not that the code is broken.** The commandPort is drained on
+   idle, so a modal dialog waiting for a click leaves the socket accepting
+   data that nobody reads: `create_connection` succeeds, the send succeeds,
+   and the runner's marker file is never created. The measurement that
+   settles it in one step is **CPU delta over a few seconds** — a busy Maya
+   climbs, a blocked one is flat zero (measured: 0.00 s over 6 s while
+   `Responding` still read True, PID alive, 1.4 GB resident). Two consequences.
+   Neither Python nor MEL gets through, so trying the other syntax proves
+   nothing. And every line sent meanwhile is still QUEUED: it fires
+   unattended the moment the dialog is dismissed. Disarm a queued run by
+   **deleting its runner file** — `exec(open(...).read())` then raises
+   FileNotFoundError instead of baking the animator's scene while nobody is
+   watching.
 
 ## Running tests
 
@@ -82,7 +96,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 564 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 605 tests at time of writing, all passing.
 
 Testing code that needs `maya.cmds` without a Maya session: inject a fake into
 `sys.modules` and **rebind the module attribute** (`naming.cmds = fake`). Do not
@@ -105,6 +119,7 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `picker_window.py` | Window, toolbar, Maya selection wiring, scriptJob | Qt + `maya.cmds` |
 | `overrig.py` | Thin binding to the MEL toolset, no policy | `maya.cmds`, `maya.mel` |
 | `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig` |
+| `aimrig.py` | The aim manifest: record, resolve a selection, bake and delete. Knows nothing about weapons | `maya.cmds`, `builder`, `overrig` |
 | `axes.py` | Rotation algebra for controller axes, pure | `maya.api.OpenMaya` only |
 | `fkchains.py` | Chain tables + pure chain resolution (chain_root, innermost_owner, ...) | stdlib + `builder` (for `_is_inside`/`LIMBS`) |
 | `fkrings.py` | Ring sizing from the skin, knot dressing | `maya.cmds`, OpenMaya, `bodymap`, `naming`, `fkchains` |
@@ -375,6 +390,19 @@ C_parent` construction rather than a measurement.
   was a custom spline rig, preserved at `0e0794f`.
 - **The IK proc reads the timeline range** (`timeControl -q -ra`) and bakes across
   it. Not a no-op even on an unanimated skeleton.
+- **The aim button does not build the aim.** `make_aim_from_selected(1)`
+  creates the two locators (`<name>_top`, `<name>_side`) snapped onto the
+  object and arms a run-once `scriptJob -ro 1 -cf "SomethingSelected"`; the
+  rig — parentConstraint the locators to the source, bake, drop the
+  constraints, then `aimConstraint -mo -aimVector 1 0 0 -upVector 0 1 0
+  -worldUpObject <side>` — is built later, **when the animator deselects**.
+  That gap is where the locators get dragged into place by hand. Anything
+  automating it has to call the deferred half itself
+  (`overrig.build_aim`), or the build lands outside the caller's undo chunk
+  and node diff and the job stays armed to fire again. The build proc is
+  driven by MEL globals the create proc sets, not by the selection, so
+  calling it directly is well defined. Its bake reads
+  `playbackOptions -ast/-aet`, never `timeControl -q -ra`.
 - **`OverRig_knots` does not record everything OverRig creates.** It holds the
   three renamed groups per limb. The locators, expressions, `pairBlend` nodes and
   the *second* parentConstraint on each source joint are in no set at all. This
@@ -843,8 +871,8 @@ motion is unchanged to 0.000000000 across the timeline and the offset holds at
 every frame.
 
 A small window: a dropdown of weapon models, an **Add** button that imports the
-chosen one and hangs it on `weapon_r`, and live rotate/translate fields for
-dialling in the grip. Design:
+chosen one and hangs it on `weapon_r`, live rotate/translate fields for
+dialling in the grip, and an **Add Aim** button (below). Design:
 `docs/superpowers/specs/2026-08-17-weapon-attach-design.md`, proof:
 `docs/superpowers/plans/verify_weapons.py` (**17/17 green** in the Manny scene).
 
@@ -858,7 +886,8 @@ import maya_scenesetup; maya_scenesetup.show_window()
 | `catalog.py` | the weapon table and lookups, pure data | **stdlib only** |
 | `skeleton.py` | which character, and where its weapon bone is | `maya.cmds`, `maya_overrig` |
 | `attach.py` | import, replace, parent, read/write offsets | `maya.cmds` |
-| `window.py` | the `cmds` window, offsets, optionVars | `maya.cmds` + the three above |
+| `aim.py` | where the aim locators go, and the press that builds it | `maya.cmds`, OpenMaya, `attach`, `overrig`, `aimrig` |
+| `window.py` | the `cmds` window, offsets, optionVars | `maya.cmds` + the four above |
 
 `catalog.py` stays stdlib-only (subprocess test) and `__init__.py` resolves
 `show_window` through `__getattr__`, both for the same reasons as
@@ -928,6 +957,74 @@ says "off the weapon" and never names a destination that may not exist. The
 weapon's animation is re-baked into the bone rather than stripped: whatever was
 animated out in the world survives, at the price of the offset fields staying
 inert until someone deletes those keys.
+
+**Add Aim** puts OverRig's aim on the weapon with both locators placed for
+you — the thing the native button leaves to hand-dragging. Design:
+`docs/superpowers/specs/2026-08-17-weapon-aim-design.md`, proof:
+`docs/superpowers/plans/verify_weapon_aim.py` (**written, not yet run —
+Maya's idle queue was blocked when it was sent; see bridge note 6**).
+`maya_scenesetup/aim.py` + `maya_overrig/aimrig.py`. Works wherever the
+weapon is, in the hand or out in world after Connect — the user's call, the
+button does not check.
+
+**The locators are placed from the model's own measured extents, never from an
+axis convention.** The longest local axis is the blade; its **signed** further
+end is the tip, because the origin sits in the grip and a model authored down
+−Y must work with no special case. Measured on the real LongSword through the
+port: blade on **Y with the tip at +115.925**, crossguard on X (±15.576),
+thickness on Z (±1.570). `_top` goes at `tip * 1.15`; `_side` on the
+second-longest axis at the **same distance**, positive on a tie — and a blade
+is symmetric across its width, so the tie is the normal case, which is why
+ties break by axis order rather than by sort luck.
+
+That is correct even though OverRig hardcodes `aimVector 1 0 0`: the constraint
+is built with `-mo`, so the direction that tracks the target afterwards is
+whichever pointed at it when the offset was measured — the blade, not local
++X. Placing by geometry is what makes the aim intuitive, not a workaround.
+Placing along local +X would aim 90° off the blade on this model. Two
+caveats: the aim is set up **against the pose on the current frame**, and a
+model with no mesh points (or a zero blade extent) is refused rather than
+given an invented distance.
+
+**The aim goes on the GEOMETRY, not the carrier** — `attach.model_root`, the
+same node Connect hangs the IK hands on. The animator grabs the geometry
+(trap 34), the hands then follow the aim for free, and the grip offsets stay
+writable because `setAttr` into a constrained channel raises. Honest side
+effect, and the status line says it: once the aim exists the carrier's
+**Rotate has no visible effect** (the constraint fixes the geometry's world
+orientation), while Translate still works.
+
+**The aim has a manifest of its own**, built like the limb and chain
+manifests — a UUID diff of the whole scene across the build, minus
+animCurves. Nothing smaller works: OverRig's aim leaves a constraint node
+parented under the source, and a manifest from `OverRig_knots` would record
+only the locators and leave that constraint live, driven by nothing (traps 3
+and 4). The set is `RigPicker_aim_<key>` but is **never** found by that name
+(Maya uniquifies; two characters can hold the same sword) — discovery is by
+prefix, and identity comes from two string attributes: `rigPickerSource`
+(one UUID, the node the bake lands on) and `rigPickerHandles` (UUIDs whose
+selection means this aim — the source and the carrier). **Neither is a
+member**, because members get deleted and the sword must not.
+
+**Bake+Delete in the picker resolves it by EXACT match**, after normalising a
+selected shape to its transform. Deliberately no descendant walk: after
+Connect the IK hand controls are DAG children of the sword geometry, so
+"descendant of the source" would resolve a hand-control click into the aim —
+trap 9 and trap 34 from a third side. The safe direction of failure here is
+"nothing happens", not "the wrong rig comes apart". The bake order is
+bake-while-the-constraint-still-drives, strip the constraint channels, delete
+the members, then delete the set only if it still exists (trap 18). A source
+someone deleted by hand still gets its orphaned locators cleaned up. The
+button no longer needs a bound skeleton when only an aim is selected.
+
+Two guards, and the split is measured rather than assumed: the aim **build**
+is not gated on the time-slider highlight, because its bake reads
+`playbackOptions -ast/-aet` and never `timeControl -q -ra`; the aim **bake**
+is, because `apply_Fast_Bake` is one of the nineteen that do (trap 36).
+`overrig.mel_gate()` now holds both guards for every MEL entry point in the
+repo; `fkcontrols._mel_gate` is a delegating alias. A second Aim press
+refuses; **Add refuses while an aim exists**, since it deletes the carrier
+whole and would leave two locators driving a deleted node.
 
 Offsets are the carrier's local rotate/translate, written with **autoKey off**
 (trap 14), read back from the scene on open, on Add and on switching the
