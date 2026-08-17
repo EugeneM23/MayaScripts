@@ -51,6 +51,30 @@ class FpsPolicy(unittest.TestCase):
         self.assertEqual(animimport.fps_warning(30.0, None), "")
 
 
+class RiggedTargetMessage(unittest.TestCase):
+    """A merge onto a rigged skeleton lands only on the unconstrained bones:
+    Maya splices a pairBlend on some channels and skips others, leaving the
+    character playing two clips at once. The import must refuse instead."""
+
+    def test_names_the_count_and_a_sample(self):
+        message = animimport.rigged_target_message(
+            ["pelvis", "hand_r", "spine_01"])
+        self.assertIn("3", message)
+        self.assertIn("pelvis", message)
+        self.assertIn("Bake+Delete", message)
+
+    def test_long_lists_are_trimmed(self):
+        names = ["bone_{0:02d}".format(i) for i in range(20)]
+        message = animimport.rigged_target_message(names)
+        self.assertIn("20", message)
+        self.assertNotIn("bone_19", message)
+
+    def test_sorted_so_the_message_is_stable(self):
+        first = animimport.rigged_target_message(["b", "a"])
+        second = animimport.rigged_target_message(["a", "b"])
+        self.assertEqual(first, second)
+
+
 class SceneFps(unittest.TestCase):
 
     def test_knows_the_units_maya_reports(self):

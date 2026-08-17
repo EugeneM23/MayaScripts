@@ -147,6 +147,29 @@ NO_TARGET_MESSAGE = (
     "no skeleton in the scene to merge onto - select a joint of the one you "
     "mean, or switch to 'as a new skeleton'")
 
+
+def rigged_target_message(names):
+    """Refusal text for a merge onto a skeleton that is still rigged.
+
+    Keying a constrained channel makes Maya splice a pairBlend in, and the
+    importer skips other channels entirely, so the merge lands on part of the
+    skeleton and the character plays two clips at once (measured: 32 bones on
+    the new clip, 60 still on the rig's). Naming the cure beats describing
+    the mess.
+    """
+    shown = ", ".join(sorted(names)[:4])
+    if len(names) > 4:
+        shown += ", ..."
+    return ("the target skeleton is rigged - {0} bone(s) carry constraints "
+            "(e.g. {1}); Bake+Delete the rig, then import".format(
+                len(names), shown))
+
+
+def constrained_joints(joints):
+    """The joints a rig is still driving, by their constraint children."""
+    return [j for j in joints
+            if cmds.listRelatives(j, children=True, type="constraint")]
+
 AMBIGUOUS_TARGET_MESSAGE = (
     "several skeletons in the scene - select a joint of the one you mean, or "
     "switch to 'as a new skeleton'")
@@ -304,6 +327,10 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
                 AMBIGUOUS_TARGET_MESSAGE if skeleton_roots()
                 else NO_TARGET_MESSAGE)
         target_joints = joints_under(target)
+        rigged = constrained_joints(target_joints)
+        if rigged:
+            raise RuntimeError(rigged_target_message(
+                [_short(j) for j in rigged]))
         # Clear first. The importer rewrites curves in place - same names and
         # same uuids, measured - so without this there is no way to tell what
         # the clip touched, and bones missing from the clip would keep frames
