@@ -770,6 +770,8 @@ thing to move, and a child the animator parented by hand is never touched.
 deliberate: trap 22 is about losing animation curves, a weapon model has none,
 and `returnNewNodes` gives the exact node list `FBXImport` cannot report at
 all. Say this out loud in the code, or the next reader "fixes" it into a bug.
+The import mode is set explicitly on every import and the previous one put
+back — see trap 33, which is what `cmds.file` DOES inherit.
 
 Offsets are the carrier's local rotate/translate, written with **autoKey off**
 (trap 14), read back from the scene on open, on Add and on switching the
@@ -789,6 +791,19 @@ deletes something the animator wanted.
     `shear`, both pivots, both pivot translates and `rotateAxis` as well, and
     the carrier is now built empty and filled rather than grouped around the
     model. Live: worst world-matrix element 28.5130917 → 0.0000000.
+33. **The FBX import MODE is one global setting for the whole session, and it
+    reaches `cmds.file` even though the curve settings do not.** `maya_uebridge`
+    leaves the plugin on `FBXImportMode -v exmerge`, where the importer matches
+    names against the scene and **creates nothing**. So importing one animation
+    from Unreal silently disarmed the weapon tool for the rest of the session:
+    `cmds.file(..., returnNewNodes=True)` returned `[]` and Add reported
+    "nothing came out of LongSword_02.fbx" — a message that points at the file
+    while the file is fine. This is the other half of trap 22: `cmds.file`
+    ignores the FBXImport* settings that carry animation, and inherits the one
+    that decides whether nodes are created at all. Any tool importing FBX must
+    set the mode it needs and put the previous one back; never inherit.
+    `verify_weapons.py` forces `exmerge` before its first attach so the
+    regression cannot come back quietly.
 
 ## Conventions
 

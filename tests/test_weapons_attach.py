@@ -133,6 +133,85 @@ class FindAttached(unittest.TestCase):
         self.assertEqual(fake.deleted, [])
 
 
+class FakeMel(object):
+    """The FBX plugin's option state, as maya.mel answers for it."""
+
+    def __init__(self, mode="exmerge"):
+        self.mode = mode
+        self.commands = []
+
+    def eval(self, command):
+        self.commands.append(command)
+        if command.strip() == "FBXImportMode -q":
+            return self.mode
+        if command.startswith("FBXImportMode -v"):
+            self.mode = command.rsplit(None, 1)[-1]
+        return None
+
+
+class FakeImportCmds(object):
+    """Enough of maya.cmds to watch what state the import runs in."""
+
+    def __init__(self, mel, nodes=("|LongSwordMesh",), boom=False):
+        self._mel = mel
+        self._nodes = list(nodes)
+        self._boom = boom
+        self.mode_during_import = None
+
+    def pluginInfo(self, name, query=False, loaded=False, **kwargs):
+        return True
+
+    def loadPlugin(self, name, quiet=False, **kwargs):
+        return [name]
+
+    def file(self, path, **kwargs):
+        self.mode_during_import = self._mel.mode
+        if self._boom:
+            raise RuntimeError("import failed")
+        return list(self._nodes)
+
+    def ls(self, nodes, long=False, type=None, **kwargs):
+        return list(nodes)
+
+
+class ImportMode(unittest.TestCase):
+    """The FBX import mode is global and outlives whoever set it.
+
+    Measured 2026-08-17 in the user's session: maya_uebridge leaves the plugin
+    on `exmerge`, where the importer matches names against the scene and
+    creates NOTHING. cmds.file then returns an empty list and Add reports
+    "nothing came out of ...". The mode must be set for every import, never
+    inherited.
+    """
+
+    def setUp(self):
+        self.mel = FakeMel("exmerge")
+        self.cmds = FakeImportCmds(self.mel)
+        attach.mel = self.mel
+        attach.cmds = self.cmds
+
+    def test_the_import_runs_in_add_mode(self):
+        attach.import_model("C:/x/sword.fbx")
+        self.assertEqual(self.cmds.mode_during_import, "add")
+
+    def test_the_previous_mode_is_put_back(self):
+        """The bridge sets its own mode on every import, but leaving another
+        tool's session state rearranged is not ours to do."""
+        attach.import_model("C:/x/sword.fbx")
+        self.assertEqual(self.mel.mode, "exmerge")
+
+    def test_the_mode_is_put_back_when_the_import_blows_up(self):
+        self.cmds = FakeImportCmds(self.mel, boom=True)
+        attach.cmds = self.cmds
+        with self.assertRaises(RuntimeError):
+            attach.import_model("C:/x/sword.fbx")
+        self.assertEqual(self.mel.mode, "exmerge")
+
+    def test_returns_what_arrived(self):
+        self.assertEqual(attach.import_model("C:/x/sword.fbx"),
+                         ["|LongSwordMesh"])
+
+
 class Seat(unittest.TestCase):
     """Zeroing translate and rotate does NOT put a node on its parent.
 

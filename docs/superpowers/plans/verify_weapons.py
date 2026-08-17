@@ -9,6 +9,7 @@ undo reverts a chunk of prior work instead.
 """
 
 import maya.cmds as cmds
+import maya.mel as mel
 
 from maya_weapons import attach
 from maya_weapons import catalog
@@ -51,7 +52,19 @@ check("the bone belongs to the bound character",
 was_attached = attach.find_attached(bone) is not None
 
 # --- attach with no offsets ----------------------------------------------
+# The FBX import mode is one global setting for the session. Put it where the
+# UE bridge leaves it -- `exmerge`, which matches names and creates nothing --
+# so this proves the case that actually broke rather than a clean-room one.
+if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
+    cmds.loadPlugin("fbxmaya", quiet=True)
+mel.eval("FBXImportMode -v exmerge")
+
 carrier = attach.attach(entry, bone)
+check("imports even with the plugin left in exmerge",
+      bool(cmds.listRelatives(carrier, allDescendents=True, type="mesh")))
+check("and puts the session's import mode back",
+      mel.eval("FBXImportMode -q") == "exmerge",
+      repr(mel.eval("FBXImportMode -q")))
 check("carrier is a child of the bone",
       carrier.startswith(bone + "|"), carrier)
 check("carrier is marked",
@@ -122,16 +135,38 @@ def free_channel(plug):
     return not cmds.getAttr(plug, lock=True)
 
 
-# Bending the arm is the only direct proof that the weapon rides it. The
+def pokeable(joint):
+    """A rotate channel that would move `joint` and is ours to write.
+
+    The bone itself once the character is bare; once a rig is built its
+    rotates are driven by a pairBlend, so the FK controller is asked next.
+    Baked curves count as driven -- rewriting the animator's curves to prove
+    a point is not on the table.
+    """
+    candidates = [joint]
+    controller = cmds.ls(joint.split("|")[-1] + "_FK_ctrl", long=True) or []
+    candidates.extend(controller)
+    for node in candidates:
+        for axis in "ZXY":
+            plug = "{0}.rotate{1}".format(node, axis)
+            if free_channel(plug):
+                return plug
+    return None
+
+
+# Turning the arm is the only direct proof that the weapon rides it. The
 # channel is read first and written back afterwards -- never a literal rest
-# value -- and autoKey is off, or the poke would key the animator's bone.
+# value -- and autoKey is off, or the poke would key the animator's rig.
 elbow = cmds.listRelatives(bone, parent=True, fullPath=True)[0]
 elbow = cmds.listRelatives(elbow, parent=True, fullPath=True)[0]
-plug = elbow + ".rotateZ"
+plug = pokeable(elbow)
 
-if not free_channel(plug):
-    check("the elbow is free to poke", False,
-          plug + " is driven or locked; carry unproven")
+if plug is None:
+    print("NOTE  nothing on {0} is free to turn -- a rig drives it and its "
+          "curves are the animator's. The carry is unmeasured in this scene "
+          "state; what stands is that the carrier is a DAG child of the bone "
+          "with a constant local matrix, checked above.".format(
+              elbow.split("|")[-1]))
 else:
     autokey = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
@@ -150,8 +185,8 @@ else:
 
     bone_moved = biggest_difference(before_bone, after_bone)
     weapon_moved = biggest_difference(before_weapon, after_weapon)
-    check("bending {0} moves the weapon with it".format(
-        elbow.split("|")[-1]),
+    check("turning {0} moves the weapon with it".format(
+        plug.split("|")[-1]),
         bone_moved > 1e-3 and weapon_moved > 1e-3,
         "bone {0:.3f}, weapon {1:.3f}".format(bone_moved, weapon_moved))
 

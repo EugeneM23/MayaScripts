@@ -11,6 +11,7 @@ that identified a node by name has paid for it.
 """
 
 import maya.cmds as cmds
+import maya.mel as mel
 
 MARKER = "mayaWeapon"
 
@@ -75,8 +76,21 @@ def import_model(path):
     if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
         cmds.loadPlugin("fbxmaya", quiet=True)
 
-    new = cmds.file(path, i=True, type="FBX", returnNewNodes=True,
-                    ignoreVersion=True) or []
+    # The plugin's import mode is one global setting that lives for the whole
+    # Maya session, and it DOES reach cmds.file even though the curve-related
+    # settings do not (trap 22, from the other side). maya_uebridge leaves it
+    # on `exmerge`, where the importer matches names against the scene and
+    # creates nothing at all -- so after any animation import from Unreal, the
+    # weapon silently stopped arriving. Set it for every import, inherit never.
+    previous = mel.eval("FBXImportMode -q")
+    mel.eval("FBXImportMode -v add")
+    try:
+        new = cmds.file(path, i=True, type="FBX", returnNewNodes=True,
+                        ignoreVersion=True) or []
+    finally:
+        if previous:
+            mel.eval("FBXImportMode -v {0}".format(previous))
+
     return outermost(cmds.ls(new, long=True, type="transform") or [])
 
 
