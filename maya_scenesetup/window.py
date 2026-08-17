@@ -91,6 +91,10 @@ def linked_message(entry):
     return "{0} drives the arms".format(entry.label)
 
 
+def attached_message(entry, bone):
+    return "{0} on {1}".format(entry.label, bone.split("|")[-1])
+
+
 # ------------------------------------------------------------------- state
 
 def _entry():
@@ -147,8 +151,7 @@ def _carrier(entry):
     once connected it lives out in world space and the bone knows nothing
     about it any more.
     """
-    root = skeleton.current_root()
-    cmds.text(_BOUND, edit=True, label=bound_message(root))
+    root = _bound_root()
     if not root:
         return None, None, None, False
     bone = skeleton.resolve_bone(root, entry.bone)
@@ -161,6 +164,29 @@ def _carrier(entry):
 
     linked = linking.linked_carrier()
     return root, bone, linked, linked is not None
+
+
+def _bound_root():
+    """The character, with the header label refreshed to match."""
+    root = skeleton.current_root()
+    cmds.text(_BOUND, edit=True, label=bound_message(root))
+    return root
+
+
+def _locate(entry):
+    """Root, bone, carrier and link state, or None with the status set.
+
+    The shared front half of every weapon callback: no character and a
+    missing bone end the press the same way everywhere.
+    """
+    root, bone, carrier, linked = _carrier(entry)
+    if not root:
+        _status(NO_CHARACTER)
+        return None
+    if not bone:
+        _status(missing_bone_message(root, entry.bone))
+        return None
+    return root, bone, carrier, linked
 
 
 # --------------------------------------------------------------- callbacks
@@ -183,7 +209,7 @@ def refresh():
         rotate, translate = attach.read_offsets(carrier)
         _set_fields(rotate, translate)
         _status(linked_message(entry) if linked
-                else "{0} on {1}".format(entry.label, bone.split("|")[-1]))
+                else attached_message(entry, bone))
         return
 
     _set_fields(*_remembered(entry))
@@ -198,13 +224,10 @@ def refresh():
 def add_weapon():
     """Put the chosen weapon into its bone, replacing what we put there before."""
     entry = _entry()
-    root, bone, _carrier_now, linked = _carrier(entry)
-    if not root:
-        _status(NO_CHARACTER)
+    located = _locate(entry)
+    if located is None:
         return
-    if not bone:
-        _status(missing_bone_message(root, entry.bone))
-        return
+    _root, bone, _carrier_now, linked = located
     if linked:
         # Replacing deletes the carrier, and the IK hand controls are its DAG
         # children: this press would take both arm rigs down unbaked.
@@ -236,19 +259,16 @@ def offsets_changed():
         _status(LINKED_NO_OFFSETS)
         return
     attach.write_offsets(carrier, rotate, translate)
-    _status("{0} on {1}".format(entry.label, bone.split("|")[-1]))
+    _status(attached_message(entry, bone))
 
 
 def connect_arms():
     """Hand the arms over to the weapon: both to IK, hands onto the prop."""
     entry = _entry()
-    root, bone, carrier, linked = _carrier(entry)
-    if not root:
-        _status(NO_CHARACTER)
+    located = _locate(entry)
+    if located is None:
         return
-    if not bone:
-        _status(missing_bone_message(root, entry.bone))
-        return
+    root, _bone, carrier, linked = located
     if linked:
         _status(ALREADY_CONNECTED)
         return
@@ -264,8 +284,7 @@ def camera_setup():
     No character needs to be bound: the camera bone often sits outside the
     skeleton's own subtree, so the resolver falls back to the scene.
     """
-    root = skeleton.current_root()
-    cmds.text(_BOUND, edit=True, label=bound_message(root))
+    root = _bound_root()
 
     bone, problem = camerarig.resolve_bone(skeleton.scene_map(root))
     if problem:
@@ -280,13 +299,10 @@ def camera_setup():
 def disconnect_arms():
     """Hands back on the root control, weapon back in the hand."""
     entry = _entry()
-    root, bone, carrier, linked = _carrier(entry)
-    if not root:
-        _status(NO_CHARACTER)
+    located = _locate(entry)
+    if located is None:
         return
-    if not bone:
-        _status(missing_bone_message(root, entry.bone))
-        return
+    _root, bone, carrier, linked = located
     if not linked:
         _status(NOT_CONNECTED)
         return
@@ -338,8 +354,8 @@ def show_window():
     cmds.button(label="Camera Setup", height=28,
                 annotation="Make a camera on camera_bone, bake the bone's "
                            "animation onto it, and drive the bone from the "
-                           "camera. The axis offset comes from a camera you "
-                           "have placed, or from the measured default.",
+                           "camera. The camera lands in the bone's transform; "
+                           "only the axes differ (the measured turn).",
                 command=lambda *_args: _run(camera_setup))
 
     cmds.text(_STATUS, label="", align="left")

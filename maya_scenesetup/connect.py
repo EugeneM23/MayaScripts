@@ -74,14 +74,14 @@ def _is_carrier(path):
             and cmds.attributeQuery(attach.MARKER, node=path, exists=True))
 
 
-def linked_carrier(limbs=ARMS):
+def linked_carrier():
     """The weapon the IK hands ride, or None.
 
     Asked exactly, never by scanning the scene for the marker: the linked
     weapon is the nearest marked ancestor of an IK hand control. Two
     characters holding the same sword stay apart with no extra bookkeeping.
     """
-    for limb in limbs:
+    for limb in ARMS:
         node = builder.ik_control(limb, "end")
         if not node or not cmds.objExists(node):
             continue
