@@ -122,8 +122,9 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.build_button.setStyleSheet(_BUTTON_STYLE)
         self.build_button.setToolTip(
             "Build the rig over the current animation, replacing whatever\n"
-            "is there. Default: IK arms and legs, FK spine, head and\n"
-            "fingers. With FK Limbs on: FK controllers on every chain.")
+            "is there. Default: IK arms and legs, FK root, spine and head.\n"
+            "With FK Limbs on: FK controllers on the arms and legs too.\n"
+            "Fingers get no controllers - their buttons select the bones.")
         self.build_button.clicked.connect(lambda _checked=False: self.build_rig())
         row.addWidget(self.build_button)
 
@@ -139,8 +140,8 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.switch_button.setToolTip(
             "Convert the selected arms or legs to the opposite rig type.\n"
             "With no rig on the limb, the first press builds its IK.\n"
-            "FK becomes IK, IK becomes FK; animation is re-baked, and\n"
-            "fingers survive on the new hand control.")
+            "FK becomes IK, IK becomes FK; animation is re-baked. Finger\n"
+            "bones ride the hand either way - they carry no controllers.")
         self.switch_button.clicked.connect(
             lambda _checked=False: self.switch_selected_limbs())
         row.addWidget(self.switch_button)
@@ -231,12 +232,18 @@ class PickerWindow(QtWidgets.QMainWindow):
     # -- view state ----------------------------------------------------------
 
     def _resolution(self):
-        """Button id -> controller path, for every control that exists now.
+        """Button id -> the node it selects, for everything that exists now.
 
         FK controllers are our own renames, so the name lookup is trusted --
         the same trust align and Switch already place in it. IK controls go
         through the limb manifests, never by bare name. Unbound resolves
         nothing: an unconnected picker is inert by design.
+
+        The one exception to "controllers, never bones": the finger buttons
+        fall back to the finger BONE, because finger FK controllers are no
+        longer built and the animator poses those bones. A controller still
+        wins where one exists, so a file rigged before that change is
+        unaffected.
         """
         if not self._scene_map:
             return {}
@@ -254,7 +261,16 @@ class PickerWindow(QtWidgets.QMainWindow):
             ik_nodes[(button.limb, button.role)] = builder.ik_control(
                 button.limb, button.role)
 
-        return pickerstate.resolve(fk_nodes, ik_nodes)
+        # Existence is re-checked rather than trusted: the binding is a
+        # snapshot, and the animator keeps working in the scene while the
+        # panel is open.
+        bone_nodes = {}
+        for joint in fkcontrols.FINGER_JOINTS:
+            path = self._scene_map.get(joint)
+            if path and cmds.objExists(path):
+                bone_nodes[joint] = path
+
+        return pickerstate.resolve(fk_nodes, ik_nodes, bone_nodes)
 
     def _refresh_view(self):
         root = self.bound_root()
@@ -275,10 +291,11 @@ class PickerWindow(QtWidgets.QMainWindow):
     # -- selection -----------------------------------------------------------
 
     def apply_selection(self, ids, mode):
-        """Translate a picker request into a Maya selection of controllers.
+        """Translate a picker request into a Maya selection.
 
-        Bones are never selected -- a button acts only when its controller
-        exists, which is also what the availability dimming shows.
+        A button acts only when it resolves to something, which is also what
+        the availability dimming shows: its controller, or -- for the fingers
+        alone -- its bone.
         """
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)

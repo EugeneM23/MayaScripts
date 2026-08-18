@@ -1,4 +1,11 @@
-"""Live checks: IK rigs ride the root control, fingers stay visible.
+"""Live checks: IK rigs ride the root control, carrying the finger bones.
+
+Since 2026-08-18 the fingers have no controllers -- they are posed on the
+bones -- so what this script proves about them changed shape: not "the finger
+ring is visible on the IK hand" (trap 15) but "the finger BONE travels with the
+root control and survives a root bake untouched". The bone is the better probe
+of the two anyway: it is what the animator actually keys.
+
 
 Run inside Maya through the bridge runner (see the plan; the runner's
 explicit globals dict is what lets these helpers see module-level names).
@@ -77,9 +84,8 @@ def node_count():
                 if not cmds.objectType(n).startswith("animCurve")])
 
 
-FINGER_CTRLS = [fkcontrols.controller_name(j) for j in
-                ("index_metacarpal_l", "index_01_l", "thumb_01_l",
-                 "pinky_metacarpal_r", "middle_02_r")]
+FINGER_CTRLS = [fkcontrols.controller_name(j)
+                for j in fkcontrols.FINGER_JOINTS]
 
 auto_key = cmds.autoKeyframe(query=True, state=True)
 cmds.autoKeyframe(state=False)
@@ -121,24 +127,29 @@ print("baseline non-anim nodes: %d\n" % baseline)
 # --- hybrid build -----------------------------------------------------------
 print(fkcontrols.rebuild(smap, fk_limbs=False), "\n")
 
-# --- section 1: fingers are visible on the IK hands -------------------------
-for ctrl in FINGER_CTRLS:
-    check("finger control exists: " + ctrl, cmds.objExists(ctrl))
-    check("FINGER CONTROL IS VISIBLE: " + ctrl, visible(ctrl))
+# --- section 1: the fingers are bones, and nothing was built for them -------
+live_fingers = [c for c in FINGER_CTRLS if cmds.objExists(c)]
+check("no finger controller exists", not live_fingers, str(live_fingers[:3]))
+check("no finger chain is recorded",
+      not [c for c in fkcontrols.FINGER_CHAINS
+           if fkcontrols.chain_members(c)])
 
 for limb in ("arm_l", "arm_r"):
-    anchor = fkcontrols._limb_anchor(smap, limb)
-    check("anchor transform is visible: " + limb,
-          bool(anchor) and cmds.getAttr(anchor + ".visibility") == 1,
-          str(anchor))
-    shapes = cmds.listRelatives(anchor, shapes=True, fullPath=True) or []
-    check("anchor shape is hidden: " + limb,
-          bool(shapes) and all(cmds.getAttr(s + ".visibility") == 0
-                               for s in shapes),
-          str(shapes))
-    check("fingers hang on the anchor: " + limb,
-          is_under(fkcontrols.controller_name(
-              "index_metacarpal_" + limb[-1]), anchor))
+    # `_anchor_in`, not `_limb_anchor`: the latter CREATES the locator, which
+    # would make this gate prove its own opposite.
+    check("no IK hand anchor built for nothing: " + limb,
+          not fkcontrols._anchor_in(builder.limb_set(limb),
+                                    limb + "_IK_anchor"))
+    side = limb[-1]
+    check("finger bones ride the hand bone: " + limb,
+          is_under(smap["index_metacarpal_" + side], smap["hand_" + side]))
+    check("finger bones are unconstrained: " + limb,
+          not [j for j in fkcontrols.FINGER_JOINTS
+               if j.endswith("_" + side) and j in smap
+               and cmds.listRelatives(smap[j], children=True,
+                                      type="constraint")])
+    check("the IK hand control is visible: " + limb,
+          visible(builder.ik_control(limb, "end")))
 
 # --- section 2: every IK group rides the root control -----------------------
 root_ctrl = fkcontrols.controller_name("root")
@@ -149,15 +160,16 @@ for limb in builder.DEFAULT_IK:
         check("%s %s rides the root control" % (limb, role),
               is_under(node, root_ctrl), str(node))
 
-# The whole character must travel with the root control: bones, IK controls
-# and finger rings alike. Read the value first, then put it back.
+# The whole character must travel with the root control: bones and IK controls
+# alike, the finger bones at the far end of the chain included. Read the value
+# first, then put it back.
 cmds.currentTime(0)
 probes = {"upperarm_l bone": smap["upperarm_l"],
           "hand_l bone": smap["hand_l"],
           "foot_r bone": smap["foot_r"],
           "arm_l IK end": builder.ik_control("arm_l", "end"),
           "leg_r IK pole": builder.ik_control("leg_r", "pole"),
-          "index_l ring": fkcontrols.controller_name("index_metacarpal_l")}
+          "index_l finger bone": smap["index_03_l"]}
 before_move = {k: wpos(v) for k, v in probes.items()}
 rest = cmds.getAttr(root_ctrl + ".translate")[0]
 cmds.setAttr(root_ctrl + ".translateX", rest[0] + 50.0)
@@ -193,20 +205,23 @@ for limb in builder.DEFAULT_IK:
     check("%s IK end is back in world" % limb,
           bool(node) and not cmds.listRelatives(node, parent=True),
           str(node))
-# The fingers ride the IK hand, and the IK hand survived -- containment
-# through a surviving rig is not ownership, so a root bake must leave them
-# alone. Baking them away also orphaned their controllers unrecorded, which
-# is what made the next bake_limbs refuse ("holds OverRig nodes we did not
-# build").
+# The finger bones hang off the hand bone, which the lifted IK still drives --
+# containment through a surviving rig is not ownership, so a root bake must
+# leave the hands working. When the fingers had controllers, baking them away
+# here orphaned those controllers unrecorded and made the next bake_limbs
+# refuse ("holds OverRig nodes we did not build"). Nothing of ours is on them
+# now, so the gate is that nothing has appeared and nothing has moved.
 for limb in ("arm_l", "arm_r"):
     side = limb[-1]
-    ctrl = fkcontrols.controller_name("index_metacarpal_" + side)
-    check("FINGERS SURVIVED THE ROOT BAKE: " + limb,
-          bool(fkcontrols.chain_members("index_" + side))
-          and cmds.objExists(ctrl))
-    check("fingers still ride the lifted IK hand: " + limb,
-          is_under(ctrl, builder.ik_control(limb, "end")))
-    check("fingers still visible: " + limb, visible(ctrl))
+    finger = smap["index_metacarpal_" + side]
+    check("NO FINGER RIG APPEARED FROM THE ROOT BAKE: " + limb,
+          not fkcontrols.chain_members("index_" + side)
+          and not cmds.objExists(
+              fkcontrols.controller_name("index_metacarpal_" + side)))
+    check("finger bones still ride the hand bone: " + limb,
+          is_under(finger, smap["hand_" + side]))
+    check("finger bones still unconstrained: " + limb,
+          not cmds.listRelatives(finger, children=True, type="constraint"))
 check("torso FK is gone with the root",
       not any(cmds.objExists(fkcontrols.controller_name(j))
               for j in ("pelvis", "spine_03", "neck_01")))

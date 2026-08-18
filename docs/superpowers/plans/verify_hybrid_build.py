@@ -87,13 +87,24 @@ check("FK on the hybrid chains only",
       sorted(fk_chains) == sorted(fkcontrols.HYBRID_FK_CHAINS),
       str(sorted(fk_chains)))
 
-ik_hand = builder.ik_control("arm_l", "end")
-finger_ctrls = [fkcontrols.controller_name(dict(fkcontrols.CHAINS)[c][0])
-                for c in fkcontrols.finger_chains_for("arm_l")]
-under = [c for c in finger_ctrls
-         if cmds.objExists(c) and cmds.ls(c, long=True)[0].startswith(
-             cmds.ls(ik_hand, long=True)[0] + "|")]
-check("left fingers hang under the IK hand", len(under) == 5, str(len(under)))
+# Fingers are posed on the BONES: no controller, no manifest, and nothing
+# hanging under the IK hand for them (2026-08-18).
+finger_ctrls = [fkcontrols.controller_name(j)
+                for j in fkcontrols.FINGER_JOINTS]
+built_finger_ctrls = [c for c in finger_ctrls if cmds.objExists(c)]
+check("no finger controller exists", not built_finger_ctrls,
+      str(built_finger_ctrls[:3]))
+check("no finger chain is recorded",
+      not [c for c in fkcontrols.FINGER_CHAINS
+           if fkcontrols.chain_members(c)])
+constrained_fingers = [j for j in fkcontrols.FINGER_JOINTS if j in smap
+                       and cmds.listRelatives(smap[j], children=True,
+                                              type="constraint")]
+check("finger bones carry no constraint", not constrained_fingers,
+      str(constrained_fingers[:3]))
+check("no IK hand anchor built for nothing",
+      not fkcontrols._anchor_in(builder.limb_set("arm_l"),
+                                "arm_l_IK_anchor"))
 
 check("hand animation survived", drift_of("hand_l", hand_ref) < 0.5,
       "%.3f cm" % drift_of("hand_l", hand_ref))
@@ -110,14 +121,21 @@ check("picker: clavicle dimmed (no control in hybrid)",
       "clavicle_l" not in resolution)
 check("picker: leg IK circle live", "leg_l_ik_end" in resolution)
 check("picker: arm pole circle live", "arm_r_ik_pole" in resolution)
+check("picker: finger button live and pointing at the BONE",
+      resolution.get("index_03_l") == smap["index_03_l"],
+      str(resolution.get("index_03_l")))
+check("picker: every finger button resolves",
+      all(j in resolution for j in fkcontrols.FINGER_JOINTS if j in smap))
 
 # --- FK Limbs toggle: full FK from this dirty state ------------------------------
 message = fkcontrols.rebuild(smap, fk_limbs=True)
 print("\nfull FK build:", message, "\n")
 check("no IK left", builder.built_limbs() == [], str(builder.built_limbs()))
-check("all chains FK",
-      len(fkcontrols.built_fk_chains()) == len(fkcontrols.CHAINS),
-      str(len(fkcontrols.built_fk_chains())))
+check("every buildable chain is FK",
+      sorted(fkcontrols.built_fk_chains()) == sorted(fkcontrols.BUILDABLE),
+      str(sorted(fkcontrols.built_fk_chains())))
+check("still no finger controller with FK Limbs on",
+      not [c for c in finger_ctrls if cmds.objExists(c)])
 check("hand animation survived the flip",
       drift_of("hand_l", hand_ref) < 0.5,
       "%.3f cm" % drift_of("hand_l", hand_ref))

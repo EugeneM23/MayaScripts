@@ -85,7 +85,8 @@ resume = cmds.currentTime(query=True)
 message = fkcontrols.rebuild(scene_map, fk_limbs=False)
 print("Build said:", message)
 gate("hybrid rig built",
-     len(fkcontrols.built_fk_chains()) >= 14
+     sorted(fkcontrols.built_fk_chains())
+     == sorted(fkcontrols.HYBRID_FK_CHAINS)
      and len(builder.built_limbs()) == 4)
 
 print("\n=== 5. every bone, every frame, against the reference ===")

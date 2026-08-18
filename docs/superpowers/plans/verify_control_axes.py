@@ -4,9 +4,15 @@ Sent through the command port against a scene holding the skeleton. The script
 builds the rig itself, in two halves, so the turning step can be measured on
 its own:
 
-  phase 1 -- build the hybrid rig with `orient_controllers` suppressed, which
-             is exactly the rig this project shipped before this change;
+  phase 1 -- build the rig with `orient_controllers` suppressed, which is
+             exactly the rig this project shipped before this change;
   phase 2 -- run `orient_controllers` for real and measure what moved.
+
+The build is FULL FK (`fk_limbs=True`), not the hybrid default: gates 5 and 5b
+need left/right controller pairs, and the hybrid rig's FK is root, pelvis,
+spine and neck -- all on the midline -- since finger controllers stopped being
+built (2026-08-18). The scene is left on the hybrid rig at the end, which is
+what the animator works in.
 
 Gates, in order of what matters:
 
@@ -16,8 +22,9 @@ Gates, in order of what matters:
 2. Every controller stands in its bone's frame -- the thing the animator grabs.
 3. The rotate channels are still in the bone's axes and still read zero at the
    build pose: this change must not spend what the previous one bought.
-4. What the animator grabs and what the finger does are the same axis. Measured
-   before and after the turn, on a finger, which is where it was reported.
+4. What the animator grabs and what the bone does are the same axis. Measured
+   before and after the turn, on the lower arm (it was reported on a finger,
+   which no longer has a controller to grab).
 5. Equal values on a left/right pair still mirror the pose, and the rest frames
    now mirror the way the skeleton does.
 
@@ -133,18 +140,22 @@ if virgin:
     # this skeleton lives in its ROTATE channels, so keying a literal 0 would
     # bend the skeleton rather than leave it alone.
     for bone, attr, delta in (("spine_03", "rotateZ", 18.0),
-                              ("index_02_l", "rotateZ", -40.0),
-                              ("thumb_02_r", "rotateZ", 25.0)):
+                              ("lowerarm_l", "rotateZ", -40.0),
+                              ("hand_r", "rotateZ", 25.0)):
         base = cmds.getAttr(SCENE[bone] + "." + attr)
         cmds.setKeyframe(SCENE[bone], attribute=attr, time=start, value=base)
         cmds.setKeyframe(SCENE[bone], attribute=attr, time=end,
                          value=base + delta)
-    print("keyed spine_03, index_02_l, thumb_02_r off their rest values")
+    print("keyed spine_03, lowerarm_l, hand_r off their rest values")
 
 real_orient = fkcontrols.orient_controllers
 fkcontrols.orient_controllers = lambda *a, **k: 0
 try:
-    print("build:", fkcontrols.rebuild(SCENE, fk_limbs=False))
+    # FULL FK, not the hybrid default: gates 5 and 5b need left/right
+    # controller pairs to mirror, and since finger controllers stopped being
+    # built the hybrid rig has none at all -- its FK is root, pelvis, spine
+    # and neck, every one of them on the midline.
+    print("build:", fkcontrols.rebuild(SCENE, fk_limbs=True))
 finally:
     fkcontrols.orient_controllers = real_orient
 
@@ -263,12 +274,17 @@ def angle_between(a, b):
     return math.degrees(math.acos(abs(dot)))
 
 
-FINGER = ("index_02_l_FK_ctrl", SCENE["index_02_l"])
+# The grab probe. Reported on a finger ("оси контролов не совпадают с осями
+# костей"), but the property is every knot's: OverRig leaves its own frame
+# 85-97 deg rolled about the bone on the left. Fingers carry no controllers
+# since 2026-08-18, so the measurement moved to the lower arm -- same rig,
+# same roll, a controller that still exists.
+GRAB_PROBE = ("lowerarm_l_FK_ctrl", SCENE["lowerarm_l"])
 grab_before = None
-if cmds.objExists(FINGER[0]):
-    grab, motion, swing = turn_axis(*FINGER)
+if cmds.objExists(GRAB_PROBE[0]):
+    grab, motion, swing = turn_axis(*GRAB_PROBE)
     grab_before = angle_between(motion, grab)
-    print("finger before: rotateZ turns the bone %.2f deg about an axis "
+    print("lowerarm before: rotateZ turns the bone %.2f deg about an axis "
           "%.2f deg from the controller's own Z" % (swing, grab_before))
 
 before = sample_bones()
@@ -328,9 +344,9 @@ check("gate 3b: controllers read zero at the build pose", worst_zero < 0.01,
 
 # --- gate 4: grab and motion are the same axis ------------------------------
 if grab_before is not None:
-    grab, motion, swing = turn_axis(*FINGER)
+    grab, motion, swing = turn_axis(*GRAB_PROBE)
     grab_after = angle_between(motion, grab)
-    check("gate 4: the finger turns about the axis you grab",
+    check("gate 4: the bone turns about the axis you grab",
           grab_after < 0.5 and abs(swing - 30.0) < 0.01,
           "%.3f deg apart (was %.2f), swing %.2f" % (grab_after, grab_before,
                                                      swing))
@@ -358,8 +374,11 @@ check("gate 5: rest frames mirror as the bones do (%d pairs)" % len(pairs),
       "%d/%d also read the behaviour mirror (-1,-1,-1)"
       % (behaviour, len(pairs)))
 
-WATCH = [("index_02_l", "index_02_r"), ("index_03_l", "index_03_r"),
-         ("thumb_02_l", "thumb_02_r")]
+# Bones measured in root space after posing one left/right controller pair.
+# The far end of the chain is included on purpose: the finger bones carry no
+# controllers of their own, so they read purely as "the hand took them there".
+WATCH = [("lowerarm_l", "lowerarm_r"), ("hand_l", "hand_r"),
+         ("middle_02_l", "middle_02_r")]
 root_inverse = world(SCENE["root"]).inverse()
 
 
@@ -369,8 +388,8 @@ def in_root(node):
     return (moved.x, moved.y, moved.z)
 
 
-with poked("index_02_l_FK_ctrl", (12.0, -8.0, -35.0), frame):
-    with poked("index_02_r_FK_ctrl", (12.0, -8.0, -35.0), frame):
+with poked("lowerarm_l_FK_ctrl", (12.0, -8.0, -35.0), frame):
+    with poked("lowerarm_r_FK_ctrl", (12.0, -8.0, -35.0), frame):
         worst_mirror = 0.0
         for left, right in WATCH:
             want = list(in_root(SCENE[left]))

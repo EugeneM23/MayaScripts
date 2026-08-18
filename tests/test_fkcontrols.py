@@ -384,29 +384,131 @@ class TestLimbsRidingInside(unittest.TestCase):
         self.assertEqual(fkcontrols.limbs_riding_inside(self.MEMBERS, []), [])
 
 
+class TestFingerChains(unittest.TestCase):
+    """The ten finger chains are described but never built (2026-08-18).
+
+    The animator poses finger BONES now, so no build may create a finger
+    controller -- while `CHAINS` keeps describing them, or a scene rigged
+    before the change becomes a rig nothing can find and nothing can bake.
+    """
+
+    def test_ten_chains_five_per_hand(self):
+        self.assertEqual(len(fkcontrols.FINGER_CHAINS), 10)
+        for side in ("_l", "_r"):
+            same = [c for c in fkcontrols.FINGER_CHAINS if c.endswith(side)]
+            self.assertEqual(len(same), 5)
+
+    def test_every_finger_chain_is_a_real_chain(self):
+        names = {name for name, _ in fkcontrols.CHAINS}
+        for chain in fkcontrols.FINGER_CHAINS:
+            self.assertIn(chain, names)
+
+    def test_the_chains_stay_in_the_table(self):
+        """Teardown walks CHAINS: a chain absent from it cannot be baked."""
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(table["index_l"][-1], "index_03_l")
+        self.assertEqual(table["thumb_r"], ("thumb_01_r", "thumb_02_r",
+                                           "thumb_03_r"))
+
+    def test_both_arms_own_exactly_the_finger_chains(self):
+        owned = (fkcontrols.finger_chains_for("arm_l")
+                 + fkcontrols.finger_chains_for("arm_r"))
+        self.assertEqual(sorted(owned), sorted(fkcontrols.FINGER_CHAINS))
+
+    def test_finger_joints_are_every_bone_of_those_chains(self):
+        table = dict(fkcontrols.CHAINS)
+        expected = [j for c in fkcontrols.FINGER_CHAINS for j in table[c]]
+        self.assertEqual(sorted(fkcontrols.FINGER_JOINTS), sorted(expected))
+        self.assertEqual(len(fkcontrols.FINGER_JOINTS), 38)
+
+    def test_finger_joints_are_exactly_the_hand_map_regions(self):
+        """What the picker falls back to must be what the map draws."""
+        drawn = {b.joint for b in bodymap.BUTTONS
+                 if b.region in ("hand_l", "hand_r")}
+        self.assertEqual(set(fkcontrols.FINGER_JOINTS), drawn)
+
+    def test_no_body_bone_is_called_a_finger(self):
+        for joint in ("hand_l", "lowerarm_r", "ball_l", "spine_03", "root"):
+            self.assertNotIn(joint, fkcontrols.FINGER_JOINTS)
+
+
+class TestBuildable(unittest.TestCase):
+
+    def test_every_chain_but_the_fingers(self):
+        expected = tuple(n for n, _ in fkcontrols.CHAINS
+                         if n not in fkcontrols.FINGER_CHAINS)
+        self.assertEqual(fkcontrols.BUILDABLE, expected)
+
+    def test_eight_chains(self):
+        """18 chains minus the ten fingers."""
+        self.assertEqual(len(fkcontrols.BUILDABLE), 8)
+
+    def test_the_body_is_all_there(self):
+        self.assertEqual(set(fkcontrols.BUILDABLE),
+                         {"root", "pelvis", "spine", "neck",
+                          "arm_l", "arm_r", "leg_l", "leg_r"})
+
+    def test_keeps_chains_order(self):
+        order = [n for n, _ in fkcontrols.CHAINS]
+        self.assertEqual(list(fkcontrols.BUILDABLE),
+                         [n for n in order if n in fkcontrols.BUILDABLE])
+
+
+class TestBuildTargets(unittest.TestCase):
+    """What a build actually creates -- fingers filtered out of every path."""
+
+    def test_none_means_everything_buildable(self):
+        self.assertEqual(fkcontrols.build_targets(),
+                         list(fkcontrols.BUILDABLE))
+
+    def test_an_explicit_list_is_filtered_too(self):
+        """No caller gets a finger chain back by asking for one."""
+        self.assertEqual(fkcontrols.build_targets(["arm_l", "index_l"]),
+                         ["arm_l"])
+
+    def test_a_fingers_only_request_builds_nothing(self):
+        self.assertEqual(fkcontrols.build_targets(list(
+            fkcontrols.FINGER_CHAINS)), [])
+
+    def test_the_hybrid_set_survives_intact(self):
+        self.assertEqual(fkcontrols.build_targets(
+            list(fkcontrols.HYBRID_FK_CHAINS)),
+            list(fkcontrols.HYBRID_FK_CHAINS))
+
+    def test_unknown_names_are_dropped(self):
+        self.assertEqual(fkcontrols.build_targets(["martian", "spine"]),
+                         ["spine"])
+
+    def test_result_is_in_chains_order_whatever_the_request_order(self):
+        self.assertEqual(fkcontrols.build_targets(["leg_r", "root", "spine"]),
+                         ["root", "spine", "leg_r"])
+
+
 class TestHybridFkChains(unittest.TestCase):
 
-    def test_everything_but_the_switchable_limbs(self):
-        names = [name for name, _ in fkcontrols.CHAINS]
-        expected = tuple(n for n in names
+    def test_everything_buildable_but_the_switchable_limbs(self):
+        expected = tuple(n for n in fkcontrols.BUILDABLE
                          if n not in fkcontrols.LIMB_CHAINS)
         self.assertEqual(fkcontrols.HYBRID_FK_CHAINS, expected)
 
-    def test_torso_and_fingers_stay_fk(self):
+    def test_the_torso_stays_fk(self):
         self.assertIn("root", fkcontrols.HYBRID_FK_CHAINS)
         self.assertIn("pelvis", fkcontrols.HYBRID_FK_CHAINS)
         self.assertIn("spine", fkcontrols.HYBRID_FK_CHAINS)
         self.assertIn("neck", fkcontrols.HYBRID_FK_CHAINS)
-        self.assertIn("index_l", fkcontrols.HYBRID_FK_CHAINS)
-        self.assertIn("thumb_r", fkcontrols.HYBRID_FK_CHAINS)
+
+    def test_the_fingers_do_not(self):
+        """They used to. The animator poses the bones now."""
+        for chain in fkcontrols.FINGER_CHAINS:
+            self.assertNotIn(chain, fkcontrols.HYBRID_FK_CHAINS)
 
     def test_no_limb_chain_slips_in(self):
         for name in fkcontrols.LIMB_CHAINS:
             self.assertNotIn(name, fkcontrols.HYBRID_FK_CHAINS)
 
-    def test_fourteen_chains(self):
-        """18 chains minus the four IK limbs."""
-        self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 14)
+    def test_four_chains(self):
+        """18 chains minus the four IK limbs and the ten fingers."""
+        self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 4)
 
 
 class TestSwitchableBones(unittest.TestCase):

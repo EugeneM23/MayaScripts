@@ -103,21 +103,26 @@ check("foot animation survived the round trip",
       drift_of("foot_l", foot_ref) < 0.5,
       "%.3f cm" % drift_of("foot_l", foot_ref))
 
-# --- switch an arm: fingers must survive -------------------------------------
-finger_ctrls = [fkcontrols.controller_name(dict(fkcontrols.CHAINS)[c][0])
-                for c in fkcontrols.finger_chains_for("arm_l")]
+# --- switch an arm: the finger BONES must come with it ------------------------
+# Fingers carry no controllers since 2026-08-18, so there is nothing to lift
+# and re-hang -- what has to hold is that the bones keep riding the hand and
+# that the switch invents nothing for them.
+finger_ctrls = [fkcontrols.controller_name(j)
+                for j in fkcontrols.FINGER_JOINTS]
 done, skipped, message = fkcontrols.switch_limbs(smap, ["arm_l"])
 print("\nswitch arm:", message)
 check("arm reported switched to IK", done == ["arm_l -> IK"], str(done))
 alive = [c for c in finger_ctrls if cmds.objExists(c)]
-check("all five finger controls survived", len(alive) == 5, str(len(alive)))
+check("no finger control was built by the switch", not alive, str(alive[:3]))
+check("no finger chain recorded",
+      not [c for c in fkcontrols.FINGER_CHAINS
+           if fkcontrols.chain_members(c)])
 
 ik_hand = builder.ik_control("arm_l", "end")
 check("IK hand control found", bool(ik_hand), str(ik_hand))
-under = [c for c in alive
-         if cmds.ls(c, long=True)[0].startswith(
-             cmds.ls(ik_hand, long=True)[0] + "|")]
-check("fingers hang under the IK hand", len(under) == 5, str(len(under)))
+check("finger bones still ride the hand bone",
+      cmds.ls(smap["index_metacarpal_l"], long=True)[0].startswith(
+          cmds.ls(smap["hand_l"], long=True)[0] + "|"))
 check("hand animation survived the arm switch",
       drift_of("hand_l", hand_ref) < 0.5,
       "%.3f cm" % drift_of("hand_l", hand_ref))
@@ -140,11 +145,11 @@ check("fingers follow the IK hand", tip_moved > 5, "%.2f cm" % tip_moved)
 done, skipped, message = fkcontrols.switch_limbs(smap, ["arm_l"])
 print("\nswitch arm back:", message)
 check("arm back to FK", done == ["arm_l -> FK"], str(done))
-fk_hand = fkcontrols.controller_name("hand_l")
-under = [c for c in finger_ctrls
-         if cmds.objExists(c) and cmds.ls(c, long=True)[0].startswith(
-             cmds.ls(fk_hand, long=True)[0] + "|")]
-check("fingers hang under the FK hand again", len(under) == 5, str(len(under)))
+check("still no finger control after the round trip",
+      not [c for c in finger_ctrls if cmds.objExists(c)])
+check("finger bones ride the hand bone still",
+      cmds.ls(smap["index_metacarpal_l"], long=True)[0].startswith(
+          cmds.ls(smap["hand_l"], long=True)[0] + "|"))
 check("hand animation intact after both switches",
       drift_of("hand_l", hand_ref) < 0.5,
       "%.3f cm" % drift_of("hand_l", hand_ref))

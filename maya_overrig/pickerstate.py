@@ -9,16 +9,28 @@ Imports nothing outside the stdlib, like bodymap, so it tests in plain Python.
 from maya_overrig import bodymap
 
 
-def resolve(fk_nodes, ik_nodes):
-    """Map every resolvable button id to the controller it selects.
+def resolve(fk_nodes, ik_nodes, bone_nodes=None):
+    """Map every resolvable button id to the node it selects.
 
     `fk_nodes` is {joint: long path or None}, `ik_nodes` is {(limb, role):
-    long path or None}. Buttons whose controller is missing are simply absent
-    from the result -- absence is what the view paints as dimmed.
+    long path or None}. Buttons that resolve to nothing are simply absent from
+    the result -- absence is what the view paints as dimmed.
+
+    `bone_nodes` is {joint: long path} for the buttons the caller allows to
+    fall back to the BONE when no controller exists. That is how the finger
+    buttons stay live now that finger FK controllers are not built: the
+    animator poses those bones directly. The controller is always tried first,
+    so a scene rigged before that change still selects its controllers, and
+    nothing here needs touching if they come back.
+
+    Which buttons may fall back is deliberately the caller's business -- this
+    module knows nothing about fingers and falls back for whatever it is
+    handed.
     """
+    bone_nodes = bone_nodes or {}
     out = {}
     for button in bodymap.BUTTONS:
-        path = fk_nodes.get(button.joint)
+        path = fk_nodes.get(button.joint) or bone_nodes.get(button.joint)
         if path:
             out[button.id] = path
     for button in bodymap.IK_BUTTONS:

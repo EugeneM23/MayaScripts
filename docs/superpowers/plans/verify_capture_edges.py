@@ -100,6 +100,11 @@ check("bake kept the fingers on the hand",
           - rest_gap) < 1.0)
 
 # --- rebuild: this is where the fingers used to fall -------------------------------
+# Every finger reading below is a BONE distance, and since 2026-08-18 the
+# fingers have no controllers at all -- so what these gates now watch is the
+# arm's capture carrying the hand, with the finger bones rigidly along for the
+# ride. The edge-clipping bug this script was written for lived in the CHAIN
+# capture, which the arm still goes through.
 print("\nrebuild:", fkcontrols.rebuild(smap, fk_limbs=False)[:70])
 
 for frame in (0, 15, 30):

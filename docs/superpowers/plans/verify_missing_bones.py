@@ -13,6 +13,10 @@ gives us, and what broke two things at once:
     chain asked for `<finger>_metacarpal_<side>_FK_ctrl`, a controller such a
     skeleton never has, so the four fingers of each hand were never attached
     to the hand at all. Only the thumbs, which start at `thumb_01`, followed.
+    Finger controllers are no longer built (2026-08-18), so that half is now
+    checked as "the resolution still skips the missing bone, and nothing was
+    built on it" -- the fix, `chain_root`, is what the spine and neck of this
+    skeleton exercise anyway.
 
 No cmds.undo -- the whole script is one command. autoKey is off throughout,
 values are read before they are written back, and the test skeleton is
@@ -182,35 +186,45 @@ check("OverRig was sourced by Build itself",
 check("all four IK limbs built",
       set(builder.built_limbs()) == set(builder.DEFAULT_IK),
       str(builder.built_limbs()))
-check("torso and fingers are FK",
-      set(fkcontrols.built_fk_chains()) >= {"pelvis", "spine", "neck",
-                                            "index_l", "thumb_r"},
+check("the torso is FK",
+      set(fkcontrols.built_fk_chains()) >= {"pelvis", "spine", "neck"},
       str(fkcontrols.built_fk_chains()))
 check("no root controller was invented", not cmds.objExists("root_FK_ctrl"))
 
 # ---------------------------------------------------------------------------
-# section 2: every finger chain hangs on its hand
+# section 2: the fingers are bones, and they follow the hand as bones
 # ---------------------------------------------------------------------------
+#
+# Trap 21 was found through the fingers, and its FIX is `chain_root` -- which
+# is still what every step asks, on this skeleton's spine (no `spine_04`) and
+# neck (no `neck_02`) as much as on its hands. The pure resolution is checked
+# here as it always was; only the "and therefore it hangs on the hand" half is
+# gone, because finger controllers are no longer built (2026-08-18).
 
 table = dict(fkcontrols.CHAINS)
 for limb in ("arm_l", "arm_r"):
     side = limb[-1]
-    anchor = fkcontrols._limb_anchor(smap, limb)
-    check("anchor exists: " + limb, bool(anchor), str(anchor))
+    check("no IK hand anchor built for nothing: " + limb,
+          not fkcontrols._anchor_in(builder.limb_set(limb),
+                                    limb + "_IK_anchor"))
     for finger in ("index", "middle", "ring", "pinky", "thumb"):
         chain = "%s_%s" % (finger, side)
         ctrl = fkcontrols.chain_root_control(table[chain], smap)
         expected = ("%s_01_%s_FK_ctrl" % (finger, side))
-        check("chain root is the first bone present: " + chain,
+        check("chain root skips the missing metacarpal: " + chain,
               ctrl == expected, "%s" % ctrl)
-        check("FINGER HANGS ON THE HAND: " + chain, is_under(ctrl, anchor))
+        check("and no such controller was built: " + chain,
+              not cmds.objExists(ctrl))
+        check("the chain is not recorded: " + chain,
+              not fkcontrols.chain_members(chain))
 
 # The measurement the user made by eye: move the hand, the fingers come.
+# The bones now, rather than their rings -- same claim, one indirection less.
 cmds.currentTime(0)
 probes = {"hand_l bone": smap["hand_l"],
-          "index_l ring": "index_01_l_FK_ctrl",
-          "pinky_l ring": "pinky_01_l_FK_ctrl",
-          "thumb_l ring": "thumb_01_l_FK_ctrl"}
+          "index_l bone": smap["index_01_l"],
+          "pinky_l bone": smap["pinky_01_l"],
+          "thumb_l bone": smap["thumb_01_l"]}
 before = {k: wpos(v) for k, v in probes.items()}
 ik_end = builder.ik_control("arm_l", "end")
 rest = cmds.getAttr(ik_end + ".translate")[0]
@@ -236,16 +250,21 @@ print("\n" + fkcontrols.switch_limbs(smap, ["arm_l"])[2] + "\n")
 check("arm_l is FK now", bool(fkcontrols.chain_members("arm_l"))
       and "arm_l" not in builder.built_limbs())
 for finger in ("index", "middle", "ring", "pinky", "thumb"):
-    ctrl = fkcontrols.chain_root_control(table[finger + "_l"], smap)
-    check("finger rides the FK hand: " + finger,
-          is_under(ctrl, "hand_l_FK_ctrl"))
+    bone = smap[finger + "_01_l"]
+    check("finger bone rides the hand bone (FK arm): " + finger,
+          is_under(bone, smap["hand_l"]))
+    check("no controller appeared for it: " + finger,
+          not cmds.objExists(
+              fkcontrols.chain_root_control(table[finger + "_l"], smap)))
 
 print("\n" + fkcontrols.switch_limbs(smap, ["arm_l"])[2] + "\n")
 check("arm_l is IK again", "arm_l" in builder.built_limbs())
-anchor = fkcontrols._limb_anchor(smap, "arm_l")
+check("no anchor built by the switches either",
+      not fkcontrols._anchor_in(builder.limb_set("arm_l"),
+                                "arm_l_IK_anchor"))
 for finger in ("index", "middle", "ring", "pinky", "thumb"):
-    ctrl = fkcontrols.chain_root_control(table[finger + "_l"], smap)
-    check("finger is back on the IK hand: " + finger, is_under(ctrl, anchor))
+    check("finger bone rides the hand bone (IK arm): " + finger,
+          is_under(smap[finger + "_01_l"], smap["hand_l"]))
 
 # ---------------------------------------------------------------------------
 # section 4: it all comes apart again

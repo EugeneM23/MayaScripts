@@ -52,10 +52,40 @@ CHAINS = tuple([
     ("leg_r", ("thigh_r", "calf_r", "foot_r", "ball_r")),
 ] + _finger_chains())
 
-# What the default (hybrid) Build keeps as FK: everything that is not an IK
-# limb -- root, spine, neck and the ten finger chains.
-HYBRID_FK_CHAINS = tuple(name for name, _ in CHAINS
+# The ten finger chains, and every bone in them.
+#
+# Described here but never BUILT (2026-08-18, the user's call): the animator
+# poses finger bones directly for now. They stay in CHAINS deliberately --
+# teardown walks that table, so a chain missing from it is a rig that nothing
+# can find and nothing can bake, which is the failure mode traps 3, 5 and 16
+# were all about. A file rigged before the change still comes apart cleanly.
+FINGER_CHAINS = tuple(name for name, _ in _finger_chains())
+FINGER_JOINTS = tuple(joint for name, chain in CHAINS
+                      if name in FINGER_CHAINS for joint in chain)
+
+# What a build may CREATE, as against what the rig may contain. One switch:
+# put the finger chains back in and finger controllers return everywhere.
+BUILDABLE = tuple(name for name, _ in CHAINS if name not in FINGER_CHAINS)
+
+# What the default (hybrid) Build keeps as FK: everything buildable that is
+# not an IK limb -- root, pelvis, spine and neck.
+HYBRID_FK_CHAINS = tuple(name for name in BUILDABLE
                          if name not in LIMB_CHAINS)
+
+
+def build_targets(only=None):
+    """Chain names a build may create, in CHAINS order.
+
+    `only=None` asks for everything buildable; an explicit list is filtered
+    through the same rule, so no caller gets a finger chain by asking for one.
+    Unknown names drop out rather than raise -- `only` arrives from Switch and
+    from the picker, and a name the table does not carry is nothing to build.
+
+    Pure. The one place the "which chains exist" / "which chains get built"
+    distinction is decided, so the answer cannot drift between callers.
+    """
+    wanted = BUILDABLE if only is None else set(only)
+    return [name for name in BUILDABLE if name in wanted]
 
 
 def controller_name(joint):

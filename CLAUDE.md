@@ -85,6 +85,20 @@ Four things that will waste a run if forgotten:
    **deleting its runner file** — `exec(open(...).read())` then raises
    FileNotFoundError instead of baking the animator's scene while nobody is
    watching.
+7. **A BOM on the runner file is indistinguishable from note 6, and
+   PowerShell 5.1 puts one there by default.** `Set-Content -Encoding utf8`
+   writes UTF-8 **with** a BOM, and `exec` of a string that starts with U+FEFF
+   raises `SyntaxError` before the runner's first statement — so the `.ran`
+   marker is never written, no output file appears, and Maya's CPU stays flat
+   because nothing ran. Every symptom of a blocked idle queue, with a healthy
+   Maya on the other end. Write the runner with
+   `[System.IO.File]::WriteAllText($p, $body, (New-Object
+   System.Text.UTF8Encoding($false)))`, or `-Encoding ascii` when it is ASCII,
+   and have the runner read its payload as `open(path, encoding='utf-8')`.
+   The tell that separates the two: send a two-line payload that only prints.
+   If THAT works and the real one does not, it is not the queue. (Measured
+   2026-08-18: a `print` payload written by PowerShell as ASCII ran; the same
+   send with a BOM'd runner produced nothing at all.)
 
 ## Running tests
 
@@ -96,7 +110,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 605 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 630 tests at time of writing, all passing.
 
 Testing code that needs `maya.cmds` without a Maya session: inject a fake into
 `sys.modules` and **rebind the module attribute** (`naming.cmds = fake`). Do not
@@ -121,7 +135,7 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig` |
 | `aimrig.py` | The aim manifest: record, resolve a selection, bake and delete. Knows nothing about weapons | `maya.cmds`, `builder`, `overrig` |
 | `axes.py` | Rotation algebra for controller axes, pure | `maya.api.OpenMaya` only |
-| `fkchains.py` | Chain tables + pure chain resolution (chain_root, innermost_owner, ...) | stdlib + `builder` (for `_is_inside`/`LIMBS`) |
+| `fkchains.py` | Chain tables, what a build may create (`BUILDABLE`/`build_targets`), pure chain resolution (chain_root, innermost_owner, ...) | stdlib + `builder` (for `_is_inside`/`LIMBS`) |
 | `fkrings.py` | Ring sizing from the skin, knot dressing | `maya.cmds`, OpenMaya, `bodymap`, `naming`, `fkchains` |
 | `fkalign.py` | Controller axis algebra (align/orient) | `maya.cmds`, OpenMaya, `axes`, `fkchains` |
 | `fkcontrols.py` | FK build/bake/switch orchestration; re-exports the three above | `maya.cmds`, `maya.mel`, `bodymap`, `builder`, `overrig` + the three above |
@@ -152,14 +166,28 @@ circles (end + pole per limb, top/mid/bot for the spine), front view with the
 character's left on the viewer's right. Click selects, `shift` adds, `ctrl`
 toggles, drag marquee-selects, wheel zooms, middle-drag pans.
 
-**The picker selects controllers, never bones.** A button is live exactly when
-its controller exists right now — FK buttons resolve `<joint>_FK_ctrl` by
-name, IK circles resolve through `builder.ik_control(limb, role)` and the limb
-manifests. Everything else is dimmed and unclickable: before a build the whole
-map is inert, a limb switched to IK dims its FK buttons and lights its
-circles. Availability is recomputed on every selection sync
-(`picker_window.sync_from_scene` → `_resolution` → `pickerstate.resolve`), so
-builds, bakes, switches and manual deletes all show up immediately.
+**The picker selects controllers, never bones — except the fingers.** A button
+is live exactly when its controller exists right now — FK buttons resolve
+`<joint>_FK_ctrl` by name, IK circles resolve through
+`builder.ik_control(limb, role)` and the limb manifests. Everything else is
+dimmed and unclickable: before a build the whole map is inert, a limb switched
+to IK dims its FK buttons and lights its circles. Availability is recomputed on
+every selection sync (`picker_window.sync_from_scene` → `_resolution` →
+`pickerstate.resolve`), so builds, bakes, switches and manual deletes all show
+up immediately.
+
+The one exception, since 2026-08-18: the **38 finger buttons fall back to the
+finger BONE**, because finger FK controllers are no longer built and the
+animator poses those bones (see below). `pickerstate.resolve` takes an optional
+`bone_nodes` fallback and the controller always wins, so a file rigged before
+that change still selects its controllers; the *policy* of which buttons may
+fall back lives in `picker_window`, which offers `fkchains.FINGER_JOINTS`
+resolved through the bound subtree, and the pure module knows nothing about
+fingers. Nothing downstream needed changing, and each for a reason: a finger
+bone in the selection lights its button (matched on the full DAG path), is
+never offered by `switchable_bones`, and resolves in `bake_targets` to a chain
+that is neither a built limb nor a recorded chain — so Bake+Delete does
+nothing, which is the safe direction of failure.
 
 **Connect** binds the panel to one skeleton. Any joint of the character works —
 it climbs to the root — as does the enclosing group. The root is remembered by
@@ -168,17 +196,30 @@ connects on open. Every lookup goes through the bound subtree, which is what
 makes namespaces and per-joint prefixes a non-issue.
 
 **Build** (the only build button) tears down whatever exists — FK baked back
-first, then IK, because finger controls can hang inside IK hand controls —
-and builds fresh in one undo step (`fkcontrols.rebuild`). Every entry point
+first, then IK, because a file rigged before 2026-08-18 has finger controls
+hanging inside IK hand controls — and builds fresh in one undo step
+(`fkcontrols.rebuild`). Every entry point
 that runs MEL — `build_fk`, `rebuild`, `switch_limbs`, `bake_fk`,
 `bake_selection`, `builder.build`, `builder.bake_limbs` — calls
 `overrig.ensure_loaded()` first and returns `overrig.NOT_LOADED_MESSAGE`
 when the toolset cannot be found at all (trap 20). Default: the hybrid
-rig — IK arms and legs (`builder.DEFAULT_IK`), FK on root/spine/neck/fingers
-(`HYBRID_FK_CHAINS`), finger chains hung on the IK hand controls via
-`apply_Parent_in`. With the **FK Limbs** toggle pressed: full FK on all 17
-chains (the old Build FK). No clavicle or ball controls in hybrid — same as
-the post-Switch IK state; switching a limb to FK brings them back.
+rig — IK arms and legs (`builder.DEFAULT_IK`), FK on root/pelvis/spine/neck
+(`HYBRID_FK_CHAINS`, four chains, ten controllers). With the **FK Limbs**
+toggle pressed: FK on the arms and legs too (eight chains, 26 controllers).
+No clavicle or ball controls in hybrid — same as the post-Switch IK state;
+switching a limb to FK brings them back.
+
+**No FK controllers on the fingers** (2026-08-18, the user's call: "буду
+анимировать на костях"). The ten finger chains stay in `CHAINS` and are left
+off a new `BUILDABLE`, which is what every build filters through
+(`fkchains.build_targets`, applied to an explicit `only=` as well, so no caller
+can ask a finger chain back). Keeping them in the table is load-bearing twice
+over: teardown walks `CHAINS`, so a chain missing from it would be a rig
+nothing can find and nothing can bake (traps 3, 5, 16) — a file rigged before
+the change still comes apart, and a Build clears yesterday's finger rig on the
+way past — and "на время" means the hanging machinery below has to stay
+reachable. Reverting is three lines in `fkchains.py` plus the tests that pin
+them. Spec: `docs/superpowers/specs/2026-08-18-fingers-on-bones-design.md`.
 
 **The spine is FK-only for now.** A full spline-IK spine (own module
 `spineik.py`, three controls, hipdrive pelvis carry, per-end advanced
@@ -299,9 +340,13 @@ that is deliberate, and a synthetic master control is not built.
 the opposite rig type, per limb, animation re-baked at every step
 (`fkcontrols.switch_limbs`, table `SWITCHABLE`). The FK manifest is per-chain
 (`RigPicker_fk_<chain>`; the flat `RigPicker_fk` is legacy, absorbed by a full
-bake). Fingers ride through an arm switch: `apply_Parent_out` lifts them to
-world, the arm converts, `apply_Parent_in` hangs them on the new hand control
-— they are DAG children of what gets deleted, so anything less loses them.
+bake). Rider chains ride through an arm switch: `apply_Parent_out` lifts them
+to world, the arm converts, `apply_Parent_in` hangs them on the new hand
+control — they are DAG children of what gets deleted, so anything less loses
+them. **No chain rides today** (fingers are the only ones that ever did, and
+they are off the build list), so this path runs only on a file rigged before
+2026-08-18; `_rehang_riders` returns early on an empty list rather than falling
+through, because asking for the anchor CREATES it.
 A chain with no rig at all auto-builds its IK on the first Switch press.
 `apply_Parent_out`/`_in` semantics (both verified by experiment): selection is
 child-then-parent for `_in`, the child alone for `_out`; both re-bake into the
@@ -317,6 +362,14 @@ the 4.2 cm rest). The limbs themselves do NOT stretch — OverRig's rebike
 keeps bone lengths constant (measured identical under overpull) — so no
 extra no-stretch work was needed. The anchor hides its SHAPE, never its
 transform — see trap 15.
+
+**That machinery is DORMANT, not gone.** With no finger chains built there is
+nothing to hang, so **no anchor is created** — `rebuild` and `_rehang_riders`
+both count the riders *before* asking for it, because `_limb_anchor` builds the
+locator and its parent constraint on demand and every Build was otherwise
+leaving two of each in the rig for nothing. The finger bones need none of it:
+they are plain DAG children of the hand bone, which is why the 40 cm overpull
+above cannot pull them off any more.
 
 **Every IK limb rides `root_FK_ctrl`** — all three OverRig top groups
 (`_IK_strech_gr`, `_IK_knee`, `_IK_feet`) hung with `apply_Parent_in`
@@ -342,17 +395,24 @@ a finger chain sits inside the root controller only by way of the IK hand,
 and that hand survives. Containment through a surviving rig is not
 ownership (trap 9 again, from the other side).
 
-Not built: spine IK (removed, see above) and neck IK; per-chain FK bake
-from the UI (Switch does it internally); docking; mirror-select; the
-pose-snapshot safety before Build (proposed, not confirmed).
+Not built: FK controllers on the fingers (dropped 2026-08-18, "на время");
+spine IK (removed, see above) and neck IK; per-chain FK bake from the UI
+(Switch does it internally); docking; mirror-select; the pose-snapshot
+safety before Build (proposed, not confirmed).
 
-**Live verification: all green** (run in the Manny scene):
-`verify_arm_switch.py`, `verify_capture_edges.py`,
-`verify_control_axes.py`, `verify_hybrid_build.py`,
-`verify_ik_under_root.py` in `docs/superpowers/plans/`.
+**Live verification** (run in the Manny scene): `verify_arm_switch.py`,
+`verify_capture_edges.py`, `verify_control_axes.py`, `verify_hybrid_build.py`,
+`verify_ik_under_root.py` in `docs/superpowers/plans/`, plus
+`verify_fingers_on_bones.py` for the 2026-08-18 change. **All six were
+rewritten that day** — five of them asserted "the finger hangs on the hand",
+which is no longer true — so their last green run predates the rewrite; they
+have not been sent through the bridge since (the animator's Maya had a blocked
+idle queue at the time — see bridge note 6).
 `verify_control_axes.py` builds the rig itself in two halves — once with
 `orient_controllers` suppressed, then for real — so the turn is measured on
-its own rather than inside a whole build. `verify_missing_bones.py` runs in an EMPTY
+its own rather than inside a whole build; it now builds **full FK**, because
+the hybrid rig's four FK chains are all on the midline and its mirror gates
+need left/right pairs. `verify_missing_bones.py` runs in an EMPTY
 scene instead — it builds its own UE4-schema skeleton (no root, no
 metacarpals, spine to `spine_03`) and is the proof for traps 20 and 21;
 run it in a FRESH Maya, since half of what it proves is that the first

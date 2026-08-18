@@ -114,10 +114,23 @@ check("FINGERS STAY ON THE HAND under a 40cm overpull",
 check("the limb itself does not stretch", abs(up - rest_up) < 0.5,
       "%.2f vs %.2f" % (up, rest_up))
 
-anchor = fkcontrols._limb_anchor(smap, "arm_r")
-index_r = fkcontrols.controller_name("index_metacarpal_r")
-check("fingers hang on the hand-bone anchor", is_under(index_r, anchor),
-      str(anchor))
+# Fingers carry no controllers now (2026-08-18) -- they are plain DAG children
+# of the hand bone, which is why the overpull above cannot tear them off. The
+# anchor they used to hang on is not built when nothing needs it: ask through
+# `_anchor_in`, never `_limb_anchor`, which CREATES one on demand.
+finger_ctrls = [fkcontrols.controller_name(j)
+                for j in fkcontrols.FINGER_JOINTS]
+
+
+def live_finger_ctrls():
+    return [c for c in finger_ctrls if cmds.objExists(c)]
+
+
+check("no finger controller in the hybrid rig", not live_finger_ctrls(),
+      str(live_finger_ctrls()[:3]))
+check("no IK hand anchor built for nothing",
+      not fkcontrols._anchor_in(builder.limb_set("arm_r"),
+                                "arm_r_IK_anchor"))
 
 # --- switch arm_r to FK -----------------------------------------------------------
 cmds.select(ik_hand, replace=True)
@@ -131,8 +144,10 @@ arm_r_strays = [n for n in stray_ik_roots()
 check("no right-arm IK strays (legs and left arm stay IK)",
       not arm_r_strays, str(arm_r_strays))
 check("FK arm built", bool(fkcontrols.chain_members("arm_r")))
-check("fingers on the FK hand",
-      is_under(index_r, fkcontrols.controller_name("hand_r")))
+check("still no finger controller after the switch",
+      not live_finger_ctrls(), str(live_finger_ctrls()[:3]))
+check("finger BONES still ride the hand bone",
+      is_under(smap["index_metacarpal_r"], smap["hand_r"]))
 check("torso controllers untouched",
       all(cmds.objExists(c) for c in torso_ctrls))
 
@@ -151,9 +166,8 @@ check("legs still IK",
 check("right arm FK still alive",
       bool(fkcontrols.chain_members("arm_r"))
       and cmds.objExists(fkcontrols.controller_name("hand_r")))
-check("left fingers on the left FK hand",
-      is_under(fkcontrols.controller_name("index_metacarpal_l"),
-               fkcontrols.controller_name("hand_l")))
+check("left finger bones still ride the left hand bone",
+      is_under(smap["index_metacarpal_l"], smap["hand_l"]))
 
 # --- both arms back to IK -----------------------------------------------------------
 done, skipped, message = fkcontrols.switch_limbs(smap, ["arm_l", "arm_r"])
@@ -161,8 +175,10 @@ print("\nswitch both back:", message)
 check("both arms IK again",
       set(builder.built_limbs()) == {"arm_l", "arm_r", "leg_l", "leg_r"},
       str(builder.built_limbs()))
-check("right fingers on the anchor again",
-      is_under(index_r, fkcontrols._limb_anchor(smap, "arm_r")))
+check("no anchor and no finger controller after both switches",
+      not live_finger_ctrls()
+      and not fkcontrols._anchor_in(builder.limb_set("arm_r"),
+                                    "arm_r_IK_anchor"))
 check("torso still fine",
       all(cmds.objExists(c) for c in torso_ctrls))
 

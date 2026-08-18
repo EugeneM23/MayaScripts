@@ -19,7 +19,8 @@ import maya.mel as mel
 from maya_overrig import bodymap, builder, overrig
 from maya_overrig.fkchains import (  # noqa: F401 -- fkcontrols is the API
     FK_SET, FK_SET_PREFIX, SUFFIX, LIMB_CHAINS, SWITCHABLE, _finger_chains,
-    CHAINS, HYBRID_FK_CHAINS, controller_name, chain_set, finger_chains_for,
+    CHAINS, FINGER_CHAINS, FINGER_JOINTS, BUILDABLE, HYBRID_FK_CHAINS,
+    build_targets, controller_name, chain_set, finger_chains_for,
     chain_root, chain_tip, chain_root_control, switchable_bones,
     innermost_owner, dependent_chains, limbs_riding_inside, attach_parent)
 from maya_overrig.fkrings import (  # noqa: F401 -- fkcontrols is the API
@@ -217,8 +218,13 @@ def build_fk(scene_map, only=None):
     """Build FK controllers through OverRig knots. Returns (count, message).
 
     `only` restricts the build to the named chains (used by Switch); None
-    builds all 17. A previous build of the affected chains is baked back
-    first. The caller guards against an existing IK build on the same bones.
+    means every buildable chain. Either way the list goes through
+    `build_targets`, so the finger chains are never built -- the animator
+    poses those bones. A previous build of the affected chains is baked back
+    first, and THAT still sees every chain in the table, which is how a Build
+    clears a finger rig left by an older version on the way past.
+
+    The caller guards against an existing IK build on the same bones.
     """
     if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return 0, "Not connected to a skeleton"
@@ -226,12 +232,15 @@ def build_fk(scene_map, only=None):
     if message:
         return 0, message
 
+    targets = build_targets(only)
     region_of = {b.joint: b.region for b in bodymap.BUTTONS}
     parent_of = _parent_map()
     # Only bones this skeleton has can be an attach target: a chain hangs
     # from the nearest ancestor that gets a controller, and one that is
-    # missing gets none.
-    targeted = {j for _, chain in CHAINS for j in chain if j in scene_map}
+    # missing gets none. Buildable chains only -- a bone no build creates a
+    # controller for is not something a chain can hang on.
+    targeted = {j for name, chain in CHAINS if name in BUILDABLE
+                for j in chain if j in scene_map}
 
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK")
     try:
@@ -261,7 +270,7 @@ def build_fk(scene_map, only=None):
         attached = 0
         with overrig.full_rate_capture(scale_nodes):
             for chain_name, chain in CHAINS:
-                if only is not None and chain_name not in only:
+                if chain_name not in targets:
                     continue
                 paths = [scene_map[j] for j in chain
                          if j in scene_map and cmds.objExists(scene_map[j])]
@@ -299,8 +308,8 @@ def build_fk(scene_map, only=None):
         # the rotate CHANNELS in the bone's axes, the second turns the knot's
         # own frame onto the bone so the manipulator agrees with them. Neither
         # creates a node, so both stay out of the manifests.
-        aligned = align_controllers(scene_map, only)
-        turned = orient_controllers(scene_map, only)
+        aligned = align_controllers(scene_map, targets)
+        turned = orient_controllers(scene_map, targets)
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -412,12 +421,14 @@ def rebuild(scene_map, fk_limbs=False):
     """One Build entry point: tear down whatever exists, then build fresh.
 
     `fk_limbs=False` (the default) builds the hybrid rig -- IK arms and legs,
-    FK everything else, finger chains hung on the IK hand controls.
-    `fk_limbs=True` builds full FK on all 17 chains.
+    FK root, pelvis, spine and neck. `fk_limbs=True` builds FK on the arms
+    and legs as well. Neither builds finger controllers: those bones are
+    posed directly.
 
-    FK is baked back before IK on purpose: finger controls can hang inside IK
-    hand controls after a Switch, and the reverse order would delete them
-    with the arm's rig before they were baked.
+    FK is baked back before IK on purpose. Nothing we build now hangs inside
+    an IK hand, but a file rigged by an older version has finger controls
+    doing exactly that, and the reverse order would delete them with the
+    arm's rig before they were baked.
     """
     if not any(j in scene_map for _, chain in CHAINS for j in chain):
         return "Not connected to a skeleton"
@@ -468,18 +479,27 @@ def rebuild(scene_map, fk_limbs=False):
             # never the control: past full extension the control keeps
             # travelling while the bone stops, and fingers riding the
             # control tear off the hand.
+            #
+            # Nothing to hang today: finger chains are off the build list and
+            # the animator poses those bones. The riders are counted BEFORE
+            # the anchor is asked for, because `_limb_anchor` creates the
+            # locator on demand -- otherwise every Build left two locators
+            # and two parent constraints in the rig for nothing at all.
             hung = 0
             for limb in ("arm_l", "arm_r"):
+                riders = [c for c in finger_chains_for(limb)
+                          if chain_members(c)]
+                if not riders:
+                    continue
                 target = (_limb_anchor(scene_map, limb)
                           or builder.ik_control(limb, "end"))
                 if not target:
                     continue
-                for chain in finger_chains_for(limb):
+                for chain in riders:
                     # The chain's own top controller, which on a skeleton
                     # without metacarpals is the one on <finger>_01_<side>.
                     ctrl = chain_root_control(table[chain], scene_map)
-                    if (chain_members(chain) and ctrl
-                            and cmds.objExists(ctrl)):
+                    if ctrl and cmds.objExists(ctrl):
                         _parent_in(ctrl, target, _ensure_chain_set(chain))
                         hung += 1
             if hung:
@@ -671,7 +691,13 @@ def _rehang_riders(scene_map, limb, riders, now_ik):
 
     Used both by the normal switch tail and by the abort path -- a refused
     bake must not leave the riders parked in world.
+
+    Returns early on an empty list rather than falling through: asking for the
+    IK anchor CREATES it, and with finger chains off the build list every
+    switch would otherwise build a locator nothing hangs on.
     """
+    if not riders:
+        return
     table = dict(CHAINS)
     if now_ik:
         target = _limb_anchor(scene_map, limb) or builder.ik_control(limb, "end")

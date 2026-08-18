@@ -67,16 +67,26 @@ print("baseline real nodes: %d\n" % baseline)
 count, message = fkcontrols.build_fk(smap)
 print("build:", message, "\n")
 
-check("64 controllers created", count == 64, str(count))
-ctrls = [fkcontrols.controller_name(b.joint) for b in bodymap.BUTTONS]
+# 26, not the 64 of every bone: finger controllers stopped being built
+# (2026-08-18) and the animator poses those bones directly.
+BUILD_JOINTS = [j for name, chain in fkcontrols.CHAINS
+                if name in fkcontrols.BUILDABLE for j in chain
+                if j in smap]
+check("%d controllers created" % len(BUILD_JOINTS),
+      count == len(BUILD_JOINTS), str(count))
+ctrls = [fkcontrols.controller_name(j) for j in BUILD_JOINTS]
+finger_ctrls = [fkcontrols.controller_name(j)
+                for j in fkcontrols.FINGER_JOINTS]
+check("no finger controller was built",
+      not [c for c in finger_ctrls if cmds.objExists(c)])
 missing = [c for c in ctrls if not cmds.objExists(c)]
 check("every controller exists by name", not missing, str(missing[:4]))
 
 ringed = [c for c in ctrls if cmds.objExists(c) and any(
     cmds.objectType(s) == "nurbsCurve"
     for s in cmds.listRelatives(c, shapes=True, fullPath=True) or [])]
-check("every controller carries a ring shape", len(ringed) == 64,
-      str(len(ringed)))
+check("every controller carries a ring shape",
+      len(ringed) == len(BUILD_JOINTS), str(len(ringed)))
 
 check("controller took over the animation",
       (cmds.keyframe("upperarm_l_FK_ctrl", query=True,
@@ -108,7 +118,8 @@ check("Build IK refused while FK exists", not builder.has_build(),
 before_rebuild = real_nodes()
 count2, message2 = fkcontrols.build_fk(smap)
 print("\nrebuild:", message2, "\n")
-check("rebuild still yields 64", count2 == 64, str(count2))
+check("rebuild yields the same count", count2 == len(BUILD_JOINTS),
+      str(count2))
 check("rebuild did not grow the scene",
       abs(real_nodes() - before_rebuild) <= 2,
       "%d -> %d" % (before_rebuild, real_nodes()))
