@@ -11,9 +11,13 @@ undo reverts a chunk of prior work instead.
 import maya.cmds as cmds
 import maya.mel as mel
 
+from maya_overrig import aimrig
+
 from maya_scenesetup import attach
 from maya_scenesetup import catalog
+from maya_scenesetup import connect as linking
 from maya_scenesetup import skeleton
+from maya_scenesetup import window
 
 RESULTS = []
 
@@ -51,6 +55,23 @@ check("the bone belongs to the bound character",
 
 was_attached = attach.find_attached(bone) is not None
 
+# Every attach below REPLACES what is in the hand, and replacing deletes the
+# marked node whole. Once the arms ride the weapon the IK hand controls are its
+# DAG children and an aim's locators drive its geometry -- so a run in that
+# scene state would take the animator's rig down unbaked. The window refuses
+# the same two cases on the same grounds; a proof script has no business being
+# braver than the button it proves.
+_standing = attach.find_attached(bone)
+_refusal = ""
+if linking.linked_weapon():
+    _refusal = "the arms are connected to a weapon - press Disconnect first"
+elif _standing and aimrig.aim_for(attach.model_root(_standing)):
+    _refusal = "the weapon has an aim - Bake+Delete it in the picker first"
+if _refusal:
+    print("ABORT  " + _refusal)
+    print("\n0/{0} checks passed (nothing was touched)".format(len(RESULTS)))
+    raise RuntimeError(_refusal)
+
 # --- attach with no offsets ----------------------------------------------
 # The FBX import mode is one global setting for the session. Put it where the
 # UE bridge leaves it -- `exmerge`, which matches names and creates nothing --
@@ -59,7 +80,8 @@ if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
     cmds.loadPlugin("fbxmaya", quiet=True)
 mel.eval("FBXImportMode -v exmerge")
 
-weapon, _note = attach.attach(entry, bone)
+assemblies_before = set(cmds.ls(assemblies=True) or [])
+weapon, note = attach.attach(entry, bone)
 check("imports even with the plugin left in exmerge",
       bool(cmds.listRelatives(weapon, allDescendents=True, type="mesh")))
 check("and puts the session's import mode back",
@@ -77,6 +99,29 @@ check("the model came in with it",
 gap = biggest_difference(world_matrix(weapon), world_matrix(bone))
 check("with zero offsets it sits exactly on the bone", gap < 1e-4,
       "worst matrix element {0:.7f}".format(gap))
+
+# --- no group of ours (2026-08-20) ---------------------------------------
+# The animator selects the sword in the viewport and animates it, so the node
+# that holds the mesh must BE the marked node -- not a group above it.
+print("attach note: " + (note or "(none, the mesh went in on its own)"))
+check("the marked node holds a mesh itself, so one click selects it",
+      bool(cmds.listRelatives(weapon, children=True, type="mesh")),
+      "shapes: {0}".format(cmds.listRelatives(weapon, children=True,
+                                              shapes=True)))
+check("no note, meaning no group was needed", note == "", repr(note))
+check("model_root answers the marked node itself",
+      attach.model_root(weapon) == weapon, attach.model_root(weapon))
+
+ours = [child for child
+        in cmds.listRelatives(bone, children=True, type="transform",
+                              fullPath=True) or []
+        if cmds.attributeQuery(attach.MARKER, node=child, exists=True)]
+check("exactly one node of ours under the bone", len(ours) == 1,
+      "{0} marked children".format(len(ours)))
+
+leftovers = sorted(set(cmds.ls(assemblies=True) or []) - assemblies_before)
+check("nothing from the import was left at world level", not leftovers,
+      ", ".join(leftovers[:4]))
 
 # --- offsets --------------------------------------------------------------
 attach.write_offsets(weapon, (0.0, 90.0, 0.0), (5.0, 0.0, 0.0))
@@ -197,6 +242,23 @@ else:
     restored = biggest_difference(before_bone, world_matrix(bone))
     check("the arm was put back exactly", restored < 1e-9,
           "worst {0:.12f}".format(restored))
+
+# --- a path pasted into the FBX field (2026-08-20) ------------------------
+custom = window.chosen_entry(entry.path, entry)
+check("a pasted path becomes an entry of its own",
+      custom.path == entry.path and custom.scale == 1.0,
+      "{0} scale {1}".format(custom.key, custom.scale))
+check("its key is a legal Maya name",
+      custom.key == catalog.node_key(custom.key), custom.key)
+
+custom_weapon, _custom_note = attach.attach(custom, bone)
+check("the pasted path attaches", custom_weapon.startswith(bone + "|"),
+      custom_weapon)
+check("and the marker holds the derived key",
+      cmds.getAttr(custom_weapon + "." + attach.MARKER) == custom.key,
+      cmds.getAttr(custom_weapon + "." + attach.MARKER))
+check("an empty field falls back to the dropdown",
+      window.chosen_entry("", entry) is entry)
 
 # --- leave the scene as we found it ---------------------------------------
 if not was_attached:

@@ -972,7 +972,7 @@ scene while the tool runs.
 Renamed from `maya_weapons` on 2026-08-17 when the camera setup joined it.
 Two things survived the rename deliberately: the scene marker attribute is
 still **`mayaWeapon`** — it is written into the animator's files and a sword in
-the open scene carries it, so renaming it would orphan that carrier and Add
+the open scene carries it, so renaming it would orphan that weapon and Add
 would import a second sword — and the offset optionVar still **reads**
 `mayaWeapons_offset_*` while writing `mayaSceneSetup_offset_*`, so a grip
 dialled in before the rename survives. `show_window` deletes the legacy window
@@ -1028,11 +1028,17 @@ on the table. There: bone travels 40.000 for 40 on the camera, returns to
 motion is unchanged to 0.000000000 across the timeline and the offset holds at
 every frame.
 
-A small window: a dropdown of weapon models, an **Add** button that imports the
-chosen one and hangs it on `weapon_r`, live rotate/translate fields for
-dialling in the grip, and an **Add Aim** button (below). Design:
+A small window: a dropdown of weapon models, a field for pasting the path of
+any other FBX, an **Add** button that imports the chosen one and hangs it on
+`weapon_r`, live rotate/translate fields for dialling in the grip, and an
+**Add Aim** button (below). Design:
 `docs/superpowers/specs/2026-08-17-weapon-attach-design.md`, proof:
-`docs/superpowers/plans/verify_weapons.py` (**17/17 green** in the Manny scene).
+`docs/superpowers/plans/verify_weapons.py` (**17/17 green before the
+2026-08-20 change; it gained nine gates for the no-group attach and the FBX
+field and has not been re-run through the bridge yet** — the command port was
+not draining that day). It refuses to run at all while the arms
+are connected or an aim exists: every attach in it REPLACES what is in the
+hand, and replacing deletes the marked node whole.
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
@@ -1041,9 +1047,9 @@ import maya_scenesetup; maya_scenesetup.show_window()
 
 | Module | Responsibility | May import |
 |---|---|---|
-| `catalog.py` | the weapon table and lookups, pure data | **stdlib only** |
+| `catalog.py` | the weapon table, lookups, and an entry for any FBX on disk (`entry_for_path`, `node_key`), pure data | **stdlib only** |
 | `skeleton.py` | which character, and where its weapon bone is | `maya.cmds`, `maya_overrig` |
-| `attach.py` | import, replace, parent, read/write offsets | `maya.cmds` |
+| `attach.py` | import, find the mesh, parent it, read/write offsets | `maya.cmds` |
 | `aim.py` | where the aim locators go, and the press that builds it | `maya.cmds`, OpenMaya, `attach`, `overrig`, `aimrig` |
 | `window.py` | the `cmds` window, offsets, optionVars | `maya.cmds` + the four above |
 
@@ -1063,11 +1069,51 @@ then resolved inside that root's subtree through `naming.hierarchy_map` +
 `detect_prefix`, never scene-wide: a bare `ls("weapon_r")` would arm whichever
 character Maya listed first.
 
-**The carrier** is a transform of ours between the bone and the imported model,
-holding the offsets and a `mayaWeapon` string attribute with the catalog key.
-Everything finds it by that marker, never by name. One weapon per bone: Add
-deletes the marked carrier first, so the live fields always have exactly one
-thing to move, and a child the animator parented by hand is never touched.
+**The weapon IS the geometry** (2026-08-20, the animator's call: «для оружия не
+должна создаваться какая-то группа, я хочу анимировать просто выделяя
+геометрию»). After the import `attach.mesh_transforms` looks for the transforms
+that hold a mesh; **exactly one** and that transform is parented straight into
+the bone, takes the `mayaWeapon` marker, is seated by `seat` and holds the grip
+in its own `translate`/`rotate` — and whatever the file came wrapped in (the
+null an exporter puts around the mesh, which is precisely the group being
+complained about) is deleted afterwards. Only leftover **transforms** are
+deleted: the shading network arrived in the same import and the mesh needs it.
+
+**Zero meshes or several keep a group** and `attach.attach` returns a note the
+status line shows. Two meshes cannot both be the node the offsets live on, and
+one click cannot select both; refusing the file outright would be worse than
+the group. So the return is `(path, note)`, and `note` is `""` in the normal
+case.
+
+The CONCEPT is unchanged, which is why nothing downstream moved: exactly one
+marked node per bone, found by that attribute and never by name. One weapon per
+bone — Add deletes the marked node first, so the live fields always have
+exactly one thing to move, and a child the animator parented by hand is never
+touched. **Trap 34 stops being reachable** in the normal case: the marked node
+and the geometry are the same node, so a control hung on it cannot be a sibling
+of the mesh.
+
+Two consequences worth knowing before they surprise someone. **`seat` now
+zeroes the artist's own transform on the model root** — one node cannot hold
+both their transform and our offsets, and offsets that are not the channels on
+screen would make the fields a lie about the scene; the grip is dialled once
+and remembered. And **`model_root` asks whether the node itself holds a mesh
+BEFORE looking at its children**, or a mesh the animator parented under the
+sword by hand would outrank the sword.
+
+**The FBX field** takes a path to any file the catalog knows nothing about and
+wins over the dropdown while it holds one. It resolves in ONE place
+(`window.chosen_entry` → `catalog.entry_for_path`), so Add, the offset fields,
+Connect and Add Aim all follow it with no line of their own. The bone comes
+from the dropdown; the scale is fixed at **1.0**, because a size correction is
+a fact about one known model and applying the sword's to somebody else's file
+is a surprise; the key is the file's stem through **`catalog.node_key`**, which
+must produce a legal Maya name — the key reaches `cmds.sets` by way of
+`RigPicker_aim_<key>`, so a space, a dot or a leading digit there is a
+traceback on some later press. Quotes are stripped (that is how Explorer copies
+a path) and whitespace counts as empty. The path is remembered in
+`mayaSceneSetup_custom_fbx`. Spec:
+`docs/superpowers/specs/2026-08-20-weapon-is-the-geometry-design.md`.
 
 **`cmds.file` here, `FBXImport` in the UE bridge.** The opposite of trap 22 and
 deliberate: trap 22 is about losing animation curves, a weapon model has none,
@@ -1088,10 +1134,10 @@ skeleton and drives the hands. Three steps, in this order —
 2. **the weapon out to world** (`overrig.parent_out`), carrying the world
    motion it had, now baked onto its own channels;
 3. **the IK end controls onto the weapon's GEOMETRY**
-   (`fkcontrols.hang_ik_end_on` with `attach.model_root(carrier)`), each
+   (`fkcontrols.hang_ik_end_on` with `attach.model_root(weapon)`), each
    lifted to world first — re-parenting a knot in place is not a measured
    path, and lift-then-hang is what `switch_limbs` does with riders. The
-   geometry, not the carrier: see trap 34.
+   geometry, which since 2026-08-20 is usually the marked node itself: see trap 34.
 
 Only the **end** groups ride the prop. Pole and base stay where they are, so
 elbows keep answering to the body and the shoulder is not pinned to the sword.
@@ -1104,8 +1150,8 @@ after the round trip.
 the nearest ancestor of an IK hand control carrying the `mayaWeapon` marker
 (`connect.marked_ancestor`), so two characters holding the same sword never
 mix. Two guards fall out of it: **Add is refused while a link exists** (the IK
-controls are the carrier's DAG children — replacing would take both arm rigs
-down unbaked) and the **offset fields go quiet** once the carrier carries
+controls are the weapon's DAG children — replacing would take both arm rigs
+down unbaked) and the **offset fields go quiet** once the weapon carries
 curves, since `setAttr` on a connected channel raises.
 
 **Disconnect** lifts the hands off and calls `hang_ik_on_root`, which puts them
@@ -1146,11 +1192,11 @@ caveats: the aim is set up **against the pose on the current frame**, and a
 model with no mesh points (or a zero blade extent) is refused rather than
 given an invented distance.
 
-**The aim goes on the GEOMETRY, not the carrier** — `attach.model_root`, the
+**The aim goes on the GEOMETRY** — `attach.model_root`, the
 same node Connect hangs the IK hands on. The animator grabs the geometry
 (trap 34), the hands then follow the aim for free, and the grip offsets stay
 writable because `setAttr` into a constrained channel raises. Honest side
-effect, and the status line says it: once the aim exists the carrier's
+effect, and the status line says it: once the aim exists the weapon's
 **Rotate has no visible effect** (the constraint fixes the geometry's world
 orientation), while Translate still works.
 
@@ -1163,7 +1209,7 @@ and 4). The set is `RigPicker_aim_<key>` but is **never** found by that name
 (Maya uniquifies; two characters can hold the same sword) — discovery is by
 prefix, and identity comes from two string attributes: `rigPickerSource`
 (one UUID, the node the bake lands on) and `rigPickerHandles` (UUIDs whose
-selection means this aim — the source and the carrier). **Neither is a
+selection means this aim - the geometry and the marked weapon, deduplicated to one when they are the same node). **Neither is a
 member**, because members get deleted and the sword must not.
 
 **Bake+Delete in the picker resolves it by EXACT match**, after normalising a
@@ -1183,15 +1229,15 @@ is not gated on the time-slider highlight, because its bake reads
 is, because `apply_Fast_Bake` is one of the nineteen that do (trap 36).
 `overrig.mel_gate()` now holds both guards for every MEL entry point in the
 repo; `fkcontrols._mel_gate` is a delegating alias. A second Aim press
-refuses; **Add refuses while an aim exists**, since it deletes the carrier
+refuses; **Add refuses while an aim exists**, since it deletes the weapon
 whole and would leave two locators driving a deleted node.
 
-Offsets are the carrier's local rotate/translate, written with **autoKey off**
+Offsets are the weapon's own local rotate/translate, written with **autoKey off**
 (trap 14), read back from the scene on open, on Add and on switching the
 dropdown, and remembered per weapon in an optionVar
 (`mayaWeapons_offset_<key>`) so a grip dialled in once survives the session.
 Scale is a catalog field, not a UI control: a model that arrives at the wrong
-size is a fact about the model. Deleting a carrier leaves its shading nodes
+size is a fact about the model. Deleting a weapon leaves its shading nodes
 behind, as any Maya delete does — chasing them is how a tool eventually
 deletes something the animator wanted.
 
@@ -1202,8 +1248,12 @@ deletes something the animator wanted.
     which looks exactly like a wrong bone or a bad import. The local matrix is
     the thing to check, not the two obvious channels: `attach.seat` zeroes
     `shear`, both pivots, both pivot translates and `rotateAxis` as well, and
-    the carrier is now built empty and filled rather than grouped around the
-    model. Live: worst world-matrix element 28.5130917 → 0.0000000.
+    the fallback group is built empty and filled rather than grouped around
+    the model. Live: worst world-matrix element 28.5130917 → 0.0000000.
+    **Still live in 2026-08-20's shape**, where the carrier is gone and the
+    MESH is what gets parented: `cmds.parent` compensates the mesh's own pivot
+    into `rotatePivotTranslate` exactly the same way, so `seat` is what puts
+    the sword in the hand rather than 28 cm beside it.
 33. **The FBX import MODE is one global setting for the whole session, and it
     reaches `cmds.file` even though the curve settings do not.** `maya_uebridge`
     leaves the plugin on `FBXImportMode -v exmerge`, where the importer matches
@@ -1229,7 +1279,10 @@ deletes something the animator wanted.
     than any shape, since an IK control is a locator and locators have shapes
     too). The verification now turns the sword 50 cm and measures that both
     hands travel with it; "it is nested and nothing drifted" was never the
-    claim the feature makes.
+    claim the feature makes. Since 2026-08-20 there is usually **no group at
+    all** — the marked node is the mesh — so the sibling relationship this
+    trap is about cannot form; it still can on a file holding two meshes,
+    which is why `model_root` stays and why Connect still goes through it.
 
 ## `root_offset_batch_tool` — batch root-motion offsets (lives in Perforce)
 
