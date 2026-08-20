@@ -135,7 +135,7 @@ class Messages(unittest.TestCase):
 
     def test_the_added_message_warns_that_rotate_is_now_inert(self):
         """The constraint fixes the geometry's world orientation, so turning
-        the carrier is compensated away. A dead field the animator has to
+        the weapon is compensated away. A dead field the animator has to
         discover on their own is worse than a noisy status line."""
         self.assertIn("Rotate", aim.added_message("X", "|x_top"))
 

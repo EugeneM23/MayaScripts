@@ -83,7 +83,7 @@ class LimbsToSwitch(unittest.TestCase):
 
 class MarkedAncestor(unittest.TestCase):
 
-    def test_finds_the_carrier_above_the_control(self):
+    def test_finds_the_weapon_above_the_control(self):
         marked = {"|LongSword_02_weapon"}
         self.assertEqual(
             connect.marked_ancestor(
@@ -108,7 +108,7 @@ class MarkedAncestor(unittest.TestCase):
                                     {"|sword"}.__contains__))
 
     def test_the_node_itself_does_not_count(self):
-        """A marked control would otherwise be read as its own carrier."""
+        """A marked control would otherwise be read as its own weapon."""
         self.assertIsNone(
             connect.marked_ancestor("|sword", {"|sword"}.__contains__))
 
@@ -140,3 +140,14 @@ class Messages(unittest.TestCase):
         measured in the user's scene, where the claim would have been false.
         """
         self.assertNotIn("root", connect.disconnected_message([]).lower())
+
+
+class RenamedApi(unittest.TestCase):
+    """The word carrier described our offset group, and there is no longer
+    one to describe."""
+
+    def test_the_linked_weapon_has_the_new_name(self):
+        self.assertTrue(callable(connect.linked_weapon))
+
+    def test_the_old_name_is_gone(self):
+        self.assertFalse(hasattr(connect, "linked_carrier"))

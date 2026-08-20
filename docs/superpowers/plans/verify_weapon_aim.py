@@ -148,14 +148,14 @@ scene_map = skeleton.scene_map(root)
 bone = skeleton.resolve_bone(root, entry.bone)
 check("a character with a weapon bone", bool(root and bone), str(bone))
 
-carrier = attach.find_attached(bone) or linking.linked_carrier()
-if carrier is None:
-    carrier = attach.attach(entry, bone)
+weapon = attach.find_attached(bone) or linking.linked_weapon()
+if weapon is None:
+    weapon, _note = attach.attach(entry, bone)
     print("NOTE  no weapon was attached; this run added one")
-check("a weapon to aim", carrier is not None, str(carrier))
+check("a weapon to aim", weapon is not None, str(weapon))
 
-model = attach.model_root(carrier)
-check("the weapon has geometry", model != carrier, str(model))
+model = attach.model_root(weapon)
+check("the weapon has geometry", model != weapon, str(model))
 
 start = int(cmds.playbackOptions(query=True, minTime=True))
 end = int(cmds.playbackOptions(query=True, maxTime=True))
@@ -189,7 +189,7 @@ sword_before = sample(model, every_frame)
 
 # --- gate 1: build the aim, and nothing moves -----------------------------
 
-message = weaponaim.add_aim(entry, carrier)
+message = weaponaim.add_aim(entry, weapon)
 print("Add Aim said:", message)
 check("the press reported an aim", "Aim on" in message, message)
 
@@ -238,10 +238,10 @@ if manifest:
     check("the manifest holds the aim constraint", bool(constraints),
           str([c.split("|")[-1] for c in constraints]))
     check("the manifest does NOT hold the sword", model not in members)
-    check("the manifest does NOT hold the carrier", carrier not in members)
+    check("the manifest does NOT hold the weapon", weapon not in members)
     handles = aimrig.aim_handles(manifest)
-    check("the sword and the carrier are handles",
-          model in handles and carrier in handles,
+    check("the sword and the weapon are handles",
+          model in handles and weapon in handles,
           str([h.split("|")[-1] for h in handles]))
     check("the source resolves back to the sword",
           aimrig.aim_source(manifest) == model,
@@ -249,7 +249,7 @@ if manifest:
 
 # --- gate 9: a second press changes nothing ------------------------------
 
-again = weaponaim.add_aim(entry, carrier)
+again = weaponaim.add_aim(entry, weapon)
 check("a second press refuses", again == weaponaim.ALREADY_MESSAGE, again)
 check("and left exactly one aim", len(aimrig.aim_sets()) == 1,
       str(aimrig.aim_sets()))
@@ -331,7 +331,7 @@ check("the character's rig is untouched", manifest_state() == rig_before,
 # --- gate 7 and 10: round trip, this time removed from a locator --------
 
 round_trip_before = sample(model, every_frame)
-message = weaponaim.add_aim(entry, carrier)
+message = weaponaim.add_aim(entry, weapon)
 check("the aim can be rebuilt after a bake", "Aim on" in message, message)
 
 sets = aimrig.aim_sets()

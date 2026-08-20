@@ -37,7 +37,7 @@ def marked_ancestor(path, marked):
     """Nearest ancestor of `path` for which `marked(candidate)` is true.
 
     The node itself never counts -- a marked control would otherwise be read
-    as its own carrier -- and ancestry is taken apart at the separator, so
+    as its own weapon -- and ancestry is taken apart at the separator, so
     `|swordExtra` is not inside `|sword`.
     """
     parts = [part for part in path.split("|") if part]
@@ -69,12 +69,12 @@ def disconnected_message(lifted):
 
 # ------------------------------------------------------------------- scene
 
-def _is_carrier(path):
+def _is_marked(path):
     return (cmds.objExists(path)
             and cmds.attributeQuery(attach.MARKER, node=path, exists=True))
 
 
-def linked_carrier():
+def linked_weapon():
     """The weapon the IK hands ride, or None.
 
     Asked exactly, never by scanning the scene for the marker: the linked
@@ -85,13 +85,13 @@ def linked_carrier():
         node = builder.ik_control(limb, "end")
         if not node or not cmds.objExists(node):
             continue
-        found = marked_ancestor(cmds.ls(node, long=True)[0], _is_carrier)
+        found = marked_ancestor(cmds.ls(node, long=True)[0], _is_marked)
         if found:
             return found
     return None
 
 
-def connect(carrier, scene_map):
+def connect(weapon, scene_map):
     """Weapon out to world, both arms to IK, hands onto the weapon."""
     if not overrig.ensure_loaded():
         return overrig.NOT_LOADED_MESSAGE
@@ -103,21 +103,21 @@ def connect(carrier, scene_map):
         if switching:
             fkcontrols.switch_limbs(scene_map, switching)
 
-        carrier = cmds.ls(carrier, long=True)[0]
-        if cmds.listRelatives(carrier, parent=True, fullPath=True):
+        weapon = cmds.ls(weapon, long=True)[0]
+        if cmds.listRelatives(weapon, parent=True, fullPath=True):
             # parent_out re-parents, so the path we hold goes stale (trap 16).
             # A short-name lookup would then be a coin flip between duplicates;
             # the UUID survives both the move and a rename.
-            uuid = cmds.ls(carrier, uuid=True)[0]
-            overrig.parent_out(carrier)
-            carrier = cmds.ls(uuid, long=True)[0]
+            uuid = cmds.ls(weapon, uuid=True)[0]
+            overrig.parent_out(weapon)
+            weapon = cmds.ls(uuid, long=True)[0]
 
-        # On the GEOMETRY, not on the carrier: the carrier is our offset
-        # group, and a control hung there is a SIBLING of the sword. Dragging
-        # the sword then leaves the hands behind -- measured, 32.840 against
-        # 0.000. Hanging deeper also keeps the carrier working as a handle,
-        # since it sits above.
-        target = attach.model_root(carrier)
+        # On the GEOMETRY. Since Add stopped building a group the marked node
+        # usually IS the geometry, so this is the same node -- but a file with
+        # two meshes still keeps a group, and a control hung on a group is a
+        # SIBLING of the sword: dragging the sword then leaves the hands
+        # behind, measured at 32.840 against 0.000.
+        target = attach.model_root(weapon)
         hung = [limb for limb in ARMS
                 if fkcontrols.hang_ik_end_on(limb, target)]
         return connected_message(switching, hung)
@@ -125,7 +125,7 @@ def connect(carrier, scene_map):
         cmds.undoInfo(closeChunk=True)
 
 
-def disconnect(carrier, bone):
+def disconnect(weapon, bone):
     """Hands back on the root control, weapon back in the bone.
 
     The weapon's animation is re-baked into the bone's space rather than
@@ -143,9 +143,9 @@ def disconnect(carrier, bone):
                 lifted.append(limb)
             fkcontrols.hang_ik_on_root(limb)
 
-        carrier = cmds.ls(carrier, long=True)[0]
-        if not cmds.listRelatives(carrier, parent=True, fullPath=True):
-            overrig.parent_in(carrier, bone)
+        weapon = cmds.ls(weapon, long=True)[0]
+        if not cmds.listRelatives(weapon, parent=True, fullPath=True):
+            overrig.parent_in(weapon, bone)
         return disconnected_message(lifted)
     finally:
         cmds.undoInfo(closeChunk=True)

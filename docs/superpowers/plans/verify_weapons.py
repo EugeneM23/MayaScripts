@@ -59,33 +59,33 @@ if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
     cmds.loadPlugin("fbxmaya", quiet=True)
 mel.eval("FBXImportMode -v exmerge")
 
-carrier = attach.attach(entry, bone)
+weapon, _note = attach.attach(entry, bone)
 check("imports even with the plugin left in exmerge",
-      bool(cmds.listRelatives(carrier, allDescendents=True, type="mesh")))
+      bool(cmds.listRelatives(weapon, allDescendents=True, type="mesh")))
 check("and puts the session's import mode back",
       mel.eval("FBXImportMode -q") == "exmerge",
       repr(mel.eval("FBXImportMode -q")))
-check("carrier is a child of the bone",
-      carrier.startswith(bone + "|"), carrier)
-check("carrier is marked",
-      cmds.attributeQuery(attach.MARKER, node=carrier, exists=True))
+check("weapon is a child of the bone",
+      weapon.startswith(bone + "|"), weapon)
+check("weapon is marked",
+      cmds.attributeQuery(attach.MARKER, node=weapon, exists=True))
 check("marker holds the catalog key",
-      cmds.getAttr(carrier + "." + attach.MARKER) == entry.key)
+      cmds.getAttr(weapon + "." + attach.MARKER) == entry.key)
 check("the model came in with it",
-      bool(cmds.listRelatives(carrier, allDescendents=True, type="mesh")))
+      bool(cmds.listRelatives(weapon, allDescendents=True, type="mesh")))
 
-gap = biggest_difference(world_matrix(carrier), world_matrix(bone))
+gap = biggest_difference(world_matrix(weapon), world_matrix(bone))
 check("with zero offsets it sits exactly on the bone", gap < 1e-4,
       "worst matrix element {0:.7f}".format(gap))
 
 # --- offsets --------------------------------------------------------------
-attach.write_offsets(carrier, (0.0, 90.0, 0.0), (5.0, 0.0, 0.0))
-rotate, translate = attach.read_offsets(carrier)
+attach.write_offsets(weapon, (0.0, 90.0, 0.0), (5.0, 0.0, 0.0))
+rotate, translate = attach.read_offsets(weapon)
 check("offsets read back as written",
       max(abs(rotate[1] - 90.0), abs(translate[0] - 5.0)) < 1e-4,
       "{0} {1}".format(rotate, translate))
 
-moved = biggest_difference(world_matrix(carrier), world_matrix(bone))
+moved = biggest_difference(world_matrix(weapon), world_matrix(bone))
 check("a non-zero offset actually moves it", moved > 1.0,
       "worst matrix element {0:.4f}".format(moved))
 
@@ -98,8 +98,8 @@ marked = [child for child
 check("a second Add leaves exactly one weapon", len(marked) == 1,
       "{0} marked children".format(len(marked)))
 
-carrier = marked[0]
-attach.write_offsets(carrier, (0.0, 30.0, 0.0), (2.0, 1.0, 0.0))
+weapon = marked[0]
+attach.write_offsets(weapon, (0.0, 30.0, 0.0), (2.0, 1.0, 0.0))
 
 # --- it rides the arm -----------------------------------------------------
 start = int(cmds.playbackOptions(query=True, minTime=True))
@@ -111,7 +111,7 @@ locals_over_time = []
 bone_over_time = []
 for frame in frames:
     cmds.currentTime(frame)
-    locals_over_time.append(local_matrix(carrier))
+    locals_over_time.append(local_matrix(weapon))
     bone_over_time.append(world_matrix(bone))
 cmds.currentTime(restore)
 
@@ -164,7 +164,7 @@ plug = pokeable(elbow)
 if plug is None:
     print("NOTE  nothing on {0} is free to turn -- a rig drives it and its "
           "curves are the animator's. The carry is unmeasured in this scene "
-          "state; what stands is that the carrier is a DAG child of the bone "
+          "state; what stands is that the weapon is a DAG child of the bone "
           "with a constant local matrix, checked above.".format(
               elbow.split("|")[-1]))
 else:
@@ -172,13 +172,13 @@ else:
     cmds.autoKeyframe(state=False)
     rest = cmds.getAttr(plug)
     before_bone = world_matrix(bone)
-    before_weapon = world_matrix(carrier)
-    before_local = local_matrix(carrier)
+    before_weapon = world_matrix(weapon)
+    before_local = local_matrix(weapon)
     try:
         cmds.setAttr(plug, rest + 25.0)
         after_bone = world_matrix(bone)
-        after_weapon = world_matrix(carrier)
-        after_local = local_matrix(carrier)
+        after_weapon = world_matrix(weapon)
+        after_local = local_matrix(weapon)
     finally:
         cmds.setAttr(plug, rest)
         cmds.autoKeyframe(state=autokey)

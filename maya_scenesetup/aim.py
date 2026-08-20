@@ -13,10 +13,13 @@ the local +X. Placing by geometry is what makes the aim intuitive, not a
 workaround for it. Placing along local +X would aim a direction 90 degrees off
 the blade on this model.
 
-The aim goes on the GEOMETRY, not on our carrier. What the animator grabs in the
-viewport is the geometry (trap 34), the IK hands ride it once Connect has hung
-them there, and the grip offsets live on the carrier and have to stay writable
--- `setAttr` into a constrained channel raises.
+The aim goes on the GEOMETRY. Since Add stopped building a group that is
+usually the marked node itself, and the two only differ for a file that kept a
+group; either way what the animator grabs in the viewport is the geometry (trap
+34) and the IK hands ride it once Connect has hung them there. An honest side
+effect stays: once the aim exists the constraint fixes the geometry's world
+orientation, so the Rotate field has no visible effect -- `setAttr` into a
+constrained channel raises, and Translate still works.
 """
 
 import maya.api.OpenMaya as om
@@ -58,7 +61,7 @@ def placement(lo, hi, margin=MARGIN):
     def further(axis):
         """The end of the box further from the origin, signed.
 
-        The origin sits in the grip, because the carrier seats the model on the
+        The origin sits in the grip, because the weapon seats the model on the
         bone -- so the further end is the tip.
         """
         return hi[axis] if abs(hi[axis]) >= abs(lo[axis]) else lo[axis]
@@ -137,8 +140,8 @@ def _scene_nodes():
     return builder._scene_nodes()
 
 
-def add_aim(entry, carrier):
-    """Put OverRig's aim on the weapon in `carrier`. Returns a message.
+def add_aim(entry, weapon):
+    """Put OverRig's aim on the attached `weapon`. Returns a message.
 
     Not gated on the time slider highlight, and that is measured rather than
     assumed: this path's bake reads `playbackOptions -ast/-aet` and never
@@ -151,8 +154,8 @@ def add_aim(entry, carrier):
     if absent:
         return overrig.AIM_PROCS_MESSAGE.format(", ".join(absent))
 
-    model = attach.model_root(carrier)
-    if aimrig.aim_for(model) or aimrig.aim_for(carrier):
+    model = attach.model_root(weapon)
+    if aimrig.aim_for(model) or aimrig.aim_for(weapon):
         return ALREADY_MESSAGE
 
     extents = local_extents(model)
@@ -187,9 +190,12 @@ def add_aim(entry, carrier):
         overrig.add_to_set([side], overrig.KNOT_SET)
         overrig.build_aim()
 
-        # The carrier is a handle but never a member: selecting it must resolve
-        # to this aim, and a bake must not delete it.
-        aimrig.record(entry.key, model, [model, carrier], before)
+        # Handles, never members: selecting one must resolve to this aim, and
+        # a bake must not delete it. Deduplicated, because with no group the
+        # model and the marked weapon are one node and the same UUID twice is
+        # bookkeeping nobody can read.
+        handles = [model] if model == weapon else [model, weapon]
+        aimrig.record(entry.key, model, handles, before)
         return added_message(entry.label, top)
     finally:
         cmds.undoInfo(closeChunk=True)

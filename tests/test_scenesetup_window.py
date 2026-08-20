@@ -52,7 +52,7 @@ SWORD = catalog.by_key("LongSword_02")
 
 
 class AimRefusals(unittest.TestCase):
-    """Add deletes the carrier whole, and the aim's locators drive the geometry
+    """Add deletes the weapon whole, and the aim's locators drive the geometry
     inside it. Without this refusal the press leaves two locators pointing at a
     deleted node -- the same reasoning that already makes Add refuse while the
     hands are connected."""
@@ -135,7 +135,7 @@ class LinkedMessages(unittest.TestCase):
     """What the window says once the hands ride the weapon."""
 
     def test_add_is_refused_with_a_reason(self):
-        """Replacing would delete the carrier, and the IK controls are its
+        """Replacing would delete the weapon, and the IK controls are its
         children -- the press would take both arm rigs down unbaked."""
         self.assertIn("disconnect", window.LINKED_NO_ADD.lower())
 

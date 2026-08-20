@@ -144,14 +144,14 @@ def _status(message):
     cmds.text(_STATUS, edit=True, label=message)
 
 
-def _carrier(entry):
-    """Root, bone, carrier, and whether that carrier drives the arms.
+def _attached(entry):
+    """Root, bone, weapon, and whether that weapon drives the arms.
 
     All four are returned so callers can tell "no character" from "character
     has no such bone" from "the bone is bare"; each says something different
     on the status line.
 
-    The carrier is looked for in the bone first and through the link second:
+    The weapon is looked for in the bone first and through the link second:
     once connected it lives out in world space and the bone knows nothing
     about it any more.
     """
@@ -166,7 +166,7 @@ def _carrier(entry):
     if in_hand:
         return root, bone, in_hand, False
 
-    linked = linking.linked_carrier()
+    linked = linking.linked_weapon()
     return root, bone, linked, linked is not None
 
 
@@ -178,19 +178,19 @@ def _bound_root():
 
 
 def _locate(entry):
-    """Root, bone, carrier and link state, or None with the status set.
+    """Root, bone, weapon and link state, or None with the status set.
 
     The shared front half of every weapon callback: no character and a
     missing bone end the press the same way everywhere.
     """
-    root, bone, carrier, linked = _carrier(entry)
+    root, bone, weapon, linked = _attached(entry)
     if not root:
         _status(NO_CHARACTER)
         return None
     if not bone:
         _status(missing_bone_message(root, entry.bone))
         return None
-    return root, bone, carrier, linked
+    return root, bone, weapon, linked
 
 
 # --------------------------------------------------------------- callbacks
@@ -207,10 +207,10 @@ def _run(action):
 def refresh():
     """Re-read the scene: which character, and what the fields should show."""
     entry = _entry()
-    root, bone, carrier, linked = _carrier(entry)
+    root, bone, weapon, linked = _attached(entry)
 
-    if carrier:
-        rotate, translate = attach.read_offsets(carrier)
+    if weapon:
+        rotate, translate = attach.read_offsets(weapon)
         _set_fields(rotate, translate)
         _status(linked_message(entry) if linked
                 else attached_message(entry, bone))
@@ -231,15 +231,15 @@ def add_weapon():
     located = _locate(entry)
     if located is None:
         return
-    _root, bone, carrier_now, linked = located
+    _root, bone, attached_now, linked = located
     if linked:
-        # Replacing deletes the carrier, and the IK hand controls are its DAG
+        # Replacing deletes the weapon, and the IK hand controls are its DAG
         # children: this press would take both arm rigs down unbaked.
         _status(LINKED_NO_ADD)
         return
-    if carrier_now and aimrig.aim_for(attach.model_root(carrier_now)):
-        # Same shape of problem: the aim's locators drive the geometry inside
-        # the carrier, so replacing it leaves them pointing at a deleted node.
+    if attached_now and aimrig.aim_for(attach.model_root(attached_now)):
+        # Same shape of problem: the aim's locators drive the geometry, so
+        # replacing it leaves them pointing at a deleted node.
         _status(AIMED_NO_ADD)
         return
 
@@ -249,9 +249,10 @@ def add_weapon():
         return
 
     rotate, translate = _fields()
-    attach.attach(entry, bone, rotate, translate)
+    _weapon, note = attach.attach(entry, bone, rotate, translate)
     _remember(entry, rotate, translate)
-    _status(added_message(entry, bone))
+    message = added_message(entry, bone)
+    _status(message + " - " + note if note else message)
 
 
 def offsets_changed():
@@ -260,14 +261,14 @@ def offsets_changed():
     rotate, translate = _fields()
     _remember(entry, rotate, translate)  # the next Add still wants them
 
-    _root, bone, carrier, _linked = _carrier(entry)
-    if not carrier:
+    _root, bone, weapon, _linked = _attached(entry)
+    if not weapon:
         _status(NOT_ATTACHED)
         return
-    if attach.is_animated(carrier):
+    if attach.is_animated(weapon):
         _status(LINKED_NO_OFFSETS)
         return
-    attach.write_offsets(carrier, rotate, translate)
+    attach.write_offsets(weapon, rotate, translate)
     _status(attached_message(entry, bone))
 
 
@@ -277,14 +278,14 @@ def connect_arms():
     located = _locate(entry)
     if located is None:
         return
-    root, _bone, carrier, linked = located
+    root, _bone, weapon, linked = located
     if linked:
         _status(ALREADY_CONNECTED)
         return
-    if not carrier:
+    if not weapon:
         _status(NO_WEAPON)
         return
-    _status(linking.connect(carrier, skeleton.scene_map(root)))
+    _status(linking.connect(weapon, skeleton.scene_map(root)))
 
 
 def add_aim():
@@ -297,11 +298,11 @@ def add_aim():
     located = _locate(entry)
     if located is None:
         return
-    _root, _bone, carrier, _linked = located
-    if not carrier:
+    _root, _bone, weapon, _linked = located
+    if not weapon:
         _status(NO_WEAPON)
         return
-    _status(weaponaim.add_aim(entry, carrier))
+    _status(weaponaim.add_aim(entry, weapon))
 
 
 def camera_setup():
@@ -328,11 +329,11 @@ def disconnect_arms():
     located = _locate(entry)
     if located is None:
         return
-    _root, bone, carrier, linked = located
+    _root, bone, weapon, linked = located
     if not linked:
         _status(NOT_CONNECTED)
         return
-    _status(linking.disconnect(carrier, bone))
+    _status(linking.disconnect(weapon, bone))
 
 
 # ------------------------------------------------------------------ window

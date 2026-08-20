@@ -65,40 +65,40 @@ end = int(cmds.playbackOptions(query=True, maxTime=True))
 frames = sorted(set([start, (start + end) // 2, end]))
 
 # --- the weapon has to be in the hand to begin with -----------------------
-carrier = attach.find_attached(bone) or linking.linked_carrier()
-if carrier is None:
-    carrier = attach.attach(entry, bone)
+weapon = attach.find_attached(bone) or linking.linked_weapon()
+if weapon is None:
+    weapon, _note = attach.attach(entry, bone)
     print("NOTE  no weapon was attached; this run added one")
-if linking.linked_carrier():
-    linking.disconnect(linking.linked_carrier(), bone)
+if linking.linked_weapon():
+    linking.disconnect(linking.linked_weapon(), bone)
     print("NOTE  the arms were already connected; this run disconnected first")
 
-carrier = attach.find_attached(bone)
-check("starting with the weapon in the hand", carrier is not None, str(carrier))
+weapon = attach.find_attached(bone)
+check("starting with the weapon in the hand", weapon is not None, str(weapon))
 
 before = sample_hands(hands, frames)
 
 # --- connect --------------------------------------------------------------
-message = linking.connect(carrier, scene_map)
+message = linking.connect(weapon, scene_map)
 print("connect said:", message)
 
-carrier = linking.linked_carrier()
-check("the link is found from the hand control", carrier is not None,
-      str(carrier))
+weapon = linking.linked_weapon()
+check("the link is found from the hand control", weapon is not None,
+      str(weapon))
 check("the weapon left the skeleton",
-      carrier is not None
-      and not cmds.listRelatives(carrier, parent=True, fullPath=True),
+      weapon is not None
+      and not cmds.listRelatives(weapon, parent=True, fullPath=True),
       "parent: {0}".format(
-          cmds.listRelatives(carrier, parent=True, fullPath=True)
-          if carrier else "?"))
-check("the weapon carries its own animation", attach.is_animated(carrier))
+          cmds.listRelatives(weapon, parent=True, fullPath=True)
+          if weapon else "?"))
+check("the weapon carries its own animation", attach.is_animated(weapon))
 
 built = builder.built_limbs()
 check("both arms are IK",
       "arm_l" in built and "arm_r" in built, str(sorted(built)))
 
-geometry = attach.model_root(carrier)
-check("the weapon has geometry to hang on", geometry != carrier, str(geometry))
+geometry = attach.model_root(weapon)
+check("the weapon has geometry to hang on", geometry != weapon, str(geometry))
 
 for limb in linking.ARMS:
     node = builder.ik_control(limb, "end")
@@ -142,19 +142,19 @@ else:
           worst_drift([still], [[world_matrix(hand) for hand in hands]]) < 1e-6)
 
 # --- pressing it twice ----------------------------------------------------
-again = linking.connect(carrier, scene_map)
+again = linking.connect(weapon, scene_map)
 print("second press said:", again)
 check("a second Connect hangs nothing new", "0 hand(s)" in again, again)
 check("and still nothing moved",
       worst_drift(before, sample_hands(hands, frames)) < 1e-4)
 
 # --- disconnect -----------------------------------------------------------
-message = linking.disconnect(carrier, bone)
+message = linking.disconnect(weapon, bone)
 print("disconnect said:", message)
 
 back = attach.find_attached(bone)
 check("the weapon is back in the hand", back is not None, str(back))
-check("nothing reports a link any more", linking.linked_carrier() is None)
+check("nothing reports a link any more", linking.linked_weapon() is None)
 
 def parent_of(node):
     found = cmds.listRelatives(node, parent=True, fullPath=True) if node else None
