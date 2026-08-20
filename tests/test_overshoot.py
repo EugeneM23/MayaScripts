@@ -420,6 +420,25 @@ class TestAbsoluteAndMerge(unittest.TestCase):
         self.assertEqual(mo.merge_plans([]), [])
 
 
+class TestAutoPoses(unittest.TestCase):
+    """No key selection: the cursor's key first, the last key as fallback."""
+
+    def test_parked_anywhere_means_the_end_of_the_move(self):
+        self.assertEqual(mo.auto_poses([0, 10, 20], 13.0), [20])
+
+    def test_parked_before_every_key_still_means_the_end(self):
+        self.assertEqual(mo.auto_poses([0, 10, 20], -5.0), [20])
+
+    def test_standing_on_a_key_names_that_pose_with_the_end_behind_it(self):
+        self.assertEqual(mo.auto_poses([0, 10, 20], 10.0), [10, 20])
+
+    def test_standing_on_the_last_key_lists_it_once(self):
+        self.assertEqual(mo.auto_poses([0, 10, 20], 20.0), [20])
+
+    def test_no_keys_no_poses(self):
+        self.assertEqual(mo.auto_poses([], 10.0), [])
+
+
 class TestPresets(unittest.TestCase):
 
     def test_every_button_has_a_preset(self):

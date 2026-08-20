@@ -83,12 +83,20 @@ nothing.
 
 ### Where the overshoot goes
 
-Selected keys, else the current frame. Selected keys carry **both a time and a
-channel**, so selecting only `translateY`'s key overshoots only Y, and selecting
-a column of keys does a whole pose. With no key selection the tool takes the key
-at — or the nearest one before — the current frame on every enabled channel. The
-status line always names what it chose. The last key of the channel is no longer
-special in any way.
+Selected keys first: they carry **both a time and a channel**, so selecting only
+`translateY`'s key overshoots only Y, and a column of keys does a whole pose.
+
+With no key selection: standing exactly on a key names that pose, and anywhere
+else means **the last key of the channel** — the animator parks the cursor
+mid-clip and expects the stop of the move, which is what the original tool
+always did. Learned live (2026-08-20, "написано что нечего овершутить хотя на
+объекте кубике есть ключи"): the first rule shipped here was "the key at or
+before the cursor", and it resolved a mid-move cursor onto a pass-through key,
+refusing correctly and unhelpfully. In auto mode the last key also rides along
+as the fallback behind an exact-frame hit, so a pass-through under the cursor
+falls through to the end instead of refusing — a pass-through can never be
+overshot, so nothing is lost (`auto_poses`, pure). One pose per channel in auto
+mode; every selected key in selection mode. The status line names what it chose.
 
 ### What one pose needs from the scene
 

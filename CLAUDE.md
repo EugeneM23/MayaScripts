@@ -1494,18 +1494,39 @@ only the window it is about to write. A *Bake into curves* checkbox writes the
 same plan into the base curves instead (identical modulo `P`) and needs no
 anim-layer semantics at all, which is why both exist.
 
+**Where it lands with no keys selected: the LAST key of the channel**, unless
+the cursor stands exactly on a key, which names that pose (`auto_poses`, with
+the last key riding as fallback so a pass-through under the cursor falls
+through to the end). The first shipped rule — "the key at or before the
+cursor" — resolved a mid-move cursor onto a pass-through key and refused,
+correctly and unhelpfully («написано что нечего овершутить хотя на объекте
+кубике есть ключи»). Selected keys still win over everything and carry both a
+time and a channel.
+
 Refusals, all named in the status line: no previous key, no move, **a
 pass-through key** (the next segment continues the same way — an excursion there
 is a wobble in the middle of a move), no room before the next key, and an
 excursion wider than twice the move is clamped rather than written.
 
-Status, honestly: the pure half is proved (68 tests). **Nobody has yet watched
-this tool run in the viewport.** The live script has never completed — Maya's
-idle queue was blocked every time it was sent (bridge note 6), and one earlier
-run died at gate 12 on two of its own bugs (traps 41 and 42). Its first real run
-also answers the one thing unit tests cannot: whether
-`cmds.setKeyframe(..., animLayer=L, value=v)` writes `v` as the offset on an
-additive layer or as an absolute value (gate 1 says which by number).
+**Three Maya facts this tool paid to learn (all measured live, out_11):**
+`cmds.setKeyframe(..., animLayer=L, value=v)` takes `v` as the plug's FINAL
+value and writes `v - base` onto the layer curve — a probe key of 0.0 at a pose
+worth 100 briefly held −100 and was the original "объект улетает" bug. Writing
+with `setKeyframe(curveNode, time=, value=)` straight onto the layer's own
+animCurve (found via `animLayer -q -findCurveForPlug`) lands the value
+verbatim, which is why `write_layer_keys` goes through the curve node. And a
+`getAttr(plug, time=)` straight after a write returns a STALE value (trap 14
+without a time change): the pose-drift guard once read a phantom 100-unit
+drift from its own already-deleted probe key and deleted a perfectly good
+write — the tool "не анимирует" while writing correct keys. `cmds.dgdirty(plug)`
+before the guard reads is the fix.
+
+Status: 787 unit tests green; the write path, the layer semantics and the
+guard are proved live through the bridge (out_11); the full 13-gate
+`verify_overshoot.py` has still never completed — the bridge died to trap 8
+(a SystemExit runner template predating note 8 was reused) before it could
+run, and only a Maya restart revives the port. Run it at the next natural
+restart.
 
 ## Conventions
 

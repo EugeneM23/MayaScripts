@@ -356,6 +356,27 @@ def key_at_or_before(times, now):
     return max(earlier) if earlier else None
 
 
+def auto_poses(times, now, epsilon=1e-6):
+    """Where to overshoot when no keys are selected, in preference order.
+
+    Standing exactly on a key names that pose; anywhere else means the end of
+    the move -- the animator parks the cursor mid-clip and expects the stop at
+    the last key, which is what the original tool always did. The last key
+    rides along as the fallback, so a pass-through under the cursor falls
+    through to the end instead of refusing outright (a pass-through can never
+    be overshot, so nothing is lost).
+    """
+    if not times:
+        return []
+    out = []
+    exact = next((t for t in times if abs(t - now) < epsilon), None)
+    if exact is not None:
+        out.append(exact)
+    if exact is None or abs(times[-1] - exact) > epsilon:
+        out.append(times[-1])
+    return out
+
+
 # ---------------------------------------------------------------------------
 #  Writing
 # ---------------------------------------------------------------------------
@@ -434,27 +455,32 @@ def write_layer_keys(obj, attr, keys, layer, source):
     plug = "%s.%s" % (obj, attr)
     cmds.animLayer(layer, edit=True, attribute=plug)
     first = keys[0]
-    cmds.setKeyframe(obj, attribute=attr, time=first.time, value=0.0,
-                     animLayer=layer)
     curve = (cmds.animLayer(layer, query=True,
                             findCurveForPlug=plug) or [None])[0]
     if not curve:
+        #  bring the curve into being. MEASURED (out_11, 2026-08-20): the
+        #  layer API takes `value` as the plug's FINAL value and writes
+        #  value - base onto the curve, so keying the current composite is
+        #  the probe that leaves a harmless zero offset -- a probe of 0.0
+        #  briefly put -100 there, and that transient poisoned every read
+        #  after it
+        current = cmds.getAttr(plug, time=first.time)
+        cmds.setKeyframe(obj, attribute=attr, time=first.time, value=current,
+                         animLayer=layer)
+        curve = (cmds.animLayer(layer, query=True,
+                                findCurveForPlug=plug) or [None])[0]
+    if not curve:
         return None, "%s could not go on the layer" % attr
-
-    #  measure what the layer API did with that zero WHILE IT IS STILL THERE:
-    #  after the clear below the plug reads the base again and the answer would
-    #  come out "offset" no matter what the truth is
-    absolute = abs(cmds.getAttr(plug, time=first.time) -
-                   base_at(source, first.time)) > 1e-4
 
     try:
         cmds.cutKey(curve, time=(keys[0].time, keys[-1].time), clear=True)
         for k in keys:
             cmds.setKeyframe(curve, time=k.time, value=k.value)
     except Exception:                                          # noqa: BLE001
+        #  through the layer API then: final value = base + offset (measured)
         for k in keys:
-            value = k.value + (base_at(source, k.time) if absolute else 0.0)
-            cmds.setKeyframe(obj, attribute=attr, time=k.time, value=value,
+            cmds.setKeyframe(obj, attribute=attr, time=k.time,
+                             value=base_at(source, k.time) + k.value,
                              animLayer=layer)
     return curve, ""
 
@@ -470,6 +496,10 @@ def write_channel(obj, attr, plans, layer=None):
     #  read the poses first: the guard at the bottom asks what OUR write did,
     #  not what the scene already held, so a stale layer from an older version
     #  cannot make it fire on an innocent run
+    try:
+        cmds.dgdirty(plug)
+    except Exception:                                          # noqa: BLE001
+        pass
     before = [cmds.getAttr(plug, time=plan_keys[0].time)
               for plan_keys, _ in plans]
 
@@ -493,6 +523,13 @@ def write_channel(obj, attr, plans, layer=None):
     #  The pose is the animator's decision and this tool only builds the stop
     #  after it. If anything we did moved it, take our keys back out and say
     #  so -- an object thrown across the scene is not an acceptable failure.
+    #  Force a fresh evaluation first: a read straight after a write returns
+    #  stale values (trap 14), and a stale read here once deleted a perfectly
+    #  good write claiming a 100-unit drift (measured, out_11).
+    try:
+        cmds.dgdirty(plug)
+    except Exception:                                          # noqa: BLE001
+        pass
     for (plan_keys, _), was in zip(plans, before):
         drift = abs(cmds.getAttr(plug, time=plan_keys[0].time) - was)
         if drift > 1e-3:
@@ -546,15 +583,17 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
                 if any_selected:
                     poses = selected_key_times(obj, attr)
                 else:
-                    at = key_at_or_before(times, now)
-                    poses = [at] if at is not None else []
+                    #  candidates, not a verdict: the key under the cursor
+                    #  first, the channel's last key as the fallback
+                    poses = auto_poses(times, now)
 
+                refused = []
                 for pose_time in poses:
                     (pose_value, prev_time, prev_value,
                      next_time, next_value) = neighbours(times, values,
                                                          pose_time)
                     if pose_value is None:
-                        skipped.append("%s.%s@%g no key there"
+                        refused.append("%s.%s@%g no key there"
                                        % (obj.split("|")[-1], attr, pose_time))
                         continue
                     keys, note = plan_overshoot(
@@ -563,7 +602,7 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
                         strength=strength, frames=frames, shape=shape,
                         swings=swings, ratio=ratio, restitution=restitution)
                     if not keys:
-                        skipped.append("%s.%s@%g %s"
+                        refused.append("%s.%s@%g %s"
                                        % (obj.split("|")[-1], attr,
                                           pose_time, note))
                         continue
@@ -572,6 +611,10 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
                     peaks.append(peak_of(keys))
                     plan_of.setdefault((obj, group, attr), []).append(
                         (keys, pose_value))
+                    if not any_selected:
+                        break            # one pose per channel in auto mode
+                if (obj, group, attr) not in plan_of:
+                    skipped.extend(refused)
 
     if not plan_of:
         return "nothing to overshoot: " + ("; ".join(skipped[:4]) or "no keys")
