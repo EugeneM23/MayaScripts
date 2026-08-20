@@ -141,7 +141,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 679 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 714 tests at time of writing, all passing.
 
 Testing code that needs `maya.cmds` without a Maya session: inject a fake into
 `sys.modules` and **rebind the module attribute** (`naming.cmds = fake`). Do not
@@ -468,7 +468,12 @@ both manifests, so a limb baked as IK and one baked as FK chains resolve
 alike), and a spine bake leaves every twist alone. The manifest is
 `RigPicker_twist_<limb>` holding the nodes we created — **not** a UUID scene
 diff: that diff exists because OverRig conjures up nodes we cannot see, and
-here every node is ours.
+here every node is ours. It also carries the driven channels as
+`rigPickerTwistPlugs` (`<uuid>.<attr>`), because **neither walk of the rig
+finds them**: `objectType` on our addDoubleLinear answers `addDL` (trap 41)
+and Maya splices a `unitConversion` in front of the angle channel (trap 42).
+Those conversions are members too, or one outlives the bake still driving the
+channel.
 
 **The bake samples, then deletes, then keys.** `cmds.bakeResults` has no say
 over a channel driven by our own DG nodes, so `twist.bake` reads every frame
@@ -503,16 +508,21 @@ rewritten that day** — five of them asserted "the finger hangs on the hand",
 which is no longer true — so their last green run predates the rewrite; they
 have not been sent through the bridge since (the animator's Maya had a blocked
 idle queue at the time — see bridge note 6). `verify_twist_bones.py`
-(2026-08-20) is in the same state, and for the same reason — the queue was
-blocked again the day it was written. **The twist rig itself is confirmed
-working in the live scene by the user** («отлично это работает»), pressing
-Build in the panel; what has not run is the script's ten gates. It runs in
+(2026-08-20) is **green: 0 of 30 gates failed** in the Manny scene, and it
+found three real bugs on the way (traps 41–43). It runs in
 **two phases**: the exact
 numbers are measured on a SANDBOX chain it builds and deletes (poking a
 sandbox is free, and it needs neither OverRig nor a rig on the character, so
 the mathematics is proved on its own), and the real skeleton then gets the
 integration gates — the network's output against the same twist recomputed in
 plain Python, idempotence, the bake, and Switch FK/IK leaving it alone.
+Measured 2026-08-20 on Manny: 22.500000 of a 90° roll on a joint at t=0.25,
+**0.000000000 from a 60° bend** (the gate that separates this from a
+two-target constraint), a counter joint netting 22.500001 of its parent's 90°,
+127.500000 at 170° with no flip, the DG against plain Python worst
+**0.000001713°** in a mixed pose, driver bones unmoved **0.000000000** over
+the timeline, and an arm switched to FK and back leaving all 144 twist nodes
+in place and every value within 0.000009°.
 `verify_control_axes.py` builds the rig itself in two halves — once with
 `orient_controllers` suppressed, then for real — so the turn is measured on
 its own rather than inside a whole build; it now builds **full FK**, because
@@ -822,6 +832,35 @@ C_parent` construction rather than a measurement.
    against 9 that are transform channels. Anything that clears a root with
    `listConnections(root, type="animCurve")` throws those away, and the loss
    only shows up in Unreal.
+41. **`cmds.objectType` does not answer the type name you created the node
+   with.** `createNode("addDoubleLinear")` reports **`addDL`**, and
+   multDoubleLinear reports **`multDL`**. `twist.driven_plugs` filtered its
+   manifest members on `== "addDoubleLinear"`, matched nothing, and returned
+   an empty list — so the bake sampled nothing, deleted the whole network and
+   took every twist value with it, while reporting "0 twist joint(s) baked"
+   in a message nobody reads twice. Identify a node by what it is WIRED to,
+   or record it; never by a type string you have not printed.
+42. **Maya splices a `unitConversion` in wherever a unitless double meets an
+   angle, and it is not in your manifest.** Our twist network ends in an
+   addDoubleLinear whose `output` is a plain double, and the joint's
+   `rotateX` is an angle — so `connectAttr` quietly creates a node in
+   between, and a second one in front of the weight multiplier where
+   `quatToEuler.outputRotateX` feeds a double. Two consequences, both
+   measured: **no walk of `.output` finds the driven channel** (it finds the
+   conversion node), and a conversion left out of the manifest **survives the
+   bake still wired to the channel** — which then has an input driven by
+   nothing, and no key can be written to it. Collect them after wiring
+   (`listConnections(node, type="unitConversion")`) and record them as ours.
+   The conversion also costs a little precision: the exact 22.5 comes back as
+   22.4999998, degrees through radians and back.
+43. **`cmds.selectKey(clear=True)` raises `TypeError: Error retrieving
+   default arguments` when the selection is empty.** It wants objects to
+   resolve its defaults against, even though clearing a key selection needs
+   none. `overrig.full_rate_capture` calls it before every chain capture, so
+   **Build crashed whenever nothing was selected** — and it went unnoticed
+   for weeks because an animator presses Build having just clicked something,
+   and every live proof selected a bone on the way in. The failure is exactly
+   the case where there is nothing to clear, so the guard swallows it.
 
 ## Retargeting Manny onto other skeletons
 
@@ -1064,12 +1103,14 @@ any other FBX, an **Add** button that imports the chosen one and hangs it on
 `weapon_r`, live rotate/translate fields for dialling in the grip, and an
 **Add Aim** button (below). Design:
 `docs/superpowers/specs/2026-08-17-weapon-attach-design.md`, proof:
-`docs/superpowers/plans/verify_weapons.py` (**17/17 green before the
-2026-08-20 change; it gained nine gates for the no-group attach and the FBX
-field and has not been re-run through the bridge yet** — the command port was
-not draining that day). It refuses to run at all while the arms
-are connected or an aim exists: every attach in it REPLACES what is in the
-hand, and replacing deletes the marked node whole.
+`docs/superpowers/plans/verify_weapons.py` (**26/26 green**, including the
+nine gates added 2026-08-20 for the no-group attach and the FBX field: the
+marked node is `LongSwordMesh` itself, a direct child of `weapon_r`, seated to
+worst matrix element **0.0000000**, with nothing left at world level from the
+import). It refuses to run at all while the arms are connected or an aim
+exists: every attach in it REPLACES what is in the hand, and replacing deletes
+the marked node whole. Its poke gate steps aside once a rig drives the arm —
+the channels are the animator's then — and says so rather than passing quietly.
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
