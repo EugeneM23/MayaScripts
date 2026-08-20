@@ -99,6 +99,24 @@ Four things that will waste a run if forgotten:
    If THAT works and the real one does not, it is not the queue. (Measured
    2026-08-18: a `print` payload written by PowerShell as ASCII ran; the same
    send with a BOM'd runner produced nothing at all.)
+8. **Do not `raise SystemExit` in a runner — it is the prime suspect for
+   killing the port for the rest of the session.** Note 5's idempotence guard
+   was written as "`SystemExit` silently when the marker exists", and note 5
+   also says every sent line runs TWICE. So the very first send of a session
+   ends with a SystemExit escaping into Maya's command-port handler — and
+   measured 2026-08-20, that is exactly where the bridge died: send #1 ran and
+   wrote its output file, and from then on every send was ACCEPTED
+   (`create_connection` fine, bytes written fine) and never executed. Maya
+   stayed healthy the whole time — responding, 1.4 GB resident, the animator
+   pressing Build in the panel and the tool working — while a two-word `print`
+   payload produced nothing, which is the same signature as notes 6 and 7 with
+   no dialog and no BOM anywhere. `SystemExit` is a BaseException, so a handler
+   that catches `Exception` lets it through to the C++ layer that asked for the
+   evaluation. **Guard with an `if`, never a raise**: wrap the runner body in
+   `if not os.path.exists(marker):` and let the duplicate pass fall off the end
+   doing nothing. Not yet isolated in a controlled experiment (that costs the
+   animator a port re-open), so it is a strong suspicion with a tight
+   correlation rather than a measured fact — but the fix costs nothing.
 
 ## Running tests
 
