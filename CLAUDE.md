@@ -832,6 +832,19 @@ C_parent` construction rather than a measurement.
    against 9 that are transform channels. Anything that clears a root with
    `listConnections(root, type="animCurve")` throws those away, and the loss
    only shows up in Unreal.
+41. **`cmds.animLayer` has no `rotationAccumulationMode` flag in Maya 2027.**
+   It is in older docs and in plenty of forum answers, and it raises
+   `TypeError: Invalid flag`. So there is nothing to configure about how an
+   additive layer accumulates euler offsets — measure the combined channel
+   instead of setting a mode.
+42. **`cmds.selectKey(clear=True)` raises when nothing is selected** —
+   `TypeError: Error retrieving default arguments`, because the command wants
+   objects and falls back to the selection. It works fine earlier in the same
+   script and then throws in the teardown, after the sandbox nodes have been
+   deleted, taking the rest of the restore with it: autoKey stayed off, the
+   frame and the selection were never put back. Every teardown step in a bridge
+   script should be individually guarded, and a `finally` block is exactly
+   where that matters.
 41. **`cmds.objectType` does not answer the type name you created the node
    with.** `createNode("addDoubleLinear")` reports **`addDL`**, and
    multDoubleLinear reports **`multDL`**. `twist.driven_plugs` filtered its
@@ -1398,6 +1411,85 @@ top-level `ik_hand_root` used to outrank a whole `pelvis` skeleton. Two data
 hazards closed as well: GO asks once before discarding a modified scene, and an
 empty name suffix pointed at the source folder is refused (`clip.FBX` and
 `clip.fbx` are one file on Windows).
+
+## `maya_overshoot` — overshoot on any pose, not just the last key
+
+Root-level standalone tool, rewritten 2026-08-20 (it had come in with the
+initial commit and never been touched; the animator's verdict on the original
+was *"качество какое-то плохое"*). Design:
+`docs/superpowers/specs/2026-08-20-overshoot-redesign-design.md`, proof:
+`docs/superpowers/plans/verify_overshoot.py`. **63 unit tests green; the live
+gates have NOT run** — see the status note at the end of this section.
+
+**The pose key becomes the extreme.** That one decision is the whole redesign.
+The original left the pose where it was and added the excursion *after* it, so
+the object decelerated into the pose, stopped, and was then kicked out and
+pulled back — a second move, not a follow-through. The obvious repair does not
+work either, and it is worth knowing why before anyone tries it again: speed at
+the pose means distance covered just before the pose, and for a 100-unit move
+over 20 frames with an ordinary ease-in, arriving on the peak speed for even
+three frames means being **51 units — half the entire move — behind** where the
+animator put the object. The momentum is not there to borrow. So the tool moves
+the stop instead: at `T` the object stands at `P + A` with zero velocity (which
+is what a turning point *is*, so the arrival keeps its own ease and nothing is
+discontinuous), and the pose becomes the settle target `N` frames later. A punch
+that hit at frame 20 still hits at frame 20, 15 % further out.
+
+**The settle is a spring released from rest**, `f(u) = e^{-ku}(cos(πcu) +
+k/(πc)·sin(πcu))`, and the reason that form is used rather than a plain damped
+sine is its derivative: `-e^{-ku}(k² + (πc)²)/(πc)·sin(πcu)`, which is zero
+**only** at `u = i/c`. So the turning points are evenly spaced, each swing keeps
+a constant share `r = e^{-k/c}` of the last, and the curve is monotone between
+them — keying those `c+1` frames with **flat** tangents (a turning point has
+zero velocity, so flat is correct rather than a compromise) reproduces the
+shape. **4-7 editable keys** where the original wrote one on every frame, up to
+120 per channel. `r` is what the UI exposes, not `k`: "each swing keeps 30 % of
+the last" is a sentence an animator can act on.
+
+Five buttons over two families — Snap (1 swing, no undershoot), Spring (3, 0.30),
+Elastic (6, 0.60), Recoil (2, 0.15), and Bounce, which is a ball dropped onto
+the pose: apex `i` at `A·e^{2i}`, fall times going as `√h`, so the contacts
+close in geometrically. Equal contact intervals are the one thing that stops a
+bounce reading as a bounce, and that is what the original had.
+
+Amplitude is `amount% · |Δ|` of the move that arrived — legible, frame-rate
+independent, and exactly what lands on the key. The original derived it from a
+one-frame finite difference *at the pose key*, which is the one place an eased
+arrival has no speed, so the harder the animator sold the stop the less
+overshoot they got; `duration` multiplied the size as well.
+
+**Where it applies:** selected keys (which carry a channel as well as a time, so
+selecting one curve's key overshoots only that channel), else the key at or
+before the current frame. Refusals, all named in the status line: no previous
+key, no move, **a pass-through key** (the next segment continues the same way —
+an extreme there is a hitch in the middle of a move), and no room before the
+next key. `N` is clamped to `T_next - 1` and the swings are reduced rather than
+letting two keys land on one frame.
+
+**Additive layer, not override** (`<obj>_overshoot_pos` / `_rot`), which deletes
+a whole bug class with it: the original animated the override layer's *weight*
+to keep it from swallowing the animation, stepping it to 1 at the LAST key over
+all channels of the group — so any channel that ended earlier had its overshoot
+silently multiplied by zero. An additive layer with no keys is zero offset,
+so there is nothing to gate, and the layer's **weight becomes the strength
+dial**, live. Re-applying clears only the window it is about to write, so other
+poses' work survives. A *Bake into curves* checkbox writes the same plan into
+the base curves instead (the key list is identical modulo `P`) — that path needs
+no anim-layer semantics at all, which is why both exist.
+
+**Two poses on one channel share a frame**: the later pose's arrival key sits
+exactly on the earlier pose's extreme, and writing its zero there would flatten
+the extreme just asked for. `merge_plans` makes the arrival give way — the curve
+is already where it needs to be.
+
+Status, honestly: the pure half is proved (63 tests). The live script got one
+partial run, failing at gate 12 on two of its own bugs (traps 41 and 42), and
+the corrected version has not been through the bridge — Maya's idle queue was
+blocked both times it was sent (bridge note 6). **Nobody has yet watched this
+tool run in the viewport.** Its first live run should also check the one thing
+unit tests cannot: whether `cmds.setKeyframe(..., animLayer=L, value=v)` writes
+`v` as the offset on an additive layer or as an absolute value (gate 1c is
+built to say which).
 
 ## Conventions
 
