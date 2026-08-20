@@ -8,11 +8,13 @@ about that model, not something the animator should retype every time.
 Paths are written with forward slashes. The FBX plugin is driven through MEL,
 where a backslash starts an escape.
 """
-
 import collections
 import os
+import string
 
 Weapon = collections.namedtuple("Weapon", "key label path bone scale")
+
+_LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
 WEAPONS = [
     Weapon("LongSword_02", "Long Sword 02",
@@ -42,3 +44,31 @@ def by_key(key):
 def missing(entry):
     """The entry's path if the file is not on disk, "" if it is."""
     return "" if os.path.isfile(entry.path) else entry.path
+
+
+def node_key(text):
+    """`text` reduced to a legal Maya node name.
+
+    The key is not only a string in an attribute: it names the aim manifest
+    (`RigPicker_aim_<key>` reaches `cmds.sets`) and an optionVar. A space, a
+    dot or a leading digit there is a traceback later, on a press that has
+    nothing to do with this one.
+    """
+    safe = "".join(c if c in _LEGAL else "_" for c in text)
+    if not safe:
+        return "weapon"
+    return "_" + safe if safe[0].isdigit() else safe
+
+
+def entry_for_path(path, bone):
+    """An entry for a file the table knows nothing about.
+
+    The key and the label come from the file's stem, so the offsets dialled
+    in for it are remembered the way any weapon's are. The bone is the
+    caller's -- the dropdown's, in the window -- and the scale is 1.0 rather
+    than that entry's: a size correction is a fact about one known model, and
+    quietly applying the sword's to somebody else's file is a surprise.
+    """
+    stem = os.path.splitext(os.path.basename(path.replace("\\", "/")))[0]
+    key = node_key(stem)
+    return Weapon(key, key, path, bone, 1.0)

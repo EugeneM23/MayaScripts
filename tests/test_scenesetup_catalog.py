@@ -89,3 +89,58 @@ class OnDisk(unittest.TestCase):
         here = os.path.abspath(__file__).replace("\\", "/")
         entry = catalog.Weapon("X", "X", here, "weapon_r", 1.0)
         self.assertEqual(catalog.missing(entry), "")
+
+
+class NodeKey(unittest.TestCase):
+    """The key is not only a marker value: it names the aim manifest, which
+    reaches cmds.sets, and an optionVar."""
+
+    def test_a_plain_name_is_untouched(self):
+        self.assertEqual(catalog.node_key("LongSword_02"), "LongSword_02")
+
+    def test_spaces_and_dots_become_underscores(self):
+        self.assertEqual(catalog.node_key("My Sword v1.2"), "My_Sword_v1_2")
+
+    def test_a_leading_digit_gets_a_prefix(self):
+        self.assertEqual(catalog.node_key("2handed"), "_2handed")
+
+    def test_non_ascii_is_replaced(self):
+        self.assertEqual(catalog.node_key("mech"), "mech")
+        self.assertEqual(len(catalog.node_key("\u043c\u0435\u0447")), 3)
+        self.assertNotIn("\u043c", catalog.node_key("\u043c\u0435\u0447"))
+
+    def test_empty_becomes_a_usable_name(self):
+        self.assertEqual(catalog.node_key(""), "weapon")
+
+    def test_a_dash_is_not_legal_in_a_maya_name(self):
+        self.assertEqual(catalog.node_key("two-handed"), "two_handed")
+
+
+class EntryForPath(unittest.TestCase):
+
+    def test_key_and_label_come_from_the_file_stem(self):
+        entry = catalog.entry_for_path("D:/props/Axe_01.FBX", "weapon_r")
+        self.assertEqual(entry.key, "Axe_01")
+        self.assertEqual(entry.label, "Axe_01")
+
+    def test_the_path_is_kept_verbatim(self):
+        entry = catalog.entry_for_path("D:/props/Axe_01.FBX", "weapon_r")
+        self.assertEqual(entry.path, "D:/props/Axe_01.FBX")
+
+    def test_the_bone_is_the_callers(self):
+        self.assertEqual(
+            catalog.entry_for_path("D:/a.fbx", "weapon_l").bone, "weapon_l")
+
+    def test_scale_is_one_never_the_catalogs(self):
+        """A scale correction is a fact about one known model; applying the
+        sword's to somebody else's file is a surprise nobody asked for."""
+        self.assertEqual(catalog.entry_for_path("D:/a.fbx", "weapon_r").scale,
+                         1.0)
+
+    def test_a_windows_path_works_too(self):
+        entry = catalog.entry_for_path(r"D:\props\Big Axe.fbx", "weapon_r")
+        self.assertEqual(entry.key, "Big_Axe")
+
+    def test_missing_answers_for_a_custom_entry_too(self):
+        entry = catalog.entry_for_path("C:/nowhere/Axe.fbx", "weapon_r")
+        self.assertEqual(catalog.missing(entry), "C:/nowhere/Axe.fbx")
