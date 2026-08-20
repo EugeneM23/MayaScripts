@@ -115,8 +115,21 @@ Four things that will waste a run if forgotten:
    evaluation. **Guard with an `if`, never a raise**: wrap the runner body in
    `if not os.path.exists(marker):` and let the duplicate pass fall off the end
    doing nothing. Not yet isolated in a controlled experiment (that costs the
-   animator a port re-open), so it is a strong suspicion with a tight
+   animator a Maya restart), so it is a strong suspicion with a tight
    correlation rather than a measured fact — but the fix costs nothing.
+
+   **Reopening the port does NOT bring it back — only restarting Maya does**,
+   and the symptoms walk through three stages, each measured 2026-08-20. First
+   the listener accepts every byte and runs nothing (notes 6 and 7's
+   signature). Then `commandPort(":7001", query=True)` still answers True, so
+   the usual one-liner is a no-op — it is guarded on exactly that — and the
+   animator's "I reopened it" changes nothing at all. Force it with
+   `commandPort(name=":7001", close=True)` first and the socket comes back
+   **listening on 127.0.0.1:7001 and actively refusing connections from
+   127.0.0.1** (RST, not a timeout), with a leftover CLOSE_WAIT beside it from
+   an earlier send. A listening socket that refuses is a socket nobody is
+   calling `accept` on: the port object is fine and the thing that services it
+   is gone. Save the scene and restart.
 
 ## Running tests
 
