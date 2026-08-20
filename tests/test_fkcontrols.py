@@ -825,5 +825,47 @@ class TestSquarePoints(unittest.TestCase):
             self.assertAlmostEqual(length, radius * 2.0, places=6)
 
 
+class TestTwistLimbsFor(unittest.TestCase):
+    """Which twist rigs come down with a bake. The rest of the wiring is
+    proved live by verify_twist_bones.py -- there is no scene here."""
+
+    def test_a_limb_baked_as_ik_takes_its_twist_with_it(self):
+        self.assertEqual(
+            fkcontrols.twist_limbs_for(["arm_l"], [], ["arm_l", "leg_r"]),
+            ["arm_l"])
+
+    def test_a_limb_baked_as_fk_chains_takes_its_twist_too(self):
+        """The FK and IK manifests use the same limb names, so one lookup
+        covers a limb baked in either representation."""
+        self.assertEqual(
+            fkcontrols.twist_limbs_for([], ["arm_r"], ["arm_r"]), ["arm_r"])
+
+    def test_both_kinds_at_once(self):
+        self.assertEqual(
+            fkcontrols.twist_limbs_for(["arm_l"], ["leg_r"],
+                                       ["arm_l", "arm_r", "leg_r"]),
+            ["arm_l", "leg_r"])
+
+    def test_a_spine_bake_leaves_every_twist_alone(self):
+        self.assertEqual(
+            fkcontrols.twist_limbs_for([], ["spine", "neck"], ["arm_l"]), [])
+
+    def test_only_limbs_that_have_a_twist_rig_are_named(self):
+        self.assertEqual(
+            fkcontrols.twist_limbs_for(["arm_l", "arm_r"], [], ["arm_l"]),
+            ["arm_l"])
+
+    def test_nothing_standing_is_nothing_to_bake(self):
+        self.assertEqual(fkcontrols.twist_limbs_for(["arm_l"], [], []), [])
+
+    def test_the_order_follows_what_is_standing(self):
+        """Deterministic: the caller passes built_limbs(), which is in table
+        order, and a set intersection would scramble it."""
+        self.assertEqual(
+            fkcontrols.twist_limbs_for(["leg_r", "arm_l"], [],
+                                       ["arm_l", "arm_r", "leg_l", "leg_r"]),
+            ["arm_l", "leg_r"])
+
+
 if __name__ == "__main__":
     unittest.main()

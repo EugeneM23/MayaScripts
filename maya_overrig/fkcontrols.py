@@ -16,7 +16,7 @@ twist joint, and `head` measures 0 for having no children at all.
 import maya.cmds as cmds
 import maya.mel as mel
 
-from maya_overrig import bodymap, builder, overrig
+from maya_overrig import bodymap, builder, overrig, twist
 from maya_overrig.fkchains import (  # noqa: F401 -- fkcontrols is the API
     FK_SET, FK_SET_PREFIX, SUFFIX, LIMB_CHAINS, SWITCHABLE, _finger_chains,
     CHAINS, FINGER_CHAINS, FINGER_JOINTS, BUILDABLE, HYBRID_FK_CHAINS,
@@ -371,6 +371,17 @@ def bake_targets(scene_map):
             [name for name, _ in CHAINS if name in fk_hit])
 
 
+def twist_limbs_for(ik_limbs, fk_chains, standing):
+    """Limbs whose twist rig must come down with this bake.
+
+    A limb name means the same thing in both manifests -- `arm_l` is `arm_l`
+    whether it is standing as an IK limb or as an FK chain -- so one lookup
+    covers both. Pure; `standing` is the twist rig as data.
+    """
+    asked = set(ik_limbs) | set(fk_chains)
+    return [limb for limb in standing if limb in asked]
+
+
 def bake_selection(scene_map, ik_limbs, fk_chains):
     """Bake exactly what the selection touches back to clean bones.
 
@@ -389,6 +400,16 @@ def bake_selection(scene_map, ik_limbs, fk_chains):
     messages = []
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
     try:
+        # First: the twist networks of whatever is coming down. A bake does
+        # not change how the bones move, so the sampled values are the same
+        # either way -- doing it first just keeps the sampling clear of a
+        # half-removed rig.
+        twist_limbs = twist_limbs_for(ik_limbs, fk_chains,
+                                      twist.built_limbs())
+        if twist_limbs:
+            _count, message = twist.bake(twist_limbs)
+            messages.append(message)
+
         for limb in ik_limbs:
             members = overrig.set_members(builder.limb_set(limb))
             root_ctrls = {}
@@ -442,6 +463,9 @@ def rebuild(scene_map, fk_limbs=False):
     messages = []
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker build")
     try:
+        if twist.has_twist():
+            _count, message = twist.bake()
+            messages.append(message)
         if has_fk():
             removed, _ = _bake_fk_chains(scene_map)
             messages.append("FK baked back ({0} nodes)".format(removed))
@@ -505,6 +529,12 @@ def rebuild(scene_map, fk_limbs=False):
             if hung:
                 messages.append(
                     "{0} finger chain(s) on the IK hands".format(hung))
+
+        # Last, and outside the FK/IK branch on purpose: the twist networks
+        # read BONES, so they are the same in either build mode and a Switch
+        # afterwards never touches them.
+        _count, message = twist.build(scene_map)
+        messages.append(message)
     finally:
         cmds.undoInfo(closeChunk=True)
     return " | ".join(messages)
