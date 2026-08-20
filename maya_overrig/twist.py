@@ -26,6 +26,10 @@ from maya_overrig import naming, overrig
 
 SET_PREFIX = "RigPicker_twist_"
 
+# The driven channels, recorded on the manifest as "<uuid>.<attr>" -- see
+# driven_plugs for why neither walk of the rig itself is safe.
+PLUGS_ATTR = "rigPickerTwistPlugs"
+
 # The two kinds, and the sign of the fraction is their whole difference.
 FOLLOW = "follow"     # the roll arrives from the far end: take +t of it
 COUNTER = "counter"   # the roll is inherited from the parent: give -(1-t) back
@@ -211,21 +215,66 @@ def has_twist():
     return bool(built_limbs())
 
 
-def driven_plugs(limb):
-    """The channels this limb's networks drive, read back from the rig itself.
+def split_plugs(text):
+    """The recorded plug list, as [(uuid, channel)]. Pure.
 
-    The last node of every network is an addDoubleLinear, so its outgoing
-    connection IS the driven plug -- no second bookkeeping to go stale.
+    Blanks are dropped rather than raising: the attribute is written by us,
+    but an animator can edit anything in a scene file.
     """
+    found = []
+    for token in (text or "").split():
+        if "." not in token:
+            continue
+        uuid, _dot, channel = token.partition(".")
+        if uuid and channel:
+            found.append((uuid, channel))
+    return found
+
+
+def driven_plugs(limb):
+    """The channels this limb's networks drive.
+
+    Read from an attribute on the manifest rather than by walking the rig,
+    and both of the obvious walks are booby-trapped. `cmds.objectType` on an
+    addDoubleLinear answers **"addDL"**, not the type name you created it
+    with, so filtering the members by type finds nothing at all (measured --
+    it made the bake a silent no-op that deleted the network and the values
+    with it). And there is no direct connection to walk to anyway: Maya
+    splices a **unitConversion** between our unitless output and the angle
+    channel, so `.output` leads to that node, not to the joint.
+
+    UUIDs, so a renamed or reparented joint still resolves and a deleted one
+    quietly drops out.
+    """
+    name = twist_set(limb)
+    if not cmds.objExists(name):
+        return []
+    if not cmds.attributeQuery(PLUGS_ATTR, node=name, exists=True):
+        return []
     plugs = []
-    for member in overrig.set_members(twist_set(limb)):
-        if not cmds.objExists(member):
-            continue
-        if cmds.objectType(member) != "addDoubleLinear":
-            continue
-        plugs.extend(cmds.listConnections(member + ".output", source=False,
-                                          destination=True, plugs=True) or [])
+    for uuid, channel in split_plugs(cmds.getAttr(
+            "{0}.{1}".format(name, PLUGS_ATTR))):
+        paths = cmds.ls(uuid, long=True) or []
+        if paths:
+            plugs.append("{0}.{1}".format(paths[0], channel))
     return list(dict.fromkeys(plugs))
+
+
+def _record_plugs(limb, pairs):
+    """Add (joint, channel) pairs to the limb's manifest record."""
+    name = _ensure_set(limb)
+    if not cmds.attributeQuery(PLUGS_ATTR, node=name, exists=True):
+        cmds.addAttr(name, longName=PLUGS_ATTR, dataType="string")
+    plug = "{0}.{1}".format(name, PLUGS_ATTR)
+    text = cmds.getAttr(plug) or ""
+    tokens = text.split()
+    for joint, channel in pairs:
+        uuid = cmds.ls(joint, uuid=True)
+        if uuid:
+            token = "{0}.{1}".format(uuid[0], channel)
+            if token not in tokens:
+                tokens.append(token)
+    cmds.setAttr(plug, " ".join(tokens), type="string")
 
 
 def _world_matrix(node):
@@ -351,6 +400,25 @@ def _network(joint, driver, weight, direction):
     return [delta, quat, dot, norm, angle, scaled, total]
 
 
+def _spliced_conversions(nodes):
+    """unitConversion nodes Maya spliced into our own wiring.
+
+    Every place a unitless double meets an angle -- quatToEuler's output into
+    a multDoubleLinear, and our sum into the joint's rotate channel -- Maya
+    inserts one of these silently. They are ours as much as the nodes we
+    created: left out of the manifest, one survives the bake still connected
+    to the channel, and the channel is then driven by a node with no input
+    and nothing can key it.
+    """
+    found = []
+    for node in nodes:
+        for other in cmds.listConnections(node, source=True, destination=True,
+                                          type="unitConversion") or []:
+            if other not in found and other not in nodes:
+                found.append(other)
+    return found
+
+
 def _ensure_set(limb):
     name = twist_set(limb)
     if not cmds.objExists(name):
@@ -409,6 +477,7 @@ def build(scene_map, limbs=None):
         local = _to_frame(along, _parent_of(driver))
 
         created = []
+        driven = []
         for joint, weight in zip(joints, fractions):
             choice = axis_choice(_local_axes(joint), along,
                                  cmds.getAttr(joint + ".rotateOrder"))
@@ -425,10 +494,12 @@ def build(scene_map, limbs=None):
             nodes = _network(joint, driver, weight * choice.sign, local)
             cmds.setAttr(nodes[-1] + ".input2", cmds.getAttr(plug))
             cmds.connectAttr(nodes[-1] + ".output", plug, force=True)
-            created.extend(nodes)
+            created.extend(nodes + _spliced_conversions(nodes))
+            driven.append((joint, "r" + choice.channel))
             rigged += 1
         if created:
             cmds.sets(created, addElement=_ensure_set(segment.limb))
+            _record_plugs(segment.limb, driven)
         if not _is_constant(driver):
             animated.append(naming.leaf(driver))
 

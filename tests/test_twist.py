@@ -239,3 +239,28 @@ class TestCollapses(unittest.TestCase):
 
     def test_nothing_collapses(self):
         self.assertTrue(twist.collapses([]))
+
+
+class SplitPlugs(unittest.TestCase):
+    """The driven channels are recorded on the manifest, because neither walk
+    of the rig itself is safe: cmds.objectType on an addDoubleLinear answers
+    "addDL", and Maya splices a unitConversion in front of the channel."""
+
+    def test_parses_a_pair(self):
+        self.assertEqual(twist.split_plugs("ABC123.rx"), [("ABC123", "rx")])
+
+    def test_parses_several(self):
+        self.assertEqual(twist.split_plugs("A.rx B.ry"),
+                         [("A", "rx"), ("B", "ry")])
+
+    def test_nothing_is_empty(self):
+        self.assertEqual(twist.split_plugs(""), [])
+        self.assertEqual(twist.split_plugs(None), [])
+
+    def test_a_token_with_no_channel_is_dropped(self):
+        self.assertEqual(twist.split_plugs("A.rx broken B.ry"),
+                         [("A", "rx"), ("B", "ry")])
+
+    def test_extra_whitespace_is_harmless(self):
+        self.assertEqual(twist.split_plugs("  A.rx   B.ry  "),
+                         [("A", "rx"), ("B", "ry")])

@@ -126,25 +126,42 @@ def source_of(plug):
     return found[0] if found else None
 
 
+def upstream(plug):
+    """The node feeding `plug`, stepping over any unitConversion.
+
+    Maya splices one in wherever a unitless double meets an angle, so this
+    walk hits two of them: in front of the joint's rotate channel, and in
+    front of the weight multiplier. They are part of the rig and are returned
+    so the teardown gate can insist they are gone too.
+    """
+    conversions = []
+    node = source_of(plug)
+    while node and cmds.objectType(node) == "unitConversion":
+        conversions.append(node)
+        node = source_of(node + ".input")
+    return node, conversions
+
+
 def networks():
     """[{joint, plug, driver, weight, rest, axis, m0inv, nodes}] for the rig.
 
-    Read from the SCENE, and walked along CONNECTIONS rather than assembled
-    from node names: Maya uniquifies a colliding name, and a by-name lookup
-    would then quietly read a neighbour's node and prove nothing.
+    Started from the manifest's recorded plugs and walked back along
+    CONNECTIONS -- never assembled from node names, because Maya uniquifies a
+    colliding name and a by-name lookup would then read a neighbour's node and
+    prove nothing.
     """
     found = []
     for limb in twist.built_limbs():
-        for member in overrig.set_members(twist.twist_set(limb)):
-            if (not cmds.objExists(member)
-                    or cmds.objectType(member) != "addDoubleLinear"):
+        for plug in twist.driven_plugs(limb):
+            if not cmds.objExists(plug):
                 continue
-            plugs = cmds.listConnections(member + ".output", source=False,
-                                         destination=True, plugs=True) or []
-            if not plugs:
+            total, spliced = upstream(plug)
+            if not total:
                 continue
-            scaled = source_of(member + ".input1")
-            angle = source_of(scaled + ".input1")
+            scaled, more = upstream(total + ".input1")
+            spliced.extend(more)
+            angle, more = upstream(scaled + ".input1")
+            spliced.extend(more)
             norm = source_of(angle + ".inputQuatX")
             dot = source_of(norm + ".inputQuatX")
             quat = source_of(dot + ".input1X")
@@ -152,14 +169,15 @@ def networks():
             driver = source_of(delta + ".matrixIn[1]")
             found.append({
                 "limb": limb,
-                "joint": plugs[0].split(".")[0],
-                "plug": plugs[0],
+                "joint": plug.split(".")[0],
+                "plug": plug,
                 "driver": driver,
                 "weight": cmds.getAttr(scaled + ".input2"),
-                "rest": cmds.getAttr(member + ".input2"),
+                "rest": cmds.getAttr(total + ".input2"),
                 "axis": om.MVector(cmds.getAttr(dot + ".input2")[0]),
                 "m0inv": om.MMatrix(cmds.getAttr(delta + ".matrixIn[0]")),
-                "nodes": [delta, quat, dot, norm, angle, scaled, member],
+                "nodes": [delta, quat, dot, norm, angle, scaled,
+                          total] + spliced,
             })
     return found
 

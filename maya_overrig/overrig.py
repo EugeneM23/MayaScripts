@@ -265,7 +265,16 @@ def full_rate_capture(nodes):
 
     # The capture's range reader falls back to curves selected in the graph
     # editor before it falls back to playback.
-    cmds.selectKey(clear=True)
+    #
+    # Guarded: `cmds.selectKey(clear=True)` raises `TypeError: Error
+    # retrieving default arguments` when the SELECTION is empty -- it wants
+    # objects to resolve its defaults against, even though clearing needs
+    # none. Measured 2026-08-20, and it means the crash is exactly the case
+    # where there is nothing to clear, so swallowing it is not a guess.
+    try:
+        cmds.selectKey(clear=True)
+    except (TypeError, RuntimeError):
+        pass
     for curve in originals:
         cmds.scaleKey(curve, timeScale=2, timePivot=0)
     cmds.playbackOptions(animationStartTime=saved[0] * 2,
