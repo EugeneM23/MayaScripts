@@ -93,11 +93,15 @@ class Outermost(unittest.TestCase):
         self.assertEqual(attach.outermost([]), [])
 
 
-class CarrierName(unittest.TestCase):
+class GroupName(unittest.TestCase):
+    """The fallback group, for a file that holds no single mesh."""
 
-    def test_names_the_carrier_after_the_weapon(self):
-        self.assertEqual(attach.carrier_name("LongSword_02"),
+    def test_names_the_group_after_the_weapon(self):
+        self.assertEqual(attach.group_name("LongSword_02"),
                          "LongSword_02_weapon")
+
+    def test_the_old_name_is_gone(self):
+        self.assertFalse(hasattr(attach, "carrier_name"))
 
 
 class FindAttached(unittest.TestCase):
@@ -213,19 +217,39 @@ class ImportMode(unittest.TestCase):
 
 
 class FakeModel(object):
-    """A carrier holding an imported model and, later, hung controls."""
+    """A node holding an imported model and, later, hung controls.
 
-    def __init__(self, children, with_mesh):
+    `with_mesh` answers "has a mesh somewhere below", `direct_mesh` answers
+    "holds a mesh shape itself" -- the two questions model_root asks, in that
+    order, and the distinction is the whole point since the marked node is
+    now the geometry.
+    """
+
+    def __init__(self, children, with_mesh, direct_mesh=()):
         self._children = dict(children)
         self._with_mesh = set(with_mesh)
+        self._direct_mesh = set(direct_mesh)
 
     def listRelatives(self, node, children=False, allDescendents=False,
                       type=None, fullPath=False, **kwargs):
         if allDescendents and type == "mesh":
             return ["shape"] if node in self._with_mesh else None
+        if allDescendents and type == "transform":
+            return self._descendants(node) or None
+        if children and type == "mesh":
+            return ["shape"] if node in self._direct_mesh else None
         if children:
             return list(self._children.get(node, [])) or None
         return None
+
+    def _descendants(self, node):
+        found = []
+        frontier = list(self._children.get(node, []))
+        while frontier:
+            child = frontier.pop(0)
+            found.append(child)
+            frontier.extend(self._children.get(child, []))
+        return found
 
 
 class ModelRoot(unittest.TestCase):
@@ -265,6 +289,49 @@ class ModelRoot(unittest.TestCase):
             {"|weapon": ["|weapon|blade", "|weapon|scabbard"]},
             with_mesh=["|weapon|blade", "|weapon|scabbard"])
         self.assertEqual(attach.model_root("|weapon"), "|weapon|blade")
+
+    def test_a_marked_mesh_transform_answers_itself(self):
+        """With no group the marked node IS the geometry, and a mesh the
+        animator parented under it must not outrank the weapon itself."""
+        attach.cmds = FakeModel(
+            {"|Sword": ["|Sword|somebodyElse"]},
+            with_mesh=["|Sword", "|Sword|somebodyElse"],
+            direct_mesh=["|Sword"])
+        self.assertEqual(attach.model_root("|Sword"), "|Sword")
+
+
+class MeshTransforms(unittest.TestCase):
+    """Which of the imported transforms hold geometry -- the decision that
+    says whether Add needs a group at all."""
+
+    def test_finds_the_one_transform_holding_a_mesh(self):
+        attach.cmds = FakeModel({}, with_mesh=[], direct_mesh=["|Sword"])
+        self.assertEqual(attach.mesh_transforms(["|Sword", "|null1"]),
+                         ["|Sword"])
+
+    def test_looks_below_a_wrapper_null(self):
+        """An exporter that wraps the mesh in a null IS the group the animator
+        is trying to be rid of, so the mesh under it still counts."""
+        attach.cmds = FakeModel({"|null1": ["|null1|Sword"]}, with_mesh=[],
+                                direct_mesh=["|null1|Sword"])
+        self.assertEqual(attach.mesh_transforms(["|null1"]), ["|null1|Sword"])
+
+    def test_two_meshes_are_both_reported(self):
+        attach.cmds = FakeModel({}, with_mesh=[],
+                                direct_mesh=["|blade", "|guard"])
+        self.assertEqual(attach.mesh_transforms(["|blade", "|guard"]),
+                         ["|blade", "|guard"])
+
+    def test_nothing_when_no_mesh_arrived(self):
+        attach.cmds = FakeModel({}, with_mesh=[], direct_mesh=[])
+        self.assertEqual(attach.mesh_transforms(["|locator1"]), [])
+
+    def test_a_mesh_is_never_reported_twice(self):
+        """The roots can overlap after an import; the answer may not."""
+        attach.cmds = FakeModel({"|null1": ["|null1|Sword"]}, with_mesh=[],
+                                direct_mesh=["|null1|Sword"])
+        self.assertEqual(attach.mesh_transforms(["|null1", "|null1|Sword"]),
+                         ["|null1|Sword"])
 
 
 class FakeCurves(object):
