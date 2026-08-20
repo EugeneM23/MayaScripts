@@ -1412,84 +1412,100 @@ hazards closed as well: GO asks once before discarding a modified scene, and an
 empty name suffix pointed at the source folder is refused (`clip.FBX` and
 `clip.fbx` are one file on Windows).
 
-## `maya_overshoot` — overshoot on any pose, not just the last key
+## `maya_overshoot` — the stop of a move, on any pose
 
-Root-level standalone tool, rewritten 2026-08-20 (it had come in with the
-initial commit and never been touched; the animator's verdict on the original
-was *"качество какое-то плохое"*). Design:
+Root-level standalone tool, rewritten 2026-08-20; it had come in with the
+initial commit and never been touched, and the animator's verdict on the
+original was *"качество какое-то плохое, пользовался только Spring"*. Design:
 `docs/superpowers/specs/2026-08-20-overshoot-redesign-design.md`, proof:
-`docs/superpowers/plans/verify_overshoot.py`. **63 unit tests green; the live
-gates have NOT run** — see the status note at the end of this section.
+`docs/superpowers/plans/verify_overshoot.py`. **68 unit tests green; the live
+gates have NOT run** — see the status note at the end.
 
-**The pose key becomes the extreme.** That one decision is the whole redesign.
-The original left the pose where it was and added the excursion *after* it, so
-the object decelerated into the pose, stopped, and was then kicked out and
-pulled back — a second move, not a follow-through. The obvious repair does not
-work either, and it is worth knowing why before anyone tries it again: speed at
-the pose means distance covered just before the pose, and for a 100-unit move
-over 20 frames with an ordinary ease-in, arriving on the peak speed for even
-three frames means being **51 units — half the entire move — behind** where the
-animator put the object. The momentum is not there to borrow. So the tool moves
-the stop instead: at `T` the object stands at `P + A` with zero velocity (which
-is what a turning point *is*, so the arrival keeps its own ease and nothing is
-discontinuous), and the pose becomes the settle target `N` frames later. A punch
-that hit at frame 20 still hits at frame 20, 15 % further out.
+**The pose key stays exactly where the animator put it.** Everything the tool
+writes starts at the pose key and comes back to it — *"наш скрипт должен
+достроить овершут, то есть тип остановки предмета... анимация должна начаться с
+того места, где был последний ключ"*. That is the animator's requirement,
+restated after a version that did the opposite was built and rejected on sight
+(*"работает совершенно не так как раньше и совсем не правильно"*). **Do not
+"fix" this into moving the pose.** The rejected design and the real tension
+behind it are written up in the spec, because the tension is genuine and the
+argument for the other side is good: an eased arrival has no momentum left at
+the pose to continue, and none can be invented — arriving on the move's peak
+speed for even three frames means being **51 units of a 100-unit move behind**
+where the animator put the object. The discontinuity at the pose is therefore
+inherent to this concept, and the tool's job is to make it *mean* something
+rather than to remove it.
 
-**The settle is a spring released from rest**, `f(u) = e^{-ku}(cos(πcu) +
-k/(πc)·sin(πcu))`, and the reason that form is used rather than a plain damped
-sine is its derivative: `-e^{-ku}(k² + (πc)²)/(πc)·sin(πcu)`, which is zero
-**only** at `u = i/c`. So the turning points are evenly spaced, each swing keeps
-a constant share `r = e^{-k/c}` of the last, and the curve is monotone between
-them — keying those `c+1` frames with **flat** tangents (a turning point has
-zero velocity, so flat is correct rather than a compromise) reproduces the
-shape. **4-7 editable keys** where the original wrote one on every frame, up to
-120 per channel. `r` is what the UI exposes, not `k`: "each swing keeps 30 % of
-the last" is a sentence an animator can act on.
+**The speed comes from the two keys of the move**, `|Δ| / (T - T_prev)`. The
+original measured a one-frame difference *at the pose key* — the one place an
+eased arrival has no speed — so the harder the animator sold the stop, the less
+overshoot they got, and at 60 fps everything halved. This was the animator's
+own prescription and it is the fix that matters most.
 
-Five buttons over two families — Snap (1 swing, no undershoot), Spring (3, 0.30),
-Elastic (6, 0.60), Recoil (2, 0.15), and Bounce, which is a ball dropped onto
-the pose: apex `i` at `A·e^{2i}`, fall times going as `√h`, so the contacts
-close in geometrically. Equal contact intervals are the one thing that stops a
-bounce reading as a bounce, and that is what the original had.
+**One quantity is held fixed and everything else is derived from it:**
 
-Amplitude is `amount% · |Δ|` of the move that arrived — legible, frame-rate
-independent, and exactly what lands on the key. The original derived it from a
-one-frame finite difference *at the pose key*, which is the one place an eased
-arrival has no speed, so the harder the animator sold the stop the less
-overshoot they got; `duration` multiplied the size as well.
+```
+entry = f'(0) of the unit-peak shape     (πc/peak for the sinusoid, 4/d for an arc)
+A     = strength · speed · N / entry
+slope = A · entry / N  ==  strength · speed
+```
 
-**Where it applies:** selected keys (which carry a channel as well as a time, so
-selecting one curve's key overshoots only that channel), else the key at or
-before the current frame. Refusals, all named in the status line: no previous
-key, no move, **a pass-through key** (the next segment continues the same way —
-an extreme there is a hitch in the middle of a move), and no room before the
-next key. `N` is clamped to `T_next - 1` and the swings are reduced rather than
-letting two keys land on one frame.
+So at strength 1.0 the curve leaves the pose at **exactly the speed the move
+arrived with** — it reads as the motion carrying through instead of a fresh kick
+out of nothing. That identity is the design in one line, and gate 2 measures it.
+
+**The shapes are keyed at their crests, not sampled.** `raw(u) = sin(πcu)e^{-ku}`
+with `k = -c·ln r`: `raw' = 0` gives `tan(πcu) = πc/k`, so the crests are
+`atan(πc/k)/(πc) + i/c` — one half period apart — and being `1/c` apart makes
+each crest exactly `r` times the last. So the tool writes the pose key, one key
+per crest with **flat** tangents (a crest has zero velocity; flat is correct, not
+a compromise), and the landing: **4-8 editable keys** where the original wrote
+one on every frame, up to 120 per channel. Bounce is the same with gravity — the
+object thrown off the pose, keeping `e` of its speed and `e²` of its height per
+contact, so the arcs shorten geometrically; contacts get **linear** tangents to
+keep the corner. Equal contact intervals are the one thing that stops a bounce
+reading as a bounce, and that is what the original had.
+
+**`frames` belongs to the preset** (Snap 5, Spring 12, Elastic 16, Recoil 8,
+Bounce 7). With the exit speed fixed, the excursion is set by how long the settle
+lasts, so one slow swing travels furthest: at Spring's 12 frames Snap's overshoot
+is three times Spring's. Those five lengths put every preset in the same size
+range for the same move. A type button loads its whole preset into the panel and
+applies; *Apply, keep my numbers* in Advanced re-runs the same shape with
+whatever was changed since.
+
+**The pose key's out-tangent is calibrated against the curve, never assumed.**
+Maya's `keyTangent -outAngle` is in degrees against an internal time unit that
+is not the scene's frame, and the exit slope is the whole feature, so guessing
+was not an option. `set_out_slope` sets a **linear** out-tangent — which aims at
+the next key, whose secant is known exactly — queries the angle Maya reports for
+it, and that one number calibrates degrees-per-unit-per-frame for that very
+curve. No temp nodes, no assumption, correct at any frame rate. The fallback if
+it ever fails is plain linear, which is about half the intended slope: a soft
+failure, and the verify script recognises both failure modes by number.
 
 **Additive layer, not override** (`<obj>_overshoot_pos` / `_rot`), which deletes
-a whole bug class with it: the original animated the override layer's *weight*
-to keep it from swallowing the animation, stepping it to 1 at the LAST key over
-all channels of the group — so any channel that ended earlier had its overshoot
-silently multiplied by zero. An additive layer with no keys is zero offset,
-so there is nothing to gate, and the layer's **weight becomes the strength
-dial**, live. Re-applying clears only the window it is about to write, so other
-poses' work survives. A *Bake into curves* checkbox writes the same plan into
-the base curves instead (the key list is identical modulo `P`) — that path needs
-no anim-layer semantics at all, which is why both exist.
+a whole bug class: the original animated the override layer's *weight* to stop it
+swallowing the animation, stepping it to 1 at the LAST key over all channels of
+the group — so any channel that ended earlier had its overshoot silently
+multiplied by zero. An additive layer with no keys is zero offset, so there is
+nothing to gate, and the weight becomes a live strength dial. Re-applying clears
+only the window it is about to write. A *Bake into curves* checkbox writes the
+same plan into the base curves instead (identical modulo `P`) and needs no
+anim-layer semantics at all, which is why both exist.
 
-**Two poses on one channel share a frame**: the later pose's arrival key sits
-exactly on the earlier pose's extreme, and writing its zero there would flatten
-the extreme just asked for. `merge_plans` makes the arrival give way — the curve
-is already where it needs to be.
+Refusals, all named in the status line: no previous key, no move, **a
+pass-through key** (the next segment continues the same way — an excursion there
+is a wobble in the middle of a move), no room before the next key, and an
+excursion wider than twice the move is clamped rather than written.
 
-Status, honestly: the pure half is proved (63 tests). The live script got one
-partial run, failing at gate 12 on two of its own bugs (traps 41 and 42), and
-the corrected version has not been through the bridge — Maya's idle queue was
-blocked both times it was sent (bridge note 6). **Nobody has yet watched this
-tool run in the viewport.** Its first live run should also check the one thing
-unit tests cannot: whether `cmds.setKeyframe(..., animLayer=L, value=v)` writes
-`v` as the offset on an additive layer or as an absolute value (gate 1c is
-built to say which).
+Status, honestly: the pure half is proved (68 tests). **Nobody has yet watched
+this tool run in the viewport.** The live script has never completed — Maya's
+idle queue was blocked every time it was sent (bridge note 6), and one earlier
+run died at gate 12 on two of its own bugs (traps 41 and 42). Its first real run
+also answers the one thing unit tests cannot: whether
+`cmds.setKeyframe(..., animLayer=L, value=v)` writes `v` as the offset on an
+additive layer or as an absolute value (gate 1 says which by number).
 
 ## Conventions
 

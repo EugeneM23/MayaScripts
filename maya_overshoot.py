@@ -1,10 +1,16 @@
 """
 Maya Animation Overshoot Tool
 
-Turns a pose key into the extreme of an overshoot: the object goes past the
-pose by a share of the move that arrived, then settles back onto it. Works on
-any pose in the clip, not only the last key -- select the keys, or stand on the
-frame, and press a shape.
+Builds the STOP of a move: the object carries on past its pose key with the
+speed the move had, and settles back onto the pose. The pose itself never
+moves -- everything the tool writes starts at the pose key and comes back to
+it. Works on any pose in the clip, not only the last key: select the keys, or
+stand on the frame, and press a shape.
+
+The speed comes from the two keys of the arriving move, `delta / frames`, not
+from a one-frame difference at the pose key -- an eased arrival has almost no
+speed left there, which is why the amount used to collapse on exactly the
+poses that were sold hardest.
 
 Design and the reasoning behind every number:
 docs/superpowers/specs/2026-08-20-overshoot-redesign-design.md
@@ -24,19 +30,25 @@ import maya.cmds as cmds
 #  Shapes -- pure, no Maya
 # ---------------------------------------------------------------------------
 
-Key = collections.namedtuple("Key", "time value tangent")
+Key = collections.namedtuple("Key", "time value tangent slope")
+Key.__new__.__defaults__ = (None,)
 
 TAN_FLAT = "flat"        # a turning point: zero velocity, so flat is correct
 TAN_LINEAR = "linear"    # a bounce contact: the corner is the impact
-TAN_COPY = "copy"        # the arrival: keep whatever the animator shaped
+TAN_SLOPE = "slope"      # the pose key: leaves at the speed of the move
 
-SHAPES = {
-    "Snap":    {"family": "spring", "swings": 1, "ratio": 0.30},
-    "Spring":  {"family": "spring", "swings": 3, "ratio": 0.30},
-    "Elastic": {"family": "spring", "swings": 6, "ratio": 0.60},
-    "Recoil":  {"family": "spring", "swings": 2, "ratio": 0.15},
-    "Bounce":  {"family": "bounce", "restitution": 0.50},
-}
+#  `frames` is part of the character, not a separate taste: leaving the pose at
+#  a fixed speed means the excursion is set by how long the settle lasts, so a
+#  single slow swing travels furthest. Without a per-shape length, pressing
+#  Snap at Spring's 12 frames gives three times Spring's overshoot. These four
+#  numbers put every preset in the same size range for the same move.
+SHAPES = collections.OrderedDict((
+    ("Snap", {"family": "sine", "swings": 1, "ratio": 0.30, "frames": 5}),
+    ("Spring", {"family": "sine", "swings": 3, "ratio": 0.30, "frames": 12}),
+    ("Elastic", {"family": "sine", "swings": 6, "ratio": 0.60, "frames": 16}),
+    ("Recoil", {"family": "sine", "swings": 2, "ratio": 0.15, "frames": 8}),
+    ("Bounce", {"family": "bounce", "restitution": 0.50, "frames": 7}),
+))
 SHAPE_ORDER = list(SHAPES)
 
 GROUPS = collections.OrderedDict((
@@ -46,80 +58,125 @@ GROUPS = collections.OrderedDict((
 
 MAX_ARCS = 4
 EPSILON = 1e-4
+MAX_SHARE = 2.0          # an overshoot wider than twice the move is a mistake
 
 
-def spring_value(u, swings, ratio):
-    """A spring released from rest at 1.0, settling on 0.0 at u = 1.
+def _decay(swings, ratio):
+    """k, from the share of itself each swing keeps."""
+    if ratio >= 1.0:
+        return 0.0
+    return -swings * math.log(ratio)
 
-    f(u) = e^-ku (cos(pi c u) + k/(pi c) sin(pi c u)),  k = -c ln r
 
-    f(0) = 1 and f'(0) = 0 -- it leaves the extreme the way an extreme is
-    left. Its derivative is -e^-ku (k^2 + a^2)/a sin(a u), a = pi c, which is
-    zero only at u = i/c: those are the only turning points, and that is why
-    keying them is enough.
+def sine_raw(u, swings, ratio):
+    """sin(pi c u) e^-ku: zero at the pose, and it comes back to zero at u=1."""
+    return (math.sin(math.pi * swings * u) *
+            math.exp(-_decay(swings, ratio) * u))
+
+
+def sine_first_extreme(swings, ratio):
+    """Where the first crest is, in u.
+
+    raw' = 0 gives tan(pi c u) = pi c / k, so the crests are one half period
+    apart from there on -- and with k = 0 it is the quarter period, which is
+    the undamped answer.
     """
-    swings = int(swings)
     a = math.pi * swings
-    k = 0.0 if ratio >= 1.0 else -swings * math.log(ratio)
-    return math.exp(-k * u) * (math.cos(a * u) + (k / a) * math.sin(a * u))
+    k = _decay(swings, ratio)
+    if k <= 0.0:
+        return 0.5 / swings
+    return math.atan(a / k) / a
 
 
-def spring_extremes(swings, ratio):
-    """The turning points as (u, value): evenly spaced, geometric, alternating."""
-    swings = int(swings)
-    return [(i / float(swings), (-1.0) ** i * ratio ** i)
-            for i in range(swings + 1)]
+def sine_peak(swings, ratio):
+    return sine_raw(sine_first_extreme(swings, ratio), swings, ratio)
+
+
+def sine_value(u, swings, ratio):
+    """The shape as the keys mean it: peak exactly 1.0, zero at both ends."""
+    return sine_raw(u, swings, ratio) / sine_peak(swings, ratio)
+
+
+def sine_extremes(swings, ratio):
+    """The crests as (u, value): a half period apart, geometric, alternating.
+
+    Consecutive crests are 1/c apart, so each is exactly `ratio` of the last.
+    """
+    first = sine_first_extreme(swings, ratio)
+    peak = sine_peak(swings, ratio)
+    out = []
+    for i in range(int(swings)):
+        u = first + i / float(swings)
+        if u >= 1.0:
+            break
+        out.append((u, (-1.0) ** i * ratio ** i))
+    return out
+
+
+def sine_entry_slope(swings, ratio):
+    """d/du of the unit-peak shape at the pose. raw'(0) is pi c."""
+    return math.pi * swings / sine_peak(swings, ratio)
 
 
 def bounce_extremes(restitution, min_height=0.02):
-    """A ball dropped onto the pose, as (u, value, kind).
+    """A ball thrown off the pose, as (u, value, kind).
 
-    Apex i is at height e^(2i) and the fall times go as sqrt(h), so arc i
-    lasts 2 d e^i where d is the first fall. Contacts therefore close in
-    geometrically, which is the whole difference between a bounce and a
-    metronome.
+    Arc 0 is the object leaving the pose at the speed of the move and being
+    pulled back to it; then it bounces, keeping e of its speed and so e^2 of
+    its height, and the arcs shorten by e. That geometric shortening is the
+    whole difference between a bounce and a metronome.
     """
     arcs = 0
-    while arcs < MAX_ARCS and restitution ** (2 * (arcs + 1)) > min_height:
+    while arcs < MAX_ARCS - 1 and restitution ** (2 * (arcs + 1)) > min_height:
         arcs += 1
 
-    span = 1.0 + 2.0 * sum(restitution ** i for i in range(1, arcs + 1))
+    span = sum(restitution ** i for i in range(arcs + 1))
     d = 1.0 / span
 
-    out = [(0.0, 1.0, "apex")]
-    t = d
-    out.append((t, 0.0, "contact"))
-    for i in range(1, arcs + 1):
-        half = d * restitution ** i
-        out.append((t + half, restitution ** (2 * i), "apex"))
-        t += 2.0 * half
+    out = []
+    t = 0.0
+    for i in range(arcs + 1):
+        step = d * restitution ** i
+        out.append((t + step * 0.5, restitution ** (2 * i), "apex"))
+        t += step
         out.append((t, 0.0, "contact"))
-    # the series sums to 1 by construction; say so exactly
     out[-1] = (1.0, 0.0, "contact")
     return out
 
 
+def bounce_entry_slope(restitution, min_height=0.02):
+    """d/du at the launch: a parabola of height h over d has slope 4h/d."""
+    ext = bounce_extremes(restitution, min_height)
+    first_apex_u = ext[0][0]
+    return 4.0 * 1.0 / (2.0 * first_apex_u)
+
+
 def _round(x):
     """Half-up, so a bounce contact at 4.5 does not land on 4."""
-    return math.floor(x + 0.5)
+    return int(math.floor(x + 0.5))
 
 
 def plan_overshoot(pose_time, pose_value, prev_time, prev_value,
                    next_time=None, next_value=None,
-                   amount=0.15, frames=12, shape="Spring",
+                   strength=1.0, frames=12, shape="Spring",
                    swings=None, ratio=None, restitution=None,
-                   peak_delay=0, epsilon=EPSILON):
+                   epsilon=EPSILON, max_share=MAX_SHARE):
     """Plan one channel's overshoot as OFFSETS from the base curve.
 
-    Returns (keys, note). An empty key list with a note means the channel was
-    skipped, and the note says why. Pure: everything it needs about the scene
-    is in the arguments.
+    The first key is the pose itself at offset zero, and the last key returns
+    to zero: the pose the animator set is never moved. Returns (keys, note);
+    an empty list with a note means the channel was skipped and why. Pure --
+    everything it needs about the scene is in the arguments.
     """
     if prev_time is None:
         return [], "no previous key"
 
     delta = pose_value - prev_value
     if abs(delta) < epsilon:
+        return [], "no move into the pose"
+
+    span = float(pose_time - prev_time)
+    if span <= 0.0:
         return [], "no move into the pose"
 
     if next_value is not None:
@@ -137,41 +194,46 @@ def plan_overshoot(pose_time, pose_value, prev_time, prev_value,
         restitution = preset.get("restitution", 0.5)
 
     notes = []
-    peak_time = pose_time + peak_delay
-
     if next_time is not None:
-        room = next_time - 1 - peak_time
-        if room < 1:
-            return [], "no room before the next key"
+        room = next_time - 1 - pose_time
         if frames > room:
             frames = room
             notes.append("shortened to %d frames" % frames)
+    frames = int(frames)
+    if frames < 2:
+        return [], "no room before the next key"
 
     if family == "bounce":
         shape_keys = [(u, v, TAN_LINEAR if k == "contact" else TAN_FLAT)
                       for u, v, k in bounce_extremes(restitution)]
+        entry = bounce_entry_slope(restitution)
     else:
         swings = int(swings)
         if swings > frames:
-            swings = max(1, int(frames))
+            swings = max(1, frames)
             notes.append("swings reduced to %d" % swings)
-        shape_keys = [(u, v, TAN_FLAT) for u, v in spring_extremes(swings, ratio)]
+        shape_keys = [(u, v, TAN_FLAT) for u, v in sine_extremes(swings, ratio)]
+        shape_keys.append((1.0, 0.0, TAN_FLAT))
+        entry = sine_entry_slope(swings, ratio)
 
-    amplitude = amount * abs(delta) * (1.0 if delta > 0 else -1.0)
+    #  the speed of the move, and the excursion that leaves the pose at it
+    speed = abs(delta) / span
+    amplitude = strength * speed * frames / entry
+    share = amplitude / abs(delta)
+    if share > max_share:
+        amplitude = max_share * abs(delta)
+        notes.append("clamped to %g x the move" % max_share)
+    direction = 1.0 if delta > 0 else -1.0
+    amplitude *= direction
+    slope = amplitude * entry / frames
 
-    # times collapse onto one frame in a tight window; the bigger excursion wins
-    merged = collections.OrderedDict()
-    for u, v, tangent in shape_keys:
-        t = peak_time + _round(u * frames)
-        value = amplitude * v
-        if t in merged and abs(merged[t].value) >= abs(value):
-            continue
-        merged[t] = Key(t, value, tangent)
-
-    keys = sorted(merged.values(), key=lambda k: k.time)
-    # the settle lands on the pose exactly, whatever the decay had left
-    keys[-1] = Key(keys[-1].time, 0.0, TAN_FLAT)
-    keys.insert(0, Key(prev_time, 0.0, TAN_COPY))
+    keys = [Key(pose_time, 0.0, TAN_SLOPE, slope)]
+    for u, v, tangent in shape_keys[:-1]:
+        t = max(pose_time + _round(u * frames), keys[-1].time + 1)
+        if t >= pose_time + frames:
+            break
+        keys.append(Key(t, amplitude * v, tangent))
+    keys.append(Key(pose_time + frames, 0.0, TAN_FLAT))
 
     return keys, ", ".join(notes)
 
@@ -183,17 +245,44 @@ def plan_window(keys):
     return (keys[0].time, keys[-1].time)
 
 
-def as_absolute(keys, pose_value, prev_value):
-    """The same plan as values for a base curve instead of offsets for a layer.
-
-    The first key is the arrival, which sits on the previous key's own value;
-    every other key is the pose plus its offset.
-    """
+def peak_of(keys):
+    """The largest excursion in a plan, as (time, value)."""
     if not keys:
-        return []
-    out = [Key(keys[0].time, prev_value + keys[0].value, keys[0].tangent)]
-    out.extend(Key(k.time, pose_value + k.value, k.tangent) for k in keys[1:])
-    return out
+        return None
+    key = max(keys, key=lambda k: abs(k.value))
+    return (key.time, key.value)
+
+
+def as_absolute(keys, pose_value):
+    """The same plan as values for a base curve instead of layer offsets."""
+    return [Key(k.time, pose_value + k.value, k.tangent, k.slope)
+            for k in keys]
+
+
+def merge_plans(plans, use_layer=True):
+    """Several poses on one channel into one key list, in time order.
+
+    Windows do not overlap -- each is clamped to end before the next key -- so
+    this is mostly a concatenation; a shared frame keeps the bigger excursion,
+    except that a pose key itself is never overwritten, since the whole point
+    is that the pose does not move.
+    """
+    merged = collections.OrderedDict()
+    for keys, pose_value in plans:
+        pose_frame = keys[0].time if keys else None
+        for k in keys:
+            held = merged.get(k.time)
+            if held is not None:
+                if k.time == pose_frame and k.tangent != TAN_SLOPE:
+                    continue
+                if held[1].tangent == TAN_SLOPE:
+                    continue
+                if abs(held[1].value) >= abs(k.value):
+                    continue
+            value = k.value if use_layer else pose_value + k.value
+            merged[k.time] = (k, Key(k.time, value, k.tangent, k.slope))
+    return [pair[1] for pair in
+            sorted(merged.values(), key=lambda pair: pair[1].time)]
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +315,7 @@ def curve_keys(curve):
 def neighbours(times, values, pose_time):
     """(pose_value, prev_time, prev_value, next_time, next_value) around a key.
 
-    None for pose_value when the channel has no key at that time at all.
+    pose_value is None when the channel has no key at that time at all.
     """
     index = None
     for i, t in enumerate(times):
@@ -268,49 +357,47 @@ def layer_for(obj, group):
     return cmds.animLayer(name)          # additive is the default; keep it
 
 
-def _apply_tangents(curve, keys, source_curve):
-    for k in keys:
+def set_out_slope(curve, time, slope, next_time, next_value, value):
+    """Give a key an exact outgoing slope, in value units per frame.
+
+    Maya's tangent angle is in degrees against an internal time unit, and
+    which one is not worth guessing (it is not the same as the scene's frame).
+    So ask the curve itself: a linear out-tangent aims at the next key, whose
+    secant we know exactly, and the angle Maya reports for it calibrates the
+    scale. No temp nodes, no assumption, right at any frame rate.
+    """
+    at = (time, time)
+    secant = (next_value - value) / float(next_time - time)
+    if abs(secant) < 1e-12:
+        return False
+    cmds.keyTangent(curve, time=at, lock=False)
+    cmds.keyTangent(curve, time=at, outTangentType="linear")
+    got = cmds.keyTangent(curve, time=at, query=True, outAngle=True) or []
+    if not got:
+        return False
+    scale = math.tan(math.radians(got[0])) / secant
+    if abs(scale) < 1e-12:
+        return False
+    cmds.keyTangent(curve, time=at, inTangentType="flat")
+    cmds.keyTangent(curve, time=at, outTangentType="fixed",
+                    outAngle=math.degrees(math.atan(slope * scale)))
+    return True
+
+
+def _apply_tangents(curve, keys):
+    for i, k in enumerate(keys):
         at = (k.time, k.time)
-        if k.tangent == TAN_COPY:
-            itt = ott = None
-            if source_curve:
-                got_i = cmds.keyTangent(source_curve, time=at, query=True,
-                                        inTangentType=True) or []
-                got_o = cmds.keyTangent(source_curve, time=at, query=True,
-                                        outTangentType=True) or []
-                itt = got_i[0] if got_i else None
-                ott = got_o[0] if got_o else None
-            if itt and ott:
-                cmds.keyTangent(curve, time=at, inTangentType=itt,
-                                outTangentType=ott)
+        if k.tangent == TAN_SLOPE:
+            if i + 1 < len(keys) and k.slope is not None:
+                nxt = keys[i + 1]
+                if set_out_slope(curve, k.time, k.slope, nxt.time, nxt.value,
+                                 k.value):
+                    continue
+            cmds.keyTangent(curve, time=at, inTangentType="flat",
+                            outTangentType="linear")
             continue
         cmds.keyTangent(curve, time=at, inTangentType=k.tangent,
                         outTangentType=k.tangent)
-
-
-def merge_plans(plans, use_layer=True):
-    """Several poses on one channel, in time order, into one key list.
-
-    Adjacent poses share a frame: the later pose's arrival key sits exactly on
-    the earlier pose's extreme. The arrival is the one that gives way -- the
-    curve is already where it needs to be there, and writing a zero would
-    flatten the extreme the animator just asked for.
-
-    `plans` is [(keys, pose_value, prev_value)]; the values come out as layer
-    offsets, or as absolute curve values when `use_layer` is False.
-    """
-    merged = collections.OrderedDict()
-    for keys, pose_value, prev_value in plans:
-        for i, k in enumerate(keys):
-            arrival = (i == 0)
-            if k.time in merged:
-                if arrival or abs(merged[k.time][1]) >= abs(k.value):
-                    continue
-            base = prev_value if arrival else pose_value
-            value = k.value if use_layer else base + k.value
-            merged[k.time] = (Key(k.time, value, k.tangent), k.value)
-    return [item[0] for item in
-            sorted(merged.values(), key=lambda item: item[0].time)]
 
 
 def write_channel(obj, attr, plans, layer=None):
@@ -334,17 +421,17 @@ def write_channel(obj, attr, plans, layer=None):
         target = (cmds.animLayer(layer, query=True,
                                  findCurveForPlug=plug) or [None])[0]
     else:
-        # a previous run's settle keys, per plan -- never the arrival, and
-        # never a stretch of the animator's own curve between two poses
-        for plan_keys, _, _ in plans:
-            cmds.cutKey(source, time=(plan_keys[1].time + 0.001,
+        # a previous run's settle keys, per plan -- never the pose key itself,
+        # and never a stretch of the animator's own curve before it
+        for plan_keys, _ in plans:
+            cmds.cutKey(source, time=(plan_keys[0].time + 0.001,
                                       plan_keys[-1].time + 0.001), clear=True)
         for k in keys:
             cmds.setKeyframe(obj, attribute=attr, time=k.time, value=k.value)
         target = base_curve(plug)
 
     if target:
-        _apply_tangents(target, keys, source)
+        _apply_tangents(target, keys)
     return target
 
 
@@ -353,37 +440,33 @@ def write_channel(obj, attr, plans, layer=None):
 # ---------------------------------------------------------------------------
 
 def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
-                      amount_pos=0.15, frames_pos=12,
-                      amount_rot=0.15, frames_rot=12,
+                      strength_pos=1.0, frames_pos=12,
+                      strength_rot=1.0, frames_rot=12,
                       swings=None, ratio=None, restitution=None,
-                      peak_delay=0, use_layer=True):
+                      use_layer=True):
     """Overshoot every pose the selection points at. Returns a report string."""
     plan_of = collections.OrderedDict()
     skipped = []
     notes = []
+    peaks = []
     any_selected = False
 
+    wanted = [g for g in GROUPS
+              if (g == "pos" and do_pos) or (g == "rot" and do_rot)]
+
     for obj in objects:
-        for group, attrs in GROUPS.items():
-            if group == "pos" and not do_pos:
-                continue
-            if group == "rot" and not do_rot:
-                continue
-            for attr in attrs:
+        for group in wanted:
+            for attr in GROUPS[group]:
                 if selected_key_times(obj, attr):
                     any_selected = True
 
     now = cmds.currentTime(query=True)
 
     for obj in objects:
-        for group, attrs in GROUPS.items():
-            if group == "pos" and not do_pos:
-                continue
-            if group == "rot" and not do_rot:
-                continue
-            amount = amount_pos if group == "pos" else amount_rot
+        for group in wanted:
+            strength = strength_pos if group == "pos" else strength_rot
             frames = frames_pos if group == "pos" else frames_rot
-            for attr in attrs:
+            for attr in GROUPS[group]:
                 plug = "%s.%s" % (obj, attr)
                 curve = base_curve(plug)
                 if not curve:
@@ -400,7 +483,8 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
 
                 for pose_time in poses:
                     (pose_value, prev_time, prev_value,
-                     next_time, next_value) = neighbours(times, values, pose_time)
+                     next_time, next_value) = neighbours(times, values,
+                                                         pose_time)
                     if pose_value is None:
                         skipped.append("%s.%s@%g no key there"
                                        % (obj.split("|")[-1], attr, pose_time))
@@ -408,9 +492,8 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
                     keys, note = plan_overshoot(
                         pose_time, pose_value, prev_time, prev_value,
                         next_time=next_time, next_value=next_value,
-                        amount=amount, frames=frames, shape=shape,
-                        swings=swings, ratio=ratio, restitution=restitution,
-                        peak_delay=peak_delay)
+                        strength=strength, frames=frames, shape=shape,
+                        swings=swings, ratio=ratio, restitution=restitution)
                     if not keys:
                         skipped.append("%s.%s@%g %s"
                                        % (obj.split("|")[-1], attr,
@@ -418,8 +501,9 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
                         continue
                     if note:
                         notes.append(note)
+                    peaks.append(peak_of(keys))
                     plan_of.setdefault((obj, group, attr), []).append(
-                        (keys, pose_value, prev_value))
+                        (keys, pose_value))
 
     if not plan_of:
         return "nothing to overshoot: " + ("; ".join(skipped[:4]) or "no keys")
@@ -441,10 +525,13 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=auto)
 
+    biggest = max(peaks, key=lambda p: abs(p[1]))
     end = cmds.playbackOptions(query=True, maxTime=True)
-    past = [k.time for plans in plan_of.values() for keys, _, _ in plans
+    past = [k.time for plans in plan_of.values() for keys, _ in plans
             for k in keys if k.time > end]
-    report = "%s on %d channel(s), %d pose(s)" % (shape, len(plan_of), poses)
+
+    report = "%s on %d channel(s), %d pose(s); peak %+.3f at frame %g" % (
+        shape, len(plan_of), poses, biggest[1], biggest[0])
     if notes:
         report += " (%s)" % "; ".join(sorted(set(notes))[:2])
     if past:
@@ -469,20 +556,18 @@ def apply_overshoot(shape="Spring", *_args):
         objects, shape=shape,
         do_pos=cmds.checkBox("overshootTranslate", query=True, value=True),
         do_rot=cmds.checkBox("overshootRotate", query=True, value=True),
-        amount_pos=cmds.floatSliderGrp("overshootTAmount",
-                                       query=True, value=True) / 100.0,
+        strength_pos=cmds.floatSliderGrp("overshootTStrength",
+                                         query=True, value=True),
         frames_pos=int(cmds.intSliderGrp("overshootTFrames",
                                          query=True, value=True)),
-        amount_rot=cmds.floatSliderGrp("overshootRAmount",
-                                       query=True, value=True) / 100.0,
+        strength_rot=cmds.floatSliderGrp("overshootRStrength",
+                                         query=True, value=True),
         frames_rot=int(cmds.intSliderGrp("overshootRFrames",
                                          query=True, value=True)),
         swings=_advanced_swings(shape),
         ratio=cmds.floatSliderGrp("overshootRatio", query=True, value=True),
         restitution=cmds.floatSliderGrp("overshootRestitution",
                                         query=True, value=True),
-        peak_delay=int(cmds.intSliderGrp("overshootPeakDelay",
-                                         query=True, value=True)),
         use_layer=not cmds.checkBox("overshootBake", query=True, value=True))
     cmds.select(objects, replace=True)
     return _status(report)
@@ -516,14 +601,17 @@ def _run(fn, *args):
 # ---------------------------------------------------------------------------
 
 def _preset_press(shape):
-    """A type button loads its preset into Advanced, then applies it.
+    """A type button loads the whole preset into the panel, then applies it.
 
-    So the sliders always show what just happened, and the Advanced Apply
-    below re-runs the same shape with whatever the animator has changed.
+    Frames included -- see the note on SHAPES. So the sliders always show what
+    just happened, and "Apply, keep my numbers" below re-runs the same shape
+    with whatever the animator has changed since.
     """
     def go(*_args):
         preset = SHAPES[shape]
-        if preset["family"] == "spring":
+        for control in ("overshootTFrames", "overshootRFrames"):
+            cmds.intSliderGrp(control, edit=True, value=preset["frames"])
+        if preset["family"] == "sine":
             cmds.intSliderGrp("overshootSwings", edit=True,
                               value=preset["swings"])
             cmds.floatSliderGrp("overshootRatio", edit=True,
@@ -561,14 +649,14 @@ def show_overshoot_ui():
 
     cmds.separator(height=8, style="none")
     cmds.text(label="Animation Overshoot", font="boldLabelFont", align="center")
-    cmds.text(label="the selected key becomes the extreme",
+    cmds.text(label="carries on past the pose, then settles back onto it",
               font="smallObliqueLabelFont", align="center")
     cmds.separator(height=8, style="in")
 
     cmds.checkBox("overshootTranslate", label="Translate", value=True)
-    cmds.floatSliderGrp("overshootTAmount", label="Amount % ", field=True,
-                        minValue=1.0, maxValue=60.0, value=15.0,
-                        fieldMinValue=0.1, fieldMaxValue=400.0,
+    cmds.floatSliderGrp("overshootTStrength", label="Strength ", field=True,
+                        minValue=0.05, maxValue=3.0, value=1.0,
+                        fieldMinValue=0.01, fieldMaxValue=20.0,
                         columnWidth3=(70, 50, 170))
     cmds.intSliderGrp("overshootTFrames", label="Frames  ", field=True,
                       minValue=2, maxValue=48, value=12,
@@ -578,9 +666,9 @@ def show_overshoot_ui():
     cmds.separator(height=6, style="in")
 
     cmds.checkBox("overshootRotate", label="Rotate", value=False)
-    cmds.floatSliderGrp("overshootRAmount", label="Amount % ", field=True,
-                        minValue=1.0, maxValue=60.0, value=15.0,
-                        fieldMinValue=0.1, fieldMaxValue=400.0,
+    cmds.floatSliderGrp("overshootRStrength", label="Strength ", field=True,
+                        minValue=0.05, maxValue=3.0, value=1.0,
+                        fieldMinValue=0.01, fieldMaxValue=20.0,
                         columnWidth3=(70, 50, 170))
     cmds.intSliderGrp("overshootRFrames", label="Frames  ", field=True,
                       minValue=2, maxValue=48, value=12,
@@ -607,12 +695,10 @@ def show_overshoot_ui():
     cmds.floatSliderGrp("overshootRestitution", label="Bounce e ", field=True,
                         minValue=0.2, maxValue=0.8, value=0.50,
                         columnWidth3=(70, 50, 150))
-    cmds.intSliderGrp("overshootPeakDelay", label="Peak +  ", field=True,
-                      minValue=0, maxValue=8, value=0,
-                      columnWidth3=(70, 50, 150))
     cmds.checkBox("overshootBake", label="Bake into curves (no anim layer)",
                   value=False)
-    cmds.button(label="Apply with these", height=24, command=_custom_press)
+    cmds.button(label="Apply, keep my numbers", height=24,
+                command=_custom_press)
     cmds.setParent("..")
     cmds.setParent("..")
 
