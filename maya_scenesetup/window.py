@@ -10,6 +10,11 @@ have gone stale, so the numbers on screen are never a lie about the scene.
 
 The offsets are remembered per weapon in an optionVar. A grip dialled in once
 should not be retyped tomorrow, and a sword and a shield want different ones.
+
+Beside the dropdown there is an FBX field: paste a path and it wins over the
+list, for any file the table knows nothing about. It resolves in ONE place
+(`_entry`), so Add, the offset fields, Connect and Add Aim all follow it
+without a line of their own, and the path itself is remembered too.
 """
 
 import traceback
@@ -32,9 +37,11 @@ _ROTATE = "mayaSceneSetupRotate"
 _TRANSLATE = "mayaSceneSetupTranslate"
 _STATUS = "mayaSceneSetupStatus"
 _BOUND = "mayaSceneSetupBound"
+_CUSTOM = "mayaSceneSetupCustomFbx"
 
 _OPTIONVAR = "mayaSceneSetup_offset_{0}"
 _LEGACY_OPTIONVAR = "mayaWeapons_offset_{0}"
+_CUSTOM_OPTIONVAR = "mayaSceneSetup_custom_fbx"
 
 NO_CHARACTER = ("no character - open the picker and press Connect, "
                 "or select a joint")
@@ -75,6 +82,19 @@ def unpack_offsets(values):
     return tuple(numbers[:3]), tuple(numbers[3:])
 
 
+def chosen_entry(field_text, entry):
+    """The entry a press uses: the FBX field wins when it holds a path.
+
+    Whitespace-only text counts as empty, or a stray space would silently
+    redirect Add at a file called " ". Double quotes are stripped because that
+    is how Windows Explorer copies a path.
+    """
+    text = (field_text or "").strip().strip('"').strip()
+    if not text:
+        return entry
+    return catalog.entry_for_path(text, entry.bone)
+
+
 def bound_message(root):
     return "no character bound" if not root else root.split("|")[-1]
 
@@ -102,8 +122,14 @@ def attached_message(entry, bone):
 # ------------------------------------------------------------------- state
 
 def _entry():
-    """The catalog entry the dropdown is showing."""
-    return catalog.by_label(cmds.optionMenu(_MENU, query=True, value=True))
+    """The entry every callback works on: the FBX field, else the dropdown.
+
+    One place, so Add, the offset fields, Connect, Add Aim and refresh all
+    follow the field without a line of their own.
+    """
+    return chosen_entry(
+        cmds.textFieldGrp(_CUSTOM, query=True, text=True),
+        catalog.by_label(cmds.optionMenu(_MENU, query=True, value=True)))
 
 
 def _fields():
@@ -131,6 +157,13 @@ def _remembered(entry):
         if cmds.optionVar(exists=name):
             return unpack_offsets(cmds.optionVar(query=name))
     return unpack_offsets(None)
+
+
+def _remembered_path():
+    """The FBX path this window was last pointed at, or ""."""
+    if cmds.optionVar(exists=_CUSTOM_OPTIONVAR):
+        return cmds.optionVar(query=_CUSTOM_OPTIONVAR) or ""
+    return ""
 
 
 def _remember(entry, rotate, translate):
@@ -223,6 +256,18 @@ def refresh():
         _status(missing_bone_message(root, entry.bone))
     else:
         _status(NOT_ATTACHED)
+
+
+def custom_changed():
+    """Remember the pasted path, then reload the fields for its key.
+
+    The grip is remembered per weapon, and a custom file is a weapon like any
+    other -- so the numbers on screen have to follow the field.
+    """
+    cmds.optionVar(stringValue=(_CUSTOM_OPTIONVAR,
+                                cmds.textFieldGrp(_CUSTOM, query=True,
+                                                  text=True) or ""))
+    refresh()
 
 
 def add_weapon():
@@ -344,7 +389,7 @@ def show_window():
         if cmds.window(name, exists=True):
             cmds.deleteUI(name)
 
-    cmds.window(WINDOW, title="Scene Setup", widthHeight=(380, 330),
+    cmds.window(WINDOW, title="Scene Setup", widthHeight=(420, 370),
                 sizeable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                       columnOffset=("both", 8))
@@ -355,6 +400,13 @@ def show_window():
                     changeCommand=lambda *_args: _run(refresh))
     for label in catalog.labels():
         cmds.menuItem(label=label)
+
+    cmds.textFieldGrp(_CUSTOM, label="FBX", text=_remembered_path(),
+                      annotation="Paste the path to any .fbx to attach it "
+                                 "instead of the weapon in the dropdown. The "
+                                 "bone comes from the dropdown; the scale is "
+                                 "1. Clear the field to go back to the list.",
+                      changeCommand=lambda *_args: _run(custom_changed))
 
     cmds.button(label="Add", height=30,
                 command=lambda *_args: _run(add_weapon))

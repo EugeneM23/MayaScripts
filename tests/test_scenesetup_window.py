@@ -152,3 +152,43 @@ class LinkedMessages(unittest.TestCase):
         message = window.linked_message(SWORD)
         self.assertIn(SWORD.label, message)
         self.assertIn("arms", message.lower())
+
+
+class ChosenEntry(unittest.TestCase):
+    """The FBX field wins over the dropdown when it holds a path."""
+
+    def test_an_empty_field_leaves_the_dropdown_alone(self):
+        self.assertIs(window.chosen_entry("", SWORD), SWORD)
+
+    def test_none_leaves_the_dropdown_alone(self):
+        self.assertIs(window.chosen_entry(None, SWORD), SWORD)
+
+    def test_whitespace_is_empty(self):
+        """A stray space must not redirect Add at a file called " "."""
+        self.assertIs(window.chosen_entry("   ", SWORD), SWORD)
+
+    def test_a_path_wins_over_the_dropdown(self):
+        got = window.chosen_entry("D:/props/Axe_01.fbx", SWORD)
+        self.assertEqual(got.path, "D:/props/Axe_01.fbx")
+        self.assertEqual(got.key, "Axe_01")
+
+    def test_the_bone_comes_from_the_dropdown(self):
+        got = window.chosen_entry("D:/props/Axe_01.fbx", SWORD)
+        self.assertEqual(got.bone, SWORD.bone)
+
+    def test_the_scale_is_never_the_dropdowns(self):
+        got = window.chosen_entry("D:/props/Axe_01.fbx", SWORD)
+        self.assertEqual(got.scale, 1.0)
+
+    def test_the_path_is_stripped(self):
+        got = window.chosen_entry("  D:/props/Axe_01.fbx  ", SWORD)
+        self.assertEqual(got.path, "D:/props/Axe_01.fbx")
+
+    def test_quotes_pasted_from_the_explorer_are_dropped(self):
+        """Windows Explorer copies a path wrapped in double quotes."""
+        got = window.chosen_entry('"D:/props/Axe_01.fbx"', SWORD)
+        self.assertEqual(got.path, "D:/props/Axe_01.fbx")
+
+    def test_the_key_is_legal_as_a_node_name(self):
+        got = window.chosen_entry("D:/props/2 Handed Axe.fbx", SWORD)
+        self.assertEqual(got.key, "_2_Handed_Axe")
