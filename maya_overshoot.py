@@ -37,17 +37,16 @@ TAN_FLAT = "flat"        # a turning point: zero velocity, so flat is correct
 TAN_LINEAR = "linear"    # a bounce contact: the corner is the impact
 TAN_SLOPE = "slope"      # the pose key: leaves at the speed of the move
 
-#  `frames` is part of the character, not a separate taste: leaving the pose at
-#  a fixed speed means the excursion is set by how long the settle lasts, so a
-#  single slow swing travels furthest. Without a per-shape length, pressing
-#  Snap at Spring's 12 frames gives three times Spring's overshoot. These four
-#  numbers put every preset in the same size range for the same move.
+#  Strength and Frames belong to the animator and nothing here ever writes to
+#  them. Note that with the exit speed held fixed, the excursion follows the
+#  half period -- Frames over swings -- so at the same Frames a single slow
+#  swing travels furthest: Snap wants fewer frames than Elastic.
 SHAPES = collections.OrderedDict((
-    ("Snap", {"family": "sine", "swings": 1, "ratio": 0.30, "frames": 5}),
-    ("Spring", {"family": "sine", "swings": 3, "ratio": 0.30, "frames": 12}),
-    ("Elastic", {"family": "sine", "swings": 6, "ratio": 0.60, "frames": 16}),
-    ("Recoil", {"family": "sine", "swings": 2, "ratio": 0.15, "frames": 8}),
-    ("Bounce", {"family": "bounce", "restitution": 0.50, "frames": 7}),
+    ("Snap", {"family": "sine", "swings": 1, "ratio": 0.30}),
+    ("Spring", {"family": "sine", "swings": 3, "ratio": 0.30}),
+    ("Elastic", {"family": "sine", "swings": 6, "ratio": 0.60}),
+    ("Recoil", {"family": "sine", "swings": 2, "ratio": 0.15}),
+    ("Bounce", {"family": "bounce", "restitution": 0.50}),
 ))
 SHAPE_ORDER = list(SHAPES)
 
@@ -312,6 +311,22 @@ def curve_keys(curve):
     return times, values
 
 
+def base_at(curve, time):
+    """The animator's own value at a time, read from the curve, not the plug.
+
+    Through the curve node on purpose: once a layer is in the way the plug no
+    longer reports the base animation, and this is what tells us whether our
+    own write landed where it was meant to.
+    """
+    try:
+        got = cmds.keyframe(curve, query=True, eval=True, time=(time, time))
+        if got:
+            return got[0]
+    except Exception:                                         # noqa: BLE001
+        pass
+    return cmds.getAttr(curve + ".output", time=time)
+
+
 def neighbours(times, values, pose_time):
     """(pose_value, prev_time, prev_value, next_time, next_value) around a key.
 
@@ -354,7 +369,13 @@ def layer_for(obj, group):
     name = "%s_overshoot_%s" % (obj.split("|")[-1].replace(":", "_"), group)
     if cmds.animLayer(name, query=True, exists=True):
         return name
-    return cmds.animLayer(name)          # additive is the default; keep it
+    layer = cmds.animLayer(name)         # additive is the default...
+    if cmds.animLayer(layer, query=True, override=True):
+        try:                            # ...but never take that on trust
+            cmds.animLayer(layer, edit=True, override=False)
+        except Exception:                                      # noqa: BLE001
+            pass
+    return layer
 
 
 def set_out_slope(curve, time, slope, next_time, next_value, value):
@@ -400,26 +421,62 @@ def _apply_tangents(curve, keys):
                         outTangentType=k.tangent)
 
 
+def write_layer_keys(obj, attr, keys, layer, source):
+    """Put the offsets on the layer's own curve. Returns (curve, complaint).
+
+    Straight onto the animCurve, because an additive layer's curve values ARE
+    the offsets -- no question of what `setKeyframe -animLayer` makes of a
+    `value`, and no dependence on which layer happens to be selected. The
+    layer API is only used to bring the curve into being, and as a fallback if
+    writing to the node is refused; there the convention is measured rather
+    than assumed, by reading the plug back after a single zero.
+    """
+    plug = "%s.%s" % (obj, attr)
+    cmds.animLayer(layer, edit=True, attribute=plug)
+    first = keys[0]
+    cmds.setKeyframe(obj, attribute=attr, time=first.time, value=0.0,
+                     animLayer=layer)
+    curve = (cmds.animLayer(layer, query=True,
+                            findCurveForPlug=plug) or [None])[0]
+    if not curve:
+        return None, "%s could not go on the layer" % attr
+
+    #  measure what the layer API did with that zero WHILE IT IS STILL THERE:
+    #  after the clear below the plug reads the base again and the answer would
+    #  come out "offset" no matter what the truth is
+    absolute = abs(cmds.getAttr(plug, time=first.time) -
+                   base_at(source, first.time)) > 1e-4
+
+    try:
+        cmds.cutKey(curve, time=(keys[0].time, keys[-1].time), clear=True)
+        for k in keys:
+            cmds.setKeyframe(curve, time=k.time, value=k.value)
+    except Exception:                                          # noqa: BLE001
+        for k in keys:
+            value = k.value + (base_at(source, k.time) if absolute else 0.0)
+            cmds.setKeyframe(obj, attribute=attr, time=k.time, value=value,
+                             animLayer=layer)
+    return curve, ""
+
+
 def write_channel(obj, attr, plans, layer=None):
-    """Put every plan for one channel into the scene, in one pass."""
+    """Put every plan for one channel into the scene. Returns a complaint."""
     plug = "%s.%s" % (obj, attr)
     source = base_curve(plug)
     keys = merge_plans(plans, use_layer=bool(layer))
     if not keys:
-        return None
+        return ""
+
+    #  read the poses first: the guard at the bottom asks what OUR write did,
+    #  not what the scene already held, so a stale layer from an older version
+    #  cannot make it fire on an innocent run
+    before = [cmds.getAttr(plug, time=plan_keys[0].time)
+              for plan_keys, _ in plans]
 
     if layer:
-        cmds.animLayer(layer, edit=True, attribute=plug)
-        existing = cmds.animLayer(layer, query=True,
-                                  findCurveForPlug=plug) or []
-        if existing:
-            cmds.cutKey(existing[0], time=(keys[0].time, keys[-1].time),
-                        clear=True)
-        for k in keys:
-            cmds.setKeyframe(obj, attribute=attr, time=k.time, value=k.value,
-                             animLayer=layer)
-        target = (cmds.animLayer(layer, query=True,
-                                 findCurveForPlug=plug) or [None])[0]
+        target, complaint = write_layer_keys(obj, attr, keys, layer, source)
+        if complaint:
+            return complaint
     else:
         # a previous run's settle keys, per plan -- never the pose key itself,
         # and never a stretch of the animator's own curve before it
@@ -432,7 +489,18 @@ def write_channel(obj, attr, plans, layer=None):
 
     if target:
         _apply_tangents(target, keys)
-    return target
+
+    #  The pose is the animator's decision and this tool only builds the stop
+    #  after it. If anything we did moved it, take our keys back out and say
+    #  so -- an object thrown across the scene is not an acceptable failure.
+    for (plan_keys, _), was in zip(plans, before):
+        drift = abs(cmds.getAttr(plug, time=plan_keys[0].time) - was)
+        if drift > 1e-3:
+            if layer and target:
+                cmds.cutKey(target, time=(keys[0].time, keys[-1].time),
+                            clear=True)
+            return "%s moved the pose by %.3f - keys removed" % (attr, drift)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -519,35 +587,36 @@ def overshoot_objects(objects, shape="Spring", do_pos=True, do_rot=False,
             if use_layer:
                 layer = layers.get((obj, group)) or layer_for(obj, group)
                 layers[(obj, group)] = layer
-            write_channel(obj, attr, plans, layer=layer)
-            poses += len(plans)
+            complaint = write_channel(obj, attr, plans, layer=layer)
+            if complaint:
+                notes.append(complaint)
+            else:
+                poses += len(plans)
     finally:
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=auto)
 
-    biggest = max(peaks, key=lambda p: abs(p[1]))
-    end = cmds.playbackOptions(query=True, maxTime=True)
-    past = [k.time for plans in plan_of.values() for keys, _ in plans
-            for k in keys if k.time > end]
+    if not poses:
+        return "%s wrote nothing: %s" % (shape, "; ".join(sorted(set(notes))[:2])
+                                         or "; ".join(skipped[:2]))
 
-    report = "%s on %d channel(s), %d pose(s); peak %+.3f at frame %g" % (
-        shape, len(plan_of), poses, biggest[1], biggest[0])
+    biggest = max(peaks, key=lambda p: abs(p[1]))
+    report = "%s  %dch  peak %+.2f @%g" % (shape, len(plan_of), biggest[1],
+                                           biggest[0])
     if notes:
-        report += " (%s)" % "; ".join(sorted(set(notes))[:2])
-    if past:
-        report += " - %d key(s) past the range end" % len(past)
-    if skipped:
-        report += " | skipped: " + "; ".join(skipped[:3])
+        report += "  (%s)" % sorted(set(notes))[0]
+    elif skipped:
+        report += "  (skipped %d)" % len(skipped)
     return report
 
 
-_LAST_SHAPE = "Spring"
-
-
 def apply_overshoot(shape="Spring", *_args):
-    """The button: read the panel, do it, report on the status line."""
-    global _LAST_SHAPE
-    _LAST_SHAPE = shape
+    """The button: read the panel, do it, report on the status line.
+
+    It reads Strength and Frames and never writes them -- the animator sets
+    those, and a button that resets them is a button that fights its user.
+    Everything else about a shape comes from its preset.
+    """
     objects = cmds.ls(selection=True, long=True) or []
     if not objects:
         return _status("select an animated object")
@@ -563,26 +632,20 @@ def apply_overshoot(shape="Spring", *_args):
         strength_rot=cmds.floatSliderGrp("overshootRStrength",
                                          query=True, value=True),
         frames_rot=int(cmds.intSliderGrp("overshootRFrames",
-                                         query=True, value=True)),
-        swings=_advanced_swings(shape),
-        ratio=cmds.floatSliderGrp("overshootRatio", query=True, value=True),
-        restitution=cmds.floatSliderGrp("overshootRestitution",
-                                        query=True, value=True),
-        use_layer=not cmds.checkBox("overshootBake", query=True, value=True))
+                                         query=True, value=True)))
     cmds.select(objects, replace=True)
     return _status(report)
 
 
-def _advanced_swings(shape):
-    """The Swings field, which a bounce has no use for."""
-    if SHAPES.get(shape, {}).get("family") == "bounce":
-        return None
-    return int(cmds.intSliderGrp("overshootSwings", query=True, value=True))
+STATUS_WIDTH = 46
 
 
 def _status(text):
+    """The status line is fixed width: a longer message must not stretch the
+    window out from under the animator's cursor."""
+    short = text if len(text) <= STATUS_WIDTH else text[:STATUS_WIDTH - 1] + "…"
     if cmds.control("overshootStatus", exists=True):
-        cmds.text("overshootStatus", edit=True, label=text)
+        cmds.text("overshootStatus", edit=True, label=short)
     cmds.headsUpMessage(text, time=2.5)
     return text
 
@@ -600,31 +663,12 @@ def _run(fn, *args):
 #  UI
 # ---------------------------------------------------------------------------
 
-def _preset_press(shape):
-    """A type button loads the whole preset into the panel, then applies it.
 
-    Frames included -- see the note on SHAPES. So the sliders always show what
-    just happened, and "Apply, keep my numbers" below re-runs the same shape
-    with whatever the animator has changed since.
-    """
+def _press(shape):
+    """A type button applies its shape. It touches no control on the panel."""
     def go(*_args):
-        preset = SHAPES[shape]
-        for control in ("overshootTFrames", "overshootRFrames"):
-            cmds.intSliderGrp(control, edit=True, value=preset["frames"])
-        if preset["family"] == "sine":
-            cmds.intSliderGrp("overshootSwings", edit=True,
-                              value=preset["swings"])
-            cmds.floatSliderGrp("overshootRatio", edit=True,
-                                value=preset["ratio"])
-        else:
-            cmds.floatSliderGrp("overshootRestitution", edit=True,
-                                value=preset["restitution"])
         _run(apply_overshoot, shape)
     return go
-
-
-def _custom_press(*_args):
-    _run(apply_overshoot, _LAST_SHAPE)
 
 
 BUTTON_COLOUR = {
@@ -635,76 +679,64 @@ BUTTON_COLOUR = {
     "Bounce": (0.85, 0.75, 0.45),
 }
 
+WIDTH = 320
+
 
 def show_overshoot_ui():
+    """One column, fixed width, nothing that folds out.
+
+    Every control has an explicit width and the status line is clipped rather
+    than allowed to grow, so pressing a button never moves the window out from
+    under the cursor.
+    """
     win_id = "animOvershootWin"
 
     if cmds.window(win_id, exists=True):
         cmds.deleteUI(win_id)
 
-    cmds.window(win_id, title="Overshoot Tool", widthHeight=(340, 560),
-                sizeable=True)
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=4,
-                      columnOffset=("both", 10))
+    cmds.window(win_id, title="Overshoot", width=WIDTH, height=430,
+                sizeable=False, resizeToFitChildren=False)
+    cmds.columnLayout(width=WIDTH, rowSpacing=4, columnOffset=("both", 10))
 
-    cmds.separator(height=8, style="none")
-    cmds.text(label="Animation Overshoot", font="boldLabelFont", align="center")
-    cmds.text(label="carries on past the pose, then settles back onto it",
-              font="smallObliqueLabelFont", align="center")
-    cmds.separator(height=8, style="in")
+    cmds.separator(height=6, style="none", width=WIDTH - 20)
+    cmds.text(label="Overshoot", font="boldLabelFont", align="center",
+              width=WIDTH - 20)
+    cmds.text(label="the object carries on past the pose, then settles back",
+              font="smallObliqueLabelFont", align="center", width=WIDTH - 20)
+    cmds.separator(height=8, style="in", width=WIDTH - 20)
 
     cmds.checkBox("overshootTranslate", label="Translate", value=True)
     cmds.floatSliderGrp("overshootTStrength", label="Strength ", field=True,
                         minValue=0.05, maxValue=3.0, value=1.0,
                         fieldMinValue=0.01, fieldMaxValue=20.0,
-                        columnWidth3=(70, 50, 170))
-    cmds.intSliderGrp("overshootTFrames", label="Frames  ", field=True,
-                      minValue=2, maxValue=48, value=12,
-                      fieldMinValue=1, fieldMaxValue=200,
-                      columnWidth3=(70, 50, 170))
+                        width=WIDTH - 20, columnWidth3=(60, 45, 175))
+    cmds.intSliderGrp("overshootTFrames", label="Frames ", field=True,
+                      minValue=2, maxValue=48, value=8,
+                      fieldMinValue=2, fieldMaxValue=200,
+                      width=WIDTH - 20, columnWidth3=(60, 45, 175))
 
-    cmds.separator(height=6, style="in")
+    cmds.separator(height=6, style="in", width=WIDTH - 20)
 
     cmds.checkBox("overshootRotate", label="Rotate", value=False)
     cmds.floatSliderGrp("overshootRStrength", label="Strength ", field=True,
                         minValue=0.05, maxValue=3.0, value=1.0,
                         fieldMinValue=0.01, fieldMaxValue=20.0,
-                        columnWidth3=(70, 50, 170))
-    cmds.intSliderGrp("overshootRFrames", label="Frames  ", field=True,
-                      minValue=2, maxValue=48, value=12,
-                      fieldMinValue=1, fieldMaxValue=200,
-                      columnWidth3=(70, 50, 170))
+                        width=WIDTH - 20, columnWidth3=(60, 45, 175))
+    cmds.intSliderGrp("overshootRFrames", label="Frames ", field=True,
+                      minValue=2, maxValue=48, value=8,
+                      fieldMinValue=2, fieldMaxValue=200,
+                      width=WIDTH - 20, columnWidth3=(60, 45, 175))
 
-    cmds.separator(height=8, style="in")
-    cmds.text(label="Overshoot type", font="smallBoldLabelFont", align="left")
+    cmds.separator(height=8, style="in", width=WIDTH - 20)
+
     for shape in SHAPE_ORDER:
-        cmds.button(label=shape, height=28,
+        cmds.button(label=shape, height=28, width=WIDTH - 20,
                     backgroundColor=BUTTON_COLOUR[shape],
-                    command=_preset_press(shape))
+                    command=_press(shape))
 
-    cmds.separator(height=6, style="none")
-    cmds.frameLayout("overshootAdvanced", label="Advanced", collapsable=True,
-                     collapse=True, marginWidth=4, marginHeight=4)
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=3)
-    cmds.intSliderGrp("overshootSwings", label="Swings  ", field=True,
-                      minValue=1, maxValue=10, value=3,
-                      columnWidth3=(70, 50, 150))
-    cmds.floatSliderGrp("overshootRatio", label="Keep  ", field=True,
-                        minValue=0.05, maxValue=0.9, value=0.30,
-                        columnWidth3=(70, 50, 150))
-    cmds.floatSliderGrp("overshootRestitution", label="Bounce e ", field=True,
-                        minValue=0.2, maxValue=0.8, value=0.50,
-                        columnWidth3=(70, 50, 150))
-    cmds.checkBox("overshootBake", label="Bake into curves (no anim layer)",
-                  value=False)
-    cmds.button(label="Apply, keep my numbers", height=24,
-                command=_custom_press)
-    cmds.setParent("..")
-    cmds.setParent("..")
-
-    cmds.separator(height=6, style="in")
+    cmds.separator(height=8, style="in", width=WIDTH - 20)
     cmds.text("overshootStatus", label="select keys, or stand on the pose",
-              align="center", font="smallFixedWidthFont")
+              align="center", width=WIDTH - 20, font="smallFixedWidthFont")
 
     cmds.showWindow(win_id)
 
