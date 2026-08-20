@@ -131,10 +131,13 @@ axis is not first in the rotate order, that joint is **skipped with a named
 reason**, because rigging it anyway would trade a candy wrapper for a bone that
 bends when it should roll. Same for an axis more than a few degrees off the bone.
 
-**The fractions**, from the joints' positions along the parent bone. Two guards:
-if the spread of positions within one segment is under 5% of the bone's length
-the positions carry no information (a rig whose twist joints all sit on the
-parent's origin), and the fractions fall back to an even split by index. A
+**The fractions**, from the joints' positions along the parent bone, clamped to
+the bone's ends. The fallback is for positions that carry no information at all
+— every joint of the segment sitting on the parent's origin, or two joints in
+the same spot, which cannot be what a rigger who authored two of them meant —
+and it is an even split by index (`1/(n+1) … n/(n+1)`). A measured position is
+otherwise trusted, including a counter joint at the shoulder, whose `t≈0` and
+`−1` weight are the correct answer rather than a degenerate one. A
 `_WEIGHT` override table holds any per-bone correction the animator asks for
 later — the same escape hatch `fkrings._BORROW`/`_SCALE` already is for ring
 sizes.
