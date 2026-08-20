@@ -178,3 +178,348 @@ def axis_choice(local_axes, bone_dir, rotate_order):
             "the innermost channel".format(channel,
                                            ROTATE_ORDERS[rotate_order].upper()))
     return AxisChoice(channel, 1.0 if dot > 0 else -1.0, None)
+
+
+# ---------------------------------------------------------------------------
+# scene
+#
+# Undo chunks belong to the callers: every entry point that reaches here --
+# fkcontrols.rebuild, fkcontrols.bake_selection -- already opens one around a
+# whole build or bake, and a half-built network must undo with the rest of it.
+# ---------------------------------------------------------------------------
+
+_ROLES = ("delta", "quat", "dot", "norm", "angle", "weight", "rest")
+
+
+def node_names(joint):
+    """Names for one joint's seven nodes, from its leaf name.
+
+    Never from the DAG path or the namespace: neither is a legal node name,
+    and the leaf is already unique among the twist joints.
+    """
+    stem = naming.leaf(joint)
+    return {role: "{0}_tw_{1}".format(stem, role) for role in _ROLES}
+
+
+def built_limbs():
+    """Limbs that currently have twist networks recorded against them."""
+    return [limb for limb in LIMBS if overrig.set_members(twist_set(limb))]
+
+
+def has_twist():
+    """True when this tool has a twist network in the scene."""
+    return bool(built_limbs())
+
+
+def driven_plugs(limb):
+    """The channels this limb's networks drive, read back from the rig itself.
+
+    The last node of every network is an addDoubleLinear, so its outgoing
+    connection IS the driven plug -- no second bookkeeping to go stale.
+    """
+    plugs = []
+    for member in overrig.set_members(twist_set(limb)):
+        if not cmds.objExists(member):
+            continue
+        if cmds.objectType(member) != "addDoubleLinear":
+            continue
+        plugs.extend(cmds.listConnections(member + ".output", source=False,
+                                          destination=True, plugs=True) or [])
+    return list(dict.fromkeys(plugs))
+
+
+def _world_matrix(node):
+    return om.MMatrix(cmds.xform(node, query=True, worldSpace=True,
+                                 matrix=True))
+
+
+def _world_point(node):
+    matrix = _world_matrix(node)
+    return om.MVector(matrix[12], matrix[13], matrix[14])
+
+
+def _local_axes(node):
+    """The node's own axes, in world."""
+    matrix = _world_matrix(node)
+    return {"x": (matrix[0], matrix[1], matrix[2]),
+            "y": (matrix[4], matrix[5], matrix[6]),
+            "z": (matrix[8], matrix[9], matrix[10])}
+
+
+def _to_frame(vector, frame):
+    """A world direction expressed in `frame`'s local space; world if None."""
+    if frame is None:
+        return om.MVector(vector).normal()
+    return (om.MVector(vector) * _world_matrix(frame).inverse()).normal()
+
+
+def _parent_of(node):
+    found = cmds.listRelatives(node, parent=True, fullPath=True) or []
+    return found[0] if found else None
+
+
+def _local_matrix_inverse(node):
+    """Inverse of the node's local matrix right now -- the twist's zero."""
+    return om.MMatrix(cmds.getAttr(node + ".matrix")).inverse()
+
+
+def _is_constant(node):
+    """Whether the node's animation actually MOVES.
+
+    "It has animCurves" is not "the animator has animation": every build
+    leaves the bones carrying constant baked curves (trap 30).
+    """
+    for curve in cmds.listConnections(node, source=True, destination=False,
+                                      type="animCurve") or []:
+        values = cmds.keyframe(curve, query=True, valueChange=True) or []
+        if values and (max(values) - min(values)) > 1e-6:
+            return False
+    return True
+
+
+def _clear_channel(plug):
+    """Free a twist channel for our network, or say why we cannot have it.
+
+    An animCurve is animation we supersede -- deleted, because an orphan
+    curve is a trap for whoever reads the file next, and Bake+Delete writes
+    a fresh one from our network. Anything else driving the channel is
+    work somebody did by hand: refused by name, never taken over silently.
+    """
+    if cmds.getAttr(plug, lock=True):
+        return "the channel is locked"
+    inputs = cmds.listConnections(plug, source=True, destination=False) or []
+    curves = [n for n in inputs if cmds.objectType(n).startswith("animCurve")]
+    strangers = sorted({cmds.objectType(n) for n in inputs
+                        if n not in curves})
+    if strangers:
+        return "the channel is already driven by " + ", ".join(strangers)
+    if curves:
+        cmds.delete(curves)
+    return None
+
+
+def _network(joint, driver, weight, direction):
+    """Seven nodes computing `weight` x the driver's twist about `direction`.
+
+    `direction` is the bone axis in the DRIVER'S PARENT frame, which is the
+    frame the delta operates in. Returns the created nodes, the last of them
+    the addDoubleLinear whose output is meant for the joint's channel.
+    """
+    names = node_names(joint)
+    rest = _local_matrix_inverse(driver)
+
+    delta = cmds.createNode("multMatrix", name=names["delta"], skipSelect=True)
+    cmds.setAttr(delta + ".matrixIn[0]", [rest[i] for i in range(16)],
+                 type="matrix")
+    cmds.connectAttr(driver + ".matrix", delta + ".matrixIn[1]")
+
+    quat = cmds.createNode("decomposeMatrix", name=names["quat"],
+                           skipSelect=True)
+    cmds.connectAttr(delta + ".matrixSum", quat + ".inputMatrix")
+
+    dot = cmds.createNode("vectorProduct", name=names["dot"], skipSelect=True)
+    cmds.setAttr(dot + ".operation", 1)             # dot product
+    cmds.setAttr(dot + ".normalizeOutput", 0)
+    for channel in "XYZ":
+        cmds.connectAttr(quat + ".outputQuat" + channel,
+                         dot + ".input1" + channel)
+    cmds.setAttr(dot + ".input2", direction.x, direction.y, direction.z,
+                 type="double3")
+
+    # quatToEuler assumes a UNIT quaternion, and (v.a, 0, 0, w) is not one --
+    # its euler X is atan2(2wx, 1 - 2x^2), which equals the twist only when
+    # x^2 + w^2 == 1. Normalising first is what makes the angle exact.
+    norm = cmds.createNode("quatNormalize", name=names["norm"],
+                           skipSelect=True)
+    cmds.connectAttr(dot + ".outputX", norm + ".inputQuatX")
+    cmds.connectAttr(quat + ".outputQuatW", norm + ".inputQuatW")
+
+    angle = cmds.createNode("quatToEuler", name=names["angle"],
+                            skipSelect=True)
+    cmds.setAttr(angle + ".inputRotateOrder", 0)    # XYZ: rx = 2*atan2(x, w)
+    cmds.connectAttr(norm + ".outputQuatX", angle + ".inputQuatX")
+    cmds.connectAttr(norm + ".outputQuatW", angle + ".inputQuatW")
+
+    scaled = cmds.createNode("multDoubleLinear", name=names["weight"],
+                             skipSelect=True)
+    cmds.connectAttr(angle + ".outputRotateX", scaled + ".input1")
+    cmds.setAttr(scaled + ".input2", weight)
+
+    total = cmds.createNode("addDoubleLinear", name=names["rest"],
+                            skipSelect=True)
+    cmds.connectAttr(scaled + ".output", total + ".input1")
+    return [delta, quat, dot, norm, angle, scaled, total]
+
+
+def _ensure_set(limb):
+    name = twist_set(limb)
+    if not cmds.objExists(name):
+        cmds.sets(name=name, empty=True)
+    return name
+
+
+def build(scene_map, limbs=None):
+    """Build the twist networks. Returns (joints rigged, message).
+
+    The pose this is called in is the twist ZERO: the driver local matrix is
+    measured now and the channel keeps the value it holds now, so nothing
+    moves at the build frame. Build in the bind pose -- and when a driver
+    carries animation that actually moves, the message says so.
+
+    Rebuilds: any network already recorded for the limbs asked for is baked
+    and removed first, so a second press cannot double it.
+    """
+    wanted = list(LIMBS if limbs is None else limbs)
+    standing = [limb for limb in wanted
+                if overrig.set_members(twist_set(limb))]
+    replaced = 0
+    if standing:
+        replaced, _message = bake(standing)
+
+    rigged = 0
+    skipped = []
+    animated = []
+    for segment in segments(scene_map):
+        if segment.limb not in wanted:
+            continue
+        bone = scene_map[segment.bone]
+        tip = scene_map[segment.tip]
+        driver = scene_map[segment.driver]
+
+        children = cmds.listRelatives(bone, children=True, type="joint",
+                                      fullPath=True) or []
+        leaves = {}
+        for path in children:
+            leaves[naming.leaf(path)] = path
+        joints = [leaves[name] for name in twist_joints(sorted(leaves))]
+        if not joints:
+            continue
+
+        span = _world_point(tip) - _world_point(bone)
+        length = span.length()
+        if length < 1e-6:
+            skipped.append("{0} (the bone has no length)".format(
+                naming.leaf(bone)))
+            continue
+        along = span / length
+        origin = _world_point(bone)
+        positions = [(_world_point(j) - origin) * along / length
+                     for j in joints]
+        fractions = weights(joints, positions, segment.kind)
+        local = _to_frame(along, _parent_of(driver))
+
+        created = []
+        for joint, weight in zip(joints, fractions):
+            choice = axis_choice(_local_axes(joint), along,
+                                 cmds.getAttr(joint + ".rotateOrder"))
+            if choice.channel is None:
+                skipped.append("{0} ({1})".format(naming.leaf(joint),
+                                                  choice.reason))
+                continue
+            plug = "{0}.r{1}".format(joint, choice.channel)
+            refusal = _clear_channel(plug)
+            if refusal:
+                skipped.append("{0} ({1})".format(naming.leaf(joint),
+                                                  refusal))
+                continue
+            nodes = _network(joint, driver, weight * choice.sign, local)
+            cmds.setAttr(nodes[-1] + ".input2", cmds.getAttr(plug))
+            cmds.connectAttr(nodes[-1] + ".output", plug, force=True)
+            created.extend(nodes)
+            rigged += 1
+        if created:
+            cmds.sets(created, addElement=_ensure_set(segment.limb))
+        if not _is_constant(driver):
+            animated.append(naming.leaf(driver))
+
+    return rigged, _message_for(rigged, replaced, skipped, animated)
+
+
+def _message_for(rigged, replaced, skipped, animated):
+    if not rigged and not skipped:
+        return "no twist joints on this skeleton"
+    message = "{0} twist joint(s) rigged".format(rigged)
+    if replaced:
+        message += ", {0} replaced".format(replaced)
+    if skipped:
+        message += ". Skipped: " + "; ".join(skipped[:4])
+    if animated:
+        message += (". Twist zero is this pose - {0} carries animation"
+                    .format(", ".join(sorted(set(animated))[:3])))
+    return message
+
+
+def collapses(values):
+    """Whether a sampled channel is still enough to be a plain value.
+
+    Without this, a rig on an unanimated skeleton leaves a key on every
+    frame of every twist joint for nothing at all.
+    """
+    return not values or (max(values) - min(values)) <= 1e-9
+
+
+def bake(limbs=None):
+    """Bake the twist networks onto the joints and remove them.
+
+    Sampled with `getAttr(time=...)` and keyed by hand rather than through
+    `bakeResults`: the channel input is our own DG network, not a constraint,
+    and this way the sampling, the disconnect and the keys are ours to order
+    -- and the order is the whole trick. Sample every frame FIRST, then
+    delete the network (which frees the channels), then write. Writing before
+    the delete is impossible, the channel still has an input; deleting before
+    sampling loses the values.
+
+    Reads the playback range, never the time slider highlight, so it needs no
+    highlight guard of its own.
+    """
+    wanted = [limb for limb in (LIMBS if limbs is None else limbs)
+              if overrig.set_members(twist_set(limb))]
+    if not wanted:
+        return 0, "no twist rig to bake"
+
+    start, end = overrig.frame_range()
+    frames = [start + step for step in range(int(end - start) + 1)]
+
+    baked = 0
+    removed = 0
+    autokey = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    try:
+        for limb in wanted:
+            plugs = [p for p in driven_plugs(limb) if cmds.objExists(p)]
+            samples = {}
+            for plug in plugs:
+                samples[plug] = [cmds.getAttr(plug, time=frame)
+                                 for frame in frames]
+
+            members = [m for m in overrig.set_members(twist_set(limb))
+                       if cmds.objExists(m)]
+            if members:
+                cmds.delete(members)
+                removed += len(members)
+
+            for plug, values in samples.items():
+                if not cmds.objExists(plug.split(".")[0]):
+                    continue
+                if collapses(values):
+                    if values:
+                        cmds.setAttr(plug, values[0])
+                else:
+                    for frame, value in zip(frames, values):
+                        cmds.setKeyframe(plug, time=frame, value=value)
+                baked += 1
+
+            # Maya deletes an objectSet together with its last member (trap
+            # 18), so by now the set may be gone.
+            if cmds.objExists(twist_set(limb)):
+                cmds.delete(twist_set(limb))
+    finally:
+        cmds.autoKeyframe(state=autokey)
+
+    return baked, "{0} twist joint(s) baked, {1} node(s) removed".format(
+        baked, removed)
+
+
+def bake_all():
+    """Bake every twist network in the scene."""
+    return bake(built_limbs())

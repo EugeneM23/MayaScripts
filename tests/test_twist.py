@@ -201,3 +201,41 @@ class TestAxisChoice(unittest.TestCase):
         self.assertEqual(len(twist.ROTATE_ORDERS), 6)
         for order in twist.ROTATE_ORDERS:
             self.assertEqual(sorted(order), ["x", "y", "z"])
+
+
+class TestNodeNames(unittest.TestCase):
+
+    def test_seven_distinct_names_derived_from_the_joint(self):
+        names = twist.node_names("|root|lowerarm_twist_01_l")
+        self.assertEqual(len(set(names.values())), 7)
+        for name in names.values():
+            self.assertTrue(name.startswith("lowerarm_twist_01_l_tw"))
+
+    def test_the_dag_path_never_reaches_the_node_name(self):
+        """A node name with a pipe in it is not a legal Maya name."""
+        for name in twist.node_names("|a|b|thigh_twist_01_r").values():
+            self.assertNotIn("|", name)
+
+    def test_a_namespace_never_reaches_the_node_name(self):
+        for name in twist.node_names("|ns:calf_twist_02_l").values():
+            self.assertNotIn(":", name)
+
+    def test_two_joints_never_collide(self):
+        left = set(twist.node_names("lowerarm_twist_01_l").values())
+        right = set(twist.node_names("lowerarm_twist_01_r").values())
+        self.assertEqual(left & right, set())
+
+
+class TestCollapses(unittest.TestCase):
+
+    def test_a_still_channel_needs_no_keys(self):
+        self.assertTrue(twist.collapses([12.5, 12.5, 12.5]))
+
+    def test_a_moving_channel_needs_keys(self):
+        self.assertFalse(twist.collapses([12.5, 12.5, 12.6]))
+
+    def test_one_sample_collapses(self):
+        self.assertTrue(twist.collapses([3.0]))
+
+    def test_nothing_collapses(self):
+        self.assertTrue(twist.collapses([]))
