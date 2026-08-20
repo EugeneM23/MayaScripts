@@ -473,7 +473,10 @@ which is no longer true — so their last green run predates the rewrite; they
 have not been sent through the bridge since (the animator's Maya had a blocked
 idle queue at the time — see bridge note 6). `verify_twist_bones.py`
 (2026-08-20) is in the same state, and for the same reason — the queue was
-blocked again the day it was written. It runs in **two phases**: the exact
+blocked again the day it was written. **The twist rig itself is confirmed
+working in the live scene by the user** («отлично это работает»), pressing
+Build in the panel; what has not run is the script's ten gates. It runs in
+**two phases**: the exact
 numbers are measured on a SANDBOX chain it builds and deletes (poking a
 sandbox is free, and it needs neither OverRig nor a rig on the character, so
 the mathematics is proved on its own), and the real skeleton then gets the
