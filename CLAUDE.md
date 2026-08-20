@@ -765,6 +765,30 @@ C_parent` construction rather than a measurement.
    refuses a merge when target joints carry constraints, naming Bake+Delete
    as the cure.
 
+38. **FBX export writes the take across the ANIMATION RANGE, so a tool that
+   narrows the range narrows the clip.** `root_offset_batch_tool` set the
+   playback range to its own offset window before exporting; measured, a
+   scene holding keys from -20 to 30 came out of the exporter as 0..30 with
+   the frames before the window simply gone. That reads as "the exporter is
+   lossy" and is really the range. An export must set the range to the UNION
+   of what it wants and what the clip already has.
+39. **`cmds.file(i=True, type="FBX")` and `FBXImport` disagree about the
+   frame rate, not only about curves.** Trap 22 says `cmds.file` drops
+   animation; measured again on this project's UE clips it did NOT (583
+   curves either way) — but it resamples a 30 fps clip into a 24 fps scene
+   onto fractional frames (`-25..18` becomes `-20..14.4`), because it never
+   sees `FBXImportSetMayaFrameRate`. So the rule stands for a second reason:
+   use `FBXImport` when timing matters, and decide the frame rate explicitly
+   rather than inheriting whatever the scene had.
+40. **Deleting "the animation" on a UE root deletes the game's data.** The
+   root of an exported UE clip carries the animation curves as custom
+   attributes — `Pose_0..9`, `MoveData_Speed`, `DisableLegIK`,
+   `DisableHandIKRetargeting`, `RootMotionAdditiveInput`, plus a pose driver
+   per joint angle. Measured: 135 curves on `ShortSword_Attack_Right_3P`,
+   against 9 that are transform channels. Anything that clears a root with
+   `listConnections(root, type="animCurve")` throws those away, and the loss
+   only shows up in Unreal.
+
 ## Retargeting Manny onto other skeletons
 
 `maya_retarget.py` (root level, standalone, no Qt) drives the referenced
@@ -1203,6 +1227,49 @@ deletes something the animator wanted.
     too). The verification now turns the sword 50 cm and measures that both
     hands travel with it; "it is nested and nothing drifted" was never the
     claim the feature makes.
+
+## `root_offset_batch_tool` — batch root-motion offsets (lives in Perforce)
+
+Not in this repo: `C:/!!!Work/Perforce/Atone/Scripts/Maya/root_offset_batch_tool.py`,
+because that folder is what the animator has on `sys.path`. A single-file
+`cmds`-only window — pick a source folder, move FBXs into a process list, pick
+an axis/distance/frame window, GO — importing each clip, splicing a straight
+root offset into the window and exporting to another folder. Design:
+`docs/superpowers/specs/2026-08-20-root-offset-splice-design.md`, proof:
+`docs/superpowers/plans/verify_root_offset_batch.py` (**35/35 green**).
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/Perforce/Atone/Scripts/Maya")
+import root_offset_batch_tool; root_offset_batch_tool.show()
+```
+
+**It is a splice, not a wipe** (the animator's rule, 2026-08-20: «отработать
+только в указанном промежутке, а всю остальную анимацию сохранить как есть»).
+Before the window: untouched. Inside: the straight offset. After: kept, and
+shifted by `(base + distance) - old_end` so the original motion continues from
+where the offset stopped instead of teleporting back. Everything else on the
+root — rotate, scale and the 135 UE curves — is never touched (trap 40).
+`setKeyframe -insert` is what makes the outside survive: it plants the two edge
+keys without changing the curve's shape, and only the tangents facing INTO the
+window are dictated, after unlocking the in/out pair. Worst error outside the
+window: 0.000000000.
+
+Its proof runs in **its own mayapy session**, never through the bridge: the
+tool starts every file with `cmds.file(new=True, force=True)`, so a bridge run
+would discard the animator's open scene. That also means the UI cannot be
+tested there — `cmds.window()` returns `False` in batch — so the panel is the
+one part that needs a live open to confirm.
+
+Four things it now defends against, each measured: the export range is the
+UNION of the clip and the window (trap 38, the reported bug — «клип
+обрезается»); the FBX import mode is set explicitly, since `exmerge` left by
+`maya_uebridge` makes the importer create nothing and every file dies with "no
+root joint found" (trap 33); the scene adopts the clip's frame rate (trap 39);
+and the root is resolved among joints with no joint above them, since a stray
+top-level `ik_hand_root` used to outrank a whole `pelvis` skeleton. Two data
+hazards closed as well: GO asks once before discarding a modified scene, and an
+empty name suffix pointed at the source folder is refused (`clip.FBX` and
+`clip.fbx` are one file on Windows).
 
 ## Conventions
 
