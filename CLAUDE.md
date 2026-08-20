@@ -110,7 +110,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 630 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 679 tests at time of writing, all passing.
 
 Testing code that needs `maya.cmds` without a Maya session: inject a fake into
 `sys.modules` and **rebind the module attribute** (`naming.cmds = fake`). Do not
@@ -138,7 +138,8 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `fkchains.py` | Chain tables, what a build may create (`BUILDABLE`/`build_targets`), pure chain resolution (chain_root, innermost_owner, ...) | stdlib + `builder` (for `_is_inside`/`LIMBS`) |
 | `fkrings.py` | Ring sizing from the skin, knot dressing | `maya.cmds`, OpenMaya, `bodymap`, `naming`, `fkchains` |
 | `fkalign.py` | Controller axis algebra (align/orient) | `maya.cmds`, OpenMaya, `axes`, `fkchains` |
-| `fkcontrols.py` | FK build/bake/switch orchestration; re-exports the three above | `maya.cmds`, `maya.mel`, `bodymap`, `builder`, `overrig` + the three above |
+| `twist.py` | The twist joints: the segment table, the measured axis and fractions, the seven-node network, its manifest and its bake | `maya.cmds`, OpenMaya, `naming`, `overrig` |
+| `fkcontrols.py` | FK build/bake/switch orchestration; re-exports the three above | `maya.cmds`, `maya.mel`, `bodymap`, `builder`, `overrig`, `twist` + the three above |
 
 **Load-bearing rules — do not break these:**
 
@@ -395,6 +396,69 @@ a finger chain sits inside the root controller only by way of the IK hand,
 and that hand survives. Containment through a surviving rig is not
 ownership (trap 9 again, from the other side).
 
+**The twist joints are driven** (2026-08-20). A UE skeleton carries
+`upperarm_twist_*`, `lowerarm_twist_*`, `thigh_twist_*`, `calf_twist_*`, whose
+job is to spread one segment's roll along its length so the skin shears
+gradually; in Unreal the engine drives them at runtime and in a Maya file they
+hang rigidly off their parent doing nothing. `twist.py` drives them with seven
+stock nodes per joint, computing the **exact** swing–twist of a driver bone
+about the measured bone axis: `Δ = M0⁻¹ · M`, then `θ = 2·atan2(v·a, w)` from
+the delta's quaternion. **`quatNormalize` in that chain is load-bearing** —
+`quatToEuler` assumes a unit quaternion and `(v·a, 0, 0, w)` is not one, so
+without it the angle comes out `atan2(2wx, 1−2x²)`, which equals the twist only
+when the swing is zero. No constraint is created anywhere.
+
+Two kinds, and the sign of the fraction is the whole difference: a **follow**
+joint (`lowerarm_twist_*`, `calf_twist_*`) takes `+t` of the far bone's roll —
+the roll enters at the wrist, so skin near the elbow stays and skin at the
+wrist follows — and a **counter** joint (`upperarm_twist_*`, `thigh_twist_*`)
+takes `−(1−t)` of its own bone's roll against ITS parent, because it is a DAG
+child of the rolling bone and inherits all of that roll already. `t` is
+measured, not tabulated: the joint's position along its parent bone, clamped,
+with an even split by index as the fallback when the positions carry no
+information at all (every joint on the parent's origin, or two in one spot).
+Which joints exist is discovered by the `_twist_<nn>` name infix, so one, two
+or three per segment is one code path; only the eight **segments** are a table.
+
+Two refusals rather than a guess. The bone axis is measured against the joint's
+own axes, and a joint whose axis is more than 10° off the bone is **skipped
+with a named reason**; so is one whose bone axis is not the **innermost channel
+of its rotate order**, because adding to a channel that is not innermost turns
+the joint about its parent — it would bend where it should roll. An animCurve
+on a twist channel is superseded and deleted; any other driver on it (a
+constraint, somebody's own connection) is refused by name, never taken over.
+
+**Switch FK/IK needs no handling at all, and that is the point of reading
+bones.** A hand is a hand whether an FK controller or an IK rig drives it, so
+the whole class of rider bugs (traps 9, 16, 21) does not arise. Build builds
+it last, outside the FK/IK branch; `bake_selection` takes down the twist rig of
+exactly the limbs it bakes (`twist_limbs_for` — a limb name means the same in
+both manifests, so a limb baked as IK and one baked as FK chains resolve
+alike), and a spine bake leaves every twist alone. The manifest is
+`RigPicker_twist_<limb>` holding the nodes we created — **not** a UUID scene
+diff: that diff exists because OverRig conjures up nodes we cannot see, and
+here every node is ours.
+
+**The bake samples, then deletes, then keys.** `cmds.bakeResults` has no say
+over a channel driven by our own DG nodes, so `twist.bake` reads every frame
+with `getAttr(time=...)` first, deletes the network to free the channels, and
+writes the keys last — writing earlier is impossible (the channel still has an
+input) and deleting earlier loses the values. A still channel collapses to a
+plain value instead of a key per frame. It reads the playback range, never the
+time slider's highlight, so it needs no highlight guard of its own.
+
+**The UE bridge keeps working**: no constraint means the trap-37 guard in
+`animimport.import_clip` does not trip. The twist channels *are* connected, so
+an FBX merge skips them silently — the right outcome, since the network
+recomputes the twist from the imported hand animation.
+
+The zero of every fraction is the pose the rig was **built** in, so build in
+the bind pose; a driver carrying animation that actually moves is named in the
+status line. Closing that needs the bind local rotations from the `bindPose`
+node, which is the *same* gap `align_controllers` has — to be closed once for
+both, deliberately not here. Spec:
+`docs/superpowers/specs/2026-08-20-twist-bones-design.md`.
+
 Not built: FK controllers on the fingers (dropped 2026-08-18, "на время");
 spine IK (removed, see above) and neck IK; per-chain FK bake from the UI
 (Switch does it internally); docking; mirror-select; the pose-snapshot
@@ -407,7 +471,14 @@ safety before Build (proposed, not confirmed).
 rewritten that day** — five of them asserted "the finger hangs on the hand",
 which is no longer true — so their last green run predates the rewrite; they
 have not been sent through the bridge since (the animator's Maya had a blocked
-idle queue at the time — see bridge note 6).
+idle queue at the time — see bridge note 6). `verify_twist_bones.py`
+(2026-08-20) is in the same state, and for the same reason — the queue was
+blocked again the day it was written. It runs in **two phases**: the exact
+numbers are measured on a SANDBOX chain it builds and deletes (poking a
+sandbox is free, and it needs neither OverRig nor a rig on the character, so
+the mathematics is proved on its own), and the real skeleton then gets the
+integration gates — the network's output against the same twist recomputed in
+plain Python, idempotence, the bake, and Switch FK/IK leaving it alone.
 `verify_control_axes.py` builds the rig itself in two halves — once with
 `orient_controllers` suppressed, then for real — so the turn is measured on
 its own rather than inside a whole build; it now builds **full FK**, because
