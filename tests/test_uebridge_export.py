@@ -80,5 +80,106 @@ class ExportLine(unittest.TestCase):
         self.assertIn("outside", line)
 
 
+from maya_uebridge import checkouts, records, vcs  # noqa: E402
+
+
+def _record(name="AS_Walk", package="/Game/Anims/AS_Walk"):
+    return records.AnimRecord(name=name, package=package, skeleton="SK",
+                              frames=60, length=2.0, fps=30.0)
+
+
+class AnimCheckouts(unittest.TestCase):
+
+    CONTENT = "C:\\p4\\Atone\\Content"
+
+    def opened(self, client, action="edit"):
+        return {"depotFile": "//d/x", "clientFile": client, "action": action}
+
+    def test_an_opened_animsequence_is_matched_to_its_record(self):
+        rows = checkouts.anim_checkouts(
+            [self.opened(self.CONTENT + "\\Anims\\AS_Walk.uasset")],
+            self.CONTENT, [_record()])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0].name, "AS_Walk")
+        self.assertEqual(rows[0][2], "edit")
+
+    def test_a_non_animation_uasset_is_dropped(self):
+        """The window is about animations, not the depot."""
+        rows = checkouts.anim_checkouts(
+            [self.opened(self.CONTENT + "\\Props\\SM_Rock.uasset")],
+            self.CONTENT, [_record()])
+        self.assertEqual(rows, [])
+
+    def test_matching_ignores_case(self):
+        rows = checkouts.anim_checkouts(
+            [self.opened("c:\\P4\\ATONE\\content\\anims\\as_walk.uasset")],
+            self.CONTENT, [_record()])
+        self.assertEqual(len(rows), 1)
+
+    def test_rows_sort_by_name(self):
+        rows = checkouts.anim_checkouts(
+            [self.opened(self.CONTENT + "\\Anims\\AS_Zed.uasset"),
+             self.opened(self.CONTENT + "\\Anims\\AS_Abc.uasset")],
+            self.CONTENT,
+            [_record("AS_Zed", "/Game/Anims/AS_Zed"),
+             _record("AS_Abc", "/Game/Anims/AS_Abc")])
+        self.assertEqual([r[0].name for r in rows], ["AS_Abc", "AS_Zed"])
+
+
+class FormatRow(unittest.TestCase):
+
+    def row(self, fbx="ok"):
+        return checkouts.CheckoutRow(_record(), "C:\\x.uasset", "edit", fbx,
+                                     "C:\\src\\AS_Walk.fbx")
+
+    def test_a_row_names_the_animation_the_action_and_the_fbx(self):
+        text = checkouts.format_row(self.row())
+        self.assertIn("AS_Walk", text)
+        self.assertIn("edit", text)
+        self.assertIn("ok", text)
+
+    def test_a_missing_fbx_shouts(self):
+        self.assertIn("MISSING", checkouts.format_row(self.row("missing")))
+
+    def test_rows_align(self):
+        a = checkouts.format_row(self.row())
+        b = checkouts.format_row(checkouts.CheckoutRow(
+            _record("AS_A_Very_Much_Longer_Animation_Name_Than_That",
+                    "/Game/Deep/Folder/AS_X"),
+            "C:\\y.uasset", "add", "depot", ""))
+        self.assertEqual(a.index("fbx "), b.index("fbx "))
+
+
+class CheckoutsCountLine(unittest.TestCase):
+
+    def test_zero_says_nothing_checked_out(self):
+        self.assertIn("nothing", checkouts.count_line(0))
+
+    def test_a_count_is_reported(self):
+        self.assertIn("3", checkouts.count_line(3))
+
+
+class ReimportLine(unittest.TestCase):
+
+    def test_saved_with_frames(self):
+        line = checkouts.reimport_line({"ok": True, "saved": True,
+                                        "frames": 62})
+        self.assertIn("saved", line)
+        self.assertIn("62", line)
+
+    def test_unsaved_is_loud(self):
+        line = checkouts.reimport_line({"ok": True, "saved": False})
+        self.assertIn("NOT saved", line)
+
+
+class FbxState(unittest.TestCase):
+
+    def test_no_root_finds_nothing(self):
+        state, path = checkouts.fbx_state("AS_X", "",
+                                          lambda args, cwd: (0, "", ""))
+        self.assertEqual(state, "missing")
+        self.assertEqual(path, "")
+
+
 if __name__ == "__main__":
     unittest.main()
