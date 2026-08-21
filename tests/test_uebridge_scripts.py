@@ -131,5 +131,46 @@ class ReplyContract(unittest.TestCase):
             self.assertIn(uescripts.MARKER, src)
 
 
+class ReimportScript(unittest.TestCase):
+
+    def script(self):
+        return uescripts.reimport_script(
+            "C:\\temp\\out.json", "/Game/Anims/AS_X",
+            "C:\\src\\Exports\\AS_X.fbx")
+
+    def test_paths_are_json_encoded_not_pasted(self):
+        self.assertIn(json.dumps("C:\\src\\Exports\\AS_X.fbx"), self.script())
+
+    def test_the_script_compiles(self):
+        compile(self.script(), "<reimport>", "exec")
+
+    def test_the_reimport_is_pointed_at_our_fbx_without_asking(self):
+        """ask_new_file=False plus set_reimport_paths is what keeps the editor
+        from raising a file dialog nobody can click (trap 23/24 family)."""
+        text = self.script()
+        self.assertIn("set_reimport_paths", text)
+        self.assertIn("ask_new_file=False", text)
+
+    def test_the_asset_is_saved_after_the_reimport(self):
+        self.assertIn("save_asset", self.script())
+
+    def test_a_missing_asset_is_guarded_before_use(self):
+        """Trap 24: a null object crashes the editor, it does not raise."""
+        self.assertIn("could not load asset", self.script())
+
+    def test_the_reply_tail_is_present(self):
+        text = self.script()
+        self.assertIn("finally:", text)
+        self.assertIn(json.dumps(uescripts.MARKER), text)
+
+
+class ListScriptContentDir(unittest.TestCase):
+
+    def test_the_listing_reports_the_content_dir(self):
+        text = uescripts.list_script("C:/out.json")
+        self.assertIn("project_content_dir", text)
+        self.assertIn("content_dir", text)
+
+
 if __name__ == "__main__":
     unittest.main()

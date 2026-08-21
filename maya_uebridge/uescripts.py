@@ -54,7 +54,7 @@ _LENGTH_TAGS = ["SequenceLength", "Sequence Length", "PlayLength"]
 _FPS_TAGS = ["TargetFrameRate", "Target Frame Rate", "FrameRate", "Frame Rate"]
 
 result = {"ok": False, "error": "", "scanning": False, "project": "",
-          "assets": [], "sample_tags": {}}
+          "content_dir": "", "assets": [], "sample_tags": {}}
 
 
 def first_tag(data, names):
@@ -80,6 +80,11 @@ def short_name(value):
 try:
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
     result["project"] = str(unreal.Paths.get_project_file_path())
+    # The checkouts window maps p4's clientFile paths to /Game packages, and
+    # get_project_file_path can come back engine-relative - so the absolute
+    # Content dir travels in the reply rather than being derived Maya-side.
+    result["content_dir"] = str(unreal.Paths.convert_relative_path_to_full(
+        unreal.Paths.project_content_dir()))
 
     if registry.is_loading_assets():
         # A partial list right after editor start reads as "this project has few
@@ -233,6 +238,70 @@ def list_script(out_path, package_path="/Game", sample_tags=False):
     return (_LIST_HEAD % values) + (_REPLY_TAIL % values)
 
 
+_REIMPORT_HEAD = '''\
+import json
+import os
+import traceback
+
+import unreal
+
+_OUT = %(out_path)s
+_PACKAGE = %(package)s
+_FBX = %(fbx_path)s
+
+result = {"ok": False, "error": "", "saved": False,
+          "frames": None, "length": None, "notes": []}
+
+
+def attempt(call, default=None):
+    """Engine APIs move between versions; a miss must not abort the run."""
+    try:
+        return call()
+    except Exception:
+        return default
+
+
+try:
+    anim = unreal.load_asset(_PACKAGE)
+    if anim is None:
+        raise RuntimeError("could not load asset: " + str(_PACKAGE))
+    if not os.path.isfile(_FBX):
+        raise RuntimeError("no FBX at " + str(_FBX))
+
+    subsystem = attempt(
+        lambda: unreal.get_editor_subsystem(unreal.ReimportSubsystem))
+    if subsystem is None:
+        raise RuntimeError("no ReimportSubsystem on this engine build")
+
+    # Point the stored import source at OUR fbx first: ask_new_file=False
+    # plus an explicit path is what keeps the editor from raising a file
+    # dialog nobody can click (the trap-23/24 family).
+    if attempt(lambda: subsystem.set_reimport_paths(anim, [_FBX]) or True) is None:
+        result["notes"].append("set_reimport_paths failed")
+
+    ran = attempt(lambda: subsystem.reimport(
+        anim, ask_new_file=False, load_new_file=False, preferred_file=_FBX))
+    if not ran:
+        raise RuntimeError("the editor refused the reimport - check its "
+                           "Output Log (returned " + str(ran) + ")")
+
+    result["saved"] = bool(attempt(lambda: unreal.EditorAssetLibrary.save_asset(
+        _PACKAGE, only_if_is_dirty=False)))
+
+    length = attempt(lambda: float(anim.get_play_length()))
+    if length is None:
+        length = attempt(lambda: float(anim.get_editor_property("sequence_length")))
+    result["length"] = length
+
+    frames = attempt(lambda: int(anim.get_editor_property("number_of_sampled_keys")))
+    if frames is None:
+        frames = attempt(lambda: int(anim.get_editor_property("number_of_frames")))
+    result["frames"] = frames
+
+    result["ok"] = True
+'''
+
+
 def export_script(out_path, package, fbx_path):
     """Source that exports one AnimSequence to `fbx_path`, bones only."""
     values = {"out_path": json.dumps(out_path),
@@ -240,3 +309,16 @@ def export_script(out_path, package, fbx_path):
               "fbx_path": json.dumps(fbx_path),
               "marker": json.dumps(MARKER)}
     return (_EXPORT_HEAD % values) + (_REPLY_TAIL % values)
+
+
+def reimport_script(out_path, package, fbx_path):
+    """Source that reimports one AnimSequence from `fbx_path` and saves it.
+
+    The uasset must already be writable (checked out) - this script does not
+    touch Perforce; the bridge did that before calling it.
+    """
+    values = {"out_path": json.dumps(out_path),
+              "package": json.dumps(package),
+              "fbx_path": json.dumps(fbx_path),
+              "marker": json.dumps(MARKER)}
+    return (_REIMPORT_HEAD % values) + (_REPLY_TAIL % values)
