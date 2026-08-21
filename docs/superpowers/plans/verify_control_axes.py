@@ -162,6 +162,10 @@ finally:
 CTRLS = [(fkcontrols.controller_name(j), SCENE[j])
          for _, chain in fkcontrols.CHAINS for j in chain
          if j in SCENE and cmds.objExists(fkcontrols.controller_name(j))]
+# Plain-transform knots (root, pelvis, and since 2026-08-21 the clavicles -
+# single-bone chains through apply_parentConstrAnim) have no jointOrient and
+# are skipped by align/orient, so they fall out of every gate here by the
+# same filter.
 TURNABLE = [(c, b) for c, b in CTRLS
             if cmds.attributeQuery("jointOrient", node=c, exists=True)]
 print("%d controllers built, %d of them joints" % (len(CTRLS), len(TURNABLE)))

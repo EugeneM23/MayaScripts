@@ -117,8 +117,8 @@ check("finger animation survived", drift_of("index_03_l", finger_ref) < 0.7,
 resolution = window._resolution()
 check("picker: spine FK button live", "spine_03" in resolution)
 check("picker: limb FK button dimmed", "upperarm_l" not in resolution)
-check("picker: clavicle dimmed (no control in hybrid)",
-      "clavicle_l" not in resolution)
+check("picker: clavicle live (own chain since 2026-08-21)",
+      "clavicle_l" in resolution)
 check("picker: leg IK circle live", "leg_l_ik_end" in resolution)
 check("picker: arm pole circle live", "arm_r_ik_pole" in resolution)
 check("picker: finger button live and pointing at the BONE",
@@ -126,6 +126,74 @@ check("picker: finger button live and pointing at the BONE",
       str(resolution.get("index_03_l")))
 check("picker: every finger button resolves",
       all(j in resolution for j in fkcontrols.FINGER_JOINTS if j in smap))
+
+# --- the clavicles: own always-FK chains over the IK arms (2026-08-21) -----------
+def wmatrix(node):
+    return cmds.xform(node, query=True, worldSpace=True, matrix=True)
+
+
+def matrix_delta(a, b):
+    return max(abs(x - y) for x, y in zip(a, b))
+
+
+clav_ctrl = fkcontrols.controller_name("clavicle_l")
+spine_tip = fkcontrols.chain_tip(dict(fkcontrols.CHAINS)["spine"], smap)
+tip_ctrl = fkcontrols.controller_name(spine_tip)
+check("clavicle controller exists in hybrid", cmds.objExists(clav_ctrl))
+check("clavicle chain recorded",
+      bool(fkcontrols.chain_members("clavicle_l"))
+      and bool(fkcontrols.chain_members("clavicle_r")))
+clav_path = cmds.ls(clav_ctrl, long=True)[0] if cmds.objExists(clav_ctrl) else ""
+tip_path = cmds.ls(tip_ctrl, long=True)[0] if cmds.objExists(tip_ctrl) else "?"
+check("clavicle control hangs inside the spine-tip control",
+      clav_path.startswith(tip_path + "|"), clav_path)
+
+# The user's chosen behaviour: the control drives ONLY the bone; the IK arm
+# keeps riding the root control. Poke through the CTRL (the bone itself is
+# constraint-driven), on its flat baked curve: read the value the curve
+# holds, key the poke over it, and key the same value back - rewriting one
+# key of a flat run with the value it already had damages nothing.
+autokey_was = cmds.autoKeyframe(query=True, state=True)
+cmds.autoKeyframe(state=False)
+cmds.currentTime(15)
+clav_before = wmatrix(smap["clavicle_l"])
+upper_before = wmatrix(smap["upperarm_l"])
+held = cmds.getAttr(clav_ctrl + ".rotateZ")
+cmds.setKeyframe(clav_ctrl, attribute="rotateZ", time=15, value=held + 25.0)
+cmds.currentTime(0)
+cmds.currentTime(15)  # settle (trap 14)
+check("clavicle control turns the clavicle bone",
+      matrix_delta(wmatrix(smap["clavicle_l"]), clav_before) > 0.05,
+      "%.6f" % matrix_delta(wmatrix(smap["clavicle_l"]), clav_before))
+check("the IK arm ignores the clavicle (the user's call)",
+      matrix_delta(wmatrix(smap["upperarm_l"]), upper_before) < 1e-4,
+      "%.9f" % matrix_delta(wmatrix(smap["upperarm_l"]), upper_before))
+cmds.setKeyframe(clav_ctrl, attribute="rotateZ", time=15, value=held)
+cmds.currentTime(0)
+cmds.currentTime(15)
+check("clavicle poke restored",
+      matrix_delta(wmatrix(smap["clavicle_l"]), clav_before) < 1e-4,
+      "%.9f" % matrix_delta(wmatrix(smap["clavicle_l"]), clav_before))
+cmds.autoKeyframe(state=autokey_was)
+cmds.currentTime(0)
+
+# The headline of the split: an arm switch no longer eats the clavicle.
+fkcontrols.switch_limbs(smap, ["arm_l"])   # IK -> FK
+check("clavicle control survives arm -> FK",
+      cmds.objExists(clav_ctrl)
+      and bool(fkcontrols.chain_members("clavicle_l")))
+upper_ctrl = fkcontrols.controller_name("upperarm_l")
+upper_path = (cmds.ls(upper_ctrl, long=True) or [""])[0]
+check("FK arm coupled inside the clavicle control",
+      upper_path.startswith(cmds.ls(clav_ctrl, long=True)[0] + "|")
+      if cmds.objExists(clav_ctrl) and upper_path else False, upper_path)
+fkcontrols.switch_limbs(smap, ["arm_l"])   # FK -> IK again
+check("clavicle control survives arm -> IK",
+      cmds.objExists(clav_ctrl)
+      and bool(fkcontrols.chain_members("clavicle_l")))
+check("hand animation survived both switches",
+      drift_of("hand_l", hand_ref) < 0.5,
+      "%.3f cm" % drift_of("hand_l", hand_ref))
 
 # --- FK Limbs toggle: full FK from this dirty state ------------------------------
 message = fkcontrols.rebuild(smap, fk_limbs=True)
