@@ -24,8 +24,12 @@ VIEW_FOLDERS = ("1p", "3p")
 
 _OTHER_OPEN = re.compile(r"^otherOpen(\d+)$")
 
-# stderr texts that are answers, not failures.
-_NORMAL_ANSWERS = ("no such file", "not in client view")
+# stderr texts that are answers, not failures. The third one is measured:
+# a target outside the workspace (the verify sandbox, a user-picked folder)
+# gets "Path ... is not under the client's root ..." - it can never be in
+# this depot, so it is "untracked", not an error.
+_NORMAL_ANSWERS = ("no such file", "not in client view",
+                   "not under the client's root")
 
 
 # ---------------------------------------------------------------- parsing

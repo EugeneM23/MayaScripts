@@ -92,6 +92,14 @@ class ClassifyFailure(unittest.TestCase):
         err = "C:\\elsewhere\\a.fbx - file(s) not in client view.\n"
         self.assertEqual(vcs.classify_failure(err, 0), "")
 
+    def test_outside_the_client_root_is_a_normal_answer(self):
+        """A target outside the workspace can never be in this depot - that
+        is 'untracked', not an error. Found live: the verify sandbox lives in
+        the temp folder and p4 names the client root instead of the view."""
+        err = ("Path 'C:\\Users\\x\\Temp\\a.fbx' is not under the client's "
+               "root 'C:\\!!!Work\\Perforce'.\n")
+        self.assertEqual(vcs.classify_failure(err, 0), "")
+
     def test_an_expired_session_names_the_cure(self):
         err = "Your session has expired, please login again.\n"
         reason = vcs.classify_failure(err, 1)
