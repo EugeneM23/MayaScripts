@@ -708,5 +708,156 @@ class ChooseTargetDepot(unittest.TestCase):
         self.assertEqual(path, os.path.join(folder, "AS_Walk.fbx"))
 
 
+_OPENED_TWO = """\
+... depotFile //atone/main/Atone/Content/Anims/AS_Walk.uasset
+... clientFile C:\\p4\\Atone\\Content\\Anims\\AS_Walk.uasset
+... action edit
+... change default
+
+... depotFile //atone/main/Atone/Content/Props/SM_Rock.uasset
+... clientFile C:\\p4\\Atone\\Content\\Props\\SM_Rock.uasset
+... action add
+... change default
+"""
+
+
+class OpenedRecords(unittest.TestCase):
+
+    def test_two_opened_files_arrive_as_two_records(self):
+        run = lambda args, cwd: (0, _OPENED_TWO, "")
+        found, failure = vcs.opened_records("C:/p4/Atone/Content", run=run)
+        self.assertEqual(failure, "")
+        self.assertEqual(len(found), 2)
+        self.assertEqual(found[0]["action"], "edit")
+
+    def test_the_pattern_asks_for_opened_uassets_only(self):
+        seen = {}
+
+        def run(args, cwd):
+            seen["args"] = args
+            return (0, "", "")
+
+        vcs.opened_records("C:/p4/Atone/Content", run=run)
+        self.assertIn("-Ro", seen["args"])
+        self.assertTrue(seen["args"][-1].endswith("....uasset"))
+
+    def test_nothing_opened_is_an_empty_answer_not_a_failure(self):
+        run = lambda args, cwd: (0, "", "... - no such file(s).\n")
+        found, failure = vcs.opened_records("C:/p4/x", run=run)
+        self.assertEqual((found, failure), ([], ""))
+
+    def test_a_dead_p4_is_a_failure(self):
+        run = lambda args, cwd: (None, "", "p4 timed out - server unreachable?")
+        found, failure = vcs.opened_records("C:/p4/x", run=run)
+        self.assertEqual(found, [])
+        self.assertIn("timed out", failure)
+
+    def test_a_record_without_action_is_dropped(self):
+        text = "... depotFile //d/f.uasset\n... clientFile C:\\d\\f.uasset\n"
+        run = lambda args, cwd: (0, text, "")
+        found, _ = vcs.opened_records("C:/d", run=run)
+        self.assertEqual(found, [])
+
+
+class PackageMapping(unittest.TestCase):
+
+    CONTENT = "C:\\p4\\Atone\\Content"
+
+    def test_a_content_file_maps_to_its_game_package(self):
+        self.assertEqual(
+            vcs.package_of("C:\\p4\\Atone\\Content\\A\\B\\AS_X.uasset",
+                           self.CONTENT),
+            "/Game/A/B/AS_X")
+
+    def test_case_and_separators_do_not_matter(self):
+        self.assertEqual(
+            vcs.package_of("c:/P4/atone/content/A/AS_X.uasset", self.CONTENT),
+            "/Game/A/AS_X")
+
+    def test_a_file_outside_content_maps_to_nothing(self):
+        self.assertEqual(vcs.package_of("C:\\elsewhere\\AS_X.uasset",
+                                        self.CONTENT), "")
+
+    def test_empty_inputs_map_to_nothing(self):
+        self.assertEqual(vcs.package_of("", self.CONTENT), "")
+        self.assertEqual(vcs.package_of("C:\\x.uasset", ""), "")
+
+    def test_the_inverse_builds_the_local_uasset_path(self):
+        path = vcs.uasset_path_of("/Game/A/B/AS_X", self.CONTENT)
+        self.assertEqual(os.path.normcase(path),
+                         os.path.normcase(self.CONTENT + "\\A\\B\\AS_X.uasset"))
+
+    def test_the_two_directions_round_trip(self):
+        package = "/Game/Prototype/Animation/AS_Y"
+        path = vcs.uasset_path_of(package, self.CONTENT)
+        self.assertEqual(vcs.package_of(path, self.CONTENT), package)
+
+
+class OpenAction(unittest.TestCase):
+
+    def test_untracked_needs_add(self):
+        self.assertEqual(vcs.open_action({}), "add")
+
+    def test_tracked_and_free_needs_edit(self):
+        self.assertEqual(vcs.open_action({"depotFile": "//d/f"}), "edit")
+
+    def test_already_mine_needs_nothing(self):
+        self.assertEqual(
+            vcs.open_action({"depotFile": "//d/f", "action": "edit"}), "")
+
+    def test_held_by_others_is_named(self):
+        self.assertEqual(
+            vcs.open_action({"depotFile": "//d/f", "otherOpen0": "a@b"}),
+            "others")
+
+
+class RevertCall(unittest.TestCase):
+
+    def test_a_reverted_edit_is_success(self):
+        run = lambda args, cwd: (0, "//d/f#3 - was edit, reverted\n", "")
+        self.assertEqual(vcs.revert("C:/d/f", run=run), "")
+
+    def test_a_reverted_add_is_success(self):
+        run = lambda args, cwd: (0, "//d/f#1 - was add, abandoned\n", "")
+        self.assertEqual(vcs.revert("C:/d/f", run=run), "")
+
+    def test_not_opened_is_already_the_goal_state(self):
+        run = lambda args, cwd: (
+            1, "", "f - file(s) not opened on this client.\n")
+        self.assertEqual(vcs.revert("C:/d/f", run=run), "")
+
+    def test_a_dead_p4_is_reported(self):
+        run = lambda args, cwd: (
+            None, "", "p4.exe not found - is Perforce installed?")
+        self.assertIn("p4", vcs.revert("C:/d/f", run=run))
+
+
+class AddCall(unittest.TestCase):
+
+    def test_opened_for_add_is_success(self):
+        run = lambda args, cwd: (0, "//d/f#1 - opened for add\n", "")
+        self.assertEqual(vcs.add("C:/d/f", run=run), "")
+
+    def test_already_opened_for_add_is_success(self):
+        run = lambda args, cwd: (0, "//d/f - currently opened for add\n", "")
+        self.assertEqual(vcs.add("C:/d/f", run=run), "")
+
+    def test_an_existing_depot_file_falls_back_to_edit(self):
+        calls = []
+
+        def run(args, cwd):
+            calls.append(args[0])
+            if args[0] == "add":
+                return (0, "", "//d/f - can't add existing file\n")
+            return (0, "//d/f#3 - opened for edit\n", "")
+
+        self.assertEqual(vcs.add("C:/d/f", run=run), "")
+        self.assertIn("edit", calls)
+
+    def test_a_dead_p4_is_reported(self):
+        run = lambda args, cwd: (None, "", "p4 timed out - server unreachable?")
+        self.assertIn("timed out", vcs.add("C:/d/f", run=run))
+
+
 if __name__ == "__main__":
     unittest.main()

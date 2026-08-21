@@ -111,12 +111,49 @@ def plan_for(fields):
     return {"kind": "edit", "users": []}
 
 
+def open_action(fields):
+    """Which p4 verb opens this file for the pair: "edit", "add", "others"
+    (held exclusively elsewhere - the caller decides what to say), or ""
+    when it is already opened by me."""
+    decision = plan_for(fields)
+    if decision["kind"] == "untracked":
+        return "add"
+    if decision["kind"] == "mine":
+        return ""
+    if decision["kind"] == "others":
+        return "others"
+    return "edit"
+
+
 # ---------------------------------------------------------------- placement
 
 def package_folder(package):
     """The uasset folder of a package path - the dir-map key."""
     text = (package or "").replace("\\", "/")
     return text.rsplit("/", 1)[0] if "/" in text else ""
+
+
+def package_of(client_file, content_dir):
+    """The /Game package of a file under the project's Content dir, "" when it
+    is not under it. Case-insensitive: Windows paths arrive in mixed case."""
+    if not client_file or not content_dir:
+        return ""
+    node = os.path.normpath(client_file)
+    prefix = os.path.normpath(content_dir) + os.sep
+    if not os.path.normcase(node).startswith(os.path.normcase(prefix)):
+        return ""
+    relative = os.path.splitext(node[len(prefix):])[0]
+    return "/Game/" + relative.replace(os.sep, "/")
+
+
+def uasset_path_of(package, content_dir):
+    """/Game/A/B/AS_X -> <content_dir>/A/B/AS_X.uasset. Pure inverse of
+    `package_of` (modulo case, which Windows does not keep anyway)."""
+    text = (package or "").replace("\\", "/")
+    if text.lower().startswith("/game/"):
+        text = text[len("/game/"):]
+    parts = [part for part in text.split("/") if part]
+    return os.path.join(content_dir, *parts) + ".uasset"
 
 
 def conventional_folder(package, root):
@@ -314,6 +351,53 @@ def checkout(path, run=run_p4):
         return ""
     failure = classify_failure(err, code)
     return failure or "p4 edit did not open the file"
+
+
+def opened_records(content_dir, run=run_p4):
+    """(records, failure): every file opened in the current workspace under
+    the project's Content dir (`fstat -Ro`), one call - `p4 opened` answers
+    depot paths only and would need a `where` per file. Records without an
+    action are not opened and are dropped. Nothing opened is ([], "")."""
+    pattern = os.path.join(content_dir, "....uasset")
+    code, out, err = run(["-ztag", "fstat", "-Ro", pattern], content_dir)
+    if code is None:
+        return [], err or "p4 failed"
+    failure = classify_failure(err, code)
+    if failure:
+        return [], failure
+    return [record for record in parse_ztag_records(out)
+            if record.get("clientFile") and record.get("action")], ""
+
+
+def revert(path, run=run_p4):
+    """p4 revert; "" on success. "not opened" is success too - nothing opened
+    is exactly the state a revert asks for. Reverting an add abandons the open
+    and leaves the file on disk, which is what the fbx invariant wants."""
+    code, out, err = run(["revert", path], os.path.dirname(path))
+    if code is None:
+        return err or "p4 failed"
+    low = (out or "").lower()
+    if "reverted" in low or "abandoned" in low:
+        return ""
+    if "not opened" in (err or "").lower():
+        return ""
+    failure = classify_failure(err, code)
+    return failure or "p4 revert did not revert the file"
+
+
+def add(path, run=run_p4):
+    """p4 add; "" on success. "can't add existing file" means a stale fstat
+    called the wrong verb - self-heal with the edit instead of reporting."""
+    code, out, err = run(["add", path], os.path.dirname(path))
+    if code is None:
+        return err or "p4 failed"
+    low = ((out or "") + " " + (err or "")).lower()
+    if "opened for add" in low:
+        return ""
+    if "can't add existing file" in low:
+        return checkout(path, run)
+    failure = classify_failure(err, code)
+    return failure or "p4 add did not open the file"
 
 
 def prepare_target(target, ask_others, ask_failure, run=run_p4):
