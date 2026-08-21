@@ -35,15 +35,17 @@ _VCSROOT = "ueAnimBridgeVcsRoot"
 
 CACHE_NAME = "maya_uebridge_cache.json"
 
-_STATE = {"records": [], "filtered": [], "project": "", "choice": ""}
+_STATE = {"records": [], "filtered": [], "project": "", "choice": "",
+          "content_dir": ""}
 
 
 # ---------------------------------------------------------------- cache
 
-def cache_payload(record_list, project="", choice=""):
+def cache_payload(record_list, project="", choice="", content_dir=""):
     """The cache is stored in the editor's own reply shape, so one parser reads both."""
     return {"project": project,
             "choice": choice,
+            "content_dir": content_dir,
             "assets": [{"name": rec.name,
                         "package": rec.package,
                         "skeleton": rec.skeleton,
@@ -60,10 +62,11 @@ def cache_path():
     return os.path.join(cmds.internalVar(userPrefDir=True), CACHE_NAME)
 
 
-def save_cache(record_list, project, choice=""):
+def save_cache(record_list, project, choice="", content_dir=""):
     try:
         with open(cache_path(), "w") as handle:
-            json.dump(cache_payload(record_list, project, choice), handle)
+            json.dump(cache_payload(record_list, project, choice, content_dir),
+                      handle)
     except (OSError, IOError):
         pass  # a cache we cannot write is not worth failing a refresh over
 
@@ -73,10 +76,11 @@ def load_cache():
         with open(cache_path(), "r") as handle:
             payload = json.load(handle)
     except (OSError, IOError, ValueError):
-        return [], "", ""
+        return [], "", "", ""
     return (records_from_cache(payload),
             payload.get("project", ""),
-            payload.get("choice", ""))
+            payload.get("choice", ""),
+            payload.get("content_dir", ""))
 
 
 def temp_folder():
@@ -207,7 +211,8 @@ def refresh():
     found = records.parse_payload(payload)
     _STATE["records"] = found
     _STATE["project"] = payload.get("project", "")
-    save_cache(found, _STATE["project"], chosen)
+    _STATE["content_dir"] = payload.get("content_dir", "")
+    save_cache(found, _STATE["project"], chosen, _STATE["content_dir"])
 
     _header("connected")
     # _repopulate writes the count itself, honouring whatever is in the search
@@ -535,10 +540,11 @@ def show_window():
             (timeline, "bottom", 18, status),
         ])
 
-    cached, project, choice = load_cache()
+    cached, project, choice, content_dir = load_cache()
     _STATE["records"] = cached
     _STATE["project"] = project
     _STATE["choice"] = choice
+    _STATE["content_dir"] = content_dir
     # Show the remembered project straight away; Refresh replaces the menu with
     # whatever is actually running. Discovery on open would make the window
     # take a second to appear even with no editor about.

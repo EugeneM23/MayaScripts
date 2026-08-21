@@ -63,6 +63,18 @@ class CacheRoundTrip(unittest.TestCase):
         """An old cache has no 'choice' key; that must not break the window."""
         self.assertEqual(window.records_from_cache({"assets": []}), [])
 
+    def test_the_cache_keeps_the_content_dir(self):
+        cached = window.cache_payload([], content_dir="C:/proj/Content")
+        self.assertEqual(cached["content_dir"], "C:/proj/Content")
+
+    def test_a_phase_one_cache_reads_as_no_content_dir(self):
+        """A cache written before this key existed must load as ''. The
+        payload shape is what load_cache reads, so the .get default is the
+        contract being pinned here."""
+        payload = window.cache_payload([])
+        payload.pop("content_dir")
+        self.assertEqual(payload.get("content_dir", ""), "")
+
 
 class EditorsLine(unittest.TestCase):
 
