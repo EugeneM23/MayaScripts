@@ -1,4 +1,6 @@
 import contextlib
+import os
+import tempfile
 import unittest
 
 from maya_overrig import overrig
@@ -114,6 +116,47 @@ class TestAimProcs(unittest.TestCase):
     def test_nothing_missing_when_they_all_exist(self):
         with _fake_mel(lambda c: 1):
             self.assertEqual(overrig.missing_aim_procs(), [])
+
+
+class MelPathCandidates(unittest.TestCase):
+    """The shipped copy first (installer and repo both put OverRig in
+    overrig/ next to the package), the user's original install second."""
+
+    def test_shipped_candidate_leads(self):
+        first = overrig.MEL_CANDIDATES[0]
+        self.assertTrue(
+            first.endswith("overrig/base_OverRig_scripts.mel"), first)
+        self.assertNotIn("\\", first)
+
+    def test_legacy_candidate_survives(self):
+        self.assertIn("base_OverRig_scripts_V10_2_f1",
+                      overrig.MEL_CANDIDATES[1])
+
+    def test_shipped_copy_exists_and_wins(self):
+        """Task 1 landed the file, so in this repo mel_path() is the
+        shipped one."""
+        self.assertEqual(overrig.mel_path(), overrig.MEL_CANDIDATES[0])
+        self.assertTrue(os.path.isfile(overrig.mel_path()))
+
+    def test_first_existing_wins(self):
+        with tempfile.NamedTemporaryFile(suffix=".mel",
+                                         delete=False) as handle:
+            real = handle.name
+        try:
+            picked = overrig.mel_path(
+                candidates=("C:/nowhere/at/all.mel", real))
+            self.assertEqual(picked, real)
+        finally:
+            os.remove(real)
+
+    def test_none_existing_reads_empty(self):
+        self.assertEqual(
+            overrig.mel_path(candidates=("C:/no.mel", "C:/also/no.mel")),
+            "")
+
+    def test_not_loaded_message_names_both_places(self):
+        for candidate in overrig.MEL_CANDIDATES:
+            self.assertIn(candidate, overrig.NOT_LOADED_MESSAGE)
 
 
 if __name__ == "__main__":

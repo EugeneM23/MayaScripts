@@ -13,10 +13,26 @@ from contextlib import contextmanager
 import maya.cmds as cmds
 import maya.mel as mel
 
-# Where the user's Custom shelf button sources the toolset from. Used only as a
-# fallback when the procs are not already in the session.
-MEL_PATH = ("C:/!!!Work/Animations/Scripts/base_OverRig_scripts_V10_2_f1/"
-            "base_OverRig_scripts.mel")
+# Two dirnames up from this file is the container that holds both the
+# packages and the shipped overrig/ folder -- true in the repo and in an
+# installed copy alike. The user's original install stays as fallback for
+# machines that predate the bundle.
+_CONTAINER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+MEL_CANDIDATES = (
+    os.path.join(_CONTAINER, "overrig",
+                 "base_OverRig_scripts.mel").replace("\\", "/"),
+    "C:/!!!Work/Animations/Scripts/base_OverRig_scripts_V10_2_f1/"
+    "base_OverRig_scripts.mel",
+)
+
+
+def mel_path(candidates=MEL_CANDIDATES):
+    """The first candidate that exists on disk, "" when none does."""
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return ""
 
 KNOT_SET = "OverRig_knots"
 # OverRig also keeps a set "OverRig_rig_objects" of the source objects it
@@ -53,7 +69,7 @@ AIM_COLOUR = (0.45, 0.7, 0.45)
 # wording, because there is one cure: nothing here works without the procs.
 NOT_LOADED_MESSAGE = (
     "OverRig is not loaded - press the OverRig shelf button "
-    "(looked for {0})".format(MEL_PATH))
+    "(looked for {0})".format(" and ".join(MEL_CANDIDATES)))
 
 
 def is_loaded():
@@ -64,15 +80,16 @@ def is_loaded():
 def ensure_loaded():
     """Source the toolset if it is not already in the session.
 
-    Deliberately does not go looking around the disk: either the procs are
-    there, or MEL_PATH is, or the caller reports failure and the user presses
-    the OverRig shelf button.
+    Deliberately does not go looking around the disk beyond the two known
+    places: either the procs are there, or a candidate is, or the caller
+    reports failure and the user presses the OverRig shelf button.
     """
     if is_loaded():
         return True
-    if not os.path.isfile(MEL_PATH):
+    path = mel_path()
+    if not path:
         return False
-    mel.eval('source "{0}";'.format(MEL_PATH))
+    mel.eval('source "{0}";'.format(path))
     return is_loaded()
 
 
