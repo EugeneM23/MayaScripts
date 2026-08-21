@@ -20,6 +20,7 @@ from maya_uebridge import animimport
 from maya_uebridge import records
 from maya_uebridge import uelink
 from maya_uebridge import uescripts
+from maya_uebridge import vcs
 
 WINDOW = "ueAnimBridgeWindow"
 _LIST = "ueAnimBridgeList"
@@ -29,6 +30,8 @@ _HEADER = "ueAnimBridgeHeader"
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
 _MODE = "ueAnimBridgeMode"
+_VCS = "ueAnimBridgeVcs"
+_VCSROOT = "ueAnimBridgeVcsRoot"
 
 CACHE_NAME = "maya_uebridge_cache.json"
 
@@ -224,12 +227,34 @@ def import_selected():
         _status("select an animation first")
         return
 
+    # Resolve the working file BEFORE the export: path dialogs first, and a
+    # cancel costs nothing. p4 runs AFTER the export: no depot state is
+    # touched until a new file actually exists to place.
+    target, is_new = None, False
+    if vcs_enabled():
+        resolved = _vcs_target(record)
+        if resolved is None:
+            _status("import cancelled")
+            return
+        target, is_new = resolved
+
     out = os.path.join(temp_folder(), "export.json")
     fbx = os.path.join(temp_folder(), "{0}.fbx".format(record.name))
     # Export from the same editor the list came from, or a second open project
     # would answer with an asset path it does not have.
     payload = uelink.run_script(uescripts.export_script(out, record.package, fbx),
                                 out, project=project_choice())
+
+    exported = payload.get("path") or fbx
+    suffix = ""
+    if target:
+        proceed, note = vcs.prepare_target(target, _ask_others, _ask_failure)
+        if not proceed:
+            _status("import cancelled - {0} untouched".format(
+                os.path.basename(target)))
+            return
+        vcs.place(exported, target)
+        suffix = vcs.status_suffix(target, _saved_root(), is_new, note)
 
     merge = merge_selected()
     namespace = ("" if merge else
@@ -240,7 +265,7 @@ def import_selected():
     cmds.undoInfo(openChunk=True, chunkName="UE anim import")
     try:
         info = animimport.import_clip(
-            payload.get("path") or fbx,
+            target or exported,
             namespace,
             set_timeline=set_timeline,
             clip_fps=payload.get("fps") or record.fps,
@@ -248,7 +273,7 @@ def import_selected():
     finally:
         cmds.undoInfo(closeChunk=True)
 
-    _status(import_line(record.name, info))
+    _status(with_vcs_suffix(import_line(record.name, info), suffix))
 
 
 def import_line(name, info):
@@ -275,13 +300,153 @@ def merge_selected():
     return cmds.radioButtonGrp(_MODE, query=True, select=True) == 1
 
 
+# ---------------------------------------------------------------- vcs
+
+def vcs_enabled():
+    if not cmds.checkBox(_VCS, exists=True):
+        return False
+    return bool(cmds.checkBox(_VCS, query=True, value=True))
+
+
+def _saved_root():
+    if cmds.optionVar(exists="ueBridgeVcsRoot"):
+        return cmds.optionVar(query="ueBridgeVcsRoot") or ""
+    return ""
+
+
+def _root_label(root):
+    return root or "no source project set"
+
+
+def _pick_root():
+    kwargs = {"fileMode": 3, "dialogStyle": 2,
+              "caption": "Where is the source project (the SourceArt root)?"}
+    saved = _saved_root()
+    if saved and os.path.isdir(saved):
+        kwargs["startingDirectory"] = saved
+    picked = cmds.fileDialog2(**kwargs) or []
+    return picked[0] if picked else ""
+
+
+def _apply_root(root):
+    cmds.optionVar(stringValue=("ueBridgeVcsRoot", root))
+    if cmds.text(_VCSROOT, exists=True):
+        cmds.text(_VCSROOT, edit=True, label=_root_label(root))
+
+
+def _vcs_toggled():
+    """First activation asks where the source project is; declining the
+    dialog flips the checkbox back off."""
+    if cmds.text(_VCSROOT, exists=True):
+        cmds.text(_VCSROOT, edit=True, enable=vcs_enabled())
+    if not vcs_enabled():
+        cmds.optionVar(intValue=("ueBridgeVcs", 0))
+        return
+    root = _saved_root()
+    if not root or not os.path.isdir(root):
+        root = _pick_root()
+        if not root:
+            cmds.checkBox(_VCS, edit=True, value=False)
+            cmds.optionVar(intValue=("ueBridgeVcs", 0))
+            if cmds.text(_VCSROOT, exists=True):
+                cmds.text(_VCSROOT, edit=True, enable=False)
+            _status("version control needs the source project folder")
+            return
+        _apply_root(root)
+    cmds.optionVar(intValue=("ueBridgeVcs", 1))
+
+
+def _change_root():
+    root = _pick_root()
+    if root:
+        _apply_root(root)
+
+
+def _load_dir_map():
+    if not cmds.optionVar(exists="ueBridgeVcsDirMap"):
+        return {}
+    try:
+        return json.loads(cmds.optionVar(query="ueBridgeVcsDirMap") or "{}")
+    except ValueError:
+        return {}
+
+
+def _save_dir_map(dir_map):
+    cmds.optionVar(stringValue=("ueBridgeVcsDirMap", json.dumps(dir_map)))
+
+
+def _ask_which_file(paths):
+    kwargs = {"fileMode": 1, "dialogStyle": 2, "fileFilter": "FBX (*.fbx)",
+              "caption": "Several working fbx match - pick the one to use",
+              "startingDirectory": os.path.dirname(paths[0])}
+    picked = cmds.fileDialog2(**kwargs) or []
+    return picked[0] if picked else ""
+
+
+def _ask_new_folder(name):
+    kwargs = {"fileMode": 3, "dialogStyle": 2,
+              "caption": "Folder for the new {0}.fbx".format(name)}
+    saved = _saved_root()
+    if saved and os.path.isdir(saved):
+        kwargs["startingDirectory"] = saved
+    picked = cmds.fileDialog2(**kwargs) or []
+    return picked[0] if picked else ""
+
+
+def _ask_others(users):
+    answer = cmds.confirmDialog(
+        title="Perforce", icon="warning",
+        message="Already checked out by:\n  {0}".format("\n  ".join(users)),
+        button=["Overwrite locally", "Cancel"], defaultButton="Cancel",
+        cancelButton="Cancel", dismissString="Cancel")
+    return answer == "Overwrite locally"
+
+
+def _ask_failure(reason):
+    answer = cmds.confirmDialog(
+        title="Perforce", icon="warning", message=reason,
+        button=["Continue locally", "Cancel"], defaultButton="Cancel",
+        cancelButton="Cancel", dismissString="Cancel")
+    return answer == "Continue locally"
+
+
+def _vcs_target(record, asks=None):
+    """The working-file path for this asset: (target, is_new), or None when
+    the user cancelled. `asks` overrides the dialogs - the live verify drives
+    this over the command port, where a modal would block Maya (bridge
+    note 6)."""
+    asks = asks or {}
+    root = _saved_root()
+    if not root or not os.path.isdir(root):
+        root = asks.get("root", _pick_root)()
+        if not root:
+            return None
+        _apply_root(root)
+    dir_map = _load_dir_map()
+    target, grown = vcs.choose_target(
+        record.name, record.package, root, dir_map,
+        asks.get("file", _ask_which_file), asks.get("folder", _ask_new_folder))
+    if grown != dir_map:
+        _save_dir_map(grown)
+    if not target:
+        return None
+    return target, not os.path.exists(target)
+
+
+def with_vcs_suffix(line, suffix):
+    """Pure - the status wording is tested without widgets."""
+    if not suffix:
+        return line
+    return "{0}  |  {1}".format(line, suffix)
+
+
 # ---------------------------------------------------------------- window
 
 def show_window():
     if cmds.window(WINDOW, exists=True):
         cmds.deleteUI(WINDOW)
 
-    cmds.window(WINDOW, title="UE Animation Bridge", widthHeight=(760, 460))
+    cmds.window(WINDOW, title="UE Animation Bridge", widthHeight=(760, 484))
     form = cmds.formLayout(numberOfDivisions=100)
 
     project_label = cmds.text(label="Project:", align="left")
@@ -307,6 +472,15 @@ def show_window():
         _MODE, numberOfRadioButtons=2, label="Import:",
         labelArray2=["onto the skeleton in the scene", "as a new skeleton"],
         columnWidth3=(52, 216, 160), select=1)
+    saved_vcs = bool(cmds.optionVar(query="ueBridgeVcs")) if cmds.optionVar(
+        exists="ueBridgeVcs") else False
+    vcs_check = cmds.checkBox(
+        _VCS, label="Connect to version control", value=saved_vcs,
+        changeCommand=lambda *_: _run(_vcs_toggled))
+    vcs_root = cmds.text(_VCSROOT, label=_root_label(_saved_root()),
+                         align="left", enable=saved_vcs)
+    vcs_pick = cmds.button(label="...", width=30,
+                           command=lambda *_: _run(_change_root))
     timeline = cmds.checkBox(_TIMELINE, label="set timeline to clip range",
                              value=True)
     import_button = cmds.button(
@@ -325,6 +499,8 @@ def show_window():
             (search, "right", 8),
             (scroll, "left", 8), (scroll, "right", 8),
             (mode, "left", 4),
+            (vcs_check, "left", 8),
+            (vcs_pick, "right", 8),
             (timeline, "left", 8),
             (import_button, "right", 8),
             (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
@@ -337,7 +513,12 @@ def show_window():
             (search, "left", 6, search_label),
             (scroll, "top", 8, search),
             (scroll, "bottom", 8, mode),
-            (mode, "bottom", 6, timeline),
+            (mode, "bottom", 6, vcs_check),
+            (vcs_check, "bottom", 6, timeline),
+            (vcs_root, "bottom", 6, timeline),
+            (vcs_pick, "bottom", 6, timeline),
+            (vcs_root, "left", 10, vcs_check),
+            (vcs_root, "right", 6, vcs_pick),
             (import_button, "bottom", 6, status),
             (timeline, "bottom", 18, status),
         ])

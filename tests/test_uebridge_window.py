@@ -131,6 +131,21 @@ class ImportLine(unittest.TestCase):
         self.assertNotIn("None", line)
 
 
+class VcsStatus(unittest.TestCase):
+    """The suffix joining lives in window.py because it decorates the import
+    line; the wording itself is vcs.status_suffix, tested in
+    test_uebridge_vcs."""
+
+    def test_the_suffix_joins_the_import_line(self):
+        line = window.with_vcs_suffix("A onto root: 92 bones",
+                                      "fbx -> S\\a.fbx")
+        self.assertEqual(line, "A onto root: 92 bones  |  fbx -> S\\a.fbx")
+
+    def test_no_suffix_leaves_the_line_alone(self):
+        line = window.with_vcs_suffix("A onto root: 92 bones", "")
+        self.assertEqual(line, "A onto root: 92 bones")
+
+
 class ProjectLabel(unittest.TestCase):
 
     def test_shows_the_project_name_not_the_path(self):
