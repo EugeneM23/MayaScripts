@@ -1,0 +1,31 @@
+global string $gShelfTopLevel;
+string $currentShelf = `tabLayout -q -st $gShelfTopLevel`;
+string $rootPath=`InstallLocationPath`;
+string $iconsPath=$rootPath+"icons/";
+string $source_path="source \"" + $rootPath + "base_OverRig_scripts.mel\"";
+string $miscPath=$rootPath+"misc/";
+
+shelfButton
+   	-command ($source_path + ";\n\/\/you can change this variable on 0, 3, 6 value for defoult orientation order\nglobal int $barnev_OverRig_RotateOrder = 0;\nglobal string $path_to_JGLBN;\n$path_to_JGLBN = \"" +$miscPath + "\";\n\n\/\/you can change this variable  0, 1 value for defoult color scheme\nbase_OverRig_scripts(1);")
+    -annotation "the main set of scripts for creating add-ons over the Rig with the transfer of animations"
+    -label ""
+    -imageOverlayLabel ""
+    -image ($iconsPath+"base_OverRig.bmp" )
+	-hi ($iconsPath+"base_OverRig2.bmp")
+    // -image1 ($iconsPath+"base_OverRig2.bmp")
+    -sourceType "mel"
+    -parent $currentShelf;
+
+
+global proc string InstallLocationPath ()
+{
+    string $whatIs=`whatIs InstallLocationPath`;
+    string $fullPath=`substring $whatIs 25 999`;
+    string $buffer[];
+    int $numTok=`tokenize $fullPath "/" $buffer`;
+    int $numLetters=size($fullPath);
+    int $numLettersLastFolder=size($buffer[$numTok-1]);
+    string $scriptLocation=`substring $fullPath 1 ($numLetters-$numLettersLastFolder)`;
+    return $scriptLocation;
+}
+
