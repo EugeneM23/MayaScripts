@@ -183,3 +183,124 @@ def choose_target(name, package, root, dir_map, ask_file, ask_folder):
         return "", dir_map
     return (os.path.join(picked, filename),
             remember_folder(dir_map, package, picked))
+
+
+# ---------------------------------------------------------------- p4 calls
+
+_CREATE_NO_WINDOW = 0x08000000  # or every p4 call flashes a console over Maya
+
+
+def run_p4(args, cwd):
+    """(returncode, stdout, stderr); returncode None when p4 could not run at
+    all, with the reason in stderr. Output decodes as utf-8 - P4CHARSET is
+    utf8 on this machine and user names may be non-ASCII."""
+    try:
+        proc = subprocess.run(
+            ["p4"] + list(args), cwd=cwd or None, capture_output=True,
+            timeout=15,
+            creationflags=_CREATE_NO_WINDOW if os.name == "nt" else 0)
+    except FileNotFoundError:
+        return None, "", "p4.exe not found - is Perforce installed?"
+    except subprocess.TimeoutExpired:
+        return None, "", "p4 timed out - server unreachable?"
+    except OSError as error:
+        return None, "", "p4 could not run: {0}".format(error)
+    return (proc.returncode,
+            proc.stdout.decode("utf-8", "replace"),
+            proc.stderr.decode("utf-8", "replace"))
+
+
+def fstat(path, run=run_p4):
+    """(fields, failure). Empty fields with no failure = untracked."""
+    code, out, err = run(["-ztag", "fstat", "-Or", path],
+                         os.path.dirname(path))
+    if code is None:
+        return {}, err or "p4 failed"
+    failure = classify_failure(err, code)
+    if failure:
+        return {}, failure
+    return parse_ztag(out), ""
+
+
+def checkout(path, run=run_p4):
+    """p4 edit; "" on success. A file never synced answers "not on client" -
+    sync it and retry once (self-healing beats pre-classifying local state)."""
+    folder = os.path.dirname(path)
+    code, out, err = run(["edit", path], folder)
+    if code is not None and "not on client" in (err or "").lower():
+        run(["sync", path], folder)
+        code, out, err = run(["edit", path], folder)
+    if code is None:
+        return err or "p4 failed"
+    low = (out or "").lower()
+    if "opened for edit" in low or "currently opened" in low:
+        return ""
+    failure = classify_failure(err, code)
+    return failure or "p4 edit did not open the file"
+
+
+def prepare_target(target, ask_others, ask_failure, run=run_p4):
+    """The depot side of placing one file: (proceed, note).
+
+    ask_others(users) and ask_failure(reason) answer True to continue
+    locally; both are injectable because a modal over the command port
+    blocks Maya. Nothing here touches the depot except p4 edit on a
+    tracked, unopened file.
+    """
+    fields, failure = fstat(target, run)
+    if failure:
+        if not ask_failure(failure):
+            return False, ""
+        return True, "no checkout - {0}".format(failure)
+    decision = plan_for(fields)
+    if decision["kind"] == "untracked":
+        return True, "not in depot"
+    if decision["kind"] == "mine":
+        return True, "checked out"
+    if decision["kind"] == "others":
+        if not ask_others(decision["users"]):
+            return False, ""
+        return True, "overwritten locally - checked out by {0}".format(
+            ", ".join(decision["users"]))
+    failure = checkout(target, run)
+    if failure:
+        if not ask_failure(failure):
+            return False, ""
+        return True, "no checkout - {0}".format(failure)
+    return True, "checked out"
+
+
+# ---------------------------------------------------------------- the disk
+
+def ensure_writable(path):
+    if os.path.isfile(path):
+        os.chmod(path, stat.S_IMODE(os.stat(path).st_mode) | stat.S_IWRITE)
+
+
+def place(source, target):
+    """Copy the exported temp fbx onto the working file. The export never
+    writes the working file directly: the UE exporter deletes its destination
+    first, so a failed export straight onto it would leave nothing there."""
+    folder = os.path.dirname(target)
+    if folder and not os.path.isdir(folder):
+        os.makedirs(folder)
+    ensure_writable(target)
+    shutil.copyfile(source, target)
+
+
+def status_suffix(target, root, is_new, note):
+    """What the status line appends after a VCS placement."""
+    base = os.path.dirname((root or "").rstrip("\\/"))
+    try:
+        shown = os.path.relpath(target, base) if base else target
+    except ValueError:  # different drive
+        shown = target
+    if shown.startswith(".."):
+        shown = target
+    tags = []
+    if is_new:
+        tags.append("new file")
+    if note and not (is_new and note == "not in depot"):
+        tags.append(note)
+    tail = " ({0})".format(", ".join(tags)) if tags else ""
+    return "fbx -> {0}{1}".format(shown, tail)

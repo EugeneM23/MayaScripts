@@ -331,5 +331,190 @@ class ChooseTarget(unittest.TestCase):
         self.assertEqual(path, "")
 
 
+class FakeP4(object):
+    """A scripted p4: each expected call is (args_prefix, (code, out, err))."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = []
+
+    def __call__(self, args, cwd):
+        self.calls.append(list(args))
+        for index, (prefix, reply) in enumerate(self.script):
+            if list(args)[:len(prefix)] == list(prefix):
+                self.script.pop(index)
+                return reply
+        raise AssertionError("unexpected p4 call: {0}".format(args))
+
+
+NO_SUCH = (0, "", "C:\\x\\AS_Walk.fbx - no such file(s).\n")
+EXPIRED = (1, "", "Your session has expired, please login again.\n")
+
+
+class Fstat(unittest.TestCase):
+
+    def test_untracked_is_empty_fields_and_no_failure(self):
+        run = FakeP4([(["-ztag", "fstat"], NO_SUCH)])
+        fields, failure = vcs.fstat("C:\\x\\AS_Walk.fbx", run)
+        self.assertEqual(fields, {})
+        self.assertEqual(failure, "")
+
+    def test_tracked_parses_the_fields(self):
+        run = FakeP4([(["-ztag", "fstat"], (0, TRACKED_UNOPENED, ""))])
+        fields, failure = vcs.fstat("C:\\x\\a.uasset", run)
+        self.assertEqual(failure, "")
+        self.assertIn("depotFile", fields)
+
+    def test_a_dead_p4_is_a_failure_with_a_reason(self):
+        run = FakeP4([(["-ztag", "fstat"], EXPIRED)])
+        fields, failure = vcs.fstat("C:\\x\\a.fbx", run)
+        self.assertEqual(fields, {})
+        self.assertIn("P4V", failure)
+
+    def test_a_missing_p4_exe_reports_itself(self):
+        run = FakeP4([(["-ztag", "fstat"], (None, "", "p4.exe not found"))])
+        fields, failure = vcs.fstat("C:\\x\\a.fbx", run)
+        self.assertIn("p4.exe", failure)
+
+
+class Checkout(unittest.TestCase):
+
+    def test_a_clean_edit_succeeds(self):
+        run = FakeP4([(["edit"], (0, "//d/a.fbx#2 - opened for edit\n", ""))])
+        self.assertEqual(vcs.checkout("C:\\x\\a.fbx", run), "")
+
+    def test_already_open_counts_as_success(self):
+        run = FakeP4([(["edit"],
+                       (0, "//d/a.fbx#2 - currently opened for edit\n", ""))])
+        self.assertEqual(vcs.checkout("C:\\x\\a.fbx", run), "")
+
+    def test_not_on_client_syncs_and_retries_once(self):
+        run = FakeP4([
+            (["edit"], (0, "", "//d/a.fbx - file(s) not on client.\n")),
+            (["sync"], (0, "//d/a.fbx#2 - added\n", "")),
+            (["edit"], (0, "//d/a.fbx#2 - opened for edit\n", "")),
+        ])
+        self.assertEqual(vcs.checkout("C:\\x\\a.fbx", run), "")
+        self.assertEqual([call[0] for call in run.calls],
+                         ["edit", "sync", "edit"])
+
+    def test_a_failed_edit_reports_a_reason(self):
+        run = FakeP4([(["edit"], EXPIRED)])
+        self.assertIn("P4V", vcs.checkout("C:\\x\\a.fbx", run))
+
+
+class PrepareTarget(unittest.TestCase):
+
+    def never_ask(self, *_):
+        raise AssertionError("a dialog was raised where none belongs")
+
+    def test_untracked_proceeds_without_p4_actions(self):
+        run = FakeP4([(["-ztag", "fstat"], NO_SUCH)])
+        proceed, note = vcs.prepare_target("C:\\x\\a.fbx",
+                                           self.never_ask, self.never_ask, run)
+        self.assertTrue(proceed)
+        self.assertEqual(note, "not in depot")
+        self.assertEqual(len(run.calls), 1)
+
+    def test_tracked_and_free_gets_checked_out(self):
+        run = FakeP4([
+            (["-ztag", "fstat"], (0, TRACKED_UNOPENED, "")),
+            (["edit"], (0, "//d/a#2 - opened for edit\n", "")),
+        ])
+        proceed, note = vcs.prepare_target("C:\\x\\a.fbx",
+                                           self.never_ask, self.never_ask, run)
+        self.assertTrue(proceed)
+        self.assertEqual(note, "checked out")
+
+    def test_mine_proceeds_silently(self):
+        run = FakeP4([(["-ztag", "fstat"], (0, OPENED_BY_ME, ""))])
+        proceed, note = vcs.prepare_target("C:\\x\\a.fbx",
+                                           self.never_ask, self.never_ask, run)
+        self.assertTrue(proceed)
+        self.assertEqual(note, "checked out")
+
+    def test_others_accepted_overwrites_locally(self):
+        run = FakeP4([(["-ztag", "fstat"], (0, OPENED_BY_OTHERS, ""))])
+        proceed, note = vcs.prepare_target(
+            "C:\\x\\a.fbx", lambda users: True, self.never_ask, run)
+        self.assertTrue(proceed)
+        self.assertIn("aleksei.silantev@", note)
+        self.assertEqual(len(run.calls), 1)  # no edit behind their back
+
+    def test_others_declined_cancels(self):
+        run = FakeP4([(["-ztag", "fstat"], (0, OPENED_BY_OTHERS, ""))])
+        proceed, _ = vcs.prepare_target(
+            "C:\\x\\a.fbx", lambda users: False, self.never_ask, run)
+        self.assertFalse(proceed)
+
+    def test_p4_failure_accepted_continues_locally(self):
+        run = FakeP4([(["-ztag", "fstat"], EXPIRED)])
+        proceed, note = vcs.prepare_target(
+            "C:\\x\\a.fbx", self.never_ask, lambda reason: True, run)
+        self.assertTrue(proceed)
+        self.assertIn("no checkout", note)
+
+    def test_p4_failure_declined_cancels(self):
+        run = FakeP4([(["-ztag", "fstat"], EXPIRED)])
+        proceed, _ = vcs.prepare_target(
+            "C:\\x\\a.fbx", self.never_ask, lambda reason: False, run)
+        self.assertFalse(proceed)
+
+    def test_a_failed_edit_falls_back_to_the_failure_ask(self):
+        run = FakeP4([
+            (["-ztag", "fstat"], (0, TRACKED_UNOPENED, "")),
+            (["edit"], EXPIRED),
+        ])
+        proceed, note = vcs.prepare_target(
+            "C:\\x\\a.fbx", self.never_ask, lambda reason: True, run)
+        self.assertTrue(proceed)
+        self.assertIn("no checkout", note)
+
+
+class PlaceAndSuffix(unittest.TestCase):
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp(prefix="vcs_place_")
+        self.addCleanup(shutil.rmtree, self.folder, True)
+
+    def test_place_overwrites_a_read_only_target(self):
+        source = os.path.join(self.folder, "new.fbx")
+        target = os.path.join(self.folder, "old.fbx")
+        for path, body in ((source, "new"), (target, "old")):
+            with open(path, "w") as handle:
+                handle.write(body)
+        os.chmod(target, stat.S_IREAD)
+        vcs.place(source, target)
+        with open(target) as handle:
+            self.assertEqual(handle.read(), "new")
+
+    def test_place_creates_the_missing_folder(self):
+        source = os.path.join(self.folder, "new.fbx")
+        with open(source, "w") as handle:
+            handle.write("new")
+        target = os.path.join(self.folder, "deep", "down", "new.fbx")
+        vcs.place(source, target)
+        self.assertTrue(os.path.isfile(target))
+
+    def test_suffix_shows_the_path_under_the_root_by_name(self):
+        suffix = vcs.status_suffix(
+            "C:\\w\\SourceArt\\P\\a.fbx", "C:\\w\\SourceArt", False,
+            "checked out")
+        self.assertIn(os.path.join("SourceArt", "P", "a.fbx"), suffix)
+        self.assertIn("(checked out)", suffix)
+
+    def test_suffix_marks_a_new_file(self):
+        suffix = vcs.status_suffix(
+            "C:\\w\\SourceArt\\P\\a.fbx", "C:\\w\\SourceArt", True,
+            "not in depot")
+        self.assertIn("new file", suffix)
+        self.assertNotIn("not in depot", suffix)  # redundant for a new file
+
+    def test_suffix_survives_a_target_outside_the_root(self):
+        suffix = vcs.status_suffix("D:\\odd\\a.fbx", "C:\\w\\SourceArt",
+                                   False, "")
+        self.assertIn("D:\\odd\\a.fbx", suffix)
+
+
 if __name__ == "__main__":
     unittest.main()
