@@ -21,6 +21,11 @@ LIMB_CHAINS = ("arm_l", "arm_r", "leg_l", "leg_r")
 # holds the full implementation at 0e0794f for when it returns.
 SWITCHABLE = LIMB_CHAINS
 
+# Clicking a clavicle bone still switches its arm: the bone is no longer
+# part of the switchable chain (2026-08-21 split), but the animator's habit
+# is older than the split.
+CLAVICLE_OF = {"clavicle_l": "arm_l", "clavicle_r": "arm_r"}
+
 
 def _finger_chains():
     chains = []
@@ -46,8 +51,16 @@ CHAINS = tuple([
     ("pelvis", ("pelvis",)),
     ("spine", ("spine_01", "spine_02", "spine_03", "spine_04", "spine_05")),
     ("neck", ("neck_01", "neck_02", "head")),
-    ("arm_l", ("clavicle_l", "upperarm_l", "lowerarm_l", "hand_l")),
-    ("arm_r", ("clavicle_r", "upperarm_r", "lowerarm_r", "hand_r")),
+    # The clavicles are deliberately their own single-knot chains (the
+    # pelvis/spine precedent, 2026-08-21): always FK, so the control
+    # survives the arm's switches in both directions. Before the arms,
+    # because parents precede children -- coupling must find its target.
+    # The control drives ONLY the bone: the IK arm keeps riding the root
+    # controller (the user's explicit call; see the spec before "fixing").
+    ("clavicle_l", ("clavicle_l",)),
+    ("clavicle_r", ("clavicle_r",)),
+    ("arm_l", ("upperarm_l", "lowerarm_l", "hand_l")),
+    ("arm_r", ("upperarm_r", "lowerarm_r", "hand_r")),
     ("leg_l", ("thigh_l", "calf_l", "foot_l", "ball_l")),
     ("leg_r", ("thigh_r", "calf_r", "foot_r", "ball_r")),
 ] + _finger_chains())
@@ -170,6 +183,10 @@ def switchable_bones(scene_map):
             path = scene_map.get(joint)
             if path:
                 out[path] = name
+    for joint, limb in CLAVICLE_OF.items():
+        path = scene_map.get(joint)
+        if path:
+            out[path] = limb
     return out
 
 

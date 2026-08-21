@@ -20,8 +20,29 @@ class TestChains(unittest.TestCase):
         table = dict(fkcontrols.CHAINS)
         self.assertEqual(table["pelvis"], ("pelvis",))
 
-    def test_eighteen_chains(self):
-        self.assertEqual(len(fkcontrols.CHAINS), 18)
+    def test_twenty_chains(self):
+        self.assertEqual(len(fkcontrols.CHAINS), 20)
+
+    def test_clavicles_are_their_own_single_knot_chains(self):
+        """Always-FK: the control must survive the arm's switches, so it
+        cannot share a chain (and a manifest) with the arm."""
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(table["clavicle_l"], ("clavicle_l",))
+        self.assertEqual(table["clavicle_r"], ("clavicle_r",))
+
+    def test_arm_chains_start_at_the_upperarm(self):
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(table["arm_l"],
+                         ("upperarm_l", "lowerarm_l", "hand_l"))
+        self.assertEqual(table["arm_r"],
+                         ("upperarm_r", "lowerarm_r", "hand_r"))
+
+    def test_clavicles_precede_the_arms(self):
+        """Parents precede children in CHAINS: a full build must find the
+        clavicle controller standing when it couples the arm."""
+        names = [name for name, _ in fkcontrols.CHAINS]
+        self.assertLess(names.index("clavicle_l"), names.index("arm_l"))
+        self.assertLess(names.index("clavicle_r"), names.index("arm_r"))
 
     def test_chain_names_are_unique(self):
         names = [name for name, _ in fkcontrols.CHAINS]
@@ -138,12 +159,16 @@ class TestChainRoot(unittest.TestCase):
         self.assertEqual(fkcontrols.chain_root(table["pinky_r"], scene_map),
                          "pinky_01_r")
 
-    def test_missing_clavicle_moves_the_arm_root_to_the_upperarm(self):
+    def test_the_arm_root_is_the_upperarm_with_or_without_clavicles(self):
+        """The clavicle is its own chain now: a rig without clavicles just
+        has no clavicle chain to build, and the arm is unaffected."""
+        table = dict(fkcontrols.CHAINS)
+        self.assertEqual(fkcontrols.chain_root(table["arm_l"], self.FULL),
+                         "upperarm_l")
         scene_map = {j: p for j, p in self.FULL.items()
                      if not j.startswith("clavicle")}
-        table = dict(fkcontrols.CHAINS)
-        self.assertEqual(fkcontrols.chain_root(table["arm_l"], scene_map),
-                         "upperarm_l")
+        self.assertIsNone(fkcontrols.chain_root(table["clavicle_l"],
+                                                scene_map))
 
     def test_a_chain_with_no_bones_at_all_has_no_root(self):
         self.assertIsNone(fkcontrols.chain_root(("root",), {}))
@@ -287,14 +312,20 @@ class TestSwitchable(unittest.TestCase):
         self.assertEqual(fkcontrols.SWITCHABLE,
                          ("arm_l", "arm_r", "leg_l", "leg_r"))
 
+    def test_clavicle_chains_do_not_switch(self):
+        """Always FK (2026-08-21): there is nothing to switch them to."""
+        self.assertNotIn("clavicle_l", fkcontrols.SWITCHABLE)
+        self.assertNotIn("clavicle_r", fkcontrols.SWITCHABLE)
+
 
 class TestDependentChains(unittest.TestCase):
 
     def test_finds_chains_rooted_inside_the_containers(self):
         ctrls = {"neck": "|spine_05_FK_ctrl|neck_01_FK_ctrl",
-                 "arm_l": "|spine_05_FK_ctrl|clavicle_l_FK_ctrl",
+                 "arm_l": "|spine_05_FK_ctrl|clavicle_l_FK_ctrl"
+                          "|upperarm_l_FK_ctrl",
                  "leg_l": "|pelvis_FK_ctrl|thigh_l_FK_ctrl",
-                 "arm_r": "|clavicle_r_FK_ctrl"}
+                 "arm_r": "|upperarm_r_FK_ctrl"}
         found = fkcontrols.dependent_chains(
             ctrls, ["|spine_05_FK_ctrl", "|pelvis_FK_ctrl"])
         self.assertEqual(found, ["neck", "arm_l", "leg_l"])
@@ -439,13 +470,14 @@ class TestBuildable(unittest.TestCase):
                          if n not in fkcontrols.FINGER_CHAINS)
         self.assertEqual(fkcontrols.BUILDABLE, expected)
 
-    def test_eight_chains(self):
-        """18 chains minus the ten fingers."""
-        self.assertEqual(len(fkcontrols.BUILDABLE), 8)
+    def test_ten_chains(self):
+        """20 chains minus the ten fingers."""
+        self.assertEqual(len(fkcontrols.BUILDABLE), 10)
 
     def test_the_body_is_all_there(self):
         self.assertEqual(set(fkcontrols.BUILDABLE),
                          {"root", "pelvis", "spine", "neck",
+                          "clavicle_l", "clavicle_r",
                           "arm_l", "arm_r", "leg_l", "leg_r"})
 
     def test_keeps_chains_order(self):
@@ -506,9 +538,15 @@ class TestHybridFkChains(unittest.TestCase):
         for name in fkcontrols.LIMB_CHAINS:
             self.assertNotIn(name, fkcontrols.HYBRID_FK_CHAINS)
 
-    def test_four_chains(self):
-        """18 chains minus the four IK limbs and the ten fingers."""
-        self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 4)
+    def test_the_clavicles_are_in(self):
+        """The point of the split (2026-08-21): shoulders are poseable in
+        the hybrid rig, and the control survives the arm's switches."""
+        self.assertIn("clavicle_l", fkcontrols.HYBRID_FK_CHAINS)
+        self.assertIn("clavicle_r", fkcontrols.HYBRID_FK_CHAINS)
+
+    def test_six_chains(self):
+        """20 chains minus the four IK limbs and the ten fingers."""
+        self.assertEqual(len(fkcontrols.HYBRID_FK_CHAINS), 6)
 
 
 class TestSwitchableBones(unittest.TestCase):
@@ -517,9 +555,18 @@ class TestSwitchableBones(unittest.TestCase):
         scene_map = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
                      for j in chain}
         owner = fkcontrols.switchable_bones(scene_map)
-        self.assertEqual(owner["|rig|clavicle_l"], "arm_l")
+        self.assertEqual(owner["|rig|upperarm_l"], "arm_l")
         self.assertEqual(owner["|rig|calf_r"], "leg_r")
         self.assertEqual(owner["|rig|ball_l"], "leg_l")
+
+    def test_a_clavicle_bone_still_switches_its_arm(self):
+        """The bone left the arm chain (2026-08-21), but the animator's
+        habit is older than the split - CLAVICLE_OF keeps it working."""
+        scene_map = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
+                     for j in chain}
+        owner = fkcontrols.switchable_bones(scene_map)
+        self.assertEqual(owner["|rig|clavicle_l"], "arm_l")
+        self.assertEqual(owner["|rig|clavicle_r"], "arm_r")
 
     def test_non_switchable_bones_stay_out(self):
         scene_map = {j: "|rig|" + j for _, chain in fkcontrols.CHAINS
@@ -544,7 +591,9 @@ class TestInnermostOwner(unittest.TestCase):
         ("|root_FK_ctrl|pelvis_FK_ctrl", "fk", "pelvis"),
         ("|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl", "fk", "spine"),
         ("|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl|spine_05_FK_ctrl"
-         "|clavicle_l_FK_ctrl", "fk", "arm_l"),
+         "|clavicle_l_FK_ctrl", "fk", "clavicle_l"),
+        ("|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl|spine_05_FK_ctrl"
+         "|clavicle_l_FK_ctrl|upperarm_l_FK_ctrl", "fk", "arm_l"),
         ("|hand_l_IK_feet", "ik", "arm_l"),
         ("|hand_l_IK_feet|arm_l_IK_anchor|index_metacarpal_l_FK_ctrl",
          "fk", "index_l"),
@@ -555,6 +604,14 @@ class TestInnermostOwner(unittest.TestCase):
                 "|spine_05_FK_ctrl|clavicle_l_FK_ctrl|upperarm_l_FK_ctrl")
         self.assertEqual(fkcontrols.innermost_owner(node, self.CANDIDATES),
                          ("fk", "arm_l"))
+
+    def test_clavicle_controller_resolves_to_the_clavicle_chain(self):
+        """Not to the arm riding inside it: the clavicle is its own chain,
+        and Bake+Delete on it expands to the nested arm by containment."""
+        node = ("|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl"
+                "|spine_05_FK_ctrl|clavicle_l_FK_ctrl")
+        self.assertEqual(fkcontrols.innermost_owner(node, self.CANDIDATES),
+                         ("fk", "clavicle_l"))
 
     def test_spine_controller_resolves_to_the_spine(self):
         node = "|root_FK_ctrl|pelvis_FK_ctrl|spine_01_FK_ctrl|spine_03_FK_ctrl"
@@ -585,6 +642,7 @@ class TestAttachParent(unittest.TestCase):
         "pelvis": "root",
         "spine_05": "spine_04",
         "clavicle_l": "spine_05",
+        "upperarm_l": "clavicle_l",
         "thigh_l": "pelvis",
         "index_metacarpal_l": "hand_l",
         "neck_01": "spine_05",
@@ -592,13 +650,26 @@ class TestAttachParent(unittest.TestCase):
         "some_twist": "spine_05",
     }
     TARGETED = {"root", "pelvis", "spine_05", "hand_l", "clavicle_l",
-                "thigh_l", "neck_01", "index_metacarpal_l"}
+                "upperarm_l", "thigh_l", "neck_01", "index_metacarpal_l"}
 
     def find(self, joint):
         return fkcontrols.attach_parent(joint, self.PARENT_OF, self.TARGETED)
 
-    def test_arm_hangs_from_the_spine_top(self):
+    def test_clavicle_hangs_from_the_spine_top(self):
         self.assertEqual(self.find("clavicle_l"), "spine_05")
+
+    def test_arm_hangs_from_the_clavicle(self):
+        """The full-FK nesting the split must preserve: rotating the
+        clavicle controller still carries the whole FK arm."""
+        self.assertEqual(self.find("upperarm_l"), "clavicle_l")
+
+    def test_arm_skips_a_missing_clavicle(self):
+        """A rig without clavicles hangs its arm on the spine top - the
+        walk through untargeted ancestors, same as trap 21's fingers."""
+        targeted = self.TARGETED - {"clavicle_l"}
+        self.assertEqual(fkcontrols.attach_parent("upperarm_l",
+                                                  self.PARENT_OF, targeted),
+                         "spine_05")
 
     def test_leg_hangs_from_the_pelvis(self):
         self.assertEqual(self.find("thigh_l"), "pelvis")
