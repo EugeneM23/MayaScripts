@@ -103,5 +103,243 @@ class ComposedGrip(unittest.TestCase):
         self.assertLess(worst, 1e-9)
 
 
+class FakeCmds(object):
+    """Records the calls whose ORDER is the design.
+
+    One weapon, one bone. `bone_keys` are the bone's key values (empty =
+    no animation, constant = curves that never move); `bone_curves` says
+    whether the transform channels carry animCurve connections at all.
+    """
+
+    def __init__(self, bone_keys=(), bone_curves=False,
+                 weapon="|hand|sword", constrained=False,
+                 marked=("|hand|sword",)):
+        self.log = []
+        self.autokey = True
+        self.autokey_during = []
+        self._bone_keys = list(bone_keys)
+        self._bone_curves = bone_curves
+        self._weapon = weapon
+        self._marked = set(marked)
+        self._constraints = {}
+        if constrained:
+            self._constraints["|skel|weapon_r"] = "|skel|weapon_r|drive1"
+
+    def _note(self, entry):
+        self.log.append(entry)
+        self.autokey_during.append(self.autokey)
+
+    def playbackOptions(self, query=False, minTime=False, maxTime=False):
+        return 0.0 if minTime else 30.0
+
+    def keyframe(self, node, query=False, timeChange=False,
+                 valueChange=False, **kwargs):
+        if valueChange:
+            return list(self._bone_keys)
+        return [0.0, 30.0] if self._bone_keys else []
+
+    def listRelatives(self, node, children=False, type=None, fullPath=False,
+                      **kwargs):
+        if type == "parentConstraint":
+            found = self._constraints.get(node)
+            return [found] if found else None
+        return None
+
+    def parentConstraint(self, *nodes, **kwargs):
+        if kwargs.get("query"):
+            return [self._weapon]
+        self._note(("constrain", nodes, kwargs.get("maintainOffset", True)))
+        name = nodes[-1] + "|constraint{0}".format(len(self.log))
+        self._constraints[nodes[-1]] = name
+        return [name]
+
+    def ls(self, *args, **kwargs):
+        if args and args[0]:
+            listed = args[0] if isinstance(args[0], (list, tuple)) else [args[0]]
+            return list(listed)
+        return []
+
+    def attributeQuery(self, name, node=None, exists=False, **kwargs):
+        return node in self._marked and name == bonedrive.MARKER
+
+    def listConnections(self, plug, **kwargs):
+        return ["someCurve"] if self._bone_curves else None
+
+    def bakeResults(self, node, **kwargs):
+        self._note(("bake", node, kwargs.get("time")))
+
+    def cutKey(self, node, **kwargs):
+        self._note(("cut", node, kwargs.get("attribute")))
+
+    def delete(self, node):
+        self._note(("delete", node))
+        doomed = node if isinstance(node, (list, tuple)) else [node]
+        for bone, constraint in list(self._constraints.items()):
+            if constraint in doomed:
+                del self._constraints[bone]
+
+    def xform(self, node, **kwargs):
+        if kwargs.get("query"):
+            return (0.0, 0.0, 0.0)
+        self._note(("xform", node))
+
+    def autoKeyframe(self, query=False, state=None):
+        if query:
+            return self.autokey
+        self.autokey = state
+
+    def objExists(self, node):
+        return True
+
+
+BONE = "|skel|weapon_r"
+SWORD = "|hand|sword"
+
+
+class WithFake(unittest.TestCase):
+
+    def use(self, fake):
+        self.fake = fake
+        bonedrive.cmds = fake
+        self.addCleanup(self._restore)
+        return fake
+
+    def _restore(self):
+        bonedrive.cmds = sys.modules["maya.cmds"]
+
+    def kinds(self):
+        return [entry[0] for entry in self.fake.log]
+
+    def phases(self):
+        """Call kinds with consecutive repeats collapsed: `_cut` logs one
+        entry per connected channel, and the ORDER is what is under test."""
+        collapsed = []
+        for kind in self.kinds():
+            if not collapsed or collapsed[-1] != kind:
+                collapsed.append(kind)
+        return collapsed
+
+
+class Link(WithFake):
+
+    def test_moving_bone_transfers_then_inverts(self):
+        """Temp constraint bone->weapon (mo=False), bake the WEAPON, delete
+        the temp, cut the bone, constrain weapon->bone (mo=False) - in that
+        order. The camera paid for cut-after-constrain (a pairBlend)."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        frames = bonedrive.link(SWORD, BONE)
+        self.assertEqual(self.phases(),
+                         ["constrain", "bake", "delete", "cut", "constrain"])
+        first = fake.log[0]
+        self.assertEqual(first[1], (BONE, SWORD))
+        self.assertIs(first[2], False)
+        self.assertEqual(fake.log[1][1], SWORD)
+        last = fake.log[-1]
+        self.assertEqual(last[1], (SWORD, BONE))
+        self.assertIs(last[2], False)
+        self.assertEqual(frames, 31)
+
+    def test_still_bone_gets_no_transfer_and_reports_zero(self):
+        """Constant curves are not animation (trap 30) - transferring them
+        would key the weapon's channels and mute the grip fields."""
+        fake = self.use(FakeCmds(bone_keys=[5.0, 5.0], bone_curves=True))
+        frames = bonedrive.link(SWORD, BONE)
+        self.assertEqual(frames, 0)
+        self.assertNotIn("bake", self.kinds())
+        self.assertEqual(self.kinds().count("constrain"), 1)
+        self.assertIn("cut", self.kinds())
+
+    def test_clean_bone_is_not_cut(self):
+        fake = self.use(FakeCmds(bone_keys=[], bone_curves=False))
+        bonedrive.link(SWORD, BONE)
+        self.assertEqual(self.kinds(), ["constrain"])
+
+    def test_autokey_is_off_for_every_write_and_restored(self):
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        bonedrive.link(SWORD, BONE)
+        self.assertTrue(all(state is False for state in fake.autokey_during))
+        self.assertTrue(fake.autokey)
+
+    def test_bake_range_is_the_union_of_playback_and_keys(self):
+        """The clip runs -20..45 while playback shows 0..30: baking the
+        playback range would truncate the transfer (trap 38)."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        fake.keyframe = lambda node, **kw: ([0.0, 25.0] if kw.get("valueChange")
+                                            else [-20.0, 45.0])
+        bonedrive.link(SWORD, BONE)
+        self.assertEqual(fake.log[1][2], (-20.0, 45.0))
+
+
+class Unlink(WithFake):
+
+    def test_bakes_the_bone_before_deleting_the_constraint(self):
+        """The animation lives on the weapon while the link stands; the
+        other order is the camera's paid-for bug."""
+        fake = self.use(FakeCmds(constrained=True))
+        weapon = bonedrive.unlink(BONE)
+        self.assertEqual(weapon, SWORD)
+        self.assertEqual(self.kinds(), ["bake", "delete"])
+        self.assertEqual(fake.log[0][1], BONE)
+
+    def test_nothing_of_ours_means_no_touch(self):
+        fake = self.use(FakeCmds(constrained=False))
+        self.assertIsNone(bonedrive.unlink(BONE))
+        self.assertEqual(fake.log, [])
+
+    def test_a_foreign_constraint_is_not_ours(self):
+        """A constraint whose driver carries no marker is somebody else's
+        rig - never bake over it, never delete it."""
+        fake = self.use(FakeCmds(constrained=True, marked=()))
+        self.assertIsNone(bonedrive.unlink(BONE))
+        self.assertEqual(fake.log, [])
+
+
+class Relink(WithFake):
+
+    def test_cuts_the_weapon_snaps_then_links(self):
+        """The weapon's curves are stale by definition after a merge - the
+        merge's contract is 'the scene plays this clip'. Cuts (one per
+        connected channel) target the WEAPON and come before the snap,
+        which comes before any constraint."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        frames = bonedrive.relink(SWORD, BONE)
+        kinds = self.kinds()
+        first_xform = kinds.index("xform")
+        self.assertGreater(first_xform, 0)
+        for entry in fake.log[:first_xform]:
+            self.assertEqual(entry[0], "cut")
+            self.assertEqual(entry[1], SWORD)
+        self.assertEqual(kinds[first_xform:first_xform + 2],
+                         ["xform", "xform"])
+        self.assertLess(first_xform, kinds.index("constrain"))
+        self.assertEqual(frames, 31)
+
+    def test_a_clip_without_weapon_keys_still_relinks(self):
+        """The bone was cleared and got nothing: the weapon snaps onto its
+        cleared pose and the constraint is rebuilt with no transfer."""
+        fake = self.use(FakeCmds(bone_keys=[], bone_curves=True))
+        frames = bonedrive.relink(SWORD, BONE)
+        self.assertEqual(frames, 0)
+        self.assertNotIn("bake", self.kinds())
+        self.assertEqual(self.kinds().count("constrain"), 1)
+
+
+class FindLinks(WithFake):
+
+    def test_pairs_only_marked_drivers(self):
+        fake = self.use(FakeCmds(constrained=True))
+        self.assertEqual(bonedrive.find_links([BONE, "|skel|hand_r"]),
+                         [(BONE, SWORD)])
+
+    def test_unmarked_drivers_stay_out(self):
+        fake = self.use(FakeCmds(constrained=True, marked=()))
+        self.assertEqual(bonedrive.find_links([BONE]), [])
+
+    def test_reads_only(self):
+        fake = self.use(FakeCmds(constrained=True))
+        bonedrive.find_links([BONE])
+        self.assertEqual(fake.log, [])
+
+
 if __name__ == "__main__":
     unittest.main()
