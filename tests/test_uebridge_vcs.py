@@ -95,10 +95,16 @@ class ClassifyFailure(unittest.TestCase):
     def test_outside_the_client_root_is_a_normal_answer(self):
         """A target outside the workspace can never be in this depot - that
         is 'untracked', not an error. Found live: the verify sandbox lives in
-        the temp folder and p4 names the client root instead of the view."""
-        err = ("Path 'C:\\Users\\x\\Temp\\a.fbx' is not under the client's "
+        the temp folder, and the measured wording has no 'the' before
+        "client's root" (exit code 1, message on stderr)."""
+        err = ("Path 'C:\\Users\\x\\Temp\\a.fbx' is not under client's "
                "root 'C:\\!!!Work\\Perforce'.\n")
-        self.assertEqual(vcs.classify_failure(err, 0), "")
+        self.assertEqual(vcs.classify_failure(err, 1), "")
+
+    def test_the_spelling_with_the_article_stays_covered(self):
+        err = ("Path 'C:\\x\\a.fbx' is not under the client's root "
+               "'C:\\w'.\n")
+        self.assertEqual(vcs.classify_failure(err, 1), "")
 
     def test_an_expired_session_names_the_cure(self):
         err = "Your session has expired, please login again.\n"
