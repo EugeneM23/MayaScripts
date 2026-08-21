@@ -1161,7 +1161,21 @@ fbx export. **Perforce is polled only by the tab's Refresh button and after
 the actions that change it** (Checkout, Revert, EXPORT) — never on a tab
 switch (the user's follow-up, 2026-08-22: «не нужно каждый раз опрашивать
 перфорс»); between polls the list keeps its last rows, and the tab header
-says Refresh is what re-reads.
+says Refresh is what re-reads. The top Refresh also re-reads them, but only
+with the VCS checkbox on — a p4-less machine must not pay two 15s timeouts
+per press. **Both lists mark the rows** (2026-08-22, «помечались визуальным
+знаком например галочка... изменены выделялись зеленым»): a `✓` prefix on
+every checked-out row (`checkouts.mark_prefix`, same-width blank otherwise,
+so columns hold), and GREEN text on modified ones — `edit` rows by a real
+`p4 -ztag diff -sa` (`vcs.modified_under`; measured: the digest compare
+works on binary uassets, ztag carries clientFile, and "not opened" is the
+normal empty answer), `add` rows always (no depot side to differ from).
+The marks come from the LAST poll (`checkouts.marks()`), refreshed by the
+same calls that refresh the rows; the colour goes through Qt
+(`checkouts.paint_rows` — `textScrollList` has no per-row colour flag, but
+underneath it is a QListWidget), best-effort so headless sessions skip.
+`_repopulate` now also keeps the selection by package identity across
+rebuilds, not by row index.
 One status line at the window bottom serves both tabs. The listing is
 `fstat -Ro <Content>/....uasset` (one
 call, clientFile included; `p4 opened` would need a `where` per file)

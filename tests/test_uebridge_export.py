@@ -1,6 +1,7 @@
 """Tests for the export-back direction: the pure range/wording logic and the
 window-free parts of the checkouts machinery."""
 
+import os
 import sys
 import types
 import unittest
@@ -138,6 +139,12 @@ class FormatRow(unittest.TestCase):
         self.assertIn("edit", text)
         self.assertIn("ok", text)
 
+    def test_every_export_row_carries_the_tick(self):
+        """Everything on this tab IS checked out - the mark says so, the
+        same one the import list uses."""
+        self.assertTrue(checkouts.format_row(self.row()).startswith(
+            checkouts.TICK))
+
     def test_a_missing_fbx_shouts(self):
         self.assertIn("MISSING", checkouts.format_row(self.row("missing")))
 
@@ -148,6 +155,44 @@ class FormatRow(unittest.TestCase):
                     "/Game/Deep/Folder/AS_X"),
             "C:\\y.uasset", "add", "depot", ""))
         self.assertEqual(a.index("fbx "), b.index("fbx "))
+
+
+class ModifiedFlag(unittest.TestCase):
+
+    def test_a_row_defaults_to_unmodified(self):
+        row = checkouts.CheckoutRow(_record(), "C:\\x.uasset", "edit", "ok", "")
+        self.assertFalse(row.modified)
+
+    def test_an_add_is_always_modified(self):
+        """An added file has no depot side to differ from - new content by
+        definition."""
+        self.assertTrue(checkouts.is_modified("C:\\x.uasset", "add", set()))
+
+    def test_an_edit_is_modified_when_the_diff_says_so(self):
+        changed = {os.path.normcase("C:\\x.uasset")}
+        self.assertTrue(checkouts.is_modified("C:\\x.uasset", "edit", changed))
+
+    def test_an_untouched_edit_is_not_modified(self):
+        self.assertFalse(checkouts.is_modified("C:\\x.uasset", "edit", set()))
+
+    def test_the_match_ignores_case(self):
+        changed = {os.path.normcase("C:\\Anims\\AS_X.uasset")}
+        self.assertTrue(checkouts.is_modified("c:\\anims\\as_x.uasset",
+                                              "edit", changed))
+
+
+class MarkPrefix(unittest.TestCase):
+
+    def test_a_checked_out_package_gets_the_tick(self):
+        self.assertEqual(
+            checkouts.mark_prefix("/Game/A/AS_X", {"/game/a/as_x"}),
+            checkouts.TICK)
+
+    def test_everything_else_gets_a_blank_of_the_same_width(self):
+        tick = checkouts.mark_prefix("/Game/A", {"/game/a"})
+        blank = checkouts.mark_prefix("/Game/B", {"/game/a"})
+        self.assertNotEqual(tick, blank)
+        self.assertEqual(len(tick), len(blank))
 
 
 class CheckoutsCountLine(unittest.TestCase):

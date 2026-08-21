@@ -160,15 +160,42 @@ def _project_label(project_path):
     return os.path.splitext(os.path.basename(project_path))[0]
 
 
-def _repopulate():
+def _repopulate(quiet=False):
+    """Rebuild the import list: rows, the checkout marks, the selection.
+
+    The tick and green marks come from `checkouts.marks()` - the LAST p4
+    read, never a fresh poll (the user's rule: only Refresh and file
+    actions talk to Perforce). `quiet` skips the status write, for callers
+    that are about to say something more specific.
+    """
+    from maya_uebridge import checkouts
     query = cmds.textField(_SEARCH, query=True, text=True) if cmds.textField(
         _SEARCH, exists=True) else ""
     shown = records.filter_records(_STATE["records"], query)
+
+    # The selection survives the rebuild by identity, not by position - a
+    # narrowed filter must not silently select a different animation.
+    previous = _STATE.get("filtered") or []
+    picked = cmds.textScrollList(_LIST, query=True,
+                                 selectIndexedItem=True) or []
+    keep = set(previous[i - 1].package for i in picked
+               if 0 < i <= len(previous))
+
     _STATE["filtered"] = shown
+    checked, modified = checkouts.marks()
     cmds.textScrollList(_LIST, edit=True, removeAll=True)
     for record in shown:
-        cmds.textScrollList(_LIST, edit=True, append=records.format_row(record))
-    _status(count_line(len(_STATE["records"]), len(shown), query))
+        cmds.textScrollList(
+            _LIST, edit=True,
+            append=checkouts.mark_prefix(record.package, checked)
+            + records.format_row(record))
+    checkouts.paint_rows(_LIST, [index for index, record in enumerate(shown)
+                                 if record.package.lower() in modified])
+    for index, record in enumerate(shown, 1):
+        if record.package in keep:
+            cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
+    if not quiet:
+        _status(count_line(len(_STATE["records"]), len(shown), query))
     return shown
 
 
@@ -216,6 +243,13 @@ def refresh():
     save_cache(found, _STATE["project"], chosen, _STATE["content_dir"])
 
     _header("connected")
+    # The top Refresh is an allowed p4 moment too (a button press), so the
+    # checkout marks on the fresh list are not stale - but only for a user
+    # who works with Perforce at all, or a p4-less machine would pay two
+    # 15s timeouts per Refresh.
+    if vcs_enabled():
+        from maya_uebridge import checkouts
+        checkouts.refresh_tab()
     # _repopulate writes the count itself, honouring whatever is in the search
     # box - overwriting it here would report the unfiltered total over a
     # filtered list.

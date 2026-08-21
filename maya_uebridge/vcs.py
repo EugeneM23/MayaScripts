@@ -369,6 +369,33 @@ def opened_records(content_dir, run=run_p4):
             if record.get("clientFile") and record.get("action")], ""
 
 
+def modified_under(content_dir, run=run_p4):
+    """(paths, failure): the opened uassets whose content DIFFERS from the
+    depot revision (`p4 diff -sa`; the server compares digests, so binary
+    files answer too). Paths come back as a normcased set holding both the
+    client and the depot spelling of every hit - membership-test with
+    os.path.normcase and either spelling matches. Files opened for add are
+    not diff's business (no depot side) and are the caller's rule. "not
+    opened" / "no file(s) to diff" are the normal empty answers."""
+    pattern = os.path.join(content_dir, "....uasset")
+    code, out, err = run(["-ztag", "diff", "-sa", pattern], content_dir)
+    if code is None:
+        return set(), err or "p4 failed"
+    low = (err or "").lower()
+    if "not opened" in low or "no file(s) to diff" in low:
+        return set(), ""
+    failure = classify_failure(err, code)
+    if failure:
+        return set(), failure
+    found = set()
+    for record in parse_ztag_records(out):
+        for key in ("clientFile", "depotFile"):
+            value = record.get(key, "")
+            if value:
+                found.add(os.path.normcase(value))
+    return found, ""
+
+
 def revert(path, run=run_p4):
     """p4 revert; "" on success. "not opened" is success too - nothing opened
     is exactly the state a revert asks for. Reverting an add abandons the open

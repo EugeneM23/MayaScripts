@@ -32,10 +32,22 @@ from maya_uebridge import window
 LEGACY_WINDOW = "ueBridgeCheckouts"
 _LIST = "ueBridgeCheckoutsList"
 
-_STATE = {"rows": []}
+_STATE = {"rows": [], "checked": set(), "modified": set()}
+
+# The perforce-style mark on a checked-out row, and a blank of the SAME
+# character width so unmarked rows keep their columns.
+TICK = "✓ "
+NO_TICK = "  "
+
+# Foreground for a modified row - readable green on Maya's dark theme.
+GREEN = (95, 220, 95)
 
 CheckoutRow = collections.namedtuple(
-    "CheckoutRow", ["record", "client_file", "action", "fbx", "fbx_path"])
+    "CheckoutRow",
+    ["record", "client_file", "action", "fbx", "fbx_path", "modified"])
+# A row built before the modified flag existed (older callers, tests) is
+# simply not modified.
+CheckoutRow.__new__.__defaults__ = (False,)
 
 
 # ---------------------------------------------------------------- pure
@@ -59,11 +71,35 @@ def anim_checkouts(opened, content_dir, record_list):
     return rows
 
 
+def is_modified(client_file, action, changed):
+    """Whether a checkout row counts as changed. An add always does - it has
+    no depot side to differ from; an edit follows `p4 diff -sa`. Pure."""
+    if "add" in (action or ""):
+        return True
+    return os.path.normcase(client_file or "") in changed
+
+
+def mark_prefix(package, checked):
+    """The tick for a checked-out package, a same-width blank otherwise.
+    `checked` holds lowercase packages. Pure."""
+    return TICK if (package or "").lower() in checked else NO_TICK
+
+
+def marks():
+    """(checked, modified): lowercase package sets from the LAST p4 read.
+    The import list marks its rows from these without polling anything -
+    they move only when Refresh or a file action runs `load_rows`."""
+    return _STATE["checked"], _STATE["modified"]
+
+
 def format_row(row):
-    """One fixed-width line: name, folder tail, p4 action, fbx state."""
+    """One fixed-width line: tick, name, folder tail, p4 action, fbx state.
+    Every row here is a checkout, so every row carries the tick - the same
+    mark the import list puts on its checked-out rows."""
     folder = row.record.package.rsplit("/", 1)[0]
     shown = row.fbx.upper() if row.fbx == "missing" else row.fbx
-    return "{0:<{1}} {2:<{3}} {4:<6} fbx {5}".format(
+    return "{0}{1:<{2}} {3:<{4}} {5:<6} fbx {6}".format(
+        TICK,
         records._middle(row.record.name, records.NAME_WIDTH),
         records.NAME_WIDTH,
         records._tail(folder, 30), 30,
@@ -127,11 +163,20 @@ def load_rows(run=vcs.run_p4):
     if failure:
         return [], failure
     matched = anim_checkouts(opened, folder, window._STATE["records"])
+    # Best-effort: a diff that cannot answer costs the green marks, never
+    # the listing.
+    changed, _ = vcs.modified_under(folder, run=run)
     root = window._saved_root()
     rows = []
     for record, client_file, action in matched:
         state, path = fbx_state(record.name, root, run)
-        rows.append(CheckoutRow(record, client_file, action, state, path))
+        rows.append(CheckoutRow(record, client_file, action, state, path,
+                                is_modified(client_file, action, changed)))
+    # The mark sets the import list reads through marks(), refreshed by the
+    # same call that refreshed the rows.
+    _STATE["checked"] = set(row.record.package.lower() for row in rows)
+    _STATE["modified"] = set(row.record.package.lower() for row in rows
+                             if row.modified)
     return rows, ""
 
 
@@ -331,11 +376,40 @@ def _selected_row():
     return None
 
 
+def paint_rows(control, indices, rgb=GREEN):
+    """Colour the given 0-based rows of a textScrollList green.
+
+    Qt reaches where cmds cannot - textScrollList has no per-row colour
+    flag, but underneath it IS a QListWidget. Best-effort by design: a
+    headless session, a fake-cmds test, or a control that is not there
+    simply skips, and the row text still carries all the information.
+    """
+    if not indices:
+        return
+    try:
+        from maya import OpenMayaUI as omui
+        from shiboken6 import wrapInstance
+        from PySide6 import QtGui, QtWidgets
+        pointer = omui.MQtUtil.findControl(control)
+        if not pointer:
+            return
+        widget = wrapInstance(int(pointer), QtWidgets.QListWidget)
+        brush = QtGui.QBrush(QtGui.QColor(*rgb))
+        for index in indices:
+            item = widget.item(index)
+            if item is not None:
+                item.setForeground(brush)
+    except Exception:
+        pass
+
+
 def _populate(rows):
     _STATE["rows"] = rows
     cmds.textScrollList(_LIST, edit=True, removeAll=True)
     for row in rows:
         cmds.textScrollList(_LIST, edit=True, append=format_row(row))
+    paint_rows(_LIST, [index for index, row in enumerate(rows)
+                       if row.modified])
     _status(count_line(len(rows)))
 
 
@@ -349,6 +423,8 @@ def refresh_tab():
         return
     rows, failure = load_rows()
     _populate(rows)
+    # The same read feeds the import list's tick and green marks.
+    window._repopulate(quiet=True)
     if failure:
         _status(failure)
 

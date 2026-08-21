@@ -793,6 +793,53 @@ class PackageMapping(unittest.TestCase):
         self.assertEqual(vcs.package_of(path, self.CONTENT), package)
 
 
+_DIFF_TWO = """\
+... depotFile //atone/main/Atone/Content/Anims/AS_Walk.uasset
+... clientFile C:\\p4\\Atone\\Content\\Anims\\AS_Walk.uasset
+... rev 2
+
+... depotFile //atone/main/Atone/Content/Anims/AS_Run.uasset
+... clientFile C:\\p4\\Atone\\Content\\Anims\\AS_Run.uasset
+... rev 5
+"""
+
+
+class ModifiedUnder(unittest.TestCase):
+
+    def test_differing_files_arrive_as_a_set(self):
+        run = lambda args, cwd: (0, _DIFF_TWO, "")
+        found, failure = vcs.modified_under("C:/p4/Atone/Content", run=run)
+        self.assertEqual(failure, "")
+        self.assertIn(os.path.normcase(
+            "C:\\p4\\Atone\\Content\\Anims\\AS_Walk.uasset"), found)
+        self.assertIn(os.path.normcase(
+            "C:\\p4\\Atone\\Content\\Anims\\AS_Run.uasset"), found)
+
+    def test_the_call_is_a_diff_sa_over_uassets(self):
+        seen = {}
+
+        def run(args, cwd):
+            seen["args"] = args
+            return (0, "", "")
+
+        vcs.modified_under("C:/p4/Atone/Content", run=run)
+        self.assertIn("diff", seen["args"])
+        self.assertIn("-sa", seen["args"])
+        self.assertTrue(seen["args"][-1].endswith("....uasset"))
+
+    def test_nothing_opened_is_an_empty_answer_not_a_failure(self):
+        run = lambda args, cwd: (
+            0, "", "C:\\x\\....uasset - file(s) not opened on this client.\n")
+        found, failure = vcs.modified_under("C:/x", run=run)
+        self.assertEqual((found, failure), (set(), ""))
+
+    def test_a_dead_p4_is_a_failure(self):
+        run = lambda args, cwd: (None, "", "p4 timed out - server unreachable?")
+        found, failure = vcs.modified_under("C:/x", run=run)
+        self.assertEqual(found, set())
+        self.assertIn("timed out", failure)
+
+
 class OpenAction(unittest.TestCase):
 
     def test_untracked_needs_add(self):

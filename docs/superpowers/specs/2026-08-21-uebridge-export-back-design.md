@@ -267,6 +267,32 @@ The user, after trying the shipped version: «Мы можем в одном ок
   checkouts of that minute (they had swapped one file since the previous
   run, and the list showed the swap).
 
+## Addendum, 2026-08-22: checkout marks in both lists
+
+The user: «файлы которые на чекауте помечались визуальным знаком например
+галочка (как в перфорсе), а файлы которые были изменены выделялись зеленым
+цветом». Both lists now mark rows:
+
+- **`✓` prefix** on every checked-out row — in the import list via
+  `checkouts.mark_prefix` (a same-width blank otherwise, so the columns
+  hold), in the export list on every row (everything there is a checkout).
+- **Green text** on modified rows. `edit` rows are asked of Perforce with
+  one `p4 -ztag diff -sa <Content>/....uasset` per refresh
+  (`vcs.modified_under`) — measured live: the digest compare answers for
+  binary uassets (an untouched edit stayed uncoloured, a really-changed one
+  went green), ztag carries `clientFile`, and "file(s) not opened" is the
+  normal empty answer. `add` rows are green always: no depot side exists to
+  differ from.
+- The marks obey the polling rule: they come from the LAST read
+  (`checkouts.marks()`), refreshed by the same triggers that refresh the
+  rows (the tab's Refresh, Checkout/Revert/EXPORT), plus the top Refresh —
+  gated on the VCS checkbox so a p4-less machine does not pay the timeouts.
+- The colour is a Qt touch-up (`checkouts.paint_rows`): `textScrollList`
+  has no per-row colour flag, but the control is a QListWidget underneath;
+  best-effort, so a headless session or a fake-cmds test just skips it.
+- `window._repopulate` keeps the selection by package identity across
+  rebuilds — a narrowed filter must not silently select a different row.
+
 ## Addendum, same day: what the live run taught about the reimport
 
 `verify_uebridge_export.py` ran green (0 of 18 gates failed) only after the
