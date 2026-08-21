@@ -126,31 +126,48 @@ check("the hands did not move", drift < 1e-4,
 # of on it. The geometry carries no keys of its own, so it can be turned and
 # put back.
 plug = geometry + ".translateX"
-if cmds.listConnections(plug, source=True, destination=False):
-    check("the geometry is free to move", False, plug + " is driven")
-else:
-    autokey = cmds.autoKeyframe(query=True, state=True)
-    cmds.autoKeyframe(state=False)
-    rest = cmds.getAttr(plug)
-    still = [world_matrix(hand) for hand in hands]
-    bone_still = world_matrix(bone)
-    try:
+autokey = cmds.autoKeyframe(query=True, state=True)
+cmds.autoKeyframe(state=False)
+poke_frame = int(cmds.currentTime(query=True))
+driven = bool(cmds.listConnections(plug, source=True, destination=False))
+if driven:
+    # Since 2026-08-20 the marked node IS the geometry, and parent_out
+    # bakes the world motion onto its own channels - so after Connect this
+    # plug is ALWAYS driven. Poke through the curve, value over value: the
+    # read value keyed back over itself restores the measured frame
+    # exactly.
+    print("NOTE  the sword's channels are baked (normal after Connect); "
+          "the drag goes through a key")
+rest = cmds.getAttr(plug)
+still = [world_matrix(hand) for hand in hands]
+bone_still = world_matrix(bone)
+try:
+    if driven:
+        cmds.setKeyframe(geometry, attribute="translateX", time=poke_frame,
+                         value=rest + 50.0)
+        cmds.currentTime(poke_frame)  # settle (trap 14)
+    else:
         cmds.setAttr(plug, rest + 50.0)
-        moved = [world_matrix(hand) for hand in hands]
-        bone_moved = biggest_difference(world_matrix(bone), bone_still)
-    finally:
+    moved = [world_matrix(hand) for hand in hands]
+    bone_moved = biggest_difference(world_matrix(bone), bone_still)
+finally:
+    if driven:
+        cmds.setKeyframe(geometry, attribute="translateX", time=poke_frame,
+                         value=rest)
+        cmds.currentTime(poke_frame)
+    else:
         cmds.setAttr(plug, rest)
-        cmds.autoKeyframe(state=autokey)
+    cmds.autoKeyframe(state=autokey)
 
-    travel = [biggest_difference(one, two) for one, two in zip(still, moved)]
-    check("dragging the sword drags both hands",
-          all(distance > 1.0 for distance in travel),
-          "hand travel: {0}".format(
-              ", ".join("{0:.3f}".format(d) for d in travel)))
-    check("weapon_r rode the drag too (the constraint survived parent_out)",
-          bone_moved > 1.0, "bone travel: {0:.3f}".format(bone_moved))
-    check("and putting it back puts them back",
-          worst_drift([still], [[world_matrix(hand) for hand in hands]]) < 1e-6)
+travel = [biggest_difference(one, two) for one, two in zip(still, moved)]
+check("dragging the sword drags both hands",
+      all(distance > 1.0 for distance in travel),
+      "hand travel: {0}".format(
+          ", ".join("{0:.3f}".format(d) for d in travel)))
+check("weapon_r rode the drag too (the constraint survived parent_out)",
+      bone_moved > 1.0, "bone travel: {0:.3f}".format(bone_moved))
+check("and putting it back puts them back",
+      worst_drift([still], [[world_matrix(hand) for hand in hands]]) < 1e-6)
 
 # --- pressing it twice ----------------------------------------------------
 again = linking.connect(weapon, scene_map)

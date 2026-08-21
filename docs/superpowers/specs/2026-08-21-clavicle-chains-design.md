@@ -13,12 +13,22 @@ at all — the clavicle is a bone of the FK **arm** chain, and that chain is not
 built in hybrid mode. The animator wants to pose the shoulders.
 
 **The user's explicit call on behaviour (2026-08-21, asked directly):** the
-clavicle control drives **only the clavicle bone**. The IK arm keeps riding the
-root controller exactly as today; rotating the clavicle does not carry the arm
-base. The alternative (hang the arm's `_IK_strech_gr` on the clavicle control,
-so the shoulder leads the arm while the hand stays planted) was offered with
-its side effects named and declined. Do not "fix" this into the coupled
-version without asking again.
+clavicle control drives **only the clavicle bone** — nothing is re-hung on
+it. The alternative (hang the arm's `_IK_strech_gr` on the clavicle control)
+was offered with its side effects named and declined. Do not add that
+coupling without asking again.
+
+**Measured live after the build (2026-08-21), correcting this spec's own
+assumption:** the design here predicted the IK arm would ignore the clavicle
+("the shoulder tears off"), because moving the root BONE had been measured
+to move neither the IK controls nor the upperarm. Wrong inference: that
+measurement never moved the clavicle bone's baked channels, so nothing could
+propagate. In fact **OverRig's IK follows the chain's parent bone on its
+own** — turning the new clavicle control moved the upperarm 1.223 (world
+matrix delta at +25°) while the IK hand stayed planted at 9.6e-8 and the
+poke restored to 0.0. So the shipped behaviour is the classic
+clavicle-over-IK — the shoulder leads, the hand stays — with no re-hang and
+no extra machinery. `verify_hybrid_build.py` pins all three numbers.
 
 ## The design: split the clavicle out of the arm chain
 

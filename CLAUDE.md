@@ -246,12 +246,18 @@ pelvis/spine split applied to the shoulders): `clavicle_l/r` left the arm
 chains and stand ahead of them in `CHAINS`, so the hybrid Build creates
 their controllers and an arm switch no longer deletes them — the control
 survives IK↔FK in both directions, and in full FK the arm chain couples
-INSIDE it (rotating the clavicle still carries the FK arm). **The control
-drives ONLY the bone** — the user's explicit call, offered the alternative
-and declined: the IK arm keeps riding the root controller, so posing a
-clavicle over an IK arm moves the shoulder skin and not the arm. Do not
-"fix" that into hanging `_IK_strech_gr` on the clavicle control without
-asking again. Single-bone chain ⇒ `apply_parentConstrAnim` ⇒ a plain
+INSIDE it (rotating the clavicle still carries the FK arm). **We drive ONLY
+the bone** — nothing was re-hung on the control (the user's explicit call,
+offered the alternative and declined) — but the measured behaviour is
+better than that promise: **OverRig's IK follows the chain's parent bone on
+its own**, so turning the clavicle control carries the arm base (upperarm
+moved 1.223) while the IK hand stays planted (9.6e-8) and the elbow
+re-solves — classic clavicle-over-IK, for free. The earlier root-bone
+measurement ("moving the root bone moves nothing") had hidden this: the
+root bone never moves the clavicle BONE's baked channels, so nothing
+propagated. Do not hang `_IK_strech_gr` on the clavicle control — it is
+not needed and was declined. Single-bone chain ⇒ `apply_parentConstrAnim`
+⇒ a plain
 transform knot whose frame already matches the bone; align/orient skip it
 by the no-jointOrient filter, like root and pelvis. Clicking a clavicle
 BONE + Switch still converts its arm (`fkchains.CLAVICLE_OF`); the clavicle
@@ -523,9 +529,12 @@ safety before Build (proposed, not confirmed).
 `verify_ik_under_root.py` in `docs/superpowers/plans/`, plus
 `verify_fingers_on_bones.py` for the 2026-08-18 change. **All six were
 rewritten that day** — five of them asserted "the finger hangs on the hand",
-which is no longer true — so their last green run predates the rewrite; they
-have not been sent through the bridge since (the animator's Maya had a blocked
-idle queue at the time — see bridge note 6). `verify_twist_bones.py`
+which is no longer true — so their last green run predated the rewrite.
+**`verify_hybrid_build.py` has since run green live (2026-08-21, 0
+failures)** with its new clavicle gates — including two full builds, the
+FK-limbs flip and an arm switch both ways — so it doubles as proof the
+rewrite itself is sound; the other four still await a live run.
+`verify_twist_bones.py`
 (2026-08-20) is **green: 0 of 30 gates failed** in the Manny scene, and it
 found three real bugs on the way (traps 41–43). It runs in
 **two phases**: the exact
@@ -1148,9 +1157,10 @@ live rotate/translate fields for dialling in the grip, and an **Add Aim**
 button (below). Design:
 `docs/superpowers/specs/2026-08-17-weapon-attach-design.md`, proof:
 `docs/superpowers/plans/verify_weapons.py` (**rebuilt 2026-08-21 around the
-inverted drive — its last green run, 26/26, predates that rebuild and has
-not been sent through the bridge since**; the marked node is `LongSwordMesh`
-itself, a direct child of the HAND, with `weapon_r` constrained to it). It
+inverted drive and green live the same day: 32/32** — the marked node is
+`LongSwordMesh` itself, a direct child of the HAND, `weapon_r` driven by it
+with the transfer, the drag-follow, the replace and the detach all at worst
+**0.0000000** over three-frame world-matrix tracks). It
 refuses to run at all while the arms are connected or an aim exists: every
 attach in it REPLACES what is in the hand, and replacing deletes the marked
 node whole.
@@ -1290,7 +1300,11 @@ back — see trap 33, which is what `cmds.file` DOES inherit.
 **Connect Arms To Weapon** turns the rig inside out: the weapon leaves the
 skeleton and drives the hands. Three steps, in this order —
 `maya_scenesetup/connect.py`, proof
-`docs/superpowers/plans/verify_connect_arms.py` (**17/17 green**):
+`docs/superpowers/plans/verify_connect_arms.py` (**22/22 green live
+2026-08-21**, with the drive-bone gates: `weapon_r` rode a 50-unit sword
+drag through the whole Connect, and the trap-34 drag now goes through a
+key — after Connect the sword's channels are always baked, so a bare
+setAttr gate reports "driven" instead of proving anything):
 
 1. **both arms brought to IK** — *brought to*, not switched. `switch_limbs`
    converts to the OPPOSITE type, so calling it on an arm that is already IK

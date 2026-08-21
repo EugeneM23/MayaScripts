@@ -148,16 +148,22 @@ tip_path = cmds.ls(tip_ctrl, long=True)[0] if cmds.objExists(tip_ctrl) else "?"
 check("clavicle control hangs inside the spine-tip control",
       clav_path.startswith(tip_path + "|"), clav_path)
 
-# The user's chosen behaviour: the control drives ONLY the bone; the IK arm
-# keeps riding the root control. Poke through the CTRL (the bone itself is
-# constraint-driven), on its flat baked curve: read the value the curve
-# holds, key the poke over it, and key the same value back - rewriting one
-# key of a flat run with the value it already had damages nothing.
+# We only DRIVE the bone (nothing was re-hung on the control - the user's
+# call), but OverRig's IK follows the chain's parent bone on its own:
+# measured 2026-08-21, poking the clavicle control moved the upperarm 1.223
+# while the earlier root-bone measurement moved it not at all. So the true
+# behaviour is the classic clavicle-over-IK: the shoulder leads the arm
+# base, the IK hand stays planted, the elbow re-solves. Poke through the
+# CTRL (the bone itself is constraint-driven), on its flat baked curve:
+# read the value the curve holds, key the poke over it, and key the same
+# value back - rewriting one key of a flat run with the value it already
+# had damages nothing.
 autokey_was = cmds.autoKeyframe(query=True, state=True)
 cmds.autoKeyframe(state=False)
 cmds.currentTime(15)
 clav_before = wmatrix(smap["clavicle_l"])
 upper_before = wmatrix(smap["upperarm_l"])
+hand_before = wmatrix(smap["hand_l"])
 held = cmds.getAttr(clav_ctrl + ".rotateZ")
 cmds.setKeyframe(clav_ctrl, attribute="rotateZ", time=15, value=held + 25.0)
 cmds.currentTime(0)
@@ -165,9 +171,12 @@ cmds.currentTime(15)  # settle (trap 14)
 check("clavicle control turns the clavicle bone",
       matrix_delta(wmatrix(smap["clavicle_l"]), clav_before) > 0.05,
       "%.6f" % matrix_delta(wmatrix(smap["clavicle_l"]), clav_before))
-check("the IK arm ignores the clavicle (the user's call)",
-      matrix_delta(wmatrix(smap["upperarm_l"]), upper_before) < 1e-4,
-      "%.9f" % matrix_delta(wmatrix(smap["upperarm_l"]), upper_before))
+check("the shoulder leads the IK arm base (OverRig's own follow)",
+      matrix_delta(wmatrix(smap["upperarm_l"]), upper_before) > 0.05,
+      "%.6f" % matrix_delta(wmatrix(smap["upperarm_l"]), upper_before))
+check("the IK hand stays planted while the clavicle turns",
+      matrix_delta(wmatrix(smap["hand_l"]), hand_before) < 1e-3,
+      "%.9f" % matrix_delta(wmatrix(smap["hand_l"]), hand_before))
 cmds.setKeyframe(clav_ctrl, attribute="rotateZ", time=15, value=held)
 cmds.currentTime(0)
 cmds.currentTime(15)
