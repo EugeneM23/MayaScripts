@@ -1020,7 +1020,9 @@ list and an FBX export for the import.
 | `records.py` | record model, search, namespace naming, row text | **stdlib only** |
 | `vcs.py` | Perforce placement: fbx name search, path convention, checkout decision table, p4 runner | **stdlib only** |
 | `animimport.py` | FBX import, timeline, fps policy | `maya.cmds` |
+| `animexport.py` | FBX export of the skeleton hierarchy, bake-on-export, range policy | `maya.cmds`, `maya.mel`, `animimport` |
 | `window.py` | the `cmds` window | `maya.cmds` |
+| `checkouts.py` | the checkouts window: pair checkout, revert, export back to the uasset | `maya.cmds` + all of the above |
 
 The first four are testable with neither application running; a subprocess
 test enforces it. `__init__.py` resolves `show_window` through `__getattr__`
@@ -1140,6 +1142,37 @@ their work would go with it). Getting it green paid for trap 44. Spec:
 `docs/superpowers/specs/2026-08-21-uebridge-perforce-design.md`, whose
 addendum records the depot-search redesign.
 
+**The reverse bridge** (2026-08-21, the same day): the animator's checked-out
+AnimSequence uassets in their own window, and the scene going back into the
+uasset. Two buttons in the main window — **Checkout** opens the selected
+animation's uasset AND its source fbx as a pair (the user's call: one
+changelist, one submit; «source fbx — прокладка через которую мы работаем»,
+so a checkout through the bridge never leaves a uasset without its fbx — a
+прокладка that exists nowhere is exported out of the editor into the
+conventional spot on the way, then `p4 add`ed), and **EXPORT** opens the
+checkouts window — or, with nothing checked out, a save-as dialog and a
+plain fbx export. The window lists `fstat -Ro <Content>/....uasset` (one
+call, clientFile included; `p4 opened` would need a `where` per file)
+matched against the cached listing by package — anything not a known
+AnimSequence is dropped — with an fbx column (`ok`/`depot`/`MISSING`).
+Revert reverts the pair behind the one confirm dialog. Export per row:
+resolve the working fbx (same `choose_target` as import) → export the root
+hierarchy to a temp fbx (`animexport`: resolved like the import merge —
+selection, else the only skeleton, else `root`; bake-on-export so the rig
+is never touched; range = animation ∪ playback, trap 38; keys outside are
+warned) → p4 on the fbx (`prepare_target`, add after place for a new file)
+→ `vcs.place` → reimport in the editor (`uescripts.reimport_script`) →
+frame-rate mismatch reported, never fixed. The Content dir rides the
+listing reply and cache as `content_dir` (old caches fall back to
+discovery's `project_root`). Spec:
+`docs/superpowers/specs/2026-08-21-uebridge-export-back-design.md` — its
+addendum records why the reimport is a legacy-path replace-import. Proof:
+`verify_uebridge_export.py`, **green live 2026-08-21, 0 of 18 gates
+failed** — exporter round trip exact (35.000000 at the mid key), the
+animator's 4 real checkouts listed with fbx, a duplicated sandbox uasset
+reimported 2 → 60 frames and deleted, the Longsword pair checked out and
+reverted with the depot left exactly as found.
+
 Traps, each paid for:
 
 22. **`cmds.file(i=True, type="FBX")` imports the skeleton and silently drops
@@ -1201,6 +1234,28 @@ Traps, each paid for:
     (`p4 set P4PORT=...`, `p4 set P4CLIENT=...` from inside Maya) — after
     that both views agree and `p4 info` connects from Maya in under a
     second.
+45. **Interchange owns .fbx on this engine build, ignores `FbxImportUI`
+    options entirely, and swallows a bones-only fbx with "There was nothing
+    to import from the provided source data".** Measured 2026-08-21: the
+    same automated `AssetImportTask` imported nothing under Interchange and
+    landed frames 2 → 60 after flipping
+    `Interchange.FeatureFlags.Import.FBX` to 0 (read the value first,
+    restore in a finally — it is a global editor toggle). Three sibling
+    facts from the same run: `unreal.ReimportSubsystem` does not exist in
+    this build's Python (the documented reimport API — hence the
+    replace-import over the existing package, skeleton read from the asset
+    itself); `task.imported_object_paths` stays EMPTY even for a successful
+    import and `task.result` answers a deprecation warning — only
+    `task.get_objects()` reports; and a replace-import rebuilds the asset
+    from the fbx, so uasset curves the fbx does not carry (trap 40's
+    Pose_*/MoveData_*) do not survive it, same as reimporting by hand.
+46. **The editor runs its own Perforce integration, and its log is the
+    diagnosis tool for silent import behaviour.** Saving a new asset fires
+    `p4 add` from inside UE; deleting it fires `p4 revert -w` — so a
+    scripted sandbox asset makes transient p4 noise even when our own code
+    never calls p4. `<project>/Saved/Logs/<name>.log` is readable with
+    shared access WHILE the editor runs; the Interchange refusal above was
+    invisible in every Python-side reply and sat plainly in that log.
 
 Measured facts about the listing: asset-registry tags are read **without
 loading assets**, and the real tag names on 5.8 are `Number of Frames`,

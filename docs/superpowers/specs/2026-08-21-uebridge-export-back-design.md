@@ -235,3 +235,39 @@ skeleton against the uasset's skeleton tag before reimport — the reimport
 matches by bone name exactly as the import merge does, and refusing on a
 tag mismatch would block legitimate retargets; UE's own reimport warnings
 remain visible in the editor.
+
+## Addendum, same day: what the live run taught about the reimport
+
+`verify_uebridge_export.py` ran green (0 of 18 gates failed) only after the
+reimport mechanism was rewritten twice, each time against a measured fact
+from the running editor (UE 5.8, the Atone build):
+
+- **There is no `ReimportSubsystem` in this build's Python API** —
+  `hasattr(unreal, "ReimportSubsystem")` is False (probed via dir(unreal)).
+  The design's original `set_reimport_paths` + `reimport` plan cannot run at
+  all. The replacement is an automated **`AssetImportTask` over the existing
+  package** (`replace_existing`, `destination_name` = the asset,
+  `FbxImportUI` with the skeleton read from the asset itself,
+  `FBXIT_ANIMATION`). Consequence, documented in the script's docstring: a
+  replace-import rebuilds the asset from the fbx, so curves the fbx does not
+  carry (the trap-40 family: Pose_*, MoveData_*) do not survive it — the
+  same contract as reimporting by hand.
+- **Interchange owns .fbx on this build and swallows a bones-only file.**
+  The editor log says `There was nothing to import from the provided source
+  data using the chosen pipeline options` and the task imports nothing —
+  legacy `FbxImportUI` options are ignored entirely by the Interchange
+  pipeline. The fix: flip `Interchange.FeatureFlags.Import.FBX` to 0 around
+  `import_asset_tasks` (read the previous value, restore in a finally) so
+  the legacy fbx animation importer handles the task. Measured: the same
+  task that imported nothing under Interchange lands frames 2 → 60 on the
+  legacy path.
+- **Success cannot be read from `imported_object_paths` or `result`** — the
+  first stays empty on this build even for a successful import, the second
+  answers with a deprecation warning. `task.get_objects()` is what reports
+  the imported AnimSequence.
+- **The editor runs its own Perforce integration**: saving a new asset
+  fires `p4 add` from inside UE, deleting it fires `p4 revert -w`. For the
+  real flow this is harmless (the exported uasset is already checked out),
+  but any sandbox asset the verify creates makes transient p4 noise, and
+  the editor log (`<project>/Saved/Logs/<name>.log`, readable shared while
+  the editor runs) is the tool that made all of this diagnosable.
