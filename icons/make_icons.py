@@ -1,0 +1,124 @@
+"""Draw the four SkeldarAnim shelf icons.
+
+32x32 PNG on a dark rounded plate so they read on Maya's shelf: flat
+glyphs, ~2 px strokes, one accent colour per tool. Regenerate with:
+
+    $env:QT_QPA_PLATFORM = 'offscreen'
+    & 'C:\\Program Files\\Autodesk\\Maya2027\\bin\\mayapy.exe' icons/make_icons.py
+"""
+
+import os
+import sys
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import (QColor, QGuiApplication, QImage, QPainter,
+                           QPainterPath, QPen)
+
+SIZE = 32
+PLATE = QColor("#262626")
+EDGE = QColor("#4a4a4a")
+
+
+def _canvas():
+    image = QImage(SIZE, SIZE, QImage.Format_ARGB32)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QPen(EDGE, 1))
+    painter.setBrush(PLATE)
+    painter.drawRoundedRect(QRectF(0.5, 0.5, SIZE - 1, SIZE - 1), 6, 6)
+    return image, painter
+
+
+def _pen(colour, width):
+    return QPen(QColor(colour), width, Qt.SolidLine, Qt.RoundCap,
+                Qt.RoundJoin)
+
+
+def draw_picker(path):
+    """A miniature of the body map: circle head, dot buttons."""
+    image, painter = _canvas()
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#4fc3f7"))
+    painter.drawEllipse(QPointF(16, 7.5), 3.0, 3.0)
+    dots = [(16, 13.5), (16, 17), (16, 20.5),                    # spine
+            (11.5, 13.5), (8.5, 17), (20.5, 13.5), (23.5, 17),   # arms
+            (13.5, 24), (12.5, 27.5), (18.5, 24), (19.5, 27.5)]  # legs
+    for x, y in dots:
+        painter.drawEllipse(QPointF(x, y), 1.7, 1.7)
+    painter.end()
+    image.save(path)
+
+
+def draw_uebridge(path):
+    """A clip plate with frame ticks and an arrow coming into the scene."""
+    image, painter = _canvas()
+    painter.setPen(_pen("#ffa726", 2.0))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(QRectF(7, 6, 18, 8), 2, 2)
+    painter.setPen(_pen("#ffa726", 1.3))
+    for x in (11, 14.5, 18, 21.5):
+        painter.drawLine(QPointF(x, 8), QPointF(x, 12))
+    painter.setPen(_pen("#ffa726", 2.4))
+    painter.drawLine(QPointF(16, 17), QPointF(16, 26.5))
+    painter.drawLine(QPointF(11.5, 22), QPointF(16, 26.5))
+    painter.drawLine(QPointF(20.5, 22), QPointF(16, 26.5))
+    painter.end()
+    image.save(path)
+
+
+def draw_scenesetup(path):
+    """A sword: blade, crossguard, grip, pommel."""
+    image, painter = _canvas()
+    painter.setPen(_pen("#cfd8dc", 2.8))
+    painter.drawLine(QPointF(23.5, 6.5), QPointF(12, 18))
+    painter.setPen(_pen("#cfd8dc", 2.4))
+    painter.drawLine(QPointF(10.1, 14.5), QPointF(15.5, 19.9))
+    painter.setPen(_pen("#cfd8dc", 2.6))
+    painter.drawLine(QPointF(11.3, 18.7), QPointF(8, 22))
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#cfd8dc"))
+    painter.drawEllipse(QPointF(7.2, 22.8), 1.8, 1.8)
+    painter.end()
+    image.save(path)
+
+
+def draw_overshoot(path):
+    """A curve overshooting a dashed target line and settling."""
+    image, painter = _canvas()
+    dashed = QPen(QColor(129, 199, 132, 150), 1.3, Qt.DashLine)
+    painter.setPen(dashed)
+    painter.drawLine(QPointF(5, 13), QPointF(27, 13))
+    curve = QPainterPath(QPointF(5.5, 26.5))
+    curve.cubicTo(QPointF(9, 26.5), QPointF(10, 8.5), QPointF(13.5, 8.5))
+    curve.cubicTo(QPointF(16.5, 8.5), QPointF(16, 16), QPointF(18.5, 16))
+    curve.cubicTo(QPointF(20.5, 16), QPointF(20.5, 12), QPointF(22.5, 12))
+    curve.cubicTo(QPointF(24.5, 12), QPointF(24.5, 13), QPointF(26.5, 13))
+    painter.setPen(_pen("#81c784", 2.2))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawPath(curve)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#81c784"))
+    painter.drawEllipse(QPointF(5.5, 26.5), 2.0, 2.0)
+    painter.end()
+    image.save(path)
+
+
+DRAWERS = {
+    "picker.png": draw_picker,
+    "uebridge.png": draw_uebridge,
+    "scenesetup.png": draw_scenesetup,
+    "overshoot.png": draw_overshoot,
+}
+
+
+def main(out_dir=None):
+    out_dir = out_dir or os.path.dirname(os.path.abspath(__file__))
+    QGuiApplication.instance() or QGuiApplication([sys.argv[0]])
+    for name, draw in sorted(DRAWERS.items()):
+        draw(os.path.join(out_dir, name))
+        print("wrote " + name)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1] if len(sys.argv) > 1 else None)
