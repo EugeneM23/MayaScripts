@@ -334,6 +334,16 @@ class AttachFlow(unittest.TestCase):
         self.assertGreater(grip_writes[0], kinds.index("link"))
         self.assertEqual(note, "")
 
+    def test_no_grip_given_means_stay_on_the_bone(self):
+        """None is not zeros: zeros are real channel values under the hand
+        and would put the sword at the hand origin. With no grip the snap
+        is the placement."""
+        fake = self._wire(frames=0)
+        attach.attach(self.Entry(), HAND, BONE)
+        after_link = fake.log[[e[0] for e in fake.log].index("link") + 1:]
+        self.assertFalse([e for e in after_link
+                          if e[0] == "set" and e[1].endswith(".rotateX")])
+
     def test_a_transferred_bone_means_no_grip_write(self):
         """With animation moved onto the weapon its channels are keyed;
         the note says what happened instead."""

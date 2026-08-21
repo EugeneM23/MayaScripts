@@ -222,8 +222,7 @@ def read_offsets(weapon):
     return rotate, translate
 
 
-def attach(entry, parent_bone_path, drive_bone,
-           rotate=(0.0, 0.0, 0.0), translate=(0.0, 0.0, 0.0)):
+def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
     """Put `entry`'s model into the hand, driving `drive_bone` from it.
 
     One mesh in the file and that mesh IS the weapon: parented under
@@ -293,7 +292,10 @@ def attach(entry, parent_bone_path, drive_bone,
             moved = ("{0} frame(s) moved from the bone onto the weapon"
                      .format(frames))
             note = note + " - " + moved if note else moved
-        else:
+        elif rotate is not None and translate is not None:
+            # No grip given (None, not zeros) means "leave it on the bone":
+            # zeros are real channel values under the hand and would put the
+            # sword at the hand origin.
             write_offsets(weapon, rotate, translate)
         return weapon, note
     finally:

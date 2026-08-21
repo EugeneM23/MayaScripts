@@ -148,14 +148,19 @@ scene_map = skeleton.scene_map(root)
 bone = skeleton.resolve_bone(root, entry.bone)
 check("a character with a weapon bone", bool(root and bone), str(bone))
 
-weapon = attach.find_attached(bone) or linking.linked_weapon()
+hand_bone = attach.parent_bone(bone)
+weapon = (attach.find_attached(hand_bone) or attach.find_attached(bone)
+          or linking.linked_weapon())
 if weapon is None:
-    weapon, _note = attach.attach(entry, bone)
+    weapon, _note = attach.attach(entry, hand_bone, bone)
     print("NOTE  no weapon was attached; this run added one")
 check("a weapon to aim", weapon is not None, str(weapon))
 
 model = attach.model_root(weapon)
-check("the weapon has geometry", model != weapon, str(model))
+check("the weapon has geometry", model is not None, str(model))
+if model == weapon:
+    print("NOTE  the marked node IS the geometry (single mesh, 2026-08-20) - "
+          "the normal case")
 
 start = int(cmds.playbackOptions(query=True, minTime=True))
 end = int(cmds.playbackOptions(query=True, maxTime=True))

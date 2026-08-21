@@ -56,6 +56,9 @@ root = skeleton.current_root()
 scene_map = skeleton.scene_map(root)
 bone = skeleton.resolve_bone(root, entry.bone)
 check("a character with a weapon bone", bool(root and bone), str(bone))
+hand_bone = attach.parent_bone(bone)
+check("the weapon bone has a parent to live under", hand_bone is not None,
+      str(hand_bone))
 
 hands = [scene_map[name] for name in ("hand_l", "hand_r") if name in scene_map]
 check("both hand bones resolved", len(hands) == 2, str(len(hands)))
@@ -65,15 +68,16 @@ end = int(cmds.playbackOptions(query=True, maxTime=True))
 frames = sorted(set([start, (start + end) // 2, end]))
 
 # --- the weapon has to be in the hand to begin with -----------------------
-weapon = attach.find_attached(bone) or linking.linked_weapon()
+weapon = (attach.find_attached(hand_bone) or attach.find_attached(bone)
+          or linking.linked_weapon())
 if weapon is None:
-    weapon, _note = attach.attach(entry, bone)
+    weapon, _note = attach.attach(entry, hand_bone, bone)
     print("NOTE  no weapon was attached; this run added one")
 if linking.linked_weapon():
-    linking.disconnect(linking.linked_weapon(), bone)
+    linking.disconnect(linking.linked_weapon(), hand_bone)
     print("NOTE  the arms were already connected; this run disconnected first")
 
-weapon = attach.find_attached(bone)
+weapon = attach.find_attached(hand_bone) or attach.find_attached(bone)
 check("starting with the weapon in the hand", weapon is not None, str(weapon))
 
 before = sample_hands(hands, frames)
@@ -98,7 +102,10 @@ check("both arms are IK",
       "arm_l" in built and "arm_r" in built, str(sorted(built)))
 
 geometry = attach.model_root(weapon)
-check("the weapon has geometry to hang on", geometry != weapon, str(geometry))
+check("the weapon has geometry to hang on", geometry is not None, str(geometry))
+if geometry == weapon:
+    print("NOTE  the marked node IS the geometry (single mesh, 2026-08-20) - "
+          "the normal case")
 
 for limb in linking.ARMS:
     node = builder.ik_control(limb, "end")
@@ -126,9 +133,11 @@ else:
     cmds.autoKeyframe(state=False)
     rest = cmds.getAttr(plug)
     still = [world_matrix(hand) for hand in hands]
+    bone_still = world_matrix(bone)
     try:
         cmds.setAttr(plug, rest + 50.0)
         moved = [world_matrix(hand) for hand in hands]
+        bone_moved = biggest_difference(world_matrix(bone), bone_still)
     finally:
         cmds.setAttr(plug, rest)
         cmds.autoKeyframe(state=autokey)
@@ -138,6 +147,8 @@ else:
           all(distance > 1.0 for distance in travel),
           "hand travel: {0}".format(
               ", ".join("{0:.3f}".format(d) for d in travel)))
+    check("weapon_r rode the drag too (the constraint survived parent_out)",
+          bone_moved > 1.0, "bone travel: {0:.3f}".format(bone_moved))
     check("and putting it back puts them back",
           worst_drift([still], [[world_matrix(hand) for hand in hands]]) < 1e-6)
 
@@ -149,11 +160,11 @@ check("and still nothing moved",
       worst_drift(before, sample_hands(hands, frames)) < 1e-4)
 
 # --- disconnect -----------------------------------------------------------
-message = linking.disconnect(weapon, bone)
+message = linking.disconnect(weapon, hand_bone)
 print("disconnect said:", message)
 
-back = attach.find_attached(bone)
-check("the weapon is back in the hand", back is not None, str(back))
+back = attach.find_attached(hand_bone)
+check("the weapon is back under the HAND bone", back is not None, str(back))
 check("nothing reports a link any more", linking.linked_weapon() is None)
 
 def parent_of(node):
