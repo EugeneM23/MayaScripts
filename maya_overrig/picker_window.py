@@ -21,11 +21,12 @@ from maya_overrig.picker_view import MODE_ADD, MODE_TOGGLE, PickerView, mode_for
 WINDOW_OBJECT_NAME = "rigPickerWindow"
 WINDOW_TITLE = "Rig Picker"
 
+# Only All survives of the group-selection row (2026-08-21, the user's
+# call: «оставим только All, все остальные не нужны») - the other groups
+# were the body map duplicated as buttons. The mechanism stays table-driven;
+# bodymap.group_members still knows every group.
 _GROUP_BUTTONS = (
-    ("All", "all"), ("Main", "main"), ("Spine", "spine"), ("Head", "head"),
-    ("Arm L", "arm_l"), ("Arm R", "arm_r"),
-    ("Hand L", "hand_l"), ("Hand R", "hand_r"),
-    ("Leg L", "leg_l"), ("Leg R", "leg_r"),
+    ("All", "all"),
 )
 
 _BUTTON_STYLE = (
@@ -33,10 +34,6 @@ _BUTTON_STYLE = (
     "padding: 4px; border-radius: 3px; }"
     "QPushButton:hover { background: #4a4a4a; }"
     "QPushButton:disabled { color: #6a6a6a; }"
-)
-
-_TOGGLE_STYLE = _BUTTON_STYLE + (
-    "QPushButton:checked { background: #5a4a7a; color: #f0e8ff; }"
 )
 
 _CONNECT_STYLE = (
@@ -121,30 +118,32 @@ class PickerWindow(QtWidgets.QMainWindow):
         self.build_button = QtWidgets.QPushButton("Build", bar)
         self.build_button.setStyleSheet(_BUTTON_STYLE)
         self.build_button.setToolTip(
-            "Build the rig over the current animation, replacing whatever\n"
-            "is there. Default: IK arms and legs, FK root, spine and head.\n"
-            "With FK Limbs on: FK controllers on the arms and legs too.\n"
+            "Build the hybrid rig over the current animation, replacing\n"
+            "whatever is there: IK arms and legs, FK root, spine, head and\n"
+            "clavicles. Bring any limb to FK afterwards with FK Limbs.\n"
             "Fingers get no controllers - their buttons select the bones.")
         self.build_button.clicked.connect(lambda _checked=False: self.build_rig())
         row.addWidget(self.build_button)
 
         self.fk_limbs_button = QtWidgets.QPushButton("FK Limbs", bar)
-        self.fk_limbs_button.setStyleSheet(_TOGGLE_STYLE)
-        self.fk_limbs_button.setCheckable(True)
+        self.fk_limbs_button.setStyleSheet(_BUTTON_STYLE)
         self.fk_limbs_button.setToolTip(
-            "When on, Build makes the arms and legs FK as well.")
+            "Bring the selected arms/legs to FK - a controller, a bone, or\n"
+            "a picker button names the limb. IK converts (animation\n"
+            "re-baked), a bare chain builds FK, FK stays and says so.")
+        self.fk_limbs_button.clicked.connect(
+            lambda _checked=False: self.convert_selected_limbs(to_ik=False))
         row.addWidget(self.fk_limbs_button)
 
-        self.switch_button = QtWidgets.QPushButton("Switch FK/IK", bar)
-        self.switch_button.setStyleSheet(_BUTTON_STYLE)
-        self.switch_button.setToolTip(
-            "Convert the selected arms or legs to the opposite rig type.\n"
-            "With no rig on the limb, the first press builds its IK.\n"
-            "FK becomes IK, IK becomes FK; animation is re-baked. Finger\n"
-            "bones ride the hand either way - they carry no controllers.")
-        self.switch_button.clicked.connect(
-            lambda _checked=False: self.switch_selected_limbs())
-        row.addWidget(self.switch_button)
+        self.ik_limbs_button = QtWidgets.QPushButton("IK Limbs", bar)
+        self.ik_limbs_button.setStyleSheet(_BUTTON_STYLE)
+        self.ik_limbs_button.setToolTip(
+            "Bring the selected arms/legs to IK - a controller, a bone, or\n"
+            "a picker button names the limb. FK converts (animation\n"
+            "re-baked), a bare chain builds its IK, IK stays and says so.")
+        self.ik_limbs_button.clicked.connect(
+            lambda _checked=False: self.convert_selected_limbs(to_ik=True))
+        row.addWidget(self.ik_limbs_button)
 
         self.bake_button = QtWidgets.QPushButton("Bake+Delete", bar)
         self.bake_button.setStyleSheet(_BUTTON_STYLE)
@@ -344,44 +343,53 @@ class PickerWindow(QtWidgets.QMainWindow):
         return message
 
     def build_rig(self):
-        """Build the rig, replacing any previous build of either kind.
+        """Build the hybrid rig, replacing any previous build of either kind.
 
-        Hybrid by default -- IK arms and legs, FK everything else; full FK
-        when the FK Limbs toggle is on. The teardown of whatever exists
-        happens inside `rebuild`, so mixed post-Switch states are fine.
+        Always hybrid from the window since 2026-08-21 -- IK arms and legs,
+        FK everything else; any limb goes FK afterwards through FK Limbs.
+        The full-FK build stays reachable as `rebuild(fk_limbs=True)`. The
+        teardown of whatever exists happens inside `rebuild`, so mixed
+        states are fine.
         """
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
 
         self._run("Build", self.build_button, lambda: fkcontrols.rebuild(
-            self._scene_map, fk_limbs=self.fk_limbs_button.isChecked()))
+            self._scene_map, fk_limbs=False))
 
-    def switch_selected_limbs(self):
-        """Convert the selected arms/legs to the opposite rig type."""
+    def _selected_limbs(self):
+        """The switchable limbs the selection touches.
+
+        One innermost-owner resolution for both manifest kinds -- an arm
+        controller nested inside the torso's controllers must NOT drag
+        those in -- plus bones (a clavicle still names its arm), so a
+        viewport bone click works with no rig standing at all.
+        """
+        selected = cmds.ls(selection=True, long=True) or []
+        ik_limbs, fk_chains = fkcontrols.bake_targets(self._scene_map)
+        bone_owner = fkcontrols.switchable_bones(self._scene_map)
+        bone_hits = {bone_owner[p] for p in selected if p in bone_owner}
+        hit = set(ik_limbs) | set(fk_chains) | bone_hits
+        return [l for l in fkcontrols.SWITCHABLE if l in hit]
+
+    def convert_selected_limbs(self, to_ik):
+        """Bring the selected arms/legs to FK or IK; ones already there stay."""
         if not self._scene_map:
             self.status.showMessage(_UNBOUND_MESSAGE)
             return
 
-        selected = cmds.ls(selection=True, long=True) or []
-        # One innermost-owner resolution for both kinds -- an arm controller
-        # nested inside the torso's controllers must NOT drag those in.
-        ik_limbs, fk_chains = fkcontrols.bake_targets(self._scene_map)
-        # Bones resolve too: with no rig on the chain at all, the first
-        # Switch press builds its IK.
-        bone_owner = fkcontrols.switchable_bones(self._scene_map)
-        bone_hits = {bone_owner[p] for p in selected if p in bone_owner}
-
-        hit = set(ik_limbs) | set(fk_chains) | bone_hits
-        limbs = [l for l in fkcontrols.SWITCHABLE if l in hit]
+        limbs = self._selected_limbs()
         if not limbs:
             self.status.showMessage(
                 "Select an arm or leg - a controller, a bone, or its "
                 "picker button")
             return
 
-        self._run("Switch", self.switch_button,
-                  lambda: fkcontrols.switch_limbs(self._scene_map, limbs)[2])
+        label = "IK Limbs" if to_ik else "FK Limbs"
+        button = self.ik_limbs_button if to_ik else self.fk_limbs_button
+        self._run(label, button, lambda: fkcontrols.convert_limbs(
+            self._scene_map, limbs, to_ik)[2])
 
     def bake_selected_limbs(self):
         """Bake ONLY what the selection touches back to clean bones.

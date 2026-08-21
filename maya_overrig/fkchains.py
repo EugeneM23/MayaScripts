@@ -190,6 +190,29 @@ def switchable_bones(scene_map):
     return out
 
 
+def limbs_to_convert(limbs, states, to_ik):
+    """(to_switch, to_build, already) for a directional FK/IK press.
+
+    The 2026-08-21 buttons bring the selection TO a type, where Switch
+    flipped it. `states` is {limb: (is_ik, is_fk)}. A limb already in the
+    asked state is left alone and NAMED - pressing FK on an FK arm must not
+    rebuild it; one in the opposite state switches; a bare one (or one the
+    states never heard of) is built directly in the asked type.
+
+    Pure - the scene arrives as data, order is preserved.
+    """
+    to_switch, to_build, already = [], [], []
+    for limb in limbs:
+        is_ik, is_fk = states.get(limb, (False, False))
+        if is_ik if to_ik else is_fk:
+            already.append(limb)
+        elif is_ik or is_fk:
+            to_switch.append(limb)
+        else:
+            to_build.append(limb)
+    return to_switch, to_build, already
+
+
 def innermost_owner(node, candidates):
     """The (kind, name) whose member is the node's NEAREST recorded ancestor.
 

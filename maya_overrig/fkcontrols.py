@@ -22,7 +22,8 @@ from maya_overrig.fkchains import (  # noqa: F401 -- fkcontrols is the API
     CHAINS, FINGER_CHAINS, FINGER_JOINTS, BUILDABLE, HYBRID_FK_CHAINS,
     build_targets, controller_name, chain_set, finger_chains_for,
     chain_root, chain_tip, chain_root_control, switchable_bones,
-    innermost_owner, dependent_chains, limbs_riding_inside, attach_parent)
+    innermost_owner, dependent_chains, limbs_riding_inside, attach_parent,
+    limbs_to_convert)
 from maya_overrig.fkrings import (  # noqa: F401 -- fkcontrols is the API
     colour_for, rollup, apply_size_rules, stagger, radius_from, is_square,
     at_bone_end, square_points, _skin_data, _parent_map, _vertex_buckets,
@@ -812,3 +813,50 @@ def switch_limbs(scene_map, limbs):
     if notes:
         message += ". " + "; ".join(notes)
     return done, skipped, message
+
+
+def convert_limbs(scene_map, limbs, to_ik):
+    """Bring each limb TO the asked type; ones already there are left alone.
+
+    The directional half of the 2026-08-21 toolbar: FK Limbs / IK Limbs
+    replaced the flip-style Switch button. Everything that touches the
+    scene is machinery that already exists and is already live-proven --
+    `switch_limbs` for the conversions (and, toward IK, for bare chains: it
+    builds their IK itself), `build_fk(only=...)` for bare chains asked to
+    FK. Returns (done, skipped, message) exactly as switch_limbs does.
+    """
+    message = _mel_gate()
+    if message:
+        return [], list(limbs), message
+
+    label = "IK" if to_ik else "FK"
+    wanted = [l for l in limbs if l in SWITCHABLE]
+    skipped = [l for l in limbs if l not in SWITCHABLE]
+    built = set(builder.built_limbs())
+    states = {l: (l in built, bool(chain_members(l))) for l in wanted}
+    to_switch, to_build, already = limbs_to_convert(wanted, states, to_ik)
+    if to_ik:
+        # switch_limbs builds a bare chain's IK on its own - the auto-build
+        # path the old Switch button already proved live.
+        to_switch = to_switch + to_build
+        to_build = []
+
+    done = []
+    parts = []
+    if to_switch:
+        switched, refused, note = switch_limbs(scene_map, to_switch)
+        done += switched
+        skipped += refused
+        parts.append(note)
+    if to_build:
+        _count, note = build_fk(scene_map, only=to_build)
+        done += [l + " -> FK (built)" for l in to_build]
+        # Name the limbs first: build_fk's own message is counts, and the
+        # animator asked about a limb, not about node bookkeeping.
+        parts.append("Built FK on: " + ", ".join(to_build))
+        parts.append(note)
+    if already:
+        parts.append("Already {0}: {1}".format(label, ", ".join(already)))
+    if not parts:
+        parts.append("Nothing to bring to {0}".format(label))
+    return done, skipped, " | ".join(parts)

@@ -290,6 +290,14 @@ class TestOverRigGuard(unittest.TestCase):
         self.assertEqual(skipped, ["arm_l"])
         self.assertIn("OverRig", message)
 
+    def test_convert_refuses_and_explains(self):
+        """The directional buttons run MEL too - same gate, same message."""
+        done, skipped, message = fkcontrols.convert_limbs(self.SCENE_MAP,
+                                                          ["arm_l"], True)
+        self.assertEqual(done, [])
+        self.assertEqual(skipped, ["arm_l"])
+        self.assertIn("OverRig", message)
+
     def test_bake_fk_refuses_and_explains(self):
         removed, message = fkcontrols.bake_fk(self.SCENE_MAP)
         self.assertEqual(removed, 0)
@@ -316,6 +324,40 @@ class TestSwitchable(unittest.TestCase):
         """Always FK (2026-08-21): there is nothing to switch them to."""
         self.assertNotIn("clavicle_l", fkcontrols.SWITCHABLE)
         self.assertNotIn("clavicle_r", fkcontrols.SWITCHABLE)
+
+
+class TestLimbsToConvert(unittest.TestCase):
+    """The directional buttons' policy (2026-08-21): FK Limbs / IK Limbs
+    bring the selection TO a type, where Switch flipped it. A limb already
+    there is left alone and NAMED - pressing FK on an FK arm must not
+    rebuild it."""
+
+    STATES = {"arm_l": (True, False),    # IK
+              "arm_r": (False, True),    # FK
+              "leg_l": (False, False)}   # bare
+
+    def test_to_fk_switches_ik_builds_bare_and_names_fk(self):
+        to_switch, to_build, already = fkcontrols.limbs_to_convert(
+            ["arm_l", "arm_r", "leg_l"], self.STATES, to_ik=False)
+        self.assertEqual(to_switch, ["arm_l"])
+        self.assertEqual(to_build, ["leg_l"])
+        self.assertEqual(already, ["arm_r"])
+
+    def test_to_ik_switches_fk_builds_bare_and_names_ik(self):
+        to_switch, to_build, already = fkcontrols.limbs_to_convert(
+            ["arm_l", "arm_r", "leg_l"], self.STATES, to_ik=True)
+        self.assertEqual(to_switch, ["arm_r"])
+        self.assertEqual(to_build, ["leg_l"])
+        self.assertEqual(already, ["arm_l"])
+
+    def test_an_unknown_limb_counts_as_bare(self):
+        to_switch, to_build, already = fkcontrols.limbs_to_convert(
+            ["leg_r"], {}, to_ik=True)
+        self.assertEqual((to_switch, to_build, already), ([], ["leg_r"], []))
+
+    def test_empty_selection_converts_nothing(self):
+        self.assertEqual(fkcontrols.limbs_to_convert([], self.STATES, True),
+                         ([], [], []))
 
 
 class TestDependentChains(unittest.TestCase):
