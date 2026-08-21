@@ -251,9 +251,25 @@ that runs MEL — `build_fk`, `rebuild`, `switch_limbs`, `bake_fk`,
 when the toolset cannot be found at all (trap 20). Default: the hybrid
 rig — IK arms and legs (`builder.DEFAULT_IK`), FK on
 root/pelvis/spine/neck/clavicles (`HYBRID_FK_CHAINS`, six chains, twelve
-controllers). With the **FK Limbs** toggle pressed: FK on the arms and legs
-too (ten chains, 26 controllers). No ball controls in hybrid — same as the
-post-Switch IK state; switching a leg to FK brings them back.
+controllers). **The window always builds hybrid** (2026-08-21 — the FK Limbs
+toggle is gone); the full-FK build stays reachable as
+`rebuild(fk_limbs=True)`, which `verify_hybrid_build.py` still exercises,
+and for the animator as Build → select all → FK Limbs. No ball controls in
+hybrid — same as the post-IK state; bringing a leg to FK brings them back.
+
+**The toolbar is directional since 2026-08-21** («от кнопочки switch давай
+избавимся»): the Switch button is gone, and **FK Limbs / IK Limbs** bring
+the selected limbs — controller, bone or picker button, a clavicle still
+naming its arm — TO the asked type. A limb already there is left alone and
+named ("Already FK: arm_l"), the opposite one converts through
+`switch_limbs`, and a bare chain builds directly in the asked type (toward
+IK via `switch_limbs`' own auto-build, toward FK via `build_fk(only=...)`).
+The policy is pure (`fkchains.limbs_to_convert`), the orchestrator is
+`fkcontrols.convert_limbs`, and **`switch_limbs` itself stays** — it is the
+engine under the buttons, Connect's auto-IK, and three verify scripts'
+harness. The group-selection row is one **All** button (the user's call:
+the other nine duplicated the body map); `bodymap.group_members` still
+knows every group.
 
 **The clavicles are their own always-FK chains** (2026-08-21, the
 pelvis/spine split applied to the shoulders): `clavicle_l/r` left the arm
@@ -311,7 +327,7 @@ verify scripts and the design spec history live at commit `0e0794f`; the
 spec `2026-08-15-spline-ik-spine-design.md` documents every decision and
 every trap it fought. The `CHAINS` split of `pelvis` from `spine` is KEPT —
 it is harmless in FK and is a prerequisite for the IK's return. Selecting
-a spine bone and pressing Switch now says "select an arm or leg".
+a spine bone and pressing FK Limbs or IK Limbs says "select an arm or leg".
 
 **Bake+Delete bakes ONLY what the selection touches** onto clean bones —
 controllers, bones, or picker buttons — and everything else stays rigged
@@ -324,10 +340,11 @@ chains down with it; FK chains bake per chain, expanding to whatever rides
 inside them (a chain cannot outlive its container). Nested rigs are baked
 before their container.
 
-**Switch auto-builds**: selecting any bone of a switchable chain (viewport
-or picker) with no rig on that chain makes the first Switch press build its
-IK; the next press converts to FK as usual (`switchable_bones` resolves
-bones to chains, including clavicles and balls).
+**A bare chain builds on the first press**: selecting any bone of a
+switchable chain (viewport or picker) with no rig on it makes IK Limbs
+build its IK and FK Limbs build its FK (`switchable_bones` resolves bones
+to chains, including clavicles and balls; inside `switch_limbs` the
+bare-to-IK path is the old Switch auto-build, unchanged).
 
 **The FK engine** (`fkcontrols.build_fk`, driven by Build) builds real FK
 controllers through OverRig knots: up to 17 chains over the 64 bones
@@ -418,9 +435,11 @@ anchored in world and Build says so ("no root bone - IK limbs stay in
 world"); hanging them on the pelvis instead would drag the planted feet, so
 that is deliberate, and a synthetic master control is not built.
 
-**Switch FK/IK** converts whatever arms/legs/spine the selection touches to
+**The switch engine** converts whatever arms/legs the selection touches to
 the opposite rig type, per limb, animation re-baked at every step
-(`fkcontrols.switch_limbs`, table `SWITCHABLE`). The FK manifest is per-chain
+(`fkcontrols.switch_limbs`, table `SWITCHABLE`; since 2026-08-21 the UI
+reaches it through the directional `convert_limbs` — there is no flip-style
+button any more). The FK manifest is per-chain
 (`RigPicker_fk_<chain>`; the flat `RigPicker_fk` is legacy, absorbed by a full
 bake). Rider chains ride through an arm switch: `apply_Parent_out` lifts them
 to world, the arm converts, `apply_Parent_in` hangs them on the new hand
@@ -429,7 +448,8 @@ them. **No chain rides today** (fingers are the only ones that ever did, and
 they are off the build list), so this path runs only on a file rigged before
 2026-08-18; `_rehang_riders` returns early on an empty list rather than falling
 through, because asking for the anchor CREATES it.
-A chain with no rig at all auto-builds its IK on the first Switch press.
+A chain with no rig at all auto-builds its IK when asked to IK (the old
+first-Switch-press behaviour, now reached through IK Limbs).
 `apply_Parent_out`/`_in` semantics (both verified by experiment): selection is
 child-then-parent for `_in`, the child alone for `_out`; both re-bake into the
 new space with zero drift. Mixed FK/IK states are normal.
