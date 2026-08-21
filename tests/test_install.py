@@ -6,8 +6,10 @@ and none is going in.
 """
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 import install
@@ -140,6 +142,53 @@ class ButtonSpecs(unittest.TestCase):
                 "C:\\Users\\Some Body\\Documents\\maya\\scripts\\SkeldarAnim"):
             self.assertNotIn("\\", spec["command"])
             self.assertNotIn("\\", spec["image"])
+
+
+class CopyPayload(unittest.TestCase):
+    """copy_payload against a throwaway destination: whitelist in,
+    caches out, idempotent, and never eats its own source."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="skeldar_install_")
+        self.dest = os.path.join(self.tmp, "SkeldarAnim")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_copies_exactly_the_payload(self):
+        install.copy_payload(REPO, self.dest)
+        self.assertEqual(sorted(os.listdir(self.dest)),
+                         sorted(install.payload()))
+
+    def test_pycache_stays_home(self):
+        install.copy_payload(REPO, self.dest)
+        for base, dirs, files in os.walk(self.dest):
+            self.assertNotIn("__pycache__", dirs, base)
+            for name in files:
+                self.assertFalse(name.endswith(".pyc"),
+                                 os.path.join(base, name))
+
+    def test_overrig_misc_survives_the_trip(self):
+        """OverRig's own button points $path_to_JGLBN at misc/."""
+        install.copy_payload(REPO, self.dest)
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.dest, "overrig", "misc")))
+
+    def test_second_run_replaces_rather_than_accumulates(self):
+        install.copy_payload(REPO, self.dest)
+        stray = os.path.join(self.dest, "stray.txt")
+        with open(stray, "w") as handle:
+            handle.write("left over")
+        install.copy_payload(REPO, self.dest)
+        self.assertFalse(os.path.exists(stray))
+
+    def test_same_place_sees_through_slash_styles(self):
+        os.makedirs(self.dest)
+        self.assertTrue(install.same_place(
+            self.dest, self.dest.replace("\\", "/")))
+
+    def test_same_place_is_false_for_a_missing_destination(self):
+        self.assertFalse(install.same_place(REPO, self.dest))
 
 
 if __name__ == "__main__":

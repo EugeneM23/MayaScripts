@@ -35,9 +35,12 @@ What a drop does, in order:
 2. **Copy the payload** to `<internalVar(userAppDir)>/scripts/SkeldarAnim/`.
    The payload is a **whitelist**, not "everything next to install.py":
    `maya_overrig/`, `maya_uebridge/`, `maya_scenesetup/`, `maya_overshoot.py`,
-   `icons/`, `assets/`, `overrig/`. Tests, docs, archive and the other
-   root-level tools stay out of the animator's prefs. `__pycache__` and
-   `*.pyc` are excluded on copy.
+   `icons/`, `assets/`, `overrig/`, plus `install.py` and
+   `README_INSTALL.txt` themselves — the installer ships itself, because a
+   colleague repairs the shelf by re-dragging `install.py` from the
+   installed folder, so the installed folder must hold it. Tests, docs,
+   archive and the other root-level tools stay out of the animator's
+   prefs. `__pycache__` and `*.pyc` are excluded on copy.
 3. **Idempotence:** an existing destination folder is deleted and rewritten —
    except when the source **is** the destination (a colleague re-drags
    `install.py` from the installed folder itself to repair the shelf; deleting

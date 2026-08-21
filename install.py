@@ -92,3 +92,83 @@ def button_specs(dest):
             "base_OverRig_scripts(1);\n").format(dest),
     })
     return specs
+
+
+def same_place(a, b):
+    """True when the two paths are one folder on disk.
+
+    The guard that keeps a re-drag from the installed folder itself from
+    rmtree-ing the very files it is about to copy.
+    """
+    if not (os.path.isdir(a) and os.path.isdir(b)):
+        return False
+    return os.path.samefile(a, b)
+
+
+def copy_payload(src_root, dest):
+    """The whitelist into `dest`, replacing whatever was there."""
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    os.makedirs(dest)
+    ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+    for name in payload():
+        src = os.path.join(src_root, name)
+        target = os.path.join(dest, name)
+        if os.path.isdir(src):
+            shutil.copytree(src, target, ignore=ignore)
+        else:
+            shutil.copy2(src, target)
+
+
+def _build_shelf(dest):
+    """The SkeldarAnim tab, rebuilt button-for-button.
+
+    The tab is created through Maya's own addNewShelfTab (it keeps the
+    shelf optionVars consistent) and never deleted -- an existing tab
+    only has its buttons replaced, which is what makes a re-drag an
+    update rather than a duplicate.
+    """
+    import maya.cmds as cmds
+    import maya.mel as mel
+    if not cmds.shelfLayout(SHELF, exists=True):
+        mel.eval('addNewShelfTab "{0}";'.format(SHELF))
+    for child in cmds.shelfLayout(SHELF, query=True, childArray=True) or []:
+        cmds.deleteUI(child)
+    for spec in button_specs(dest):
+        cmds.shelfButton(
+            label=spec["label"],
+            annotation=spec["annotation"],
+            image=spec["image"],
+            sourceType=spec["sourceType"],
+            command=spec["command"],
+            parent=SHELF,
+        )
+
+
+def install(dropped=None, quiet=False):
+    """Copy the payload, build the shelf, say so.
+
+    `dropped` is the path Maya hands onMayaDroppedPythonFile; __file__
+    is the fallback. `quiet` skips the confirm dialog: a modal dialog
+    over the command port blocks Maya's idle queue, so scripted runs
+    must never raise one.
+    """
+    import maya.cmds as cmds
+    src = os.path.dirname(os.path.abspath(dropped)) if dropped \
+        else source_root()
+    dest = os.path.join(cmds.internalVar(userAppDir=True),
+                        "scripts", SHELF)
+    if not same_place(src, dest):
+        copy_payload(src, dest)
+    _build_shelf(dest.replace("\\", "/"))
+    if not quiet:
+        cmds.confirmDialog(
+            title="SkeldarAnim",
+            message="Installed: shelf {0}, {1} buttons.\n{2}".format(
+                SHELF, len(button_specs(dest)), dest),
+            button=["OK"])
+    return dest
+
+
+def onMayaDroppedPythonFile(*args):
+    install(args[0] if args else None)
