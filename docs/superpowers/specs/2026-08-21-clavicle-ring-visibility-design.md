@@ -35,12 +35,14 @@ language, just at the other end of the bone. So:
 - **`_SCALE` gains the clavicles** (the table that exists exactly for
   user-driven size fixes): the skin-measured 9.0 is the spread around the
   clavicle AXIS; around the deltoid the meaningful comparison is the
-  upperarm's measured 7.75, so the ring must beat that with a visible
-  margin. Factor **1.4** → radius ≈ 12.6, standing ~4.9 proud of the deltoid
-  all around — the proportion the other rings' margins give. (Chosen against
-  the measurements above, confirmed by looking at an actual viewport
-  capture; a number that "should be fine" was not acceptable after the
-  first invisible ring.)
+  upperarm's measured 7.75. Factor **1.7** → radius ≈ 15.3. The number was
+  chosen by LOOKING, not computed: 1.4 (≈12.6, "4.9 proud of the deltoid")
+  read correct on paper and still dipped its lower arc into the arm on the
+  real mesh — judged on a viewport capture through the bridge, corrected,
+  re-shot. At 1.7 the ring reads as a bold arc over the shoulder from the
+  front and a clear full circle from the ¾ view; the inner-lower arc still
+  passes behind the trapezius, which is the normal look of a shoulder
+  control and nothing like the total burial that was the complaint.
 - A bone in `_AT_BONE_END` with no joint child keeps the origin centre —
   same as today, nothing to point at (the UE4-schema rig has upperarms, so
   this is a guard, not a path).

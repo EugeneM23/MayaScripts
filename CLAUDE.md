@@ -279,6 +279,18 @@ CONTROL is not switchable — it is always FK. Old files degrade cleanly:
 their clavicle knots are recorded in the old arm manifests, and teardown
 reads manifests, not the table.
 
+**The clavicle ring is drawn at the bone's far END, not its origin**
+(`fkrings._AT_BONE_END`, same day: «контролеры не видно из-за меша»). The
+origin sits 1.4 cm off the midline INSIDE the chest, so a ring centred
+there was invisible; centred on the first joint child (the shoulder) it
+arcs over the deltoid — the pivot does not move, only the drawing. The end
+is computed through the knot's inverse matrix, never assumed to be
+`(length, 0, 0)`. Size correction rides the existing `_SCALE` table at
+**1.7** — 1.4 read right on paper and still dipped into the arm on the
+real mesh; the number was chosen by looking at viewport captures taken
+through the bridge, and that is the standard this table's entries are held
+to now. A bone in `_AT_BONE_END` with no joint child keeps the origin.
+
 **No FK controllers on the fingers** (2026-08-18, the user's call: "буду
 анимировать на костях"). The ten finger chains stay in `CHAINS` and are left
 off a new `BUILDABLE`, which is what every build filters through
@@ -547,7 +559,17 @@ which is no longer true — so their last green run predated the rewrite.
 **`verify_hybrid_build.py` has since run green live (2026-08-21, 0
 failures)** with its new clavicle gates — including two full builds, the
 FK-limbs flip and an arm switch both ways — so it doubles as proof the
-rewrite itself is sound; the other four still await a live run.
+rewrite itself is sound; the other four still await a live run. Its reset
+now **bakes the twist rig and restores the BIND POSE** (and restores it
+again at the end): the original version keyed literal zeros on
+`upperarm_l`/`spine_03` — trap 30 verbatim, this skeleton's bind lives in
+its rotate channels — and every run bent the skeleton a little further,
+until the arm stood straight up and pose-dependent gates (world-X ring
+position, a +25° shrug against a straight arm at full extension) failed on
+correct code. Gates that measure placement now measure against BONES, and
+the shrug is +10° with the hand judged relative to the shoulder's travel.
+dagPose refuses to restore while the twist networks drive their channels —
+hence the twist bake first.
 `verify_twist_bones.py`
 (2026-08-20) is **green: 0 of 30 gates failed** in the Manny scene, and it
 found three real bugs on the way (traps 41–43). It runs in

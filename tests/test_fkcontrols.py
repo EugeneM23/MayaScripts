@@ -745,6 +745,17 @@ class TestApplySizeRules(unittest.TestCase):
         self.assertEqual(found["hand_l"], 5.5)
         self.assertEqual(found["pelvis"], 15.9)
 
+    def test_clavicles_grow(self):
+        """Their ring lives around the DELTOID now (2026-08-21), and must
+        beat the upperarm's measured 7.75 with a visible margin - the
+        skin-measured 9.0 barely did."""
+        found = fkcontrols.apply_size_rules({"clavicle_l": 9.02,
+                                             "clavicle_r": 8.75})
+        self.assertGreater(found["clavicle_l"], 9.02 * 1.3)
+        self.assertGreater(found["clavicle_r"], 8.75 * 1.3)
+        self.assertAlmostEqual(found["clavicle_l"] / 9.02,
+                               found["clavicle_r"] / 8.75, places=6)
+
     def test_borrowing_uses_the_measured_value_not_a_corrected_one(self):
         """Rules must not chain, or one correction would feed another."""
         found = fkcontrols.apply_size_rules({"spine_05": 3.9, "spine_04": 10.0,
@@ -762,6 +773,29 @@ class TestApplySizeRules(unittest.TestCase):
 
     def test_empty_input(self):
         self.assertEqual(fkcontrols.apply_size_rules({}), {})
+
+
+class TestAtBoneEnd(unittest.TestCase):
+    """Rings drawn at the bone's far end instead of its origin.
+
+    The clavicle's origin sits 1.4 cm off the midline, inside the chest --
+    a ring centred there is invisible from everywhere («контролеры не
+    видно из-за меша»). Its band belongs around the deltoid, at the other
+    end of the bone."""
+
+    def test_the_clavicles_and_only_the_clavicles(self):
+        self.assertTrue(fkcontrols.at_bone_end("clavicle_l"))
+        self.assertTrue(fkcontrols.at_bone_end("clavicle_r"))
+        for button in bodymap.BUTTONS:
+            if button.joint.startswith("clavicle"):
+                continue
+            self.assertFalse(fkcontrols.at_bone_end(button.joint),
+                             button.joint)
+
+    def test_every_listed_bone_is_a_real_chain_bone(self):
+        chained = {j for _, chain in fkcontrols.CHAINS for j in chain}
+        for joint in ("clavicle_l", "clavicle_r"):
+            self.assertIn(joint, chained)
 
 
 class TestStagger(unittest.TestCase):

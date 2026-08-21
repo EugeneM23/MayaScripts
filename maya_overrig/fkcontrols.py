@@ -25,10 +25,10 @@ from maya_overrig.fkchains import (  # noqa: F401 -- fkcontrols is the API
     innermost_owner, dependent_chains, limbs_riding_inside, attach_parent)
 from maya_overrig.fkrings import (  # noqa: F401 -- fkcontrols is the API
     colour_for, rollup, apply_size_rules, stagger, radius_from, is_square,
-    square_points, _skin_data, _parent_map, _vertex_buckets, _radius_for,
-    _style_curve, _make_ring, _make_square, _final_radii, _bone_knot_map,
-    _hide_native_shapes, _hide_rig_machinery, _dress_knots, _BORROW, _SCALE,
-    _SQUARE)
+    at_bone_end, square_points, _skin_data, _parent_map, _vertex_buckets,
+    _radius_for, _style_curve, _make_ring, _make_square, _final_radii,
+    _bone_knot_map, _hide_native_shapes, _hide_rig_machinery, _dress_knots,
+    _BORROW, _SCALE, _SQUARE)
 from maya_overrig.fkalign import (  # noqa: F401 -- fkcontrols is the API
     merge_key_times, is_constant, orient_controllers, align_controllers,
     _euler_matrix, _ROTATE_CHANNELS)

@@ -69,7 +69,12 @@ _BORROW = {"spine_05": ("spine_04", 1.05)}
 
 # The feet measure their length rather than their girth: the bone axis runs
 # along the foot, so the perpendicular spread picks up the whole sole.
-_SCALE = {"foot_l": 0.5, "foot_r": 0.5}
+# The clavicle rings live around the DELTOID (see _AT_BONE_END) and must
+# clear it whole; the skin-measured 9.0 buried them («контролеры не видно»,
+# 2026-08-21), and 1.4 still dipped the lower arc into the arm on the real
+# mesh -- judged on a viewport capture, not a guess. 1.7 floats free.
+_SCALE = {"foot_l": 0.5, "foot_r": 0.5,
+          "clavicle_l": 1.7, "clavicle_r": 1.7}
 
 
 def apply_size_rules(radii):
@@ -116,10 +121,24 @@ def radius_from(distances, percentile=0.75, margin=1.1):
 # in a stack of near-equal spine rings and disappears among them.
 _SQUARE = frozenset({"pelvis"})
 
+# Bones whose ring is centred on the bone's far END (its first joint child)
+# instead of its origin. The clavicle's origin sits 1.4 cm off the midline,
+# INSIDE the chest, so a ring centred there is invisible from everywhere;
+# its band belongs around the deltoid, at the other end of the bone -- the
+# same visual language as every other ring, just at the far end. The pivot
+# does not move: the control still turns about the bone origin, and the
+# ring sweeping with the shoulder is what a clavicle control does anywhere.
+_AT_BONE_END = frozenset({"clavicle_l", "clavicle_r"})
+
 
 def is_square(joint):
     """True when the joint's controller draws as a square, not a ring."""
     return joint in _SQUARE
+
+
+def at_bone_end(joint):
+    """True when the joint's ring is drawn at the bone's far end."""
+    return joint in _AT_BONE_END
 
 
 def square_points(radius):
@@ -248,11 +267,32 @@ def _style_curve(transform, colour):
         cmds.setAttr(shape + ".lineWidth", _LINE_WIDTH)
 
 
-def _make_ring(name, radius, normal, colour):
+def _make_ring(name, radius, normal, colour, center=(0.0, 0.0, 0.0)):
     ring = cmds.circle(name=name, normal=normal, radius=radius,
-                       sections=_SECTIONS, constructionHistory=False)[0]
+                       center=center, sections=_SECTIONS,
+                       constructionHistory=False)[0]
     _style_curve(ring, colour)
     return ring
+
+
+def _bone_end_local(knot, bone):
+    """The bone's far end (its first joint child) in the knot's local space.
+
+    The knot stands ON the bone (parentConstrAnim), so this is very nearly
+    (bone length, 0, 0) -- but computed, never assumed: the knot's frame is
+    OverRig's, not ours. A bone with no joint child keeps the origin --
+    nothing to point at, and a buried ring beats a wrong one.
+    """
+    kids = cmds.listRelatives(bone, children=True, type="joint",
+                              fullPath=True) or []
+    if not kids:
+        return (0.0, 0.0, 0.0)
+    end = om.MPoint(*cmds.xform(kids[0], query=True, worldSpace=True,
+                                translation=True))
+    inverse = om.MMatrix(cmds.xform(knot, query=True, worldSpace=True,
+                                    matrix=True)).inverse()
+    local = end * inverse
+    return (local.x, local.y, local.z)
 
 
 def _make_square(name, radius, colour):
@@ -404,12 +444,15 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
             normal = (up.x, up.y, up.z)
         else:
             normal = (1, 0, 0)
+        center = (_bone_end_local(knot, bone) if at_bone_end(bare)
+                  else (0.0, 0.0, 0.0))
         if is_square(bare):
             ring = _make_square(bare + "_FK_ring_tmp", radii.get(bare, 1.0),
                                 colour_for(region_of[bare]))
         else:
             ring = _make_ring(bare + "_FK_ring_tmp", radii.get(bare, 1.0),
-                              normal, colour_for(region_of[bare]))
+                              normal, colour_for(region_of[bare]),
+                              center=center)
         shape = cmds.listRelatives(ring, shapes=True, fullPath=True)[0]
         cmds.parent(shape, knot, relative=True, shape=True)
         cmds.delete(ring)

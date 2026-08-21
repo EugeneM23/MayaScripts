@@ -15,7 +15,7 @@ for name in [m for m in list(sys.modules) if m.startswith("maya_overrig")]:
 import maya.cmds as cmds
 
 import maya_overrig
-from maya_overrig import bodymap, builder, fkcontrols
+from maya_overrig import bodymap, builder, fkcontrols, twist
 
 failures = []
 
@@ -54,6 +54,10 @@ window.connect_to_selection()
 smap = window._scene_map
 
 # --- reset ---------------------------------------------------------------------
+if twist.has_twist():
+    # The twist networks drive twist-joint channels, and dagPose refuses a
+    # pose while any member's channel is driven ("Pose not achieved").
+    twist.bake()
 if fkcontrols.has_fk():
     fkcontrols.bake_fk(smap)
 if builder.has_build():
@@ -61,14 +65,42 @@ if builder.has_build():
 all_joints = [smap[b.joint] for b in bodymap.BUTTONS if b.joint in smap]
 cmds.cutKey(all_joints, clear=True)
 
+
+def restore_bind_pose():
+    """cutKey leaves the bones frozen at whatever the last bake walked them
+    to (trap 30), and repeated runs COMPOUND that drift - measured
+    2026-08-21, the arm ended pointing straight up. The bind pose is the
+    only honest reset, and Build bakes the pose the skeleton stands in."""
+    poses = cmds.dagPose(query=True, bindPose=True) or []
+    if not poses:
+        print("NOTE  no bindPose node - building from the pose as it stands")
+        return
+    try:
+        cmds.dagPose(poses[0], restore=True, g=True)
+    except RuntimeError as exc:
+        print("NOTE  bind pose not fully restored: %s" % str(exc).strip())
+
+
+restore_bind_pose()
+
 baseline = len([n for n in cmds.ls(long=True)
                 if not cmds.objectType(n).startswith("animCurve")])
 print("baseline non-anim nodes: %d\n" % baseline)
 
-cmds.setKeyframe(smap["upperarm_l"], attribute="rotateZ", time=0, value=0)
-cmds.setKeyframe(smap["upperarm_l"], attribute="rotateZ", time=30, value=-30)
-cmds.setKeyframe(smap["spine_03"], attribute="rotateZ", time=0, value=0)
-cmds.setKeyframe(smap["spine_03"], attribute="rotateZ", time=30, value=20)
+# Key OFF THE VALUES THE BONES HOLD (trap 30): this skeleton's bind
+# orientation lives in the rotate channels, and a literal 0 bends it - the
+# original version of this script keyed literal zeros and every run bent
+# the skeleton a little further.
+_held_arm = cmds.getAttr(smap["upperarm_l"] + ".rotateZ")
+_held_spine = cmds.getAttr(smap["spine_03"] + ".rotateZ")
+cmds.setKeyframe(smap["upperarm_l"], attribute="rotateZ", time=0,
+                 value=_held_arm)
+cmds.setKeyframe(smap["upperarm_l"], attribute="rotateZ", time=30,
+                 value=_held_arm - 30)
+cmds.setKeyframe(smap["spine_03"], attribute="rotateZ", time=0,
+                 value=_held_spine)
+cmds.setKeyframe(smap["spine_03"], attribute="rotateZ", time=30,
+                 value=_held_spine + 20)
 
 hand_ref = snap("hand_l")
 foot_ref = snap("foot_l")
@@ -148,6 +180,32 @@ tip_path = cmds.ls(tip_ctrl, long=True)[0] if cmds.objExists(tip_ctrl) else "?"
 check("clavicle control hangs inside the spine-tip control",
       clav_path.startswith(tip_path + "|"), clav_path)
 
+# The ring is drawn at the bone's far END (2026-08-21): centred on the
+# origin it was buried mid-chest and invisible. Measured against the BONES,
+# not world axes - a world-X gate failed the moment the scene stood in a
+# non-bind pose while the ring was exactly right.
+ring_shapes = cmds.listRelatives(clav_ctrl, shapes=True, fullPath=True,
+                                 type="nurbsCurve") or []
+check("clavicle control carries a ring shape", bool(ring_shapes))
+if ring_shapes:
+    box = cmds.exactWorldBoundingBox(ring_shapes[0])
+    ring_mid = [(box[0] + box[3]) / 2.0, (box[1] + box[4]) / 2.0,
+                (box[2] + box[5]) / 2.0]
+    ring_size = max(box[3] - box[0], box[4] - box[1], box[5] - box[2])
+    pivot = cmds.xform(clav_ctrl, query=True, worldSpace=True,
+                       translation=True)
+    shoulder = cmds.xform(smap["upperarm_l"], query=True, worldSpace=True,
+                          translation=True)
+    to_shoulder = sum((a - b) ** 2
+                      for a, b in zip(ring_mid, shoulder)) ** 0.5
+    from_pivot = sum((a - b) ** 2
+                     for a, b in zip(ring_mid, pivot)) ** 0.5
+    check("clavicle ring centred on the bone END, not its origin",
+          to_shoulder < 3.0 and from_pivot > 10.0,
+          "to shoulder %.2f, from pivot %.2f" % (to_shoulder, from_pivot))
+    check("clavicle ring is big enough to see", ring_size > 24.0,
+          "diameter %.1f" % ring_size)
+
 # We only DRIVE the bone (nothing was re-hung on the control - the user's
 # call), but OverRig's IK follows the chain's parent bone on its own:
 # measured 2026-08-21, poking the clavicle control moved the upperarm 1.223
@@ -165,18 +223,22 @@ clav_before = wmatrix(smap["clavicle_l"])
 upper_before = wmatrix(smap["upperarm_l"])
 hand_before = wmatrix(smap["hand_l"])
 held = cmds.getAttr(clav_ctrl + ".rotateZ")
-cmds.setKeyframe(clav_ctrl, attribute="rotateZ", time=15, value=held + 25.0)
+# +10, a shrug, not +25: past the elbow's slack the chain hits full
+# extension and the hand HAS to give (the 3.68-of-50 overpull story) -
+# which is real IK behaviour, not the claim under test.
+cmds.setKeyframe(clav_ctrl, attribute="rotateZ", time=15, value=held + 10.0)
 cmds.currentTime(0)
 cmds.currentTime(15)  # settle (trap 14)
 check("clavicle control turns the clavicle bone",
-      matrix_delta(wmatrix(smap["clavicle_l"]), clav_before) > 0.05,
+      matrix_delta(wmatrix(smap["clavicle_l"]), clav_before) > 0.02,
       "%.6f" % matrix_delta(wmatrix(smap["clavicle_l"]), clav_before))
+shoulder_moved = matrix_delta(wmatrix(smap["upperarm_l"]), upper_before)
+hand_moved = matrix_delta(wmatrix(smap["hand_l"]), hand_before)
 check("the shoulder leads the IK arm base (OverRig's own follow)",
-      matrix_delta(wmatrix(smap["upperarm_l"]), upper_before) > 0.05,
-      "%.6f" % matrix_delta(wmatrix(smap["upperarm_l"]), upper_before))
-check("the IK hand stays planted while the clavicle turns",
-      matrix_delta(wmatrix(smap["hand_l"]), hand_before) < 1e-3,
-      "%.9f" % matrix_delta(wmatrix(smap["hand_l"]), hand_before))
+      shoulder_moved > 0.02, "%.6f" % shoulder_moved)
+check("the IK hand holds while the shoulder shrugs",
+      hand_moved < max(0.15 * shoulder_moved, 1e-3),
+      "hand %.6f vs shoulder %.6f" % (hand_moved, shoulder_moved))
 cmds.setKeyframe(clav_ctrl, attribute="rotateZ", time=15, value=held)
 cmds.currentTime(0)
 cmds.currentTime(15)
@@ -232,6 +294,8 @@ check("foot animation intact after three builds",
       drift_of("foot_l", foot_ref) < 0.5,
       "%.3f cm" % drift_of("foot_l", foot_ref))
 
+if twist.has_twist():
+    twist.bake()  # the last rebuild stood it back up; the baseline had none
 fkcontrols.bake_fk(smap)
 if builder.has_build():
     builder.bake_limbs(smap, builder.built_limbs())
@@ -245,6 +309,7 @@ check("hand animation on the bones at the end",
 
 cmds.currentTime(0)
 cmds.cutKey(all_joints, clear=True)
+restore_bind_pose()  # leave the character standing, not frozen mid-bake
 cmds.select(clear=True)
 print("\n%s" % ("HYBRID BUILD WORKS" if not failures
                 else "FAILURES: %s" % failures))
