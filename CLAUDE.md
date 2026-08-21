@@ -1091,13 +1091,25 @@ them frame by frame: 120 samples, worst 0.000000°, root motion 0.000000 cm.
 the working FBX in the SourceArt tree: the editor still exports to temp,
 the file is then PLACED onto the working copy (`vcs.place`) and Maya
 imports THAT path — the scene references the working file, not a temp
-copy. The working file is found **by name** under the source root
-(`vcs.find_fbx` — the measured hierarchies diverge, the uasset path
-carries `1P` where the fbx path carries `Exports`, while the file names
-match exactly); the path convention (`vcs.conventional_folder`: insert
-`Exports` after `Animation`, drop a trailing `1P`/`3P`) only decides where
-a NEW file goes, and a folder the user was asked for once is remembered
-per uasset folder (`ueBridgeVcsDirMap`). First activation of the checkbox
+copy. The working file is found **by name** under the source root, on the
+disk AND in the depot (`vcs.find_fbx` + `vcs.find_fbx_depot` — a file at
+head that was never synced is invisible to a disk walk, and treating it
+as new misplaced a Longsword import «в папку на уровень выше»); a
+depot-only hit resolves to the `clientFile` that `p4 fstat` reports even
+for an unsynced file, and `checkout`'s not-on-client sync-retry brings it
+to disk on the way to `p4 edit`. The path convention
+(`vcs.conventional_folder`) is the depot's **pure mirror**: insert
+`Exports` after `Animation`, keep everything else — the first version
+dropped a trailing `1P`/`3P` (inferred from the local Unarmed files,
+which are NOT in the depot and do not follow the convention) and that is
+exactly what put the Longsword fbx one level up; the depot keeps those
+folders (measured: `.../Weapons/Longsword/3P/AS_*.fbx`). The convention
+only decides where a NEW file goes, and a folder the user was asked for
+once is remembered per uasset folder (`ueBridgeVcsDirMap`). The depot
+pattern comes from `p4 -ztag where <root>/...` — blank-line-separated
+records, exclusions carry `unmap`, the effective mapping is the LAST
+record without one; wildcard output needs `parse_ztag_records`, the flat
+`parse_ztag` silently merges records. First activation of the checkbox
 asks for the source project root (`ueBridgeVcsRoot`); the `...` button
 changes it later. The p4 side (`vcs.prepare_target`): untracked files are
 just written — **no `p4 add`**, versioning is the export phase's job (the
@@ -1118,11 +1130,15 @@ assumed spelling with "the" cost a verify run. Every dialog is injectable
 (bridge note 6). SourceArt maps to its own depot — `//atone-art`, a local
 depot, not the `//atone/main` stream — and the three example Unarmed fbx
 are NOT in it, only on disk. Verify: `verify_uebridge_vcs.py` — **green
-live 2026-08-21, 0 of 11 gates failed** — builds a **sandbox source
+live 2026-08-21, 0 of 14 gates failed** — builds a **sandbox source
 root** (never the real SourceArt — a verify run must not overwrite the
-animator's working files), never mutates the depot, and imports into its
-own namespace with `set_timeline=False`. Getting it green paid for trap
-44. Spec: `docs/superpowers/specs/2026-08-21-uebridge-perforce-design.md`.
+animator's working files) and imports into its own namespace with
+`set_timeline=False`; the depot gates are fstat reads plus one real
+sync+edit on the Longsword fbx immediately `p4 revert`ed (skipped if
+anyone holds the file open — never revert a file the animator opened,
+their work would go with it). Getting it green paid for trap 44. Spec:
+`docs/superpowers/specs/2026-08-21-uebridge-perforce-design.md`, whose
+addendum records the depot-search redesign.
 
 Traps, each paid for:
 
