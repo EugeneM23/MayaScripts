@@ -1105,20 +1105,24 @@ user's call) — tracked-and-free gets `p4 edit` with one sync-retry on
 "not on client", checked out by others raises the only modal (named
 users, Cancel / Overwrite locally), and a dead p4 (expired SSO session,
 no network, no exe) offers Continue locally. No depot state is mutated
-before the export has succeeded. Two measured parser facts: **p4 exits 0
-even for "no such file(s)"** — failures are classified by stderr text and
-that message is a normal answer meaning untracked — and **ztag's
-other-open block is double-prefixed** (`... ... otherOpen0 ...`); match
-one prefix and every busy file reads as free. Every dialog is injectable
+before the export has succeeded. Three measured parser facts: **p4 exits
+0 even for "no such file(s)"** — failures are classified by stderr text
+and that message is a normal answer meaning untracked; **ztag's
+other-open block is double-prefixed** (`... ... otherOpen0 ...`) — match
+one prefix and every busy file reads as free; and a target outside the
+workspace answers **"is not under client's root" with no article** (exit
+code 1) — also a normal answer, "can never be in this depot", and the
+assumed spelling with "the" cost a verify run. Every dialog is injectable
 (`window._vcs_target(record, asks=...)`, the two asks of
 `prepare_target`), because a modal over the command port blocks Maya
 (bridge note 6). SourceArt maps to its own depot — `//atone-art`, a local
 depot, not the `//atone/main` stream — and the three example Unarmed fbx
-are NOT in it, only on disk. Verify: `verify_uebridge_vcs.py`, which
-builds a **sandbox source root** (never the real SourceArt — a verify run
-must not overwrite the animator's working files), never mutates the
-depot, and imports into its own namespace with `set_timeline=False`.
-Spec: `docs/superpowers/specs/2026-08-21-uebridge-perforce-design.md`.
+are NOT in it, only on disk. Verify: `verify_uebridge_vcs.py` — **green
+live 2026-08-21, 0 of 11 gates failed** — builds a **sandbox source
+root** (never the real SourceArt — a verify run must not overwrite the
+animator's working files), never mutates the depot, and imports into its
+own namespace with `set_timeline=False`. Getting it green paid for trap
+44. Spec: `docs/superpowers/specs/2026-08-21-uebridge-perforce-design.md`.
 
 Traps, each paid for:
 
@@ -1165,6 +1169,22 @@ Traps, each paid for:
     bone reads as untouched — the status claimed 92 animated and 93 untouched
     in the same sentence. Normalise with `cmds.ls(node, long=True)`. The
     live check now asserts animated + untouched equals the skeleton.
+44. **p4 inside Maya can see a DIFFERENT HKCU Perforce store than p4 in a
+    shell — same user, same exe, same key path.** Measured 2026-08-21:
+    `p4 set` from a shell answered `P4PORT=ssl:perforce.atone.com:1666`
+    with a client set, while the same `p4 set` spawned from Maya answered
+    the dead `ssl:perforce.pulse-game.digital:1666` with no client —
+    `whoami` identical in both, a `winreg` read from inside Maya confirmed
+    Maya's process genuinely sees the stale values, and a full registry
+    search from the shell finds no "pulse-game" anywhere. Mechanism
+    unidentified (some registry overlay); the SYMPTOM is p4 hanging to
+    timeout only when called from Maya while the shell works — which reads
+    exactly like a network problem and is not one. env vars were None in
+    both processes, HOME made no difference, no .p4enviro file exists. The
+    fix that works: write the correct values THROUGH the bridge
+    (`p4 set P4PORT=...`, `p4 set P4CLIENT=...` from inside Maya) — after
+    that both views agree and `p4 info` connects from Maya in under a
+    second.
 
 Measured facts about the listing: asset-registry tags are read **without
 loading assets**, and the real tag names on 5.8 are `Number of Frames`,
