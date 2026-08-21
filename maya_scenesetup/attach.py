@@ -1,10 +1,16 @@
-"""Put a weapon model into a bone, and move it once it is there.
+"""Put a weapon model into the hand, and drive its export bone from it.
 
-Attachment is a plain DAG parent: the model hangs under the bone and inherits
-its motion. **The weapon is the geometry** -- the mesh transform itself is
-what gets parented, marked and offset, so one click in the viewport selects
-the thing that moves. A file that arrives wrapped in a null loses the null;
-that null is exactly the group the animator asked not to have.
+**The weapon is the geometry** -- the mesh transform itself is what gets
+parented, marked and offset, so one click in the viewport selects the thing
+that moves. A file that arrives wrapped in a null loses the null; that null
+is exactly the group the animator asked not to have.
+
+Since 2026-08-21 the drive is inverted: the mesh parents under the drive
+bone's own PARENT (hand_r on Manny), any moving animation `weapon_r` carried
+is baked onto the mesh, and the bone is then parent-constrained to it
+(`bonedrive.link`, mo=False -- the bone lives in the sword's frame). It has
+to be the hand: a node cannot both parent the weapon and follow it, that is
+a cycle. The animator animates the sword; the export bone follows.
 
 A file holding no mesh, or several, keeps a group of ours instead: two meshes
 cannot both be the node the offsets live on, and one click cannot select both.
@@ -18,7 +24,12 @@ name has paid for it.
 import maya.cmds as cmds
 import maya.mel as mel
 
-MARKER = "mayaWeapon"
+from maya_scenesetup import bonedrive
+
+# The marker moved into bonedrive (the leaf) so the bridge can read it
+# without importing this module; every existing reader of attach.MARKER
+# keeps working through this re-export.
+MARKER = bonedrive.MARKER
 
 # Everything that can hold an offset between a node and its parent. Zeroing
 # translate and rotate is not enough: a pivot sits at the centre of the
@@ -87,11 +98,30 @@ def find_attached(bone):
     return None
 
 
-def remove_attached(bone):
-    """Delete our weapon under `bone`. Returns what was removed, or None."""
-    weapon = find_attached(bone)
-    if weapon:
-        cmds.delete(weapon)
+def parent_bone(bone):
+    """The bone the weapon parents under: the drive bone's own DAG parent.
+
+    On Manny that is hand_r -- and resolving it as "weapon_r's parent" rather
+    than by name keeps a UE4-schema rig, a prefix or a weapon_l entry working
+    with no new table.
+    """
+    parents = cmds.listRelatives(bone, parent=True, fullPath=True) or []
+    return parents[0] if parents else None
+
+
+def detach(parent_bone_path, drive_bone):
+    """Remove our weapon and give the bone its animation back.
+
+    Unlink FIRST: the bone's motion lives on the weapon while the link
+    stands, and deleting the weapon first would take it away (the camera's
+    second press, same order). The legacy home -- a sword parented under
+    weapon_r by the old version -- is searched second.
+    """
+    weapon = find_attached(parent_bone_path) or find_attached(drive_bone)
+    if not weapon:
+        return None
+    bonedrive.unlink(drive_bone)
+    cmds.delete(weapon)
     return weapon
 
 
@@ -192,22 +222,36 @@ def read_offsets(weapon):
     return rotate, translate
 
 
-def attach(entry, bone, rotate=(0.0, 0.0, 0.0), translate=(0.0, 0.0, 0.0)):
-    """Put `entry`'s model into `bone`. Returns (attached long path, note).
+def attach(entry, parent_bone_path, drive_bone,
+           rotate=(0.0, 0.0, 0.0), translate=(0.0, 0.0, 0.0)):
+    """Put `entry`'s model into the hand, driving `drive_bone` from it.
 
-    One mesh in the file and that mesh IS the weapon: parented into the bone,
-    marked, seated, holding the grip on its own channels, with whatever
-    scaffolding the file came wrapped in deleted afterwards. Zero meshes or
-    several keep a group of ours, and the note says so -- two meshes cannot
-    both be the node the offsets live on, and one click cannot select both.
+    One mesh in the file and that mesh IS the weapon: parented under
+    `parent_bone_path` (the drive bone's own parent), marked, seated, with
+    whatever scaffolding the file came wrapped in deleted afterwards. Zero
+    meshes or several keep a group of ours, and the note says so -- two
+    meshes cannot both be the node the offsets live on, and one click cannot
+    select both.
 
-    Whatever this module attached there before is removed first: one weapon per
-    bone, so the offset fields always have exactly one thing to move. All of it
-    is one undo chunk -- a half-undone import leaves geometry with no home.
+    Then the drive inverts: the weapon is snapped onto `drive_bone`, any
+    moving animation the bone carried is baked onto the weapon's channels,
+    and the bone is parent-constrained to the weapon (`bonedrive.link`,
+    mo=False -- the weapon standing on the bone is what makes that jump
+    nothing). The remembered grip applies only when nothing was transferred:
+    with animation on the weapon the fields are quiet anyway (`is_animated`),
+    and on a clean bone the grip moves weapon and bone together, which is the
+    honest export.
+
+    Whatever this module attached before is removed first WITH its animation
+    (`detach` bakes the bone back off the old weapon before deleting it). All
+    of it is one undo chunk -- a half-undone import leaves geometry with no
+    home -- and runs with autoKey off (trap 14).
     """
     cmds.undoInfo(openChunk=True)
+    autokey = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
     try:
-        remove_attached(bone)
+        detach(parent_bone_path, drive_bone)
 
         roots = import_model(entry.path)
         if not roots:
@@ -216,7 +260,8 @@ def attach(entry, bone, rotate=(0.0, 0.0, 0.0), translate=(0.0, 0.0, 0.0)):
         meshes = mesh_transforms(roots)
         note = ""
         if len(meshes) == 1:
-            weapon = cmds.ls(cmds.parent(meshes[0], bone)[0], long=True)[0]
+            weapon = cmds.ls(cmds.parent(meshes[0], parent_bone_path)[0],
+                             long=True)[0]
             # Only the leftover TRANSFORMS: the shading network arrived in the
             # same import and the mesh still needs it.
             leftovers = [path for path in cmds.ls(roots, long=True) or []
@@ -230,7 +275,8 @@ def attach(entry, bone, rotate=(0.0, 0.0, 0.0), translate=(0.0, 0.0, 0.0)):
             group = cmds.group(empty=True, world=True,
                                name=group_name(entry.key))
             cmds.parent(roots, group)
-            weapon = cmds.ls(cmds.parent(group, bone)[0], long=True)[0]
+            weapon = cmds.ls(cmds.parent(group, parent_bone_path)[0],
+                             long=True)[0]
             note = "{0} mesh(es) in the file - kept in a group".format(
                 len(meshes))
 
@@ -239,7 +285,17 @@ def attach(entry, bone, rotate=(0.0, 0.0, 0.0), translate=(0.0, 0.0, 0.0)):
         cmds.addAttr(weapon, longName=MARKER, dataType="string")
         cmds.setAttr(weapon + "." + MARKER, entry.key, type="string")
         seat(weapon, entry.scale)
-        write_offsets(weapon, rotate, translate)
+
+        # Onto the drive bone exactly, then invert the drive.
+        bonedrive.snap(weapon, drive_bone)
+        frames = bonedrive.link(weapon, drive_bone)
+        if frames:
+            moved = ("{0} frame(s) moved from the bone onto the weapon"
+                     .format(frames))
+            note = note + " - " + moved if note else moved
+        else:
+            write_offsets(weapon, rotate, translate)
         return weapon, note
     finally:
+        cmds.autoKeyframe(state=autokey)
         cmds.undoInfo(closeChunk=True)

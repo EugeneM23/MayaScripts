@@ -12,15 +12,34 @@ import unittest
 
 
 def _install_fake_maya():
-    """Let attach import without Maya. See CLAUDE.md on rebinding."""
-    if "maya.cmds" in sys.modules:
+    """Let attach import without Maya. See CLAUDE.md on rebinding.
+
+    Real modules win when they are importable -- under mayapy they always
+    are, and attach reaches bonedrive, which needs maya.api.OpenMaya as
+    well. Guarding on `"maya.cmds" in sys.modules` instead is not enough:
+    run on its own, this module then installed a fake `maya` that is not a
+    package and shadowed the real one.
+    """
+    try:
+        import maya.api.OpenMaya  # noqa: F401
+        import maya.cmds  # noqa: F401
+        import maya.mel  # noqa: F401
         return
+    except ImportError:
+        pass
+
     maya = types.ModuleType("maya")
+    api = types.ModuleType("maya.api")
+    openmaya = types.ModuleType("maya.api.OpenMaya")
     cmds = types.ModuleType("maya.cmds")
     mel = types.ModuleType("maya.mel")
+    maya.api = api
     maya.cmds = cmds
     maya.mel = mel
+    api.OpenMaya = openmaya
     sys.modules.setdefault("maya", maya)
+    sys.modules["maya.api"] = api
+    sys.modules["maya.api.OpenMaya"] = openmaya
     sys.modules["maya.cmds"] = cmds
     sys.modules["maya.mel"] = mel
 
@@ -28,6 +47,7 @@ def _install_fake_maya():
 _install_fake_maya()
 
 from maya_scenesetup import attach  # noqa: E402
+from maya_scenesetup import bonedrive  # noqa: E402
 
 BONE = "|SKM_Manny|root|hand_r|weapon_r"
 
@@ -35,16 +55,20 @@ BONE = "|SKM_Manny|root|hand_r|weapon_r"
 class FakeCmds(object):
     """Enough of maya.cmds for the child walk and the attribute writes."""
 
-    def __init__(self, children=(), marked=()):
+    def __init__(self, children=(), marked=(), parents=None):
         self._children = list(children)
         self._marked = set(marked)
+        self._parents = dict(parents or {})
         self.attrs = {}
         self.deleted = []
         self.autokey = True
         self.autokey_during_write = []
 
-    def listRelatives(self, node, children=False, type=None, fullPath=False,
-                      **kwargs):
+    def listRelatives(self, node, children=False, parent=False, type=None,
+                      fullPath=False, **kwargs):
+        if parent:
+            found = self._parents.get(node)
+            return [found] if found else None
         if not children:
             return None
         found = [c for c in self._children if c.rsplit("|", 1)[0] == node]
@@ -123,18 +147,205 @@ class FindAttached(unittest.TestCase):
         attach.cmds = FakeCmds()
         self.assertIsNone(attach.find_attached(BONE))
 
-    def test_remove_deletes_only_the_marked_child(self):
-        fake = FakeCmds(children=[BONE + "|prop", BONE + "|LongSword_02_weapon"],
-                        marked=[BONE + "|LongSword_02_weapon"])
-        attach.cmds = fake
-        attach.remove_attached(BONE)
-        self.assertEqual(fake.deleted, [BONE + "|LongSword_02_weapon"])
+    def test_remove_attached_is_gone(self):
+        """It deleted without giving the bone its animation back; `detach`
+        is the removal now."""
+        self.assertFalse(hasattr(attach, "remove_attached"))
 
-    def test_remove_on_a_bare_bone_deletes_nothing(self):
-        fake = FakeCmds()
+
+HAND = "|SKM_Manny|root|hand_r"
+
+
+class FakeBonedrive(object):
+    """Records unlink calls in a log shared with FakeCmds.deleted-style
+    assertions: the ORDER of unlink against delete is the design."""
+
+    MARKER = bonedrive.MARKER
+
+    def __init__(self, log):
+        self.log = log
+
+    def unlink(self, bone):
+        self.log.append(("unlink", bone))
+        return None
+
+    def snap(self, node, target):
+        self.log.append(("snap", node, target))
+
+    def link(self, weapon, bone):
+        self.log.append(("link", weapon, bone))
+        return 0
+
+
+class Marker(unittest.TestCase):
+
+    def test_the_marker_is_bonedrives(self):
+        """One string, defined in the leaf module, re-exported here so
+        every existing attach.MARKER reader keeps working."""
+        self.assertEqual(attach.MARKER, bonedrive.MARKER)
+        self.assertEqual(attach.MARKER, "mayaWeapon")
+
+
+class ParentBone(unittest.TestCase):
+
+    def test_answers_the_dag_parent(self):
+        attach.cmds = FakeCmds(parents={BONE: HAND})
+        self.assertEqual(attach.parent_bone(BONE), HAND)
+
+    def test_none_for_a_parentless_bone(self):
+        attach.cmds = FakeCmds()
+        self.assertIsNone(attach.parent_bone(BONE))
+
+
+class Detach(unittest.TestCase):
+
+    def _wire(self, fake):
         attach.cmds = fake
-        self.assertIsNone(attach.remove_attached(BONE))
-        self.assertEqual(fake.deleted, [])
+        log = []
+        fake_drive = FakeBonedrive(log)
+        real_delete = fake.delete
+
+        def logged_delete(node):
+            log.append(("delete", node))
+            real_delete(node)
+        fake.delete = logged_delete
+        self.real_bonedrive = attach.bonedrive
+        attach.bonedrive = fake_drive
+        self.addCleanup(self._unwire)
+        return log
+
+    def _unwire(self):
+        attach.bonedrive = self.real_bonedrive
+
+    def test_unlinks_before_deleting(self):
+        """The bone's animation lives on the weapon while the link stands;
+        deleting first would take it away (the camera's paid-for order)."""
+        fake = FakeCmds(children=[HAND + "|sword"], marked=[HAND + "|sword"])
+        log = self._wire(fake)
+        removed = attach.detach(HAND, BONE)
+        self.assertEqual(removed, HAND + "|sword")
+        self.assertEqual(log, [("unlink", BONE),
+                               ("delete", HAND + "|sword")])
+
+    def test_looks_under_the_hand_first_and_the_bone_second(self):
+        """A file attached by the old version keeps its sword under
+        weapon_r; it is still found and still comes off."""
+        fake = FakeCmds(children=[BONE + "|oldSword"],
+                        marked=[BONE + "|oldSword"])
+        log = self._wire(fake)
+        removed = attach.detach(HAND, BONE)
+        self.assertEqual(removed, BONE + "|oldSword")
+        self.assertEqual(log[0], ("unlink", BONE))
+
+    def test_nothing_attached_means_nothing_touched(self):
+        fake = FakeCmds()
+        log = self._wire(fake)
+        self.assertIsNone(attach.detach(HAND, BONE))
+        self.assertEqual(log, [])
+
+
+class AttachFlow(unittest.TestCase):
+    """attach() ordering, with the import and the scene both faked.
+
+    What is under test is the design's order: parent, mark, seat, snap onto
+    the drive bone, link, and the grip only when nothing was transferred.
+    The real import needs a live Maya and stays in verify_weapons.py.
+    """
+
+    class Entry(object):
+        path = "C:/x/sword.fbx"
+        key = "sword"
+        scale = 1.0
+
+    class FlowCmds(FakeCmds):
+
+        def __init__(self):
+            FakeCmds.__init__(self)
+            self.log = []
+            self.existing = {"|sword"}
+
+        def undoInfo(self, **kwargs):
+            pass
+
+        def parent(self, node, target):
+            new = "{0}|{1}".format(target, str(node).rsplit("|", 1)[-1])
+            self.existing.discard(node)
+            self.existing.add(new)
+            self.log.append(("parent", node, target))
+            return [new]
+
+        def ls(self, nodes=None, **kwargs):
+            listed = nodes if isinstance(nodes, (list, tuple)) else [nodes]
+            return [n for n in listed if n]
+
+        def objExists(self, node):
+            return node in self.existing
+
+        def addAttr(self, node, **kwargs):
+            self.log.append(("mark", node))
+
+        def setAttr(self, plug, *values, **kwargs):
+            self.log.append(("set", plug))
+            FakeCmds.setAttr(self, plug, *values, **kwargs)
+
+        def delete(self, node):
+            self.log.append(("deleted", node))
+
+    def _wire(self, frames):
+        fake = self.FlowCmds()
+        attach.cmds = fake
+        self.real_bonedrive = attach.bonedrive
+        self.real_import = attach.import_model
+        self.real_meshes = attach.mesh_transforms
+        drive = FakeBonedrive(fake.log)
+        drive.link = lambda weapon, bone: (
+            fake.log.append(("link", weapon, bone)) or frames)
+        attach.bonedrive = drive
+        attach.import_model = lambda path: ["|sword"]
+        attach.mesh_transforms = lambda roots: ["|sword"]
+        self.addCleanup(self._unwire)
+        return fake
+
+    def _unwire(self):
+        attach.bonedrive = self.real_bonedrive
+        attach.import_model = self.real_import
+        attach.mesh_transforms = self.real_meshes
+
+    def _kinds(self, fake):
+        return [entry[0] for entry in fake.log]
+
+    def test_parent_mark_seat_snap_link_then_grip(self):
+        fake = self._wire(frames=0)
+        weapon, note = attach.attach(self.Entry(), HAND, BONE,
+                                     rotate=(1.0, 2.0, 3.0),
+                                     translate=(4.0, 5.0, 6.0))
+        self.assertEqual(weapon, HAND + "|sword")
+        kinds = self._kinds(fake)
+        self.assertLess(kinds.index("parent"), kinds.index("mark"))
+        self.assertLess(kinds.index("mark"), kinds.index("snap"))
+        self.assertLess(kinds.index("snap"), kinds.index("link"))
+        self.assertEqual(fake.log[kinds.index("snap")],
+                         ("snap", HAND + "|sword", BONE))
+        # The grip lands after the link, so the bone follows it.
+        grip_writes = [i for i, entry in enumerate(fake.log)
+                       if entry[0] == "set"
+                       and entry[1].endswith(".rotateX")]
+        self.assertTrue(grip_writes)
+        self.assertGreater(grip_writes[0], kinds.index("link"))
+        self.assertEqual(note, "")
+
+    def test_a_transferred_bone_means_no_grip_write(self):
+        """With animation moved onto the weapon its channels are keyed;
+        the note says what happened instead."""
+        fake = self._wire(frames=31)
+        _weapon, note = attach.attach(self.Entry(), HAND, BONE,
+                                      rotate=(1.0, 2.0, 3.0),
+                                      translate=(4.0, 5.0, 6.0))
+        kinds = self._kinds(fake)
+        after_link = fake.log[kinds.index("link") + 1:]
+        self.assertFalse([e for e in after_link
+                          if e[0] == "set" and e[1].endswith(".rotateX")])
+        self.assertIn("31", note)
 
 
 class FakeMel(object):
