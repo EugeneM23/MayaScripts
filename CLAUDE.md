@@ -235,11 +235,29 @@ that runs MEL — `build_fk`, `rebuild`, `switch_limbs`, `bake_fk`,
 `bake_selection`, `builder.build`, `builder.bake_limbs` — calls
 `overrig.ensure_loaded()` first and returns `overrig.NOT_LOADED_MESSAGE`
 when the toolset cannot be found at all (trap 20). Default: the hybrid
-rig — IK arms and legs (`builder.DEFAULT_IK`), FK on root/pelvis/spine/neck
-(`HYBRID_FK_CHAINS`, four chains, ten controllers). With the **FK Limbs**
-toggle pressed: FK on the arms and legs too (eight chains, 26 controllers).
-No clavicle or ball controls in hybrid — same as the post-Switch IK state;
-switching a limb to FK brings them back.
+rig — IK arms and legs (`builder.DEFAULT_IK`), FK on
+root/pelvis/spine/neck/clavicles (`HYBRID_FK_CHAINS`, six chains, twelve
+controllers). With the **FK Limbs** toggle pressed: FK on the arms and legs
+too (ten chains, 26 controllers). No ball controls in hybrid — same as the
+post-Switch IK state; switching a leg to FK brings them back.
+
+**The clavicles are their own always-FK chains** (2026-08-21, the
+pelvis/spine split applied to the shoulders): `clavicle_l/r` left the arm
+chains and stand ahead of them in `CHAINS`, so the hybrid Build creates
+their controllers and an arm switch no longer deletes them — the control
+survives IK↔FK in both directions, and in full FK the arm chain couples
+INSIDE it (rotating the clavicle still carries the FK arm). **The control
+drives ONLY the bone** — the user's explicit call, offered the alternative
+and declined: the IK arm keeps riding the root controller, so posing a
+clavicle over an IK arm moves the shoulder skin and not the arm. Do not
+"fix" that into hanging `_IK_strech_gr` on the clavicle control without
+asking again. Single-bone chain ⇒ `apply_parentConstrAnim` ⇒ a plain
+transform knot whose frame already matches the bone; align/orient skip it
+by the no-jointOrient filter, like root and pelvis. Clicking a clavicle
+BONE + Switch still converts its arm (`fkchains.CLAVICLE_OF`); the clavicle
+CONTROL is not switchable — it is always FK. Old files degrade cleanly:
+their clavicle knots are recorded in the old arm manifests, and teardown
+reads manifests, not the table.
 
 **No FK controllers on the fingers** (2026-08-18, the user's call: "буду
 анимировать на костях"). The ten finger chains stay in `CHAINS` and are left
@@ -807,7 +825,10 @@ C_parent` construction rather than a measurement.
    bones kept playing the old one — two animations on one character, which
    reads exactly like "the rig drifted". `animimport.import_clip` now
    refuses a merge when target joints carry constraints, naming Bake+Delete
-   as the cure.
+   as the cure. Since 2026-08-21 our own weapon-driven bones are the one
+   exception: they are unlinked before the merge and re-linked after it
+   (`foreign_constrained` / `bonedrive`), so a sword in the hand does not
+   block every import — the refusal fires on everybody else's constraints.
 
 38. **FBX export writes the take across the ANIMATION RANGE, so a tool that
    narrows the range narrows the clip.** `root_offset_batch_tool` set the
@@ -987,6 +1008,15 @@ wrong character in silence.
 than tidiness — see trap 27. Bones the clip has no keys for end up unanimated
 and are named in the status line.
 
+**A weapon-driven `weapon_r` is re-linked across the merge** (2026-08-21):
+the sword's constraint would otherwise refuse every import (trap 37's guard).
+Our links are found read-only BEFORE the refusal — a refusal must leave the
+scene untouched — then unlinked (the bone baked back), and after the timeline
+is set the sword is snapped onto the bone and re-linked, picking up the new
+clip's weapon motion. Lazy `maya_scenesetup` import, so a Maya without the
+weapon tool behaves exactly as before. The status line names the re-linked
+bones.
+
 Proof: `docs/superpowers/plans/verify_uebridge_merge.py` (**25/25 green**). It
 imports one clip twice — merged, and as a reference skeleton — and compares
 them frame by frame: 120 samples, worst 0.000000°, root motion 0.000000 cm.
@@ -1112,18 +1142,18 @@ motion is unchanged to 0.000000000 across the timeline and the offset holds at
 every frame.
 
 A small window: a dropdown of weapon models, a field for pasting the path of
-any other FBX, an **Add** button that imports the chosen one and hangs it on
-`weapon_r`, live rotate/translate fields for dialling in the grip, and an
-**Add Aim** button (below). Design:
+any other FBX, an **Add** button that imports the chosen one, hangs it under
+the HAND and drives `weapon_r` from it (below), a **Remove Weapon** button,
+live rotate/translate fields for dialling in the grip, and an **Add Aim**
+button (below). Design:
 `docs/superpowers/specs/2026-08-17-weapon-attach-design.md`, proof:
-`docs/superpowers/plans/verify_weapons.py` (**26/26 green**, including the
-nine gates added 2026-08-20 for the no-group attach and the FBX field: the
-marked node is `LongSwordMesh` itself, a direct child of `weapon_r`, seated to
-worst matrix element **0.0000000**, with nothing left at world level from the
-import). It refuses to run at all while the arms are connected or an aim
-exists: every attach in it REPLACES what is in the hand, and replacing deletes
-the marked node whole. Its poke gate steps aside once a rig drives the arm —
-the channels are the animator's then — and says so rather than passing quietly.
+`docs/superpowers/plans/verify_weapons.py` (**rebuilt 2026-08-21 around the
+inverted drive — its last green run, 26/26, predates that rebuild and has
+not been sent through the bridge since**; the marked node is `LongSwordMesh`
+itself, a direct child of the HAND, with `weapon_r` constrained to it). It
+refuses to run at all while the arms are connected or an aim exists: every
+attach in it REPLACES what is in the hand, and replacing deletes the marked
+node whole.
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
@@ -1134,7 +1164,8 @@ import maya_scenesetup; maya_scenesetup.show_window()
 |---|---|---|
 | `catalog.py` | the weapon table, lookups, and an entry for any FBX on disk (`entry_for_path`, `node_key`), pure data | **stdlib only** |
 | `skeleton.py` | which character, and where its weapon bone is | `maya.cmds`, `maya_overrig` |
-| `attach.py` | import, find the mesh, parent it, read/write offsets | `maya.cmds` |
+| `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition, range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
+| `attach.py` | import, find the mesh, parent it under the hand, invert the drive, read/write offsets | `maya.cmds`, `bonedrive` |
 | `aim.py` | where the aim locators go, and the press that builds it | `maya.cmds`, OpenMaya, `attach`, `overrig`, `aimrig` |
 | `window.py` | the `cmds` window, offsets, optionVars | `maya.cmds` + the four above |
 
@@ -1185,6 +1216,55 @@ screen would make the fields a lie about the scene; the grip is dialled once
 and remembered. And **`model_root` asks whether the node itself holds a mesh
 BEFORE looking at its children**, or a mesh the animator parented under the
 sword by hand would outrank the sword.
+
+**The weapon drives its bone** (2026-08-21, the user's ask: «перекинуть на
+него анимацию с weapon bone а потом weapon bone привязать к оружию... крепить
+к кисти а не к вепон боне»). The Camera Setup pattern applied to the weapon:
+Add parents the mesh under **`weapon_r`'s own DAG parent** (`hand_r` on
+Manny — resolved as "the drive bone's parent", never by name), snaps it onto
+`weapon_r`, moves any MOVING animation the bone carried onto the mesh's
+channels (temp constraint + bake; constant curves are not animation, trap
+30), cuts the bone's curves and parent-constrains `weapon_r` to the mesh
+with **`maintainOffset=False` — the bone lives in the sword's frame**,
+wherever the animator takes it. It has to be the hand: a node cannot both
+parent the weapon and follow it. All of it is `bonedrive.link`; the ranges
+everywhere are the union of the playback range and the driver's own keys
+(trap 38 from the export side). Consequences, each deliberate:
+
+- **Replace and Remove give the bone its animation back first**
+  (`attach.detach` = `bonedrive.unlink` — bake the bone off the sword,
+  drop the constraint — THEN delete; the camera paid for the other order).
+  **Remove Weapon** is a new button because hand-deleting the sword now
+  loses the bone's animation and orphans the constraint (trap 4); it is
+  refused while the arms ride the weapon or an aim exists, like Add.
+- **The grip lives in a new optionVar** (`mayaSceneSetup_grip_<key>`): raw
+  channels under the hand. The two older names meant "channels under
+  weapon_r" and are read only through composition with the bone's local
+  matrix (`bonedrive.composed_grip`, `window.grip_values` holds the
+  policy); NO save composes zeros, which lands the sword exactly on
+  `weapon_r` — the game's own grip. Old-space numbers are never shown as if
+  they were new-space (no character bound ⇒ zeros). The grip is written
+  AFTER the link, so the bone follows it — the honest export. With
+  transferred animation on the sword the fields are quiet (`is_animated`,
+  as after Connect).
+- **Connect is unchanged** and Disconnect returns the sword **under the
+  hand**: the constraint targets the node, not the path, so it survives
+  `parent_out`/`parent_in` and `weapon_r` keeps following the sword out in
+  world and back. Old files (sword parented under `weapon_r` by the old
+  version) are still found — the lookup asks the hand first, `weapon_r`
+  second — and come off cleanly through the same detach.
+- **The UE bridge re-links across a merge** (the user's call over refusing):
+  `weapon_r` under our constraint would trip the trap-37 refusal on every
+  import after an Add, so `animimport` finds our links read-only
+  (`bonedrive.find_links`), refuses only on OTHER constrained joints (a
+  refusal touches nothing), unlinks ours, merges, and after the timeline is
+  set re-links — the sword's stale curves are cut, it snaps onto the bone
+  and picks up the new clip (`bonedrive.relink`). Lazy, guarded import: a
+  Maya without `maya_scenesetup` gets the old behaviour exactly. The camera
+  is out of scope — `camera_bone` sits outside the skeleton subtree, so its
+  constraint never reaches the guard.
+
+Spec: `docs/superpowers/specs/2026-08-21-weapon-drives-bone-design.md`.
 
 **The FBX field** takes a path to any file the catalog knows nothing about and
 wins over the dropdown while it holds one. It resolves in ONE place
@@ -1243,9 +1323,11 @@ curves, since `setAttr` on a connected channel raises.
 back under the root controller *when there is one*. A rig built by Switch after
 a full bake has no root controller and stands in world — so the status line
 says "off the weapon" and never names a destination that may not exist. The
-weapon's animation is re-baked into the bone rather than stripped: whatever was
-animated out in the world survives, at the price of the offset fields staying
-inert until someone deletes those keys.
+weapon goes back **under the hand bone** (since 2026-08-21), its animation
+re-baked into that local space rather than stripped: whatever was animated out
+in the world survives, at the price of the offset fields staying inert until
+someone deletes those keys. `weapon_r` rides through the whole round trip —
+the constraint targets the node, not the path.
 
 **Add Aim** puts OverRig's aim on the weapon with both locators placed for
 you — the thing the native button leaves to hand-dragging. Design:
