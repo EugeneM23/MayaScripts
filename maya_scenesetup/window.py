@@ -25,6 +25,7 @@ from maya_overrig import aimrig
 
 from maya_scenesetup import aim as weaponaim
 from maya_scenesetup import attach
+from maya_scenesetup import bonedrive
 from maya_scenesetup import camera as camerarig
 from maya_scenesetup import catalog
 from maya_scenesetup import connect as linking
@@ -39,6 +40,11 @@ _STATUS = "mayaSceneSetupStatus"
 _BOUND = "mayaSceneSetupBound"
 _CUSTOM = "mayaSceneSetupCustomFbx"
 
+# The grip in its 2026-08-21 space: raw channels under the HAND. The two
+# older names lived under weapon_r and are read only to migrate -- writing
+# an old-space triple as under-hand channels puts the sword at the hand
+# origin, so a new space needed a new name.
+_GRIP_OPTIONVAR = "mayaSceneSetup_grip_{0}"
 _OPTIONVAR = "mayaSceneSetup_offset_{0}"
 _LEGACY_OPTIONVAR = "mayaWeapons_offset_{0}"
 _CUSTOM_OPTIONVAR = "mayaSceneSetup_custom_fbx"
@@ -51,6 +57,8 @@ NOT_CONNECTED = "not connected - the hands are not on the weapon"
 ALREADY_CONNECTED = "already connected"
 LINKED_NO_ADD = ("the hands ride this weapon - press Disconnect Arms before "
                  "replacing it")
+LINKED_NO_REMOVE = ("the hands ride this weapon - press Disconnect Arms "
+                    "before removing it")
 AIMED_NO_ADD = "the weapon has an aim - Bake+Delete in the picker first"
 LINKED_NO_OFFSETS = "the weapon is animated - its offsets are baked in"
 
@@ -59,6 +67,28 @@ LINKED_NO_OFFSETS = "the weapon is animated - its offsets are baked in"
 
 def optionvar_name(key):
     return _OPTIONVAR.format(key)
+
+
+def grip_optionvar_name(key):
+    return _GRIP_OPTIONVAR.format(key)
+
+
+def grip_values(new_era, old_era, bone_local, compose):
+    """Which grip the fields show, and in which space. Pure.
+
+    New-era saves are raw under-hand channels. Everything else goes through
+    the composition against the drive bone's local matrix: an old-era save
+    lived under weapon_r, and NO save composes zeros -- which lands the sword
+    exactly on the bone, the game's own grip. With no bone to compose against
+    zeros stand in; old-space numbers are never displayed as if they were
+    new-space.
+    """
+    if new_era is not None:
+        return unpack_offsets(new_era)
+    if bone_local is not None:
+        rotate, translate = unpack_offsets(old_era)
+        return compose(rotate, translate, bone_local)
+    return unpack_offsets(None)
 
 
 def pack_offsets(rotate, translate):
@@ -103,6 +133,15 @@ def missing_bone_message(root, bone):
     return "{0} has no bone '{1}'".format(root.split("|")[-1], bone)
 
 
+def missing_parent_message(bone):
+    return ("'{0}' has no parent bone - nothing to hang the weapon on"
+            .format(bone))
+
+
+def removed_message(entry):
+    return "{0} removed - the bone keeps the animation".format(entry.label)
+
+
 def missing_file_message(path):
     return "file not found: " + path
 
@@ -145,18 +184,25 @@ def _set_fields(rotate, translate):
                        value2=translate[1], value3=translate[2])
 
 
-def _remembered(entry):
-    """The grip remembered for this weapon, reading through the old name.
+def _remembered(entry, bone_local=None):
+    """The grip for this weapon as under-hand channels.
 
-    The optionVar was called `mayaWeapons_offset_*` before this module became
-    SceneSetup. A grip dialled in yesterday is worth more than a tidy prefix,
-    so the old name is still read; only the new one is written.
+    A grip dialled in yesterday is worth more than a tidy prefix, so both
+    pre-2026-08-21 names are still read -- but their numbers lived under
+    weapon_r, so they only reach the fields composed with the drive bone's
+    local matrix (`grip_values` holds the policy).
     """
-    for name in (optionvar_name(entry.key),
-                 _LEGACY_OPTIONVAR.format(entry.key)):
-        if cmds.optionVar(exists=name):
-            return unpack_offsets(cmds.optionVar(query=name))
-    return unpack_offsets(None)
+    new_era = None
+    name = grip_optionvar_name(entry.key)
+    if cmds.optionVar(exists=name):
+        new_era = cmds.optionVar(query=name)
+    old_era = None
+    for old in (optionvar_name(entry.key),
+                _LEGACY_OPTIONVAR.format(entry.key)):
+        if cmds.optionVar(exists=old):
+            old_era = cmds.optionVar(query=old)
+            break
+    return grip_values(new_era, old_era, bone_local, bonedrive.composed_grip)
 
 
 def _remembered_path():
@@ -167,7 +213,7 @@ def _remembered_path():
 
 
 def _remember(entry, rotate, translate):
-    name = optionvar_name(entry.key)
+    name = grip_optionvar_name(entry.key)
     cmds.optionVar(clearArray=name)
     for value in pack_offsets(rotate, translate):
         cmds.optionVar(floatValueAppend=(name, value))
@@ -178,29 +224,33 @@ def _status(message):
 
 
 def _attached(entry):
-    """Root, bone, weapon, and whether that weapon drives the arms.
+    """Root, hand, drive bone, weapon, and whether it drives the arms.
 
-    All four are returned so callers can tell "no character" from "character
+    All five are returned so callers can tell "no character" from "character
     has no such bone" from "the bone is bare"; each says something different
-    on the status line.
+    on the status line. `hand` is the drive bone's own DAG parent -- where
+    the weapon lives since 2026-08-21.
 
-    The weapon is looked for in the bone first and through the link second:
-    once connected it lives out in world space and the bone knows nothing
-    about it any more.
+    The weapon is looked for under the hand first, under the drive bone
+    second (the legacy home of files attached by the old version), and
+    through the link last: once connected it lives out in world space and
+    neither bone knows anything about it any more.
     """
     root = _bound_root()
     if not root:
-        return None, None, None, False
+        return None, None, None, None, False
     bone = skeleton.resolve_bone(root, entry.bone)
     if not bone:
-        return root, None, None, False
+        return root, None, None, None, False
+    hand = attach.parent_bone(bone)
 
-    in_hand = attach.find_attached(bone)
-    if in_hand:
-        return root, bone, in_hand, False
+    in_hand = attach.find_attached(hand) if hand else None
+    attached_now = in_hand or attach.find_attached(bone)
+    if attached_now:
+        return root, hand, bone, attached_now, False
 
     linked = linking.linked_weapon()
-    return root, bone, linked, linked is not None
+    return root, hand, bone, linked, linked is not None
 
 
 def _bound_root():
@@ -211,19 +261,22 @@ def _bound_root():
 
 
 def _locate(entry):
-    """Root, bone, weapon and link state, or None with the status set.
+    """Root, hand, bone, weapon and link state, or None with the status set.
 
-    The shared front half of every weapon callback: no character and a
-    missing bone end the press the same way everywhere.
+    The shared front half of every weapon callback: no character, a missing
+    bone and a parentless bone end the press the same way everywhere.
     """
-    root, bone, weapon, linked = _attached(entry)
+    root, hand, bone, weapon, linked = _attached(entry)
     if not root:
         _status(NO_CHARACTER)
         return None
     if not bone:
         _status(missing_bone_message(root, entry.bone))
         return None
-    return root, bone, weapon, linked
+    if not hand:
+        _status(missing_parent_message(entry.bone))
+        return None
+    return root, hand, bone, weapon, linked
 
 
 # --------------------------------------------------------------- callbacks
@@ -240,20 +293,24 @@ def _run(action):
 def refresh():
     """Re-read the scene: which character, and what the fields should show."""
     entry = _entry()
-    root, bone, weapon, linked = _attached(entry)
+    root, hand, bone, weapon, linked = _attached(entry)
 
     if weapon:
         rotate, translate = attach.read_offsets(weapon)
         _set_fields(rotate, translate)
         _status(linked_message(entry) if linked
-                else attached_message(entry, bone))
+                else attached_message(entry, hand or bone))
         return
 
-    _set_fields(*_remembered(entry))
+    bone_local = (bonedrive.local_matrix(bone, hand)
+                  if bone and hand else None)
+    _set_fields(*_remembered(entry, bone_local))
     if not root:
         _status(NO_CHARACTER)
     elif not bone:
         _status(missing_bone_message(root, entry.bone))
+    elif not hand:
+        _status(missing_parent_message(entry.bone))
     else:
         _status(NOT_ATTACHED)
 
@@ -271,12 +328,12 @@ def custom_changed():
 
 
 def add_weapon():
-    """Put the chosen weapon into its bone, replacing what we put there before."""
+    """Put the chosen weapon into the hand, replacing what we put there before."""
     entry = _entry()
     located = _locate(entry)
     if located is None:
         return
-    _root, bone, attached_now, linked = located
+    _root, hand, bone, attached_now, linked = located
     if linked:
         # Replacing deletes the weapon, and the IK hand controls are its DAG
         # children: this press would take both arm rigs down unbaked.
@@ -294,10 +351,35 @@ def add_weapon():
         return
 
     rotate, translate = _fields()
-    _weapon, note = attach.attach(entry, bone, rotate, translate)
+    _weapon, note = attach.attach(entry, hand, bone, rotate, translate)
     _remember(entry, rotate, translate)
-    message = added_message(entry, bone)
+    message = added_message(entry, hand)
     _status(message + " - " + note if note else message)
+
+
+def remove_weapon():
+    """Take the weapon off: the bone gets its animation back, the sword goes.
+
+    Forced by the inverted drive: deleting the sword by hand would lose the
+    bone's animation (it lives on the sword) and leave an orphaned
+    constraint under the bone (trap 4).
+    """
+    entry = _entry()
+    located = _locate(entry)
+    if located is None:
+        return
+    _root, hand, bone, weapon, linked = located
+    if linked:
+        _status(LINKED_NO_REMOVE)
+        return
+    if not weapon:
+        _status(NOT_ATTACHED)
+        return
+    if aimrig.aim_for(attach.model_root(weapon)):
+        _status(AIMED_NO_ADD)
+        return
+    removed = attach.detach(hand, bone)
+    _status(removed_message(entry) if removed else NOT_ATTACHED)
 
 
 def offsets_changed():
@@ -306,7 +388,7 @@ def offsets_changed():
     rotate, translate = _fields()
     _remember(entry, rotate, translate)  # the next Add still wants them
 
-    _root, bone, weapon, _linked = _attached(entry)
+    _root, hand, bone, weapon, _linked = _attached(entry)
     if not weapon:
         _status(NOT_ATTACHED)
         return
@@ -314,7 +396,7 @@ def offsets_changed():
         _status(LINKED_NO_OFFSETS)
         return
     attach.write_offsets(weapon, rotate, translate)
-    _status(attached_message(entry, bone))
+    _status(attached_message(entry, hand or bone))
 
 
 def connect_arms():
@@ -323,7 +405,7 @@ def connect_arms():
     located = _locate(entry)
     if located is None:
         return
-    root, _bone, weapon, linked = located
+    root, _hand, _bone, weapon, linked = located
     if linked:
         _status(ALREADY_CONNECTED)
         return
@@ -343,7 +425,7 @@ def add_aim():
     located = _locate(entry)
     if located is None:
         return
-    _root, _bone, weapon, _linked = located
+    _root, _hand, _bone, weapon, _linked = located
     if not weapon:
         _status(NO_WEAPON)
         return
@@ -374,11 +456,11 @@ def disconnect_arms():
     located = _locate(entry)
     if located is None:
         return
-    _root, bone, weapon, linked = located
+    _root, hand, _bone, weapon, linked = located
     if not linked:
         _status(NOT_CONNECTED)
         return
-    _status(linking.disconnect(weapon, bone))
+    _status(linking.disconnect(weapon, hand))
 
 
 # ------------------------------------------------------------------ window
@@ -409,7 +491,17 @@ def show_window():
                       changeCommand=lambda *_args: _run(custom_changed))
 
     cmds.button(label="Add", height=30,
+                annotation="Import the weapon under the hand bone, move any "
+                           "weapon-bone animation onto it, and drive the "
+                           "bone from the weapon. Replaces what a previous "
+                           "Add put there, animation preserved.",
                 command=lambda *_args: _run(add_weapon))
+    cmds.button(label="Remove Weapon", height=24,
+                annotation="Bake the weapon bone's animation back from the "
+                           "weapon, then delete the weapon and its "
+                           "constraint. Deleting the sword by hand instead "
+                           "loses that animation.",
+                command=lambda *_args: _run(remove_weapon))
 
     cmds.floatFieldGrp(_ROTATE, numberOfFields=3, label="Rotate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,

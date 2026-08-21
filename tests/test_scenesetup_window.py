@@ -103,6 +103,80 @@ class OptionVars(unittest.TestCase):
                          ((0.0, 90.0, 0.0), (0.0, 0.0, 0.0)))
 
 
+class GripValues(unittest.TestCase):
+    """Which grip the fields show, and in which SPACE (2026-08-21).
+
+    The stored grip used to mean "channels under weapon_r"; the channels
+    live under the hand now, so the same six numbers mean something else.
+    New-era saves are raw; old-era saves compose with the drive bone's
+    local matrix; and old-space numbers are never displayed as if they
+    were new-space.
+    """
+
+    def _compose(self, calls):
+        def compose(rotate, translate, bone_local):
+            calls.append((rotate, translate, bone_local))
+            return (7.0, 8.0, 9.0), (10.0, 11.0, 12.0)
+        return compose
+
+    def test_a_new_era_save_is_returned_raw(self):
+        calls = []
+        got = window.grip_values([1, 2, 3, 4, 5, 6], [9] * 6, "L",
+                                 self._compose(calls))
+        self.assertEqual(got, ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
+        self.assertEqual(calls, [])
+
+    def test_an_old_era_save_composes_with_the_bone(self):
+        calls = []
+        got = window.grip_values(None, [1, 2, 3, 4, 5, 6], "L",
+                                 self._compose(calls))
+        self.assertEqual(got, ((7.0, 8.0, 9.0), (10.0, 11.0, 12.0)))
+        self.assertEqual(calls, [((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), "L")])
+
+    def test_no_save_defaults_to_the_bone_itself(self):
+        """Zeros through the composition ARE the drive bone's pose - the
+        sword lands exactly on weapon_r, which is the game's own grip."""
+        calls = []
+        window.grip_values(None, None, "L", self._compose(calls))
+        self.assertEqual(calls, [((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), "L")])
+
+    def test_without_a_bone_zeros_stand_in(self):
+        """Old-space numbers must never be shown as if they were new-space;
+        with no character there is nothing to compose against."""
+        calls = []
+        got = window.grip_values(None, [1, 2, 3, 4, 5, 6], None,
+                                 self._compose(calls))
+        self.assertEqual(got, ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+        self.assertEqual(calls, [])
+
+    def test_the_grip_optionvar_is_its_own_name(self):
+        """A new space needs a new name, or an old-era triple would be read
+        back as under-hand channels and put the sword at the hand origin."""
+        self.assertNotEqual(window.grip_optionvar_name("LongSword_02"),
+                            window.optionvar_name("LongSword_02"))
+        self.assertIn("LongSword_02",
+                      window.grip_optionvar_name("LongSword_02"))
+
+
+class RemoveWeapon(unittest.TestCase):
+    """The button the inverted drive forces: deleting the sword by hand
+    would lose the bone's animation and orphan the constraint (trap 4)."""
+
+    def test_there_is_a_remove_callback(self):
+        self.assertTrue(callable(window.remove_weapon))
+
+    def test_remove_is_refused_while_linked(self):
+        self.assertIn("disconnect", window.LINKED_NO_REMOVE.lower())
+
+    def test_removed_names_the_weapon(self):
+        self.assertIn(SWORD.label, window.removed_message(SWORD))
+
+    def test_a_parentless_bone_is_named(self):
+        message = window.missing_parent_message("weapon_r")
+        self.assertIn("weapon_r", message)
+        self.assertIn("parent", message.lower())
+
+
 class Messages(unittest.TestCase):
 
     def test_no_character_points_at_both_ways_out(self):
