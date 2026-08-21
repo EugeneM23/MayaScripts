@@ -197,7 +197,8 @@ class Purity(unittest.TestCase):
         code = (
             "import sys; sys.path.insert(0, %r);"
             "import maya_uebridge, maya_uebridge.records,"
-            " maya_uebridge.uescripts, maya_uebridge.uelink;"
+            " maya_uebridge.uescripts, maya_uebridge.uelink,"
+            " maya_uebridge.vcs;"
             "assert 'maya.cmds' not in sys.modules, 'maya.cmds leaked in';"
             "assert 'maya_uebridge.window' not in sys.modules, 'window leaked in';"
             "assert 'maya_uebridge.animimport' not in sys.modules, 'animimport leaked in';"
