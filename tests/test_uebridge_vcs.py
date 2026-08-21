@@ -6,6 +6,9 @@ including the double '... ...' prefix on other-open fields and the fact that
 """
 
 import os
+import shutil
+import stat
+import tempfile
 import unittest
 
 from maya_uebridge import vcs
@@ -137,6 +140,108 @@ class PlanFor(unittest.TestCase):
         plan = vcs.plan_for(vcs.parse_ztag(both))
         self.assertEqual(plan["kind"], "mine")
         self.assertEqual(len(plan["users"]), 2)
+
+
+class ConventionalFolder(unittest.TestCase):
+
+    ROOT = os.path.join("C:\\", "src")
+
+    def test_the_real_example(self):
+        """The measured divergence: Exports inserted after Animation, the
+        trailing 1P dropped."""
+        folder = vcs.conventional_folder(
+            "/Game/Prototype/Animation/PlayerCharacter/Unarmed/1P/AS_Unarmed_Idle_1P",
+            self.ROOT)
+        self.assertEqual(folder, os.path.join(
+            self.ROOT, "Prototype", "Animation", "Exports",
+            "PlayerCharacter", "Unarmed"))
+
+    def test_3p_is_dropped_too(self):
+        folder = vcs.conventional_folder("/Game/P/Animation/X/3P/Asset", self.ROOT)
+        self.assertEqual(folder, os.path.join(
+            self.ROOT, "P", "Animation", "Exports", "X"))
+
+    def test_1p_matching_is_case_insensitive(self):
+        folder = vcs.conventional_folder("/Game/P/Animation/X/1p/Asset", self.ROOT)
+        self.assertTrue(folder.endswith("X"))
+
+    def test_exports_is_not_doubled(self):
+        folder = vcs.conventional_folder(
+            "/Game/P/Animation/Exports/X/Asset", self.ROOT)
+        self.assertEqual(folder.lower().count("exports"), 1)
+
+    def test_a_path_without_animation_passes_through(self):
+        folder = vcs.conventional_folder("/Game/Props/Swords/Asset", self.ROOT)
+        self.assertEqual(folder, os.path.join(self.ROOT, "Props", "Swords"))
+
+    def test_a_package_without_game_prefix_still_lands_under_root(self):
+        folder = vcs.conventional_folder("Odd/Path/Asset", self.ROOT)
+        self.assertEqual(folder, os.path.join(self.ROOT, "Odd", "Path"))
+
+    def test_a_bare_asset_name_lands_on_the_root(self):
+        self.assertEqual(vcs.conventional_folder("Asset", self.ROOT), self.ROOT)
+
+
+class FindFbx(unittest.TestCase):
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="vcs_find_")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def plant(self, *parts):
+        path = os.path.join(self.root, *parts)
+        folder = os.path.dirname(path)
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        with open(path, "w") as handle:
+            handle.write("x")
+        return path
+
+    def test_finds_a_nested_file(self):
+        planted = self.plant("A", "B", "AS_Walk.fbx")
+        self.assertEqual(vcs.find_fbx("AS_Walk", self.root), [planted])
+
+    def test_matching_is_case_insensitive(self):
+        self.plant("A", "as_walk.FBX")
+        self.assertEqual(len(vcs.find_fbx("AS_Walk", self.root)), 1)
+
+    def test_finds_every_duplicate(self):
+        self.plant("A", "AS_Walk.fbx")
+        self.plant("B", "AS_Walk.fbx")
+        self.assertEqual(len(vcs.find_fbx("AS_Walk", self.root)), 2)
+
+    def test_other_names_do_not_match(self):
+        self.plant("A", "AS_Walk_Fast.fbx")
+        self.assertEqual(vcs.find_fbx("AS_Walk", self.root), [])
+
+    def test_a_missing_root_is_an_empty_list(self):
+        gone = os.path.join(self.root, "nowhere")
+        self.assertEqual(vcs.find_fbx("AS_Walk", gone), [])
+
+
+class DirMap(unittest.TestCase):
+
+    PACKAGE = "/Game/P/Animation/X/1P/AS_Walk"
+
+    def test_remember_and_recall(self):
+        grown = vcs.remember_folder({}, self.PACKAGE, "C:/src/somewhere")
+        self.assertEqual(vcs.remembered_folder(grown, self.PACKAGE),
+                         "C:/src/somewhere")
+
+    def test_the_key_is_the_uasset_folder_not_the_asset(self):
+        """Two animations in one uasset folder share the remembered answer."""
+        grown = vcs.remember_folder({}, self.PACKAGE, "C:/src/somewhere")
+        sibling = "/Game/P/Animation/X/1P/AS_Run"
+        self.assertEqual(vcs.remembered_folder(grown, sibling),
+                         "C:/src/somewhere")
+
+    def test_remember_does_not_mutate_the_input(self):
+        original = {}
+        vcs.remember_folder(original, self.PACKAGE, "C:/x")
+        self.assertEqual(original, {})
+
+    def test_unknown_package_recalls_nothing(self):
+        self.assertEqual(vcs.remembered_folder({}, self.PACKAGE), "")
 
 
 if __name__ == "__main__":

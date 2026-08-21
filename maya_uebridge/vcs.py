@@ -89,3 +89,60 @@ def plan_for(fields):
     if users:
         return {"kind": "others", "users": users}
     return {"kind": "edit", "users": []}
+
+
+# ---------------------------------------------------------------- placement
+
+def package_folder(package):
+    """The uasset folder of a package path - the dir-map key."""
+    text = (package or "").replace("\\", "/")
+    return text.rsplit("/", 1)[0] if "/" in text else ""
+
+
+def conventional_folder(package, root):
+    """Where a NEW fbx belongs, derived from the uasset package path.
+
+    The measured convention (2026-08-21): the path relative to /Game, with
+    Exports inserted after the Animation segment (not doubled) and a trailing
+    1P/3P view folder dropped.
+    """
+    text = (package or "").replace("\\", "/")
+    if text.lower().startswith("/game/"):
+        text = text[len("/game/"):]
+    segments = [part for part in text.split("/") if part][:-1]
+    if segments and segments[-1].lower() in VIEW_FOLDERS:
+        segments = segments[:-1]
+    for index, segment in enumerate(segments):
+        if segment.lower() == "animation":
+            following = (segments[index + 1].lower()
+                         if index + 1 < len(segments) else "")
+            if following != "exports":
+                segments = (segments[:index + 1] + ["Exports"]
+                            + segments[index + 1:])
+            break
+    return os.path.join(root, *segments) if segments else root
+
+
+def find_fbx(name, root):
+    """Every <name>.fbx under root, case-insensitively. Fresh walk per call -
+    the tree is local and a cache would go stale under the animator's hands."""
+    wanted = (name + ".fbx").lower()
+    found = []
+    if not root or not os.path.isdir(root):
+        return found
+    for folder, _, files in os.walk(root):
+        for filename in files:
+            if filename.lower() == wanted:
+                found.append(os.path.join(folder, filename))
+    return found
+
+
+def remembered_folder(dir_map, package):
+    return (dir_map or {}).get(package_folder(package), "")
+
+
+def remember_folder(dir_map, package, folder):
+    """A new map with the answer for this uasset folder recorded."""
+    grown = dict(dir_map or {})
+    grown[package_folder(package)] = folder
+    return grown
