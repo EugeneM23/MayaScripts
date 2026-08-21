@@ -75,6 +75,39 @@ class RiggedTargetMessage(unittest.TestCase):
         self.assertEqual(first, second)
 
 
+class WeaponLinks(unittest.TestCase):
+    """The bridge unlinks our weapon-driven bones around a merge
+    (2026-08-21): weapon_r under the sword's constraint would otherwise
+    trip the rigged-skeleton refusal on every import after an Add."""
+
+    def test_our_bones_do_not_count_as_rigged(self):
+        self.assertEqual(
+            animimport.foreign_constrained(
+                ["|s|weapon_r", "|s|hand_r"], ["|s|weapon_r"]),
+            ["|s|hand_r"])
+
+    def test_a_real_rig_still_refuses(self):
+        self.assertEqual(
+            animimport.foreign_constrained(["|s|hand_r"], []),
+            ["|s|hand_r"])
+
+    def test_nothing_constrained_is_nothing(self):
+        self.assertEqual(animimport.foreign_constrained([], ["|s|weapon_r"]),
+                         [])
+
+    def test_relink_note_names_the_bones(self):
+        self.assertIn("weapon_r", animimport.relink_note(["weapon_r"]))
+
+    def test_no_relink_no_note(self):
+        self.assertEqual(animimport.relink_note([]), "")
+
+    def test_the_lookup_survives_a_maya_without_scenesetup(self):
+        """Lazy and guarded: the bridge must work where the weapon tool was
+        never installed. With the fake maya in place the import itself
+        succeeds here; what this pins is that the helper answers a list."""
+        self.assertIsInstance(animimport._weapon_links([]), list)
+
+
 class SceneFps(unittest.TestCase):
 
     def test_knows_the_units_maya_reports(self):

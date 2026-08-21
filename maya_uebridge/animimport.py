@@ -168,6 +168,38 @@ def constrained_joints(joints):
     return [j for j in joints
             if cmds.listRelatives(j, children=True, type="constraint")]
 
+
+def foreign_constrained(constrained, linked_bones):
+    """The constrained joints that are NOT ours to unlink. Pure.
+
+    A weapon-driven bone (weapon_r riding the sword since 2026-08-21) is
+    released and re-linked around the merge, so it must not count as "the
+    skeleton is rigged" -- but anything else constrained still refuses.
+    """
+    ours = set(linked_bones)
+    return [joint for joint in constrained if joint not in ours]
+
+
+def relink_note(bones):
+    """Status text for the weapon links rebuilt after the merge."""
+    if not bones:
+        return ""
+    return "weapon re-linked on " + ", ".join(bones)
+
+
+def _weapon_links(joints):
+    """[(bone, weapon)] our weapon tool drives; [] when scenesetup is absent.
+
+    Lazy and guarded on purpose: the bridge must work in a Maya that never
+    installed the weapon tool, and a bare import here would be a hard
+    dependency for every user of the window.
+    """
+    try:
+        from maya_scenesetup import bonedrive
+    except ImportError:
+        return []
+    return bonedrive.find_links(joints)
+
 AMBIGUOUS_TARGET_MESSAGE = (
     "several skeletons in the scene - select a joint of the one you mean, or "
     "switch to 'as a new skeleton'")
@@ -316,6 +348,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
     target = None
     cleared = 0
     target_joints = []
+    links = []
     if merge:
         roots = skeleton_roots()
         target = choose_target_root(roots, selected_roots())
@@ -323,10 +356,20 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
             raise RuntimeError(
                 AMBIGUOUS_TARGET_MESSAGE if roots else NO_TARGET_MESSAGE)
         target_joints = joints_under(target)
-        rigged = constrained_joints(target_joints)
+        # Our weapon-driven bones are released around the merge and re-linked
+        # after it; the refusal fires on the OTHER constrained joints only.
+        # Reading before refusing is load-bearing: a refusal must leave the
+        # scene exactly as it was, so nothing is unlinked yet.
+        links = _weapon_links(target_joints)
+        rigged = foreign_constrained(constrained_joints(target_joints),
+                                     [bone for bone, _ in links])
         if rigged:
             raise RuntimeError(rigged_target_message(
                 [_short(j) for j in rigged]))
+        if links:
+            from maya_scenesetup import bonedrive
+            for bone, _weapon in links:
+                bonedrive.unlink(bone)
         # Clear first. The importer rewrites curves in place - same names and
         # same uuids, measured - so without this there is no way to tell what
         # the clip touched, and bones missing from the clip would keep frames
@@ -379,12 +422,24 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
         cmds.playbackOptions(minTime=start, maxTime=end,
                              animationStartTime=start, animationEndTime=end)
 
+    # After the timeline is set, so the re-link's bake range unions against
+    # the CLIP's range rather than whatever the scene showed before.
+    relinked = []
+    if merge and links:
+        from maya_scenesetup import bonedrive
+        for bone, weapon in links:
+            if cmds.objExists(weapon) and cmds.objExists(bone):
+                bonedrive.relink(weapon, bone)
+                relinked.append(_short(bone))
+
     warnings = [fps_warning(clip_fps, scene_fps())]
     if merge:
         warnings.append(merge_warning(joint_count))
         warnings.append(stale_line(stale))
+        warnings.append(relink_note(relinked))
 
-    return {"namespace": "" if merge else namespace,
+    return {"relinked": relinked,
+            "namespace": "" if merge else namespace,
             "merged": bool(merge),
             "target": _short(target) if target else "",
             "cleared": cleared,
