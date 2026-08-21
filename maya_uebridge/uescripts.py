@@ -302,10 +302,24 @@ try:
     task.set_editor_property("save", True)
     task.set_editor_property("options", options)
 
-    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+    # Interchange owns .fbx on this build and swallows a bones-only file
+    # with "nothing to import" (measured 2026-08-21 in the editor log), so
+    # the task runs on the legacy fbx path and the flag goes straight back.
+    flag = attempt(lambda: unreal.SystemLibrary.get_console_variable_int_value(
+        "Interchange.FeatureFlags.Import.FBX"))
+    if flag:
+        unreal.SystemLibrary.execute_console_command(
+            None, "Interchange.FeatureFlags.Import.FBX 0")
+    try:
+        unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+    finally:
+        if flag:
+            unreal.SystemLibrary.execute_console_command(
+                None, "Interchange.FeatureFlags.Import.FBX 1")
 
-    landed = list(attempt(lambda: task.get_editor_property(
-        "imported_object_paths"), []) or [])
+    # task.result is deprecated and imported_object_paths stays empty on
+    # this build (both measured) - get_objects is what answers.
+    landed = list(attempt(lambda: task.get_objects(), []) or [])
     if not landed:
         raise RuntimeError("the import task reported nothing imported - "
                            "check the editor's Output Log")

@@ -153,6 +153,20 @@ class ReimportScript(unittest.TestCase):
         self.assertIn('"automated", True', text)
         self.assertIn("FBXIT_ANIMATION", text)
 
+    def test_the_import_is_forced_onto_the_legacy_fbx_path(self):
+        """Interchange swallows a bones-only fbx with 'nothing to import'
+        (measured 2026-08-21 in the editor log), so the task runs with the
+        Interchange fbx flag off, and the flag is put back in a finally."""
+        text = self.script()
+        self.assertIn("Interchange.FeatureFlags.Import.FBX", text)
+        self.assertIn("finally:", text.split("import_asset_tasks")[0]
+                      + text.split("import_asset_tasks")[1])
+
+    def test_success_is_measured_by_get_objects(self):
+        """task.result is deprecated on this build; imported_object_paths
+        stays empty (measured) - get_objects is what answers."""
+        self.assertIn("get_objects", self.script())
+
     def test_the_skeleton_comes_from_the_asset_itself(self):
         self.assertIn('get_editor_property("skeleton")', self.script())
 
