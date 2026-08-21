@@ -308,6 +308,25 @@ def merge_selected():
     return cmds.radioButtonGrp(_MODE, query=True, select=True) == 1
 
 
+def checkout_selected():
+    """Open the selected animation's uasset+fbx pair in Perforce."""
+    record = _selected_record()
+    if record is None:
+        _status("select an animation first")
+        return
+    # Lazy: checkouts imports this module at its top, so the top-level import
+    # graph must stay one-directional.
+    from maya_uebridge import checkouts
+    _status(checkouts.checkout_pair(record))
+
+
+def export_pressed():
+    """The reverse bridge: the checkouts window, or a plain save-as export
+    when nothing is checked out."""
+    from maya_uebridge import checkouts
+    checkouts.open_for_export()
+
+
 # ---------------------------------------------------------------- vcs
 
 def vcs_enabled():
@@ -500,6 +519,12 @@ def show_window():
                            command=lambda *_: _run(_change_root))
     timeline = cmds.checkBox(_TIMELINE, label="set timeline to clip range",
                              value=True)
+    checkout_button = cmds.button(
+        label="Checkout", height=34, width=90,
+        command=lambda *_: _run(checkout_selected, busy="talking to p4..."))
+    export_button = cmds.button(
+        label="EXPORT", height=34, width=90,
+        command=lambda *_: _run(export_pressed, busy="reading checkouts..."))
     import_button = cmds.button(
         label="IMPORT", height=34,
         command=lambda *_: _run(import_selected,
@@ -537,6 +562,10 @@ def show_window():
             (vcs_root, "left", 10, vcs_check),
             (vcs_root, "right", 6, vcs_pick),
             (import_button, "bottom", 6, status),
+            (export_button, "bottom", 6, status),
+            (export_button, "right", 6, import_button),
+            (checkout_button, "bottom", 6, status),
+            (checkout_button, "right", 6, export_button),
             (timeline, "bottom", 18, status),
         ])
 
