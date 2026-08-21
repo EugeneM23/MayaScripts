@@ -131,6 +131,20 @@ Four things that will waste a run if forgotten:
    calling `accept` on: the port object is fine and the thing that services it
    is gone. Save the scene and restart.
 
+9. **The session imports the INSTALLED SkeldarAnim copy, not the repo.**
+   Measured 2026-08-21: `maya_overrig.__file__` answered
+   `Documents/maya/scripts/SkeldarAnim/...` — the shelf buttons bootstrap
+   that path, and it wins over a repo path APPENDED later. So a verify
+   runner must `sys.path.insert(0, REPO)` and purge all three package trees
+   whole from `sys.modules` (package roots included) before exec'ing the
+   script, or it silently proves yesterday's code; and after changing repo
+   code, refresh the installed copy (`install.install(quiet=True)` from the
+   repo's `install.py`, purging the `install` module first — the installed
+   folder carries its own) or the user's shelf keeps running the old build.
+   One more polling detail: a runner that redirects stdout into its output
+   file CREATES the file immediately — poll for the script's final line,
+   never for the file's existence.
+
 ## Running tests
 
 There is **no system Python** — `python` resolves to the Microsoft Store stub.
