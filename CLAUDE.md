@@ -1018,10 +1018,11 @@ list and an FBX export for the import.
 | `uelink.py` | engine discovery, session, running Python in the editor | **stdlib only** |
 | `uescripts.py` | UE-side script text | **stdlib only** |
 | `records.py` | record model, search, namespace naming, row text | **stdlib only** |
+| `vcs.py` | Perforce placement: fbx name search, path convention, checkout decision table, p4 runner | **stdlib only** |
 | `animimport.py` | FBX import, timeline, fps policy | `maya.cmds` |
 | `window.py` | the `cmds` window | `maya.cmds` |
 
-The first three are testable with neither application running; a subprocess
+The first four are testable with neither application running; a subprocess
 test enforces it. `__init__.py` resolves `show_window` through `__getattr__`
 for the same reason as `maya_overrig`.
 
@@ -1085,6 +1086,39 @@ bones.
 Proof: `docs/superpowers/plans/verify_uebridge_merge.py` (**25/25 green**). It
 imports one clip twice — merged, and as a reference skeleton — and compares
 them frame by frame: 120 samples, worst 0.000000°, root motion 0.000000 cm.
+
+**Connect to version control** (2026-08-21) reroutes every import through
+the working FBX in the SourceArt tree: the editor still exports to temp,
+the file is then PLACED onto the working copy (`vcs.place`) and Maya
+imports THAT path — the scene references the working file, not a temp
+copy. The working file is found **by name** under the source root
+(`vcs.find_fbx` — the measured hierarchies diverge, the uasset path
+carries `1P` where the fbx path carries `Exports`, while the file names
+match exactly); the path convention (`vcs.conventional_folder`: insert
+`Exports` after `Animation`, drop a trailing `1P`/`3P`) only decides where
+a NEW file goes, and a folder the user was asked for once is remembered
+per uasset folder (`ueBridgeVcsDirMap`). First activation of the checkbox
+asks for the source project root (`ueBridgeVcsRoot`); the `...` button
+changes it later. The p4 side (`vcs.prepare_target`): untracked files are
+just written — **no `p4 add`**, versioning is the export phase's job (the
+user's call) — tracked-and-free gets `p4 edit` with one sync-retry on
+"not on client", checked out by others raises the only modal (named
+users, Cancel / Overwrite locally), and a dead p4 (expired SSO session,
+no network, no exe) offers Continue locally. No depot state is mutated
+before the export has succeeded. Two measured parser facts: **p4 exits 0
+even for "no such file(s)"** — failures are classified by stderr text and
+that message is a normal answer meaning untracked — and **ztag's
+other-open block is double-prefixed** (`... ... otherOpen0 ...`); match
+one prefix and every busy file reads as free. Every dialog is injectable
+(`window._vcs_target(record, asks=...)`, the two asks of
+`prepare_target`), because a modal over the command port blocks Maya
+(bridge note 6). SourceArt maps to its own depot — `//atone-art`, a local
+depot, not the `//atone/main` stream — and the three example Unarmed fbx
+are NOT in it, only on disk. Verify: `verify_uebridge_vcs.py`, which
+builds a **sandbox source root** (never the real SourceArt — a verify run
+must not overwrite the animator's working files), never mutates the
+depot, and imports into its own namespace with `set_timeline=False`.
+Spec: `docs/superpowers/specs/2026-08-21-uebridge-perforce-design.md`.
 
 Traps, each paid for:
 
