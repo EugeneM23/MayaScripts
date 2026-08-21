@@ -268,22 +268,52 @@ try:
     if not os.path.isfile(_FBX):
         raise RuntimeError("no FBX at " + str(_FBX))
 
-    subsystem = attempt(
-        lambda: unreal.get_editor_subsystem(unreal.ReimportSubsystem))
-    if subsystem is None:
-        raise RuntimeError("no ReimportSubsystem on this engine build")
+    skeleton = anim.get_editor_property("skeleton")
+    if skeleton is None:
+        raise RuntimeError("the asset has no skeleton: " + str(_PACKAGE))
 
-    # Point the stored import source at OUR fbx first: ask_new_file=False
-    # plus an explicit path is what keeps the editor from raising a file
-    # dialog nobody can click (the trap-23/24 family).
-    if attempt(lambda: subsystem.set_reimport_paths(anim, [_FBX]) or True) is None:
-        result["notes"].append("set_reimport_paths failed")
+    # This engine build exposes no ReimportSubsystem (measured 2026-08-21:
+    # hasattr(unreal, "ReimportSubsystem") is False), so the reimport is an
+    # automated import task over the existing package: replace_existing
+    # rewrites the same asset, the skeleton comes from the asset itself, and
+    # automated=True keeps every dialog away (the trap-23/24 family).
+    options = unreal.FbxImportUI()
+    for name, value in (("import_mesh", False),
+                        ("import_animations", True),
+                        ("import_materials", False),
+                        ("import_textures", False),
+                        ("create_physics_asset", False),
+                        ("import_as_skeletal", False),
+                        ("automated_import_should_detect_type", False),
+                        ("skeleton", skeleton)):
+        if attempt(lambda: options.set_editor_property(name, value) or True) is None:
+            result["notes"].append("no FbxImportUI." + name)
+    if attempt(lambda: options.set_editor_property(
+            "mesh_type_to_import",
+            unreal.FBXImportType.FBXIT_ANIMATION) or True) is None:
+        result["notes"].append("no FbxImportUI.mesh_type_to_import")
 
-    ran = attempt(lambda: subsystem.reimport(
-        anim, ask_new_file=False, load_new_file=False, preferred_file=_FBX))
-    if not ran:
-        raise RuntimeError("the editor refused the reimport - check its "
-                           "Output Log (returned " + str(ran) + ")")
+    task = unreal.AssetImportTask()
+    task.set_editor_property("filename", _FBX)
+    task.set_editor_property("destination_path", _PACKAGE.rsplit("/", 1)[0])
+    task.set_editor_property("destination_name", _PACKAGE.rsplit("/", 1)[-1])
+    task.set_editor_property("replace_existing", True)
+    task.set_editor_property("automated", True)
+    task.set_editor_property("save", True)
+    task.set_editor_property("options", options)
+
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+
+    landed = list(attempt(lambda: task.get_editor_property(
+        "imported_object_paths"), []) or [])
+    if not landed:
+        raise RuntimeError("the import task reported nothing imported - "
+                           "check the editor's Output Log")
+
+    anim = unreal.load_asset(_PACKAGE)
+    if anim is None:
+        raise RuntimeError("the asset vanished after the reimport: "
+                           + str(_PACKAGE))
 
     result["saved"] = bool(attempt(lambda: unreal.EditorAssetLibrary.save_asset(
         _PACKAGE, only_if_is_dirty=False)))
@@ -315,7 +345,11 @@ def reimport_script(out_path, package, fbx_path):
     """Source that reimports one AnimSequence from `fbx_path` and saves it.
 
     The uasset must already be writable (checked out) - this script does not
-    touch Perforce; the bridge did that before calling it.
+    touch Perforce; the bridge did that before calling it. The mechanism is a
+    replace-import (AssetImportTask over the existing package), because this
+    engine build exposes no ReimportSubsystem to Python; note that a replace
+    rebuilds the asset from the fbx, so curves the fbx does not carry do not
+    survive it - the same contract as reimporting by hand in the editor.
     """
     values = {"out_path": json.dumps(out_path),
               "package": json.dumps(package),

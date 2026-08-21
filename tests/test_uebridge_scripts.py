@@ -144,12 +144,17 @@ class ReimportScript(unittest.TestCase):
     def test_the_script_compiles(self):
         compile(self.script(), "<reimport>", "exec")
 
-    def test_the_reimport_is_pointed_at_our_fbx_without_asking(self):
-        """ask_new_file=False plus set_reimport_paths is what keeps the editor
-        from raising a file dialog nobody can click (trap 23/24 family)."""
+    def test_the_reimport_is_an_automated_replace_import(self):
+        """This engine build has no ReimportSubsystem (measured 2026-08-21),
+        so the reimport is an AssetImportTask over the existing package -
+        automated, or the editor raises a dialog nobody can click."""
         text = self.script()
-        self.assertIn("set_reimport_paths", text)
-        self.assertIn("ask_new_file=False", text)
+        self.assertIn("replace_existing", text)
+        self.assertIn('"automated", True', text)
+        self.assertIn("FBXIT_ANIMATION", text)
+
+    def test_the_skeleton_comes_from_the_asset_itself(self):
+        self.assertIn('get_editor_property("skeleton")', self.script())
 
     def test_the_asset_is_saved_after_the_reimport(self):
         self.assertIn("save_asset", self.script())
