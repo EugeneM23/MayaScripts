@@ -1155,9 +1155,13 @@ call: one changelist, one submit; «source fbx — прокладка через
 работаем», so a checkout through the bridge never leaves a uasset without
 its fbx — a прокладка that exists nowhere is exported out of the editor
 into the conventional spot on the way, then `p4 add`ed). **Export** embeds
-the checkouts list (`checkouts.build_tab`), re-read on every switch to the
-tab and after every checkout, with EXPORT / Revert / Refresh; EXPORT with
-nothing checked out degrades to a save-as dialog and a plain fbx export.
+the checkouts list (`checkouts.build_tab`) with EXPORT / Revert / Refresh;
+EXPORT with nothing checked out degrades to a save-as dialog and a plain
+fbx export. **Perforce is polled only by the tab's Refresh button and after
+the actions that change it** (Checkout, Revert, EXPORT) — never on a tab
+switch (the user's follow-up, 2026-08-22: «не нужно каждый раз опрашивать
+перфорс»); between polls the list keeps its last rows, and the tab header
+says Refresh is what re-reads.
 One status line at the window bottom serves both tabs. The listing is
 `fstat -Ro <Content>/....uasset` (one
 call, clientFile included; `p4 opened` would need a `where` per file)

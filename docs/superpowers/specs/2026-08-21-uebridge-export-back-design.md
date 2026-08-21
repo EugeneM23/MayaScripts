@@ -246,9 +246,12 @@ The user, after trying the shipped version: «Мы можем в одном ок
   list, import mode, VCS row, timeline, Checkout + IMPORT) and **Export**
   (the checkouts list with EXPORT / Revert / Refresh, built by
   `checkouts.build_tab` into the tabLayout; no window of its own any more).
-- The checkouts list re-reads on every switch to the Export tab and after
-  every Checkout press, so it is current the moment it is visible — the
-  point of the ask.
+- The checkouts list re-reads after every Checkout press and on the tab's
+  own Refresh button. It originally also re-read on every switch to the
+  Export tab; the user retired that the next morning («не нужно каждый раз
+  опрашивать перфорс когда мы открываем вкладку export») — a tab switch now
+  polls nothing, the list keeps its last rows, and the tab header names
+  Refresh as the re-read.
 - **Checkout stays on the Import tab**, beside IMPORT: it acts on the
   selection in the full animation list, which lives there; the pair it
   opens appears on the Export tab immediately.

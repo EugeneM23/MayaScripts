@@ -340,8 +340,11 @@ def _populate(rows):
 
 
 def refresh_tab():
-    """Re-read the checkouts into the tab's list. Safe to call from anywhere
-    - a bridge window without the tab built yet just ignores it."""
+    """Re-read the checkouts into the tab's list. Called by the tab's
+    Refresh button and after every action that changes the depot state -
+    NEVER on a tab switch (the user's call: opening the tab must not poll
+    Perforce). Safe from anywhere - a bridge window without the tab built
+    yet just ignores it."""
     if not cmds.textScrollList(_LIST, exists=True):
         return
     rows, failure = load_rows()
@@ -396,13 +399,16 @@ def build_tab(parent):
     """The Export tab, built inside the bridge window's tabLayout.
 
     No window of its own since 2026-08-21 evening (the user's ask: «хочется
-    видеть сразу все наши файлы на чекауте») - the list refreshes when the
-    tab is opened, and every message goes to the window's one status line.
+    видеть сразу все наши файлы на чекауте»), and no polling on a tab switch
+    since the morning after - Refresh and the file actions are the only p4
+    reads, so the header says where the button is and the list simply keeps
+    its last rows. Every message goes to the window's one status line.
     """
     form = cmds.formLayout(parent=parent)
 
     header = cmds.text(
-        label="AnimSequence uassets checked out in this workspace",
+        label="AnimSequence uassets checked out in this workspace"
+              " - Refresh re-reads Perforce",
         align="left")
     scroll = cmds.textScrollList(
         _LIST, allowMultiSelection=False, font="fixedWidthFont",

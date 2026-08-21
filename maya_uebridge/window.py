@@ -325,15 +325,10 @@ def checkout_selected():
     _status(line)
 
 
-def _tab_changed():
-    """Switching to the Export tab re-reads the checkouts, so the list is
-    current the moment it becomes visible - no popup, no stale rows."""
-    if cmds.tabLayout(_TABS, query=True, selectTabIndex=True) != 2:
-        return
-    _status("asking p4...")
-    cmds.refresh()
-    from maya_uebridge import checkouts
-    checkouts.refresh_tab()
+# No handler on the tab switch, deliberately (the user's follow-up: «не
+# нужно каждый раз опрашивать перфорс когда мы открываем вкладку export») -
+# the checkouts list re-reads Perforce only on its Refresh button and after
+# the actions that change it (Checkout, Revert, EXPORT).
 
 
 # ---------------------------------------------------------------- vcs
@@ -512,8 +507,7 @@ def show_window():
 
     # Two tabs since 2026-08-21 evening (the user's ask): Import is the
     # browse-and-import side, Export is every action on the checkouts.
-    tabs = cmds.tabLayout(_TABS, innerMarginWidth=4, innerMarginHeight=4,
-                          changeCommand=lambda *_: _run(_tab_changed))
+    tabs = cmds.tabLayout(_TABS, innerMarginWidth=4, innerMarginHeight=4)
 
     import_tab = cmds.formLayout(parent=tabs)
 
