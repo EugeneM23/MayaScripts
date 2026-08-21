@@ -1528,6 +1528,64 @@ guard are proved live through the bridge (out_11); the full 13-gate
 run, and only a Maya restart revives the port. Run it at the next natural
 restart.
 
+## `install.py` — the SkeldarAnim shelf, drag-and-drop
+
+The repo root is the distribution folder: zip it, hand it to a colleague,
+they drag `install.py` into an open Maya viewport and get a shelf named
+**SkeldarAnim** with five buttons — Rig Picker, UE Bridge, Scene Setup,
+Overshoot, and the native OverRig panel. Design:
+`docs/superpowers/specs/2026-08-21-installer-design.md`, proof:
+`docs/superpowers/plans/verify_install.py` (**11 gates, 0 failed** in the
+live Maya, 2026-08-21: real install, payload exact, five buttons each
+opening its window, OverRig dock up, sword resolved from the installed
+copy, idempotent re-run, sys.path put back).
+
+A drop copies a **whitelist** (`install.payload()`) into
+`<userAppDir>/scripts/SkeldarAnim/` — the three packages,
+`maya_overshoot.py`, `icons/`, `assets/`, `overrig/`, plus `install.py`
+and `README_INSTALL.txt` so the installed folder can repair itself —
+and nothing else: tests, docs, archive and the other root tools stay
+home. The shelf tab is created through Maya's own `addNewShelfTab` (it
+keeps the shelf optionVars consistent) and **never deleted**; an existing
+tab only has its buttons replaced, which is what makes a re-drag an
+update rather than a duplicate. Button commands are written at install
+time with the destination baked in (`install.button_specs(dest)`): the
+four Python buttons bootstrap `sys.path` and call the tool's show
+function; the fifth replays OverRig's own installer command verbatim —
+`source`, `$barnev_OverRig_RotateOrder = 0`, `$path_to_JGLBN =
+<dest>/overrig/misc/`, `base_OverRig_scripts(1)` — read out of
+`Drag_and_Drop_to_install.mel`, not guessed.
+
+Things that will bite if forgotten:
+
+- **`same_place(src, dest)` guards the copy**: a re-drag of `install.py`
+  from the installed folder itself must not `rmtree` the very files it is
+  about to copy. Source == destination skips the copy and only rebuilds
+  the shelf.
+- **`install(quiet=True)` exists for the bridge**: the normal path ends in
+  a `confirmDialog`, and a modal dialog over the command port is a blocked
+  idle queue (bridge note 6). Scripted installs must pass `quiet=True`.
+- **Shipped-copy-first resolution, legacy path as fallback.** The sword:
+  `catalog._sword_path()` takes `<container>/assets/LongSword_02.fbx`
+  (two dirnames up from `catalog.py` — true in the repo and the installed
+  copy alike), else the old `Animations/Sources` path. OverRig:
+  `overrig.mel_path()` walks `overrig.MEL_CANDIDATES` — the shipped
+  `<container>/overrig/base_OverRig_scripts.mel` first, the user's
+  original install second; `NOT_LOADED_MESSAGE` names both. `MEL_PATH`
+  is gone.
+- **`overrig/misc/` is empty at the source and load-bearing anyway** —
+  OverRig's own button points `$path_to_JGLBN` at it. Git does not track
+  empty dirs, hence `overrig/misc/.gitkeep`.
+- **OverRig is committed whole** — MEL, manuals, `License.txt`, `icons/`.
+  Its license (clause 3) forbids redistribution without the author's
+  consent; the user chose to commit it with that on the table (private
+  repo, intra-studio hand-off, studio's call). Clause 4 forbids stripping
+  proprietary notices, so never trim the folder.
+- Icons are 32×32 PNGs drawn by `icons/make_icons.py` (QPainter under
+  mayapy, `QT_QPA_PLATFORM=offscreen`); the generator is committed next to
+  its output, regenerate and re-commit to restyle. The OverRig button uses
+  Barnev's own `base_OverRig.bmp`.
+
 ## Conventions
 
 - Branch `feature/overrig-picker`, remote `github.com/EugeneM23/MayaScripts`.
