@@ -254,7 +254,10 @@ def import_selected():
                 os.path.basename(target)))
             return
         vcs.place(exported, target)
-        suffix = vcs.status_suffix(target, _saved_root(), is_new, note)
+        # "New" is the depot's verdict, not the disk's: a depot file synced
+        # on demand did not exist locally a moment ago and is anything but.
+        suffix = vcs.status_suffix(target, _saved_root(),
+                                   is_new and note == "not in depot", note)
 
     merge = merge_selected()
     namespace = ("" if merge else
@@ -376,11 +379,19 @@ def _save_dir_map(dir_map):
 
 
 def _ask_which_file(paths):
-    kwargs = {"fileMode": 1, "dialogStyle": 2, "fileFilter": "FBX (*.fbx)",
-              "caption": "Several working fbx match - pick the one to use",
-              "startingDirectory": os.path.dirname(paths[0])}
-    picked = cmds.fileDialog2(**kwargs) or []
-    return picked[0] if picked else ""
+    """A numbered dialog, not a file picker: a depot-only candidate does not
+    exist on disk yet, and a picker cannot select a file that is not there."""
+    shown = paths[:6]
+    lines = ["{0}.  {1}".format(index + 1, path)
+             for index, path in enumerate(shown)]
+    answer = cmds.confirmDialog(
+        title="Several working fbx match",
+        message="Pick the working file:\n\n{0}".format("\n".join(lines)),
+        button=[str(index + 1) for index in range(len(shown))] + ["Cancel"],
+        defaultButton="Cancel", cancelButton="Cancel", dismissString="Cancel")
+    if not answer.isdigit():
+        return ""
+    return shown[int(answer) - 1]
 
 
 def _ask_new_folder(name):
@@ -425,7 +436,8 @@ def _vcs_target(record, asks=None):
     dir_map = _load_dir_map()
     target, grown = vcs.choose_target(
         record.name, record.package, root, dir_map,
-        asks.get("file", _ask_which_file), asks.get("folder", _ask_new_folder))
+        asks.get("file", _ask_which_file), asks.get("folder", _ask_new_folder),
+        run=asks.get("run", vcs.run_p4))
     if grown != dir_map:
         _save_dir_map(grown)
     if not target:

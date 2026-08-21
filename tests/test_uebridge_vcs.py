@@ -160,24 +160,23 @@ class ConventionalFolder(unittest.TestCase):
 
     ROOT = os.path.join("C:\\", "src")
 
-    def test_the_real_example(self):
-        """The measured divergence: Exports inserted after Animation, the
-        trailing 1P dropped."""
+    def test_the_real_example_keeps_the_view_folder(self):
+        """The depot's canonical layout is a pure mirror - measured on
+        Longsword: the fbx lives in .../Weapons/Longsword/3P/, the 3P KEPT.
+        The first version dropped 1P/3P (inferred from local Unarmed files
+        that are not in the depot) and landed an import one level above."""
         folder = vcs.conventional_folder(
-            "/Game/Prototype/Animation/PlayerCharacter/Unarmed/1P/AS_Unarmed_Idle_1P",
+            "/Game/Prototype/Animation/PlayerCharacter/Weapons/Longsword/3P/"
+            "AS_Longsword_Attack_Back_Combo_2_Hold_1_3P",
             self.ROOT)
         self.assertEqual(folder, os.path.join(
             self.ROOT, "Prototype", "Animation", "Exports",
-            "PlayerCharacter", "Unarmed"))
+            "PlayerCharacter", "Weapons", "Longsword", "3P"))
 
-    def test_3p_is_dropped_too(self):
-        folder = vcs.conventional_folder("/Game/P/Animation/X/3P/Asset", self.ROOT)
+    def test_1p_is_kept_too(self):
+        folder = vcs.conventional_folder("/Game/P/Animation/X/1P/Asset", self.ROOT)
         self.assertEqual(folder, os.path.join(
-            self.ROOT, "P", "Animation", "Exports", "X"))
-
-    def test_1p_matching_is_case_insensitive(self):
-        folder = vcs.conventional_folder("/Game/P/Animation/X/1p/Asset", self.ROOT)
-        self.assertTrue(folder.endswith("X"))
+            self.ROOT, "P", "Animation", "Exports", "X", "1P"))
 
     def test_exports_is_not_doubled(self):
         folder = vcs.conventional_folder(
@@ -314,7 +313,7 @@ class ChooseTarget(unittest.TestCase):
         self.assertEqual(path, "")
 
     def test_a_new_file_lands_in_the_existing_conventional_folder(self):
-        folder = os.path.join(self.root, "P", "Animation", "Exports", "X")
+        folder = os.path.join(self.root, "P", "Animation", "Exports", "X", "1P")
         os.makedirs(folder)
         path, _ = vcs.choose_target(
             "AS_Walk", self.PACKAGE, self.root, {}, self.never, self.never)
@@ -528,6 +527,185 @@ class PlaceAndSuffix(unittest.TestCase):
         suffix = vcs.status_suffix("D:\\odd\\a.fbx", "C:\\w\\SourceArt",
                                    False, "")
         self.assertIn("D:\\odd\\a.fbx", suffix)
+
+
+def where_reply(depot="//atone-art/..."):
+    """The measured shape of `p4 -ztag where <root>/...`: one record per view
+    line, blank-line separated, exclusions carrying an `unmap` field."""
+    return ("... unmap \n"
+            "... depotFile //atone/main/SourceArt/...\n"
+            "... clientFile //c/SourceArt/...\n"
+            "... path C:\\w\\SourceArt\\...\n"
+            "\n"
+            "... depotFile {0}\n"
+            "... clientFile //c/SourceArt/...\n"
+            "... path C:\\w\\SourceArt\\...\n".format(depot))
+
+
+def fstat_record(depot, client, head_action="add", have=False):
+    lines = ["... depotFile {0}".format(depot),
+             "... clientFile {0}".format(client),
+             "... isMapped",
+             "... headAction {0}".format(head_action),
+             "... headType binary",
+             "... headRev 1"]
+    if have:
+        lines.append("... haveRev 1")
+    return "\n".join(lines) + "\n"
+
+
+class ParseZtagRecords(unittest.TestCase):
+
+    def test_splits_records_on_blank_lines(self):
+        records = vcs.parse_ztag_records(where_reply())
+        self.assertEqual(len(records), 2)
+        self.assertIn("unmap", records[0])
+        self.assertNotIn("unmap", records[1])
+
+    def test_one_record_without_a_trailing_blank_parses(self):
+        records = vcs.parse_ztag_records(fstat_record("//d/a.fbx", "C:\\a.fbx"))
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["depotFile"], "//d/a.fbx")
+
+    def test_empty_text_is_an_empty_list(self):
+        self.assertEqual(vcs.parse_ztag_records(""), [])
+
+
+class DepotPattern(unittest.TestCase):
+
+    def test_takes_the_last_mapping_without_unmap(self):
+        """The view EXCLUDES //atone/main/SourceArt and maps //atone-art in;
+        reading the first record would search a dead branch (measured)."""
+        run = FakeP4([(["-ztag", "where"], (0, where_reply(), ""))])
+        self.assertEqual(vcs.depot_pattern("C:\\w\\SourceArt", run),
+                         "//atone-art/...")
+
+    def test_a_pattern_without_wildcard_gets_one(self):
+        reply = "... depotFile //atone-art\n... clientFile //c/S\n... path X\n"
+        run = FakeP4([(["-ztag", "where"], (0, reply, ""))])
+        self.assertEqual(vcs.depot_pattern("C:\\w\\SourceArt", run),
+                         "//atone-art/...")
+
+    def test_p4_trouble_is_an_empty_pattern(self):
+        run = FakeP4([(["-ztag", "where"], (None, "", "p4.exe not found"))])
+        self.assertEqual(vcs.depot_pattern("C:\\w\\SourceArt", run), "")
+
+
+class FindFbxDepot(unittest.TestCase):
+
+    CLIENT = "C:\\w\\SourceArt\\P\\Animation\\Exports\\X\\3P\\AS_Walk.fbx"
+
+    def script(self, fstat_reply):
+        return FakeP4([
+            (["-ztag", "where"], (0, where_reply(), "")),
+            (["-ztag", "fstat"], fstat_reply),
+        ])
+
+    def test_finds_an_unsynced_depot_file(self):
+        """The whole point: a file at head with no local copy - fstat answers
+        clientFile even then (measured on the Longsword fbx, no haveRev)."""
+        run = self.script((0, fstat_record("//atone-art/P/AS_Walk.fbx",
+                                           self.CLIENT), ""))
+        found = vcs.find_fbx_depot("AS_Walk", "C:\\w\\SourceArt", run)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["clientFile"], self.CLIENT)
+
+    def test_the_search_pattern_is_scoped_and_named(self):
+        run = self.script((0, "", "no such file(s).\n"))
+        vcs.find_fbx_depot("AS_Walk", "C:\\w\\SourceArt", run)
+        self.assertEqual(run.calls[1][:2], ["-ztag", "fstat"])
+        self.assertEqual(run.calls[1][-1], "//atone-art/.../AS_Walk.fbx")
+
+    def test_deleted_at_head_is_dropped(self):
+        reply = (fstat_record("//atone-art/P/AS_Walk.fbx", self.CLIENT,
+                              head_action="move/delete")
+                 + "\n"
+                 + fstat_record("//atone-art/Q/AS_Walk.fbx",
+                                "C:\\w\\SourceArt\\Q\\AS_Walk.fbx"))
+        run = self.script((0, reply, ""))
+        found = vcs.find_fbx_depot("AS_Walk", "C:\\w\\SourceArt", run)
+        self.assertEqual(len(found), 1)
+        self.assertIn("\\Q\\", found[0]["clientFile"])
+
+    def test_nothing_in_the_depot_is_an_empty_list(self):
+        run = self.script((0, "", "//atone-art/.../AS_Walk.fbx - no such file(s).\n"))
+        self.assertEqual(vcs.find_fbx_depot("AS_Walk", "C:\\w\\SourceArt", run), [])
+
+    def test_p4_trouble_degrades_to_an_empty_list(self):
+        """Discovery must not hard-fail: prepare_target surfaces real
+        failures with its dialog; a dead p4 here just means disk-only."""
+        run = FakeP4([(["-ztag", "where"], EXPIRED)])
+        self.assertEqual(vcs.find_fbx_depot("AS_Walk", "C:\\w\\SourceArt", run), [])
+
+    def test_no_runner_means_no_depot_search(self):
+        self.assertEqual(vcs.find_fbx_depot("AS_Walk", "C:\\w\\SourceArt", None), [])
+
+
+class ChooseTargetDepot(unittest.TestCase):
+
+    PACKAGE = "/Game/P/Animation/X/3P/AS_Walk"
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="vcs_depot_")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def never(self, *_):
+        self.fail("a dialog was raised where none belongs")
+
+    def depot_run(self, client_path, head_action="add"):
+        return FakeP4([
+            (["-ztag", "where"], (0, where_reply(), "")),
+            (["-ztag", "fstat"], (0, fstat_record("//atone-art/x/AS_Walk.fbx",
+                                                  client_path, head_action), "")),
+        ])
+
+    def test_a_depot_only_hit_is_the_target(self):
+        """The reported bug: on disk nothing, in the depot the file exists at
+        the right path - the target must be its mapped local path, not a
+        conventionally derived folder."""
+        client = os.path.join(self.root, "P", "Animation", "Exports", "X",
+                              "3P", "AS_Walk.fbx")
+        path, _ = vcs.choose_target("AS_Walk", self.PACKAGE, self.root, {},
+                                    self.never, self.never,
+                                    run=self.depot_run(client))
+        self.assertEqual(path, client)
+
+    def test_a_disk_hit_that_is_the_same_file_is_not_doubled(self):
+        folder = os.path.join(self.root, "somewhere")
+        os.makedirs(folder)
+        client = os.path.join(folder, "AS_Walk.fbx")
+        with open(client, "w") as handle:
+            handle.write("x")
+        upper = client.upper()  # depot answers its own casing of the path
+        path, _ = vcs.choose_target("AS_Walk", self.PACKAGE, self.root, {},
+                                    self.never, self.never,
+                                    run=self.depot_run(upper))
+        self.assertEqual(path, client)
+
+    def test_disk_and_depot_at_different_paths_ask(self):
+        folder = os.path.join(self.root, "local")
+        os.makedirs(folder)
+        disk = os.path.join(folder, "AS_Walk.fbx")
+        with open(disk, "w") as handle:
+            handle.write("x")
+        depot_client = os.path.join(self.root, "depot", "AS_Walk.fbx")
+        offered = []
+
+        def pick(paths):
+            offered.extend(paths)
+            return paths[0]
+
+        vcs.choose_target("AS_Walk", self.PACKAGE, self.root, {},
+                          pick, self.never, run=self.depot_run(depot_client))
+        self.assertEqual(len(offered), 2)
+        self.assertIn(depot_client, offered)
+
+    def test_without_a_runner_the_behaviour_is_disk_only(self):
+        folder = os.path.join(self.root, "P", "Animation", "Exports", "X", "3P")
+        os.makedirs(folder)
+        path, _ = vcs.choose_target("AS_Walk", self.PACKAGE, self.root, {},
+                                    self.never, self.never)
+        self.assertEqual(path, os.path.join(folder, "AS_Walk.fbx"))
 
 
 if __name__ == "__main__":

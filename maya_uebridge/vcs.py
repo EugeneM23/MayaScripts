@@ -19,9 +19,6 @@ import shutil
 import stat
 import subprocess
 
-# Folders the uasset hierarchy carries that the fbx hierarchy does not.
-VIEW_FOLDERS = ("1p", "3p")
-
 _OTHER_OPEN = re.compile(r"^otherOpen(\d+)$")
 
 # stderr texts that are answers, not failures. The root ones are measured:
@@ -48,6 +45,24 @@ def parse_ztag(text):
         parts = line.split(" ", 1)
         fields[parts[0]] = parts[1].strip() if len(parts) > 1 else ""
     return fields
+
+
+def parse_ztag_records(text):
+    """-ztag output as a LIST of dicts: records are blank-line separated.
+    `parse_ztag` flattens everything into one dict, which is right for a
+    single-file fstat and silently wrong for a pattern - a `where` answer or
+    a wildcard fstat needs this one."""
+    records = []
+    current = []
+    for line in (text or "").splitlines():
+        if line.strip():
+            current.append(line)
+        elif current:
+            records.append(parse_ztag("\n".join(current)))
+            current = []
+    if current:
+        records.append(parse_ztag("\n".join(current)))
+    return records
 
 
 def other_openers(fields):
@@ -107,16 +122,17 @@ def package_folder(package):
 def conventional_folder(package, root):
     """Where a NEW fbx belongs, derived from the uasset package path.
 
-    The measured convention (2026-08-21): the path relative to /Game, with
-    Exports inserted after the Animation segment (not doubled) and a trailing
-    1P/3P view folder dropped.
+    The depot's canonical layout is a PURE MIRROR (measured on the Longsword
+    fbx, 2026-08-21): the path relative to /Game, with Exports inserted after
+    the Animation segment (not doubled), and nothing dropped - the 1P/3P view
+    folders are kept. The first version dropped them (inferred from local
+    Unarmed files that are not in the depot) and landed an import one level
+    above its folder.
     """
     text = (package or "").replace("\\", "/")
     if text.lower().startswith("/game/"):
         text = text[len("/game/"):]
     segments = [part for part in text.split("/") if part][:-1]
-    if segments and segments[-1].lower() in VIEW_FOLDERS:
-        segments = segments[:-1]
     for index, segment in enumerate(segments):
         if segment.lower() == "animation":
             following = (segments[index + 1].lower()
@@ -142,6 +158,52 @@ def find_fbx(name, root):
     return found
 
 
+def depot_pattern(root, run):
+    """The depot-side pattern for the source root, read from the client view
+    (`p4 -ztag where <root>/...`). "" when p4 cannot answer. The view's
+    exclusions carry an `unmap` field; the effective mapping is the LAST
+    record without one (measured: //atone/main/SourceArt is excluded and
+    //atone-art is mapped over it)."""
+    code, out, err = run(["-ztag", "where", os.path.join(root, "...")], root)
+    if code is None or classify_failure(err, code):
+        return ""
+    effective = [record for record in parse_ztag_records(out)
+                 if "unmap" not in record]
+    if not effective:
+        return ""
+    pattern = effective[-1].get("depotFile", "")
+    if not pattern:
+        return ""
+    if not pattern.endswith("..."):
+        pattern = pattern.rstrip("/") + "/..."
+    return pattern
+
+
+def find_fbx_depot(name, root, run):
+    """Depot hits for <name>.fbx under the root's depot mapping, as fstat
+    record dicts - clientFile is the mapped local path, present EVEN FOR A
+    FILE NEVER SYNCED (measured; no haveRev then). Deleted-at-head records
+    are dropped. [] on any p4 trouble: discovery must not hard-fail, a real
+    failure resurfaces in prepare_target with its dialog."""
+    if run is None:
+        return []
+    pattern = depot_pattern(root, run)
+    if not pattern:
+        return []
+    search = pattern[:-3] + ".../" + name + ".fbx"
+    code, out, err = run(["-ztag", "fstat", "-Or", search], root)
+    if code is None or classify_failure(err, code):
+        return []
+    kept = []
+    for record in parse_ztag_records(out):
+        if not record.get("clientFile"):
+            continue
+        if "delete" in record.get("headAction", ""):
+            continue
+        kept.append(record)
+    return kept
+
+
 def remembered_folder(dir_map, package):
     return (dir_map or {}).get(package_folder(package), "")
 
@@ -153,15 +215,25 @@ def remember_folder(dir_map, package, folder):
     return grown
 
 
-def choose_target(name, package, root, dir_map, ask_file, ask_folder):
+def choose_target(name, package, root, dir_map, ask_file, ask_folder,
+                  run=None):
     """The working-file path for one asset, or "" when the user cancelled.
 
     Search by NAME first (the user's call - the measured hierarchies diverge,
-    the names match exactly). The convention only decides where a NEW file
-    goes; a folder the user was asked for once is remembered per uasset
-    folder and never asked again.
+    the names match exactly), on the disk AND in the depot: a file at head
+    that was never synced is invisible to a disk walk, and treating it as new
+    misplaced a Longsword import. A depot-only hit resolves to its mapped
+    local path; `checkout` later syncs it on the way to `p4 edit`. The
+    convention only decides where a NEW file goes; a folder the user was
+    asked for once is remembered per uasset folder and never asked again.
     """
     hits = find_fbx(name, root)
+    seen = set(os.path.normcase(hit) for hit in hits)
+    for record in find_fbx_depot(name, root, run):
+        client = record["clientFile"]
+        if os.path.normcase(client) not in seen:
+            hits.append(client)
+            seen.add(os.path.normcase(client))
     if len(hits) == 1:
         return hits[0], dir_map
     if len(hits) > 1:

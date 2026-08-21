@@ -14,8 +14,8 @@ Gates:
  3. choose_target: ambiguity resolved by the injected pick, remembered
  4. choose_target: new file lands in the planted conventional folder
  5. choose_target: new file with no folder asks, remembers, second call silent
- 6. conventional_folder on the real example package matches the real folder
-    on disk (read-only isdir check against the true SourceArt)
+ 6. conventional_folder is the pure mirror: the Longsword package maps onto
+    the folder the depot actually uses, 3P kept (the reported bug's fix)
  7. real p4 fstat on the tracked example uasset parses: depotFile present,
     plan kind is edit/others/mine
  8. real p4 fstat on the sandbox fbx answers untracked; prepare_target
@@ -25,6 +25,17 @@ Gates:
     (merge=False - the scene skeleton is untouched) animates joints
 11. window._vcs_target with injected asks resolves end to end and the dir
     map optionVar grows
+12. find_fbx_depot finds the real Longsword fbx that sits in the depot
+    (never synced before the first run) at its canonical clientFile path
+13. choose_target with the real root and real p4 resolves that name to the
+    depot path silently - the reported scenario, discovery half
+14. prepare_target on that real file checks it out (a never-synced file
+    answers "not on client" and checkout syncs and retries - the user's
+    sync+checkout ask), then p4 revert puts the open state back; the file
+    stays synced on disk. Skipped cleanly if a colleague holds it open.
+
+The dir map optionVar is deliberately CLEARED at the end (not restored):
+answers remembered under the dropped-1P/3P convention are stale.
 """
 
 import json
@@ -44,6 +55,12 @@ REAL_UASSET = ("C:/!!!Work/Perforce/Atone/Content/Prototype/Animation/"
 REAL_SOURCEART = "C:/!!!Work/Perforce/SourceArt"
 REAL_PACKAGE = ("/Game/Prototype/Animation/PlayerCharacter/Unarmed/1P/"
                 "AS_Unarmed_Idle_1P")
+LONGSWORD_NAME = "AS_Longsword_Attack_Back_Combo_2_Hold_1_3P"
+LONGSWORD_PACKAGE = ("/Game/Prototype/Animation/PlayerCharacter/Weapons/"
+                     "Longsword/3P/" + LONGSWORD_NAME)
+LONGSWORD_CLIENT = os.path.normpath(
+    "C:/!!!Work/Perforce/SourceArt/Prototype/Animation/Exports/"
+    "PlayerCharacter/Weapons/Longsword/3P/" + LONGSWORD_NAME + ".fbx")
 NAMESPACE = "vcsverify"
 
 # The session imports the INSTALLED SkeldarAnim copy (note 9): put the repo
@@ -56,6 +73,11 @@ for name in [key for key in list(sys.modules)
 from maya_uebridge import animimport, records, vcs, window  # noqa: E402
 
 RESULTS = []
+# True only while gate 14 holds the Longsword file open; the finally block
+# reverts it if an exception lands between the edit and the revert. Never
+# revert unconditionally - the animator may hold that file open with REAL
+# work, and gate 14 skips itself in that case.
+LONGSWORD_OPENED = [False]
 
 
 def gate(number, label, ok, detail=""):
@@ -128,7 +150,7 @@ try:
     # -- gate 4: new file lands in the planted conventional folder -------
     fresh = os.path.join(sandbox, "fresh_root")
     convention = os.path.join(fresh, "Prototype", "Animation", "Exports",
-                              "PlayerCharacter", "Unarmed")
+                              "PlayerCharacter", "Unarmed", "1P")
     os.makedirs(convention)
     path, dm = vcs.choose_target("AS_Unarmed_New", REAL_PACKAGE,
                                  fresh, {}, never, never)
@@ -154,10 +176,11 @@ try:
           and path2 == path and asked == ["AS_Unarmed_New"]),
          "asked={0}".format(asked))
 
-    # -- gate 6: the convention matches the real SourceArt ---------------
-    real_convention = vcs.conventional_folder(REAL_PACKAGE, REAL_SOURCEART)
-    gate(6, "conventional_folder maps the real package onto a real folder",
-         os.path.isdir(real_convention), real_convention)
+    # -- gate 6: the convention is the depot's pure mirror ----------------
+    mirror = os.path.normpath(
+        vcs.conventional_folder(LONGSWORD_PACKAGE, REAL_SOURCEART))
+    gate(6, "conventional_folder mirrors the depot layout, 3P kept",
+         mirror == os.path.dirname(LONGSWORD_CLIENT), mirror)
 
     # -- gate 7: real fstat on the tracked uasset parses -----------------
     fields, failure = vcs.fstat(REAL_UASSET.replace("/", os.sep))
@@ -211,6 +234,53 @@ try:
          and resolved[1] is False,
          "resolved={0}".format(resolved))
 
+    # -- gate 12: the depot search finds the real Longsword fbx ----------
+    depot_hits = vcs.find_fbx_depot(LONGSWORD_NAME, REAL_SOURCEART,
+                                    vcs.run_p4)
+    clients = [os.path.normpath(rec.get("clientFile", ""))
+               for rec in depot_hits]
+    gate(12, "find_fbx_depot finds the depot-side Longsword fbx",
+         clients == [LONGSWORD_CLIENT], "clients={0}".format(clients))
+
+    # -- gate 13: choose_target resolves the reported case silently ------
+    path, _ = vcs.choose_target(LONGSWORD_NAME, LONGSWORD_PACKAGE,
+                                REAL_SOURCEART, {}, never, never,
+                                run=vcs.run_p4)
+    gate(13, "choose_target lands the Longsword import on the depot path",
+         os.path.normpath(path) == LONGSWORD_CLIENT, path)
+
+    # -- gate 14: the user's sync+checkout flow, then put back -----------
+    fields_before, fail_before = vcs.fstat(LONGSWORD_CLIENT)
+    plan_before = vcs.plan_for(fields_before)
+    if fail_before:
+        gate(14, "real sync+checkout flow", False, fail_before)
+    elif plan_before["kind"] == "mine":
+        gate(14, "real sync+checkout flow (skipped - already opened by you)",
+             True, "")
+    elif plan_before["kind"] == "others":
+        gate(14, "real sync+checkout flow (skipped - held by a colleague)",
+             True, ", ".join(plan_before["users"]))
+    elif plan_before["kind"] == "untracked":
+        gate(14, "real sync+checkout flow", False,
+             "expected the Longsword fbx tracked in the depot")
+    else:
+        proceed, note = vcs.prepare_target(LONGSWORD_CLIENT, never, never)
+        LONGSWORD_OPENED[0] = proceed and note == "checked out"
+        after, _ = vcs.fstat(LONGSWORD_CLIENT)
+        opened = after.get("action") == "edit"
+        synced = (os.path.isfile(LONGSWORD_CLIENT)
+                  and after.get("haveRev") == after.get("headRev"))
+        code, _, _ = vcs.run_p4(["revert", LONGSWORD_CLIENT],
+                                os.path.dirname(LONGSWORD_CLIENT))
+        if code == 0:
+            LONGSWORD_OPENED[0] = False
+        back, _ = vcs.fstat(LONGSWORD_CLIENT)
+        gate(14, "real sync+checkout flow, then reverted",
+             proceed and note == "checked out" and opened and synced
+             and not back.get("action"),
+             "note={0} have={1}/{2} revert_rc={3}".format(
+                 note, after.get("haveRev"), after.get("headRev"), code))
+
 except Exception:
     import traceback
     print(traceback.format_exc())
@@ -220,9 +290,24 @@ finally:
     # Every teardown step guarded on its own (trap 42): one failed restore
     # must not take the rest of the restore with it.
     try:
+        if LONGSWORD_OPENED[0]:
+            vcs.run_p4(["revert", LONGSWORD_CLIENT],
+                       os.path.dirname(LONGSWORD_CLIENT))
+            print("backup revert of the Longsword checkout ran")
+    except Exception as error:
+        print("backup revert failed: {0}".format(error))
+    try:
         optionvar_restore(OPTIONVARS, held_vars)
     except Exception as error:
         print("optionVar restore failed: {0}".format(error))
+    try:
+        # Deliberately NOT restored: folder answers remembered under the
+        # dropped-1P/3P convention are stale and would misplace new files.
+        previous_map = held_vars.get("ueBridgeVcsDirMap", "")
+        cmds.optionVar(stringValue=("ueBridgeVcsDirMap", "{}"))
+        print("dir map cleared (was: {0!r})".format(previous_map))
+    except Exception as error:
+        print("dir map clearing failed: {0}".format(error))
     try:
         if cmds.namespace(exists=NAMESPACE):
             cmds.namespace(removeNamespace=NAMESPACE,

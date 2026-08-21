@@ -179,6 +179,52 @@ branch with canned answers.
   copying a known FBX into the temp slot — the placement, p4 and import gates
   do not need the editor.
 
+## Addendum, same day: the depot is part of the search, and the convention keeps 1P/3P
+
+Paid for live with `AS_Longsword_Attack_Back_Combo_2_Hold_1_3P`: the import
+landed the fbx «в папку на уровень выше» — one level above where it belongs.
+Two causes, measured against the real depot:
+
+- **The "drop 1P/3P" rule was wrong.** It was inferred from the local Unarmed
+  files, which are NOT in the depot and do not follow the project convention.
+  The depot's canonical layout keeps the view folder: uasset
+  `Content/Prototype/Animation/PlayerCharacter/Weapons/Longsword/3P/AS_*.uasset`
+  ↔ fbx `//atone-art/Prototype/Animation/Exports/PlayerCharacter/Weapons/`
+  `Longsword/3P/AS_*.fbx`. So the convention is a **pure mirror**: the path
+  relative to `/Game`, with `Exports` inserted after `Animation` (not
+  doubled) and nothing dropped. The old rule pointed at `.../Longsword`,
+  which exists on disk, so the file was placed there silently.
+- **The search must cover the depot, not only the disk** (the user's
+  requirement: «посмотреть не только локально на диске а еще и в депоте;
+  если нету на диске а есть в депоте то загрузить ее взять на чекаут и
+  импортировать»). The Longsword fbx exists in the depot at head but was
+  never synced — a disk-only walk cannot see it, so the file read as "new"
+  and went to the (wrongly derived) conventional folder.
+
+The mechanics, all measured: `p4 -ztag where <root>/...` answers one record
+per view line, blank-line separated, exclusions carrying an `unmap` field —
+the effective depot pattern is the **last record without `unmap`**
+(`//atone-art/...` for this root). `p4 -ztag fstat -Or
+<pattern>/.../<name>.fbx` finds the file wherever it is under the root and
+answers **both `depotFile` and `clientFile` even for a file never synced**
+(no `haveRev` line then), so the mapped local path comes for free. Records
+whose `headAction` is a delete are dropped. The multi-record output needs a
+record-splitting parser (`parse_ztag_records`); the flat `parse_ztag` merges
+records and is kept for single-file calls.
+
+`choose_target` merges disk and depot hits (deduplicated case-insensitively
+by local path; the depot search is skipped when no runner is passed, and a
+p4 failure during discovery degrades silently to disk-only — `prepare_target`
+will surface the failure with its dialog anyway). A depot-only hit needs no
+new checkout logic: `checkout` already answers "not on client" with one
+`p4 sync` and a retry, which is exactly the sync-then-edit the user asked
+for. The ambiguity dialog becomes a numbered `confirmDialog` — a file picker
+cannot select a depot-only path that does not exist on disk yet.
+
+The "new file" status tag is now derived from the *depot* answer, not the
+disk: a synced-on-demand file did not exist locally but is anything but new
+(`is_new and note == "not in depot"` at the call site).
+
 ## Out of scope (phase 2 and later)
 
 Submitting from Maya (`p4 add`/`p4 submit`, changelist description policy),
