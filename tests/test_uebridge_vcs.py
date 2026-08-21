@@ -244,5 +244,92 @@ class DirMap(unittest.TestCase):
         self.assertEqual(vcs.remembered_folder({}, self.PACKAGE), "")
 
 
+class ChooseTarget(unittest.TestCase):
+
+    PACKAGE = "/Game/P/Animation/X/1P/AS_Walk"
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="vcs_choose_")
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def plant(self, *parts):
+        path = os.path.join(self.root, *parts)
+        folder = os.path.dirname(path)
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        with open(path, "w") as handle:
+            handle.write("x")
+        return path
+
+    def never(self, *_):
+        self.fail("a dialog was raised where none belongs")
+
+    def test_a_single_hit_is_taken_silently(self):
+        planted = self.plant("anywhere", "AS_Walk.fbx")
+        path, dir_map = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, {}, self.never, self.never)
+        self.assertEqual(path, planted)
+        self.assertEqual(dir_map, {})
+
+    def test_ambiguity_prefers_the_remembered_folder(self):
+        wanted = self.plant("good", "AS_Walk.fbx")
+        self.plant("bad", "AS_Walk.fbx")
+        remembered = vcs.remember_folder({}, self.PACKAGE,
+                                         os.path.dirname(wanted))
+        path, _ = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, remembered,
+            self.never, self.never)
+        self.assertEqual(path, wanted)
+
+    def test_ambiguity_without_memory_asks_and_remembers(self):
+        first = self.plant("A", "AS_Walk.fbx")
+        self.plant("B", "AS_Walk.fbx")
+        path, dir_map = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, {},
+            lambda paths: first, self.never)
+        self.assertEqual(path, first)
+        self.assertEqual(vcs.remembered_folder(dir_map, self.PACKAGE),
+                         os.path.dirname(first))
+
+    def test_cancelling_the_pick_cancels_the_import(self):
+        self.plant("A", "AS_Walk.fbx")
+        self.plant("B", "AS_Walk.fbx")
+        path, _ = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, {},
+            lambda paths: "", self.never)
+        self.assertEqual(path, "")
+
+    def test_a_new_file_lands_in_the_existing_conventional_folder(self):
+        folder = os.path.join(self.root, "P", "Animation", "Exports", "X")
+        os.makedirs(folder)
+        path, _ = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, {}, self.never, self.never)
+        self.assertEqual(path, os.path.join(folder, "AS_Walk.fbx"))
+
+    def test_a_new_file_prefers_the_remembered_folder(self):
+        chosen = os.path.join(self.root, "elsewhere")
+        os.makedirs(chosen)
+        remembered = vcs.remember_folder({}, self.PACKAGE, chosen)
+        path, _ = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, remembered,
+            self.never, self.never)
+        self.assertEqual(path, os.path.join(chosen, "AS_Walk.fbx"))
+
+    def test_a_new_file_with_no_folder_asks_and_remembers(self):
+        chosen = os.path.join(self.root, "picked")
+        os.makedirs(chosen)
+        path, dir_map = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, {},
+            self.never, lambda name: chosen)
+        self.assertEqual(path, os.path.join(chosen, "AS_Walk.fbx"))
+        self.assertEqual(vcs.remembered_folder(dir_map, self.PACKAGE), chosen)
+
+    def test_cancelling_the_folder_ask_cancels_the_import(self):
+        path, _ = vcs.choose_target(
+            "AS_Walk", self.PACKAGE, self.root, {},
+            self.never, lambda name: "")
+        self.assertEqual(path, "")
+
+
 if __name__ == "__main__":
     unittest.main()

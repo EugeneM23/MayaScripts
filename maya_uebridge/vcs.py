@@ -146,3 +146,40 @@ def remember_folder(dir_map, package, folder):
     grown = dict(dir_map or {})
     grown[package_folder(package)] = folder
     return grown
+
+
+def choose_target(name, package, root, dir_map, ask_file, ask_folder):
+    """The working-file path for one asset, or "" when the user cancelled.
+
+    Search by NAME first (the user's call - the measured hierarchies diverge,
+    the names match exactly). The convention only decides where a NEW file
+    goes; a folder the user was asked for once is remembered per uasset
+    folder and never asked again.
+    """
+    hits = find_fbx(name, root)
+    if len(hits) == 1:
+        return hits[0], dir_map
+    if len(hits) > 1:
+        remembered = remembered_folder(dir_map, package)
+        if remembered:
+            for hit in hits:
+                if (os.path.normcase(os.path.dirname(hit))
+                        == os.path.normcase(remembered)):
+                    return hit, dir_map
+        picked = ask_file(hits)
+        if not picked:
+            return "", dir_map
+        return picked, remember_folder(dir_map, package,
+                                       os.path.dirname(picked))
+    filename = name + ".fbx"
+    remembered = remembered_folder(dir_map, package)
+    if remembered and os.path.isdir(remembered):
+        return os.path.join(remembered, filename), dir_map
+    folder = conventional_folder(package, root)
+    if os.path.isdir(folder):
+        return os.path.join(folder, filename), dir_map
+    picked = ask_folder(name)
+    if not picked:
+        return "", dir_map
+    return (os.path.join(picked, filename),
+            remember_folder(dir_map, package, picked))
