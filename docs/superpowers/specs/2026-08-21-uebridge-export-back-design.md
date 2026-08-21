@@ -236,6 +236,34 @@ matches by bone name exactly as the import merge does, and refusing on a
 tag mismatch would block legitimate retargets; UE's own reimport warnings
 remain visible in the editor.
 
+## Addendum, same evening: two tabs instead of the popup
+
+The user, after trying the shipped version: «Мы можем в одном окне сделать 2
+вкладки? Первая для импорта вторая для всех действий с экспортом, хочется
+видеть сразу все наши файлы на чекауте». So the popup lasted hours:
+
+- The bridge window is a `tabLayout` — **Import** (the old window: search,
+  list, import mode, VCS row, timeline, Checkout + IMPORT) and **Export**
+  (the checkouts list with EXPORT / Revert / Refresh, built by
+  `checkouts.build_tab` into the tabLayout; no window of its own any more).
+- The checkouts list re-reads on every switch to the Export tab and after
+  every Checkout press, so it is current the moment it is visible — the
+  point of the ask.
+- **Checkout stays on the Import tab**, beside IMPORT: it acts on the
+  selection in the full animation list, which lives there; the pair it
+  opens appears on the Export tab immediately.
+- EXPORT with an empty checkouts list keeps the agreed degradation: a
+  save-as dialog and a plain fbx export.
+- One status line at the window bottom serves both tabs
+  (`checkouts._status` delegates to the window's).
+- The old `ueBridgeCheckouts` window id is deleted on every bridge open —
+  the `maya_scenesetup` rename taught that a panel left up from an older
+  build stays wired to dead code.
+- Verified live (2026-08-21): both tabs screenshotted through the bridge,
+  the tab switch fired the p4 refresh and listed the animator's real
+  checkouts of that minute (they had swapped one file since the previous
+  run, and the list showed the swap).
+
 ## Addendum, same day: what the live run taught about the reimport
 
 `verify_uebridge_export.py` ran green (0 of 18 gates failed) only after the

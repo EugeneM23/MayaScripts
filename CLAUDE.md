@@ -1143,15 +1143,23 @@ their work would go with it). Getting it green paid for trap 44. Spec:
 addendum records the depot-search redesign.
 
 **The reverse bridge** (2026-08-21, the same day): the animator's checked-out
-AnimSequence uassets in their own window, and the scene going back into the
-uasset. Two buttons in the main window — **Checkout** opens the selected
-animation's uasset AND its source fbx as a pair (the user's call: one
-changelist, one submit; «source fbx — прокладка через которую мы работаем»,
-so a checkout through the bridge never leaves a uasset without its fbx — a
-прокладка that exists nowhere is exported out of the editor into the
-conventional spot on the way, then `p4 add`ed), and **EXPORT** opens the
-checkouts window — or, with nothing checked out, a save-as dialog and a
-plain fbx export. The window lists `fstat -Ro <Content>/....uasset` (one
+AnimSequence uassets always in sight, and the scene going back into the
+uasset. **The bridge window is two tabs** (the user's ask, same evening:
+«хочется видеть сразу все наши файлы на чекауте» — the afternoon's popup
+lasted hours; its `ueBridgeCheckouts` window id is deleted on every open, or
+a panel left up from the older build stays wired to dead code): **Import**
+is the old window — list, search, import mode, the VCS row — plus
+**Checkout**, which sits beside IMPORT because it acts on that list's
+selection and opens the uasset AND its source fbx as a pair (the user's
+call: one changelist, one submit; «source fbx — прокладка через которую мы
+работаем», so a checkout through the bridge never leaves a uasset without
+its fbx — a прокладка that exists nowhere is exported out of the editor
+into the conventional spot on the way, then `p4 add`ed). **Export** embeds
+the checkouts list (`checkouts.build_tab`), re-read on every switch to the
+tab and after every checkout, with EXPORT / Revert / Refresh; EXPORT with
+nothing checked out degrades to a save-as dialog and a plain fbx export.
+One status line at the window bottom serves both tabs. The listing is
+`fstat -Ro <Content>/....uasset` (one
 call, clientFile included; `p4 opened` would need a `where` per file)
 matched against the cached listing by package — anything not a known
 AnimSequence is dropped — with an fbx column (`ok`/`depot`/`MISSING`).

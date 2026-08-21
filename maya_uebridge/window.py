@@ -23,6 +23,7 @@ from maya_uebridge import uescripts
 from maya_uebridge import vcs
 
 WINDOW = "ueAnimBridgeWindow"
+_TABS = "ueAnimBridgeTabs"
 _LIST = "ueAnimBridgeList"
 _SEARCH = "ueAnimBridgeSearch"
 _STATUS = "ueAnimBridgeStatus"
@@ -317,14 +318,22 @@ def checkout_selected():
     # Lazy: checkouts imports this module at its top, so the top-level import
     # graph must stay one-directional.
     from maya_uebridge import checkouts
-    _status(checkouts.checkout_pair(record))
+    line = checkouts.checkout_pair(record)
+    # The Export tab shows the pair the moment it is opened; refresh before
+    # the status write, or the row count would overwrite the checkout line.
+    checkouts.refresh_tab()
+    _status(line)
 
 
-def export_pressed():
-    """The reverse bridge: the checkouts window, or a plain save-as export
-    when nothing is checked out."""
+def _tab_changed():
+    """Switching to the Export tab re-reads the checkouts, so the list is
+    current the moment it becomes visible - no popup, no stale rows."""
+    if cmds.tabLayout(_TABS, query=True, selectTabIndex=True) != 2:
+        return
+    _status("asking p4...")
+    cmds.refresh()
     from maya_uebridge import checkouts
-    checkouts.open_for_export()
+    checkouts.refresh_tab()
 
 
 # ---------------------------------------------------------------- vcs
@@ -481,8 +490,14 @@ def with_vcs_suffix(line, suffix):
 def show_window():
     if cmds.window(WINDOW, exists=True):
         cmds.deleteUI(WINDOW)
+    # Lazy for the import graph (checkouts imports this module at its top).
+    from maya_uebridge import checkouts
+    # The popup the Export tab replaced; one left open from an older build
+    # would stay up wired to dead code.
+    if cmds.window(checkouts.LEGACY_WINDOW, exists=True):
+        cmds.deleteUI(checkouts.LEGACY_WINDOW)
 
-    cmds.window(WINDOW, title="UE Animation Bridge", widthHeight=(760, 484))
+    cmds.window(WINDOW, title="UE Animation Bridge", widthHeight=(760, 520))
     form = cmds.formLayout(numberOfDivisions=100)
 
     project_label = cmds.text(label="Project:", align="left")
@@ -494,6 +509,13 @@ def show_window():
     refresh_button = cmds.button(
         label="Refresh", width=90,
         command=lambda *_: _run(refresh, busy="asking the editor..."))
+
+    # Two tabs since 2026-08-21 evening (the user's ask): Import is the
+    # browse-and-import side, Export is every action on the checkouts.
+    tabs = cmds.tabLayout(_TABS, innerMarginWidth=4, innerMarginHeight=4,
+                          changeCommand=lambda *_: _run(_tab_changed))
+
+    import_tab = cmds.formLayout(parent=tabs)
 
     search_label = cmds.text(label="Search:", align="left")
     search = cmds.textField(_SEARCH, placeholderText="name or folder",
@@ -519,39 +541,30 @@ def show_window():
                            command=lambda *_: _run(_change_root))
     timeline = cmds.checkBox(_TIMELINE, label="set timeline to clip range",
                              value=True)
+    # Checkout lives beside IMPORT because it acts on the same selection in
+    # the same list; the pair it opens shows up on the Export tab.
     checkout_button = cmds.button(
         label="Checkout", height=34, width=90,
         command=lambda *_: _run(checkout_selected, busy="talking to p4..."))
-    export_button = cmds.button(
-        label="EXPORT", height=34, width=90,
-        command=lambda *_: _run(export_pressed, busy="reading checkouts..."))
     import_button = cmds.button(
         label="IMPORT", height=34,
         command=lambda *_: _run(import_selected,
                                 busy="exporting from the editor..."))
-    status = cmds.text(_STATUS, label="", align="left")
 
     cmds.formLayout(
-        form, edit=True,
+        import_tab, edit=True,
         attachForm=[
-            (project_label, "top", 10), (project_label, "left", 8),
-            (project_menu, "top", 6), (header, "top", 10),
-            (refresh_button, "top", 4), (refresh_button, "right", 8),
-            (search_label, "left", 8),
-            (search, "right", 8),
+            (search_label, "top", 10), (search_label, "left", 8),
+            (search, "top", 8), (search, "right", 8),
             (scroll, "left", 8), (scroll, "right", 8),
             (mode, "left", 4),
             (vcs_check, "left", 8),
             (vcs_pick, "right", 8),
             (timeline, "left", 8),
-            (import_button, "right", 8),
-            (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
+            (import_button, "right", 8), (import_button, "bottom", 8),
+            (checkout_button, "bottom", 8),
         ],
         attachControl=[
-            (project_menu, "left", 6, project_label),
-            (header, "left", 12, project_menu),
-            (search_label, "top", 10, project_menu),
-            (search, "top", 8, project_menu),
             (search, "left", 6, search_label),
             (scroll, "top", 8, search),
             (scroll, "bottom", 8, mode),
@@ -561,12 +574,30 @@ def show_window():
             (vcs_pick, "bottom", 6, timeline),
             (vcs_root, "left", 10, vcs_check),
             (vcs_root, "right", 6, vcs_pick),
-            (import_button, "bottom", 6, status),
-            (export_button, "bottom", 6, status),
-            (export_button, "right", 6, import_button),
-            (checkout_button, "bottom", 6, status),
-            (checkout_button, "right", 6, export_button),
-            (timeline, "bottom", 18, status),
+            (timeline, "bottom", 10, import_button),
+            (checkout_button, "right", 6, import_button),
+        ])
+
+    export_tab = checkouts.build_tab(tabs)
+    cmds.tabLayout(tabs, edit=True,
+                   tabLabel=[(import_tab, "Import"), (export_tab, "Export")])
+
+    status = cmds.text(_STATUS, label="", align="left", parent=form)
+
+    cmds.formLayout(
+        form, edit=True,
+        attachForm=[
+            (project_label, "top", 10), (project_label, "left", 8),
+            (project_menu, "top", 6), (header, "top", 10),
+            (refresh_button, "top", 4), (refresh_button, "right", 8),
+            (tabs, "left", 2), (tabs, "right", 2),
+            (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
+        ],
+        attachControl=[
+            (project_menu, "left", 6, project_label),
+            (header, "left", 12, project_menu),
+            (tabs, "top", 8, project_menu),
+            (tabs, "bottom", 6, status),
         ])
 
     cached, project, choice, content_dir = load_cache()

@@ -1,5 +1,6 @@
-"""The checkouts window: my checked-out AnimSequence uassets, the pair
-checkout (uasset+fbx together), revert, and the export back into the uasset.
+"""The Export tab of the bridge window: my checked-out AnimSequence uassets,
+the pair checkout (uasset+fbx together), revert, and the export back into
+the uasset.
 
 The invariant this window exists for, in the user's words: «у нас не должно
 быть такой ситуации что скрипт видит uasset на чекауте в перфорсе а fbx в
@@ -25,9 +26,11 @@ from maya_uebridge import uescripts
 from maya_uebridge import vcs
 from maya_uebridge import window
 
-WINDOW = "ueBridgeCheckouts"
+# The 2026-08-21 popup window this tab replaced. Deleted on every bridge
+# open, or a panel left up from before stays wired to dead code (the
+# maya_scenesetup rename paid for this one).
+LEGACY_WINDOW = "ueBridgeCheckouts"
 _LIST = "ueBridgeCheckoutsList"
-_STATUS = "ueBridgeCheckoutsStatus"
 
 _STATE = {"rows": []}
 
@@ -293,13 +296,11 @@ def export_to(row, asks=None):
     return "  |  ".join(part for part in parts if part)
 
 
-# ---------------------------------------------------------------- window
+# ---------------------------------------------------------------- the tab
 
 def _status(text):
-    if cmds.text(_STATUS, exists=True):
-        cmds.text(_STATUS, edit=True, label=text)
-    else:
-        window._status(text)
+    """The bridge window has ONE status line; this tab talks through it."""
+    window._status(text)
 
 
 def _run(action, busy=None):
@@ -338,7 +339,11 @@ def _populate(rows):
     _status(count_line(len(rows)))
 
 
-def _refresh_pressed():
+def refresh_tab():
+    """Re-read the checkouts into the tab's list. Safe to call from anywhere
+    - a bridge window without the tab built yet just ignores it."""
+    if not cmds.textScrollList(_LIST, exists=True):
+        return
     rows, failure = load_rows()
     _populate(rows)
     if failure:
@@ -346,12 +351,24 @@ def _refresh_pressed():
 
 
 def _export_pressed():
+    # With nothing checked out the press degrades to a plain save-as export
+    # («если файлов на чекауте нету ... пользователь укажет путь для
+    # сохранения fbx»).
+    if not _STATE["rows"]:
+        path = _ask_save_path()
+        if not path:
+            _status("export cancelled")
+            return
+        info = animexport.export_hierarchy(path)
+        _status("no checkouts - " + animexport.export_line(
+            os.path.basename(path), info))
+        return
     row = _selected_row()
     if row is None:
         _status("select a checked-out animation first")
         return
     line = export_to(row)
-    _refresh_pressed()   # the fbx column may have changed
+    refresh_tab()   # the fbx column may have changed
     _status(line)
 
 
@@ -361,7 +378,7 @@ def _revert_pressed():
         _status("select a checked-out animation first")
         return
     line = revert_pair(row)
-    _refresh_pressed()   # the row is usually gone now
+    refresh_tab()   # the row is usually gone now
     _status(line)
 
 
@@ -375,38 +392,14 @@ def _ask_save_path():
     return picked[0] if picked else ""
 
 
-def open_for_export():
-    """The main window's Export press: the checkouts window when anything is
-    checked out, a plain save-as export when nothing is («если файлов на
-    чекауте нету ... пользователь укажет путь для сохранения fbx»)."""
-    root = window._saved_root()
-    if not root or not os.path.isdir(root):
-        root = window._pick_root()
-        if not root:
-            window._status("export needs the source project folder")
-            return
-        window._apply_root(root)
-    rows, failure = load_rows()
-    if failure:
-        window._status(failure)
-        return
-    if not rows:
-        path = _ask_save_path()
-        if not path:
-            window._status("export cancelled")
-            return
-        info = animexport.export_hierarchy(path)
-        window._status("no checkouts - " + animexport.export_line(
-            os.path.basename(path), info))
-        return
-    show_window(rows)
+def build_tab(parent):
+    """The Export tab, built inside the bridge window's tabLayout.
 
-
-def show_window(rows=None):
-    if cmds.window(WINDOW, exists=True):
-        cmds.deleteUI(WINDOW)
-    cmds.window(WINDOW, title="UE Checkouts", widthHeight=(700, 340))
-    form = cmds.formLayout(numberOfDivisions=100)
+    No window of its own since 2026-08-21 evening (the user's ask: «хочется
+    видеть сразу все наши файлы на чекауте») - the list refreshes when the
+    tab is opened, and every message goes to the window's one status line.
+    """
+    form = cmds.formLayout(parent=parent)
 
     header = cmds.text(
         label="AnimSequence uassets checked out in this workspace",
@@ -417,36 +410,26 @@ def show_window(rows=None):
                                            busy="exporting..."))
     refresh_button = cmds.button(
         label="Refresh", width=80,
-        command=lambda *_: _run(_refresh_pressed, busy="asking p4..."))
+        command=lambda *_: _run(refresh_tab, busy="asking p4..."))
     revert_button = cmds.button(
         label="Revert", width=80,
         command=lambda *_: _run(_revert_pressed))
     export_button = cmds.button(
-        label="EXPORT", height=30, width=140,
+        label="EXPORT", height=34, width=140,
         command=lambda *_: _run(_export_pressed, busy="exporting..."))
-    status = cmds.text(_STATUS, label="", align="left")
 
     cmds.formLayout(
         form, edit=True,
         attachForm=[
             (header, "top", 8), (header, "left", 8), (header, "right", 8),
             (scroll, "left", 8), (scroll, "right", 8),
-            (refresh_button, "left", 8),
-            (export_button, "right", 8),
-            (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
+            (refresh_button, "left", 8), (refresh_button, "bottom", 8),
+            (revert_button, "bottom", 8),
+            (export_button, "right", 8), (export_button, "bottom", 8),
         ],
         attachControl=[
             (scroll, "top", 8, header),
             (scroll, "bottom", 8, export_button),
-            (refresh_button, "bottom", 6, status),
-            (revert_button, "bottom", 6, status),
             (revert_button, "left", 6, refresh_button),
-            (export_button, "bottom", 6, status),
         ])
-
-    if rows is None:
-        _refresh_pressed()
-    else:
-        _populate(rows)
-    cmds.showWindow(WINDOW)
-    return WINDOW
+    return form
