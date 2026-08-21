@@ -16,9 +16,27 @@ Weapon = collections.namedtuple("Weapon", "key label path bone scale")
 
 _LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
+# Two dirnames up from this file is the container that holds both the
+# packages and assets/ -- true in the repo and in an installed copy alike.
+_CONTAINER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+_LEGACY_SWORD = "C:/!!!Work/Animations/Sources/LongSword_02.fbx"
+
+
+def _sword_path():
+    """The shipped copy first, the legacy absolute path as fallback.
+
+    Computed once at import: the table keeps holding a plain absolute
+    path, so missing(), attach and the offset optionVars never learn
+    that anything changed.
+    """
+    local = os.path.join(_CONTAINER, "assets",
+                         "LongSword_02.fbx").replace("\\", "/")
+    return local if os.path.isfile(local) else _LEGACY_SWORD
+
+
 WEAPONS = [
-    Weapon("LongSword_02", "Long Sword 02",
-           "C:/!!!Work/Animations/Sources/LongSword_02.fbx", "weapon_r", 1.0),
+    Weapon("LongSword_02", "Long Sword 02", _sword_path(), "weapon_r", 1.0),
 ]
 
 

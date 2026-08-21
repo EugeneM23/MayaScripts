@@ -144,3 +144,33 @@ class EntryForPath(unittest.TestCase):
     def test_missing_answers_for_a_custom_entry_too(self):
         entry = catalog.entry_for_path("C:/nowhere/Axe.fbx", "weapon_r")
         self.assertEqual(catalog.missing(entry), "C:/nowhere/Axe.fbx")
+
+
+class SwordShipsWithTheTool(unittest.TestCase):
+    """The sword resolves next to the container first (repo or installed
+    copy alike), the user's legacy absolute path only as fallback."""
+
+    def test_table_path_is_the_shipped_copy(self):
+        path = catalog.WEAPONS[0].path
+        self.assertTrue(path.endswith("assets/LongSword_02.fbx"), path)
+        self.assertTrue(os.path.isfile(path), path)
+
+    def test_shipped_path_uses_forward_slashes(self):
+        """The path reaches the FBX plugin through MEL, where a backslash
+        starts an escape (module docstring rule)."""
+        self.assertNotIn("\\", catalog.WEAPONS[0].path)
+
+    def test_missing_is_empty_for_the_shipped_sword(self):
+        self.assertEqual(catalog.missing(catalog.WEAPONS[0]), "")
+
+    def test_falls_back_to_the_legacy_path(self):
+        """With no shipped copy on disk the old absolute path returns --
+        a machine that predates assets/ keeps working."""
+        original = catalog.os.path.isfile
+        catalog.os.path.isfile = lambda _p: False
+        try:
+            path = catalog._sword_path()
+        finally:
+            catalog.os.path.isfile = original
+        self.assertEqual(
+            path, "C:/!!!Work/Animations/Sources/LongSword_02.fbx")
