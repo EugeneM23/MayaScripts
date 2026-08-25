@@ -1357,11 +1357,11 @@ on the table. There: bone travels 40.000 for 40 on the camera, returns to
 motion is unchanged to 0.000000000 across the timeline and the offset holds at
 every frame.
 
-A small window: a dropdown of weapon models, a field for pasting the path of
-any other FBX, an **Add** button that imports the chosen one, hangs it under
-the HAND and drives `weapon_r` from it (below), a **Remove Weapon** button,
-live rotate/translate fields for dialling in the grip, and an **Add Aim**
-button (below). Design:
+A small window: an **Add Character** button (below), a dropdown of weapon
+models, a field for pasting the path of any other FBX, an **Add** button
+that imports the chosen one, hangs it under the HAND and drives `weapon_r`
+from it (below), a **Remove Weapon** button, live rotate/translate fields
+for dialling in the grip, and an **Add Aim** button (below). Design:
 `docs/superpowers/specs/2026-08-17-weapon-attach-design.md`, proof:
 `docs/superpowers/plans/verify_weapons.py` (**rebuilt 2026-08-21 around the
 inverted drive and green live the same day: 32/32** — the marked node is
@@ -1388,7 +1388,8 @@ import maya_scenesetup; maya_scenesetup.show_window()
 
 | Module | Responsibility | May import |
 |---|---|---|
-| `catalog.py` | the weapon table, lookups, and an entry for any FBX on disk (`entry_for_path`, `node_key`), pure data | **stdlib only** |
+| `catalog.py` | the weapon table, lookups, an entry for any FBX on disk (`entry_for_path`, `node_key`), the character scene path — pure data | **stdlib only** |
+| `character.py` | the working character into the current scene: import, the already-here refusal, the malware sweep | `maya.cmds`, `catalog`, `builder` (lazy) |
 | `skeleton.py` | which character, and where its weapon bone is | `maya.cmds`, `maya_overrig` |
 | `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition, range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
 | `attach.py` | import, find the mesh, parent it under the hand, invert the drive, read/write offsets | `maya.cmds`, `bonedrive` |
@@ -1400,6 +1401,42 @@ import maya_scenesetup; maya_scenesetup.show_window()
 `maya_overrig`. The window is plain `cmds` — a dropdown, a button and two float
 rows need no Qt — and every callback goes through `_run`, which puts the
 failure on the status line instead of the Script Editor (trap 20).
+
+**Add Character** (2026-08-25) puts the working character into the CURRENT
+scene — the content the animator used to get by opening
+`C:/!!!Work/Animations/Rigs/Characters/Manny_Sckeleton.ma` by hand (the typo
+is in the real filename): 93 joints, 6 meshes, `camera_root`/`camera_bone`
+inside the skeleton, `bindPose2`. The shipped `assets/Manny_Skeleton.ma`
+(typo fixed) is that file with exactly the 13 **"vaccine" malware lines cut**
+(`vaccine_gene`/`breed_gene` script nodes — the infection already on record
+for this studio's scenes). The cut is textual and diff-verified; never
+"clean" it with a Maya open-and-resave, which would have to load
+mtoa/USD/materialx to not mangle their nodes and would execute script nodes
+on the way in. `catalog.character_path()` resolves shipped-copy-first with
+the user's original — infected, typo and all — as the legacy fallback, which
+is why `character.add_character()` also **sweeps imported script nodes**
+named like the malware on every press (import never executes script nodes,
+so the sweep always wins the race). Import, never open, and **no
+namespace** — the UE bridge merges clips by plain bone names. The press
+**refuses while any skeleton is in the scene** (`builder.character_roots()`
+non-empty): importing over an existing `root` renames the incoming skeleton
+into a second character that the picker and the bridge then refuse to guess
+between; nothing happening is the safe direction, and a second press refusing
+is the idempotence. Two pre-existing warts to not chase: every `.ma` import
+leaves Maya's locked/singleton furniture behind (`UsdDefaultRenderSettings`,
+`shapeEditorManager`, `poseInterpolatorManager` — the verify's cleanup gate
+excuses them by class, never by name), and the character scene carries a few
+of its own leftover PoleLock expressions that print a divide-by-zero warning
+on import — both predate the button and both happen with a manual open/import
+too. `assets/` is already whole in the installer payload, so the character
+rides the SkeldarAnim install. Spec:
+`docs/superpowers/specs/2026-08-25-add-character-design.md`. Proof:
+`verify_add_character.py` — adaptive: in the user's live scene (which held a
+skeleton) the refusal path ran green (5 gates, scene untouched); the full
+import path ran green in mayapy **standalone** (13 gates, 0 failures —
+"Manny added - 93 joints, 6 meshes", weapon_r and camera_bone resolving,
+header binding, second press refusing, cleanup leaving only the excused
+singletons).
 
 **The character comes from the picker.** `maya_overrig.picker_window` gained one
 module-level `bound_root()`, which finds the open window and returns its bound

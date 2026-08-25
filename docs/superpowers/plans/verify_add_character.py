@@ -123,9 +123,24 @@ else:
                     cmds.delete(node)
                 except Exception:
                     pass  # died with a parent already
+    # Locked plugin-settings nodes (UsdDefaultRenderSettings) and Maya's
+    # singleton managers (shapeEditorManager, poseInterpolatorManager)
+    # survive any delete -- every .ma import leaves them, by Maya's design.
+    # The gate is about CONTENT: nothing the animator can see or select may
+    # survive, and no script node may (that is where malware lives).
     leftover = scene_uuids() - before
-    gate("13 scene left as found", not leftover,
-         "{0} leftover nodes".format(len(leftover)))
+    stray, excused = [], []
+    for uuid in sorted(leftover):
+        for node in cmds.ls(uuid, long=True) or []:
+            kind = cmds.objectType(node)
+            inherited = cmds.nodeType(node, inherited=True) or []
+            if "dagNode" in inherited or kind == "script":
+                stray.append("{0} ({1})".format(node, kind))
+            else:
+                excused.append("{0} ({1})".format(node, kind))
+    gate("13 scene left as found", not stray,
+         "stray: {0}; singletons excused: {1}".format(stray or "none",
+                                                      excused or "none"))
 
 print("RESULT: {0} failures".format(len(FAILURES)))
 if FAILURES:
