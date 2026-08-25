@@ -28,6 +28,7 @@ from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
 from maya_scenesetup import camera as camerarig
 from maya_scenesetup import catalog
+from maya_scenesetup import character
 from maya_scenesetup import connect as linking
 from maya_scenesetup import skeleton
 
@@ -311,6 +312,19 @@ def custom_changed():
     refresh()
 
 
+def add_character():
+    """Import the working character into the scene, then catch the UI up.
+
+    The status is written LAST: `refresh` ends by writing its own line, and
+    the outcome of the press must be what stays on screen. The refresh is
+    what flips the header to the new character -- a lone skeleton binds
+    through `skeleton.current_root` with no press of anything.
+    """
+    message = character.add_character()
+    refresh()
+    _status(message)
+
+
 def add_weapon():
     """Put the chosen weapon into the hand, replacing what we put there before.
 
@@ -469,12 +483,20 @@ def show_window():
         if cmds.window(name, exists=True):
             cmds.deleteUI(name)
 
-    cmds.window(WINDOW, title="Scene Setup", widthHeight=(420, 370),
+    cmds.window(WINDOW, title="Scene Setup", widthHeight=(420, 410),
                 sizeable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                       columnOffset=("both", 8))
 
     cmds.text(_BOUND, label="", align="left")
+
+    cmds.button(label="Add Character", height=30,
+                annotation="Import the working character (Manny skeleton, "
+                           "geometry and camera bone) into this scene -- "
+                           "the same content as the rig scene, no manual "
+                           "open. Refuses if a skeleton is already here.",
+                command=lambda *_args: _run(add_character))
+    cmds.separator(height=8, style="in")
 
     cmds.optionMenu(_MENU, label="Weapon",
                     changeCommand=lambda *_args: _run(refresh))

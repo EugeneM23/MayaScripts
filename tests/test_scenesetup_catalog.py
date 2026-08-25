@@ -174,3 +174,29 @@ class SwordShipsWithTheTool(unittest.TestCase):
             catalog.os.path.isfile = original
         self.assertEqual(
             path, "C:/!!!Work/Animations/Sources/LongSword_02.fbx")
+
+
+class CharacterShipsWithTheTool(unittest.TestCase):
+    """The character scene resolves like the sword: the copy next to the
+    container first, the user's original file as fallback. The fallback
+    keeps the filename's real spelling, typo and all -- it has to match
+    the file that is actually on that disk."""
+
+    def test_path_is_the_shipped_copy(self):
+        path = catalog.character_path()
+        self.assertTrue(path.endswith("assets/Manny_Skeleton.ma"), path)
+        self.assertTrue(os.path.isfile(path), path)
+
+    def test_shipped_path_uses_forward_slashes(self):
+        self.assertNotIn("\\", catalog.character_path())
+
+    def test_falls_back_to_the_legacy_path(self):
+        original = catalog.os.path.isfile
+        catalog.os.path.isfile = lambda _p: False
+        try:
+            path = catalog.character_path()
+        finally:
+            catalog.os.path.isfile = original
+        self.assertEqual(
+            path,
+            "C:/!!!Work/Animations/Rigs/Characters/Manny_Sckeleton.ma")

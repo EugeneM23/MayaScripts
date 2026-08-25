@@ -22,6 +22,23 @@ _CONTAINER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 _LEGACY_SWORD = "C:/!!!Work/Animations/Sources/LongSword_02.fbx"
 
+# The user's original file, spelling and all: the fallback has to match what
+# is actually on that disk. Our shipped copy fixes the typo.
+_LEGACY_CHARACTER = ("C:/!!!Work/Animations/Rigs/Characters/"
+                     "Manny_Sckeleton.ma")
+
+
+def character_path():
+    """The working character scene: the shipped copy first, legacy second.
+
+    Same rule as the sword, but resolved at call time -- there is no table
+    row to freeze it into, and a copy that appears in assets/ mid-session
+    (a colleague re-running the installer) should win immediately.
+    """
+    local = os.path.join(_CONTAINER, "assets",
+                         "Manny_Skeleton.ma").replace("\\", "/")
+    return local if os.path.isfile(local) else _LEGACY_CHARACTER
+
 
 def _sword_path():
     """The shipped copy first, the legacy absolute path as fallback.
