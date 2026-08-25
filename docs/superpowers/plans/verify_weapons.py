@@ -9,13 +9,15 @@ Since 2026-08-21 the drive is inverted: the sword parents under the HAND and
 whole story: placement, the transfer of the bone's animation onto the sword,
 the bone following the sword 1:1, the replace round-trip keeping the motion,
 and detach putting it all back. Since 2026-08-25 the grip gates prove the
-user's two reports fixed: a dialled grip rides the transferred clip instead
-of being flattened by it, a re-Add does not compound it, the bridge's
-relink puts a rewritten bone back under the same grip -- and through all of
-it THE BONE KEEPS PLAYING ITS ORIGINAL TRACK («главное чтобы наша анимация
-сохранилась в исходном виде»): the final constraint captures the grip's
-inverse, so the grip lives on the sword and never reaches the export bone.
-A live re-dial moves only the sword.
+user's three rulings that day: the grip is BONE-relative (zeros mean
+exactly on weapon_r -- the intermediate under-hand space put the sword at
+the hand), a dialled grip rides the transferred clip instead of being
+flattened by it, a re-Add does not compound it, the bridge's relink puts a
+rewritten bone back under the same grip -- and through all of it THE BONE
+KEEPS PLAYING ITS ORIGINAL TRACK («главное чтобы наша анимация сохранилась
+в исходном виде»): the final constraint captures the grip's inverse, so
+the grip lives on the sword and never reaches the export bone. A live
+re-dial moves only the sword.
 
 Never cmds.undo() from a bridge script: the whole script is one command, and
 undo reverts a chunk of prior work instead.
@@ -343,10 +345,11 @@ else:
             worst = max(worst, biggest_difference(matrices[0], other))
         return worst
 
-    def grip_world(hand_world, rotate, translate):
-        """Where a dialled grip puts the sword: grip_local * hand_world."""
+    def grip_world(bone_world, rotate, translate):
+        """Where a dialled grip puts the sword: grip * the BONE's world
+        (2026-08-25, the space ruling: zeros mean exactly on weapon_r)."""
         product = (om.MMatrix(bonedrive.matrix_of(rotate, translate))
-                   * om.MMatrix(hand_world))
+                   * om.MMatrix(bone_world))
         return [product[i] for i in range(16)]
 
     g_autokey = cmds.autoKeyframe(query=True, state=True)
@@ -380,10 +383,11 @@ else:
 
     cmds.currentTime(mid)
     placed = biggest_difference(world_matrix(weapon),
-                                grip_world(world_matrix(hand),
+                                grip_world(world_matrix(bone),
                                            GRIP_R, GRIP_T))
-    check("at the attach frame the sword stands at the dialled grip",
-          placed < 1e-3, "worst {0:.7f}".format(placed))
+    check("at the attach frame the sword stands at the dialled grip "
+          "RELATIVE TO THE BONE", placed < 1e-3,
+          "worst {0:.7f}".format(placed))
 
     g_offsets = []
     g_sword_track = {}
@@ -462,7 +466,7 @@ else:
                                             g_new_track[frame]))
     cmds.currentTime(mid)
     replaced = biggest_difference(world_matrix(weapon),
-                                  grip_world(world_matrix(hand),
+                                  grip_world(world_matrix(bone),
                                              GRIP_R, GRIP_T))
     spread = matrix_spread(g_offsets)
     check("relink puts the new clip under the same grip", spread < 1e-3,
@@ -499,7 +503,7 @@ else:
     GRIP_T2 = (2.0, 3.0, 1.0)
     bonedrive.regrip(weapon, bone, GRIP_R2, GRIP_T2)
     redialled = biggest_difference(world_matrix(weapon),
-                                   grip_world(world_matrix(hand),
+                                   grip_world(world_matrix(bone),
                                               GRIP_R2, GRIP_T2))
     check("a live re-dial moves the sword to the new grip",
           redialled < 1e-3, "worst {0:.7f}".format(redialled))

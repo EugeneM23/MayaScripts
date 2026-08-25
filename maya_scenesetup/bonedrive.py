@@ -25,11 +25,12 @@ import maya.cmds as cmds
 # every existing `attach.MARKER` reader keeps working.
 MARKER = "mayaWeapon"
 
-# The dialled grip, stored on the marked node itself (raw under-hand
-# channels, same space as the optionVar the window keeps). It lives HERE so
-# `relink` can put the sword back on its grip after a clip import rewrote
-# the bone -- the optionVar is window policy, out of this module's reach,
-# and an attribute travels with the scene file where an optionVar does not.
+# The dialled grip, stored on the marked node itself -- BONE-relative since
+# 2026-08-25 (zeros mean exactly on weapon_r), the same space as the fields
+# and the optionVar the window keeps. It lives HERE so `relink` can put the
+# sword back on its grip after a clip import rewrote the bone -- the
+# optionVar is window policy, out of this module's reach, and an attribute
+# travels with the scene file where an optionVar does not.
 GRIP_ROTATE = "mayaWeaponGripRotate"
 GRIP_TRANSLATE = "mayaWeaponGripTranslate"
 
@@ -59,16 +60,29 @@ def matrix_of(rotate, translate):
     return tuple(matrix.asMatrix())
 
 
-def composed_grip(rotate, translate, bone_local):
-    """An old-scheme grip (channels under weapon_r) as under-hand channels.
+def composed_grip(rotate, translate, frame16):
+    """A bone-relative grip composed onto a frame, as (rotate, translate).
 
-    The sword's world position is identical in both schemes by construction:
-    the old channels rode `weapon_r`, so composing them onto the bone's local
-    matrix relative to the hand is the same world placement, expressed where
-    the channels now live.
+    Feed it the bone's WORLD matrix and the answer is where the sword
+    stands in world; feed it a local matrix and the answer is local. Row
+    vectors, so the grip multiplies from the left.
     """
     product = (om.MMatrix(matrix_of(rotate, translate))
-               * om.MMatrix(bone_local))
+               * om.MMatrix(frame16))
+    frame = om.MTransformationMatrix(product)
+    euler = frame.rotation(asQuaternion=False).reorder(om.MEulerRotation.kXYZ)
+    shift = frame.translation(om.MSpace.kTransform)
+    return (tuple(math.degrees(v) for v in (euler.x, euler.y, euler.z)),
+            (shift.x, shift.y, shift.z))
+
+
+def grip_between(child16, parent16):
+    """The bone-relative grip that takes `parent16` to `child16`. Pure.
+
+    The inverse of `composed_grip`: measured between the sword's and the
+    bone's world matrices it answers the grip the fields should show.
+    """
+    product = om.MMatrix(child16) * om.MMatrix(parent16).inverse()
     frame = om.MTransformationMatrix(product)
     euler = frame.rotation(asQuaternion=False).reorder(om.MEulerRotation.kXYZ)
     shift = frame.translation(om.MSpace.kTransform)
@@ -95,19 +109,6 @@ def bake_range(node):
     end = cmds.playbackOptions(query=True, maxTime=True)
     return union_range(start, end,
                        cmds.keyframe(node, query=True, timeChange=True) or [])
-
-
-def local_matrix(node, parent):
-    """`node`'s matrix relative to `parent`, from world matrices.
-
-    World matrices rather than the local channels: a joint's local matrix
-    hides jointOrient and rotateAxis, and this module must not care.
-    """
-    child = om.MMatrix(cmds.xform(node, query=True, matrix=True,
-                                  worldSpace=True))
-    above = om.MMatrix(cmds.xform(parent, query=True, matrix=True,
-                                  worldSpace=True))
-    return tuple(child * above.inverse())
 
 
 def _constraints_on(bone):
@@ -193,15 +194,55 @@ def snap(node, target):
 def store_grip(weapon, rotate, translate):
     """Remember the dialled grip on the weapon node itself.
 
-    Raw under-hand channels, the same six numbers the window keeps in its
-    optionVar -- but on the node, so `relink` can re-apply them after a
-    merge without reaching into window policy, and so they travel with the
-    scene file.
+    Bone-relative, the same six numbers the window keeps in its optionVar --
+    but on the node, so `relink` can re-apply them after a merge without
+    reaching into window policy, and so they travel with the scene file.
     """
     for attr, values in ((GRIP_ROTATE, rotate), (GRIP_TRANSLATE, translate)):
         if not cmds.attributeQuery(attr, node=weapon, exists=True):
             cmds.addAttr(weapon, longName=attr, dataType="double3")
         cmds.setAttr("{0}.{1}".format(weapon, attr), *values, type="double3")
+
+
+def place_at_grip(weapon, bone, rotate, translate):
+    """Stand `weapon` at the grip: world pose = grip x the BONE's world.
+
+    Zeros put the sword exactly on `weapon_r` -- the game's own grip. Two
+    channel-shaped writes like `snap`, so scale stays the catalog's and the
+    weapon's DAG parent (the hand) never enters the math.
+    """
+    world_rotate, world_translate = composed_grip(
+        rotate, translate,
+        cmds.xform(bone, query=True, matrix=True, worldSpace=True))
+    cmds.xform(weapon, worldSpace=True, translation=world_translate)
+    cmds.xform(weapon, worldSpace=True, rotation=world_rotate)
+
+
+def apply_grip(weapon, bone, rotate, translate):
+    """Place `weapon` at the grip and remember it on a marked node.
+
+    The one grip-application everything shares: attach on Add, relink after
+    a merge (through the stored copy), regrip on a live dial. Unmarked
+    nodes -- sandboxes, plain locators -- are placed but store nothing.
+    autoKey is held off around the writes (trap 14); nesting inside a
+    caller's guard restores the caller's state.
+    """
+    with _autokey_off():
+        place_at_grip(weapon, bone, rotate, translate)
+        if cmds.attributeQuery(MARKER, node=weapon, exists=True):
+            store_grip(weapon, rotate, translate)
+
+
+def measured_grip(weapon, bone):
+    """The grip the scene currently holds, from world matrices.
+
+    What the fields show for an attached, unanimated weapon: a sword the
+    animator nudged by hand in the viewport reads back as its real
+    bone-relative offset.
+    """
+    return grip_between(
+        cmds.xform(weapon, query=True, matrix=True, worldSpace=True),
+        cmds.xform(bone, query=True, matrix=True, worldSpace=True))
 
 
 def stored_grip(weapon):
@@ -265,19 +306,19 @@ def link(weapon, bone):
 
 
 def regrip(weapon, bone, rotate, translate):
-    """Write a new grip without moving the bone.
+    """Move the weapon to a new grip without moving the bone.
 
     The bone plays its own animation through the constraint's captured
-    offset, so writing the weapon's channels under a live constraint would
-    drag the bone along by the OLD offset. Our constraint is dropped first
-    (the bone freezes exactly where the invariant held it), the channels
-    written, and the constraint remade capturing the new offset -- the
-    weapon moves, the bone does not. A marked weapon remembers the grip on
-    itself, as `attach.write_offsets` does.
+    offset, so placing the weapon under a live constraint would drag the
+    bone along by the OLD offset. Our constraint is dropped first (the bone
+    freezes exactly where the invariant held it), the weapon placed at the
+    new grip relative to the bone (`apply_grip`, which also updates the
+    stored copy on a marked node), and the constraint remade capturing the
+    new offset -- the weapon moves, the bone does not.
 
-    A bone with no constraint, or somebody else's, gets a plain write and
-    its constraint is left standing: a legacy sword still takes offsets,
-    and a foreign rig is not ours to rehook.
+    A bone with no constraint, or somebody else's, gets a plain placement
+    and its constraint is left standing: a legacy sword still takes
+    offsets, and a foreign rig is not ours to rehook.
     """
     ours = driving_weapon(bone)
     rehook = bool(ours) and (cmds.ls(ours, long=True)
@@ -285,11 +326,7 @@ def regrip(weapon, bone, rotate, translate):
     with _autokey_off():
         if rehook:
             cmds.delete(_constraints_on(bone))
-        for channel, values in (("rotate", rotate), ("translate", translate)):
-            cmds.setAttr("{0}.{1}".format(weapon, channel), *values,
-                         type="double3")
-        if cmds.attributeQuery(MARKER, node=weapon, exists=True):
-            store_grip(weapon, rotate, translate)
+        apply_grip(weapon, bone, rotate, translate)
         if rehook:
             cmds.parentConstraint(weapon, bone, maintainOffset=True)
 
@@ -321,15 +358,14 @@ def relink(weapon, bone):
     rebuilt.
 
     The GRIP is not the clip's to flatten: a stored grip puts the sword back
-    on its dialled pose after the snap, and the transfer keeps that offset
-    (`link`, mo=True). A legacy sword with none stored keeps the snap.
+    on its dialled pose relative to the bone after the snap, and the
+    transfer keeps that offset (`link`, mo=True). A legacy sword with none
+    stored keeps the snap.
     """
     with _autokey_off():
         _cut(weapon)
         snap(weapon, bone)
         grip = stored_grip(weapon)
         if grip:
-            for channel, values in zip(("rotate", "translate"), grip):
-                cmds.setAttr("{0}.{1}".format(weapon, channel), *values,
-                             type="double3")
+            place_at_grip(weapon, bone, grip[0], grip[1])
         return link(weapon, bone)

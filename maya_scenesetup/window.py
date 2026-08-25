@@ -40,11 +40,14 @@ _STATUS = "mayaSceneSetupStatus"
 _BOUND = "mayaSceneSetupBound"
 _CUSTOM = "mayaSceneSetupCustomFbx"
 
-# The grip in its 2026-08-21 space: raw channels under the HAND. The two
-# older names lived under weapon_r and are read only to migrate -- writing
-# an old-space triple as under-hand channels puts the sword at the hand
-# origin, so a new space needed a new name.
-_GRIP_OPTIONVAR = "mayaSceneSetup_grip_{0}"
+# The grip is BONE-relative (2026-08-25, the user's ruling): zeros mean the
+# sword exactly on weapon_r, and the numbers survive any reparenting. That
+# is the pre-2026-08-21 meaning, so the two old names read back verbatim --
+# the grip dialled before the inverted drive returns. The under-hand name
+# from the four days in between (`mayaSceneSetup_grip_*`) is deliberately
+# never read: its numbers mean nothing in the bone space, and applying them
+# is what put the sword at the HAND («оружие подставляется в позицию
+# кисти»).
 _OPTIONVAR = "mayaSceneSetup_offset_{0}"
 _LEGACY_OPTIONVAR = "mayaWeapons_offset_{0}"
 _CUSTOM_OPTIONVAR = "mayaSceneSetup_custom_fbx"
@@ -68,28 +71,6 @@ LINKED_NO_OFFSETS = ("the weapon is animated - the grip is saved and "
 
 def optionvar_name(key):
     return _OPTIONVAR.format(key)
-
-
-def grip_optionvar_name(key):
-    return _GRIP_OPTIONVAR.format(key)
-
-
-def grip_values(new_era, old_era, bone_local, compose):
-    """Which grip the fields show, and in which space. Pure.
-
-    New-era saves are raw under-hand channels. Everything else goes through
-    the composition against the drive bone's local matrix: an old-era save
-    lived under weapon_r, and NO save composes zeros -- which lands the sword
-    exactly on the bone, the game's own grip. With no bone to compose against
-    zeros stand in; old-space numbers are never displayed as if they were
-    new-space.
-    """
-    if new_era is not None:
-        return unpack_offsets(new_era)
-    if bone_local is not None:
-        rotate, translate = unpack_offsets(old_era)
-        return compose(rotate, translate, bone_local)
-    return unpack_offsets(None)
 
 
 def pack_offsets(rotate, translate):
@@ -185,25 +166,19 @@ def _set_fields(rotate, translate):
                        value2=translate[1], value3=translate[2])
 
 
-def _remembered(entry, bone_local=None):
-    """The grip for this weapon as under-hand channels.
+def _remembered(entry):
+    """The remembered grip for this weapon: bone-relative, read verbatim.
 
-    A grip dialled in yesterday is worth more than a tidy prefix, so both
-    pre-2026-08-21 names are still read -- but their numbers lived under
-    weapon_r, so they only reach the fields composed with the drive bone's
-    local matrix (`grip_values` holds the policy).
+    Both names hold the same space (the legacy one predates the
+    weapons->scenesetup rename), so the first that exists wins and no
+    composition is needed -- the numbers mean "offset from weapon_r"
+    whether they were dialled yesterday or before the inverted drive.
     """
-    new_era = None
-    name = grip_optionvar_name(entry.key)
-    if cmds.optionVar(exists=name):
-        new_era = cmds.optionVar(query=name)
-    old_era = None
-    for old in (optionvar_name(entry.key),
-                _LEGACY_OPTIONVAR.format(entry.key)):
-        if cmds.optionVar(exists=old):
-            old_era = cmds.optionVar(query=old)
-            break
-    return grip_values(new_era, old_era, bone_local, bonedrive.composed_grip)
+    for name in (optionvar_name(entry.key),
+                 _LEGACY_OPTIONVAR.format(entry.key)):
+        if cmds.optionVar(exists=name):
+            return unpack_offsets(cmds.optionVar(query=name))
+    return unpack_offsets(None)
 
 
 def _remembered_path():
@@ -214,7 +189,7 @@ def _remembered_path():
 
 
 def _remember(entry, rotate, translate):
-    name = grip_optionvar_name(entry.key)
+    name = optionvar_name(entry.key)
     cmds.optionVar(clearArray=name)
     for value in pack_offsets(rotate, translate):
         cmds.optionVar(floatValueAppend=(name, value))
@@ -294,26 +269,26 @@ def _run(action):
 def refresh():
     """Re-read the scene: which character, and what the fields should show.
 
-    The fields always show the GRIP, never the animation: an animated
-    weapon's channels are frame values, and showing those as offsets is how
-    a re-Add once saved them over the remembered grip. A clean weapon's
-    channels ARE the grip, so there the scene is the truth.
+    The fields always show the GRIP -- bone-relative, zeros meaning exactly
+    on weapon_r -- never the animation: an animated weapon's values are
+    frame values, and showing those as offsets is how a re-Add once saved
+    them over the remembered grip. A clean attached weapon is measured
+    against the bone (`bonedrive.measured_grip`), so a sword nudged by hand
+    in the viewport reads back honestly.
     """
     entry = _entry()
     root, hand, bone, weapon, linked = _attached(entry)
-    bone_local = (bonedrive.local_matrix(bone, hand)
-                  if bone and hand else None)
 
     if weapon:
-        if attach.is_animated(weapon):
-            _set_fields(*_remembered(entry, bone_local))
+        if bone and not attach.is_animated(weapon):
+            _set_fields(*bonedrive.measured_grip(weapon, bone))
         else:
-            _set_fields(*attach.read_offsets(weapon))
+            _set_fields(*_remembered(entry))
         _status(linked_message(entry) if linked
                 else attached_message(entry, hand or bone))
         return
 
-    _set_fields(*_remembered(entry, bone_local))
+    _set_fields(*_remembered(entry))
     if not root:
         _status(NO_CHARACTER)
     elif not bone:
@@ -339,12 +314,10 @@ def custom_changed():
 def add_weapon():
     """Put the chosen weapon into the hand, replacing what we put there before.
 
-    The fields are re-read from the scene first: they were last filled by
-    some earlier refresh, and a character bound SINCE then (the picker's
-    Connect does not reach into this window) leaves them showing the
-    unbound zeros -- which this press would then apply and remember over
-    the real grip. Anything the user typed survives the re-read: typing
-    fired `offsets_changed`, which remembered it.
+    The fields are re-read first: they were last filled by some earlier
+    refresh, and the scene may have moved since (a weapon nudged by hand, a
+    character bound from the picker). Anything the user typed survives the
+    re-read: typing fired `offsets_changed`, which remembered it.
     """
     refresh()
     entry = _entry()
@@ -530,9 +503,15 @@ def show_window():
 
     cmds.floatFieldGrp(_ROTATE, numberOfFields=3, label="Rotate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
+                       annotation="Grip rotation relative to the weapon "
+                                  "bone. Zeros put the weapon exactly on "
+                                  "weapon_r.",
                        changeCommand=lambda *_args: _run(offsets_changed))
     cmds.floatFieldGrp(_TRANSLATE, numberOfFields=3, label="Translate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
+                       annotation="Grip position relative to the weapon "
+                                  "bone. Zeros put the weapon exactly on "
+                                  "weapon_r.",
                        changeCommand=lambda *_args: _run(offsets_changed))
 
     cmds.separator(height=8, style="in")

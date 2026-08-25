@@ -1367,10 +1367,16 @@ button (below). Design:
 inverted drive and green live the same day: 32/32** — the marked node is
 `LongSwordMesh` itself, a direct child of the HAND, `weapon_r` driven by it
 with the transfer, the drag-follow, the replace and the detach all at worst
-**0.0000000** over three-frame world-matrix tracks; **the 2026-08-25 grip
-gates — grip kept across the transfer with the bone on its ORIGINAL track,
-re-Add compound-free, relink under the same grip, a live re-dial moving
-only the sword — have NOT run live yet**, the port was down that day). It
+**0.0000000** over three-frame world-matrix tracks — re-run green **31/31
+on 2026-08-25** under the final bone-relative build, on a real UE clip
+carrying 47 frames of weapon_r. The in-scene grip gates skip themselves
+in a scene with a real clip (their relink simulation rewrites the bone's
+keys) and still await a bind-pose-scene run; the grip MECHANICS are proven
+live by a sandbox chain the same day, **13/13, every number 0.0000000**:
+sword at the bone-relative grip, offset kept across the transfer, the bone
+on its ORIGINAL track, unlink restoring it, relink under the same stored
+grip, a clean bone unmoved by Add, a live re-dial moving only the sword,
+and the fields reading the grip back from world matrices). It
 refuses to run at all while the arms are connected or an aim exists: every
 attach in it REPLACES what is in the hand, and replacing deletes the marked
 node whole.
@@ -1466,40 +1472,51 @@ everywhere are the union of the playback range and the driver's own keys
   **Remove Weapon** is a new button because hand-deleting the sword now
   loses the bone's animation and orphans the constraint (trap 4); it is
   refused while the arms ride the weapon or an aim exists, like Add.
-- **The grip lives in a new optionVar** (`mayaSceneSetup_grip_<key>`): raw
-  channels under the hand. The two older names meant "channels under
-  weapon_r" and are read only through composition with the bone's local
-  matrix (`bonedrive.composed_grip`, `window.grip_values` holds the
-  policy); NO save composes zeros, which lands the sword exactly on
-  `weapon_r` — the game's own grip. Old-space numbers are never shown as if
-  they were new-space (no character bound ⇒ zeros).
-- **The grip is written BEFORE the link and RIDES the transfer**
-  (2026-08-25, the user's report: «офсеты… больше не учитываются» — the
-  original grip-after-link applied it only to an unanimated bone, and a UE
-  clip always animates `weapon_r`, so in practice Add always dropped it).
-  The transfer keeps the sword's offset from the bone (mo=True, identity
-  when no grip); the final constraint's mo=True then keeps the BONE on its
-  original track (the same day's second ruling — the first version of this
-  fix had the bone follow grip∘clip, and the user rejected the shifted
-  bone at once). A re-Add with the same grip does not compound (the write
-  is absolute, so the captured offset repeats). The grip is ALSO stored on
-  the marked node (`mayaWeaponGripRotate/Translate`, written by
-  `write_offsets` on marked nodes only) so the bridge's relink can
-  re-apply it. With transferred animation on the sword the FIELDS are
-  quiet (`is_animated`, as after Connect) — they show the remembered grip,
-  never the animation's frame values: showing frame values is how a re-Add
-  once saved them over the remembered grip. `add_weapon` re-runs `refresh`
-  first for the same reason (fields last filled in an unbound window held
-  zeros); typed values survive the re-read through `offsets_changed`'s
-  save. Two spec addenda record the full reasoning.
+- **The grip is BONE-relative** (2026-08-25, the user's third ruling that
+  day: «наше оружие подставляется в позицию вепон боны с указанными
+  офсетами» — the intermediate build applied the fields as channels under
+  the HAND, which put the sword at the hand). Zeros mean exactly on
+  `weapon_r`; the placement is `bonedrive.apply_grip` → `place_at_grip`
+  (grip × the bone's WORLD matrix, two snap-style xform writes — the DAG
+  parent never enters the math), and the read-back is `measured_grip`, so
+  a sword nudged by hand in the viewport reads back honestly. This is the
+  pre-2026-08-21 meaning, so the optionVar is the ORIGINAL
+  `mayaSceneSetup_offset_<key>` (legacy `mayaWeapons_offset_*` read
+  second, verbatim — grips dialled before the inverted drive return). The
+  under-hand era name `mayaSceneSetup_grip_*` (2026-08-21..25 only) is
+  deliberately never read, its numbers mean nothing in the bone space;
+  `grip_values`, `composed_grip`-migration and `attach.write_offsets` /
+  `read_offsets` are gone rather than disabled (gone-tests pin it).
+- **The grip is placed BEFORE the link and RIDES the transfer**
+  (2026-08-25, the user's first report that day: «офсеты… больше не
+  учитываются» — the original grip-after-link applied it only to an
+  unanimated bone, and a UE clip always animates `weapon_r`, so in
+  practice Add always dropped it). The transfer keeps the sword's offset
+  from the bone (mo=True, identity when no grip) — bone-relative, that
+  offset IS the grip exactly, so the sword plays grip∘clip for the whole
+  clip with no capture-frame dependence. The final constraint's mo=True
+  keeps the BONE on its original track (the second ruling — the first fix
+  had the bone follow grip∘clip, rejected at once). A re-Add with the same
+  grip captures the same offset — nothing compounds. The grip is ALSO
+  stored on the marked node (`mayaWeaponGripRotate/Translate`, written by
+  `apply_grip`; bone-relative since the space change, a file saved with
+  the 4-day under-hand build re-links slightly off until one re-Add) so
+  the bridge's relink re-applies it after every clip import. With
+  transferred animation on the sword the FIELDS are quiet (`is_animated`,
+  as after Connect) — they show the remembered grip, never the animation's
+  frame values: showing frame values is how a re-Add once saved them over
+  the remembered grip. `add_weapon` re-runs `refresh` first for the same
+  staleness reason; typed values survive the re-read through
+  `offsets_changed`'s save. Three spec addenda record the full reasoning.
 - **A live grip dial goes through `bonedrive.regrip`, never a plain
-  channel write**: the bone plays its own animation through the
-  constraint's captured offset, so writing the sword's channels under a
-  live constraint drags the bone along by the OLD offset. Regrip drops our
-  constraint (the bone freezes exactly where the invariant held it),
-  writes the channels + stored grip, and remakes the constraint capturing
-  the new offset — the sword moves, the bone does not. No constraint, or
-  somebody else's, gets a plain write and the constraint left standing.
+  placement**: the bone plays its own animation through the constraint's
+  captured offset, so moving the sword under a live constraint drags the
+  bone along by the OLD offset. Regrip drops our constraint (the bone
+  freezes exactly where the invariant held it), places the sword at the
+  new bone-relative grip (`apply_grip`), and remakes the constraint
+  capturing the new offset — the sword moves, the bone does not. No
+  constraint, or somebody else's, gets a plain placement and the
+  constraint left standing.
 - **Connect is unchanged** and Disconnect returns the sword **under the
   hand**: the constraint targets the node, not the path, so it survives
   `parent_out`/`parent_in` and `weapon_r` keeps following the sword out in

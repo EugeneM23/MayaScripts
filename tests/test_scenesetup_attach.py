@@ -172,6 +172,9 @@ class FakeBonedrive(object):
     def snap(self, node, target):
         self.log.append(("snap", node, target))
 
+    def apply_grip(self, weapon, bone, rotate, translate):
+        self.log.append(("grip", weapon, bone, rotate, translate))
+
     def link(self, weapon, bone):
         self.log.append(("link", weapon, bone))
         return 0
@@ -317,8 +320,9 @@ class AttachFlow(unittest.TestCase):
     def test_parent_mark_seat_snap_grip_then_link(self):
         """The grip lands BEFORE the link (2026-08-25): the transfer keeps
         the sword's offset from the bone (mo=True), so a dialled grip rides
-        the clip; on a clean bone the constrained bone follows it the same
-        as it did when the grip came last."""
+        the clip. The placement is bonedrive.apply_grip - BONE-relative
+        (the same day's space ruling: zeros mean exactly on weapon_r),
+        never raw channels under the hand."""
         fake = self._wire(frames=0)
         weapon, note = attach.attach(self.Entry(), HAND, BONE,
                                      rotate=(1.0, 2.0, 3.0),
@@ -327,29 +331,26 @@ class AttachFlow(unittest.TestCase):
         kinds = self._kinds(fake)
         self.assertLess(kinds.index("parent"), kinds.index("mark"))
         self.assertLess(kinds.index("mark"), kinds.index("snap"))
-        self.assertLess(kinds.index("snap"), kinds.index("link"))
+        self.assertLess(kinds.index("snap"), kinds.index("grip"))
+        self.assertLess(kinds.index("grip"), kinds.index("link"))
         self.assertEqual(fake.log[kinds.index("snap")],
                          ("snap", HAND + "|sword", BONE))
-        grip_writes = [i for i, entry in enumerate(fake.log)
-                       if entry[0] == "set"
-                       and entry[1].endswith(".rotateX")]
-        self.assertTrue(grip_writes)
-        self.assertGreater(grip_writes[0], kinds.index("snap"))
-        self.assertLess(grip_writes[0], kinds.index("link"))
+        self.assertEqual(fake.log[kinds.index("grip")],
+                         ("grip", HAND + "|sword", BONE,
+                          (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
         self.assertEqual(note, "")
 
     def test_no_grip_given_means_stay_on_the_bone(self):
-        """None is not zeros: zeros are real channel values under the hand
-        and would put the sword at the hand origin. With no grip the snap
-        is the placement and nothing writes the channels at all."""
+        """None is not zeros: zeros are a real grip (the sword exactly on
+        the bone). With no grip the snap is the placement and apply_grip
+        is never called."""
         fake = self._wire(frames=0)
         attach.attach(self.Entry(), HAND, BONE)
-        self.assertFalse([e for e in fake.log
-                          if e[0] == "set" and e[1].endswith(".rotateX")])
+        self.assertNotIn("grip", self._kinds(fake))
 
     def test_the_grip_rides_a_transferred_bone(self):
         """The user's 2026-08-25 report: adding into an animated scene
-        dropped the dialled grip entirely. The grip is written before the
+        dropped the dialled grip entirely. The grip is placed before the
         link, and the transfer (mo=True) keeps it - so the saved offsets
         shape the sword whether or not the bone brought animation."""
         fake = self._wire(frames=31)
@@ -357,11 +358,8 @@ class AttachFlow(unittest.TestCase):
                                       rotate=(1.0, 2.0, 3.0),
                                       translate=(4.0, 5.0, 6.0))
         kinds = self._kinds(fake)
-        grip_writes = [i for i, entry in enumerate(fake.log)
-                       if entry[0] == "set"
-                       and entry[1].endswith(".rotateX")]
-        self.assertTrue(grip_writes)
-        self.assertLess(grip_writes[0], kinds.index("link"))
+        self.assertIn("grip", kinds)
+        self.assertLess(kinds.index("grip"), kinds.index("link"))
         self.assertIn("31", note)
 
 
@@ -626,60 +624,11 @@ class Seat(unittest.TestCase):
 
 class Offsets(unittest.TestCase):
 
-    def setUp(self):
-        self.fake = FakeCmds()
-        attach.cmds = self.fake
-
-    def test_writes_all_six_channels(self):
-        attach.write_offsets("|c", (10.0, 20.0, 30.0), (1.0, 2.0, 3.0))
-        self.assertEqual(self.fake.attrs["|c.rotateY"], 20.0)
-        self.assertEqual(self.fake.attrs["|c.translateZ"], 3.0)
-
-    def test_autokey_is_off_for_every_write(self):
-        """The user works with autoKey ON; a scripted poke must not key."""
-        attach.write_offsets("|c", (10.0, 0.0, 0.0), (0.0, 0.0, 0.0))
-        self.assertEqual(set(self.fake.autokey_during_write), {False})
-
-    def test_autokey_is_put_back(self):
-        attach.write_offsets("|c", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
-        self.assertTrue(self.fake.autokey)
-
-    def test_autokey_is_put_back_even_when_a_write_blows_up(self):
-        def boom(plug, *values, **kwargs):
-            raise RuntimeError("locked channel")
-        self.fake.setAttr = boom
-        with self.assertRaises(RuntimeError):
-            attach.write_offsets("|c", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
-        self.assertTrue(self.fake.autokey)
-
-    def test_reads_what_it_wrote(self):
-        attach.write_offsets("|c", (10.0, 20.0, 30.0), (1.0, 2.0, 3.0))
-        rotate, translate = attach.read_offsets("|c")
-        self.assertEqual(rotate, (10.0, 20.0, 30.0))
-        self.assertEqual(translate, (1.0, 2.0, 3.0))
-
-    def _recording_bonedrive(self, stored):
-        real = attach.bonedrive
-        attach.bonedrive = types.SimpleNamespace(
-            MARKER=real.MARKER,
-            store_grip=lambda node, rotate, translate:
-                stored.append((node, rotate, translate)))
-        self.addCleanup(setattr, attach, "bonedrive", real)
-
-    def test_a_marked_weapon_remembers_the_grip_on_itself(self):
-        """The stored grip is what relink re-applies after a clip import
-        (the optionVar is window policy, out of the bridge's reach)."""
-        self.fake = FakeCmds(marked=["|c"])
-        attach.cmds = self.fake
-        stored = []
-        self._recording_bonedrive(stored)
-        attach.write_offsets("|c", (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
-        self.assertEqual(stored, [("|c", (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))])
-
-    def test_an_unmarked_node_stores_nothing(self):
-        """Verify sandboxes and plain locators go through write_offsets
-        too; only the weapon carries a grip."""
-        stored = []
-        self._recording_bonedrive(stored)
-        attach.write_offsets("|c", (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
-        self.assertEqual(stored, [])
+    def test_the_raw_channel_utilities_are_gone(self):
+        """write_offsets and read_offsets wrote and read plain channels
+        under whatever the parent was. The grip is BONE-relative now and
+        goes through bonedrive.apply_grip / measured_grip; keeping a raw
+        write around is how the next reader applies a grip in the wrong
+        space again."""
+        self.assertFalse(hasattr(attach, "write_offsets"))
+        self.assertFalse(hasattr(attach, "read_offsets"))

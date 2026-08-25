@@ -75,6 +75,23 @@ class ComposedGrip(unittest.TestCase):
     matrix(new channels) == matrix(grip) * bone_local.
     """
 
+    def test_grip_between_inverts_composed_grip(self):
+        """The read-back: the grip measured between the composed frame and
+        the bone frame is the grip that was composed in."""
+        rotate, translate = (10.0, -20.0, 35.0), (1.0, 2.0, -3.0)
+        bone = bonedrive.matrix_of((30.0, 40.0, -25.0), (5.0, -1.0, 2.0))
+        placed = bonedrive.composed_grip(rotate, translate, bone)
+        back_r, back_t = bonedrive.grip_between(
+            bonedrive.matrix_of(placed[0], placed[1]), bone)
+        self.assertLess(max(abs(a - b) for a, b in zip(back_r, rotate)), 1e-6)
+        self.assertLess(max(abs(a - b) for a, b in zip(back_t, translate)),
+                        1e-6)
+
+    def test_grip_between_identity_frames_is_zero(self):
+        identity = bonedrive.matrix_of((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        rotate, translate = bonedrive.grip_between(identity, identity)
+        self.assertLess(max(abs(v) for v in rotate + translate), 1e-9)
+
     def test_identity_bone_local_returns_the_grip(self):
         rotate, translate = bonedrive.composed_grip(
             (10.0, 20.0, 30.0), (1.0, 2.0, 3.0), _matrix(0, 0, 0, 0, 0, 0))
@@ -201,6 +218,9 @@ class FakeCmds(object):
 
     def xform(self, node, **kwargs):
         if kwargs.get("query"):
+            if kwargs.get("matrix"):
+                return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                        0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
             return (0.0, 0.0, 0.0)
         self._note(("xform", node))
 
@@ -376,61 +396,59 @@ class Relink(WithFake):
     def test_a_stored_grip_is_reapplied_between_snap_and_link(self):
         """A merge's contract is 'the scene plays this clip', but the GRIP
         is not the clip's to flatten: the sword goes back to its dialled
-        pose after the snap, and the transfer keeps that offset."""
+        pose relative to the bone after the snap, and the transfer keeps
+        that offset. Two placement xforms on top of the snap's two."""
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True,
                                  grip=((10.0, 0.0, 0.0), (0.0, 5.0, 0.0))))
         bonedrive.relink(SWORD, BONE)
         kinds = self.kinds()
-        sets = [i for i, kind in enumerate(kinds) if kind == "set"]
-        self.assertTrue(sets)
-        self.assertGreater(sets[0], kinds.index("xform"))
-        self.assertLess(sets[-1], kinds.index("constrain"))
-        self.assertEqual(fake.attrs[SWORD + ".rotate"], (10.0, 0.0, 0.0))
-        self.assertEqual(fake.attrs[SWORD + ".translate"], (0.0, 5.0, 0.0))
+        placements = [i for i, kind in enumerate(kinds) if kind == "xform"]
+        self.assertEqual(len(placements), 4)
+        self.assertLess(placements[-1], kinds.index("constrain"))
 
     def test_no_stored_grip_means_the_snap_is_the_placement(self):
         """A legacy sword (attached before the grip lived on the node)
-        relinks exactly as before: onto the bone, nothing written."""
+        relinks exactly as before: onto the bone, nothing more."""
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
         bonedrive.relink(SWORD, BONE)
-        self.assertNotIn("set", self.kinds())
+        self.assertEqual(self.kinds().count("xform"), 2)
 
 
 class Regrip(WithFake):
-    """A new grip moves the SWORD only. The bone plays its own animation
-    through the constraint's captured offset, so writing the sword's
-    channels under a live constraint would drag the bone along by the OLD
-    offset - the constraint is dropped (the bone freezes where it stands),
-    the channels written, and the constraint remade capturing the new
-    offset. The bone never moves."""
+    """A new grip moves the SWORD only, placed relative to the BONE (the
+    user's 2026-08-25 space ruling: zeros mean exactly on weapon_r). The
+    bone plays its own animation through the constraint's captured offset,
+    so placing the sword under a live constraint would drag the bone along
+    by the OLD offset - the constraint is dropped (the bone freezes where
+    it stands), the sword placed, and the constraint remade capturing the
+    new offset. The bone never moves."""
 
-    def test_drops_writes_and_remakes_around_our_constraint(self):
+    def test_drops_places_and_remakes_around_our_constraint(self):
         fake = self.use(FakeCmds(constrained=True))
         bonedrive.regrip(SWORD, BONE, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
         kinds = self.kinds()
         self.assertEqual(kinds.count("delete"), 1)
         self.assertEqual(kinds.count("constrain"), 1)
-        sets = [i for i, kind in enumerate(kinds) if kind == "set"]
-        self.assertLess(kinds.index("delete"), sets[0])
-        self.assertLess(sets[-1], kinds.index("constrain"))
+        placements = [i for i, kind in enumerate(kinds) if kind == "xform"]
+        self.assertEqual(len(placements), 2)
+        self.assertLess(kinds.index("delete"), placements[0])
+        self.assertLess(placements[-1], kinds.index("constrain"))
         last = fake.log[-1]
         self.assertEqual(last[1], (SWORD, BONE))
         self.assertIs(last[2], True)
-        self.assertEqual(fake.attrs[SWORD + ".rotate"], (1.0, 2.0, 3.0))
-        self.assertEqual(fake.attrs[SWORD + ".translate"], (4.0, 5.0, 6.0))
 
-    def test_an_unconstrained_bone_gets_a_plain_write(self):
+    def test_an_unconstrained_bone_gets_a_plain_placement(self):
         """A legacy sword (old file, no inverted drive) still takes its
         offsets; there is nothing to rehook."""
         fake = self.use(FakeCmds(constrained=False))
         bonedrive.regrip(SWORD, BONE, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))
         self.assertNotIn("delete", self.kinds())
         self.assertNotIn("constrain", self.kinds())
-        self.assertEqual(fake.attrs[SWORD + ".rotate"], (1.0, 0.0, 0.0))
+        self.assertEqual(self.kinds().count("xform"), 2)
 
     def test_a_foreign_constraint_is_left_standing(self):
         """A constraint whose driver carries no marker is somebody else's
-        rig - write the sword, touch nothing on the bone."""
+        rig - place the sword, touch nothing on the bone."""
         fake = self.use(FakeCmds(constrained=True, marked=()))
         bonedrive.regrip(SWORD, BONE, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))
         self.assertNotIn("delete", self.kinds())

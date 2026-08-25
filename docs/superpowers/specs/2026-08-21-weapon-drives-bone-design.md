@@ -283,3 +283,63 @@ the ruling itself: the bone plays its ORIGINAL track under the grip, after
 a re-Add, and after a relink onto a new clip; Add with a grip does not move
 a clean bone; a live re-dial moves the sword to the new grip and the bone
 not at all. Awaiting the live run at the next open port.
+
+## Addendum 3 (2026-08-25, later the same day): the grip is BONE-relative
+
+Addendum 2 shipped, the port came up, the no-grip story proved green live
+(31/31 in the real scene, on a real clip carrying 47 frames of `weapon_r`)
+— and the user pressed Add: «Сейчас оружие подставляется в позицию кисти а
+должно подставляться в позицию weapon bone… с указанными офсетами». The
+sword landed at the HAND. Root cause: the grip's SPACE. Since 2026-08-21
+the fields meant "raw channels under the hand" — zeros put the sword at
+the hand origin, and any number the user types means nothing they can
+picture. The user thinks — and the same message says so explicitly — in
+offsets **from the weapon bone**: zeros = exactly on `weapon_r`, the numbers
+they dialled before the redesign. Their post-redesign typing had been saved
+into the under-hand optionVar as if it were hand-space, which is precisely
+what put the sword at the wrist.
+
+The ruling collapses the whole under-hand construction:
+
+- **The grip means "offset from `weapon_r`" everywhere** — fields, saved
+  optionVar, the copy stored on the node. Application composes at APPLY
+  time: `place_at_grip` = grip × the bone's WORLD matrix, two snap-style
+  xform writes, so the weapon's DAG parent (still the hand — that part of
+  the design stands, a node cannot both parent the weapon and follow it)
+  never enters the math. `apply_grip` = place + store-on-marked; it is the
+  one grip application shared by attach, relink and regrip. `measured_grip`
+  (world matrices through the pure `grip_between`) is the read-back, so the
+  fields show a hand-nudged sword honestly.
+- **The transfer offset now IS the grip, exactly.** mo=True maintains the
+  offset in the bone's frame; a bone-relative grip is constant there, so
+  sword(t) = grip ∘ clip(t) with no capture-frame dependence — Addendum 2's
+  under-hand scheme had a small f0-dependence where the clip animates
+  `weapon_r` against the hand; that artifact is gone by construction.
+- **The old optionVars come back verbatim.** Bone-relative is the
+  pre-2026-08-21 meaning, so `mayaSceneSetup_offset_<key>` (and the legacy
+  `mayaWeapons_offset_<key>`) read with no composition — the LongSword grip
+  dialled before the inverted drive returns. The under-hand name
+  (`mayaSceneSetup_grip_<key>`, four days old) is deliberately never read:
+  its numbers are junk in the bone space. `grip_values`, the
+  composed-migration and `attach.write_offsets`/`read_offsets` are gone
+  rather than disabled, with gone-tests: a raw channel write lying around
+  is how the next reader applies a grip in the wrong space again.
+- A file saved during the four under-hand days carries an under-hand
+  stored-grip attribute that the new code reads as bone-relative; the
+  first re-Add rewrites it. No migration — the attribute is days old.
+
+Everything Addendum 2 established stands: grip before link, both
+constraints mo=True, the bone byte-original, the sampled-frame capture,
+regrip's drop-place-remake.
+
+Proof: 1036 unit tests green (the space pinned in attach's flow via
+`apply_grip`, regrip placing instead of writing, `grip_between` inverting
+`composed_grip`, the window's under-hand policy gone). Live the same day,
+sandbox chain over the bridge, **13/13, every number 0.0000000**: sword at
+the bone-relative grip over an animated bone, offset kept across the
+transfer, the bone on its original track, unlink restoring it, relink onto
+a rewritten clip under the same stored grip, a clean bone unmoved by Add
+and by a live re-dial, and `measured_grip` reading the dialled numbers
+back from world matrices. `verify_weapons.py` re-ran green 31/31 in the
+real scene under the final build; its in-scene grip gates (bind-pose scene
+required) remain pending.

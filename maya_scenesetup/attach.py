@@ -158,30 +158,6 @@ def import_model(path):
     return outermost(cmds.ls(new, long=True, type="transform") or [])
 
 
-def write_offsets(weapon, rotate, translate):
-    """Set the weapon's local rotate and translate.
-
-    autoKey is off for the duration. A weapon in the hand carries no curves,
-    so it would not fire -- but the user works with autoKey ON and this repo
-    has already paid for assuming a scripted poke is harmless.
-
-    A MARKED node also remembers the grip on itself (`bonedrive.store_grip`),
-    so the bridge's relink can re-apply it after a clip import. Unmarked
-    nodes -- verify sandboxes, plain locators -- store nothing.
-    """
-    state = cmds.autoKeyframe(query=True, state=True)
-    cmds.autoKeyframe(state=False)
-    try:
-        for axis, value in zip("XYZ", rotate):
-            cmds.setAttr("{0}.rotate{1}".format(weapon, axis), value)
-        for axis, value in zip("XYZ", translate):
-            cmds.setAttr("{0}.translate{1}".format(weapon, axis), value)
-        if cmds.attributeQuery(MARKER, node=weapon, exists=True):
-            bonedrive.store_grip(weapon, rotate, translate)
-    finally:
-        cmds.autoKeyframe(state=state)
-
-
 def model_root(weapon):
     """The geometry of an attached weapon -- what the animator grabs.
 
@@ -221,15 +197,6 @@ def is_animated(node):
                                     type="animCurve"):
                 return True
     return False
-
-
-def read_offsets(weapon):
-    """The weapon's local rotate and translate, as two triples."""
-    rotate = tuple(cmds.getAttr("{0}.rotate{1}".format(weapon, axis))
-                   for axis in "XYZ")
-    translate = tuple(cmds.getAttr("{0}.translate{1}".format(weapon, axis))
-                      for axis in "XYZ")
-    return rotate, translate
 
 
 def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
@@ -300,15 +267,15 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
         cmds.setAttr(weapon + "." + MARKER, entry.key, type="string")
         seat(weapon, entry.scale)
 
-        # Onto the drive bone exactly, the grip on top, then invert the
-        # drive -- the transfer keeps the sword's offset from the bone, so
-        # the grip rides the clip instead of being flattened by it. No grip
-        # given (None, not zeros) means "leave it on the bone": zeros are
-        # real channel values under the hand and would put the sword at the
-        # hand origin.
+        # Onto the drive bone exactly, the grip on top (BONE-relative:
+        # zeros mean exactly on weapon_r), then invert the drive -- the
+        # transfer keeps the sword's offset from the bone, so the grip
+        # rides the clip instead of being flattened by it. No grip given
+        # (None) means "leave it on the bone", same place as zeros but
+        # with nothing stored.
         bonedrive.snap(weapon, drive_bone)
         if rotate is not None and translate is not None:
-            write_offsets(weapon, rotate, translate)
+            bonedrive.apply_grip(weapon, drive_bone, rotate, translate)
         frames = bonedrive.link(weapon, drive_bone)
         if frames:
             moved = ("{0} frame(s) moved from the bone onto the weapon"

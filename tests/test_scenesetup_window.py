@@ -103,59 +103,25 @@ class OptionVars(unittest.TestCase):
                          ((0.0, 90.0, 0.0), (0.0, 0.0, 0.0)))
 
 
-class GripValues(unittest.TestCase):
-    """Which grip the fields show, and in which SPACE (2026-08-21).
+class GripSpace(unittest.TestCase):
+    """The offsets are BONE-relative (2026-08-25, the user's ruling: «наше
+    оружие подставляется в позицию вепон боны с указанными офсетами»).
 
-    The stored grip used to mean "channels under weapon_r"; the channels
-    live under the hand now, so the same six numbers mean something else.
-    New-era saves are raw; old-era saves compose with the drive bone's
-    local matrix; and old-space numbers are never displayed as if they
-    were new-space.
+    Zeros mean exactly on weapon_r. That is the pre-2026-08-21 meaning, so
+    the pre-redesign optionVars read back verbatim and the four days of
+    under-hand policy - grip_values, the composition, the separate
+    grip-optionVar name - are gone rather than disabled. The under-hand
+    numbers saved into `mayaSceneSetup_grip_*` during those days mean
+    nothing in the bone space and are deliberately never read.
     """
 
-    def _compose(self, calls):
-        def compose(rotate, translate, bone_local):
-            calls.append((rotate, translate, bone_local))
-            return (7.0, 8.0, 9.0), (10.0, 11.0, 12.0)
-        return compose
+    def test_the_under_hand_policy_is_gone(self):
+        self.assertFalse(hasattr(window, "grip_values"))
+        self.assertFalse(hasattr(window, "grip_optionvar_name"))
 
-    def test_a_new_era_save_is_returned_raw(self):
-        calls = []
-        got = window.grip_values([1, 2, 3, 4, 5, 6], [9] * 6, "L",
-                                 self._compose(calls))
-        self.assertEqual(got, ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
-        self.assertEqual(calls, [])
-
-    def test_an_old_era_save_composes_with_the_bone(self):
-        calls = []
-        got = window.grip_values(None, [1, 2, 3, 4, 5, 6], "L",
-                                 self._compose(calls))
-        self.assertEqual(got, ((7.0, 8.0, 9.0), (10.0, 11.0, 12.0)))
-        self.assertEqual(calls, [((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), "L")])
-
-    def test_no_save_defaults_to_the_bone_itself(self):
-        """Zeros through the composition ARE the drive bone's pose - the
-        sword lands exactly on weapon_r, which is the game's own grip."""
-        calls = []
-        window.grip_values(None, None, "L", self._compose(calls))
-        self.assertEqual(calls, [((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), "L")])
-
-    def test_without_a_bone_zeros_stand_in(self):
-        """Old-space numbers must never be shown as if they were new-space;
-        with no character there is nothing to compose against."""
-        calls = []
-        got = window.grip_values(None, [1, 2, 3, 4, 5, 6], None,
-                                 self._compose(calls))
-        self.assertEqual(got, ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
-        self.assertEqual(calls, [])
-
-    def test_the_grip_optionvar_is_its_own_name(self):
-        """A new space needs a new name, or an old-era triple would be read
-        back as under-hand channels and put the sword at the hand origin."""
-        self.assertNotEqual(window.grip_optionvar_name("LongSword_02"),
-                            window.optionvar_name("LongSword_02"))
-        self.assertIn("LongSword_02",
-                      window.grip_optionvar_name("LongSword_02"))
+    def test_the_save_name_is_the_bone_relative_one(self):
+        self.assertEqual(window.optionvar_name("LongSword_02"),
+                         "mayaSceneSetup_offset_LongSword_02")
 
 
 class RemoveWeapon(unittest.TestCase):
