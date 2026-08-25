@@ -226,3 +226,60 @@ round-trips, relink re-applies, order pinned) — 1035 green. Live:
 script owns the bone's animation; restores every channel it touches) — grip
 kept across the transfer, re-Add compound-free, relink under the same grip.
 Awaiting its live run at the next open port.
+
+## Addendum 2 (2026-08-25, the same day): the bone's animation is inviolate
+
+The addendum above closed the report by letting the bone follow grip∘clip —
+«wherever the sword is, the bone is» extended to the animated case. The
+user rejected the shifted bone on sight: «Теперь ты изменяешь позицию
+weapon bone… главное чтобы наша анимация сохранилась в исходном виде». That
+settles the question the first addendum called "the one semantic
+consequence to know", and settles it the other way: **the grip is a
+Maya-side model correction — how the imported FBX sits relative to the
+bone — and must never reach the export bone.** The game attaches its own
+weapon model to `weapon_r` with its own socket; exporting grip∘clip would
+double that correction in engine.
+
+The scheme that satisfies all three constraints at once (grip visible on
+the sword; bone bound to the sword; bone's track byte-original) is the
+final constraint flag: **`parentConstraint(weapon, bone,
+maintainOffset=True)`** — the camera's own flag, as it happens. At capture
+time the sword stands at grip∘clip(f) and the just-cut bone stands frozen
+at clip(f), so the captured offset is exactly the grip's inverse, and
+bone(t) = grip⁻¹ ∘ grip ∘ clip(t) = clip(t) for every frame — algebra, not
+approximation. With no grip the offset is the identity and nothing about
+the grip-less paths changes. Everything downstream follows for free:
+`unlink` bakes the bone back to the ORIGINAL clip (better than before, which
+baked grip∘clip), the bridge's relink re-links the new clip under the same
+inverse, Connect's `parent_out` keeps the offset because the constraint
+targets the node, and the export (`animexport` bakes the skeleton) carries
+the clip verbatim.
+
+Two consequences that needed their own work:
+
+1. **The offset is captured on a SAMPLED frame.** After the transfer the
+   sword is a baked curve; a capture at a fractional currentTime compares
+   an interpolated sword against the bone's exact cut value and rides that
+   error on every frame for ever. `link` jumps to the range start (always
+   a sample) for the cut-and-constrain, then puts the time back — only
+   when a transfer ran; a static sword evaluates exactly at any time.
+
+2. **A live grip dial must not write channels under the live constraint** —
+   the bone would follow the sword by the OLD offset and leave its track.
+   `bonedrive.regrip` (now what `offsets_changed` calls) drops our
+   constraint (the bone freezes exactly where the invariant held it),
+   writes the channels and the stored grip, and remakes the constraint
+   capturing the new offset: the sword moves, the bone does not. A bone
+   with no constraint (legacy file) or somebody else's keeps a plain
+   write; a foreign constraint is not ours to rehook.
+
+A file saved with yesterday's mo=False constraint keeps behaving as saved
+until the next Add or import rebuilds the link; no migration — the files
+are days old and the user re-adds constantly.
+
+Proof: 1043 unit tests green (regrip order and refusals, the sampled-frame
+pin, the flipped final flag). `verify_weapons.py`'s grip gates now measure
+the ruling itself: the bone plays its ORIGINAL track under the grip, after
+a re-Add, and after a relink onto a new clip; Add with a grip does not move
+a clean bone; a live re-dial moves the sword to the new grip and the bone
+not at all. Awaiting the live run at the next open port.

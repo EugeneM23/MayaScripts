@@ -2,8 +2,12 @@
 
 The Camera Setup pattern generalised: the animator's thing (the weapon)
 carries the animation and the export bone is parent-constrained to it,
-`maintainOffset=False` -- the bone lives in the node's frame, so wherever the
-sword is, the bone is, and the export is honest. `attach` builds the link at
+`maintainOffset=True` -- the weapon plays the clip WITH the dialled grip on
+top, the captured offset is the grip's inverse, and the bone keeps playing
+exactly the animation it always had (the user's 2026-08-25 ruling: «главное
+чтобы наша анимация сохранилась в исходном виде» -- the grip is a Maya-side
+model correction and never reaches the export bone). With no grip the offset
+is the identity and the bone rides the node 1:1. `attach` builds the link at
 Add, and the UE bridge unlinks/relinks around a merge (the constraint would
 otherwise trip the rigged-skeleton refusal, trap 37).
 
@@ -222,17 +226,26 @@ def link(weapon, bone):
     live). The transfer keeps the weapon's CURRENT offset from the bone
     (mo=True) -- that offset is the dialled grip the caller placed, and the
     identity when the weapon stands on the bone, so a grip-less attach and
-    the bridge's relink behave exactly as if it were mo=False. mo=False on
-    the temp is how the 2026-08-25 report happened: the transfer flattened
-    the grip whenever the bone brought animation, which in a scene with a
-    UE clip is always.
+    the bridge's relink transfer verbatim. mo=False on the temp is how the
+    2026-08-25 report happened: the transfer flattened the grip whenever
+    the bone brought animation, which in a scene with a UE clip is always.
 
-    The final constraint stays mo=False -- that one is the design in one
-    flag: the bone lives in the weapon's frame, wherever the animator (and
-    the grip) takes it.
+    The final constraint is mo=True as well -- the user's ruling the same
+    day: «главное чтобы наша анимация сохранилась в исходном виде». The
+    weapon plays grip-then-clip, the captured offset is the grip's inverse,
+    so the BONE keeps playing exactly the clip it always had -- the grip is
+    a Maya-side model correction and never reaches the export bone. With no
+    grip the offset is the identity and the bone rides the weapon 1:1. The
+    camera drives its bone through the same flag.
+
+    After a transfer the offset is captured ON A SAMPLED FRAME (the range
+    start, time put back): the weapon is a baked curve now, and a capture
+    at a fractional currentTime would compare an interpolated weapon
+    against the bone's exact cut value, riding that error on every frame.
     """
     start, end = bake_range(bone)
     frames = 0
+    parked = None
     with _autokey_off():
         if moves(bone):
             temporary = cmds.parentConstraint(bone, weapon,
@@ -240,9 +253,45 @@ def link(weapon, bone):
             _bake(weapon, start, end)
             cmds.delete(temporary)
             frames = int(round(end - start)) + 1
-        _cut(bone)
-        cmds.parentConstraint(weapon, bone, maintainOffset=False)
+            parked = cmds.currentTime(query=True)
+            cmds.currentTime(start)
+        try:
+            _cut(bone)
+            cmds.parentConstraint(weapon, bone, maintainOffset=True)
+        finally:
+            if parked is not None:
+                cmds.currentTime(parked)
     return frames
+
+
+def regrip(weapon, bone, rotate, translate):
+    """Write a new grip without moving the bone.
+
+    The bone plays its own animation through the constraint's captured
+    offset, so writing the weapon's channels under a live constraint would
+    drag the bone along by the OLD offset. Our constraint is dropped first
+    (the bone freezes exactly where the invariant held it), the channels
+    written, and the constraint remade capturing the new offset -- the
+    weapon moves, the bone does not. A marked weapon remembers the grip on
+    itself, as `attach.write_offsets` does.
+
+    A bone with no constraint, or somebody else's, gets a plain write and
+    its constraint is left standing: a legacy sword still takes offsets,
+    and a foreign rig is not ours to rehook.
+    """
+    ours = driving_weapon(bone)
+    rehook = bool(ours) and (cmds.ls(ours, long=True)
+                             == cmds.ls(weapon, long=True))
+    with _autokey_off():
+        if rehook:
+            cmds.delete(_constraints_on(bone))
+        for channel, values in (("rotate", rotate), ("translate", translate)):
+            cmds.setAttr("{0}.{1}".format(weapon, channel), *values,
+                         type="double3")
+        if cmds.attributeQuery(MARKER, node=weapon, exists=True):
+            store_grip(weapon, rotate, translate)
+        if rehook:
+            cmds.parentConstraint(weapon, bone, maintainOffset=True)
 
 
 def unlink(bone):

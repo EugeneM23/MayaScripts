@@ -7,10 +7,14 @@ is exactly the group the animator asked not to have.
 
 Since 2026-08-21 the drive is inverted: the mesh parents under the drive
 bone's own PARENT (hand_r on Manny), any moving animation `weapon_r` carried
-is baked onto the mesh, and the bone is then parent-constrained to it
-(`bonedrive.link`, mo=False -- the bone lives in the sword's frame). It has
-to be the hand: a node cannot both parent the weapon and follow it, that is
-a cycle. The animator animates the sword; the export bone follows.
+is baked onto the mesh (with the dialled grip kept on top), and the bone is
+then parent-constrained to it (`bonedrive.link`, mo=True -- the captured
+offset is the grip's inverse, so the bone keeps playing its ORIGINAL
+animation while the sword sits at the grip; the user's 2026-08-25 ruling).
+It has to be the hand: a node cannot both parent the weapon and follow it,
+that is a cycle. The animator animates the sword; the export bone follows
+at the grip's inverse, so what exports is the clip the scene came with plus
+whatever the animator does to the sword -- never the grip itself.
 
 A file holding no mesh, or several, keeps a group of ours instead: two meshes
 cannot both be the node the offsets live on, and one click cannot select both.
@@ -242,12 +246,15 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
     grip is written (sword to its dialled pose -- and remembered on the
     node), any moving animation the bone carried is baked onto the weapon's
     channels WITH that offset kept (`bonedrive.link`, mo=True on the
-    transfer), and the bone is parent-constrained to the weapon (mo=False --
-    the bone lives in the sword's frame). So the grip shapes the sword
-    whether or not the bone brought animation; grip-after-link was the
-    user's 2026-08-25 report, every Add in a scene with a UE clip silently
-    dropping the offsets. On an animated weapon the FIELDS stay quiet
-    (`is_animated`) -- the grip they saved still applied.
+    transfer), and the bone is parent-constrained to the weapon -- mo=True,
+    capturing the grip's inverse, so the bone keeps playing exactly the
+    animation it always had («в исходном виде», the user's 2026-08-25
+    ruling) while the sword visibly sits at the grip. So the grip shapes
+    the sword whether or not the bone brought animation, and never leaks
+    into the export bone; grip-after-link was the same day's first report,
+    every Add in a scene with a UE clip silently dropping the offsets. On
+    an animated weapon the FIELDS stay quiet (`is_animated`) -- the grip
+    they saved still applied.
 
     Whatever this module attached before is removed first WITH its animation
     (`detach` bakes the bone back off the old weapon before deleting it). All

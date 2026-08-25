@@ -123,6 +123,9 @@ class FakeCmds(object):
         self._marked = set(marked)
         self._constraints = {}
         self.attrs = {}
+        # Deliberately fractional: the offset capture must not trust it.
+        self.now = 7.3
+        self.times = []
         if grip:
             self.attrs[weapon + "." + bonedrive.GRIP_ROTATE] = tuple(grip[0])
             self.attrs[weapon + "." + bonedrive.GRIP_TRANSLATE] = tuple(grip[1])
@@ -206,6 +209,12 @@ class FakeCmds(object):
             return self.autokey
         self.autokey = state
 
+    def currentTime(self, value=None, query=False):
+        if query:
+            return self.now
+        self.times.append(value)
+        self.now = value
+
     def objExists(self, node):
         return True
 
@@ -244,10 +253,12 @@ class Link(WithFake):
         """Temp constraint bone->weapon (mo=TRUE - the transfer keeps
         whatever offset the caller placed, which is the dialled grip;
         identity when the weapon stands on the bone), bake the WEAPON,
-        delete the temp, cut the bone, constrain weapon->bone (mo=False) -
+        delete the temp, cut the bone, constrain weapon->bone (mo=TRUE -
+        the bone keeps playing ITS OWN track at the grip's inverse; the
+        user's 2026-08-25 ruling: the grip is not the export's to carry) -
         in that order. The camera paid for cut-after-constrain (a
-        pairBlend); the user's 2026-08-25 report paid for mo=False here
-        flattening the grip."""
+        pairBlend); the first grip fix paid for mo=False here shifting the
+        bone by the grip."""
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
         frames = bonedrive.link(SWORD, BONE)
         self.assertEqual(self.phases(),
@@ -258,8 +269,25 @@ class Link(WithFake):
         self.assertEqual(fake.log[1][1], SWORD)
         last = fake.log[-1]
         self.assertEqual(last[1], (SWORD, BONE))
-        self.assertIs(last[2], False)
+        self.assertIs(last[2], True)
         self.assertEqual(frames, 31)
+
+    def test_the_final_offset_is_captured_on_a_sampled_frame(self):
+        """After the transfer the sword is a SAMPLED curve: capturing the
+        offset at a fractional currentTime compares an interpolated sword
+        against the bone's exact cut value, and the error rides every
+        frame for ever. The capture jumps to the range start (always a
+        sample) and puts the time back."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        bonedrive.link(SWORD, BONE)
+        self.assertEqual(fake.times, [0.0, 7.3])
+
+    def test_no_transfer_means_no_time_jump(self):
+        """A static sword evaluates exactly at any time - the animator's
+        cursor is not touched without a reason."""
+        fake = self.use(FakeCmds(bone_keys=[], bone_curves=False))
+        bonedrive.link(SWORD, BONE)
+        self.assertEqual(fake.times, [])
 
     def test_still_bone_gets_no_transfer_and_reports_zero(self):
         """Constant curves are not animation (trap 30) - transferring them
@@ -366,6 +394,65 @@ class Relink(WithFake):
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
         bonedrive.relink(SWORD, BONE)
         self.assertNotIn("set", self.kinds())
+
+
+class Regrip(WithFake):
+    """A new grip moves the SWORD only. The bone plays its own animation
+    through the constraint's captured offset, so writing the sword's
+    channels under a live constraint would drag the bone along by the OLD
+    offset - the constraint is dropped (the bone freezes where it stands),
+    the channels written, and the constraint remade capturing the new
+    offset. The bone never moves."""
+
+    def test_drops_writes_and_remakes_around_our_constraint(self):
+        fake = self.use(FakeCmds(constrained=True))
+        bonedrive.regrip(SWORD, BONE, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+        kinds = self.kinds()
+        self.assertEqual(kinds.count("delete"), 1)
+        self.assertEqual(kinds.count("constrain"), 1)
+        sets = [i for i, kind in enumerate(kinds) if kind == "set"]
+        self.assertLess(kinds.index("delete"), sets[0])
+        self.assertLess(sets[-1], kinds.index("constrain"))
+        last = fake.log[-1]
+        self.assertEqual(last[1], (SWORD, BONE))
+        self.assertIs(last[2], True)
+        self.assertEqual(fake.attrs[SWORD + ".rotate"], (1.0, 2.0, 3.0))
+        self.assertEqual(fake.attrs[SWORD + ".translate"], (4.0, 5.0, 6.0))
+
+    def test_an_unconstrained_bone_gets_a_plain_write(self):
+        """A legacy sword (old file, no inverted drive) still takes its
+        offsets; there is nothing to rehook."""
+        fake = self.use(FakeCmds(constrained=False))
+        bonedrive.regrip(SWORD, BONE, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        self.assertNotIn("delete", self.kinds())
+        self.assertNotIn("constrain", self.kinds())
+        self.assertEqual(fake.attrs[SWORD + ".rotate"], (1.0, 0.0, 0.0))
+
+    def test_a_foreign_constraint_is_left_standing(self):
+        """A constraint whose driver carries no marker is somebody else's
+        rig - write the sword, touch nothing on the bone."""
+        fake = self.use(FakeCmds(constrained=True, marked=()))
+        bonedrive.regrip(SWORD, BONE, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        self.assertNotIn("delete", self.kinds())
+        self.assertNotIn("constrain", self.kinds())
+
+    def test_stores_the_grip_on_a_marked_weapon(self):
+        fake = self.use(FakeCmds(constrained=True))
+        bonedrive.regrip(SWORD, BONE, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+        self.assertEqual(bonedrive.stored_grip(SWORD),
+                         ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
+
+    def test_an_unmarked_node_stores_no_grip(self):
+        fake = self.use(FakeCmds(constrained=True, marked=()))
+        bonedrive.regrip(SWORD, BONE, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+        self.assertIsNone(bonedrive.stored_grip(SWORD))
+
+    def test_autokey_is_off_for_every_write_and_restored(self):
+        fake = self.use(FakeCmds(constrained=True))
+        bonedrive.regrip(SWORD, BONE, (1.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        self.assertTrue(all(state is False
+                            for state in fake.autokey_during))
+        self.assertTrue(fake.autokey)
 
 
 class StoredGrip(WithFake):

@@ -401,7 +401,14 @@ def remove_weapon():
 
 
 def offsets_changed():
-    """Live edit: write the fields into the attached weapon, and remember them."""
+    """Live edit: move the weapon to the new grip, and remember it.
+
+    Through `bonedrive.regrip`, never a plain channel write: the bone plays
+    its own animation through the constraint's captured offset, and writing
+    the sword's channels under a live constraint would drag the bone along
+    by the OLD offset. Regrip rehooks the constraint around the write, so
+    the sword moves and the bone does not.
+    """
     entry = _entry()
     rotate, translate = _fields()
     _remember(entry, rotate, translate)  # the next Add still wants them
@@ -413,7 +420,7 @@ def offsets_changed():
     if attach.is_animated(weapon):
         _status(LINKED_NO_OFFSETS)
         return
-    attach.write_offsets(weapon, rotate, translate)
+    bonedrive.regrip(weapon, bone, rotate, translate)
     _status(attached_message(entry, hand or bone))
 
 
