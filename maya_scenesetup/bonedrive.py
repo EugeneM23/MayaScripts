@@ -21,6 +21,14 @@ import maya.cmds as cmds
 # every existing `attach.MARKER` reader keeps working.
 MARKER = "mayaWeapon"
 
+# The dialled grip, stored on the marked node itself (raw under-hand
+# channels, same space as the optionVar the window keeps). It lives HERE so
+# `relink` can put the sword back on its grip after a clip import rewrote
+# the bone -- the optionVar is window policy, out of this module's reach,
+# and an attribute travels with the scene file where an optionVar does not.
+GRIP_ROTATE = "mayaWeaponGripRotate"
+GRIP_TRANSLATE = "mayaWeaponGripTranslate"
+
 CHANNELS = tuple(channel + axis
                  for channel in ("translate", "rotate") for axis in "XYZ")
 
@@ -178,21 +186,57 @@ def snap(node, target):
         target, query=True, worldSpace=True, rotation=True))
 
 
+def store_grip(weapon, rotate, translate):
+    """Remember the dialled grip on the weapon node itself.
+
+    Raw under-hand channels, the same six numbers the window keeps in its
+    optionVar -- but on the node, so `relink` can re-apply them after a
+    merge without reaching into window policy, and so they travel with the
+    scene file.
+    """
+    for attr, values in ((GRIP_ROTATE, rotate), (GRIP_TRANSLATE, translate)):
+        if not cmds.attributeQuery(attr, node=weapon, exists=True):
+            cmds.addAttr(weapon, longName=attr, dataType="double3")
+        cmds.setAttr("{0}.{1}".format(weapon, attr), *values, type="double3")
+
+
+def stored_grip(weapon):
+    """The grip stored on `weapon`, as (rotate, translate) -- or None.
+
+    None, not zeros: zeros are a real grip (the sword exactly on the bone),
+    and a legacy sword that never had one stored must keep the snap-only
+    relink instead of being yanked to the hand origin.
+    """
+    for attr in (GRIP_ROTATE, GRIP_TRANSLATE):
+        if not cmds.attributeQuery(attr, node=weapon, exists=True):
+            return None
+    return (tuple(cmds.getAttr(weapon + "." + GRIP_ROTATE)[0]),
+            tuple(cmds.getAttr(weapon + "." + GRIP_TRANSLATE)[0]))
+
+
 def link(weapon, bone):
     """Move the bone's animation onto the weapon, then drive the bone from it.
 
     Returns the number of frames baked across (0: the bone had nothing that
     moves, so the weapon's channels stay clean and the grip fields stay
-    live). The caller has already put the weapon where the bone is, so
-    mo=False jumps nothing -- and mo=False is the design in one flag: the
-    bone lives in the weapon's frame, wherever the animator takes it.
+    live). The transfer keeps the weapon's CURRENT offset from the bone
+    (mo=True) -- that offset is the dialled grip the caller placed, and the
+    identity when the weapon stands on the bone, so a grip-less attach and
+    the bridge's relink behave exactly as if it were mo=False. mo=False on
+    the temp is how the 2026-08-25 report happened: the transfer flattened
+    the grip whenever the bone brought animation, which in a scene with a
+    UE clip is always.
+
+    The final constraint stays mo=False -- that one is the design in one
+    flag: the bone lives in the weapon's frame, wherever the animator (and
+    the grip) takes it.
     """
     start, end = bake_range(bone)
     frames = 0
     with _autokey_off():
         if moves(bone):
             temporary = cmds.parentConstraint(bone, weapon,
-                                              maintainOffset=False)[0]
+                                              maintainOffset=True)[0]
             _bake(weapon, start, end)
             cmds.delete(temporary)
             frames = int(round(end - start)) + 1
@@ -226,8 +270,17 @@ def relink(weapon, bone):
     snapped onto the bone (a clip with no weapon_r keys leaves the bone at
     its cleared pose, and the weapon must stand there too), and the link is
     rebuilt.
+
+    The GRIP is not the clip's to flatten: a stored grip puts the sword back
+    on its dialled pose after the snap, and the transfer keeps that offset
+    (`link`, mo=True). A legacy sword with none stored keeps the snap.
     """
     with _autokey_off():
         _cut(weapon)
         snap(weapon, bone)
+        grip = stored_grip(weapon)
+        if grip:
+            for channel, values in zip(("rotate", "translate"), grip):
+                cmds.setAttr("{0}.{1}".format(weapon, channel), *values,
+                             type="double3")
         return link(weapon, bone)

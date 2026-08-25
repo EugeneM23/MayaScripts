@@ -8,7 +8,10 @@ Since 2026-08-21 the drive is inverted: the sword parents under the HAND and
 `weapon_r` is parent-constrained to it (mo=False). The gates here prove the
 whole story: placement, the transfer of the bone's animation onto the sword,
 the bone following the sword 1:1, the replace round-trip keeping the motion,
-and detach putting it all back.
+and detach putting it all back. Since 2026-08-25 the grip gates prove the
+user's report fixed: a dialled grip rides the transferred clip instead of
+being flattened by it, a re-Add does not compound it, and the bridge's
+relink puts a rewritten bone back under the same grip.
 
 Never cmds.undo() from a bridge script: the whole script is one command, and
 undo reverts a chunk of prior work instead.
@@ -305,6 +308,170 @@ if synthetic_keys:
 if was_attached:
     print("NOTE  the scene had a weapon attached before this run; it was "
           "replaced and then removed - press Add to put it back")
+
+# --- the grip rides the transfer (2026-08-25) -------------------------------
+# The user's report: adding into an animated scene dropped the dialled
+# offsets, because the old transfer (mo=False) flattened the sword onto the
+# bone. Now the grip is written BEFORE the link and the transfer keeps the
+# offset; a re-Add with the same grip must not compound it, and the bridge's
+# relink must put a rewritten bone's motion back under the same grip.
+# Self-contained: runs only when this script owns the bone's animation
+# (a real clip would come back grip-shifted, and the scene is not ours to
+# shift), keys its own motion and restores every channel it touched.
+if bone_was_animated:
+    print("NOTE  grip gates skipped: weapon_r carries the scene's own "
+          "animation, and proving the grip would shift it")
+else:
+    import maya.api.OpenMaya as om
+
+    GRIP_R = (0.0, 0.0, 25.0)
+    GRIP_T = (0.0, 3.0, 0.0)
+
+    def offset_from(track_world, reference_world):
+        """The constant the transfer must keep: sword(t) * orig(t)^-1."""
+        product = (om.MMatrix(track_world)
+                   * om.MMatrix(reference_world).inverse())
+        return [product[i] for i in range(16)]
+
+    def matrix_spread(matrices):
+        worst = 0.0
+        for other in matrices[1:]:
+            worst = max(worst, biggest_difference(matrices[0], other))
+        return worst
+
+    def grip_world(hand_world):
+        """Where the dialled grip puts the sword: grip_local * hand_world."""
+        product = (om.MMatrix(bonedrive.matrix_of(GRIP_R, GRIP_T))
+                   * om.MMatrix(hand_world))
+        return [product[i] for i in range(16)]
+
+    g_autokey = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    g_rest = {channel: cmds.getAttr("{0}.{1}".format(bone, channel))
+              for channel in ("rotateX", "rotateY", "rotateZ",
+                              "translateX", "translateY", "translateZ")}
+    try:
+        cmds.setKeyframe(bone, attribute="rotateZ", time=start,
+                         value=g_rest["rotateZ"])
+        cmds.setKeyframe(bone, attribute="rotateZ", time=end,
+                         value=g_rest["rotateZ"] + 40.0)
+        cmds.setKeyframe(bone, attribute="translateX", time=start,
+                         value=g_rest["translateX"])
+        cmds.setKeyframe(bone, attribute="translateX", time=end,
+                         value=g_rest["translateX"] + 6.0)
+    finally:
+        cmds.autoKeyframe(state=g_autokey)
+
+    g_track = {}
+    for frame in (start, mid, end):
+        cmds.currentTime(frame)
+        g_track[frame] = world_matrix(bone)
+
+    cmds.currentTime(mid)
+    weapon, _g_note = attach.attach(entry, hand, bone,
+                                    rotate=GRIP_R, translate=GRIP_T)
+    check("the grip is remembered on the node itself",
+          bonedrive.stored_grip(weapon) == (GRIP_R, GRIP_T),
+          str(bonedrive.stored_grip(weapon)))
+
+    cmds.currentTime(mid)
+    placed = biggest_difference(world_matrix(weapon),
+                                grip_world(world_matrix(hand)))
+    check("at the attach frame the sword stands at the dialled grip",
+          placed < 1e-3, "worst {0:.7f}".format(placed))
+
+    g_offsets = []
+    g_sword_track = {}
+    g_pair = 0.0
+    for frame in (start, mid, end):
+        cmds.currentTime(frame)
+        g_sword_track[frame] = world_matrix(weapon)
+        g_offsets.append(offset_from(g_sword_track[frame], g_track[frame]))
+        g_pair = max(g_pair, biggest_difference(world_matrix(bone),
+                                                g_sword_track[frame]))
+    spread = matrix_spread(g_offsets)
+    check("the sword rides the clip with the grip offset kept, not "
+          "flattened onto the bone", spread < 1e-3,
+          "offset spread {0:.7f} over 3 frames".format(spread))
+    check("the bone follows the gripped sword 1:1", g_pair < 1e-3,
+          "worst {0:.7f}".format(g_pair))
+
+    # Re-Add with the same grip: the absolute write anchors it, so the
+    # offset captured against the already-shifted bone is the identity and
+    # nothing compounds.
+    cmds.currentTime(mid)
+    weapon, _g_note = attach.attach(entry, hand, bone,
+                                    rotate=GRIP_R, translate=GRIP_T)
+    worst_readd = 0.0
+    for frame in (start, mid, end):
+        cmds.currentTime(frame)
+        worst_readd = max(worst_readd,
+                          biggest_difference(world_matrix(weapon),
+                                             g_sword_track[frame]))
+    check("a re-Add with the same grip does not compound it",
+          worst_readd < 1e-3, "worst {0:.7f}".format(worst_readd))
+
+    # The bridge across a merge: unlink, the bone rewritten, relink. The
+    # sword must pick up the NEW motion under the SAME grip.
+    bonedrive.unlink(bone)
+    g_autokey = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    try:
+        cmds.cutKey(bone, attribute=("rotateX", "rotateY", "rotateZ",
+                                     "translateX", "translateY",
+                                     "translateZ"), clear=True)
+        for channel in g_rest:
+            cmds.setAttr("{0}.{1}".format(bone, channel), g_rest[channel])
+        cmds.setKeyframe(bone, attribute="rotateZ", time=start,
+                         value=g_rest["rotateZ"])
+        cmds.setKeyframe(bone, attribute="rotateZ", time=end,
+                         value=g_rest["rotateZ"] - 30.0)
+        cmds.setKeyframe(bone, attribute="translateY", time=start,
+                         value=g_rest["translateY"])
+        cmds.setKeyframe(bone, attribute="translateY", time=end,
+                         value=g_rest["translateY"] + 4.0)
+    finally:
+        cmds.autoKeyframe(state=g_autokey)
+    g_new_track = {}
+    for frame in (start, mid, end):
+        cmds.currentTime(frame)
+        g_new_track[frame] = world_matrix(bone)
+
+    cmds.currentTime(mid)
+    bonedrive.relink(weapon, bone)
+    g_offsets = []
+    g_pair = 0.0
+    for frame in (start, mid, end):
+        cmds.currentTime(frame)
+        g_offsets.append(offset_from(world_matrix(weapon),
+                                     g_new_track[frame]))
+        g_pair = max(g_pair, biggest_difference(world_matrix(bone),
+                                                world_matrix(weapon)))
+    cmds.currentTime(mid)
+    replaced = biggest_difference(world_matrix(weapon),
+                                  grip_world(world_matrix(hand)))
+    spread = matrix_spread(g_offsets)
+    check("relink puts the new clip under the same grip", spread < 1e-3,
+          "offset spread {0:.7f}".format(spread))
+    check("and the sword stands at the dialled grip at the relink frame",
+          replaced < 1e-3, "worst {0:.7f}".format(replaced))
+    check("the bone follows the relinked sword 1:1", g_pair < 1e-3,
+          "worst {0:.7f}".format(g_pair))
+
+    # Leave the bone exactly as this section found it.
+    attach.detach(hand, bone)
+    g_autokey = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    try:
+        cmds.cutKey(bone, attribute=("rotateX", "rotateY", "rotateZ",
+                                     "translateX", "translateY",
+                                     "translateZ"), clear=True)
+        for channel in g_rest:
+            cmds.setAttr("{0}.{1}".format(bone, channel), g_rest[channel])
+    finally:
+        cmds.autoKeyframe(state=g_autokey)
+    cmds.currentTime(restore_time)
+    check("grip gates left the bone at rest", not bonedrive.moves(bone))
 
 passed = sum(1 for _name, ok, _detail in RESULTS if ok)
 print("\n{0}/{1} checks passed".format(passed, len(RESULTS)))

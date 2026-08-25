@@ -161,3 +161,68 @@ Remove round-trip the animation back onto the bone (worst element ~0);
 Connect/Disconnect still round-trips with the constraint live. The bridge
 re-link gate needs a running editor and stays in `verify_uebridge_merge.py`
 territory — added there, guarded on the editor being reachable.
+
+## Addendum (2026-08-25): the grip rides the transfer
+
+Step 5 above — «grip offsets apply after the link… this only happens on an
+unanimated bone» — shipped as designed and turned out to be the design's one
+wrong call. The user's report: «когда мы добавляем оружие то офсеты смещения
+поворота и позиции больше не учитываются». The report is exact. A UE clip
+animates `weapon_r` (this spec's own measurement), so in any scene holding an
+imported clip `moves(bone)` is true, the transfer runs, and the grip write
+was skipped — every Add in the user's real workflow silently dropped the
+dialled offsets. Under the pre-redesign scheme they always applied: the sword
+was a DAG child of `weapon_r`, so its local grip channels composed with the
+bone's animation for free. The inverted drive has to do that composition
+explicitly, and didn't.
+
+Three changes, one semantic: **the grip is not the clip's to flatten.**
+
+1. **`attach.attach` writes the grip BEFORE `bonedrive.link`** (when given —
+   the None-means-stay-on-the-bone rule is unchanged), and the transfer's
+   temporary constraint is **`maintainOffset=True`**: the bake keeps the
+   sword's current offset from the bone, which is the grip just written —
+   and the identity when nothing was, so a grip-less attach and the bridge
+   relink bake byte-identically to the old mo=False. On a clean bone the
+   order swap changes nothing observable: the sword holds the grip channels
+   and the mo=False final constraint puts the bone on it, exactly as
+   grip-after-link did. The final constraint stays mo=False — the bone
+   lives in the sword's frame, grip included; that half of the design
+   stands.
+
+2. **The grip is remembered on the marked node itself**
+   (`mayaWeaponGripRotate` / `mayaWeaponGripTranslate`, written by
+   `attach.write_offsets` whenever its target carries the marker). The
+   optionVar is window policy the bridge must not reach into, and an
+   attribute travels with the scene file. **`bonedrive.relink` re-applies
+   it** between the snap and the link, so a clip import no longer flattens
+   the grip either — before this, the first Refresh-import after an Add
+   undid the dialled grip even on a clean bone. A legacy sword with no
+   stored grip keeps the snap-only relink.
+
+3. **The window's fields always show the GRIP, never the animation.**
+   `refresh` over an animated weapon used to show the sword's current-frame
+   channel values; a re-Add then saved those frame values into the
+   optionVar as if they were a grip — quietly destroying the remembered
+   one. Now an animated weapon's fields show the remembered grip (what the
+   next Add or import applies), a clean weapon's channels remain the truth,
+   and `add_weapon` re-runs `refresh` first so fields last filled in an
+   unbound window cannot be applied and saved as zeros. Typed values
+   survive the re-read — typing fired `offsets_changed`, which remembered
+   them.
+
+Why the no-compounding property holds on re-Add: the grip write is ABSOLUTE
+(under-hand channels), so re-adding over a bone that already plays the
+grip-shifted motion captures an offset of ~identity and the sword's track is
+unchanged — measured as a gate. The one semantic consequence to know: with
+animation transferred, the exported bone now carries grip∘clip rather than
+the clip verbatim. That is this design's own philosophy («wherever the sword
+is, the bone is») extended to the animated case, and it is what «офсеты
+учитываются» means under an inverted drive.
+
+Proof: unit tests updated (the transfer keeps the grip, the store
+round-trips, relink re-applies, order pinned) — 1035 green. Live:
+`verify_weapons.py` gained a self-contained grip section (runs only when the
+script owns the bone's animation; restores every channel it touches) — grip
+kept across the transfer, re-Add compound-free, relink under the same grip.
+Awaiting its live run at the next open port.

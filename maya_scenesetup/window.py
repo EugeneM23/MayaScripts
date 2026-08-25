@@ -60,7 +60,8 @@ LINKED_NO_ADD = ("the hands ride this weapon - press Disconnect Arms before "
 LINKED_NO_REMOVE = ("the hands ride this weapon - press Disconnect Arms "
                     "before removing it")
 AIMED_NO_ADD = "the weapon has an aim - Bake+Delete in the picker first"
-LINKED_NO_OFFSETS = "the weapon is animated - its offsets are baked in"
+LINKED_NO_OFFSETS = ("the weapon is animated - the grip is saved and "
+                     "applies on the next Add or clip import")
 
 
 # ------------------------------------------------------------------ policy
@@ -291,19 +292,27 @@ def _run(action):
 
 
 def refresh():
-    """Re-read the scene: which character, and what the fields should show."""
+    """Re-read the scene: which character, and what the fields should show.
+
+    The fields always show the GRIP, never the animation: an animated
+    weapon's channels are frame values, and showing those as offsets is how
+    a re-Add once saved them over the remembered grip. A clean weapon's
+    channels ARE the grip, so there the scene is the truth.
+    """
     entry = _entry()
     root, hand, bone, weapon, linked = _attached(entry)
+    bone_local = (bonedrive.local_matrix(bone, hand)
+                  if bone and hand else None)
 
     if weapon:
-        rotate, translate = attach.read_offsets(weapon)
-        _set_fields(rotate, translate)
+        if attach.is_animated(weapon):
+            _set_fields(*_remembered(entry, bone_local))
+        else:
+            _set_fields(*attach.read_offsets(weapon))
         _status(linked_message(entry) if linked
                 else attached_message(entry, hand or bone))
         return
 
-    bone_local = (bonedrive.local_matrix(bone, hand)
-                  if bone and hand else None)
     _set_fields(*_remembered(entry, bone_local))
     if not root:
         _status(NO_CHARACTER)
@@ -328,7 +337,16 @@ def custom_changed():
 
 
 def add_weapon():
-    """Put the chosen weapon into the hand, replacing what we put there before."""
+    """Put the chosen weapon into the hand, replacing what we put there before.
+
+    The fields are re-read from the scene first: they were last filled by
+    some earlier refresh, and a character bound SINCE then (the picker's
+    Connect does not reach into this window) leaves them showing the
+    unbound zeros -- which this press would then apply and remember over
+    the real grip. Anything the user typed survives the re-read: typing
+    fired `offsets_changed`, which remembered it.
+    """
+    refresh()
     entry = _entry()
     located = _locate(entry)
     if located is None:

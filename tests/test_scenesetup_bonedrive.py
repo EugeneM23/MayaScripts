@@ -113,7 +113,7 @@ class FakeCmds(object):
 
     def __init__(self, bone_keys=(), bone_curves=False,
                  weapon="|hand|sword", constrained=False,
-                 marked=("|hand|sword",)):
+                 marked=("|hand|sword",), grip=None):
         self.log = []
         self.autokey = True
         self.autokey_during = []
@@ -122,6 +122,10 @@ class FakeCmds(object):
         self._weapon = weapon
         self._marked = set(marked)
         self._constraints = {}
+        self.attrs = {}
+        if grip:
+            self.attrs[weapon + "." + bonedrive.GRIP_ROTATE] = tuple(grip[0])
+            self.attrs[weapon + "." + bonedrive.GRIP_TRANSLATE] = tuple(grip[1])
         if constrained:
             self._constraints["|skel|weapon_r"] = "|skel|weapon_r|drive1"
 
@@ -160,7 +164,21 @@ class FakeCmds(object):
         return []
 
     def attributeQuery(self, name, node=None, exists=False, **kwargs):
-        return node in self._marked and name == bonedrive.MARKER
+        if name == bonedrive.MARKER:
+            return node in self._marked
+        return "{0}.{1}".format(node, name) in self.attrs
+
+    def addAttr(self, node, longName=None, **kwargs):
+        self._note(("addattr", node, longName))
+        self.attrs.setdefault("{0}.{1}".format(node, longName), None)
+
+    def setAttr(self, plug, *values, **kwargs):
+        self._note(("set", plug))
+        self.attrs[plug] = tuple(values)
+
+    def getAttr(self, plug):
+        stored = self.attrs.get(plug)
+        return [tuple(stored)] if stored else [(0.0, 0.0, 0.0)]
 
     def listConnections(self, plug, **kwargs):
         return ["someCurve"] if self._bone_curves else None
@@ -223,16 +241,20 @@ class WithFake(unittest.TestCase):
 class Link(WithFake):
 
     def test_moving_bone_transfers_then_inverts(self):
-        """Temp constraint bone->weapon (mo=False), bake the WEAPON, delete
-        the temp, cut the bone, constrain weapon->bone (mo=False) - in that
-        order. The camera paid for cut-after-constrain (a pairBlend)."""
+        """Temp constraint bone->weapon (mo=TRUE - the transfer keeps
+        whatever offset the caller placed, which is the dialled grip;
+        identity when the weapon stands on the bone), bake the WEAPON,
+        delete the temp, cut the bone, constrain weapon->bone (mo=False) -
+        in that order. The camera paid for cut-after-constrain (a
+        pairBlend); the user's 2026-08-25 report paid for mo=False here
+        flattening the grip."""
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
         frames = bonedrive.link(SWORD, BONE)
         self.assertEqual(self.phases(),
                          ["constrain", "bake", "delete", "cut", "constrain"])
         first = fake.log[0]
         self.assertEqual(first[1], (BONE, SWORD))
-        self.assertIs(first[2], False)
+        self.assertIs(first[2], True)
         self.assertEqual(fake.log[1][1], SWORD)
         last = fake.log[-1]
         self.assertEqual(last[1], (SWORD, BONE))
@@ -322,6 +344,53 @@ class Relink(WithFake):
         self.assertEqual(frames, 0)
         self.assertNotIn("bake", self.kinds())
         self.assertEqual(self.kinds().count("constrain"), 1)
+
+    def test_a_stored_grip_is_reapplied_between_snap_and_link(self):
+        """A merge's contract is 'the scene plays this clip', but the GRIP
+        is not the clip's to flatten: the sword goes back to its dialled
+        pose after the snap, and the transfer keeps that offset."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True,
+                                 grip=((10.0, 0.0, 0.0), (0.0, 5.0, 0.0))))
+        bonedrive.relink(SWORD, BONE)
+        kinds = self.kinds()
+        sets = [i for i, kind in enumerate(kinds) if kind == "set"]
+        self.assertTrue(sets)
+        self.assertGreater(sets[0], kinds.index("xform"))
+        self.assertLess(sets[-1], kinds.index("constrain"))
+        self.assertEqual(fake.attrs[SWORD + ".rotate"], (10.0, 0.0, 0.0))
+        self.assertEqual(fake.attrs[SWORD + ".translate"], (0.0, 5.0, 0.0))
+
+    def test_no_stored_grip_means_the_snap_is_the_placement(self):
+        """A legacy sword (attached before the grip lived on the node)
+        relinks exactly as before: onto the bone, nothing written."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        bonedrive.relink(SWORD, BONE)
+        self.assertNotIn("set", self.kinds())
+
+
+class StoredGrip(WithFake):
+    """The grip lives on the marked node itself: the optionVar is window
+    policy, and the bridge's relink must not reach into it."""
+
+    def test_round_trips(self):
+        self.use(FakeCmds())
+        bonedrive.store_grip(SWORD, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+        self.assertEqual(bonedrive.stored_grip(SWORD),
+                         ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
+
+    def test_absent_reads_as_none(self):
+        """None, not zeros: zeros are a real grip (the bone itself), and a
+        legacy sword with no stored grip must keep today's snap-only path."""
+        self.use(FakeCmds())
+        self.assertIsNone(bonedrive.stored_grip(SWORD))
+
+    def test_storing_twice_updates_without_adding_twice(self):
+        self.use(FakeCmds())
+        bonedrive.store_grip(SWORD, (1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+        bonedrive.store_grip(SWORD, (7.0, 8.0, 9.0), (1.0, 1.0, 1.0))
+        self.assertEqual(self.kinds().count("addattr"), 2)
+        self.assertEqual(bonedrive.stored_grip(SWORD),
+                         ((7.0, 8.0, 9.0), (1.0, 1.0, 1.0)))
 
 
 class FindLinks(WithFake):

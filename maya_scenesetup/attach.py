@@ -160,6 +160,10 @@ def write_offsets(weapon, rotate, translate):
     autoKey is off for the duration. A weapon in the hand carries no curves,
     so it would not fire -- but the user works with autoKey ON and this repo
     has already paid for assuming a scripted poke is harmless.
+
+    A MARKED node also remembers the grip on itself (`bonedrive.store_grip`),
+    so the bridge's relink can re-apply it after a clip import. Unmarked
+    nodes -- verify sandboxes, plain locators -- store nothing.
     """
     state = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
@@ -168,6 +172,8 @@ def write_offsets(weapon, rotate, translate):
             cmds.setAttr("{0}.rotate{1}".format(weapon, axis), value)
         for axis, value in zip("XYZ", translate):
             cmds.setAttr("{0}.translate{1}".format(weapon, axis), value)
+        if cmds.attributeQuery(MARKER, node=weapon, exists=True):
+            bonedrive.store_grip(weapon, rotate, translate)
     finally:
         cmds.autoKeyframe(state=state)
 
@@ -232,14 +238,16 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
     meshes cannot both be the node the offsets live on, and one click cannot
     select both.
 
-    Then the drive inverts: the weapon is snapped onto `drive_bone`, any
-    moving animation the bone carried is baked onto the weapon's channels,
-    and the bone is parent-constrained to the weapon (`bonedrive.link`,
-    mo=False -- the weapon standing on the bone is what makes that jump
-    nothing). The remembered grip applies only when nothing was transferred:
-    with animation on the weapon the fields are quiet anyway (`is_animated`),
-    and on a clean bone the grip moves weapon and bone together, which is the
-    honest export.
+    Then the drive inverts: the weapon is snapped onto `drive_bone`, the
+    grip is written (sword to its dialled pose -- and remembered on the
+    node), any moving animation the bone carried is baked onto the weapon's
+    channels WITH that offset kept (`bonedrive.link`, mo=True on the
+    transfer), and the bone is parent-constrained to the weapon (mo=False --
+    the bone lives in the sword's frame). So the grip shapes the sword
+    whether or not the bone brought animation; grip-after-link was the
+    user's 2026-08-25 report, every Add in a scene with a UE clip silently
+    dropping the offsets. On an animated weapon the FIELDS stay quiet
+    (`is_animated`) -- the grip they saved still applied.
 
     Whatever this module attached before is removed first WITH its animation
     (`detach` bakes the bone back off the old weapon before deleting it). All
@@ -285,18 +293,20 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
         cmds.setAttr(weapon + "." + MARKER, entry.key, type="string")
         seat(weapon, entry.scale)
 
-        # Onto the drive bone exactly, then invert the drive.
+        # Onto the drive bone exactly, the grip on top, then invert the
+        # drive -- the transfer keeps the sword's offset from the bone, so
+        # the grip rides the clip instead of being flattened by it. No grip
+        # given (None, not zeros) means "leave it on the bone": zeros are
+        # real channel values under the hand and would put the sword at the
+        # hand origin.
         bonedrive.snap(weapon, drive_bone)
+        if rotate is not None and translate is not None:
+            write_offsets(weapon, rotate, translate)
         frames = bonedrive.link(weapon, drive_bone)
         if frames:
             moved = ("{0} frame(s) moved from the bone onto the weapon"
                      .format(frames))
             note = note + " - " + moved if note else moved
-        elif rotate is not None and translate is not None:
-            # No grip given (None, not zeros) means "leave it on the bone":
-            # zeros are real channel values under the hand and would put the
-            # sword at the hand origin.
-            write_offsets(weapon, rotate, translate)
         return weapon, note
     finally:
         cmds.autoKeyframe(state=autokey)

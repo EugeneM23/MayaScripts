@@ -1367,7 +1367,9 @@ button (below). Design:
 inverted drive and green live the same day: 32/32** — the marked node is
 `LongSwordMesh` itself, a direct child of the HAND, `weapon_r` driven by it
 with the transfer, the drag-follow, the replace and the detach all at worst
-**0.0000000** over three-frame world-matrix tracks). It
+**0.0000000** over three-frame world-matrix tracks; **the 2026-08-25 grip
+gates — grip kept across the transfer, re-Add compound-free, relink under
+the same grip — have NOT run live yet**, the port was down that day). It
 refuses to run at all while the arms are connected or an aim exists: every
 attach in it REPLACES what is in the hand, and replacing deletes the marked
 node whole.
@@ -1439,8 +1441,10 @@ sword by hand would outrank the sword.
 к кисти а не к вепон боне»). The Camera Setup pattern applied to the weapon:
 Add parents the mesh under **`weapon_r`'s own DAG parent** (`hand_r` on
 Manny — resolved as "the drive bone's parent", never by name), snaps it onto
-`weapon_r`, moves any MOVING animation the bone carried onto the mesh's
-channels (temp constraint + bake; constant curves are not animation, trap
+`weapon_r`, writes the grip, moves any MOVING animation the bone carried
+onto the mesh's channels (temp constraint + bake, **mo=True since
+2026-08-25 — the transfer keeps the sword's offset from the bone**, i.e.
+the grip; constant curves are not animation, trap
 30), cuts the bone's curves and parent-constrains `weapon_r` to the mesh
 with **`maintainOffset=False` — the bone lives in the sword's frame**,
 wherever the animator takes it. It has to be the hand: a node cannot both
@@ -1460,10 +1464,25 @@ everywhere are the union of the playback range and the driver's own keys
   matrix (`bonedrive.composed_grip`, `window.grip_values` holds the
   policy); NO save composes zeros, which lands the sword exactly on
   `weapon_r` — the game's own grip. Old-space numbers are never shown as if
-  they were new-space (no character bound ⇒ zeros). The grip is written
-  AFTER the link, so the bone follows it — the honest export. With
-  transferred animation on the sword the fields are quiet (`is_animated`,
-  as after Connect).
+  they were new-space (no character bound ⇒ zeros).
+- **The grip is written BEFORE the link and RIDES the transfer**
+  (2026-08-25, the user's report: «офсеты… больше не учитываются» — the
+  original grip-after-link applied it only to an unanimated bone, and a UE
+  clip always animates `weapon_r`, so in practice Add always dropped it).
+  The transfer keeps the sword's offset from the bone (mo=True, identity
+  when no grip), the bone then follows grip∘clip — the design's own
+  «wherever the sword is, the bone is» extended to the animated case. A
+  re-Add with the same grip does not compound (the write is absolute, so
+  the captured offset is ~identity). The grip is ALSO stored on the marked
+  node (`mayaWeaponGripRotate/Translate`, written by `write_offsets` on
+  marked nodes only) so the bridge's relink can re-apply it. With
+  transferred animation on the sword the FIELDS are quiet (`is_animated`,
+  as after Connect) — they show the remembered grip, never the animation's
+  frame values: showing frame values is how a re-Add once saved them over
+  the remembered grip. `add_weapon` re-runs `refresh` first for the same
+  reason (fields last filled in an unbound window held zeros); typed
+  values survive the re-read through `offsets_changed`'s save. Spec
+  addendum records the full reasoning.
 - **Connect is unchanged** and Disconnect returns the sword **under the
   hand**: the constraint targets the node, not the path, so it survives
   `parent_out`/`parent_in` and `weapon_r` keeps following the sword out in
@@ -1475,8 +1494,10 @@ everywhere are the union of the playback range and the driver's own keys
   import after an Add, so `animimport` finds our links read-only
   (`bonedrive.find_links`), refuses only on OTHER constrained joints (a
   refusal touches nothing), unlinks ours, merges, and after the timeline is
-  set re-links — the sword's stale curves are cut, it snaps onto the bone
-  and picks up the new clip (`bonedrive.relink`). Lazy, guarded import: a
+  set re-links — the sword's stale curves are cut, it snaps onto the bone,
+  takes its stored grip back (2026-08-25 — a merge's contract is "the scene
+  plays this clip", but the grip is not the clip's to flatten) and picks up
+  the new clip (`bonedrive.relink`). Lazy, guarded import: a
   Maya without `maya_scenesetup` gets the old behaviour exactly. The camera
   is out of scope — `camera_bone` sits outside the skeleton subtree, so its
   constraint never reaches the guard.
