@@ -1923,6 +1923,93 @@ guard are proved live through the bridge (out_11); the full 13-gate
 run, and only a Maya restart revives the port. Run it at the next natural
 restart.
 
+## `maya_skelfit` — a Manny-schema skeleton fitted to a humanoid mesh, and the skin
+
+Root-level standalone (2026-08-27), driven by the project skill
+**`.claude/skills/manny-skeleton/SKILL.md`** — the user activates it when a
+character needs a skeleton and a skin; the skill is the workflow (probe →
+build → placement checkpoint with screenshots → user drags joints →
+finalize → voxel bind → pose-test checkpoint), the tool is the math. Design:
+`docs/superpowers/specs/2026-08-27-skeleton-skin-skill-design.md`. Proof:
+`docs/superpowers/plans/verify_skelfit.py` — **green live 2026-08-27, 0 of
+21 gates failed** in the Manny-mesh scene (identity fit worst 0.037 cm,
+symmetry exact, orientations worst 0.048°, weights sum 1.000000000,
+lone-elbow isolation 0.000000, finalize mirroring a dragged hand to
+0.000000). **Its cleanup deletes the skeleton and rebuilds — never run it
+after the user has adjusted joints.**
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import maya_skelfit
+maya_skelfit.build()      # fit + create, refuses over existing joints
+maya_skelfit.finalize()   # mirror the user-edited side, re-solve orients
+maya_skelfit.bind()       # geodesic voxel skin
+```
+
+**The template is measured, never assumed**:
+`assets/manny_skeleton_template.json`, extracted from the shipped
+`assets/Manny_Skeleton.ma` by `assets/make_skeleton_template.py` (mayapy;
+IMPORTS the scene — import never executes script nodes). 93 joints;
+`jointOrient` non-zero only on `root`, `rotateAxis` zero everywhere, bind
+orientation in the ROTATE channels (the CLAUDE.md fact, confirmed by
+extraction), rotateOrder xyz and ssc off on all 93. Landmarks (ground,
+height, arm tips) are computed from Manny's own mesh by the SAME
+`mesh_landmarks` the fit applies to a target mesh, so the identity case is
+exact by construction. Facts that cost a debugging round each: **Manny's
+own skeleton is asymmetric** (calves differ by 0.068 cm — symmetrize
+splits the difference, tests compare with delta 0.05); **`weapon_l/r` are
+deliberately asymmetric** attachment points (never symmetrized);
+**`ik_hand_gun` has no side suffix and sits on the RIGHT hand** — the ik
+helpers are followers snapped onto their targets (`IK_FOLLOWS`, measured
+6e-6 off their targets in the template), and a midline rule would have
+pinned it to x=0.
+
+**The skin rides the twist bones.** Measured on Manny's own skin:
+`thigh_l/r`, `upperarm_l/r` and `spine_05` carry ZERO weight — those
+segments deform through their twist children — and the true per-vertex
+maximum is 8 influences while the skinCluster's `maxInfluences` attr
+claims 5 (the attr lies). `bind_influences` therefore hands the voxel
+bind the template's **weighted** list (74 of 93): `ik_foot_l` stands
+exactly on the foot and would steal its weights, and weighting `upperarm`
+instead of its twists would break what the twist rig and every UE clip
+assume.
+
+**Binding is two commands, and the second needs a GPU.**
+`skinCluster(bindMethod=3)` alone leaves closest-distance weights; the
+voxel weighting is `geomBind -bm 3 -gvp 256 true`, which fails in batch
+mayapy with "Unable to create an offscreen OpenGL buffer" (measured). A
+geomBind failure is reported loudly by `bind()` — fallback weights on the
+mesh must never pass as voxel-bound.
+
+**The orientation solver is hierarchical**: a joint inherits its parent's
+full swing and adds only the minimal aim correction, so a subtree swung
+without roll about its root bone (the fit's own arm re-aim, a user
+dragging a hand) keeps its template LOCAL channels exactly; leaves and
+zero-length bones inherit the swing whole; `root` keeps its channels
+verbatim and is never re-aimed. Trap 31 in full form here: the template
+stores unwound eulers (428° on ik_hand_gun) AND alternate euler triples
+(pelvis reads (x,y,z) vs (x±180, −y±180, z±180)) — every test compares
+composed rotations, never channel values.
+
+The fit itself is deliberately modest: uniform height scale about the
+ground plane, each arm chain rigidly swung about its shoulder toward the
+measured arm tip (centroid of the vertices within 2% of the x-span of the
+side's extreme — assumes the widest point per side IS the arm, so
+pauldrons/shields mislead it and the placement checkpoint is the
+corrective), exact symmetrization. Everything else lands proportionally
+and the user's adjustment pass fixes the rest — that was the user's
+chosen workflow («авто + моя правка»). `finalize()` detects the edited
+side against a snapshot stored on `root.skelfitReference` at build time,
+mirrors it, pins template-midline joints to x=0, cuts accidental autoKey
+keys (pre-bind, keys on the skeleton are noise), and re-solves every
+orientation. **Placement is final once the skin is on** — a post-bind fix
+is unbind → adjust → finalize → re-bind, which the skill spells out.
+
+Not built (v1, deliberate): FBX skeletal-mesh export to UE, copy-weights
+from Manny as an alternative first pass, leg re-aim, weight-painting UI.
+Test scene note: the animator's test mesh `Skin_3p` IS Manny's own body
+mesh (48705 verts), which is what makes the identity gates exact.
+
 ## `install.py` — the SkeldarAnim shelf, drag-and-drop
 
 The repo root is the distribution folder: zip it, hand it to a colleague,
