@@ -28,6 +28,7 @@ import math
 import os
 
 import maya.api.OpenMaya as om
+import maya.cmds as cmds
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "assets", "manny_skeleton_template.json")
@@ -221,6 +222,158 @@ def bind_influences(template):
     return list(body["weighted_influences"])
 
 
+# ------------------------------------------------------------------ scene side
+
+REFERENCE_ATTR = "skelfitReference"
+
+
+def scene_mesh_transforms():
+    """Transforms holding a real (non-intermediate) mesh, long names."""
+    shapes = cmds.ls(type="mesh", long=True, noIntermediate=True) or []
+    seen, transforms = set(), []
+    for shape in shapes:
+        transform = cmds.listRelatives(shape, parent=True, fullPath=True)[0]
+        if transform not in seen:
+            seen.add(transform)
+            transforms.append(transform)
+    return transforms
+
+
+def selected_mesh_transforms():
+    """Selected transforms that hold a mesh (a selected shape counts as its
+    transform), long names, selection order kept."""
+    picked = []
+    for node in cmds.ls(selection=True, long=True) or []:
+        if cmds.nodeType(node) == "mesh":
+            node = cmds.listRelatives(node, parent=True, fullPath=True)[0]
+        shapes = cmds.listRelatives(node, shapes=True, fullPath=True,
+                                    noIntermediate=True) or []
+        if any(cmds.nodeType(s) == "mesh" for s in shapes):
+            if node not in picked:
+                picked.append(node)
+    return picked
+
+
+def target_mesh():
+    """The mesh to fit/bind, or (None, reason)."""
+    return choose_mesh(selected_mesh_transforms(), scene_mesh_transforms())
+
+
+def mesh_points(transform):
+    """World position of every vertex, one API call."""
+    sel = om.MSelectionList()
+    sel.add(transform)
+    fn = om.MFnMesh(sel.getDagPath(0))
+    return [[p.x, p.y, p.z] for p in fn.getPoints(om.MSpace.kWorld)]
+
+
+def _write_channels(name, entry, channel):
+    cmds.setAttr(name + ".translate", *channel["translate"], type="double3")
+    cmds.setAttr(name + ".rotate", *channel["rotate"], type="double3")
+    cmds.setAttr(name + ".jointOrient", *entry["jointOrient"], type="double3")
+
+
+def _store_reference(positions):
+    if not cmds.attributeQuery(REFERENCE_ATTR, node="root", exists=True):
+        cmds.addAttr("root", longName=REFERENCE_ATTR, dataType="string")
+    cmds.setAttr("root." + REFERENCE_ATTR, json.dumps(positions),
+                 type="string")
+
+
+def build(mesh=None):
+    """Fit the template onto the mesh and create the skeleton.
+
+    Refuses over an existing skeleton (same policy as Add Character:
+    nothing happening is the safe direction) and over name clashes -- a
+    stray transform named like a bone would silently rename the joint."""
+    if cmds.ls(type="joint"):
+        return ("refused: the scene already has joints - this builds a "
+                "FRESH skeleton (delete the old one, or start a new scene)")
+    template = load_template()
+    taken = cmds.ls([j["name"] for j in template["joints"]]) or []
+    if taken:
+        return ("refused: node names the skeleton needs are taken: %s"
+                % ", ".join(sorted(taken)[:6]))
+    if mesh is None:
+        mesh, reason = target_mesh()
+        if mesh is None:
+            return "refused: " + reason
+
+    positions, notes, scale = fit_positions(template, mesh_points(mesh))
+    channels = solve_channels(template, positions)
+    jm = joint_map(template)
+    for name in hierarchy_order(template):
+        entry = jm[name]
+        if entry["parent"]:
+            joint = cmds.createNode("joint", name=name,
+                                    parent=entry["parent"], skipSelect=True)
+        else:
+            joint = cmds.createNode("joint", name=name, skipSelect=True)
+        cmds.setAttr(joint + ".rotateOrder", entry["rotateOrder"])
+        cmds.setAttr(joint + ".segmentScaleCompensate",
+                     entry["segmentScaleCompensate"])
+        cmds.setAttr(joint + ".radius", entry["radius"])
+        cmds.setAttr(joint + ".side", entry["side"])
+        cmds.setAttr(joint + ".type", entry["type"])
+        cmds.setAttr(joint + ".preferredAngle", *entry["preferredAngle"],
+                     type="double3")
+        _write_channels(name, entry, channels[name])
+    _store_reference(positions)
+    cmds.select(clear=True)
+    return ("%d joints on %s - %s. Drag any joints that landed badly, then "
+            "finalize()" % (len(template["joints"]),
+                            mesh.rsplit("|", 1)[-1], "; ".join(notes)))
+
+
+def _skeleton_positions(template):
+    return {j["name"]: cmds.xform(j["name"], q=True, ws=True, translation=True)
+            for j in template["joints"]}
+
+
+def finalize(side=None):
+    """Mirror the user-edited side onto the other and re-solve every
+    orientation. Accidental keys (autoKey during joint drags) are cut --
+    before the bind the skeleton's pose IS the data, keys on it are noise."""
+    template = load_template()
+    missing = [j["name"] for j in template["joints"]
+               if not cmds.objExists(j["name"])]
+    if missing:
+        return ("refused: no built skeleton (%s missing)"
+                % ", ".join(missing[:4]))
+    current = _skeleton_positions(template)
+    if side is None:
+        if not cmds.attributeQuery(REFERENCE_ATTR, node="root", exists=True):
+            return ("refused: no fit reference on root - pass side='l' or "
+                    "side='r' explicitly")
+        reference = json.loads(cmds.getAttr("root." + REFERENCE_ATTR))
+        side, moved = edited_side(reference, current)
+
+    result = finalize_positions(template, current, side)
+    channels = solve_channels(template, result)
+    jm = joint_map(template)
+    was_auto = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    try:
+        cut = 0
+        for name in hierarchy_order(template):
+            for channel in ("translate", "rotate"):
+                curves = cmds.listConnections(name + "." + channel,
+                                              type="animCurve") or []
+                if curves:
+                    cmds.cutKey(name, attribute=channel, clear=True)
+                    cut += 1
+            _write_channels(name, jm[name], channels[name])
+    finally:
+        cmds.autoKeyframe(state=was_auto)
+    _store_reference(result)
+    moved_now = sum(1 for name in current
+                    if math.dist(current[name], result[name]) > 1e-4)
+    note = " (%d accidental keyed channels cut)" % cut if cut else ""
+    return ("side '%s' mirrored onto '%s', %d joints moved, orientations "
+            "re-solved%s" % (side, "r" if side == "l" else "l",
+                             moved_now, note))
+
+
 # ------------------------------------------------------------------ pure: fit
 
 def _centroid(points):
@@ -343,3 +496,54 @@ def symmetrize(template, positions):
     for follower, target in IK_FOLLOWS.items():
         positions[follower] = list(positions[target])
     return positions
+
+
+# --------------------------------------------------- pure: finalize decisions
+
+def choose_mesh(selected, scene):
+    """The target mesh, or (None, why not): the selection wins, else the
+    lone mesh; two candidates with no hint are refused, because skinning
+    the wrong character in silence is worse than asking."""
+    if len(selected) == 1:
+        return selected[0], ""
+    if len(selected) > 1:
+        return None, "select ONE mesh to fit, not %d" % len(selected)
+    if len(scene) == 1:
+        return scene[0], ""
+    if not scene:
+        return None, "no mesh in the scene to fit"
+    return None, ("several meshes in the scene (%s) - select the one to fit"
+                  % ", ".join(n.rsplit("|", 1)[-1] for n in scene[:6]))
+
+
+def edited_side(reference, current):
+    """Which side the user edited: the one that diverged further from the
+    snapshot `build` stored, and by how much."""
+    moved = {"l": 0.0, "r": 0.0}
+    for name, position in current.items():
+        side = side_of(name)
+        if side and name in reference:
+            moved[side] = max(moved[side],
+                              math.dist(position, reference[name]))
+    side = "l" if moved["l"] >= moved["r"] else "r"
+    return side, moved[side]
+
+
+def finalize_positions(template, current, side):
+    """The edited side copied onto the other across the midline, midline
+    joints pinned back to x=0 (their y/z edits kept), ik followers snapped
+    onto their targets, weapons left exactly where they are."""
+    jm = joint_map(template)
+    result = {name: list(position) for name, position in current.items()}
+    for name, position in list(result.items()):
+        if name in IK_FOLLOWS or name in ASYMMETRIC:
+            continue
+        this_side = side_of(name)
+        if this_side is None:
+            if abs(jm[name]["world_position"][0]) < 0.1:
+                result[name][0] = 0.0
+        elif this_side == side:
+            result[pair_name(name)] = [-position[0], position[1], position[2]]
+    for follower, target in IK_FOLLOWS.items():
+        result[follower] = list(result[target])
+    return result

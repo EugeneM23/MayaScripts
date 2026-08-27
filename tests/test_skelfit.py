@@ -343,6 +343,77 @@ class TestSolveChannels(unittest.TestCase):
                 self.assertAlmostEqual(have[k], want[k], 5, msg=name)
 
 
+class TestChooseMesh(unittest.TestCase):
+
+    def test_the_selection_wins(self):
+        name, reason = sf.choose_mesh(["|Sword"], ["|Sword", "|Body"])
+        self.assertEqual(name, "|Sword")
+
+    def test_two_selected_meshes_are_refused(self):
+        name, reason = sf.choose_mesh(["|A", "|B"], ["|A", "|B"])
+        self.assertIsNone(name)
+        self.assertIn("ONE", reason)
+
+    def test_a_lone_scene_mesh_answers_with_no_selection(self):
+        name, reason = sf.choose_mesh([], ["|Body"])
+        self.assertEqual(name, "|Body")
+
+    def test_two_scene_meshes_and_no_selection_is_refused(self):
+        name, reason = sf.choose_mesh([], ["|A", "|B"])
+        self.assertIsNone(name)
+
+    def test_an_empty_scene_is_refused(self):
+        name, reason = sf.choose_mesh([], [])
+        self.assertIsNone(name)
+
+
+class TestFinalizePositions(unittest.TestCase):
+
+    def _current(self, t):
+        return {j["name"]: list(j["world_position"]) for j in t["joints"]}
+
+    def test_the_edited_side_is_the_one_that_moved(self):
+        t = template()
+        reference = self._current(t)
+        current = self._current(t)
+        current["hand_l"][1] += 7.0
+        side, moved = sf.edited_side(reference, current)
+        self.assertEqual(side, "l")
+        self.assertAlmostEqual(moved, 7.0, 6)
+
+    def test_mirror_copies_the_edited_side_onto_the_other(self):
+        t = template()
+        current = self._current(t)
+        current["hand_l"] = [40.0, 110.0, 20.0]
+        result = sf.finalize_positions(t, current, "l")
+        self.assertEqual(result["hand_l"], [40.0, 110.0, 20.0])
+        self.assertEqual(result["hand_r"], [-40.0, 110.0, 20.0])
+
+    def test_midline_joints_snap_to_x_zero_keeping_their_edits(self):
+        t = template()
+        current = self._current(t)
+        current["spine_03"] = [1.5, 120.0, 3.0]
+        result = sf.finalize_positions(t, current, "l")
+        self.assertEqual(result["spine_03"], [0.0, 120.0, 3.0])
+
+    def test_ik_followers_land_on_their_targets(self):
+        t = template()
+        current = self._current(t)
+        current["hand_l"] = [40.0, 110.0, 20.0]
+        result = sf.finalize_positions(t, current, "l")
+        self.assertEqual(result["ik_hand_l"], result["hand_l"])
+        self.assertEqual(result["ik_hand_gun"], result["hand_r"])
+
+    def test_weapons_are_left_exactly_where_they_are(self):
+        t = template()
+        current = self._current(t)
+        current["weapon_r"] = [-40.0, 100.0, 25.0]
+        result = sf.finalize_positions(t, current, "r")
+        self.assertEqual(result["weapon_r"], [-40.0, 100.0, 25.0])
+        jm = sf.joint_map(t)
+        self.assertEqual(result["weapon_l"], jm["weapon_l"]["world_position"])
+
+
 class TestBindInfluences(unittest.TestCase):
 
     def test_comes_from_the_biggest_mesh_and_matches_manny_reality(self):
