@@ -325,6 +325,148 @@ def build(mesh=None):
                             mesh.rsplit("|", 1)[-1], "; ".join(notes)))
 
 
+def bind(mesh=None, resolution=256):
+    """Geodesic voxel skin of the mesh to the weighted-influence joints.
+
+    Two steps, the way Maya's own bind UI does it: `skinCluster` with
+    bindMethod 3 creates the deformer, `geomBind` computes the voxel
+    weights. geomBind needs a GPU context (measured: it fails in batch
+    with 'Unable to create an offscreen OpenGL buffer') and a failure
+    leaves closest-distance fallback weights -- so it is reported loudly,
+    never swallowed."""
+    template = load_template()
+    missing = [j["name"] for j in template["joints"]
+               if not cmds.objExists(j["name"])]
+    if missing:
+        return "refused: no built skeleton (%s missing)" % ", ".join(missing[:4])
+    if mesh is None:
+        mesh, reason = target_mesh()
+        if mesh is None:
+            return "refused: " + reason
+    shape_history = cmds.listHistory(mesh) or []
+    existing = cmds.ls(shape_history, type="skinCluster") or []
+    if existing:
+        return ("refused: %s is already skinned (%s) - detach it first "
+                "(Skin > Unbind, or skinCluster -e -ub)"
+                % (mesh.rsplit("|", 1)[-1], existing[0]))
+    influences = bind_influences(template)
+    skin = cmds.skinCluster(
+        influences + [mesh], toSelectedBones=True, bindMethod=3,
+        maximumInfluences=8, obeyMaxInfluences=True, normalizeWeights=1,
+        name=mesh.rsplit("|", 1)[-1].lstrip("|") + "_skin")[0]
+    try:
+        cmds.geomBind(skin, bindMethod=3,
+                      geodesicVoxelParams=(resolution, True),
+                      falloff=0.2, maxInfluences=8)
+    except RuntimeError as exc:
+        return ("skin %s created but voxel weighting FAILED (%s) - the "
+                "weights on it now are closest-distance fallback"
+                % (skin, str(exc).strip()))
+    return ("%s: %s voxel-bound to %d joints (resolution %d, max 8 "
+            "influences)" % (mesh.rsplit("|", 1)[-1], skin,
+                             len(influences), resolution))
+
+
+# canned deltas ADDED to the current rotate channels -- a visual smoke of
+# the skin, not anatomy; restore_pose puts the exact prior values back
+POSES = {
+    "elbows": {"lowerarm_l": (0.0, 0.0, -60.0), "lowerarm_r": (0.0, 0.0, -60.0)},
+    "knees": {"calf_l": (0.0, 0.0, 45.0), "calf_r": (0.0, 0.0, 45.0)},
+    "shoulders": {"upperarm_l": (0.0, 0.0, -40.0),
+                  "upperarm_r": (0.0, 0.0, -40.0)},
+    "head": {"neck_01": (0.0, 25.0, 0.0), "head": (0.0, 20.0, 0.0)},
+    "spine": {"spine_01": (15.0, 0.0, 0.0), "spine_03": (15.0, 0.0, 0.0)},
+}
+
+_POSE_STORE = {}
+
+
+def pose_test(name="elbows"):
+    """Apply one canned pose (delta on top of the current values)."""
+    if name not in POSES:
+        return "refused: unknown pose '%s' (have: %s)" % (
+            name, ", ".join(sorted(POSES)))
+    if _POSE_STORE:
+        return "refused: a pose is already applied - restore_pose() first"
+    for joint in POSES[name]:
+        if not cmds.objExists(joint):
+            return "refused: joint %s not in the scene" % joint
+        if cmds.listConnections(joint + ".rotate", type="animCurve"):
+            return ("refused: %s.rotate is keyed - pose_test is for the "
+                    "unkeyed bind check" % joint)
+    was_auto = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    try:
+        for joint, delta in POSES[name].items():
+            prior = cmds.getAttr(joint + ".rotate")[0]
+            _POSE_STORE[joint] = prior
+            cmds.setAttr(joint + ".rotate",
+                         prior[0] + delta[0], prior[1] + delta[1],
+                         prior[2] + delta[2], type="double3")
+    finally:
+        cmds.autoKeyframe(state=was_auto)
+    return "pose '%s' applied to %d joints" % (name, len(POSES[name]))
+
+
+def restore_pose():
+    """Exact prior rotate values back (trap 14: read first, write back)."""
+    if not _POSE_STORE:
+        return "nothing to restore"
+    was_auto = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    try:
+        for joint, prior in list(_POSE_STORE.items()):
+            if cmds.objExists(joint):
+                cmds.setAttr(joint + ".rotate", *prior, type="double3")
+            del _POSE_STORE[joint]
+    finally:
+        cmds.autoKeyframe(state=was_auto)
+    return "pose restored"
+
+
+def screenshot(path, view="front"):
+    """One viewport frame to `path`, joints drawn through the mesh; every
+    panel/camera setting put back afterwards (the user works in this
+    scene)."""
+    panels = cmds.getPanel(type="modelPanel") or []
+    if not panels:
+        return "refused: no model panel (batch session?)"
+    visible = cmds.getPanel(visiblePanels=True) or []
+    panel = next((p for p in panels if p in visible), panels[-1])
+    camera = {"front": "front", "side": "side", "persp": "persp"}.get(view)
+    if camera is None:
+        return "refused: view must be front/side/persp"
+
+    old_camera = cmds.modelEditor(panel, q=True, camera=True)
+    old_xray = cmds.modelEditor(panel, q=True, jointXray=True)
+    old_joints = cmds.modelEditor(panel, q=True, joints=True)
+    camera_xform = cmds.xform(camera, q=True, matrix=True, worldSpace=True)
+    old_coi = None
+    if cmds.objExists(camera + ".centerOfInterest"):
+        old_coi = cmds.getAttr(camera + ".centerOfInterest")
+    try:
+        cmds.modelEditor(panel, e=True, camera=camera, jointXray=True,
+                         joints=True, activeView=True)
+        fit = cmds.ls(type="mesh", noIntermediate=True, long=True) or None
+        if fit:
+            transforms = list({cmds.listRelatives(s, parent=True,
+                                                  fullPath=True)[0]
+                               for s in fit})
+            cmds.viewFit(camera, *transforms)
+        cmds.playblast(frame=[cmds.currentTime(query=True)],
+                       format="image", compression="png",
+                       completeFilename=path, viewer=False,
+                       showOrnaments=False, percent=100,
+                       widthHeight=(1280, 960), forceOverwrite=True)
+    finally:
+        cmds.xform(camera, matrix=camera_xform, worldSpace=True)
+        if old_coi is not None:
+            cmds.setAttr(camera + ".centerOfInterest", old_coi)
+        cmds.modelEditor(panel, e=True, camera=old_camera,
+                         jointXray=old_xray, joints=old_joints)
+    return path
+
+
 def _skeleton_positions(template):
     return {j["name"]: cmds.xform(j["name"], q=True, ws=True, translation=True)
             for j in template["joints"]}

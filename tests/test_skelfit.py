@@ -414,6 +414,27 @@ class TestFinalizePositions(unittest.TestCase):
         self.assertEqual(result["weapon_l"], jm["weapon_l"]["world_position"])
 
 
+class TestPoses(unittest.TestCase):
+
+    def test_every_pose_names_real_template_joints(self):
+        names = {j["name"] for j in template()["joints"]}
+        for pose, deltas in sf.POSES.items():
+            for joint, delta in deltas.items():
+                self.assertIn(joint, names, msg=pose)
+                self.assertEqual(len(delta), 3, msg=pose)
+
+    def test_poses_touch_only_weighted_or_parent_bones(self):
+        """A pose on a bone nothing is weighted to (ik_*, camera_*) would
+        show nothing and read as a broken skin."""
+        t = template()
+        allowed = set(sf.bind_influences(t)) | {"upperarm_l", "upperarm_r",
+                                                "thigh_l", "thigh_r",
+                                                "spine_05"}
+        for pose, deltas in sf.POSES.items():
+            for joint in deltas:
+                self.assertIn(joint, allowed, msg=pose)
+
+
 class TestBindInfluences(unittest.TestCase):
 
     def test_comes_from_the_biggest_mesh_and_matches_manny_reality(self):
