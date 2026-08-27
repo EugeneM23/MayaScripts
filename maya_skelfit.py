@@ -58,6 +58,88 @@ _JOINT_KEYS = ("name", "parent", "translate", "rotate", "jointOrient",
                "world_matrix")
 
 
+# ------------------------------------------------- pure: orientation solver
+
+def _rotation_of(matrix16):
+    """The orthonormal rotation part of a flat 16-float matrix."""
+    return om.MTransformationMatrix(om.MMatrix(matrix16)).rotation(
+        asQuaternion=True).asMatrix()
+
+
+def hierarchy_order(template):
+    """Joint names, every parent before any of its children."""
+    kids = children_map(template)
+    order = [j["name"] for j in template["joints"] if j["parent"] is None]
+    index = 0
+    while index < len(order):
+        order.extend(kids[order[index]])
+        index += 1
+    return order
+
+
+def solve_channels(template, positions):
+    """translate/rotate per joint for the fitted world positions.
+
+    Each joint's world frame is the TEMPLATE frame swung so its bone aims
+    at the fitted child -- and the swing is HIERARCHICAL: a joint first
+    inherits its parent's full swing, then adds only the minimal aim
+    correction on top. A subtree swung rigidly WITHOUT roll about its root
+    bone -- which is exactly the motion the fit's own arm re-aim and a
+    user dragging joints produce, and the only rigid motion positions can
+    witness -- therefore keeps its template LOCAL channels exactly, and
+    identical positions reproduce the template channels exactly; the roll
+    conventions the twist rig and UE retarget
+    rely on survive the fit either way. Leaves and zero-length bones
+    inherit the parent's swing whole. `root` keeps its channels verbatim
+    (jointOrient lives there; it is never re-aimed). Row-vector convention
+    throughout: frame axes are rows, so a world swing right-multiplies,
+    and local = world * parent_world^-1."""
+    jm = joint_map(template)
+    kids = children_map(template)
+    swings, worlds, channels = {}, {}, {}
+    for name in hierarchy_order(template):
+        entry = jm[name]
+        parent = entry["parent"]
+        primary = kids[name][0] if kids[name] else None
+        inherited = swings.get(parent) or om.MMatrix()
+        if name == "root":
+            total = om.MMatrix()
+        elif primary is None:
+            total = inherited
+        else:
+            u = [a - b for a, b in zip(jm[primary]["world_position"],
+                                       entry["world_position"])]
+            v = [a - b for a, b in zip(positions[primary], positions[name])]
+            if math.hypot(*u) < 1e-4 or math.hypot(*v) < 1e-4:
+                total = inherited
+            else:
+                carried = om.MVector(*u) * inherited
+                total = inherited * swing_quat(carried, v).asMatrix()
+        swings[name] = total
+
+        tm = om.MTransformationMatrix(
+            _rotation_of(entry["world_matrix"]) * total)
+        tm.setTranslation(om.MVector(*positions[name]), om.MSpace.kTransform)
+        worlds[name] = tm.asMatrix()
+
+        if name == "root":
+            channels[name] = {"translate": list(positions[name]),
+                              "rotate": list(entry["rotate"]),
+                              "world": worlds[name]}
+            continue
+        local = om.MTransformationMatrix(
+            worlds[name] * worlds[parent].inverse())
+        translate = local.translation(om.MSpace.kTransform)
+        euler = local.rotation(asQuaternion=False)
+        channels[name] = {
+            "translate": [translate.x, translate.y, translate.z],
+            "rotate": [math.degrees(euler.x), math.degrees(euler.y),
+                       math.degrees(euler.z)],
+            "world": worlds[name],
+        }
+    return channels
+
+
 # ------------------------------------------------------------- pure: template
 
 def validate_template(data):

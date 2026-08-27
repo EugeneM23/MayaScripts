@@ -220,6 +220,129 @@ class TestFitPositions(unittest.TestCase):
             self.assertAlmostEqual(a[2], b[2], 9, msg=name)
 
 
+def compose_world(template, channels):
+    """World matrices rebuilt from the solver's channels alone -- the same
+    product the DAG will consume (rotateAxis and jointOrient are zero off
+    root, ssc off), so agreement here is agreement in Maya."""
+    import maya.api.OpenMaya as om
+    jm = sf.joint_map(template)
+    kids = sf.children_map(template)
+    worlds = {}
+    def euler_matrix(deg):
+        return om.MEulerRotation(*[math.radians(v) for v in deg]).asMatrix()
+
+    queue = [j["name"] for j in template["joints"] if j["parent"] is None]
+    while queue:
+        name = queue.pop(0)
+        ch = channels[name]
+        # the DAG's local product: rotate * jointOrient (rotateAxis is zero)
+        local = euler_matrix(ch["rotate"]) * euler_matrix(jm[name]["jointOrient"])
+        tm = om.MTransformationMatrix(local)
+        tm.setTranslation(om.MVector(*ch["translate"]), om.MSpace.kTransform)
+        local = tm.asMatrix()
+        parent = jm[name]["parent"]
+        worlds[name] = local * worlds[parent] if parent else local
+        queue.extend(kids[name])
+    return worlds
+
+
+def _bend_elbow(t, positions, degrees=40.0):
+    """Swing everything below the elbow rigidly, the way the fit itself
+    moves chains: by the roll-free minimal rotation (roll about the bone is
+    unobservable from positions, so only roll-free rigid motions can keep
+    subtree locals exactly)."""
+    import maya.api.OpenMaya as om
+    jm = sf.joint_map(t)
+    elbow = positions["lowerarm_l"]
+    u = om.MVector(*[a - b for a, b in zip(jm["hand_l"]["world_position"],
+                                           jm["lowerarm_l"]["world_position"])])
+    turned = u.rotateBy(om.MQuaternion(math.radians(degrees),
+                                       om.MVector(0, 0, 1)))
+    quat = sf.swing_quat([u.x, u.y, u.z], [turned.x, turned.y, turned.z])
+    for name in sf.arm_chain(t, "l"):
+        if name not in ("upperarm_l", "lowerarm_l",
+                        "upperarm_twist_01_l", "upperarm_twist_02_l"):
+            positions[name] = sf.rotate_about(positions[name], elbow, quat)
+    return elbow, quat
+
+
+class TestSolveChannels(unittest.TestCase):
+
+    def test_identity_positions_reproduce_the_template_channels(self):
+        t = template()
+        positions = {j["name"]: list(j["world_position"]) for j in t["joints"]}
+        channels = sf.solve_channels(t, positions)
+        for j in t["joints"]:
+            got = channels[j["name"]]
+            for a, b in zip(got["translate"], j["translate"]):
+                self.assertAlmostEqual(a, b, 4, msg=j["name"])
+            # trap 31, full form: the template stores unwound eulers
+            # (428 deg on ik_hand_gun) and alternate triples (pelvis);
+            # the same ROTATION is what matters, so compare matrices
+            import maya.api.OpenMaya as om
+            want = om.MEulerRotation(
+                *[math.radians(v) for v in j["rotate"]]).asMatrix()
+            have = om.MEulerRotation(
+                *[math.radians(v) for v in got["rotate"]]).asMatrix()
+            for k in range(16):
+                self.assertAlmostEqual(have[k], want[k], 5, msg=j["name"])
+
+    def test_channels_compose_back_to_the_fitted_positions(self):
+        t = template()
+        jm = sf.joint_map(t)
+        shoulder = jm["upperarm_l"]["world_position"]
+        tip = t["landmarks"]["tip_l"]
+        reach = math.dist(shoulder, tip)
+
+        def to_t_pose(p):
+            if p[0] > 40:
+                return [shoulder[0] + reach, p[1] - tip[1] + shoulder[1], shoulder[2]]
+            if p[0] < -40:
+                return [-(shoulder[0] + reach), p[1] - tip[1] + shoulder[1], shoulder[2]]
+            return p
+
+        positions, _, _ = sf.fit_positions(t, synthetic_points(t, to_t_pose))
+        channels = sf.solve_channels(t, positions)
+        worlds = compose_world(t, channels)
+        for name, want in positions.items():
+            got = [worlds[name].getElement(3, axis) for axis in range(3)]
+            for a, b in zip(got, want):
+                self.assertAlmostEqual(a, b, 6, msg=name)
+
+    def test_swing_carries_the_old_bone_axis_onto_the_new_direction(self):
+        import maya.api.OpenMaya as om
+        t = template()
+        jm = sf.joint_map(t)
+        positions = {j["name"]: list(j["world_position"]) for j in t["joints"]}
+        elbow, quat = _bend_elbow(t, positions)
+        channels = sf.solve_channels(t, positions)
+        worlds = compose_world(t, channels)
+        # the lowerarm's world frame now aims its old bone axis at the hand
+        old_dir = om.MVector(*[a - b for a, b in zip(
+            jm["hand_l"]["world_position"], jm["lowerarm_l"]["world_position"])])
+        local = old_dir * om.MMatrix(jm["lowerarm_l"]["world_matrix"]).inverse()
+        new_dir = (local * worlds["lowerarm_l"]).normal()
+        want = om.MVector(*[a - b for a, b in zip(
+            positions["hand_l"], positions["lowerarm_l"])]).normal()
+        for axis in range(3):
+            self.assertAlmostEqual(new_dir[axis], want[axis], 6)
+
+    def test_rigid_subtree_keeps_its_template_locals(self):
+        t = template()
+        positions = {j["name"]: list(j["world_position"]) for j in t["joints"]}
+        _bend_elbow(t, positions)
+        channels = sf.solve_channels(t, positions)
+        jm = sf.joint_map(t)
+        import maya.api.OpenMaya as om
+        for name in ("middle_01_l", "middle_02_l", "thumb_02_l", "pinky_03_l"):
+            want = om.MEulerRotation(
+                *[math.radians(v) for v in jm[name]["rotate"]]).asMatrix()
+            have = om.MEulerRotation(
+                *[math.radians(v) for v in channels[name]["rotate"]]).asMatrix()
+            for k in range(16):
+                self.assertAlmostEqual(have[k], want[k], 5, msg=name)
+
+
 class TestBindInfluences(unittest.TestCase):
 
     def test_comes_from_the_biggest_mesh_and_matches_manny_reality(self):
