@@ -56,6 +56,15 @@ def weight_stats(shape, skin, influence_names):
     return weighted, real_max
 
 
+def body_points(cmds, transform):
+    """World position of every vertex, one API call for the whole mesh."""
+    import maya.api.OpenMaya as om
+    sel = om.MSelectionList()
+    sel.add(transform)
+    fn = om.MFnMesh(sel.getDagPath(0))
+    return [[p.x, p.y, p.z] for p in fn.getPoints(om.MSpace.kWorld)]
+
+
 def main():
     import maya.standalone
     maya.standalone.initialize(name="python")
@@ -122,9 +131,17 @@ def main():
             "measured_max_influences": real_max,
         }
 
+    # landmarks come from the SAME function the fit uses on a target mesh,
+    # so fitting Manny's mesh onto itself is exact by construction
+    sys.path.insert(0, os.path.dirname(HERE))
+    import maya_skelfit
+    body = max(meshes, key=lambda n: meshes[n]["vertices"])
+    landmarks = maya_skelfit.mesh_landmarks(body_points(cmds, body))
+
     data = {
         "source_scene": os.path.basename(SCENE),
         "linear_unit": cmds.currentUnit(q=True, linear=True),
+        "landmarks": landmarks,
         "joints": entries,
         "meshes": meshes,
     }
