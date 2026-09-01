@@ -248,7 +248,10 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 **Every rig and skeleton operation acts on the character the picker is
 CONNECTED to** (2026-09-01, the user's ask: press Connect on a bone hierarchy
 and that hierarchy is what we work with; a scene may hold many characters).
-Spec: `docs/superpowers/specs/2026-09-01-active-character-design.md`. Proof:
+Spec: `docs/superpowers/specs/2026-09-01-active-character-design.md`.
+**The animator confirmed all four parts by hand in the live scene the same
+day** — the plugin folder, the per-character rig, repeated Add Character, and
+import/export following the selection then the connect ("всё работает"). Proof:
 `verify_two_characters.py` — **green live 2026-09-01, 0 of 51 gates failed**,
 including the two that matter most: turning character A's spine control moved
 B by **0.000000000**, and pulling A's IK hand moved B by **0.000000000**.
