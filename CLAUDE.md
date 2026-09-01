@@ -1130,6 +1130,21 @@ C_parent` construction rather than a measurement.
    stayed as ambiguous as it had been. Silent skips need to be counted as
    failures, or measured directly: the gate that caught this asserted every
    held joint's name, not the absence of errors.
+49. **A module-level context is per module OBJECT, so purging `sys.modules`
+   while a panel is open splits it in two.** Measured 2026-09-01:
+   `picker_window.connect_root("|root")` returned True and the panel showed
+   "Connected to root", while `active.root()` read **None** in the same
+   send — the live window's `active` was the module object from before a
+   verify script's purge, and the freshly imported one was a different
+   object with its own `_ROOT_UUID`. Two things purge: every bridge script
+   (note 9) and `install.purge_modules` on an update. This is exactly why
+   `manifest.activate(scene_map)` re-derives the character from the binding
+   map at every entry point instead of trusting what Connect set, and why
+   `picker_window._resolution` re-asserts its own binding on every sync —
+   both were written for staleness and both cover this too (verified:
+   `active.clear()` followed by `activate(scene_map)` answers `|root`).
+   Nothing to fix; do not "simplify" either of them into reading the
+   context once.
 
 ## Retargeting Manny onto other skeletons
 
@@ -1633,16 +1648,27 @@ GONE, and so is its premise: the picker and the bridge no longer guess between
 two characters, they are told. `character.refusal` and `ALREADY` are deleted
 rather than disabled, with a gone-test pinning it. Two things replaced them.
 **The message names the rename** (`character.rename_note`): only the TOP node
-collides, so `root` becomes `root1` while `pelvis` and everything under it keep
-their plain names — which is precisely what lets the bridge go on merging clips
-onto the second character by name. Maya increments a trailing number until it
-is free, so a Manny imported beside a Manny beside a Manny comes out `root1`,
-`root2` (measured live). **The new character is connected on arrival**
+collides, and `pelvis` and everything under it keep their plain names — which
+is precisely what lets the bridge go on merging clips onto the second
+character by name. **Two different renames, both measured live 2026-09-01,
+and the difference is worth knowing**: a `cmds.file(i=True)` of a `.ma`
+prefixes the clashing top node with the FILE STEM — the second Manny's root
+comes out `Manny_Skeleton_root`, not `root1` — while a plain `cmds.rename` or
+`duplicate` collision increments a trailing number instead, and increments it
+until the name is free (an injected `spine_01` on a rig that already has
+`spine_01..05` lands as `spine_06`, trap 47). So never predict the new root's
+name: `character.new_root` is a path DIFF for exactly that reason.
+**The new character is connected on arrival**
 (`character.connect` → `picker_window.connect_root`), so "add it" and "work on
 it" are one press; the import is a lazy guarded one, because Scene Setup is
 plain `cmds` and has to keep working where PySide6 does not exist.
-`character.new_root` is a path DIFF, not a name diff — the incoming top node's
-name is not knowable in advance, and everything below it kept its plain name.
+
+Proof: `verify_add_character.py`, **rewritten and green live 2026-09-01, 10
+gates, 0 failures** in the animator's scene (which held a Manny) — the second
+character arrived as `Manny_Skeleton_root` with all 93 bones resolving by
+plain name, the first character untouched, the new one active, and the scene
+back to one root afterwards. Its old branch proved the refusal, which no
+longer exists; the empty-scene branch still runs the 13 original gates.
 
 Two pre-existing warts to not chase: every `.ma` import
 leaves Maya's locked/singleton furniture behind (`UsdDefaultRenderSettings`,
