@@ -270,3 +270,27 @@ class WrapperNodes(unittest.TestCase):
     def test_nothing_in_nothing_out(self):
         self.assertEqual(self._find([]), [])
         self.assertEqual(self._find(None), [])
+
+
+class TransformPlugs(unittest.TestCase):
+    """The FBX importer LOCKS a skinned mesh's transform -- all nine of
+    t/r/s, measured -- and a locked plug makes `cmds.xform` a SILENT no-op.
+    That is how the first flatten left the skeleton standing and the
+    geometry on its side: the joints took their world matrix back and the
+    mesh could not."""
+
+    def test_twelve_plugs_in_a_fixed_order(self):
+        plugs = character.transform_plugs("|mesh")
+        self.assertEqual(len(plugs), 12)
+        self.assertEqual(plugs[0], "|mesh.translateX")
+        self.assertEqual(plugs[-1], "|mesh.shearZ")
+
+    def test_it_covers_what_the_importer_locks(self):
+        plugs = set(character.transform_plugs("m"))
+        for channel in ("translate", "rotate", "scale"):
+            for axis in "XYZ":
+                self.assertIn("m.{0}{1}".format(channel, axis), plugs)
+
+    def test_the_order_is_stable_across_calls(self):
+        self.assertEqual(character.transform_plugs("a"),
+                         character.transform_plugs("a"))

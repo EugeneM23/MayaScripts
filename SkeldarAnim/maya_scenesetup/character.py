@@ -168,6 +168,40 @@ def wrapper_nodes(nodes, is_joint, has_shape, depth):
     return found
 
 
+TRANSFORM_CHANNELS = ("translate", "rotate", "scale", "shear")
+
+
+def transform_plugs(node):
+    """The twelve t/r/s/shear plugs of a node, in a fixed order. Pure."""
+    return ["{0}.{1}{2}".format(node, channel, axis)
+            for channel in TRANSFORM_CHANNELS for axis in "XYZ"]
+
+
+def _locked_plugs(node):
+    """Which of those plugs are locked right now.
+
+    The FBX importer LOCKS a skinned mesh's transform -- t, r and s, all
+    nine (measured) -- to stop anyone double-transforming the deformation.
+    A locked plug makes `cmds.xform` a silent no-op, which is exactly how
+    the first version of the flatten left the skeleton right and the
+    geometry lying on its side: the joints took their world matrix back
+    and the mesh could not.
+    """
+    found = []
+    for plug in transform_plugs(node):
+        if cmds.objExists(plug) and cmds.getAttr(plug, lock=True):
+            found.append(plug)
+    return found
+
+
+def _set_locked(plugs, state):
+    for plug in plugs:
+        try:
+            cmds.setAttr(plug, lock=state)
+        except Exception:
+            pass  # referenced or otherwise unwritable; nothing to do
+
+
 def flatten_wrappers(nodes):
     """Unparent the FBX importer's wrapper and delete it. Returns its name(s).
 
@@ -213,8 +247,19 @@ def flatten_wrappers(nodes):
             cmds.parent(children, world=True)
             for uuid, matrix in worlds.items():
                 paths = cmds.ls(uuid, long=True) or []
-                if paths:
+                if not paths:
+                    continue
+                # Unlocked around the write and locked back exactly as
+                # found: the importer's protection is right, it just has
+                # to let this one write through. Without it the mesh
+                # silently keeps identity and lies on its side while the
+                # skeleton stands up (measured: bbox Y and Z swapped).
+                locks = _locked_plugs(paths[0])
+                _set_locked(locks, False)
+                try:
                     cmds.xform(paths[0], worldSpace=True, matrix=matrix)
+                finally:
+                    _set_locked(locks, True)
         if cmds.objExists(wrapper):
             cmds.delete(wrapper)
         removed.append(wrapper.split("|")[-1])

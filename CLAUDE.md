@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1306 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1309 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1148,6 +1148,22 @@ C_parent` construction rather than a measurement.
    `active.clear()` followed by `activate(scene_map)` answers `|root`).
    Nothing to fix; do not "simplify" either of them into reading the
    context once.
+51. **A LOCKED plug makes `cmds.xform` a silent no-op, and the FBX importer
+   locks a skinned mesh's transform.** All nine of t/r/s, measured. So
+   `flatten_wrappers` moved the joints correctly and could not move the
+   mesh at all: the skeleton stood up and the geometry lay on its side
+   («скелет стоит на правильном месте а геометрия нет»), because the
+   skinCluster's stored `geomMatrix` still holds the wrapper's -90 and
+   wants it supplied from the DAG above the mesh. Sampled vertices came
+   out as `(x, -z, y)`; the bbox had Y and Z swapped. **Two strategies
+   failed IDENTICALLY before the cause was found** — preserving the mesh's
+   world matrix and preserving its local matrix — and that they agreed was
+   the clue: nothing written to that transform was landing. Unlock around
+   the write, lock exactly what was locked back, and the drift is
+   0.000000 on both the bbox and the head. The other half of the lesson is
+   about gates: every gate in the failing run passed, because they all
+   measured JOINTS. Bones are the easy half to measure and the wrong half
+   to trust.
 
 ## Retargeting Manny onto other skeletons
 
@@ -1786,9 +1802,19 @@ animation import from Unreal. The guard used to live inside
 failure that exists in two copies is a fix that will exist in one copy soon
 enough. The live gate sets the mode to `exmerge` on purpose before pressing.
 
-Proof: `verify_add_character.py`, **green live 2026-09-01, 0 of 26 gates
+**And the flatten has to write through the importer's LOCKS** (trap 51,
+2026-09-02): the FBX importer locks a skinned mesh's t/r/s, a locked plug
+makes `cmds.xform` a silent no-op, so the first version moved the joints
+and left the mesh lying on its side. Unlock around the write, lock exactly
+what was locked back; drift 0.000000 on both the bbox and the head. The
+verify now measures the MESH's world bounding box, because every gate in
+the failing run passed while the animator looked at a character on its
+side — they all measured joints.
+
+Proof: `verify_add_character.py`, **green live 2026-09-02, 0 of 28 gates
 failed** — the flat shape (skeleton and mesh at world level, no wrapper),
-the rest pose surviving the flatten to 0.01, and the point of the feature:
+the rest pose surviving the flatten to 0.01, the mesh standing where the
+skeleton does, the locks restored, and the point of the feature:
 a `SwordAnimsetPro` clip imported onto the freshly added mannequin, every
 bone the clip can name animated, the bridge resolving it as the target
 through Connect, **and the animated character standing up** (head at

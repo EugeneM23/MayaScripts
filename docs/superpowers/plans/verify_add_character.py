@@ -270,6 +270,29 @@ else:
              cmds.xform(hierarchy["head"], query=True, worldSpace=True,
                         translation=True)[1] if hierarchy.get("head")
              else -1))
+
+    # The GEOMETRY, not just the bones. The first flatten left the skeleton
+    # standing and the mesh on its side, because the FBX importer LOCKS a
+    # skinned mesh's transform and a locked plug makes `cmds.xform` a silent
+    # no-op. Bones are the easy half to measure and the wrong half to trust:
+    # every gate above passed while the animator was looking at a character
+    # lying down.
+    meshes = [m for m in (cmds.ls(new_uuids, type="mesh", long=True) or [])
+              if not cmds.getAttr(m + ".intermediateObject")]
+    box = cmds.exactWorldBoundingBox(meshes) if meshes else None
+    gate("22d the MESH stands where the skeleton does",
+         bool(box) and box[4] > 150.0 and (box[4] - box[1]) > 150.0
+         and (box[5] - box[2]) < 60.0,
+         "bbox Y {0:.2f}..{1:.2f}  Z {2:.2f}..{3:.2f}".format(
+             box[1], box[4], box[2], box[5]) if box else "no mesh")
+    gate("22e the importer's transform locks are back on",
+         bool(meshes) and all(
+             cmds.getAttr(plug, lock=True)
+             for plug in character.transform_plugs(
+                 cmds.listRelatives(meshes[0], parent=True,
+                                    fullPath=True)[0])
+             if cmds.objExists(plug) and "shear" not in plug),
+         "mesh transform relocked")
     gate("23 the UE5-only bones are absent",
          not any(name in hierarchy for name in
                  ("spine_04", "spine_05", "neck_02", "index_metacarpal_l")),

@@ -213,3 +213,41 @@ Proof: `verify_add_character.py`, **green live 2026-09-01, 0 of 26 gates
 failed** — including the shape (skeleton and mesh at world level, no
 wrapper), the rest pose surviving to 0.01, and the animated character
 standing up.
+
+### Addendum 2: the flatten left the geometry behind
+
+The animator, one press later: «скелет стоит на правильном месте а геометрия
+нет». Measured, and they were exactly right:
+
+| | head (joint) | mesh bbox Y | mesh bbox Z |
+|---|---|---|---|
+| wrapped (reference) | `0, 165.5, -4.0` | `-0.04 .. 182.53` | `-21.97 .. 14.75` |
+| flattened, first try | `0, 165.5, -4.0` | `-14.75 .. 21.97` | `-0.04 .. 182.53` |
+
+Y and Z swapped: the skeleton stood up and the mesh lay on its side.
+Sampled vertices confirmed it exactly — `(x, y, z)` came out as `(x, -z, y)`.
+
+**Cause: the FBX importer LOCKS a skinned mesh's transform** — all nine of
+t/r/s, measured — to stop anyone double-transforming the deformation. And a
+locked plug makes `cmds.xform` a **silent no-op**. So the joints took their
+world matrix back and the mesh could not: it kept identity, while the
+skinCluster's stored `geomMatrix` (which holds the wrapper's -90; measured,
+not connected to anything) meant the deformation still needed that -90 from
+the DAG above the mesh.
+
+Two strategies were measured and BOTH failed identically before the cause
+was found — preserving the mesh's world matrix, and preserving its local
+matrix. That they agreed was the clue: nothing written to that transform
+was landing at all.
+
+The fix is three lines: record which plugs are locked, unlock them around
+the write, lock exactly those back. Drift from the wrapped reference is then
+**0.000000 on the bounding box and 0.000000 on the head**.
+
+**The lesson for the gates.** Every gate in the previous run passed while
+the animator was looking at a character lying down, because they all
+measured JOINTS. Bones are the easy half to measure and the wrong half to
+trust — `verify_add_character.py` now measures the mesh's world bounding box
+and that the importer's locks are back on.
+
+Green live 2026-09-02: **0 of 28 gates failed.**
