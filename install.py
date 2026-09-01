@@ -14,6 +14,7 @@ inside the functions that run there.
 
 import os
 import shutil
+import sys
 
 SHELF = "SkeldarAnim"
 
@@ -51,6 +52,49 @@ def payload():
 def source_root():
     """The distribution root: the folder this file was dragged from."""
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def module_names():
+    """What the shelf buttons import, derived from the payload.
+
+    `install` itself is left out: it is the module running right now.
+    """
+    names = []
+    for name in payload():
+        if name.endswith(".py"):
+            stem = name[:-3]
+            if stem != "install":
+                names.append(stem)
+        elif os.path.isdir(os.path.join(source_root(), name)) \
+                and os.path.isfile(os.path.join(source_root(), name,
+                                                "__init__.py")):
+            names.append(name)
+    return names
+
+
+def purge_modules(names=None, modules=None):
+    """Drop our packages from the import cache. Returns what was dropped.
+
+    The update's missing half. Copying the files replaces what is on
+    disk, but a Maya that has already imported the old ones keeps them
+    in `sys.modules` for the rest of the session -- so the shelf button
+    goes on opening the previous version, and the animator, who did
+    everything right, reports that the update did nothing. Purged here
+    the next press imports from disk.
+
+    Package roots go too, not only submodules: a stale root keeps its
+    submodules bound as attributes, and `from pkg import mod` then hands
+    back the old object (the same trap the tests hit).
+    """
+    names = module_names() if names is None else names
+    modules = sys.modules if modules is None else modules
+    dropped = []
+    for key in list(modules):
+        root = key.split(".")[0]
+        if root in names:
+            del modules[key]
+            dropped.append(key)
+    return sorted(dropped)
 
 
 def button_specs(dest):
@@ -161,11 +205,19 @@ def install(dropped=None, quiet=False):
     if not same_place(src, dest):
         copy_payload(src, dest)
     _build_shelf(dest.replace("\\", "/"))
+    reloaded = purge_modules()
     if not quiet:
+        note = ""
+        if reloaded:
+            note = ("\n\nThe previous version was loaded in this session"
+                    "\n({0} modules dropped). Close any of our panels that"
+                    "\nare open and reopen them from the shelf; restart"
+                    "\nMaya if anything still looks old.".format(
+                        len(reloaded)))
         cmds.confirmDialog(
             title="SkeldarAnim",
-            message="Installed: shelf {0}, {1} buttons.\n{2}".format(
-                SHELF, len(button_specs(dest)), dest),
+            message="Installed: shelf {0}, {1} buttons.\n{2}{3}".format(
+                SHELF, len(button_specs(dest)), dest, note),
             button=["OK"])
     return dest
 

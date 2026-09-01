@@ -191,5 +191,45 @@ class CopyPayload(unittest.TestCase):
         self.assertFalse(install.same_place(REPO, self.dest))
 
 
+class PurgeModules(unittest.TestCase):
+    """The update's other half: the import cache, not just the files.
+
+    A fake sys.modules is passed in, so no test can knock the real one
+    out from under the suite it is running in.
+    """
+
+    def test_the_names_are_what_the_buttons_import(self):
+        names = install.module_names()
+        self.assertIn("maya_overrig", names)
+        self.assertIn("maya_uebridge", names)
+        self.assertIn("maya_scenesetup", names)
+        self.assertIn("maya_overshoot", names)
+
+    def test_install_itself_is_never_purged(self):
+        self.assertNotIn("install", install.module_names())
+
+    def test_data_folders_are_not_modules(self):
+        for name in ("icons", "assets", "overrig"):
+            self.assertNotIn(name, install.module_names())
+
+    def test_the_package_root_goes_with_its_submodules(self):
+        fake = {"maya_overrig": 1, "maya_overrig.builder": 2,
+                "maya_overrig.picker_view": 3}
+        dropped = install.purge_modules(["maya_overrig"], fake)
+        self.assertEqual(fake, {})
+        self.assertEqual(dropped, ["maya_overrig", "maya_overrig.builder",
+                                   "maya_overrig.picker_view"])
+
+    def test_strangers_are_left_alone(self):
+        fake = {"maya_overrig": 1, "maya": 2, "maya.cmds": 3,
+                "maya_overrigged": 4}
+        install.purge_modules(["maya_overrig"], fake)
+        self.assertEqual(sorted(fake), ["maya", "maya.cmds",
+                                        "maya_overrigged"])
+
+    def test_nothing_loaded_drops_nothing(self):
+        self.assertEqual(install.purge_modules(["maya_overrig"], {}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2010,6 +2010,95 @@ from Manny as an alternative first pass, leg re-aim, weight-painting UI.
 Test scene note: the animator's test mesh `Skin_3p` IS Manny's own body
 mesh (48705 verts), which is what makes the identity gates exact.
 
+## `maya_meltmorph` — one mesh flowing into another, baked to Alembic
+
+Root-level standalone (2026-08-31), driven by the project skill
+**`.claude/skills/melt-morph/SKILL.md`**. Built for
+`AS_TechLimb_MeltMorph_1P_01.ma`: a first-person techno-limb flowing into a
+crossbow as a wave from the fingers to the elbow over 20 frames. Design:
+`docs/superpowers/specs/2026-08-31-melt-morph-design.md`.
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import maya_meltmorph as mm
+mm.probe()                          # read-only; BORDER EDGES is the headline
+mm.prepare(shape)                   # hidden closed duplicate, polyCloseBorder
+mm.build(source, target, axis="z", start="max")
+mm.calibrate()                      # the part of the sweep that isn't dead
+mm.key_range(0, 20)
+mm.bake(0, 20)                      # versioned alembic + gpu cache, verified
+```
+
+**It is a level-set blend, not a morph.** Two `mesh_to_level_set` into
+`merge_volumes` in `AlphaBlendLevelSet` mode (`level_set_mode = 3`), whose
+`alpha` takes a **field**: `plane_field(normal=axis)` → `scale_field(W on that
+axis)` gives `(p·n − F)/W`, so 0 at the front and 1 one band-width behind it.
+Topology changes freely every frame — that is what reads as liquid, and it is
+why blendshapes are out (a fixed-topology route was built and measured; it
+crumples wherever a feature TRAVELS across the surface, see the spec).
+`scale_field` DIVIDES, so the plane sits at `(F − W/2)/W` — hence `set_front()`
+rather than writing the attribute by hand. The front is a published float3
+input, so retiming the melt is retiming one animCurve on
+`meltGraphShape.front_pos.z`.
+
+**Live-verified 2026-08-31**: the module rebuilt the hand-authored graph and
+reproduced it exactly — frame 0 at 24068 verts / area 1473.408 (pure arm) and
+frame 20 at 23680 / 1452.721 (pure ballista), both MATCH, with every frame in
+between changing. `calibrate()` independently found the live window
+86.14 → 26.56 where the hand-tuned guess had been 88 → 30. The Alembic is
+lossless: identical counts on all 21 frames, areas to three decimals, worst
+closest-point distance **0.000000000**.
+
+Decisions and traps, each paid for:
+
+- **Open meshes are closed in Maya, never bridged by `min_hole_radius`.** Both
+  sources were open (1226 border edges on the hand, 296 on the ballista) and a
+  solid voxelisation of an open mesh leaks and returns NOTHING. `min_hole_radius
+  = 6` did close the hand into one clean shell — and **welded the fingers into a
+  mitten**, because a radius that caps a sleeve also caps finger gaps.
+  `prepare()` runs `polyCloseBorder` on a hidden duplicate (1226 → 0, one face
+  per loop) and the voxeliser runs at radius 0.
+- **Keep the closing and smoothing small.** `iterations 2 × deviation 3`
+  (0.9 cm at a 0.3 cm voxel) turned the fist into a smooth club; 1 × 1 keeps the
+  knuckles. `smooth_deviation` is in VOXELS — world size is `deviation ×
+  detail_size`, so 1 is nearly a no-op, which reads as "smoothing does nothing".
+- **The sweep must be calibrated.** An SDF alpha blend shows nothing until the
+  incoming shape's negative distance beats the outgoing shape's positive one, so
+  a naive sweep has dead frames at both ends (measured: 97 → 22 left frames 0–3
+  and 18–20 byte-identical). `calibrate()` walks the span and reports the live
+  range; `key_range()` defaults to it.
+- **The end frame is a SOFTENED target, not the target mesh** — the crossbow's
+  spike came ~7 cm short, the limb span ~5 cm. A cut to the real model pops;
+  cross-fade 2–3 frames or lower `detail_size`.
+- **Never verify a bake vertex-i against vertex-i.** The contour is
+  multithreaded and its vertex ORDER is not stable between evaluations: that
+  comparison reported 167 cm of error on bit-identical geometry. `bake()`
+  compares counts, area, bbox and closest-point distance.
+- **Alembics are versioned, never overwritten** (`_v001`, `_v002`, …). Once
+  Maya has READ an alembic this session it keeps an internal archive handle and
+  `AbcExport` refuses with a bare "Can't write to file" — measured with no
+  `AlembicNode`/`gpuCache`/`cacheFile` left in the scene at all, and with plain
+  `open(path, "r+b")` from inside that same Maya succeeding. There is nothing to
+  delete; a new name sidesteps it.
+- **Playback speed cannot be measured over the bridge.** The live graph, the
+  Alembic mesh and a GPU cache all timed 0.35–0.38 s/frame — and so did an
+  **empty viewport**. The floor is the harness (a port round trip plus a forced
+  redraw per frame). What baking really buys: no Bifrost dependency, no
+  recompute on any edit, no JIT stall on the first frame after a change, and a
+  portable file. The lever for real playback weight is `mesh_scale` (mean 47322
+  faces/frame at scale 1).
+
+Bifrost scripting facts live in the spec's table — `addNode` spelling, fan-in
+child ports, the `volume_to_mesh` node that compiles clean and outputs an empty
+mesh, float3 defaults that only take the **brace** form `"{0,0,1}"`. Every one
+of them fails silently. The authoritative sources are on disk: port names in
+`$BIFROST_LOCATION/resources/<pack>/docs/ENU/*.md`, graph structure in the
+shipped example graphs' JSON under `$BIFROST_LOCATION/resources/graphs/*/*.json`.
+
+Not built: a curved or noisy wave front (`fractal_noise_field` + `warp_field`
+are the pieces), the cross-fade to the real target, and fixed-topology output
+for UE morph targets.
+
 ## `install.py` — the SkeldarAnim shelf, drag-and-drop
 
 The repo root is the distribution folder: zip it, hand it to a colleague,
@@ -2044,6 +2133,31 @@ Things that will bite if forgotten:
   from the installed folder itself must not `rmtree` the very files it is
   about to copy. Source == destination skips the copy and only rebuilds
   the shelf.
+- **An update also purges `sys.modules`** (`install.purge_modules`,
+  2026-09-01), and without it half the update does not happen: the files
+  on disk are replaced, but a Maya that has already imported the old ones
+  keeps them for the rest of the session, so the shelf button goes on
+  opening the previous version — the colleague did everything right and
+  reports that the update did nothing. Reproduced end to end in mayapy:
+  with the old unpacked build loaded, `import maya_scenesetup.window`
+  kept answering the August file **even with the new copy first on
+  `sys.path`**; the purge drops 20 modules and the same import lands on
+  the new one. Package ROOTS go too, not only submodules (CLAUDE.md's own
+  test-runner trap, from the other side), the names are derived from
+  `payload()` so no second list exists, and `install` itself is excluded —
+  it is the module doing the purging. It cannot help a panel that is
+  already OPEN, whose widgets hold the old classes; the confirm dialog
+  says to close and reopen, and to restart Maya if anything still looks
+  old.
+- **The shelf needs Maya 2025 or newer, and only for the picker.**
+  `picker_view.py`/`picker_window.py` import PySide6/shiboken6 at module
+  level, and PySide6 ships with Maya from 2025 (2022–2024 carry PySide2).
+  The picker also calls `event.position().toPoint()`, which is Qt6-only,
+  so an import shim alone would not be enough. The other four buttons are
+  plain `cmds` and MEL and run anywhere: UE Bridge's one Qt use — the
+  green row painting in `checkouts.paint_rows` — is inside
+  `except Exception: pass` and degrades to uncoloured rows.
+  `README_INSTALL.txt` states the requirement.
 - **`install(quiet=True)` exists for the bridge**: the normal path ends in
   a `confirmDialog`, and a modal dialog over the command port is a blocked
   idle queue (bridge note 6). Scripted installs must pass `quiet=True`.
@@ -2067,6 +2181,40 @@ Things that will bite if forgotten:
   mayapy, `QT_QPA_PLATFORM=offscreen`); the generator is committed next to
   its output, regenerate and re-commit to restyle. The OverRig button uses
   Barnev's own `base_OverRig.bmp`.
+
+**Never zip the distribution by hand — run `make_build.py`** (2026-09-01;
+the two archives that predate it were hand-made from the *installed* copy
+and carry `__pycache__/install.cpython-313.pyc` for nothing):
+
+```
+& 'C:\Program Files\Autodesk\Maya2027\bin\mayapy.exe' make_build.py
+```
+
+Writes `SkeldarAnim_<date>.zip` beside the repository folder (`--out`
+overrides), one `SkeldarAnim/` directory inside so the instruction stays
+"unzip, drag `SkeldarAnim/install.py` into the viewport". Dated, so a
+rebuild replaces only today's archive and never an earlier day's. It is a
+development tool and is
+**not** in the payload. Four things it settles:
+
+- **The composition comes from `install.payload()`**, never a second list
+  here. A whitelist that drifts from the installer's reaches a colleague
+  as an ImportError days later, pointing at the wrong file entirely.
+- **`__pycache__`/`*.pyc` are cut** by the same patterns `copy_payload`
+  ignores, and **directory entries are written** so `overrig/misc/`
+  survives empty — OverRig's own button points `$path_to_JGLBN` at it.
+- **Verification is part of the build**: the finished archive is reopened,
+  `testzip()`ed and its entry list compared against a fresh walk of the
+  payload. A mismatch **deletes the archive** and raises — a broken build
+  must not leave something zip-shaped lying around to be handed off.
+- **`BUILD_INFO.txt` rides inside** with the date, branch, commit and a
+  named list of uncommitted payload files if any. The two 2026-08-21
+  archives are four minutes apart and nothing distinguishes them.
+
+Sizes to expect: **13 MB, 57 files** (2026-09-01), against the old
+760 KB — `assets/Manny_Skeleton.ma` is 52 MB and mandatory, Add Character
+runs on it. Tests: `tests/test_make_build.py` (15, on a fake tree in a
+temp dir — the real payload is never zipped to prove a rule about names).
 
 ## Conventions
 
