@@ -1,6 +1,7 @@
 """
 Maya Anim Batch Export Tool
 Opens Maya/FBX files, applies clean scene + camera position, re-exports.
+camera_root is placed on a typed XYZ vector, local to its parent.
 Preserves original FPS and frame timings from source file.
 Run in Maya Script Editor (Python tab).
 """
@@ -205,7 +206,19 @@ def export_file(source_path, output_folder, key_range=None, settings=None):
 # OPERATIONS
 # -------------------------
 
-def op_set_camera_position(height_value, height_axis):
+def op_set_camera_position(position):
+    """Put camera_root on `position` -- (x, y, z), local to its parent.
+
+    All three coordinates come from the caller, so nothing is read out of the
+    clip. The one-axis version this replaces read the file's position first
+    and inherited two of the three coordinates from it, which is what made the
+    read-before-delete ORDER a bug worth its own commit (1e01e4f). There is no
+    read left to get the order wrong about.
+
+    objectSpace on purpose: the numbers are translateX/Y/Z as the Channel Box
+    shows them, so copying a placement out of an open scene is a matter of
+    reading three numbers off the screen.
+    """
     root = find_node_by_name("root")
     if not root:
         cmds.warning("root не найден.")
@@ -216,19 +229,12 @@ def op_set_camera_position(height_value, height_axis):
         cmds.warning("camera_root не найден в иерархии root.")
         return False
 
-    # Read position at frame 0 BEFORE deleting curves
-    cmds.currentTime(0)
-    pos = list(cmds.xform(camera_root, query=True, objectSpace=True, translation=True))
-
-    # Remove all animation keys from camera_root
+    # Free the channels first: a write onto an animated channel is discarded.
     curves = cmds.listConnections(camera_root, type="animCurve", source=True, destination=False) or []
     if curves:
         cmds.delete(curves)
 
-    # Override the requested axis with the user value
-    axis_index = {"X": 0, "Y": 1, "Z": 2}[height_axis]
-    pos[axis_index] = height_value
-    cmds.xform(camera_root, objectSpace=True, translation=pos)
+    cmds.xform(camera_root, objectSpace=True, translation=list(position))
     return True
 
 
@@ -289,7 +295,7 @@ def apply_operations(settings):
         snap_keys_to_frames_in_root()
 
     if settings["use_camera_position"]:
-        op_set_camera_position(settings["height_value"], settings["height_axis"])
+        op_set_camera_position(settings["camera_position"])
 
     if settings["use_clean_scene"]:
         op_clean_scene()
@@ -393,8 +399,14 @@ def get_ui_settings():
         "use_clean_scene":   cmds.checkBox("cbClean",      query=True, value=True),
         "snap_keys":         cmds.checkBox("cbSnapKeys",   query=True, value=True),
         "bake_animation":    cmds.checkBox("cbBake",       query=True, value=True),
-        "height_value":      cmds.floatFieldGrp("ffHeight", query=True, value1=True),
-        "height_axis":       cmds.optionMenuGrp("omAxis",   query=True, value=True),
+        # Three explicit queries rather than one -q -value: the rest of this
+        # file reads fields this way, and the list form's shape is one more
+        # thing to be wrong about.
+        "camera_position": (
+            cmds.floatFieldGrp("ffCamPos", query=True, value1=True),
+            cmds.floatFieldGrp("ffCamPos", query=True, value2=True),
+            cmds.floatFieldGrp("ffCamPos", query=True, value3=True),
+        ),
     }
 
 
@@ -419,11 +431,8 @@ def show_ui():
 
     cmds.separator(height=10, style="in")
     cmds.checkBox("cbCamPos",   label="Set camera_root position", value=True)
-    cmds.floatFieldGrp("ffHeight", label="Height value", value1=0.0)
-    cmds.optionMenuGrp("omAxis", label="Axis")
-    cmds.menuItem(label="Z")
-    cmds.menuItem(label="Y")
-    cmds.menuItem(label="X")
+    cmds.floatFieldGrp("ffCamPos", label="camera_root position (XYZ)",
+                       numberOfFields=3, value1=0.0, value2=0.0, value3=0.0)
 
     cmds.checkBox("cbClean",    label="Clean scene (удалить всё кроме root)", value=True)
     cmds.checkBox("cbSnapKeys", label="Snap root keys to frames", value=True)

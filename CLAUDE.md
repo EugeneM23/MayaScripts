@@ -2251,6 +2251,60 @@ hazards closed as well: GO asks once before discarding a modified scene, and an
 empty name suffix pointed at the source folder is refused (`clip.FBX` and
 `clip.fbx` are one file on Windows).
 
+## `maya_anim_batch_export` — a folder of clips, one camera placement
+
+Root-level standalone (`cmds` only, no Qt, no package), window **Anim Batch
+Export Tool**: pick an input folder and every `.ma`/`.mb`/`.fbx` in it is
+opened, put through a few operations and re-exported into an output folder.
+The operations are the `camera_root` placement, Clean scene (delete everything
+outside the `root` hierarchy, strip namespaces), Snap root keys to whole
+frames, and an optional bake on export; the timeline is set from the `root`
+hierarchy's own key range **last**, after everything that could move it.
+
+```python
+import sys, importlib
+_p = "C:/!!!Work/MayaScripts"
+if _p not in sys.path:
+    sys.path.insert(0, _p)
+import maya_anim_batch_export
+importlib.reload(maya_anim_batch_export)
+```
+
+The `reload` is not developer convenience: the module ends with a module-level
+`show_ui()` call, so a second plain `import` finds it in `sys.modules` and no
+window opens.
+
+**`camera_root` goes to a typed XYZ vector** (2026-09-02, the animator's ask:
+«не по одной оси а мог ставить кость в указаный вектор по 3 координатам»).
+`op_set_camera_position(position)` deletes every animCurve on `camera_root`
+and writes all three coordinates in `objectSpace` — the numbers are
+translateX/Y/Z as the Channel Box shows them, so copying a placement out of an
+open scene is a matter of reading three numbers off the screen. Nothing is
+read out of the clip any more, which retires the read-before-delete ordering
+bug commit `1e01e4f` existed to fix. The predecessor typed one axis and
+inherited the other two from the file. No per-axis toggles and no "pick from
+scene" button — both offered and declined; the curve deletion stays total
+(rotation and scale go with translation), which is the tool's own long-
+standing behaviour. Spec:
+`docs/superpowers/specs/2026-09-02-camera-root-vector-design.md`.
+
+**Its proof runs in its own mayapy session, never through the bridge** — the
+tool starts every file with `cmds.file(new=True, force=True)`, so a bridge run
+would discard the animator's open scene. Same rule and same reason as
+`root_offset_batch_tool`. `verify_anim_batch_camera.py` — **green 2026-09-02,
+0 of 18 gates failed** — copies two real `AS_DownState_*.FBX` clips into a
+temp sandbox, runs the batch and measures the files that land on DISK: the
+vector exact to 0.000000000 on all three axes, no curve left on `camera_root`,
+and the `root` key range unchanged (0..91 and 0..81). Its vector has three
+distinct non-zero coordinates on purpose, so an axis dropped, transposed or
+inherited from the clip cannot pass.
+
+Two measured facts any headless run of this tool needs: in mayapy batch
+`cmds.window()` returns `False` while `columnLayout`/`checkBox` still succeed,
+and **every UI query answers `False`** — so `get_ui_settings()` hands back a
+dict of `False`, and a headless run must build the settings dict by hand and
+call `run_on_folder(settings)`, never `run_tool()`.
+
 ## `maya_overshoot` — the stop of a move, on any pose
 
 Root-level standalone tool, rewritten 2026-08-20; it had come in with the
