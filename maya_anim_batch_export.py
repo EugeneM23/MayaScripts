@@ -132,6 +132,25 @@ def load_fbx_plugin():
         cmds.warning("FBX plugin: {}".format(e))
 
 
+# The mode an open needs: create everything the file holds. Never inherited --
+# see open_file.
+FBX_IMPORT_MODE = "add"
+
+
+def get_fbx_import_mode():
+    try:
+        return mel.eval("FBXImportMode -q;")
+    except Exception:
+        return None
+
+
+def set_fbx_import_mode(mode):
+    try:
+        mel.eval("FBXImportMode -v {};".format(mode))
+    except Exception as e:
+        cmds.warning("FBX import mode: {}".format(e))
+
+
 def open_file(file_path):
     """Open file preserving its original FPS."""
     ext = os.path.splitext(file_path)[1].lower()
@@ -143,9 +162,23 @@ def open_file(file_path):
 
     if ext == ".fbx":
         load_fbx_plugin()
-        # Open FBX directly so Maya reads FPS from the file (import creates a new
-        # scene with default 24fps and ignores the FBX frame rate)
-        cmds.file(file_path, open=True, force=True)
+        # The FBX import MODE is one global setting for the whole Maya session
+        # and `cmds.file` inherits it. Any Unreal import leaves it on
+        # `exmerge`, where the importer matches names against what is already
+        # in the scene and creates NOTHING: measured, a clip opens with 0
+        # joints where `add` and `merge` both give 94. The batch then cleaned,
+        # placed and exported an empty scene over every file in the folder and
+        # said nothing about it. Set the mode, and put back whatever was there
+        # -- the animator is working in this session.
+        previous = get_fbx_import_mode()
+        set_fbx_import_mode(FBX_IMPORT_MODE)
+        try:
+            # Open FBX directly so Maya reads FPS from the file (import creates a new
+            # scene with default 24fps and ignores the FBX frame rate)
+            cmds.file(file_path, open=True, force=True)
+        finally:
+            if previous:
+                set_fbx_import_mode(previous)
         return True
 
     cmds.warning("Неподдерживаемый формат: {}".format(file_path))
@@ -165,6 +198,16 @@ def get_scene_fps():
 
 
 def export_file(source_path, output_folder, key_range=None, settings=None):
+    # Everything this tool does is anchored on the root hierarchy, so a scene
+    # without one is a scene nothing worked on -- and exporting it writes a
+    # file holding the four default cameras and 8 KB of nothing. That is what
+    # fourteen clips became when the import mode created no nodes: written,
+    # counted as successes, and only noticed when the animator opened one.
+    # Refuse instead, and let the caller count it as a failure.
+    if not find_node_by_name("root"):
+        cmds.warning("В сцене нет root, экспорт пропущен: {}".format(source_path))
+        return None
+
     ensure_folder(output_folder)
     ext = os.path.splitext(source_path)[1].lower()
     base = os.path.splitext(os.path.basename(source_path))[0]
@@ -352,8 +395,10 @@ def run_on_folder(settings):
                 continue
 
             key_range = apply_operations(settings)
-            export_file(path, settings["output_folder"], key_range, settings)
-            ok += 1
+            if export_file(path, settings["output_folder"], key_range, settings):
+                ok += 1
+            else:
+                fail += 1
 
         except Exception as e:
             fail += 1

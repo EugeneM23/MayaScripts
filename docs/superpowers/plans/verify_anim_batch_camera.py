@@ -28,8 +28,20 @@ What is claimed:
   * no animCurve is left driving camera_root,
   * the root key range survives -- placing the camera must not cost the
     animation,
+  * an empty scene is refused by the exporter rather than written out as a
+    success, which is the half of the failure that let it go unnoticed,
   * and both clips pass, because the failure that matters is a batch that
     works on the first file only.
+
+The whole run happens with the FBX import mode forced to `exmerge` -- trap
+33, and the reason the animator's own run produced fourteen 8 KB files
+holding nothing but the four default cameras. The mode is one global setting
+per Maya session, `maya_uebridge` leaves it there, and `cmds.file(open=True)`
+inherits it: measured, opening a clip under `exmerge` yields 0 joints where
+`add` and `merge` both yield 94. A fresh mayapy starts on `merge`, which is
+exactly why the first version of this proof passed while the tool was broken
+in the animator's session. Forcing the hostile mode here is what stops that
+regression coming back quietly -- the same thing `verify_weapons.py` does.
 """
 
 import os
@@ -41,6 +53,7 @@ import maya.standalone
 maya.standalone.initialize(name="python")
 
 import maya.cmds as cmds  # noqa: E402
+import maya.mel as mel  # noqa: E402
 
 REPO = r"C:/!!!Work/MayaScripts"
 sys.path.insert(0, REPO)
@@ -55,6 +68,10 @@ CLIPS = ["AS_DownState_Loop.FBX", "AS_DownState_Turn_180.FBX"]
 VECTOR = (12.5, -34.25, 7.75)
 
 TOL = 1e-4
+
+# The mode the animator's session was left in. Everything below runs under it.
+HOSTILE_MODE = "exmerge"
+
 RESULTS = []
 
 
@@ -62,6 +79,10 @@ def check(name, ok, detail=""):
     RESULTS.append((name, bool(ok), detail))
     print("{0} {1}{2}".format("PASS" if ok else "FAIL", name,
                               "  --  " + detail if detail else ""))
+
+
+def scene_joints():
+    return len(cmds.ls(type="joint") or [])
 
 
 def camera_root_state():
@@ -84,6 +105,10 @@ def main():
         check("source clips present", False, "missing: {0}".format(missing))
         return
 
+    T.load_fbx_plugin()
+    mel.eval("FBXImportMode -v {0};".format(HOSTILE_MODE))
+    print("FBX import mode forced to {0}".format(mel.eval("FBXImportMode -q;")))
+
     sandbox_in = tempfile.mkdtemp(prefix="downstate_in_")
     sandbox_out = tempfile.mkdtemp(prefix="downstate_out_")
     print("sandbox in : {0}".format(sandbox_in))
@@ -101,9 +126,15 @@ def main():
             "pos": pos,
             "curves": curves,
             "range": T.get_key_range_from_root(),
+            "joints": scene_joints(),
         }
-        print("source {0}: camera_root {1}, {2} curve(s), range {3}".format(
-            clip, pos, curves, source_state[clip]["range"]))
+        print("source {0}: {1} joint(s), camera_root {2}, {3} curve(s), range {4}".format(
+            clip, source_state[clip]["joints"], pos, curves,
+            source_state[clip]["range"]))
+
+    check("the clips open under a hostile import mode",
+          all(source_state[c]["joints"] > 0 for c in CLIPS),
+          "joints: {0}".format({c: source_state[c]["joints"] for c in CLIPS}))
 
     check("both clips carry camera_root",
           all(source_state[c]["pos"] is not None for c in CLIPS),
@@ -129,6 +160,10 @@ def main():
     }
     T.run_on_folder(settings)
 
+    check("the import mode was put back",
+          mel.eval("FBXImportMode -q;") == HOSTILE_MODE,
+          "left on {0}, want {1}".format(mel.eval("FBXImportMode -q;"), HOSTILE_MODE))
+
     # --- measure what landed on disk ---------------------------------------
     for clip in CLIPS:
         out = os.path.join(sandbox_out, os.path.splitext(clip)[0] + ".fbx")
@@ -138,6 +173,14 @@ def main():
         check("{0}: exported".format(clip), True, os.path.basename(out))
 
         T.open_file(out)
+        joints = scene_joints()
+        # > 0 as well as equal: under the broken tool BOTH sides were 0 and
+        # an equality-only gate passed while every export held nothing.
+        check("{0}: the export is not empty".format(clip),
+              joints > 0 and joints == source_state[clip]["joints"],
+              "{0} joint(s), source had {1}".format(
+                  joints, source_state[clip]["joints"]))
+
         pos, curves = camera_root_state()
         if pos is None:
             check("{0}: camera_root survived the export".format(clip), False)
@@ -161,6 +204,19 @@ def main():
         check("{0}: root key range survived".format(clip),
               got_range == want_range,
               "got {0}, source {1}".format(got_range, want_range))
+
+    # The other half of the empty-file failure: fourteen 8 KB files were
+    # written AND counted as successes. A scene with no root is a scene
+    # nothing worked on and must not reach the exporter at all.
+    guard_dir = tempfile.mkdtemp(prefix="downstate_guard_")
+    cmds.file(new=True, force=True)
+    refused = T.export_file(os.path.join(SOURCE_DIR, CLIPS[0]), guard_dir,
+                            None, settings)
+    wrote = os.listdir(guard_dir)
+    check("an empty scene is refused, not exported",
+          not refused and not wrote,
+          "returned {0!r}, wrote {1}".format(refused, wrote))
+    shutil.rmtree(guard_dir, ignore_errors=True)
 
     shutil.rmtree(sandbox_in, ignore_errors=True)
     shutil.rmtree(sandbox_out, ignore_errors=True)

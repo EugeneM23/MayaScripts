@@ -2288,14 +2288,32 @@ scene" button — both offered and declined; the curve deletion stays total
 standing behaviour. Spec:
 `docs/superpowers/specs/2026-09-02-camera-root-vector-design.md`.
 
+**Trap 33 bit this tool too, and it cost a whole live run** (2026-09-02).
+The FBX import MODE is one global setting for the entire Maya session,
+`cmds.file(open=True)` inherits it, and any import from Unreal leaves it on
+`exmerge` — where the importer matches names against what is already in the
+scene and creates **nothing**. Measured: a clip opens with **0 joints** under
+`exmerge` against 94 under `add` or `merge`. So the batch cleaned, placed and
+exported an *empty scene* over all fourteen files — **8 KB each, holding the
+four default cameras and nothing else** — counted every one as a success, and
+the only symptom the animator had was «открываю fbx файл а он пустой».
+`open_file` now sets the mode and puts back whatever it found (the animator is
+working in that session), and `export_file` **refuses a scene with no `root`**
+instead of writing 8 KB of nothing, with `run_on_folder` counting the refusal
+as a failure. Both halves were needed: the mode is why the files were empty,
+the missing guard is why nobody was told.
+
 **Its proof runs in its own mayapy session, never through the bridge** — the
 tool starts every file with `cmds.file(new=True, force=True)`, so a bridge run
 would discard the animator's open scene. Same rule and same reason as
 `root_offset_batch_tool`. `verify_anim_batch_camera.py` — **green 2026-09-02,
-0 of 18 gates failed** — copies two real `AS_DownState_*.FBX` clips into a
-temp sandbox, runs the batch and measures the files that land on DISK: the
-vector exact to 0.000000000 on all three axes, no curve left on `camera_root`,
-and the `root` key range unchanged (0..91 and 0..81). Its vector has three
+0 of 23 gates failed** — copies two real `AS_DownState_*.FBX` clips into a
+temp sandbox, runs the whole batch **under a forced `exmerge`** and measures
+the files that land on DISK: 94 joints in each export, the vector exact to
+0.000000000 on all three axes, no curve left on `camera_root`, and the `root`
+key range unchanged (0..91 and 0..81). Forcing the hostile mode is the point —
+a fresh mayapy starts on `merge`, and the first version of this proof passed
+while the tool was broken in the animator's session. Its vector has three
 distinct non-zero coordinates on purpose, so an axis dropped, transposed or
 inherited from the clip cannot pass.
 

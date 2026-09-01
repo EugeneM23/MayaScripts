@@ -108,3 +108,32 @@ land on disk rather than on the scene in memory:
   placement must not cost the animation,
 - and the same for a second clip, because the failure that matters is a batch
   that works on the first file.
+
+## Addendum, the same day: the run that came back empty
+
+The first live run wrote all fourteen files and every one of them was empty —
+8 KB, four default cameras, no skeleton. The tool was fine; the session was
+not. `cmds.file(open=True)` inherits the FBX plugin's global import mode, an
+Unreal import earlier in the session had left it on `exmerge`, and in that
+mode the importer creates nothing at all. Measured: 0 joints under `exmerge`,
+94 under `add` and 94 under `merge`.
+
+That is trap 33 in CLAUDE.md, already paid for twice — once in
+`maya_scenesetup` (a weapon silently stopped arriving) and once in
+`root_offset_batch_tool` (every file died with "no root joint found"). This
+tool imported FBX and never set the mode.
+
+Two fixes, and both are needed. `open_file` sets `FBXImportMode add` and
+restores whatever it found in a `finally`, because the animator is working in
+that session and the mode is not ours to leave changed. And `export_file`
+**refuses a scene with no `root`**: everything this tool does is anchored on
+that hierarchy, so a scene without one is a scene nothing worked on. The
+export mode explains why the files were empty; the missing guard explains why
+fourteen of them were written, counted as successes, and only noticed when
+somebody opened one.
+
+The proof now runs the entire batch with the mode forced to `exmerge`. This
+matters more than it sounds: a fresh mayapy starts on `merge`, so the original
+version of this script passed on exactly the code that was destroying the
+animator's exports. A proof that cannot fail in the animator's conditions is
+not a proof.
