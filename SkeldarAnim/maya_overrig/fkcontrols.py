@@ -16,14 +16,15 @@ twist joint, and `head` measures 0 for having no children at all.
 import maya.cmds as cmds
 import maya.mel as mel
 
-from maya_overrig import bodymap, builder, overrig, twist
+from maya_overrig import (active, bodymap, builder, manifest, naming, overrig,
+                          twist)
 from maya_overrig.fkchains import (  # noqa: F401 -- fkcontrols is the API
     FK_SET, FK_SET_PREFIX, SUFFIX, LIMB_CHAINS, SWITCHABLE, _finger_chains,
     CHAINS, FINGER_CHAINS, FINGER_JOINTS, BUILDABLE, HYBRID_FK_CHAINS,
     build_targets, controller_name, chain_set, finger_chains_for,
     chain_root, chain_tip, chain_root_control, switchable_bones,
     innermost_owner, dependent_chains, limbs_riding_inside, attach_parent,
-    limbs_to_convert)
+    limbs_to_convert, control_leaf, bone_of_control, controls_in)
 from maya_overrig.fkrings import (  # noqa: F401 -- fkcontrols is the API
     colour_for, rollup, apply_size_rules, stagger, radius_from, is_square,
     at_bone_end, square_points, _skin_data, _parent_map, _vertex_buckets,
@@ -39,30 +40,102 @@ from maya_overrig.fkalign import (  # noqa: F401 -- fkcontrols is the API
 # scene side
 # ---------------------------------------------------------------------------
 
-def chain_members(chain):
-    """Long paths recorded against one chain, [] if none."""
-    return overrig.set_members(chain_set(chain))
+def chain_members(chain, table=None):
+    """Long paths the ACTIVE character has recorded against one chain.
+
+    `table` is a `manifest.records()` snapshot, for the callers that ask
+    about all twenty chains in a row.
+    """
+    return manifest.members(manifest.KIND_FK, chain, table=table)
 
 
 def built_fk_chains():
-    """Chains that currently have nodes recorded against them."""
-    return [name for name, _ in CHAINS if chain_members(name)]
+    """Chains the active character has nodes recorded against."""
+    table = manifest.records()
+    return [name for name, _ in CHAINS if chain_members(name, table=table)]
 
 
-def _legacy_members():
-    return overrig.set_members(FK_SET)
+def _legacy_members(table=None):
+    """The pre-2026-08 flat FK set, if this character has one."""
+    return manifest.members(manifest.KIND_FK, "", table=table)
 
 
 def has_fk():
     """True when any FK is recorded — per-chain sets or the legacy flat one."""
-    return bool(built_fk_chains() or _legacy_members())
+    table = manifest.records()
+    return bool([name for name, _ in CHAINS
+                 if chain_members(name, table=table)]
+                or _legacy_members(table))
 
 
 def _ensure_chain_set(chain):
-    name = chain_set(chain)
-    if not cmds.objExists(name):
-        cmds.sets(name=name, empty=True)
-    return name
+    """This character's chain manifest, created and tagged if absent."""
+    return manifest.ensure(manifest.KIND_FK, chain)
+
+
+def control_index(paths_by_bone):
+    """{bone: UUID} from {bone: path}. The stale-proof form of an index.
+
+    UUIDs, not paths, because coupling RE-PARENTS knots: apply_Parent_in
+    makes a chain's root knot a DAG child of its parent's, and every knot
+    below it changes path (trap 16). An index of paths assembled during a
+    build is stale by the second chain -- which is exactly when the third
+    one needs to hang off it.
+    """
+    return {bone: naming.uuid_of(path)
+            for bone, path in (paths_by_bone or {}).items() if path}
+
+
+def control_for(bone, index):
+    """One bone's controller path, resolved from the index NOW, or None."""
+    uuid = (index or {}).get(bone)
+    return naming.path_from_uuid(uuid) if uuid else None
+
+
+def fk_controls(scene_map=None, table=None):
+    """{bone: UUID} for the ACTIVE character's FK controllers.
+
+    The index that replaced trusting `<bone>_FK_ctrl` to be unique. It is
+    read out of this character's own manifests, so a second character's
+    identically-named knots are simply not in it; `scene_map`, when given,
+    drops anything the binding does not know about.
+
+    Per-chain manifests win over the legacy flat set: a chain rebuilt
+    since the flat set was recorded is the one standing now.
+    """
+    table = manifest.records() if table is None else table
+    found = {}
+    for chain, _ in CHAINS:
+        for bone, path in controls_in(chain_members(chain,
+                                                    table=table)).items():
+            found.setdefault(bone, path)
+    for bone, path in controls_in(_legacy_members(table)).items():
+        found.setdefault(bone, path)
+    if scene_map is not None:
+        found = {bone: path for bone, path in found.items()
+                 if bone in scene_map}
+    return control_index(found)
+
+
+def fk_control_paths(scene_map=None, table=None):
+    """{bone: path} for the active character's FK controllers.
+
+    What the picker's button resolution wants; `fk_controls` is what
+    anything holding an index across a re-parenting wants.
+    """
+    index = fk_controls(scene_map, table)
+    return {bone: control_for(bone, index) for bone in index}
+
+
+def chain_root_path(chain, scene_map, index):
+    """The control at the top of a chain, as a PATH, or None.
+
+    The scoped counterpart of `chain_root_control`, which names it. A
+    chain starts at the first bone the skeleton HAS, never at the first
+    bone of the table (trap 21).
+    """
+    first = chain_root(chain, scene_map)
+    return control_for(first, index) if first else None
 
 
 def _record_into(set_name, before):
@@ -84,7 +157,7 @@ def _record_fresh(chain, before):
     return _record_into(_ensure_chain_set(chain), before)
 
 
-def _attach_chain(chain, scene_map, parent_of, targeted):
+def _attach_chain(chain, scene_map, parent_of, targeted, controls):
     """Hang one chain's root controller off its parent bone's controller.
 
     OverRig's apply_Parent_in does the heavy lifting: the child knot becomes a
@@ -101,9 +174,14 @@ def _attach_chain(chain, scene_map, parent_of, targeted):
     parent = attach_parent(first, parent_of, targeted)
     if parent is None:
         return False
-    child_ctrl = controller_name(first)
-    parent_ctrl = controller_name(parent)
-    if not (cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
+    # Resolved out of the index the build is assembling, never by name:
+    # inside a build is the one moment two characters genuinely own a knot
+    # called `upperarm_l_FK_ctrl`, and a name lookup here coupled the
+    # wrong character's chain.
+    child_ctrl = control_for(first, controls)
+    parent_ctrl = control_for(parent, controls)
+    if not (child_ctrl and parent_ctrl
+            and cmds.objExists(child_ctrl) and cmds.objExists(parent_ctrl)):
         return False
     overrig.parent_in(child_ctrl, parent_ctrl)
     return True
@@ -120,11 +198,14 @@ def _bake_fk_chains(scene_map, chains=None):
     def read_manifests():
         """The recorded state, freshly resolved. Paths, so re-read after any
         re-parenting: a stale path deletes nothing and leaks a live rig."""
-        members = {name: chain_members(name) for name, _ in CHAINS}
+        table = manifest.records()
+        members = {name: chain_members(name, table=table)
+                   for name, _ in CHAINS}
         if chains is None:
             return (members,
                     [name for name, _ in CHAINS if members[name]],
-                    [m for m in _legacy_members() if cmds.objExists(m)])
+                    [m for m in _legacy_members(table)
+                     if cmds.objExists(m)])
         return members, [c for c in chains if members.get(c)], []
 
     members_by_chain, wanted, legacy = read_manifests()
@@ -178,11 +259,17 @@ def _bake_fk_chains(scene_map, chains=None):
     doomed = [d for d in doomed if cmds.objExists(d)]
     if doomed:
         cmds.delete(doomed)
+    # Resolved by tag, not by name: this character's `spine` manifest may
+    # be `RigPicker_fk_spine1`. Maya deletes an objectSet with its last
+    # member, so most successful teardowns find nothing left (trap 18).
     for c in wanted:
-        if cmds.objExists(chain_set(c)):
-            cmds.delete(chain_set(c))
-    if legacy and cmds.objExists(FK_SET):
-        cmds.delete(FK_SET)
+        found = manifest.find(manifest.KIND_FK, c)
+        if found and cmds.objExists(found):
+            cmds.delete(found)
+    if legacy:
+        found = manifest.find(manifest.KIND_FK, "")
+        if found and cmds.objExists(found):
+            cmds.delete(found)
 
     removed = len(doomed)
     if constrained:
@@ -206,6 +293,7 @@ def bake_fk(scene_map, chains=None):
     message = _mel_gate()
     if message:
         return 0, message
+    manifest.activate(scene_map)
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker FK bake")
     try:
         removed, wanted = _bake_fk_chains(scene_map, chains)
@@ -232,6 +320,9 @@ def build_fk(scene_map, only=None):
     message = _mel_gate()
     if message:
         return 0, message
+    # After the guard, never before: activating CLAIMS untagged manifests,
+    # and a refusal must leave the scene exactly as it found it.
+    manifest.activate(scene_map)
 
     targets = build_targets(only)
     region_of = {b.joint: b.region for b in bodymap.BUTTONS}
@@ -248,7 +339,9 @@ def build_fk(scene_map, only=None):
         if only is None:
             replaced = _bake_fk_chains(scene_map)[0] if has_fk() else 0
         else:
-            existing = [c for c in only if chain_members(c)]
+            snapshot = manifest.records()
+            existing = [c for c in only
+                        if chain_members(c, table=snapshot)]
             replaced = (_bake_fk_chains(scene_map, existing)[0]
                         if existing else 0)
 
@@ -258,13 +351,24 @@ def build_fk(scene_map, only=None):
         # doubled time together: the whole skeleton, and any rig already
         # driving part of it (a restricted build runs while other chains'
         # rigs play). A chain captured against an unscaled parent records a
-        # mixture of two timelines.
+        # mixture of two timelines. This character's rigs only -- scaling
+        # another character's would drag its animation through doubled
+        # time and scale it back against a timeline it never rode.
+        snapshot = manifest.records()
         scale_nodes = [p for p in scene_map.values() if cmds.objExists(p)]
         for name, _ in CHAINS:
-            scale_nodes.extend(chain_members(name))
-        scale_nodes.extend(_legacy_members())
+            scale_nodes.extend(chain_members(name, table=snapshot))
+        scale_nodes.extend(_legacy_members(snapshot))
         for name, _ in builder.LIMBS:
-            scale_nodes.extend(overrig.set_members(builder.limb_set(name)))
+            scale_nodes.extend(manifest.members(manifest.KIND_IK, name,
+                                                table=snapshot))
+
+        # The controller index this build assembles as it goes: {bone:
+        # knot path}, seeded with whatever chains already stand (a
+        # restricted build couples onto them) and extended by each chain
+        # as it is dressed. Nothing inside a build resolves a controller
+        # by name.
+        controls = fk_controls(scene_map, table=snapshot)
 
         created = 0
         recorded = 0
@@ -291,7 +395,12 @@ def build_fk(scene_map, only=None):
                 fresh_knots = [k for k in
                                overrig.set_members(overrig.KNOT_SET)
                                if k not in before_knots]
-                created += _dress_knots(fresh_knots, paths, radii, region_of)
+                dressed = _dress_knots(fresh_knots, paths, radii, region_of)
+                created += len(dressed)
+                # Into the index before coupling: the coupling is what
+                # needs it, and by name these knots are indistinguishable
+                # from another character's.
+                controls.update(control_index(dressed))
 
                 # Couple inside the same diff window so the coupling nodes
                 # land in this chain's manifest -- and inside the doubled
@@ -299,7 +408,8 @@ def build_fk(scene_map, only=None):
                 # Parents precede children in CHAINS, so a full build always
                 # finds its target; a restricted build couples only if the
                 # target controller happens to exist.
-                if _attach_chain(chain, scene_map, parent_of, targeted):
+                if _attach_chain(chain, scene_map, parent_of, targeted,
+                                 controls):
                     attached += 1
 
                 recorded += len(_record_fresh(chain_name, before))
@@ -309,8 +419,8 @@ def build_fk(scene_map, only=None):
         # the rotate CHANNELS in the bone's axes, the second turns the knot's
         # own frame onto the bone so the manipulator agrees with them. Neither
         # creates a node, so both stay out of the manifests.
-        aligned = align_controllers(scene_map, targets)
-        turned = orient_controllers(scene_map, targets)
+        aligned = align_controllers(scene_map, targets, controls)
+        turned = orient_controllers(scene_map, targets, controls)
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -335,14 +445,23 @@ def bake_targets(scene_map):
     never to everything on the way up. Bones resolve to whichever
     representation their chain currently has.
     """
+    # `adopt`, not `activate`: this is a read-only resolution and must not
+    # write a tag into the scene. It has to adopt something, though -- the
+    # press that follows resolves against whatever character is active, and
+    # a build elsewhere may have moved it since the last selection sync.
+    active.adopt(scene_map)
     selected = cmds.ls(selection=True, long=True) or []
 
+    # This character's manifests only. A click inside another character's
+    # rig resolves to nothing, and nothing happening is the safe direction
+    # of failure -- the wrong rig coming apart is not.
+    snapshot = manifest.records()
     candidates = []
     for name, _ in builder.LIMBS:
-        for m in overrig.set_members(builder.limb_set(name)):
+        for m in manifest.members(manifest.KIND_IK, name, table=snapshot):
             candidates.append((m, "ik", name))
     for name, _ in CHAINS:
-        for m in chain_members(name):
+        for m in chain_members(name, table=snapshot):
             candidates.append((m, "fk", name))
 
     bone_names = {}
@@ -360,7 +479,7 @@ def bake_targets(scene_map):
             name = bone_names[node]
             if name in built:
                 ik_hit.add(name)
-            elif chain_members(name):
+            elif chain_members(name, table=snapshot):
                 fk_hit.add(name)
             continue
         owner = innermost_owner(node, candidates)
@@ -397,6 +516,7 @@ def bake_selection(scene_map, ik_limbs, fk_chains):
     message = _mel_gate()
     if message:
         return message
+    manifest.activate(scene_map)
 
     messages = []
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
@@ -412,12 +532,10 @@ def bake_selection(scene_map, ik_limbs, fk_chains):
             messages.append(message)
 
         for limb in ik_limbs:
-            members = overrig.set_members(builder.limb_set(limb))
-            root_ctrls = {}
-            for chain_name, chain in CHAINS:
-                ctrl = chain_root_control(chain, scene_map)
-                paths = (cmds.ls(ctrl, long=True) or []) if ctrl else []
-                root_ctrls[chain_name] = paths[0] if paths else None
+            members = manifest.members(manifest.KIND_IK, limb)
+            index = fk_controls(scene_map)
+            root_ctrls = {chain_name: chain_root_path(chain, scene_map, index)
+                          for chain_name, chain in CHAINS}
             riders = dependent_chains(root_ctrls, members)
             riders = [c for c in riders if chain_members(c)]
             if riders:
@@ -459,6 +577,7 @@ def rebuild(scene_map, fk_limbs=False):
     message = _mel_gate()
     if message:
         return message
+    manifest.activate(scene_map)
 
     table = dict(CHAINS)
     messages = []
@@ -520,10 +639,11 @@ def rebuild(scene_map, fk_limbs=False):
                           or builder.ik_control(limb, "end"))
                 if not target:
                     continue
+                index = fk_controls(scene_map)
                 for chain in riders:
                     # The chain's own top controller, which on a skeleton
                     # without metacarpals is the one on <finger>_01_<side>.
-                    ctrl = chain_root_control(table[chain], scene_map)
+                    ctrl = chain_root_path(table[chain], scene_map, index)
                     if ctrl and cmds.objExists(ctrl):
                         _parent_in(ctrl, target, _ensure_chain_set(chain))
                         hung += 1
@@ -602,7 +722,8 @@ def _limb_anchor(scene_map, limb):
     so it lives and dies with the rig.
     """
     mark = limb + "_IK_anchor"
-    existing = _anchor_in(builder.limb_set(limb), mark)
+    limb_manifest = builder.limb_set(limb)
+    existing = _anchor_in(limb_manifest, mark)
     if existing:
         _mute_anchor(existing)
         return existing
@@ -616,7 +737,7 @@ def _limb_anchor(scene_map, limb):
     loc = cmds.parent(loc, ctrl)[0]
     cmds.parentConstraint(end_bone, loc, maintainOffset=True)
     _mute_anchor(loc)
-    cmds.sets(loc, addElement=builder.limb_set(limb))
+    cmds.sets(loc, addElement=builder._ensure_limb_set(limb))
     return cmds.ls(loc, long=True)[0]
 
 
@@ -641,10 +762,9 @@ def hang_ik_on_root(limb):
     -- IK built by Switch after a full bake stays in world, and the next
     Build re-hangs it.
     """
-    root_ctrl = controller_name("root")
-    if not cmds.objExists(root_ctrl):
+    root_path = control_for("root", fk_controls())
+    if not root_path:
         return 0
-    root_path = cmds.ls(root_ctrl, long=True)[0]
     hung = 0
     for role in IK_TOP_ROLES:
         node = builder.ik_control(limb, role)
@@ -652,7 +772,7 @@ def hang_ik_on_root(limb):
             continue
         if builder._is_inside(cmds.ls(node, long=True)[0], root_path):
             continue  # already there; the operation is idempotent
-        _parent_in(node, root_ctrl, builder._ensure_limb_set(limb))
+        _parent_in(node, root_path, builder._ensure_limb_set(limb))
         hung += 1
     return hung
 
@@ -730,13 +850,14 @@ def _rehang_riders(scene_map, limb, riders, now_ik):
     if not riders:
         return
     table = dict(CHAINS)
+    index = fk_controls(scene_map)
     if now_ik:
         target = _limb_anchor(scene_map, limb) or builder.ik_control(limb, "end")
     else:
         tip = chain_tip(table[limb], scene_map)
-        target = controller_name(tip) if tip else None
+        target = control_for(tip, index) if tip else None
     for chain in riders:
-        ctrl = chain_root_control(table[chain], scene_map)
+        ctrl = chain_root_path(table[chain], scene_map, index)
         if (target and ctrl and cmds.objExists(ctrl)
                 and cmds.objExists(target)):
             _parent_in(ctrl, target, _ensure_chain_set(chain))
@@ -752,6 +873,7 @@ def switch_limbs(scene_map, limbs):
     message = _mel_gate()
     if message:
         return [], list(limbs), message
+    manifest.activate(scene_map)
 
     table = dict(CHAINS)
     done = []
@@ -776,8 +898,9 @@ def switch_limbs(scene_map, limbs):
 
             riders = [c for c in finger_chains_for(limb)
                       if chain_members(c)]
+            index = fk_controls(scene_map)
             for chain in riders:
-                ctrl = chain_root_control(table[chain], scene_map)
+                ctrl = chain_root_path(table[chain], scene_map, index)
                 if ctrl and cmds.objExists(ctrl):
                     _parent_out(ctrl, _ensure_chain_set(chain))
 
@@ -828,6 +951,7 @@ def convert_limbs(scene_map, limbs, to_ik):
     message = _mel_gate()
     if message:
         return [], list(limbs), message
+    manifest.activate(scene_map)
 
     label = "IK" if to_ik else "FK"
     wanted = [l for l in limbs if l in SWITCHABLE]

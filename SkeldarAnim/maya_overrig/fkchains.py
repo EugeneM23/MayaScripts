@@ -102,12 +102,62 @@ def build_targets(only=None):
 
 
 def controller_name(joint):
-    """Name of the controller for a joint."""
+    """Name of the controller for a joint.
+
+    What NAMES a fresh controller. Since 2026-09-01 it is not what FINDS
+    one: with two characters in the scene the second build's knot is
+    `upperarm_l_FK_ctrl1`, so every name lookup resolved the first
+    character -- coupling one character's spine onto another's pelvis,
+    aligning somebody else's axes. Resolution goes through the per-
+    character index (`fkcontrols.fk_controls`) instead.
+    """
     return joint + SUFFIX
 
 
+def control_leaf(leaf):
+    """A knot's leaf name reduced to the controller name, or "".
+
+    Maya appends a digit run when a second character builds the same
+    chain, so `upperarm_l_FK_ctrl1` has to read as the same controller.
+    The suffix ends in a letter, so stripping trailing digits can never
+    eat part of a bone name -- `spine_01_FK_ctrl` survives whole.
+
+    Everything else is rejected, which is what keeps the machinery out of
+    the index: OverRig parks a dead `..._FK_ctrl_aimConstraint1` under
+    every knot, our ring arrives as `..._FK_ring_tmpShape`, and neither
+    reduces to a bare controller name.
+    """
+    bare = (leaf or "").rstrip("0123456789")
+    if bare.endswith(SUFFIX) and len(bare) > len(SUFFIX):
+        return bare
+    return ""
+
+
+def bone_of_control(leaf):
+    """The bone a controller leaf name belongs to, or "". Pure."""
+    name = control_leaf(leaf)
+    return name[:-len(SUFFIX)] if name else ""
+
+
+def controls_in(members):
+    """{bone name: control path} read out of one manifest's members.
+
+    Matching inside a manifest that already belongs to ONE character is
+    unambiguous -- which is the whole point of tagging the manifests. The
+    first hit wins, so a re-recorded duplicate cannot displace the
+    controller the build made.
+    """
+    found = {}
+    for path in members or []:
+        leaf = (path or "").split("|")[-1].split(":")[-1]
+        bone = bone_of_control(leaf)
+        if bone:
+            found.setdefault(bone, path)
+    return found
+
+
 def chain_set(chain):
-    """Name of the object set recording one chain's created nodes."""
+    """The readable name a NEW chain manifest gets. Pure."""
     return FK_SET_PREFIX + chain
 
 

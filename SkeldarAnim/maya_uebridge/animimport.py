@@ -6,6 +6,7 @@ its frame rate would be the most destructive thing this bridge could do. A
 mismatch is reported and the import proceeds.
 """
 
+import contextlib
 import os
 import re
 
@@ -13,6 +14,11 @@ import maya.cmds as cmds
 import maya.mel as mel
 
 FBX_PLUGIN = "fbxmaya"
+
+# The prefix the OTHER characters' joints wear for the length of one
+# exclusive merge. Nothing in this project or in UE is called anything
+# like it, and it is only ever on disk if Maya dies mid-import.
+HOLD_PREFIX = "rpHold_"
 
 TIME_UNIT_TO_FPS = {
     "game": 15, "film": 24, "pal": 25, "ntsc": 30,
@@ -187,6 +193,21 @@ def relink_note(bones):
     return "weapon re-linked on " + ", ".join(bones)
 
 
+def unheld_warning(names):
+    """Status text when another character could not be held aside. Pure.
+
+    Worth a warning rather than a refusal: the merge still lands on the
+    right names for the target, but a joint left holding its plain name in
+    another character could have taken the clip too.
+    """
+    if not names:
+        return ""
+    unique = sorted(set(names))
+    return ("{0} joint(s) of another character could not be renamed out of "
+            "the way ({1}) - check they kept their animation".format(
+                len(unique), ", ".join(unique[:3])))
+
+
 def _weapon_links(joints):
     """[(bone, weapon)] our weapon tool drives; [] when scenesetup is absent.
 
@@ -209,21 +230,43 @@ def _short(node):
     return (node or "").split("|")[-1]
 
 
-def choose_target_root(roots, selected_roots=()):
+def choose_target_root(roots, selected_roots=(), bound_root=None):
     """The skeleton a merge should land on, or None when it is not decidable.
 
-    Namespaced skeletons are never candidates: an exclusive merge matches plain
-    bone names, so a namespaced skeleton could not receive the clip anyway -
-    and in this tool they are exactly the reference imports of earlier clips.
+    The order the animator asked for (2026-09-01): "Import and Export
+    should first look at whether a bone hierarchy is SELECTED, and if the
+    selection is not empty, import onto the bones in the selection. If the
+    selection is empty, then look at the connect."
 
-    Guessing between two plausible skeletons would animate the wrong character
-    without saying so, which is worse than asking.
+        selection -> the picker's connected character -> the only skeleton
+        -> the one called `root` -> refuse
+
+    `bound_root` is the picker's binding, which is the animator's explicit
+    statement of which character they are working on. It sits ahead of
+    "the only skeleton" so that a scene holding several characters is
+    decidable at all without clicking a bone first.
+
+    Namespaced skeletons are never candidates at any step: an exclusive
+    merge matches plain bone names, so a namespaced skeleton could not
+    receive the clip anyway - and in this tool they are exactly the
+    reference imports of earlier clips.
+
+    Guessing between two plausible skeletons would animate the wrong
+    character without saying so, which is worse than asking.
     """
-    plain = [root for root in (roots or []) if ":" not in _short(root)]
+    def plain_only(paths):
+        return [root for root in (paths or [])
+                if root and ":" not in _short(root)]
 
-    chosen = [root for root in (selected_roots or []) if ":" not in _short(root)]
+    plain = plain_only(roots)
+
+    chosen = plain_only(selected_roots)
     if chosen:
         return chosen[0]
+
+    bound = plain_only([bound_root])
+    if bound:
+        return bound[0]
 
     if len(plain) == 1:
         return plain[0]
@@ -232,6 +275,93 @@ def choose_target_root(roots, selected_roots=()):
     if len(named) == 1:
         return named[0]
     return None
+
+
+def picker_root():
+    """The character the Rig Picker is connected to, or None.
+
+    Guarded and lazy: `picker_window` imports PySide6, which Maya 2024 and
+    older do not ship, and the bridge is plain `cmds` on purpose.
+    """
+    try:
+        from maya_overrig import picker_window
+    except Exception:
+        return None
+    try:
+        return picker_window.bound_root()
+    except Exception:
+        return None
+
+
+def resolve_target():
+    """The skeleton to merge onto, asking the scene the three questions."""
+    return choose_target_root(skeleton_roots(), selected_roots(),
+                              picker_root())
+
+
+def skeletons_to_hold(roots, target):
+    """Plain-named skeletons other than the target. Pure.
+
+    Choosing the right target is not enough on its own. `FBXImport -v
+    exmerge` matches bone names INSIDE the FBX plugin, so with two Mannys
+    in the scene `pelvis` is ambiguous and the plugin lands on whichever
+    it finds first - the animator asked for one character and the other
+    one moves.
+
+    Namespaced skeletons are left alone: their bones cannot collide with
+    the plain names the merge matches, and a REFERENCED skeleton (always
+    namespaced) could not be renamed anyway.
+    """
+    return [root for root in (roots or [])
+            if root and root != target and ":" not in _short(root)]
+
+
+def hold_name(short):
+    """The name a held-aside joint wears for one merge. Pure."""
+    return HOLD_PREFIX + short
+
+
+@contextlib.contextmanager
+def other_skeletons_held(target_root):
+    """Rename every other character's joints out of the merge's way.
+
+    A rename is invisible to connections - constraints, skinClusters and
+    animCurves are wired to nodes, not to names - and it is the only lever
+    that reaches inside the FBX plugin's own name matching.
+
+    Resolved through UUIDs on the way back: renaming a root changes every
+    descendant's path (trap 16), so the recorded paths are stale by the
+    second node. Restored in a `finally`, and skipped entirely when there
+    is nothing to hold, which is every single-character scene the tool has
+    ever run in.
+    """
+    held = []
+    failed = []
+    for root in skeletons_to_hold(skeleton_roots(), target_root):
+        for joint in joints_under(root):
+            short = _short(joint)
+            if short.startswith(HOLD_PREFIX):
+                continue
+            uuid = (cmds.ls(joint, uuid=True) or [None])[0]
+            if not uuid:
+                continue
+            try:
+                cmds.rename(joint, hold_name(short))
+            except RuntimeError:
+                failed.append(short)   # locked, referenced, read-only
+                continue
+            held.append((uuid, short))
+    try:
+        yield failed
+    finally:
+        for uuid, short in reversed(held):
+            paths = cmds.ls(uuid, long=True) or []
+            if not paths:
+                continue          # the animator deleted it mid-import
+            try:
+                cmds.rename(paths[0], short)
+            except RuntimeError:
+                pass              # nothing better to do; the name is cosmetic
 
 
 def skeleton_roots():
@@ -351,7 +481,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
     links = []
     if merge:
         roots = skeleton_roots()
-        target = choose_target_root(roots, selected_roots())
+        target = resolve_target()
         if target is None:
             raise RuntimeError(
                 AMBIGUOUS_TARGET_MESSAGE if roots else NO_TARGET_MESSAGE)
@@ -385,8 +515,12 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
     if merge:
         # Exclusive merge matches by name against what is already here, so the
         # import must NOT go into a namespace - a namespace is exactly what
-        # stops the names matching.
-        mel.eval(import_command(fbx_path))
+        # stops the names matching. For the same reason the OTHER characters
+        # are held aside by name for the length of the call: `pelvis` has to
+        # mean exactly one joint while the plugin is matching.
+        with other_skeletons_held(target) as failed_to_hold:
+            mel.eval(import_command(fbx_path))
+        unheld = list(failed_to_hold)
     else:
         # FBXImport has no namespace flag, but it honours the current one
         # (verified: 116/116 joints and 1081/1081 curves landed inside).
@@ -437,6 +571,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
         warnings.append(merge_warning(joint_count))
         warnings.append(stale_line(stale))
         warnings.append(relink_note(relinked))
+        warnings.append(unheld_warning(unheld))
 
     return {"relinked": relinked,
             "namespace": "" if merge else namespace,

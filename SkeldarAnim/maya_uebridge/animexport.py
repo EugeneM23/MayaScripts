@@ -77,11 +77,16 @@ def export_command(fbx_path):
 
 
 def resolve_root():
-    """The skeleton the export takes - the import merge's own rule (selection
-    wins, else the only plain skeleton, else the one named root), so the two
-    directions of the bridge always agree about "the" character."""
+    """The skeleton the export takes - the import merge's own rule.
+
+    One function decides for both directions (selection, then the picker's
+    connected character, then the only plain skeleton, then the one named
+    `root`), so Import and Export can never disagree about "the"
+    character. That was the user's ask in as many words: "такая же логика
+    с экспортом".
+    """
     roots = animimport.skeleton_roots()
-    root = animimport.choose_target_root(roots, animimport.selected_roots())
+    root = animimport.resolve_target()
     if root is None:
         raise RuntimeError(AMBIGUOUS_TARGET_MESSAGE if roots
                            else NO_TARGET_MESSAGE)

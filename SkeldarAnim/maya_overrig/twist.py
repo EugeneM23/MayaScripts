@@ -22,9 +22,9 @@ from collections import namedtuple
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 
-from maya_overrig import naming, overrig
+from maya_overrig import manifest, naming, overrig
 
-SET_PREFIX = "RigPicker_twist_"
+SET_PREFIX = manifest.TWIST_PREFIX
 
 # The driven channels, recorded on the manifest as "<uuid>.<attr>" -- see
 # driven_plugs for why neither walk of the rig itself is safe.
@@ -69,9 +69,20 @@ _PATTERN = re.compile(r"_twist_(\d+)(?:_|$)", re.IGNORECASE)
 # pure
 # ---------------------------------------------------------------------------
 
-def twist_set(limb):
-    """Name of the object set recording one limb's twist networks."""
+def twist_set_name(limb):
+    """The readable name a NEW twist manifest gets. Pure."""
     return SET_PREFIX + limb
+
+
+def twist_set(limb, table=None):
+    """The ACTIVE character's twist manifest for one limb.
+
+    Falls back to the readable name when this character has none, so
+    `set_members` reads empty and `objExists` reads False exactly as they
+    did before manifests carried a character tag.
+    """
+    return (manifest.find(manifest.KIND_TWIST, limb, table=table)
+            or twist_set_name(limb))
 
 
 def segments(scene_map):
@@ -206,8 +217,10 @@ def node_names(joint):
 
 
 def built_limbs():
-    """Limbs that currently have twist networks recorded against them."""
-    return [limb for limb in LIMBS if overrig.set_members(twist_set(limb))]
+    """Limbs the ACTIVE character has twist networks recorded against."""
+    table = manifest.records()
+    return [limb for limb in LIMBS
+            if manifest.members(manifest.KIND_TWIST, limb, table=table)]
 
 
 def has_twist():
@@ -420,10 +433,8 @@ def _spliced_conversions(nodes):
 
 
 def _ensure_set(limb):
-    name = twist_set(limb)
-    if not cmds.objExists(name):
-        cmds.sets(name=name, empty=True)
-    return name
+    """This character's twist manifest, created and tagged if absent."""
+    return manifest.ensure(manifest.KIND_TWIST, limb)
 
 
 def build(scene_map, limbs=None):
@@ -437,9 +448,11 @@ def build(scene_map, limbs=None):
     Rebuilds: any network already recorded for the limbs asked for is baked
     and removed first, so a second press cannot double it.
     """
+    manifest.activate(scene_map)
     wanted = list(LIMBS if limbs is None else limbs)
+    table = manifest.records()
     standing = [limb for limb in wanted
-                if overrig.set_members(twist_set(limb))]
+                if manifest.members(manifest.KIND_TWIST, limb, table=table)]
     replaced = 0
     if standing:
         replaced, _message = bake(standing)
@@ -543,8 +556,9 @@ def bake(limbs=None):
     Reads the playback range, never the time slider highlight, so it needs no
     highlight guard of its own.
     """
+    table = manifest.records()
     wanted = [limb for limb in (LIMBS if limbs is None else limbs)
-              if overrig.set_members(twist_set(limb))]
+              if manifest.members(manifest.KIND_TWIST, limb, table=table)]
     if not wanted:
         return 0, "no twist rig to bake"
 
@@ -557,13 +571,17 @@ def bake(limbs=None):
     cmds.autoKeyframe(state=False)
     try:
         for limb in wanted:
+            # Re-resolved per limb: the previous iteration's delete may
+            # have taken a manifest with it (trap 18), which invalidates
+            # any snapshot taken before the loop.
+            set_name = twist_set(limb)
             plugs = [p for p in driven_plugs(limb) if cmds.objExists(p)]
             samples = {}
             for plug in plugs:
                 samples[plug] = [cmds.getAttr(plug, time=frame)
                                  for frame in frames]
 
-            members = [m for m in overrig.set_members(twist_set(limb))
+            members = [m for m in overrig.set_members(set_name)
                        if cmds.objExists(m)]
             if members:
                 cmds.delete(members)
@@ -582,8 +600,8 @@ def bake(limbs=None):
 
             # Maya deletes an objectSet together with its last member (trap
             # 18), so by now the set may be gone.
-            if cmds.objExists(twist_set(limb)):
-                cmds.delete(twist_set(limb))
+            if cmds.objExists(set_name):
+                cmds.delete(set_name)
     finally:
         cmds.autoKeyframe(state=autokey)
 

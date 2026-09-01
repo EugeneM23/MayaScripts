@@ -416,6 +416,12 @@ def _hide_rig_machinery(nodes):
 def _dress_knots(knot_paths, chain_paths, radii, region_of):
     """Rename fresh knots to <bone>_FK_ctrl and put our ring shapes on them.
 
+    Returns {bone leaf name: knot path} -- the controller index for what
+    this call created. Since 2026-09-01 that return value is load-bearing
+    rather than a count: with two characters in the scene the rename comes
+    out as `upperarm_l_FK_ctrl1`, so the build cannot find its own knots
+    by name afterwards and is handed them here instead.
+
     Works through UUIDs: renaming a chain parent changes every descendant's
     path, so each knot's path is re-resolved just before its own rename.
     """
@@ -424,7 +430,7 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
     # invalidates the stored paths of every knot beneath it.
     uuid_by_bone = {bone: naming.uuid_of(knot)
                     for bone, knot in by_bone.items()}
-    dressed = 0
+    dressed = {}
     for bone, uuid in sorted(uuid_by_bone.items()):
         knot = naming.path_from_uuid(uuid)
         if not knot:
@@ -456,5 +462,5 @@ def _dress_knots(knot_paths, chain_paths, radii, region_of):
         shape = cmds.listRelatives(ring, shapes=True, fullPath=True)[0]
         cmds.parent(shape, knot, relative=True, shape=True)
         cmds.delete(ring)
-        dressed += 1
+        dressed[bare] = knot
     return dressed

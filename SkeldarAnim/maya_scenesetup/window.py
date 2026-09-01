@@ -494,7 +494,8 @@ def show_window():
                 annotation="Import the working character (Manny skeleton, "
                            "geometry and camera bone) into this scene -- "
                            "the same content as the rig scene, no manual "
-                           "open. Refuses if a skeleton is already here.",
+                           "open. Press it once per character; each one is "
+                           "connected in the picker as it arrives.",
                 command=lambda *_args: _run(add_character))
     cmds.separator(height=8, style="in")
 

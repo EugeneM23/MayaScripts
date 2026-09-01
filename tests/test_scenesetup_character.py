@@ -53,25 +53,68 @@ class SceneType(unittest.TestCase):
                          "mayaBinary")
 
 
-class Refusal(unittest.TestCase):
-    """Importing over an existing skeleton makes Maya rename the incoming
-    root (root1): a second character the picker and the UE bridge then
-    refuse to guess between. Nothing happening is the safe direction."""
+class NoRefusal(unittest.TestCase):
+    """The blanket refusal is GONE (2026-09-01): a scene holds as many
+    characters as the animator wants, because every rig operation is
+    scoped to the one the picker is connected to. Pinned as a gone-test so
+    it cannot come back by accident."""
 
-    def test_an_empty_scene_is_no_refusal(self):
-        self.assertEqual(character.refusal([]), "")
+    def test_the_refusal_is_gone(self):
+        self.assertFalse(hasattr(character, "refusal"))
+        self.assertFalse(hasattr(character, "ALREADY"))
 
-    def test_an_existing_skeleton_refuses_by_leaf_name(self):
-        message = character.refusal(["|SKM_Manny_Simple|root"])
-        self.assertIn("root", message)
-        self.assertIn("already", message)
 
-    def test_falsy_entries_are_ignored(self):
-        self.assertEqual(character.refusal([None, ""]), "")
+class NewRoot(unittest.TestCase):
+    """A path diff: the incoming TOP node is the one Maya renamed, so its
+    name is not knowable in advance, and everything below it kept its
+    plain name -- which is what a name diff would miss."""
 
-    def test_the_first_root_is_the_one_named(self):
-        message = character.refusal(["|a|rootA", "|b|rootB"])
-        self.assertIn("rootA", message)
+    def test_finds_the_root_the_import_added(self):
+        self.assertEqual(character.new_root(["|root"], ["|root", "|root1"]),
+                         "|root1")
+
+    def test_an_empty_scene_yields_the_only_root(self):
+        self.assertEqual(character.new_root([], ["|root"]), "|root")
+
+    def test_nothing_new_is_none(self):
+        self.assertIsNone(character.new_root(["|root"], ["|root"]))
+        self.assertIsNone(character.new_root([], []))
+        self.assertIsNone(character.new_root(None, None))
+
+    def test_the_shallowest_fresh_root_wins(self):
+        """The import brings rig-helper joints too; the character root is
+        always shallower than anything under it."""
+        self.assertEqual(
+            character.new_root([], ["|grp|root|extra_jnt", "|grp|root"]),
+            "|grp|root")
+
+    def test_ties_break_by_path_so_the_answer_never_moves(self):
+        self.assertEqual(character.new_root([], ["|zeta", "|alpha"]),
+                         character.new_root([], ["|alpha", "|zeta"]))
+
+
+class RenameNote(unittest.TestCase):
+    """Said out loud because the animator sees `root1` in the outliner and
+    wonders what went wrong. Nothing did -- only the top node collides."""
+
+    def test_names_the_new_root_and_the_one_already_there(self):
+        note = character.rename_note("|root1", ["|root", "|root1"])
+        self.assertIn("root1", note)
+        self.assertIn("root", note)
+
+    def test_the_first_character_gets_no_note(self):
+        self.assertEqual(character.rename_note("|root", ["|root"]), "")
+
+    def test_nothing_imported_gets_no_note(self):
+        self.assertEqual(character.rename_note(None, ["|root"]), "")
+        self.assertEqual(character.rename_note("|root", []), "")
+
+    def test_no_note_when_the_name_did_not_actually_collide(self):
+        """A character imported into a scene whose skeleton is called
+        something else keeps its own name."""
+        self.assertEqual(
+            character.rename_note("|root", ["|pelvis_only", "|root"]),
+            "imported as root (pelvis_only already in the scene)")
 
 
 class MalwareNodes(unittest.TestCase):
@@ -110,6 +153,19 @@ class AddedMessage(unittest.TestCase):
         self.assertIn("Manny added", message)
         self.assertIn("vaccine_gene", message)
         self.assertIn("malware", message)
+
+    def test_the_rename_note_rides_along(self):
+        message = character.added_message(
+            93, 6, [], note="imported as root1 (root already in the scene)")
+        self.assertIn("root1", message)
+
+    def test_the_connect_is_reported(self):
+        """"add it" and "work on it" are one press, so the press has to say
+        which one it happened to."""
+        self.assertIn("connected",
+                      character.added_message(93, 6, [], connected=True))
+        self.assertNotIn("connected",
+                         character.added_message(93, 6, []))
 
 
 class ShippedAsset(unittest.TestCase):

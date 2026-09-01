@@ -15,7 +15,8 @@ import maya.OpenMayaUI as omui
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import wrapInstance
 
-from maya_overrig import aimrig, bodymap, builder, fkcontrols, naming, pickerstate
+from maya_overrig import (active, aimrig, bodymap, builder, fkcontrols,
+                          manifest, naming, pickerstate)
 from maya_overrig.picker_view import MODE_ADD, MODE_TOGGLE, PickerView, mode_for
 
 WINDOW_OBJECT_NAME = "rigPickerWindow"
@@ -197,6 +198,7 @@ class PickerWindow(QtWidgets.QMainWindow):
         self._root_uuid = None
         self._scene_map = {}
         self._prefix = ""
+        active.clear()
         self._refresh_view()
         if len(roots) > 1:
             self.status.showMessage(
@@ -207,6 +209,14 @@ class PickerWindow(QtWidgets.QMainWindow):
 
     def _bind(self, root):
         self._root_uuid = naming.uuid_of(root)
+
+        # Connect IS the choice of active character (the user's own
+        # description: press Connect on a hierarchy and that hierarchy is
+        # what we work with). Claiming happens here too, so a scene rigged
+        # before manifests carried a character tag is migrated the moment
+        # it is connected -- which is before a second character can exist.
+        active.set_root(root)
+        manifest.claim_untagged()
 
         # Rigs often arrive with every joint prefixed. The prefix is worked out
         # once for the whole skeleton, so the body map's plain UE5 names line up
@@ -233,10 +243,16 @@ class PickerWindow(QtWidgets.QMainWindow):
     def _resolution(self):
         """Button id -> the node it selects, for everything that exists now.
 
-        FK controllers are our own renames, so the name lookup is trusted --
-        the same trust align and Switch already place in it. IK controls go
-        through the limb manifests, never by bare name. Unbound resolves
-        nothing: an unconnected picker is inert by design.
+        BOTH halves go through the bound character's own manifests, never
+        by bare name (2026-09-01). FK controllers used to be trusted as
+        our own renames -- true until a second character in the scene
+        makes Maya's second `upperarm_l_FK_ctrl` into `..._FK_ctrl1`, at
+        which point every button on character two lit up character one's
+        rig. Unbound resolves nothing: an unconnected picker is inert by
+        design.
+
+        One manifest snapshot for the whole sync: the scan is a scene-wide
+        `ls` and this runs on every selection change.
 
         The one exception to "controllers, never bones": the finger buttons
         fall back to the finger BONE, because finger FK controllers are no
@@ -247,18 +263,21 @@ class PickerWindow(QtWidgets.QMainWindow):
         if not self._scene_map:
             return {}
 
-        fk_nodes = {}
-        for joint in self._scene_map:
-            if joint not in self._fk_joints:
-                continue
-            paths = cmds.ls(fkcontrols.controller_name(joint),
-                            long=True) or []
-            fk_nodes[joint] = paths[0] if paths else None
+        # The window is the UI's definition of the active character, so it
+        # re-asserts it here rather than trusting whatever ran last: a
+        # verify script or a second panel can have adopted a different
+        # character since, and the buttons must keep showing THIS binding.
+        active.set_root(self.bound_root())
+
+        table = manifest.records()
+        controls = fkcontrols.fk_control_paths(self._scene_map, table=table)
+        fk_nodes = {joint: controls.get(joint)
+                    for joint in self._scene_map if joint in self._fk_joints}
 
         ik_nodes = {}
         for button in bodymap.IK_BUTTONS:
             ik_nodes[(button.limb, button.role)] = builder.ik_control(
-                button.limb, button.role)
+                button.limb, button.role, table=table)
 
         # Existence is re-checked rather than trusted: the binding is a
         # snapshot, and the animator keeps working in the scene while the
@@ -470,6 +489,14 @@ class PickerWindow(QtWidgets.QMainWindow):
         super(PickerWindow, self).closeEvent(event)
 
 
+def _open_window():
+    """The live picker window, or None."""
+    for widget in QtWidgets.QApplication.topLevelWidgets():
+        if widget.objectName() == WINDOW_OBJECT_NAME:
+            return widget
+    return None
+
+
 def bound_root():
     """The open picker's bound skeleton root, or None.
 
@@ -477,10 +504,27 @@ def bound_root():
     already driving. The binding lives in the live window and is not persisted
     anywhere, so there is nothing else to read it out of.
     """
-    for widget in QtWidgets.QApplication.topLevelWidgets():
-        if widget.objectName() == WINDOW_OBJECT_NAME:
-            return widget.bound_root()
-    return None
+    window = _open_window()
+    return window.bound_root() if window else None
+
+
+def connect_root(root):
+    """Bind the open picker to `root`. True when a picker took it.
+
+    What lets Add Character hand over the character it just imported, so
+    "add it" and "work on it" are one press. With no picker open the active
+    character is still set -- a Scene Setup press acts on it either way --
+    and the next Connect decides.
+    """
+    if not root:
+        return False
+    window = _open_window()
+    if window is None:
+        active.set_root(root)
+        manifest.claim_untagged()
+        return False
+    window._bind(root)
+    return True
 
 
 def show_picker():

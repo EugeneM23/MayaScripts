@@ -285,7 +285,27 @@ def _turn_onto_bone(ctrl, offset):
     return True
 
 
-def orient_controllers(scene_map, only=None):
+def _control_path(joint, controls):
+    """One bone's controller path, or None.
+
+    `controls` is the per-character index {bone: controller UUID} the
+    build assembles -- with a second character in the scene the knot is
+    called `upperarm_l_FK_ctrl1` and the name lookup below resolves the
+    WRONG character's controller, which would rewrite its rotate axes.
+    Left as None the name lookup stands, which is what a single-character
+    scene (and every verify script calling these two directly) needs.
+    """
+    if controls is not None:
+        uuid = controls.get(joint)
+        if not uuid:
+            return None
+        found = cmds.ls(uuid, long=True) or []
+        return found[0] if found else None
+    name = fkchains.controller_name(joint)
+    return name if cmds.objExists(name) else None
+
+
+def orient_controllers(scene_map, only=None, controls=None):
     """Turn every built FK controller onto its bone's frame. Bones do not move.
 
     The half of "on the bone's axes" that `align_controllers` cannot buy: it
@@ -303,9 +323,9 @@ def orient_controllers(scene_map, only=None):
         if only is not None and chain_name not in only:
             continue
         for joint in chain:
-            ctrl = fkchains.controller_name(joint)
+            ctrl = _control_path(joint, controls)
             bone = scene_map.get(joint)
-            if not (cmds.objExists(ctrl) and bone and cmds.objExists(bone)):
+            if not (ctrl and bone and cmds.objExists(bone)):
                 continue
             plan.append((ctrl, axes.frame_offset(_world_rotation(bone),
                                                  _world_rotation(ctrl))))
@@ -376,7 +396,7 @@ def _align_one(ctrl, bone):
     return True
 
 
-def align_controllers(scene_map, only=None):
+def align_controllers(scene_map, only=None, controls=None):
     """Re-express every built FK controller in its bone's axes. Nothing moves.
 
     Puts the controllers on the skeleton's own mirror convention, so a
@@ -391,9 +411,9 @@ def align_controllers(scene_map, only=None):
         if only is not None and chain_name not in only:
             continue
         for joint in chain:
-            ctrl = fkchains.controller_name(joint)
+            ctrl = _control_path(joint, controls)
             bone = scene_map.get(joint)
-            if not (cmds.objExists(ctrl) and bone and cmds.objExists(bone)):
+            if not (ctrl and bone and cmds.objExists(bone)):
                 continue
             if _align_one(ctrl, bone):
                 aligned += 1

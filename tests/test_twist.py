@@ -57,12 +57,14 @@ class TestSegments(unittest.TestCase):
         self.assertEqual(twist.LIMBS, ("arm_l", "arm_r", "leg_l", "leg_r"))
 
     def test_set_name_is_per_limb(self):
-        self.assertEqual(twist.twist_set("arm_l"), "RigPicker_twist_arm_l")
+        self.assertEqual(twist.twist_set_name("arm_l"),
+                         "RigPicker_twist_arm_l")
 
     def test_the_set_name_carries_the_shared_prefix(self):
         """builder.recorded_members() finds it by the RigPicker_ prefix, so
         the twist rig is shielded from _reclaim like every other manifest."""
-        self.assertTrue(twist.twist_set("leg_r").startswith("RigPicker_"))
+        self.assertTrue(twist.twist_set_name("leg_r").startswith(
+            "RigPicker_"))
 
 
 class TestTwistJoints(unittest.TestCase):

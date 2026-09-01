@@ -46,13 +46,24 @@ def choose_root(picker_root_path, selection_roots, scene_roots):
 
 
 def current_root():
-    """Ask the scene the three questions and let `choose_root` decide."""
-    from maya_overrig import builder  # drags maya.mel in; not needed to import
+    """Ask the scene the three questions and let `choose_root` decide.
+
+    Whatever it decides becomes the ACTIVE character (2026-09-01), because
+    everything downstream of here reads the rig through this character's own
+    manifests: `connect.linked_weapon` asks for its IK hand controls,
+    Connect switches its arms. Without this a scene with two characters and
+    no picker open would resolve a root here and then look the rig up
+    against whichever character something else made active last.
+    """
+    from maya_overrig import active  # drags maya.mel in; not needed to import
+    from maya_overrig import builder
 
     selection = cmds.ls(selection=True, long=True) or []
-    return choose_root(picker_root(),
+    root = choose_root(picker_root(),
                        [naming.find_root(node) for node in selection],
                        builder.character_roots())
+    active.set_root(root)
+    return root
 
 
 def bone_in(hierarchy, bone_name):

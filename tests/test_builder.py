@@ -118,12 +118,16 @@ class TestMissingLimbs(unittest.TestCase):
 
 
 class TestLimbSet(unittest.TestCase):
+    """`limb_set_name` is what NAMES a fresh manifest and is pure.
+    `limb_set` FINDS the active character's, so it reads the scene and is
+    proved by tests/test_manifest.py and the live verify."""
 
     def test_name_is_prefixed(self):
-        self.assertEqual(builder.limb_set("leg_l"), "RigPicker_build_leg_l")
+        self.assertEqual(builder.limb_set_name("leg_l"),
+                         "RigPicker_build_leg_l")
 
     def test_every_limb_gets_a_distinct_set(self):
-        names = [builder.limb_set(name) for name, _ in builder.LIMBS]
+        names = [builder.limb_set_name(name) for name, _ in builder.LIMBS]
         self.assertEqual(len(set(names)), len(builder.LIMBS))
 
 

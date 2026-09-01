@@ -1,16 +1,19 @@
 """Build OverRig setups on the skeleton the picker is bound to.
 
 This module holds the policy -- which joints make up a limb, what gets
-recorded, what a rebuild removes. All MEL knowledge lives in overrig.py.
+recorded, what a rebuild removes. All MEL knowledge lives in overrig.py,
+and which character a manifest belongs to lives in manifest.py: since
+2026-09-01 a limb's set is found by its character tag, never by its name,
+so a second character in the scene cannot be read as unrigged.
 """
 
 from collections import namedtuple
 
 import maya.cmds as cmds
 
-from maya_overrig import naming, overrig
+from maya_overrig import active, manifest, naming, overrig
 
-BUILD_SET_PREFIX = "RigPicker_build_"
+BUILD_SET_PREFIX = manifest.IK_PREFIX
 
 # Arms and legs: three joints each, in the order OverRig's IK proc requires
 # -- root, middle, end. Any other order produces a wrong chain.
@@ -54,21 +57,40 @@ def missing_limbs(scene_map):
             if not all(joint in scene_map for joint in joints)]
 
 
-def limb_set(limb):
-    """Name of the object set recording one limb's created nodes."""
-    return BUILD_SET_PREFIX + limb
+def limb_set_name(limb):
+    """The readable name a NEW limb manifest gets. Pure.
+
+    Maya uniquifies it when a second character builds the same limb, which
+    is why nothing looks a manifest up by this name.
+    """
+    return manifest.set_name_for(manifest.KIND_IK, limb)
 
 
-def ik_control(limb, role):
+def limb_set(limb, table=None):
+    """The ACTIVE character's manifest for one limb.
+
+    Falls back to the readable name when this character has none, so every
+    caller's `set_members(...)` reads empty and every `objExists(...)`
+    reads False -- exactly what they did before manifests were tagged.
+    """
+    return (manifest.find(manifest.KIND_IK, limb, table=table)
+            or limb_set_name(limb))
+
+
+def ik_control(limb, role, table=None):
     """The IK control of a built limb for a role, through its manifest.
 
     Roles come from IK_ROLES: `end` is the control at the chain tip, `pole`
     the middle target, `base` the group at the chain root. Never found by
     bare scene name -- OverRig suffixes renames on collision, so the search
-    space is the limb's own recorded nodes.
+    space is the limb's own recorded nodes, and since 2026-09-01 that means
+    the ACTIVE character's own recorded nodes.
+
+    `table` is a `manifest.records()` snapshot: the picker asks eleven
+    times per selection sync and each lookup is otherwise a scene-wide ls.
     """
     mark = IK_ROLES[role]
-    for member in overrig.set_members(limb_set(limb)):
+    for member in manifest.members(manifest.KIND_IK, limb, table=table):
         if not cmds.objExists(member):
             continue
         if mark in member.split("|")[-1] and cmds.objectType(member) in (
@@ -78,9 +100,14 @@ def ik_control(limb, role):
 
 
 def built_limbs():
-    """Limbs that currently have nodes recorded against them."""
+    """Limbs the ACTIVE character has nodes recorded against.
+
+    One manifest snapshot for all four questions: the scan is a scene-wide
+    `ls` and this runs on every selection sync.
+    """
+    table = manifest.records()
     return [name for name, _ in LIMBS
-            if overrig.set_members(limb_set(name))]
+            if manifest.members(manifest.KIND_IK, name, table=table)]
 
 
 def character_roots():
@@ -89,9 +116,11 @@ def character_roots():
     Anything OverRig created is skipped. Its IK groups contain joints of their
     own, and without this a scene with a build in it reports a dozen skeletons
     instead of one, so the picker refuses to auto-connect.
+
+    Lives in `active` now, so `manifest` can ask without importing this
+    module; the name stays here because every caller already uses it.
     """
-    return naming.find_skeleton_roots(
-        exclude_under=overrig.set_members(overrig.KNOT_SET))
+    return active.character_roots()
 
 
 def top_level(path):
@@ -139,6 +168,11 @@ def recorded_members():
     The FK chain sets share the RigPicker_ prefix with the limb sets, so a
     name scan covers both without builder having to know fkcontrols'
     constants (importing it would be a cycle).
+
+    Deliberately NOT scoped to the active character. This is the shield
+    that stops `_reclaim` dooming anything we bookkept; scoping it would
+    let a bake on one character reclaim another's rig as "unrecorded".
+    Scene-wide is the safe direction of failure here.
     """
     members = []
     for set_name in cmds.ls("RigPicker_*", type="objectSet") or []:
@@ -263,10 +297,8 @@ def _recordable(node):
 
 
 def _ensure_limb_set(limb):
-    name = limb_set(limb)
-    if not cmds.objExists(name):
-        cmds.sets(name=name, empty=True)
-    return name
+    """This character's limb manifest, created and tagged if absent."""
+    return manifest.ensure(manifest.KIND_IK, limb)
 
 
 def has_build():
@@ -383,8 +415,13 @@ def bake_limbs(scene_map, limbs):
     if selection:
         return BuildResult([], list(limbs), 0, 0,
                            overrig.slider_message(selection))
+    # After the guards: activating CLAIMS untagged manifests, and a
+    # refusal must leave the scene exactly as it found it.
+    manifest.activate(scene_map)
 
-    members_by_limb = {name: overrig.set_members(limb_set(name))
+    table = manifest.records()
+    members_by_limb = {name: manifest.members(manifest.KIND_IK, name,
+                                              table=table)
                        for name, _ in LIMBS}
 
     # A rig parked inside another must be baked before its container is
@@ -426,7 +463,13 @@ def bake_limbs(scene_map, limbs):
     cmds.undoInfo(openChunk=True, chunkName="Rig Picker bake")
     try:
         for limb in limbs:
-            members = [m for m in overrig.set_members(limb_set(limb))
+            # Re-resolved per limb, and AFTER any lifting: recorded long
+            # paths are only valid until something re-parents them (trap
+            # 16), and the manifest itself may have been created since the
+            # snapshot above.
+            set_name = manifest.find(manifest.KIND_IK, limb)
+            members = [m for m in (overrig.set_members(set_name)
+                                   if set_name else [])
                        if cmds.objExists(m)]
             joints = [j for j in resolved.get(limb, []) if cmds.objExists(j)]
             if not members and not joints:
@@ -443,8 +486,10 @@ def bake_limbs(scene_map, limbs):
             if members:
                 cmds.delete(members)
                 removed += len(members)
-            if cmds.objExists(limb_set(limb)):
-                cmds.delete(limb_set(limb))
+            # Maya deletes an objectSet together with its last member, so a
+            # successful teardown often leaves nothing to delete (trap 18).
+            if set_name and cmds.objExists(set_name):
+                cmds.delete(set_name)
 
             # Anything still driving these joints was built outside our
             # bookkeeping -- an older version, or a manifest that got lost.
@@ -485,6 +530,7 @@ def build(scene_map, only=None):
     selection = overrig.slider_selection()
     if selection:
         return BuildResult([], [], 0, 0, overrig.slider_message(selection))
+    manifest.activate(scene_map)
 
     resolvable = limb_joints(scene_map)
     if only is not None:

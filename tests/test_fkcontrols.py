@@ -71,6 +71,82 @@ class TestControllerName(unittest.TestCase):
         self.assertEqual(len(names), len(bodymap.BUTTONS))
 
 
+class TestControlLeaf(unittest.TestCase):
+    """Reading a controller back out of a manifest member's leaf name.
+
+    The bug behind it: with a second character in the scene Maya renames
+    the second build's knot to `upperarm_l_FK_ctrl1`, so the name lookup
+    the whole rig trusted resolved the FIRST character -- coupling one
+    character's chain onto another's, aligning somebody else's axes.
+    """
+
+    def test_a_plain_controller_reads_as_itself(self):
+        self.assertEqual(fkcontrols.control_leaf("upperarm_l_FK_ctrl"),
+                         "upperarm_l_FK_ctrl")
+
+    def test_mayas_uniquifying_digits_are_stripped(self):
+        self.assertEqual(fkcontrols.control_leaf("upperarm_l_FK_ctrl1"),
+                         "upperarm_l_FK_ctrl")
+        self.assertEqual(fkcontrols.control_leaf("upperarm_l_FK_ctrl12"),
+                         "upperarm_l_FK_ctrl")
+
+    def test_a_bone_name_ending_in_digits_survives_whole(self):
+        """The suffix ends in a letter, so the strip can never eat part of
+        a bone name: `spine_01_FK_ctrl` has to come back intact."""
+        self.assertEqual(fkcontrols.control_leaf("spine_01_FK_ctrl"),
+                         "spine_01_FK_ctrl")
+        self.assertEqual(fkcontrols.bone_of_control("index_02_l_FK_ctrl"),
+                         "index_02_l")
+
+    def test_the_machinery_is_rejected(self):
+        """OverRig parks a dead aimConstraint under every knot, our ring
+        arrives as a *_FK_ring_tmpShape, and the anchor is a locator --
+        none of them may enter the index."""
+        for leaf in ("upperarm_l_FK_ctrl_aimConstraint1",
+                     "upperarm_l_FK_ctrlShape",
+                     "upperarm_l_FK_ring_tmpShape",
+                     "arm_l_IK_anchor", "fin_jnt11", "_FK_ctrl", "", None):
+            self.assertEqual(fkcontrols.control_leaf(leaf), "", repr(leaf))
+            self.assertEqual(fkcontrols.bone_of_control(leaf), "", repr(leaf))
+
+    def test_bone_of_control_drops_the_suffix(self):
+        self.assertEqual(fkcontrols.bone_of_control("upperarm_l_FK_ctrl1"),
+                         "upperarm_l")
+
+
+class TestControlsIn(unittest.TestCase):
+
+    def test_reads_the_controllers_out_of_a_manifest(self):
+        members = ["|spine_01_FK_ctrl",
+                   "|spine_01_FK_ctrl|spine_02_FK_ctrl",
+                   "|spine_01_FK_ctrl|spine_01_FK_ctrl_aimConstraint1",
+                   "|Z_something"]
+        self.assertEqual(fkcontrols.controls_in(members),
+                         {"spine_01": "|spine_01_FK_ctrl",
+                          "spine_02":
+                              "|spine_01_FK_ctrl|spine_02_FK_ctrl"})
+
+    def test_a_second_characters_manifest_reads_the_same_bones(self):
+        """The manifest already belongs to one character, so matching
+        inside it is unambiguous -- that is the whole point of tagging."""
+        members = ["|root1|spine_01_FK_ctrl1"]
+        self.assertEqual(fkcontrols.controls_in(members),
+                         {"spine_01": "|root1|spine_01_FK_ctrl1"})
+
+    def test_a_namespace_is_stripped_from_the_key(self):
+        self.assertEqual(fkcontrols.controls_in(["|hero:pelvis_FK_ctrl"]),
+                         {"pelvis": "|hero:pelvis_FK_ctrl"})
+
+    def test_the_first_hit_wins(self):
+        members = ["|a|pelvis_FK_ctrl", "|b|pelvis_FK_ctrl"]
+        self.assertEqual(fkcontrols.controls_in(members),
+                         {"pelvis": "|a|pelvis_FK_ctrl"})
+
+    def test_nothing_in_nothing_out(self):
+        self.assertEqual(fkcontrols.controls_in([]), {})
+        self.assertEqual(fkcontrols.controls_in(None), {})
+
+
 class TestColourFor(unittest.TestCase):
 
     def test_left_and_right_differ(self):

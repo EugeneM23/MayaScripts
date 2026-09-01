@@ -202,6 +202,90 @@ class TargetSkeleton(unittest.TestCase):
         self.assertIn("select", animimport.NO_TARGET_MESSAGE.lower())
 
 
+class ConnectedCharacterIsTheFallback(unittest.TestCase):
+    """The 2026-09-01 order, in the user's words: "look first at whether a
+    bone hierarchy is selected... if the selection is empty, look at the
+    connect"."""
+
+    def test_the_selection_still_beats_the_connect(self):
+        chosen = animimport.choose_target_root(
+            ["|root", "|root1"], selected_roots=["|root1"],
+            bound_root="|root")
+        self.assertEqual(chosen, "|root1")
+
+    def test_the_connect_decides_when_nothing_is_selected(self):
+        chosen = animimport.choose_target_root(
+            ["|root", "|root1"], selected_roots=[], bound_root="|root1")
+        self.assertEqual(chosen, "|root1")
+
+    def test_the_connect_beats_the_one_called_root(self):
+        """Otherwise a picker connected to the second Manny would still
+        import onto the first one, which is the whole bug."""
+        chosen = animimport.choose_target_root(
+            ["|root", "|root1"], bound_root="|root1")
+        self.assertEqual(chosen, "|root1")
+
+    def test_a_namespaced_connect_does_not_override(self):
+        chosen = animimport.choose_target_root(
+            ["|root", "|AS_Clip:root"], bound_root="|AS_Clip:root")
+        self.assertEqual(chosen, "|root")
+
+    def test_no_connect_falls_through_to_the_old_rules(self):
+        self.assertEqual(
+            animimport.choose_target_root(["|rig_root", "|root"],
+                                          bound_root=None),
+            "|root")
+        self.assertIsNone(
+            animimport.choose_target_root(["|hero", "|enemy"],
+                                          bound_root=None))
+
+
+class HoldingOtherSkeletons(unittest.TestCase):
+    """Choosing the right target is not enough: `FBXImport -v exmerge`
+    matches bone names inside the plugin, so with two Mannys in the scene
+    `pelvis` is ambiguous and the plugin lands on whichever it finds."""
+
+    def test_the_other_plain_skeleton_is_held(self):
+        self.assertEqual(
+            animimport.skeletons_to_hold(["|root", "|root1"], "|root"),
+            ["|root1"])
+
+    def test_the_target_itself_is_never_held(self):
+        self.assertNotIn(
+            "|root", animimport.skeletons_to_hold(["|root"], "|root"))
+
+    def test_a_single_character_scene_holds_nothing(self):
+        """Every scene the tool has ever run in: the whole mechanism has to
+        be a no-op there."""
+        self.assertEqual(animimport.skeletons_to_hold(["|root"], "|root"), [])
+        self.assertEqual(animimport.skeletons_to_hold([], "|root"), [])
+        self.assertEqual(animimport.skeletons_to_hold(None, "|root"), [])
+
+    def test_namespaced_skeletons_are_left_alone(self):
+        """Their bones cannot collide with the plain names the merge
+        matches - and a referenced skeleton (always namespaced) could not
+        be renamed anyway."""
+        self.assertEqual(
+            animimport.skeletons_to_hold(["|root", "|AS_Clip:root"], "|root"),
+            [])
+
+    def test_the_hold_name_is_a_prefix_nothing_else_uses(self):
+        self.assertEqual(animimport.hold_name("pelvis"), "rpHold_pelvis")
+        self.assertTrue(
+            animimport.hold_name("pelvis").startswith(
+                animimport.HOLD_PREFIX))
+
+    def test_a_joint_that_could_not_be_held_is_warned_about(self):
+        warning = animimport.unheld_warning(["pelvis", "pelvis", "spine_01"])
+        self.assertIn("pelvis", warning)
+        self.assertIn("spine_01", warning)
+        self.assertIn("2", warning)
+
+    def test_nothing_unheld_is_no_warning(self):
+        self.assertEqual(animimport.unheld_warning([]), "")
+        self.assertEqual(animimport.unheld_warning(None), "")
+
+
 class MergeDefault(unittest.TestCase):
     """`merge` left unset must follow the namespace, or a caller asking for a
     named skeleton silently gets its scene overwritten instead."""
