@@ -251,3 +251,36 @@ trust — `verify_add_character.py` now measures the mesh's world bounding box
 and that the importer's locks are back on.
 
 Green live 2026-09-02: **0 of 28 gates failed.**
+
+### Addendum 3: grey, not black — and a trap-16 regression it uncovered
+
+«давай изменим цвет материала на серый а то сейчас сильно темный». Measured:
+the FBX brings `M_UE4Man_Body` and `M_UE4Man_ChestLogo` as phongs with
+**color (0, 0, 0)**. UE does not put textures in the file, so the reference
+figure arrives pure black.
+
+`character.grey_black_materials` sets them to Maya's own default grey
+(0.5, 0.5, 0.5), and the rule has two conditions of which the second is the
+one that matters:
+
+- the colour is near-black (≤ 0.02 on every channel), and
+- **the colour plug carries no texture.** A textured colour is never
+  overridden whatever its plug reads, because the texture is what decides
+  the look and the value is meaningless then. Verified: a phong with a ramp
+  on `.color` comes through untouched, connection intact.
+
+Scoped to the nodes this import created, and to the FBX path only — a black
+material in Manny's `.ma` would be somebody's choice.
+
+**And it uncovered a regression of my own.** `import_asset` was returning
+the import's original long paths, which `flatten_wrappers` had just
+invalidated by re-parenting everything out of the wrapper (trap 16). The
+status line therefore read **"UE4 Mannequin added - 0 joints, 0 meshes"**,
+and the malware sweep — which runs over that same list — was scanning stale
+paths and would have found nothing. Fixed by capturing UUIDs before the
+flatten and resolving live paths after it; the press reports 68 and 2 again.
+
+Two gates were added for exactly these: the materials are not black, and
+the press counted what actually arrived.
+
+Green live 2026-09-02: **0 of 30 gates failed.**

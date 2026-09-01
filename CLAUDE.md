@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1309 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1316 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1811,10 +1811,25 @@ verify now measures the MESH's world bounding box, because every gate in
 the failing run passed while the animator looked at a character on its
 side — they all measured joints.
 
-Proof: `verify_add_character.py`, **green live 2026-09-02, 0 of 28 gates
+**The mannequin is greyed on arrival** (2026-09-02, «сильно темный»): UE
+puts no textures in the FBX, so `M_UE4Man_Body` and `M_UE4Man_ChestLogo`
+come in at color (0,0,0) and the reference figure is pure black.
+`grey_black_materials` sets a near-black, **untextured** colour to Maya's
+own default grey — textured never, whatever the plug reads, because the
+texture is what decides the look. FBX path only: a black material in
+Manny's `.ma` is somebody's choice.
+
+**`import_asset` returns UUID-resolved paths**, and that is not tidiness:
+the flatten re-parents everything out of the wrapper, so the import's own
+long paths are stale by the time the caller counts them (trap 16). Against
+stale paths the status read "0 joints, 0 meshes" and the malware sweep —
+which walks that same list — scanned nothing.
+
+Proof: `verify_add_character.py`, **green live 2026-09-02, 0 of 30 gates
 failed** — the flat shape (skeleton and mesh at world level, no wrapper),
 the rest pose surviving the flatten to 0.01, the mesh standing where the
-skeleton does, the locks restored, and the point of the feature:
+skeleton does, the locks restored, the materials grey, the press counting
+what actually arrived, and the point of the feature:
 a `SwordAnimsetPro` clip imported onto the freshly added mannequin, every
 bone the clip can name animated, the bridge resolving it as the target
 through Connect, **and the animated character standing up** (head at

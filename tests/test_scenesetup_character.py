@@ -294,3 +294,33 @@ class TransformPlugs(unittest.TestCase):
     def test_the_order_is_stable_across_calls(self):
         self.assertEqual(character.transform_plugs("a"),
                          character.transform_plugs("a"))
+
+
+class NeedsGrey(unittest.TestCase):
+    """The UE4 mannequin's FBX brings its two materials at color (0,0,0):
+    UE does not put the textures in the file, so the character arrives pure
+    black. A reference figure has to read as a figure."""
+
+    def test_a_flat_black_material_is_the_case_this_exists_for(self):
+        self.assertTrue(character.needs_grey((0.0, 0.0, 0.0), False))
+
+    def test_a_TEXTURED_colour_is_never_overridden(self):
+        """The texture decides the look and the plug's value means nothing
+        then -- black or not."""
+        self.assertFalse(character.needs_grey((0.0, 0.0, 0.0), True))
+        self.assertFalse(character.needs_grey((0.8, 0.8, 0.8), True))
+
+    def test_a_material_that_is_merely_dark_is_left_alone(self):
+        self.assertFalse(character.needs_grey((0.2, 0.2, 0.2), False))
+
+    def test_a_coloured_material_is_left_alone(self):
+        self.assertFalse(character.needs_grey((0.0, 0.0, 0.6), False))
+
+    def test_rounding_noise_still_counts_as_black(self):
+        self.assertTrue(character.needs_grey((0.0, 1e-8, 0.0), False))
+
+    def test_no_colour_at_all_is_not_a_decision(self):
+        self.assertFalse(character.needs_grey(None, False))
+
+    def test_the_grey_is_maya_s_own_default(self):
+        self.assertEqual(character.GREY, (0.5, 0.5, 0.5))

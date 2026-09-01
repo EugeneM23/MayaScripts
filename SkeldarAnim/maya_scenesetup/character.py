@@ -168,7 +168,63 @@ def wrapper_nodes(nodes, is_joint, has_shape, depth):
     return found
 
 
+# A reference figure should read as a figure. The UE4 mannequin's FBX
+# brings `M_UE4Man_Body` and `M_UE4Man_ChestLogo` with color (0, 0, 0) --
+# UE does not put the textures in the file, so the character arrives pure
+# black («сильно темный»). Maya's own default lambert grey is the obvious
+# value to land on, and it is one constant so a second asset with the same
+# problem needs no second decision.
+GREY = (0.5, 0.5, 0.5)
+
+# What counts as "black enough to be a mistake". A material an artist
+# genuinely made black sits at 0.0 too, which is why the texture test below
+# matters more than this threshold.
+_BLACK = 0.02
+
 TRANSFORM_CHANNELS = ("translate", "rotate", "scale", "shear")
+
+
+def needs_grey(colour, textured):
+    """Whether a material arrived unusably dark. Pure.
+
+    Two conditions, and the second is the important one: a TEXTURED colour
+    is never overridden, whatever it reads as, because the texture is what
+    decides the look and the plug's value is meaningless then. Only a flat,
+    near-black, untextured colour is the "the textures did not come along"
+    case this exists for.
+    """
+    if textured or colour is None:
+        return False
+    return all(abs(channel) <= _BLACK for channel in colour)
+
+
+def grey_black_materials(nodes):
+    """Give this import's pure-black materials a grey colour.
+
+    Scoped to the nodes the import created, so nothing already in the
+    animator's scene is touched -- and to the FBX path, because Manny's
+    `.ma` brings its own shading and a black material there would be
+    somebody's choice.
+    """
+    changed = []
+    for material in (cmds.ls(nodes, materials=True) or []):
+        plug = material + ".color"
+        if not cmds.objExists(plug):
+            continue
+        textured = bool(cmds.listConnections(plug, source=True,
+                                             destination=False))
+        try:
+            colour = cmds.getAttr(plug)[0]
+        except Exception:
+            continue
+        if not needs_grey(colour, textured):
+            continue
+        try:
+            cmds.setAttr(plug, GREY[0], GREY[1], GREY[2], type="double3")
+        except RuntimeError:
+            continue  # locked or referenced; the look is not worth a raise
+        changed.append(material)
+    return changed
 
 
 def transform_plugs(node):
@@ -283,12 +339,21 @@ def import_asset(path):
     if is_fbx(path):
         from maya_scenesetup import fbximport
         new = fbximport.import_nodes(path)
+        # UUIDs BEFORE the flatten. Re-parenting invalidates the long path
+        # of every node under the wrapper (trap 16), and the caller counts
+        # these and sweeps them for malware -- against stale paths it
+        # counted zero joints and swept nothing.
+        uuids = cmds.ls(new, uuid=True) or []
         # FBX only: the wrapper is that importer's artifact, and Manny's
         # `.ma` brings its skeleton, meshes and camera at world level
         # already. Running this over a `.ma` would flatten the mesh GROUP
         # the animator's file legitimately has.
         flatten_wrappers(new)
-        return [node for node in new if cmds.objExists(node)]
+        live = []
+        for uuid in uuids:
+            live.extend(cmds.ls(uuid, long=True) or [])
+        grey_black_materials(live)
+        return live
     return cmds.file(path, i=True, type=scene_type(path),
                      returnNewNodes=True, ignoreVersion=True) or []
 

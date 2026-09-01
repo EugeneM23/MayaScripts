@@ -285,6 +285,29 @@ else:
          and (box[5] - box[2]) < 60.0,
          "bbox Y {0:.2f}..{1:.2f}  Z {2:.2f}..{3:.2f}".format(
              box[1], box[4], box[2], box[5]) if box else "no mesh")
+    # A reference figure has to READ as a figure. UE puts no textures in
+    # the FBX, so both materials arrive at color (0,0,0) and the mannequin
+    # is pure black («сильно темный»).
+    imported_materials = [m for m in
+                          (cmds.ls(cmds.ls(new_uuids, long=True) or [],
+                                   materials=True) or [])]
+    dark = [m for m in imported_materials
+            if cmds.objExists(m + ".color")
+            and not cmds.listConnections(m + ".color", source=True,
+                                         destination=False)
+            and max(cmds.getAttr(m + ".color")[0]) <= 0.02]
+    gate("22f the materials are grey, not black",
+         bool(imported_materials) and not dark,
+         "{0} material(s), {1} still black".format(
+             len(imported_materials), len(dark)))
+
+    # The counts in the status line come from the nodes the import
+    # reports, and after the flatten every long path below the wrapper is
+    # stale (trap 16) -- against stale paths it said "0 joints, 0 meshes"
+    # and the malware sweep scanned nothing.
+    gate("22g the press counted what actually arrived",
+         "68 joints" in message and "2 meshes" in message, message)
+
     gate("22e the importer's transform locks are back on",
          bool(meshes) and all(
              cmds.getAttr(plug, lock=True)
