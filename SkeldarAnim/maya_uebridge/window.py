@@ -336,6 +336,20 @@ def import_line(name, info):
     return head
 
 
+def export_uasset_selected():
+    """Overwrite the selected AnimSequence with the scene's animation.
+
+    The short road: no Perforce, an FBX staged in the temp folder, and the
+    read-only flag cleared if it is set. Everything that can refuse refuses
+    inside `uassetexport`, which also owns the confirm dialog -- this is only
+    the UI state it needs.
+    """
+    from maya_uebridge import uassetexport   # lazy: keeps the import graph flat
+    return _status(uassetexport.export_to_uasset(
+        _selected_record(), _STATE.get("content_dir") or "",
+        project_choice(), temp_folder()))
+
+
 def merge_selected():
     """True when the clip should land on the skeleton already in the scene."""
     if not cmds.radioButtonGrp(_MODE, exists=True):
@@ -574,6 +588,17 @@ def show_window():
     checkout_button = cmds.button(
         label="Checkout", height=34, width=90,
         command=lambda *_: _run(checkout_selected, busy="talking to p4..."))
+    # Deliberately NOT called "EXPORT": the Export tab has a button by that
+    # name which does go through Perforce, and two identically-labelled
+    # buttons with different blast radii is how somebody submits by accident.
+    uasset_button = cmds.button(
+        label="Export to uasset", height=34, width=120,
+        annotation="Overwrite the selected AnimSequence with the scene's "
+                   "animation. Asks first. Does NOT touch Perforce: the "
+                   "uasset is written on disk with no changelist behind it, "
+                   "and a read-only flag is cleared.",
+        command=lambda *_: _run(export_uasset_selected,
+                                busy="writing the uasset..."))
     import_button = cmds.button(
         label="IMPORT", height=34,
         command=lambda *_: _run(import_selected,
@@ -590,6 +615,7 @@ def show_window():
             (vcs_pick, "right", 8),
             (timeline, "left", 8),
             (import_button, "right", 8), (import_button, "bottom", 8),
+            (uasset_button, "bottom", 8),
             (checkout_button, "bottom", 8),
         ],
         attachControl=[
@@ -603,7 +629,8 @@ def show_window():
             (vcs_root, "left", 10, vcs_check),
             (vcs_root, "right", 6, vcs_pick),
             (timeline, "bottom", 10, import_button),
-            (checkout_button, "right", 6, import_button),
+            (uasset_button, "right", 6, import_button),
+            (checkout_button, "right", 6, uasset_button),
         ])
 
     export_tab = checkouts.build_tab(tabs)

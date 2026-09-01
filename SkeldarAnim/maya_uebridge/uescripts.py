@@ -250,7 +250,8 @@ _PACKAGE = %(package)s
 _FBX = %(fbx_path)s
 
 result = {"ok": False, "error": "", "saved": False,
-          "frames": None, "length": None, "notes": []}
+          "frames": None, "length": None, "notes": [],
+          "before_frames": None, "before_length": None, "skeleton": ""}
 
 
 def attempt(call, default=None):
@@ -271,6 +272,17 @@ try:
     skeleton = anim.get_editor_property("skeleton")
     if skeleton is None:
         raise RuntimeError("the asset has no skeleton: " + str(_PACKAGE))
+    result["skeleton"] = str(attempt(lambda: skeleton.get_name(), "") or "")
+
+    # Read the asset BEFORE the import, so the caller can tell a real
+    # replacement from a silent no-op. Measured 2026-09-01: an FBX whose
+    # bones do not match the asset's skeleton imports "successfully" -
+    # ok, saved, no notes, no error - and leaves the animation untouched.
+    # Reporting "reimported and saved (196 frames)" over that is how an
+    # animator believes an export landed when nothing was written.
+    result["before_frames"] = attempt(
+        lambda: int(anim.get_editor_property("number_of_sampled_keys")))
+    result["before_length"] = attempt(lambda: float(anim.get_play_length()))
 
     # This engine build exposes no ReimportSubsystem (measured 2026-08-21:
     # hasattr(unreal, "ReimportSubsystem") is False), so the reimport is an

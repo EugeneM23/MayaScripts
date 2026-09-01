@@ -38,6 +38,32 @@ class UnionRange(unittest.TestCase):
     def test_a_widened_slider_widens_the_export(self):
         self.assertEqual(animexport.union_range((0, 60), (-10, 80)), (-10, 80))
 
+    def test_a_fractional_range_is_snapped_to_whole_frames(self):
+        """Measured 2026-09-01 in the editor log: UE REFUSES a clip whose
+        length is not frame-border aligned -- "Animation length 2.96 is not
+        compatible with import frame-rate 31 fps (sub frame 0.752)" -- while
+        the import task still reports success and saves the package. From
+        Python the export looks like it worked and the asset is untouched."""
+        self.assertEqual(animexport.union_range((0, 88.792), (0, 88.792)),
+                         (0.0, 89.0))
+
+    def test_the_snap_rounds_OUTWARD_so_it_can_only_widen(self):
+        """Inward rounding would clip the clip, which is trap 38 again."""
+        start, end = animexport.union_range((-3.4, 60.2), (0, 10))
+        self.assertEqual((start, end), (-4.0, 61.0))
+
+    def test_whole_frames_are_left_exactly_alone(self):
+        self.assertEqual(animexport.union_range((0, 131), (0, 131)),
+                         (0.0, 131.0))
+
+    def test_the_result_is_always_a_whole_number(self):
+        for animation, playback in (((0.5, 10.5), (0, 10)),
+                                    ((-0.1, 0.1), (0, 0)),
+                                    ((2.999, 3.001), (3, 3))):
+            start, end = animexport.union_range(animation, playback)
+            self.assertEqual(start, int(start), (animation, playback))
+            self.assertEqual(end, int(end), (animation, playback))
+
 
 class OutsideKeysWarning(unittest.TestCase):
 

@@ -19,6 +19,8 @@ import shutil
 import stat
 import subprocess
 
+from maya_uebridge import records
+
 _OTHER_OPEN = re.compile(r"^otherOpen(\d+)$")
 
 # stderr texts that are answers, not failures. The root ones are measured:
@@ -133,27 +135,13 @@ def package_folder(package):
     return text.rsplit("/", 1)[0] if "/" in text else ""
 
 
-def package_of(client_file, content_dir):
-    """The /Game package of a file under the project's Content dir, "" when it
-    is not under it. Case-insensitive: Windows paths arrive in mixed case."""
-    if not client_file or not content_dir:
-        return ""
-    node = os.path.normpath(client_file)
-    prefix = os.path.normpath(content_dir) + os.sep
-    if not os.path.normcase(node).startswith(os.path.normcase(prefix)):
-        return ""
-    relative = os.path.splitext(node[len(prefix):])[0]
-    return "/Game/" + relative.replace(os.sep, "/")
-
-
-def uasset_path_of(package, content_dir):
-    """/Game/A/B/AS_X -> <content_dir>/A/B/AS_X.uasset. Pure inverse of
-    `package_of` (modulo case, which Windows does not keep anyway)."""
-    text = (package or "").replace("\\", "/")
-    if text.lower().startswith("/game/"):
-        text = text[len("/game/"):]
-    parts = [part for part in text.split("/") if part]
-    return os.path.join(content_dir, *parts) + ".uasset"
+# The package<->path pair LIVES IN records.py (2026-09-01). It is pure
+# string and path work with no p4 in it, and Export to uasset needs it while
+# being required not to touch Perforce -- so importing this module for it
+# would make the boundary a fiction. Re-exported here because every existing
+# caller says `vcs.uasset_path_of`.
+package_of = records.package_of
+uasset_path_of = records.uasset_path_of
 
 
 def conventional_folder(package, root):

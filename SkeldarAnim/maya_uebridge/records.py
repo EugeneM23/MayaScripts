@@ -1,11 +1,18 @@
 """The animation record and everything pure that operates on it.
 
 stdlib only: no maya.cmds, no unreal. This module holds the fiddly parts —
-parsing what the editor sent, the search filter, and namespace naming — so they
-can be tested without either application running.
+parsing what the editor sent, the search filter, namespace naming, the
+package↔disk-path conversion and the reimport reply's wording — so they can
+be tested without either application running.
+
+The last two moved here from `vcs.py` and `checkouts.py` on 2026-09-01, when
+Export to uasset needed them and must not touch Perforce: they are string and
+path work with no p4 anywhere in them, and one home is what keeps two status
+lines from drifting apart. `vcs.py` re-imports them, so nothing else moved.
 """
 
 import collections
+import os
 import re
 
 AnimRecord = collections.namedtuple(
@@ -121,3 +128,69 @@ def format_row(record):
         _middle(record.name, NAME_WIDTH), NAME_WIDTH,
         _tail(folder, FOLDER_WIDTH), FOLDER_WIDTH,
         frames)
+
+
+# ------------------------------------------------- package <-> disk path
+
+def package_of(client_file, content_dir):
+    """The /Game package of a file under the project's Content dir, "" when it
+    is not under it. Case-insensitive: Windows paths arrive in mixed case."""
+    if not client_file or not content_dir:
+        return ""
+    node = os.path.normpath(client_file)
+    prefix = os.path.normpath(content_dir) + os.sep
+    if not os.path.normcase(node).startswith(os.path.normcase(prefix)):
+        return ""
+    relative = os.path.splitext(node[len(prefix):])[0]
+    return "/Game/" + relative.replace(os.sep, "/")
+
+
+def uasset_path_of(package, content_dir):
+    """/Game/A/B/AS_X -> <content_dir>/A/B/AS_X.uasset. Pure inverse of
+    `package_of` (modulo case, which Windows does not keep anyway)."""
+    text = (package or "").replace("\\", "/")
+    if text.lower().startswith("/game/"):
+        text = text[len("/game/"):]
+    parts = [part for part in text.split("/") if part]
+    return os.path.join(content_dir, *parts) + ".uasset"
+
+
+# ----------------------------------------------------- the editor's reply
+
+def reimport_line(payload):
+    """What the status says about the editor's side of an export. Pure.
+
+    Shared by both export directions -- the Perforce round trip on the
+    Export tab and the direct Export to uasset -- so the wording cannot
+    drift between them.
+    """
+    payload = payload or {}
+    frames = payload.get("frames")
+    tail = " ({0} frames)".format(frames) if frames is not None else ""
+    if not payload.get("saved"):
+        return "reimported, NOT saved - save it in the editor" + tail
+    return "reimported and saved" + tail
+
+
+def unchanged_warning(payload):
+    """A warning when the reimport left the asset exactly as it was. Pure.
+
+    Measured 2026-09-01: an FBX whose bones do not match the asset's
+    skeleton imports "successfully" -- ok, saved, no notes, no error -- and
+    the animation is untouched. The status said "reimported and saved (196
+    frames)" over an asset nothing had been written to, which is the worst
+    kind of failure this project keeps finding.
+
+    Frame count AND length both identical is the signal. Re-exporting the
+    same clip unchanged would look the same, so this is worded as something
+    to check rather than as an error.
+    """
+    payload = payload or {}
+    before, after = payload.get("before_frames"), payload.get("frames")
+    if before is None or after is None or before != after:
+        return ""
+    if payload.get("before_length") != payload.get("length"):
+        return ""
+    skeleton = payload.get("skeleton") or "the asset's skeleton"
+    return ("the asset did NOT change ({0} frames) - check the exported "
+            "bones match {1}".format(after, skeleton))

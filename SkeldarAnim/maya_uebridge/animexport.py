@@ -7,6 +7,7 @@ is nothing to restore afterwards; the one thing written is the selection, and
 it is put back.
 """
 
+import math
 import os
 
 import maya.cmds as cmds
@@ -39,13 +40,29 @@ _EXPORT_OPTIONS = (
 
 
 def union_range(animation, playback):
-    """The exported range: animation range UNION playback range. Pure.
+    """The exported range: animation range UNION playback range, snapped to
+    WHOLE frames. Pure.
 
     An export clipped to a zoomed-in timeline trims the clip (trap 38), so
     the outer animation range always counts; the union also covers a slider
     dragged wider than the animation range.
+
+    The snap is the other half, and it was measured the hard way
+    (2026-09-01). A Maya range can end on a fraction -- the animator drags
+    the slider and it stops at 88.792 -- and UE REFUSES such a clip:
+
+        FBXImport: Error: Animation length 2.96 is not compatible with
+        import frame-rate 31 fps (sub frame 0.752), animation has to be
+        frame-border aligned.
+
+    ...while the import task still reports success and saves the package,
+    so from Python the export looks like it worked and the asset is
+    untouched. Rounding OUTWARD (floor the start, ceil the end) can only
+    widen the range, so it cannot re-introduce trap 38's clipping.
     """
-    return (min(animation[0], playback[0]), max(animation[1], playback[1]))
+    start = min(animation[0], playback[0])
+    end = max(animation[1], playback[1])
+    return (float(math.floor(start)), float(math.ceil(end)))
 
 
 def outside_keys_warning(times, start, end):

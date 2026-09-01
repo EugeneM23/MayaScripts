@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1205 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1264 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1205,10 +1205,11 @@ list and an FBX export for the import.
 |---|---|---|
 | `uelink.py` | engine discovery, session, running Python in the editor | **stdlib only** |
 | `uescripts.py` | UE-side script text | **stdlib only** |
-| `records.py` | record model, search, namespace naming, row text | **stdlib only** |
+| `records.py` | record model, search, namespace naming, row text, **the package↔disk-path pair and the reimport reply's wording** | **stdlib only** |
 | `vcs.py` | Perforce placement: fbx name search, path convention, checkout decision table, p4 runner | **stdlib only** |
 | `animimport.py` | FBX import, timeline, fps policy, the target rule (selection then connect) and the exmerge name hold | `maya.cmds` |
 | `animexport.py` | FBX export of the skeleton hierarchy, bake-on-export, range policy | `maya.cmds`, `maya.mel`, `animimport` |
+| `uassetexport.py` | **Export to uasset: the direct road.** The warning, the read-only flag, the temp fbx. Imports no `vcs` and a test enforces it | `maya.cmds`, `animexport`, `animimport`, `records`, `uelink`, `uescripts` |
 | `window.py` | the `cmds` window | `maya.cmds` |
 | `checkouts.py` | the checkouts window: pair checkout, revert, export back to the uasset | `maya.cmds` + all of the above |
 
@@ -1424,6 +1425,52 @@ animator's 4 real checkouts listed with fbx, a duplicated sandbox uasset
 reimported 2 → 60 frames and deleted, the Longsword pair checked out and
 reverted with the depot left exactly as found.
 
+**Export to uasset — the direct road** (2026-09-01, the user's ask:
+«кнопочка экспорта в uasset… защитное предупреждение о перезаписи… если
+uasset readonly то будем снимать эту настройку… пока что ни как не будет
+связываться с функционалом для перфорса»). A third button on the IMPORT
+tab — `Checkout | Export to uasset | IMPORT` — because it acts on the same
+list selection. Deliberately not labelled `EXPORT`: the Export tab has one
+of those and it goes through Perforce.
+
+`maya_uebridge/uassetexport.py`. One press: resolve the record, the uasset's
+disk path and the scene skeleton (`animexport.resolve_root` — selection,
+then the connect: one function for every direction of the bridge) — every
+refusal happening **before** any dialog; then a confirm that names the asset,
+the skeleton, what a replace-import throws away (`Pose_0..9`,
+`MoveData_*`, `DisableLegIK`, `RootMotionAdditiveInput` — trap 40), and
+that Perforce is untouched; then the FBX to
+`%TEMP%/maya_uebridge/<Name>.uasset.fbx`; then the read-only flag, cleared
+and **left off** (the file is modified, and hiding that is worse); then the
+editor. Export before chmod, so a failed export leaves the uasset exactly
+as it was. The VCS checkbox does not change any of it.
+
+**The "no Perforce" boundary is enforced, not promised.** The only thing
+this road needs from `vcs.py` is the pure package↔path pair, so
+`package_of`/`uasset_path_of` MOVED to `records.py` (`vcs` re-imports them,
+so no caller changed), `reimport_line` moved there too, and a subprocess
+test asserts `maya_uebridge.vcs` never reaches `sys.modules` through
+`uassetexport` — plus an AST check that no `vcs`/`p4`/`prepare_target`
+name appears in its code.
+
+**A "successful" reimport that writes nothing is now reported**
+(`records.unchanged_warning`). The editor answers `ok: True, saved: True`,
+no notes and no error while leaving the animation untouched, so the status
+used to read "reimported and saved (196 frames)" over an asset nothing had
+been written to. The signal is frame count AND length both identical
+across the import; the wording is "check the exported bones match
+`<skeleton>`" rather than an error, because re-exporting an unchanged clip
+looks the same. **Both export directions use it.**
+
+Proof: `verify_uebridge_uasset.py` — **green live 2026-09-01, 0 of 25
+gates failed**, and it proves BOTH directions of that warning on sandbox
+assets duplicated into `/Game/__bridge_verify` and deleted again: a real
+replacement comes out changed and unwarned (195 → 100 frames, and 90 → 100
+on a second asset), and a no-op is never reported as a success. It also
+exercises the read-only flag for real — `chmod 0o444` on the sandbox
+uasset, cleared by the press — and asserts the animator's own uasset was
+never touched.
+
 Traps, each paid for:
 
 22. **`cmds.file(i=True, type="FBX")` imports the skeleton and silently drops
@@ -1507,6 +1554,28 @@ Traps, each paid for:
     never calls p4. `<project>/Saved/Logs/<name>.log` is readable with
     shared access WHILE the editor runs; the Interchange refusal above was
     invisible in every Python-side reply and sat plainly in that log.
+
+50. **A FRACTIONAL playback range makes UE refuse the animation, and the
+    import task still reports success.** Measured 2026-09-01, and it is the
+    single finding that decided whether Export to uasset worked at all. The
+    animator drags the time slider and it stops at **88.792**; `union_range`
+    handed that to `FBXExportBakeComplexEnd`; the editor log then said
+
+        FBXImport: Error: Animation length 2.96 is not compatible with
+        import frame-rate 31 fps (sub frame 0.752), animation has to be
+        frame-border aligned. Either re-export animation or enable snap...
+
+    — while the Python reply came back `ok: True, saved: True, notes: [],
+    error: ""` and the asset kept its old animation to the last frame and
+    the last 0.01 s. Two wrong theories died on the way (the second
+    character's root being called `Manny_Skeleton_root` rather than `root`,
+    and the sandbox's skeleton being a UE4 mannequin); both were killed by
+    reading the log, which trap 46 already says is the tool for exactly
+    this. `union_range` now snaps OUTWARD — floor the start, ceil the end —
+    which can only widen the range and so cannot re-introduce trap 38's
+    clipping. **This bug was in the Perforce export direction too**, since
+    2026-08-21, and would have silently written nothing every time the
+    animator's range happened to end on a fraction.
 
 Measured facts about the listing: asset-registry tags are read **without
 loading assets**, and the real tag names on 5.8 are `Number of Frames`,

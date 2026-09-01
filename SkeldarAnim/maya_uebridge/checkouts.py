@@ -112,13 +112,9 @@ def count_line(count):
     return "{0} animation uasset(s) checked out".format(count)
 
 
-def reimport_line(payload):
-    """What the status says about the editor's side of the export. Pure."""
-    frames = payload.get("frames")
-    tail = " ({0} frames)".format(frames) if frames is not None else ""
-    if not payload.get("saved"):
-        return "reimported, NOT saved - save it in the editor" + tail
-    return "reimported and saved" + tail
+# Moved to records.py (2026-09-01): both export directions read this
+# payload, and duplicating the wording is how two status lines drift apart.
+reimport_line = records.reimport_line
 
 
 # ---------------------------------------------------------------- lookups
@@ -335,6 +331,9 @@ def export_to(row, asks=None):
     suffix = vcs.status_suffix(target, window._saved_root(), False, note)
     parts = [animexport.export_line(record.name, info), suffix,
              reimport_line(payload),
+             # Same silent no-op as the direct road: an "ok, saved" import
+             # that wrote nothing (2026-09-01).
+             records.unchanged_warning(payload),
              # Same rule as import: the scene's rate is never changed, a
              # mismatch is said out loud - UE resamples the clip.
              animimport.fps_warning(record.fps, animimport.scene_fps())]
