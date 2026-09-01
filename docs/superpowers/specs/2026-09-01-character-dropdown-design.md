@@ -145,3 +145,71 @@ selection as found.
   for the suit and is a separate piece of work.
 - Any third skeleton. The table makes adding one a two-line change; adding
   one nobody asked for is not.
+
+---
+
+## Addendum: making the two imports the same shape — and the bug under it
+
+The animator's first note after using it: «сейчас ue5 скелет вставляется в
+сцену кости отдельно меш отдельно, UE4 скелет вставляется в сцену в одной
+группе с мешем, нужно сделать однородно!»
+
+Measured, the difference was bigger than that. **One Manny press brings four
+world-level nodes** — the 93 joints, a transform holding the 6 meshes, a
+camera and a materialXStack. **One UE4 press brought one** — a group holding
+both the joints and the meshes. With six characters in the scene that is 24
+nodes against 6.
+
+Asked which shape should win, the animator chose **flat, like Manny's**. So
+the FBX importer's wrapper is flattened away and Manny is untouched.
+
+### The wrapper was not just untidy
+
+The wrapper carries the FBX axis conversion — `rotateX -90`, Z-up to Y-up —
+while `root` beneath it has clean channels. No import option changes that:
+`FBXImportUpAxis y`, `FBXImportAxisConversionEnable` and
+`FBXImportForcedFileAxis z` were all tried in a standalone Maya and all
+three produced the same wrapper.
+
+And a **UE clip carries that same -90**, on `root`'s jointOrient. So merging
+one onto a WRAPPED skeleton applies the rotation twice. Measured standalone
+from one clip:
+
+| | head at rest | head at frame 0 of the clip |
+|---|---|---|
+| wrapped | `0, 165.5, -4.0` | `4.7, 2.96, -147.8` — **lying down** |
+| flattened | `0, 165.5, -4.0` | `4.7, 147.8, 3.0` — upright |
+
+So flattening is what makes an animation import land the right way up. The
+earlier live run that reported "68 of 68 bones animated" was telling the
+truth and the character was on its face; nothing had measured which way up
+it stood.
+
+### A plain unparent moves the skeleton
+
+`cmds.parent(children, world=True)` changed the world matrix by a full
+90 degrees (measured: worst matrix element 1.0). Maya distributes a joint's
+new parentage into `jointOrient`, and the arithmetic it picks is not the one
+that preserves the pose. So `flatten_wrappers` records every child's world
+matrix by UUID first, unparents, and re-asserts the world matrix by hand.
+The rest pose then comes out identical to the wrapped import — head Y
+165.516 both ways.
+
+### What flat costs, stated rather than wished away
+
+At world level Maya will not allow a second `root`, so in a scene that
+already holds one the UE4 mannequin arrives as `root2` — exactly as a
+second Manny arrives as `Manny_Skeleton_root`. An exmerge matches bone
+NAMES, so the clip's `root` then matches nothing and that one bone comes in
+unanimated: **67 of 68**, measured. That is the pre-existing behaviour of a
+second Manny, now shared; the first character in a scene keeps `root` and
+gets all 68. The verify gate computes the expectation from the root's actual
+name instead of asserting the happy case.
+
+Flattening is FBX-only. Running it over Manny's `.ma` would flatten the
+transform that legitimately holds its six meshes.
+
+Proof: `verify_add_character.py`, **green live 2026-09-01, 0 of 26 gates
+failed** — including the shape (skeleton and mesh at world level, no
+wrapper), the rest pose surviving to 0.01, and the animated character
+standing up.

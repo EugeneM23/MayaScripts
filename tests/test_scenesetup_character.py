@@ -218,3 +218,55 @@ class ShippedAsset(unittest.TestCase):
             content = handle.read()
         self.assertIn(b'createNode joint -n "root"', content)
         self.assertIn(b"bindPose", content)
+
+
+class WrapperNodes(unittest.TestCase):
+    """Which imported node is the FBX importer's axis-conversion wrapper.
+
+    Pure: the scene arrives as three lookups. The wrapper is one transform
+    at WORLD level holding no shape of its own and not a joint -- and
+    flattening it is correctness, not tidiness: a UE clip carries the same
+    -90 on root's jointOrient, so a merge onto a wrapped skeleton rotates
+    twice and the character lies down (measured, head Y=2.96 against
+    Y=147.84).
+    """
+
+    def _find(self, nodes, joints=(), shaped=()):
+        return character.wrapper_nodes(
+            nodes,
+            is_joint=lambda n: n in joints,
+            has_shape=lambda n: n in shaped,
+            depth=lambda n: n.count("|"))
+
+    def test_finds_the_shapeless_world_level_transform(self):
+        self.assertEqual(
+            self._find(["|SK_Mannequin", "|SK_Mannequin|root"],
+                       joints=("|SK_Mannequin|root",)),
+            ["|SK_Mannequin"])
+
+    def test_a_joint_is_never_a_wrapper(self):
+        """Manny's root arrives at world level and must stay exactly
+        where it is."""
+        self.assertEqual(self._find(["|root"], joints=("|root",)), [])
+
+    def test_a_transform_holding_a_shape_is_not_a_wrapper(self):
+        """The mesh transform is content, not scaffolding."""
+        self.assertEqual(
+            self._find(["|SKM_Manny_Simple"], shaped=("|SKM_Manny_Simple",)),
+            [])
+
+    def test_nested_transforms_are_left_alone(self):
+        """Only the TOP wrapper: a group inside the file is the author's."""
+        self.assertEqual(
+            self._find(["|SK_Mannequin|inner", "|SK_Mannequin|inner|more"]),
+            [])
+
+    def test_several_wrappers_all_come_back(self):
+        self.assertEqual(self._find(["|a", "|b"]), ["|a", "|b"])
+
+    def test_duplicates_collapse(self):
+        self.assertEqual(self._find(["|a", "|a"]), ["|a"])
+
+    def test_nothing_in_nothing_out(self):
+        self.assertEqual(self._find([]), [])
+        self.assertEqual(self._find(None), [])

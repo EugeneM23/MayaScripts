@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1299 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1306 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1743,6 +1743,39 @@ That is stated rather than worked around; `ik_hand_gun` is not substituted.
 `verify_missing_bones.py` proves, so Connect and Build are likely to work,
 but nothing on this skeleton has been live-verified.
 
+**Both imports leave the same SHAPE** (2026-09-01, the animator's first
+note after using it: «ue5 скелет вставляется кости отдельно меш отдельно,
+UE4 вставляется в одной группе с мешем, нужно сделать однородно»). Flat won
+— Manny's shape, unchanged — so the FBX importer's wrapper is flattened
+away by `character.flatten_wrappers`.
+
+**And the wrapper was a BUG, not untidiness.** It carries the axis
+conversion (`rotateX -90`, Z-up to Y-up) while `root` beneath it is clean,
+and no import option changes that (`FBXImportUpAxis y`,
+`FBXImportAxisConversionEnable`, `FBXImportForcedFileAxis z` all tried
+standalone, all produce the wrapper). A UE clip carries **that same -90**,
+on `root`'s jointOrient — so a merge onto a WRAPPED skeleton applies it
+twice and the character lies down. Measured standalone from one clip: head
+at rest `0, 165.5, -4.0` either way; at frame 0 **`4.7, 2.96, -147.8`
+wrapped against `4.7, 147.8, 3.0` flat**. The earlier "68 of 68 bones
+animated" was true and the character was on its face; nothing had measured
+which way up it stood.
+
+**A plain unparent moves the skeleton 90°** (measured: worst world-matrix
+element 1.0). Maya distributes a joint's new parentage into `jointOrient`
+and the arithmetic it picks is not the pose-preserving one. So the flatten
+records every child's world matrix BY UUID, unparents, and re-asserts the
+world matrix by hand; the rest pose then comes out identical (165.516 both
+ways). FBX only — running it over Manny's `.ma` would flatten the transform
+that legitimately holds its six meshes.
+
+**What flat costs, and it is Manny's existing cost:** at world level Maya
+will not allow a second `root`, so in a scene that already holds one the
+mannequin arrives as `root2` — as a second Manny arrives as
+`Manny_Skeleton_root`. An exmerge matches bone NAMES, so the clip's `root`
+matches nothing and that one bone comes in unanimated: **67 of 68**,
+measured. The first character in a scene keeps `root` and gets all 68.
+
 **The FBX row is why the import forks**, and trap 33 is the whole story:
 `character.scene_type` answers `FBX`, and that path goes through
 `fbximport.import_nodes`, which forces the plugin's global import MODE.
@@ -1753,10 +1786,15 @@ animation import from Unreal. The guard used to live inside
 failure that exists in two copies is a fix that will exist in one copy soon
 enough. The live gate sets the mode to `exmerge` on purpose before pressing.
 
-Proof: `verify_add_character.py`, **green live 2026-09-01, 0 of 23 gates
-failed**, ending with the point of the feature — a `SwordAnimsetPro` clip
-imported onto the freshly added mannequin: **68 of 68 bones animated, 0
-without keys**, with the bridge resolving it as the target through Connect.
+Proof: `verify_add_character.py`, **green live 2026-09-01, 0 of 26 gates
+failed** — the flat shape (skeleton and mesh at world level, no wrapper),
+the rest pose surviving the flatten to 0.01, and the point of the feature:
+a `SwordAnimsetPro` clip imported onto the freshly added mannequin, every
+bone the clip can name animated, the bridge resolving it as the target
+through Connect, **and the animated character standing up** (head at
+`4.68, 147.84, 2.96`). That last gate is the one the flatten exists for;
+gate 31 computes its expectation from the root's actual name rather than
+asserting the happy case.
 
 **Press it as many times as you like** (2026-09-01, the user's ask: "я должен
 иметь возможность добавить в сцену сколько угодно персонажей"). The old

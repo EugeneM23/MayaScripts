@@ -231,10 +231,45 @@ else:
     gate("21 it arrives even from the bridge's exmerge mode",
          message.startswith("UE4 Mannequin added") and len(fresh) == 1,
          "mode was {0!r} | {1}".format(hostile, message))
+    # The root's own leaf name is NOT asserted to be `root`. Flat means the
+    # skeleton root sits at world level, where Maya will not allow a second
+    # `root` -- so in a scene that already holds one it arrives as `root2`,
+    # exactly as Manny's arrives as `Manny_Skeleton_root`. That is the
+    # homogeneity that was asked for, wart included; gate 31 measures what
+    # it costs.
+    root_leaf = root.split("|")[-1] if root else ""
+    root_is_plain = root_leaf == "root"
     gate("22 68 joints with plain UE4 names",
-         len(hierarchy) == 68 and "root" in hierarchy
-         and "spine_03" in hierarchy and "ik_hand_gun" in hierarchy,
-         "{0} bones".format(len(hierarchy)))
+         len(hierarchy) == 68 and root_leaf.startswith("root")
+         and "spine_03" in hierarchy and "ik_hand_gun" in hierarchy
+         and "ball_l" in hierarchy,
+         "{0} bones, root is {1!r}".format(len(hierarchy), root_leaf))
+
+    # The shape in the outliner: «нужно сделать однородно». The FBX
+    # importer's axis-conversion wrapper is flattened away, so this press
+    # leaves what Manny's does -- the skeleton and the mesh at world level,
+    # side by side, and no group holding both.
+    world_level = [n for n in (cmds.ls(new_uuids, long=True) or [])
+                   if n.count("|") == 1]
+    wrappers = [n for n in world_level
+                if cmds.objectType(n) == "transform"
+                and not cmds.listRelatives(n, shapes=True)
+                and cmds.listRelatives(n, children=True, type="joint")]
+    gate("22a the skeleton is at world level, not inside a group",
+         bool(root) and root.count("|") == 1 and not wrappers,
+         "{0} | wrappers: {1}".format(root, wrappers))
+    gate("22b the mesh is its own world-level node, like Manny's",
+         any(cmds.listRelatives(n, shapes=True, type="mesh")
+             for n in world_level),
+         ", ".join(n.split("|")[-1] for n in world_level))
+    gate("22c the rest pose survived the flatten",
+         bool(hierarchy.get("head"))
+         and abs(cmds.xform(hierarchy["head"], query=True, worldSpace=True,
+                            translation=True)[1] - 165.516) < 0.01,
+         "head Y = {0:.3f}".format(
+             cmds.xform(hierarchy["head"], query=True, worldSpace=True,
+                        translation=True)[1] if hierarchy.get("head")
+             else -1))
     gate("23 the UE5-only bones are absent",
          not any(name in hierarchy for name in
                  ("spine_04", "spine_05", "neck_02", "index_metacarpal_l")),
@@ -305,11 +340,24 @@ if UE4 is not None:
             info = animimport.import_clip(
                 payload.get("path") or fbx, "", set_timeline=False,
                 clip_fps=payload.get("fps") or clip.fps, merge=True)
-            gate("31 every bone of the pack clip landed on it",
-                 info.get("joints") == len(hierarchy) and not info.get("stale"),
-                 "{0}/{1} animated, {2} without keys".format(
-                     info.get("joints"), len(hierarchy),
-                     len(info.get("stale") or [])))
+            # An exmerge matches bone NAMES, so the one bone a crowded
+            # scene costs is the root: at world level Maya will not allow a
+            # second `root`, and the clip's `root` then matches nothing.
+            # Exactly what a second Manny has always done -- its root is
+            # `Manny_Skeleton_root` -- so the expectation is stated rather
+            # than wished away.
+            plain_root = (target or "").split("|")[-1] == "root"
+            expected = len(hierarchy) if plain_root else len(hierarchy) - 1
+            stale = info.get("stale") or []
+            gate("31 every bone the clip can name landed on it",
+                 info.get("joints") == expected
+                 and len(stale) == (0 if plain_root else 1),
+                 "{0}/{1} animated, {2} without keys{3}".format(
+                     info.get("joints"), len(hierarchy), len(stale),
+                     "" if plain_root else
+                     " (root is {0!r} in this scene, so the clip's `root`"
+                     " matches nothing - same as a second Manny)".format(
+                         (target or "").split("|")[-1])))
             sampled = [name for name in ("pelvis", "spine_01", "upperarm_l",
                                          "hand_r", "thigh_l")
                        if hierarchy.get(name)
@@ -317,6 +365,19 @@ if UE4 is not None:
                                                 type="animCurve")]
             gate("32 the sampled bones really carry curves",
                  len(sampled) == 5, ", ".join(sampled))
+            # THE gate the flatten exists for. A UE clip carries the same
+            # -90 the FBX wrapper did, on root's jointOrient -- so onto a
+            # WRAPPED skeleton it applies twice and the character lies
+            # down. Measured standalone: head Y=2.96 wrapped, Y=147.84
+            # flat, from this very clip. Upright means Y is the tallest
+            # component by a mile.
+            cmds.currentTime(info.get("start") or 0, edit=True)
+            head = hierarchy.get("head")
+            pos = (cmds.xform(head, query=True, worldSpace=True,
+                              translation=True) if head else [0, 0, 0])
+            gate("33 the animated character stands UP, not on its face",
+                 abs(pos[1]) > max(abs(pos[0]), abs(pos[2])),
+                 "head at [{0:.2f}, {1:.2f}, {2:.2f}]".format(*pos))
         except Exception:
             FAILURES.append("gates 30-32 raised")
             traceback.print_exc()

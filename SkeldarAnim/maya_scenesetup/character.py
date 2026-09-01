@@ -151,6 +151,76 @@ def connect(root):
     return picker_window.connect_root(root)
 
 
+def wrapper_nodes(nodes, is_joint, has_shape, depth):
+    """The FBX axis-conversion wrappers among `nodes`. Pure.
+
+    One transform at world level, holding no shape of its own and not a
+    joint: that is what the FBX importer wraps a file's contents in. The
+    scene arrives as three lookups so the decision is testable without
+    Maya.
+    """
+    found = []
+    for node in nodes or []:
+        if depth(node) != 1 or is_joint(node) or has_shape(node):
+            continue
+        if node not in found:
+            found.append(node)
+    return found
+
+
+def flatten_wrappers(nodes):
+    """Unparent the FBX importer's wrapper and delete it. Returns its name(s).
+
+    The importer wraps a file's contents in one transform carrying the
+    Z-up -> Y-up conversion (measured: `rotateX -90`). Manny's `.ma` has no
+    such node, so Add Character used to leave two different shapes in the
+    outliner -- «ue5 скелет вставляется кости отдельно меш отдельно, UE4
+    вставляется в одной группе с мешем, нужно сделать однородно».
+
+    And the wrapper is worse than untidy. A UE clip carries that SAME -90
+    on `root`'s jointOrient, so merging one onto a WRAPPED skeleton applies
+    the rotation twice and the character lies down: measured in a
+    standalone Maya, head at Y=2.96 wrapped against Y=147.84 flat, from the
+    same clip. Flattening is what makes an animation import land upright.
+
+    World matrices are recorded and put back BY HAND. A plain
+    `cmds.parent(..., world=True)` moved the skeleton 90 degrees (measured:
+    worst world-matrix element 1.0) -- Maya distributes a joint's new
+    parentage into `jointOrient`, and the arithmetic it picks is not the
+    one that preserves the pose. Re-asserting the world matrix afterwards
+    is; the rest pose comes out identical to the wrapped import.
+    """
+    wrappers = wrapper_nodes(
+        cmds.ls(nodes, long=True, type="transform") or [],
+        is_joint=lambda n: cmds.objectType(n) == "joint",
+        has_shape=lambda n: bool(cmds.listRelatives(n, shapes=True)),
+        depth=lambda n: n.count("|"))
+
+    removed = []
+    for wrapper in wrappers:
+        if not cmds.objExists(wrapper):
+            continue
+        children = cmds.listRelatives(wrapper, children=True,
+                                      fullPath=True) or []
+        if children:
+            # By UUID: every path below changes as soon as one is moved.
+            worlds = {}
+            for child in children:
+                uuid = (cmds.ls(child, uuid=True) or [None])[0]
+                if uuid:
+                    worlds[uuid] = cmds.xform(child, query=True,
+                                              worldSpace=True, matrix=True)
+            cmds.parent(children, world=True)
+            for uuid, matrix in worlds.items():
+                paths = cmds.ls(uuid, long=True) or []
+                if paths:
+                    cmds.xform(paths[0], worldSpace=True, matrix=matrix)
+        if cmds.objExists(wrapper):
+            cmds.delete(wrapper)
+        removed.append(wrapper.split("|")[-1])
+    return removed
+
+
 def import_asset(path):
     """Import a character asset and return every node that arrived.
 
@@ -167,7 +237,13 @@ def import_asset(path):
     """
     if is_fbx(path):
         from maya_scenesetup import fbximport
-        return fbximport.import_nodes(path)
+        new = fbximport.import_nodes(path)
+        # FBX only: the wrapper is that importer's artifact, and Manny's
+        # `.ma` brings its skeleton, meshes and camera at world level
+        # already. Running this over a `.ma` would flatten the mesh GROUP
+        # the animator's file legitimately has.
+        flatten_wrappers(new)
+        return [node for node in new if cmds.objExists(node)]
     return cmds.file(path, i=True, type=scene_type(path),
                      returnNewNodes=True, ignoreVersion=True) or []
 
