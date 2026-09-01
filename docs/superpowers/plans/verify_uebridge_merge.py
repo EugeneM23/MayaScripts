@@ -14,7 +14,7 @@ animator presses, not an API underneath it.
 
 import sys
 
-REPO = r"C:/!!!Work/MayaScripts"
+REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.append(REPO)
 

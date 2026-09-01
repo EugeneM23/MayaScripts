@@ -7,7 +7,7 @@ the finally block, and the joint count is compared before and after.
 
 import sys
 
-REPO = r"C:/!!!Work/MayaScripts"
+REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.append(REPO)
 

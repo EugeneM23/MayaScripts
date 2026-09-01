@@ -22,7 +22,7 @@ below to point at another one).
 import os
 import sys
 
-sys.path.append(r"C:/!!!Work/MayaScripts")
+sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
 
 import maya.cmds as cmds
 

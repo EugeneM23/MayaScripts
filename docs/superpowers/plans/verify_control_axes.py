@@ -36,7 +36,7 @@ written back.
 import math
 import sys
 
-REPO = r"C:/!!!Work/MayaScripts"
+REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.append(REPO)
 for _name in [m for m in list(sys.modules) if m.startswith("maya_overrig")]:

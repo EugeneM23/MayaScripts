@@ -6,7 +6,7 @@ the bake back are proven on motion, not on a static pose.
 
 import sys
 
-REPO = r"C:/!!!Work/MayaScripts"
+REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.append(REPO)
 

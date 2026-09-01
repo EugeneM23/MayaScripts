@@ -193,7 +193,8 @@ class Purity(unittest.TestCase):
 
     def test_the_pure_modules_import_without_maya(self):
         """records/uescripts/uelink must not drag maya.cmds or the window in."""
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        root = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "SkeldarAnim")
         code = (
             "import sys; sys.path.insert(0, %r);"
             "import maya_uebridge, maya_uebridge.records,"

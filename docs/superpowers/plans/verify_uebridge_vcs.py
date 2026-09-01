@@ -47,7 +47,7 @@ import tempfile
 
 import maya.cmds as cmds
 
-REPO = "C:/!!!Work/MayaScripts"
+REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"
 REAL_FBX = ("C:/!!!Work/Perforce/SourceArt/Prototype/Animation/Exports/"
             "PlayerCharacter/Unarmed/AS_Unarmed_Idle_1P.fbx")
 REAL_UASSET = ("C:/!!!Work/Perforce/Atone/Content/Prototype/Animation/"

@@ -16,7 +16,7 @@ import os
 import sys
 import traceback
 
-REPO = "C:/!!!Work/MayaScripts"
+REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 # The session imports the INSTALLED SkeldarAnim copy (working notes, bridge

@@ -32,7 +32,7 @@ animation is only cut when NO bone carries anything that moves (trap 30).
 import sys
 from contextlib import contextmanager
 
-REPO = r"C:/!!!Work/MayaScripts"
+REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.append(REPO)
 

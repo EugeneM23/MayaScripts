@@ -14,7 +14,13 @@ import unittest
 
 import install
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The PLUGIN folder, not the repo root. Payload names have always been
+# relative to the folder holding install.py, and since 2026-09-01 that is
+# the repo's SkeldarAnim/ -- the workshop keeps the standalone tools.
+PLUGIN = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "SkeldarAnim")
+REPO = PLUGIN
 
 ICON_NAMES = ("picker.png", "uebridge.png", "scenesetup.png",
               "overshoot.png")
@@ -80,9 +86,17 @@ class Payload(unittest.TestCase):
         self.assertIn("install.py", install.payload())
         self.assertIn("README_INSTALL.txt", install.payload())
 
-    def test_source_root_is_this_repo(self):
+    def test_source_root_is_the_plugin_folder(self):
         self.assertEqual(os.path.normcase(install.source_root()),
-                         os.path.normcase(REPO))
+                         os.path.normcase(PLUGIN))
+
+    def test_the_workshop_tools_stay_out_of_the_plugin_folder(self):
+        """The point of the SkeldarAnim/ split: if it ships it is in
+        there, and the standalone tools are not."""
+        for name in ("maya_skelfit.py", "maya_meltmorph.py",
+                     "make_build.py", "tests"):
+            self.assertFalse(
+                os.path.exists(os.path.join(PLUGIN, name)), name)
 
 
 class ButtonSpecs(unittest.TestCase):

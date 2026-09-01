@@ -54,6 +54,21 @@ class Composition(unittest.TestCase):
     def test_the_builder_itself_never_ships(self):
         self.assertNotIn("make_build.py", install.payload())
 
+    def test_the_source_root_is_the_plugin_folder(self):
+        self.assertEqual(os.path.basename(make_build.source_root()),
+                         install.SHELF)
+
+    def test_the_archive_lands_beside_the_repository(self):
+        """Not beside source_root(): since the payload moved into the
+        repo's SkeldarAnim/ that would drop the zip inside the repo, one
+        level in from every earlier build."""
+        self.assertEqual(
+            os.path.normcase(make_build.default_out_dir()),
+            os.path.normcase(os.path.dirname(make_build.REPO_ROOT)))
+        self.assertNotEqual(
+            os.path.normcase(make_build.default_out_dir()),
+            os.path.normcase(make_build.REPO_ROOT))
+
     def test_archive_name_is_dated(self):
         import datetime
         name = make_build.archive_name(datetime.date(2026, 9, 1))

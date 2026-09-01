@@ -17,7 +17,7 @@ written back; autoKey is off throughout.
 
 import sys
 
-REPO = r"C:/!!!Work/MayaScripts"
+REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.append(REPO)
 

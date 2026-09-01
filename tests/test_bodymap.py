@@ -21,7 +21,8 @@ class TestMayaFreeBoundary(unittest.TestCase):
             "          if m.startswith('maya.') or m.startswith('PySide6')]\n"
             "print(';'.join(sorted(leaked)))\n"
         )
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        repo_root = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "SkeldarAnim")
         result = subprocess.run(
             [sys.executable, "-c", script],
             cwd=repo_root, capture_output=True, text=True)

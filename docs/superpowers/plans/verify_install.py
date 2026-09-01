@@ -18,7 +18,7 @@ import sys
 import maya.cmds as cmds
 import maya.mel as mel
 
-REPO = "C:/!!!Work/MayaScripts"
+REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"
 
 RESULTS = []
 

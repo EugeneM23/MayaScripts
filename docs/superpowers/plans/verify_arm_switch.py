@@ -11,7 +11,7 @@ Run inside Maya through the bridge. Binds explicitly to `root`. No undo.
 
 import sys
 
-REPO = r"C:/!!!Work/MayaScripts"
+REPO = r"C:/!!!Work/MayaScripts/SkeldarAnim"
 if REPO not in sys.path:
     sys.path.append(REPO)
 

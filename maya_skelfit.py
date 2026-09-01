@@ -30,8 +30,26 @@ import os
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
-TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "assets", "manny_skeleton_template.json")
+# assets/ lives inside the plugin folder (2026-09-01 split: the repo root
+# is the workshop, SkeldarAnim/ is what ships) -- and Manny is shared, the
+# same folder Add Character imports the character scene from. The repo-root
+# spelling is kept as a fallback so a checkout from before the move, or a
+# copy of this file dropped beside its own assets/, still resolves.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ASSET_DIRS = (os.path.join(_HERE, "SkeldarAnim", "assets"),
+               os.path.join(_HERE, "assets"))
+
+
+def asset_path(name):
+    """Full path of a shipped asset: the plugin folder, else beside us."""
+    for folder in _ASSET_DIRS:
+        candidate = os.path.join(folder, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.join(_ASSET_DIRS[0], name)
+
+
+TEMPLATE_PATH = asset_path("manny_skeleton_template.json")
 
 # the slice of the side reach that counts as "the arm tip" when measuring a
 # mesh: vertices within 2% of the full x-span of the extreme point

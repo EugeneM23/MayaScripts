@@ -6,6 +6,12 @@ Writes `SkeldarAnim_<date>.zip` next to the repository folder: the same
 payload the installer copies, wrapped in one `SkeldarAnim/` directory so
 the instruction stays "unzip, drag SkeldarAnim/install.py into Maya".
 
+The payload lives in the repo's `SkeldarAnim/` folder (2026-09-01) and
+`install.py` with it, so this script puts that folder on sys.path before
+importing the installer -- and derives the output directory from its OWN
+location rather than the installer's, or the archive would land inside
+the repository.
+
 The composition comes from `install.payload()` and nowhere else. A second
 whitelist here would drift from the installer on the first edit, and the
 symptom -- a colleague's shelf button raising ImportError on a module the
@@ -25,7 +31,13 @@ import subprocess
 import sys
 import zipfile
 
-import install
+PLUGIN = "SkeldarAnim"
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+if os.path.join(REPO_ROOT, PLUGIN) not in sys.path:
+    sys.path.insert(0, os.path.join(REPO_ROOT, PLUGIN))
+
+import install  # noqa: E402  -- needs the line above
 
 # Same exclusions the installer's copy applies. A .pyc in a handed-off
 # archive is at best noise and at worst a stale compile of code the
@@ -45,13 +57,18 @@ def payload_names():
 
 
 def source_root():
-    """The repository folder."""
+    """The plugin folder: what the payload names are relative to."""
     return install.source_root()
 
 
 def default_out_dir():
-    """Beside the repository folder, where the earlier archives live."""
-    return os.path.dirname(source_root())
+    """Beside the REPOSITORY folder, where the earlier archives live.
+
+    Not beside `source_root()` any more -- since the payload moved into
+    the repo's SkeldarAnim/ folder that would drop the archive inside the
+    repository, one level in from where every earlier build landed.
+    """
+    return os.path.dirname(REPO_ROOT)
 
 
 def archive_name(day=None):

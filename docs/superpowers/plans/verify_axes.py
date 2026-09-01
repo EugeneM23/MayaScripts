@@ -33,8 +33,8 @@ def log(text=""):
 try:
     import sys
 
-    if r"C:/!!!Work/MayaScripts" not in sys.path:
-        sys.path.append(r"C:/!!!Work/MayaScripts")
+    if r"C:/!!!Work/MayaScripts/SkeldarAnim" not in sys.path:
+        sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
 
     import maya.cmds as cmds
     import maya.utils

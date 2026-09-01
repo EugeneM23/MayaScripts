@@ -15,7 +15,7 @@ animated channels -- this script only imports and deletes what it imported.
 
 import sys
 
-REPO = "C:/!!!Work/MayaScripts"
+REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"
 
 # Note 9: the session imports the INSTALLED SkeldarAnim copy. Prove the
 # repo's code, not yesterday's build.
