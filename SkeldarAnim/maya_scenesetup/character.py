@@ -55,8 +55,21 @@ _MALWARE = ("vaccine", "breed")
 # ------------------------------------------------------------------ policy
 
 def scene_type(path):
-    """Maya's file type for a scene path. Explicit, never sniffed."""
-    return "mayaBinary" if path.lower().endswith(".mb") else "mayaAscii"
+    """Maya's file type for a character asset. Explicit, never sniffed.
+
+    The `FBX` row arrived with the UE4 mannequin (2026-09-01): the editor
+    exports FBX, so that is what the plugin ships. It decides which import
+    path runs, and the FBX one has to force the plugin's global import MODE
+    (trap 33) -- see `fbximport`.
+    """
+    lowered = (path or "").lower()
+    if lowered.endswith(".fbx"):
+        return "FBX"
+    return "mayaBinary" if lowered.endswith(".mb") else "mayaAscii"
+
+
+def is_fbx(path):
+    return scene_type(path) == "FBX"
 
 
 def new_root(before_roots, after_roots):
@@ -104,9 +117,12 @@ def malware_nodes(names):
     return found
 
 
-def added_message(joints, meshes, removed, note="", connected=False):
+def added_message(joints, meshes, removed, note="", connected=False,
+                  label=None):
+    """What the press says. `label` names WHICH skeleton arrived, now that
+    the dropdown offers more than one."""
     message = "{0} added - {1} joints, {2} meshes".format(
-        LABEL, joints, meshes)
+        label or LABEL, joints, meshes)
     if note:
         message += " - " + note
     if connected:
@@ -135,22 +151,47 @@ def connect(root):
     return picker_window.connect_root(root)
 
 
-def add_character():
-    """Import the character scene, sweep it, connect it, and say so.
+def import_asset(path):
+    """Import a character asset and return every node that arrived.
 
-    Repeatable: every press adds another character (2026-09-01). The one
-    refusal left is the file not being there.
+    Two formats since 2026-09-01. `.ma` is Manny; `.fbx` is the UE4
+    mannequin, and it MUST go through `fbximport`, which forces the FBX
+    plugin's global import MODE -- `maya_uebridge` leaves it on `exmerge`,
+    where the importer matches names against the scene and creates nothing
+    at all, so without that guard Add Character would silently stop working
+    after any animation import from Unreal (trap 33).
+
+    Import, never open: whatever is already in the scene survives. And no
+    namespace, deliberately -- the UE bridge merges clips onto this skeleton
+    by plain bone names, which is the whole point of adding it.
+    """
+    if is_fbx(path):
+        from maya_scenesetup import fbximport
+        return fbximport.import_nodes(path)
+    return cmds.file(path, i=True, type=scene_type(path),
+                     returnNewNodes=True, ignoreVersion=True) or []
+
+
+def add_character(entry=None):
+    """Import a character, sweep it, connect it, and say so.
+
+    `entry` is a `catalog.Character`; None means the dropdown's default,
+    Manny, so every existing caller keeps its behaviour. Repeatable: every
+    press adds another character. The one refusal left is the file not
+    being there.
     """
     from maya_overrig import builder  # drags maya.mel in; keep import lazy
 
-    path = catalog.character_path()
+    entry = entry or catalog.default_character()
+    path = catalog.character_file(entry)
     if not os.path.isfile(path):
         return NO_FILE.format(path)
 
     before_roots = builder.character_roots()
-    new = cmds.file(path, i=True, type=scene_type(path),
-                    returnNewNodes=True, ignoreVersion=True) or []
+    new = import_asset(path)
 
+    # Format-blind on purpose: an FBX cannot carry a script node, but the
+    # sweep costs nothing and the `.ma` path genuinely needs it.
     suspect = malware_nodes(cmds.ls(new, type="script") or [])
     removed = [node for node in suspect if cmds.objExists(node)]
     if removed:
@@ -163,4 +204,5 @@ def add_character():
 
     joints = len(cmds.ls(new, type="joint") or [])
     meshes = len(cmds.ls(new, type="mesh") or [])
-    return added_message(joints, meshes, removed, note, connected)
+    return added_message(joints, meshes, removed, note, connected,
+                         label=entry.label)

@@ -26,9 +26,9 @@ name has paid for it.
 """
 
 import maya.cmds as cmds
-import maya.mel as mel
 
 from maya_scenesetup import bonedrive
+from maya_scenesetup import fbximport
 
 # The marker moved into bonedrive (the leaf) so the bridge can read it
 # without importing this module; every existing reader of attach.MARKER
@@ -132,29 +132,11 @@ def detach(parent_bone_path, drive_bone):
 def import_model(path):
     """Import `path` and return the transforms that arrived at world level.
 
-    `cmds.file` rather than the plugin's `FBXImport`, which is the opposite of
-    what the UE bridge does and is deliberate: trap 22 is about losing
-    animation curves, and there is no animation in a weapon model, while
-    `returnNewNodes` gives the exact node list `FBXImport` cannot report at all.
+    The import itself is `fbximport.import_nodes`, which owns the mode guard
+    (trap 33) -- Add Character needs the identical thing for the UE4
+    mannequin, and a fix for a silent failure must not exist twice.
     """
-    if not cmds.pluginInfo("fbxmaya", query=True, loaded=True):
-        cmds.loadPlugin("fbxmaya", quiet=True)
-
-    # The plugin's import mode is one global setting that lives for the whole
-    # Maya session, and it DOES reach cmds.file even though the curve-related
-    # settings do not (trap 22, from the other side). maya_uebridge leaves it
-    # on `exmerge`, where the importer matches names against the scene and
-    # creates nothing at all -- so after any animation import from Unreal, the
-    # weapon silently stopped arriving. Set it for every import, inherit never.
-    previous = mel.eval("FBXImportMode -q")
-    mel.eval("FBXImportMode -v add")
-    try:
-        new = cmds.file(path, i=True, type="FBX", returnNewNodes=True,
-                        ignoreVersion=True) or []
-    finally:
-        if previous:
-            mel.eval("FBXImportMode -v {0}".format(previous))
-
+    new = fbximport.import_nodes(path)
     return outermost(cmds.ls(new, long=True, type="transform") or [])
 
 

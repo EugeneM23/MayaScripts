@@ -232,3 +232,103 @@ class ChosenEntry(unittest.TestCase):
     def test_the_key_is_legal_as_a_node_name(self):
         got = window.chosen_entry("D:/props/2 Handed Axe.fbx", SWORD)
         self.assertEqual(got.key, "_2_Handed_Axe")
+
+
+class FakeUiCmds(object):
+    """Enough of maya.cmds to answer for one optionMenu and one optionVar."""
+
+    def __init__(self, menu_value=None, stored=None, menu_exists=True):
+        self.menu_value = menu_value
+        self.stored = dict(stored or {})
+        self.menu_exists = menu_exists
+        self.status = []
+
+    def optionMenu(self, name, exists=False, query=False, value=None,
+                   edit=False, **kwargs):
+        if exists:
+            return self.menu_exists
+        if edit and value is not None:
+            self.menu_value = value
+            return name
+        return self.menu_value
+
+    def optionVar(self, exists=None, query=None, stringValue=None, **kwargs):
+        if exists is not None:
+            return exists in self.stored
+        if query is not None:
+            return self.stored.get(query)
+        if stringValue is not None:
+            self.stored[stringValue[0]] = stringValue[1]
+        return None
+
+    def text(self, *args, **kwargs):
+        if kwargs.get("label") is not None:
+            self.status.append(kwargs["label"])
+        return args[0] if args else ""
+
+
+class CharacterDropdown(unittest.TestCase):
+    """Which skeleton Add Character imports (2026-09-01).
+
+    The default matters most: anyone who never opens the list must get
+    exactly the behaviour they had before the dropdown existed.
+    """
+
+    def setUp(self):
+        self.real = window.cmds
+        self.fake = FakeUiCmds()
+        window.cmds = self.fake
+
+    def tearDown(self):
+        window.cmds = self.real
+
+    def _labels(self):
+        return window.catalog.character_labels()
+
+    def test_the_dropdown_names_the_catalog_in_table_order(self):
+        self.assertEqual(self._labels()[0],
+                         window.catalog.default_character().label)
+
+    def test_a_chosen_label_resolves_to_its_entry(self):
+        wanted = window.catalog.character_by_key("UE4_Mannequin")
+        self.fake.menu_value = wanted.label
+        self.assertIs(window.chosen_character(), wanted)
+
+    def test_no_menu_yet_falls_back_to_the_default(self):
+        """The window builds its controls in order; nothing may raise
+        because it asked before the menu existed."""
+        self.fake.menu_exists = False
+        self.assertIs(window.chosen_character(),
+                      window.catalog.default_character())
+
+    def test_an_unknown_label_falls_back_rather_than_raising(self):
+        """A scene file outlives a rename of a table row."""
+        self.fake.menu_value = "Sevarog"
+        self.assertIs(window.chosen_character(),
+                      window.catalog.default_character())
+
+    def test_an_empty_menu_value_falls_back(self):
+        self.fake.menu_value = ""
+        self.assertIs(window.chosen_character(),
+                      window.catalog.default_character())
+
+    def test_changing_the_choice_remembers_it(self):
+        wanted = window.catalog.character_by_key("UE4_Mannequin")
+        self.fake.menu_value = wanted.label
+        window.character_changed()
+        self.assertEqual(self.fake.stored.get(window._CHARACTER_OPTIONVAR),
+                         wanted.label)
+
+    def test_changing_the_choice_says_what_will_be_imported(self):
+        wanted = window.catalog.character_by_key("UE4_Mannequin")
+        self.fake.menu_value = wanted.label
+        window.character_changed()
+        self.assertTrue(any(wanted.label in line
+                            for line in self.fake.status), self.fake.status)
+
+    def test_nothing_remembered_reads_as_empty(self):
+        self.assertEqual(window.remembered_character(), "")
+
+    def test_a_remembered_label_reads_back(self):
+        self.fake.stored[window._CHARACTER_OPTIONVAR] = "UE4 Mannequin"
+        self.assertEqual(window.remembered_character(), "UE4 Mannequin")

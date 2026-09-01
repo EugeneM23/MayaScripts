@@ -48,6 +48,19 @@ class SceneType(unittest.TestCase):
         self.assertEqual(character.scene_type("D:/rigs/Manny.mb"),
                          "mayaBinary")
 
+    def test_fbx_is_fbx(self):
+        """The UE4 mannequin ships as FBX because that is what the editor
+        exports; the type decides which import path runs, and the FBX one
+        has to force the plugin's global mode (trap 33)."""
+        self.assertEqual(character.scene_type("D:/a/UE4_Mannequin.fbx"),
+                         "FBX")
+        self.assertTrue(character.is_fbx("D:/a/UE4_Mannequin.FBX"))
+        self.assertFalse(character.is_fbx("D:/rigs/Manny.ma"))
+
+    def test_nothing_is_not_fbx(self):
+        self.assertFalse(character.is_fbx(""))
+        self.assertFalse(character.is_fbx(None))
+
     def test_extension_case_does_not_matter(self):
         self.assertEqual(character.scene_type("D:/rigs/MANNY.MB"),
                          "mayaBinary")
@@ -166,6 +179,16 @@ class AddedMessage(unittest.TestCase):
                       character.added_message(93, 6, [], connected=True))
         self.assertNotIn("connected",
                          character.added_message(93, 6, []))
+
+    def test_the_label_names_WHICH_skeleton_arrived(self):
+        """With a dropdown offering more than one, "Manny added" over a UE4
+        mannequin would be a lie the animator has no other way to catch."""
+        message = character.added_message(68, 2, [], label="UE4 Mannequin")
+        self.assertIn("UE4 Mannequin added", message)
+        self.assertNotIn("Manny added", message)
+
+    def test_no_label_keeps_the_original_wording(self):
+        self.assertIn("Manny added", character.added_message(93, 6, []))
 
 
 class ShippedAsset(unittest.TestCase):

@@ -40,6 +40,7 @@ _TRANSLATE = "mayaSceneSetupTranslate"
 _STATUS = "mayaSceneSetupStatus"
 _BOUND = "mayaSceneSetupBound"
 _CUSTOM = "mayaSceneSetupCustomFbx"
+_CHARACTER = "mayaSceneSetupCharacter"
 
 # The grip is BONE-relative (2026-08-25, the user's ruling): zeros mean the
 # sword exactly on weapon_r, and the numbers survive any reparenting. That
@@ -52,6 +53,7 @@ _CUSTOM = "mayaSceneSetupCustomFbx"
 _OPTIONVAR = "mayaSceneSetup_offset_{0}"
 _LEGACY_OPTIONVAR = "mayaWeapons_offset_{0}"
 _CUSTOM_OPTIONVAR = "mayaSceneSetup_custom_fbx"
+_CHARACTER_OPTIONVAR = "mayaSceneSetup_character"
 
 NO_CHARACTER = ("no character - open the picker and press Connect, "
                 "or select a joint")
@@ -312,15 +314,42 @@ def custom_changed():
     refresh()
 
 
+def chosen_character():
+    """The catalog entry the dropdown names, or the default. Never None.
+
+    A remembered label that the table no longer carries falls back rather
+    than raising: a scene file outlives a rename of a row.
+    """
+    label = ""
+    if cmds.optionMenu(_CHARACTER, exists=True):
+        label = cmds.optionMenu(_CHARACTER, query=True, value=True) or ""
+    return (catalog.character_by_label(label)
+            or catalog.default_character())
+
+
+def remembered_character():
+    """The label stored from the last session, or ""."""
+    if cmds.optionVar(exists=_CHARACTER_OPTIONVAR):
+        return cmds.optionVar(query=_CHARACTER_OPTIONVAR) or ""
+    return ""
+
+
+def character_changed():
+    """Remember the choice. Nothing else: the press is what imports."""
+    entry = chosen_character()
+    cmds.optionVar(stringValue=(_CHARACTER_OPTIONVAR, entry.label))
+    _status("Add Character will import: {0}".format(entry.label))
+
+
 def add_character():
-    """Import the working character into the scene, then catch the UI up.
+    """Import the chosen character into the scene, then catch the UI up.
 
     The status is written LAST: `refresh` ends by writing its own line, and
     the outcome of the press must be what stays on screen. The refresh is
     what flips the header to the new character -- a lone skeleton binds
     through `skeleton.current_root` with no press of anything.
     """
-    message = character.add_character()
+    message = character.add_character(chosen_character())
     refresh()
     _status(message)
 
@@ -490,12 +519,23 @@ def show_window():
 
     cmds.text(_BOUND, label="", align="left")
 
+    cmds.optionMenu(_CHARACTER, label="Character",
+                    annotation="Which skeleton Add Character puts into the "
+                               "scene. Manny is the UE5 rig with geometry "
+                               "and a camera bone; UE4 Mannequin is the "
+                               "68-bone skeleton the Longsword/Sword "
+                               "AnimsetPro packs animate -- it has no "
+                               "weapon_r and no camera_bone, so Add Weapon "
+                               "and Camera Setup do not apply to it.",
+                    changeCommand=lambda *_args: _run(character_changed))
+    for label in catalog.character_labels():
+        cmds.menuItem(label=label)
+
     cmds.button(label="Add Character", height=30,
-                annotation="Import the working character (Manny skeleton, "
-                           "geometry and camera bone) into this scene -- "
-                           "the same content as the rig scene, no manual "
-                           "open. Press it once per character; each one is "
-                           "connected in the picker as it arrives.",
+                annotation="Import the chosen skeleton into this scene -- "
+                           "no manual open. Press it once per character; "
+                           "each one is connected in the picker as it "
+                           "arrives.",
                 command=lambda *_args: _run(add_character))
     cmds.separator(height=8, style="in")
 
@@ -565,6 +605,13 @@ def show_window():
     cmds.text(_STATUS, label="", align="left")
 
     cmds.setParent("..")
+    # The remembered skeleton, restored before the first refresh. A label
+    # the table no longer carries is simply not selected, so the menu stays
+    # on Manny -- the default anyone who never opens the list gets.
+    remembered = remembered_character()
+    if remembered and remembered in catalog.character_labels():
+        cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
+
     cmds.showWindow(WINDOW)
 
     _run(refresh)

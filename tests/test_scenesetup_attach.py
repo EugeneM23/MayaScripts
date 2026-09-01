@@ -412,13 +412,24 @@ class ImportMode(unittest.TestCase):
     creates NOTHING. cmds.file then returns an empty list and Add reports
     "nothing came out of ...". The mode must be set for every import, never
     inherited.
+
+    The guard itself moved to `fbximport` on 2026-09-01 (Add Character needs
+    the identical thing for UE4_Mannequin.fbx) and is tested there. What is
+    still attach's own is that it reports the OUTERMOST transforms.
     """
 
     def setUp(self):
+        from maya_scenesetup import fbximport
+        self.fbximport = fbximport
+        self.real = (fbximport.cmds, fbximport.mel, attach.cmds)
         self.mel = FakeMel("exmerge")
         self.cmds = FakeImportCmds(self.mel)
-        attach.mel = self.mel
+        fbximport.mel = self.mel
+        fbximport.cmds = self.cmds
         attach.cmds = self.cmds
+
+    def tearDown(self):
+        self.fbximport.cmds, self.fbximport.mel, attach.cmds = self.real
 
     def test_the_import_runs_in_add_mode(self):
         attach.import_model("C:/x/sword.fbx")
@@ -432,6 +443,7 @@ class ImportMode(unittest.TestCase):
 
     def test_the_mode_is_put_back_when_the_import_blows_up(self):
         self.cmds = FakeImportCmds(self.mel, boom=True)
+        self.fbximport.cmds = self.cmds
         attach.cmds = self.cmds
         with self.assertRaises(RuntimeError):
             attach.import_model("C:/x/sword.fbx")
@@ -440,6 +452,15 @@ class ImportMode(unittest.TestCase):
     def test_returns_what_arrived(self):
         self.assertEqual(attach.import_model("C:/x/sword.fbx"),
                          ["|LongSwordMesh"])
+
+    def test_only_the_outermost_transforms_are_reported(self):
+        """attach's own half: a file arriving as a null holding the mesh
+        must answer the null, not both."""
+        self.cmds = FakeImportCmds(
+            self.mel, nodes=("|grp", "|grp|LongSwordMesh"))
+        self.fbximport.cmds = self.cmds
+        attach.cmds = self.cmds
+        self.assertEqual(attach.import_model("C:/x/sword.fbx"), ["|grp"])
 
 
 class FakeModel(object):

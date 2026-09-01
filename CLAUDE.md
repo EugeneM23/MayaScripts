@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1264 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1299 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1682,11 +1682,12 @@ import maya_scenesetup; maya_scenesetup.show_window()
 
 | Module | Responsibility | May import |
 |---|---|---|
-| `catalog.py` | the weapon table, lookups, an entry for any FBX on disk (`entry_for_path`, `node_key`), the character scene path — pure data | **stdlib only** |
+| `catalog.py` | the weapon table AND the character table, lookups, an entry for any FBX on disk (`entry_for_path`, `node_key`) — pure data | **stdlib only** |
+| `fbximport.py` | one home for the FBX import-MODE guard (trap 33), shared by the weapon and the character | `maya.cmds`, `maya.mel` |
 | `character.py` | the working character into the current scene: import, the rename note, connecting it, the malware sweep | `maya.cmds`, `catalog`, `builder` + `picker_window` (both lazy) |
 | `skeleton.py` | which character — and it becomes the ACTIVE one — and where its weapon bone is | `maya.cmds`, `maya_overrig` |
 | `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition, range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
-| `attach.py` | import, find the mesh, parent it under the hand, invert the drive, read/write offsets | `maya.cmds`, `bonedrive` |
+| `attach.py` | find the mesh, parent it under the hand, invert the drive, read/write offsets | `maya.cmds`, `bonedrive`, `fbximport` |
 | `aim.py` | where the aim locators go, and the press that builds it | `maya.cmds`, OpenMaya, `attach`, `overrig`, `aimrig` |
 | `window.py` | the `cmds` window, offsets, optionVars | `maya.cmds` + the four above |
 
@@ -1712,6 +1713,50 @@ is why `character.add_character()` also **sweeps imported script nodes**
 named like the malware on every press (import never executes script nodes,
 so the sweep always wins the race). Import, never open, and **no
 namespace** — the UE bridge merges clips by plain bone names.
+
+**A DROPDOWN of skeletons** (2026-09-01, later the same day: «я бы хотел
+иметь возможность добавлять скелет UE4_Mannequin… в add character сделаем
+выпадающий список»). `catalog.CHARACTERS` is a table like `WEAPONS`, so a
+third skeleton is a row rather than a branch, and the `optionMenu` above the
+button is filled from it. The choice is remembered in
+`mayaSceneSetup_character`; **Manny is row 0 and the default**, so anyone
+who never opens the list has exactly the old behaviour.
+`character_path()` with no argument still means Manny — deliberately, since
+`maya_skelfit`, `verify_add_character.py` and three test modules ask that
+question and none of them is about the dropdown.
+
+**Row two is `assets/UE4_Mannequin.fbx`** — 1.0 MB, **68 joints, 2 meshes**,
+exported once from `/Game/SwordAnimsetPro/UE4_Mannequin/Mesh/SK_Mannequin`
+in the animator's own project through `uelink` (`AssetExportTask`,
+`automated=True`, `load_asset` guarded — trap 24). The
+Longsword/SwordAnimsetPro packs' ~1200 clips all run on it. Verified in a
+standalone Maya before shipping: root at `|SK_Mannequin|root`, **no script
+nodes at all**, `spine_01..03`, no metacarpals, no `neck_02`, one twist per
+segment. Extracting it from the animator's `UE4_To_Many.ma` instead would
+have meant separating one skeleton out of 299 joints across three skeletons
+plus an AdvancedSkeleton rig, and sanitizing two vaccine/breed nodes.
+
+**It has no `weapon_r` and no `camera_bone`** (measured), so Add Weapon and
+Camera Setup refuse on it through their existing "bone not found" path.
+That is stated rather than worked around; `ik_hand_gun` is not substituted.
+**The rig is neither blocked nor promised**: the UE4 schema is exactly what
+`verify_missing_bones.py` proves, so Connect and Build are likely to work,
+but nothing on this skeleton has been live-verified.
+
+**The FBX row is why the import forks**, and trap 33 is the whole story:
+`character.scene_type` answers `FBX`, and that path goes through
+`fbximport.import_nodes`, which forces the plugin's global import MODE.
+`maya_uebridge` leaves it on `exmerge`, where the importer creates NOTHING
+— so without the guard Add Character would silently stop working after any
+animation import from Unreal. The guard used to live inside
+`attach.import_model`; it is one module now, because a fix for a silent
+failure that exists in two copies is a fix that will exist in one copy soon
+enough. The live gate sets the mode to `exmerge` on purpose before pressing.
+
+Proof: `verify_add_character.py`, **green live 2026-09-01, 0 of 23 gates
+failed**, ending with the point of the feature — a `SwordAnimsetPro` clip
+imported onto the freshly added mannequin: **68 of 68 bones animated, 0
+without keys**, with the bridge resolving it as the target through Connect.
 
 **Press it as many times as you like** (2026-09-01, the user's ask: "я должен
 иметь возможность добавить в сцену сколько угодно персонажей"). The old
@@ -2539,10 +2584,11 @@ repository. Four things it settles:
   named list of uncommitted payload files if any. The two 2026-08-21
   archives are four minutes apart and nothing distinguishes them.
 
-Sizes to expect: **13 MB, 57 files** (2026-09-01), against the old
-760 KB — `assets/Manny_Skeleton.ma` is 52 MB and mandatory, Add Character
-runs on it. Tests: `tests/test_make_build.py` (15, on a fake tree in a
-temp dir — the real payload is never zipped to prove a rule about names).
+Sizes to expect: **13.8 MB, 62 files** (2026-09-01), against the old
+760 KB — `assets/Manny_Skeleton.ma` is 52 MB and mandatory (Add Character
+runs on it) and `assets/UE4_Mannequin.fbx` another 1 MB. Tests:
+`tests/test_make_build.py` (15, on a fake tree in a temp dir — the real
+payload is never zipped to prove a rule about names).
 
 ## Conventions
 

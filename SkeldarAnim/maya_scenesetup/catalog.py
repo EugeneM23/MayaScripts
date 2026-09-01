@@ -14,6 +14,13 @@ import string
 
 Weapon = collections.namedtuple("Weapon", "key label path bone scale")
 
+# The characters Add Character can put into the scene (2026-09-01). A table
+# for the same reason the weapons are one: a third skeleton is a row, not a
+# branch. `legacy` stays per entry rather than a special case because
+# Manny's fallback IS the user's original file, typo and infection and all,
+# and that resolution rule has to survive.
+Character = collections.namedtuple("Character", "key label file legacy")
+
 _LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
 # Two dirnames up from this file is the container that holds both the
@@ -28,16 +35,62 @@ _LEGACY_CHARACTER = ("C:/!!!Work/Animations/Rigs/Characters/"
                      "Manny_Sckeleton.ma")
 
 
-def character_path():
-    """The working character scene: the shipped copy first, legacy second.
+CHARACTERS = [
+    Character("Manny", "Manny (UE5)", "Manny_Skeleton.ma",
+              _LEGACY_CHARACTER),
+    # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
+    # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
+    # metacarpals, no neck_02, one twist per segment. The pack animations
+    # (Longsword/SwordAnimsetPro, ~1200 clips) all run on it.
+    Character("UE4_Mannequin", "UE4 Mannequin", "UE4_Mannequin.fbx", ""),
+]
 
-    Same rule as the sword, but resolved at call time -- there is no table
-    row to freeze it into, and a copy that appears in assets/ mid-session
-    (a colleague re-running the installer) should win immediately.
+
+def character_labels():
+    """Dropdown labels, in table order."""
+    return [entry.label for entry in CHARACTERS]
+
+
+def character_by_label(label):
+    for entry in CHARACTERS:
+        if entry.label == label:
+            return entry
+    return None
+
+
+def character_by_key(key):
+    for entry in CHARACTERS:
+        if entry.key == key:
+            return entry
+    return None
+
+
+def default_character():
+    """Manny, so anyone who never opens the list sees today's behaviour."""
+    return CHARACTERS[0]
+
+
+def character_file(entry):
+    """Where a character's scene is: shipped copy first, legacy second.
+
+    Resolved at call time rather than frozen into the table -- a copy that
+    appears in assets/ mid-session (a colleague re-running the installer)
+    should win immediately.
     """
     local = os.path.join(_CONTAINER, "assets",
-                         "Manny_Skeleton.ma").replace("\\", "/")
-    return local if os.path.isfile(local) else _LEGACY_CHARACTER
+                         entry.file).replace("\\", "/")
+    if os.path.isfile(local):
+        return local
+    return entry.legacy or local
+
+
+def character_path(entry=None):
+    """The working character scene. No argument still means Manny.
+
+    Deliberately: `maya_skelfit`, `verify_add_character.py` and three test
+    modules ask this question and none of them is about the dropdown.
+    """
+    return character_file(entry or default_character())
 
 
 def _sword_path():

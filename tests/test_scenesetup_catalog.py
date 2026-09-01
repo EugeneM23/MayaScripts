@@ -201,3 +201,67 @@ class CharacterShipsWithTheTool(unittest.TestCase):
         self.assertEqual(
             path,
             "C:/!!!Work/Animations/Rigs/Characters/Manny_Sckeleton.ma")
+
+
+class CharacterTable(unittest.TestCase):
+    """A table since 2026-09-01, so a third skeleton is a row rather than a
+    branch. The animator's packs (Longsword/SwordAnimsetPro, ~1200 clips)
+    all run on UE4_Mannequin, which is what the second row is for."""
+
+    def test_manny_is_first_so_it_stays_the_default(self):
+        self.assertEqual(catalog.CHARACTERS[0].key, "Manny")
+        self.assertIs(catalog.default_character(), catalog.CHARACTERS[0])
+
+    def test_the_ue4_mannequin_is_there(self):
+        entry = catalog.character_by_key("UE4_Mannequin")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.file, "UE4_Mannequin.fbx")
+
+    def test_labels_are_unique_and_in_table_order(self):
+        labels = catalog.character_labels()
+        self.assertEqual(len(labels), len(set(labels)))
+        self.assertEqual(labels,
+                         [entry.label for entry in catalog.CHARACTERS])
+
+    def test_keys_are_unique(self):
+        keys = [entry.key for entry in catalog.CHARACTERS]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_lookup_by_label_and_by_key_agree(self):
+        for entry in catalog.CHARACTERS:
+            self.assertIs(catalog.character_by_label(entry.label), entry)
+            self.assertIs(catalog.character_by_key(entry.key), entry)
+
+    def test_an_unknown_name_is_none_rather_than_a_guess(self):
+        self.assertIsNone(catalog.character_by_label("Sevarog"))
+        self.assertIsNone(catalog.character_by_key("Sevarog"))
+        self.assertIsNone(catalog.character_by_label(""))
+
+    def test_every_entry_ships_in_assets(self):
+        for entry in catalog.CHARACTERS:
+            path = catalog.character_file(entry)
+            self.assertTrue(os.path.isfile(path), path)
+            self.assertNotIn("\\", path)
+
+    def test_character_path_with_no_argument_still_means_manny(self):
+        """maya_skelfit, verify_add_character and three test modules ask
+        this question and none of them is about the dropdown."""
+        self.assertEqual(catalog.character_path(),
+                         catalog.character_file(catalog.CHARACTERS[0]))
+
+    def test_character_path_takes_an_entry(self):
+        entry = catalog.character_by_key("UE4_Mannequin")
+        self.assertTrue(
+            catalog.character_path(entry).endswith("UE4_Mannequin.fbx"))
+
+    def test_an_entry_with_no_legacy_still_answers_a_path(self):
+        """Only Manny has a legacy file. A missing shipped copy for the
+        others must not answer "" and make the refusal read as a bug."""
+        entry = catalog.character_by_key("UE4_Mannequin")
+        original = catalog.os.path.isfile
+        catalog.os.path.isfile = lambda _p: False
+        try:
+            path = catalog.character_file(entry)
+        finally:
+            catalog.os.path.isfile = original
+        self.assertTrue(path.endswith("UE4_Mannequin.fbx"), path)
