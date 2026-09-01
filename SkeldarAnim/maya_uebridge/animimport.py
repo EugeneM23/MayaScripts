@@ -322,7 +322,7 @@ def hold_name(short):
 
 
 @contextlib.contextmanager
-def other_skeletons_held(target_root):
+def other_skeletons_held(target_root, roots=None):
     """Rename every other character's joints out of the merge's way.
 
     A rename is invisible to connections - constraints, skinClusters and
@@ -334,23 +334,44 @@ def other_skeletons_held(target_root):
     second node. Restored in a `finally`, and skipped entirely when there
     is nothing to hold, which is every single-character scene the tool has
     ever run in.
+
+    `roots` narrows the candidates; None means every skeleton in the
+    scene, which is what an import wants. It exists so a verify run can
+    exercise the mechanism on its own throwaway characters instead of
+    renaming the animator's.
     """
-    held = []
-    failed = []
-    for root in skeletons_to_hold(skeleton_roots(), target_root):
+    candidates = skeleton_roots() if roots is None else roots
+
+    # Every UUID collected BEFORE the first rename, and each path resolved
+    # from its UUID again right before its own rename. `root` is a bone in
+    # every UE clip, so it is held like any other -- and renaming it
+    # invalidates the path of every joint beneath it (trap 16). Measured
+    # 2026-09-01: walking the paths straight through renamed the root and
+    # SILENTLY skipped all twenty bones under it, so the merge stayed
+    # exactly as ambiguous as before.
+    wanted = []
+    for root in skeletons_to_hold(candidates, target_root):
         for joint in joints_under(root):
             short = _short(joint)
             if short.startswith(HOLD_PREFIX):
                 continue
             uuid = (cmds.ls(joint, uuid=True) or [None])[0]
-            if not uuid:
-                continue
-            try:
-                cmds.rename(joint, hold_name(short))
-            except RuntimeError:
-                failed.append(short)   # locked, referenced, read-only
-                continue
-            held.append((uuid, short))
+            if uuid:
+                wanted.append((uuid, short))
+
+    held = []
+    failed = []
+    for uuid, short in wanted:
+        paths = cmds.ls(uuid, long=True) or []
+        if not paths:
+            failed.append(short)
+            continue
+        try:
+            cmds.rename(paths[0], hold_name(short))
+        except RuntimeError:
+            failed.append(short)   # locked, referenced, read-only
+            continue
+        held.append((uuid, short))
     try:
         yield failed
     finally:

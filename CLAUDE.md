@@ -6,14 +6,43 @@ they do not go wrong again.
 
 ## What is here
 
-Two things, with different conventions:
+**The repo root is the workshop. `SkeldarAnim/` is the plugin.** That split
+landed 2026-09-01 ("изолируем нашу полку как отдельный плагин чтобы ты тут не
+путался куда какие скрипты") and it is the first thing to know: if it is in
+`SkeldarAnim/`, a colleague receives it; if it is at the root, it is ours.
+
+```
+MayaScripts/                  the workshop
+├── SkeldarAnim/              THE PLUGIN -- this, and only this, ships
+│   ├── install.py  README_INSTALL.txt
+│   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/
+│   ├── maya_overshoot.py
+│   └── icons/  assets/  overrig/
+├── make_build.py             dev tool: builds the zip from SkeldarAnim/
+├── maya_skelfit.py  maya_meltmorph.py  maya_retarget.py  ...
+└── tests/  docs/  archive/  CLAUDE.md
+```
+
+`install.payload()` did not change: its names were always relative to
+`source_root()`, the folder holding `install.py`. Three things did —
+`tests/__init__.py` puts the plugin folder on `sys.path` (discovery gives the
+repo root), `make_build.py` derives its OUTPUT dir from its own location so
+the zip still lands beside the repository, and every dev entry point and
+verify plan now says `.../MayaScripts/SkeldarAnim`. The standalone root tools
+deliberately stayed put: they never shipped, and moving them would break the
+paths written into both project skills and a dozen verify scripts for nothing.
+`maya_skelfit.py` resolves `assets/` inside the plugin folder (Manny is shared
+with Add Character), with the old spelling as a fallback.
+
+Two conventions inside, unchanged:
 
 - **Root-level `maya_*.py`** — standalone single-file tools, pure `maya.cmds`, no
   Qt, no package. Leave that style alone when touching them. Tools the packages
   superseded live in `archive/` (moved 2026-08-17; its README says why each).
-- **`maya_overrig/`** — a Python wrapper around the **OverRig** MEL toolset. This
-  is the active work. It uses Qt and is a package, deliberately breaking the
-  flat convention; see `docs/superpowers/specs/2026-08-14-overrig-picker-design.md`.
+- **`SkeldarAnim/maya_overrig/`** — a Python wrapper around the **OverRig** MEL
+  toolset. This is the active work. It uses Qt and is a package, deliberately
+  breaking the flat convention; see
+  `docs/superpowers/specs/2026-08-14-overrig-picker-design.md`.
 
 OverRig itself is third-party MEL by Pavel Barnev, v10.2, living at
 `C:/!!!Work/Animations/Scripts/base_OverRig_scripts_V10_2_f1/base_OverRig_scripts.mel`
@@ -141,6 +170,10 @@ Four things that will waste a run if forgotten:
    code, refresh the installed copy (`install.install(quiet=True)` from the
    repo's `install.py`, purging the `install` module first — the installed
    folder carries its own) or the user's shelf keeps running the old build.
+   Since 2026-09-01 the repo path to insert is
+   `C:/!!!Work/MayaScripts/SkeldarAnim`, not the repo root — a verify plan
+   still pointing at the root imports NOTHING of ours and dies on the first
+   `from maya_overrig import ...`, which reads like a broken bridge.
    One more polling detail: a runner that redirects stdout into its output
    file CREATES the file immediately — poll for the script's final line,
    never for the file's existence.
@@ -155,7 +188,13 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 714 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1205 tests at time of writing, all passing.
+
+Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
+puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
+must point its `cwd`/`sys.path` at the PLUGIN folder, not the repo root. Four
+purity tests do (`test_bodymap`, `test_pickerstate`, `test_scenesetup_catalog`,
+`test_uebridge_records`).
 
 Testing code that needs `maya.cmds` without a Maya session: inject a fake into
 `sys.modules` and **rebind the module attribute** (`naming.cmds = fake`). Do not
@@ -177,7 +216,9 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
 | `picker_view.py` | Qt scene, button items, painting, input | **Qt only** |
 | `picker_window.py` | Window, toolbar, Maya selection wiring, scriptJob | Qt + `maya.cmds` |
 | `overrig.py` | Thin binding to the MEL toolset, no policy | `maya.cmds`, `maya.mel` |
-| `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig` |
+| `active.py` | **Which character every operation acts on.** The UUID, `root_of(scene_map)` (pure), `character_roots`, `sole_character` | `maya.cmds`, `naming`, `overrig` |
+| `manifest.py` | **Whose manifest is whose.** Kind/name/owner tagging, prefix discovery, the legacy claim. Pure policy + thin scene wrappers | `maya.cmds`, `overrig`, `active` |
+| `builder.py` | Limb table, manifest, build / bake / teardown policy | `maya.cmds`, `naming`, `overrig`, `manifest`, `active` |
 | `aimrig.py` | The aim manifest: record, resolve a selection, bake and delete. Knows nothing about weapons | `maya.cmds`, `builder`, `overrig` |
 | `axes.py` | Rotation algebra for controller axes, pure | `maya.api.OpenMaya` only |
 | `fkchains.py` | Chain tables, what a build may create (`BUILDABLE`/`build_targets`), pure chain resolution (chain_root, innermost_owner, ...) | stdlib + `builder` (for `_is_inside`/`LIMBS`) |
@@ -195,13 +236,94 @@ quotes for `git commit -m`; write the message to a file and use `git commit -F`.
   plain-Python tests.
 - The fiddly logic is deliberately pushed into **pure functions taking the scene
   as data** (`order_by_nesting`, `foreign_knots_inside`,
-  `detect_prefix`, `unrecorded_rig_roots`). Test those; keep the Maya-touching
-  wrappers thin.
+  `detect_prefix`, `unrecorded_rig_roots`, `manifest.pick`,
+  `active.root_of`). Test those; keep the Maya-touching wrappers thin.
+- **Nothing resolves a manifest or a controller BY NAME any more** (2026-09-01).
+  `builder.limb_set_name` / `fkchains.chain_set` / `twist.twist_set_name` name a
+  FRESH set; `manifest.find` finds an existing one; `fkcontrols.fk_controls`
+  finds controllers. See the section below before adding a lookup.
+
+## The active character
+
+**Every rig and skeleton operation acts on the character the picker is
+CONNECTED to** (2026-09-01, the user's ask: press Connect on a bone hierarchy
+and that hierarchy is what we work with; a scene may hold many characters).
+Spec: `docs/superpowers/specs/2026-09-01-active-character-design.md`. Proof:
+`verify_two_characters.py` — **green live 2026-09-01, 0 of 51 gates failed**,
+including the two that matter most: turning character A's spine control moved
+B by **0.000000000**, and pulling A's IK hand moved B by **0.000000000**.
+
+**What was broken.** Every manifest and every controller was found by NAME.
+Maya uniquifies the second character's `RigPicker_build_arm_l` to `...arm_l1`
+and its `upperarm_l_FK_ctrl` to `..._FK_ctrl1` (both confirmed live), so the
+tool read character two as unrigged — building FK over its live IK — coupled
+its chains onto character one's controllers, aligned somebody else's rotate
+axes, and baked limbs the animator never selected. Silently, every time.
+
+**Identity by ATTRIBUTE, discovery by PREFIX** (`manifest.py`). Every
+RigPicker set carries `rigPickerRoot` (the character root's UUID),
+`rigPickerKind` (`ik`/`fk`/`twist`) and `rigPickerName`. The readable name is
+kept for the outliner and never searched for again. This is exactly what the
+aim manifest has done since 2026-08-17, generalised. **Legacy files keep
+working**: a set with no tag was built in a single-character scene, so it
+answers for the sole character, and `claim_untagged` tags it on the first bind
+or build — with several characters already present it is claimed only when one
+of its members lies inside the asking character's own subtree (OverRig parks a
+constraint under every source joint, so a rig of ours always has one there).
+`pick` is pure and tagged beats untagged, for a scene part-way through.
+
+**The controller INDEX** — `{bone: controller UUID}` — replaced trusting
+`<bone>_FK_ctrl` to be unique. Two sources, and both are needed:
+
+- *After* a build, `fkcontrols.fk_controls(scene_map)` reads it out of this
+  character's own manifests. Matching inside a manifest that already belongs
+  to one character is unambiguous — that is the whole point of tagging. The
+  leaf is digit-stripped (`control_leaf`, pure) and compared EXACTLY against
+  `bone + "_FK_ctrl"`, which is what keeps OverRig's dead
+  `..._FK_ctrl_aimConstraint1` and our `..._FK_ring_tmpShape` out. The suffix
+  ends in a letter, so the strip can never eat part of a bone name
+  (`spine_01_FK_ctrl` survives whole).
+- *During* a build it comes from the build itself: `_dress_knots` now RETURNS
+  `{bone: knot path}` instead of a count, and `build_fk` threads the index
+  through coupling, align and orient. Inside a build is the one moment two
+  characters genuinely own a knot of the same name.
+
+**UUIDs, not paths, in the index.** `apply_Parent_in` re-parents a chain's
+root knot, changing every knot below it — a path index assembled during a
+build is stale by the second chain, which is exactly when the third needs to
+hang off it (trap 16 again). `control_for(bone, index)` re-resolves.
+
+**Where the character comes from — no signature changed.** A binding map
+carries its own root: it is built by `naming.hierarchy_map(root)`, so the
+root is the shallowest joint path in it (`active.root_of`, pure, tie-broken
+by path). Every MEL entry point calls `manifest.activate(scene_map)` — which
+is why twelve live verify scripts and eight test modules needed no edits — and
+the picker's `_bind` sets it directly, so Connect is what the animator
+experiences. `picker_window._resolution` RE-ASSERTS the window's binding on
+every selection sync: a verify script or a second panel can have adopted a
+different character since.
+
+**Guards run BEFORE activating.** Activating claims manifests, which WRITES,
+and a refusal must leave the scene exactly as it found it. `bake_targets` uses
+`active.adopt` (context only) rather than `activate`, because it is a
+read-only resolution.
+
+**Deliberately scene-wide:** `builder.recorded_members()`, the shield that
+stops `_reclaim` dooming anything we bookkept — scoping it would let a bake on
+one character reclaim another's rig. `OverRig_knots` likewise (it is
+OverRig's, shared by every character, and `character_roots` excludes joints
+under it — trap 1). `aimrig` was already identity-by-attribute and an aim
+belongs to a weapon rather than a character; untouched.
+
+One measured detail from the live run: with two characters, `scale_nodes` for
+`full_rate_capture` is now **this character's** bones and rigs only. Scaling
+another character's would drag its animation through doubled time and scale it
+back against a timeline it never rode.
 
 Entry point:
 
 ```python
-import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
 import maya_overrig; maya_overrig.show_picker()
 ```
 
@@ -235,16 +357,22 @@ never offered by `switchable_bones`, and resolves in `bake_targets` to a chain
 that is neither a built limb nor a recorded chain — so Bake+Delete does
 nothing, which is the safe direction of failure.
 
-**Connect** binds the panel to one skeleton. Any joint of the character works —
-it climbs to the root — as does the enclosing group. The root is remembered by
-UUID so renaming or regrouping does not break the link. A single-skeleton scene
-connects on open. Every lookup goes through the bound subtree, which is what
-makes namespaces and per-joint prefixes a non-issue.
+**Connect** binds the panel to one skeleton, **and that is what chooses the
+ACTIVE character** (2026-09-01): every build, switch, bake and teardown lands
+on the connected hierarchy, and a scene may hold as many characters as the
+animator likes. Any joint of the character works — it climbs to the root — as
+does the enclosing group. The root is remembered by UUID so renaming or
+regrouping does not break the link. A single-skeleton scene connects on open.
+Every lookup goes through the bound subtree, which is what makes namespaces and
+per-joint prefixes a non-issue; see **The active character** below for what
+makes two identically-named Mannys stay apart.
 
-**Build** (the only build button) tears down whatever exists — FK baked back
-first, then IK, because a file rigged before 2026-08-18 has finger controls
-hanging inside IK hand controls — and builds fresh in one undo step
-(`fkcontrols.rebuild`). Every entry point
+**Build** (the only build button) tears down whatever exists **on the
+connected character** — FK baked back first, then IK, because a file rigged
+before 2026-08-18 has finger controls hanging inside IK hand controls — and
+builds fresh in one undo step (`fkcontrols.rebuild`). Another character's rig
+in the same scene is not touched; verified live (0.000000000 both ways).
+Every entry point
 that runs MEL — `build_fk`, `rebuild`, `switch_limbs`, `bake_fk`,
 `bake_selection`, `builder.build`, `builder.bake_limbs` — calls
 `overrig.ensure_loaded()` first and returns `overrig.NOT_LOADED_MESSAGE`
@@ -568,12 +696,26 @@ both, deliberately not here. Spec:
 Not built: FK controllers on the fingers (dropped 2026-08-18, "на время");
 spine IK (removed, see above) and neck IK; per-chain FK bake from the UI
 (Switch does it internally); docking; mirror-select; the pose-snapshot
-safety before Build (proposed, not confirmed).
+safety before Build (proposed, not confirmed); a character dropdown in the
+picker (Connect already is one, and the user described Connect as the
+mechanism).
 
 **Live verification** (run in the Manny scene): `verify_arm_switch.py`,
 `verify_capture_edges.py`, `verify_control_axes.py`, `verify_hybrid_build.py`,
 `verify_ik_under_root.py` in `docs/superpowers/plans/`, plus
-`verify_fingers_on_bones.py` for the 2026-08-18 change. **All six were
+`verify_fingers_on_bones.py` for the 2026-08-18 change.
+`verify_two_characters.py` (2026-09-01) is **green: 0 of 51 gates failed**
+and is the proof for the active-character scoping — it builds two throwaway
+UE5-schema skeletons of its own in whatever scene is open, so it needs
+neither the Manny scene nor an empty one, and it runs in **three phases**
+(`PHASES` narrows it for a staged run): manifest scoping with no OverRig at
+all, a real hybrid build on both characters, and the import/export target.
+Phase 2 skips itself when the scene already holds RigPicker manifests that
+are not its own — it builds and tears down for real, and a verify run has no
+business doing that beside the animator's rig. Measured: A's spine control
+turning A by 7.87 and B by **0.000000000**, A's IK hand pulling A by 14.49
+and B by **0.000000000**, B's controller resolving to nothing against A's
+binding, and a Bake+Delete on B leaving A's rig standing and still driving. **All six were
 rewritten that day** — five of them asserted "the finger hangs on the hand",
 which is no longer true — so their last green run predated the rewrite.
 **`verify_hybrid_build.py` has since run green live (2026-08-21, 0
@@ -960,6 +1102,34 @@ C_parent` construction rather than a measurement.
    for weeks because an animator presses Build having just clicked something,
    and every live proof selected a bone on the way in. The failure is exactly
    the case where there is nothing to clear, so the guard swallows it.
+47. **A verify script that builds a skeleton by SHORT NAME injects joints
+   into the ANIMATOR'S character, and a `finally` that deletes its group
+   cannot clean up a failure that happened before the group existed.**
+   Measured 2026-09-01: `verify_two_characters.py`'s first draft did
+   `cmds.select(parent_short_name)` per joint. In a scene already holding a
+   Manny, `cmds.select("root")` resolved to the animator's root, so the
+   test skeleton was grown INSIDE their character until an ambiguous name
+   (`neck_01`, which by then existed twice) raised `ValueError` — leaving
+   six joints behind: `root1` at world level and `pelvis1`, `spine_06`,
+   `spine_07`, `spine_08` and a second `neck_01` inside the animator's
+   skeleton. Maya increments a trailing number until the name is free,
+   which is why an injected `spine_01` comes out as `spine_06` on a rig
+   that already has `spine_01..05` — the debris does not look like debris.
+   Three rules out of it: build with LONG paths, register every created
+   node's UUID **as it is created** and delete from that registry in the
+   teardown (not from a group that may not exist yet), and clean up by
+   signature — childless, no skinCluster, no animCurve, and a name the
+   canonical 93-joint template does not carry — never by guesswork.
+48. **`cmds.ls(stale_long_path, uuid=True)` returns `[]`, so a loop that
+   skips on "no uuid" silently skips everything after the first rename.**
+   `other_skeletons_held` renamed a skeleton's ROOT first and then walked
+   the descendant paths it had collected beforehand; each was stale, each
+   returned no uuid, and each was passed over by a `continue` meant for
+   deleted nodes. The hold reported success (nothing in its `failed` list)
+   while holding exactly one joint out of twenty-one — and the FBX merge
+   stayed as ambiguous as it had been. Silent skips need to be counted as
+   failures, or measured directly: the gate that caught this asserted every
+   held joint's name, not the absence of errors.
 
 ## Retargeting Manny onto other skeletons
 
@@ -1002,7 +1172,7 @@ skeleton. Design:
 live editor with 470 animations).
 
 ```python
-import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
 import maya_uebridge; maya_uebridge.show_window()
 ```
 
@@ -1019,7 +1189,7 @@ list and an FBX export for the import.
 | `uescripts.py` | UE-side script text | **stdlib only** |
 | `records.py` | record model, search, namespace naming, row text | **stdlib only** |
 | `vcs.py` | Perforce placement: fbx name search, path convention, checkout decision table, p4 runner | **stdlib only** |
-| `animimport.py` | FBX import, timeline, fps policy | `maya.cmds` |
+| `animimport.py` | FBX import, timeline, fps policy, the target rule (selection then connect) and the exmerge name hold | `maya.cmds` |
 | `animexport.py` | FBX export of the skeleton hierarchy, bake-on-export, range policy | `maya.cmds`, `maya.mel`, `animimport` |
 | `window.py` | the `cmds` window | `maya.cmds` |
 | `checkouts.py` | the checkouts window: pair checkout, revert, export back to the uasset | `maya.cmds` + all of the above |
@@ -1065,12 +1235,49 @@ radio button keeps the old behaviour, a separate namespaced skeleton, and
 `import_clip` with a namespace but no explicit `merge` follows the namespace
 rather than overwriting the scene.
 
-**The target skeleton is chosen, never assumed** (`choose_target_root`, pure):
-the selection wins, else the only skeleton, else the one named `root`.
-Namespaced roots are never candidates — they cannot receive a plain-name merge,
-and in this tool they *are* the reference imports of earlier clips. Two
-plausible skeletons with no hint is refused, because guessing animates the
-wrong character in silence.
+**The target skeleton is chosen, never assumed** (`choose_target_root`, pure).
+The order, since 2026-09-01, is the animator's own words ("кнопочка импорт и
+экспорт должна прежде всего смотреть не выделена ли у нас иерархия костей…
+если выделение пустое тогда смотрим в коннект"):
+
+```
+selection -> the picker's CONNECTED character -> the only skeleton
+          -> the one named `root` -> refuse
+```
+
+The connect sits ahead of "the only skeleton" so a scene holding several
+characters is decidable at all without clicking a bone first
+(`animimport.picker_root`, lazy and guarded — the bridge is plain `cmds` and
+PySide6 does not exist before Maya 2025). **`animimport.resolve_target()` is
+the one function both directions use** — `animexport.resolve_root` delegates to
+it, so Import and Export can never disagree about "the" character, which is
+what "такая же логика с экспортом" asked for. Namespaced roots are never
+candidates at any step — they cannot receive a plain-name merge, and in this
+tool they *are* the reference imports of earlier clips. Two plausible
+skeletons with no hint is still refused, because guessing animates the wrong
+character in silence.
+
+**Choosing right is not enough on its own.** `FBXImport -v exmerge` matches
+bone names INSIDE the FBX plugin, so with two Mannys in the scene `pelvis` is
+ambiguous and the plugin lands on whichever it finds. So every OTHER plain-named
+skeleton's joints are renamed to `rpHold_<name>` for the length of the call and
+restored in a `finally` (`other_skeletons_held`). A rename is invisible to
+connections — constraints, skinClusters and animCurves are wired to nodes, not
+names — and it is the only lever that reaches inside the plugin's own matching.
+Namespaced skeletons are skipped: their bones cannot collide, and a REFERENCED
+skeleton (always namespaced) could not be renamed anyway. The whole mechanism
+is a no-op in a single-character scene. `roots=` narrows the candidates so a
+verify run can exercise it on throwaway characters instead of the animator's.
+
+**Collect every UUID before the first rename, and resolve each path from its
+UUID right before its own rename.** `root` is a bone in every UE clip so it is
+held like any other — and renaming it invalidates the path of every joint
+beneath it. Measured live 2026-09-01: walking the paths straight through
+renamed the root and then SILENTLY skipped all twenty bones under it (the
+stale path made `cmds.ls(path, uuid=True)` return nothing, which the loop read
+as "gone" and passed over), leaving the merge exactly as ambiguous as before.
+The gate that caught it was "B's bones are renamed for the length of the
+merge"; nothing else would have.
 
 **The target's animation is cleared first**, and that is load-bearing rather
 than tidiness — see trap 27. Bones the clip has no keys for end up unanimated
@@ -1382,15 +1589,15 @@ attach in it REPLACES what is in the hand, and replacing deletes the marked
 node whole.
 
 ```python
-import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
 import maya_scenesetup; maya_scenesetup.show_window()
 ```
 
 | Module | Responsibility | May import |
 |---|---|---|
 | `catalog.py` | the weapon table, lookups, an entry for any FBX on disk (`entry_for_path`, `node_key`), the character scene path — pure data | **stdlib only** |
-| `character.py` | the working character into the current scene: import, the already-here refusal, the malware sweep | `maya.cmds`, `catalog`, `builder` (lazy) |
-| `skeleton.py` | which character, and where its weapon bone is | `maya.cmds`, `maya_overrig` |
+| `character.py` | the working character into the current scene: import, the rename note, connecting it, the malware sweep | `maya.cmds`, `catalog`, `builder` + `picker_window` (both lazy) |
+| `skeleton.py` | which character — and it becomes the ACTIVE one — and where its weapon bone is | `maya.cmds`, `maya_overrig` |
 | `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition, range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
 | `attach.py` | import, find the mesh, parent it under the hand, invert the drive, read/write offsets | `maya.cmds`, `bonedrive` |
 | `aim.py` | where the aim locators go, and the press that builds it | `maya.cmds`, OpenMaya, `attach`, `overrig`, `aimrig` |
@@ -1417,12 +1624,27 @@ the user's original — infected, typo and all — as the legacy fallback, which
 is why `character.add_character()` also **sweeps imported script nodes**
 named like the malware on every press (import never executes script nodes,
 so the sweep always wins the race). Import, never open, and **no
-namespace** — the UE bridge merges clips by plain bone names. The press
-**refuses while any skeleton is in the scene** (`builder.character_roots()`
-non-empty): importing over an existing `root` renames the incoming skeleton
-into a second character that the picker and the bridge then refuse to guess
-between; nothing happening is the safe direction, and a second press refusing
-is the idempotence. Two pre-existing warts to not chase: every `.ma` import
+namespace** — the UE bridge merges clips by plain bone names.
+
+**Press it as many times as you like** (2026-09-01, the user's ask: "я должен
+иметь возможность добавить в сцену сколько угодно персонажей"). The old
+blanket refusal — any skeleton in the scene and the press did nothing — is
+GONE, and so is its premise: the picker and the bridge no longer guess between
+two characters, they are told. `character.refusal` and `ALREADY` are deleted
+rather than disabled, with a gone-test pinning it. Two things replaced them.
+**The message names the rename** (`character.rename_note`): only the TOP node
+collides, so `root` becomes `root1` while `pelvis` and everything under it keep
+their plain names — which is precisely what lets the bridge go on merging clips
+onto the second character by name. Maya increments a trailing number until it
+is free, so a Manny imported beside a Manny beside a Manny comes out `root1`,
+`root2` (measured live). **The new character is connected on arrival**
+(`character.connect` → `picker_window.connect_root`), so "add it" and "work on
+it" are one press; the import is a lazy guarded one, because Scene Setup is
+plain `cmds` and has to keep working where PySide6 does not exist.
+`character.new_root` is a path DIFF, not a name diff — the incoming top node's
+name is not knowable in advance, and everything below it kept its plain name.
+
+Two pre-existing warts to not chase: every `.ma` import
 leaves Maya's locked/singleton furniture behind (`UsdDefaultRenderSettings`,
 `shapeEditorManager`, `poseInterpolatorManager` — the verify's cleanup gate
 excuses them by class, never by name), and the character scene carries a few
@@ -2101,8 +2323,9 @@ for UE morph targets.
 
 ## `install.py` — the SkeldarAnim shelf, drag-and-drop
 
-The repo root is the distribution folder: zip it, hand it to a colleague,
-they drag `install.py` into an open Maya viewport and get a shelf named
+**`SkeldarAnim/` is the distribution folder** (it was the repo root until
+2026-09-01): `make_build.py` zips it, a colleague unzips and drags
+`SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
 **SkeldarAnim** with five buttons — Rig Picker, UE Bridge, Scene Setup,
 Overshoot, and the native OverRig panel. Design:
 `docs/superpowers/specs/2026-08-21-installer-design.md`, proof:
@@ -2116,7 +2339,10 @@ A drop copies a **whitelist** (`install.payload()`) into
 `maya_overshoot.py`, `icons/`, `assets/`, `overrig/`, plus `install.py`
 and `README_INSTALL.txt` so the installed folder can repair itself —
 and nothing else: tests, docs, archive and the other root tools stay
-home. The shelf tab is created through Maya's own `addNewShelfTab` (it
+home. Since the 2026-09-01 split that whitelist is also just "everything
+in the folder", which is the point of the folder; keep it explicit
+anyway — `make_build.py` and both installer test suites read it, and a
+folder is not a contract. The shelf tab is created through Maya's own `addNewShelfTab` (it
 keeps the shelf optionVars consistent) and **never deleted**; an existing
 tab only has its buttons replaced, which is what makes a re-drag an
 update rather than a duplicate. Button commands are written at install
@@ -2195,7 +2421,11 @@ overrides), one `SkeldarAnim/` directory inside so the instruction stays
 "unzip, drag `SkeldarAnim/install.py` into the viewport". Dated, so a
 rebuild replaces only today's archive and never an earlier day's. It is a
 development tool and is
-**not** in the payload. Four things it settles:
+**not** in the payload. It reads the payload out of the repo's
+`SkeldarAnim/` folder and derives the OUTPUT directory from its own
+location, not the installer's: `dirname(source_root())` used to be the
+repo's parent and after the split would drop the archive inside the
+repository. Four things it settles:
 
 - **The composition comes from `install.payload()`**, never a second list
   here. A whitelist that drifts from the installer's reaches a colleague
@@ -2229,4 +2459,13 @@ temp dir — the real payload is never zipped to prove a rule about names).
   passed while the scene was broken.
 - **Verify by doing the real thing.** Every serious bug in this project survived a
   green test run and was caught by building for real and looking at the scene, or
-  by the user noticing something on screen.
+  by the user noticing something on screen. Two more on 2026-09-01: 1205 unit
+  tests were green while the FBX name hold was holding one joint out of
+  twenty-one, and while a verify script was injecting joints into the
+  animator's own skeleton (traps 47 and 48).
+- **A verify script runs in the animator's OPEN scene.** Never assume an empty
+  one: resolve everything by long path or UUID, register what you create as you
+  create it, guard each teardown step on its own, and leave the frame, the
+  playback range, autoKey and the selection exactly as you found them. Probe the
+  scene state before and after — the only way to know a run was clean is to
+  compare.
