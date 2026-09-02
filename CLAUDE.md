@@ -16,7 +16,7 @@ MayaScripts/                  the workshop
 ├── SkeldarAnim/              THE PLUGIN -- this, and only this, ships
 │   ├── install.py  README_INSTALL.txt
 │   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/
-│   ├── maya_overshoot.py
+│   ├── maya_overshoot.py  maya_hotkeys.py
 │   └── icons/  assets/  overrig/
 ├── make_build.py             dev tool: builds the zip from SkeldarAnim/
 ├── maya_skelfit.py  maya_meltmorph.py  maya_retarget.py  ...
@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1316 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1392 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -2659,9 +2659,10 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with five buttons — Rig Picker, UE Bridge, Scene Setup,
-Overshoot, and the native OverRig panel. Design:
-`docs/superpowers/specs/2026-08-21-installer-design.md`, proof:
+**SkeldarAnim** with six buttons — Rig Picker, UE Bridge, Scene Setup,
+Overshoot, Hotkeys, and the native OverRig panel. Design:
+`docs/superpowers/specs/2026-08-21-installer-design.md` (written when there
+were five; the sixth arrived 2026-09-02 with its own spec), proof:
 `docs/superpowers/plans/verify_install.py` (**11 gates, 0 failed** in the
 live Maya, 2026-08-21: real install, payload exact, five buttons each
 opening its window, OverRig dock up, sword resolved from the installed
@@ -2712,7 +2713,7 @@ Things that will bite if forgotten:
   `picker_view.py`/`picker_window.py` import PySide6/shiboken6 at module
   level, and PySide6 ships with Maya from 2025 (2022–2024 carry PySide2).
   The picker also calls `event.position().toPoint()`, which is Qt6-only,
-  so an import shim alone would not be enough. The other four buttons are
+  so an import shim alone would not be enough. The other five buttons are
   plain `cmds` and MEL and run anywhere: UE Bridge's one Qt use — the
   green row painting in `checkouts.paint_rows` — is inside
   `except Exception: pass` and degrades to uncoloured rows.
@@ -2779,6 +2780,103 @@ Sizes to expect: **13.8 MB, 62 files** (2026-09-01), against the old
 runs on it) and `assets/UE4_Mannequin.fbx` another 1 MB. Tests:
 `tests/test_make_build.py` (15, on a fake tree in a temp dir — the real
 payload is never zipped to prove a rule about names).
+
+## `maya_hotkeys` — the temporary hotkey map
+
+The sixth shelf button, `Hotkeys` (2026-09-02, the animator's ask: «кнопочка
+которая на время активации включала бы временную карту горячих клавишь»).
+One press switches Maya to a hotkey set named `SkeldarAnim`; the next press
+puts their own set back. Design:
+`docs/superpowers/specs/2026-09-02-hotkey-map-design.md`, proof:
+`docs/superpowers/plans/verify_hotkeys.py` (13 gates, **not run yet** — it
+needs a live Maya with the command port open).
+
+**The map's contents are the animator's, laid out in Maya's own Hotkey
+Editor.** A map file, a panel of ours and a cheat sheet were all offered and
+declined, so there is no editor and no map format here. What the module adds
+is the switch plus **107 runTimeCommands** worth binding, in the editor's own
+category tree (categories nest with a **dot** — measured, Maya ships
+`Editors.Time Editor.Clip`).
+
+**The set is created once as a copy of whatever is active** and never
+rebuilt: rebuilding would keep the copy in step with the base set and
+destroy every key assigned in it. So their Ctrl+Z and Q/W/E/R keep working
+and only what they assign is different. **It is sticky by choice** — Maya
+saves the active set itself and we do nothing at exit — which is why the
+previous set is remembered in the optionVar `skeldarAnimPreviousHotkeySet`
+rather than in a module variable: the session that turns the map off is
+often not the one that turned it on. Ours is never an answer to "where do I
+go back to" (the way out would lead back in) and a deleted memory falls back
+to `Maya_Default`. State is read from `hotkeySet -q -current` at **every**
+press and never cached — the animator can switch sets by hand between two
+presses, the same reason `picker_window._resolution` re-asserts its binding
+on every sync.
+
+**Every command's body is a one-liner into a table in the module**
+(`maya_hotkeys.run("picker.build")`, preceded by the shelf buttons' own
+`sys.path` bootstrap with the path read from `__file__`). Maya SAVES a user
+runTimeCommand into `userRunTimeCommands.mel` — measured: `default` comes
+back `False` — which is what makes the sticky map fire after a restart
+before the button is pressed, and also means a body outlives the plugin. So
+the body carries no logic: a stale one still resolves through the current
+table, and an unknown key reports itself. `toggle()` **registers first, in
+both directions**, so a press that turns the map off also brings the rows
+and the baked path into step with what is on disk; the installer registers
+nothing.
+
+**Ours are 23 rows, and each one presses a panel button.** Every action of
+ours already is one — `picker_window.live_window()` hands back the live
+picker and `build_rig()` is the Build button; Scene Setup's and Overshoot's
+module-level callbacks read their own windows' controls — so a hotkey
+inherits the status line, the refresh and the exception trap for free. With
+the panel closed **there is nothing to press**: the command opens it and
+says so, rather than re-deriving a character to act on. Two small public
+names were added for this: `picker_window.live_window()` (`show_picker`
+REPLACES the window, so a caller must be able to tell open from closed) and
+`PickerWindow.select_group` (was `_select_group`; it has a second caller
+now). `maya_overshoot.WINDOW` is a module constant for the same reason.
+
+**OverRig's are 84 rows** — every one-press procedure in
+`overrig/function_for_hotkeys.TXT`, with the author's own arguments and his
+headings as the categories, a row per named mode (four for
+`set_infinity_graphEditor`, five for `brn_apply_finger_bend_tool`). Each
+sources the toolset first (`overrig.ensure_loaded()`, then `mel.eval`) —
+without it a keypress in a fresh Maya answers `Cannot find procedure` in the
+Script Editor, which is **trap 20 from the hotkey side** — and deliberately
+**not** gated on the time-slider highlight the way our own MEL entry points
+are (trap 36): `apply_range_Fast_Bake`, `selKeys_by_timerange` and
+`double_oscillate_keys` are *about* that range.
+
+**Two procedures are excluded and a gone-test names both:**
+`barn_fast_bake_source_obj_and_delete_knots` and its `min_max` twin are the
+only ones in the file that ignore the selection and bake-and-delete the
+whole scene's knots. One mis-press away is not where they belong; both are
+spelled out in the table's comment so a grep for either lands on the
+reason. The ones needing real arguments (`execute_overlap_command`, the
+motion trail, the ribbon) are registered as their windows instead —
+for those, the window IS the one-press command.
+
+Qt lives below four one-line `_*_module()` seams, so the module loads on a
+Maya with PySide2 and a plain-Python test can hand in a fake panel. The
+button finds itself on the shelf by label (a shelf button's command runs
+with no widget context) and lights its background while the map is on;
+not finding it skips the paint and still switches. There is deliberately
+**no undo chunk** of ours — `rebuild` already builds in one undo step and
+OverRig's procedures manage theirs.
+
+Two measured facts to not re-derive: `hotkeySet` **needs a UI**
+(`RuntimeError: Maya command error` in mayapy), so the set half is
+fake-`cmds` tests plus the live script and nothing else; and the Hotkey
+Editor is opened by the runTimeCommand **`HotkeyPreferencesWindow`**.
+`shelfButton` carries `-enableBackground`/`-backgroundColor`, and
+`runTimeCommand -e` accepts `command`, `category`, `label` and
+`annotation` — which is why re-registration edits instead of
+delete-and-recreate, an edit being the one form that cannot disturb a
+binding.
+
+A door left open: `hotkeySet` has `-export`/`-import` for `.mhk`, so handing
+the finished map to a colleague — the one thing living in prefs costs us —
+is one flag each whenever it is asked for.
 
 ## Conventions
 
