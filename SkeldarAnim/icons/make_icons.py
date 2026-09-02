@@ -1,4 +1,4 @@
-"""Draw the four SkeldarAnim shelf icons.
+"""Draw the five SkeldarAnim shelf icons.
 
 32x32 PNG on a dark rounded plate so they read on Maya's shelf: flat
 glyphs, ~2 px strokes, one accent colour per tool. Regenerate with:
@@ -104,8 +104,27 @@ def draw_overshoot(path):
     image.save(path)
 
 
+def draw_hotkeys(path):
+    """A keycap with a spark: the map switches on."""
+    image, painter = _canvas()
+    painter.setPen(_pen("#ba68c8", 2.0))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(QRectF(6.5, 8.5, 14, 14), 3, 3)
+    painter.setPen(_pen("#ba68c8", 1.6))
+    painter.drawLine(QPointF(10, 19), QPointF(17, 19))
+    painter.setPen(_pen("#ba68c8", 2.2))
+    painter.drawLine(QPointF(13.5, 12), QPointF(13.5, 16))
+    painter.setPen(_pen("#f06292", 2.2))
+    painter.drawLine(QPointF(23, 10), QPointF(25.5, 15))
+    painter.drawLine(QPointF(25.5, 15), QPointF(22, 15))
+    painter.drawLine(QPointF(22, 15), QPointF(24.5, 21))
+    painter.end()
+    image.save(path)
+
+
 DRAWERS = {
     "picker.png": draw_picker,
+    "hotkeys.png": draw_hotkeys,
     "uebridge.png": draw_uebridge,
     "scenesetup.png": draw_scenesetup,
     "overshoot.png": draw_overshoot,

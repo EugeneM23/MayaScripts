@@ -25,6 +25,7 @@ _PAYLOAD = (
     "maya_uebridge",
     "maya_scenesetup",
     "maya_overshoot.py",
+    "maya_hotkeys.py",
     "icons",
     "assets",
     "overrig",
@@ -41,6 +42,8 @@ _PYTHON_BUTTONS = (
      "maya_scenesetup", "show_window", "scenesetup.png"),
     ("Overshoot", "Build the stop of a move on the selected keys",
      "maya_overshoot", "show_overshoot_ui", "overshoot.png"),
+    ("Hotkeys", "Temporary hotkey map on/off - assign keys in Maya's "
+     "Hotkey Editor", "maya_hotkeys", "toggle", "hotkeys.png"),
 )
 
 
