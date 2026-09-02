@@ -423,3 +423,89 @@ class RunPressesThePanel(SeamCase):
             del maya_hotkeys._INDEX["test.explode"]
         self.assertIn("boom", self.fake.messages[-1])
         self.assertIn("Explode", self.fake.messages[-1])
+
+
+class OverRigRows(SeamCase):
+    """The author's own list, grouped as the author grouped it."""
+
+    def _rows(self):
+        return [row for row in maya_hotkeys.COMMANDS
+                if row[0].startswith("overrig.")]
+
+    def test_the_whole_list_is_there(self):
+        self.assertEqual(len(self._rows()), 84)
+
+    def test_every_row_is_a_mel_script(self):
+        for row in self._rows():
+            self.assertIs(row[4].func, maya_hotkeys._mel, row[0])
+            script = row[4].args[0]
+            self.assertTrue(script.endswith(";"), script)
+
+    def test_the_categories_are_the_authors_headings(self):
+        wanted = set([
+            "OverRig.Menu", "OverRig.Rotation order", "OverRig.Smart object",
+            "OverRig.Knot", "OverRig.Parent", "OverRig.Aim",
+            "OverRig.Key tools", "OverRig.Selector", "OverRig.Double knots",
+            "OverRig.Snapshot", "OverRig.Hierarchy", "OverRig.IK",
+            "OverRig.Bake", "OverRig.Sword", "OverRig.Physics",
+            "OverRig.Misc", "OverRig.Finger"])
+        self.assertEqual(set(row[1] for row in self._rows()), wanted)
+
+    def test_a_row_sources_overrig_before_running(self):
+        class Loader(object):
+            NOT_LOADED_MESSAGE = "OverRig is not loaded"
+
+            def __init__(self):
+                self.asked = 0
+
+            def ensure_loaded(self):
+                self.asked += 1
+                return True
+
+        loader = Loader()
+        maya_hotkeys._overrig_module = lambda: loader
+        maya_hotkeys.run("overrig.parent_in")
+        self.assertEqual(loader.asked, 1)
+        self.assertEqual(self.fake.evaluated, ["apply_Parent_in();"])
+
+    def test_a_missing_overrig_is_reported_and_nothing_runs(self):
+        class Missing(object):
+            NOT_LOADED_MESSAGE = "OverRig is not loaded - press the button"
+
+            def ensure_loaded(self):
+                return False
+
+        maya_hotkeys._overrig_module = lambda: Missing()
+        maya_hotkeys.run("overrig.bake")
+        self.assertEqual(self.fake.evaluated, [])
+        self.assertIn("not loaded", self.fake.messages[-1])
+
+
+class TheDestructiveProceduresStayOut(unittest.TestCase):
+    """A gone-test. These two are the only procedures in
+    function_for_hotkeys.TXT that ignore the selection and work on the whole
+    scene: they select all of OverRig_rig_objects, bake, and delete every
+    knot. On a key that is one mis-press from taking down hand-made setups
+    the tool never built. Excluded on purpose -- if they are ever wanted,
+    that is the animator's explicit call and this test is the record of it.
+    """
+
+    FORBIDDEN = (
+        "barn_fast_bake_source_obj_and_delete_knots",
+        "barn_fast_bake_min_max_or_range_source_obj_and_delete_knots",
+    )
+
+    def test_no_row_runs_them(self):
+        scripts = " ".join(
+            row[4].args[0] for row in maya_hotkeys.COMMANDS
+            if getattr(row[4], "func", None) is maya_hotkeys._mel)
+        for name in self.FORBIDDEN:
+            self.assertNotIn(name, scripts)
+
+    def test_the_module_never_mentions_them(self):
+        with open(os.path.join(PLUGIN, "maya_hotkeys.py"),
+                  encoding="utf-8") as handle:
+            source = handle.read()
+        for name in self.FORBIDDEN:
+            self.assertEqual(source.count(name), 1,
+                             "only the comment saying why may name " + name)
