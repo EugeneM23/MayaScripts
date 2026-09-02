@@ -1314,6 +1314,40 @@ as "gone" and passed over), leaving the merge exactly as ambiguous as before.
 The gate that caught it was "B's bones are renamed for the length of the
 merge"; nothing else would have.
 
+**And the target's OWN root is renamed too** (2026-09-02, the animator:
+«анимация root кости переносится только на первый скелет … на последующие
+скелеты мы ее не переносим»). Holding the other characters aside frees
+`pelvis`, but Maya renamed exactly ONE joint of the second character when
+it arrived — the root, because a top-level node's path IS its short name —
+so the clip's `root` reached nothing and the character played the clip on
+the spot while the first one walked (**67 of 68 bones**, measured, and
+recorded here for months as a cost rather than a bug).
+`target_root_plain(target, joints)` nests inside the hold and gives the
+root its undecorated name back for the length of the call. **Both
+directions**: `export_hierarchy` wraps the same manager, or the FBX handed
+to Unreal names a root the UE skeleton does not have.
+
+Three things it does that are each load-bearing. It **refuses to guess** —
+`plain_root_name` (pure) accepts only a decoration *relative to the
+skeleton's own bones*: strip trailing digits, then `root` or `<prefix>_root`
+where no other bone wears `<prefix>`. That is the exact statement of the
+mechanism (only the top node collides), and it is what keeps `ik_foot_root`
+— a real UE bone whose children `ik_foot_l`/`ik_foot_r` wear the prefix —
+and every non-UE rig out. It **frees the name first**, displacing whatever
+answers to `root` with the same `rpHold_` prefix: on the import path the
+hold has already done it, on the export path the first character has not.
+And it **checks the name Maya actually gave it** — `cmds.rename` onto a
+taken name succeeds with `root1` rather than failing, and `root1` matches
+the clip no better than the name we started with, so that is undone at once
+and reported as nothing done. A wrong answer costs nothing: the rename
+either matches the clip's root or matches nothing, which is exactly the old
+behaviour, and either way the name is put back in a `finally`. Spec:
+`docs/superpowers/specs/2026-09-02-root-name-collision-design.md`. Proof:
+`verify_uebridge_root_name.py`, **20 gates, 0 failed** — including the
+control that suppresses the rename and measures the root NOT moving
+(0.000000000 against 100.0000000), which is what makes the gate one that
+can fail.
+
 **The target's animation is cleared first**, and that is load-bearing rather
 than tidiness — see trap 27. Bones the clip has no keys for end up unanimated
 and are named in the status line.
@@ -1789,8 +1823,13 @@ that legitimately holds its six meshes.
 will not allow a second `root`, so in a scene that already holds one the
 mannequin arrives as `root2` — as a second Manny arrives as
 `Manny_Skeleton_root`. An exmerge matches bone NAMES, so the clip's `root`
-matches nothing and that one bone comes in unanimated: **67 of 68**,
-measured. The first character in a scene keeps `root` and gets all 68.
+used to match nothing and that one bone came in unanimated: **67 of 68**,
+measured. **Fixed 2026-09-02** — the bridge gives the root its undecorated
+name back for the length of the merge and of the export
+(`animimport.target_root_plain`, see the UE bridge section); the decorated
+name in the outliner is now cosmetic. The old note read this as a cost of
+the flat shape. It was the feature failing on every character after the
+first, and the animator reported it as such.
 
 **The FBX row is why the import forks**, and trap 33 is the whole story:
 `character.scene_type` answers `FBX`, and that path goes through

@@ -321,6 +321,141 @@ def hold_name(short):
     return HOLD_PREFIX + short
 
 
+# The UE skeleton's root bone. Not a new assumption: `choose_target_root`
+# already falls back to "the skeleton called `root`", and the hold above
+# already rests on "`root` is a bone in every UE clip".
+UE_ROOT = "root"
+
+_TRAILING_DIGITS = re.compile(r"[0-9]+$")
+
+
+def plain_root_name(root_short, bone_shorts):
+    """The undecorated name behind a clashing root, or "". Pure.
+
+    Maya will not let two nodes at world level share a short name - a
+    top-level node's path IS its short name - so a second character has
+    exactly ONE joint renamed: its root. Everything below keeps its plain
+    name, because its path is unique already. An exmerge matches by name,
+    so the clip's `root` reaches nothing and the character plays the clip
+    on the spot while the first one walks.
+
+    Two decorations exist, both measured: a trailing run of digits (a
+    `duplicate`, a plain rename, the FBX importer) and the file stem
+    (`cmds.file(i=True)` of Manny_Skeleton.ma gives `Manny_Skeleton_root`).
+
+    Decorated **relative to its own skeleton**, which is the exact
+    statement of the mechanism: only the top node ever collides, so a
+    prefix the rest of the skeleton also wears was never a collision.
+    `ik_foot_root` is a bone of the UE schema and its own children are
+    `ik_foot_l` and `ik_foot_r` - they wear the prefix, so it is left
+    alone. So is a root genuinely called something else. The answer is
+    then "" and the behaviour is exactly what it was.
+    """
+    leaf = _short(root_short).split(":")[-1]
+    if not leaf or leaf == UE_ROOT:
+        return ""
+    stripped = _TRAILING_DIGITS.sub("", leaf)
+    if stripped == UE_ROOT:
+        return UE_ROOT
+    if not stripped.endswith("_" + UE_ROOT):
+        return ""
+    prefix = stripped[:-len(UE_ROOT)]
+    others = [_short(name).split(":")[-1] for name in (bone_shorts or [])]
+    if any(name != leaf and name.startswith(prefix) for name in others):
+        return ""
+    return UE_ROOT
+
+
+def root_note(actual, used):
+    """Said when the root wore a different name for the transfer. Pure.
+
+    Without it the next person finds one name in the outliner and another
+    in the FBX, with nothing to go on.
+    """
+    if not actual or not used or actual == used:
+        return ""
+    return "root motion: `{0}` treated as `{1}`".format(actual, used)
+
+
+def _rename_back(uuid, short):
+    """Put a name back, resolved from the UUID.
+
+    Never from a path recorded earlier: renaming a root invalidates the
+    path of every joint beneath it, and `cmds.ls(stale, uuid=True)` then
+    answers nothing at all (traps 16 and 48).
+    """
+    paths = cmds.ls(uuid, long=True) or []
+    if not paths:
+        return                # the animator deleted it mid-import
+    try:
+        cmds.rename(paths[0], short)
+    except RuntimeError:
+        pass                  # nothing better to do; the name is cosmetic
+
+
+@contextlib.contextmanager
+def target_root_plain(target_root, joints):
+    """The target's OWN root wears its undecorated name for the length of
+    the call. Yields the name it took, or "" when nothing was renamed.
+
+    `other_skeletons_held` frees the names the OTHER characters hold; this
+    is the other half, and without it the clip's `root` matches nothing on
+    every character after the first (measured: 67 of 68 bones).
+
+    Three steps. Free the name - whatever answers to it is renamed aside
+    with the same `rpHold_` prefix, which on the import path has already
+    happened and on the export path has not. Rename the root, and CHECK
+    the name Maya actually gave it: `cmds.rename` onto a taken name
+    succeeds with `root1` rather than failing, and `root1` matches the
+    clip no better than the name we started with. Then restore in a
+    `finally`, ours first so the name is free for whatever was displaced.
+
+    A wrong answer costs nothing: the rename either matches the clip's
+    root or matches nothing, which is exactly today's behaviour, and
+    either way the name is put back.
+    """
+    leaf = _short(target_root)
+    wanted = plain_root_name(leaf, [_short(j) for j in (joints or [])
+                                    if _short(j) != leaf])
+    root_uuid = ""
+    if wanted:
+        root_uuid = (cmds.ls(target_root, uuid=True) or [""])[0]
+    if not root_uuid:
+        yield ""
+        return
+
+    displaced = []
+    blocked = False
+    for node in (cmds.ls(wanted, long=True) or []):
+        uuid = (cmds.ls(node, uuid=True) or [None])[0]
+        if not uuid or uuid == root_uuid:
+            continue
+        try:
+            cmds.rename(node, hold_name(wanted))
+        except RuntimeError:
+            blocked = True    # locked, referenced, read-only
+            break
+        displaced.append((uuid, wanted))
+
+    took = ""
+    path = (cmds.ls(root_uuid, long=True) or [None])[0]
+    if not blocked and path:
+        try:
+            if _short(cmds.rename(path, wanted)) == wanted:
+                took = wanted
+            else:
+                _rename_back(root_uuid, leaf)
+        except RuntimeError:
+            pass
+    try:
+        yield took
+    finally:
+        if took:
+            _rename_back(root_uuid, leaf)
+        for uuid, short in reversed(displaced):
+            _rename_back(uuid, short)
+
+
 @contextlib.contextmanager
 def other_skeletons_held(target_root, roots=None):
     """Rename every other character's joints out of the merge's way.
@@ -500,6 +635,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
     cleared = 0
     target_joints = []
     links = []
+    root_as = ""
     if merge:
         roots = skeleton_roots()
         target = resolve_target()
@@ -539,8 +675,15 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
         # stops the names matching. For the same reason the OTHER characters
         # are held aside by name for the length of the call: `pelvis` has to
         # mean exactly one joint while the plugin is matching.
+        #
+        # And the target's OWN root is renamed to its plain name inside
+        # that, because Maya renamed exactly one of its joints when the
+        # character arrived - the root - and without this the clip's
+        # `root` matches nothing on every character after the first.
+        # Nested, so the hold has already freed the name.
         with other_skeletons_held(target) as failed_to_hold:
-            mel.eval(import_command(fbx_path))
+            with target_root_plain(target, target_joints) as root_as:
+                mel.eval(import_command(fbx_path))
         unheld = list(failed_to_hold)
     else:
         # FBXImport has no namespace flag, but it honours the current one
@@ -590,6 +733,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
     warnings = [fps_warning(clip_fps, scene_fps())]
     if merge:
         warnings.append(merge_warning(joint_count))
+        warnings.append(root_note(_short(target), root_as))
         warnings.append(stale_line(stale))
         warnings.append(relink_note(relinked))
         warnings.append(unheld_warning(unheld))

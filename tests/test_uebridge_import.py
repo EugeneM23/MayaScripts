@@ -286,6 +286,198 @@ class HoldingOtherSkeletons(unittest.TestCase):
         self.assertEqual(animimport.unheld_warning(None), "")
 
 
+class TheTargetsOwnRootName(unittest.TestCase):
+    """Holding the OTHER characters aside is only half of it.
+
+    Maya will not let two nodes at world level share a short name, so a
+    second character has exactly one joint renamed: its root. Everything
+    below keeps its plain name, because its path is unique already. An
+    exmerge matches by name, so the clip's `root` reaches nothing and the
+    character plays the clip on the spot while the first one walks.
+    """
+
+    def test_a_plain_root_is_left_alone(self):
+        """Every single-character scene: the whole mechanism is a no-op."""
+        self.assertEqual(animimport.plain_root_name("root", ["pelvis"]), "")
+
+    def test_a_trailing_number_is_a_decoration(self):
+        """`duplicate`, a plain rename and the FBX importer all increment."""
+        self.assertEqual(animimport.plain_root_name("root2", ["pelvis"]),
+                         "root")
+
+    def test_a_file_stem_prefix_is_a_decoration(self):
+        """`cmds.file(i=True)` of Manny_Skeleton.ma prefixes the clashing top
+        node with the FILE STEM, not with a number."""
+        self.assertEqual(
+            animimport.plain_root_name("Manny_Skeleton_root", ["pelvis"]),
+            "root")
+
+    def test_both_decorations_at_once(self):
+        """A third character: the stem prefix, then Maya's increment."""
+        self.assertEqual(
+            animimport.plain_root_name("Manny_Skeleton_root1", ["pelvis"]),
+            "root")
+
+    def test_a_schema_bone_ending_in_root_is_not_a_decoration(self):
+        """`ik_foot_root` is a bone of the UE skeleton, not a renamed `root`
+        - and its own children wear the prefix, which is what says so.
+        Only the TOP node ever collides, so a prefix the rest of the
+        skeleton also wears was never a collision."""
+        self.assertEqual(
+            animimport.plain_root_name("ik_foot_root",
+                                       ["ik_foot_l", "ik_foot_r"]), "")
+
+    def test_a_root_called_something_else_is_left_alone(self):
+        """No guessing: a non-UE rig keeps exactly today's behaviour."""
+        self.assertEqual(animimport.plain_root_name("Bip001", ["Bip002"]), "")
+        self.assertEqual(animimport.plain_root_name("hero", ["pelvis"]), "")
+
+    def test_nothing_is_left_alone(self):
+        self.assertEqual(animimport.plain_root_name("", []), "")
+        self.assertEqual(animimport.plain_root_name(None, None), "")
+
+    def test_names_are_reduced_to_their_leaf(self):
+        self.assertEqual(
+            animimport.plain_root_name("|Manny_Skeleton_root", ["|grp|pelvis"]),
+            "root")
+
+
+class RootNameNote(unittest.TestCase):
+    """Said out loud, or the next person finds one name in the outliner and
+    another in the FBX with nothing to go on."""
+
+    def test_silent_when_nothing_was_renamed(self):
+        self.assertEqual(animimport.root_note("root", ""), "")
+
+    def test_silent_when_the_name_did_not_change(self):
+        self.assertEqual(animimport.root_note("root", "root"), "")
+
+    def test_names_the_rename_and_says_why(self):
+        note = animimport.root_note("Manny_Skeleton_root", "root")
+        self.assertIn("Manny_Skeleton_root", note)
+        self.assertIn("root motion", note)
+
+
+class FakeScene(object):
+    """Just enough Maya for the rename dance: names, uuids, and the
+    UNIQUIFYING rename.
+
+    Deliberately minimal, and deliberately honest about the one behaviour
+    the manager has to defend against - `cmds.rename` onto a taken name
+    succeeds with a DIFFERENT name rather than failing. Everything lives at
+    world level, which is where roots live. The real proof is the live
+    verify script.
+    """
+
+    def __init__(self, names):
+        self.names = {}                      # uuid -> short name
+        for index, name in enumerate(names):
+            self.names["uuid%d" % index] = name
+        self.renames = 0
+
+    def uuid_of(self, short):
+        for uuid, name in self.names.items():
+            if name == short:
+                return uuid
+        return None
+
+    def ls(self, *args, **kwargs):
+        if not args:
+            return sorted("|" + n for n in self.names.values())
+        wanted = args[0]
+        if wanted in self.names:                       # a uuid
+            return ["|" + self.names[wanted]]
+        short = str(wanted).split("|")[-1]
+        uuid = self.uuid_of(short)
+        if uuid is None:
+            return []
+        if kwargs.get("uuid"):
+            return [uuid]
+        return ["|" + short]
+
+    def rename(self, path, new):
+        short = str(path).split("|")[-1]
+        uuid = self.uuid_of(short)
+        if uuid is None:
+            raise RuntimeError("no object matches name: " + str(path))
+        taken = set(self.names.values()) - {short}
+        assigned = new
+        suffix = 1
+        while assigned in taken:                       # Maya uniquifies
+            assigned = "{0}{1}".format(new, suffix)
+            suffix += 1
+        self.names[uuid] = assigned
+        self.renames += 1
+        return assigned
+
+
+class TheRootWearsItsPlainName(unittest.TestCase):
+    """The lever itself. A temporary rename is the only thing that reaches
+    inside the FBX plugin's own name matching."""
+
+    def setUp(self):
+        self.real_cmds = animimport.cmds
+
+    def tearDown(self):
+        animimport.cmds = self.real_cmds
+
+    def use(self, names):
+        scene = FakeScene(names)
+        animimport.cmds = scene
+        return scene
+
+    def test_the_root_takes_the_plain_name_and_gives_it_back(self):
+        """The import path: `other_skeletons_held` has already taken the
+        name away, so there is nothing to displace."""
+        scene = self.use(["Manny_Skeleton_root", "pelvis", "rpHold_root"])
+        with animimport.target_root_plain(
+                "|Manny_Skeleton_root",
+                ["|Manny_Skeleton_root", "|Manny_Skeleton_root|pelvis"]) as took:
+            self.assertEqual(took, "root")
+            self.assertIn("root", scene.names.values())
+        self.assertIn("Manny_Skeleton_root", scene.names.values())
+        self.assertNotIn("root", scene.names.values())
+
+    def test_whatever_holds_the_name_is_displaced_and_restored(self):
+        """The export path: no hold has run, so the first character is
+        still answering to `root`."""
+        scene = self.use(["Manny_Skeleton_root", "root"])
+        with animimport.target_root_plain(
+                "|Manny_Skeleton_root", ["|Manny_Skeleton_root"]) as took:
+            self.assertEqual(took, "root")
+            self.assertIn("rpHold_root", scene.names.values())
+        self.assertEqual(sorted(scene.names.values()),
+                         ["Manny_Skeleton_root", "root"])
+
+    def test_a_plain_root_renames_nothing_at_all(self):
+        scene = self.use(["root", "pelvis"])
+        with animimport.target_root_plain("|root", ["|root"]) as took:
+            self.assertEqual(took, "")
+        self.assertEqual(scene.renames, 0)
+
+    def test_a_rename_maya_uniquified_is_undone_not_reported(self):
+        """`cmds.rename` onto a taken name succeeds with `root1`, which
+        matches the clip no better than the name we started with. Reporting
+        it would be a lie, and leaving it would rename the animator's joint
+        for nothing."""
+        scene = self.use(["Manny_Skeleton_root", "root"])
+        scene.rename = lambda path, new: "root1"      # nothing actually moves
+        with animimport.target_root_plain(
+                "|Manny_Skeleton_root", ["|Manny_Skeleton_root"]) as took:
+            self.assertEqual(took, "")
+
+    def test_the_names_come_back_even_when_the_body_raises(self):
+        scene = self.use(["Manny_Skeleton_root", "root"])
+        try:
+            with animimport.target_root_plain(
+                    "|Manny_Skeleton_root", ["|Manny_Skeleton_root"]):
+                raise ValueError("the importer died")
+        except ValueError:
+            pass
+        self.assertEqual(sorted(scene.names.values()),
+                         ["Manny_Skeleton_root", "root"])
+
+
 class MergeDefault(unittest.TestCase):
     """`merge` left unset must follow the namespace, or a caller asking for a
     named skeleton silently gets its scene overwritten instead."""

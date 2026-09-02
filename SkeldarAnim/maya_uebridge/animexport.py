@@ -156,21 +156,40 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None):
     times = cmds.keyframe(joints, query=True, timeChange=True) or []
 
     notes = _apply_export_options(start, end)
+    leaf = root.split("|")[-1]
     previous = cmds.ls(selection=True, long=True) or []
-    cmds.select(root, replace=True)
+    root_uuid = (cmds.ls(root, uuid=True) or [None])[0]
+    exported_as = leaf
     try:
-        mel.eval(export_command(fbx_path))
+        # The same name Maya decorated on arrival would go into the file,
+        # and the UE skeleton has no bone called `Manny_Skeleton_root`. So
+        # the root wears its plain name for the length of the export -
+        # every export road runs through here, which is why this is the
+        # one place it lives.
+        with animimport.target_root_plain(root, joints) as took:
+            exported_as = took or leaf
+            # The rename invalidated the path resolved above (trap 16).
+            path = (cmds.ls(root_uuid, long=True) or [root])[0] \
+                if root_uuid else root
+            cmds.select(path, replace=True)
+            mel.eval(export_command(fbx_path))
     finally:
-        if previous:
-            cmds.select(previous, replace=True)
+        restored = [node for node in previous if cmds.objExists(node)]
+        if restored:
+            cmds.select(restored, replace=True)
         else:
             cmds.select(clear=True)
 
     if not os.path.isfile(fbx_path) or os.path.getsize(fbx_path) == 0:
         raise RuntimeError("the exporter wrote nothing at {0}".format(fbx_path))
 
-    return {"root": root.split("|")[-1],
+    warning = "  |  ".join(text for text in (
+        outside_keys_warning(times, start, end),
+        animimport.root_note(leaf, exported_as),
+    ) if text)
+
+    return {"root": exported_as,
             "joints": len(joints),
             "start": start, "end": end,
-            "warning": outside_keys_warning(times, start, end),
+            "warning": warning,
             "notes": notes}
