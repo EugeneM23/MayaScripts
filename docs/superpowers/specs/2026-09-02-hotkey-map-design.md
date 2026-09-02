@@ -125,8 +125,10 @@ and an unknown key reports itself instead of raising. Keys are
 the area is what the category is derived from, so the two cannot drift apart.
 
 `runTimeCommand` names are technical (`skeldarAnimPickerBuild`); the Hotkey
-Editor shows `-label`, `-annotation` and `-keywords`, so a search for "bake"
-finds them.
+Editor shows `-label` and `-annotation`, and every row's label carries the
+word the animator would search for, so "bake" finds the bake rows. `-keywords`
+exists and is deliberately left unset: a second place to spell the same words
+is a second place for them to drift.
 
 **`toggle()` registers first, in both directions**, with `edit=True` for the
 rows that already exist. That is the only moment registration happens, and
