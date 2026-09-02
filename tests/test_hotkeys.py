@@ -509,3 +509,87 @@ class TheDestructiveProceduresStayOut(unittest.TestCase):
         for name in self.FORBIDDEN:
             self.assertEqual(source.count(name), 1,
                              "only the comment saying why may name " + name)
+
+
+class CommandNames(unittest.TestCase):
+
+    def test_a_key_becomes_a_camel_case_name(self):
+        self.assertEqual(maya_hotkeys.command_name("picker.build"),
+                         "skeldarAnimPickerBuild")
+        self.assertEqual(maya_hotkeys.command_name("overrig.parent_in"),
+                         "skeldarAnimOverrigParentIn")
+
+    def test_every_name_is_unique(self):
+        names = [maya_hotkeys.command_name(row[0])
+                 for row in maya_hotkeys.COMMANDS]
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_every_name_is_legal_for_maya(self):
+        for row in maya_hotkeys.COMMANDS:
+            name = maya_hotkeys.command_name(row[0])
+            self.assertTrue(name[0].isalpha(), name)
+            self.assertTrue(name.replace("_", "").isalnum(), name)
+
+
+class CommandBodies(unittest.TestCase):
+    """The body is a one-liner into the table. A stale copy in the
+    animator's prefs then still resolves through the current table, and an
+    unknown key reports itself."""
+
+    DEST = "C:/Users/Some Body/Documents/maya/scripts/SkeldarAnim"
+
+    def test_the_body_bootstraps_and_dispatches(self):
+        body = maya_hotkeys.command_body("picker.build", self.DEST)
+        self.assertIn('_p = "{0}"'.format(self.DEST), body)
+        self.assertIn("sys.path.insert(0, _p)", body)
+        self.assertIn("import maya_hotkeys", body)
+        self.assertIn('maya_hotkeys.run("picker.build")', body)
+
+    def test_backslashes_never_reach_a_body(self):
+        body = maya_hotkeys.command_body(
+            "picker.build",
+            r"C:\Users\Some Body\Documents\maya\scripts\SkeldarAnim")
+        self.assertNotIn("\\", body)
+
+    def test_the_default_dest_is_where_the_module_lives(self):
+        self.assertEqual(maya_hotkeys.install_dir(),
+                         PLUGIN.replace("\\", "/"))
+        self.assertIn(maya_hotkeys.install_dir(),
+                      maya_hotkeys.command_body("picker.build"))
+
+
+class Register(unittest.TestCase):
+
+    DEST = "C:/prefs/SkeldarAnim"
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_it_creates_one_command_per_row(self):
+        created, updated = maya_hotkeys.register(self.DEST)
+        self.assertEqual(created, len(maya_hotkeys.COMMANDS))
+        self.assertEqual(updated, 0)
+        self.assertEqual(len(self.fake.runtime), len(maya_hotkeys.COMMANDS))
+
+    def test_a_second_pass_edits_and_creates_nothing(self):
+        maya_hotkeys.register(self.DEST)
+        self.fake.creates = []
+        created, updated = maya_hotkeys.register(self.DEST)
+        self.assertEqual(created, 0)
+        self.assertEqual(updated, len(maya_hotkeys.COMMANDS))
+        self.assertEqual(self.fake.creates, [])
+
+    def test_a_row_arrives_whole(self):
+        maya_hotkeys.register(self.DEST)
+        row = self.fake.runtime["skeldarAnimPickerBuild"]
+        self.assertEqual(row["category"], "SkeldarAnim.Rig Picker")
+        self.assertEqual(row["label"], "Build")
+        self.assertIn('run("picker.build")', row["command"])
+
+    def test_re_registration_refreshes_a_moved_install(self):
+        maya_hotkeys.register("C:/old/SkeldarAnim")
+        maya_hotkeys.register("C:/new/SkeldarAnim")
+        body = self.fake.runtime["skeldarAnimPickerBuild"]["command"]
+        self.assertIn("C:/new/SkeldarAnim", body)
+        self.assertNotIn("C:/old/SkeldarAnim", body)

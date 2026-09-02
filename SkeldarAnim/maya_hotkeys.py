@@ -128,6 +128,75 @@ def _mel(script):
     return mel.eval(script)
 
 
+# ------------------------------------------------------------ registration
+
+def install_dir():
+    """The folder this module was installed into.
+
+    The path a command's body has to put on `sys.path`: a key pressed
+    before any shelf button in a fresh Maya has nothing of ours there. Read
+    from our own location, so the installed copy knows where it lives and a
+    move is picked up by the next registration.
+    """
+    return os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+
+
+def command_name(key):
+    """`picker.build` -> `skeldarAnimPickerBuild`.
+
+    Maya wants an identifier; the readable name is the row's `label`, which
+    is what the Hotkey Editor shows.
+    """
+    parts = [chunk[:1].upper() + chunk[1:]
+             for chunk in key.replace(".", "_").split("_") if chunk]
+    return PREFIX + "".join(parts)
+
+
+def command_body(key, dest=None):
+    """The runTimeCommand's body: bootstrap, then dispatch through us.
+
+    Deliberately a one-liner into the table rather than real logic. Maya
+    SAVES a user runTimeCommand into userRunTimeCommands.mel (measured:
+    `default` comes back False), so a body is a copy that outlives the
+    installed plugin -- and this one keeps resolving through whatever table
+    is current, or reports an unknown key instead of raising.
+    """
+    dest = install_dir() if dest is None \
+        else dest.replace("\\", "/").rstrip("/")
+    return ("import sys\n"
+            "_p = \"{0}\"\n"
+            "if _p not in sys.path:\n"
+            "    sys.path.insert(0, _p)\n"
+            "import maya_hotkeys\n"
+            "maya_hotkeys.run(\"{1}\")\n").format(dest, key)
+
+
+def register(dest=None):
+    """Create or refresh every command. Returns (created, updated).
+
+    Called from `toggle()` in both directions, which is the only moment
+    registration happens: a press that turns the map OFF refreshes the
+    commands too, so an updated plugin's rows -- and the path baked inside
+    them -- come into step with what is on disk.
+    """
+    created = updated = 0
+    for key, category, label, annotation, _action in COMMANDS:
+        name = command_name(key)
+        body = command_body(key, dest)
+        if cmds.runTimeCommand(name, query=True, exists=True):
+            cmds.runTimeCommand(name, edit=True, command=body,
+                                category=category, label=label,
+                                annotation=annotation,
+                                commandLanguage="python")
+            updated += 1
+        else:
+            cmds.runTimeCommand(name, command=body, category=category,
+                                label=label, annotation=annotation,
+                                commandLanguage="python", default=False)
+            created += 1
+    return created, updated
+
+
 # --------------------------------------------------------------- the table
 
 def row(key):
