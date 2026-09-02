@@ -43,15 +43,22 @@ TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 # WireframeOnShaded, measured -- and overwriting them was the animator's own
 # call («если возникают конфликты то перезапиши»). Only inside our set: in
 # their own set those four keep doing what Maya says.
+# alt+g and alt+o joined on 2026-09-03 («чтобы alt+g не просто открывал
+# граф эдитор а делал toggle... и тоже самое для аутлайнера на alt+o»).
+# alt+g held `GraphEditorNameCommand` -- Maya's plain opener -- and alt+o
+# was free.
 DEFAULT_KEYS = (
     ("a", {"altModifier": True}, "time.prev"),
     ("s", {"altModifier": True}, "time.next"),
     ("4", {"altModifier": True}, "time.insert"),
     ("5", {"altModifier": True}, "time.remove"),
+    ("g", {"altModifier": True}, "editor.graph"),
+    ("o", {"altModifier": True}, "editor.outliner"),
 )
 
-# Bumped when DEFAULT_KEYS changes, which re-installs them once.
-DEFAULT_KEYS_VERSION = 1
+# Bumped when DEFAULT_KEYS changes, which re-installs them once -- which is
+# how alt+g and alt+o reached a set that already existed.
+DEFAULT_KEYS_VERSION = 2
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -228,6 +235,60 @@ def remove_frame():
         cmds.undoInfo(closeChunk=True)
     return _report("Frame {0:g} removed ({1} key(s)) - {2} curve(s) "
                    "moved".format(clear, cut, len(curves)))
+
+
+def _maya_mel(script):
+    """Run one of MAYA's own MEL commands.
+
+    Deliberately not `_mel`, which sources OverRig first: pressing alt+g
+    to see the Graph Editor has no business loading a rigging toolset.
+    """
+    return mel.eval(script if script.endswith(";") else script + ";")
+
+
+def toggle_workspace_editor(label, control, command):
+    """Close the editor if it is up, open it with Maya's own command if not.
+
+    The Graph Editor and its kind live in a workspaceControl of their own
+    (measured: `GraphEditor` makes `graphEditor1Window`, and `close` on
+    that control removes it entirely, after which the same command opens it
+    again). Closing is the only lever we pull ourselves; opening goes
+    through Maya's command, which also RAISES a control that exists but
+    sits hidden behind a tab -- and that is what an animator pressing the
+    key wants in that case, not a close they cannot see.
+    """
+    if cmds.workspaceControl(control, exists=True) \
+            and cmds.workspaceControl(control, query=True, visible=True):
+        cmds.workspaceControl(control, edit=True, close=True)
+        return _report(label + " closed")
+    _maya_mel(command)
+    return _report(label + " open")
+
+
+def _outliner_shown():
+    """Whether any Outliner panel is visible in the current layout."""
+    visible = set(cmds.getPanel(visiblePanels=True) or [])
+    return any(panel in visible
+               for panel in (cmds.getPanel(type="outlinerPanel") or []))
+
+
+def toggle_outliner():
+    """Maya's own ToggleOutliner, with a word about which way it went.
+
+    The Outliner is NOT a workspaceControl of its own: in a normal layout
+    it is a PANEL of that layout, so `outlinerPanel1Window` never exists
+    and there is nothing of ours to close. Measured 2026-09-03: one
+    `ToggleOutliner` takes the visible panels from
+    `[modelPanel4, outlinerPanel1]` to `[modelPanel4]` and the next brings
+    it back -- Maya already has this toggle, so we only report it. A layout
+    holding no Outliner at all is said so rather than reported as done.
+    """
+    before = _outliner_shown()
+    _maya_mel("ToggleOutliner")
+    after = _outliner_shown()
+    if before == after:
+        return _report("Outliner unchanged - none in this layout")
+    return _report("Outliner " + ("shown" if after else "hidden"))
 
 
 def _mel(script):
@@ -555,6 +616,13 @@ _OURS = (
      "Take the frame after the current one out, keys and all - the exact "
      "inverse of Insert frame",
      remove_frame),
+
+    ("editor.graph", "Editors", "Toggle Graph Editor",
+     "Open the Graph Editor, or close it if it is already up",
+     partial(toggle_workspace_editor, "Graph Editor", "graphEditor1Window",
+             "GraphEditor")),
+    ("editor.outliner", "Editors", "Toggle Outliner",
+     "Show or hide the Outliner in this layout", toggle_outliner),
 
     ("picker.connect", "Rig Picker", "Connect",
      "Bind the picker to the selected character",

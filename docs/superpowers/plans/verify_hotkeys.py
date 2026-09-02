@@ -322,12 +322,12 @@ try:
             wanted = maya_hotkeys.name_command(row_key)
             if held != wanted:
                 wrong.append((key, held, wanted))
-        gate(15, "the four starter keys are ours in our set", not wrong,
+        gate(15, "every starter key is ours in our set", not wrong,
              "wrong: {0}".format(wrong) if wrong else
-             "alt+a/s/4/5 -> prev/next/insert/remove")
+             ", ".join("alt+{0}={1}".format(key, row.split(".")[-1])
+                       for key, _m, row in maya_hotkeys.DEFAULT_KEYS))
     except Exception as exc:
-        gate(15, "the four starter keys are ours in our set", False,
-             repr(exc))
+        gate(15, "every starter key is ours in our set", False, repr(exc))
 
     # ---- Gate 16: and no other set has them --------------------------
     # The whole promise of a temporary map: what it takes, it takes only
@@ -471,9 +471,64 @@ try:
         gate(21, "the starter keys run by their MEL name",
              not wrong and stepped == start + 1.0 and home == start,
              "{0} | {1:g} -> {2:g} -> {3:g}".format(
-                 wrong or "all four wired", start, stepped, home))
+                 wrong or "all {0} wired".format(
+                     len(maya_hotkeys.DEFAULT_KEYS)),
+                 start, stepped, home))
     except Exception as exc:
         gate(21, "the starter keys run by their MEL name", False, repr(exc))
+
+    # ---- Gate 22: the Graph Editor toggles both ways ---------------------
+    # Restored: an editor that was closed on entry is closed again.
+    graph_was_up = cmds.workspaceControl("graphEditor1Window", exists=True) \
+        and cmds.workspaceControl("graphEditor1Window", query=True,
+                                  visible=True)
+    try:
+        def graph_up():
+            return bool(
+                cmds.workspaceControl("graphEditor1Window", exists=True)
+                and cmds.workspaceControl("graphEditor1Window", query=True,
+                                          visible=True))
+
+        if graph_was_up:
+            maya_hotkeys.run("editor.graph")
+            closed = not graph_up()
+            maya_hotkeys.run("editor.graph")
+            opened = graph_up()
+        else:
+            maya_hotkeys.run("editor.graph")
+            opened = graph_up()
+            maya_hotkeys.run("editor.graph")
+            closed = not graph_up()
+        gate(22, "the Graph Editor toggles both ways", opened and closed,
+             "was up: {0}, opened: {1}, closed: {2}".format(
+                 graph_was_up, opened, closed))
+    except Exception as exc:
+        gate(22, "the Graph Editor toggles both ways", False, repr(exc))
+    finally:
+        try:
+            up_now = cmds.workspaceControl("graphEditor1Window", exists=True)
+            if graph_was_up and not up_now:
+                mel.eval("GraphEditor;")
+            elif up_now and not graph_was_up:
+                cmds.workspaceControl("graphEditor1Window", edit=True,
+                                      close=True)
+        except Exception:
+            pass
+
+    # ---- Gate 23: the Outliner toggles in the layout --------------------
+    # A different mechanism: it is a PANEL of the layout, not a
+    # workspaceControl, so Maya's own ToggleOutliner is the whole thing.
+    try:
+        before = maya_hotkeys._outliner_shown()
+        maya_hotkeys.run("editor.outliner")
+        flipped = maya_hotkeys._outliner_shown()
+        maya_hotkeys.run("editor.outliner")
+        restored = maya_hotkeys._outliner_shown()
+        gate(23, "the Outliner toggles in the layout",
+             flipped != before and restored == before,
+             "{0} -> {1} -> {2}".format(before, flipped, restored))
+    except Exception as exc:
+        gate(23, "the Outliner toggles in the layout", False, repr(exc))
 
 finally:
     # Each step on its own: one raising teardown abandons the rest.

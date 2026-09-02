@@ -380,6 +380,47 @@ was written, so it is a live hazard rather than a hypothetical one.
 `remove_frame` takes the module's only undo chunk, because clearing a frame
 and pulling the rest back are two commands that must undo together.
 
+## Addendum, 2026-09-03: alt+g and alt+o toggle their editors
+
+«чтобы alt+g не просто открывал граф эдитор а делал toggle если открыт то
+закрывал если закрыт то открывал и тоже самое для аутлайнера на alt+o».
+Two more rows, a new category `SkeldarAnim.Editors`, `DEFAULT_KEYS` up to
+six and `DEFAULT_KEYS_VERSION` to 2 — which is what carried them into the
+set the animator already had.
+
+**The two editors are held by Maya in different ways, and that decides the
+implementation.** Measured before writing anything:
+
+- The Graph Editor opens as a workspaceControl of its own,
+  `graphEditor1Window`; `close` on that control removes it outright
+  (`exists` goes False), and `GraphEditor` opens it again afterwards. So
+  `toggle_workspace_editor(label, control, command)` closes only when the
+  control exists **and** is visible, and otherwise runs Maya's own opener.
+  The second half matters for the tabbed case: a control that exists but
+  sits behind another tab gets RAISED rather than closed, which is what a
+  keypress should do when the animator cannot see the thing.
+- The Outliner is not a workspaceControl at all. In a normal layout it is a
+  panel *of the layout* — the animator's own showed
+  `getPanel(visiblePanels=True) == [modelPanel4, outlinerPanel1]` with
+  `outlinerPanel1Window` absent — and Maya already has the toggle for it:
+  `ToggleOutliner` took the visible panels to `[modelPanel4]` and back.
+  `toggle_outliner` runs it and only reports which way it went; a layout
+  with no Outliner is said so rather than reported as done. There is no
+  `ToggleGraphEditor` to match, which is why the halves differ rather than
+  sharing one mechanism.
+
+**Neither goes through `_mel`.** That helper sources OverRig first, and
+pressing alt+g to look at a curve has no business loading a rigging
+toolset; `_maya_mel` is the plain one, and a test pins the distinction.
+
+Two flag names cost a probe round each and are worth writing down:
+`cmds.getPanel` takes **`scriptType`**, not `scriptedType` (`TypeError:
+Invalid flag`), and `workspaceControl` carries `-close`, `-restore`,
+`-raise` and `-visible`.
+
+alt+g held `GraphEditorNameCommand` — Maya's plain opener — and alt+o was
+free; overwriting stands on the same instruction as the first four keys.
+
 ## Not built
 
 - No editor, no map file, no cheat-sheet panel — all three declined above.

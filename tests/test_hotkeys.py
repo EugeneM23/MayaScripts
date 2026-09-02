@@ -83,6 +83,11 @@ class FakeCmds(object):
         self.chunks = []
         self.namecommands = {}
         self.bindings = {}
+        # The editors: `workspace` is workspaceControl name -> visible, and
+        # `panels` is layout panel -> visible, because the Graph Editor is
+        # the first kind and the Outliner is the second (measured).
+        self.workspace = {}
+        self.panels = {}
 
     # -- hotkey sets -----------------------------------------------------
     def hotkeySet(self, name=None, query=False, edit=False, current=False,
@@ -182,6 +187,26 @@ class FakeCmds(object):
     def inViewMessage(self, assistMessage="", **kwargs):
         self.messages.append(assistMessage)
         return None
+
+    # -- the editors -----------------------------------------------------
+    def workspaceControl(self, name, exists=False, query=False, edit=False,
+                         visible=None, close=False, **kwargs):
+        if exists:
+            return name in self.workspace
+        if query and visible:
+            return self.workspace.get(name, False)
+        if edit and close:
+            self.workspace.pop(name, None)
+            return None
+        return None
+
+    def getPanel(self, visiblePanels=False, type=None, scriptType=None,
+                 **kwargs):
+        if visiblePanels:
+            return [p for p, shown in sorted(self.panels.items()) if shown]
+        if type or scriptType:
+            return sorted(self.panels)
+        return []
 
     # -- the timeline ----------------------------------------------------
     def currentTime(self, value=None, query=False, edit=False):
@@ -293,12 +318,19 @@ class FakeCmds(object):
 
 
 class FakeMel(object):
+    """Records what was evaluated, and models the one command whose EFFECT
+    the module reads back: `ToggleOutliner` flips the layout's outliner,
+    measured live."""
 
     def __init__(self, fake_cmds):
         self.cmds = fake_cmds
 
     def eval(self, script):
         self.cmds.evaluated.append(script)
+        if script == "ToggleOutliner;":
+            for panel in list(self.cmds.panels):
+                if "outliner" in panel.lower():
+                    self.cmds.panels[panel] = not self.cmds.panels[panel]
         return None
 
 
@@ -410,8 +442,8 @@ class TheTable(unittest.TestCase):
 
 
 class OurRows(unittest.TestCase):
-    """27 of ours: four openers plus the map's own toggle, four timeline,
-    six picker, seven scene, five overshoot."""
+    """29 of ours: four openers plus the map's own toggle, four timeline,
+    two editors, six picker, seven scene, five overshoot."""
 
     def _keys(self, prefix):
         return [row[0] for row in maya_hotkeys.COMMANDS
@@ -420,7 +452,7 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 27)
+        self.assertEqual(len(ours), 29)
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
@@ -1019,12 +1051,6 @@ class TheDefaultKeys(unittest.TestCase):
         self.fake = FakeCmds()
         use(self.fake)
 
-    def test_the_table_is_the_four_keys(self):
-        self.assertEqual([(key, row) for key, _mods, row
-                          in maya_hotkeys.DEFAULT_KEYS],
-                         [("a", "time.prev"), ("s", "time.next"),
-                          ("4", "time.insert"), ("5", "time.remove")])
-
     def test_every_default_key_names_a_real_row(self):
         for _key, _mods, row in maya_hotkeys.DEFAULT_KEYS:
             self.assertIsNotNone(maya_hotkeys.row(row), row)
@@ -1079,3 +1105,112 @@ class TheDefaultKeys(unittest.TestCase):
         self.fake.bindings.clear()
         maya_hotkeys.activate()
         self.assertIn(("a", True), self.fake.bindings)
+
+
+class EditorToggles(unittest.TestCase):
+    """Two editors, two different mechanisms -- measured, not assumed.
+
+    The Graph Editor opens as a workspaceControl of its own
+    (`graphEditor1Window`), and closing that control removes it entirely.
+    The Outliner does not: in a normal layout it is a PANEL of the layout,
+    so `outlinerPanel1Window` never exists and Maya's own ToggleOutliner is
+    the whole mechanism.
+    """
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_a_closed_graph_editor_is_opened_by_mayas_command(self):
+        maya_hotkeys.run("editor.graph")
+        self.assertEqual(self.fake.evaluated, ["GraphEditor;"])
+
+    def test_an_open_graph_editor_is_closed(self):
+        self.fake.workspace["graphEditor1Window"] = True
+        maya_hotkeys.run("editor.graph")
+        self.assertEqual(self.fake.evaluated, [])
+        self.assertNotIn("graphEditor1Window", self.fake.workspace)
+
+    def test_a_hidden_graph_editor_is_raised_not_closed(self):
+        """Behind a tab it exists but is not visible: the animator pressing
+        the key wants to SEE it, so Maya's own opener runs."""
+        self.fake.workspace["graphEditor1Window"] = False
+        maya_hotkeys.run("editor.graph")
+        self.assertEqual(self.fake.evaluated, ["GraphEditor;"])
+        self.assertIn("graphEditor1Window", self.fake.workspace)
+
+    def test_the_graph_editor_never_sources_overrig(self):
+        """`_mel` loads the rigging toolset first, and pressing alt+g has no
+        business doing that."""
+        asked = []
+
+        class Loader(object):
+            NOT_LOADED_MESSAGE = "not loaded"
+
+            def ensure_loaded(self):
+                asked.append(1)
+                return True
+
+        maya_hotkeys._overrig_module = lambda: Loader()
+        try:
+            maya_hotkeys.run("editor.graph")
+        finally:
+            maya_hotkeys._overrig_module = \
+                maya_hotkeys.__dict__["_overrig_module"]
+        self.assertEqual(asked, [])
+
+    def test_the_outliner_goes_through_mayas_own_toggle(self):
+        self.fake.panels = {"outlinerPanel1": True}
+        maya_hotkeys.run("editor.outliner")
+        self.assertEqual(self.fake.evaluated, ["ToggleOutliner;"])
+
+    def test_the_outliner_reports_which_way_it_went(self):
+        self.fake.panels = {"outlinerPanel1": True}
+        maya_hotkeys.run("editor.outliner")
+        self.assertIn("hidden", self.fake.messages[-1])
+        maya_hotkeys.run("editor.outliner")
+        self.assertIn("shown", self.fake.messages[-1])
+
+    def test_an_outliner_that_is_not_in_the_layout_is_said_so(self):
+        self.fake.panels = {}
+        maya_hotkeys.run("editor.outliner")
+        self.assertIn("layout", self.fake.messages[-1])
+
+    def test_both_rows_are_in_the_editors_category(self):
+        for key in ("editor.graph", "editor.outliner"):
+            self.assertEqual(maya_hotkeys.row(key)[1], "SkeldarAnim.Editors")
+
+
+class TheSixDefaultKeys(unittest.TestCase):
+    """alt+g and alt+o joined the four timeline keys, so the version went
+    up -- which is what re-installs them once for a set that already
+    exists."""
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_the_table(self):
+        self.assertEqual([(key, row) for key, _mods, row
+                          in maya_hotkeys.DEFAULT_KEYS],
+                         [("a", "time.prev"), ("s", "time.next"),
+                          ("4", "time.insert"), ("5", "time.remove"),
+                          ("g", "editor.graph"), ("o", "editor.outliner")])
+
+    def test_the_version_went_up(self):
+        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 2)
+
+    def test_an_old_marker_gets_the_new_keys(self):
+        self.fake.sets.append("SkeldarAnim")
+        self.fake.optionvars[maya_hotkeys.DEFAULT_KEYS_VAR] = 1
+        maya_hotkeys.activate()
+        self.assertEqual(
+            self.fake.bindings[("g", True)],
+            maya_hotkeys.name_command("editor.graph"))
+
+    def test_a_current_marker_is_left_alone(self):
+        self.fake.sets.append("SkeldarAnim")
+        self.fake.optionvars[maya_hotkeys.DEFAULT_KEYS_VAR] = \
+            maya_hotkeys.DEFAULT_KEYS_VERSION
+        maya_hotkeys.activate()
+        self.assertEqual(self.fake.bindings, {})

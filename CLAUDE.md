@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1417 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1428 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -2789,7 +2789,7 @@ One press switches Maya to a hotkey set named `SkeldarAnim`; the next press
 puts their own set back. Design:
 `docs/superpowers/specs/2026-09-02-hotkey-map-design.md`, proof:
 `docs/superpowers/plans/verify_hotkeys.py` — **green live 2026-09-02, 0 of
-21 gates failed** (three legitimate SKIPs: the animator's set already
+23 gates failed** (three legitimate SKIPs: the animator's set already
 existed, so the creation gates step aside rather than touch it). The ones
 that matter most: the fresh set really inherited its source's sample key
 (so it IS a copy), **the shelf button's own baked command** toggles both
@@ -2807,9 +2807,9 @@ the current set, the selection, the frame and autoKey as it found them.
 **The map's contents are the animator's, laid out in Maya's own Hotkey
 Editor.** A map file, a panel of ours and a cheat sheet were all offered and
 declined, so there is no editor and no map format here. What the module adds
-is the switch plus **111 runTimeCommands** worth binding, in the editor's own
+is the switch plus **113 runTimeCommands** worth binding, in the editor's own
 category tree (categories nest with a **dot** — measured, Maya ships
-`Editors.Time Editor.Clip`) — and, since 2026-09-02, **four keys bound for
+`Editors.Time Editor.Clip`) — and, since 2026-09-02, **six keys bound for
 you** (below).
 
 **The set is created once as a copy of whatever is active** and never
@@ -2838,9 +2838,10 @@ both directions**, so a press that turns the map off also brings the rows
 and the baked path into step with what is on disk; the installer registers
 nothing.
 
-**Four starter keys, bound in OUR set only** (2026-09-02, the animator's
+**Six starter keys, bound in OUR set only** (2026-09-02, the animator's
 ask: «alt+a — кадр назад, alt+s — кадр вперед. alt+4 — добавить inbetween
-кадр между alt+5 убрать»). `DEFAULT_KEYS` is a table; `bind_defaults()`
+кадр между alt+5 убрать»; alt+g and alt+o joined the next day, below).
+`DEFAULT_KEYS` is a table; `bind_defaults()`
 runs **after** the switch, so the keys land in our set and never in theirs.
 All four were already taken by a Maya default — measured: alt+a
 `CycleDisplayMode`, alt+s `HIKSetFullBodyKey`, alt+4 `ImagePlaneOption`,
@@ -2872,13 +2873,43 @@ written. The live gate measures those curves with **`floatChange`**, not
 `timeChange` — a driven curve answers nothing at all for `timeChange`, so
 the gate's first version compared `[]` with `[]` and could not fail.
 
+**alt+g toggles the Graph Editor, alt+o the Outliner** (2026-09-03,
+«чтобы alt+g не просто открывал граф эдитор а делал toggle»), and the two
+are **different mechanisms** — measured, not assumed:
+
+- The Graph Editor opens as a **workspaceControl of its own**,
+  `graphEditor1Window`; `close` on that control removes it entirely, after
+  which `GraphEditor` opens it again. So `toggle_workspace_editor` closes
+  only when the control exists AND is visible, and otherwise runs **Maya's
+  own opener** — which also RAISES a control hidden behind a tab, and that
+  is what a keypress should do in that case rather than a close nobody can
+  see. The helper takes (label, control, command), so the Dope Sheet is one
+  row whenever it is wanted.
+- The Outliner is **not** a workspaceControl: in a normal layout it is a
+  PANEL of the layout, so `outlinerPanel1Window` never exists at all. Maya
+  already has the toggle — `ToggleOutliner`, measured taking the visible
+  panels from `[modelPanel4, outlinerPanel1]` to `[modelPanel4]` and back —
+  so `toggle_outliner` runs that and only reports which way it went, from
+  `getPanel(visiblePanels=True)`. A layout with no Outliner in it is said
+  so rather than reported as done. There is no `ToggleGraphEditor` to
+  match it; that is why the two halves differ.
+
+Both go through `_maya_mel`, **not** `_mel`: the latter sources OverRig
+first, and pressing alt+g to look at a curve has no business loading a
+rigging toolset. A test pins that.
+
+Two flag names cost a probe round each: `cmds.getPanel` takes
+**`scriptType`** and not `scriptedType` (`TypeError: Invalid flag`), and
+`workspaceControl` carries `-close`, `-restore`, `-raise` and `-visible`.
+
 `remove_frame` is **the one undo chunk** in the module, and it earns it:
 clearing the frame and pulling the rest back are two commands, and a
 Ctrl+Z that undid half of that leaves the timeline in a state nobody asked
 for. Everything else inherits its target's undo, as the shelf buttons do.
 
-**Ours are 27 rows, and each one presses a panel button** (bar the four
-timeline ones, which are the module's own). Every action of
+**Ours are 29 rows, and each one presses a panel button** — bar the four
+timeline ones and the two editor toggles, which are the module's own work.
+Every action of
 ours already is one — `picker_window.live_window()` hands back the live
 picker and `build_rig()` is the Build button; Scene Setup's and Overshoot's
 module-level callbacks read their own windows' controls — so a hotkey
