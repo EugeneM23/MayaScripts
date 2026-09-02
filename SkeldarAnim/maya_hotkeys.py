@@ -236,6 +236,39 @@ def open_editor():
     mel.eval(EDITOR_COMMAND + ";")
 
 
+def shelf_button(shelf=SHELF, label=BUTTON_LABEL):
+    """Our shelf button, or None.
+
+    A shelf button's command runs with no widget context, so there is no
+    `self` to edit -- the button is found by walking the shelf's children
+    and matching the label we gave it. Not finding it is a normal outcome
+    (the module called from the Script Editor, the shelf renamed): the set
+    still switches and only the paint is skipped.
+    """
+    if not cmds.shelfLayout(shelf, exists=True):
+        return None
+    for child in cmds.shelfLayout(shelf, query=True, childArray=True) or []:
+        if not cmds.control(child, query=True, exists=True):
+            continue
+        if cmds.shelfButton(child, query=True, label=True) == label:
+            return child
+    return None
+
+
+def paint(active):
+    """Light the button while the map is on. True when it was painted.
+
+    Maya shows the active hotkey set nowhere but the Hotkey Editor's own
+    dropdown, so a toggle with no feedback is a toggle you lose track of.
+    """
+    button = shelf_button()
+    if not button:
+        return False
+    cmds.shelfButton(button, edit=True, enableBackground=bool(active),
+                     backgroundColor=ON_COLOUR)
+    return True
+
+
 def activate():
     """Switch to our set, creating it if this is its first press.
 
@@ -252,6 +285,7 @@ def activate():
         cmds.hotkeySet(SET, source=base, current=True)
     else:
         cmds.hotkeySet(SET, edit=True, current=True)
+    paint(True)
     if fresh:
         open_editor()
         return _report("Hotkeys: {0} created from {1} - assign your "
@@ -263,6 +297,7 @@ def deactivate():
     """Put the animator's own set back."""
     back = previous_set()
     cmds.hotkeySet(back, edit=True, current=True)
+    paint(False)
     return _report("Hotkeys: " + back)
 
 

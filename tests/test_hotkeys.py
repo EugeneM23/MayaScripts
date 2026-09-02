@@ -731,3 +731,41 @@ class TheEditorOnFirstPress(unittest.TestCase):
         message = maya_hotkeys.activate()
         self.assertIn("SkeldarAnim", message)
         self.assertIn("Eugene", message)
+
+
+class ThePaint(unittest.TestCase):
+    """A shelf button's command runs with no widget context, so the button
+    has to find itself. Not finding it is not an error: the set still
+    switches and only the paint is skipped."""
+
+    def setUp(self):
+        self.fake = FakeCmds(
+            shelves={"SkeldarAnim": ["btn1", "btn2", "btn3"]},
+            buttons={"btn1": "Rig Picker", "btn2": "Hotkeys",
+                     "btn3": "OverRig"})
+        use(self.fake)
+
+    def test_it_finds_itself_by_label(self):
+        self.assertEqual(maya_hotkeys.shelf_button(), "btn2")
+
+    def test_no_shelf_is_not_an_error(self):
+        self.fake.shelves = {}
+        self.assertIsNone(maya_hotkeys.shelf_button())
+        self.assertFalse(maya_hotkeys.paint(True))
+
+    def test_no_button_of_ours_is_not_an_error(self):
+        self.fake.buttons["btn2"] = "Something Else"
+        self.assertIsNone(maya_hotkeys.shelf_button())
+
+    def test_activate_lights_it_and_deactivate_puts_it_out(self):
+        maya_hotkeys.activate()
+        self.assertEqual(self.fake.painted[-1],
+                         ("btn2", True, maya_hotkeys.ON_COLOUR))
+        maya_hotkeys.deactivate()
+        self.assertEqual(self.fake.painted[-1],
+                         ("btn2", False, maya_hotkeys.ON_COLOUR))
+
+    def test_a_missing_button_does_not_stop_the_switch(self):
+        self.fake.shelves = {}
+        maya_hotkeys.activate()
+        self.assertEqual(self.fake.current, "SkeldarAnim")
