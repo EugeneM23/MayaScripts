@@ -32,6 +32,28 @@ PREFIX = "skeldarAnim"
 EDITOR_COMMAND = "HotkeyPreferencesWindow"
 ON_COLOUR = (0.27, 0.38, 0.48)
 
+# The time-based curve types, and the whole list of them. Everything else
+# `ls(type="animCurve")` answers is a driven key -- see `time_curves`.
+TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
+
+# Keys bound in OUR set when it is created (2026-09-02, the animator's ask:
+# «alt+a - кадр назад, alt+s - кадр вперед. alt+4 - добавить inbetween кадр
+# между alt+5 убрать»). All four were taken by a Maya default -- alt+a
+# CycleDisplayMode, alt+s HIKSetFullBodyKey, alt+4 ImagePlaneOption, alt+5
+# WireframeOnShaded, measured -- and overwriting them was the animator's own
+# call («если возникают конфликты то перезапиши»). Only inside our set: in
+# their own set those four keep doing what Maya says.
+DEFAULT_KEYS = (
+    ("a", {"altModifier": True}, "time.prev"),
+    ("s", {"altModifier": True}, "time.next"),
+    ("4", {"altModifier": True}, "time.insert"),
+    ("5", {"altModifier": True}, "time.remove"),
+)
+
+# Bumped when DEFAULT_KEYS changes, which re-installs them once.
+DEFAULT_KEYS_VERSION = 1
+DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
+
 
 # --------------------------------------------------------------- reporting
 
@@ -111,6 +133,101 @@ def _overshoot(shape):
         module.show_overshoot_ui()
         return _report("Overshoot opened - press again")
     return module.apply_overshoot(shape)
+
+
+def step_frame(delta):
+    """One frame back or forward."""
+    cmds.currentTime(cmds.currentTime(query=True) + delta, edit=True)
+
+
+def insert_plan(now, last):
+    """(start, end, +1) for the keys that make room after `now`.
+
+    Everything strictly after the current frame moves one frame later, so
+    the frame right after the pose the animator is standing on comes free.
+    None when there is nothing after `now` to move -- inserting room at the
+    end of a clip is what the timeline is already for.
+    """
+    if last is None or last <= now:
+        return None
+    return (now + 1.0, last, 1.0)
+
+
+def remove_plan(now, last):
+    """(frame to clear, range to pull back or None, -1) -- insert's inverse.
+
+    The frame after `now` goes, keys and all, and everything past it comes
+    back one frame. Press insert then remove and the timeline is exactly
+    where it started, which is the whole reason the pair is defined this
+    way round.
+    """
+    if last is None or last <= now:
+        return None
+    shift = (now + 2.0, last) if last >= now + 2.0 else None
+    return (now + 1.0, shift, -1.0)
+
+
+def time_curves():
+    """The curves to shift: the selection's, else every one in the scene.
+
+    Two things this is careful about. `cmds.ls(type="animCurve")` also
+    answers the DRIVEN-key curves -- `animCurveUU` and friends, whose x
+    axis is a driver's VALUE and not time -- and shifting one of those
+    moves a set-driven-key relationship instead of the animation, silently.
+    Measured 2026-09-02: the animator's open scene holds animCurveUU right
+    now, so the filter is not theoretical. And a selection narrows it,
+    because "insert a frame" means the shot when nothing is picked and that
+    limb when something is.
+    """
+    selected = cmds.ls(selection=True, long=True) or []
+    if selected:
+        curves = cmds.keyframe(selected, query=True, name=True) or []
+    else:
+        curves = cmds.ls(type=TIME_CURVES) or []
+    return [c for c in curves if cmds.objectType(c) in TIME_CURVES]
+
+
+def insert_frame():
+    """Make room for an inbetween after the current frame."""
+    curves = time_curves()
+    if not curves:
+        return _report("Insert frame: no animation to move")
+    now = cmds.currentTime(query=True)
+    plan = insert_plan(now, cmds.findKeyframe(curves, which="last"))
+    if plan is None:
+        return _report("Insert frame: no keys after {0:g}".format(now))
+    start, end, delta = plan
+    cmds.keyframe(curves, edit=True, relative=True, timeChange=delta,
+                  time=(start, end))
+    return _report("Frame {0:g} is free - {1} curve(s) moved".format(
+        start, len(curves)))
+
+
+def remove_frame():
+    """Take the frame after the current one back out, keys and all.
+
+    The one undo chunk in this module, and it earns it: clearing the frame
+    and pulling the rest back are two commands, and a Ctrl+Z that undid
+    half of that would leave the timeline in a state nobody asked for.
+    """
+    curves = time_curves()
+    if not curves:
+        return _report("Remove frame: no animation to move")
+    now = cmds.currentTime(query=True)
+    plan = remove_plan(now, cmds.findKeyframe(curves, which="last"))
+    if plan is None:
+        return _report("Remove frame: no keys after {0:g}".format(now))
+    clear, shift, delta = plan
+    cmds.undoInfo(openChunk=True)
+    try:
+        cut = cmds.cutKey(curves, time=(clear, clear), clear=True) or 0
+        if shift:
+            cmds.keyframe(curves, edit=True, relative=True,
+                          timeChange=delta, time=shift)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return _report("Frame {0:g} removed ({1} key(s)) - {2} curve(s) "
+                   "moved".format(clear, cut, len(curves)))
 
 
 def _mel(script):
@@ -236,6 +353,62 @@ def open_editor():
     mel.eval(EDITOR_COMMAND + ";")
 
 
+def name_command(key):
+    """The nameCommand wrapping a row's runTimeCommand.
+
+    A hotkey binds a nameCommand, never a runTimeCommand -- the Hotkey
+    Editor makes one when the animator drags a command onto a key, and
+    with no editor in the loop we make it ourselves.
+    """
+    return command_name(key) + "Name"
+
+
+def bind_defaults():
+    """Bind DEFAULT_KEYS in whatever set is CURRENT. What it displaced.
+
+    Called from `activate()` while our set is current -- never against the
+    animator's own set, which is why it is called after the switch and not
+    before. Returns [(key, the nameCommand that was there)] so the press
+    can say what moved instead of taking a key silently.
+    """
+    displaced = []
+    for key, modifiers, row_key in DEFAULT_KEYS:
+        found = row(row_key)
+        if found is None:                      # a table edit went wrong
+            continue
+        # `cmds.hotkey` reverses itself between reading and writing, and
+        # getting it the wrong way round raises rather than misbehaving:
+        # READING takes the key POSITIONALLY (`keyShortcut=` under query
+        # answers "must be passed a boolean argument"), WRITING takes it as
+        # the `keyShortcut` FLAG ("Please specify a key" otherwise). Both
+        # measured live 2026-09-02; the second cost a live run.
+        held = cmds.hotkey(key, query=True, name=True, **modifiers) or ""
+        wrapper = name_command(row_key)
+        if held and held != wrapper:
+            displaced.append((_key_label(key, modifiers), held))
+        cmds.nameCommand(wrapper, annotation=found[3],
+                         command=command_name(row_key), sourceType="mel")
+        cmds.hotkey(keyShortcut=key, name=wrapper, **modifiers)
+    return displaced
+
+
+def _key_label(key, modifiers):
+    """`alt+a`, for a message the animator can read."""
+    parts = [name[:-8] for name in ("ctrlModifier", "altModifier",
+                                    "shiftModifier") if modifiers.get(name)]
+    return "+".join(parts + [key])
+
+
+def defaults_installed():
+    """Which version of DEFAULT_KEYS this user has already been given."""
+    if not cmds.optionVar(exists=DEFAULT_KEYS_VAR):
+        return 0
+    try:
+        return int(cmds.optionVar(query=DEFAULT_KEYS_VAR) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def shelf_button(shelf=SHELF, label=BUTTON_LABEL):
     """Our shelf button, or None.
 
@@ -286,11 +459,26 @@ def activate():
     else:
         cmds.hotkeySet(SET, edit=True, current=True)
     paint(True)
+
+    # The starter keys go in AFTER the switch, so they land in our set and
+    # never in the animator's. A fresh set always gets them; an existing
+    # one gets them once per version, because "only on creation" would
+    # never reach a set the animator had already made -- theirs existed
+    # before these keys did. After that their edits in the editor stand.
+    note = ""
+    if fresh or defaults_installed() < DEFAULT_KEYS_VERSION:
+        displaced = bind_defaults()
+        cmds.optionVar(intValue=(DEFAULT_KEYS_VAR, DEFAULT_KEYS_VERSION))
+        note = " - {0} key(s) bound".format(len(DEFAULT_KEYS))
+        if displaced:
+            note += ", took " + ", ".join(
+                "{0} from {1}".format(key, held) for key, held in displaced)
+
     if fresh:
         open_editor()
-        return _report("Hotkeys: {0} created from {1} - assign your "
-                       "keys".format(SET, base))
-    return _report("Hotkeys: " + SET)
+        return _report("Hotkeys: {0} created from {1}{2} - assign the "
+                       "rest".format(SET, base, note))
+    return _report("Hotkeys: " + SET + note)
 
 
 def deactivate():
@@ -354,6 +542,19 @@ _OURS = (
      partial(_show, "maya_overshoot", "show_overshoot_ui")),
     ("window.hotkeys", "Windows", "Hotkey map on/off",
      "Switch between the SkeldarAnim hotkey set and your own", toggle),
+
+    ("time.prev", "Timeline", "Frame back", "One frame back",
+     partial(step_frame, -1.0)),
+    ("time.next", "Timeline", "Frame forward", "One frame forward",
+     partial(step_frame, 1.0)),
+    ("time.insert", "Timeline", "Insert frame",
+     "Make room for an inbetween after the current frame - the selection's "
+     "curves, or the whole scene when nothing is selected",
+     insert_frame),
+    ("time.remove", "Timeline", "Remove frame",
+     "Take the frame after the current one out, keys and all - the exact "
+     "inverse of Insert frame",
+     remove_frame),
 
     ("picker.connect", "Rig Picker", "Connect",
      "Bind the picker to the selected character",

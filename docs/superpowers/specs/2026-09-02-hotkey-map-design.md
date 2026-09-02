@@ -326,10 +326,65 @@ The gate that OverRig sources itself on the first press is only honest in a
 pressed; the script says so where it runs, the way `verify_missing_bones.py`
 asks for a fresh session.
 
+## Addendum, the same day: four keys bound for you
+
+The animator, once the map was in their hands: «alt+a — кадр назад, alt+s —
+кадр вперед. alt+4 — добавить inbetween кадр между alt+5 убрать». So the
+"no pre-bound keys" decision below is **superseded** — the map arrives with
+four keys in it. Everything else about it stands: the rest is theirs to lay
+out in the editor.
+
+**Four new rows, a new category `SkeldarAnim.Timeline`.** Frame back and
+frame forward are `currentTime ± 1`. Insert and remove are the module's own
+work rather than a panel press, and they are **exact inverses**, which is
+what fixes their semantics: insert moves everything strictly after the
+current frame one frame later, so the frame after the pose comes free;
+remove clears that frame, keys and all, and pulls the rest back. Press one
+then the other and the timeline is where it started. Both halves are pure
+functions (`insert_plan`, `remove_plan`) and tested as such.
+
+**Two calls that were mine to make**, since the animator asked me to do it
+myself, and both are stated so they are easy to reverse:
+
+- **Scope**: the selection's curves, or every curve in the scene when
+  nothing is selected. "Insert a frame" means the shot when nothing is
+  picked and that limb when something is, which is also how OverRig's own
+  procedures behave.
+- **What remove takes**: the frame after the current one, *with whatever is
+  on it*. The alternative — refusing when that frame carries keys — is
+  safer in the abstract and useless in practice: after a Build every bone
+  carries a dense baked curve, so it would refuse every time. One press is
+  one undo step, and the status line says how many keys went.
+
+**The keys are bound inside our set only.** `bind_defaults()` runs after
+the switch to `SkeldarAnim`, never before it. All four were already taken
+by a Maya default — measured: alt+a `CycleDisplayMode`, alt+s
+`HIKSetFullBodyKey`, alt+4 `ImagePlaneOption`, alt+5
+`WireframeOnShaded` — and overwriting them was the animator's explicit call
+(«если возникают конфликты то перезапиши»). The press names what it
+displaced rather than taking a key quietly, and in their own set those four
+keep working.
+
+**Binding is once, not every press.** A fresh set always gets them; a set
+that already exists gets them once per `DEFAULT_KEYS_VERSION`, recorded in
+the optionVar `skeldarAnimDefaultKeys`. The version exists because "only on
+creation" would never have reached the animator's own set, which existed
+before these keys did — and because a fifth default key later is then one
+bump rather than a special case. After the install their edits stand: the
+keys are a starting point, not a policy.
+
+**`cmds.ls(type="animCurve")` answers driven-key curves as well**, whose x
+axis is a driver's value and not time. `time_curves()` filters to the four
+time-based types; the animator's open scene held `animCurveUU` when this
+was written, so it is a live hazard rather than a hypothetical one.
+`remove_frame` takes the module's only undo chunk, because clearing a frame
+and pulling the rest back are two commands that must undo together.
+
 ## Not built
 
 - No editor, no map file, no cheat-sheet panel — all three declined above.
-- No pre-bound keys, and so no `nameCommand` of ours.
+- ~~No pre-bound keys~~ — superseded by the addendum above; four keys are
+  bound, and the `nameCommand` wrappers they need are ours.
 - Nothing at Maya exit: the map is sticky by choice.
 - **A door left open**: `hotkeySet` has `-export`/`-import` for `.mhk` files, so
   handing the finished map to a colleague — the one thing living in prefs costs

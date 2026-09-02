@@ -70,6 +70,19 @@ class FakeCmds(object):
         self.buttons = dict(buttons or {})
         self.windows = set(windows)
         self.evaluated = []
+        # The timeline half: a tiny curve model. `curves` is curve -> key
+        # times, `curve_types` is what objectType answers (the four
+        # time-based types move, animCurveUU and friends must not), and
+        # `driving` is object -> its curves, which is what
+        # `keyframe -q -name` answers for a selection.
+        self.time = 1.0
+        self.curves = {}
+        self.curve_types = {}
+        self.driving = {}
+        self.selected = []
+        self.chunks = []
+        self.namecommands = {}
+        self.bindings = {}
 
     # -- hotkey sets -----------------------------------------------------
     def hotkeySet(self, name=None, query=False, edit=False, current=False,
@@ -128,14 +141,15 @@ class FakeCmds(object):
 
     # -- odds and ends ---------------------------------------------------
     def optionVar(self, exists=None, query=None, stringValue=None,
-                  remove=None):
+                  intValue=None, remove=None):
         if exists is not None:
             return exists in self.optionvars
         if query is not None:
             return self.optionvars.get(query, "")
-        if stringValue is not None:
-            self.optionvars[stringValue[0]] = stringValue[1]
-            return None
+        for pair in (stringValue, intValue):
+            if pair is not None:
+                self.optionvars[pair[0]] = pair[1]
+                return None
         if remove is not None:
             self.optionvars.pop(remove, None)
             return None
@@ -167,6 +181,114 @@ class FakeCmds(object):
 
     def inViewMessage(self, assistMessage="", **kwargs):
         self.messages.append(assistMessage)
+        return None
+
+    # -- the timeline ----------------------------------------------------
+    def currentTime(self, value=None, query=False, edit=False):
+        if query:
+            return self.time
+        self.time = float(value)
+        return self.time
+
+    def ls(self, *args, **kwargs):
+        if kwargs.get("selection"):
+            return list(self.selected)
+        wanted = kwargs.get("type")
+        if wanted:
+            wanted = (wanted,) if isinstance(wanted, str) else tuple(wanted)
+            return [c for c, kind in sorted(self.curve_types.items())
+                    if kind in wanted]
+        return []
+
+    def objectType(self, node):
+        return self.curve_types.get(node, "transform")
+
+    def _named(self, nodes):
+        """Curve names for whatever was passed: curves, or their objects."""
+        found = []
+        for node in (nodes or []):
+            if node in self.curves:
+                found.append(node)
+            else:
+                found.extend(self.driving.get(node, []))
+        return found
+
+    def keyframe(self, nodes=None, query=False, edit=False, name=False,
+                 relative=False, timeChange=None, time=None,
+                 timeChange_query=False):
+        curves = self._named(nodes)
+        if query and name:
+            return list(curves)
+        if query:
+            times = []
+            for curve in curves:
+                times.extend(self.curves[curve])
+            return sorted(times)
+        moved = 0
+        low, high = time
+        for curve in curves:
+            keys = self.curves[curve]
+            for index, key in enumerate(keys):
+                if low <= key <= high:
+                    keys[index] = key + timeChange
+                    moved += 1
+            keys.sort()
+        return moved
+
+    def cutKey(self, nodes=None, time=None, clear=False):
+        low, high = time
+        cut = 0
+        for curve in self._named(nodes):
+            keep = [k for k in self.curves[curve] if not low <= k <= high]
+            cut += len(self.curves[curve]) - len(keep)
+            self.curves[curve][:] = keep
+        return cut
+
+    def findKeyframe(self, nodes=None, which=None, **kwargs):
+        times = []
+        for curve in self._named(nodes):
+            times.extend(self.curves[curve])
+        if not times:
+            return None
+        return max(times) if which == "last" else min(times)
+
+    def undoInfo(self, openChunk=False, closeChunk=False, **kwargs):
+        if openChunk:
+            self.chunks.append("open")
+        if closeChunk:
+            self.chunks.append("close")
+        return None
+
+    # -- name commands and bindings --------------------------------------
+    def nameCommand(self, name, command=None, annotation=None,
+                    sourceType=None):
+        self.namecommands[name] = command
+        return name
+
+    def hotkey(self, key=None, query=False, name=None, keyShortcut=None,
+               altModifier=False, ctrlModifier=False, shiftModifier=False,
+               **kwargs):
+        """As strict as the real command about which form takes the key.
+
+        Maya reverses itself: READING is `hotkey("a", query=True,
+        name=True)` -- with `keyShortcut=` under query it raises "must be
+        passed a boolean argument" -- and WRITING is
+        `hotkey(keyShortcut="a", name=...)`, which raises "Please specify a
+        key" if the key comes in positionally. Both measured live, and a
+        fake that accepted either form is exactly what let the wrong one
+        ship: the unit tests passed and the live run failed.
+        """
+        if query:
+            if keyShortcut is not None and not isinstance(keyShortcut, bool):
+                raise RuntimeError(
+                    "Flag 'keyShortcut' must be passed a boolean argument "
+                    "when query flag is set")
+            if key is None:
+                raise RuntimeError("Please specify a key")
+            return self.bindings.get((key, bool(altModifier)), "")
+        if keyShortcut is None:
+            raise RuntimeError("Please specify a key")
+        self.bindings[(keyShortcut, bool(altModifier))] = name
         return None
 
 
@@ -288,12 +410,22 @@ class TheTable(unittest.TestCase):
 
 
 class OurRows(unittest.TestCase):
-    """23 of ours: four openers plus the map's own toggle, six picker,
-    seven scene, five overshoot."""
+    """27 of ours: four openers plus the map's own toggle, four timeline,
+    six picker, seven scene, five overshoot."""
 
     def _keys(self, prefix):
         return [row[0] for row in maya_hotkeys.COMMANDS
                 if row[0].startswith(prefix)]
+
+    def test_the_count(self):
+        ours = [row for row in maya_hotkeys.COMMANDS
+                if not row[0].startswith("overrig.")]
+        self.assertEqual(len(ours), 27)
+
+    def test_the_timeline_rows(self):
+        self.assertEqual(sorted(self._keys("time.")),
+                         ["time.insert", "time.next", "time.prev",
+                          "time.remove"])
 
     def test_the_four_openers_and_the_toggle(self):
         self.assertEqual(sorted(self._keys("window.")),
@@ -769,3 +901,181 @@ class ThePaint(unittest.TestCase):
         self.fake.shelves = {}
         maya_hotkeys.activate()
         self.assertEqual(self.fake.current, "SkeldarAnim")
+
+
+class FramePlans(unittest.TestCase):
+    """Pure: which keys move and by how much.
+
+    Insert makes room after the current frame; remove takes that frame back
+    out, keys and all. They are exact inverses on purpose -- press one then
+    the other and the timeline is where it started.
+    """
+
+    def test_insert_shifts_everything_after_now(self):
+        self.assertEqual(maya_hotkeys.insert_plan(1.0, 10.0),
+                         (2.0, 10.0, 1.0))
+
+    def test_insert_needs_something_after_now(self):
+        self.assertIsNone(maya_hotkeys.insert_plan(10.0, 10.0))
+        self.assertIsNone(maya_hotkeys.insert_plan(20.0, 10.0))
+        self.assertIsNone(maya_hotkeys.insert_plan(1.0, None))
+
+    def test_remove_clears_the_next_frame_and_pulls_the_rest_back(self):
+        self.assertEqual(maya_hotkeys.remove_plan(1.0, 10.0),
+                         (2.0, (3.0, 10.0), -1.0))
+
+    def test_remove_with_only_one_frame_left_just_clears_it(self):
+        self.assertEqual(maya_hotkeys.remove_plan(1.0, 2.0),
+                         (2.0, None, -1.0))
+
+    def test_remove_needs_something_after_now(self):
+        self.assertIsNone(maya_hotkeys.remove_plan(10.0, 10.0))
+        self.assertIsNone(maya_hotkeys.remove_plan(1.0, None))
+
+    def test_the_two_are_inverses(self):
+        start, end, delta = maya_hotkeys.insert_plan(1.0, 10.0)
+        clear, shift, back = maya_hotkeys.remove_plan(1.0, end + delta)
+        self.assertEqual(clear, start)
+        self.assertEqual(shift, (start + 1.0, end + delta))
+        self.assertEqual(back, -delta)
+
+
+class FrameCommands(unittest.TestCase):
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        self.fake.time = 1.0
+        self.fake.curves = {"loc_translateX": [0.0, 1.0, 2.0, 10.0],
+                            "driven_translateY": [0.0, 5.0]}
+        self.fake.curve_types = {"loc_translateX": "animCurveTL",
+                                 "driven_translateY": "animCurveUU"}
+        self.fake.driving = {"|loc": ["loc_translateX"],
+                             "|driven": ["driven_translateY"]}
+        use(self.fake)
+
+    def test_step_moves_the_time(self):
+        maya_hotkeys.run("time.next")
+        self.assertEqual(self.fake.time, 2.0)
+        maya_hotkeys.run("time.prev")
+        maya_hotkeys.run("time.prev")
+        self.assertEqual(self.fake.time, 0.0)
+
+    def test_insert_makes_room_after_the_current_frame(self):
+        maya_hotkeys.run("time.insert")
+        self.assertEqual(self.fake.curves["loc_translateX"],
+                         [0.0, 1.0, 3.0, 11.0])
+
+    def test_remove_is_the_exact_inverse(self):
+        maya_hotkeys.run("time.insert")
+        maya_hotkeys.run("time.remove")
+        self.assertEqual(self.fake.curves["loc_translateX"],
+                         [0.0, 1.0, 2.0, 10.0])
+
+    def test_a_driven_key_curve_is_never_touched(self):
+        """`ls(type="animCurve")` answers the DRIVEN curves too, and their
+        x-axis is a driver's value, not time. Measured live: the animator's
+        scene holds animCurveUU right now."""
+        maya_hotkeys.run("time.insert")
+        self.assertEqual(self.fake.curves["driven_translateY"], [0.0, 5.0])
+
+    def test_the_selection_narrows_it(self):
+        self.fake.curves["other_translateX"] = [0.0, 4.0]
+        self.fake.curve_types["other_translateX"] = "animCurveTL"
+        self.fake.driving["|other"] = ["other_translateX"]
+        self.fake.selected = ["|loc"]
+        maya_hotkeys.run("time.insert")
+        self.assertEqual(self.fake.curves["loc_translateX"],
+                         [0.0, 1.0, 3.0, 11.0])
+        self.assertEqual(self.fake.curves["other_translateX"], [0.0, 4.0])
+
+    def test_no_animation_is_reported_not_raised(self):
+        self.fake.curves = {}
+        self.fake.curve_types = {}
+        self.fake.driving = {}
+        maya_hotkeys.run("time.insert")
+        self.assertIn("no ", self.fake.messages[-1].lower())
+
+    def test_nothing_after_the_current_frame_is_reported(self):
+        self.fake.time = 99.0
+        maya_hotkeys.run("time.insert")
+        self.assertIn("99", self.fake.messages[-1])
+
+    def test_remove_is_one_undo_step(self):
+        """Two commands (clear, then shift) must undo together."""
+        maya_hotkeys.run("time.remove")
+        self.assertEqual(self.fake.chunks, ["open", "close"])
+
+
+class TheDefaultKeys(unittest.TestCase):
+    """The four keys the animator asked for, bound in OUR set only.
+
+    Every one of them was already taken by a Maya default -- measured:
+    alt+a CycleDisplayMode, alt+s HIKSetFullBodyKey, alt+4
+    ImagePlaneOption, alt+5 WireframeOnShaded -- and the animator's call
+    was to overwrite them. Inside our set, so their own set keeps them.
+    """
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_the_table_is_the_four_keys(self):
+        self.assertEqual([(key, row) for key, _mods, row
+                          in maya_hotkeys.DEFAULT_KEYS],
+                         [("a", "time.prev"), ("s", "time.next"),
+                          ("4", "time.insert"), ("5", "time.remove")])
+
+    def test_every_default_key_names_a_real_row(self):
+        for _key, _mods, row in maya_hotkeys.DEFAULT_KEYS:
+            self.assertIsNotNone(maya_hotkeys.row(row), row)
+
+    def test_they_are_all_alt(self):
+        for _key, mods, _row in maya_hotkeys.DEFAULT_KEYS:
+            self.assertEqual(mods, {"altModifier": True})
+
+    def test_binding_creates_a_namecommand_per_row(self):
+        maya_hotkeys.bind_defaults()
+        for _key, _mods, row in maya_hotkeys.DEFAULT_KEYS:
+            wanted = maya_hotkeys.name_command(row)
+            self.assertIn(wanted, self.fake.namecommands)
+            self.assertEqual(self.fake.namecommands[wanted],
+                             maya_hotkeys.command_name(row))
+
+    def test_binding_binds_the_keys_with_alt(self):
+        maya_hotkeys.bind_defaults()
+        self.assertEqual(
+            self.fake.bindings[("a", True)],
+            maya_hotkeys.name_command("time.prev"))
+        self.assertEqual(
+            self.fake.bindings[("5", True)],
+            maya_hotkeys.name_command("time.remove"))
+
+    def test_it_reports_what_it_displaced(self):
+        self.fake.bindings[("a", True)] = "NameCom_CycleDisplayMode"
+        displaced = maya_hotkeys.bind_defaults()
+        self.assertEqual(displaced, [("alt+a", "NameCom_CycleDisplayMode")])
+
+    def test_a_fresh_set_gets_them(self):
+        maya_hotkeys.activate()
+        self.assertEqual(
+            self.fake.bindings[("a", True)],
+            maya_hotkeys.name_command("time.prev"))
+
+    def test_an_existing_set_gets_them_once(self):
+        """The animator's set already exists, so "only on creation" would
+        never reach it."""
+        self.fake.sets.append("SkeldarAnim")
+        maya_hotkeys.activate()
+        self.assertIn(("a", True), self.fake.bindings)
+        del self.fake.bindings[("a", True)]
+        maya_hotkeys.deactivate()
+        maya_hotkeys.activate()
+        self.assertNotIn(("a", True), self.fake.bindings)
+
+    def test_a_re_created_set_gets_them_again(self):
+        maya_hotkeys.activate()
+        maya_hotkeys.deactivate()
+        self.fake.sets.remove("SkeldarAnim")
+        self.fake.bindings.clear()
+        maya_hotkeys.activate()
+        self.assertIn(("a", True), self.fake.bindings)

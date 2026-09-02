@@ -12,11 +12,21 @@ exactly as they left it -- those gates skip themselves and say why, the way
 phase 2 of verify_two_characters.py steps aside when it finds manifests
 that are not its own.
 
-Every key this script binds is bound while its own SANDBOX set is current,
-and gate 5 refuses if that set is not current: the animator's own set
-cannot be written to. One thing is left behind on purpose --
+Every key this script binds ITSELF is bound while its own SANDBOX set is
+current, and gate 5 refuses if that set is not current: the animator's own
+set cannot be written to. One thing is left behind on purpose --
 `skeldarAnimVerifyProbe`, a nameCommand -- because Maya has no flag that
 deletes one. It is named to be recognisable and nothing is bound to it.
+
+Two deliberate exceptions to "restore everything", both because proving the
+feature IS the feature: calling `activate()` binds the four starter keys
+into the `SkeldarAnim` set and marks them installed in an optionVar. When
+that set already belongs to the animator it is not deleted afterwards, so
+those four keys stay -- which is what they asked for. Gate 16 is the check
+that nothing leaked anywhere else.
+
+Gates 17-19 measure real key times, so they build their own locator with
+its own keys and a real set-driven curve and delete both.
 
 Sent through the command-port bridge. Bridge hygiene lives in the runner
 (if-guarded marker, no SystemExit, unique output file); this script only
@@ -299,6 +309,143 @@ try:
                  "{0} -> {1} -> {2}".format(TEST_SET, on, back))
     except Exception as exc:
         gate(14, "the shelf button's own command toggles", False, repr(exc))
+
+    # ---- Gate 15: the four starter keys are bound in OUR set ---------
+    # All four were taken by a Maya default and overwriting them was the
+    # animator's call. Inside our set only, which is what gate 16 checks.
+    try:
+        if not maya_hotkeys.is_active():
+            cmds.hotkeySet(maya_hotkeys.SET, edit=True, current=True)
+        wrong = []
+        for key, modifiers, row_key in maya_hotkeys.DEFAULT_KEYS:
+            held = cmds.hotkey(key, query=True, name=True, **modifiers) or ""
+            wanted = maya_hotkeys.name_command(row_key)
+            if held != wanted:
+                wrong.append((key, held, wanted))
+        gate(15, "the four starter keys are ours in our set", not wrong,
+             "wrong: {0}".format(wrong) if wrong else
+             "alt+a/s/4/5 -> prev/next/insert/remove")
+    except Exception as exc:
+        gate(15, "the four starter keys are ours in our set", False,
+             repr(exc))
+
+    # ---- Gate 16: and no other set has them --------------------------
+    # The whole promise of a temporary map: what it takes, it takes only
+    # inside itself. Checked against Maya_Default rather than the set that
+    # was current on entry -- the animator may well have left the map ON,
+    # in which case `set_before` IS ours and the gate would be comparing
+    # our set with itself. Maya_Default always exists, is never ours, and
+    # nothing here ever writes to it.
+    try:
+        cmds.hotkeySet(maya_hotkeys.FALLBACK_SET, edit=True, current=True)
+        theirs = dict(
+            (key, cmds.hotkey(key, query=True, name=True, **modifiers) or "")
+            for key, modifiers, _row in maya_hotkeys.DEFAULT_KEYS)
+        ours_names = set(maya_hotkeys.name_command(row)
+                         for _k, _m, row in maya_hotkeys.DEFAULT_KEYS)
+        leaked = [(key, held) for key, held in theirs.items()
+                  if held in ours_names]
+        gate(16, "no other set got our keys", not leaked,
+             "leaked: {0}".format(leaked) if leaked else str(theirs))
+    except Exception as exc:
+        gate(16, "no other set got our keys", False, repr(exc))
+
+    # ---- Gates 17-19: insert and remove on a SANDBOX -----------------
+    # Never on the animator's curves: this measures real key times, so it
+    # builds its own locator, gives it keys and a set-driven curve, and
+    # deletes both. The driven curve is the gate that can fail --
+    # `ls(type="animCurve")` answers it too, and shifting it would move a
+    # set-driven-key relationship instead of animation.
+    sandbox = []
+    time_before = cmds.currentTime(query=True)
+    auto_before = cmds.autoKeyframe(query=True, state=True)
+    try:
+        cmds.autoKeyframe(state=False)
+        loc = cmds.spaceLocator(name="skdHotkeyProbe")[0]
+        driver = cmds.spaceLocator(name="skdHotkeyDriver")[0]
+        sandbox = [loc, driver]
+        for frame, value in ((0, 0.0), (1, 1.0), (2, 2.0), (10, 10.0)):
+            cmds.setKeyframe(loc + ".translateX", time=frame, value=value)
+        # A real set-driven key: driver.tx drives loc.translateZ.
+        cmds.setDrivenKeyframe(loc + ".translateZ",
+                               currentDriver=driver + ".translateX",
+                               driverValue=0.0, value=0.0)
+        cmds.setDrivenKeyframe(loc + ".translateZ",
+                               currentDriver=driver + ".translateX",
+                               driverValue=5.0, value=5.0)
+        driven = [c for c in (cmds.keyframe(loc, query=True, name=True) or [])
+                  if cmds.objectType(c) not in maya_hotkeys.TIME_CURVES]
+        moving = loc + "_translateX"
+
+        def times(node):
+            return cmds.keyframe(node, query=True, timeChange=True) or []
+
+        def drivers(node):
+            """A driven curve's x axis is a driver VALUE, so timeChange
+            answers nothing at all for one -- the first version of gate 19
+            compared [] with [] and could not fail. floatChange is the
+            axis that would move if we shifted it by mistake."""
+            return cmds.keyframe(node, query=True, floatChange=True) or []
+
+        before_moving = times(moving)
+        before_driven = [drivers(c) for c in driven]
+
+        cmds.select(loc, replace=True)
+        cmds.currentTime(1.0, edit=True)
+        maya_hotkeys.run("time.insert")
+        after_insert = times(moving)
+        gate(17, "insert makes room after the current frame",
+             after_insert == [0.0, 1.0, 3.0, 11.0],
+             "{0} -> {1}".format(before_moving, after_insert))
+
+        maya_hotkeys.run("time.remove")
+        after_remove = times(moving)
+        gate(18, "remove is insert's exact inverse",
+             after_remove == before_moving,
+             "{0} -> {1}".format(after_insert, after_remove))
+
+        after_driven = [drivers(c) for c in driven]
+        gate(19, "a set-driven curve never moved",
+             bool(driven) and after_driven == before_driven
+             and any(after_driven),
+             "{0} driven curve(s): {1} -> {2}".format(
+                 len(driven), before_driven, after_driven))
+    except Exception as exc:
+        for number, name in ((17, "insert makes room after the current "
+                                  "frame"),
+                             (18, "remove is insert's exact inverse"),
+                             (19, "a set-driven curve never moved")):
+            if not [line for line in RESULTS
+                    if line.startswith("GATE {0} ".format(number))]:
+                gate(number, name, False, repr(exc))
+    finally:
+        for node in sandbox:
+            try:
+                if cmds.objExists(node):
+                    cmds.delete(node)
+            except Exception:
+                pass
+        try:
+            cmds.autoKeyframe(state=auto_before)
+        except Exception:
+            pass
+        try:
+            cmds.currentTime(time_before, edit=True)
+        except Exception:
+            pass
+
+    # ---- Gate 20: stepping a frame ------------------------------------
+    try:
+        start = cmds.currentTime(query=True)
+        maya_hotkeys.run("time.next")
+        forward = cmds.currentTime(query=True)
+        maya_hotkeys.run("time.prev")
+        back = cmds.currentTime(query=True)
+        gate(20, "alt+s/alt+a step one frame",
+             forward == start + 1.0 and back == start,
+             "{0:g} -> {1:g} -> {2:g}".format(start, forward, back))
+    except Exception as exc:
+        gate(20, "alt+s/alt+a step one frame", False, repr(exc))
 
 finally:
     # Each step on its own: one raising teardown abandons the rest.

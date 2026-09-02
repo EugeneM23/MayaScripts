@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1392 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1417 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -2789,20 +2789,25 @@ One press switches Maya to a hotkey set named `SkeldarAnim`; the next press
 puts their own set back. Design:
 `docs/superpowers/specs/2026-09-02-hotkey-map-design.md`, proof:
 `docs/superpowers/plans/verify_hotkeys.py` — **green live 2026-09-02, 0 of
-14 gates failed**, including the two that matter most: the fresh set really
-inherited its source's sample key (so it IS a copy), and **the shelf
-button's own baked command** toggles both ways
-(`SkeldarAnim_verify_base → SkeldarAnim → SkeldarAnim_verify_base`) —
-everything else called the module directly, and that string is what the
-animator's finger travels. The run left the animator's set list and current
-set exactly as found.
+20 gates failed** (three legitimate SKIPs: the animator's set already
+existed, so the creation gates step aside rather than touch it). The ones
+that matter most: the fresh set really inherited its source's sample key
+(so it IS a copy), **the shelf button's own baked command** toggles both
+ways (`SkeldarAnim_verify_base → SkeldarAnim → SkeldarAnim_verify_base`) —
+everything else calls the module directly, and that string is what the
+animator's finger travels — the four starter keys are ours **inside our set
+while `Maya_Default` keeps its own**, insert/remove round-trip a sandbox
+locator's keys exactly (`0,1,2,10 → 0,1,3,11 → 0,1,2,10`), and a real
+set-driven curve's driver values do not move. The run leaves the set list,
+the current set, the selection, the frame and autoKey as it found them.
 
 **The map's contents are the animator's, laid out in Maya's own Hotkey
 Editor.** A map file, a panel of ours and a cheat sheet were all offered and
 declined, so there is no editor and no map format here. What the module adds
-is the switch plus **107 runTimeCommands** worth binding, in the editor's own
+is the switch plus **111 runTimeCommands** worth binding, in the editor's own
 category tree (categories nest with a **dot** — measured, Maya ships
-`Editors.Time Editor.Clip`).
+`Editors.Time Editor.Clip`) — and, since 2026-09-02, **four keys bound for
+you** (below).
 
 **The set is created once as a copy of whatever is active** and never
 rebuilt: rebuilding would keep the copy in step with the base set and
@@ -2830,7 +2835,47 @@ both directions**, so a press that turns the map off also brings the rows
 and the baked path into step with what is on disk; the installer registers
 nothing.
 
-**Ours are 23 rows, and each one presses a panel button.** Every action of
+**Four starter keys, bound in OUR set only** (2026-09-02, the animator's
+ask: «alt+a — кадр назад, alt+s — кадр вперед. alt+4 — добавить inbetween
+кадр между alt+5 убрать»). `DEFAULT_KEYS` is a table; `bind_defaults()`
+runs **after** the switch, so the keys land in our set and never in theirs.
+All four were already taken by a Maya default — measured: alt+a
+`CycleDisplayMode`, alt+s `HIKSetFullBodyKey`, alt+4 `ImagePlaneOption`,
+alt+5 `WireframeOnShaded` — and overwriting them was the animator's own
+call («если возникают конфликты то перезапиши»); the press **names what it
+displaced** rather than taking a key silently, and in their own set those
+four go on doing what Maya says. Binding happens on the press that CREATES
+the set **and** once per `DEFAULT_KEYS_VERSION` for a set that already
+exists — "only on creation" would never have reached the animator's, which
+existed before these keys did — recorded in the optionVar
+`skeldarAnimDefaultKeys`. After that their edits in the editor stand: the
+keys are a starting point, not a policy.
+
+**Insert / remove frame are exact inverses**, which is why they are defined
+the way round they are: `insert_plan` moves everything strictly after the
+current frame one frame later, so the frame after the pose comes free;
+`remove_plan` clears that frame, keys and all, and pulls the rest back.
+Press one then the other and the timeline is where it started. Both are
+pure and tested as such. They act on **the selection's curves, or every
+curve in the scene when nothing is selected** — "insert a frame" means the
+shot when nothing is picked and that limb when something is.
+
+**`cmds.ls(type="animCurve")` answers the DRIVEN-key curves too**, and
+their x axis is a driver's VALUE rather than time — shifting one moves a
+set-driven-key relationship instead of animation, silently. `time_curves()`
+filters to `TIME_CURVES` (`animCurveTL/TA/TT/TU`), and this is not
+theoretical: the animator's open scene held `animCurveUU` when this was
+written. The live gate measures those curves with **`floatChange`**, not
+`timeChange` — a driven curve answers nothing at all for `timeChange`, so
+the gate's first version compared `[]` with `[]` and could not fail.
+
+`remove_frame` is **the one undo chunk** in the module, and it earns it:
+clearing the frame and pulling the rest back are two commands, and a
+Ctrl+Z that undid half of that leaves the timeline in a state nobody asked
+for. Everything else inherits its target's undo, as the shelf buttons do.
+
+**Ours are 27 rows, and each one presses a panel button** (bar the four
+timeline ones, which are the module's own). Every action of
 ours already is one — `picker_window.live_window()` hands back the live
 picker and `build_rig()` is the Build button; Scene Setup's and Overshoot's
 module-level callbacks read their own windows' controls — so a hotkey
@@ -2880,14 +2925,18 @@ its window is named `HotkeyEditor`; `shelfButton` carries
 re-registration edits instead of delete-and-recreate, an edit being the
 one form that cannot disturb a binding.
 
-Two more, both paid for in the live run. **`cmds.hotkey` reverses its own
-flag between reading and writing**: setting a binding is
-`hotkey(keyShortcut="F12", name=<nameCommand>)`, but READING one is
-`hotkey("F12", query=True, name=True)` — with `keyShortcut=` in query mode
-Maya answers `TypeError: Flag 'keyShortcut' must be passed a boolean
-argument when query flag is set`, and the key has to go in positionally.
-That cost `verify_hotkeys.py` two gates on its first run, and the
-keyword form had been introduced *by* a review of the script. And
+Two more, both paid for in a live run. **`cmds.hotkey` reverses its own
+flag between reading and writing, and each wrong way round RAISES**:
+writing is `hotkey(keyShortcut="a", name=<nameCommand>)` — positionally it
+answers `RuntimeError: Please specify a key` — and reading is
+`hotkey("a", query=True, name=True)`, where `keyShortcut=` answers
+`TypeError: Flag 'keyShortcut' must be passed a boolean argument when
+query flag is set`. Each form cost a live run, in opposite directions:
+first the query written with the flag, then the write done positionally —
+by which point this paragraph already said so, which is its own lesson.
+The unit tests missed the second because the fake `cmds` accepted either
+form; **the fake now raises exactly as Maya does**, which is what a fake
+of a fussy command is for. And
 **`cmds.nameCommand` has no query flag at all** (no `-q` in its synopsis),
 so a binding cannot be followed from the key to the command body: the
 verify script proves the chain in two halves instead — the key resolves to
