@@ -167,7 +167,7 @@ class PickerWindow(QtWidgets.QMainWindow):
             button = QtWidgets.QPushButton(label, box)
             button.setStyleSheet(_BUTTON_STYLE)
             button.clicked.connect(
-                lambda _checked=False, g=group: self._select_group(g))
+                lambda _checked=False, g=group: self.select_group(g))
             grid.addWidget(button, index // 5, index % 5)
         return box
 
@@ -298,7 +298,7 @@ class PickerWindow(QtWidgets.QMainWindow):
             self.bound_label.setText(root.split("|")[-1])
         self.sync_from_scene()
 
-    def _select_group(self, group):
+    def select_group(self, group):
         modifiers = QtWidgets.QApplication.keyboardModifiers()
         self.apply_selection(list(bodymap.group_members(group)),
                              mode_for(modifiers))
@@ -495,6 +495,16 @@ def _open_window():
         if widget.objectName() == WINDOW_OBJECT_NAME:
             return widget
     return None
+
+
+def live_window():
+    """The open picker, or None. The public name of what tools ask for.
+
+    `show_picker` REPLACES the window, so a caller that wants to press a
+    button on the panel already up has to be able to tell "open" from
+    "closed" first. The hotkey commands are exactly that caller.
+    """
+    return _open_window()
 
 
 def bound_root():

@@ -680,6 +680,7 @@ def apply_overshoot(shape="Spring", *_args):
     return _status(report)
 
 
+WINDOW = "animOvershootWin"   # also read by maya_hotkeys, to tell open from closed
 STATUS_WIDTH = 46
 
 
@@ -732,7 +733,7 @@ def show_overshoot_ui():
     than allowed to grow, so pressing a button never moves the window out from
     under the cursor.
     """
-    win_id = "animOvershootWin"
+    win_id = WINDOW
 
     if cmds.window(win_id, exists=True):
         cmds.deleteUI(win_id)
