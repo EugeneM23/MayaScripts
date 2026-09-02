@@ -288,18 +288,18 @@ class TheTable(unittest.TestCase):
 
 
 class OurRows(unittest.TestCase):
-    """Ours: the window openers, six picker, seven scene, five overshoot.
-    The map's own toggle joins the Windows group in Task 4, once there is a
-    `toggle` for it to name."""
+    """23 of ours: four openers plus the map's own toggle, six picker,
+    seven scene, five overshoot."""
 
     def _keys(self, prefix):
         return [row[0] for row in maya_hotkeys.COMMANDS
                 if row[0].startswith(prefix)]
 
-    def test_the_four_openers(self):
+    def test_the_four_openers_and_the_toggle(self):
         self.assertEqual(sorted(self._keys("window.")),
-                         ["window.overshoot", "window.picker",
-                          "window.scenesetup", "window.uebridge"])
+                         ["window.hotkeys", "window.overshoot",
+                          "window.picker", "window.scenesetup",
+                          "window.uebridge"])
 
     def test_the_picker_rows(self):
         self.assertEqual(sorted(self._keys("picker.")),
@@ -593,3 +593,141 @@ class Register(unittest.TestCase):
         body = self.fake.runtime["skeldarAnimPickerBuild"]["command"]
         self.assertIn("C:/new/SkeldarAnim", body)
         self.assertNotIn("C:/old/SkeldarAnim", body)
+
+
+class TheSet(unittest.TestCase):
+    """Created once as a copy of whatever is active, and never rebuilt --
+    rebuilding would destroy the keys the animator assigned in it, which is
+    the whole content of the feature."""
+
+    def setUp(self):
+        self.fake = FakeCmds(current="Maya_Default")
+        use(self.fake)
+
+    def test_the_first_activation_creates_it_from_the_current_set(self):
+        maya_hotkeys.activate()
+        self.assertIn("SkeldarAnim", self.fake.sets)
+        self.assertEqual(self.fake.sources["SkeldarAnim"], "Maya_Default")
+        self.assertEqual(self.fake.current, "SkeldarAnim")
+
+    def test_a_second_activation_switches_without_recreating(self):
+        maya_hotkeys.activate()
+        maya_hotkeys.deactivate()
+        self.fake.sources["SkeldarAnim"] = "TOUCHED"
+        maya_hotkeys.activate()
+        self.assertEqual(self.fake.current, "SkeldarAnim")
+        self.assertEqual(self.fake.sources["SkeldarAnim"], "TOUCHED")
+        self.assertEqual(self.fake.sets.count("SkeldarAnim"), 1)
+
+    def test_it_copies_the_animators_own_set_when_that_is_current(self):
+        self.fake.sets.append("Eugene")
+        self.fake.current = "Eugene"
+        maya_hotkeys.activate()
+        self.assertEqual(self.fake.sources["SkeldarAnim"], "Eugene")
+
+    def test_deactivate_returns_to_what_was_remembered(self):
+        self.fake.sets.append("Eugene")
+        self.fake.current = "Eugene"
+        maya_hotkeys.activate()
+        maya_hotkeys.deactivate()
+        self.assertEqual(self.fake.current, "Eugene")
+
+    def test_activating_while_already_ours_keeps_the_memory(self):
+        """Or the way out would lead back in and the animator would be stuck
+        in a map with no exit but the Hotkey Editor."""
+        self.fake.sets.append("Eugene")
+        self.fake.current = "Eugene"
+        maya_hotkeys.activate()
+        maya_hotkeys.activate()
+        maya_hotkeys.deactivate()
+        self.assertEqual(self.fake.current, "Eugene")
+
+    def test_a_vanished_memory_falls_back_to_maya_default(self):
+        self.fake.sets.append("Eugene")
+        self.fake.current = "Eugene"
+        maya_hotkeys.activate()
+        self.fake.sets.remove("Eugene")
+        maya_hotkeys.deactivate()
+        self.assertEqual(self.fake.current, "Maya_Default")
+
+    def test_no_memory_at_all_falls_back_to_maya_default(self):
+        self.fake.sets.append("SkeldarAnim")
+        self.fake.current = "SkeldarAnim"
+        maya_hotkeys.deactivate()
+        self.assertEqual(self.fake.current, "Maya_Default")
+
+    def test_the_memory_survives_in_an_optionvar(self):
+        self.fake.sets.append("Eugene")
+        self.fake.current = "Eugene"
+        maya_hotkeys.activate()
+        self.assertEqual(
+            self.fake.optionvars[maya_hotkeys.PREVIOUS_VAR], "Eugene")
+
+    def test_our_set_is_never_remembered_as_the_way_back(self):
+        self.fake.optionvars[maya_hotkeys.PREVIOUS_VAR] = "SkeldarAnim"
+        self.fake.sets.append("SkeldarAnim")
+        self.assertEqual(maya_hotkeys.previous_set(), "Maya_Default")
+
+
+class TheState(unittest.TestCase):
+    """Read from Maya at every press, never cached: the animator can switch
+    sets by hand in the editor between two presses."""
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_is_active_reads_the_current_set(self):
+        self.assertFalse(maya_hotkeys.is_active())
+        self.fake.sets.append("SkeldarAnim")
+        self.fake.current = "SkeldarAnim"
+        self.assertTrue(maya_hotkeys.is_active())
+
+    def test_toggle_switches_both_ways(self):
+        maya_hotkeys.toggle()
+        self.assertEqual(self.fake.current, "SkeldarAnim")
+        maya_hotkeys.toggle()
+        self.assertEqual(self.fake.current, "Maya_Default")
+
+    def test_toggle_registers_in_both_directions(self):
+        maya_hotkeys.toggle()
+        self.assertEqual(len(self.fake.runtime), len(maya_hotkeys.COMMANDS))
+        self.fake.runtime.clear()
+        maya_hotkeys.toggle()
+        self.assertEqual(len(self.fake.runtime), len(maya_hotkeys.COMMANDS))
+
+    def test_a_hand_switch_to_a_third_set_is_respected(self):
+        """Ours is not current, so the press must turn the map ON, not off."""
+        maya_hotkeys.toggle()
+        self.fake.sets.append("Somebody Else")
+        self.fake.current = "Somebody Else"
+        maya_hotkeys.toggle()
+        self.assertEqual(self.fake.current, "SkeldarAnim")
+
+
+class TheEditorOnFirstPress(unittest.TestCase):
+    """A set that is a copy of the current one behaves exactly like it until
+    keys are assigned in it -- so without this the first press looks like a
+    button that does nothing."""
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_creation_opens_the_hotkey_editor(self):
+        maya_hotkeys.activate()
+        self.assertIn(maya_hotkeys.EDITOR_COMMAND + ";", self.fake.evaluated)
+
+    def test_later_presses_do_not(self):
+        maya_hotkeys.activate()
+        maya_hotkeys.deactivate()
+        self.fake.evaluated = []
+        maya_hotkeys.activate()
+        self.assertEqual(self.fake.evaluated, [])
+
+    def test_the_creation_message_names_both_sets(self):
+        self.fake.sets.append("Eugene")
+        self.fake.current = "Eugene"
+        message = maya_hotkeys.activate()
+        self.assertIn("SkeldarAnim", message)
+        self.assertIn("Eugene", message)

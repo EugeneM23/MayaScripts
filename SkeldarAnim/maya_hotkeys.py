@@ -197,6 +197,81 @@ def register(dest=None):
     return created, updated
 
 
+# ------------------------------------------------------------ the hotkey set
+
+def current_set():
+    """Maya's active hotkey set."""
+    return cmds.hotkeySet(query=True, current=True)
+
+
+def is_active():
+    """True when the map is on.
+
+    Asked at every press and never cached: the animator can switch sets by
+    hand in the Hotkey Editor between two presses, and a stored boolean
+    would then lie -- the same reason `picker_window._resolution`
+    re-asserts its binding on every sync.
+    """
+    return current_set() == SET
+
+
+def previous_set():
+    """The set to come back to.
+
+    Ours is never an answer: it would make the way out lead back in. A
+    remembered set that has since been deleted is not one either, so both
+    fall back to `Maya_Default`, which always exists and cannot be deleted.
+    """
+    remembered = ""
+    if cmds.optionVar(exists=PREVIOUS_VAR):
+        remembered = cmds.optionVar(query=PREVIOUS_VAR) or ""
+    if remembered and remembered != SET \
+            and cmds.hotkeySet(remembered, query=True, exists=True):
+        return remembered
+    return FALLBACK_SET
+
+
+def open_editor():
+    """Maya's own Hotkey Editor -- the editor for this map."""
+    mel.eval(EDITOR_COMMAND + ";")
+
+
+def activate():
+    """Switch to our set, creating it if this is its first press.
+
+    The set is created ONCE, as a copy of whatever is active at that
+    moment, and never rebuilt: rebuilding it on every press would keep the
+    copy in step with the base set and destroy every key the animator
+    assigned in it.
+    """
+    base = current_set()
+    fresh = not cmds.hotkeySet(SET, query=True, exists=True)
+    if base != SET:
+        cmds.optionVar(stringValue=(PREVIOUS_VAR, base))
+    if fresh:
+        cmds.hotkeySet(SET, source=base, current=True)
+    else:
+        cmds.hotkeySet(SET, edit=True, current=True)
+    if fresh:
+        open_editor()
+        return _report("Hotkeys: {0} created from {1} - assign your "
+                       "keys".format(SET, base))
+    return _report("Hotkeys: " + SET)
+
+
+def deactivate():
+    """Put the animator's own set back."""
+    back = previous_set()
+    cmds.hotkeySet(back, edit=True, current=True)
+    return _report("Hotkeys: " + back)
+
+
+def toggle():
+    """The shelf button. Registers first, in both directions."""
+    register()
+    return deactivate() if is_active() else activate()
+
+
 # --------------------------------------------------------------- the table
 
 def row(key):
@@ -242,6 +317,8 @@ _OURS = (
     ("window.overshoot", "Windows", "Overshoot",
      "Open the Overshoot panel",
      partial(_show, "maya_overshoot", "show_overshoot_ui")),
+    ("window.hotkeys", "Windows", "Hotkey map on/off",
+     "Switch between the SkeldarAnim hotkey set and your own", toggle),
 
     ("picker.connect", "Rig Picker", "Connect",
      "Bind the picker to the selected character",
