@@ -530,6 +530,32 @@ try:
     except Exception as exc:
         gate(23, "the Outliner toggles in the layout", False, repr(exc))
 
+    # ---- Gate 24: the keys we stopped using were given back -------------
+    # RELEASED_KEYS must hold none of our commands afterwards, and no key
+    # may be in both tables -- releasing one we had just bound would leave
+    # the animator with a dead key and no way to guess why.
+    try:
+        if not maya_hotkeys.is_active():
+            cmds.hotkeySet(maya_hotkeys.SET, edit=True, current=True)
+        ours = set(maya_hotkeys.name_command(row[0])
+                   for row in maya_hotkeys.COMMANDS)
+        still_held = []
+        for key, modifiers, _row in maya_hotkeys.RELEASED_KEYS:
+            held = cmds.hotkey(key, query=True, name=True, **modifiers) or ""
+            if held in ours:
+                still_held.append((key, held))
+        in_use = set((key, tuple(sorted(mods)))
+                     for key, mods, _row in maya_hotkeys.DEFAULT_KEYS)
+        overlap = [key for key, mods, _row in maya_hotkeys.RELEASED_KEYS
+                   if (key, tuple(sorted(mods))) in in_use]
+        gate(24, "the keys we stopped using hold nothing of ours",
+             not still_held and not overlap,
+             "still held: {0}, in both tables: {1}".format(
+                 still_held, overlap))
+    except Exception as exc:
+        gate(24, "the keys we stopped using hold nothing of ours", False,
+             repr(exc))
+
 finally:
     # Each step on its own: one raising teardown abandons the rest.
     #

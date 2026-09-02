@@ -47,18 +47,37 @@ TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 # граф эдитор а делал toggle... и тоже самое для аутлайнера на alt+o»).
 # alt+g held `GraphEditorNameCommand` -- Maya's plain opener -- and alt+o
 # was free.
+# The inbetweens moved off alt+4/alt+5 on 2026-09-03 («давай переделаем
+# добавление инбитвинов на alt + + и alt + -»). BOTH spellings of each key
+# are bound to the same command, because Maya keeps `+` and `=` as separate
+# bindings -- measured: binding alt++ leaves alt+= untouched -- and which
+# one a physical alt+shift+= press fires cannot be measured over the
+# command port. Both bound, so the key works whichever way a hand reaches
+# it. All four were unbound in the animator's set, so nothing was taken.
 DEFAULT_KEYS = (
     ("a", {"altModifier": True}, "time.prev"),
     ("s", {"altModifier": True}, "time.next"),
-    ("4", {"altModifier": True}, "time.insert"),
-    ("5", {"altModifier": True}, "time.remove"),
+    ("+", {"altModifier": True}, "time.insert"),
+    ("=", {"altModifier": True}, "time.insert"),
+    ("-", {"altModifier": True}, "time.remove"),
+    ("_", {"altModifier": True}, "time.remove"),
     ("g", {"altModifier": True}, "editor.graph"),
     ("o", {"altModifier": True}, "editor.outliner"),
 )
 
-# Bumped when DEFAULT_KEYS changes, which re-installs them once -- which is
-# how alt+g and alt+o reached a set that already existed.
-DEFAULT_KEYS_VERSION = 2
+# Keys DEFAULT_KEYS used to hold and does not any more. They are given back
+# on the version bump -- unbound, and only while they still hold the very
+# command we put there, so a key the animator has since re-assigned in the
+# editor is left alone. A key must never be in both tables.
+RELEASED_KEYS = (
+    ("4", {"altModifier": True}, "time.insert"),
+    ("5", {"altModifier": True}, "time.remove"),
+)
+
+# Bumped when either table changes, which re-installs them once -- which is
+# how alt+g and alt+o reached a set that already existed, and how the
+# number keys are handed back.
+DEFAULT_KEYS_VERSION = 3
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -453,6 +472,24 @@ def bind_defaults():
     return displaced
 
 
+def release_keys():
+    """Give back the keys we no longer use. Which ones were freed.
+
+    Only a key that still holds the command WE put there is unbound: one
+    the animator has since re-assigned in the editor is theirs, and taking
+    it a second time to "clean up" would be the rudest thing this module
+    could do.
+    """
+    freed = []
+    for key, modifiers, row_key in RELEASED_KEYS:
+        wrapper = name_command(row_key)
+        held = cmds.hotkey(key, query=True, name=True, **modifiers) or ""
+        if held == wrapper:
+            cmds.hotkey(keyShortcut=key, name="", **modifiers)
+            freed.append(_key_label(key, modifiers))
+    return freed
+
+
 def _key_label(key, modifiers):
     """`alt+a`, for a message the animator can read."""
     parts = [name[:-8] for name in ("ctrlModifier", "altModifier",
@@ -528,12 +565,15 @@ def activate():
     # before these keys did. After that their edits in the editor stand.
     note = ""
     if fresh or defaults_installed() < DEFAULT_KEYS_VERSION:
+        freed = release_keys()
         displaced = bind_defaults()
         cmds.optionVar(intValue=(DEFAULT_KEYS_VAR, DEFAULT_KEYS_VERSION))
         note = " - {0} key(s) bound".format(len(DEFAULT_KEYS))
         if displaced:
             note += ", took " + ", ".join(
                 "{0} from {1}".format(key, held) for key, held in displaced)
+        if freed:
+            note += ", gave back " + ", ".join(freed)
 
     if fresh:
         open_editor()

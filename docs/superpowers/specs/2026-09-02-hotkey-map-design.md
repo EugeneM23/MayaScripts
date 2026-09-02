@@ -421,6 +421,37 @@ Invalid flag`), and `workspaceControl` carries `-close`, `-restore`,
 alt+g held `GraphEditorNameCommand` — Maya's plain opener — and alt+o was
 free; overwriting stands on the same instruction as the first four keys.
 
+## Addendum, 2026-09-03: the inbetweens move to plus and minus
+
+«давай переделаем добавление инбитвинов на alt + + и alt + -». Insert and
+remove leave alt+4/alt+5. Two things came out of measuring first.
+
+**Maya keeps `+` and `=` as separate bindings.** Binding alt++ left alt+=
+untouched, and vice versa; every spelling — `+`, `=`, `shift+=`, `-`, `_` —
+binds and queries back without complaint. Which one a physical alt+shift+=
+press actually fires cannot be measured over the command port, because a
+keypress is the one thing the bridge cannot send. So **both spellings of
+each are bound to the same command**: insert on alt++ and alt+=, remove on
+alt+- and alt+_. The key then works whether the animator's hand reaches it
+with shift or without, and all four were unbound in their set, so nothing
+was taken.
+
+**A key we stop using is given back.** `RELEASED_KEYS` names what
+`DEFAULT_KEYS` used to hold, and `release_keys()` unbinds each one **only
+while it still holds the very command we put there** — a key the animator
+has since re-assigned is theirs, and taking it a second time to tidy up
+would be the rudest thing this module could do. It runs under the same
+version gate, immediately before the binding, and the press says what it
+gave back.
+
+Restoring what the key held *before* we took it was the other option and
+was not built: it needs a persistent record of every displacement, and the
+first install had already happened without one. Unbinding is honest, needs
+no state, and the animator can put Maya's image-plane toggle back in the
+editor in two clicks if they miss it. A key must never appear in both
+tables; a unit test and live gate 24 both pin that, because releasing a key
+we had just bound would leave it dead with no way to guess why.
+
 ## Not built
 
 - No editor, no map file, no cheat-sheet panel — all three declined above.

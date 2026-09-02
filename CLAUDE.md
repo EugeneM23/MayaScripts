@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1428 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1437 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -2789,7 +2789,7 @@ One press switches Maya to a hotkey set named `SkeldarAnim`; the next press
 puts their own set back. Design:
 `docs/superpowers/specs/2026-09-02-hotkey-map-design.md`, proof:
 `docs/superpowers/plans/verify_hotkeys.py` — **green live 2026-09-02, 0 of
-23 gates failed** (three legitimate SKIPs: the animator's set already
+24 gates failed** (three legitimate SKIPs: the animator's set already
 existed, so the creation gates step aside rather than touch it). The ones
 that matter most: the fresh set really inherited its source's sample key
 (so it IS a copy), **the shelf button's own baked command** toggles both
@@ -2838,10 +2838,11 @@ both directions**, so a press that turns the map off also brings the rows
 and the baked path into step with what is on disk; the installer registers
 nothing.
 
-**Six starter keys, bound in OUR set only** (2026-09-02, the animator's
-ask: «alt+a — кадр назад, alt+s — кадр вперед. alt+4 — добавить inbetween
-кадр между alt+5 убрать»; alt+g and alt+o joined the next day, below).
-`DEFAULT_KEYS` is a table; `bind_defaults()`
+**Six commands on eight starter keys, bound in OUR set only** (2026-09-02,
+the animator's ask: «alt+a — кадр назад, alt+s — кадр вперед… добавить
+inbetween кадр между… убрать»; alt+g and alt+o joined the next day, below,
+and the inbetweens moved off alt+4/alt+5 onto the plus and minus keys the
+same day). `DEFAULT_KEYS` is a table; `bind_defaults()`
 runs **after** the switch, so the keys land in our set and never in theirs.
 All four were already taken by a Maya default — measured: alt+a
 `CycleDisplayMode`, alt+s `HIKSetFullBodyKey`, alt+4 `ImagePlaneOption`,
@@ -2854,6 +2855,25 @@ exists — "only on creation" would never have reached the animator's, which
 existed before these keys did — recorded in the optionVar
 `skeldarAnimDefaultKeys`. After that their edits in the editor stand: the
 keys are a starting point, not a policy.
+
+**Both spellings of the plus and minus keys are bound to the same command**
+(2026-09-03, «переделаем добавление инбитвинов на alt + + и alt + -»).
+Maya keeps `+` and `=` as **separate bindings** — measured: binding alt++
+leaves alt+= untouched — and which one a physical alt+shift+= press fires
+cannot be measured over the command port, since a keypress is the one thing
+the bridge cannot send. So insert is on alt++ *and* alt+=, remove on alt+-
+*and* alt+_, and the key works whichever way a hand reaches it. All four
+were unbound in the animator's set, so nothing was taken.
+
+**A key we stop using is given back.** `RELEASED_KEYS` names the keys
+`DEFAULT_KEYS` used to hold — alt+4 and alt+5 — and `release_keys()`
+unbinds each **only while it still holds the very command we put there**:
+one the animator has since re-assigned in the editor is theirs, and taking
+it a second time to tidy up would be the rudest thing this module could do.
+It runs under the same version gate, just before the binding, and the
+press says what it gave back. A key must never be in both tables, which a
+test and a live gate both pin — releasing one we had just bound would leave
+a dead key and no way to guess why.
 
 **Insert / remove frame are exact inverses**, which is why they are defined
 the way round they are: `insert_plan` moves everything strictly after the

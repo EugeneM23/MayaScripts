@@ -1073,7 +1073,7 @@ class TheDefaultKeys(unittest.TestCase):
             self.fake.bindings[("a", True)],
             maya_hotkeys.name_command("time.prev"))
         self.assertEqual(
-            self.fake.bindings[("5", True)],
+            self.fake.bindings[("-", True)],
             maya_hotkeys.name_command("time.remove"))
 
     def test_it_reports_what_it_displaced(self):
@@ -1181,21 +1181,15 @@ class EditorToggles(unittest.TestCase):
             self.assertEqual(maya_hotkeys.row(key)[1], "SkeldarAnim.Editors")
 
 
-class TheSixDefaultKeys(unittest.TestCase):
-    """alt+g and alt+o joined the four timeline keys, so the version went
-    up -- which is what re-installs them once for a set that already
-    exists."""
+class TheVersionMarker(unittest.TestCase):
+    """Every change to the key tables goes out through the version, which is
+    what reaches a set the animator already has -- alt+g and alt+o arrived
+    that way, and so did handing the number keys back. The table itself is
+    pinned by TheStarterKeysAfterTheMove."""
 
     def setUp(self):
         self.fake = FakeCmds()
         use(self.fake)
-
-    def test_the_table(self):
-        self.assertEqual([(key, row) for key, _mods, row
-                          in maya_hotkeys.DEFAULT_KEYS],
-                         [("a", "time.prev"), ("s", "time.next"),
-                          ("4", "time.insert"), ("5", "time.remove"),
-                          ("g", "editor.graph"), ("o", "editor.outliner")])
 
     def test_the_version_went_up(self):
         self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 2)
@@ -1214,3 +1208,93 @@ class TheSixDefaultKeys(unittest.TestCase):
             maya_hotkeys.DEFAULT_KEYS_VERSION
         maya_hotkeys.activate()
         self.assertEqual(self.fake.bindings, {})
+
+
+class TheStarterKeysAfterTheMove(unittest.TestCase):
+    """The inbetweens moved off alt+4/alt+5 onto the plus and minus keys.
+
+    Both spellings of each are bound to the same command: Maya keeps `+`
+    and `=` as SEPARATE bindings (measured -- binding alt++ leaves alt+=
+    untouched), and which one a physical alt+shift+= press fires cannot be
+    measured over the command port. Binding both is what makes the key work
+    whichever way the animator's hand reaches it.
+    """
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_the_table(self):
+        self.assertEqual([(key, row) for key, _mods, row
+                          in maya_hotkeys.DEFAULT_KEYS],
+                         [("a", "time.prev"), ("s", "time.next"),
+                          ("+", "time.insert"), ("=", "time.insert"),
+                          ("-", "time.remove"), ("_", "time.remove"),
+                          ("g", "editor.graph"), ("o", "editor.outliner")])
+
+    def test_the_version_went_up_again(self):
+        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 3)
+
+    def test_both_spellings_reach_the_same_command(self):
+        maya_hotkeys.bind_defaults()
+        insert = maya_hotkeys.name_command("time.insert")
+        self.assertEqual(self.fake.bindings[("+", True)], insert)
+        self.assertEqual(self.fake.bindings[("=", True)], insert)
+        remove = maya_hotkeys.name_command("time.remove")
+        self.assertEqual(self.fake.bindings[("-", True)], remove)
+        self.assertEqual(self.fake.bindings[("_", True)], remove)
+
+    def test_the_number_keys_are_no_longer_bound(self):
+        maya_hotkeys.bind_defaults()
+        self.assertNotIn(("4", True), self.fake.bindings)
+        self.assertNotIn(("5", True), self.fake.bindings)
+
+
+class ReleasedKeys(unittest.TestCase):
+    """A key we stop using is given back -- but only if it still holds the
+    command we put there. One the animator has since re-assigned is theirs.
+    """
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        use(self.fake)
+
+    def test_the_table_names_the_old_inbetween_keys(self):
+        self.assertEqual([(key, row) for key, _mods, row
+                          in maya_hotkeys.RELEASED_KEYS],
+                         [("4", "time.insert"), ("5", "time.remove")])
+
+    def test_no_released_key_is_still_in_use(self):
+        """Or we would unbind a key we had just bound."""
+        current = set((key, tuple(sorted(mods)))
+                      for key, mods, _row in maya_hotkeys.DEFAULT_KEYS)
+        for key, mods, _row in maya_hotkeys.RELEASED_KEYS:
+            self.assertNotIn((key, tuple(sorted(mods))), current, key)
+
+    def test_our_command_is_unbound(self):
+        self.fake.bindings[("4", True)] = \
+            maya_hotkeys.name_command("time.insert")
+        freed = maya_hotkeys.release_keys()
+        self.assertEqual(freed, ["alt+4"])
+        self.assertEqual(self.fake.bindings[("4", True)], "")
+
+    def test_somebody_elses_command_is_left_alone(self):
+        self.fake.bindings[("4", True)] = "NameComToggle_ImagePlaneOption"
+        self.assertEqual(maya_hotkeys.release_keys(), [])
+        self.assertEqual(self.fake.bindings[("4", True)],
+                         "NameComToggle_ImagePlaneOption")
+
+    def test_an_unbound_key_is_left_alone(self):
+        self.assertEqual(maya_hotkeys.release_keys(), [])
+        self.assertEqual(self.fake.bindings, {})
+
+    def test_activate_releases_before_binding(self):
+        self.fake.sets.append("SkeldarAnim")
+        self.fake.optionvars[maya_hotkeys.DEFAULT_KEYS_VAR] = 2
+        self.fake.bindings[("4", True)] = \
+            maya_hotkeys.name_command("time.insert")
+        message = maya_hotkeys.activate()
+        self.assertEqual(self.fake.bindings[("4", True)], "")
+        self.assertEqual(self.fake.bindings[("+", True)],
+                         maya_hotkeys.name_command("time.insert"))
+        self.assertIn("alt+4", message)
