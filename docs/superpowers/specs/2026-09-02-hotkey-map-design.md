@@ -256,6 +256,15 @@ Probed in `mayapy` 2027 before the design was written:
   the set arrives as a copy of the animator's own and every key in it is
   theirs. The verify script has to create one explicitly for its test key,
   since `hotkey -name` takes a nameCommand and there is no editor in the loop.
+- Two more, measured in the live run rather than up front. **`cmds.hotkey`
+  reverses its own flag between writing and reading**: `hotkey(keyShortcut=
+  "F12", name=<nameCommand>)` sets a binding, but reading one is
+  `hotkey("F12", query=True, name=True)` — with `keyShortcut=` under `query`
+  Maya raises `TypeError: Flag 'keyShortcut' must be passed a boolean
+  argument`. And **`cmds.nameCommand` has no query flag at all**, so a
+  binding cannot be followed from the key through to the body; the proof
+  splits in two — the key resolves to our nameCommand, and a runTimeCommand
+  run by its own name reaches `run()`.
 
 ## Testing
 
@@ -285,6 +294,15 @@ a debugging round before.
 generator like the other four.
 
 ## Live verification
+
+**Green live 2026-09-02: 0 of 14 gates failed** (14 rather than the 13 below
+— a last gate was added once the rest passed: the shelf button's own baked
+command, executed the way the animator's press executes it, toggling
+`SkeldarAnim_verify_base → SkeldarAnim → SkeldarAnim_verify_base`).
+The first run failed two gates, both of them the script's own bug about
+`cmds.hotkey`'s query form, recorded above; the feature itself never failed
+a gate. The first run also caught trap 20 honestly: OverRig was not loaded
+in that session and an OverRig row sourced it.
 
 `docs/superpowers/plans/verify_hotkeys.py`, sent through the command port. It
 touches **prefs, not the scene**, which changes the hygiene rules: record the

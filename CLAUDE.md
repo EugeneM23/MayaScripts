@@ -2788,8 +2788,14 @@ The sixth shelf button, `Hotkeys` (2026-09-02, the animator's ask: «кнопо�
 One press switches Maya to a hotkey set named `SkeldarAnim`; the next press
 puts their own set back. Design:
 `docs/superpowers/specs/2026-09-02-hotkey-map-design.md`, proof:
-`docs/superpowers/plans/verify_hotkeys.py` (13 gates, **not run yet** — it
-needs a live Maya with the command port open).
+`docs/superpowers/plans/verify_hotkeys.py` — **green live 2026-09-02, 0 of
+14 gates failed**, including the two that matter most: the fresh set really
+inherited its source's sample key (so it IS a copy), and **the shelf
+button's own baked command** toggles both ways
+(`SkeldarAnim_verify_base → SkeldarAnim → SkeldarAnim_verify_base`) —
+everything else called the module directly, and that string is what the
+animator's finger travels. The run left the animator's set list and current
+set exactly as found.
 
 **The map's contents are the animator's, laid out in Maya's own Hotkey
 Editor.** A map file, a panel of ours and a cheat sheet were all offered and
@@ -2864,15 +2870,28 @@ not finding it skips the paint and still switches. There is deliberately
 **no undo chunk** of ours — `rebuild` already builds in one undo step and
 OverRig's procedures manage theirs.
 
-Two measured facts to not re-derive: `hotkeySet` **needs a UI**
+Measured facts to not re-derive: `hotkeySet` **needs a UI**
 (`RuntimeError: Maya command error` in mayapy), so the set half is
-fake-`cmds` tests plus the live script and nothing else; and the Hotkey
-Editor is opened by the runTimeCommand **`HotkeyPreferencesWindow`**.
-`shelfButton` carries `-enableBackground`/`-backgroundColor`, and
-`runTimeCommand -e` accepts `command`, `category`, `label` and
-`annotation` — which is why re-registration edits instead of
-delete-and-recreate, an edit being the one form that cannot disturb a
-binding.
+fake-`cmds` tests plus the live script and nothing else; the Hotkey
+Editor is opened by the runTimeCommand **`HotkeyPreferencesWindow`** and
+its window is named `HotkeyEditor`; `shelfButton` carries
+`-enableBackground`/`-backgroundColor`; and `runTimeCommand -e` accepts
+`command`, `category`, `label` and `annotation` — which is why
+re-registration edits instead of delete-and-recreate, an edit being the
+one form that cannot disturb a binding.
+
+Two more, both paid for in the live run. **`cmds.hotkey` reverses its own
+flag between reading and writing**: setting a binding is
+`hotkey(keyShortcut="F12", name=<nameCommand>)`, but READING one is
+`hotkey("F12", query=True, name=True)` — with `keyShortcut=` in query mode
+Maya answers `TypeError: Flag 'keyShortcut' must be passed a boolean
+argument when query flag is set`, and the key has to go in positionally.
+That cost `verify_hotkeys.py` two gates on its first run, and the
+keyword form had been introduced *by* a review of the script. And
+**`cmds.nameCommand` has no query flag at all** (no `-q` in its synopsis),
+so a binding cannot be followed from the key to the command body: the
+verify script proves the chain in two halves instead — the key resolves to
+our nameCommand, and a runTimeCommand run by its own name reaches `run()`.
 
 A door left open: `hotkeySet` has `-export`/`-import` for `.mhk`, so handing
 the finished map to a colleague — the one thing living in prefs costs us —

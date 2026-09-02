@@ -124,16 +124,20 @@ try:
              "the animator's own set")
     else:
         try:
-            key_before = cmds.hotkey(keyShortcut=TEST_KEY, query=True,
-                                     name=True) or ""
+            # In QUERY mode `keyShortcut` is a boolean flag and the key goes
+            # in POSITIONALLY -- `hotkey(keyShortcut="F12", query=True)`
+            # raises "must be passed a boolean argument when query flag is
+            # set". Measured live 2026-09-02, and it cost this script two
+            # gates. Setting a binding is the other way round: there the key
+            # IS the keyShortcut flag's value.
+            key_before = cmds.hotkey(TEST_KEY, query=True, name=True) or ""
             cmds.nameCommand("skeldarAnimVerifyProbe",
                              annotation="verify probe",
                              command="skeldarAnimPickerBuild",
                              sourceType="mel")
             cmds.hotkey(keyShortcut=TEST_KEY,
                         name="skeldarAnimVerifyProbe")
-            sample = cmds.hotkey(keyShortcut=TEST_KEY, query=True,
-                                 name=True) or ""
+            sample = cmds.hotkey(TEST_KEY, query=True, name=True) or ""
             gate(5, "sample key bound in the base set",
                  sample == "skeldarAnimVerifyProbe",
                  "{0}, was {1}".format(sample, key_before or "unbound"))
@@ -158,8 +162,7 @@ try:
         except Exception as exc:
             gate(6, "created from the current set", False, repr(exc))
         try:
-            inherited = cmds.hotkey(keyShortcut=TEST_KEY, query=True,
-                                    name=True) or ""
+            inherited = cmds.hotkey(TEST_KEY, query=True, name=True) or ""
             gate(7, "the copy inherited the sample key",
                  inherited == "skeldarAnimVerifyProbe", inherited)
         except Exception as exc:
@@ -262,6 +265,40 @@ try:
              "Maya)".format(was_loaded))
     except Exception as exc:
         gate(13, "an OverRig row sources the toolset", False, repr(exc))
+
+    # ---- Gate 14: the shelf button's OWN command runs ----------------
+    # Everything above called the module directly. This is the string the
+    # installer baked into the button, which is what the animator's finger
+    # travels: bootstrap sys.path, import, toggle. Pressed twice, so it
+    # ends on the set it started from. (Both presses land on the module
+    # THIS script imported from the repo -- `maya_hotkeys` is already in
+    # sys.modules -- so what the gate proves is the string and the toggle,
+    # not which copy on disk answers. A fresh session proves that.)
+    try:
+        button = maya_hotkeys.shelf_button()
+        have_sandbox = cmds.hotkeySet(TEST_SET, query=True, exists=True)
+        if not button:
+            skip(14, "the shelf button's own command toggles",
+                 "no Hotkeys button on the shelf - re-drag install.py")
+        elif not have_sandbox:
+            skip(14, "the shelf button's own command toggles",
+                 "the sandbox base set is gone - nothing safe to toggle "
+                 "against")
+        else:
+            cmds.hotkeySet(TEST_SET, edit=True, current=True)
+            cmds.optionVar(stringValue=(maya_hotkeys.PREVIOUS_VAR, TEST_SET))
+            body = cmds.shelfButton(button, query=True, command=True)
+            globals_for_press = {"__name__": "__main__"}
+            exec(compile(body, "shelfButton", "exec"), globals_for_press)
+            on = cmds.hotkeySet(query=True, current=True)
+            exec(compile(body, "shelfButton", "exec"),
+                 dict(globals_for_press))
+            back = cmds.hotkeySet(query=True, current=True)
+            gate(14, "the shelf button's own command toggles",
+                 on == maya_hotkeys.SET and back == TEST_SET,
+                 "{0} -> {1} -> {2}".format(TEST_SET, on, back))
+    except Exception as exc:
+        gate(14, "the shelf button's own command toggles", False, repr(exc))
 
 finally:
     # Each step on its own: one raising teardown abandons the rest.
