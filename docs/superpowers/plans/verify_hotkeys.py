@@ -447,6 +447,34 @@ try:
     except Exception as exc:
         gate(20, "alt+s/alt+a step one frame", False, repr(exc))
 
+    # ---- Gate 21: the starter keys' whole chain --------------------------
+    # A keypress travels key -> nameCommand -> runTimeCommand -> body ->
+    # run(). Gate 15 proved the first link for these four keys and gate 11
+    # the last one for a probe row; this closes them for the real four:
+    # each nameCommand points at the right runTimeCommand, and the two
+    # stepping commands are RUN BY THEIR MEL NAME, which is exactly what a
+    # keypress does. Only prev/next are run for real -- insert and remove
+    # are proved on the sandbox above, and running them here would shift
+    # the animator's own keys.
+    try:
+        wrong = []
+        for _key, _mods, row_key in maya_hotkeys.DEFAULT_KEYS:
+            wrapper = maya_hotkeys.name_command(row_key)
+            wanted = maya_hotkeys.command_name(row_key)
+            if not cmds.runTimeCommand(wanted, query=True, exists=True):
+                wrong.append((wrapper, "no runTimeCommand " + wanted))
+        start = cmds.currentTime(query=True)
+        mel.eval(maya_hotkeys.command_name("time.next") + ";")
+        stepped = cmds.currentTime(query=True)
+        mel.eval(maya_hotkeys.command_name("time.prev") + ";")
+        home = cmds.currentTime(query=True)
+        gate(21, "the starter keys run by their MEL name",
+             not wrong and stepped == start + 1.0 and home == start,
+             "{0} | {1:g} -> {2:g} -> {3:g}".format(
+                 wrong or "all four wired", start, stepped, home))
+    except Exception as exc:
+        gate(21, "the starter keys run by their MEL name", False, repr(exc))
+
 finally:
     # Each step on its own: one raising teardown abandons the rest.
     #

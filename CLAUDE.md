@@ -2789,7 +2789,7 @@ One press switches Maya to a hotkey set named `SkeldarAnim`; the next press
 puts their own set back. Design:
 `docs/superpowers/specs/2026-09-02-hotkey-map-design.md`, proof:
 `docs/superpowers/plans/verify_hotkeys.py` — **green live 2026-09-02, 0 of
-20 gates failed** (three legitimate SKIPs: the animator's set already
+21 gates failed** (three legitimate SKIPs: the animator's set already
 existed, so the creation gates step aside rather than touch it). The ones
 that matter most: the fresh set really inherited its source's sample key
 (so it IS a copy), **the shelf button's own baked command** toggles both
@@ -2798,7 +2798,10 @@ everything else calls the module directly, and that string is what the
 animator's finger travels — the four starter keys are ours **inside our set
 while `Maya_Default` keeps its own**, insert/remove round-trip a sandbox
 locator's keys exactly (`0,1,2,10 → 0,1,3,11 → 0,1,2,10`), and a real
-set-driven curve's driver values do not move. The run leaves the set list,
+set-driven curve's driver values do not move, and each of the four keys
+resolves to a nameCommand whose runTimeCommand **runs by its MEL name** —
+the chain a keypress travels, closed link by link since a keypress itself
+cannot be sent over the port. The run leaves the set list,
 the current set, the selection, the frame and autoKey as it found them.
 
 **The map's contents are the animator's, laid out in Maya's own Hotkey
