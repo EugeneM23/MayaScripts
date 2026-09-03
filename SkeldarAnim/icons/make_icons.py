@@ -1,4 +1,4 @@
-"""Draw the six SkeldarAnim shelf icons.
+"""Draw the seven SkeldarAnim shelf icons.
 
 32x32 PNG on a dark rounded plate so they read on Maya's shelf: flat
 glyphs, ~2 px strokes, one accent colour per tool. Regenerate with:
@@ -142,6 +142,23 @@ def draw_vpstudio(path):
     image.save(path)
 
 
+def draw_colour(path):
+    """Four palette chips: the swatch grid, in one glyph."""
+    image, painter = _canvas()
+    painter.setPen(Qt.NoPen)
+    chips = (((7.5, 7.5), "#cc4038"), ((17.0, 7.5), "#e6bf33"),
+             ((7.5, 17.0), "#59ad52"), ((17.0, 17.0), "#4085d9"))
+    for (x, y), hue in chips:
+        painter.setBrush(QColor(hue))
+        painter.drawRoundedRect(QRectF(x, y, 7.5, 7.5), 1.6, 1.6)
+    painter.setBrush(QColor("#e6e6e6"))
+    painter.drawEllipse(QPointF(22.5, 22.5), 4.2, 4.2)
+    painter.setBrush(QColor("#9b59d0"))
+    painter.drawEllipse(QPointF(22.5, 22.5), 2.4, 2.4)
+    painter.end()
+    image.save(path)
+
+
 DRAWERS = {
     "picker.png": draw_picker,
     "hotkeys.png": draw_hotkeys,
@@ -149,6 +166,7 @@ DRAWERS = {
     "scenesetup.png": draw_scenesetup,
     "overshoot.png": draw_overshoot,
     "vpstudio.png": draw_vpstudio,
+    "colour.png": draw_colour,
 }
 
 

@@ -2,8 +2,8 @@
 
 Copies the toolset into <userAppDir>/scripts/SkeldarAnim and builds the
 SkeldarAnim shelf: Rig Picker, UE Bridge, Scene Setup, Overshoot,
-Hotkeys, Studio and the native OverRig panel. Re-dragging updates in
-place. The unzipped folder can be deleted after installing.
+Hotkeys, Studio, Colour and the native OverRig panel. Re-dragging updates
+in place. The unzipped folder can be deleted after installing.
 
 Design: docs/superpowers/specs/2026-08-21-installer-design.md
 
@@ -27,6 +27,7 @@ _PAYLOAD = (
     "maya_overshoot.py",
     "maya_hotkeys.py",
     "maya_vpstudio.py",
+    "maya_colour.py",
     "icons",
     "assets",
     "overrig",
@@ -48,6 +49,8 @@ _PYTHON_BUTTONS = (
     ("Studio", "Viewport Studio: studio light, shadows, ambient occlusion "
      "and motion blur, live in the viewport", "maya_vpstudio",
      "show_window", "vpstudio.png"),
+    ("Colour", "Recolour the selected character, bone or mesh from an "
+     "eight-colour palette", "maya_colour", "show_window", "colour.png"),
 )
 
 

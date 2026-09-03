@@ -2685,6 +2685,58 @@ off" means "as they had it". The first version merely omitted those flags,
 which left the rig invisible until Restore. Manipulators are never hidden:
 an animator who cannot see the manipulator cannot animate.
 
+## `maya_colour` — the palette on the shelf
+
+Shipped single-file tool (2026-09-03, `SkeldarAnim/maya_colour.py`, `cmds`
+only), the **eighth shelf button** — «добавим давай на полку скрипт
+настройки цвета», asked minutes after the colour feature landed inside
+Scene Setup. Spec:
+`docs/superpowers/specs/2026-09-03-colour-on-the-shelf-design.md`. Proof:
+`docs/superpowers/plans/verify_colour_tool.py` — **green live 2026-09-03,
+0 of 34 gates failed** (it paints a SANDBOX character of its own — a joint
+chain with a skinned sphere, a marked prop and an unmarked one — never the
+animator's figures, and gates that their colours are untouched).
+
+A grid of the eight palette colours, a custom swatch, a **Next free
+colour** button and a "taken:" line naming what the scene already wears.
+
+**It holds no colour policy at all** — the palette, the free colour, our
+blinn, who wears it and how a character's meshes are found all stay in
+`maya_scenesetup.colour`; this is a panel over it. Three unit tests read
+the module's own source and assert that neither the palette values nor a
+`free_colour` nor any `shadingNode`/`forceElement` appears in it. A second
+copy of "which colour is free" would answer differently from Scene Setup's
+swatch within a week.
+
+**It recolours the SELECTION; Scene Setup's swatch is the colour of the
+NEXT Add.** One meaning per control — the animator's own ruling that
+morning — so the two never overlap. Target order is the toolset's
+convention: selection, then the picker's connect, then a refusal.
+
+**A bone means the character, anything else holding geometry means that
+geometry, and the joint question is asked FIRST.** `hand_r` has the sword
+parented under it, so a mesh-first rule would resolve a hand-bone click to
+the sword. It climbs to the TOPMOST joint — the nearest joint above a hand
+is the hand.
+
+**A marked weapon is not part of its character, and that is a real bug the
+live run found.** `colour.character_meshes` finds a figure through the
+skinCluster AND a DAG walk (the walk is deliberate — unskinned geometry
+parented in by hand is part of the figure), so a sword in the hand is
+caught by it; `colour.paint` then reuses whatever material of ours is
+already on those shapes, the two share one material, and **painting the
+sword repaints the character** (measured: the character went pink when
+only the prop was clicked). `maya_colour.without_weapons` drops shapes
+under anything carrying `bonedrive.MARKER`, so the sword keeps the colour
+Add Weapon gave it; an UNmarked prop still travels with the figure, gated
+both ways. **Scene Setup's own Recolour button is deliberately untouched**
+— it has the same property and has had it since that morning.
+
+Two smaller rules, each with a test: `refresh` never writes to a colour
+control (it fires after every press and would discard the colour just
+dialled — `maya_scenesetup.window`'s swatch lesson), and a refusal opens
+no undo chunk, since an empty chunk eats the animator's previous undo step.
+
 ## `maya_skelfit` — a Manny-schema skeleton fitted to a humanoid mesh, and the skin
 
 Root-level standalone (2026-08-27), driven by the project skill
@@ -2866,11 +2918,11 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with seven buttons — Rig Picker, UE Bridge, Scene Setup,
-Overshoot, Hotkeys, Studio, and the native OverRig panel. Design:
+**SkeldarAnim** with eight buttons — Rig Picker, UE Bridge, Scene Setup,
+Overshoot, Hotkeys, Studio, Colour, and the native OverRig panel. Design:
 `docs/superpowers/specs/2026-08-21-installer-design.md` (written when there
-were five; the sixth arrived 2026-09-02 and the seventh, Viewport Studio,
-2026-09-03, each with its own spec), proof:
+were five; the sixth arrived 2026-09-02, and Viewport Studio and Colour
+both on 2026-09-03, each with its own spec), proof:
 `docs/superpowers/plans/verify_install.py` (**11 gates, 0 failed** in the
 live Maya, 2026-08-21: real install, payload exact, five buttons each
 opening its window, OverRig dock up, sword resolved from the installed
