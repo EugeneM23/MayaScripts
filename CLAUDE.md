@@ -2571,21 +2571,62 @@ only, no Qt), the **seventh shelf button** — the animator's ask: «скрип�
 тени, амбиент аклюжен, моушен блур, пол геометрией». Spec:
 `docs/superpowers/specs/2026-09-03-viewport-studio-design.md`. Proof:
 `docs/superpowers/plans/verify_vpstudio.py` — **green live 2026-09-03, 0 of
-85 gates failed** in the two-character scene.
+101 gates failed**, plus 16 panel gates driving the real buttons. Two gate
+lessons from it, both CLAUDE.md note 4 in miniature: the AO gate asserted
+a literal `18` and failed on correct code when the animator swapped what
+was in the scene mid-session (the subject became 257 cm and the tool
+correctly computed 26), so expectations are COMPUTED from the frame the
+run measured; and the entry state must be captured AFTER clearing a studio
+an earlier run left standing, or the leftover rig's own settings get
+recorded as "what the animator had".
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
 import maya_vpstudio; maya_vpstudio.show_window()
 ```
 
-One press builds five lights under one pivot (warm **key** spot with a
-depth-map shadow, cool **fill** directional, **rim** spot, **bounce** from
-below, a breath of **ambient**), a **floor** (polyPlane + blinn, receives
-shadows, casts none, reference display so it stays out of a marquee
-select), and the whole Viewport 2.0 set: AO, multisample AA, motion blur,
-bloom, depth-peeled transparency, all lights, shadows, grid off, light
-icons off, dark gradient. **Measured: 8.1 ms/frame — 123 fps — at Good
-quality on two skinned Mannys** (Fast 147, Beauty 87).
+One press builds a **look** — picked from a dropdown, `Studio` or
+`Outdoor` (added the same day: «давай сделаем еще присет для уличного…
+чтобы я мог выбрать присеты из выпадающего списка») — plus a **floor**
+(polyPlane + blinn, receives shadows, casts none, reference display so it
+stays out of a marquee select) and the whole Viewport 2.0 set: AO,
+multisample AA, motion blur, bloom, depth-peeled transparency, all lights,
+shadows, grid off, light icons off, a backdrop. **Measured: 8.1 ms/frame —
+123 fps — at Good quality on two skinned Mannys** (Fast 147, Beauty 87).
+
+**A look is a BUNDLE, not a light table** (`LOOKS`): the lights, the
+floor's colour and roughness, the backdrop, the shadow filter size and the
+bloom amount — everything that reads differently between a dark stage and
+a sunny day. So a third look is a row in that table, not a branch. Studio
+is five lights (warm **key** spot with a depth-map shadow, cool **fill**
+directional, **rim** spot, **bounce** from below, a breath of
+**ambient**); Outdoor is four, and **the kinds change rather than the
+numbers**: one hard parallel **`sun`** (directional — a spot sun lights a
+pool on the ground and reads as a stadium floodlight), a **`sky`** ambient
+three times the studio's, which is what fills the sun's shadows and why
+they read blue, a **`skylight`** giving that dome a direction, and a warm
+ground **`bounce`**.
+
+**The sun's shadow map is focused BY HAND, and that is what the
+directional sun costs.** A directional has no cone to bound its depth map
+and `useDmapAutoFocus` fits it to the whole scene — which includes a floor
+twenty radii across: measured live, 2048 texels over a 5575 cm floor is
+2.7 cm/texel and the shadow is mush. With auto-focus off and
+`dmapWidthFocus` at 2.6 radii the same map covers 725 cm at **0.35
+cm/texel**. Spots never get it — their map already covers the cone, and
+the two levers would fight.
+
+**Picking a look applies it at once**, and it REBUILDS rather than retunes
+(a different look is different lights, floor and sky). Two consequences
+that each have a test: **the dropdowns are wired up only after the window
+is built** — setting an `optionMenu`'s value fires its `changeCommand`, so
+restoring the remembered look during the build would rebuild the whole
+studio just from opening the panel — and **the dials read the look off the
+GROUP, never off the dropdown**, since `retune` scales from each spec's
+base intensity and must use the table these very lights came from
+(Outdoor standing + dropdown flipped to Studio would scale the sun off the
+studio key). `retune` writes the standing look back, not the dropdown's,
+or the next retune inherits the lie.
 
 **It is reversible, and the memory lives on our own group.**
 `hardwareRenderingGlobals` is a scene node and the panel flags are the

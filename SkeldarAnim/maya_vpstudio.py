@@ -1,10 +1,17 @@
 """
 Viewport Studio -- one press for a juicy real-time picture in Viewport 2.0.
 
-Studio lighting on the subject, depth-map shadows, screen-space ambient
-occlusion, anti-aliasing, motion blur, a floor to catch the shadow, and a
-dark gradient behind it. Everything Viewport 2.0 can do at playback speed
-and nothing that needs a renderer -- there is no Arnold in the loop.
+A LOOK picked from a dropdown -- **Studio** (three-point on a dark stage)
+or **Outdoor** (a hard sun under an open sky) -- with depth-map shadows,
+screen-space ambient occlusion, anti-aliasing, motion blur, a floor to
+catch the shadow, and the right thing behind it. Everything Viewport 2.0
+can do at playback speed and nothing that needs a renderer -- there is no
+Arnold in the loop.
+
+A look is a bundle rather than a light table (`LOOKS`): the lights, the
+floor's colour, the backdrop, how sharp the shadow is and how much bloom.
+Anything that reads differently between a stage and a sunny day lives
+there, so a third look is a row rather than a branch.
 
     import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
     import maya_vpstudio; maya_vpstudio.show_window()
@@ -59,6 +66,7 @@ PIVOT_ATTR = "skeldarVpStudioPivot"
 # ---------------------------------------------------------------------------
 
 DEFAULTS = collections.OrderedDict((
+    ("look", "Studio"),
     ("quality", "Good"),
     ("floor", True),
     ("shadows", True),
@@ -133,7 +141,7 @@ LightSpec = collections.namedtuple(
     "name kind azimuth elevation distance intensity colour shadow "
     "specular cover")
 
-LIGHTS = (
+STUDIO_LIGHTS = (
     LightSpec("key", "spot", 38.0, 30.0, 2.6, 1.30,
               (1.00, 0.96, 0.90), True, True, 1.7),
     LightSpec("fill", "directional", -62.0, 14.0, 3.0, 0.32,
@@ -146,7 +154,77 @@ LIGHTS = (
               (0.62, 0.68, 0.80), False, False, 0.0),
 )
 
-LIGHT_NAMES = tuple(spec.name for spec in LIGHTS)
+#  Outdoors is not "the studio with different numbers": it is one hard
+#  parallel source plus an enormous soft one, and that changes the KIND of
+#  every light in the table.
+#
+#  The sun is DIRECTIONAL and has to be. A spot sun lights a pool on the
+#  ground and reads as a stadium floodlight; the sun lights everything at
+#  once and its shadows run parallel. The price is that a directional's
+#  depth map covers whatever it is focused on rather than a cone -- see
+#  `light_plan`, which focuses it on the subject by hand.
+#
+#  `sky` is the dome: outdoors the open sky is a light source the size of
+#  the sky, so it is much stronger than the studio's breath of ambient and
+#  it is what fills the sun's shadows (and why they read blue). `skylight`
+#  gives that dome a direction, since the sky is brightest overhead, and
+#  `bounce` is the sunlit ground throwing warm light back up.
+OUTDOOR_LIGHTS = (
+    LightSpec("sun", "directional", 42.0, 46.0, 3.0, 1.55,
+              (1.00, 0.95, 0.86), True, True, 0.0),
+    LightSpec("sky", "ambient", 0.0, 70.0, 3.0, 0.30,
+              (0.55, 0.68, 0.92), False, False, 0.0),
+    LightSpec("skylight", "directional", -70.0, 66.0, 3.0, 0.30,
+              (0.70, 0.81, 1.00), False, False, 0.0),
+    LightSpec("bounce", "directional", -30.0, -20.0, 2.2, 0.20,
+              (0.86, 0.78, 0.62), False, False, 0.0),
+)
+
+#  A LOOK is a bundle, not a light table. Outdoors also means a sky behind
+#  the subject rather than a dark wall, pale ground rather than a black
+#  studio floor, a sharper shadow (the sun is a small source) and more
+#  bloom (a sunny day blows out). Anything that reads differently between
+#  the two belongs here, so a third look is a row rather than a branch.
+LOOKS = collections.OrderedDict((
+    ("Studio", {
+        "lights": STUDIO_LIGHTS,
+        "floor": {"colour": (0.30, 0.31, 0.34),
+                  "specular": (0.045, 0.045, 0.05),
+                  "eccentricity": 0.42, "roll_off": 0.55},
+        "backdrop": {"top": (0.150, 0.163, 0.180),
+                     "bottom": (0.035, 0.037, 0.042),
+                     "flat": (0.078, 0.084, 0.094)},
+        "shadow_filter": 4,
+        "bloom": 0.22,
+    }),
+    ("Outdoor", {
+        "lights": OUTDOOR_LIGHTS,
+        "floor": {"colour": (0.40, 0.39, 0.36),
+                  "specular": (0.030, 0.030, 0.030),
+                  "eccentricity": 0.60, "roll_off": 0.35},
+        "backdrop": {"top": (0.26, 0.42, 0.70),
+                     "bottom": (0.60, 0.68, 0.76),
+                     "flat": (0.40, 0.52, 0.68)},
+        "shadow_filter": 2,
+        "bloom": 0.30,
+    }),
+))
+
+LOOK_ORDER = tuple(LOOKS)
+
+
+def look_of(name):
+    """The named look, or Studio for anything we do not know."""
+    return LOOKS.get(name, LOOKS["Studio"])
+
+
+def lights_of(name):
+    """The light table of the named look."""
+    return look_of(name)["lights"]
+
+
+def light_names(name):
+    return tuple(spec.name for spec in lights_of(name))
 
 
 def bbox_union(boxes):
@@ -271,11 +349,12 @@ def light_plan(frame, azimuth, options):
     """
     options = merged_options(options)
     quality = quality_of(options["quality"])
+    look = look_of(options["look"])
     centre = frame["centre"]
     radius = frame["radius"]
     brightness = max(0.0, float(options["brightness"]))
     plan = []
-    for spec in LIGHTS:
+    for spec in look["lights"]:
         distance = spec.distance * radius
         world = spherical(centre, distance, azimuth + spec.azimuth,
                           spec.elevation)
@@ -291,11 +370,20 @@ def light_plan(frame, azimuth, options):
             "specular": spec.specular,
             "shadow": bool(spec.shadow and options["shadows"]),
             "dmap": quality["dmap"],
+            "filter": look["shadow_filter"],
         }
         if spec.kind == "spot":
             entry["cone"] = cone_angle(radius, distance, spec.cover)
             entry["penumbra"] = 14.0
             entry["dropoff"] = 6.0
+        elif spec.shadow:
+            #  A shadow-casting DIRECTIONAL light (the sun) has no cone to
+            #  bound its depth map, and auto-focus fits it to the whole
+            #  scene -- which now includes a floor twenty radii across, so
+            #  a 2048 map lands about 1.7 cm per texel and the sun's
+            #  shadow comes out mushy. Focused on the subject by hand it
+            #  is ten times sharper, which is what a sun should look like.
+            entry["width_focus"] = 2.6 * radius
         plan.append(entry)
     return plan
 
@@ -313,6 +401,7 @@ FLOOR_RADII = 20.0
 def floor_plan(frame, options=None):
     """Size and place the shadow catcher."""
     options = merged_options(options)
+    surface = look_of(options["look"])["floor"]
     radius = frame["radius"]
     centre = frame["centre"]
     size = max(400.0, min(FLOOR_RADII * radius, 100000.0))
@@ -323,10 +412,10 @@ def floor_plan(frame, options=None):
             "position": (centre[0],
                          frame["floor_y"] - max(0.02, 0.0005 * radius),
                          centre[2]),
-            "colour": (0.30, 0.31, 0.34),
-            "specular": (0.045, 0.045, 0.05),
-            "eccentricity": 0.42,
-            "roll_off": 0.55}
+            "colour": surface["colour"],
+            "specular": surface["specular"],
+            "eccentricity": surface["eccentricity"],
+            "roll_off": surface["roll_off"]}
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +452,7 @@ def render_settings(frame, options=None):
     """
     options = merged_options(options)
     quality = quality_of(options["quality"])
+    look = look_of(options["look"])
     height = frame["height"]
     radius = frame["radius"]
     ao_radius = int(max(2, min(round(0.10 * height), 200)))
@@ -387,7 +477,7 @@ def render_settings(frame, options=None):
         #  whole picture to fog.
         ("bloomEnable", bool(options["bloom"])),
         ("bloomThreshold", 1.0),
-        ("bloomAmount", 0.22),
+        ("bloomAmount", look["bloom"]),
         ("bloomFilterRadius", 12.0),
 
         ("hwFogEnable", bool(options["fog"])),
@@ -471,25 +561,23 @@ def panel_settings(options=None):
     return plan
 
 
-#  The FLAT colour is set alongside the gradient, and that is not
-#  belt-and-braces: measured 2026-09-03, `playblast` renders the viewport
-#  background from `background` and ignores the gradient entirely (white,
-#  both offScreen and on-screen). An animator reviews on playblasts, so a
-#  look that only exists live is half a look.
-BACKDROP = {"top": (0.150, 0.163, 0.180),
-            "bottom": (0.035, 0.037, 0.042),
-            "flat": (0.078, 0.084, 0.094)}
-
-
 def backdrop_settings(options=None):
-    """The gradient behind the subject, or nothing when it is switched off."""
+    """What is behind the subject: a dark wall, or a sky.
+
+    The FLAT colour is set alongside the two gradient stops, and that is
+    not belt-and-braces: measured 2026-09-03, `playblast` renders the
+    background from `background` and ignores the gradient entirely. An
+    animator reviews on playblasts, so a look that only exists live is
+    half a look.
+    """
     options = merged_options(options)
     if not options["backdrop"]:
         return {}
+    sky = look_of(options["look"])["backdrop"]
     return {"gradient": True,
-            "background": BACKDROP["flat"],
-            "backgroundTop": BACKDROP["top"],
-            "backgroundBottom": BACKDROP["bottom"]}
+            "background": sky["flat"],
+            "backgroundTop": sky["top"],
+            "backgroundBottom": sky["bottom"]}
 
 
 def dof_plan(distance, options=None):
@@ -851,9 +939,16 @@ def _make_light(entry, parent):
     if entry["shadow"]:
         cmds.setAttr(shape + ".useDepthMapShadows", 1)
         cmds.setAttr(shape + ".dmapResolution", int(entry["dmap"]))
-        cmds.setAttr(shape + ".dmapFilterSize", 4)
-        cmds.setAttr(shape + ".useDmapAutoFocus", 1)
+        cmds.setAttr(shape + ".dmapFilterSize", int(entry["filter"]))
         cmds.setAttr(shape + ".shadowColor", 0.0, 0.0, 0.0, type="double3")
+        #  The sun: focus its depth map on the subject instead of letting
+        #  auto-focus spread it over a floor twenty radii across.
+        width = entry.get("width_focus")
+        if width and cmds.objExists(shape + ".dmapWidthFocus"):
+            cmds.setAttr(shape + ".useDmapAutoFocus", 0)
+            cmds.setAttr(shape + ".dmapWidthFocus", float(width))
+        else:
+            cmds.setAttr(shape + ".useDmapAutoFocus", 1)
     elif cmds.objExists(shape + ".useDepthMapShadows"):
         cmds.setAttr(shape + ".useDepthMapShadows", 0)
 
@@ -977,7 +1072,8 @@ def _setup(options):
                    translation=frame["centre"])
 
         index = {}
-        for spec, entry in zip(LIGHTS, light_plan(frame, azimuth, options)):
+        for spec, entry in zip(lights_of(options["look"]),
+                               light_plan(frame, azimuth, options)):
             transform, _shape = _make_light(entry, pivot)
             made.append(transform)
             index[spec.name] = _uuid(transform)
@@ -1063,8 +1159,9 @@ def _setup(options):
     #  an older one may not, and the animator should hear it from the
     #  status line rather than wonder why the picture is flat.
     short = len(wanted) - wrote
-    return ("studio on - %d lights%s, %s quality, subject %.0f cm%s"
-            % (len(LIGHT_NAMES), ", floor" if options["floor"] else "",
+    return ("%s on - %d lights%s, %s quality, subject %.0f cm%s"
+            % (options["look"], len(lights_of(options["look"])),
+               ", floor" if options["floor"] else "",
                options["quality"], frame["height"],
                "" if not short else " (%d setting(s) unavailable)" % short))
 
@@ -1083,9 +1180,13 @@ def retune(options=None):
         return ""
     index = read_index(rig)
     brightness = max(0.0, float(options["brightness"]))
+    #  The look the RIG was built with, not whatever the dropdown says
+    #  now: the base intensities have to come from the table these very
+    #  lights were made from, and picking a new look rebuilds anyway.
+    built = read_options(rig).get("look", options["look"])
     touched = 0
     with _quiet_autokey():
-        for spec in LIGHTS:
+        for spec in lights_of(built):
             path = resolve(index.get(spec.name))
             if not path:
                 continue
@@ -1099,11 +1200,16 @@ def retune(options=None):
         if pivot and cmds.objExists(pivot + ".rotateY"):
             cmds.setAttr(pivot + ".rotateY", float(options["rotate"]))
         #  Keep the group's own record in step, or the next press -- and
-        #  `refresh` -- report the numbers from before the drag.
-        _write_string(rig, OPTIONS_ATTR, json.dumps(dict(options)))
+        #  `refresh` -- report the numbers from before the drag. The LOOK
+        #  written back is the one standing in the scene, never the
+        #  dropdown's: recording a look these lights were not built from
+        #  would make the next retune scale them off the wrong table.
+        record = collections.OrderedDict(options)
+        record["look"] = built
+        _write_string(rig, OPTIONS_ATTR, json.dumps(dict(record)))
     cmds.refresh()
-    return "brightness %.2f, rotate %.0f, %d lights" % (
-        brightness, float(options["rotate"]), touched)
+    return "%s: brightness %.2f, rotate %.0f, %d lights" % (
+        built, brightness, float(options["rotate"]), touched)
 
 
 def restore(undoable=True):
@@ -1157,9 +1263,14 @@ CHECKS = (
     ("backdrop", "Dark backdrop", "a neutral gradient behind it all"),
 )
 
-CONTROL = {"quality": "vpStudioQuality",
+CONTROL = {"look": "vpStudioLook",
+           "quality": "vpStudioQuality",
            "brightness": "vpStudioBrightness",
            "rotate": "vpStudioRotate"}
+
+MENUS = ("look", "quality")
+
+MENU_ITEMS = {"look": LOOK_ORDER, "quality": QUALITY_ORDER}
 
 
 def _control(key):
@@ -1189,9 +1300,10 @@ def window_options():
         name = _control(key)
         if cmds.checkBox(name, exists=True):
             options[key] = cmds.checkBox(name, query=True, value=True)
-    if cmds.optionMenu(_control("quality"), exists=True):
-        options["quality"] = cmds.optionMenu(_control("quality"),
-                                             query=True, value=True)
+    for key in MENUS:
+        name = _control(key)
+        if cmds.optionMenu(name, exists=True):
+            options[key] = cmds.optionMenu(name, query=True, value=True)
     for key in ("brightness", "rotate"):
         name = _control(key)
         if cmds.floatSliderGrp(name, exists=True):
@@ -1256,6 +1368,24 @@ def _live_change(*_args):
     return _run(go)
 
 
+def _menu_change(*_args):
+    """Picking a look (or a quality) re-applies it on a standing studio.
+
+    A preset picker that needs a second press to take effect is a preset
+    picker nobody believes; with nothing built it is just remembered.
+    Unlike the two dials this cannot retune -- a different look is a
+    different set of lights, a different floor and a different sky -- so
+    it rebuilds, which is also what keeps the group's stored look honest.
+    """
+    def go():
+        options = window_options()
+        _remember(options)
+        if not find_rig():
+            return _status("%s look remembered" % options["look"])
+        return _status(setup(options))
+    return _run(go)
+
+
 def refresh(*_args):
     """Show what the scene holds. Never writes to a control's value.
 
@@ -1267,9 +1397,10 @@ def refresh(*_args):
         return ""
     rig = find_rig()
     if not rig:
-        return _status("studio off - press Studio Look")
+        return _status("studio off - pick a look and press Apply")
     opts = read_options(rig)
-    return _status("studio on - %s quality" % opts.get("quality", "?"))
+    return _status("%s on - %s quality" % (opts.get("look", "?"),
+                                           opts.get("quality", "?")))
 
 
 def show_window():
@@ -1286,22 +1417,25 @@ def show_window():
     cmds.separator(height=6, style="none", width=WIDTH - 20)
     cmds.text(label="Viewport Studio", font="boldLabelFont", align="center",
               width=WIDTH - 20)
-    cmds.text(label="studio light, shadows, AO and motion blur, live",
+    cmds.text(label="lighting, shadows, AO and motion blur, live",
               font="smallObliqueLabelFont", align="center",
               width=WIDTH - 20)
     cmds.separator(height=8, style="in", width=WIDTH - 20)
 
-    cmds.rowLayout(numberOfColumns=2, columnWidth2=(70, 200),
-                   columnAlign2=("right", "left"))
-    cmds.text(label="Quality ")
-    cmds.optionMenu(_control("quality"), width=195,
-                    changeCommand=lambda *_a: None)
-    for name in QUALITY_ORDER:
-        cmds.menuItem(label=name)
-    cmds.setParent("..")
-    if stored.get("quality") in QUALITY_ORDER:
-        cmds.optionMenu(_control("quality"), edit=True,
-                        value=stored["quality"])
+    for key, label in (("look", "Look "), ("quality", "Quality ")):
+        cmds.rowLayout(numberOfColumns=2, columnWidth2=(70, 200),
+                       columnAlign2=("right", "left"))
+        cmds.text(label=label)
+        #  No changeCommand yet: it is attached at the end of the build.
+        #  Setting an optionMenu's value FIRES its changeCommand, so
+        #  wiring it here would rebuild the whole studio as a side effect
+        #  of merely opening the panel.
+        cmds.optionMenu(_control(key), width=195)
+        for name in MENU_ITEMS[key]:
+            cmds.menuItem(label=name)
+        cmds.setParent("..")
+        if stored.get(key) in MENU_ITEMS[key]:
+            cmds.optionMenu(_control(key), edit=True, value=stored[key])
 
     cmds.separator(height=6, style="in", width=WIDTH - 20)
 
@@ -1327,10 +1461,10 @@ def show_window():
 
     cmds.separator(height=8, style="in", width=WIDTH - 20)
 
-    cmds.button(label="Studio Look", height=34, width=WIDTH - 20,
+    cmds.button(label="Apply Look", height=34, width=WIDTH - 20,
                 backgroundColor=(0.45, 0.70, 0.50),
-                annotation="build the studio on the selection, or on the "
-                           "whole scene when nothing is selected",
+                annotation="build the chosen look on whatever the scene "
+                           "holds",
                 command=_press_setup)
     cmds.button(label="Restore Viewport", height=26, width=WIDTH - 20,
                 backgroundColor=(0.62, 0.48, 0.44),
@@ -1339,8 +1473,15 @@ def show_window():
                 command=_press_restore)
 
     cmds.separator(height=8, style="in", width=WIDTH - 20)
-    cmds.text("vpStudioStatus", label="press Studio Look", align="center",
-              width=WIDTH - 20, font="smallFixedWidthFont")
+    cmds.text("vpStudioStatus", label="pick a look and press Apply",
+              align="center", width=WIDTH - 20,
+              font="smallFixedWidthFont")
+
+    #  Only now, with every control built and every remembered value in
+    #  place, do the dropdowns become live.
+    for key in MENUS:
+        cmds.optionMenu(_control(key), edit=True,
+                        changeCommand=_menu_change)
 
     cmds.showWindow(WINDOW)
     refresh()

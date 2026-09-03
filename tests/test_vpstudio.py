@@ -212,7 +212,7 @@ class TestLightPlan(unittest.TestCase):
 
     def test_five_lights(self):
         self.assertEqual(len(self.plan()), 5)
-        self.assertEqual(vp.LIGHT_NAMES,
+        self.assertEqual(vp.light_names("Studio"),
                          ("key", "fill", "rim", "bounce", "ambient"))
 
     def test_they_are_named_for_the_outliner(self):
@@ -267,7 +267,7 @@ class TestLightPlan(unittest.TestCase):
 
     def test_the_distances_are_multiples_of_the_radius(self):
         frame = vp.subject_frame(BOX)
-        for spec, entry in zip(vp.LIGHTS, self.plan()):
+        for spec, entry in zip(vp.lights_of("Studio"), self.plan()):
             reach = math.sqrt(sum(
                 (entry["position"][i] - frame["centre"][i]) ** 2
                 for i in range(3)))
@@ -310,6 +310,176 @@ class TestLightPlan(unittest.TestCase):
     def test_only_spots_carry_a_cone(self):
         for entry in self.plan():
             self.assertEqual("cone" in entry, entry["kind"] == "spot")
+
+
+class TestLooks(unittest.TestCase):
+    """A look is a bundle -- lights, floor, sky, shadow sharpness, bloom --
+    so a third one is a row in the table rather than a branch in the
+    code."""
+
+    def test_two_looks_studio_first(self):
+        self.assertEqual(vp.LOOK_ORDER, ("Studio", "Outdoor"))
+
+    def test_studio_is_the_default(self):
+        """Anyone who never opens the list gets what they had before."""
+        self.assertEqual(vp.DEFAULTS["look"], "Studio")
+        self.assertEqual(vp.merged_options(None)["look"], "Studio")
+
+    def test_an_unknown_look_is_the_studio(self):
+        self.assertEqual(vp.look_of("nonsense"), vp.look_of("Studio"))
+        self.assertEqual(vp.lights_of("nonsense"), vp.STUDIO_LIGHTS)
+
+    def test_every_look_carries_every_part(self):
+        for name in vp.LOOK_ORDER:
+            look = vp.look_of(name)
+            for part in ("lights", "floor", "backdrop", "shadow_filter",
+                         "bloom"):
+                self.assertIn(part, look, "%s / %s" % (name, part))
+
+    def test_every_look_has_exactly_one_shadow_caster(self):
+        for name in vp.LOOK_ORDER:
+            casters = [s for s in vp.lights_of(name) if s.shadow]
+            self.assertEqual(len(casters), 1, name)
+
+    def test_every_look_has_something_to_fill_the_shadows(self):
+        for name in vp.LOOK_ORDER:
+            self.assertTrue(any(not s.shadow for s in vp.lights_of(name)),
+                            name)
+
+    def test_no_look_exceeds_the_eight_hardware_lights(self):
+        for name in vp.LOOK_ORDER:
+            self.assertLessEqual(len(vp.lights_of(name)), 8, name)
+
+    def test_every_light_name_is_unique_within_its_look(self):
+        """The names are the keys of the UUID index the dials read."""
+        for name in vp.LOOK_ORDER:
+            names = [s.name for s in vp.lights_of(name)]
+            self.assertEqual(len(names), len(set(names)), name)
+
+    def test_outdoor_is_a_sun_and_a_sky(self):
+        names = vp.light_names("Outdoor")
+        self.assertIn("sun", names)
+        self.assertIn("sky", names)
+
+    def test_the_sun_is_directional(self):
+        """A spot sun lights a pool on the ground and reads as a stadium
+        floodlight; the sun lights everything and its shadows run
+        parallel."""
+        sun = [s for s in vp.lights_of("Outdoor") if s.name == "sun"][0]
+        self.assertEqual(sun.kind, "directional")
+        self.assertTrue(sun.shadow)
+
+    def test_the_sun_is_higher_and_harder_than_the_key(self):
+        sun = [s for s in vp.lights_of("Outdoor") if s.name == "sun"][0]
+        key = [s for s in vp.lights_of("Studio") if s.name == "key"][0]
+        self.assertGreater(sun.elevation, key.elevation)
+        self.assertGreater(sun.intensity, key.intensity)
+        self.assertLess(vp.look_of("Outdoor")["shadow_filter"],
+                        vp.look_of("Studio")["shadow_filter"])
+
+    def test_the_sky_fills_far_harder_than_the_studio_s_ambient(self):
+        sky = [s for s in vp.lights_of("Outdoor") if s.name == "sky"][0]
+        amb = [s for s in vp.lights_of("Studio") if s.name == "ambient"][0]
+        self.assertGreater(sky.intensity, amb.intensity)
+
+    def test_the_sky_is_blue_and_the_key_is_warm(self):
+        sky = [s for s in vp.lights_of("Outdoor") if s.name == "sky"][0]
+        sun = [s for s in vp.lights_of("Outdoor") if s.name == "sun"][0]
+        self.assertGreater(sky.colour[2], sky.colour[0])
+        self.assertGreater(sun.colour[0], sun.colour[2])
+
+    def test_outdoor_puts_a_sky_behind_the_subject(self):
+        studio = vp.backdrop_settings({"look": "Studio"})
+        outdoor = vp.backdrop_settings({"look": "Outdoor"})
+        self.assertGreater(outdoor["backgroundTop"][2],
+                           studio["backgroundTop"][2])
+        self.assertGreater(max(outdoor["backgroundTop"]),
+                           max(studio["backgroundTop"]))
+
+    def test_the_outdoor_sky_is_bluer_than_it_is_red(self):
+        sky = vp.backdrop_settings({"look": "Outdoor"})
+        self.assertGreater(sky["backgroundTop"][2], sky["backgroundTop"][0])
+
+    def test_the_outdoor_horizon_is_paler_than_the_zenith(self):
+        """Haze piles up at the horizon; the sky is deepest overhead."""
+        sky = vp.backdrop_settings({"look": "Outdoor"})
+        self.assertGreater(sum(sky["backgroundBottom"]),
+                           sum(sky["backgroundTop"]))
+
+    def test_the_outdoor_ground_is_paler_than_the_studio_floor(self):
+        frame = vp.subject_frame(BOX)
+        studio = vp.floor_plan(frame, {"look": "Studio"})["colour"]
+        outdoor = vp.floor_plan(frame, {"look": "Outdoor"})["colour"]
+        self.assertGreater(sum(outdoor), sum(studio))
+
+    def test_a_sunny_day_blooms_harder(self):
+        frame = vp.subject_frame(BOX)
+        self.assertGreater(
+            vp.render_settings(frame, {"look": "Outdoor"})["bloomAmount"],
+            vp.render_settings(frame, {"look": "Studio"})["bloomAmount"])
+
+    def test_the_backdrop_switch_still_wins_over_the_look(self):
+        self.assertEqual(
+            vp.backdrop_settings({"look": "Outdoor", "backdrop": False}),
+            {})
+
+    def test_each_look_plans_its_own_lights(self):
+        frame = vp.subject_frame(BOX)
+        for name in vp.LOOK_ORDER:
+            plan = vp.light_plan(frame, 0.0, {"look": name})
+            self.assertEqual([e["name"] for e in plan],
+                             ["VPStudio_" + s
+                              for s in vp.light_names(name)], name)
+
+    def test_the_shadow_filter_reaches_the_plan(self):
+        frame = vp.subject_frame(BOX)
+        for name in vp.LOOK_ORDER:
+            plan = vp.light_plan(frame, 0.0, {"look": name})
+            self.assertTrue(all(e["filter"] ==
+                                vp.look_of(name)["shadow_filter"]
+                                for e in plan), name)
+
+    def test_the_sun_focuses_its_shadow_map_on_the_subject(self):
+        """A directional's auto-focus fits the map to the whole scene,
+        which now includes a floor twenty radii across -- so the sun's
+        shadow comes out mushy unless it is focused by hand."""
+        frame = vp.subject_frame(BOX)
+        plan = vp.light_plan(frame, 0.0, {"look": "Outdoor"})
+        sun = [e for e in plan if e["name"] == "VPStudio_sun"][0]
+        self.assertIn("width_focus", sun)
+        self.assertLess(sun["width_focus"],
+                        vp.floor_plan(frame, {"look": "Outdoor"})["size"])
+        self.assertGreater(sun["width_focus"], frame["radius"])
+
+    def test_a_spot_never_asks_for_a_width_focus(self):
+        """A spot's map already covers its cone; the two levers are
+        different attributes and mixing them would fight."""
+        frame = vp.subject_frame(BOX)
+        for entry in vp.light_plan(frame, 0.0, {"look": "Studio"}):
+            if entry["kind"] == "spot":
+                self.assertNotIn("width_focus", entry)
+
+    def test_shadows_off_takes_the_sun_s_shadow_too(self):
+        frame = vp.subject_frame(BOX)
+        plan = vp.light_plan(frame, 0.0,
+                             {"look": "Outdoor", "shadows": False})
+        self.assertFalse(any(e["shadow"] for e in plan))
+
+    def test_brightness_scales_the_outdoor_rig_as_well(self):
+        frame = vp.subject_frame(BOX)
+        base = vp.light_plan(frame, 0.0, {"look": "Outdoor"})
+        twice = vp.light_plan(frame, 0.0,
+                              {"look": "Outdoor", "brightness": 2.0})
+        for a, b in zip(base, twice):
+            self.assertAlmostEqual(b["intensity"], 2.0 * a["intensity"],
+                                   places=9)
+
+    def test_the_dropdown_offers_exactly_the_looks_that_exist(self):
+        self.assertEqual(vp.MENU_ITEMS["look"], vp.LOOK_ORDER)
+        self.assertEqual(vp.MENU_ITEMS["quality"], vp.QUALITY_ORDER)
+        for key in vp.MENUS:
+            self.assertIn(key, vp.DEFAULTS)
+            self.assertIn(key, vp.CONTROL)
 
 
 class TestFloorPlan(unittest.TestCase):

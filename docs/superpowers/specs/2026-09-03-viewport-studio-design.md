@@ -154,6 +154,76 @@ The subject is every visible mesh, which is predictable.
    orbit distance: a bright floor edge with bare background beyond it.
    Twenty is free, because the shadows come from spots.
 
+## Addendum, same day — looks are a dropdown
+
+The animator, straight after using it: «это у нас студийное освещение а
+теперь давай сделаем еще присет для уличного. Сделай так чтобы я мог
+выбрать присеты из выпадающего списка». So: a **Look** dropdown —
+**Studio** and **Outdoor** — beside the Quality one. The two are
+orthogonal (a look is the lighting, a quality is the sample counts), which
+is why they are two lists and not one.
+
+**A look is a bundle, not a light table.** `LOOKS` carries the lights, the
+floor's colour and roughness, the backdrop, the shadow filter size and the
+bloom amount, because every one of those reads differently between a dark
+stage and a sunny day: outdoors wants a sky behind the subject rather than
+a wall, pale sunlit ground rather than a black floor, a *sharper* shadow
+(the sun is a small source) and more bloom. A third look is now a row in
+that table rather than a branch anywhere.
+
+**Outdoors is not the studio with different numbers — the KINDS change.**
+One hard parallel source plus one enormous soft one:
+
+- **`sun`** is a **directional** light and has to be. A spot sun lights a
+  visible pool on the ground and reads as a stadium floodlight; the sun
+  lights everything at once and its shadows run parallel.
+- **`sky`** is the dome, an ambient light three times the studio's, and it
+  is what fills the sun's shadows — which is also why they read blue.
+- **`skylight`** gives that dome a direction, since the sky is brightest
+  overhead, and **`bounce`** is the sunlit ground throwing warm light back
+  up. Four lights against the studio's five.
+
+**The sun's shadow map is focused by hand.** This is the one thing the
+directional sun costs, and it is measurable: a directional light has no
+cone to bound its depth map, and `useDmapAutoFocus` fits the map to the
+whole scene — which now includes a floor twenty radii across. Measured
+live, auto-focus over a 5575 cm floor at 2048 texels is 2.7 cm per texel
+and the sun's shadow comes out mushy. With `useDmapAutoFocus` off and
+`dmapWidthFocus` set to 2.6 radii, the same map covers 725 cm at **0.35 cm
+per texel** — eight times sharper, which is what a sun should look like.
+Spots never ask for it: their map already covers the cone, and the two
+levers are different attributes that would fight.
+
+**Picking a look applies it immediately.** A preset picker that needs a
+second press is a preset picker nobody believes. Unlike the two dials this
+cannot retune — a different look is a different set of lights, a different
+floor and a different sky — so the dropdown rebuilds, which is also what
+keeps the group's stored look honest.
+
+**But the dropdowns are wired up only after the window is built.** Setting
+an `optionMenu`'s value FIRES its `changeCommand`, so restoring the
+remembered look while building the panel would rebuild the entire studio
+as a side effect of merely opening the window.
+
+**The dials read the look off the GROUP, never off the dropdown.**
+`retune` scales each light from its spec's base intensity, so it has to
+use the table these very lights were built from: with Outdoor standing and
+the dropdown flipped to Studio, reading the dropdown would scale the sun
+off the studio key's intensity. It also writes the standing look back into
+the group's options rather than the dropdown's, or the *next* retune would
+inherit the lie. Live gate: brightness 2.0 with `look="Studio"` passed in
+scales the sun to exactly 2 × the sun's own base.
+
+Live: **0 of 101 gates failed** (was 85 before the looks), plus 16 panel
+gates. 136 unit tests for this tool.
+
+One more gate lesson, and it is CLAUDE.md note 4 in miniature: the AO
+gate asserted a literal `18`, correct for the 181 cm subject the scene
+held when it was written. The animator swapped what was in the scene
+mid-session, the subject became 257 cm, the tool correctly computed 26 —
+and the gate failed on correct code. Expectations are now COMPUTED from
+the frame the run actually measured.
+
 ## Deliberately not built
 
 A camera rig or framing (`persp` is the animator's), image-based lighting

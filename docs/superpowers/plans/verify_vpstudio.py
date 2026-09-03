@@ -254,7 +254,7 @@ if 2 in PHASES:
 
         index = v.read_index(rig)
         gate("every light is in the index by UUID",
-             sorted(index) == sorted(v.LIGHT_NAMES)
+             sorted(index) == sorted(v.light_names("Studio"))
              and all(v.resolve(u) for u in index.values()))
 
         key = v.resolve(index["key"])
@@ -299,10 +299,16 @@ if 2 in PHASES:
 
         # --- the viewport ------------------------------------------------
         hw = "hardwareRenderingGlobals."
+        #  The expectation is COMPUTED from the subject we measured, never
+        #  hardcoded: the animator works in this scene while the script
+        #  runs (CLAUDE.md note 4), and a literal 18 here failed on
+        #  correct code the moment they swapped what was in the scene.
+        want_ao = v.render_settings(frame, {"quality": "Good"})["ssaoRadius"]
         gate("AO is on, sized for a %.0f cm subject" % frame["height"],
              cmds.getAttr(hw + "ssaoEnable") == 1
-             and cmds.getAttr(hw + "ssaoRadius") == 18,
-             "radius %s" % cmds.getAttr(hw + "ssaoRadius"))
+             and cmds.getAttr(hw + "ssaoRadius") == want_ao,
+             "radius %s, want %s" % (cmds.getAttr(hw + "ssaoRadius"),
+                                     want_ao))
         gate("anti-aliasing is on at 8 samples",
              cmds.getAttr(hw + "multiSampleEnable") == 1
              and cmds.getAttr(hw + "multiSampleCount") == 8)
@@ -408,6 +414,115 @@ if 2 in PHASES:
         v.setup({"quality": "Good", "motion_blur": False})
         gate("a switched-off option really goes off",
              cmds.getAttr(hw + "motionBlurEnable") == 0)
+
+        # --- the Outdoor look --------------------------------------------
+        said_out = v.setup({"look": "Outdoor", "quality": "Good"})
+        print("outdoor said:", said_out)
+        rig_out = v.find_rig()
+        out_index = v.read_index(rig_out)
+        out_lights = [l for l in (cmds.ls(lights=True, long=True) or [])
+                      if l.startswith(rig_out)]
+        gate("the look is named on the status line",
+             "Outdoor" in said_out, said_out)
+        gate("the outdoor rig is its own set of lights",
+             sorted(out_index) == sorted(v.light_names("Outdoor"))
+             and len(out_lights) == len(v.light_names("Outdoor")),
+             "%d lights: %s" % (len(out_lights), sorted(out_index)))
+        gate("no light of the studio rig is left behind",
+             not any(name in out_index for name in ("key", "fill", "rim")))
+        gate("the group remembers which look it is",
+             v.read_options(rig_out).get("look") == "Outdoor")
+
+        sun = v.resolve(out_index["sun"])
+        sun_shape = cmds.listRelatives(sun, shapes=True, fullPath=True)[0]
+        gate("the sun is a directional light",
+             cmds.nodeType(sun_shape) == "directionalLight",
+             cmds.nodeType(sun_shape))
+        gate("and it casts",
+             cmds.getAttr(sun_shape + ".useDepthMapShadows") == 1)
+        gate("its shadow is sharper than the studio key's",
+             cmds.getAttr(sun_shape + ".dmapFilterSize")
+             < v.look_of("Studio")["shadow_filter"],
+             "filter %s" % cmds.getAttr(sun_shape + ".dmapFilterSize"))
+        #  The measurement this look turns on: auto-focus would spread the
+        #  sun's depth map over a floor twenty radii across.
+        auto = cmds.getAttr(sun_shape + ".useDmapAutoFocus")
+        width = cmds.getAttr(sun_shape + ".dmapWidthFocus")
+        floor_size = v.floor_plan(frame, {"look": "Outdoor"})["size"]
+        gate("the sun's shadow map is focused on the subject by hand",
+             auto == 0 and width < floor_size and width > frame["radius"],
+             "autoFocus %s, width %.0f cm against a %.0f cm floor"
+             % (auto, width, floor_size))
+        print("  sun shadow map: %d texels over %.0f cm = %.2f cm/texel"
+              % (cmds.getAttr(sun_shape + ".dmapResolution"), width,
+                 width / max(cmds.getAttr(sun_shape + ".dmapResolution"),
+                             1)))
+
+        sky_bg = cmds.displayRGBColor("backgroundTop", query=True)
+        gate("there is a sky behind the subject, not a dark wall",
+             sky_bg[2] > sky_bg[0] and max(sky_bg) > 0.2,
+             str(["%.2f" % c for c in sky_bg]))
+        out_floor = [n for n in (cmds.listRelatives(rig_out, children=True,
+                                                    fullPath=True) or [])
+                     if cmds.listRelatives(n, shapes=True, type="mesh",
+                                           fullPath=True)]
+        shading = cmds.listConnections(
+            cmds.listRelatives(out_floor[0], shapes=True,
+                               fullPath=True)[0],
+            type="shadingEngine") or []
+        shader = cmds.listConnections(shading[0] + ".surfaceShader") or []
+        gate("the ground is paler than the studio floor",
+             sum(cmds.getAttr(shader[0] + ".color")[0])
+             > sum(v.look_of("Studio")["floor"]["colour"]),
+             str(["%.2f" % c
+                  for c in cmds.getAttr(shader[0] + ".color")[0]]))
+        gate("a sunny day blooms harder",
+             abs(cmds.getAttr(hw + "bloomAmount")
+                 - v.look_of("Outdoor")["bloom"]) < 1e-4,
+             "%.3f" % cmds.getAttr(hw + "bloomAmount"))
+
+        mismatched_out = []
+        for attr, value in v.render_settings(
+                frame, {"look": "Outdoor", "quality": "Good"}).items():
+            got = cmds.getAttr(hw + attr)
+            if isinstance(value, bool):
+                landed = bool(got) == value
+            elif isinstance(value, float):
+                landed = abs(float(got) - value) < 1e-4
+            else:
+                landed = got == value
+            if not landed:
+                mismatched_out.append("%s=%r want %r" % (attr, got, value))
+        gate("every outdoor render setting lands too", not mismatched_out,
+             "; ".join(mismatched_out[:4]))
+
+        #  The dial must scale the OUTDOOR table, not the studio one it
+        #  would find if it read the dropdown instead of the group.
+        v.retune({"brightness": 2.0, "look": "Studio"})
+        sun_now = cmds.listRelatives(
+            v.resolve(v.read_index(rig_out)["sun"]), shapes=True,
+            fullPath=True)[0]
+        sun_base = [s for s in v.lights_of("Outdoor")
+                    if s.name == "sun"][0].intensity
+        gate("brightness scales the look that is actually standing",
+             abs(cmds.getAttr(sun_now + ".intensity") - 2.0 * sun_base)
+             < 1e-4,
+             "%.3f, want %.3f" % (cmds.getAttr(sun_now + ".intensity"),
+                                  2.0 * sun_base))
+        gate("and the group still says Outdoor",
+             v.read_options(rig_out).get("look") == "Outdoor")
+        v.retune({"brightness": 1.0})
+
+        print("outdoor shot:", blast(SHOTS + r"\v_outdoor.png"))
+
+        # --- back to the studio look -------------------------------------
+        v.setup({"look": "Studio", "quality": "Good"})
+        back_index = v.read_index(v.find_rig())
+        gate("picking the studio look back gives the studio rig",
+             sorted(back_index) == sorted(v.light_names("Studio")))
+        studio_bg = cmds.displayRGBColor("backgroundTop", query=True)
+        gate("and the dark wall comes back with it",
+             max(studio_bg) < 0.2, str(["%.2f" % c for c in studio_bg]))
 
         # --- clean view --------------------------------------------------
         v.setup({"quality": "Good", "clean": True})
