@@ -62,6 +62,12 @@ _WEIGHT = {}
 ROTATE_ORDERS = ("xyz", "yzx", "zxy", "xzy", "yxz", "zyx")
 
 _AXIS_TOLERANCE = 0.9848             # cos(10 degrees)
+
+# What `quatToEuler` can express either side of the build pose. Measured on
+# isolated nodes 2026-09-03: it wraps into (-180, +180], and `decomposeMatrix`
+# canonicalises the sign before that, so a roll past this arrives as a 360
+# degree step in one frame. See the 2026-09-03-twist-roll-limit spec.
+ROLL_WINDOW = 180.0
 _PATTERN = re.compile(r"_twist_(\d+)(?:_|$)", re.IGNORECASE)
 
 
@@ -143,6 +149,104 @@ def weights(names, positions, kind):
         weight = position if kind == FOLLOW else -(1.0 - position)
         out.append(_WEIGHT.get(naming.leaf(name), weight))
     return out
+
+
+def lift(values):
+    """A sign-ambiguous angle sequence made continuous. Pure.
+
+    The quaternion a matrix decomposes to is sign-ambiguous -- `q` and `-q`
+    are one rotation, Maya picks one by a rule of its own, and the pick
+    changes from sample to sample. Every `2*atan2(v.a, w)` reading can then
+    differ from its neighbour by 360 degrees for no physical reason, so the
+    sign is carried forward from the previous sample and THAT is what makes
+    the sequence mean something.
+
+    Anchored on the first sample, which the caller arranges to be the build
+    pose: there the delta is the identity and the roll is exactly 0.
+    """
+    out = []
+    for value in values or []:
+        if out:
+            value += 360.0 * round((out[-1] - value) / 360.0)
+        out.append(value)
+    return out
+
+
+def anchored(values, index):
+    """The sequence shifted so `values[index]` reads zero. Pure.
+
+    `lift` anchors on its first sample, so the offset it hands back is only
+    known up to a multiple of 360. The BUILD frame fixes it: there the delta
+    is the identity and the roll is exactly zero. An index off the end leaves
+    the sequence alone -- there is no anchor to be had, and the span half of
+    `excursion` needs none.
+    """
+    if not values:
+        return []
+    if index < 0 or index >= len(values):
+        return list(values)
+    zero = values[index]
+    return [value - zero for value in values]
+
+
+def excursion(values, window=ROLL_WINDOW):
+    """How far a CONTINUOUS roll sequence leaves the expressible window. Pure.
+
+    `quatToEuler` wraps its output into (-window, +window] -- measured on
+    isolated nodes: fed a 190 degree twist it answers -170, fed 350 it
+    answers -10 -- so a roll outside that window arrives at the joint as a
+    360 degree step in a single frame. Returns 0.0 when the sequence fits.
+
+    Takes values that are ALREADY continuous, which is what `sampled_rolls`
+    hands back. It must not lift them itself: a lift takes the short way
+    between neighbours, so re-lifting a genuine +200 reading would pull it
+    to -160 and report a segment that wraps as one that fits.
+
+    Two ways to be outside, and both are checked. The sequence may leave the
+    window around the build pose; or its SPAN may be wider than the whole
+    360 degree window, which wraps wherever the zero sits and so needs no
+    anchor at all.
+    """
+    if not values:
+        return 0.0
+    low, high = min(values), max(values)
+    over = max(high - window, -window - low, 0.0)
+    return max(over, high - low - 2.0 * window, 0.0)
+
+
+def roll_refusal(values, window=ROLL_WINDOW):
+    """Why a segment cannot be rigged, or None. Pure.
+
+    `values` are continuous, as `excursion` needs them.
+    """
+    if not excursion(values, window):
+        return None
+    reach = max(abs(min(values)), abs(max(values)))
+    return ("the roll reaches {0:.0f} deg, past the {1:.0f} the network can "
+            "express - fix the driver, do not rig over it"
+            .format(reach, window))
+
+
+def sampled_rolls(deltas, axis):
+    """The roll each sampled delta carries about `axis`, lifted. Pure.
+
+    The same arithmetic the seven nodes do, in one place, so `build` can ask
+    what the network is about to report before it creates it. `deltas` are
+    16-float matrices and `axis` a 3-tuple in the same frame. OpenMaya only,
+    with no scene -- the way `axes.py` is.
+    """
+    direction = om.MVector(*axis)
+    if direction.length() < 1e-12:
+        return []
+    direction = direction.normal()
+    raw = []
+    for values in deltas or []:
+        rotation = om.MTransformationMatrix(om.MMatrix(values)).rotation(
+            asQuaternion=True)
+        along = (rotation.x * direction.x + rotation.y * direction.y
+                 + rotation.z * direction.z)
+        raw.append(math.degrees(2.0 * math.atan2(along, rotation.w)))
+    return lift(raw)
 
 
 AxisChoice = namedtuple("AxisChoice", "channel sign reason")
@@ -360,15 +464,42 @@ def _clear_channel(plug):
     return None
 
 
-def _network(joint, driver, weight, direction):
+def driver_rolls(driver, rest_inverse, direction, frames):
+    """The roll the network will report on `driver`, per frame.
+
+    Anchored at the build pose, which is the current frame: there the delta
+    is the identity and the roll is exactly zero, and that is what pins the
+    lift's otherwise unknown multiple of 360. The build frame is therefore
+    sampled along with the range, whether or not it falls inside it.
+
+    Reads the playback range through `getAttr(time=...)`, so it moves neither
+    the time slider nor the scene -- the animator is working in it.
+    """
+    now = cmds.currentTime(query=True)
+    ordered = sorted(set(list(frames) + [now]))
+    deltas = []
+    for frame in ordered:
+        matrix = om.MMatrix(cmds.getAttr(driver + ".matrix", time=frame))
+        product = rest_inverse * matrix
+        deltas.append([product[i] for i in range(16)])
+    rolls = sampled_rolls(deltas, (direction.x, direction.y, direction.z))
+    return anchored(rolls, ordered.index(now))
+
+
+def _network(joint, driver, weight, direction, rest=None):
     """Seven nodes computing `weight` x the driver's twist about `direction`.
 
     `direction` is the bone axis in the DRIVER'S PARENT frame, which is the
     frame the delta operates in. Returns the created nodes, the last of them
     the addDoubleLinear whose output is meant for the joint's channel.
+
+    `rest` is the twist's zero, measured now when the caller has not already
+    measured it -- and `build` has, so that its refusal and these nodes are
+    provably judging the same reference pose.
     """
     names = node_names(joint)
-    rest = _local_matrix_inverse(driver)
+    if rest is None:
+        rest = _local_matrix_inverse(driver)
 
     delta = cmds.createNode("multMatrix", name=names["delta"], skipSelect=True)
     cmds.setAttr(delta + ".matrixIn[0]", [rest[i] for i in range(16)],
@@ -457,6 +588,9 @@ def build(scene_map, limbs=None):
     if standing:
         replaced, _message = bake(standing)
 
+    start, end = overrig.frame_range()
+    sample_frames = [start + step for step in range(int(end - start) + 1)]
+
     rigged = 0
     skipped = []
     animated = []
@@ -489,6 +623,18 @@ def build(scene_map, limbs=None):
         fractions = weights(joints, positions, segment.kind)
         local = _to_frame(along, _parent_of(driver))
 
+        # Measured BEFORE anything is created, and the same reference the
+        # nodes will use. `quatToEuler` wraps into (-180, +180], so a roll
+        # past that arrives at the joint as a 360 degree step in one frame --
+        # measured on a real clip as a 223.50 degree whip. Refusing by name
+        # is what this module already does for an axis off the bone and for
+        # a channel driven by somebody else.
+        rest = _local_matrix_inverse(driver)
+        refusal = roll_refusal(driver_rolls(driver, rest, local, sample_frames))
+        if refusal:
+            skipped.append("{0} ({1})".format(naming.leaf(bone), refusal))
+            continue
+
         created = []
         driven = []
         for joint, weight in zip(joints, fractions):
@@ -504,7 +650,8 @@ def build(scene_map, limbs=None):
                 skipped.append("{0} ({1})".format(naming.leaf(joint),
                                                   refusal))
                 continue
-            nodes = _network(joint, driver, weight * choice.sign, local)
+            nodes = _network(joint, driver, weight * choice.sign, local,
+                                 rest=rest)
             cmds.setAttr(nodes[-1] + ".input2", cmds.getAttr(plug))
             cmds.connectAttr(nodes[-1] + ".output", plug, force=True)
             created.extend(nodes + _spliced_conversions(nodes))

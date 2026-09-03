@@ -696,6 +696,75 @@ node, which is the *same* gap `align_controllers` has — to be closed once for
 both, deliberately not here. Spec:
 `docs/superpowers/specs/2026-08-20-twist-bones-design.md`.
 
+**The network cannot express a roll past ±180°, and since 2026-09-03 it
+REFUSES instead of whipping** (the animator: «иногда случается перекрут
+костей на руках»). `quatToEuler` wraps its output into (−180°, +180°] —
+measured on isolated nodes: fed a 190° twist it answers **−170°**, fed 350°
+it answers **−10°** — and `decomposeMatrix.outputQuat` canonicalises the sign
+before that, so a delta past 180° is re-expressed the short way upstream of
+our arithmetic and **nothing downstream can recover it**. Crossing the
+boundary therefore delivered a ~360° step in one frame: measured on
+`longsword Idle.0031.mb`, the network's angle went **+164.86° → −170.39°**
+between frames 9 and 10 and `upperarm_twist_01_r.rotateX` stepped **223.50°**
+(× the 0.667 weight), with `upperarm_twist_02_r`'s world orientation stepping
+**163.66°** at frame 29. Sub-frame sampling put **121.44° of the 134.33°**
+jump inside one 0.1-frame interval — an instantaneous whip, not interpolation.
+So `build` now samples the driver's roll across the playback range **before it
+creates anything** (`driver_rolls` → `roll_refusal`, the pure halves being
+`lift`/`anchored`/`excursion`/`sampled_rolls`) and skips a segment that does
+not fit, by name and with the number ("the roll reaches 473 deg, past the 180
+the network can express"). That is the module's existing character — it
+already refuses an axis more than 10° off the bone and a channel driven by
+anything that is not ours. Two anchoring rules, both load-bearing: the zero is
+the **build frame**, where the delta is the identity and the roll is exactly 0
+(so that frame is sampled with the range and the sequence shifted to put it at
+0), and a **span wider than 360° wraps wherever the zero sits**, which is
+checked as well and needs no anchor at all. `excursion` must NOT lift its
+input — a lift takes the short way between neighbours, so re-lifting a genuine
++200° reading pulls it to −160° and reports a wrapping segment as a fitting
+one; a test pins that.
+
+**Two candidate fixes were built and REFUTED by measurement, so do not
+re-propose them.** Removing the swing geometrically (transport the reference
+perpendicular by the minimal rotation taking the build-pose axis to the
+current one) gave `upperarm_r` **−309.6..+206.6 — identical** to what shipped.
+Reading the driver's innermost rotate channel diverged from the geometric roll
+by **138.46°** on `upperarm_l`, and is not available at all for the follow
+segments, whose drivers sit **14.35–33.83°** off the segment axis. (The
+innermost-channel claim itself IS true and now measured: with order `xyz`, +30
+on `rotateX` turns **30.0000°**, **0.0000°** off the joint's own X — with
+`zyx` the same +30 lands 50.23° off, so it holds only for the innermost
+channel, which is what `axis_choice` already checks.) The reason no third
+formula helps: the right arm's bone axis swings **160.0°** on this clip and
+`hand_r`'s **174.0°**, and the roll of a bone whose axis sweeps that far has
+**no continuous bounded definition** — it is path-dependent, the same holonomy
+that makes parallel transport around a loop come back rotated. Both
+formulations agree on a 516° range because the quantity itself is unbounded.
+
+**And the extreme input was not ours.** Every arm bone in that file carries a
+**pairBlend at weight 1.000** — `input1` the imported clip's animCurves,
+`input2` the OverRig parentConstraints — so the clip's keys are **muted** and
+the bones are driven entirely by the IK. That is **trap 37's signature**: an
+FBX merge onto a rigged skeleton. The tell that no two-handed grip explains:
+the hands travel through space almost identically (**368.76** vs **375.61** cm
+on the forearms, 458 vs 466 on the hands) while the right forearm rotates
+**3.23×** more violently than the left (117.72° vs 36.44° per frame) and the
+right upper arm **2.45×**. Files like this want `Bake+Delete` before the
+merge, which `animimport`'s guard already asks for. Spec:
+`docs/superpowers/specs/2026-09-03-twist-roll-limit-design.md`. Proof:
+`verify_twist_roll_limit.py` — **green live 2026-09-03, 0 of 31 gates
+failed**, including the two that matter most: our arithmetic matched the
+standing network on **65 of 69 frames with 4 differing by exactly 360°** (the
+wraps themselves), and the build-pose anchor read **0.000000000000**. Not
+covered: the creation half of `build`, which wants a throwaway skeleton in an
+empty scene — phase 2 walks build's call chain read-only instead, because
+running a real build beside the animator's rig is not something a verify run
+may do. Deliberately not done: unwrapping `twist.bake` (it samples the
+channel, so it needs the per-joint 360°×weight period or a recompute from the
+network's own `delta`/`dot`/`weight` nodes before they are deleted) — with the
+refusal in place a freshly built rig can never wrap, so that would only patch
+files already damaged.
+
 Not built: FK controllers on the fingers (dropped 2026-08-18, "на время");
 spine IK (removed, see above) and neck IK; per-chain FK bake from the UI
 (Switch does it internally); docking; mirror-select; the pose-snapshot
@@ -1164,6 +1233,25 @@ C_parent` construction rather than a measurement.
    about gates: every gate in the failing run passed, because they all
    measured JOINTS. Bones are the easy half to measure and the wrong half
    to trust.
+52. **`quatToEuler` wraps into (−180°, +180°] and `decomposeMatrix` throws
+    the long way away before it, so a stock-node roll network cannot pass
+    180° — and it fails as a WHIP, not as an error.** Measured in isolation
+    2026-09-03: feed the pipeline a 190° twist as `(sin 95°, cos 95°)` and
+    it answers **−170°**; feed 350° and it answers **−10°**; the
+    discontinuities sit at exactly ±180°. `quatNormalize` in front is
+    innocent — it passes `x` and `w` through element for element. And
+    `decomposeMatrix.outputQuat` canonicalises the sign, so a >180° delta is
+    already re-expressed the short way when our nodes see it: **there is
+    nothing downstream to recover.** In `maya_overrig/twist.py` that turned
+    a genuinely unbounded quantity into a 223.50° single-frame whip on a
+    twist joint, silently — and `verify_twist_bones.py` was green on 30
+    gates because its largest test roll is **170°**, ten degrees short of
+    the cliff. Two lessons beyond the nodes. A gate whose extreme stops just
+    inside a boundary proves the boundary is never crossed, not that
+    crossing it is handled. And when a DG network's output is a BOUNDED
+    reading of an UNBOUNDED quantity, the build must measure the range and
+    refuse, because the runtime cannot.
+
 
 ## Retargeting Manny onto other skeletons
 
