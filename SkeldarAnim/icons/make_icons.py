@@ -1,4 +1,4 @@
-"""Draw the five SkeldarAnim shelf icons.
+"""Draw the six SkeldarAnim shelf icons.
 
 32x32 PNG on a dark rounded plate so they read on Maya's shelf: flat
 glyphs, ~2 px strokes, one accent colour per tool. Regenerate with:
@@ -122,12 +122,33 @@ def draw_hotkeys(path):
     image.save(path)
 
 
+def draw_vpstudio(path):
+    """A lit sphere over its own shadow: the studio, in one glyph."""
+    image, painter = _canvas()
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(255, 255, 255, 26))
+    painter.drawEllipse(QRectF(6.0, 21.0, 20.0, 5.0))
+    painter.setBrush(QColor("#4dd0e1"))
+    painter.drawEllipse(QPointF(15.0, 15.5), 7.0, 7.0)
+    painter.setBrush(QColor(0, 0, 0, 90))
+    painter.drawEllipse(QPointF(17.4, 17.6), 6.4, 6.4)
+    painter.setBrush(QColor("#fff59d"))
+    painter.drawEllipse(QPointF(24.5, 7.5), 2.6, 2.6)
+    painter.setPen(_pen("#fff59d", 1.2))
+    for a, b in (((22.2, 4.6), (21.0, 3.2)), ((27.0, 4.6), (28.2, 3.2)),
+                 ((22.2, 10.4), (21.0, 11.8))):
+        painter.drawLine(QPointF(*a), QPointF(*b))
+    painter.end()
+    image.save(path)
+
+
 DRAWERS = {
     "picker.png": draw_picker,
     "hotkeys.png": draw_hotkeys,
     "uebridge.png": draw_uebridge,
     "scenesetup.png": draw_scenesetup,
     "overshoot.png": draw_overshoot,
+    "vpstudio.png": draw_vpstudio,
 }
 
 

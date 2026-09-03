@@ -2562,6 +2562,88 @@ guard are proved live through the bridge (out_11); the full 13-gate
 run, and only a Maya restart revives the port. Run it at the next natural
 restart.
 
+## `maya_vpstudio` — Viewport Studio: a juicy real-time picture on one press
+
+Shipped single-file tool (2026-09-03, `SkeldarAnim/maya_vpstudio.py`, `cmds`
+only, no Qt), the **seventh shelf button** — the animator's ask: «скрипт
+который по нажатию будет автоматически настраивать красивый рендер во
+вьюпорте который будет работать в реальном времени … студийное освещение,
+тени, амбиент аклюжен, моушен блур, пол геометрией». Spec:
+`docs/superpowers/specs/2026-09-03-viewport-studio-design.md`. Proof:
+`docs/superpowers/plans/verify_vpstudio.py` — **green live 2026-09-03, 0 of
+85 gates failed** in the two-character scene.
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
+import maya_vpstudio; maya_vpstudio.show_window()
+```
+
+One press builds five lights under one pivot (warm **key** spot with a
+depth-map shadow, cool **fill** directional, **rim** spot, **bounce** from
+below, a breath of **ambient**), a **floor** (polyPlane + blinn, receives
+shadows, casts none, reference display so it stays out of a marquee
+select), and the whole Viewport 2.0 set: AO, multisample AA, motion blur,
+bloom, depth-peeled transparency, all lights, shadows, grid off, light
+icons off, dark gradient. **Measured: 8.1 ms/frame — 123 fps — at Good
+quality on two skinned Mannys** (Fast 147, Beauty 87).
+
+**It is reversible, and the memory lives on our own group.**
+`hardwareRenderingGlobals` is a scene node and the panel flags are the
+animator's, so what the press overwrites is captured first and stored as
+JSON on `VPStudio` (`skeldarVpStudioState`). **The capture happens only on
+the press that finds no rig** — a second press carries the FIRST press's
+memory forward, or Restore hands back our own studio as if it were theirs.
+That is the most breakable thing in the tool and it has a unit test and a
+live gate.
+
+**Everything is measured, nothing tabulated in centimetres.** The light
+table is in subject RADII and degrees (`radius` = half the bbox diagonal,
+the one measure that does not collapse on a flat subject), and the AO
+radius is 10% of the subject's height — 16 cm reads as contact shadow on a
+180 cm character and as nothing on a 20 m one. **Our own floor is excluded
+from the measurement**, or every press measures the last press's floor and
+the studio walks off to infinity. **The azimuth comes from the viewing
+camera**, so nothing has to guess which way a character faces, and the
+Rotate dial spins the rig as one attribute on one pivot. Identity is by
+attribute (`skeldarVpStudio`) with a `{light: UUID}` index
+(`skeldarVpStudioLights`) for the dials; deletion is by UUID with existence
+re-checked in front of each one (trap 18). **The selection is deliberately
+ignored** — `hand_r` owns the sword mesh, and Manny's body meshes are not
+under his skeleton at all, so "light what is selected" would light a 40 cm
+sword.
+
+Five things measured on the way, each of which cost something:
+
+- **A bare attribute name in a plug-writer fails SILENTLY.**
+  `render_settings` returns `ssaoEnable`, `apply_plugs` needs
+  `hardwareRenderingGlobals.ssaoEnable`, and `objExists` on the former is
+  False — so every render setting was dropped and the studio came out with
+  no AO, no AA, no motion blur and no bloom, looking entirely plausible.
+  **Two screenshots were judged by eye in that state.** Hence
+  `render_plugs`, `_setup` counting its writes and naming the shortfall,
+  and a gate comparing every planned setting against the scene (trap 48).
+- **`playblast` ignores the background gradient** and renders from the flat
+  `background` colour, so the tool sets all three — an animator reviews on
+  playblasts.
+- **A playblast PNG carries alpha and a transparent background reads as
+  white.** Three shots were mis-read as "the backdrop is not applying".
+  Judge a viewport look in a format with no alpha channel.
+- **Viewport 2.0 motion blur never reaches playblast output.** A cube
+  crossing at 300 cm/frame came out crisp with blur on, at 8 and 16
+  samples, single frame and over a sequence, offscreen and on-screen. It is
+  an interactive-redraw effect: the attributes are proven set, the visual
+  effect is confirmable only by a human scrubbing — the bridge cannot drive
+  an interactive redraw, the same wall the hotkey map hit.
+- **A Qt `widget.grab()` of a model panel captures the chrome and a blank
+  white rectangle** where the GL surface is. CLAUDE.md note 3 is about Qt
+  panels; a viewport is not one, and `playblast` is the way.
+
+**Clean view is off by default** and unticking it puts the animator's own
+flags back *from the saved state* rather than forcing them True — "clean
+off" means "as they had it". The first version merely omitted those flags,
+which left the rig invisible until Restore. Manipulators are never hidden:
+an animator who cannot see the manipulator cannot animate.
+
 ## `maya_skelfit` — a Manny-schema skeleton fitted to a humanoid mesh, and the skin
 
 Root-level standalone (2026-08-27), driven by the project skill
@@ -2743,10 +2825,11 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with six buttons — Rig Picker, UE Bridge, Scene Setup,
-Overshoot, Hotkeys, and the native OverRig panel. Design:
+**SkeldarAnim** with seven buttons — Rig Picker, UE Bridge, Scene Setup,
+Overshoot, Hotkeys, Studio, and the native OverRig panel. Design:
 `docs/superpowers/specs/2026-08-21-installer-design.md` (written when there
-were five; the sixth arrived 2026-09-02 with its own spec), proof:
+were five; the sixth arrived 2026-09-02 and the seventh, Viewport Studio,
+2026-09-03, each with its own spec), proof:
 `docs/superpowers/plans/verify_install.py` (**11 gates, 0 failed** in the
 live Maya, 2026-08-21: real install, payload exact, five buttons each
 opening its window, OverRig dock up, sword resolved from the installed

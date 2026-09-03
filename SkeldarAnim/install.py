@@ -1,9 +1,9 @@
 """Drag this file into an open Maya viewport to install SkeldarAnim.
 
 Copies the toolset into <userAppDir>/scripts/SkeldarAnim and builds the
-SkeldarAnim shelf: Rig Picker, UE Bridge, Scene Setup, Overshoot, and the
-native OverRig panel. Re-dragging updates in place. The unzipped folder
-can be deleted after installing.
+SkeldarAnim shelf: Rig Picker, UE Bridge, Scene Setup, Overshoot,
+Hotkeys, Studio and the native OverRig panel. Re-dragging updates in
+place. The unzipped folder can be deleted after installing.
 
 Design: docs/superpowers/specs/2026-08-21-installer-design.md
 
@@ -26,6 +26,7 @@ _PAYLOAD = (
     "maya_scenesetup",
     "maya_overshoot.py",
     "maya_hotkeys.py",
+    "maya_vpstudio.py",
     "icons",
     "assets",
     "overrig",
@@ -44,6 +45,9 @@ _PYTHON_BUTTONS = (
      "maya_overshoot", "show_overshoot_ui", "overshoot.png"),
     ("Hotkeys", "Temporary hotkey map on/off - assign keys in Maya's "
      "Hotkey Editor", "maya_hotkeys", "toggle", "hotkeys.png"),
+    ("Studio", "Viewport Studio: studio light, shadows, ambient occlusion "
+     "and motion blur, live in the viewport", "maya_vpstudio",
+     "show_window", "vpstudio.png"),
 )
 
 
@@ -101,7 +105,7 @@ def purge_modules(names=None, modules=None):
 
 
 def button_specs(dest):
-    """The five shelf buttons as data, every path baked in absolute.
+    """The shelf buttons as data, every path baked in absolute.
 
     `dest` may arrive with backslashes; commands reach MEL and the shelf
     editor, where a backslash starts an escape -- so it is normalised

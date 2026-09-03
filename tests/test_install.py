@@ -89,6 +89,9 @@ class Payload(unittest.TestCase):
     def test_the_hotkey_map_ships(self):
         self.assertIn("maya_hotkeys.py", install.payload())
 
+    def test_the_viewport_studio_ships(self):
+        self.assertIn("maya_vpstudio.py", install.payload())
+
     def test_every_icon_a_button_names_exists(self):
         """A missing icon is a shelf button with a blank square on it."""
         for spec in install.button_specs(PLUGIN):
@@ -114,10 +117,11 @@ class ButtonSpecs(unittest.TestCase):
     def _specs(self):
         return install.button_specs(self.DEST)
 
-    def test_six_buttons_in_shelf_order(self):
+    def test_seven_buttons_in_shelf_order(self):
         labels = [s["label"] for s in self._specs()]
         self.assertEqual(labels, ["Rig Picker", "UE Bridge", "Scene Setup",
-                                  "Overshoot", "Hotkeys", "OverRig"])
+                                  "Overshoot", "Hotkeys", "Studio",
+                                  "OverRig"])
 
     def test_python_buttons_bootstrap_and_call(self):
         wanted = {
@@ -126,8 +130,9 @@ class ButtonSpecs(unittest.TestCase):
             "Scene Setup": ("maya_scenesetup", "show_window"),
             "Overshoot": ("maya_overshoot", "show_overshoot_ui"),
             "Hotkeys": ("maya_hotkeys", "toggle"),
+            "Studio": ("maya_vpstudio", "show_window"),
         }
-        for spec in self._specs()[:5]:
+        for spec in self._specs()[:6]:
             module, func = wanted[spec["label"]]
             self.assertEqual(spec["sourceType"], "python")
             self.assertIn(self.DEST, spec["command"])
@@ -136,18 +141,19 @@ class ButtonSpecs(unittest.TestCase):
             self.assertIn("{0}.{1}()".format(module, func), spec["command"])
 
     def test_python_buttons_use_our_icons(self):
-        icons = [s["image"] for s in self._specs()[:5]]
+        icons = [s["image"] for s in self._specs()[:6]]
         self.assertEqual(icons, [
             self.DEST + "/icons/picker.png",
             self.DEST + "/icons/uebridge.png",
             self.DEST + "/icons/scenesetup.png",
             self.DEST + "/icons/overshoot.png",
-            self.DEST + "/icons/hotkeys.png"])
+            self.DEST + "/icons/hotkeys.png",
+            self.DEST + "/icons/vpstudio.png"])
 
     def test_overrig_button_replays_the_native_installer(self):
         """Verbatim from OverRig's own Drag_and_Drop_to_install.mel: the
         source, both globals, misc/ and the coloring argument."""
-        spec = self._specs()[5]
+        spec = self._specs()[6]
         self.assertEqual(spec["sourceType"], "mel")
         command = spec["command"]
         self.assertIn(
