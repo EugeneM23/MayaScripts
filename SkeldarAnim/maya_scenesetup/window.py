@@ -29,6 +29,7 @@ from maya_scenesetup import bonedrive
 from maya_scenesetup import camera as camerarig
 from maya_scenesetup import catalog
 from maya_scenesetup import character
+from maya_scenesetup import colour as colouring
 from maya_scenesetup import connect as linking
 from maya_scenesetup import skeleton
 
@@ -41,6 +42,8 @@ _STATUS = "mayaSceneSetupStatus"
 _BOUND = "mayaSceneSetupBound"
 _CUSTOM = "mayaSceneSetupCustomFbx"
 _CHARACTER = "mayaSceneSetupCharacter"
+_CHARACTER_COLOUR = "mayaSceneSetupCharacterColour"
+_WEAPON_COLOUR = "mayaSceneSetupWeaponColour"
 
 # The grip is BONE-relative (2026-08-25, the user's ruling): zeros mean the
 # sword exactly on weapon_r, and the numbers survive any reparenting. That
@@ -68,6 +71,8 @@ LINKED_NO_REMOVE = ("the hands ride this weapon - press Disconnect Arms "
 AIMED_NO_ADD = "the weapon has an aim - Bake+Delete in the picker first"
 LINKED_NO_OFFSETS = ("the weapon is animated - the grip is saved and "
                      "applies on the next Add or clip import")
+NO_COLOUR_TARGET = ("nothing to recolour - the swatch is previewing the "
+                    "colour the next Add will bring")
 
 
 # ------------------------------------------------------------------ policy
@@ -143,6 +148,11 @@ def attached_message(entry, bone):
     return "{0} on {1}".format(entry.label, bone.split("|")[-1])
 
 
+def recoloured_message(what, rgb):
+    return "{0} is now {1}".format(what.split("|")[-1],
+                                   colouring.colour_name(rgb))
+
+
 # ------------------------------------------------------------------- state
 
 def _entry():
@@ -167,6 +177,25 @@ def _set_fields(rotate, translate):
                        value3=rotate[2])
     cmds.floatFieldGrp(_TRANSLATE, edit=True, value1=translate[0],
                        value2=translate[1], value3=translate[2])
+
+
+def _swatch(control):
+    return tuple(cmds.colorSliderGrp(control, query=True, rgbValue=True))
+
+
+def _set_swatch(control, rgb):
+    cmds.colorSliderGrp(control, edit=True,
+                        rgbValue=(rgb[0], rgb[1], rgb[2]))
+
+
+def _shown_colour(shapes):
+    """What a swatch shows: our colour on `shapes`, else the next free one.
+
+    Two meanings, and they never overlap: with something there it is that
+    thing's colour, read back from the scene like the measured grip; with
+    nothing there it previews what the next Add will bring.
+    """
+    return colouring.colour_of(shapes) or colouring.free_colour().rgb
 
 
 def _remembered(entry):
@@ -282,6 +311,15 @@ def refresh():
     entry = _entry()
     root, hand, bone, weapon, linked = _attached(entry)
 
+    # Both swatches first, and before the early return below: a swatch is a
+    # property of the scene, so it is filled whatever the weapon branch
+    # decides.
+    _set_swatch(_CHARACTER_COLOUR,
+                _shown_colour(colouring.character_meshes(root)))
+    _set_swatch(_WEAPON_COLOUR,
+                _shown_colour(colouring.mesh_shapes([weapon])
+                              if weapon else []))
+
     if weapon:
         if bone and not attach.is_animated(weapon):
             _set_fields(*bonedrive.measured_grip(weapon, bone))
@@ -347,11 +385,57 @@ def add_character():
     The status is written LAST: `refresh` ends by writing its own line, and
     the outcome of the press must be what stays on screen. The refresh is
     what flips the header to the new character -- a lone skeleton binds
-    through `skeleton.current_root` with no press of anything.
+    through `skeleton.current_root` with no press of anything, and it is
+    also what pulls the new character's colour into the swatch.
+
+    The swatch is deliberately NOT read here: the press takes the next free
+    palette colour, so two characters can never arrive identical even when
+    nobody touches the control. Wanting a different one is one click
+    afterwards, with the character on screen -- which is when a colour can
+    actually be judged.
     """
     message = character.add_character(chosen_character())
     refresh()
     _status(message)
+
+
+def character_colour_changed():
+    """Repaint the connected character. The swatch is about the scene.
+
+    The CONNECTED one, not the last added: the rig, the bridge and this
+    window have all been scoped to the connected character since
+    2026-09-01, and a colour picking a different one would be the only
+    thing here that did.
+    """
+    root = _bound_root()
+    shapes = colouring.character_meshes(root)
+    rgb = _swatch(_CHARACTER_COLOUR)
+    if not shapes:
+        _status(NO_COLOUR_TARGET)
+        return
+    cmds.undoInfo(openChunk=True)
+    try:
+        colouring.paint(shapes, rgb, root.split("|")[-1])
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    _status(recoloured_message(root, rgb))
+
+
+def weapon_colour_changed():
+    """Repaint the attached weapon, wherever it is -- in the hand or out in
+    world after Connect. A shading assignment survives re-parenting."""
+    entry = _entry()
+    _root, _hand, _bone, weapon, _linked = _attached(entry)
+    rgb = _swatch(_WEAPON_COLOUR)
+    if not weapon:
+        _status(NO_COLOUR_TARGET)
+        return
+    cmds.undoInfo(openChunk=True)
+    try:
+        colouring.paint_nodes([weapon], rgb, entry.key)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    _status(recoloured_message(entry.label, rgb))
 
 
 def add_weapon():
@@ -385,9 +469,16 @@ def add_weapon():
         return
 
     rotate, translate = _fields()
-    _weapon, note = attach.attach(entry, hand, bone, rotate, translate)
+    weapon, note = attach.attach(entry, hand, bone, rotate, translate)
     _remember(entry, rotate, translate)
+
+    # Read back rather than precomputed: the colour is chosen INSIDE attach,
+    # after the old weapon is gone, so a replaced sword takes its own colour
+    # back instead of walking down the palette on every press.
+    painted = colouring.colour_of(colouring.mesh_shapes([weapon]))
     message = added_message(entry, hand)
+    if painted:
+        message += " - " + colouring.colour_name(painted)
     _status(message + " - " + note if note else message)
 
 
@@ -512,7 +603,7 @@ def show_window():
         if cmds.window(name, exists=True):
             cmds.deleteUI(name)
 
-    cmds.window(WINDOW, title="Scene Setup", widthHeight=(420, 410),
+    cmds.window(WINDOW, title="Scene Setup", widthHeight=(420, 470),
                 sizeable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                       columnOffset=("both", 8))
@@ -530,6 +621,18 @@ def show_window():
                     changeCommand=lambda *_args: _run(character_changed))
     for label in catalog.character_labels():
         cmds.menuItem(label=label)
+
+    cmds.colorSliderGrp(_CHARACTER_COLOUR, label="Colour",
+                        rgbValue=colouring.PALETTE[0].rgb,
+                        annotation="The colour of the CONNECTED character. "
+                                   "Change it and that character is "
+                                   "repainted at once. Add Character takes "
+                                   "the next free colour by itself, so two "
+                                   "characters never arrive the same; with "
+                                   "nothing connected this previews the "
+                                   "colour the next press will bring.",
+                        changeCommand=lambda *_a: _run(
+                            character_colour_changed))
 
     cmds.button(label="Add Character", height=30,
                 annotation="Import the chosen skeleton into this scene -- "
@@ -576,6 +679,16 @@ def show_window():
                                   "bone. Zeros put the weapon exactly on "
                                   "weapon_r.",
                        changeCommand=lambda *_args: _run(offsets_changed))
+    cmds.colorSliderGrp(_WEAPON_COLOUR, label="Colour",
+                        rgbValue=colouring.PALETTE[0].rgb,
+                        annotation="The colour of the attached weapon. "
+                                   "Change it and the weapon is repainted "
+                                   "at once. Add takes the next free colour "
+                                   "by itself -- one palette for characters "
+                                   "and weapons together, so a sword in a "
+                                   "red character's hand comes out orange.",
+                        changeCommand=lambda *_a: _run(
+                            weapon_colour_changed))
 
     cmds.separator(height=8, style="in")
     cmds.button(label="Connect Arms To Weapon", height=28,

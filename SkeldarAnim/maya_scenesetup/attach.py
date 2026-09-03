@@ -28,6 +28,7 @@ name has paid for it.
 import maya.cmds as cmds
 
 from maya_scenesetup import bonedrive
+from maya_scenesetup import colour as colouring
 from maya_scenesetup import fbximport
 
 # The marker moved into bonedrive (the leaf) so the bridge can read it
@@ -181,7 +182,8 @@ def is_animated(node):
     return False
 
 
-def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
+def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None,
+           rgb=None):
     """Put `entry`'s model into the hand, driving `drive_bone` from it.
 
     One mesh in the file and that mesh IS the weapon: parented under
@@ -248,6 +250,17 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None):
         cmds.addAttr(weapon, longName=MARKER, dataType="string")
         cmds.setAttr(weapon + "." + MARKER, entry.key, type="string")
         seat(weapon, entry.scale)
+
+        # The colour comes from the same scan the characters use, so a sword
+        # in a red character's hand arrives orange -- telling those two
+        # apart is half of what the colour is for. Painted here, inside the
+        # chunk this function already opened.
+        if rgb is None:
+            rgb = colouring.free_colour().rgb
+        # `weapon` rather than `model_root(weapon)`: usually the same node,
+        # but a file that kept a group of ours holds several meshes and all
+        # of them are the weapon.
+        colouring.paint_nodes([weapon], rgb, entry.key)
 
         # Onto the drive bone exactly, the grip on top (BONE-relative:
         # zeros mean exactly on weapon_r), then invert the drive -- the

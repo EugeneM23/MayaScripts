@@ -38,6 +38,7 @@ import os
 import maya.cmds as cmds
 
 from maya_scenesetup import catalog
+from maya_scenesetup import colour
 
 LABEL = "Manny"
 
@@ -118,11 +119,14 @@ def malware_nodes(names):
 
 
 def added_message(joints, meshes, removed, note="", connected=False,
-                  label=None):
+                  label=None, colour_name=""):
     """What the press says. `label` names WHICH skeleton arrived, now that
-    the dropdown offers more than one."""
+    the dropdown offers more than one, and `colour_name` which colour it is
+    wearing -- the animator picked the press by colour from then on."""
     message = "{0} added - {1} joints, {2} meshes".format(
         label or LABEL, joints, meshes)
+    if colour_name:
+        message += " - " + colour_name
     if note:
         message += " - " + note
     if connected:
@@ -358,13 +362,21 @@ def import_asset(path):
                      returnNewNodes=True, ignoreVersion=True) or []
 
 
-def add_character(entry=None):
-    """Import a character, sweep it, connect it, and say so.
+def add_character(entry=None, rgb=None):
+    """Import a character, colour it, sweep it, connect it, and say so.
 
     `entry` is a `catalog.Character`; None means the dropdown's default,
     Manny, so every existing caller keeps its behaviour. Repeatable: every
     press adds another character. The one refusal left is the file not
     being there.
+
+    `rgb` is the colour the character arrives wearing; None means the next
+    free palette colour, which is what the button passes -- two characters
+    can then never arrive identical even when nobody touches the swatch.
+    The meshes are taken from the import's OWN nodes, which is exact and
+    needs no searching (and `import_asset` has already re-resolved them
+    from their UUIDs, because the flatten invalidates every long path below
+    the wrapper -- trap 16).
     """
     from maya_overrig import builder  # drags maya.mel in; keep import lazy
 
@@ -373,8 +385,19 @@ def add_character(entry=None):
     if not os.path.isfile(path):
         return NO_FILE.format(path)
 
+    if rgb is None:
+        rgb = colour.free_colour().rgb
+
     before_roots = builder.character_roots()
     new = import_asset(path)
+
+    # Its own undo chunk: creating the material and assigning it are two
+    # commands, and half of that undone is a mesh with no shader.
+    cmds.undoInfo(openChunk=True)
+    try:
+        painted = colour.paint_nodes(new, rgb, entry.key)
+    finally:
+        cmds.undoInfo(closeChunk=True)
 
     # Format-blind on purpose: an FBX cannot carry a script node, but the
     # sweep costs nothing and the `.ma` path genuinely needs it.
@@ -391,4 +414,6 @@ def add_character(entry=None):
     joints = len(cmds.ls(new, type="joint") or [])
     meshes = len(cmds.ls(new, type="mesh") or [])
     return added_message(joints, meshes, removed, note, connected,
-                         label=entry.label)
+                         label=entry.label,
+                         colour_name=colour.colour_name(rgb) if painted
+                         else "")

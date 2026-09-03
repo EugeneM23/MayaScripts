@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1437 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1485 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1734,10 +1734,11 @@ import maya_scenesetup; maya_scenesetup.show_window()
 |---|---|---|
 | `catalog.py` | the weapon table AND the character table, lookups, an entry for any FBX on disk (`entry_for_path`, `node_key`) — pure data | **stdlib only** |
 | `fbximport.py` | one home for the FBX import-MODE guard (trap 33), shared by the weapon and the character | `maya.cmds`, `maya.mel` |
-| `character.py` | the working character into the current scene: import, the rename note, connecting it, the malware sweep | `maya.cmds`, `catalog`, `builder` + `picker_window` (both lazy) |
+| `colour.py` | the palette, which colour is free, our material and who wears it, a character's meshes | `maya.cmds` (a leaf) |
+| `character.py` | the working character into the current scene: import, the rename note, connecting it, the malware sweep | `maya.cmds`, `catalog`, `colour`, `builder` + `picker_window` (both lazy) |
 | `skeleton.py` | which character — and it becomes the ACTIVE one — and where its weapon bone is | `maya.cmds`, `maya_overrig` |
 | `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition, range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
-| `attach.py` | find the mesh, parent it under the hand, invert the drive, read/write offsets | `maya.cmds`, `bonedrive`, `fbximport` |
+| `attach.py` | find the mesh, parent it under the hand, invert the drive, read/write offsets | `maya.cmds`, `bonedrive`, `colour`, `fbximport` |
 | `aim.py` | where the aim locators go, and the press that builds it | `maya.cmds`, OpenMaya, `attach`, `overrig`, `aimrig` |
 | `window.py` | the `cmds` window, offsets, optionVars | `maya.cmds` + the four above |
 
@@ -1897,6 +1898,60 @@ name: `character.new_root` is a path DIFF for exactly that reason.
 (`character.connect` → `picker_window.connect_root`), so "add it" and "work on
 it" are one press; the import is a lazy guarded one, because Scene Setup is
 plain `cmds` and has to keep working where PySide6 does not exist.
+
+**Every character and every weapon arrives in its own COLOUR** (2026-09-03,
+the animator's ask: «нужно добавить опцию выбора цвета для персонажа и
+оружия которого мы добавляем в сцену. Я предлагаю при добавлении в сцену
+задавать новый материал и назначать ему указаный цвет»). Two Mannys in one
+scene were indistinguishable in the viewport — the outliner can tell `root`
+from `Manny_Skeleton_root` and the eye cannot. So each press creates one
+lambert and assigns it to every mesh it brought. `maya_scenesetup/colour.py`.
+Spec: `docs/superpowers/specs/2026-09-03-scene-colour-design.md`. Proof:
+`verify_scenesetup_colour.py` — **green live 2026-09-03, 0 of 28 gates
+failed**, in four phases (a sandbox, two real Add presses, the weapon, and
+the panel itself).
+
+- **Identity by attribute**: the lambert carries `skeldarColour` with the
+  owner's key, and every lookup asks for that. The name (`skeldarColour_red`)
+  is for the Hypershade and is never searched for — Maya uniquifies it to
+  `...red1` on the second character, which is exactly what happened in the
+  live run.
+- **The free colour is read from the SCENE**, not from a counter: eight named
+  hues, `next_colour` (pure) takes the first not already worn. A counter is
+  right until the animator opens another file or deletes a character.
+  Character and weapon share one scan, so a sword in an amber character's
+  hand came out orange (measured).
+- **An unassigned material stops counting** (`is_assigned`). Replacing a
+  weapon deletes its geometry and leaves the lambert behind, as any Maya
+  delete does; without this rule a re-Added sword walks down the palette on
+  every press. Nothing is deleted — chasing shading nodes is how a tool
+  eventually deletes something the animator wanted.
+- **Add never reads the swatch; the swatch is a property of the scene.** It
+  shows the CONNECTED character's colour (or the attached weapon's), read
+  back on every `refresh` exactly as the grip fields show the measured grip,
+  and changing it repaints at once. With nothing connected it previews the
+  next Add. The alternative — the swatch choosing the next colour — was put
+  to the animator with its cost (the control must then lie about one of its
+  two meanings) and they chose this. Two characters therefore never arrive
+  identical even when nobody touches it.
+- **A character's meshes are found through the skinCluster**, not the DAG.
+  Manny's meshes sit at WORLD level, so a walk down from `root` finds
+  **zero** (measured, gate 18). Identity by connection; the DAG walk stays in
+  the union for unskinned geometry parented in by hand. At Add time neither
+  is used — the import's own node list is exact.
+- **Manny's "6 meshes" are six mesh SHAPES and only TWO are renderable** —
+  `Hands_1P` and `Skin_3p`, each with its own `...Orig` intermediates from
+  the skinCluster and blendshape history (measured 2026-09-03). The status
+  line has always counted shapes. A gate written as `>= 6` fails on correct
+  code, and did.
+- The asset's own materials are **not deleted**, only unassigned, so a hand
+  re-assignment in Hypershade brings the original look back. A checkbox to
+  skip the colouring and a "restore the original material" button were both
+  offered and declined: «нет, красим всегда». `grey_black_materials` stays —
+  the colour is an assignment, the grey is a fix to the asset's own material.
+- Nothing downstream is touched: `animexport` runs `FBXExportSkins false` and
+  `FBXExportShapes false`, so no material of ours can reach Unreal, and no
+  part of `maya_overrig` reads a material.
 
 Proof: `verify_add_character.py`, **rewritten and green live 2026-09-01, 10
 gates, 0 failures** in the animator's scene (which held a Manny) — the second

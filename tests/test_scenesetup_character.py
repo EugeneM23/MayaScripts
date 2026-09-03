@@ -190,6 +190,24 @@ class AddedMessage(unittest.TestCase):
     def test_no_label_keeps_the_original_wording(self):
         self.assertIn("Manny added", character.added_message(93, 6, []))
 
+    def test_the_colour_is_named(self):
+        """Every press brings a different one, so the colour is how the
+        animator tells the presses apart afterwards."""
+        message = character.added_message(93, 6, [], colour_name="red")
+        self.assertIn("red", message)
+
+    def test_no_colour_says_nothing_about_colour(self):
+        """A press that painted nothing must not claim a colour."""
+        self.assertEqual(character.added_message(93, 6, [], colour_name=""),
+                         character.added_message(93, 6, []))
+
+    def test_the_colour_does_not_displace_the_rename_note(self):
+        message = character.added_message(
+            93, 6, [], note="imported as root1 (root already in the scene)",
+            colour_name="blue", connected=True)
+        for fragment in ("93 joints", "blue", "root1", "connected"):
+            self.assertIn(fragment, message)
+
 
 class ShippedAsset(unittest.TestCase):
     """The sanitize is a fact about the file; pin it or lose it silently."""

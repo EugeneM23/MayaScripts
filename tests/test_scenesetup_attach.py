@@ -247,6 +247,30 @@ class Detach(unittest.TestCase):
         self.assertEqual(log, [])
 
 
+class FakeColouring(object):
+    """The colour module as attach sees it: a free colour and a painter.
+
+    Stubbed rather than exercised -- what this class of test is about is the
+    ORDER of attach's steps. The colour's own decisions are pinned in
+    test_scenesetup_colour.py and proved live in verify_scenesetup_colour.py.
+    """
+
+    FREE = (0.80, 0.25, 0.22)
+
+    def __init__(self, log):
+        self.log = log
+
+    def free_colour(self):
+        class _Entry(object):
+            name = "red"
+            rgb = FakeColouring.FREE
+        return _Entry()
+
+    def paint_nodes(self, nodes, rgb, key):
+        self.log.append(("paint", list(nodes), tuple(rgb), key))
+        return "skeldarColour_red"
+
+
 class AttachFlow(unittest.TestCase):
     """attach() ordering, with the import and the scene both faked.
 
@@ -300,12 +324,14 @@ class AttachFlow(unittest.TestCase):
         self.real_bonedrive = attach.bonedrive
         self.real_import = attach.import_model
         self.real_meshes = attach.mesh_transforms
+        self.real_colouring = attach.colouring
         drive = FakeBonedrive(fake.log)
         drive.link = lambda weapon, bone: (
             fake.log.append(("link", weapon, bone)) or frames)
         attach.bonedrive = drive
         attach.import_model = lambda path: ["|sword"]
         attach.mesh_transforms = lambda roots: ["|sword"]
+        attach.colouring = FakeColouring(fake.log)
         self.addCleanup(self._unwire)
         return fake
 
@@ -313,6 +339,7 @@ class AttachFlow(unittest.TestCase):
         attach.bonedrive = self.real_bonedrive
         attach.import_model = self.real_import
         attach.mesh_transforms = self.real_meshes
+        attach.colouring = self.real_colouring
 
     def _kinds(self, fake):
         return [entry[0] for entry in fake.log]
@@ -361,6 +388,29 @@ class AttachFlow(unittest.TestCase):
         self.assertIn("grip", kinds)
         self.assertLess(kinds.index("grip"), kinds.index("link"))
         self.assertIn("31", note)
+
+    def test_the_weapon_is_painted_after_it_is_marked(self):
+        """The colour lands on the weapon inside the chunk attach already
+        opens, and after the mark: a half-undone Add must not leave geometry
+        with a shader and no marker."""
+        fake = self._wire(frames=0)
+        attach.attach(self.Entry(), HAND, BONE)
+        kinds = self._kinds(fake)
+        self.assertIn("paint", kinds)
+        self.assertLess(kinds.index("mark"), kinds.index("paint"))
+        painted = fake.log[kinds.index("paint")]
+        self.assertEqual(painted[1], [HAND + "|sword"])
+        self.assertEqual(painted[2], FakeColouring.FREE)
+        self.assertEqual(painted[3], "sword")
+
+    def test_a_given_colour_beats_the_palette(self):
+        """None means the next free colour, which is what the button passes.
+        An explicit one is honoured - that is the seam the verify script
+        drives, and it must not be quietly overridden by a scan."""
+        fake = self._wire(frames=0)
+        attach.attach(self.Entry(), HAND, BONE, rgb=(0.1, 0.2, 0.3))
+        painted = fake.log[self._kinds(fake).index("paint")]
+        self.assertEqual(painted[2], (0.1, 0.2, 0.3))
 
 
 class FakeMel(object):

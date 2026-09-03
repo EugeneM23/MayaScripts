@@ -332,3 +332,72 @@ class CharacterDropdown(unittest.TestCase):
     def test_a_remembered_label_reads_back(self):
         self.fake.stored[window._CHARACTER_OPTIONVAR] = "UE4 Mannequin"
         self.assertEqual(window.remembered_character(), "UE4 Mannequin")
+
+
+class ColourSwatches(unittest.TestCase):
+    """What the two swatches mean. The widgets themselves need a live Maya;
+    what is testable is the policy in front of them."""
+
+    def test_the_refusal_is_its_own_message(self):
+        """A swatch moved with nothing connected is not "nothing attached" --
+        it is previewing the next Add, and saying so is the difference
+        between a dead control and one that is waiting."""
+        self.assertNotEqual(window.NO_COLOUR_TARGET, window.NOT_ATTACHED)
+        self.assertIn("next Add", window.NO_COLOUR_TARGET)
+
+    def test_recoloured_names_the_colour_and_the_leaf(self):
+        from maya_scenesetup import colour
+        message = window.recoloured_message("|group|root",
+                                            colour.PALETTE[0].rgb)
+        self.assertIn("root", message)
+        self.assertNotIn("|", message)
+        self.assertIn("red", message)
+
+    def test_a_hand_dialled_colour_is_still_reported(self):
+        message = window.recoloured_message("root", (0.11, 0.93, 0.44))
+        self.assertIn("custom", message)
+
+    def test_both_callbacks_exist(self):
+        self.assertTrue(callable(window.character_colour_changed))
+        self.assertTrue(callable(window.weapon_colour_changed))
+
+    def test_the_two_swatches_are_different_controls(self):
+        """One layout, two rows: sharing a name would make the weapon's
+        swatch edit the character's."""
+        self.assertNotEqual(window._CHARACTER_COLOUR, window._WEAPON_COLOUR)
+
+
+class ShownColour(unittest.TestCase):
+    """The swatch is a property of the scene: our colour when there is one,
+    the next free colour as a preview when there is not. Same rule the grip
+    fields already follow."""
+
+    class FakeColouring(object):
+        def __init__(self, of=None, free=(0.1, 0.2, 0.3)):
+            self._of = of
+            self._free = free
+
+        def colour_of(self, shapes):
+            return self._of
+
+        def free_colour(self):
+            class _Entry(object):
+                pass
+            entry = _Entry()
+            entry.rgb = self._free
+            return entry
+
+    def setUp(self):
+        self.real = window.colouring
+
+    def tearDown(self):
+        window.colouring = self.real
+
+    def test_ours_wins(self):
+        window.colouring = self.FakeColouring(of=(0.8, 0.25, 0.22))
+        self.assertEqual(window._shown_colour(["|bodyShape"]),
+                         (0.8, 0.25, 0.22))
+
+    def test_nothing_there_previews_the_next_add(self):
+        window.colouring = self.FakeColouring(of=None, free=(0.9, 0.5, 0.18))
+        self.assertEqual(window._shown_colour([]), (0.9, 0.5, 0.18))
