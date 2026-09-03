@@ -3061,7 +3061,7 @@ Things that will bite if forgotten:
   `picker_view.py`/`picker_window.py` import PySide6/shiboken6 at module
   level, and PySide6 ships with Maya from 2025 (2022–2024 carry PySide2).
   The picker also calls `event.position().toPoint()`, which is Qt6-only,
-  so an import shim alone would not be enough. The other five buttons are
+  so an import shim alone would not be enough. The other seven buttons are
   plain `cmds` and MEL and run anywhere: UE Bridge's one Qt use — the
   green row painting in `checkouts.paint_rows` — is inside
   `except Exception: pass` and degrades to uncoloured rows.
