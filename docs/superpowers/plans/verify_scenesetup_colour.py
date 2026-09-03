@@ -11,7 +11,7 @@ phases, and the split is the point:
   2. Two real Add Character presses prove the integration: different
      colours, different materials, every mesh painted, one recoloured while
      the other does not move.
-  3. The weapon, on the character phase 2 imported, proves the shared
+  3. The weapon, on a character phase 2 imported, proves the shared
      palette -- a sword in a red character's hand comes out something else.
   4. The PANEL, which no unit test can reach: a `cmds` window needs a live
      Maya. Driven against the throwaway character, never the animator's --
@@ -133,6 +133,10 @@ try:
     register_new()
     gate("4 a material is created and marked",
          bool(material) and colour.is_ours(material), material)
+    gate("4b it is a blinn, so the figure keeps its form",
+         cmds.objectType(material) == colour.SHADER
+         and cmds.objExists(material + ".specularColor"),
+         cmds.objectType(material))
     gate("5 the colour reads back exactly",
          distance(colour.colour_of(shapes), RED) < 1e-6,
          "{0:.9f}".format(distance(colour.colour_of(shapes), RED)))
@@ -161,7 +165,7 @@ try:
                  for rgb in used),
          colour.free_colour().name)
 
-    # The orphan rule: deleting the geometry leaves the lambert behind (as
+    # The orphan rule: deleting the geometry leaves the material behind (as
     # any Maya delete does), and it must stop COUNTING -- or a re-added
     # sword would walk down the palette on every press.
     cmds.delete(skinned)
@@ -312,26 +316,71 @@ try:
          cmds.colorSliderGrp(panel._CHARACTER_COLOUR, exists=True)
          and cmds.colorSliderGrp(panel._WEAPON_COLOUR, exists=True))
 
+    # The swatch means "the colour the next Add will bring" (2026-09-03,
+    # the animator's reversal), so on open it holds a colour NOTHING in the
+    # scene is wearing -- not the connected character's.
     shown = panel._swatch(panel._CHARACTER_COLOUR)
-    gate("26 the swatch shows the connected character's own colour",
-         distance(shown, colour.colour_of(meshes_b)) < 1e-6,
-         "{0:.9f} from {1}".format(
-             distance(shown, colour.colour_of(meshes_b)),
-             colour.colour_name(colour.colour_of(meshes_b))))
+    gate("26 the swatch opens on a colour nobody is wearing",
+         not any(colour.same_colour(shown, rgb)
+                 for rgb in colour.used_colours()),
+         "{0}, against {1} in use".format(colour.colour_name(shown),
+                                          len(colour.used_colours())))
 
+    # A refresh must not throw away a colour the animator has just picked --
+    # and `refresh` runs at the front of every press and on every dropdown
+    # change, so this is the failure mode the design has to be proof against.
     VIOLET = colour.PALETTE[6].rgb
     cmds.colorSliderGrp(panel._CHARACTER_COLOUR, edit=True, rgbValue=VIOLET)
-    panel.character_colour_changed()
+    panel.refresh()
+    gate("27 a refresh leaves the chosen colour alone",
+         distance(panel._swatch(panel._CHARACTER_COLOUR), VIOLET) < 1e-6,
+         "{0:.9f}".format(distance(panel._swatch(panel._CHARACTER_COLOUR),
+                                   VIOLET)))
+
+    panel.recolour_character()
     register_new()
     landed = distance(colour.colour_of(colour.character_meshes(root_b)),
                       VIOLET)
-    gate("27 the swatch repaints the connected character", landed < 1e-6,
+    gate("28 Recolour puts it on the connected character", landed < 1e-6,
          "{0:.9f}".format(landed))
 
-    gate("28 and never reaches the animator's own character",
-         colour.colour_of(theirs_meshes) is None and theirs_before is None,
-         "{0} mesh(es), still {1}".format(
-             len(theirs_meshes), colour.colour_of(theirs_meshes)))
+    # UNCHANGED, not "unpainted". The animator's own character may already
+    # wear a colour -- they use this tool, and the first build's swatch
+    # repainted the connected character on change, which is exactly what
+    # they saw before asking for this reversal. A gate asserting `is None`
+    # fails on a correct run in a scene that has been worked in; the claim
+    # worth making is that Recolour moved only what it was pointed at.
+    theirs_now = colour.colour_of(theirs_meshes)
+    if theirs_before is None or theirs_now is None:
+        unmoved = theirs_before is theirs_now
+    else:
+        unmoved = distance(theirs_now, theirs_before) < 1e-9
+    gate("29 and never reaches the animator's own character",
+         bool(theirs_meshes) and unmoved,
+         "{0} mesh(es), {1} -> {2}".format(
+             len(theirs_meshes),
+             colour.colour_name(theirs_before) if theirs_before else None,
+             colour.colour_name(theirs_now) if theirs_now else None))
+
+    # The other half of the ruling: the press takes the SWATCH's colour, not
+    # a palette pick of its own.
+    TEAL = colour.PALETTE[4].rgb
+    cmds.colorSliderGrp(panel._CHARACTER_COLOUR, edit=True, rgbValue=TEAL)
+    roots_pre = builder.character_roots()
+    panel.add_character()
+    root_c = [r for r in builder.character_roots() if r not in roots_pre]
+    register_new()
+    colour_c = (colour.colour_of(colour.character_meshes(root_c[0]))
+                if root_c else None)
+    gate("30 THE RULING: Add wears the colour the swatch was holding",
+         bool(root_c) and distance(colour_c, TEAL) < 1e-6,
+         "{0} vs teal, {1:.9f}".format(colour.colour_name(colour_c),
+                                       distance(colour_c, TEAL)))
+    gate("31 and the swatch moves on to a free one afterwards",
+         not any(colour.same_colour(panel._swatch(panel._CHARACTER_COLOUR),
+                                    rgb)
+                 for rgb in colour.used_colours()),
+         colour.colour_name(panel._swatch(panel._CHARACTER_COLOUR)))
 
 finally:
     # ------------------------------------------------------------- teardown
@@ -392,11 +441,11 @@ finally:
                 stray.append("{0} ({1})".format(node, kind))
             else:
                 excused.append(kind)
-    gate("24 the scene is left as it was found", not stray,
+    gate("32 the scene is left as it was found", not stray,
          "stray: {0}; non-DAG singletons excused: {1}".format(
              stray or "none", sorted(set(excused)) or "none"))
 
     print("")
-    print("{0} of {1} gates failed".format(len(FAILURES), 28))
+    print("{0} of {1} gates failed".format(len(FAILURES), 32))
     for label in FAILURES:
         print("  FAILED: " + label)

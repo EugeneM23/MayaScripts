@@ -205,3 +205,73 @@ The gates that can actually fail:
 7. The run leaves the scene as it found it — every created node registered
    by UUID as it is created and deleted from that registry (trap 47), the
    frame, the selection and autoKey put back.
+
+---
+
+## Addendum, the same day: a blinn, and the colour is chosen BEFORE the press
+
+Two changes after the first build reached the animator's hands.
+
+### blinn, not lambert
+
+«давай материал поменяем на maya blin у него лучше шейдинг и он блестит».
+A lambert is flat, so a coloured figure lost the form the grey one had; a
+blinn's specular puts the highlight back and the figure reads as a surface
+again. One constant, `colour.SHADER`.
+
+Its specular attributes are left at Maya's defaults. The ask was for the
+shine, the defaults give it, and inventing eccentricity numbers for somebody
+else's look is how a tool ends up with a table of magic values nobody can
+justify.
+
+**A file coloured earlier keeps its lamberts.** `is_ours` asks for the marker
+attribute and knows nothing about the node type, so `paint` reuses an
+existing lambert rather than swapping a blinn in under the assignment.
+Recolouring an old character therefore keeps it flat and only a fresh Add
+brings the shine. Replacing a material is a bigger promise than a colour
+change should make — the animator may have tuned the one that is there.
+
+### The swatch is the colour of the NEXT Add
+
+«Цвет будем задавать перед созданием персонажа или оружия в сцене» — the
+animator's original wording, and their reversal of the reading this spec
+argued for above. The main text's reasoning is left standing because the
+tension it describes is real; what changed is which side of it wins, and
+that was theirs to decide.
+
+The two meanings are now two controls:
+
+- **The swatch** means one thing: what the next Add will bring. It is filled
+  with the next free colour when the window opens and advanced again after
+  every press, so choosing is optional and two presses in a row still never
+  collide.
+- **A Recolour button** beside it puts that colour on the connected
+  character / the attached weapon.
+
+**`refresh` must not touch the swatches, and that is the one bug this shape
+can have.** A refresh fires on every dropdown change and at the front of
+every press, so writing to a swatch there would throw away the colour the
+animator picked a second earlier. A unit test strips the comments out of
+`refresh` and asserts it calls neither setter; live gate 27 sets a colour,
+calls `refresh`, and measures the swatch still holding it.
+
+Add no longer reads the palette at all — gate 30 sets the swatch to teal and
+measures the arriving character wearing teal to 0.000000012, and gate 31
+measures the swatch afterwards holding a colour nobody wears.
+
+### Two things measured while getting there
+
+**`cmds.skinCluster(query=True, geometry=True)` answers with SHORT names** --
+`['Hands_1PShape']`, not a path. That is trap 28 from a new side, and the
+next thing that happens to these shapes is a `forceElement`, so a name
+resolving to several nodes would repaint somebody else's character. Maya
+hands back the shortest UNIQUE name, so one path is what normally comes out;
+`colour.unambiguous` drops anything that does not, because skipping is the
+safe direction of failure and guessing is not.
+
+**A gate asserting the animator's own character is UNPAINTED fails on a
+correct run.** They use this tool: the first build's swatch repainted the
+connected character on change, they touched it, and their working Manny went
+red -- which is precisely what prompted this addendum. The claim worth
+gating is that Recolour moved only what it was pointed at, so gate 29
+compares before against after (`red -> red`) rather than against nothing.

@@ -71,8 +71,8 @@ LINKED_NO_REMOVE = ("the hands ride this weapon - press Disconnect Arms "
 AIMED_NO_ADD = "the weapon has an aim - Bake+Delete in the picker first"
 LINKED_NO_OFFSETS = ("the weapon is animated - the grip is saved and "
                      "applies on the next Add or clip import")
-NO_COLOUR_TARGET = ("nothing to recolour - the swatch is previewing the "
-                    "colour the next Add will bring")
+NO_COLOUR_TARGET = ("nothing to recolour - the swatch is the colour the "
+                    "next Add will bring")
 
 
 # ------------------------------------------------------------------ policy
@@ -188,14 +188,22 @@ def _set_swatch(control, rgb):
                         rgbValue=(rgb[0], rgb[1], rgb[2]))
 
 
-def _shown_colour(shapes):
-    """What a swatch shows: our colour on `shapes`, else the next free one.
+def _advance_swatch(control):
+    """Put the next free colour in a swatch.
 
-    Two meanings, and they never overlap: with something there it is that
-    thing's colour, read back from the scene like the measured grip; with
-    nothing there it previews what the next Add will bring.
+    Done when the window opens and after every successful Add -- never in
+    `refresh`. That is the whole rule that keeps the swatch honest: it means
+    ONE thing, "the colour the next Add will bring", and a `refresh` fired by
+    a dropdown change must not throw away the colour the animator just
+    picked. Advancing after a press is what stops two presses in a row
+    handing out the same colour when nobody touches the control.
+
+    A first version had the swatch show the CONNECTED character's colour and
+    repaint on change; the animator reversed it («цвет будем задавать перед
+    созданием персонажа или оружия в сцене»), and the Recolour button beside
+    it is what took over the repaint.
     """
-    return colouring.colour_of(shapes) or colouring.free_colour().rgb
+    _set_swatch(control, colouring.free_colour().rgb)
 
 
 def _remembered(entry):
@@ -311,14 +319,11 @@ def refresh():
     entry = _entry()
     root, hand, bone, weapon, linked = _attached(entry)
 
-    # Both swatches first, and before the early return below: a swatch is a
-    # property of the scene, so it is filled whatever the weapon branch
-    # decides.
-    _set_swatch(_CHARACTER_COLOUR,
-                _shown_colour(colouring.character_meshes(root)))
-    _set_swatch(_WEAPON_COLOUR,
-                _shown_colour(colouring.mesh_shapes([weapon])
-                              if weapon else []))
+    # The swatches are deliberately NOT touched here. They hold the colour
+    # the next Add will bring, and `refresh` runs on every dropdown change
+    # and at the front of every press -- overwriting them would discard the
+    # colour the animator just picked. They are filled once on open and
+    # advanced after each Add (`_advance_swatch`).
 
     if weapon:
         if bone and not attach.is_animated(weapon):
@@ -385,27 +390,32 @@ def add_character():
     The status is written LAST: `refresh` ends by writing its own line, and
     the outcome of the press must be what stays on screen. The refresh is
     what flips the header to the new character -- a lone skeleton binds
-    through `skeleton.current_root` with no press of anything, and it is
-    also what pulls the new character's colour into the swatch.
+    through `skeleton.current_root` with no press of anything.
 
-    The swatch is deliberately NOT read here: the press takes the next free
-    palette colour, so two characters can never arrive identical even when
-    nobody touches the control. Wanting a different one is one click
-    afterwards, with the character on screen -- which is when a colour can
-    actually be judged.
+    The colour comes from the SWATCH (2026-09-03, the animator's ruling:
+    «цвет будем задавать перед созданием персонажа или оружия в сцене»), and
+    the swatch is advanced to the next free colour afterwards -- so choosing
+    is optional and two presses in a row still never collide. The advance
+    comes after `refresh`, which does not touch the swatches at all.
     """
-    message = character.add_character(chosen_character())
+    message = character.add_character(chosen_character(),
+                                      _swatch(_CHARACTER_COLOUR))
     refresh()
+    _advance_swatch(_CHARACTER_COLOUR)
     _status(message)
 
 
-def character_colour_changed():
-    """Repaint the connected character. The swatch is about the scene.
+def recolour_character():
+    """Put the swatch's colour on the connected character.
 
     The CONNECTED one, not the last added: the rig, the bridge and this
     window have all been scoped to the connected character since
     2026-09-01, and a colour picking a different one would be the only
     thing here that did.
+
+    Its own button rather than the swatch's changeCommand, so that dialling
+    a colour for the NEXT character cannot repaint the current one on the
+    way past.
     """
     root = _bound_root()
     shapes = colouring.character_meshes(root)
@@ -421,9 +431,10 @@ def character_colour_changed():
     _status(recoloured_message(root, rgb))
 
 
-def weapon_colour_changed():
-    """Repaint the attached weapon, wherever it is -- in the hand or out in
-    world after Connect. A shading assignment survives re-parenting."""
+def recolour_weapon():
+    """Put the swatch's colour on the attached weapon, wherever it is -- in
+    the hand or out in world after Connect. A shading assignment survives
+    re-parenting."""
     entry = _entry()
     _root, _hand, _bone, weapon, _linked = _attached(entry)
     rgb = _swatch(_WEAPON_COLOUR)
@@ -469,16 +480,12 @@ def add_weapon():
         return
 
     rotate, translate = _fields()
-    weapon, note = attach.attach(entry, hand, bone, rotate, translate)
+    rgb = _swatch(_WEAPON_COLOUR)
+    _weapon, note = attach.attach(entry, hand, bone, rotate, translate, rgb)
     _remember(entry, rotate, translate)
+    _advance_swatch(_WEAPON_COLOUR)
 
-    # Read back rather than precomputed: the colour is chosen INSIDE attach,
-    # after the old weapon is gone, so a replaced sword takes its own colour
-    # back instead of walking down the palette on every press.
-    painted = colouring.colour_of(colouring.mesh_shapes([weapon]))
-    message = added_message(entry, hand)
-    if painted:
-        message += " - " + colouring.colour_name(painted)
+    message = added_message(entry, hand) + " - " + colouring.colour_name(rgb)
     _status(message + " - " + note if note else message)
 
 
@@ -622,17 +629,24 @@ def show_window():
     for label in catalog.character_labels():
         cmds.menuItem(label=label)
 
+    # The swatch and its Recolour button share a row: the button acts on the
+    # swatch beside it, and a full-width button of its own would read as a
+    # step in the sequence rather than as that swatch's verb.
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 4)])
     cmds.colorSliderGrp(_CHARACTER_COLOUR, label="Colour",
+                        columnWidth3=(60, 60, 130),
                         rgbValue=colouring.PALETTE[0].rgb,
-                        annotation="The colour of the CONNECTED character. "
-                                   "Change it and that character is "
-                                   "repainted at once. Add Character takes "
-                                   "the next free colour by itself, so two "
-                                   "characters never arrive the same; with "
-                                   "nothing connected this previews the "
-                                   "colour the next press will bring.",
-                        changeCommand=lambda *_a: _run(
-                            character_colour_changed))
+                        annotation="The colour the next Add Character will "
+                                   "bring. It is refilled with the next "
+                                   "unused colour after every press, so two "
+                                   "characters never arrive the same even if "
+                                   "you never touch it.")
+    cmds.button(label="Recolour", width=90,
+                annotation="Put this colour on the character that is "
+                           "CONNECTED now, instead of on the next one added.",
+                command=lambda *_a: _run(recolour_character))
+    cmds.setParent("..")
 
     cmds.button(label="Add Character", height=30,
                 annotation="Import the chosen skeleton into this scene -- "
@@ -679,16 +693,21 @@ def show_window():
                                   "bone. Zeros put the weapon exactly on "
                                   "weapon_r.",
                        changeCommand=lambda *_args: _run(offsets_changed))
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 4)])
     cmds.colorSliderGrp(_WEAPON_COLOUR, label="Colour",
+                        columnWidth3=(60, 60, 130),
                         rgbValue=colouring.PALETTE[0].rgb,
-                        annotation="The colour of the attached weapon. "
-                                   "Change it and the weapon is repainted "
-                                   "at once. Add takes the next free colour "
-                                   "by itself -- one palette for characters "
-                                   "and weapons together, so a sword in a "
-                                   "red character's hand comes out orange.",
-                        changeCommand=lambda *_a: _run(
-                            weapon_colour_changed))
+                        annotation="The colour the next Add will give the "
+                                   "weapon. One palette for characters and "
+                                   "weapons together, so a sword never "
+                                   "arrives the colour of the hand holding "
+                                   "it.")
+    cmds.button(label="Recolour", width=90,
+                annotation="Put this colour on the weapon already attached, "
+                           "instead of on the next one added.",
+                command=lambda *_a: _run(recolour_weapon))
+    cmds.setParent("..")
 
     cmds.separator(height=8, style="in")
     cmds.button(label="Connect Arms To Weapon", height=28,
@@ -728,4 +747,10 @@ def show_window():
     cmds.showWindow(WINDOW)
 
     _run(refresh)
+    # After refresh, which does not touch them: both swatches open on the
+    # colour the next Add would bring, read from THIS scene. A remembered
+    # optionVar would be wrong here -- a colour saved yesterday may be worn
+    # by somebody in the file opened today.
+    _run(lambda: _advance_swatch(_CHARACTER_COLOUR))
+    _run(lambda: _advance_swatch(_WEAPON_COLOUR))
     return WINDOW

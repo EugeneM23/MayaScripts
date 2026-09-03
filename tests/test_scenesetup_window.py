@@ -357,9 +357,17 @@ class ColourSwatches(unittest.TestCase):
         message = window.recoloured_message("root", (0.11, 0.93, 0.44))
         self.assertIn("custom", message)
 
-    def test_both_callbacks_exist(self):
-        self.assertTrue(callable(window.character_colour_changed))
-        self.assertTrue(callable(window.weapon_colour_changed))
+    def test_both_recolour_buttons_exist(self):
+        self.assertTrue(callable(window.recolour_character))
+        self.assertTrue(callable(window.recolour_weapon))
+
+    def test_the_changeCommand_callbacks_are_gone(self):
+        """The swatch used to repaint on change; the animator reversed it
+        («цвет будем задавать перед созданием персонажа или оружия в
+        сцене») and a Recolour button took over. Leaving the old names
+        around is how a caller keeps reaching the retired behaviour."""
+        self.assertFalse(hasattr(window, "character_colour_changed"))
+        self.assertFalse(hasattr(window, "weapon_colour_changed"))
 
     def test_the_two_swatches_are_different_controls(self):
         """One layout, two rows: sharing a name would make the weapon's
@@ -367,18 +375,19 @@ class ColourSwatches(unittest.TestCase):
         self.assertNotEqual(window._CHARACTER_COLOUR, window._WEAPON_COLOUR)
 
 
-class ShownColour(unittest.TestCase):
-    """The swatch is a property of the scene: our colour when there is one,
-    the next free colour as a preview when there is not. Same rule the grip
-    fields already follow."""
+class NextAddColour(unittest.TestCase):
+    """The swatch means ONE thing: the colour the next Add will bring.
+
+    It is filled on open and advanced after every press, and `refresh`
+    never touches it -- a refresh fires on every dropdown change and at the
+    front of every press, so writing to it there would throw away the
+    colour the animator had just picked.
+    """
 
     class FakeColouring(object):
-        def __init__(self, of=None, free=(0.1, 0.2, 0.3)):
-            self._of = of
+        def __init__(self, free=(0.1, 0.2, 0.3)):
             self._free = free
-
-        def colour_of(self, shapes):
-            return self._of
+            self.painted = []
 
         def free_colour(self):
             class _Entry(object):
@@ -388,16 +397,33 @@ class ShownColour(unittest.TestCase):
             return entry
 
     def setUp(self):
-        self.real = window.colouring
+        self.real_colouring = window.colouring
+        self.real_set = window._set_swatch
+        self.written = []
+        window._set_swatch = lambda control, rgb: self.written.append(
+            (control, tuple(rgb)))
 
     def tearDown(self):
-        window.colouring = self.real
+        window.colouring = self.real_colouring
+        window._set_swatch = self.real_set
 
-    def test_ours_wins(self):
-        window.colouring = self.FakeColouring(of=(0.8, 0.25, 0.22))
-        self.assertEqual(window._shown_colour(["|bodyShape"]),
-                         (0.8, 0.25, 0.22))
+    def test_advancing_writes_the_next_free_colour(self):
+        window.colouring = self.FakeColouring(free=(0.9, 0.5, 0.18))
+        window._advance_swatch(window._CHARACTER_COLOUR)
+        self.assertEqual(self.written,
+                         [(window._CHARACTER_COLOUR, (0.9, 0.5, 0.18))])
 
-    def test_nothing_there_previews_the_next_add(self):
-        window.colouring = self.FakeColouring(of=None, free=(0.9, 0.5, 0.18))
-        self.assertEqual(window._shown_colour([]), (0.9, 0.5, 0.18))
+    def test_refresh_is_not_what_fills_it(self):
+        """The guard against the one bug this design can have: a `refresh`
+        overwriting a colour the animator chose a second earlier.
+
+        Comments are stripped before the check -- `refresh` says out loud
+        that it leaves the swatches alone, and naming the functions it does
+        not call must not be what fails this.
+        """
+        import inspect
+        code = [line.split("#")[0]
+                for line in inspect.getsource(window.refresh).splitlines()]
+        body = chr(10).join(code)
+        self.assertNotIn("_set_swatch(", body)
+        self.assertNotIn("_advance_swatch(", body)

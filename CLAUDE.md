@@ -188,7 +188,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1485 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1491 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1734,7 +1734,7 @@ import maya_scenesetup; maya_scenesetup.show_window()
 |---|---|---|
 | `catalog.py` | the weapon table AND the character table, lookups, an entry for any FBX on disk (`entry_for_path`, `node_key`) — pure data | **stdlib only** |
 | `fbximport.py` | one home for the FBX import-MODE guard (trap 33), shared by the weapon and the character | `maya.cmds`, `maya.mel` |
-| `colour.py` | the palette, which colour is free, our material and who wears it, a character's meshes | `maya.cmds` (a leaf) |
+| `colour.py` | the palette, which colour is free, our blinn and who wears it, a character's meshes | `maya.cmds` (a leaf) |
 | `character.py` | the working character into the current scene: import, the rename note, connecting it, the malware sweep | `maya.cmds`, `catalog`, `colour`, `builder` + `picker_window` (both lazy) |
 | `skeleton.py` | which character — and it becomes the ACTIVE one — and where its weapon bone is | `maya.cmds`, `maya_overrig` |
 | `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition, range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
@@ -1905,11 +1905,34 @@ the animator's ask: «нужно добавить опцию выбора цве
 задавать новый материал и назначать ему указаный цвет»). Two Mannys in one
 scene were indistinguishable in the viewport — the outliner can tell `root`
 from `Manny_Skeleton_root` and the eye cannot. So each press creates one
-lambert and assigns it to every mesh it brought. `maya_scenesetup/colour.py`.
-Spec: `docs/superpowers/specs/2026-09-03-scene-colour-design.md`. Proof:
-`verify_scenesetup_colour.py` — **green live 2026-09-03, 0 of 28 gates
-failed**, in four phases (a sandbox, two real Add presses, the weapon, and
-the panel itself).
+**blinn** and assigns it to every mesh it brought. `maya_scenesetup/colour.py`.
+Spec: `docs/superpowers/specs/2026-09-03-scene-colour-design.md` — read its
+ADDENDUM, which reverses two of the main text's decisions the same day.
+Proof: `verify_scenesetup_colour.py` — **green live 2026-09-03, 0 of 32
+gates failed**, in four phases (a sandbox, two real Add presses, the weapon,
+and the panel itself).
+
+- **blinn, not lambert** («у него лучше шейдинг и он блестит»): a lambert is
+  flat, so a coloured figure lost the form the grey one had. `colour.SHADER`,
+  one constant, specular attributes left at Maya's defaults — the ask was for
+  the shine and the defaults give it. **A file coloured earlier keeps its
+  lamberts**: `is_ours` asks for the marker and knows nothing about the node
+  type, so `paint` reuses what is there rather than swapping a material out
+  from under an assignment the animator may have tuned.
+- **The swatch is the colour of the NEXT Add** («цвет будем задавать перед
+  созданием персонажа или оружия в сцене»), and a **Recolour** button beside
+  it puts that colour on the connected character / attached weapon. One
+  meaning per control. The first build had the swatch show the connected
+  character and repaint on change; the animator reversed it after using it —
+  and the tell is still in their scene, a `skeldarColour_red` **lambert**
+  on their own Manny from the afternoon they tried the slider.
+- **`refresh` must never touch a swatch, and that is the one bug this shape
+  can have.** It fires on every dropdown change and at the front of every
+  press, so a write there discards the colour the animator picked a second
+  earlier. The swatches are filled on open and advanced after each press
+  (`_advance_swatch`). A unit test strips the comments out of `refresh` and
+  asserts it calls neither setter; live gate 27 sets a colour, calls
+  `refresh` and measures the swatch still holding it.
 
 - **Identity by attribute**: the lambert carries `skeldarColour` with the
   owner's key, and every lookup asks for that. The name (`skeldarColour_red`)
@@ -1926,19 +1949,25 @@ the panel itself).
   delete does; without this rule a re-Added sword walks down the palette on
   every press. Nothing is deleted — chasing shading nodes is how a tool
   eventually deletes something the animator wanted.
-- **Add never reads the swatch; the swatch is a property of the scene.** It
-  shows the CONNECTED character's colour (or the attached weapon's), read
-  back on every `refresh` exactly as the grip fields show the measured grip,
-  and changing it repaints at once. With nothing connected it previews the
-  next Add. The alternative — the swatch choosing the next colour — was put
-  to the animator with its cost (the control must then lie about one of its
-  two meanings) and they chose this. Two characters therefore never arrive
-  identical even when nobody touches it.
+- **Add reads the swatch, and the swatch is refilled with the next free
+  colour after every press** — so choosing is optional and two presses in a
+  row still never collide. Gate 30 sets it to teal and measures the arriving
+  character wearing teal to 0.000000012.
 - **A character's meshes are found through the skinCluster**, not the DAG.
   Manny's meshes sit at WORLD level, so a walk down from `root` finds
   **zero** (measured, gate 18). Identity by connection; the DAG walk stays in
   the union for unskinned geometry parented in by hand. At Add time neither
   is used — the import's own node list is exact.
+- **`cmds.skinCluster(query=True, geometry=True)` answers with SHORT names**
+  — measured: `['Hands_1PShape']`, not a path. Trap 28 from a new side, and
+  the next thing that happens to those shapes is a `forceElement`, so a name
+  resolving to several nodes would repaint somebody else's character. Maya
+  hands back the shortest UNIQUE name, so one path is what normally comes
+  out; `colour.unambiguous` drops anything that does not, because skipping is
+  the safe direction of failure.
+- **A gate asserting the animator's own character is UNPAINTED fails on a
+  correct run** — they use this tool, and theirs is already red. Gate 29
+  compares before against after (`red -> red`) instead.
 - **Manny's "6 meshes" are six mesh SHAPES and only TWO are renderable** —
   `Hands_1P` and `Skin_3p`, each with its own `...Orig` intermediates from
   the skinCluster and blendshape history (measured 2026-09-03). The status

@@ -2,10 +2,10 @@
 
 Since 2026-09-01 Add Character can be pressed as many times as the animator
 likes, and every press brought the same grey figure: the outliner can tell
-two Mannys apart and the eye cannot. So each press now creates one lambert
-and assigns it to every mesh it brought, in a colour no other character or
-weapon in the scene is wearing («нужно добавить опцию выбора цвета для
-персонажа и оружия которого мы добавляем в сцену», 2026-09-03).
+two Mannys apart and the eye cannot. So each press now creates one blinn
+and assigns it to every mesh it brought, in the colour the panel's swatch is
+showing («нужно добавить опцию выбора цвета для персонажа и оружия которого
+мы добавляем в сцену», 2026-09-03).
 
 The asset's own materials are not deleted -- they stay in the scene,
 unassigned -- but nothing here offers to put them back. That was the
@@ -23,7 +23,9 @@ Hypershade costs nothing.
 **The free colour is read from the scene.** Not from a counter in an
 optionVar: a counter is right until the animator opens another file, deletes
 a character, or presses Add in a scene somebody else set up, and then it
-hands out a colour already on screen.
+hands out a colour already on screen. It is what the swatch is filled with
+when the window opens and after every press, so the animator can choose a
+colour and can also just not bother.
 """
 
 import collections
@@ -37,6 +39,17 @@ Colour = collections.namedtuple("Colour", "name rgb")
 MARKER = "skeldarColour"
 
 PREFIX = "skeldarColour"
+
+# blinn, not lambert (2026-09-03, the animator's second look at it: «давай
+# материал поменяем на maya blin у него лучше шейдинг и он блестит»). A
+# lambert is flat, so a coloured figure lost the form the grey one had --
+# a blinn's specular puts the highlight back and reads as a surface.
+#
+# Its specular attributes are left at Maya's defaults. The ask was for the
+# shine, the defaults give it, and inventing eccentricity numbers for
+# somebody else's look is how a tool ends up with a table of magic values
+# nobody can justify.
+SHADER = "blinn"
 
 # Mid-bright, one per hue stop. Two requirements the values have to meet, both
 # pinned by tests: none is near black -- `character.needs_grey` reads a
@@ -209,6 +222,22 @@ def mesh_shapes(nodes):
     return found
 
 
+def unambiguous(name):
+    """The single node `name` points at, or None if it points at several.
+
+    `cmds.skinCluster(q=True, geometry=True)` answers with SHORT names --
+    measured 2026-09-03: `['Hands_1PShape']`, not a path -- which is trap 28
+    all over again. Maya hands back the shortest UNIQUE name, so one path is
+    what normally comes out; but two Mannys in one scene share every leaf
+    name below the top node, and if a name ever does resolve to several
+    nodes then picking one would be a guess. The next thing that happens to
+    these shapes is a `forceElement`, so a guess here repaints somebody
+    else's character. Skipping is the safe direction of failure.
+    """
+    paths = cmds.ls(name, long=True) or []
+    return paths[0] if len(paths) == 1 else None
+
+
 def skinned_shapes(root):
     """The meshes deformed by any joint under `root`.
 
@@ -231,7 +260,9 @@ def skinned_shapes(root):
                                         geometry=True) or []
         except Exception:
             continue
-        for shape in mesh_shapes(geometry):
+        resolved = [path for path in (unambiguous(name) for name in geometry)
+                    if path]
+        for shape in mesh_shapes(resolved):
             if shape not in shapes:
                 shapes.append(shape)
     return shapes
@@ -294,8 +325,8 @@ def colour_of(shapes):
 
 
 def make_material(rgb, key):
-    """A fresh lambert in `rgb`, marked as ours, with its shading engine."""
-    material = cmds.shadingNode("lambert", asShader=True,
+    """A fresh blinn in `rgb`, marked as ours, with its shading engine."""
+    material = cmds.shadingNode(SHADER, asShader=True,
                                 name=material_name(rgb))
     cmds.setAttr(material + ".color", rgb[0], rgb[1], rgb[2], type="double3")
     cmds.addAttr(material, longName=MARKER, dataType="string")
@@ -311,11 +342,18 @@ def make_material(rgb, key):
 def paint(shapes, rgb, key):
     """Give `shapes` our material in `rgb`. Returns the material, or None.
 
-    Reuses the one already on them when it is ours, so a live recolour is one
-    `setAttr` -- creating a material on every swatch drag would leave the
-    scene full of orphans -- and creates and assigns one otherwise. The
-    re-assignment on the reuse path is what makes a character converge on a
-    single material after being painted in two halves.
+    Reuses the one already on them when it is ours, so a recolour is one
+    `setAttr` -- replacing the material would drop whatever the animator had
+    tuned on it -- and creates and assigns one otherwise. The re-assignment
+    on the reuse path is what makes a character converge on a single
+    material after being painted in two halves.
+
+    A file coloured before 2026-09-03 carries LAMBERTS, and this reuses them
+    rather than upgrading them to blinns: `is_ours` asks for the marker
+    attribute and knows nothing about the node type. Recolouring an old
+    character therefore keeps it flat, and only a fresh Add brings the
+    shine. Swapping the material under an existing assignment is a bigger
+    promise than a colour change should make.
     """
     shapes = [shape for shape in (shapes or []) if shape]
     if not shapes:

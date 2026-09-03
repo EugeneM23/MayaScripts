@@ -184,6 +184,61 @@ class MeshSet(unittest.TestCase):
         self.assertEqual(colour.mesh_set(None, None), [])
 
 
+class Shader(unittest.TestCase):
+    """blinn, not lambert (2026-09-03): «у него лучше шейдинг и он блестит».
+    A lambert is flat, so a coloured figure lost the form the grey one had."""
+
+    def test_the_shader_is_a_blinn(self):
+        self.assertEqual(colour.SHADER, "blinn")
+
+    def test_make_material_creates_that_type(self):
+        real = colour.cmds
+        fake = FakeCmds()
+        colour.cmds = fake
+        try:
+            colour.make_material((0.8, 0.25, 0.22), "Manny")
+        finally:
+            colour.cmds = real
+        self.assertEqual(fake.kinds, [colour.SHADER])
+
+
+class Unambiguous(unittest.TestCase):
+    """`cmds.skinCluster(q=True, geometry=True)` answers with SHORT names --
+    measured 2026-09-03: `['Hands_1PShape']`, not a path. Maya hands back
+    the shortest UNIQUE name, so one path normally comes out; two Mannys in
+    one scene share every leaf below the top node, and the next thing that
+    happens to these shapes is a `forceElement`. A guess there repaints
+    somebody else's character, so the ambiguous name is dropped."""
+
+    class Resolver(object):
+        def __init__(self, table):
+            self.table = table
+
+        def ls(self, name, **kwargs):
+            return list(self.table.get(name, []))
+
+    def setUp(self):
+        self.real = colour.cmds
+
+    def tearDown(self):
+        colour.cmds = self.real
+
+    def test_one_path_resolves(self):
+        colour.cmds = self.Resolver({"bodyShape": ["|rig|body|bodyShape"]})
+        self.assertEqual(colour.unambiguous("bodyShape"),
+                         "|rig|body|bodyShape")
+
+    def test_two_paths_are_dropped(self):
+        colour.cmds = self.Resolver(
+            {"Hands_1PShape": ["|a|Hands_1P|Hands_1PShape",
+                               "|b|Hands_1P|Hands_1PShape"]})
+        self.assertIsNone(colour.unambiguous("Hands_1PShape"))
+
+    def test_nothing_resolves_to_nothing(self):
+        colour.cmds = self.Resolver({})
+        self.assertIsNone(colour.unambiguous("gone"))
+
+
 class Marker(unittest.TestCase):
     """Identity by attribute, the same schema as `mayaWeapon` on the weapon
     geometry and `rigPickerRoot` on the rig manifests."""
@@ -206,6 +261,7 @@ class FakeCmds(object):
         self.engines = {}                      # material -> shading engine
         self.colours = {}                      # material -> rgb
         self.created = []
+        self.kinds = []
         self.forced = []
 
     # -- reads
@@ -249,6 +305,7 @@ class FakeCmds(object):
     def shadingNode(self, kind, **kwargs):
         name = kwargs.get("name", kind)
         self.created.append(name)
+        self.kinds.append(kind)
         self.ours.add(name)
         return name
 
