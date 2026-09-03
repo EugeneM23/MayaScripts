@@ -184,14 +184,38 @@ def ring_name(bone):
     return naming.leaf(bone) + CTRL_SUFFIX
 
 
-def ring_offset(length):
+def ring_offset(length, direction):
     """The control's local translate: the bone's midpoint. Pure.
 
-    It is a DAG child of the bone, whose own X is the bone axis -- measured
-    0.00 deg off on every counter segment of this skeleton family -- so the
-    midpoint is (length/2, 0, 0) and the ring's normal is local X.
+    `direction` is the bone's direction in its OWN frame, MEASURED -- never
+    assumed to be +X. Measured on Manny 2026-09-03, this skeleton family
+    runs its bones down both signs: **+X on the left arm and the right leg,
+    -X on the right arm and the left leg**. Assuming +X put four of the
+    eight controls a full bone length away, at t = -0.5, outside the bone
+    entirely -- 27.771 cm off on `upperarm_r`, 43.348 on `thigh_l`. The
+    animator saw it as "left builds fine, right is crooked".
+
+    A degenerate direction falls back to the bone's origin: a buried ring
+    beats a ring somewhere invented, which is the same call `fkrings`
+    already makes for a bone with no child.
     """
-    return (length / 2.0, 0.0, 0.0)
+    unit = om.MVector(*direction)
+    if unit.length() < 1e-9:
+        return (0.0, 0.0, 0.0)
+    unit = unit.normal() * (length / 2.0)
+    return (unit.x, unit.y, unit.z)
+
+
+def axis_sense(direction):
+    """+1 when the bone runs along the control's own +X, -1 when against.
+
+    The control's local X is its bone's own X, and because this skeleton
+    family runs its bones down both signs, `ring.rotateX` means the roll
+    about the BONE only up to this sign. Without it the manual term and the
+    automatic one pull opposite ways on half the segments, so fading
+    `autoTwist` would swing the joint instead of handing it over.
+    """
+    return -1.0 if direction[0] < 0.0 else 1.0
 
 
 def ring_radius(skin_radius, bone="", margin=_CTRL_MARGIN):
@@ -585,7 +609,7 @@ def find_ring(bone, limb, table=None):
     return None
 
 
-def _twist_ring(bone, radius, length, colour, with_auto):
+def _twist_ring(bone, radius, length, direction, colour, with_auto):
     """The manual control for one segment: create, seat, place, lock, tag.
 
     A DAG child of the BONE, because bones survive an FK/IK switch and the
@@ -598,7 +622,8 @@ def _twist_ring(bone, radius, length, colour, with_auto):
     ring = cmds.parent(ring, bone, relative=True)[0]
     ring = cmds.ls(ring, long=True)[0]
     _seat(ring)
-    cmds.setAttr(ring + ".translate", *ring_offset(length), type="double3")
+    cmds.setAttr(ring + ".translate", *ring_offset(length, direction),
+                 type="double3")
     cmds.setAttr(ring + ".rotate", 0.0, 0.0, 0.0, type="double3")
 
     cmds.addAttr(ring, longName=SEGMENT_ATTR, dataType="string")
@@ -670,7 +695,7 @@ def _auto_chain(joint, driver, weight, direction, rest=None):
     return [delta, quat, dot, norm, angle, scaled], scaled + ".output"
 
 
-def _drive(joint, weight, ring, auto_plug):
+def _drive(joint, weight, ring, auto_plug, sense=1.0):
     """Sum the automatic term, the animator's ring and the build-pose value.
 
     Returns (nodes, total) -- `total` the addDoubleLinear whose output the
@@ -710,7 +735,9 @@ def _drive(joint, weight, ring, auto_plug):
         manual = cmds.createNode("multDoubleLinear", name=names["manual"],
                                  skipSelect=True)
         cmds.connectAttr(ring + ".rotateX", manual + ".input1")
-        cmds.setAttr(manual + ".input2", weight)
+        # `sense` is what makes the ring pull the same way the automatic
+        # term does on a bone that runs down -X.
+        cmds.setAttr(manual + ".input2", weight * sense)
         made.append(manual)
         if summed:
             blend = cmds.createNode("addDoubleLinear", name=names["blend"],
@@ -730,7 +757,7 @@ def _drive(joint, weight, ring, auto_plug):
 
 
 def _network(joint, driver, weight, direction, rest=None, ring=None,
-             with_auto=True):
+             with_auto=True, sense=1.0):
     """One joint's whole chain. Returns (nodes, total).
 
     `with_auto` False builds the manual-only shape: a segment whose roll
@@ -741,7 +768,7 @@ def _network(joint, driver, weight, direction, rest=None, ring=None,
     auto_plug = None
     if with_auto:
         nodes, auto_plug = _auto_chain(joint, driver, weight, direction, rest)
-    driven, total = _drive(joint, weight, ring, auto_plug)
+    driven, total = _drive(joint, weight, ring, auto_plug, sense)
     return nodes + driven, total
 
 
@@ -821,6 +848,12 @@ def build(scene_map, limbs=None):
                 naming.leaf(bone)))
             continue
         along = span / length
+        # Three frames, and they are genuinely different. `along` is world;
+        # `local` is the DRIVER'S PARENT frame, which is where the delta
+        # operates; `own` is the BONE'S own frame, which is where the
+        # control lives -- and this skeleton family runs its bones down
+        # both signs of it.
+        own = _to_frame(along, bone)
         origin = _world_point(bone)
         positions = [(_world_point(j) - origin) * along / length
                      for j in joints]
@@ -848,7 +881,7 @@ def build(scene_map, limbs=None):
         driven = []
         ring = _twist_ring(bone, ring_radius(radii.get(segment.bone, 0.0)
                                              or length * 0.12, bone),
-                           length, fkrings.colour_for(segment.limb),
+                           length, own, fkrings.colour_for(segment.limb),
                            with_auto)
         created.append(ring)
         for joint, weight in zip(joints, fractions):
@@ -866,7 +899,8 @@ def build(scene_map, limbs=None):
                 continue
             nodes, total = _network(joint, driver, weight * choice.sign,
                                     local, rest=rest, ring=ring,
-                                    with_auto=with_auto)
+                                    with_auto=with_auto,
+                                    sense=axis_sense(own))
             cmds.setAttr(total + ".input2", cmds.getAttr(plug))
             cmds.connectAttr(total + ".output", plug, force=True)
             created.extend(nodes + _spliced_conversions(nodes))

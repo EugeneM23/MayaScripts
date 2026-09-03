@@ -511,21 +511,63 @@ class TestRingName(unittest.TestCase):
 
 
 class TestRingOffset(unittest.TestCase):
-    """The control sits at the bone's midpoint, in the bone's own frame,
-    whose X is the bone axis -- measured 0.00 deg off on every counter
-    segment of this skeleton family."""
+    """The control sits at the bone's midpoint, in the bone's OWN frame --
+    and the direction is MEASURED, never assumed to be +X.
 
-    def test_the_midpoint_along_x(self):
-        self.assertEqual(twist.ring_offset(30.0), (15.0, 0.0, 0.0))
+    Measured on Manny 2026-09-03: the bone runs along +X on the left arm and
+    the right leg, and along -X on the right arm and the left leg. Assuming
+    +X put four of the eight controls a full bone length away, outside the
+    bone entirely (t = -0.5), 27.771 cm off on upperarm_r and 43.348 on
+    thigh_l -- the animator saw it as "left builds fine, right is crooked"."""
+
+    def test_the_midpoint_along_a_positive_x_bone(self):
+        self.assertEqual(twist.ring_offset(30.0, (1.0, 0.0, 0.0)),
+                         (15.0, 0.0, 0.0))
+
+    def test_the_midpoint_along_a_NEGATIVE_x_bone(self):
+        self.assertEqual(twist.ring_offset(30.0, (-1.0, 0.0, 0.0)),
+                         (-15.0, 0.0, 0.0))
 
     def test_a_zero_length_bone_sits_on_the_origin(self):
-        self.assertEqual(twist.ring_offset(0.0), (0.0, 0.0, 0.0))
+        self.assertEqual(twist.ring_offset(0.0, (-1.0, 0.0, 0.0)),
+                         (0.0, 0.0, 0.0))
 
-    def test_it_never_leaves_the_bone_axis(self):
-        for length in (1.0, 12.5, 400.0):
-            offset = twist.ring_offset(length)
-            self.assertEqual(offset[1], 0.0)
-            self.assertEqual(offset[2], 0.0)
+    def test_the_direction_need_not_arrive_normalised(self):
+        offset = twist.ring_offset(30.0, (-2.0, 0.0, 0.0))
+        self.assertAlmostEqual(offset[0], -15.0, places=9)
+
+    def test_an_off_axis_direction_is_followed_not_snapped(self):
+        # thigh_l measured (-1.0000, -0.0017, 0.0000): the ring follows the
+        # bone's real midline rather than the nearest axis
+        offset = twist.ring_offset(100.0, (-1.0, -0.0017, 0.0))
+        self.assertLess(offset[0], -49.9)
+        self.assertLess(offset[1], 0.0)
+
+    def test_a_zero_direction_falls_back_to_the_origin(self):
+        self.assertEqual(twist.ring_offset(30.0, (0.0, 0.0, 0.0)),
+                         (0.0, 0.0, 0.0))
+
+
+class TestAxisSense(unittest.TestCase):
+    """The control's local X is its bone's own X, and this skeleton family
+    runs its bones down BOTH signs. So `ring.rotateX` means the roll about
+    the bone only up to this sign -- without it the manual term and the
+    automatic one pull opposite ways on half the segments."""
+
+    def test_a_positive_x_bone_keeps_the_sense(self):
+        self.assertEqual(twist.axis_sense((1.0, 0.0, 0.0)), 1.0)
+
+    def test_a_negative_x_bone_flips_it(self):
+        self.assertEqual(twist.axis_sense((-1.0, 0.0, 0.0)), -1.0)
+
+    def test_the_measured_manny_directions(self):
+        # left arm and right leg run +X, right arm and left leg run -X
+        self.assertEqual(twist.axis_sense((1.0, -0.0, 0.0)), 1.0)
+        self.assertEqual(twist.axis_sense((-1.0, 0.0, -0.0)), -1.0)
+        self.assertEqual(twist.axis_sense((-1.0, -0.0017, 0.0)), -1.0)
+
+    def test_a_degenerate_direction_keeps_the_sense(self):
+        self.assertEqual(twist.axis_sense((0.0, 1.0, 0.0)), 1.0)
 
 
 class TestRingRadius(unittest.TestCase):

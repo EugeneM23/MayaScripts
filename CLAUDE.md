@@ -796,10 +796,10 @@ the whip alive as plain animation. A manual-only network reaches
 
 The ring is **a DAG child of its own BONE** (bones survive an FK/IK switch; an
 FK controller would take the control down with it), local rotation identity so
-its X is the bone axis and `rotateX` is the innermost channel of the xyz order,
-at the bone's **midpoint**, radius from the skin through `fkrings` with an
-outward margin so it can be grabbed over the geometry. Every channel but
-`rotateX` is locked. It is **seated** like `attach.seat` does it — shear, both
+its X is the bone's own X and `rotateX` is the innermost channel of the xyz
+order, at the bone's **midpoint along the MEASURED bone direction**, radius from
+the skin through `fkrings` with an outward margin so it can be grabbed over the
+geometry. Every channel but `rotateX` is locked. It is **seated** like `attach.seat` does it — shear, both
 pivots, both pivot translates and `rotateAxis` zeroed (trap 32). Identity is
 `rigPickerTwistSegment` plus membership of `RigPicker_twist_<limb>`; `find_ring`
 never asks for the name, which Maya uniquifies on the second character.
@@ -821,7 +821,40 @@ while its joints turn 10 and 20 (it is a distributor, exactly as the automatic
 term is), and `autoTwist` gates a whole segment rather than one joint. All
 three were offered and accepted.
 
-Proof: `verify_twist_manual.py` — **green 2026-09-03, 0 of 68 gates failed**.
+**The bone axis runs down BOTH signs of local X, and assuming +X put four of
+the eight controls outside their bone** (2026-09-03, minutes after the first
+build: «твисты по левой стороне строятся нормально по правой криво»).
+Measured, the bone direction in each bone's OWN frame: **+X on
+`upperarm_l`/`lowerarm_l` and `thigh_r`/`calf_r`, −X on `upperarm_r`/
+`lowerarm_r` and `thigh_l`/`calf_l`** — not left versus right, arms and legs
+use opposite conventions per side. `ring_offset(length, direction)` follows the
+measured direction; before that it returned `(+length/2, 0, 0)` and four rings
+sat at **t = −0.5 along the bone, outside it entirely** — 27.771 cm off on
+`upperarm_r`, 43.348 on `thigh_l`. The twist joints and their fractions were
+right on both sides all along; only the placement was wrong.
+
+**`axis_sense` cancels the handedness `choice.sign` carries for the automatic
+term**, so the manual share is the signed distribution and nothing else:
+`manual = ring.rotateX × fraction`. That follows the convention
+`align_controllers` set — *equal values on both sides give a mirrored pose* —
+verified on all four pairs (a +30 ring moves both upper arms by
+**−20.000000**, both forearms by **+10.000000**) while the bones run down
+opposite signs. The deliberate consequence: on a −X segment the ring dials
+**against** the automatic term's reported number, which is the half that does
+not matter with the mesh in front of the animator.
+
+**And the FIXTURE is the lesson.** `verify_twist_manual.py` first built every
+bone along +X on both sides, so it could not see a control placed by assuming
++X. **A fixture more symmetric than the skeleton proves nothing about the
+skeleton.** It now carries Manny's actual signs and gates that all eight
+controls sit at t = +0.5 **and** that the two sides really do run down
+opposite signs, so the gate cannot pass by accident. A first version of the
+sense gate then failed on correct code by assuming the other convention (that
+setting the ring to the network's own roll reading reproduces the automatic
+term); it was replaced by the mirror invariant, which is what the toolset
+actually promises.
+
+Proof: `verify_twist_manual.py` — **green 2026-09-03, 0 of 88 gates failed**.
 It runs a REAL `twist.build` in **mayapy standalone on a skeleton it builds
 itself**, never in the animator's scene: this feature creates rings, attributes
 and nodes, and a read-only walk cannot prove any of it, while building for real

@@ -79,23 +79,34 @@ CHAIN = [
     ("neck_01", "spine_05", 8.0),
     ("head", "neck_01", 8.0),
 ]
+# Measured on Manny 2026-09-03: the bone runs along +X on the LEFT ARM and
+# the RIGHT LEG, and along -X on the RIGHT ARM and the LEFT LEG. The first
+# version of this fixture ran every bone along +X on both sides, so it could
+# not see a control placed by assuming +X -- and four of the eight landed a
+# full bone length outside their bone in the animator's scene. A fixture that
+# is more symmetric than the skeleton proves nothing about the skeleton.
+ARM_SIGN = {"l": 1.0, "r": -1.0}
+LEG_SIGN = {"l": -1.0, "r": 1.0}
+
 for side in ("l", "r"):
+    arm = ARM_SIGN[side]
+    leg = LEG_SIGN[side]
     CHAIN += [
-        ("clavicle_%s" % side, "spine_05", 12.0),
-        ("upperarm_%s" % side, "clavicle_%s" % side, 30.0),
-        ("upperarm_twist_01_%s" % side, "upperarm_%s" % side, 10.0),
-        ("upperarm_twist_02_%s" % side, "upperarm_%s" % side, 20.0),
-        ("lowerarm_%s" % side, "upperarm_%s" % side, 30.0),
-        ("lowerarm_twist_01_%s" % side, "lowerarm_%s" % side, 8.0),
-        ("lowerarm_twist_02_%s" % side, "lowerarm_%s" % side, 16.0),
-        ("hand_%s" % side, "lowerarm_%s" % side, 24.0),
-        ("thigh_%s" % side, "pelvis", 40.0),
-        ("thigh_twist_01_%s" % side, "thigh_%s" % side, 13.333333),
-        ("thigh_twist_02_%s" % side, "thigh_%s" % side, 26.666667),
-        ("calf_%s" % side, "thigh_%s" % side, 40.0),
-        ("calf_twist_01_%s" % side, "calf_%s" % side, 6.666667),
-        ("calf_twist_02_%s" % side, "calf_%s" % side, 13.333333),
-        ("foot_%s" % side, "calf_%s" % side, 20.0),
+        ("clavicle_%s" % side, "spine_05", arm * 12.0),
+        ("upperarm_%s" % side, "clavicle_%s" % side, arm * 30.0),
+        ("upperarm_twist_01_%s" % side, "upperarm_%s" % side, arm * 10.0),
+        ("upperarm_twist_02_%s" % side, "upperarm_%s" % side, arm * 20.0),
+        ("lowerarm_%s" % side, "upperarm_%s" % side, arm * 30.0),
+        ("lowerarm_twist_01_%s" % side, "lowerarm_%s" % side, arm * 8.0),
+        ("lowerarm_twist_02_%s" % side, "lowerarm_%s" % side, arm * 16.0),
+        ("hand_%s" % side, "lowerarm_%s" % side, arm * 24.0),
+        ("thigh_%s" % side, "pelvis", leg * 40.0),
+        ("thigh_twist_01_%s" % side, "thigh_%s" % side, leg * 13.333333),
+        ("thigh_twist_02_%s" % side, "thigh_%s" % side, leg * 26.666667),
+        ("calf_%s" % side, "thigh_%s" % side, leg * 40.0),
+        ("calf_twist_01_%s" % side, "calf_%s" % side, leg * 6.666667),
+        ("calf_twist_02_%s" % side, "calf_%s" % side, leg * 13.333333),
+        ("foot_%s" % side, "calf_%s" % side, leg * 20.0),
     ]
 
 paths = {}
@@ -125,9 +136,16 @@ print("built %d joints under %s" % (len(paths), ROOT))
 # The refused segment: roll the right upper arm well past 180 degrees.
 cmds.setKeyframe(paths["upperarm_r"] + ".rotateX", time=0, value=0.0)
 cmds.setKeyframe(paths["upperarm_r"] + ".rotateX", time=30, value=300.0)
-# and a modest, safe roll on the left, to prove auto still runs
-cmds.setKeyframe(paths["upperarm_l"] + ".rotateX", time=0, value=0.0)
-cmds.setKeyframe(paths["upperarm_l"] + ".rotateX", time=30, value=60.0)
+# Modest, safe rolls everywhere else, so nothing is refused AND every
+# segment the sense gate looks at actually rolls. A comparison of 0 against
+# 0 cannot fail, and that is the trap that let the placement bug ship.
+for _driver, _amount in (("upperarm_l", 60.0),     # +X counter
+                         ("thigh_l", -70.0),       # -X counter
+                         ("hand_l", 40.0),         # +X follow
+                         ("hand_r", 50.0),         # -X follow
+                         ("foot_r", -35.0)):       # +X follow
+    cmds.setKeyframe(paths[_driver] + ".rotateX", time=0, value=0.0)
+    cmds.setKeyframe(paths[_driver] + ".rotateX", time=30, value=_amount)
 cmds.currentTime(0)
 
 # Exactly how picker_window builds it: one prefix for the whole skeleton,
@@ -198,6 +216,31 @@ for bone in ("upperarm_l", "lowerarm_r", "thigh_l"):
          not cmds.getAttr(ring + ".rotateX", lock=True)
          and cmds.getAttr(ring + ".rotateX", keyable=True))
 
+hdr("EVERY CONTROL SITS ON ITS BONE -- the gate that was missing")
+print("  Measured ALONG the bone: t must be +0.5 on all eight, whichever")
+print("  sign of local X the bone runs down. Assuming +X put four of them")
+print("  at t = -0.5, outside the bone entirely.")
+print("")
+
+
+def world(node):
+    import maya.api.OpenMaya as om
+    return om.MVector(*cmds.xform(node, query=True, worldSpace=True,
+                                  translation=True))
+
+
+TIP_OF = {seg.bone: seg.tip for seg in twist.SEGMENTS}
+for segment in twist.segments(scene_map):
+    bone_path = scene_map[segment.bone]
+    span = world(scene_map[TIP_OF[segment.bone]]) - world(bone_path)
+    length = span.length()
+    along = span / length
+    t = (world(rings[segment.bone]) - world(bone_path)) * along / length
+    sign = "+X" if cmds.getAttr(
+        scene_map[TIP_OF[segment.bone]] + ".translateX") > 0 else "-X"
+    gate("%s (%s bone) control is at t=+0.5 on its bone"
+         % (segment.bone, sign), close(t, 0.5, 1e-4), "t = %+.6f" % t)
+
 hdr("THE AUTO DIAL EXISTS ONLY WHERE THERE IS AUTO")
 for bone, wanted in (("upperarm_l", True), ("lowerarm_l", True),
                      ("thigh_r", True), ("upperarm_r", False)):
@@ -231,9 +274,10 @@ cmds.setAttr(rings["upperarm_l"] + ".rotateX", 0.0)
 # expectation is COMPUTED from the geometry the run actually measured -- a
 # number written in by hand fails on correct code the moment the fixture
 # moves, which is how the first version of this gate failed.
-LENGTH = cmds.getAttr(scene_map["hand_l"] + ".translateX")
+LENGTH = abs(cmds.getAttr(scene_map["hand_l"] + ".translateX"))
 for leaf in ("lowerarm_twist_01_l", "lowerarm_twist_02_l"):
-    fraction = cmds.getAttr(scene_map[leaf] + ".translateX") / LENGTH
+    fraction = abs(cmds.getAttr(scene_map[leaf]
+                                + ".translateX")) / LENGTH
     wanted = 30.0 * fraction
     before = cmds.getAttr(scene_map[leaf] + ".rotateX")
     cmds.setAttr(rings["lowerarm_l"] + ".rotateX", 30.0)
@@ -260,6 +304,55 @@ gate("with auto=0 the ring still drives the joint",
 cmds.setAttr(rings["upperarm_l"] + ".rotateX", 0.0)
 cmds.setAttr(rings["upperarm_l"] + "." + twist.AUTO_ATTR, 1.0)
 cmds.currentTime(0)
+
+hdr("THE RING IS IN THE JOINT\'S OWN CHANNEL SENSE, SO IT MIRRORS")
+print("  This skeleton family runs its bones down BOTH signs of local X, and")
+print("  the toolset\'s standing convention is the one align_controllers set:")
+print("  equal values on both sides give a MIRRORED pose. The control\'s own X")
+print("  is its bone\'s own X, which mirrors across the body, so the manual")
+print("  share is the signed distribution and nothing else -- axis_sense is")
+print("  what cancels the handedness `choice.sign` carries for the automatic")
+print("  term. The consequence, deliberate: on a -X segment the ring dials")
+print("  AGAINST the automatic term\'s number, and with the mesh in front of")
+print("  the animator that is the half that matters.")
+print("")
+
+MIRROR = (("upperarm_l", "upperarm_r", "upperarm_twist_01_%s", "counter"),
+          ("lowerarm_l", "lowerarm_r", "lowerarm_twist_01_%s", "follow"),
+          ("thigh_l", "thigh_r", "thigh_twist_01_%s", "counter"),
+          ("calf_l", "calf_r", "calf_twist_01_%s", "follow"))
+
+for left_bone, right_bone, joint_pattern, kind in MIRROR:
+    left_joint = scene_map[joint_pattern % "l"]
+    right_joint = scene_map[joint_pattern % "r"]
+    base_l = cmds.getAttr(left_joint + ".rotateX")
+    base_r = cmds.getAttr(right_joint + ".rotateX")
+    cmds.setAttr(rings[left_bone] + ".rotateX", 30.0)
+    cmds.setAttr(rings[right_bone] + ".rotateX", 30.0)
+    moved_l = cmds.getAttr(left_joint + ".rotateX") - base_l
+    moved_r = cmds.getAttr(right_joint + ".rotateX") - base_r
+    cmds.setAttr(rings[left_bone] + ".rotateX", 0.0)
+    cmds.setAttr(rings[right_bone] + ".rotateX", 0.0)
+    sign_l = "+X" if cmds.getAttr(
+        scene_map[TIP_OF[left_bone]] + ".translateX") > 0 else "-X"
+    sign_r = "+X" if cmds.getAttr(
+        scene_map[TIP_OF[right_bone]] + ".translateX") > 0 else "-X"
+    gate("%s/%s (%s vs %s): +30 on both mirrors"
+         % (left_bone, right_bone, sign_l, sign_r),
+         close(moved_l, moved_r, 1e-4),
+         "%+.6f vs %+.6f" % (moved_l, moved_r))
+    gate("%s/%s: the bones really do run down opposite signs"
+         % (left_bone, right_bone), sign_l != sign_r,
+         "%s / %s" % (sign_l, sign_r))
+    # and the share is the signed distribution, with no handedness leak
+    tip = scene_map[TIP_OF[right_bone]]
+    length = abs(cmds.getAttr(tip + ".translateX"))
+    t = abs(cmds.getAttr(right_joint + ".translateX")) / length
+    wanted = 30.0 * (t if kind == "follow" else -(1.0 - t))
+    gate("%s: the share is exactly %s of the ring"
+         % (right_bone, "+t" if kind == "follow" else "-(1-t)"),
+         close(moved_r, wanted, 1e-4),
+         "%+.6f, wanted %+.6f (t=%.3f)" % (moved_r, wanted, t))
 
 hdr("THE REFUSED SEGMENT IS MANUAL ONLY, NOT SKIPPED")
 # From the REAL path, so the names carry the skeleton's prefix. The first

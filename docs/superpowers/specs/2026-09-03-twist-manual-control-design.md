@@ -11,6 +11,11 @@ Read `2026-09-03-twist-roll-limit-design.md` first: it records why the
 automatic roll cannot be made to work past ±180°, which is what makes a manual
 path necessary rather than a convenience.
 
+**And read the ADDENDUM at the end before acting on the main text**: the bone
+axis turned out to run down BOTH signs of local X on this skeleton family,
+which corrects what this text says about the ring's placement and about the
+sense its rotation carries.
+
 ## The four decisions
 
 The animator chose all four:
@@ -137,3 +142,56 @@ Picker buttons (decision 3 — added later if the rings prove hard to grab),
 per-joint rings, carrying the dial across a rebuild, and any change to the
 automatic roll's mathematics: the roll-limit spec records why two candidate
 reformulations were refuted by measurement.
+
+## Addendum, the same evening — the bone axis runs down BOTH signs
+
+The animator, minutes after the first build: «твисты по левой стороне
+строятся нормально по правой криво». Measured in their scene, the bone
+direction in each bone's OWN frame:
+
+| segment | axis |
+|---|---|
+| `upperarm_l`, `lowerarm_l` | **+X** |
+| `upperarm_r`, `lowerarm_r` | **−X** |
+| `thigh_l`, `calf_l` | **−X** |
+| `thigh_r`, `calf_r` | **+X** |
+
+Not left versus right — **arms and legs use opposite conventions per side**.
+`ring_offset` returned `(+length/2, 0, 0)` unconditionally, so four of the
+eight controls landed at **t = −0.5 along the bone, outside it entirely**:
+27.771 cm off on `upperarm_r`, 43.348 on `thigh_l`. The twist joints and their
+fractions were correct on both sides all along; only the ring's placement was
+wrong.
+
+`ring_offset(length, direction)` now follows the **measured** direction, and a
+degenerate direction falls back to the bone's origin — the same call `fkrings`
+makes for a bone with no child.
+
+**The fixture is the real lesson.** `verify_twist_manual.py` built every bone
+along +X on both sides, so it could not see a control placed by assuming +X.
+A fixture more symmetric than the skeleton proves nothing about the skeleton.
+It now carries Manny's actual signs (`ARM_SIGN`, `LEG_SIGN`) and gates that
+**all eight** controls sit at t = +0.5, plus that the two sides really do run
+down opposite signs — so the gate cannot pass by accident.
+
+### And the sense the ring turns in
+
+The control's own X is its bone's own X, so on half the segments it points
+against the bone. `axis_sense` cancels the handedness that `choice.sign`
+carries for the automatic term, leaving the manual share as **the signed
+distribution and nothing else**: `manual = ring.rotateX × fraction`.
+
+That choice follows the toolset's standing convention, set by
+`align_controllers`: *equal values on both sides give a mirrored pose*. Verified
+on all four pairs — a +30 ring on both sides moves the two joints identically
+(−20.000000 / −20.000000 on the upper arms, +10.000000 / +10.000000 on the
+forearms) while the bones run down opposite signs.
+
+**The deliberate consequence:** on a −X segment the ring dials *against* the
+automatic term's reported number. With the mesh in front of the animator that
+is the half that matters — they drag until the shoulder looks right, and they
+never compute against the network's angle. A first version of the gate assumed
+the opposite convention (that setting the ring to the network's own roll
+reading reproduces the automatic term) and failed on correct code; it was
+replaced by the mirror invariant, which is the property the toolset actually
+promises.
