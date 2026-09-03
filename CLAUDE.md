@@ -765,6 +765,85 @@ network's own `delta`/`dot`/`weight` nodes before they are deleted) — with the
 refusal in place a freshly built rig can never wrap, so that would only patch
 files already damaged.
 
+**The twist joints have MANUAL controls too** (2026-09-03, the same evening:
+«А можем ли мы сделать для твистов дополнительные контроллы и там где не
+справляется авто вращение вращать твисты руками?»). One ring per SEGMENT —
+eight of them — whose `rotateX` is distributed to that segment's twist joints
+by **the same signed fractions `weights()` computes for the automatic term**.
+That is the whole reason it is one ring per segment and not one per joint: the
+distribution cannot drift between the two paths, because there is one number.
+Spec: `docs/superpowers/specs/2026-09-03-twist-manual-control-design.md`.
+
+The network's last node was already an `addDoubleLinear` holding a constant, so
+the addition point existed. Per joint: `gate = auto × ring.autoTwist`,
+`manual = ring.rotateX × fraction`, `blend = gate + manual`, then the old
+`total = blend + build-pose value`. Three nodes a joint, eight rings; 112 nodes
+becomes about 170.
+
+**A refused segment gets the same shape minus the automatic term** — no
+`delta`/`quat`/`dot`/`norm`/`angle`/`weight`/`gate` at all, just
+`manual` + `total`, and **no `autoTwist` attribute**, because a dial over a
+term that does not exist would be a lie and its absence is how the ring says
+the segment is the animator's alone. `_drive` **refuses by name** when neither
+source is present rather than connecting from nothing.
+
+**And this closes the gap the roll limit left open.** `build` bakes any
+standing network before rebuilding, and the refusal then *skipped* the segment
+— so a rebuild baked the old 223° whip into keys and refused to re-rig, leaving
+the whip alive as plain animation. A manual-only network reaches
+`_clear_channel`, which deletes those keys. The refusal changed meaning from
+**skip** to **manual only**, and the message says `MANUAL ONLY, no auto:`.
+
+The ring is **a DAG child of its own BONE** (bones survive an FK/IK switch; an
+FK controller would take the control down with it), local rotation identity so
+its X is the bone axis and `rotateX` is the innermost channel of the xyz order,
+at the bone's **midpoint**, radius from the skin through `fkrings` with an
+outward margin so it can be grabbed over the geometry. Every channel but
+`rotateX` is locked. It is **seated** like `attach.seat` does it — shear, both
+pivots, both pivot translates and `rotateAxis` zeroed (trap 32). Identity is
+`rigPickerTwistSegment` plus membership of `RigPicker_twist_<limb>`; `find_ring`
+never asks for the name, which Maya uniquifies on the second character.
+`segment.limb` **is** a bodymap region (`arm_l`, `leg_r`), so the ring wears its
+limb's own colour with no lookup.
+
+Ring creation lives in `fkrings` (`twist_ring`, `measured_radii`) because that
+module already owns ring sizing and dressing for the whole toolset — no second
+implementation of sizes. The new `twist → fkrings` edge is acyclic.
+
+Nothing else changed: no picker buttons (the animator chose viewport selection),
+and `bake` already samples the driven channel, so the sum lands in the keys by
+itself and the rings die as manifest members.
+
+**Known cost, stated rather than solved:** Build always tears down and
+rebuilds, so a dialled ring is baked into the joints and the fresh ring starts
+at zero — **dial the twists after the last Build**. Also the ring turns +30
+while its joints turn 10 and 20 (it is a distributor, exactly as the automatic
+term is), and `autoTwist` gates a whole segment rather than one joint. All
+three were offered and accepted.
+
+Proof: `verify_twist_manual.py` — **green 2026-09-03, 0 of 68 gates failed**.
+It runs a REAL `twist.build` in **mayapy standalone on a skeleton it builds
+itself**, never in the animator's scene: this feature creates rings, attributes
+and nodes, and a read-only walk cannot prove any of it, while building for real
+beside the animator's rig is what `verify_two_characters.py` refuses to do.
+Measured: the counter distribution exactly **−20.000000 / −10.000000** for a
++30 ring, follow **+10.000000 / +20.000000**, `autoTwist` 0 removing the
+automatic contribution to **0.000000000** while the ring still drives
+(−10.000000), the refused joint **not following its driver's 300° roll (range
+0.000000000)** against a control that the left joint does follow (40.000000),
+and the bake reproducing every sampled frame to **0.000000000** while removing
+198 nodes and all eight rings. Two fixture lessons from getting it green, both
+CLAUDE.md's own in miniature: expectations are **computed from the geometry the
+run measured** (a hand-written +1/3 failed on correct code once the fixture's
+forearm was 24 long, not 30), and `node_names` must be asked for the **real
+prefixed path** — the first version asked for unprefixed names that do not
+exist either way, so the gate "no automatic chain was created" **could not
+fail**. Three positive controls were added for exactly that reason.
+**`mayapy` standalone does not auto-load `matrixNodes`/`quatNodes`**, so
+`quatNormalize` comes back an unknown node type and the wiring dies on a
+missing destination attribute; interactive Maya loads them, which is why the
+module needs no guard.
+
 Not built: FK controllers on the fingers (dropped 2026-08-18, "на время");
 spine IK (removed, see above) and neck IK; per-chain FK bake from the UI
 (Switch does it internally); docking; mirror-select; the pose-snapshot

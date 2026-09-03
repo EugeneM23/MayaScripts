@@ -275,6 +275,29 @@ def _make_ring(name, radius, normal, colour, center=(0.0, 0.0, 0.0)):
     return ring
 
 
+def twist_ring(name, radius, colour):
+    """A free ring for a twist control, encircling its own local X.
+
+    Unlike `_dress_knots`, which attaches a shape to an OverRig knot, the
+    twist control is a transform of its own parented under a BONE -- so this
+    hands the caller a free transform to parent, place and lock. Same circle
+    and same styling as every other ring in the toolset: one place makes
+    them, or they drift apart.
+    """
+    return _make_ring(name, radius, (1.0, 0.0, 0.0), colour)
+
+
+def measured_radii(scene_map):
+    """{joint: ring radius} measured from the skinned mesh.
+
+    The public face of `_final_radii` for a caller that wants the sizes
+    without dressing anything -- `twist.build` asks for them to size its
+    manual controls against the same skin the FK rings are sized against.
+    """
+    radii, _guessed, _skinned = _final_radii(scene_map)
+    return radii
+
+
 def _bone_end_local(knot, bone):
     """The bone's far end (its first joint child) in the knot's local space.
 

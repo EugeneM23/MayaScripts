@@ -207,9 +207,10 @@ class TestAxisChoice(unittest.TestCase):
 
 class TestNodeNames(unittest.TestCase):
 
-    def test_seven_distinct_names_derived_from_the_joint(self):
+    def test_a_distinct_name_per_role_derived_from_the_joint(self):
         names = twist.node_names("|root|lowerarm_twist_01_l")
-        self.assertEqual(len(set(names.values())), 7)
+        self.assertEqual(len(set(names.values())), len(twist._ROLES))
+        self.assertEqual(set(names), set(twist._ROLES))
         for name in names.values():
             self.assertTrue(name.startswith("lowerarm_twist_01_l_tw"))
 
@@ -482,3 +483,144 @@ class TestAnchored(unittest.TestCase):
         # 516 degrees of span wraps wherever the zero sits
         shifted = twist.anchored([-309.6, 0.0, 206.6], 1)
         self.assertGreater(twist.excursion(shifted), 0.0)
+
+
+class TestRingName(unittest.TestCase):
+    """The readable name a NEW twist control gets. Never searched for --
+    Maya uniquifies it on the second character. See
+    docs/superpowers/specs/2026-09-03-twist-manual-control-design.md"""
+
+    def test_from_a_leaf(self):
+        self.assertEqual(twist.ring_name("upperarm_r"),
+                         "upperarm_r_twist_ctrl")
+
+    def test_from_a_long_path(self):
+        self.assertEqual(twist.ring_name("|root|pelvis|upperarm_l"),
+                         "upperarm_l_twist_ctrl")
+
+    def test_a_namespace_is_dropped_with_the_path(self):
+        self.assertEqual(twist.ring_name("|ns:root|ns:thigh_l"),
+                         "thigh_l_twist_ctrl")
+
+    def test_it_is_a_legal_maya_name(self):
+        for bone in ("upperarm_l", "lowerarm_r", "calf_l"):
+            name = twist.ring_name(bone)
+            self.assertTrue(name[0].isalpha(), name)
+            self.assertTrue(all(ch.isalnum() or ch == "_" for ch in name),
+                            name)
+
+
+class TestRingOffset(unittest.TestCase):
+    """The control sits at the bone's midpoint, in the bone's own frame,
+    whose X is the bone axis -- measured 0.00 deg off on every counter
+    segment of this skeleton family."""
+
+    def test_the_midpoint_along_x(self):
+        self.assertEqual(twist.ring_offset(30.0), (15.0, 0.0, 0.0))
+
+    def test_a_zero_length_bone_sits_on_the_origin(self):
+        self.assertEqual(twist.ring_offset(0.0), (0.0, 0.0, 0.0))
+
+    def test_it_never_leaves_the_bone_axis(self):
+        for length in (1.0, 12.5, 400.0):
+            offset = twist.ring_offset(length)
+            self.assertEqual(offset[1], 0.0)
+            self.assertEqual(offset[2], 0.0)
+
+
+class TestRingRadius(unittest.TestCase):
+    """Outside the skin so the ring can be grabbed over the geometry. The
+    margin rides a correction table like fkrings._SCALE, held to the same
+    standard: chosen from viewport captures, not on paper."""
+
+    def test_the_margin_pushes_it_outside_the_skin(self):
+        self.assertGreater(twist.ring_radius(10.0, "upperarm_l"), 10.0)
+
+    def test_a_zero_radius_stays_zero(self):
+        self.assertEqual(twist.ring_radius(0.0, "upperarm_l"), 0.0)
+
+    def test_a_negative_radius_is_clamped(self):
+        self.assertEqual(twist.ring_radius(-5.0, "upperarm_l"), 0.0)
+
+    def test_the_margin_is_a_parameter(self):
+        self.assertAlmostEqual(twist.ring_radius(10.0, "upperarm_l",
+                                                 margin=2.0),
+                               20.0, places=9)
+
+    def test_a_correction_entry_is_applied(self):
+        original = dict(twist._CTRL_SCALE)
+        try:
+            twist._CTRL_SCALE["upperarm_l"] = 0.5
+            self.assertAlmostEqual(
+                twist.ring_radius(10.0, "upperarm_l", margin=1.0), 5.0,
+                places=9)
+            # and a bone with no entry is untouched
+            self.assertAlmostEqual(
+                twist.ring_radius(10.0, "lowerarm_l", margin=1.0), 10.0,
+                places=9)
+        finally:
+            twist._CTRL_SCALE.clear()
+            twist._CTRL_SCALE.update(original)
+
+    def test_the_table_takes_a_leaf_from_a_long_path(self):
+        original = dict(twist._CTRL_SCALE)
+        try:
+            twist._CTRL_SCALE["thigh_r"] = 0.25
+            self.assertAlmostEqual(
+                twist.ring_radius(8.0, "|root|pelvis|thigh_r", margin=1.0),
+                2.0, places=9)
+        finally:
+            twist._CTRL_SCALE.clear()
+            twist._CTRL_SCALE.update(original)
+
+
+class TestLockedChannels(unittest.TestCase):
+    """The control does one thing: roll about the bone axis."""
+
+    def test_rotate_x_is_never_locked(self):
+        self.assertNotIn("rotateX", twist.LOCKED_CHANNELS)
+
+    def test_the_other_two_rotates_are_locked(self):
+        self.assertIn("rotateY", twist.LOCKED_CHANNELS)
+        self.assertIn("rotateZ", twist.LOCKED_CHANNELS)
+
+    def test_translate_and_scale_are_locked(self):
+        for axis in "XYZ":
+            self.assertIn("translate" + axis, twist.LOCKED_CHANNELS)
+            self.assertIn("scale" + axis, twist.LOCKED_CHANNELS)
+
+    def test_no_channel_is_listed_twice(self):
+        self.assertEqual(len(twist.LOCKED_CHANNELS),
+                         len(set(twist.LOCKED_CHANNELS)))
+
+
+class TestAutoAttributeWanted(unittest.TestCase):
+    """The autoTwist dial is created only where there IS an automatic term.
+    On a refused segment it would claim to affect something that does not
+    exist, and its absence is how the ring says the segment is yours alone."""
+
+    def test_a_rigged_segment_gets_the_dial(self):
+        self.assertTrue(twist.wants_auto_dial(None))
+
+    def test_a_refused_segment_does_not(self):
+        self.assertFalse(twist.wants_auto_dial("the roll reaches 473 deg"))
+
+    def test_an_empty_reason_is_not_a_refusal(self):
+        self.assertTrue(twist.wants_auto_dial(""))
+
+
+class TestDriveNeedsASource(unittest.TestCase):
+    """A twist joint needs an automatic term, a control, or both. Neither is
+    a programming error, not a channel to leave dangling -- `_drive` would
+    otherwise connect from None and crash somewhere less informative."""
+
+    def test_neither_source_is_refused_by_name(self):
+        with self.assertRaises(ValueError) as caught:
+            twist._drive("|root|upperarm_twist_01_r", -0.5, None, None)
+        self.assertIn("upperarm_twist_01_r", str(caught.exception))
+
+    def test_the_message_says_what_is_missing(self):
+        with self.assertRaises(ValueError) as caught:
+            twist._drive("thigh_twist_01_l", 0.5, None, None)
+        self.assertIn("automatic term", str(caught.exception))
+        self.assertIn("control", str(caught.exception))

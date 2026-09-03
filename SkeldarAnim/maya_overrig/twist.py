@@ -22,7 +22,7 @@ from collections import namedtuple
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 
-from maya_overrig import manifest, naming, overrig
+from maya_overrig import fkrings, manifest, naming, overrig
 
 SET_PREFIX = manifest.TWIST_PREFIX
 
@@ -68,6 +68,29 @@ _AXIS_TOLERANCE = 0.9848             # cos(10 degrees)
 # canonicalises the sign before that, so a roll past this arrives as a 360
 # degree step in one frame. See the 2026-09-03-twist-roll-limit spec.
 ROLL_WINDOW = 180.0
+
+# The manual control: one ring per SEGMENT, its roll distributed to that
+# segment's twist joints by the SAME measured fractions the automatic term
+# uses -- so distribution cannot drift between the two paths, because there
+# is one number. Spec: 2026-09-03-twist-manual-control-design.md
+CTRL_SUFFIX = "_twist_ctrl"
+SEGMENT_ATTR = "rigPickerTwistSegment"   # identity, never the name (uniquified)
+AUTO_ATTR = "autoTwist"                  # the 0..1 dial on the automatic term
+
+# The control does one thing: roll about the bone axis. rotateX is the
+# innermost channel of the xyz order, which is the only way a rotate channel
+# is a roll about the bone rather than a turn about the parent.
+LOCKED_CHANNELS = ("translateX", "translateY", "translateZ",
+                   "rotateY", "rotateZ",
+                   "scaleX", "scaleY", "scaleZ", "visibility")
+
+# Outward of the skin so the ring can be grabbed over the geometry, and a
+# per-bone escape hatch like fkrings._SCALE. Empty until an animator asks --
+# and its entries are held to that table's standard: chosen by looking at
+# viewport captures, never on paper.
+_CTRL_MARGIN = 1.25
+_CTRL_SCALE = {}
+
 _PATTERN = re.compile(r"_twist_(\d+)(?:_|$)", re.IGNORECASE)
 
 
@@ -149,6 +172,46 @@ def weights(names, positions, kind):
         weight = position if kind == FOLLOW else -(1.0 - position)
         out.append(_WEIGHT.get(naming.leaf(name), weight))
     return out
+
+
+def ring_name(bone):
+    """The readable name a NEW twist control gets. Pure.
+
+    For the outliner only. Never searched for: Maya uniquifies it to
+    `..._twist_ctrl1` on the second character, which is the whole lesson of
+    the active-character work -- `find_ring` asks for SEGMENT_ATTR instead.
+    """
+    return naming.leaf(bone) + CTRL_SUFFIX
+
+
+def ring_offset(length):
+    """The control's local translate: the bone's midpoint. Pure.
+
+    It is a DAG child of the bone, whose own X is the bone axis -- measured
+    0.00 deg off on every counter segment of this skeleton family -- so the
+    midpoint is (length/2, 0, 0) and the ring's normal is local X.
+    """
+    return (length / 2.0, 0.0, 0.0)
+
+
+def ring_radius(skin_radius, bone="", margin=_CTRL_MARGIN):
+    """The control's radius: outside the skin, so it can be grabbed. Pure.
+
+    FK rings sit on the joints and this one sits mid-bone, so the margin
+    buys clearance over the geometry rather than over another control.
+    """
+    return (max(skin_radius, 0.0) * margin
+            * _CTRL_SCALE.get(naming.leaf(bone), 1.0))
+
+
+def wants_auto_dial(refusal):
+    """Whether this segment's control gets the autoTwist dial. Pure.
+
+    Only where there IS an automatic term. On a refused segment the dial
+    would claim to affect something that does not exist, and its absence is
+    how the ring says the segment is the animator's alone.
+    """
+    return not refusal
 
 
 def lift(values):
@@ -307,7 +370,8 @@ def axis_choice(local_axes, bone_dir, rotate_order):
 # whole build or bake, and a half-built network must undo with the rest of it.
 # ---------------------------------------------------------------------------
 
-_ROLES = ("delta", "quat", "dot", "norm", "angle", "weight", "rest")
+_ROLES = ("delta", "quat", "dot", "norm", "angle", "weight",
+          "gate", "manual", "blend", "rest")
 
 
 def node_names(joint):
@@ -486,12 +550,77 @@ def driver_rolls(driver, rest_inverse, direction, frames):
     return anchored(rolls, ordered.index(now))
 
 
-def _network(joint, driver, weight, direction, rest=None):
-    """Seven nodes computing `weight` x the driver's twist about `direction`.
+def _seat(node):
+    """Zero everything `cmds.parent` leaves behind, so local zero IS the
+    parent's origin.
+
+    Trap 32: `cmds.parent` compensates the child's pivot into
+    `rotatePivotTranslate`, so translate 0 / rotate 0 is NOT the parent --
+    a carrier once read zero on both and hung 28.5 cm off the hand. The
+    local matrix is the thing to check, not the two obvious channels.
+    """
+    for attr, count in (("shear", 3), ("rotateAxis", 3),
+                        ("rotatePivot", 3), ("rotatePivotTranslate", 3),
+                        ("scalePivot", 3), ("scalePivotTranslate", 3)):
+        plug = "{0}.{1}".format(node, attr)
+        if cmds.objExists(plug):
+            cmds.setAttr(plug, *([0.0] * count), type="double3")
+
+
+def find_ring(bone, limb, table=None):
+    """This character's manual control for one segment, by ATTRIBUTE.
+
+    Never by name: Maya uniquifies `upperarm_r_twist_ctrl` to `...ctrl1` on
+    the second character, which is the whole lesson of the active-character
+    work. Membership of this character's twist manifest scopes the search,
+    and SEGMENT_ATTR says which segment inside it.
+    """
+    leaf = naming.leaf(bone)
+    for member in manifest.members(manifest.KIND_TWIST, limb, table=table):
+        if not cmds.objExists(member):
+            continue
+        plug = "{0}.{1}".format(member, SEGMENT_ATTR)
+        if cmds.objExists(plug) and cmds.getAttr(plug) == leaf:
+            return member
+    return None
+
+
+def _twist_ring(bone, radius, length, colour, with_auto):
+    """The manual control for one segment: create, seat, place, lock, tag.
+
+    A DAG child of the BONE, because bones survive an FK/IK switch and the
+    FK controller a switch deletes would take the control with it. Its local
+    rotation is identity, so its own X is the bone axis and `rotateX` is the
+    innermost channel of the xyz order -- the only way a rotate channel is a
+    roll about the bone rather than a turn about its parent.
+    """
+    ring = fkrings.twist_ring(ring_name(bone), radius, colour)
+    ring = cmds.parent(ring, bone, relative=True)[0]
+    ring = cmds.ls(ring, long=True)[0]
+    _seat(ring)
+    cmds.setAttr(ring + ".translate", *ring_offset(length), type="double3")
+    cmds.setAttr(ring + ".rotate", 0.0, 0.0, 0.0, type="double3")
+
+    cmds.addAttr(ring, longName=SEGMENT_ATTR, dataType="string")
+    cmds.setAttr(ring + "." + SEGMENT_ATTR, naming.leaf(bone), type="string")
+    if with_auto:
+        cmds.addAttr(ring, longName=AUTO_ATTR, attributeType="double",
+                     min=0.0, max=1.0, defaultValue=1.0, keyable=True)
+
+    for channel in LOCKED_CHANNELS:
+        plug = "{0}.{1}".format(ring, channel)
+        if cmds.objExists(plug):
+            cmds.setAttr(plug, lock=True, keyable=False)
+    cmds.setAttr(ring + ".rotateX", keyable=True)
+    return ring
+
+
+def _auto_chain(joint, driver, weight, direction, rest=None):
+    """The automatic term: `weight` x the driver's twist about `direction`.
 
     `direction` is the bone axis in the DRIVER'S PARENT frame, which is the
-    frame the delta operates in. Returns the created nodes, the last of them
-    the addDoubleLinear whose output is meant for the joint's channel.
+    frame the delta operates in. Returns (nodes, output plug) -- the plug
+    carrying the weighted roll, for `_drive` to gate and sum.
 
     `rest` is the twist's zero, measured now when the caller has not already
     measured it -- and `build` has, so that its refusal and these nodes are
@@ -538,10 +667,82 @@ def _network(joint, driver, weight, direction, rest=None):
     cmds.connectAttr(angle + ".outputRotateX", scaled + ".input1")
     cmds.setAttr(scaled + ".input2", weight)
 
+    return [delta, quat, dot, norm, angle, scaled], scaled + ".output"
+
+
+def _drive(joint, weight, ring, auto_plug):
+    """Sum the automatic term, the animator's ring and the build-pose value.
+
+    Returns (nodes, total) -- `total` the addDoubleLinear whose output the
+    caller connects to the joint's channel, and whose `input2` the caller
+    sets to the value the channel holds at the build pose.
+
+    Three shapes, and the missing pieces are missing rather than neutral:
+
+    - auto and a ring  : gate the auto by the dial, add the ring's share
+    - auto alone       : what shipped before there were controls
+    - a ring alone     : a segment whose roll the network cannot express,
+                         so there is nothing to gate and no dial to gate it
+
+    `weight` multiplies BOTH terms -- the same signed fraction `weights()`
+    computed -- which is why one ring per segment cannot drift out of step
+    with the automatic distribution.
+    """
+    if not auto_plug and not ring:
+        raise ValueError(
+            "{0}: nothing would drive the channel - a twist joint needs an "
+            "automatic term, a control, or both".format(naming.leaf(joint)))
+
+    names = node_names(joint)
+    made = []
+    summed = auto_plug
+
+    if auto_plug and ring and cmds.attributeQuery(AUTO_ATTR, node=ring,
+                                                  exists=True):
+        gate = cmds.createNode("multDoubleLinear", name=names["gate"],
+                               skipSelect=True)
+        cmds.connectAttr(auto_plug, gate + ".input1")
+        cmds.connectAttr(ring + "." + AUTO_ATTR, gate + ".input2")
+        made.append(gate)
+        summed = gate + ".output"
+
+    if ring:
+        manual = cmds.createNode("multDoubleLinear", name=names["manual"],
+                                 skipSelect=True)
+        cmds.connectAttr(ring + ".rotateX", manual + ".input1")
+        cmds.setAttr(manual + ".input2", weight)
+        made.append(manual)
+        if summed:
+            blend = cmds.createNode("addDoubleLinear", name=names["blend"],
+                                    skipSelect=True)
+            cmds.connectAttr(summed, blend + ".input1")
+            cmds.connectAttr(manual + ".output", blend + ".input2")
+            made.append(blend)
+            summed = blend + ".output"
+        else:
+            summed = manual + ".output"
+
     total = cmds.createNode("addDoubleLinear", name=names["rest"],
                             skipSelect=True)
-    cmds.connectAttr(scaled + ".output", total + ".input1")
-    return [delta, quat, dot, norm, angle, scaled, total]
+    cmds.connectAttr(summed, total + ".input1")
+    made.append(total)
+    return made, total
+
+
+def _network(joint, driver, weight, direction, rest=None, ring=None,
+             with_auto=True):
+    """One joint's whole chain. Returns (nodes, total).
+
+    `with_auto` False builds the manual-only shape: a segment whose roll
+    leaves what `quatToEuler` can express gets no automatic term at all
+    rather than a wrapping one.
+    """
+    nodes = []
+    auto_plug = None
+    if with_auto:
+        nodes, auto_plug = _auto_chain(joint, driver, weight, direction, rest)
+    driven, total = _drive(joint, weight, ring, auto_plug)
+    return nodes + driven, total
 
 
 def _spliced_conversions(nodes):
@@ -591,8 +792,11 @@ def build(scene_map, limbs=None):
     start, end = overrig.frame_range()
     sample_frames = [start + step for step in range(int(end - start) + 1)]
 
+    radii = fkrings.measured_radii(scene_map)
+
     rigged = 0
     skipped = []
+    manual_only = []
     animated = []
     for segment in segments(scene_map):
         if segment.limb not in wanted:
@@ -631,12 +835,22 @@ def build(scene_map, limbs=None):
         # a channel driven by somebody else.
         rest = _local_matrix_inverse(driver)
         refusal = roll_refusal(driver_rolls(driver, rest, local, sample_frames))
+        with_auto = wants_auto_dial(refusal)
         if refusal:
-            skipped.append("{0} ({1})".format(naming.leaf(bone), refusal))
-            continue
+            manual_only.append("{0} ({1})".format(naming.leaf(bone), refusal))
 
+        # The manual control. One per segment, and it is built whether or
+        # not the automatic term is -- a refused segment is exactly where
+        # the animator needs it most. `segment.limb` IS a bodymap region
+        # ("arm_l", "leg_r"), so the ring wears its limb's own colour with
+        # no lookup.
         created = []
         driven = []
+        ring = _twist_ring(bone, ring_radius(radii.get(segment.bone, 0.0)
+                                             or length * 0.12, bone),
+                           length, fkrings.colour_for(segment.limb),
+                           with_auto)
+        created.append(ring)
         for joint, weight in zip(joints, fractions):
             choice = axis_choice(_local_axes(joint), along,
                                  cmds.getAttr(joint + ".rotateOrder"))
@@ -650,10 +864,11 @@ def build(scene_map, limbs=None):
                 skipped.append("{0} ({1})".format(naming.leaf(joint),
                                                   refusal))
                 continue
-            nodes = _network(joint, driver, weight * choice.sign, local,
-                                 rest=rest)
-            cmds.setAttr(nodes[-1] + ".input2", cmds.getAttr(plug))
-            cmds.connectAttr(nodes[-1] + ".output", plug, force=True)
+            nodes, total = _network(joint, driver, weight * choice.sign,
+                                    local, rest=rest, ring=ring,
+                                    with_auto=with_auto)
+            cmds.setAttr(total + ".input2", cmds.getAttr(plug))
+            cmds.connectAttr(total + ".output", plug, force=True)
             created.extend(nodes + _spliced_conversions(nodes))
             driven.append((joint, "r" + choice.channel))
             rigged += 1
@@ -663,15 +878,19 @@ def build(scene_map, limbs=None):
         if not _is_constant(driver):
             animated.append(naming.leaf(driver))
 
-    return rigged, _message_for(rigged, replaced, skipped, animated)
+    return rigged, _message_for(rigged, replaced, skipped, animated,
+                                manual_only)
 
 
-def _message_for(rigged, replaced, skipped, animated):
+def _message_for(rigged, replaced, skipped, animated, manual_only=()):
     if not rigged and not skipped:
         return "no twist joints on this skeleton"
     message = "{0} twist joint(s) rigged".format(rigged)
     if replaced:
         message += ", {0} replaced".format(replaced)
+    if manual_only:
+        message += (". MANUAL ONLY, no auto: "
+                    + "; ".join(manual_only[:3]))
     if skipped:
         message += ". Skipped: " + "; ".join(skipped[:4])
     if animated:
