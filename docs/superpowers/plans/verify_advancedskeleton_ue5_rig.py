@@ -106,7 +106,7 @@ try:
         q = rot(W1 * W0.inverse()); a = math.degrees(2 * math.acos(max(-1.0, min(1.0, q.w)))); s = math.sin(math.radians(a) / 2.0)
         ax = (q.x / s, q.y / s, q.z / s) if abs(s) > 1e-9 else (0, 0, 0)
         return a, ax
-    cmds.setAttr("FKIKLeg_L.FKIKBlend", 0)
+    for c in ("FKIKLeg_L", "FKIKArm_L", "FKIKArm_R"): cmds.setAttr(c + ".FKIKBlend", 0)   # the FK tests need FK limbs, whatever the animator left them at
     tests = [("FKShoulder_L", "upperarm_l", "YZ", 25), ("FKElbow_R", "lowerarm_r", "YZ", 25), ("FKWrist_L", "hand_l", "XYZ", 25),
              ("FKIndexFinger1_L", "index_01_l", "XYZ", 25), ("FKThumbFinger2_R", "thumb_02_r", "XYZ", 25), ("FKPinkyFinger3_L", "pinky_03_l", "XYZ", 25),
              ("FKHip_L", "thigh_l", "YZ", 25), ("FKKnee_L", "calf_l", "YZ", 25), ("FKAnkle_L", "foot_l", "XYZ", 25),
@@ -118,7 +118,7 @@ try:
             a, ax = axis_test(c, uej, axis)
             ok = (abs(abs(ax[i]) - 1) < 1e-3) and (a > 5 if expect is None else abs(a - expect) < 0.05)
             if not ok: bad.append((c, axis, round(a, 3), [round(v, 3) for v in ax]))
-    cmds.setAttr("FKIKLeg_L.FKIKBlend", saved["blends"]["FKIKLeg_L"])
+    cmds.setAttr("FKIKLeg_L.FKIKBlend", 10)   # the IK leg gate below wants the leg in IK; the arms stay FK until the wrist twist gate
     gate(7, not bad, "control axis == bone axis on %d control/axis pairs (Hip/Knee/Shoulder/Elbow X roll goes to the twist joints by AS design, measured 0.0 on the joint itself); bad=%s" % (sum(len(t[2]) for t in tests), bad[:6]))
     # 8 equal values on both sides give a mirrored pose
     cmds.setAttr("FKShoulder_L.rotateZ", 30); cmds.setAttr("FKShoulder_R.rotateZ", 30)
@@ -133,7 +133,7 @@ try:
     dr = [wpos("root")[0] - r0[0], wpos("hand_r")[0] - h0[0]]; cmds.setAttr("Main.translateX", 0)
     gate(10, all(abs(d - 10) < 1e-3 for d in dr), "Main tx=10 moves root and hand_r by %s" % ["%.4f" % d for d in dr])
     cmds.setAttr("FKIKArm_L.FKIKBlend", 10); h0 = wpos("hand_l"); cmds.setAttr("IKArm_L.translateY", -10); h1 = wpos("hand_l")
-    cmds.setAttr("IKArm_L.translateY", 0); cmds.setAttr("FKIKArm_L.FKIKBlend", saved["blends"]["FKIKArm_L"])
+    cmds.setAttr("IKArm_L.translateY", 0); cmds.setAttr("FKIKArm_L.FKIKBlend", 0)   # back to FK for the wrist twist gate; the animator's blends return in finally
     gate(11, dist(h0, h1) > 5, "FKIKArm_L to IK, IKArm_L ty=-10 moved hand_l %.2f cm" % dist(h0, h1))
     # 12 finger curl attribute, 13 forearm twist distribution
     m0 = wm("index_02_l"); cmds.setAttr("Fingers_L.indexCurl", 5); a = ang(rot(m0), rot(wm("index_02_l"))); cmds.setAttr("Fingers_L.indexCurl", 0)
@@ -199,10 +199,18 @@ try:
     gate(22, not badf, "Fingers curl turns all 28 phalanges about their bone +Z and spread opens both hands; bad=%s" % badf[:6])
     sdk = cmds.ls("SDKFK*", type="transform")
     gate(23, len(sdk) == 28 and all((cmds.listRelatives(g, p=True) or [""])[0].startswith("UEAxis") for g in sdk), "%d SDK groups, each under its UEAxis frame node" % len(sdk))
+    # 24 the IK control curves are drawn on the control's own axes: hand cubes with every CV at +-half-size, foot boxes with two X levels
+    def levels(c, i):
+        s = cmds.listRelatives(c, s=True, type="nurbsCurve", fullPath=True)[0]
+        sl = om.MSelectionList(); sl.add(s)
+        return sorted(set(round(q[i], 1) for q in om.MFnNurbsCurve(sl.getDagPath(0)).cvPositions(om.MSpace.kObject)))
+    cubes = all(len(levels(c, i)) == 2 and abs(sum(levels(c, i))) < 0.05 for c in ("IKArm_L", "IKArm_R") for i in range(3))
+    feet = all(len(levels(c, 0)) == 2 for c in ("IKLeg_L", "IKLeg_R"))
+    gate(24, cubes and feet, "IK hand cubes axis-aligned on the hand frame (x levels %s), foot boxes two X levels %s" % (levels("IKArm_L", 0), levels("IKLeg_L", 0)))
 finally:
     for c, v in saved["blends"].items(): cmds.setAttr(c + ".FKIKBlend", v)
     cmds.evaluationManager(mode=saved["em"]); cmds.autoKeyframe(st=saved["autoKey"]); cmds.currentTime(saved["time"])
     if saved["sel"]: cmds.select(saved["sel"])
     else: cmds.select(clear=True)
     print("restored: em %s autoKey %s time %s sel %s" % (cmds.evaluationManager(q=True, mode=True)[0], cmds.autoKeyframe(q=True, st=True), cmds.currentTime(q=True), cmds.ls(sl=True)))
-print("RESULT: %d of 23 gates failed %s" % (len(FAILS), FAILS))
+print("RESULT: %d of 24 gates failed %s" % (len(FAILS), FAILS))

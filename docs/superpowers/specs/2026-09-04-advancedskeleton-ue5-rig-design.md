@@ -173,12 +173,25 @@ The user, after using the rig: «Fingers_L сгибает пальцы по ло
 - **IK shapes.** A control's curve is drawn in its local space, so turning the
   frame turned the drawing; the FK rings are symmetric about the bone axis and
   never showed it, the IK foot boxes (open degree-1 curves, 15 spans) did. AS's
-  own Set Axis has "keep curve unaffected"; Detach/Attach does not. For all 64
-  custom-oriented controls the CVs were multiplied by `R_old · R_new⁻¹` (R_old =
-  the frame of `CustomOrient`'s parent, where AS drew the curve): every curve is
-  back where AS drew it to **0.000000000 cm**, the axes unchanged (0.000002°).
-- Both steps are in `as_ue5_rig_procedure.py` (`restore_shapes`,
-  `finger_sdk_axes`) and gated (22, 23) in the verify script.
+  own Set Axis has "keep curve unaffected"; Detach/Attach does not. The first
+  fix multiplied the CVs of all 64 custom-oriented controls by `R_old · R_new⁻¹`
+  (R_old = the frame AS drew in): every curve back where AS drew it to
+  0.000000000 cm — and the user's next note was «контрол руки визуально
+  ориентирован по мировым координатам, а не вдоль осей поворота»: AS draws the
+  IK hand cube in the WORLD frame (`IKOffsetArm_*` is the identity) and the
+  foot box 8.71° off the foot's own yaw, so a drawing put back exactly is skew
+  to the new axes. **The rule that stands: the curve is drawn axis-aligned in
+  the control's own (= bone) frame, its extents on the nearest signed
+  permutation of AS's drawing axes** (`M = R_old · R_new⁻¹`, each row snapped to
+  its dominant axis when that component is ≥ 0.7 and the axes are distinct;
+  identity otherwise). Measured: the foot boxes turned 8.71° and the toe rings
+  4.59° from AS's drawing and now follow the foot; the hand cubes fell to the
+  identity case (the hand frame is diagonal to the world) and sit on the hand
+  axes with every CV at ±10.6; finger rings turned up to 27.8° (AS's finger
+  frames are that far off the UE bones' axes) and are now perpendicular to
+  their bones; frames unchanged (0.000002°), drift none.
+- All three steps are in `as_ue5_rig_procedure.py` (`align_shapes`,
+  `finger_sdk_axes`) and gated (22–24) in the verify script.
 
 ## Not done, deliberately or not yet
 
@@ -201,4 +214,4 @@ The user, after using the rig: «Fingers_L сгибает пальцы по ло
 ## Files
 
 - `docs/superpowers/plans/as_ue5_rig_procedure.py` — the sequence, re-runnable.
-- `docs/superpowers/plans/verify_advancedskeleton_ue5_rig.py` — 23 live gates, **green live 2026-09-04, 0 of 23 gates failed**.
+- `docs/superpowers/plans/verify_advancedskeleton_ue5_rig.py` — 24 live gates, **green live 2026-09-04, 0 of 24 gates failed**.

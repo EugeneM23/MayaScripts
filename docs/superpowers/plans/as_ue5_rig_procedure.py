@@ -188,21 +188,45 @@ def orient_controls():
     return len(targets), worst
 
 
-def restore_shapes():
-    """Turn every custom-oriented control's curve back to where AS drew it (Set Axis's
-    "keep curve unaffected", which Detach/Attach does not do).  The axes stay; only the
-    CVs move.  Circles about the bone axis never showed it; the IK foot boxes did."""
+def _nearest_perm(m):
+    """The signed axis permutation closest to rotation m, or None when no row has a dominant axis."""
+    perm = om.MMatrix()
+    used = []
+    for i in range(3):
+        r = _row(m, i)
+        j = max(range(3), key=lambda k: abs(r[k]))
+        if abs(r[j]) < 0.7 or j in used:
+            return None
+        used.append(j)
+        for k in range(3):
+            perm.setElement(i, k, (1.0 if r[j] >= 0 else -1.0) if k == j else 0.0)
+    return perm
+
+
+def align_shapes():
+    """Redraw every custom-oriented control's curve AXIS-ALIGNED in the control's own (= bone)
+    frame, its extents on the nearest axes of the frame AS drew it in.
+
+    Turning a control's frame turns its curve with it (the IK foot boxes came out flipped).
+    Putting the CVs back exactly where AS drew them (R_old * R_new^-1) fixed that but left
+    the drawing skew to the new axes -- 8.7 deg on the feet, and a world-aligned cube on the
+    hands («визуально ориентирован по мировым координатам»).  With the nearest signed
+    permutation instead, the foot box stays a foot box and follows the foot's yaw, the hand
+    cube sits on the hand axes, and every ring is perpendicular to its bone.  Run once,
+    right after Attach, while the CVs are still AS's local drawing.
+    """
     n = 0
     for c in cmds.sets("ControlSet", q=True):
         k = "CustomOrient" + c
         if not cmds.objExists(k):
             continue
-        r_old = _rot(_wmat(cmds.listRelatives(k, p=True)[0])).asMatrix()   # the frame AS drew the curve in
-        m = r_old * _rot(_wmat(c)).asMatrix().inverse()
+        as_frame = cmds.listRelatives(k, p=True)[0] if c.startswith("IK") else c[2:]   # IKOffset*, or the deform joint
+        m = _rot(_wmat(as_frame)).asMatrix() * _rot(_wmat(c)).asMatrix().inverse()
+        perm = _nearest_perm(m) or om.MMatrix()                                         # a cube on a diagonal frame: keep it local
         for s in cmds.listRelatives(c, s=True, type="nurbsCurve", fullPath=True) or []:
             sl = om.MSelectionList(); sl.add(s)
             fn = om.MFnNurbsCurve(sl.getDagPath(0))
-            fn.setCVPositions(om.MPointArray([om.MPoint(pt) * m for pt in fn.cvPositions(om.MSpace.kObject)]), om.MSpace.kObject)
+            fn.setCVPositions(om.MPointArray([om.MPoint(pt) * perm for pt in fn.cvPositions(om.MSpace.kObject)]), om.MSpace.kObject)
             fn.updateCurve()
             n += 1
     return n
@@ -255,10 +279,10 @@ def run():
         build()
         constrain()
         n, worst = orient_controls()
-        shapes = restore_shapes()
+        shapes = align_shapes()
         sdk = finger_sdk_axes()
         drift = max(max(abs(a - b) for a, b in zip(m, cmds.getAttr(j + ".worldMatrix[0]"))) for j, m in rest.items())
-        print("// %d controls oriented (worst frame angle %.5f deg), %d curves put back, %d finger SDK groups re-framed; bind-pose drift %.9f" % (n, worst, shapes, sdk, drift))
+        print("// %d controls oriented (worst frame angle %.5f deg), %d curves aligned to their axes, %d finger SDK groups re-framed; bind-pose drift %.9f" % (n, worst, shapes, sdk, drift))
         lay = cmds.createDisplayLayer(name="UE5_Skeleton", empty=True)
         cmds.editDisplayLayerMembers(lay, joints, noRecurse=True)
     finally:

@@ -3495,7 +3495,7 @@ Custom) on the studio's UE5 Manny, at the user's ask («сделай риг ос
 `docs/superpowers/specs/2026-09-04-advancedskeleton-ue5-rig-design.md`.
 Procedure, re-runnable: `docs/superpowers/plans/as_ue5_rig_procedure.py`.
 Proof: `docs/superpowers/plans/verify_advancedskeleton_ue5_rig.py` — **green
-live 2026-09-04, 0 of 23 gates failed**.
+live 2026-09-04, 0 of 24 gates failed**.
 
 **What it is.** The UE skeleton is untouched — names, hierarchy, skin, bind
 pose (drift 0.000000000 on all 93 joints) — and every one of AS's 79
@@ -3570,10 +3570,16 @@ twist bones expect.
   a `UEAxis*` node framed y = bone Z, z = bone Y, x = y × z, the CustomOrient
   below recomputed — curl turns all 28 phalanges about exactly +Z (inward on
   both UE hands), spread opens the tips 4.76 cm. And Detach/Attach does not
-  do Set Axis's "keep curve unaffected": the IK foot boxes came out flipped
-  until every custom-oriented control's CVs were multiplied by
-  `R_old · R_new⁻¹` (back where AS drew them to 0.000000000 cm; rings about
-  the bone axis never showed it).
+  do Set Axis's "keep curve unaffected": the IK foot boxes came out flipped.
+  Putting the CVs back exactly (`R_old · R_new⁻¹`) fixed that and drew the
+  next complaint — AS draws the IK hand cube in the WORLD frame, so a
+  drawing put back exactly is skew to the bone axes («визуально
+  ориентирован по мировым координатам»). The rule that stands: every
+  custom-oriented control's curve is drawn axis-aligned in the control's own
+  frame, extents on the nearest signed permutation of AS's drawing axes
+  (identity when no axis dominates — the hand cube); feet turned 8.71°,
+  finger rings up to 27.8°, frames untouched (`align_shapes` in the
+  procedure, gate 24).
 - Harness: a Bash call longer than ~8 KB dies with "unexpected EOF" and runs
   nothing (three times that day) — write big payloads with Write and keep
   the Bash call to the run command.
