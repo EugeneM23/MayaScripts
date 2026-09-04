@@ -280,3 +280,64 @@ this document as the fallback if the overlay window ever stops compositing).
 `exec(open(path).read())`, so a runner deriving its own directory from it
 raises **before** writing its marker — which reads exactly like a dead bridge
 (CLAUDE.md notes 6/7/8) and is really trap 17's family. Hardcode the path.
+
+---
+
+## Addendum, 2026-09-05 — what the build and the live run changed
+
+Three decisions in the main text were replaced by measurement. Read these
+rather than the paragraphs above where they disagree.
+
+**The gesture rule is "keys first, the scene when no key was caught", not a
+press-time classification.** The main text decides on press whether a
+gesture is about keys or about the scene, and that is right for a click and
+wrong for a marquee: a box's contents are only known when it closes, and
+starting a rubber band exactly on a key to select several is fiddly, while
+starting it on empty space is how the Graph Editor's own band works. So LMB
+always operates on keys — click or marquee — and falls through to
+`selectFromScreen` when it caught none. One rule, decided by what was
+caught, uniform for both, and both halves reachable with no modal switch.
+
+**`MGlobal.selectFromScreen`'s CLICK form of `kXORWithList` is a NO-OP.**
+Measured from both starting states:
+
+| adjustment | from an empty selection | from one already holding it |
+|---|---|---|
+| `kReplaceList` | selects | selects |
+| `kAddToList` | selects | stays |
+| `kXORWithList` | **nothing** | **stays** |
+| `kRemoveFromList` | nothing | removes |
+| `kXORWithList`, **box** form | — | removes |
+
+So a shift-click routed through the API's own adjustment silently did
+nothing — the animator shift-clicks, sees no change, and blames their aim.
+The pick is now always `kReplaceList`, the one value measured to behave
+identically in both forms, and the modifier is applied afterwards through
+`cmds.select(..., add/toggle/deselect)`, which is exact for all four.
+`verify_curveview.py`'s gate 29b keeps the quirk itself measured, so a
+future Maya that fixes it will announce itself.
+
+**`cutKey(clear=True)` answers 0 even when it worked**, so the status line
+read "Deleted 0 key(s)" over keys it had just removed. The count is taken
+before the cut.
+
+Two harness facts, each of which cost a probe round.
+
+**Maya's pick runs through the viewport's own DRAW pass**, so a node that
+has never been drawn cannot be found: an unrefreshed locator at screen
+centre picked nothing at all under every adjustment, which reads exactly
+like a broken adjustment table. Trap 14's family. Real use always has a
+drawn viewport; a verify run has to ask for one with `cmds.refresh()`.
+
+**The Qt event loop does not turn while a bridge script holds the main
+thread**, so the overlay window has never been exposed and `repaint()` is a
+no-op — measured, `paint_count` stayed 0 while the window was up and
+correct. `render()` into a `QImage` forces `paintEvent` synchronously, and
+the gate then counts the non-zero bytes it left (164067 of 7874460) rather
+than trusting that it ran.
+
+One thing the plan promised and the build did not need: a `_STATE.hit`
+field for the press-time classification. It is gone with the rule.
+
+Proof: `docs/superpowers/plans/verify_curveview.py` — **green live
+2026-09-05, 0 of 44 gates failed**, 1929 unit tests green.
