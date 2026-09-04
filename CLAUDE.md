@@ -3483,3 +3483,86 @@ is one flag each whenever it is asked for.
   playback range, autoKey and the selection exactly as you found them. Probe the
   scene state before and after — the only way to know a run was clean is to
   compare.
+
+## AdvancedSkeleton rig over the UE5 skeleton (2026-09-04)
+
+Not a plugin change: a control rig built in the animator's scene with the
+third-party **AdvancedSkeleton 6.797**
+(`C:/Users/MY PC/Downloads/AdvancedSkeleton/AdvancedSkeleton.mel`, shelf
+Custom) on the studio's UE5 Manny, at the user's ask («сделай риг оснастку для
+управления скелетом… есть специальные пресеты под этот скелет… сделай всё от
+начала и до конца»). Spec:
+`docs/superpowers/specs/2026-09-04-advancedskeleton-ue5-rig-design.md`.
+Procedure, re-runnable: `docs/superpowers/plans/as_ue5_rig_procedure.py`.
+Proof: `docs/superpowers/plans/verify_advancedskeleton_ue5_rig.py` — **green
+live 2026-09-04, 0 of 21 gates failed**.
+
+**What it is.** The UE skeleton is untouched — names, hierarchy, skin, bind
+pose (drift 0.000000000 on all 93 joints) — and every one of AS's 79
+deformation joints drives its UE twin through point+orient+scale constraints
+(`-mo`; the vendor's Name Matcher "Constraint to Joints" with nine
+twist/in-between rows added by hand — UE numbers the lower twists from the
+wrist/ankle end, so `ElbowPart2 → lowerarm_twist_01`, `KneePart2 →
+calf_twist_01`). `root ← Main` (parentConstraint, no scale — **Main is root
+motion**; in-place work moves `RootX_M` and the IK controls),
+`ik_hand_gun/ik_hand_r ← hand_r`, `ik_hand_l ← hand_l`, `ik_foot_* ← foot_*`;
+`weapon_*`, `camera_*`, `interaction`, `center_of_mass`, `ik_*_root` ride
+their parents. Legs default to IK (`FKIKLeg_*.FKIKBlend 10`), arms to FK. The
+UE joints sit in a `UE5_Skeleton` display layer. **Every FK control and the six
+IK end controls carry the LOCAL AXES OF THEIR UE BONE** (the user's ruling,
+«оси контролов должны соответствовать осям костей на исходном скелете»;
+`RootX_M` keeps AS's world frame, as AS itself insists): rotating a control 25°
+about its X/Y/Z turns the bone 25.000° about its own X/Y/Z, and equal values on
+both sides mirror to 0.0003 cm. Shoulder/Elbow/Hip/Knee do not roll about their
+own X — AS sends that roll to the twist joints by design, which is what UE's
+twist bones expect.
+
+**How it was made, and the traps** (each measured):
+
+- Fit = the vendor's `fitSkeletons/UE5.ma`, authored on this very skeleton
+  (0.0003 cm everywhere but Neck/Head, 4.7 cm, snapped); Knee given
+  `twistJoints 2` (the preset has none), Neck `inbetweenJoints 1`, Eye/Jaw fit
+  joints deleted, heel pivot moved to the back of the sole. The Name Matcher's
+  own `nameMatchers/Unreal5.ma` is a 17-unit template scaled by height/17 with
+  a stray `Chest` off `Spine3` — not used.
+- **Never call `asNameMatcherCheck` over the port**: it compares
+  `joint.bindPose` (measured: the WORLD matrix at bind) with `.matrix` (local)
+  and puts up "Reset joints to Bind-Pose?" for any hierarchy — a modal that
+  blocks the idle queue (bridge note 6). The vendor's procs read their own UI
+  controls, so `AdvancedSkeleton;` (the window) must be open before any of
+  them; it opens without dialogs here (`asHaveRanThisVersion` 1, units cm).
+- **Control axes = `asControlOrientDetach` → set each control's world rotation
+  (`local = R_bone · R_parent⁻¹`, in its own rotate order) →
+  `asControlOrientAttach` with mirror OFF**, each side from its own bone. The
+  FKX joint is a DAG child of its FK control; Detach parks children in
+  `CustomOrientReverse*`, Attach inserts `CustomOrient*` above the Extra.
+  **The in-between neck breaks**: `NeckInbetweenMM_M` /
+  `NeckPart1InbetweenMM_M.matrixIn[1]` read
+  `FKExtraNeck_M.parentInverseMatrix`, which Attach turns into the rotated
+  CustomOrient, and `FKXNeck_M` came back rotated (180, 0, −0.938) —
+  `neck_01` flipped. Reconnect both to `FKOffsetNeck_M.worldInverseMatrix`
+  BEFORE detaching (they are the only consumers of any
+  `*Extra*.parentInverseMatrix`); done after Attach it leaves NeckPart1/Head
+  with stale transforms that had to be normalised by hand. IK end controls are
+  safe: the IKX ankle/wrist read the CHILD `IKFKAligned*` nodes and Attach
+  re-orients `AlignIKTo*` (FK↔IK align still lands to 1e-6); the one consumer
+  of an IK control's own rotation, the arm pole's follow offset
+  `PoleOffsetArmMMArm_*.matrixIn[1]`, is right-multiplied by D⁻¹ so its
+  product is unchanged.
+- **Maya crashed at the first parallel evaluation of the freshly wired rig**
+  (15:55, `MayaCrashLog260904.1555.dmp`; the recovered scene held the whole
+  rig). Every later poke ran under `evaluationManager -mode off` and put it
+  back. Cause not isolated.
+- `asCreateGameEngineRootMotion` errors while a UE `root` exists (6.800 renames
+  its joint `RootMotion_M`) — hence `root ← Main`.
+- A ReBuild regenerates the neck network with the vendor's reading and
+  re-applies `customAxis` through its own Set Axis batch: run
+  `as_ue5_rig_procedure.orient_controls()` again afterwards. The UE bridge's
+  import guard (trap 37) refuses merges onto constrained joints, so this
+  character takes clips through AS's MoCap Matcher or with the rig
+  disconnected; export bakes as before.
+- Pre-rig backup:
+  `Documents/maya/projects/default/scenes/Manny_before_AdvancedSkeleton_20260904_1548.mb`.
+  The scene lives at the crash-recovery path until the user saves it.
+- Harness: a Bash call holding two heredocs dies at the second marker — one
+  heredoc per call, the other file through Write.
