@@ -442,8 +442,9 @@ class TheTable(unittest.TestCase):
 
 
 class OurRows(unittest.TestCase):
-    """29 of ours: four openers plus the map's own toggle, four timeline,
-    two editors, six picker, seven scene, five overshoot."""
+    """33 of ours: four openers plus the map's own toggle and the curve
+    overlay's, four timeline, two editors, three curve overlay, six picker,
+    seven scene, five overshoot."""
 
     def _keys(self, prefix):
         return [row[0] for row in maya_hotkeys.COMMANDS
@@ -452,18 +453,23 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 29)
+        self.assertEqual(len(ours), 33)
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
                          ["time.insert", "time.next", "time.prev",
                           "time.remove"])
 
-    def test_the_four_openers_and_the_toggle(self):
+    def test_the_four_openers_and_the_two_toggles(self):
         self.assertEqual(sorted(self._keys("window.")),
-                         ["window.hotkeys", "window.overshoot",
-                          "window.picker", "window.scenesetup",
-                          "window.uebridge"])
+                         ["window.curveview", "window.hotkeys",
+                          "window.overshoot", "window.picker",
+                          "window.scenesetup", "window.uebridge"])
+
+    def test_the_curve_overlay_rows(self):
+        self.assertEqual(sorted(self._keys("curve.")),
+                         ["curve.delete", "curve.insert",
+                          "curve.normalise"])
 
     def test_the_picker_rows(self):
         self.assertEqual(sorted(self._keys("picker.")),
@@ -1230,7 +1236,8 @@ class TheStarterKeysAfterTheMove(unittest.TestCase):
                          [("a", "time.prev"), ("s", "time.next"),
                           ("+", "time.insert"), ("=", "time.insert"),
                           ("-", "time.remove"), ("_", "time.remove"),
-                          ("g", "editor.graph"), ("o", "editor.outliner")])
+                          ("g", "editor.graph"), ("o", "editor.outliner"),
+                          ("c", "window.curveview")])
 
     def test_the_version_went_up_again(self):
         self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 3)

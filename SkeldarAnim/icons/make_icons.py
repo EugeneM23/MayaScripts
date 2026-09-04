@@ -1,4 +1,4 @@
-"""Draw the seven SkeldarAnim shelf icons.
+"""Draw the eight SkeldarAnim shelf icons.
 
 32x32 PNG on a dark rounded plate so they read on Maya's shelf: flat
 glyphs, ~2 px strokes, one accent colour per tool. Regenerate with:
@@ -159,8 +159,30 @@ def draw_colour(path):
     image.save(path)
 
 
+def draw_curveview(path):
+    """A curve with keys inside a viewport frame: the graph, over the view."""
+    image, painter = _canvas()
+    painter.setPen(QPen(QColor(255, 255, 255, 60), 1.2))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(QRectF(5.5, 7.5, 21.0, 17.0), 2.0, 2.0)
+    curve = QPainterPath(QPointF(7.0, 21.5))
+    curve.cubicTo(QPointF(10.5, 21.5), QPointF(11.0, 10.5),
+                  QPointF(15.0, 10.5))
+    curve.cubicTo(QPointF(19.5, 10.5), QPointF(20.0, 19.0),
+                  QPointF(25.0, 19.0))
+    painter.setPen(_pen("#ffb74d", 2.2))
+    painter.drawPath(curve)
+    painter.setPen(QPen(QColor("#1e1e1e"), 1))
+    painter.setBrush(QColor("#ffe0b2"))
+    for x, y in ((7.0, 21.5), (15.0, 10.5), (25.0, 19.0)):
+        painter.drawRect(QRectF(x - 2.1, y - 2.1, 4.2, 4.2))
+    painter.end()
+    image.save(path)
+
+
 DRAWERS = {
     "picker.png": draw_picker,
+    "curveview.png": draw_curveview,
     "hotkeys.png": draw_hotkeys,
     "uebridge.png": draw_uebridge,
     "scenesetup.png": draw_scenesetup,

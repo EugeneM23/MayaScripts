@@ -23,7 +23,8 @@ PLUGIN = os.path.join(
 REPO = PLUGIN
 
 ICON_NAMES = ("picker.png", "uebridge.png", "scenesetup.png",
-              "overshoot.png")
+              "overshoot.png", "hotkeys.png", "vpstudio.png",
+              "colour.png", "curveview.png")
 
 
 class Icons(unittest.TestCase):
@@ -34,12 +35,12 @@ class Icons(unittest.TestCase):
         with open(path, "rb") as handle:
             return handle.read(24)
 
-    def test_all_four_exist_as_png(self):
+    def test_every_icon_exists_as_png(self):
         for name in ICON_NAMES:
             head = self._header(name)
             self.assertEqual(head[:8], b"\x89PNG\r\n\x1a\n", name)
 
-    def test_all_four_are_32_by_32(self):
+    def test_every_icon_is_32_by_32(self):
         for name in ICON_NAMES:
             head = self._header(name)
             width = int.from_bytes(head[16:20], "big")
@@ -95,6 +96,10 @@ class Payload(unittest.TestCase):
     def test_the_colour_palette_ships(self):
         self.assertIn("maya_colour.py", install.payload())
 
+    def test_the_curve_overlay_ships(self):
+        self.assertIn("maya_curveview", install.payload())
+        self.assertIn("maya_curveview", install.module_names())
+
     def test_every_icon_a_button_names_exists(self):
         """A missing icon is a shelf button with a blank square on it."""
         for spec in install.button_specs(PLUGIN):
@@ -120,11 +125,11 @@ class ButtonSpecs(unittest.TestCase):
     def _specs(self):
         return install.button_specs(self.DEST)
 
-    def test_eight_buttons_in_shelf_order(self):
+    def test_nine_buttons_in_shelf_order(self):
         labels = [s["label"] for s in self._specs()]
         self.assertEqual(labels, ["Rig Picker", "UE Bridge", "Scene Setup",
                                   "Overshoot", "Hotkeys", "Studio",
-                                  "Colour", "OverRig"])
+                                  "Colour", "Curves", "OverRig"])
 
     def test_python_buttons_bootstrap_and_call(self):
         wanted = {
@@ -135,8 +140,9 @@ class ButtonSpecs(unittest.TestCase):
             "Hotkeys": ("maya_hotkeys", "toggle"),
             "Studio": ("maya_vpstudio", "show_window"),
             "Colour": ("maya_colour", "show_window"),
+            "Curves": ("maya_curveview", "toggle"),
         }
-        for spec in self._specs()[:7]:
+        for spec in self._specs()[:8]:
             module, func = wanted[spec["label"]]
             self.assertEqual(spec["sourceType"], "python")
             self.assertIn(self.DEST, spec["command"])
@@ -145,7 +151,7 @@ class ButtonSpecs(unittest.TestCase):
             self.assertIn("{0}.{1}()".format(module, func), spec["command"])
 
     def test_python_buttons_use_our_icons(self):
-        icons = [s["image"] for s in self._specs()[:7]]
+        icons = [s["image"] for s in self._specs()[:8]]
         self.assertEqual(icons, [
             self.DEST + "/icons/picker.png",
             self.DEST + "/icons/uebridge.png",
@@ -153,12 +159,13 @@ class ButtonSpecs(unittest.TestCase):
             self.DEST + "/icons/overshoot.png",
             self.DEST + "/icons/hotkeys.png",
             self.DEST + "/icons/vpstudio.png",
-            self.DEST + "/icons/colour.png"])
+            self.DEST + "/icons/colour.png",
+            self.DEST + "/icons/curveview.png"])
 
     def test_overrig_button_replays_the_native_installer(self):
         """Verbatim from OverRig's own Drag_and_Drop_to_install.mel: the
         source, both globals, misc/ and the coloring argument."""
-        spec = self._specs()[7]
+        spec = self._specs()[8]
         self.assertEqual(spec["sourceType"], "mel")
         command = spec["command"]
         self.assertIn(

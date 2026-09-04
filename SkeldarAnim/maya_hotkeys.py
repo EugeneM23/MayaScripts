@@ -54,6 +54,9 @@ TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 # one a physical alt+shift+= press fires cannot be measured over the
 # command port. Both bound, so the key works whichever way a hand reaches
 # it. All four were unbound in the animator's set, so nothing was taken.
+# alt+c joined on 2026-09-05 with the Curve Overlay. What it held first was
+# NOT measured -- the press names whatever it displaces, which is the whole
+# reason it does.
 DEFAULT_KEYS = (
     ("a", {"altModifier": True}, "time.prev"),
     ("s", {"altModifier": True}, "time.next"),
@@ -63,6 +66,7 @@ DEFAULT_KEYS = (
     ("_", {"altModifier": True}, "time.remove"),
     ("g", {"altModifier": True}, "editor.graph"),
     ("o", {"altModifier": True}, "editor.outliner"),
+    ("c", {"altModifier": True}, "window.curveview"),
 )
 
 # Keys DEFAULT_KEYS used to hold and does not any more. They are given back
@@ -77,7 +81,7 @@ RELEASED_KEYS = (
 # Bumped when either table changes, which re-installs them once -- which is
 # how alt+g and alt+o reached a set that already existed, and how the
 # number keys are handed back.
-DEFAULT_KEYS_VERSION = 3
+DEFAULT_KEYS_VERSION = 4
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -111,6 +115,11 @@ def _scene_module():
 def _overshoot_module():
     import maya_overshoot
     return maya_overshoot
+
+
+def _curveview_module():
+    from maya_curveview import tool
+    return tool
 
 
 def _overrig_module():
@@ -159,6 +168,15 @@ def _overshoot(shape):
         module.show_overshoot_ui()
         return _report("Overshoot opened - press again")
     return module.apply_overshoot(shape)
+
+
+def _curveview(func, *args):
+    """Run one Curve Overlay command.
+
+    No open-and-say-so dance like `_picker`: the mode's own commands answer
+    "Curve Overlay is off" themselves, and the toggle is the way in.
+    """
+    return getattr(_curveview_module(), func)(*args)
 
 
 def step_frame(delta):
@@ -643,6 +661,9 @@ _OURS = (
      partial(_show, "maya_overshoot", "show_overshoot_ui")),
     ("window.hotkeys", "Windows", "Hotkey map on/off",
      "Switch between the SkeldarAnim hotkey set and your own", toggle),
+    ("window.curveview", "Windows", "Curve overlay on/off",
+     "Draw the selected control's curves over the viewport and edit them "
+     "there", partial(_curveview, "toggle")),
 
     ("time.prev", "Timeline", "Frame back", "One frame back",
      partial(step_frame, -1.0)),
@@ -704,6 +725,16 @@ _OURS = (
     ("scene.camera", "Scene Setup", "Camera Setup",
      "A camera on camera_bone, the bone driven from it",
      partial(_scene, "camera_setup")),
+
+    ("curve.insert", "Curve Overlay", "Insert key at current frame",
+     "A key on every drawn curve at the current frame, leaving the shape "
+     "alone", partial(_curveview, "insert_key_at_time")),
+    ("curve.delete", "Curve Overlay", "Delete selected keys",
+     "Remove the keys selected in the overlay",
+     partial(_curveview, "delete_selected_keys")),
+    ("curve.normalise", "Curve Overlay", "Normalise curves on/off",
+     "One Y window per curve, so channels of different magnitudes are "
+     "comparable in shape", partial(_curveview, "toggle_normalise")),
 
     ("shoot.snap", "Overshoot", "Overshoot Snap",
      "One tight swing out of the pose", partial(_overshoot, "Snap")),

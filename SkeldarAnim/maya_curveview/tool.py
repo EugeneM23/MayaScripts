@@ -99,6 +99,10 @@ def set_normalise(state):
     return "Normalise: {0}".format("on" if state else "off")
 
 
+def toggle_normalise():
+    return set_normalise(not _normalise())
+
+
 # --------------------------------------------------------------- the drawing
 
 def build_scene(rect):
