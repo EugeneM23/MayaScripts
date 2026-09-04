@@ -190,7 +190,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1929 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1943 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -2995,7 +2995,7 @@ The **ninth** shelf button (2026-09-05), a package
 `docs/superpowers/specs/2026-09-05-viewport-curve-overlay-design.md` — **read
 its ADDENDUM**, which reverses three of the main text's decisions the same
 day. Proof: `docs/superpowers/plans/verify_curveview.py` — **green live
-2026-09-05, 0 of 44 gates failed**, 1929 unit tests.
+2026-09-05, 0 of 44 gates failed**, 1943 unit tests.
 
 ```python
 import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
@@ -3067,6 +3067,34 @@ already has in his hands. `alt`+anything is the camera, natively.
 is picked in the Graph Editor too, `cmds.keyframe(edit=True,
 relative=True, animation="keys")` moves "the selected keys" with no list to
 pass, and undo needs no bookkeeping of ours.
+
+**What is drawn, and the fix that only LOOKING found.** No selection means
+nothing at all. A selected control means the channels picked in the channel
+box; with nothing picked there it means the **TRANSFORM** channels, widening
+to everything animated only when the node has no animated transform channel
+(so a rig gizmo animated on custom attributes still shows). The reason is
+measured: the most animated transform in the animator's own scene is a UE
+clip's `root` with **141 animated channels** — `Pose_0..9`, `MoveData_*`,
+`DisableLegIK` and about 130 pose drivers, which **trap 40** is the record of:
+the game's data, not animation anybody poses. Drawn together they crushed the
+real root motion into a flat band. `MAX_CURVES` (12) is the backstop behind
+that and **names the count** rather than silently drawing twelve of a hundred.
+A custom attribute is still one channel-box click away.
+
+The same look found there was **no value axis at all** — the shape of a curve
+read and its magnitude did not, which is half a graph editor. Horizontal lines
+come from `mapping.value_lines`, which has **no floor of 1** unlike the frame
+grid (a rotation living between 0 and 0.5 still needs lines), with the zero
+line brighter and a short label at the left edge. They are skipped when
+normalised, where one shared value line would be a lie — `Scene` carries the
+flag for exactly that.
+
+**How that was looked at, since a screen grab cannot be trusted here:** the
+picture is a composite of a real one-frame `playblast` (exactly what the
+viewport renders) and the overlay's own `render()` into a `QImage` (exactly
+what it paints), alpha-blended. Both halves are the real thing and it does
+not care which window is in front — which a screen grab does, and the
+animator is usually reading somewhere else.
 
 Load-bearing details, each measured or paid for elsewhere:
 
