@@ -41,6 +41,9 @@ GEOMETRY_MS = 100
 PICK_RADIUS = 9.0
 THROTTLE = 0.05
 
+# The most curves drawn at once. See `build_scene` for why there is a cap.
+MAX_CURVES = 12
+
 HINT = "LMB select  |  MMB drag keys  |  alt+mouse camera"
 NO_CURVES = "Curve Overlay - select a control with animation"
 
@@ -114,6 +117,14 @@ def build_scene(rect):
     animator is looking at.
     """
     found = curves.visible_curves()
+    total = len(found)
+    # A cap, and it is not tidiness. Measured on the animator's own scene:
+    # a UE clip's root carries 141 animated channels (Pose_0..9, MoveData_*
+    # and ~130 pose drivers -- trap 40's game data), and drawn together they
+    # crushed the real animation into a flat band. `curves.py` narrows the
+    # fallback to the transform channels; this is the backstop, and it says
+    # what to do rather than silently drawing twelve of a hundred.
+    found = found[:MAX_CURVES]
     _STATE.curves = found
     span = curves.time_range()
     if not found:
@@ -126,7 +137,8 @@ def build_scene(rect):
     series = [points + curve.keys
               for points, curve in zip(sampled, found)]
     shared = mapping.autoframe(span, mapping.value_span(series))
-    if _normalise():
+    normalised = _normalise()
+    if normalised:
         frames = mapping.normalise(span, series)
     else:
         frames = [shared] * len(found)
@@ -137,8 +149,13 @@ def build_scene(rect):
         drawn.append(overlay.Drawn(
             curve.attribute, frame, points, curve.keys, selected,
             curves.tangent_angles(curve.curve, sorted(selected))))
-    return overlay.Scene(shared, drawn, _current_time(),
-                         "{0} curve(s)   {1}".format(len(drawn), HINT), None)
+    if total > MAX_CURVES:
+        message = ("{0} of {1} channels - pick the ones you want in the "
+                   "channel box   {2}".format(len(drawn), total, HINT))
+    else:
+        message = "{0} curve(s)   {1}".format(len(drawn), HINT)
+    return overlay.Scene(shared, drawn, _current_time(), message, None,
+                         normalised)
 
 
 def _current_time():

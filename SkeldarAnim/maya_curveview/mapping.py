@@ -113,6 +113,19 @@ def normalise(time_range, series, margin=0.08):
             for points in series]
 
 
+def _nice_step(raw):
+    """`raw` rounded UP to 1, 2, 2.5, 5 or 10 times a power of ten."""
+    raw = abs(float(raw))
+    if raw <= 0:
+        return 1.0
+    power = 10.0 ** math.floor(math.log10(raw))
+    for multiple in (1.0, 2.0, 2.5, 5.0, 10.0):
+        step = multiple * power
+        if step >= raw:
+            return step
+    return 10.0 * power
+
+
 def grid_step(span, target=12):
     """A readable frame step for the vertical grid over `span` frames.
 
@@ -126,12 +139,33 @@ def grid_step(span, target=12):
     raw = span / max(int(target), 1)
     if raw <= 1.0:
         return 1.0
-    power = 10.0 ** math.floor(math.log10(raw))
-    for multiple in (1.0, 2.0, 2.5, 5.0, 10.0):
-        step = multiple * power
-        if step >= raw:
-            return step
-    return 10.0 * power
+    return _nice_step(raw)
+
+
+def value_lines(frame, target=5):
+    """The values to draw horizontal grid lines at, over `frame`'s Y range.
+
+    No floor of 1 here, unlike `grid_step`: a rotation channel living
+    between 0 and 0.5 still needs lines. Without these the shape of a curve
+    reads and its magnitude does not, which is half a graph editor.
+    """
+    span = frame.v1 - frame.v0
+    if span <= 0:
+        return []
+    step = _nice_step(span / max(int(target), 1))
+    lines = []
+    value = math.ceil(frame.v0 / step) * step
+    while value <= frame.v1 + step * 1e-9:
+        lines.append(0.0 if abs(value) < step * 1e-6 else value)
+        value += step
+    return lines
+
+
+def value_label(value):
+    """A short readable number for a grid line."""
+    if abs(float(value)) < 1e-9:
+        return "0"
+    return "{0:.4g}".format(float(value))
 
 
 def sample_count(rect, step=3, minimum=2):

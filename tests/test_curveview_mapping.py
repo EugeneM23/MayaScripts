@@ -322,3 +322,42 @@ class TestPolicy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestValueGrid(unittest.TestCase):
+    """The horizontal lines. Without them the shape of a curve reads and
+    its magnitude does not, which is half a graph editor."""
+
+    def test_lines_land_on_friendly_numbers(self):
+        frame = mapping.Frame(0.0, 100.0, -22.4, 302.5)
+        lines = mapping.value_lines(frame, target=5)
+        self.assertTrue(lines)
+        for value in lines:
+            self.assertAlmostEqual(value / 100.0, round(value / 100.0),
+                                   places=9, msg=value)
+
+    def test_every_line_is_inside_the_frame(self):
+        frame = mapping.Frame(0.0, 100.0, -22.4, 302.5)
+        for value in mapping.value_lines(frame):
+            self.assertGreaterEqual(value, frame.v0)
+            self.assertLessEqual(value, frame.v1)
+
+    def test_a_small_range_still_gets_lines(self):
+        # No floor of 1 here, unlike grid_step: a rotation living between 0
+        # and 0.5 still needs lines.
+        lines = mapping.value_lines(mapping.Frame(0.0, 10.0, 0.0, 0.5))
+        self.assertGreaterEqual(len(lines), 3)
+        self.assertLess(max(lines), 0.6)
+
+    def test_zero_comes_out_exactly_zero(self):
+        lines = mapping.value_lines(mapping.Frame(0.0, 10.0, -5.0, 5.0))
+        self.assertIn(0.0, lines)
+        self.assertEqual(mapping.value_label(0.0), "0")
+
+    def test_a_collapsed_range_has_no_lines(self):
+        self.assertEqual(mapping.value_lines(
+            mapping.Frame(0.0, 10.0, 3.0, 3.0)), [])
+
+    def test_labels_are_short(self):
+        for value in (302.462, -22.4051, 0.25, 1234567.0):
+            self.assertLessEqual(len(mapping.value_label(value)), 10, value)

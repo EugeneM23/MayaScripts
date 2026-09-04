@@ -36,13 +36,17 @@ from maya_curveview import mapping
 Drawn = namedtuple("Drawn", "attribute frame samples keys selected tangents")
 
 # `frame` here is the shared X axis (the playback range). `marquee` is a
-# pixel rectangle (x0, y0, x1, y1) or None.
-Scene = namedtuple("Scene", "frame curves current_time message marquee")
+# pixel rectangle (x0, y0, x1, y1) or None. `normalised` says whether each
+# curve carries its own Y window, in which case the value grid is not drawn:
+# with one scale per curve a shared value line would be a lie.
+Scene = namedtuple("Scene",
+                   "frame curves current_time message marquee normalised")
+Scene.__new__.__defaults__ = (False,)
 
 
 def empty_scene(frame=None):
     frame = frame or mapping.Frame(0.0, 1.0, -1.0, 1.0)
-    return Scene(frame, [], None, "", None)
+    return Scene(frame, [], None, "", None, False)
 
 
 # --------------------------------------------------------- the Windows part
@@ -109,6 +113,7 @@ def is_click_through(widget):
 _GRID = QtGui.QColor(255, 255, 255, 26)
 _GRID_TEXT = QtGui.QColor(255, 255, 255, 110)
 _TIME = QtGui.QColor(255, 190, 60, 190)
+_ZERO = QtGui.QColor(255, 255, 255, 64)
 _KEY_EDGE = QtGui.QColor(20, 20, 20, 220)
 _KEY_SELECTED = QtGui.QColor(255, 255, 255)
 _MESSAGE = QtGui.QColor(255, 255, 255, 200)
@@ -192,11 +197,11 @@ class CurveOverlay(QtWidgets.QWidget):
             painter.end()
 
     def _paint_grid(self, painter, scene, rect):
-        step = mapping.grid_step(scene.frame.t1 - scene.frame.t0)
-        painter.setPen(QtGui.QPen(_GRID, 1))
         font = painter.font()
         font.setPointSize(8)
         painter.setFont(font)
+
+        step = mapping.grid_step(scene.frame.t1 - scene.frame.t0)
         frame = math.ceil(scene.frame.t0 / step) * step
         while frame <= scene.frame.t1:
             x, _ = mapping.to_pixels(scene.frame, rect, frame, 0.0)
@@ -206,6 +211,21 @@ class CurveOverlay(QtWidgets.QWidget):
             painter.drawText(int(x) + 3, rect.height - 4,
                              str(int(round(frame))))
             frame += step
+
+        # The value grid. Without it the shape reads and the magnitude does
+        # not, which is half a graph editor. Skipped when each curve carries
+        # its own Y window, where one shared line would be a lie.
+        if scene.normalised or not scene.curves:
+            return
+        for value in mapping.value_lines(scene.frame):
+            _, y = mapping.to_pixels(scene.frame, rect, scene.frame.t0,
+                                     value)
+            zero = abs(value) < 1e-9
+            painter.setPen(QtGui.QPen(_ZERO if zero else _GRID,
+                                      1.4 if zero else 1))
+            painter.drawLine(0, int(y), rect.width, int(y))
+            painter.setPen(_GRID_TEXT)
+            painter.drawText(4, int(y) - 3, mapping.value_label(value))
 
     def _paint_time(self, painter, scene, rect):
         if scene.current_time is None:

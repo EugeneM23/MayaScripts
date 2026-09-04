@@ -21,6 +21,18 @@ Curve = namedtuple("Curve", "plug node attribute curve keys")
 
 CHANNEL_BOX = "mainChannelBox"
 
+# What "this control's curves" means when the animator has picked nothing in
+# the channel box. Measured on the animator's own scene 2026-09-05: the most
+# animated transform in it was a UE clip's `root` with **141** animated
+# channels -- `Pose_0..9`, `MoveData_*` and about 130 pose drivers, which
+# trap 40 is the record of: they are the GAME's data, not animation anybody
+# poses. Drawn all together they crushed the real animation into a flat band
+# and buried it. So the fallback is the transform channels, and a custom
+# attribute is reachable by picking it in the channel box.
+TRANSFORM_ATTRIBUTES = frozenset(
+    [family + axis for family in ("translate", "rotate", "scale")
+     for axis in "XYZ"] + ["visibility"])
+
 
 # ------------------------------------------------------------- the selection
 
@@ -57,6 +69,12 @@ def channel_attributes(node):
     channel box answers attribute NAMES with no owner, so the answer is
     intersected with what this node actually has animated -- otherwise a
     second selected control borrows the first one's channels.
+
+    With nothing picked there the answer is narrowed to the TRANSFORM
+    channels (see `TRANSFORM_ATTRIBUTES`), and only widens to everything
+    animated when the node has no animated transform channel at all -- so a
+    node whose animation lives entirely in custom attributes still shows
+    something.
     """
     animated = [attribute
                 for attribute in (cmds.listAttr(node, keyable=True) or [])
@@ -64,7 +82,9 @@ def channel_attributes(node):
     chosen = _channel_box_selection()
     if chosen:
         return [attribute for attribute in chosen if attribute in animated]
-    return animated
+    transforms = [attribute for attribute in animated
+                  if attribute in TRANSFORM_ATTRIBUTES]
+    return transforms or animated
 
 
 def visible_curves(selection=None):

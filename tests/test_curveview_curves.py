@@ -197,3 +197,46 @@ class TestSampling(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTransformNarrowing(Fixture):
+    """With nothing picked in the channel box the answer is the TRANSFORM
+    channels. Measured on the animator's scene: a UE clip's root carries
+    141 animated channels -- Pose_0..9, MoveData_* and ~130 pose drivers,
+    which is the game's data (trap 40) -- and drawing them all buried the
+    animation in a flat band."""
+
+    def _ue_root(self):
+        plugs = {}
+        for attribute in ("translateX", "translateY", "translateZ",
+                          "rotateX", "rotateY", "rotateZ"):
+            plugs[("root", attribute)] = ["curve_" + attribute]
+        for attribute in ("Pose_0", "Pose_1", "MoveData_Speed",
+                          "DisableLegIK", "thigh_l_fwd_90"):
+            plugs[("root", attribute)] = ["curve_" + attribute]
+        return plugs
+
+    def test_the_fallback_is_the_transform_channels(self):
+        curves.cmds = FakeCmds(selection=["root"], channel_selection=None,
+                               plugs=self._ue_root())
+        found = curves.channel_attributes("root")
+        self.assertEqual(len(found), 6)
+        self.assertNotIn("Pose_0", found)
+        self.assertNotIn("MoveData_Speed", found)
+
+    def test_a_channel_box_pick_still_reaches_a_custom_attribute(self):
+        plugs = self._ue_root()
+        plugs[("root", "Pose_3")] = ["curve_Pose_3"]
+        curves.cmds = FakeCmds(selection=["root"],
+                               channel_selection=["Pose_3", "MoveData_Speed"],
+                               plugs=plugs)
+        self.assertEqual(sorted(curves.channel_attributes("root")),
+                         ["MoveData_Speed", "Pose_3"])
+
+    def test_a_node_animated_only_on_custom_attributes_still_shows(self):
+        curves.cmds = FakeCmds(
+            selection=["gizmo"], channel_selection=None,
+            plugs={("gizmo", "autoTwist"): ["curveA"],
+                   ("gizmo", "bias"): ["curveB"]})
+        self.assertEqual(sorted(curves.channel_attributes("gizmo")),
+                         ["autoTwist", "bias"])

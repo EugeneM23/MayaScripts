@@ -575,3 +575,39 @@ class TestModeState(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCurveCap(Fixture):
+    """A UE clip's root carries 141 animated channels (measured). The cap
+    is the backstop behind curves.py's transform narrowing, and it says
+    what to do rather than silently drawing twelve of a hundred."""
+
+    def _many(self, count):
+        return [FakeCurve("attr{0}".format(i), "curve{0}".format(i),
+                          [(0.0, float(i))]) for i in range(count)]
+
+    def test_more_than_the_cap_is_truncated(self):
+        window = self.arm(self._many(40))
+        self.assertEqual(len(window.scene().curves), tool.MAX_CURVES)
+
+    def test_and_the_message_says_how_many_there_were(self):
+        window = self.arm(self._many(40))
+        message = window.scene().message
+        self.assertIn("of 40 channels", message)
+        self.assertIn("channel box", message)
+
+    def test_the_state_list_is_truncated_with_the_scene(self):
+        # scene.curves is index-parallel to _STATE.curves; if the cap
+        # trimmed one and not the other, every click would resolve to the
+        # wrong animCurve.
+        window = self.arm(self._many(40))
+        self.assertEqual(len(tool._STATE.curves),
+                         len(window.scene().curves))
+
+    def test_under_the_cap_the_message_is_the_plain_count(self):
+        window = self.arm(self._many(3))
+        self.assertIn("3 curve(s)", window.scene().message)
+
+    def test_the_scene_reports_whether_it_is_normalised(self):
+        window = self.arm(self._many(2))
+        self.assertFalse(window.scene().normalised)
