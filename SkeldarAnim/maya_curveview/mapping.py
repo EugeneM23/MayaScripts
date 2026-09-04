@@ -113,6 +113,27 @@ def normalise(time_range, series, margin=0.08):
             for points in series]
 
 
+def grid_step(span, target=12):
+    """A readable frame step for the vertical grid over `span` frames.
+
+    Rounded up to a friendly number so the labels read 10, 20, 30 rather
+    than 8, 16, 24 -- and never below 1, because a grid line at a fraction
+    of a frame means nothing to an animator.
+    """
+    span = abs(float(span))
+    if span <= 0:
+        return 1.0
+    raw = span / max(int(target), 1)
+    if raw <= 1.0:
+        return 1.0
+    power = 10.0 ** math.floor(math.log10(raw))
+    for multiple in (1.0, 2.0, 2.5, 5.0, 10.0):
+        step = multiple * power
+        if step >= raw:
+            return step
+    return 10.0 * power
+
+
 def sample_count(rect, step=3, minimum=2):
     """How many samples a curve needs to look smooth in `rect`.
 

@@ -300,6 +300,20 @@ class TestPolicy(unittest.TestCase):
         self.assertFalse(mapping.should_evaluate(1.01, 1.0, 0.05))
         self.assertTrue(mapping.should_evaluate(1.06, 1.0, 0.05))
 
+    def test_grid_step_is_a_friendly_number(self):
+        self.assertEqual(mapping.grid_step(24, target=12), 2.0)
+        self.assertEqual(mapping.grid_step(100, target=12), 10.0)
+        self.assertEqual(mapping.grid_step(1000, target=12), 100.0)
+
+    def test_grid_step_never_goes_below_a_frame(self):
+        self.assertEqual(mapping.grid_step(6, target=12), 1.0)
+        self.assertEqual(mapping.grid_step(0), 1.0)
+
+    def test_grid_step_gives_roughly_the_asked_for_count(self):
+        for span in (7, 13, 48, 101, 250, 3000):
+            step = mapping.grid_step(span, target=12)
+            self.assertLessEqual(span / step, 13.0, span)
+
     def test_sample_count_never_exceeds_the_pixels(self):
         self.assertEqual(mapping.sample_count(mapping.Rect(300, 100), step=3),
                          100)
