@@ -67,12 +67,21 @@ SEGMENTS = [("thigh_l", "calf_l"), ("calf_l", "foot_l"), ("thigh_r", "calf_r"),
             ("lowerarm_l", "hand_l"), ("upperarm_r", "lowerarm_r"),
             ("lowerarm_r", "hand_r"), ("pelvis", "spine_01"), ("neck_01", "head")]
 
+# How far a rest offset may sit from the identity before it needs a helper: the
+# aligned controls measure ~1e-7 against their bones, the IK end controls stand
+# 0.0003-0.0095 cm off theirs, and a pole is nowhere near its bone.
+OFFSET_TOL = 1e-5
+# A control is at its build pose when these read their defaults.  A pole's offset
+# is pose-dependent (a pole is not rigidly linked to its bone), so the rest
+# matrices have to be read with the rig at rest.
+DEFAULTS = (("tx", 0.0), ("ty", 0.0), ("tz", 0.0), ("rx", 0.0), ("ry", 0.0), ("rz", 0.0))
+
 HOLDER = "MoCapConstraints"      # AdvancedSkeleton's own node name
 SWITCH = "disableConstraints"    # ... and its own attribute
 DRIVER_PREFIX = "asrtDriver_"
 TARGET_PREFIX = "asrtTarget_"
 
-Drive = collections.namedtuple("Drive", "control bone translate rotate offset")
+Drive = collections.namedtuple("Drive", "control bone translate rotate")
 
 
 # ---------------------------------------------------------------- pure policy
@@ -109,25 +118,25 @@ def drive_plan(controls, bones):
     bones = set(bones)
     drives, missing = [], []
 
-    def add(control, bone, translate, rotate, offset):
+    def add(control, bone, translate, rotate):
         if control not in controls:
             return
         if bone not in bones:
             missing.append((control, bone))
             return
-        drives.append(Drive(control, bone, translate, rotate, offset))
+        drives.append(Drive(control, bone, translate, rotate))
 
     for control, bone in ROOT_ROWS:
-        add(control, bone, True, True, True)
+        add(control, bone, True, True)
     for as_base, ue_base in ROWS:
         for as_side, ue_side in SIDES:
-            add("FK" + as_base + as_side, ue_base + ue_side, False, True, False)
+            add("FK" + as_base + as_side, ue_base + ue_side, False, True)
     for as_base, ue_base, translate in IK_ROWS:
         for as_side, ue_side in SIDES[1:]:
-            add(as_base + as_side, ue_base + ue_side, translate, True, False)
+            add(as_base + as_side, ue_base + ue_side, translate, True)
     for as_base, ue_base in POLE_ROWS:
         for as_side, ue_side in SIDES[1:]:
-            add(as_base + as_side, ue_base + ue_side, True, False, True)
+            add(as_base + as_side, ue_base + ue_side, True, False)
     return drives, missing
 
 
@@ -170,6 +179,22 @@ def source_root_of(selection, joint_paths, rig_paths_):
     return root, ""
 
 
+def rigid(matrix):
+    """Pure: the same transform with its scale and shear thrown away.
+
+    Both matrices going into an offset have to be rigid, or the offset carries a
+    scale that the helper's driver -- a plain transform following the bone by
+    point+orient, scale 1 -- cannot reproduce: measured, the rig's own scale
+    chain leaves ~4e-7 on a bone, and 85 cm out at the pole that came back as
+    33 microns of error.
+    """
+    tm = om.MTransformationMatrix(om.MMatrix(matrix))
+    out = om.MTransformationMatrix()
+    out.setRotation(tm.rotation(asQuaternion=True))
+    out.setTranslation(tm.translation(om.MSpace.kWorld), om.MSpace.kWorld)
+    return list(out.asMatrix())
+
+
 def offset_local(control_world, bone_world):
     """Pure: the rest offset as a LOCAL matrix, C_rest * B_rest^-1.
 
@@ -177,13 +202,30 @@ def offset_local(control_world, bone_world):
     local matrix, under a parent holding the source bone's world matrix, stands
     exactly where the control stands at rest -- whatever pose the clip is in.
     """
-    return list(om.MMatrix(control_world) * om.MMatrix(bone_world).inverse())
+    return list(om.MMatrix(rigid(control_world))
+                * om.MMatrix(rigid(bone_world)).inverse())
 
 
 def is_identity(matrix, tol=1e-6):
     """Pure: is this 16-float matrix the identity within tol?"""
     return all(abs(a - b) <= tol
                for a, b in zip(list(om.MMatrix(matrix)), list(om.MMatrix())))
+
+
+def rotation_only(matrix):
+    """Pure: the same matrix with its translation row zeroed."""
+    m = list(matrix)
+    m[12] = m[13] = m[14] = 0.0
+    return m
+
+
+def needs_offset(local, translate, tol=OFFSET_TOL):
+    """Pure: must this drive go through the offset helper?
+
+    Measured, never tabulated: whether a control stands on its bone is a fact
+    about the rig, and a rotation-only drive does not care where the bone is.
+    """
+    return not is_identity(local if translate else rotation_only(local), tol)
 
 
 def segment_lengths(positions):
@@ -274,7 +316,7 @@ def _register(constraints):
         cmds.connectAttr(HOLDER + "." + SWITCH, c + ".nodeState", force=True)
 
 
-def _helper(control, source_path, rig_bone_path):
+def _helper(control, source_path, local):
     """Driver (follows the source bone 1:1) + target (holds the rest offset)."""
     driver = cmds.createNode("transform", name=DRIVER_PREFIX + control,
                              parent=HOLDER, skipSelect=True)
@@ -282,9 +324,63 @@ def _helper(control, source_path, rig_bone_path):
             cmds.orientConstraint(source_path, driver)[0]]
     target = cmds.createNode("transform", name=TARGET_PREFIX + control,
                              parent=driver, skipSelect=True)
-    _set_local(target, offset_local(cmds.getAttr(control + ".worldMatrix[0]"),
-                                    cmds.getAttr(rig_bone_path + ".worldMatrix[0]")))
+    _set_local(target, local)
     return target, made
+
+
+NECK_BIAS = ("FKNeck_M", "bias", 10.0)   # measured: 0 -> neck_01 takes half, 10 -> all
+
+
+def has_neck_inbetween():
+    """Does this rig's neck distribute its control's bend across two joints?"""
+    control, attr, _ = NECK_BIAS
+    return bool(cmds.objExists("NeckInbetweenMM_M")
+                and cmds.attributeQuery(attr, node=control, exists=True))
+
+
+def neck_note():
+    """What the neck's in-between costs a retarget, and the knob that removes it.
+
+    Measured 2026-09-04: `FKNeck_M.bias` (keyable, soft range 0..10, default 0)
+    feeds the in-between's blend weight linearly -- 0 gives 0.5 and 10 gives
+    1.0, where 30 deg on the control turns neck_01 by exactly 30.0000.  So at
+    the default the retargeted neck lands half as bent as the source's.
+    """
+    if not has_neck_inbetween():
+        return ""
+    control, attr, full = NECK_BIAS
+    return ("note: the neck's in-between hands neck_01 HALF of its control's "
+            "bend, so the neck lands softer than the source (the head's "
+            "orientation is exact, its position a few mm off at a 15 deg bend). "
+            "For an exact neck set %s.%s to %g -- by hand, or "
+            "connect(exact_neck=True)." % (control, attr, full))
+
+
+def set_exact_neck():
+    """Turn the neck's in-between off by its own bias attribute.  Writes."""
+    if not has_neck_inbetween():
+        return ""
+    control, attr, full = NECK_BIAS
+    was = cmds.getAttr(control + "." + attr)
+    cmds.setAttr(control + "." + attr, full)
+    return ("neck: %s.%s %g -> %g, so neck_01 takes its control's bend 1:1. "
+            "LEAVE IT THERE - it decides how the baked neck keys distribute, and "
+            "putting it back to %g afterwards would halve the neck again."
+            % (control, attr, was, full, was))
+
+
+def posed_controls(tol=1e-3):
+    """Controls off their default translate/rotate: the rig is not at build pose."""
+    out = []
+    for control in cmds.sets("ControlSet", query=True) or []:
+        for attr, default in DEFAULTS:
+            plug = control + "." + attr
+            if not cmds.objExists(plug) or not cmds.getAttr(plug, settable=True):
+                continue
+            if abs(cmds.getAttr(plug) - default) > tol:
+                out.append(control)
+                break
+    return out
 
 
 def _key_range(paths):
@@ -349,23 +445,34 @@ def report(source_root=None):
         return plan.refusal
     lines = ["source: %s (%d bones, keys %s)"
              % (plan.root, len(plan.bones), _key_range(list(plan.bones.values())))]
-    lines.append("would drive %d controls: %d rotation only, %d with position, "
-                 "%d through a rest offset"
+    offsets = [d.control for d in plan.drives
+               if needs_offset(offset_local(
+                   cmds.getAttr(d.control + ".worldMatrix[0]"),
+                   cmds.getAttr(plan.rig_bones[d.bone] + ".worldMatrix[0]")),
+                   d.translate)]
+    lines.append("would drive %d controls: %d rotation only, %d with position; "
+                 "%d need a rest offset (%s)"
                  % (len(plan.drives),
                     len([d for d in plan.drives if not d.translate]),
                     len([d for d in plan.drives if d.translate]),
-                    len([d for d in plan.drives if d.offset])))
+                    len(offsets), ", ".join(offsets)))
+    posed = posed_controls()
+    if posed:
+        lines.append("the rig is posed (%s%s) - connect() will refuse until it is "
+                     "at its build pose" % (", ".join(posed[:4]),
+                                            " ..." if len(posed) > 4 else ""))
     if plan.missing:
         lines.append("no source bone for: "
                      + ", ".join("%s (%s)" % (c, b) for c, b in plan.missing))
     if plan.warn:
         lines.append(plan.warn)
+    lines.append(neck_note())
     if cmds.objExists(HOLDER):
         lines.append("%s already exists - disconnect first" % HOLDER)
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line)
 
 
-def connect(source_root=None):
+def connect(source_root=None, require_build_pose=True, exact_neck=False):
     """Make the rig follow the source skeleton, in AdvancedSkeleton's own shape."""
     if cmds.objExists(HOLDER):
         return ("%s already exists - press \"Disconnect MoCap Skeleton\" in "
@@ -373,19 +480,36 @@ def connect(source_root=None):
     plan = _plan(source_root)
     if plan.refusal:
         return plan.refusal
+    posed = posed_controls()
+    if posed and require_build_pose:
+        return ("the rig is posed (%s%s) - press \"Go To BuildPose\" in "
+                "AdvancedSkeleton first, or connect(require_build_pose=False). "
+                "The rest offsets are read from the pose the rig stands in, and "
+                "a pole's offset is pose-dependent."
+                % (", ".join(posed[:4]), " ..." if len(posed) > 4 else ""))
+
+    # Read every rest matrix BEFORE building anything: the first constraints move
+    # controls that later ones measure against (a pole follows the IK control it
+    # rides, so its offset came out 0.022 cm wrong when read mid-build).
+    rest_control = dict((d.control, cmds.getAttr(d.control + ".worldMatrix[0]"))
+                        for d in plan.drives)
+    rest_bone = dict((d.bone, cmds.getAttr(plan.rig_bones[d.bone] + ".worldMatrix[0]"))
+                     for d in plan.drives)
 
     auto = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
     cmds.undoInfo(openChunk=True, chunkName="AS retarget connect")
     made = []
+    offsets = 0
     try:
         _holder()
         for drive in plan.drives:
             target = plan.bones[drive.bone]
-            if drive.offset:
-                target, helpers = _helper(drive.control, target,
-                                          plan.rig_bones[drive.bone])
+            local = offset_local(rest_control[drive.control], rest_bone[drive.bone])
+            if needs_offset(local, drive.translate):
+                target, helpers = _helper(drive.control, target, local)
                 made += helpers
+                offsets += 1
             if drive.translate:
                 made.append(cmds.pointConstraint(target, drive.control)[0])
             if drive.rotate:
@@ -395,8 +519,8 @@ def connect(source_root=None):
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=auto)
 
-    lines = ["retarget connected: %d controls driven from %s"
-             % (len(plan.drives), leaf(plan.root))]
+    lines = ["retarget connected: %d controls driven from %s (%d through a rest "
+             "offset)" % (len(plan.drives), leaf(plan.root), offsets)]
     if plan.missing:
         lines.append("no source bone for: "
                      + ", ".join(c for c, _ in plan.missing))
@@ -407,9 +531,10 @@ def connect(source_root=None):
                  % (cmds.playbackOptions(query=True, min=True),
                     cmds.playbackOptions(query=True, max=True),
                     _key_range(list(plan.bones.values()))))
+    lines.append(set_exact_neck() if exact_neck else neck_note())
     lines.append("now in AdvancedSkeleton: MoCap Matcher > Bake, then "
                  "Disconnect MoCap Skeleton")
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line)
 
 
 def disconnect():

@@ -52,10 +52,10 @@ class TestDrivePlan(unittest.TestCase):
     def test_every_control_is_driven_once(self):
         self.assertEqual(len(self.by_control), len(self.drives))
 
-    def test_the_fk_controls_take_rotation_only_and_need_no_offset(self):
+    def test_the_fk_controls_take_rotation_only(self):
         d = self.by_control["FKShoulder_L"]
-        self.assertEqual((d.bone, d.translate, d.rotate, d.offset),
-                         ("upperarm_l", False, True, False))
+        self.assertEqual((d.bone, d.translate, d.rotate),
+                         ("upperarm_l", False, True))
 
     def test_the_spine_is_one_to_one(self):
         for i in range(1, 6):
@@ -67,33 +67,33 @@ class TestDrivePlan(unittest.TestCase):
     def test_the_metacarpals_are_mapped(self):
         self.assertEqual(self.by_control["FKIndexFinger0_R"].bone, "index_metacarpal_r")
 
-    def test_root_motion_goes_to_main_with_an_offset(self):
+    def test_root_motion_goes_to_main(self):
         d = self.by_control["Main"]
-        self.assertEqual((d.bone, d.translate, d.rotate, d.offset),
-                         ("root", True, True, True))
+        self.assertEqual((d.bone, d.translate, d.rotate),
+                         ("root", True, True))
 
     def test_the_pelvis_control_is_rootx_and_not_an_fk_control(self):
         d = self.by_control["RootX_M"]
-        self.assertEqual((d.bone, d.translate, d.rotate, d.offset),
-                         ("pelvis", True, True, True))
+        self.assertEqual((d.bone, d.translate, d.rotate),
+                         ("pelvis", True, True))
         self.assertNotIn("FKRoot_M", self.by_control)
 
-    def test_the_ik_ends_take_position_and_rotation_without_an_offset(self):
+    def test_the_ik_ends_take_position_and_rotation(self):
         self.assertEqual(self.by_control["IKLeg_R"].bone, "foot_r")
         for name in ("IKArm_L", "IKLeg_L"):
             d = self.by_control[name]
-            self.assertEqual((d.translate, d.rotate, d.offset), (True, True, False))
+            self.assertEqual((d.translate, d.rotate), (True, True))
 
     def test_the_toe_control_takes_rotation_only(self):
         d = self.by_control["IKToes_L"]
-        self.assertEqual((d.bone, d.translate, d.rotate, d.offset),
-                         ("ball_l", False, True, False))
+        self.assertEqual((d.bone, d.translate, d.rotate),
+                         ("ball_l", False, True))
 
-    def test_the_poles_ride_the_upper_bone_by_position_through_an_offset(self):
+    def test_the_poles_ride_the_upper_bone_by_position(self):
         self.assertEqual(self.by_control["PoleLeg_L"].bone, "thigh_l")
         self.assertEqual(self.by_control["PoleArm_R"].bone, "upperarm_r")
         d = self.by_control["PoleLeg_R"]
-        self.assertEqual((d.translate, d.rotate, d.offset), (True, False, True))
+        self.assertEqual((d.translate, d.rotate), (True, False))
 
     def test_the_twist_joints_are_never_driven(self):
         for d in self.drives:
@@ -208,11 +208,52 @@ class TestOffsetLocal(unittest.TestCase):
         for a, b in zip(got, ctrl):
             self.assertAlmostEqual(a, b, places=9)
 
+    def test_a_scale_on_either_input_does_not_reach_the_offset(self):
+        # the rig's own scale chain leaves ~4e-7 on a bone, and 85 cm out at a
+        # pole that came back as 33 microns of error until both sides were made
+        # rigid
+        ctrl = [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1]
+        bone = self.IDENT[:12] + [1, 2, 3, 1]
+        scaled = [v * 1.0000004 for v in bone[:12]] + bone[12:]
+        clean = ar.offset_local(ctrl, bone)
+        got = ar.offset_local(ctrl, scaled)
+        for a, b in zip(got, clean):
+            self.assertAlmostEqual(a, b, places=9)
+
     def test_it_is_not_the_other_order(self):
         ctrl = [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1]
         bone = [1, 0, 0, 0, 0, 0, 1, 0, 0, -1, 0, 0, 4, 0, 0, 1]
         wrong = list(om.MMatrix(bone) * om.MMatrix(ar.offset_local(ctrl, bone)))
         self.assertFalse(all(abs(a - b) < 1e-9 for a, b in zip(wrong, ctrl)))
+
+
+class TestNeedsOffset(unittest.TestCase):
+
+    IDENT = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+
+    def test_the_translation_row_is_what_rotation_only_drops(self):
+        m = [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1]
+        self.assertEqual(ar.rotation_only(m), m[:12] + [0.0, 0.0, 0.0, 1])
+
+    def test_equal_frames_need_no_offset(self):
+        self.assertFalse(ar.needs_offset(self.IDENT, True))
+        self.assertFalse(ar.needs_offset(self.IDENT, False))
+
+    def test_a_control_standing_off_its_bone_needs_one_only_when_position_is_driven(self):
+        # what the IK end controls measure: 0.0095 cm off the bone, frames equal
+        off = self.IDENT[:12] + [0.0095, 0.0, 0.0, 1]
+        self.assertTrue(ar.needs_offset(off, True))
+        self.assertFalse(ar.needs_offset(off, False))
+
+    def test_a_turned_frame_needs_one_either_way(self):
+        turned = [0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        self.assertTrue(ar.needs_offset(turned, True))
+        self.assertTrue(ar.needs_offset(turned, False))
+
+    def test_the_aligned_controls_measured_residual_is_not_an_offset(self):
+        # the FK controls measure ~1e-7 against their bones after the axis work
+        tiny = [1, 1e-7, 0, 0, -1e-7, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        self.assertFalse(ar.needs_offset(tiny, False))
 
 
 class TestScaleWarning(unittest.TestCase):
@@ -313,7 +354,21 @@ class TestNames(unittest.TestCase):
         # drift from it.  Deliberately absent.
         self.assertFalse(hasattr(ar, "bake"))
 
+    def test_the_neck_note_only_reports_and_the_setter_only_sets(self):
+        # a function whose name says "note" must not change the animator's rig:
+        # the bias is theirs, and it decides how baked neck keys distribute
+        with open(ar.__file__.replace(".pyc", ".py")) as handle:
+            source = handle.read()
+        note = source.split("def neck_note()")[1].split("\ndef ")[0]
+        self.assertNotIn("setAttr", note)
+        self.assertIn("setAttr", source.split("def set_exact_neck()")[1].split("\ndef ")[0])
+
+    def test_the_neck_bias_is_the_measured_pair(self):
+        # measured 2026-09-04: bias 0 -> in-between weight 0.5, bias 10 -> 1.0
+        self.assertEqual(ar.NECK_BIAS, ("FKNeck_M", "bias", 10.0))
+
     def test_no_qt(self):
-        source = open(ar.__file__.replace(".pyc", ".py")).read()
+        with open(ar.__file__.replace(".pyc", ".py")) as handle:
+            source = handle.read()
         for banned in ("PySide", "shiboken", "QtWidgets"):
             self.assertNotIn(banned, source)
