@@ -60,6 +60,20 @@ def _set_rot(node, rmat):
     cmds.setAttr(node + ".rotate", math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
 
 
+def _set_local(node, local):
+    """Write a full local matrix (rotation in the node's order, translation) onto a transform."""
+    tm = om.MTransformationMatrix(local)
+    tm.reorderRotation(cmds.getAttr(node + ".rotateOrder") + 1)
+    e = tm.rotation(asQuaternion=False)
+    t = tm.translation(om.MSpace.kTransform)
+    cmds.setAttr(node + ".translate", t.x, t.y, t.z)
+    cmds.setAttr(node + ".rotate", math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
+
+
+def _row(m, i):
+    return om.MVector(m.getElement(i, 0), m.getElement(i, 1), m.getElement(i, 2))
+
+
 def ensure_as_ui():
     """Source the toolset and open its window -- the vendor's procs read their own controls."""
     if mel.eval('whatIs "asReBuildAdvancedSkeleton"') == "Unknown":
@@ -174,6 +188,61 @@ def orient_controls():
     return len(targets), worst
 
 
+def restore_shapes():
+    """Turn every custom-oriented control's curve back to where AS drew it (Set Axis's
+    "keep curve unaffected", which Detach/Attach does not do).  The axes stay; only the
+    CVs move.  Circles about the bone axis never showed it; the IK foot boxes did."""
+    n = 0
+    for c in cmds.sets("ControlSet", q=True):
+        k = "CustomOrient" + c
+        if not cmds.objExists(k):
+            continue
+        r_old = _rot(_wmat(cmds.listRelatives(k, p=True)[0])).asMatrix()   # the frame AS drew the curve in
+        m = r_old * _rot(_wmat(c)).asMatrix().inverse()
+        for s in cmds.listRelatives(c, s=True, type="nurbsCurve", fullPath=True) or []:
+            sl = om.MSelectionList(); sl.add(s)
+            fn = om.MFnNurbsCurve(sl.getDagPath(0))
+            fn.setCVPositions(om.MPointArray([om.MPoint(pt) * m for pt in fn.cvPositions(om.MSpace.kObject)]), om.MSpace.kObject)
+            fn.updateCurve()
+            n += 1
+    return n
+
+
+def finger_sdk_axes():
+    """The Fingers curl/spread set-driven keys drive the SDKFK* groups, which sit ABOVE
+    CustomOrient and therefore still turned about AS's axes (measured: 14 deg off the
+    knuckle axis).  Each group is re-parented under a UEAxis node whose frame is
+    y = bone Z (curl channel -> the UE bend axis, +Z curls inward on both hands),
+    z = bone Y (spread channel -> the UE spread axis), x = y cross z; the
+    CustomOrient below is recomputed so nothing moves at rest.  Run at the build pose.
+    """
+    table = mapping()
+    n = 0
+    for g in sorted(cmds.ls("SDKFK*", type="transform")):
+        ue = table.get(g[len("SDKFK"):])
+        parent = cmds.listRelatives(g, p=True)[0]
+        if not ue or parent.startswith("UEAxis"):
+            continue
+        kids = {k: _wmat(k) for k in (cmds.listRelatives(g, c=True, type="transform") or [])}
+        b = _rot(_wmat(ue)).asMatrix()
+        y, z = _row(b, 2), _row(b, 1)
+        x = y ^ z
+        d = om.MMatrix()
+        for r, v in enumerate((x, y, z)):
+            for col in range(3):
+                d.setElement(r, col, v[col])
+        node = cmds.createNode("transform", n="UEAxis" + g, p=parent)
+        cmds.addAttr(node, ln="ueAxisFor", dt="string")
+        cmds.setAttr(node + ".ueAxisFor", ue, type="string")
+        _set_rot(node, d * _rot(_wmat(parent)).asMatrix().inverse())
+        cmds.parent(g, node, r=True)
+        gw = _wmat(g)
+        for k, kw in kids.items():
+            _set_local(k, kw * gw.inverse())
+        n += 1
+    return n
+
+
 def run():
     state = {"autoKey": cmds.autoKeyframe(q=True, st=True), "em": cmds.evaluationManager(q=True, mode=True)[0]}
     cmds.autoKeyframe(st=False)
@@ -186,8 +255,10 @@ def run():
         build()
         constrain()
         n, worst = orient_controls()
+        shapes = restore_shapes()
+        sdk = finger_sdk_axes()
         drift = max(max(abs(a - b) for a, b in zip(m, cmds.getAttr(j + ".worldMatrix[0]"))) for j, m in rest.items())
-        print("// %d FK controls oriented, worst frame angle %.5f deg; bind-pose drift %.9f" % (n, worst, drift))
+        print("// %d controls oriented (worst frame angle %.5f deg), %d curves put back, %d finger SDK groups re-framed; bind-pose drift %.9f" % (n, worst, shapes, sdk, drift))
         lay = cmds.createDisplayLayer(name="UE5_Skeleton", empty=True)
         cmds.editDisplayLayerMembers(lay, joints, noRecurse=True)
     finally:

@@ -180,10 +180,29 @@ try:
     for c, v in saved["blends"].items(): cmds.setAttr(c + ".FKIKBlend", v)
     w, wj = worst_drift()
     gate(21, d_arm < 0.01 and d_leg < 0.01 and w < 1e-3, "align FK->IK arm %.6f, IK->FK leg %.6f (world-matrix max diff); back to build pose drift %.9f" % (d_arm, d_leg, w))
+    # 22 the Fingers attributes curl every phalanx about the UE bone's +Z and spread opens the hand
+    #    (the SDK groups sit above CustomOrient in AS's frame; re-framed 2026-09-04 evening, «Fingers_L сгибает пальцы по ложным осям»)
+    badf = []
+    sp0 = {h: cmds.getAttr("Fingers_%s.spread" % h) for h in "LR"}
+    for hand, S in (("L", "l"), ("R", "r")):
+        for finger, bones in (("index", ["index_01", "index_02", "index_03"]), ("middle", ["middle_01", "middle_02", "middle_03"]), ("ring", ["ring_01", "ring_02", "ring_03"]), ("pinky", ["pinky_01", "pinky_02", "pinky_03"]), ("thumb", ["thumb_02", "thumb_03"])):
+            W = {b: wm(b + "_" + S) for b in bones}
+            cmds.setAttr("Fingers_%s.%sCurl" % (hand, finger), 5)
+            for b in bones:
+                q = rot(wm(b + "_" + S) * W[b].inverse()); a = math.degrees(2 * math.acos(max(-1.0, min(1.0, q.w)))); s = math.sin(math.radians(a) / 2.0)
+                az = q.z / s if abs(s) > 1e-9 else 0.0
+                if not (a > 5 and abs(az - 1.0) < 0.01): badf.append((hand, finger, b, round(a, 2), round(az, 3)))
+            cmds.setAttr("Fingers_%s.%sCurl" % (hand, finger), 0)
+        d0 = dist(wpos("index_03_" + S), wpos("pinky_03_" + S)); cmds.setAttr("Fingers_%s.spread" % hand, sp0[hand] + 5)
+        d1 = dist(wpos("index_03_" + S), wpos("pinky_03_" + S)); cmds.setAttr("Fingers_%s.spread" % hand, sp0[hand])
+        if d1 - d0 < 2: badf.append((hand, "spread", round(d1 - d0, 2)))
+    gate(22, not badf, "Fingers curl turns all 28 phalanges about their bone +Z and spread opens both hands; bad=%s" % badf[:6])
+    sdk = cmds.ls("SDKFK*", type="transform")
+    gate(23, len(sdk) == 28 and all((cmds.listRelatives(g, p=True) or [""])[0].startswith("UEAxis") for g in sdk), "%d SDK groups, each under its UEAxis frame node" % len(sdk))
 finally:
     for c, v in saved["blends"].items(): cmds.setAttr(c + ".FKIKBlend", v)
     cmds.evaluationManager(mode=saved["em"]); cmds.autoKeyframe(st=saved["autoKey"]); cmds.currentTime(saved["time"])
     if saved["sel"]: cmds.select(saved["sel"])
     else: cmds.select(clear=True)
     print("restored: em %s autoKey %s time %s sel %s" % (cmds.evaluationManager(q=True, mode=True)[0], cmds.autoKeyframe(q=True, st=True), cmds.currentTime(q=True), cmds.ls(sl=True)))
-print("RESULT: %d of 21 gates failed %s" % (len(FAILS), FAILS))
+print("RESULT: %d of 23 gates failed %s" % (len(FAILS), FAILS))

@@ -126,8 +126,8 @@ of MEL, one file). The relevant machinery, all confirmed in the source:
   matches how UE's twist bones are meant to carry it. Not a defect.
 - **Legs are IK by default** (`FKIKLeg_*.FKIKBlend = 10`), arms FK; FK leg
   controls do nothing until the blend is switched.
-- **Two heredocs in one Bash call fail** in this harness, at the second marker.
-  Cost the very first bridge run and the S7 run.
+- **A Bash call longer than ~8 KB fails** in this harness with "unexpected EOF"
+  and runs nothing. Cost the first bridge run, the S7 run and the S13 run.
 
 ## Measured, in the final state
 
@@ -148,6 +148,37 @@ of MEL, one file). The relevant machinery, all confirmed in the source:
   (0.000000). FK→IK align on the arm (`asAlignIK2FK`) matches the hand's
   world matrix to 1e-6 with the hand 12.6 cm from rest; IK→FK on the leg
   (`asAlignFK2IK`) matches foot and calf to 0.000000.
+
+## Evening follow-ups: the finger curl and the IK foot shapes
+
+The user, after using the rig: «Fingers_L сгибает пальцы по ложным осям, не по
+осям костей изначального скелета. ИК контролы ног теперь имеют правильные оси
+поворотов, но визуально перевернуты».
+
+- **Fingers.** The curl/spread set-driven keys drive the `SDKFK<Finger><n>_<S>`
+  groups (`rotateY` = curl, +90° at curl 10; `rotateZ` = spread, index +40 /
+  pinky −60 at spread 10), and those groups sit ABOVE `CustomOrient` — so they
+  still turned about AS's axes. Measured: `indexCurl` bent `index_01_l` about
+  (0, 0.237, 0.971) in the bone's frame, 14° off the UE bend axis Z; spread
+  about (0, 0.971, −0.237). Fix: each of the 28 groups was re-parented under a
+  `UEAxis<group>` node (attribute `ueAxisFor` = the bone) whose frame is
+  **y = bone Z, z = bone Y, x = y × z** — the curl channel then turns about the
+  UE bend axis and spread about the UE spread axis, wiring untouched — and the
+  `CustomOrient` below was recomputed (`K.local = K.world · G.world⁻¹`) so the
+  rest pose did not move (K world error 0.000000000). Signs were chosen by
+  measurement, first try: curl now turns **all 28 phalanges about exactly
+  (0, 0, +1)** — the UE convention where positive Z curls inward on both hands
+  (the bind values are +23.4°/+14.9°/+12.5° on the index) — 45/90/135° at
+  curl 5; spread +5 opens the index–pinky tips by **+4.76 cm on both hands**.
+- **IK shapes.** A control's curve is drawn in its local space, so turning the
+  frame turned the drawing; the FK rings are symmetric about the bone axis and
+  never showed it, the IK foot boxes (open degree-1 curves, 15 spans) did. AS's
+  own Set Axis has "keep curve unaffected"; Detach/Attach does not. For all 64
+  custom-oriented controls the CVs were multiplied by `R_old · R_new⁻¹` (R_old =
+  the frame of `CustomOrient`'s parent, where AS drew the curve): every curve is
+  back where AS drew it to **0.000000000 cm**, the axes unchanged (0.000002°).
+- Both steps are in `as_ue5_rig_procedure.py` (`restore_shapes`,
+  `finger_sdk_axes`) and gated (22, 23) in the verify script.
 
 ## Not done, deliberately or not yet
 
@@ -170,4 +201,4 @@ of MEL, one file). The relevant machinery, all confirmed in the source:
 ## Files
 
 - `docs/superpowers/plans/as_ue5_rig_procedure.py` — the sequence, re-runnable.
-- `docs/superpowers/plans/verify_advancedskeleton_ue5_rig.py` — 21 live gates, **green live 2026-09-04, 0 of 21 gates failed**.
+- `docs/superpowers/plans/verify_advancedskeleton_ue5_rig.py` — 23 live gates, **green live 2026-09-04, 0 of 23 gates failed**.

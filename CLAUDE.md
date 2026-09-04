@@ -3495,7 +3495,7 @@ Custom) on the studio's UE5 Manny, at the user's ask («сделай риг ос
 `docs/superpowers/specs/2026-09-04-advancedskeleton-ue5-rig-design.md`.
 Procedure, re-runnable: `docs/superpowers/plans/as_ue5_rig_procedure.py`.
 Proof: `docs/superpowers/plans/verify_advancedskeleton_ue5_rig.py` — **green
-live 2026-09-04, 0 of 21 gates failed**.
+live 2026-09-04, 0 of 23 gates failed**.
 
 **What it is.** The UE skeleton is untouched — names, hierarchy, skin, bind
 pose (drift 0.000000000 on all 93 joints) — and every one of AS's 79
@@ -3564,5 +3564,16 @@ twist bones expect.
 - Pre-rig backup:
   `Documents/maya/projects/default/scenes/Manny_before_AdvancedSkeleton_20260904_1548.mb`.
   The scene lives at the crash-recovery path until the user saves it.
-- Harness: a Bash call holding two heredocs dies at the second marker — one
-  heredoc per call, the other file through Write.
+- **Two follow-ups the same evening, both measured.** The Fingers curl/spread
+  set-driven keys drive the `SDKFK*` groups, which sit ABOVE `CustomOrient`
+  and so kept AS's axes (curl 14° off the UE knuckle axis); each is now under
+  a `UEAxis*` node framed y = bone Z, z = bone Y, x = y × z, the CustomOrient
+  below recomputed — curl turns all 28 phalanges about exactly +Z (inward on
+  both UE hands), spread opens the tips 4.76 cm. And Detach/Attach does not
+  do Set Axis's "keep curve unaffected": the IK foot boxes came out flipped
+  until every custom-oriented control's CVs were multiplied by
+  `R_old · R_new⁻¹` (back where AS drew them to 0.000000000 cm; rings about
+  the bone axis never showed it).
+- Harness: a Bash call longer than ~8 KB dies with "unexpected EOF" and runs
+  nothing (three times that day) — write big payloads with Write and keep
+  the Bash call to the run command.
