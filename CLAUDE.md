@@ -15,8 +15,8 @@ landed 2026-09-01 ("изолируем нашу полку как отдельн
 MayaScripts/                  the workshop
 ├── SkeldarAnim/              THE PLUGIN -- this, and only this, ships
 │   ├── install.py  README_INSTALL.txt
-│   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/
-│   ├── maya_overshoot.py  maya_hotkeys.py
+│   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/  maya_curveview/
+│   ├── maya_overshoot.py  maya_hotkeys.py  maya_vpstudio.py  maya_colour.py
 │   └── icons/  assets/  overrig/
 ├── make_build.py             dev tool: builds the zip from SkeldarAnim/
 ├── maya_skelfit.py  maya_meltmorph.py  maya_retarget.py  ...
@@ -180,7 +180,9 @@ Four things that will waste a run if forgotten:
 
 ## Running tests
 
-There is **no system Python** — `python` resolves to the Microsoft Store stub.
+There is **no system Python** — `python` resolves to the Microsoft Store stub,
+and that stub does not fail, it **HANGS**: a `python - <<EOF` in the Bash tool
+sits there until the timeout and a `|| mayapy` fallback beside it never fires.
 Use Maya's interpreter, and never `pip install` into the Maya tree.
 
 ```
@@ -188,7 +190,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1491 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1929 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -1363,6 +1365,52 @@ C_parent` construction rather than a measurement.
     crossing it is handled. And when a DG network's output is a BOUNDED
     reading of an UNBOUNDED quantity, the build must measure the range and
     refuse, because the runtime cannot.
+
+53. **`__file__` does not exist in a file the command port runs**, and a
+    runner that derives its own directory from it dies before writing its
+    marker — no marker, no output file, Maya's CPU flat. Every symptom of a
+    blocked idle queue (notes 6/7/8) with a healthy Maya and a correct
+    script on the other end. Trap 17's family: `exec(open(path).read())`
+    hands the file's TEXT to a namespace that has neither `__file__` nor a
+    module of its own. Hardcode the path in the runner, and pass `__file__`
+    explicitly in the globals dict it exec's the payload with.
+54. **Qt's `WA_TransparentForMouseEvents` does not cross a native-window
+    boundary.** It is a routing flag *inside* Qt: the event goes to the
+    widget below in the SAME window, and for a top-level window "below" is
+    another native window Qt will not forward to. Measured on a translucent
+    overlay over Maya's viewport: no marquee, no camera orbit, the events
+    simply died in our window. On Windows the mechanism that does work is
+    `WS_EX_LAYERED | WS_EX_TRANSPARENT` via ctypes, set **after `show()`**
+    (re-parenting recreates the native window and drops it), after which
+    `WindowFromPoint` stops answering our window and `alt`+LMB orbits the
+    camera straight through. `WindowFromPoint` is also the hands-free test:
+    the docs say it skips a `WS_EX_TRANSPARENT` window, which is the same
+    decision a real click takes.
+55. **`MGlobal.selectFromScreen`'s CLICK form of `kXORWithList` is a
+    no-op, while its BOX form toggles correctly.** Measured from both
+    starting states: from an empty selection the click form selects
+    nothing, from a held one it changes nothing. So a shift-click routed
+    through the API's own adjustment silently does nothing — the animator
+    shift-clicks, sees no change, and blames their aim. `kReplaceList` is
+    the one value measured to behave identically in both forms: pick with
+    that and apply the modifier yourself with `cmds.select(... add / toggle
+    / deselect)`.
+56. **Maya's pick runs through the viewport's own DRAW pass**, so a node
+    that has never been drawn cannot be selected from screen. A locator
+    created and immediately picked at screen centre returned nothing at all
+    under every listAdjustment — which reads exactly like a broken
+    adjustment table and cost a whole probe round to separate. Trap 14's
+    family, from the selection side: `cmds.refresh()` before any scripted
+    pick of something just created.
+57. **`repaint()` is a no-op while a bridge script holds the main thread**,
+    because the Qt event loop never turns and the window has never been
+    exposed — measured, `paint_count` stayed 0 on a window that was up and
+    visibly correct. `widget.render(QImage)` forces `paintEvent`
+    synchronously, and counting the non-zero bytes it leaves is the gate
+    worth having: it proves ink, not merely that a handler ran. And
+    **`cutKey(clear=True)` answers 0 even when it worked**, so a status line
+    built on its return value reports "Deleted 0 key(s)" over keys it has
+    just removed — count the selection before the cut.
 
 
 ## Retargeting Manny onto other skeletons
@@ -2937,6 +2985,164 @@ control (it fires after every press and would discard the colour just
 dialled — `maya_scenesetup.window`'s swatch lesson), and a refusal opens
 no undo chunk, since an empty chunk eats the animator's previous undo step.
 
+## `maya_curveview` — Curve Overlay: the graph editor over the viewport
+
+The **ninth** shelf button (2026-09-05), a package
+(`SkeldarAnim/maya_curveview/`) — the animator's ask: «сделать свой кастомный
+граф эдитор в мая… кривые рисовались прямо поверх вьюпорта, так чтобы я мог
+двигать кривую прямо во вьюпорте… какой-то режим превращал мой вьюпорт в граф
+эдитор с прозрачным фоном». Spec:
+`docs/superpowers/specs/2026-09-05-viewport-curve-overlay-design.md` — **read
+its ADDENDUM**, which reverses three of the main text's decisions the same
+day. Proof: `docs/superpowers/plans/verify_curveview.py` — **green live
+2026-09-05, 0 of 44 gates failed**, 1929 unit tests.
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
+import maya_curveview; maya_curveview.toggle()
+```
+
+One press turns the whole viewport into a graph editor with no background:
+the selected control's curves are drawn over the live picture, keys as
+squares on the keys, and the character stays visible underneath. **The point
+is the feedback loop, not the screen space** — «Хочу править кривые и сразу
+же смотреть на результат».
+
+**The architecture was chosen from five live probes, not from an opinion
+about Qt**, and every one of these is measured:
+
+- **`QmayaGLWidget` is a NATIVE Windows window** (inside a `QStackedWidget`
+  inside two `QmayaLayoutWidget`s). A native child window composites above
+  every non-native sibling, so a child overlay **cannot paint over the
+  viewport at all** — and Maya's own layout owns the panel, which gave a
+  child overlay a height of **zero** with `paintEvent` running 0 times.
+- **A frameless translucent TOP-LEVEL window does composite**, with real
+  alpha over live GL: the character, the grid, the manipulator arrows and
+  Maya's own `Focal Length / 10.4 fps` HUD all read through it.
+- **Qt's `WA_TransparentForMouseEvents` does NOT pass the mouse through a
+  top-level window** — under the overlay there was no marquee and no camera
+  orbit. It is a Qt-internal routing flag: it forwards an event to the widget
+  below **inside the same window**, and Qt forwards nothing across a
+  native-window boundary. The Windows recipe is
+  **`WS_EX_LAYERED | WS_EX_TRANSPARENT`** through ctypes, applied **after
+  `show()`** (re-parenting recreates the native window and loses it) — and
+  `alt`+LMB then orbits the camera straight through the overlay.
+- **`cmds.draggerContext` runs its command as PYTHON, not MEL.** A MEL-style
+  `python("...")` answered `NameError: name 'python' is not defined`, which
+  was itself the proof that the callback fires.
+- **`draggerContext(space="screen")` reports `[x, y, 0.0]` viewport-local
+  with Y from the BOTTOM** — `qt_y = height − y`, confirmed by drawing both
+  readings and watching which followed the cursor. `button` is `1` for LMB,
+  `modifier` is a **string** (`'none'`), and `alt` never arrives: all 1725
+  drag events of a recorded session carried `'none'` while the animator was
+  orbiting.
+- **~860 events per drag**, about one per pixel of travel.
+
+So input is an ordinary Maya context — which is the whole reason the camera
+still works, since `alt`+mouse is taken upstream in Maya's own event
+dispatch — and the overlay is a pure painter the OS hit-tests straight
+through. The rejected alternatives are in the spec: a `MPxContext` +
+`MUIDrawManager` plugin (the fallback, its one unknown never closed), and a
+Qt overlay handling its own mouse (dead on the measurement above).
+
+| Module | Responsibility | May import |
+|---|---|---|
+| `mapping.py` | **all the arithmetic**: time/value ↔ pixels, the Y flip, autoframe, normalise, hit-testing, marquee, grid step, tangent geometry, the modifier table, the throttle decision | **stdlib only** |
+| `curves.py` | which curves are drawn (the channel-box rule), plugs → animCurves, sampling | `maya.cmds` |
+| `edits.py` | the undo chunk, the relative key move, tangents, insert/delete, the throttled time follow | `maya.cmds` |
+| `overlay.py` | the window: translucency, click-through, painting | **Qt + ctypes only, never `maya.cmds`** |
+| `viewport.py` | the active model panel's GL widget and its global rect | `maya.cmds`, Qt |
+| `tool.py` | the dragger context, the gestures, entering and leaving the mode | `maya.cmds` + all the above |
+
+Both boundaries are enforced by subprocess tests, as `bodymap`'s is.
+
+**The gestures.** LMB **works on keys, and selects objects when it caught
+none** — a click with nothing under it click-selects in the scene, a marquee
+that caught no key box-selects, and both halves are reachable with no modal
+switch. MMB drags the selected keys, or a tangent handle when the press
+landed on one: the Graph Editor's own division of labour, which the animator
+already has in his hands. `alt`+anything is the camera, natively.
+
+**Key selection is MAYA's**, not a private set: a key picked in the overlay
+is picked in the Graph Editor too, `cmds.keyframe(edit=True,
+relative=True, animation="keys")` moves "the selected keys" with no list to
+pass, and undo needs no bookkeeping of ours.
+
+Load-bearing details, each measured or paid for elsewhere:
+
+- **The drag sends the DIFFERENCE from what it has already applied**, never
+  the running total — snapping the time to whole frames on a total would
+  re-round every one of ~860 events and drift. A test walks 200 events to
+  +37 frames and asserts they sum to exactly 37.
+- **Sampling evaluates the animCURVE NODE** (`cmds.keyframe(curve,
+  query=True, eval=True, time=(t, t))`), never the driven plug: a plug
+  sample pulls a whole rig evaluation, which on the animator's scene is
+  10 fps per sample.
+- **The Y window is fitted to the SAMPLES as well as the keys**, because a
+  curve overshoots between its keys and that overshoot is the shape being
+  looked at.
+- **Time follows the dragged key, throttled to ~20 Hz**, with one guaranteed
+  evaluation on release. One gate governs both the evaluation and the
+  repaint, since a repaint needs a re-sample anyway.
+- **There is no pan and no zoom.** X is the playback range — so the curve's
+  time lines up under the time slider — and Y autofits. That is what leaves
+  every camera gesture to the camera, and it removes a whole subsystem.
+  `normalise` (one Y window per curve) is a toggle for channels of different
+  magnitudes; the default is the shared axis, as the Graph Editor's is.
+- **The viewport is followed by a 10 Hz QTimer, not an event filter.** Maya
+  destroys and rebuilds those widgets on a layout change, so a filter dies
+  with them; a timer comparing the rectangle covers the window move,
+  Ctrl+Space, the layout switch, a monitor with another DPI **and** the
+  focus change in one mechanism.
+- **Changing the tool leaves the mode** (a scriptJob on `ToolChanged`).
+  Press W and the context is no longer ours, so an overlay still hanging
+  there lies: curves are drawn and nothing can grab them. That is exactly
+  what happened between two probes.
+- `selectKey(clear=True)` is wrapped — **trap 43**: it RAISES when nothing
+  is selected, which is exactly the case with nothing to clear.
+
+**`MGlobal.selectFromScreen`'s CLICK form of `kXORWithList` is a NO-OP**, and
+this is the bug the live run found. Measured from both starting states: from
+an empty selection it selects nothing, from a held one it changes nothing —
+while the **box** form of the same value toggles correctly. So shift-click
+silently did nothing, which is the worst kind of wrong: the animator
+shift-clicks, sees no change, and blames their own aim. The pick is now
+always `kReplaceList` — the one value measured to behave identically in both
+forms — and the modifier is applied afterwards through `cmds.select(...
+add/toggle/deselect)`. Gate 29b keeps the quirk itself measured, so a Maya
+that fixes it will announce itself.
+
+**`cutKey(clear=True)` answers 0 even when it worked**, so the status line
+read "Deleted 0 key(s)" over keys it had just removed. Counted before the cut.
+
+Two harness facts this feature paid for, both of which will bite the next
+live run:
+
+- **Maya's pick runs through the viewport's own DRAW pass**, so a node that
+  has never been drawn cannot be found: an unrefreshed locator at screen
+  centre picked nothing at all under every adjustment, which reads exactly
+  like a broken adjustment table and cost a whole probe round. Trap 14's
+  family. Real use always has a drawn viewport; a verify run must ask for
+  one with `cmds.refresh()`.
+- **The Qt event loop does not turn while a bridge script holds the main
+  thread**, so a window it just created has never been exposed and
+  `repaint()` is a **no-op** — `paint_count` stayed 0 while the window was
+  up and correct. `render()` into a `QImage` forces `paintEvent`
+  synchronously, and the gate counts the non-zero bytes it left (164067 of
+  7874460) rather than trusting that it ran.
+
+Stated costs, not hidden: the overlay sits above Maya's own panels, so a
+menu opened over the viewport gets curve lines drawn across it (reduced by
+hiding on focus loss, not removed); **Windows only**, since click-through is
+the Win32 ex-style; one viewport at a time, the active model panel; and
+**`playblast` never sees the overlay** — it is an OS window, not part of the
+viewport render, so reviews come out clean of curves.
+
+Not built: weighted-tangent dragging, curve cycling/infinity display, the
+Dope Sheet's key grid, retiming tools. Hotkeys: `alt+c` toggles the mode,
+and three more rows (insert a key at the current frame, delete the selected
+keys, normalise on/off) are in `maya_hotkeys` waiting to be bound.
+
 ## `maya_skelfit` — a Manny-schema skeleton fitted to a humanoid mesh, and the skin
 
 Root-level standalone (2026-08-27), driven by the project skill
@@ -3118,19 +3324,20 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with eight buttons — Rig Picker, UE Bridge, Scene Setup,
-Overshoot, Hotkeys, Studio, Colour, and the native OverRig panel. Design:
-`docs/superpowers/specs/2026-08-21-installer-design.md` (written when there
-were five; the sixth arrived 2026-09-02, and Viewport Studio and Colour
-both on 2026-09-03, each with its own spec), proof:
+**SkeldarAnim** with nine buttons — Rig Picker, UE Bridge, Scene Setup,
+Overshoot, Hotkeys, Studio, Colour, Curves, and the native OverRig panel.
+Design: `docs/superpowers/specs/2026-08-21-installer-design.md` (written
+when there were five; the sixth arrived 2026-09-02, Viewport Studio and
+Colour both on 2026-09-03, and the Curve Overlay on 2026-09-05, each with
+its own spec), proof:
 `docs/superpowers/plans/verify_install.py` (**11 gates, 0 failed** in the
 live Maya, 2026-08-21: real install, payload exact, five buttons each
 opening its window, OverRig dock up, sword resolved from the installed
 copy, idempotent re-run, sys.path put back).
 
 A drop copies a **whitelist** (`install.payload()`) into
-`<userAppDir>/scripts/SkeldarAnim/` — the three packages,
-`maya_overshoot.py`, `icons/`, `assets/`, `overrig/`, plus `install.py`
+`<userAppDir>/scripts/SkeldarAnim/` — the four packages, the three
+single-file tools, `icons/`, `assets/`, `overrig/`, plus `install.py`
 and `README_INSTALL.txt` so the installed folder can repair itself —
 and nothing else: tests, docs, archive and the other root tools stay
 home. Since the 2026-09-01 split that whitelist is also just "everything
