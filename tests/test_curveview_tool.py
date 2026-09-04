@@ -465,6 +465,52 @@ class TestSelecting(Fixture):
         self.assertEqual(len(self.cmds.selected_keys), 1)
 
 
+class TestAdjustment(Fixture):
+    """The half of the object pick that carries the decisions.
+
+    The pick itself is always a REPLACE, because the CLICK form of
+    kXORWithList was measured live to be a no-op while its BOX form toggles
+    correctly -- so the modifier is applied here instead.
+    """
+
+    def setUp(self):
+        Fixture.setUp(self)
+        self.selects = []
+
+        def select(*args, **kwargs):
+            self.selects.append((args, tuple(sorted(kwargs))))
+
+        self.cmds.select = select
+
+    def test_replace_leaves_the_pick_alone(self):
+        tool.apply_adjustment(["old"], ["new"], "replace")
+        self.assertEqual(self.selects, [])
+
+    def test_add_restores_then_adds(self):
+        tool.apply_adjustment(["old"], ["new"], "add")
+        self.assertEqual([call[1] for call in self.selects],
+                         [("replace",), ("add",)])
+        self.assertEqual(self.selects[0][0], (["old"],))
+        self.assertEqual(self.selects[1][0], (["new"],))
+
+    def test_toggle_uses_the_toggle_flag(self):
+        tool.apply_adjustment(["old"], ["new"], "toggle")
+        self.assertEqual(self.selects[-1][1], ("toggle",))
+
+    def test_remove_uses_deselect(self):
+        tool.apply_adjustment(["old"], ["new"], "remove")
+        self.assertEqual(self.selects[-1][1], ("deselect",))
+
+    def test_an_empty_before_clears_instead_of_selecting_nothing(self):
+        tool.apply_adjustment([], ["new"], "add")
+        self.assertEqual(self.selects[0][1], ("clear",))
+
+    def test_picking_nothing_only_restores(self):
+        tool.apply_adjustment(["old"], [], "toggle")
+        self.assertEqual([call[1] for call in self.selects],
+                         [("replace",)])
+
+
 class TestTangent(Fixture):
 
     def test_mmb_on_a_handle_drags_the_tangent(self):

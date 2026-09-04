@@ -82,11 +82,24 @@ def insert_key(curve, at_time):
 
 
 def delete_selected():
-    """Remove the selected keys. Returns how many went."""
+    """Remove the selected keys. Returns how many went.
+
+    Counted BEFORE the cut: `cutKey(clear=True)` answers 0 even when it
+    worked (measured live 2026-09-05 -- the keys were gone and the status
+    line said "Deleted 0 key(s)", which reads as a tool that did nothing).
+    """
     try:
-        return int(cmds.cutKey(animation="keys", clear=True) or 0)
+        doomed = len(cmds.keyframe(query=True, selected=True,
+                                   timeChange=True) or [])
+    except Exception:
+        doomed = 0
+    if not doomed:
+        return 0
+    try:
+        cmds.cutKey(animation="keys", clear=True)
     except Exception:
         return 0
+    return doomed
 
 
 def follow_time(at_time, now, last, interval=0.05):

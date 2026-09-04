@@ -586,6 +586,28 @@ def select_keys(caught, adjust):
                 pass
 
 
+def apply_adjustment(before, picked, adjust):
+    """Put `before` back and fold `picked` into it the way `adjust` says.
+
+    Split out from the pick so the half with the decisions in it is
+    testable without an OpenMaya in the room.
+    """
+    if adjust == "replace":
+        return                       # the pick already IS the selection
+    if before:
+        cmds.select(before, replace=True)
+    else:
+        cmds.select(clear=True)
+    if not picked:
+        return
+    if adjust == "add":
+        cmds.select(picked, add=True)
+    elif adjust == "toggle":
+        cmds.select(picked, toggle=True)
+    else:
+        cmds.select(picked, deselect=True)
+
+
 def select_from_screen(x0, y0, x1, y1, modifier):
     """Maya's own viewport selection, done by us because LMB is ours.
 
@@ -593,20 +615,30 @@ def select_from_screen(x0, y0, x1, y1, modifier):
     exactly what `draggerContext` handed over, so nothing is flipped on this
     path. Flipping it would select whatever is mirrored about the middle of
     the viewport, which looks like a broken pick rather than a wrong Y.
+
+    **The pick is always a REPLACE, and the modifier is applied afterwards
+    by us.** Measured live 2026-09-05: the CLICK form of `kXORWithList` is a
+    NO-OP -- from an empty selection it selects nothing, from a held one it
+    changes nothing -- while the BOX form of the same value toggles
+    correctly. So a shift-click routed through the API's own adjustment
+    silently did nothing, which is the worst kind of wrong: the animator
+    shift-clicks, sees no change, and blames their own aim. `kReplaceList`
+    is the one value measured to behave identically in both forms, and
+    `cmds.select` is exact for all four behaviours.
     """
     import maya.api.OpenMaya as om
-    table = {"replace": om.MGlobal.kReplaceList,
-             "add": om.MGlobal.kAddToList,
-             "toggle": om.MGlobal.kXORWithList,
-             "remove": om.MGlobal.kRemoveFromList}
-    adjust = table[mapping.adjustment(modifier)]
+    adjust = mapping.adjustment(modifier)
     method = om.MGlobal.kWireframeSelectMethod
+    before = cmds.ls(selection=True, long=True) or []
     if abs(x1 - x0) < 1.0 and abs(y1 - y0) < 1.0:
-        om.MGlobal.selectFromScreen(int(x0), int(y0), adjust, method)
-        return
-    om.MGlobal.selectFromScreen(int(min(x0, x1)), int(min(y0, y1)),
-                                int(max(x0, x1)), int(max(y0, y1)),
-                                adjust, method)
+        om.MGlobal.selectFromScreen(int(x0), int(y0),
+                                    om.MGlobal.kReplaceList, method)
+    else:
+        om.MGlobal.selectFromScreen(int(min(x0, x1)), int(min(y0, y1)),
+                                    int(max(x0, x1)), int(max(y0, y1)),
+                                    om.MGlobal.kReplaceList, method)
+    picked = cmds.ls(selection=True, long=True) or []
+    apply_adjustment(before, picked, adjust)
 
 
 # ---------------------------------------------------------------- the extras

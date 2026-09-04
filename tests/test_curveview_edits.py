@@ -13,6 +13,8 @@ class FakeCmds(object):
         self.tangents = []
         self.fail = fail
         self.time = None
+        self.selected = []
+        self.cut = False
 
     def undoInfo(self, **kwargs):
         if kwargs.get("openChunk"):
@@ -21,6 +23,8 @@ class FakeCmds(object):
             self.chunks.append("close")
 
     def keyframe(self, *args, **kwargs):
+        if kwargs.get("query") and kwargs.get("selected"):
+            return list(self.selected)
         self.calls.append(kwargs)
         if self.fail:
             raise RuntimeError("no keys selected")
@@ -32,7 +36,8 @@ class FakeCmds(object):
         self.calls.append(kwargs)
 
     def cutKey(self, **kwargs):
-        return 3
+        self.cut = True
+        return 0
 
     def currentTime(self, *args, **kwargs):
         if kwargs.get("query"):
@@ -145,8 +150,17 @@ class TestKeys(Fixture):
         edits.set_tangent("curveA", 0, "in", -12.0)
         self.assertEqual(self.fake.tangents[0][1]["inAngle"], -12.0)
 
-    def test_delete_selected_counts(self):
+    def test_delete_selected_counts_before_the_cut(self):
+        # cutKey(clear=True) answers 0 even when it worked, measured live,
+        # so the count comes from the key selection instead.
+        self.fake.selected = [1.0, 2.0, 5.0]
         self.assertEqual(edits.delete_selected(), 3)
+        self.assertTrue(self.fake.cut)
+
+    def test_deleting_nothing_cuts_nothing(self):
+        self.fake.selected = []
+        self.assertEqual(edits.delete_selected(), 0)
+        self.assertFalse(self.fake.cut)
 
 
 if __name__ == "__main__":
