@@ -3583,3 +3583,131 @@ twist bones expect.
 - Harness: a Bash call longer than ~8 KB dies with "unexpected EOF" and runs
   nothing (three times that day) — write big payloads with Write and keep
   the Bash call to the run command.
+
+## `maya_asretarget` — a clip on a second UE5 skeleton onto the AS rig (2026-09-04)
+
+Root-level standalone (`cmds` + `maya.api.OpenMaya`, no Qt, no package), the
+sibling of `maya_retarget.py` — that one drives another skeleton FROM Manny,
+this one drives the AdvancedSkeleton rig FROM another skeleton. The animator's
+ask: «я импортирую в сцену анимацию с аналогичного скелета… наш ретаргет
+привязан к этим костям. Потом я сам иду в настройки андванцед скелетона и делаю
+запекание. Твоя задача сделать сам ретаргет». Spec:
+`docs/superpowers/specs/2026-09-04-as-retarget-design.md` (read its ADDENDUM —
+the live run changed three decisions). Proof:
+`docs/superpowers/plans/verify_asretarget.py` — **green live 2026-09-04, 0 of
+26 gates failed**; 47 unit tests.
+
+```python
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import maya_asretarget
+print(maya_asretarget.report())      # read-only: what would be driven, from what
+print(maya_asretarget.connect())     # build it, from the SELECTED source skeleton
+print(maya_asretarget.disconnect())  # the same as AdvancedSkeleton's own button
+```
+
+The loop: import the clip on a second UE5 skeleton → select any joint of it →
+`connect()` → set the playback range to the clip → in AdvancedSkeleton, **MoCap
+Matcher > Bake**, then **Disconnect MoCap Skeleton**.
+
+**The vendor's Bake and Disconnect are reused verbatim, because they run on a
+convention rather than on their own bookkeeping.** `asMoCapMatcherBake` finds
+the node `MoCapConstraints`, walks the destinations of its `disableConstraints`
+attribute for the constraints, resolves each one's
+`constraintParentInverseMatrix` to the object it drives, bakes exactly those
+across `playbackOptions -min/-max` and ends in `delete -staticChannels`;
+`asMoCapMatcherDisconnect` deletes the same constraints and the node. So we
+register every constraint's `nodeState` on that attribute and park every helper
+UNDER `MoCapConstraints` — the helpers then die with the parent on Disconnect.
+**The vendor's own `MoCapConnect` is deliberately NOT used**: it constrains with
+`-mo` (so the clip's pose at press time becomes the rest pose, hence its
+"zero-out MoCap-joints" step), it resolves source bones by scene-wide NAME
+(with two Mannys `upperarm_l` is a coin flip), it drives no poles, and it leaves
+root motion in the pelvis. Its `moCapMatchers/Unreal.txt` template is UE4-schema
+(`Chest=spine_03`, no metacarpals, no `neck_02`) and does not fit this rig.
+
+**74 controls, and no maintainOffset anywhere.** After the 2026-09-04 axis work
+a control's frame IS its bone's frame (measured: posing `FKSpine3_M` turned
+`spine_03` by 24.95° with the frames 0.00001° apart), so an `orientConstraint`
+with no offset copies the source's world orientation 1:1 — at any frame, in any
+pose, with no pose matching. FK controls take rotation only; `IKArm/IKLeg` take
+point+orient from `hand_*`/`foot_*`, `IKToes` orientation from `ball_*`; `Main`
+takes `root` so **root motion stays in the exported `root` bone** rather than
+smearing into the pelvis; `RootX_M` takes `pelvis`; and the four poles ride the
+UPPER bone's frame (`thigh_*`/`upperarm_*`) — a pole point-constrained to the
+mid joint is degenerate on a straight limb, while the limb plane is fixed by the
+upper bone's roll. Twist joints are skipped: no FK controls, and the rig's twist
+network recomputes them from the bones we drive. Both FK and IK are driven, as
+the vendor does, so whichever mode a limb is in it follows — and a limb flipped
+to FK after the bake reproduces the source bone for bone (0.048 cm, which is the
+rig's own FitSkeleton fit tolerance).
+
+**The offset helper, and why it exists at all.** Where a control's rest frame is
+NOT its bone's (`Main`, `RootX_M`, the poles, and — measured — the IK end
+controls, which stand 0.0003–0.0095 cm off their bones), the drive goes through
+two nodes under the holder: `asrtDriver_<control>` point+orient-constrained to
+the source bone 1:1, and `asrtTarget_<control>` whose LOCAL matrix is the
+analytic rest offset `C_rest · B_rest⁻¹` (row vectors: `world = local · parent`).
+A transform pair rather than a constraint's `offset` attribute, because trap 19
+is the record of how easy that convention is to get backwards — and a pair is
+measurable, which gate 10 does.
+
+Three things the live run changed, each worth not re-deriving:
+
+- **Whether a drive needs the offset is MEASURED, never tabulated**
+  (`needs_offset`, pure). The design had a table flag; the IK end controls then
+  snapped the limb by 0.0095 cm because the table said "no offset".
+- **Every rest matrix is read BEFORE the first constraint.** Reading them as the
+  build went along put a pole's offset 0.022 cm out: a leg pole rides its IK
+  control (`followLeg` 10), which an earlier drive had already constrained. For
+  the same reason `connect` **refuses a posed rig** (a pole's offset is
+  pose-dependent) and names AdvancedSkeleton's *Go To BuildPose*;
+  `connect(require_build_pose=False)` overrides.
+- **Both sides of the offset are made rigid** (`rigid`, pure). The rig's scale
+  chain leaves ~4e-7 of scale on a bone and the helper's driver cannot carry it:
+  85 cm out at the pole that was 33 microns of error, now 4.
+
+**The neck cannot be exact, and the number says why.** Measured at a 15° source
+neck bend: `FKNeck_M` reaches its target perfectly (0.00000° from the source's
+`neck_01`) and the BONE still lands **7.5000° short** — half. That is the neck
+in-between the rig was built with (`Neck.inbetweenJoints 1`), which distributes
+a control's bend across both neck joints. `neck_02` and `head` keep exact
+ORIENTATION and pay 0.6554 cm of position. The knob is the animator's own:
+**`FKNeck_M.bias`**, keyable, soft range 0..10, default 0, feeding the blend
+weight linearly — measured **0 → weight 0.5** (30° on the control turns
+`neck_01` 15.0000°) and **10 → 1.0** (30.0000°, and the retargeted neck then
+lands 0.000015°/0.000001 cm off). `connect` names it in the status line and
+`connect(exact_neck=True)` sets it — the default leaves the rig alone, because
+the bias decides how the baked neck keys distribute and moving it afterwards
+would halve the neck again.
+
+**What is exact:** pelvis, spine 1–5, clavicles and every finger to
+**0.000020177** (world-matrix element) over sampled frames; hands, feet and
+balls to **0.0016 cm** (the IK solver's own residual); knees and elbows to
+**0.0876°**; root motion **0.000000000** against 100 cm travelled; and after
+Bake + Disconnect with the source deleted the rig plays the take to the same
+0.0016 cm, with no pairBlend spliced anywhere (trap 37's signature never
+appears).
+
+**Two facts about the vendor's Bake.** It reads the PLAYBACK RANGE, so match it
+to the clip first — `connect` prints the range and the source's own key range
+because the animator's scene was sitting at 0..46400. And `delete
+-staticChannels` means it keys only what moves: 20 controls of 74 on the test
+take, which is right — root motion arriving through `Main` turns the whole rig,
+so everything else keeps its local values.
+
+The source is resolved from the **selection**, climbed to the topmost joint, and
+its bones matched by LEAF name inside that subtree — so a namespaced import, a
+plain second Manny whose root Maya renamed, or a group around either all behave
+the same, and nothing is ever found by a scene-wide lookup. It refuses: our own
+rigged skeleton (its joints carry our constraints) or anything under `Group`, an
+empty or jointless selection, two skeletons at once, a standing
+`MoCapConstraints`, and a posed rig. A source bone the map needs but the clip
+lacks is named and skipped (a UE4-schema source loses 11 rows and works).
+Proportions are compared pose-independently by segment length and a >2%
+difference is a WARNING, not a refusal — scaling a source is the vendor's own
+MoCap Matcher step and guessing it would distort a take.
+
+Harness note from this session: a probe that set `evaluationManager -mode off`
+outside its own try/finally died on an unrelated error and left the animator's
+Maya in DG evaluation for the rest of the session. Set scene state inside the
+guard that restores it, from the first line.

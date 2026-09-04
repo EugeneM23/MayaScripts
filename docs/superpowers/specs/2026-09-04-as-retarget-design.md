@@ -217,3 +217,93 @@ skeleton's own bind orientations, being a duplicate of it.
   controls themselves, which is what "перекидывается на кости" asks for.
 - **No fix for a fractional or huge playback range.** `connect()` reports it;
   changing the animator's range behind their back is how trap 38 happened.
+
+## Addendum: what the live run measured, and what it changed
+
+`verify_asretarget.py` — **green live 2026-09-04, 0 of 26 gates failed** (the
+spec above planned 23; three gates were added for what the run found). Five
+things came out of getting there, and three of them changed the design.
+
+**The offset is MEASURED per drive, not tabulated.** The design above had the
+`Drive` record carry an `offset` flag, and the first run showed why that is the
+wrong shape: the IK end controls do not sit exactly on their bones — measured
+`IKLeg_L` 0.0094 cm from `foot_l`, `IKToes_L` 0.0095, `IKArm_L` 0.0003 — so a
+no-offset point constraint snapped the limb by that much and `ball_l` came out
+0.0095 cm off the source. Whether a control stands on its bone is a fact about
+the rig, so `connect` now computes `local = C_rest · B_rest⁻¹` for every drive
+and calls `needs_offset` (pure) on it: the full matrix for a drive that takes
+position, the rotation block alone for a rotation-only drive. Eight helpers
+result on this rig — `Main`, `RootX_M`, the four poles, `IKArm_L`, `IKLeg_L` —
+and the flag is gone from the record.
+
+**Every rest matrix is read BEFORE the first constraint.** `connect` measured
+each control as it built, and by the time it reached the poles the IK controls
+were already constrained — a leg pole rides its IK control (`followLeg` 10), so
+it had moved, and its offset came out 0.022 cm wrong. The snapshot is now taken
+up front. And because a pole's offset is pose-dependent in a way an FK
+control's is not, `connect` **refuses a posed rig** and names
+AdvancedSkeleton's own *Go To BuildPose*; `connect(require_build_pose=False)`
+is there for whoever knows better.
+
+**Both sides of the offset are made rigid** (`rigid`, pure). The rig's own
+scale chain leaves about 4e-7 of scale on a bone, `B_rest⁻¹` carries its
+reciprocal, and the helper's driver — a plain transform following the bone by
+point+orient, scale 1 — cannot reproduce it: 85 cm out at the pole that was 33
+microns of error. Stripping scale and shear from both matrices took it to 4
+microns, which is float noise on an 85 cm lever.
+
+**The neck cannot be exact, and the number says exactly why.** Measured at a
+15° source neck bend: the control reaches its target perfectly (`FKNeck_M`
+0.00000° from the source's `neck_01`) and the BONE still comes out 7.5000°
+short — half. AdvancedSkeleton's neck in-between distributes the control's bend
+across both neck joints, which is what `inbetweenJoints 1` bought us in the
+rig. `neck_02` and `head` keep exact ORIENTATION (they have their own
+absolutely-constrained controls) and pay in position: the head lands 0.6554 cm
+off at that bend.
+
+The knob that removes it is the animator's own: **`FKNeck_M.bias`** — keyable,
+soft range 0..10, default 0 — feeds the in-between's blend weight linearly.
+Measured: bias 0 → weight 0.5 → 30° on the control turns `neck_01` by
+15.0000°; bias 10 → weight 1.0 → **30.0000°**, and with the retarget connected
+the neck then lands 0.000015° / 0.000001 cm off the source. So `connect` names
+it in the status line, and `connect(exact_neck=True)` sets it — with the
+consequence stated, because the bias decides how the baked neck keys
+distribute and moving it afterwards would halve the neck again. The default
+leaves the animator's rig alone.
+
+**What is exact, and what is not** (measured over four sampled frames of a take
+carrying root motion, a spine bend, a leg flexion, an arm raise and a finger
+curl):
+
+| | worst error |
+|---|---|
+| pelvis, spine 1–5, clavicles, fingers, thumb | **0.000020177** (world-matrix element) |
+| hands, feet, balls | **0.0016 cm** — the IK solver's own residual |
+| knees, elbows | **0.0876°** (`calf_l`), the elbow 0.0005° |
+| root motion in the `root` BONE | **0.000000000** against 100.0000 cm travelled |
+| finger curl | **0.0000°** |
+| neck_01 | 7.5000° short by design; 0.000015° with `bias` 10 |
+| after Bake + Disconnect, source deleted | **0.0016 cm** — the same IK residual |
+| limbs flipped to FK after the bake | **0.048 cm** |
+
+That last row is the escape hatch the IK residual rests on: the FK controls
+carry the source's pose too, so a limb flipped to FK reproduces it bone for
+bone. Its 0.048 cm is the rig's own fit — the FitSkeleton was snapped to the
+bones with a 0.01 cm tolerance, so the AS chain's segment lengths differ from
+the UE skeleton's by a few hundredths and an FK chain shows that as position.
+The vendor's bake is innocent: measured, it kept every watched control's value
+to **0.000000°**, and spliced no pairBlend.
+
+**Two things about the vendor's Bake worth knowing.** It reads
+`playbackOptions -min/-max`, so the range must be the clip's before it is
+pressed — `connect` reports both the range and the source's own key range for
+exactly that reason (the animator's scene was sitting at 0..46400). And it ends
+in `delete -staticChannels`, so it keys only what actually moves: 20 controls
+of 74 on this take, and that is right — a rig whose root motion arrives through
+`Main` turns as a whole, so the local values of everything else do not change.
+The gate computes the must-be-keyed list from the take rather than counting.
+
+**Harness note.** A probe that set `evaluationManager -mode off` outside its own
+try/finally died on an unrelated error and left the animator's Maya in DG
+evaluation for the rest of the session. Set scene state inside the guard that
+restores it, from the first line.
