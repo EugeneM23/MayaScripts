@@ -666,9 +666,15 @@ class TestNames(unittest.TestCase):
         self.assertEqual(ar.SWITCH, "disableConstraints")
 
     def test_no_bake_of_our_own(self):
-        # The bake is AdvancedSkeleton's button; a second implementation would
-        # drift from it.  Deliberately absent.
-        self.assertFalse(hasattr(ar, "bake"))
+        # The bake is AdvancedSkeleton's: bake() (2026-09-06) only presses the
+        # vendor's Bake over the clip's keys and then its Disconnect, so a
+        # Disconnect can no longer be pressed alone by accident.  A second
+        # implementation would drift from the vendor's, so bakeResults stays out.
+        with open(ar.__file__.replace(".pyc", ".py"), encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertTrue(callable(ar.bake))
+        self.assertIn("asMoCapMatcherBake", src)
+        self.assertNotIn("bakeResults", src)
 
     def test_the_neck_note_only_reports_and_the_setter_only_sets(self):
         # a function whose name says "note" must not change the animator's rig:

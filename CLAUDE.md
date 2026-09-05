@@ -190,7 +190,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 2035 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 2041 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -4243,3 +4243,15 @@ animator's `Sweep Fall.fbx`); 55 unit tests.
   named** (`foreign_constraints`; ours are told apart by their holder
   registration). `ls("ns:*")` does not reach a NESTED namespace
   (`pmrtMx:mixamorig:Hips`): find imported nodes by the UUIDs the import created.
+- **One button for both rigs: `maya_rig_retarget.py`** («я просто выделяю скелет,
+  нажимаю на скрипт и ретаргет готов. Точно так же я хочу и для Lugal_Rig_01»).
+  The animator's shelf button ran `maya_asretarget.connect()`, which on the Lugal
+  rig can only refuse (its bones are UE's). The dispatcher reads the rig's
+  constrained game skeleton — UE names → `maya_asretarget`, PlayerMale names →
+  `maya_pmretarget` — and forwards `report/connect/bake/disconnect`;
+  `maya_asretarget` gained the same `bake()` (vendor Bake over the clip's keys,
+  then Disconnect) so the pair of buttons means the same on `Manny_rig_02` and
+  `Lugal_Rig_01`. **The two buttons live on the animator's SkeldarAnim shelf
+  (`shelfButton9` RTG = connect, `shelfButton32` BAKE = bake+disconnect), which the
+  installer REBUILDS on a re-drag** — they are the animator's, not the payload's;
+  a re-install wipes them unless they move to the Custom shelf.

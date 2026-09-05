@@ -32,6 +32,7 @@ import math
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya.mel as mel
 
 # AdvancedSkeleton deform-joint base -> UE bone base.  The rig's own map
 # (2026-09-04), minus the twist Part joints: they have no FK controls and the
@@ -733,6 +734,62 @@ def _register(constraints):
         cmds.connectAttr(HOLDER + "." + SWITCH, c + ".nodeState", force=True)
 
 
+SOURCE_ATTR = "asrtSourceRoot"     # on the holder: where the clip came from, for bake()
+
+
+def _remember_source(root):
+    if not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
+        cmds.addAttr(HOLDER, longName=SOURCE_ATTR, dataType="string")
+    cmds.setAttr(HOLDER + "." + SOURCE_ATTR, root, type="string")
+
+
+def source_key_range():
+    """(first, last) key of the connected source's bones, or None."""
+    if not cmds.objExists(HOLDER) or not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
+        return None
+    root = cmds.getAttr(HOLDER + "." + SOURCE_ATTR)
+    if not root or not cmds.objExists(root):
+        return None
+    paths = list(source_bones(root).values())
+    if not (cmds.keyframe(paths, query=True, keyframeCount=True) or 0):
+        return None
+    return cmds.findKeyframe(paths, which="first"), cmds.findKeyframe(paths, which="last")
+
+
+def bake(disconnect=True):
+    """AdvancedSkeleton's own MoCap Matcher > Bake, over the CLIP's key range, then (by default)
+    its Disconnect MoCap Skeleton -- one call, so the bake cannot be skipped by accident
+    (2026-09-06: a Disconnect without it left the Lugal rig frozen in one pose).
+
+    The vendor's `asMoCapMatcherBake` bakes every object our constraints drive across the
+    PLAYBACK range and deletes static channels; it reads the holder, not its window.  The
+    range is set to the connected source's keys for the length of the bake and put back.
+    """
+    if not cmds.objExists(HOLDER):
+        return "nothing connected (%s not found) - connect() first" % HOLDER
+    controls = set(cmds.sets("ControlSet", query=True) or [])
+    before = set(c for c in controls if cmds.listConnections(c, type="animCurve", source=True, destination=False))
+    span = source_key_range()
+    saved = (cmds.playbackOptions(query=True, min=True), cmds.playbackOptions(query=True, max=True),
+             cmds.playbackOptions(query=True, animationStartTime=True), cmds.playbackOptions(query=True, animationEndTime=True))
+    if span:
+        cmds.playbackOptions(edit=True, min=span[0], max=span[1], animationStartTime=min(span[0], saved[2]),
+                             animationEndTime=max(span[1], saved[3]))
+    try:
+        mel.eval("asMoCapMatcherBake;")
+    finally:
+        cmds.playbackOptions(edit=True, min=saved[0], max=saved[1], animationStartTime=saved[2], animationEndTime=saved[3])
+    keyed = [c for c in controls if c not in before and cmds.listConnections(c, type="animCurve", source=True, destination=False)]
+    curves = list(set(cmds.listConnections(keyed, type="animCurve", source=True, destination=False) or [])) if keyed else []
+    baked = ("%g..%g" % (cmds.findKeyframe(curves, which="first"), cmds.findKeyframe(curves, which="last"))) if curves else "nothing"
+    note = "baked %d controls over %s (%d curves; static channels dropped, as the vendor's Bake does)" % (len(keyed), baked, len(curves))
+    if disconnect:
+        note += "; " + globals()["disconnect"]()
+    else:
+        note += "; still connected - disconnect() when done"
+    return note
+
+
 def _helper(control, source_path, local):
     """Driver (follows the source bone 1:1) + target (holds the rest offset)."""
     driver = cmds.createNode("transform", name=DRIVER_PREFIX + control,
@@ -986,6 +1043,7 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True):
     helped, turned, ground = 0, 0, ""
     try:
         _holder()
+        _remember_source(plan.root)
         for drive in plan.drives:
             target = plan.bones[drive.bone]
             local = offsets[drive.control]
@@ -1053,13 +1111,16 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True):
                     cmds.playbackOptions(query=True, max=True),
                     _key_range(list(plan.bones.values()))))
     lines.append(set_exact_neck() if exact_neck else neck_note())
-    lines.append("now in AdvancedSkeleton: MoCap Matcher > Bake, then "
-                 "Disconnect MoCap Skeleton")
+    lines.append("the rig FOLLOWS the clip now and keeps nothing of it yet: run bake() -- the vendor's "
+                 "Bake over the clip's keys, then its Disconnect (or, in AdvancedSkeleton: MoCap "
+                 "Matcher > Bake, then Disconnect MoCap Skeleton). Disconnecting without the bake "
+                 "leaves one frozen pose.")
     return "\n".join(line for line in lines if line)
 
 
 def disconnect():
-    """What AdvancedSkeleton's own \"Disconnect MoCap Skeleton\" button does."""
+    """What AdvancedSkeleton's own \"Disconnect MoCap Skeleton\" button does -- and, like it, it
+    keeps NOTHING of the clip: bake() first, or the rig is left frozen in one pose."""
     if not cmds.objExists(HOLDER):
         return "nothing connected (%s not found)" % HOLDER
     doomed = []

@@ -151,6 +151,24 @@ root (`pmrtSourceRoot`) for that. `connect()` now ends by saying so, and
 through `bake()` and asserts the baked span is the clip's (0..20) with the range
 back at 0..100.
 
+## One button for both rigs
+
+«В случае с manny_rig_02 я просто выделяю скелет, нажимаю на скрипт и ретаргет
+готов. Точно так же я хочу и для Lugal_Rig_01.» The animator's shelf button
+(`shelfButton9`, on the SkeldarAnim shelf, made by dragging the Script Editor
+snippet) ran `maya_asretarget.connect()` — on the Lugal rig that module refuses,
+since the bones it maps are UE's. `maya_rig_retarget.py` is the dispatcher: it reads
+the constrained game skeleton under the rig, UE names go to `maya_asretarget`,
+PlayerMale names to `maya_pmretarget`, anything else is refused by name; `report`,
+`connect`, `bake`, `disconnect` are forwarded and prefixed with the module's name.
+`maya_asretarget` gained the same `bake()` so the pair of buttons means the same on
+both scenes: **RTG** (`shelfButton9`, connect — the rig follows the selected
+skeleton) and **BAKE** (`shelfButton32`, the vendor's Bake over the clip's keys,
+then Disconnect). Both were rewired live and the shelves saved
+(`saveAllShelves`). Stated risk: the SkeldarAnim shelf is rebuilt by the installer
+on a re-drag, and these two buttons are not in its payload — they belong on the
+Custom shelf.
+
 ## Not done, deliberately
 
 - No neck knobs (this rig has no in-between) and no twist handling (no twist joints).
