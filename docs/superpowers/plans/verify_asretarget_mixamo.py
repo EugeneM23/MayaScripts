@@ -87,6 +87,12 @@ saved = {"autoKey": cmds.autoKeyframe(query=True, state=True),
 blends = dict((c, cmds.getAttr(c + ".FKIKBlend"))
               for c in ("FKIKArm_L", "FKIKArm_R", "FKIKLeg_L", "FKIKLeg_R")
               if cmds.objExists(c))
+# connect() sets the neck bias by default since 2026-09-05; the animator's own
+# value goes back at the end
+bias_saved = (cmds.getAttr("%s.%s" % ar.NECK_BIAS[:2])
+              if cmds.objExists(ar.NECK_BIAS[0]) else None)
+share_saved = (cmds.getAttr("%s.%s" % ar.NECK_TWIST[:2])
+               if cmds.objExists(ar.NECK_TWIST[0]) else None)
 controls = cmds.sets("ControlSet", query=True) or []
 keyed_before = set(c for c in controls
                    if cmds.listConnections(c, type="animCurve", source=True,
@@ -105,6 +111,13 @@ try:
     mixamo = [j for j in cmds.ls(type="joint", long=True)
               if "mixamorig" in j and not cmds.listRelatives(j, parent=True, type="joint")]
     gate(1, len(mixamo) == 1, "one Mixamo root in the scene: %s" % mixamo)
+    if len(mixamo) != 1:
+        # every gate below reads that skeleton; stop here with a name rather
+        # than an IndexError (the scene held two UE clips and no Mixamo one
+        # when this first tripped, 2026-09-05)
+        raise RuntimeError("this scene holds %d Mixamo skeleton(s) - import the "
+                           "animator's Mixamo clip (65 joints under mixamorig:Hips) "
+                           "and run again" % len(mixamo))
     source = mixamo[0]
     bones = ar.source_bones(source)
     schema, score = ar.detect_schema(list(bones))
@@ -167,10 +180,20 @@ try:
     helpers = cmds.listRelatives(ar.HOLDER, children=True, fullPath=True) or []
     registered = set(cmds.listConnections(ar.HOLDER + "." + ar.SWITCH, source=False,
                                           destination=True) or [])
-    position_drives = [d for d in plan.drives if d.translate]
-    gate(9, len(helpers) == len(position_drives) and len(registered) >= len(plan.drives),
-         "%d helpers for the %d position drives, %d constraints registered on %s.%s"
-         % (len(helpers), len(position_drives), len(registered), ar.HOLDER, ar.SWITCH))
+    # since 2026-09-05 only a POLE goes through a helper pair (a point constraint
+    # cannot turn its offset with the bone); a position+rotation drive is one
+    # parentConstraint carrying its rest offset on its own target offsets
+    poles = [d for d in plan.drives if d.translate and not d.rotate]
+    rigid_drives = [d for d in plan.drives if d.translate and d.rotate]
+    single = [d.control for d in rigid_drives
+              if cmds.listConnections(d.control, source=True, destination=False,
+                                      type="parentConstraint")]
+    gate(9, len(helpers) == len(poles) and len(single) == len(rigid_drives)
+         and len(registered) >= len(plan.drives),
+         "%d helpers for the %d poles, the %d position+rotation drives are single "
+         "parentConstraints, %d constraints registered on %s.%s"
+         % (len(helpers), len(poles), len(rigid_drives), len(registered),
+            ar.HOLDER, ar.SWITCH))
     main_driven = bool(cmds.listConnections("Main", source=True, destination=False,
                                             type="constraint"))
     gate(10, main_driven, "Main is driven (the horizontal travel; Mixamo has no root)")
@@ -282,6 +305,10 @@ finally:
         # the animator back a rig in the wrong mode -- measured, it did.
         for name, value in blends.items():
             cmds.setAttr(name + ".FKIKBlend", value)
+        if bias_saved is not None:
+            cmds.setAttr("%s.%s" % ar.NECK_BIAS[:2], bias_saved)
+        if share_saved is not None:
+            cmds.setAttr("%s.%s" % ar.NECK_TWIST[:2], share_saved)
     except Exception as exc:
         print("// build pose: %s" % exc)
     drift, where_worst = 0.0, None

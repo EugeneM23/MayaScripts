@@ -129,10 +129,16 @@ branch anywhere:
   fighting a second driver.
 - **no metacarpals**: those four controls per hand are simply not in the table.
   A schema's own gaps are not "missing bones" and are not reported as such.
-- **`keep_position`**: a twin keeps its sub-millimetre rest offset on position
-  drives; a foreign source cannot — its rest hand is 40 cm from where ours
-  rests — so position drives go straight to the source's bone. A **pole** keeps
-  its offset in both cases: the 85 cm standoff from its bone IS the control.
+- **`twin`** (named `keep_position` until 2026-09-05, when the field turned out
+  to decide two things that are one fact): a twin keeps its sub-millimetre rest
+  offset on position drives, and — since the same day — its FK controls are
+  driven in position as well, because a clip can animate a bone's translation
+  and only a twin's positions are ours to reproduce (the twin spec's Addendum
+  2). A foreign source gets neither: its rest hand is 40 cm from where ours
+  rests, so its position drives go straight to the source's bone, and its FK
+  controls stay rotation-only — placing them on Mixamo's joints would hand the
+  rig Mixamo's proportions. A **pole** keeps its offset in both cases: the 85 cm
+  standoff from its bone IS the control.
 - **`root_bone=None`**: Mixamo has no root bone, so `Main` takes the source
   hips' **horizontal travel** (`pointConstraint`, `skip=["y"]`) and nothing
   else. Translation is unambiguous — the hips' ground travel IS the character's

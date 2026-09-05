@@ -41,7 +41,16 @@ TAKE = [("root", "translateZ", 100.0), ("root", "rotateY", 25.0),
         ("thigh_l", "rotateZ", 35.0), ("calf_l", "rotateZ", -45.0),
         ("foot_l", "rotateZ", 10.0),
         ("upperarm_r", "rotateY", -30.0), ("lowerarm_r", "rotateZ", 40.0),
-        ("hand_r", "rotateX", 25.0), ("index_01_l", "rotateZ", 30.0)]
+        ("hand_r", "rotateX", 25.0), ("index_01_l", "rotateZ", 30.0),
+        # a twin's bones can carry TRANSLATION too (measured 2026-09-05 on the
+        # animator's Longsword clip: clavicles sliding 3.65 cm, the neck base
+        # 3.67, spine_05 2.52) and a rotation-only drive lost every centimetre
+        # of it -- so the fixture carries some, or it cannot see that bug
+        ("clavicle_l", "translateY", 3.0), ("spine_05", "translateZ", 2.0),
+        ("neck_01", "translateX", -2.5),
+        # a head ROLL (X is the bone axis): the neck in-between hands half of it
+        # to neck_02, which a UE source never does -- the neck's second knob
+        ("head", "rotateX", 30.0)]
 # bones the FK controls drive directly (the spine is FK, the limbs are IK).
 # The neck chain is measured on its own: AdvancedSkeleton's neck in-between
 # gives neck_01 half of its control's bend, so an absolute per-bone copy cannot
@@ -125,6 +134,12 @@ saved = {"autoKey": cmds.autoKeyframe(query=True, state=True),
 blends_saved = dict((c, cmds.getAttr(c + ".FKIKBlend"))
                     for c in ("FKIKArm_L", "FKIKArm_R", "FKIKLeg_L", "FKIKLeg_R")
                     if cmds.objExists(c))
+# connect() sets the neck bias by default since 2026-09-05; the animator's own
+# value goes back at the end
+bias_saved = (cmds.getAttr("%s.%s" % ar.NECK_BIAS[:2])
+              if cmds.objExists(ar.NECK_BIAS[0]) else None)
+share_saved = (cmds.getAttr("%s.%s" % ar.NECK_TWIST[:2])
+               if cmds.objExists(ar.NECK_TWIST[0]) else None)
 controls = cmds.sets("ControlSet", query=True) or []
 keyed_before = set(c for c in controls
                    if cmds.listConnections(c, type="animCurve", source=True,
@@ -217,6 +232,26 @@ try:
          "%d constraints registered on %s.%s, %d helper drivers parented under it"
          % (len(set(cons)), ar.HOLDER, ar.SWITCH, len(helpers)))
 
+    # A position+rotation drive (every FK control since 2026-09-05, the IK ends,
+    # Main, RootX_M) is ONE parentConstraint carrying the rest offset on its own
+    # target offsets -- so at the take's rest frame every such control must stand
+    # exactly where it stood before the connect, with no helper node anywhere
+    # near it.  This is the gate on the measured offset convention.
+    rigid_drives = [d for d in plan.drives if d.translate and d.rotate]
+    cmds.currentTime(1.0)
+    cmds.currentTime(0.0)
+    rigid_worst = max((worst(wm(d.control), rest_control[d.control]), d.control)
+                      for d in rigid_drives)
+    single = [d.control for d in rigid_drives
+              if cmds.listConnections(d.control, source=True, destination=False,
+                                      type="parentConstraint")
+              and d.control not in helped]
+    gate(27, rigid_worst[0] < 1e-4 and len(single) == len(rigid_drives)
+         and len(rigid_drives) >= 66,
+         "%d position+rotation drives are single parentConstraints (no helper), "
+         "and at the rest frame each control stands on its own rest, worst "
+         "%.9f (%s)" % (len(rigid_drives), rigid_worst[0], rigid_worst[1]))
+
     # --------------------------------------------------------------- transfer
     def measure(frame):
         cmds.currentTime(frame)
@@ -267,33 +302,46 @@ try:
          "hands, feet and balls land on the source within the IK solver's own "
          "residual, worst %.9f cm (%s at frame %g)"
          % (ik_worst[0], ik_worst[1], ik_worst[2]))
-    # the neck cannot be exact and the number says why: AdvancedSkeleton's neck
-    # in-between hands neck_01 half of its control's bend
-    own = dict((b, d) for b, a, d in TAKE if a.startswith("rotate"))["neck_01"]
-    deficit = ang(*tracks[END]["neck_01"])
-    head_pos = math.sqrt(sum((tracks[END]["head"][0][12 + i]
-                              - tracks[END]["head"][1][12 + i]) ** 2 for i in range(3)))
-    gate(25, abs(deficit - own / 2.0) < 0.1 and ang(*tracks[END]["head"]) < 1e-3
-         and head_pos < 1.0,
-         "the neck in-between costs exactly half of the neck's OWN bend: the take "
-         "turns neck_01 by %g deg and the rig is %.4f short (half is %g); the "
-         "head's orientation stays exact (%.5f deg), its position %.4f cm off"
-         % (own, deficit, own / 2.0, ang(*tracks[END]["head"]), head_pos))
-
-    # and the one attribute that removes it (measured: bias 0 -> weight 0.5,
-    # bias 10 -> 1.0), checked with the retarget still connected
+    # the neck: AdvancedSkeleton's in-between hands neck_01 HALF of its control's
+    # bend at bias 0, and connect() sets the bias to 10 by default since
+    # 2026-09-05 (the animator's ask being an exact neck).  So first the exact
+    # neck the default leaves, then the half-bend it removed -- measured by
+    # putting the bias back for a moment with the retarget still connected.
     control, attr, full = ar.NECK_BIAS
-    bias_saved = cmds.getAttr(control + "." + attr)
-    cmds.setAttr(control + "." + attr, full)
+    tnode, tattr, tfull = ar.NECK_TWIST
+    own = dict((b, d) for b, a, d in TAKE if a.startswith("rotate"))["neck_01"]
     cmds.currentTime(END)
     neck_exact = ang(wm(rig_bones["neck_01"]), wm(bones["neck_01"]))
+    neck2_exact = ang(wm(rig_bones["neck_02"]), wm(bones["neck_02"]))
     head_exact = math.sqrt(sum((wm(rig_bones["head"])[12 + i]
                                 - wm(bones["head"])[12 + i]) ** 2 for i in range(3)))
-    cmds.setAttr(control + "." + attr, bias_saved)
-    gate(26, neck_exact < 1e-3 and head_exact < 1e-3,
-         "with %s.%s at %g the neck lands 1:1: neck_01 %.6f deg off, head %.6f cm "
-         "off (which is what connect(exact_neck=True) sets)"
-         % (control, attr, full, neck_exact, head_exact))
+    gate(25, cmds.getAttr(control + "." + attr) == full
+         and cmds.getAttr(tnode + "." + tattr) == tfull
+         and neck_exact < 1e-3 and neck2_exact < 1e-3 and head_exact < 1e-3,
+         "connect() set %s.%s to %g and %s.%s to %g, and the neck lands 1:1: "
+         "neck_01 %.6f deg, neck_02 %.6f deg, head %.6f cm off (the take bends "
+         "neck_01 by %g deg, rolls the head 30 and slides the neck base)"
+         % (control, attr, full, tnode, tattr, tfull, neck_exact, neck2_exact,
+            head_exact, own))
+    # the rig's own values for a moment, with the retarget still connected: the
+    # bend share halves neck_01, the twist share rolls neck_02 by half the head's
+    # roll (a UE source keeps neck_02 at its rest roll) -- both measured, then
+    # both put back to what connect() set
+    cmds.setAttr(control + "." + attr, 0.0)
+    cmds.setAttr(tnode + "." + tattr, 0.5)
+    cmds.currentTime(END - 1.0)
+    cmds.currentTime(END)
+    deficit = ang(wm(rig_bones["neck_01"]), wm(bones["neck_01"]))
+    roll = ang(wm(rig_bones["neck_02"]), wm(bones["neck_02"]))
+    head_turn = ang(wm(rig_bones["head"]), wm(bones["head"]))
+    cmds.setAttr(control + "." + attr, full)
+    cmds.setAttr(tnode + "." + tattr, tfull)
+    gate(26, abs(deficit - own / 2.0) < 0.1 and roll > 5.0 and head_turn < 1e-3,
+         "at bias 0 and twist share 0.5 the in-between costs exactly half of the "
+         "neck's OWN bend (%g deg on the take, the rig %.4f short, half is %g) and "
+         "rolls neck_02 by %.2f deg of the head's 30 deg roll, while the head's "
+         "orientation stays exact (%.5f deg) -- the two costs the default removes"
+         % (own, deficit, own / 2.0, roll, head_turn))
     mid_worst = max((ang(*tracks[f][n]), n, f) for f in SAMPLES for n in MID_BONES)
     gate(14, mid_worst[0] < 1.0,
          "knees and elbows follow the source's plane, worst %.4f deg (%s at frame %g)"
@@ -442,6 +490,10 @@ finally:
     try:
         for name, value in blends_saved.items():
             cmds.setAttr(name + ".FKIKBlend", value)
+        if bias_saved is not None:
+            cmds.setAttr("%s.%s" % ar.NECK_BIAS[:2], bias_saved)
+        if share_saved is not None:
+            cmds.setAttr("%s.%s" % ar.NECK_TWIST[:2], share_saved)
         cmds.evaluationManager(mode=saved["em"])
         cmds.autoKeyframe(state=saved["autoKey"])
         cmds.currentTime(saved["time"])
@@ -456,4 +508,4 @@ finally:
              cmds.playbackOptions(query=True, min=True),
              cmds.playbackOptions(query=True, max=True),
              cmds.currentTime(query=True), cmds.ls(selection=True)))
-print("RESULT: %d of 26 gates failed %s" % (len(FAILS), FAILS))
+print("RESULT: %d of 27 gates failed %s" % (len(FAILS), FAILS))

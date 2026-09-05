@@ -52,10 +52,18 @@ class TestDrivePlan(unittest.TestCase):
     def test_every_control_is_driven_once(self):
         self.assertEqual(len(self.by_control), len(self.drives))
 
-    def test_the_fk_controls_take_rotation_only(self):
+    def test_a_twins_fk_controls_take_position_as_well_as_rotation(self):
+        # Measured 2026-09-05 on the animator's Longsword clip: a UE5 twin's
+        # bones carry TRANSLATION animation (clavicles sliding 3.65 cm, the neck
+        # base 3.67, spine_05 2.52, the thighs 0.81 over the take), and a
+        # rotation-only drive lost every centimetre of it -- 6.35 cm at the
+        # hands.  The same rig's bones are ours to place, so place them.
         d = self.by_control["FKShoulder_L"]
         self.assertEqual((d.bone, d.translate, d.rotate),
-                         ("upperarm_l", False, True))
+                         ("upperarm_l", True, True))
+        fk = [d for d in self.drives if d.control.startswith("FK")]
+        self.assertEqual(len(fk), 62)
+        self.assertTrue(all(d.translate and d.rotate for d in fk))
 
     def test_the_spine_is_one_to_one(self):
         for i in range(1, 6):
@@ -164,6 +172,14 @@ class TestSchemas(unittest.TestCase):
         self.assertEqual(ar.UE5.root_bone, "root")
         self.assertIsNone(ar.MIXAMO.root_bone)
 
+    def test_only_the_ue5_source_is_a_twin_of_our_own_skeleton(self):
+        # one fact with two consequences: a twin's FK controls are driven in
+        # position, and its position drives keep our sub-millimetre rest offset
+        self.assertTrue(ar.UE5.twin)
+        self.assertFalse(ar.MIXAMO.twin)
+        self.assertTrue(ar.keeps_position("FKScapula_L", ar.UE5))
+        self.assertFalse(ar.keeps_position("FKScapula_L", ar.MIXAMO))
+
     def test_a_pole_always_keeps_its_standoff_whatever_the_schema(self):
         for schema in ar.SCHEMAS:
             self.assertTrue(ar.keeps_position("PoleLeg_L", schema))
@@ -201,6 +217,13 @@ class TestMixamoPlan(unittest.TestCase):
         self.assertEqual(self.by_control["FKSpine5_M"].bone, "Spine2")
         for gap in ("FKSpine2_M", "FKSpine4_M"):
             self.assertNotIn(gap, self.by_control)
+
+    def test_the_fk_controls_take_rotation_only_because_the_proportions_are_not_ours(self):
+        # placing our controls on Mixamo's joints would hand the rig Mixamo's
+        # proportions (its arm is 16.5% shorter than ours); a twin gets position
+        fk = [d for d in self.drives if d.control.startswith("FK")]
+        self.assertTrue(fk)
+        self.assertTrue(all(d.rotate and not d.translate for d in fk))
 
     def test_the_neck_inbetween_is_left_undriven_so_the_neck_smooths_itself(self):
         self.assertEqual(self.by_control["FKNeck_M"].bone, "Neck")
@@ -468,6 +491,52 @@ class TestNeedsOffset(unittest.TestCase):
         self.assertFalse(ar.needs_offset(tiny, False))
 
 
+class TestParentOffsets(unittest.TestCase):
+    """A parentConstraint's target offsets carry a rigid rest offset exactly.
+
+    Measured 2026-09-05 on sandbox transforms over all six rotate orders:
+    `targetOffsetTranslate` = the offset's translation and `targetOffsetRotate`
+    = its euler in the CONSTRAINED node's rotate order reproduce
+    W_control = O * W_source to 4.6e-14, and `-mo` stores those very numbers.
+    Read in xyz for any other order the follow is wrong by up to 1.47.
+    """
+
+    def test_the_identity_offset_is_all_zeros(self):
+        translate, rotate = ar.parent_offsets(list(om.MMatrix()), 3)
+        self.assertEqual(tuple(translate), (0.0, 0.0, 0.0))
+        self.assertEqual(tuple(rotate), (0.0, 0.0, 0.0))
+
+    def test_the_translation_is_the_matrix_row_untouched(self):
+        m = list(om.MMatrix())
+        m[12], m[13], m[14] = 4.0, -5.0, 6.5
+        translate, rotate = ar.parent_offsets(m, 0)
+        self.assertEqual(tuple(translate), (4.0, -5.0, 6.5))
+        self.assertEqual(tuple(rotate), (0.0, 0.0, 0.0))
+
+    def test_the_rotation_round_trips_through_the_controls_rotate_order(self):
+        for order in range(6):
+            tm = om.MTransformationMatrix()
+            tm.setRotation(om.MEulerRotation(math.radians(30.0), math.radians(-70.0),
+                                             math.radians(115.0), order))
+            tm.setTranslation(om.MVector(1.0, 2.0, 3.0), om.MSpace.kWorld)
+            m = list(tm.asMatrix())
+            translate, rotate = ar.parent_offsets(m, order)
+            back = om.MEulerRotation([math.radians(v) for v in rotate],
+                                     order).asMatrix()
+            for i in range(3):
+                for j in range(3):
+                    self.assertAlmostEqual(back.getElement(i, j), m[i * 4 + j],
+                                           places=9, msg="order %d" % order)
+            self.assertEqual(tuple(round(v, 9) for v in translate), (1.0, 2.0, 3.0))
+
+    def test_it_agrees_with_the_orient_constraints_euler(self):
+        tm = om.MTransformationMatrix()
+        tm.setRotation(om.MEulerRotation(0.4, -1.1, 2.0, 5))
+        m = list(tm.asMatrix())
+        _, rotate = ar.parent_offsets(m, 5)
+        self.assertEqual(tuple(rotate), tuple(ar.euler_offset(m, 5)))
+
+
 class TestProportions(unittest.TestCase):
 
     def matrix(self, x, y, z):
@@ -613,6 +682,18 @@ class TestNames(unittest.TestCase):
     def test_the_neck_bias_is_the_measured_pair(self):
         # measured 2026-09-04: bias 0 -> in-between weight 0.5, bias 10 -> 1.0
         self.assertEqual(ar.NECK_BIAS, ("FKNeck_M", "bias", 10.0))
+
+    def test_the_neck_twist_share_is_the_measured_knob(self):
+        # measured 2026-09-05: NeckPart1_M's orientConstraint.offsetX is DRIVEN by
+        # the head's twist times this multiplier (0.5 in the rig); at 0 neck_02
+        # lands exactly on every frame, at 0.5 it rolled 24.24 deg off the source
+        self.assertEqual(ar.NECK_TWIST, ("twistAmountDivideNeckPart1_M", "input2", 0.0))
+        # both knobs are what "exact neck" means, and the setter names both
+        with open(ar.__file__.replace(".pyc", ".py")) as handle:
+            source = handle.read()
+        setter = source.split("def set_exact_neck()")[1].split("\ndef ")[0]
+        self.assertIn("NECK_TWIST", setter)
+        self.assertIn("NECK_BIAS", setter)
 
     def test_no_qt(self):
         with open(ar.__file__.replace(".pyc", ".py")) as handle:

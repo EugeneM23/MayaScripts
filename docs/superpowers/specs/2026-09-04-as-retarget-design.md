@@ -307,3 +307,107 @@ The gate computes the must-be-keyed list from the take rather than counting.
 try/finally died on an unrelated error and left the animator's Maya in DG
 evaluation for the rest of the session. Set scene state inside the guard that
 restores it, from the first line.
+
+## Addendum 2 (2026-09-05): a twin's bones carry translation, and the neck has a second knob
+
+**Ask:** «Когда делаю ретаргет на AS_Death_Front_3p_01:root совпадение положения
+костей очень точное (кроме шеи, что тоже нужно исправить), когда же я делаю
+ретаргет на AS_Longsword_Attack_Backcombo:root положение костей начинает
+отличаться заметно… Мне важно чтобы мой ретаргет всегда имел 100% точность».
+
+**What was different between the two clips.** Nothing in the schema: both are
+full UE5 twins — 94 joints, every hint bone, 74 drives, nothing missing, bind in
+the rotate channels, identical limb lengths. What differs is what the clips
+animate. Death's non-root bones never translate (≤ 0.02 cm over the take).
+Longsword's do — the studio's retarget from the UE4 pack carried the mocap's
+bone translations: neck_01 **3.67 cm**, clavicle_l/r **3.65 / 3.64**, spine_05
+**2.52**, spine_04 1.46, thigh_l/r 0.81, spine_01–03 0.2–0.5. The twin path drove
+every FK control with an `orientConstraint` alone, so those centimetres were
+unreproducible and stacked down the chain. Measured at build pose, all four
+limbs in FK, over six frames: pelvis 0.000, spine_05 **2.825**, neck_01
+**5.037**, clavicle_l **6.347** and the whole left arm with it, clavicle_r
+5.975, the thighs 0.800 — with every orientation exact except the rolls AS
+sends to the twist joints. That is the 「заметно」.
+
+**The fix: a twin's FK controls follow their bones in position too.** AS is
+ready for it — all 62 FK controls have unlocked, keyable, unconnected translate
+channels, and +2 cm on any of them moves its UE bone and everything below by
+exactly 2.0000 and nothing above (measured on `FKScapula_L`, `FKSpine3_M`,
+`FKNeck_M`, `FKHip_L`, `FKShoulder_L`). `Schema.twin` — renamed from
+`keep_position`, because the two turned out to be one fact — makes
+`drive_plan` give the FK rows `translate=True`. Mixamo's stay rotation-only:
+placing our controls on Mixamo's joints would hand the rig Mixamo's proportions
+(its arm is 16.5% shorter than ours).
+
+**A rigid follow with a rest offset is ONE `parentConstraint`.** 62 more
+position drives through the helper pair would have doubled the nodes the
+vendor's Bake walks, so the offset convention was measured instead: on sandbox
+transforms over all six rotate orders, `targetOffsetTranslate` = the offset's
+translation and `targetOffsetRotate` = its euler **in the constrained node's
+rotate order** make the constraint hold `W_control = O · W_source` to
+**4.6e-14**; `-mo` stores exactly those numbers; read in xyz for a zyx control
+the follow is wrong by up to 1.47; and the node carries
+`constraintParentInverseMatrix`, so AS's Bake and Disconnect treat it like any
+other. Every position+rotation drive — the 62 FK controls, the IK ends, `Main`,
+`RootX_M`: 68 — is now one such constraint, and only the four poles keep the
+helper pair (a pointConstraint cannot turn its offset with the bone). 82
+constraints and 4 helpers, against 96 and 8 before. `parent_offsets` is the pure
+half; a unit test round-trips all six orders.
+
+**Measured after, on the real clips** (build pose, all FK, six frames each):
+Longsword — every bone ≤ **0.0009 cm** except the left leg (thigh 0.0097, calf
+0.0567, foot 0.0132); Death — ≤ **0.0004 cm** except the left leg (calf 0.0814).
+The left leg is the rig's own: `FKKnee_L` stands **0.0637 cm** off `calf_l`
+while the right knee stands 0.00004 — the FitSkeleton was mirrored and Manny's
+left calf is 0.068 cm asymmetric (CLAUDE.md's own fact) — and because the AS
+Knee joint does not roll with the bone (that roll goes to the twist joints), a
+constant offset in the deform joint's frame is not constant in the bone's, so
+it shows as up to 0.08 cm that wanders with the knee's roll. Sub-millimetre, a
+fit fact rather than a retarget fact, and stated rather than hidden.
+
+**The neck's second knob.** With `bias` 10, neck_01 landed exactly and
+`neck_02`'s POSITION was exact, but its orientation read **0.73° / 24.24°**
+(Longsword frames 18 / 28) and 0.69° / 3.30° (Death) while `FKNeckPart1_M`
+reached its target to 0.0000°. Link by link: control → CustomOrientReverse →
+`FKXNeckPart1_M` exact; **`FKXNeckPart1_M` → `NeckPart1_M`** carried the whole
+error. A fresh orientConstraint to the same target landed exactly, under
+`Neck_M` or in world; no cycle in the scene, no staleness (`dgdirty`,
+`refresh`, `dgeval`, both evaluation modes identical), every `interpType` the
+same. The rig's constraint differs in one input that reads (0, 0, 0) at build
+pose: its **`offsetX` is DRIVEN** — `HeadQTETwist_M` (the head's twist about
+the neck axis, a quatToEuler) × `twistAmountDivideNeckPart1_M.input2` = 0.5.
+AdvancedSkeleton's in-between takes half of the head's ROLL, the same design as
+the limb twist joints, while the UE source keeps neck_02 at its rest roll (its
+local rotation is a constant 1.914° through the whole Longsword take); a head
+twist of 52.8° therefore shows as 24.24° on neck_02. Share 0 → neck_02 exact on
+every frame (0.000 at all six samples), neck_01 and the head untouched.
+`set_exact_neck` now sets both knobs — `FKNeck_M.bias` 10 and
+`twistAmountDivideNeckPart1_M.input2` 0 — and **`exact_neck=True` is the
+default**, the ask being an exact neck; the status line says both stay, because
+the baked keys assume them, and `exact_neck=False` leaves the rig's in-between
+alone and only reports the cost. The lesson worth more than the fix: **a
+constraint's `offset` can be a live input — read it under the pose, not at
+rest.** Its (0, 0, 0) at build pose is what made this take eleven probes.
+
+**Verification.** `verify_asretarget.py`'s fixture now slides `clavicle_l`
+3 cm, `spine_05` 2 cm and `neck_01` −2.5 cm and rolls the head 30° — the shape
+of the Longsword clip, without which it could not have seen either bug — and
+runs **0 of 27 gates failed**: FK-driven bones to **7e-6** (world-matrix
+element), the 68 position+rotation drives single parentConstraints standing on
+their rests to **1e-5** (gate 27, the measured offset convention), the neck
+1:1 by default (gate 25) with the two costs the default removes measured by
+putting the rig's own values back for a moment (gate 26: 7.5000 of 15, and a
+roll of neck_02 from the head's 30). `verify_asretarget_mixamo.py` re-run **0
+of 18** on the animator's own `Sweep Fall.fbx`, imported into a throwaway
+namespace and removed again (224 nodes, none left); its numbers are unchanged
+to the last digit. Both verifies save and restore the two neck knobs — since
+the default writes them, a verify must put the animator's values back.
+
+**Two things about the workflow, stated rather than fixed.** A Disconnect
+without a Bake leaves the rig in the clip's last pose, so the next `connect`
+refuses («the rig is posed») until Go To BuildPose — right, since a pole's
+offset is pose-dependent, and the message says what to press. And the vendor's
+Bake reads the playback range while an FBX import MOVES that range to the
+clip's: a wrapper that imports and then runs a verify saving the range restores
+the wrong one (measured, the Mixamo wrapper did; the animator's 0..46 was put
+back by hand). Save the range before the import.

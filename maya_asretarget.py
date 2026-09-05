@@ -9,7 +9,10 @@ contract the vendor's `Bake` and `Disconnect MoCap Skeleton` rely on.
 Two source schemas are known (`SCHEMAS`, detected from the bones the source
 actually has): a UE5 twin of the rig's own skeleton, and Mixamo -- different
 names, a Y-down-the-bone convention against our X, and a T-pose rest against
-our A-pose. The rest-pose difference is what the alignment below is for.
+our A-pose. The rest-pose difference is what the alignment below is for.  A
+twin's FK controls follow their bones in POSITION as well as rotation, because a
+clip can animate a bone's translation and only a twin's positions are ours to
+reproduce (measured 2026-09-05: the Longsword clip slides its clavicles 3.65 cm).
 
 Design: docs/superpowers/specs/2026-09-04-as-retarget-design.md
         docs/superpowers/specs/2026-09-05-asretarget-mixamo-design.md
@@ -77,9 +80,10 @@ MIXAMO_ROWS = [
 MIXAMO_SIDES = [("_M", ""), ("_L", "Left"), ("_R", "Right")]
 
 # The two controls whose own rest frame is NOT the bone's frame: AdvancedSkeleton
-# keeps them world-oriented on purpose (see the rig spec), so they go through an
-# offset helper.  Root motion reaches `Main`, which is what the UE `root` bone
-# follows -- put it in the pelvis instead and an export loses it.
+# keeps them world-oriented on purpose (see the rig spec), so their rest offset
+# is far from the identity and rides their constraint's target offsets.  Root
+# motion reaches `Main`, which is what the UE `root` bone follows -- put it in
+# the pelvis instead and an export loses it.
 ROOT_ROWS = [("Main", "root"), ("RootX_M", "pelvis")]
 # The IK end controls sit exactly on their bones with matching frames (measured
 # 0.0000-0.0095 cm, 0.00000 deg), so they need no offset.  Toes take rotation
@@ -104,24 +108,33 @@ MIXAMO_POLE_ROWS = [("PoleArm", "Arm"), ("PoleLeg", "UpLeg")]
 # align       -- whether to align the rest poses bone by bone.  A twin needs no
 #                alignment; Mixamo's T-pose sits 54.83 deg off our A-pose arm
 #                and a retarget without the alignment droops by exactly that.
-# keep_position-- whether a POSITION drive keeps our own rest offset from the
-#                source bone (a twin: yes, 0.0003-0.0095 cm) or goes straight to
-#                the source's bone (a foreign skeleton: its hand is 40 cm from
-#                where ours rests, so an offset would be nonsense).
+# twin        -- the source IS this skeleton: the same bones with the same
+#                proportions (a second UE5 Manny).  Two things follow from that
+#                one fact.  Its bone POSITIONS are ours to reproduce, so the FK
+#                controls are driven in position as well as rotation -- a clip
+#                can animate a bone's translation (measured 2026-09-05 on the
+#                animator's Longsword clip: the clavicles slide 3.65 cm, the neck
+#                base 3.67, spine_05 2.52, the thighs 0.81 over the take), and a
+#                rotation-only drive lost every centimetre of it, 6.35 cm at the
+#                hands.  And a position drive keeps our own sub-millimetre rest
+#                offset from the source bone (0.0003-0.0095 cm) rather than going
+#                straight to it.  A foreign skeleton gets neither: placing our
+#                controls on Mixamo's joints would hand the rig Mixamo's
+#                proportions, and its rest hand is 40 cm from where ours rests.
 # root_bone    -- the source's root-motion bone, or None: Mixamo has none and
 #                the travel lives in the hips.
 Schema = collections.namedtuple(
     "Schema", "name rows sides side_before ik_rows pole_rows pelvis root_bone rest align "
-              "keep_position hints")
+              "twin hints")
 
 UE5 = Schema(name="ue5", rows=ROWS, sides=SIDES, side_before=False, ik_rows=IK_ROWS,
              pole_rows=POLE_ROWS, pelvis="pelvis", root_bone="root",
-             rest="live", align=False, keep_position=True,
+             rest="live", align=False, twin=True,
              hints=("pelvis", "spine_05", "upperarm_l", "hand_r", "ball_l"))
 MIXAMO = Schema(name="mixamo", rows=MIXAMO_ROWS, sides=MIXAMO_SIDES, side_before=True,
                 ik_rows=MIXAMO_IK_ROWS, pole_rows=MIXAMO_POLE_ROWS,
                 pelvis="Hips", root_bone=None,
-                rest="jointOrient", align=True, keep_position=False,
+                rest="jointOrient", align=True, twin=False,
                 hints=("Hips", "Spine2", "LeftArm", "RightHand", "LeftToeBase"))
 SCHEMAS = (UE5, MIXAMO)
 
@@ -132,9 +145,11 @@ SEGMENTS = [("thigh_l", "calf_l"), ("calf_l", "foot_l"), ("thigh_r", "calf_r"),
             ("lowerarm_l", "hand_l"), ("upperarm_r", "lowerarm_r"),
             ("lowerarm_r", "hand_r"), ("pelvis", "spine_01"), ("neck_01", "head")]
 
-# How far a rest offset may sit from the identity before it needs a helper: the
-# aligned controls measure ~1e-7 against their bones, the IK end controls stand
-# 0.0003-0.0095 cm off theirs, and a pole is nowhere near its bone.
+# How far a rest offset may sit from the identity before it is carried at all
+# (on the constraint itself, or in a pole's helper pair): the aligned controls
+# measure ~1e-7 against their bones, the IK end controls stand 0.0003-0.0095 cm
+# off theirs, the FK controls 0.00004 cm (median) with FKNeckPart1_M at 0.129,
+# and a pole is nowhere near its bone.
 OFFSET_TOL = 1e-5
 # A control is at its build pose when these read their defaults.  A pole's offset
 # is pose-dependent (a pole is not rigidly linked to its bone), so the rest
@@ -200,10 +215,13 @@ def drive_plan(controls, bones, schema=UE5):
 
     add("Main", schema.root_bone, True, True)
     add("RootX_M", schema.pelvis, True, True)
+    # An FK control of a twin takes the bone's POSITION too: the clip may animate
+    # the bone's translation (the Longsword clip slides its clavicles 3.65 cm),
+    # and only a twin's positions are ours to reproduce -- see Schema.twin.
     for as_base, src_base in schema.rows:
         for as_side, src_side in schema.sides:
             add("FK" + as_base + as_side, bone_name(src_base, src_side, schema),
-                False, True)
+                schema.twin, True)
     for as_base, src_base, translate in schema.ik_rows:
         for as_side, src_side in schema.sides[1:]:
             add(as_base + as_side, bone_name(src_base, src_side, schema),
@@ -241,7 +259,7 @@ def keeps_position(control, schema):
     """
     if control.startswith("Pole"):
         return True
-    return schema.keep_position
+    return schema.twin
 
 
 def top_joint(path, joint_paths):
@@ -305,6 +323,7 @@ def offset_local(control_world, bone_world):
     Maya is row-vector (world = local * parent), so a helper carrying this as its
     local matrix, under a parent holding the source bone's world matrix, stands
     exactly where the control stands at rest -- whatever pose the clip is in.
+    A parentConstraint's target offsets carry the same matrix (`parent_offsets`).
     """
     return list(om.MMatrix(rigid(control_world))
                 * om.MMatrix(rigid(bone_world)).inverse())
@@ -324,7 +343,7 @@ def rotation_only(matrix):
 
 
 def needs_offset(local, translate, tol=OFFSET_TOL):
-    """Pure: must this drive go through the offset helper?
+    """Pure: must this drive carry a rest offset at all?
 
     Measured, never tabulated: whether a control stands on its bone is a fact
     about the rig, and a rotation-only drive does not care where the bone is.
@@ -490,6 +509,21 @@ def euler_offset(matrix, rotate_order):
     tm.reorderRotation(rotate_order + 1)
     e = tm.rotation(asQuaternion=False)
     return (math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
+
+
+def parent_offsets(matrix, rotate_order):
+    """Pure: a rigid rest offset as a parentConstraint's two target offsets.
+
+    Measured 2026-09-05 on sandbox transforms over all six rotate orders:
+    `targetOffsetTranslate` = the offset's translation row and
+    `targetOffsetRotate` = its euler in the CONSTRAINED node's rotate order make
+    the constraint hold exactly W_control = O * W_source (worst element 4.6e-14),
+    and `-mo` stores those very numbers.  So a position+rotation drive with a
+    rest offset is ONE constraint and no helper node.  The order matters: read
+    in xyz for a zyx control the follow is wrong by up to 1.47.
+    """
+    m = list(matrix)
+    return (m[12], m[13], m[14]), euler_offset(rotation_only(matrix), rotate_order)
 
 
 LIMB_SPANS = [("arm", "Shoulder", "Elbow", "Wrist"),
@@ -712,6 +746,14 @@ def _helper(control, source_path, local):
 
 
 NECK_BIAS = ("FKNeck_M", "bias", 10.0)   # measured: 0 -> neck_01 takes half, 10 -> all
+# The in-between's OTHER share, found 2026-09-05: NeckPart1_M's orientConstraint
+# has its offsetX DRIVEN -- the head's twist about the neck axis (HeadQTETwist_M)
+# times this multiplier -- so neck_02 rolls by half of whatever the head rolls
+# (24.24 deg at a 52.8 deg head twist on the Longsword clip) while a UE source
+# keeps neck_02 at its rest roll.  The same design as the limb twist joints.
+# At 0 neck_02 lands exactly on every frame.  Read it under the pose, never at
+# rest: at build pose the offset reads (0, 0, 0) and hides all of this.
+NECK_TWIST = ("twistAmountDivideNeckPart1_M", "input2", 0.0)
 
 
 def has_neck_inbetween():
@@ -732,24 +774,39 @@ def neck_note():
     if not has_neck_inbetween():
         return ""
     control, attr, full = NECK_BIAS
+    tnode, tattr, tfull = NECK_TWIST
     return ("note: the neck's in-between hands neck_01 HALF of its control's "
-            "bend, so the neck lands softer than the source (the head's "
-            "orientation is exact, its position a few mm off at a 15 deg bend). "
-            "For an exact neck set %s.%s to %g -- by hand, or "
-            "connect(exact_neck=True)." % (control, attr, full))
+            "bend and rolls neck_02 by half of the head's twist, so the neck lands "
+            "softer and twists differently from the source (the head's orientation "
+            "is exact, its position a few mm off at a 15 deg bend). For an exact "
+            "neck set %s.%s to %g and %s.%s to %g -- by hand, or "
+            "connect(exact_neck=True), the default."
+            % (control, attr, full, tnode, tattr, tfull))
 
 
 def set_exact_neck():
-    """Turn the neck's in-between off by its own bias attribute.  Writes."""
+    """Turn the neck's in-between off by its own two knobs.  Writes.
+
+    The bias (bend share, measured 2026-09-04) and the twist multiplier (roll
+    share, measured 2026-09-05); a rig without an in-between has neither and
+    gets an empty string.
+    """
     if not has_neck_inbetween():
         return ""
-    control, attr, full = NECK_BIAS
-    was = cmds.getAttr(control + "." + attr)
-    cmds.setAttr(control + "." + attr, full)
-    return ("neck: %s.%s %g -> %g, so neck_01 takes its control's bend 1:1. "
-            "LEAVE IT THERE - it decides how the baked neck keys distribute, and "
-            "putting it back to %g afterwards would halve the neck again."
-            % (control, attr, was, full, was))
+    done = []
+    for node, attr, full in (NECK_BIAS, NECK_TWIST):
+        if not cmds.objExists(node) or not cmds.attributeQuery(attr, node=node,
+                                                                exists=True):
+            continue
+        was = cmds.getAttr(node + "." + attr)
+        cmds.setAttr(node + "." + attr, full)
+        done.append("%s.%s %g -> %g" % (node, attr, was, full))
+    if not done:
+        return ""
+    return ("neck: %s -- so neck_01 takes its control's bend 1:1 and neck_02 "
+            "stops taking half of the head's roll. LEAVE THEM THERE: they decide "
+            "how the baked neck keys distribute, and putting them back afterwards "
+            "would halve the neck and re-roll neck_02." % ", ".join(done))
 
 
 def posed_controls(tol=1e-3):
@@ -791,7 +848,7 @@ def _drive_offset(drive, plan):
         plan.align.get(drive.control, list(om.MMatrix())),
         plan.src_rest[drive.bone],
         keeps_position(drive.control, plan.schema))
-    if plan.schema.rest == "live" and plan.schema.keep_position:
+    if plan.schema.rest == "live" and plan.schema.twin:
         # a twin: the source's rest IS our own bone's, and reading it from our
         # own rig is what the 2026-09-04 gates measured
         return offset_local(reference, plan.rig_rest[ours])
@@ -896,8 +953,13 @@ def report(source_root=None):
     return "\n".join(line for line in lines if line)
 
 
-def connect(source_root=None, require_build_pose=True, exact_neck=False):
-    """Make the rig follow the source skeleton, in AdvancedSkeleton's own shape."""
+def connect(source_root=None, require_build_pose=True, exact_neck=True):
+    """Make the rig follow the source skeleton, in AdvancedSkeleton's own shape.
+
+    exact_neck -- set FKNeck_M.bias so neck_01 takes its control's bend 1:1
+    (default since 2026-09-05, the animator's ask being an exact neck); False
+    leaves the rig's neck in-between as it is and only reports the cost.
+    """
     if cmds.objExists(HOLDER):
         return ("%s already exists - press \"Disconnect MoCap Skeleton\" in "
                 "AdvancedSkeleton first, or run disconnect()" % HOLDER)
@@ -927,26 +989,37 @@ def connect(source_root=None, require_build_pose=True, exact_neck=False):
         for drive in plan.drives:
             target = plan.bones[drive.bone]
             local = offsets[drive.control]
-            offset = None
-            if needs_offset(local, drive.translate):
-                if drive.translate:
+            order = cmds.getAttr(drive.control + ".rotateOrder")
+            shifted = needs_offset(local, drive.translate)
+            if drive.translate and drive.rotate:
+                # a rigid follow is ONE parentConstraint, its two target offsets
+                # holding the rest offset exactly (measured 2026-09-05, 4.6e-14;
+                # see parent_offsets).  No helper: 66 of the 74 twin drives are
+                # of this kind, and a helper pair each would have doubled the
+                # nodes the vendor's Bake walks.
+                con = cmds.parentConstraint(target, drive.control)[0]
+                if shifted:
+                    move, turn = parent_offsets(local, order)
+                    cmds.setAttr(con + ".target[0].targetOffsetTranslate", *move)
+                    cmds.setAttr(con + ".target[0].targetOffsetRotate", *turn)
+                    turned += 1
+                made.append(con)
+            elif drive.translate:
+                # a pole: a point constraint cannot turn its offset with the
+                # bone, so the offset lives in a helper pair under the holder
+                if shifted:
                     target, helpers = _helper(drive.control, target, local)
                     made += helpers
                     helped += 1
-                else:
-                    # a rotation-only drive needs no node: the constraint's own
-                    # offset holds exactly O * W_source (measured 2026-09-05)
-                    offset = euler_offset(local,
-                                          cmds.getAttr(drive.control + ".rotateOrder"))
-                    turned += 1
-            if drive.translate:
                 made.append(cmds.pointConstraint(target, drive.control)[0])
-            if drive.rotate:
-                if offset is None:
-                    made.append(cmds.orientConstraint(target, drive.control)[0])
-                else:
-                    made.append(cmds.orientConstraint(target, drive.control,
-                                                      offset=offset)[0])
+            elif shifted:
+                # a rotation-only drive needs no node: the constraint's own
+                # offset holds exactly O * W_source (measured 2026-09-05)
+                made.append(cmds.orientConstraint(target, drive.control,
+                                                  offset=euler_offset(local, order))[0])
+                turned += 1
+            else:
+                made.append(cmds.orientConstraint(target, drive.control)[0])
         if plan.schema.root_bone is None and cmds.objExists("Main") \
                 and plan.schema.pelvis in plan.bones:
             # no root bone in the source: give `Main` the horizontal travel, which

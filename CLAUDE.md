@@ -190,7 +190,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1943 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 1980 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -3911,9 +3911,9 @@ ORIENTATION and pay 0.6554 cm of position. The knob is the animator's own:
 weight linearly — measured **0 → weight 0.5** (30° on the control turns
 `neck_01` 15.0000°) and **10 → 1.0** (30.0000°, and the retargeted neck then
 lands 0.000015°/0.000001 cm off). `connect` names it in the status line and
-`connect(exact_neck=True)` sets it — the default leaves the rig alone, because
-the bias decides how the baked neck keys distribute and moving it afterwards
-would halve the neck again.
+`connect(exact_neck=True)` sets it — **the default since 2026-09-05**, together
+with the in-between's second knob (the twist share, below); both decide how the
+baked neck keys distribute, so both stay where connect put them.
 
 **What is exact:** pelvis, spine 1–5, clavicles and every finger to
 **0.000020177** (world-matrix element) over sampled frames; hands, feet and
@@ -4031,3 +4031,55 @@ Facts to not re-derive:
   teardown: **`asGoToBuildPose` writes the FKIKBlend values the rig was BUILT
   with**, so restoring the animator's blends before it hands them back a rig in
   the wrong mode. Restore them after.
+
+**A twin's bones carry TRANSLATION, and since 2026-09-05 its FK controls follow
+it** (the animator: «на AS_Death_Front_3p_01 совпадение положения костей очень
+точное (кроме шеи), на AS_Longsword_Attack_Backcombo положение костей начинает
+отличаться заметно… мне важно чтобы мой ретаргет всегда имел 100% точность»).
+Spec: the twin spec's **Addendum 2**. Both clips are full UE5 twins; the
+difference is what they animate — the Longsword clip translates its bones
+(neck_01 **3.67 cm**, clavicles **3.65**, spine_05 2.52, thighs 0.81) and an
+orientation-only FK drive lost every centimetre, stacked down the chain
+(measured: clavicle_l **6.35 cm**, neck_01 5.04, spine_05 2.83; pelvis 0.000).
+Facts:
+
+- **`Schema.twin`** (was `keep_position`): one fact, two consequences — a
+  twin's FK rows take position, and its position drives keep our rest offset.
+  Mixamo's FK stays rotation-only (its joints would hand the rig its
+  proportions).
+- **A position+rotation drive is ONE `parentConstraint`** carrying the rest
+  offset on its target offsets. Measured over all six rotate orders:
+  `targetOffsetTranslate` = the offset's translation and `targetOffsetRotate` =
+  its euler **in the constrained node's rotate order** reproduce `W_c = O · W_t`
+  to **4.6e-14** (xyz for a zyx control is off by up to 1.47); `-mo` stores
+  exactly those; `constraintParentInverseMatrix` exists, so AS Bake/Disconnect
+  are unchanged. 68 such drives, no helper; only the 4 poles keep the helper
+  pair (a pointConstraint cannot turn its offset). 82 constraints + 4 helpers,
+  against 96 + 8 before. `parent_offsets` is the pure half.
+- **AS's FK controls take translation**: all 62 have free translate channels,
+  and +2 cm on one moves its UE bone and everything below by 2.0000, nothing
+  above.
+- **Measured after** on the real clips, all FK: Longsword every bone
+  ≤ **0.0009 cm**, Death ≤ **0.0004**, except the LEFT leg at 0.06–0.08 cm —
+  the rig's own: `FKKnee_L` stands 0.0637 cm off `calf_l` (mirrored fit against
+  Manny's 0.068 cm asymmetric calf; the right knee 0.00004) and the Knee joint
+  does not roll with the bone, so that constant offset wanders with the knee's
+  roll. A fit fact, not a retarget fact.
+- **The neck has a SECOND knob.** `neck_02`'s orientation read up to **24.24°**
+  off with its control exact: `NeckPart1_M_orientConstraint1.offsetX` is
+  **DRIVEN** by the head's twist (`HeadQTETwist_M` ×
+  `twistAmountDivideNeckPart1_M.input2` = 0.5) — the in-between takes half the
+  head's roll, like the limb twist joints, while a UE source keeps neck_02 at
+  its rest roll. Share 0 → exact on every frame. `set_exact_neck` sets both
+  knobs (bias 10, share 0) and that is the default. **A constraint's `offset`
+  can be a live input — read it under the pose, never at rest**: its (0,0,0)
+  at build pose cost eleven probes.
+- **Verify**: the twin fixture now slides clavicle_l 3 cm / spine_05 2 /
+  neck_01 −2.5 and rolls the head 30 — a fixture without translation could not
+  see this bug — **0 of 27 gates**; Mixamo **0 of 18** on the animator's
+  `Sweep Fall.fbx` imported into a throwaway namespace (the wrapper must save
+  the playback range BEFORE the import: FBXImport moves it). Both verifies
+  save and restore the neck knobs. 84 unit tests.
+- **Workflow**: Disconnect without Bake leaves the rig posed, so the next
+  connect refuses until Go To BuildPose — by design (a pole's offset is
+  pose-dependent), and the message names the button.
