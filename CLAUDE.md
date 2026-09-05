@@ -190,7 +190,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 1980 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 2035 tests at time of writing, all passing.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -4186,3 +4186,55 @@ placed from the geometry. Legs IK, arms FK. Facts, each measured or paid for:
   (`PlayerMale_v6_before_AdvancedSkeleton_*.mb`, `..._rig_*.mb`,
   `..._rig_final_*.mb`); the scene itself is the opened FBX — Save As is the
   animator's.
+
+## `maya_pmretarget` — rotations onto the PlayerMale rig from UE, Mixamo or itself (2026-09-06)
+
+Root-level standalone, a COPY of `maya_asretarget.py` for the PlayerMale rig
+(«сделаем копию скрипта ретаргета на разные скелеты… не учитывать изменения
+позиций в костях, только вращения… отдельным модулем»); it imports nothing from
+its sibling and a test pins that. Same API (`report()`, `connect()`,
+`disconnect()`), same vendor contract (`MoCapConstraints.disableConstraints`,
+helpers under the holder, then AS's own Bake and Disconnect). Spec:
+`docs/superpowers/specs/2026-09-05-pmretarget-design.md`. Proof:
+`docs/superpowers/plans/verify_pmretarget.py` — **green live 2026-09-06, all 32
+gates passed** on three sources it builds or imports itself (a copy of the game
+skeleton with a known take, a 93-joint Manny from the shipped template, the
+animator's `Sweep Fall.fbx`); 55 unit tests.
+
+- **FK controls take rotation only** (orientConstraint, rest offset, rest poses
+  aligned bone by bone as in the Mixamo work) — a source bone translated 1.0 is
+  ignored while its orientation lands to 0.00000°. **The IK ends and poles follow
+  OUR OWN FK joints** (`IKArm ← FKXWrist`, `IKLeg ← FKXAnkle`, …): a rotation-only
+  retarget has no source position to give an IK hand, so the IK pose is the FK
+  pose in our proportions and the animator switches either way after one bake.
+- **Travel is scaled** by our pelvis height over the source's, each above its own
+  root (a UE or Mixamo clip is ~8.6× this 17.5-unit character): `Main` follows the
+  source root's rotation and scaled translation (100 cm → 11.6869), or the hips'
+  horizontal travel from rest when there is no root bone; `RootX_M` the pelvis.
+- **Four schemas by required/absent bones, in order**: `OWN` (rest = our bones'
+  rest by name), `UE5` (rest from `assets/manny_skeleton_template.json`), `UE4`
+  (`spine_03` chest, no `spine_05`; rest from `assets/ue4_mannequin_template.json`,
+  68 joints extracted from the shipped fbx in mayapy), `MIXAMO` (rest = rotates at
+  0). Spines: UE5 `Chest ← spine_05` (spine_04 alone), UE4 `Chest ← spine_03`,
+  Mixamo `Chest ← Spine2` (our Spine3 alone).
+- **A `pointConstraint`'s `offset` is in the constrained node's PARENT space.**
+  `RootX_M`'s parent follows `Main`, so a 25° root turn turned the pelvis offset
+  with it (0.115 off). The offset lives on a helper under the scaled group
+  (`pmrtOffset_`, divided by the scale) and the control's constraint carries none
+  → 0.000000. Rotation offsets are fine: an orientConstraint holds `W = O · W_src`.
+- **The pole took three tries.** Riding the upper bone at its rest standoff (the
+  Manny module's way): 0.11° on our own take, **5.0°** on a UE take whose bends
+  come through the alignment about axes that are not our knee's hinge. Riding the
+  knee's frame: the same. The vendor's three-point placement with its world-z nudge
+  a tenth of the limb long: **19.7°** on a straight leg under a yaw. What stands:
+  base on the hip–ankle line at the knee's share, nudge **in the FK knee's frame**
+  and **0.2 % of the limb** long, aimed at the knee, pole a limb out — pole 0.0004
+  off the FK plane, IK knee on the FK knee to 8e-5, UE take in IK 0.0388°.
+- **What is left in IK is the skeleton's own**: the IK thigh and knee still differ
+  from FK by **0.33° of roll** (directions exact) because this skeleton's knee
+  hinge stands 0.36° off its own rest bend plane and a solver bends about the
+  plane's normal. Stated, gated at 0.5°; the FK bake is the product.
+- **A control the animator has constrained to their own nodes is skipped and
+  named** (`foreign_constraints`; ours are told apart by their holder
+  registration). `ls("ns:*")` does not reach a NESTED namespace
+  (`pmrtMx:mixamorig:Hips`): find imported nodes by the UUIDs the import created.
