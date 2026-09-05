@@ -191,6 +191,37 @@ Consequence for the IK controls: `IKLeg_R.rotateY 20` turns the foot about the
 CONTROL's Y, which is world up — the gate says so — rather than about the ankle
 bone's tilted Y. That is what a flat foot box promises.
 
+## Later that evening: the hand frame, from the animator's locators
+
+«locator10 - для правой руки! locator9 - для левой. Давай контролы рук
+сориентируем по этим локаторам я сделал их как подсказку для тебя». Two locators
+on the hand joints (0.07 and 0.02 away), mirrored the way the skeleton mirrors
+its joints (locator9 is the point-mirror of locator10 to 0.02–0.16°): X along the
+fingers (0.995 with the middle-finger direction), Z the palm normal, **29.28° off
+the hand BONE's frame** — whose X points at the middle finger's root, not along
+the fingers — and 7.9° off AS's wrist. So neither of the earlier answers (bone
+axes, AS axes) was the hand frame the animator wanted; the locators are it.
+
+Applied to `IKArm_R/L` and `FKWrist_R/L` by `frame_controls()`: the standing
+shape alignment undone first (while its permutation is still known), Detach /
+set / Attach with mirror off, the arm pole's follow offset compensated, the
+curves re-aligned on the nearest axes of the new frame. Measured: all four
+**0.000000°** from their locator, the game skeleton's drift still 2.1e-7, every
+other control and the fingers unchanged, `FKWrist_R.rx 25` turning the hand
+25.000° about the control's X. The frame is recorded as `HAND_FRAME_IN_BONE`
+(the locator's axes in the hand bone's coordinates — the same numbers on both
+sides), so `run()` reproduces it in a scene without the locators; `hand_frames()`
+prefers the locators when they exist.
+
+**The animator works in the scene while the bridge does.** Measuring the two
+wrists' mirror, the left one did not move at all: `FKShoulder_L`, `FKElbow_L`
+and `FKWrist_L` carried the animator's own parentConstraints to `locator1/2/3`,
+beside an OverRig `base_IK_strech1` — a test in progress on the left arm, made
+between two of our runs, and left alone. The verify now **skips, and says so**,
+every pose that would go through a control holding a constraint whose target
+lies outside `|Group` (`foreign_constraints`), instead of reporting the rig
+broken.
+
 ## Measured, in the final state
 
 - Game skeleton whole: 57 joints, their own names, no `asHeldName` left; world
@@ -199,8 +230,9 @@ bone's tilted Y. That is what a flat foot box promises.
 - 56 deformation joints, 56 mapped, `Root` ← Main; 169 constraints, each game
   joint's three targets the expected twin (gate 5). No animation, no pairBlend on
   the skeleton; 70 skinClusters and both bindPose nodes intact.
-- 55 FK controls on their bones' frames; the six IK end controls on AS's
-  world-aligned frames (0.00000°), AS's skeleton hidden in `AS_DeformSkeleton`.
+- 53 FK controls on their bones' frames; `FKWrist_R/L` and `IKArm_R/L` on the
+  animator's hand frame (0.000000° from the locators); `IKLeg`/`IKToes` on AS's
+  world-aligned frames (0.00000°); AS's skeleton hidden in `AS_DeformSkeleton`.
 - Legs IK (`FKIKLeg_* 10`), arms FK; IK leg lifts the ankle **1.0000** with the
   thigh planted (0.0000000) and turns the foot 20° about the control's world Y
   (0.00000° off); IK arm the same for the hand once the blend is 10.

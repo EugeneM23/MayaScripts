@@ -460,6 +460,91 @@ def as_frames(controls=None):
     return max(_angle(_wmat(c), R) for c, R in frames.items()) if frames else 0.0
 
 
+def _as_drawing_frame(control):
+    """The frame AS drew a control's curve in: the deformation joint for an FK control, the
+    node above the CustomOrient (IKOffset*) -- or the control's own parent when there is none -- for an IK one."""
+    if control.startswith("IK"):
+        k = "CustomOrient" + control
+        return cmds.listRelatives(k if cmds.objExists(k) else control, p=True)[0]
+    return control[2:]
+
+
+def _turn_cvs(control, m):
+    for s in cmds.listRelatives(control, s=True, type="nurbsCurve", fullPath=True) or []:
+        sl = om.MSelectionList()
+        sl.add(s)
+        fn = om.MFnNurbsCurve(sl.getDagPath(0))
+        fn.setCVPositions(om.MPointArray([om.MPoint(pt) * m for pt in fn.cvPositions(om.MSpace.kObject)]), om.MSpace.kObject)
+        fn.updateCurve()
+
+
+def frame_controls(frames):
+    """Give each control in `frames` ({control: world rotation matrix}) that frame, and redraw
+    its curve axis-aligned in the new frame.  The rest of the rig keeps its frames.
+
+    The same Detach / set / Attach as orient_controls, for a chosen few: the standing shape
+    alignment is undone first (a CustomOrient on the control means align_shapes ran on it),
+    the arm pole's follow offset is compensated, and the curve is re-aligned on the nearest
+    signed permutation of AS's drawing axes -- identity when no axis dominates.  Returns the
+    worst angle left between a control and its asked frame.
+    """
+    drawing = dict((c, _rot(_wmat(_as_drawing_frame(c))).asMatrix()) for c in frames)
+    for c in frames:
+        if cmds.objExists("CustomOrient" + c):
+            perm = _nearest_perm(drawing[c] * _rot(_wmat(c)).asMatrix().inverse())
+            if perm is not None:
+                _turn_cvs(c, perm.transpose())
+    w_old = dict((c, _wmat(c)) for c in frames if c.startswith("IKArm"))
+    mel.eval("asControlOrientDetach;")
+    for c, R in frames.items():
+        Pr = _rot(om.MMatrix(cmds.getAttr(c + ".parentMatrix[0]"))).asMatrix()
+        _set_rot(c, R * Pr.inverse())
+    cmds.checkBox("asControlOrientAttachMirrorCheckBox", e=True, v=0)
+    mel.eval("asControlOrientAttach;")
+    for c in w_old:
+        mm = "PoleOffsetArmMMArm_" + c[-1]
+        if cmds.objExists(mm):
+            d = _wmat(c) * w_old[c].inverse()
+            m1 = om.MMatrix(cmds.getAttr(mm + ".matrixIn[1]"))
+            cmds.setAttr(mm + ".matrixIn[1]", list(m1 * d.inverse()), type="matrix")
+    for c in frames:
+        perm = _nearest_perm(drawing[c] * _rot(_wmat(c)).asMatrix().inverse())
+        if perm is not None:
+            _turn_cvs(c, perm)
+    return max(_angle(_wmat(c), R) for c, R in frames.items())
+
+
+# The hand frame the animator asked for (2026-09-05, «locator10 - для правой руки, locator9 - для
+# левой»): X along the fingers, Z the palm normal, 29.3 deg off the hand BONE's frame (whose X
+# points at the middle finger's root, not along the fingers) and 7.9 deg off AS's wrist.
+# Rows = the frame's axes in the hand bone's own coordinates; the same numbers on both sides,
+# because the animator mirrored the locator the way the skeleton mirrors its joints.
+HAND_LOCATORS = {"_R": "locator10", "_L": "locator9"}
+HAND_FRAME_IN_BONE = [0.873138, -0.440331, 0.209138, 0.0,     # measured from locator10 against Right_Hand,
+                      0.448993, 0.893510, 0.006729, 0.0,     # 2026-09-05; locator9 against Left_Hand agrees
+                      -0.189830, 0.088026, 0.977863, 0.0,    # to 0.16 deg
+                      0.0, 0.0, 0.0, 1.0]
+
+
+def hand_frames():
+    """{control: world rotation} for IKArm/FKWrist on both sides -- from the animator's hint
+    locators when they are in the scene, else from the recorded HAND_FRAME_IN_BONE."""
+    game = game_joints()
+    out = {}
+    for suffix, loc in HAND_LOCATORS.items():
+        bone = game[SIDE[suffix] + "Hand"]
+        if cmds.objExists(loc):
+            R = _rot(_wmat(loc)).asMatrix()
+        elif HAND_FRAME_IN_BONE is not None:
+            R = om.MMatrix(HAND_FRAME_IN_BONE) * _rot(_wmat(bone)).asMatrix()
+        else:
+            raise RuntimeError("no hint locator %s and no recorded hand frame" % loc)
+        for c in ("IKArm" + suffix, "FKWrist" + suffix):
+            if cmds.objExists(c):
+                out[c] = R
+    return out
+
+
 def _nearest_perm(m):
     """The signed axis permutation closest to rotation m, or None when no row has a dominant axis."""
     perm = om.MMatrix()
@@ -651,6 +736,7 @@ def run():
         signs, probes = calibrate_finger_axes()
         print("// %d controls oriented (worst frame angle %.5f deg), %d curves aligned, finger axes %s -> curl/spread %s"
               % (n, worst, shapes, signs, probes))
+        print("// hand frames (IKArm, FKWrist) on the animator's frame: worst %.6f deg" % frame_controls(hand_frames()))
         print("// release: %d names given back" % release())
         # the names are back, so the pre-build paths resolve again
         drift = max(max(abs(a - b) for a, b in zip(m, cmds.getAttr(j + ".worldMatrix[0]"))) for j, m in rest.items())

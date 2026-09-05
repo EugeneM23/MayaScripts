@@ -4153,6 +4153,20 @@ placed from the geometry. Legs IK, arms FK. Facts, each measured or paid for:
   `AS_DeformSkeleton` (the game skeleton in the visible `PlayerMale_Skeleton`).
   On Manny the same bone-axis rule looked right because UE's foot bone is
   nearly world-aligned (boxes turned 8.71°); the rule is skeleton-dependent.
+- **The HAND controls carry a frame the animator drew as two locators**
+  (`locator10` right, `locator9` left, «я сделал их как подсказку для тебя»):
+  X along the fingers, Z the palm normal — **29.28° off the hand bone**, whose
+  X points at the middle finger's root, and 7.9° off AS's wrist; neither
+  earlier answer was it. `frame_controls({ctrl: R})` puts a chosen few
+  controls on given frames (shape alignment undone first, Detach / set /
+  Attach, pole offset compensated, curves re-aligned) — `IKArm_R/L` and
+  `FKWrist_R/L` sit on it to 0.000000°; `HAND_FRAME_IN_BONE` records it so
+  `run()` needs no locators. **The animator works in the scene meanwhile**: the
+  left arm's FK controls turned up parent-constrained to `locator1/2/3` beside
+  an OverRig `base_IK_strech1` — their own test, made between two runs; the
+  verify skips, and names, any pose through a control whose constraint target
+  lies outside `|Group` (`foreign_constraints`) rather than calling the rig
+  broken.
 - **Finger SDK axes are measured**: on this skeleton the knuckle line is a
   phalanx's local Y and the palm normal its Z (both hands, same formula — on
   UE it was Z/Y). **The palm is the side the THUMB sits on**: the cross product

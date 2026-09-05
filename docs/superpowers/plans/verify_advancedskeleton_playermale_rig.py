@@ -41,11 +41,32 @@ AXIS_TESTS = [("FKSpine1_M", "Spine1", None), ("FKSpine2_M", "Spine2", None), ("
               ("FKAnkle_R", "Right_Ankle", "FKIKLeg_R"), ("FKToes_R", "Right_Toes", "FKIKLeg_R")]
 
 results = []
+skipped = []
 
 
 def gate(name, ok, detail=""):
     results.append((name, bool(ok), detail))
     print("%s %2d  %s%s" % ("ok  " if ok else "FAIL", len(results), name, (" -- " + detail) if detail else ""))
+
+
+def skip(name, why):
+    skipped.append((name, why))
+    print("skip     %s -- %s" % (name, why))
+
+
+def foreign_constraints(ctrl):
+    """Constraints on a control whose targets lie outside the rig: the animator's own work in
+    progress (measured 2026-09-05: FKShoulder_L/FKElbow_L/FKWrist_L parent-constrained to
+    locator1/2/3 beside an OverRig setup). A verify run poses around them, never through them."""
+    q = {"parentConstraint": cmds.parentConstraint, "orientConstraint": cmds.orientConstraint,
+         "pointConstraint": cmds.pointConstraint, "scaleConstraint": cmds.scaleConstraint}
+    out = []
+    for con in cmds.listRelatives(ctrl, c=True, type="constraint", fullPath=True) or []:
+        fn = q.get(cmds.nodeType(con))
+        targets = fn(con, q=True, targetList=True) if fn else []
+        if any(not cmds.ls(t, long=True)[0].startswith("|Group|") for t in targets):
+            out.append("%s <- %s" % (con.split("|")[-1], targets))
+    return out
 
 
 def W(path):
@@ -168,16 +189,30 @@ try:
             a = ang(M(c), M(g))
             if a > 1e-3:
                 off.append((c, round(a, 4)))
-    gate("every FK control carries its bone's frame", not off, "off: %s" % off[:5])
+    off = [o for o in off if not o[0].startswith("FKWrist")]
+    gate("every FK control but the wrists carries its bone's frame", not off, "off: %s" % off[:5])
     ik_off = []
     for c, b in pr.IK_END:
+        if c.startswith("IKArm"):
+            continue
         parent = cmds.listRelatives(c, p=True)[0]
         a = ang(M(c), M(parent))                     # AS's own frame: zero rotation under the IK offset
         if a > 1e-3 or cmds.objExists("CustomOrient" + c):
             ik_off.append((c, round(a, 4)))
     world = ang(M("IKLeg_R"), om.MMatrix())
-    gate("the six IK end controls keep AS's own frames (feet and hands world-aligned), no CustomOrient on them",
-         not ik_off and world < 1e-3, "off: %s; IKLeg_R vs world %.5f deg" % (ik_off[:6], world))
+    gate("the IK leg and toe controls keep AS's own frames (feet world-aligned), no CustomOrient on them",
+         not ik_off and world < 1e-3, "off: %s; IKLeg_R vs world %.5f deg" % (ik_off[:4], world))
+    # the hands: the frame the animator gave as locators (X along the fingers, Z the palm normal),
+    # 29 deg off the hand bone, on both the FK wrist and the IK arm control
+    hand = pr.hand_frames()
+    hand_off = [(c, round(ang(M(c), R), 4)) for c, R in hand.items() if ang(M(c), R) > 1e-3]
+    Mx = om.MMatrix([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+    lr = max(math.degrees(math.acos(max(-1.0, min(1.0, abs(pr._row(M("FKWrist_R"), i).normal() * pr._row(Mx * M("FKWrist_L") * Mx, i).normal())))))
+             for i in range(3))
+    along = pr._row(M("FKWrist_R"), 0).normal() * (W(game["Right_Middle1"]) - W(game["Right_Hand"])).normal()
+    gate("IKArm and FKWrist on both sides carry the animator's hand frame (locator10 / locator9): X along the fingers, mirrored L/R",
+         len(hand) == 4 and not hand_off and lr < 0.5 and along > 0.98,
+         "off: %s; L/R mirror %.3f deg; X . fingers %.3f" % (hand_off, lr, along))
     asj = cmds.listRelatives("DeformationSystem", allDescendents=True, type="joint", fullPath=True) or []
     in_layer = set(cmds.editDisplayLayerMembers("AS_DeformSkeleton", q=True, fullNames=True) or []) if cmds.objExists("AS_DeformSkeleton") else set()
     gate("AS's deformation skeleton sits in the hidden layer AS_DeformSkeleton, the game skeleton in the visible PlayerMale_Skeleton",
@@ -188,23 +223,30 @@ try:
 
     worst = 0.0
     worst_at = ""
+    tested = 0
     for ctrl, bone, blend in AXIS_TESTS:
+        held_by = foreign_constraints(ctrl)
+        if held_by:
+            skip("axis test on %s" % ctrl, "it carries the animator's own %s" % held_by)
+            continue
+        tested += 1
         for axis in "xyz":
             build_pose()
             if blend:
                 cmds.setAttr(blend + ".FKIKBlend", 0)
                 settle()
             m0 = M(game[bone])
+            axis_world = pr._row(M(ctrl), "xyz".index(axis)).normal()   # == the bone's own axis wherever the frames match
             cmds.setAttr(ctrl + ".rotate" + axis.upper(), 25.0)
             settle()
-            a = ang(axis_matrix(axis, 25.0) * R(m0), M(game[bone]))
+            a = ang(R(m0) * om.MQuaternion(math.radians(25.0), axis_world).asMatrix(), M(game[bone]))
             if a > worst:
                 worst, worst_at = a, "%s.%s" % (ctrl, axis)
             cmds.setAttr(ctrl + ".rotate" + axis.upper(), 0.0)
             if blend:
                 cmds.setAttr(blend + ".FKIKBlend", state["blends"][blend])
-    gate("25 deg on a control's axis turns its bone 25 deg about the bone's own axis (%d controls x 3 axes)" % len(AXIS_TESTS),
-         worst < 0.01, "worst %.5f deg at %s" % (worst, worst_at))
+    gate("25 deg on a control's axis turns its bone 25 deg about that axis, which is the bone's own wherever the frames match (%d controls x 3 axes)" % tested,
+         worst < 0.01 and tested >= 12, "worst %.5f deg at %s" % (worst, worst_at))
 
     build_pose()
     m0, fore0 = M(game["Right_Arm"]), cmds.getAttr(game["Right_ForeArm"] + ".rotate")[0]
@@ -226,17 +268,22 @@ try:
         for i in range(3):
             d = abs(pr._row(wr, i).normal() * pr._row(wl, i).normal())
             asym = max(asym, math.degrees(math.acos(max(-1.0, min(1.0, d)))))
-    cmds.setAttr("FKShoulder_R.rotateZ", 30.0)
-    cmds.setAttr("FKShoulder_L.rotateZ", 30.0)
-    cmds.setAttr("FKElbow_R.rotateY", 40.0)
-    cmds.setAttr("FKElbow_L.rotateY", 40.0)
-    settle()
-    r, l = W(game["Right_Hand"]), W(game["Left_Hand"])
-    mirror = max(abs(r.x + l.x), abs(r.y - l.y), abs(r.z - l.z))
-    gate("equal values on both arms give a mirrored pose, to within the skeleton's own asymmetry", mirror < 0.01,
-         "hands at %.4f/%.4f/%.4f, mirror error %.6f; the game skeleton's own arm frames are %.3f deg asymmetric" % (r.x, r.y, r.z, mirror, asym))
-    for c in ("FKShoulder_R", "FKShoulder_L", "FKElbow_R", "FKElbow_L"):
-        cmds.setAttr(c + ".rotate", 0, 0, 0)
+    arm_ctrls = ("FKShoulder_R", "FKShoulder_L", "FKElbow_R", "FKElbow_L")
+    held_by = [h for c in arm_ctrls for h in foreign_constraints(c)]
+    if held_by:
+        skip("equal values on both arms give a mirrored pose", "the animator's own %s hold the left arm" % held_by)
+    else:
+        cmds.setAttr("FKShoulder_R.rotateZ", 30.0)
+        cmds.setAttr("FKShoulder_L.rotateZ", 30.0)
+        cmds.setAttr("FKElbow_R.rotateY", 40.0)
+        cmds.setAttr("FKElbow_L.rotateY", 40.0)
+        settle()
+        r, l = W(game["Right_Hand"]), W(game["Left_Hand"])
+        mirror = max(abs(r.x + l.x), abs(r.y - l.y), abs(r.z - l.z))
+        gate("equal values on both arms give a mirrored pose, to within the skeleton's own asymmetry", mirror < 0.01,
+             "hands at %.4f/%.4f/%.4f, mirror error %.6f; the game skeleton's own arm frames are %.3f deg asymmetric" % (r.x, r.y, r.z, mirror, asym))
+        for c in arm_ctrls:
+            cmds.setAttr(c + ".rotate", 0, 0, 0)
 
     # ------------------------------------------------------------ fingers
     build_pose()
@@ -377,6 +424,8 @@ finally:
     failed = [r for r in results if not r[1]]
     print("restored: EM %s, autoKey %s, time %s, blends %s" % (cmds.evaluationManager(q=True, mode=True)[0], cmds.autoKeyframe(q=True, st=True),
                                                                cmds.currentTime(q=True), dict((c, cmds.getAttr(c + ".FKIKBlend")) for c in BLENDS)))
+    if skipped:
+        print("%d check(s) skipped around the animator's own constraints: %s" % (len(skipped), [s[0] for s in skipped]))
     if failed:
         print("%d of %d gates failed: %s" % (len(failed), len(results), [r[0] for r in failed]))
     else:
