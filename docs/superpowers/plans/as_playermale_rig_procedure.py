@@ -520,10 +520,17 @@ def frame_controls(frames):
 # Rows = the frame's axes in the hand bone's own coordinates; the same numbers on both sides,
 # because the animator mirrored the locator the way the skeleton mirrors its joints.
 HAND_LOCATORS = {"_R": "locator10", "_L": "locator9"}
-HAND_FRAME_IN_BONE = [0.873138, -0.440331, 0.209138, 0.0,     # measured from locator10 against Right_Hand,
-                      0.448993, 0.893510, 0.006729, 0.0,     # 2026-09-05; locator9 against Left_Hand agrees
-                      -0.189830, 0.088026, 0.977863, 0.0,    # to 0.16 deg
-                      0.0, 0.0, 0.0, 1.0]
+# Per side, because the animator's left locator was not the exact mirror of the right one
+# (0.16 deg apart) and the rig carries what each locator gave; a fresh run reproduces both.
+HAND_FRAME_IN_BONE = {
+    "_R": [0.873138, -0.440331, 0.209138, 0.0,     # locator10 against Right_Hand, 2026-09-05
+           0.448993, 0.893510, 0.006729, 0.0,
+           -0.189830, 0.088026, 0.977863, 0.0,
+           0.0, 0.0, 0.0, 1.0],
+    "_L": [0.873199, -0.440355, 0.208831, 0.0,     # locator9 against Left_Hand, 2026-09-05
+           0.449502, 0.893270, 0.004080, 0.0,
+           -0.188339, 0.090308, 0.977943, 0.0,
+           0.0, 0.0, 0.0, 1.0]}
 
 
 def hand_frames():
@@ -535,10 +542,8 @@ def hand_frames():
         bone = game[SIDE[suffix] + "Hand"]
         if cmds.objExists(loc):
             R = _rot(_wmat(loc)).asMatrix()
-        elif HAND_FRAME_IN_BONE is not None:
-            R = om.MMatrix(HAND_FRAME_IN_BONE) * _rot(_wmat(bone)).asMatrix()
         else:
-            raise RuntimeError("no hint locator %s and no recorded hand frame" % loc)
+            R = om.MMatrix(HAND_FRAME_IN_BONE[suffix]) * _rot(_wmat(bone)).asMatrix()
         for c in ("IKArm" + suffix, "FKWrist" + suffix):
             if cmds.objExists(c):
                 out[c] = R
