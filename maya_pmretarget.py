@@ -10,12 +10,17 @@ and one different rule, both the animator's (2026-09-05): «сделаем ко�
     import maya_pmretarget
     print(maya_pmretarget.report())      # read-only: what would be driven, from what
     print(maya_pmretarget.connect())     # build it, from the SELECTED source skeleton
-    print(maya_pmretarget.disconnect())  # the same as AdvancedSkeleton's own button
+    print(maya_pmretarget.bake())        # the vendor's Bake over the clip's range, then Disconnect
+    print(maya_pmretarget.disconnect())  # Disconnect alone -- the rig keeps NO animation
 
-Then, in AdvancedSkeleton: MoCap Matcher > Bake, then Disconnect MoCap Skeleton -- every
-constraint built here registers its nodeState on `MoCapConstraints.disableConstraints`
-and every helper is parented under `MoCapConstraints`, the contract the vendor's Bake and
-Disconnect rely on (measured 2026-09-04).
+`bake()` is AdvancedSkeleton's own MoCap Matcher > Bake and Disconnect MoCap Skeleton,
+pressed in that order with the playback range set to the clip's keys for the length of the
+bake.  Every constraint built here registers its nodeState on
+`MoCapConstraints.disableConstraints` and every helper is parented under
+`MoCapConstraints`, the contract the vendor's Bake and Disconnect rely on (measured
+2026-09-04).  A Disconnect WITHOUT the Bake leaves the rig frozen in the pose of the frame
+it stood on and nothing else -- which is what «сработал только на 1 кадре» looks like
+(2026-09-06, the Mixamo clip: connected, disconnected, never baked).
 
 What is driven, and how:
 
@@ -62,6 +67,7 @@ import os
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
+import maya.mel as mel
 
 # ------------------------------------------------------------------ our rig
 
@@ -603,6 +609,28 @@ def _register(constraints):
         cmds.connectAttr(HOLDER + "." + SWITCH, c + ".nodeState", force=True)
 
 
+SOURCE_ATTR = "pmrtSourceRoot"     # on the holder: where the clip came from, for bake()
+
+
+def _remember_source(root):
+    if not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
+        cmds.addAttr(HOLDER, longName=SOURCE_ATTR, dataType="string")
+    cmds.setAttr(HOLDER + "." + SOURCE_ATTR, root, type="string")
+
+
+def source_key_range():
+    """(first, last) key of the connected source's bones, or None."""
+    if not cmds.objExists(HOLDER) or not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
+        return None
+    root = cmds.getAttr(HOLDER + "." + SOURCE_ATTR)
+    if not root or not cmds.objExists(root):
+        return None
+    paths = list(source_bones(root).values())
+    if not (cmds.keyframe(paths, query=True, keyframeCount=True) or 0):
+        return None
+    return cmds.findKeyframe(paths, which="first"), cmds.findKeyframe(paths, which="last")
+
+
 def _scale_group(factor):
     """A group under the holder scaled by the size ratio; whatever sits under it at the
     source's world position stands at OUR scale.  Dies with the holder."""
@@ -855,6 +883,7 @@ def connect(source_root=None, require_build_pose=True):
     made = []
     try:
         _holder()
+        _remember_source(plan.root)
         for d in plan.drives:
             order = cmds.getAttr(d.control + ".rotateOrder")
             if d.kind == "fk":
@@ -899,16 +928,57 @@ def connect(source_root=None, require_build_pose=True):
     lines += plan.notes
     if plan.missing:
         lines.append("no source bone for: " + ", ".join(c for c, _ in plan.missing))
-    lines.append("playback range %g..%g, the source's keys run %s - the vendor's Bake reads the RANGE, so "
-                 "match it to the clip first" % (cmds.playbackOptions(query=True, min=True),
-                                                 cmds.playbackOptions(query=True, max=True),
-                                                 _key_range(list(plan.bones.values()))))
-    lines.append("now in AdvancedSkeleton: MoCap Matcher > Bake, then Disconnect MoCap Skeleton")
+    lines.append("the source's keys run %s (playback range %g..%g)" % (
+        _key_range(list(plan.bones.values())), cmds.playbackOptions(query=True, min=True),
+        cmds.playbackOptions(query=True, max=True)))
+    lines.append("the rig FOLLOWS the clip now and keeps nothing of it yet: run maya_pmretarget.bake() -- the "
+                 "vendor's Bake over the clip's keys, then its Disconnect. Disconnecting without the bake "
+                 "leaves one frozen pose.")
     return "\n".join(line for line in lines if line)
 
 
+def bake(disconnect=True):
+    """AdvancedSkeleton's own MoCap Matcher > Bake, over the CLIP's key range, then (by default)
+    its Disconnect MoCap Skeleton.
+
+    The vendor's `asMoCapMatcherBake` bakes every object our constraints drive across the
+    PLAYBACK range and deletes static channels; it needs no window open (it reads the holder,
+    not the UI).  The range is set to the connected source's keys for the length of the bake
+    and put back, so a range left at 0..100 over a 0..75 clip does not bake 25 frames of
+    nothing.  Returns what was keyed.
+    """
+    if not cmds.objExists(HOLDER):
+        return "nothing connected (%s not found) - connect() first" % HOLDER
+    controls = set(cmds.sets("ControlSet", query=True) or [])
+    before = set(c for c in controls if cmds.listConnections(c, type="animCurve", source=True, destination=False))
+    span = source_key_range()
+    saved = (cmds.playbackOptions(query=True, min=True), cmds.playbackOptions(query=True, max=True),
+             cmds.playbackOptions(query=True, animationStartTime=True), cmds.playbackOptions(query=True, animationEndTime=True))
+    if span:
+        cmds.playbackOptions(edit=True, min=span[0], max=span[1], animationStartTime=min(span[0], saved[2]),
+                             animationEndTime=max(span[1], saved[3]))
+    try:
+        mel.eval("asMoCapMatcherBake;")
+    finally:
+        cmds.playbackOptions(edit=True, min=saved[0], max=saved[1], animationStartTime=saved[2], animationEndTime=saved[3])
+    keyed = [c for c in controls if c not in before and cmds.listConnections(c, type="animCurve", source=True, destination=False)]
+    curves = list(set(cmds.listConnections(keyed, type="animCurve", source=True, destination=False) or [])) if keyed else []
+    baked = ("%g..%g" % (cmds.findKeyframe(curves, which="first"), cmds.findKeyframe(curves, which="last"))) if curves else "nothing"
+    note = "baked %d controls over %s (%d curves; static channels dropped, as the vendor's Bake does)" % (len(keyed), baked, len(curves))
+    if disconnect:
+        note += "; " + disconnect_()
+    else:
+        note += "; still connected - disconnect() when done"
+    return note
+
+
 def disconnect():
-    """What AdvancedSkeleton's own \"Disconnect MoCap Skeleton\" button does."""
+    """What AdvancedSkeleton's own \"Disconnect MoCap Skeleton\" button does -- and, like it, it
+    keeps NOTHING of the clip: bake() first, or the rig is left frozen in one pose."""
+    return disconnect_()
+
+
+def disconnect_():
     if not cmds.objExists(HOLDER):
         return "nothing connected (%s not found)" % HOLDER
     doomed = []

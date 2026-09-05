@@ -400,9 +400,15 @@ class TestNames(unittest.TestCase):
     def test_no_bake_of_our_own_and_no_qt(self):
         with open(pm.__file__.replace(".pyc", ".py"), encoding="utf-8") as fh:
             src = fh.read()
-        self.assertNotIn("bakeResults", src)
+        self.assertNotIn("bakeResults", src)                  # the bake stays the vendor's
+        self.assertIn("asMoCapMatcherBake", src)
         self.assertNotIn("PySide", src)
         self.assertNotIn("import maya_asretarget", src)      # a copy, not a coupling
+
+    def test_bake_exists_and_disconnect_alone_says_it_keeps_nothing(self):
+        self.assertTrue(callable(pm.bake))
+        self.assertIn("NOTHING", pm.disconnect.__doc__)
+        self.assertIn("bake()", pm.disconnect.__doc__)
 
     def test_candidates_cover_the_rig_and_nothing_twice(self):
         for schema in pm.SCHEMAS:

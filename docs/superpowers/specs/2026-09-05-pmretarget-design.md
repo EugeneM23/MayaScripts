@@ -131,6 +131,26 @@ the game bone it stands on (`FKChest_M → Spine4`, `IKLeg_L → Left_Ankle`,
   they carried before; range, frame, autoKey, evaluation mode, blends, selection and
   the FBX import mode restored.
 
+## The morning after: «ретаргет сработал только на 1 кадре»
+
+The animator connected the Mixamo clip and pressed AdvancedSkeleton's Disconnect —
+without its Bake. What the scene showed (2026-09-06): no `MoCapConstraints`, no
+keys on any driven control, the rig frozen in the pose of the frame it was
+disconnected on, the MoCap Matcher window not even open. Connected again and
+measured, the rig followed the clip on every sampled frame (bone directions
+0.000–0.008° at 0, 15, 30, 45, 60, 75; the root travelling with the scaled hips), so
+the transfer worked and only the bake was missing — a Disconnect keeps nothing.
+
+The fix is a step that cannot be skipped by accident: **`bake(disconnect=True)`**
+calls the vendor's `asMoCapMatcherBake` (it reads the holder, not its window) with
+the playback range set to the connected source's keys for the length of the bake
+and put back — a range left at 0..100 over a 0..75 clip would otherwise bake 25
+frames of nothing — then the vendor's Disconnect. The holder remembers the source
+root (`pmrtSourceRoot`) for that. `connect()` now ends by saying so, and
+`disconnect()`'s docstring says what it does not keep. Gate 12 of the verify goes
+through `bake()` and asserts the baked span is the clip's (0..20) with the range
+back at 0..100.
+
 ## Not done, deliberately
 
 - No neck knobs (this rig has no in-between) and no twist handling (no twist joints).

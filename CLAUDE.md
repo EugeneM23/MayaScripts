@@ -4193,8 +4193,13 @@ Root-level standalone, a COPY of `maya_asretarget.py` for the PlayerMale rig
 («сделаем копию скрипта ретаргета на разные скелеты… не учитывать изменения
 позиций в костях, только вращения… отдельным модулем»); it imports nothing from
 its sibling and a test pins that. Same API (`report()`, `connect()`,
-`disconnect()`), same vendor contract (`MoCapConstraints.disableConstraints`,
-helpers under the holder, then AS's own Bake and Disconnect). Spec:
+`disconnect()`) plus **`bake()`** — the vendor's MoCap Bake over the CLIP's key
+range (the holder remembers the source), then its Disconnect — same vendor
+contract (`MoCapConstraints.disableConstraints`, helpers under the holder). **A
+Disconnect without the Bake keeps nothing**: the morning after, the animator's
+«ретаргет сработал только на 1 кадре» was exactly that — connected, disconnected,
+never baked, the rig frozen in one pose; connected again it followed the clip on
+every sampled frame (0.000–0.008°). `connect()` now ends by naming `bake()`. Spec:
 `docs/superpowers/specs/2026-09-05-pmretarget-design.md`. Proof:
 `docs/superpowers/plans/verify_pmretarget.py` — **green live 2026-09-06, all 32
 gates passed** on three sources it builds or imports itself (a copy of the game

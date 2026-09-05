@@ -265,12 +265,16 @@ try:
     gate("A: every constraint is registered on MoCapConstraints.disableConstraints and every helper sits under it",
          n_cons >= len(driven) and all(n.startswith("|" + pm.HOLDER) for n in cmds.ls("pmrt*", type="transform", long=True)),
          "%d constraints, %d helper transforms" % (n_cons, len(cmds.ls("pmrt*", type="transform"))))
-    # the vendor's own Bake and Disconnect
+    # the vendor's own Bake and Disconnect, through bake(): over the CLIP's keys, the range put back
     settle(0.0)
-    mel.eval("asMoCapMatcherBake;")
-    mel.eval("asMoCapMatcherDisconnect;")
+    cmds.playbackOptions(e=True, min=0, max=100)            # a range wider than the clip, as the animator had it
+    note = pm.bake()
     gone = not cmds.objExists(pm.HOLDER) and not cmds.ls("pmrt*", type="transform")
     keyed = [c for c in driven if cmds.listConnections(c, type="animCurve", s=True, d=False)]
+    span = (cmds.findKeyframe(keyed, which="first"), cmds.findKeyframe(keyed, which="last")) if keyed else None
+    gate("A: bake() bakes over the clip's own keys, not the wider playback range, and puts the range back",
+         span == (0.0, END) and cmds.playbackOptions(q=True, max=True) == 100.0, "baked %s, range now %g..%g; %s" % (span, cmds.playbackOptions(q=True, min=True), cmds.playbackOptions(q=True, max=True), note[:90]))
+    cmds.playbackOptions(e=True, min=0, max=END)
     settle(13.0)
     after_ik = [ang(M(game[b]), M(own[b])) for b in fk_bones]
     all_fk(True)
