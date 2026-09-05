@@ -1,12 +1,18 @@
-"""Retarget: drive the AdvancedSkeleton rig from a second, animated UE5 skeleton.
+"""Retarget: drive the AdvancedSkeleton rig from a second, animated skeleton.
 
-The animator imports a clip on an analogous skeleton, this makes the rig follow
-it, and the baking stays their own button in AdvancedSkeleton: every constraint
+The animator imports a clip on another skeleton, this makes the rig follow it,
+and the baking stays their own button in AdvancedSkeleton: every constraint
 built here registers its `nodeState` on `MoCapConstraints.disableConstraints`
 and every helper node is parented under `MoCapConstraints`, which is the whole
 contract the vendor's `Bake` and `Disconnect MoCap Skeleton` rely on.
 
+Two source schemas are known (`SCHEMAS`, detected from the bones the source
+actually has): a UE5 twin of the rig's own skeleton, and Mixamo -- different
+names, a Y-down-the-bone convention against our X, and a T-pose rest against
+our A-pose. The rest-pose difference is what the alignment below is for.
+
 Design: docs/superpowers/specs/2026-09-04-as-retarget-design.md
+        docs/superpowers/specs/2026-09-05-asretarget-mixamo-design.md
 
 Run in Maya (Script Editor, Python tab):
     import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
@@ -47,6 +53,29 @@ ROWS = [
 ]
 SIDES = [("_M", ""), ("_L", "_l"), ("_R", "_r")]
 
+# AdvancedSkeleton deform-joint base -> Mixamo bone base.  Measured on the
+# animator's own clip 2026-09-05: 65 joints under `mixamorig:Hips`, the side is
+# a PREFIX (`LeftUpLeg`), there are no metacarpals, the spine is three joints
+# against our five, and the neck is one against our two.
+MIXAMO_ROWS = [
+    ("Spine1", "Spine"), ("Spine3", "Spine1"), ("Spine5", "Spine2"),
+    ("Neck", "Neck"), ("Head", "Head"),
+    ("Scapula", "Shoulder"), ("Shoulder", "Arm"), ("Elbow", "ForeArm"),
+    ("Wrist", "Hand"),
+    ("IndexFinger1", "HandIndex1"), ("IndexFinger2", "HandIndex2"),
+    ("IndexFinger3", "HandIndex3"),
+    ("MiddleFinger1", "HandMiddle1"), ("MiddleFinger2", "HandMiddle2"),
+    ("MiddleFinger3", "HandMiddle3"),
+    ("RingFinger1", "HandRing1"), ("RingFinger2", "HandRing2"),
+    ("RingFinger3", "HandRing3"),
+    ("PinkyFinger1", "HandPinky1"), ("PinkyFinger2", "HandPinky2"),
+    ("PinkyFinger3", "HandPinky3"),
+    ("ThumbFinger1", "HandThumb1"), ("ThumbFinger2", "HandThumb2"),
+    ("ThumbFinger3", "HandThumb3"),
+    ("Hip", "UpLeg"), ("Knee", "Leg"), ("Ankle", "Foot"), ("Toes", "ToeBase"),
+]
+MIXAMO_SIDES = [("_M", ""), ("_L", "Left"), ("_R", "Right")]
+
 # The two controls whose own rest frame is NOT the bone's frame: AdvancedSkeleton
 # keeps them world-oriented on purpose (see the rig spec), so they go through an
 # offset helper.  Root motion reaches `Main`, which is what the UE `root` bone
@@ -59,6 +88,42 @@ IK_ROWS = [("IKArm", "hand", True), ("IKLeg", "foot", True), ("IKToes", "ball", 
 # The pole rides the UPPER bone's frame: the limb plane is fixed by its roll, and
 # a pole point-constrained to the mid joint is degenerate on a straight limb.
 POLE_ROWS = [("PoleArm", "upperarm"), ("PoleLeg", "thigh")]
+MIXAMO_IK_ROWS = [("IKArm", "Hand", True), ("IKLeg", "Foot", True),
+                  ("IKToes", "ToeBase", False)]
+MIXAMO_POLE_ROWS = [("PoleArm", "Arm"), ("PoleLeg", "UpLeg")]
+
+# A schema is everything that differs between one source skeleton and another.
+#
+# rest        -- where the source's REST pose comes from.  "live" means the
+#                source stands in the same bind pose as our rig (a twin), so its
+#                current matrices ARE the rest; "jointOrient" means the bind is
+#                in the joints' jointOrient and the rest is the pose with every
+#                rotate at 0, which is what a Mixamo FBX carries (measured
+#                2026-09-05: that pose is an exact T-pose, arms along +X to
+#                0.000, 47.23 cm out and 0.00 cm up).
+# align       -- whether to align the rest poses bone by bone.  A twin needs no
+#                alignment; Mixamo's T-pose sits 54.83 deg off our A-pose arm
+#                and a retarget without the alignment droops by exactly that.
+# keep_position-- whether a POSITION drive keeps our own rest offset from the
+#                source bone (a twin: yes, 0.0003-0.0095 cm) or goes straight to
+#                the source's bone (a foreign skeleton: its hand is 40 cm from
+#                where ours rests, so an offset would be nonsense).
+# root_bone    -- the source's root-motion bone, or None: Mixamo has none and
+#                the travel lives in the hips.
+Schema = collections.namedtuple(
+    "Schema", "name rows sides side_before ik_rows pole_rows pelvis root_bone rest align "
+              "keep_position hints")
+
+UE5 = Schema(name="ue5", rows=ROWS, sides=SIDES, side_before=False, ik_rows=IK_ROWS,
+             pole_rows=POLE_ROWS, pelvis="pelvis", root_bone="root",
+             rest="live", align=False, keep_position=True,
+             hints=("pelvis", "spine_05", "upperarm_l", "hand_r", "ball_l"))
+MIXAMO = Schema(name="mixamo", rows=MIXAMO_ROWS, sides=MIXAMO_SIDES, side_before=True,
+                ik_rows=MIXAMO_IK_ROWS, pole_rows=MIXAMO_POLE_ROWS,
+                pelvis="Hips", root_bone=None,
+                rest="jointOrient", align=True, keep_position=False,
+                hints=("Hips", "Spine2", "LeftArm", "RightHand", "LeftToeBase"))
+SCHEMAS = (UE5, MIXAMO)
 
 # Pose-independent proportions: a joint's local translation does not change with
 # the pose, so these lengths compare two skeletons without posing either.
@@ -91,53 +156,92 @@ def leaf(path):
     return path.split("|")[-1].split(":")[-1]
 
 
-def candidates():
-    """Every control name the tables can drive, in build order."""
-    out = [c for c, _ in ROOT_ROWS]
-    for base, _ in ROWS:
-        for side, _ in SIDES:
+def bone_name(base, side, schema):
+    """Pure: the source's name for a bone. Mixamo puts the side FIRST."""
+    return (side + base) if schema.side_before else (base + side)
+
+
+def candidates(schema=UE5):
+    """Every control name the schema's tables can drive, in build order."""
+    out = ["Main", "RootX_M"]
+    for base, _ in schema.rows:
+        for side, _ in schema.sides:
             out.append("FK" + base + side)
-    for base, _, _ in IK_ROWS:
-        for side, _ in SIDES[1:]:
+    for base, _, _ in schema.ik_rows:
+        for side, _ in schema.sides[1:]:
             out.append(base + side)
-    for base, _ in POLE_ROWS:
-        for side, _ in SIDES[1:]:
+    for base, _ in schema.pole_rows:
+        for side, _ in schema.sides[1:]:
             out.append(base + side)
     return out
 
 
-def drive_plan(controls, bones):
+def drive_plan(controls, bones, schema=UE5):
     """Pure: what to constrain to what.
 
     controls -- control names that exist in this rig
     bones    -- leaf names that exist in the source skeleton
     Returns (drives, missing), missing being [(control, bone)] rows skipped
-    because the source has no such bone.
+    because the source has no such bone.  A schema's own gaps -- Mixamo has no
+    metacarpals, no second neck joint and three spine joints against our five --
+    are not "missing": those rows simply are not in its table.
     """
     controls = set(controls)
     bones = set(bones)
     drives, missing = [], []
 
     def add(control, bone, translate, rotate):
-        if control not in controls:
+        if control not in controls or bone is None:
             return
         if bone not in bones:
             missing.append((control, bone))
             return
         drives.append(Drive(control, bone, translate, rotate))
 
-    for control, bone in ROOT_ROWS:
-        add(control, bone, True, True)
-    for as_base, ue_base in ROWS:
-        for as_side, ue_side in SIDES:
-            add("FK" + as_base + as_side, ue_base + ue_side, False, True)
-    for as_base, ue_base, translate in IK_ROWS:
-        for as_side, ue_side in SIDES[1:]:
-            add(as_base + as_side, ue_base + ue_side, translate, True)
-    for as_base, ue_base in POLE_ROWS:
-        for as_side, ue_side in SIDES[1:]:
-            add(as_base + as_side, ue_base + ue_side, True, False)
+    add("Main", schema.root_bone, True, True)
+    add("RootX_M", schema.pelvis, True, True)
+    for as_base, src_base in schema.rows:
+        for as_side, src_side in schema.sides:
+            add("FK" + as_base + as_side, bone_name(src_base, src_side, schema),
+                False, True)
+    for as_base, src_base, translate in schema.ik_rows:
+        for as_side, src_side in schema.sides[1:]:
+            add(as_base + as_side, bone_name(src_base, src_side, schema),
+                translate, True)
+    for as_base, src_base in schema.pole_rows:
+        for as_side, src_side in schema.sides[1:]:
+            add(as_base + as_side, bone_name(src_base, src_side, schema),
+                True, False)
     return drives, missing
+
+
+def detect_schema(bones, schemas=SCHEMAS):
+    """Pure: which schema this source is, by the bones it actually has.
+
+    Scored on the schema's own hint bones, which are chosen to be unambiguous
+    (`pelvis`/`spine_05` against `Hips`/`Spine2`), so a source that is neither
+    scores zero everywhere and is refused rather than guessed at.
+    """
+    bones = set(bones)
+    scored = [(sum(1 for hint in s.hints if hint in bones), s) for s in schemas]
+    scored.sort(key=lambda pair: -pair[0])
+    best, schema = scored[0]
+    if not best:
+        return None, 0
+    return schema, best
+
+
+def keeps_position(control, schema):
+    """Pure: does this control's POSITION keep our own rest offset?
+
+    A pole always does -- it stands 85 cm out from its bone and that standoff IS
+    the control.  Everything else follows the schema: a twin keeps its
+    sub-millimetre offset, a foreign skeleton goes straight to the source's bone
+    because our rest hand is 40 cm from where its rest hand is.
+    """
+    if control.startswith("Pole"):
+        return True
+    return schema.keep_position
 
 
 def top_joint(path, joint_paths):
@@ -238,6 +342,211 @@ def segment_lengths(positions):
     return out
 
 
+def our_bone_map():
+    """Pure: {control: the UE bone it drives on OUR rig}.
+
+    Our rig is always the UE5 Manny, whatever the source is, so this comes from
+    the UE5 tables and never from the schema.
+    """
+    out = {"Main": "root", "RootX_M": "pelvis"}
+    for base, ue in ROWS:
+        for side, ue_side in SIDES:
+            out["FK" + base + side] = ue + ue_side
+    for base, ue, _ in IK_ROWS:
+        for side, ue_side in SIDES[1:]:
+            out[base + side] = ue + ue_side
+    for base, ue in POLE_ROWS:
+        for side, ue_side in SIDES[1:]:
+            out[base + side] = ue + ue_side
+    return out
+
+
+def position(matrix):
+    """Pure: the translation row of a 16-float matrix."""
+    return (matrix[12], matrix[13], matrix[14])
+
+
+def direction(rest, first, second):
+    """Pure: the unit vector from one rest bone to another, or None if they sit
+    on top of each other (a zero-length bone says nothing about a direction)."""
+    if first not in rest or second not in rest:
+        return None
+    a, b = position(rest[first]), position(rest[second])
+    v = om.MVector(b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    if v.length() < 1e-6:
+        return None
+    return v.normal()
+
+
+def rotation_angle(matrix):
+    """Pure: how far a rotation matrix turns, in degrees."""
+    q = om.MTransformationMatrix(om.MMatrix(matrix)).rotation(asQuaternion=True)
+    return math.degrees(2 * math.acos(max(-1.0, min(1.0, abs(q.w)))))
+
+
+def align_rotation(ours, theirs):
+    """Pure: the minimal rotation taking our rest bone direction onto the
+    source's, as a 16-float matrix.
+
+    Minimal because nothing else is known: the two skeletons agree on where a
+    bone POINTS at rest and say nothing about the roll around it, and the roll
+    our rig already has is the one its own axis work established.
+    """
+    if ours is None or theirs is None:
+        return list(om.MMatrix())
+    return list(om.MQuaternion(ours, theirs).asMatrix())
+
+
+def depth_of(leaf_name, parents):
+    """Pure: how many steps up to the top of the skeleton."""
+    depth, node = 0, parents.get(leaf_name)
+    while node:
+        depth += 1
+        node = parents.get(node)
+    return depth
+
+
+def descends(child, ancestor, parents):
+    """Pure: how many steps from child up to ancestor, or 0 if unrelated."""
+    steps, node = 1, parents.get(child)
+    while node:
+        if node == ancestor:
+            return steps
+        steps += 1
+        node = parents.get(node)
+    return 0
+
+
+# Which child gives a bone its direction, where the nearest one is the wrong
+# one.  A hand's nearest mapped descendant is the THUMB -- the one finger that
+# does not continue the hand -- and taking it rolled the wrist by a measured
+# 30.77 deg.  The middle finger is what a hand points along.
+DIRECTION_CHILD = {"hand_l": "middle_01_l", "hand_r": "middle_01_r"}
+
+
+def alignments(triples, rig_rest, src_rest, rig_parents, src_parents):
+    """Pure: {control: the rest-alignment rotation for its bone}.
+
+    A bone's direction needs a child to point at, and it has to be a child BOTH
+    skeletons map -- so the hand aims at the middle finger (Mixamo has no
+    metacarpal) and the head, the toes and the finger tips, which have no mapped
+    child at all, inherit their parent's alignment.  Processed from the root
+    down, so a parent's answer is ready when its children ask for it.
+    """
+    ordered = sorted(triples, key=lambda t: depth_of(t[1], rig_parents))
+    preferred = dict((t[1], t[2]) for t in triples)
+    out, by_bone = {}, {}
+    for control, our_bone, src_bone in ordered:
+        best = None
+        want = DIRECTION_CHILD.get(our_bone)
+        if want is not None and want in preferred:
+            best = (0, want, preferred[want])
+        for other, other_our, other_src in triples:
+            if other == control or best is not None and best[0] == 0:
+                continue
+            ours = descends(other_our, our_bone, rig_parents)
+            theirs = descends(other_src, src_bone, src_parents)
+            if ours and theirs and (best is None or ours + theirs < best[0]):
+                best = (ours + theirs, other_our, other_src)
+        rotation = None
+        if best is not None:
+            rotation = align_rotation(direction(rig_rest, our_bone, best[1]),
+                                      direction(src_rest, src_bone, best[2]))
+        if rotation is None:                      # no mapped child: inherit
+            node = rig_parents.get(our_bone)
+            while node and node not in by_bone:
+                node = rig_parents.get(node)
+            rotation = by_bone.get(node, list(om.MMatrix()))
+        out[control] = rotation
+        by_bone[our_bone] = rotation
+    return out
+
+
+def reference_matrix(control_rest, align, source_rest, keep_position):
+    """Pure: where the control should stand when the source stands at ITS rest.
+
+    Rotation: our own rest frame, turned by the alignment (a WORLD rotation, so
+    it post-multiplies).  Position: ours when the offset is worth keeping, the
+    source's bone when it is not.
+    """
+    tm = om.MTransformationMatrix(om.MMatrix(rigid(control_rest))
+                                  * om.MMatrix(align))
+    out = om.MTransformationMatrix()
+    out.setRotation(tm.rotation(asQuaternion=True))
+    where = position(control_rest) if keep_position else position(source_rest)
+    out.setTranslation(om.MVector(where[0], where[1], where[2]), om.MSpace.kWorld)
+    return list(out.asMatrix())
+
+
+def euler_offset(matrix, rotate_order):
+    """Pure: a rotation matrix as the euler triple a constraint's `offset` takes.
+
+    Measured 2026-09-05: an orientConstraint's offset holds
+    `W_target = O * W_source` (trap 19's convention, worst element 0.000000000),
+    which is exactly the shape of our rest offset -- so a rotation-only drive
+    needs no helper node at all.
+    """
+    tm = om.MTransformationMatrix(om.MMatrix(matrix))
+    tm.reorderRotation(rotate_order + 1)
+    e = tm.rotation(asQuaternion=False)
+    return (math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
+
+
+LIMB_SPANS = [("arm", "Shoulder", "Elbow", "Wrist"),
+              ("leg", "Hip", "Knee", "Ankle")]
+
+
+def limb_ratios(rig_rest, src_rest, schema, side="_L"):
+    """Pure: {limb: rig length / source length} through the schema's own map.
+
+    Measured through the map rather than by name, because a foreign schema
+    shares no bone name with us -- which is why the plain segment comparison
+    stays silent on a Mixamo source and this exists.
+    """
+    ours = our_bone_map()
+    src_side = dict(schema.sides)[side]
+    out = {}
+    for limb, first, middle, last in LIMB_SPANS:
+        rig_names = [ours.get("FK" + b + side) for b in (first, middle, last)]
+        rows = dict(schema.rows)
+        src_names = [bone_name(rows[b], src_side, schema) if b in rows else None
+                     for b in (first, middle, last)]
+        if None in rig_names or None in src_names:
+            continue
+        if not all(n in rig_rest for n in rig_names) or \
+                not all(n in src_rest for n in src_names):
+            continue
+
+        def span(rest, names):
+            total = 0.0
+            for a, b in zip(names, names[1:]):
+                pa, pb = position(rest[a]), position(rest[b])
+                total += math.sqrt(sum((x - y) ** 2 for x, y in zip(pa, pb)))
+            return total
+        source = span(src_rest, src_names)
+        if source > 1e-6:
+            out[limb] = span(rig_rest, rig_names) / source
+    return out
+
+
+def proportion_note(ratios, tol=0.02):
+    """What a length difference means for the animator, per FK/IK mode.
+
+    Nothing is scaled and nothing is refused: a rotation copy keeps the rig's
+    own proportions (FK) and an end-effector copy lands the hand where the
+    source's is (IK).  Both are right, they just differ, and by how much is
+    what this says.
+    """
+    off = dict((limb, r) for limb, r in ratios.items() if abs(r - 1.0) > tol)
+    if not off:
+        return ""
+    parts = ", ".join("the rig's %s is %+.1f%% of the source's" % (limb, (r - 1.0) * 100.0)
+                      for limb, r in sorted(off.items()))
+    return (parts + " - in FK the rig copies the source's ANGLES (its own "
+            "proportions kept), in IK the hand and foot land on the source's own "
+            "positions; both are driven, the FKIKBlend chooses")
+
+
 def scale_warning(source_lengths, rig_lengths, tol=0.02):
     """Pure: name the segments whose length differs by more than tol, or ""."""
     bad = []
@@ -260,6 +569,80 @@ def source_bones(root):
     paths = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
                                         fullPath=True) or [])
     return dict((leaf(p), p) for p in paths)
+
+
+def parents_of(bones):
+    """{leaf: parent leaf} inside one skeleton, from the DAG paths themselves."""
+    out = {}
+    for name, path in bones.items():
+        parts = [leaf("|" + p) for p in path.split("|") if p]
+        out[name] = parts[-2] if len(parts) > 1 else None
+    return out
+
+
+def _local_rest(joint):
+    """The joint's own LOCAL matrix with rotate at 0: what its bind pose is when
+    the bind lives in jointOrient rather than in the rotate channels."""
+    def euler(values):
+        return om.MEulerRotation([math.radians(v) for v in values], 0).asMatrix()
+    m = euler(cmds.getAttr(joint + ".rotateAxis")[0]) * euler(
+        cmds.getAttr(joint + ".jointOrient")[0])
+    scale = om.MMatrix()
+    for i, v in enumerate(cmds.getAttr(joint + ".scale")[0]):
+        scale.setElement(i, i, v)
+    m = scale * m
+    for i, v in enumerate(cmds.getAttr(joint + ".translate")[0]):
+        m.setElement(3, i, v)
+    return m
+
+
+def rest_matrices(bones, mode):
+    """{leaf: rest world matrix} for a skeleton.
+
+    "live" -- the source stands in the same bind pose as our rig, so what the
+    scene shows IS the rest (and our own rig, at its build pose, always answers
+    this way).
+    "jointOrient" -- the bind is in the joints' jointOrient, so the rest is the
+    pose with every rotate at 0, walked down the hierarchy.  Measured on the
+    animator's Mixamo clip: that pose is an exact T-pose.  Our own rig must
+    NEVER be read this way -- its bind lives in the rotate channels, and
+    zeroing them straightens the skeleton by 76 cm.
+    """
+    if mode == "live":
+        return dict((name, cmds.getAttr(path + ".worldMatrix[0]"))
+                    for name, path in bones.items())
+    parents = parents_of(bones)
+    order = sorted(bones, key=lambda name: depth_of(name, parents))
+    out = {}
+    for name in order:
+        parent = parents.get(name)
+        base = om.MMatrix(out[parent]) if parent in out else om.MMatrix(
+            cmds.getAttr((cmds.listRelatives(bones[name], parent=True, fullPath=True)
+                          or [None])[0] + ".worldMatrix[0]")
+            if cmds.listRelatives(bones[name], parent=True) else om.MMatrix())
+        out[name] = list(_local_rest(bones[name]) * base)
+    return out
+
+
+def tpose_note(rest, schema):
+    """What the computed rest pose looks like, so a wrong guess is visible.
+
+    A retarget rests entirely on the source's rest pose being the pose the
+    clip's rotations are measured from; if that came out wrong, every number
+    below it is wrong too, quietly.  So the arm spread and the height are
+    reported rather than assumed.
+    """
+    if schema.rest == "live":
+        return ""
+    pairs = [("LeftArm", "LeftHand"), ("upperarm_l", "hand_l")]
+    for shoulder, hand in pairs:
+        if shoulder in rest and hand in rest:
+            a, b = position(rest[shoulder]), position(rest[hand])
+            top = max(position(m)[1] for m in rest.values())
+            return ("source rest pose: arm reaches %.2f cm sideways and %.2f cm "
+                    "vertically (a T-pose is sideways only), height %.2f cm"
+                    % (abs(b[0] - a[0]), abs(b[1] - a[1]), top))
+    return ""
 
 
 def rig_paths():
@@ -395,12 +778,29 @@ def _key_range(paths):
                        cmds.findKeyframe(paths, which="last"))
 
 
-Plan = collections.namedtuple("Plan", "root drives missing warn bones rig_bones refusal")
+Plan = collections.namedtuple(
+    "Plan", "root drives missing warn bones rig_bones refusal schema "
+            "src_rest rig_rest align notes")
+
+
+def _drive_offset(drive, plan):
+    """The constant rest offset for one drive: reference * source_rest^-1."""
+    ours = our_bone_map()[drive.control]
+    reference = reference_matrix(
+        cmds.getAttr(drive.control + ".worldMatrix[0]"),
+        plan.align.get(drive.control, list(om.MMatrix())),
+        plan.src_rest[drive.bone],
+        keeps_position(drive.control, plan.schema))
+    if plan.schema.rest == "live" and plan.schema.keep_position:
+        # a twin: the source's rest IS our own bone's, and reading it from our
+        # own rig is what the 2026-09-04 gates measured
+        return offset_local(reference, plan.rig_rest[ours])
+    return offset_local(reference, plan.src_rest[drive.bone])
 
 
 def _plan(source_root=None):
     """Everything connect() needs, computed without touching the scene."""
-    empty = Plan("", [], [], "", {}, {}, "")
+    empty = Plan("", [], [], "", {}, {}, "", UE5, {}, {}, {}, [])
     if not cmds.objExists("ControlSet") or not cmds.objExists("Main"):
         return empty._replace(
             refusal="no AdvancedSkeleton rig in this scene (ControlSet/Main missing)")
@@ -421,21 +821,45 @@ def _plan(source_root=None):
         cmds.listRelatives(ue_root, allDescendents=True, type="joint",
                            fullPath=True) or []))
     bones = source_bones(source_root)
-    controls = [c for c in candidates() if cmds.objExists(c)]
-    drives, missing = drive_plan(controls, list(bones))
-    drives = [d for d in drives if d.bone in rig_bones]
+    schema, score = detect_schema(list(bones))
+    if schema is None:
+        return empty._replace(
+            refusal="%s is neither a UE5 skeleton nor a Mixamo one (none of %s "
+                    "found) - a third schema needs a row in SCHEMAS"
+                    % (leaf(source_root),
+                       ", ".join(sorted(set(h for s in SCHEMAS for h in s.hints)))))
+    controls = [c for c in candidates(schema) if cmds.objExists(c)]
+    drives, missing = drive_plan(controls, list(bones), schema)
+    ours = our_bone_map()
+    drives = [d for d in drives if ours.get(d.control) in rig_bones]
     if not drives:
         return empty._replace(
-            refusal="no bone of %s matches this rig - is it a UE5 skeleton?"
-                    % leaf(source_root))
+            refusal="no bone of %s matches this rig" % leaf(source_root))
+
+    src_rest = rest_matrices(bones, schema.rest)
+    rig_rest = rest_matrices(rig_bones, "live")
+    triples = [(d.control, ours[d.control], d.bone) for d in drives]
+    align = (alignments(triples, rig_rest, src_rest,
+                        parents_of(rig_bones), parents_of(bones))
+             if schema.align else
+             dict((d.control, list(om.MMatrix())) for d in drives))
     warn = scale_warning(
-        segment_lengths(dict((n, cmds.xform(p, query=True, worldSpace=True,
-                                            translation=True))
-                             for n, p in bones.items())),
-        segment_lengths(dict((n, cmds.xform(p, query=True, worldSpace=True,
-                                            translation=True))
-                             for n, p in rig_bones.items())))
-    return Plan(source_root, drives, missing, warn, bones, rig_bones, "")
+        segment_lengths(dict((n, position(m)) for n, m in src_rest.items())),
+        segment_lengths(dict((n, position(m)) for n, m in rig_rest.items())))
+    notes = []
+    if schema.align:
+        worst = max([(rotation_angle(a), c) for c, a in align.items()] or [(0.0, "")])
+        notes.append("rest poses aligned bone by bone, worst %.2f deg (%s)"
+                     % (worst[0], worst[1]))
+    tp = tpose_note(src_rest, schema)
+    if tp:
+        notes.append(tp)
+    ratios = limb_ratios(rig_rest, src_rest, schema)
+    note = proportion_note(ratios)
+    if note:
+        notes.append(note)
+    return Plan(source_root, drives, missing, warn, bones, rig_bones, "",
+                schema, src_rest, rig_rest, align, notes)
 
 
 def report(source_root=None):
@@ -443,19 +867,19 @@ def report(source_root=None):
     plan = _plan(source_root)
     if plan.refusal:
         return plan.refusal
-    lines = ["source: %s (%d bones, keys %s)"
-             % (plan.root, len(plan.bones), _key_range(list(plan.bones.values())))]
+    lines = ["source: %s (%d bones, schema %s, keys %s)"
+             % (plan.root, len(plan.bones), plan.schema.name,
+                _key_range(list(plan.bones.values())))]
     offsets = [d.control for d in plan.drives
-               if needs_offset(offset_local(
-                   cmds.getAttr(d.control + ".worldMatrix[0]"),
-                   cmds.getAttr(plan.rig_bones[d.bone] + ".worldMatrix[0]")),
-                   d.translate)]
+               if needs_offset(_drive_offset(d, plan), d.translate)]
     lines.append("would drive %d controls: %d rotation only, %d with position; "
                  "%d need a rest offset (%s)"
                  % (len(plan.drives),
                     len([d for d in plan.drives if not d.translate]),
                     len([d for d in plan.drives if d.translate]),
-                    len(offsets), ", ".join(offsets)))
+                    len(offsets), ", ".join(offsets[:8])))
+    for note in plan.notes:
+        lines.append(note)
     posed = posed_controls()
     if posed:
         lines.append("the rig is posed (%s%s) - connect() will refuse until it is "
@@ -488,39 +912,63 @@ def connect(source_root=None, require_build_pose=True, exact_neck=False):
                 "a pole's offset is pose-dependent."
                 % (", ".join(posed[:4]), " ..." if len(posed) > 4 else ""))
 
-    # Read every rest matrix BEFORE building anything: the first constraints move
+    # Read every rest offset BEFORE building anything: the first constraints move
     # controls that later ones measure against (a pole follows the IK control it
     # rides, so its offset came out 0.022 cm wrong when read mid-build).
-    rest_control = dict((d.control, cmds.getAttr(d.control + ".worldMatrix[0]"))
-                        for d in plan.drives)
-    rest_bone = dict((d.bone, cmds.getAttr(plan.rig_bones[d.bone] + ".worldMatrix[0]"))
-                     for d in plan.drives)
+    offsets = dict((d.control, _drive_offset(d, plan)) for d in plan.drives)
 
     auto = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
     cmds.undoInfo(openChunk=True, chunkName="AS retarget connect")
     made = []
-    offsets = 0
+    helped, turned, ground = 0, 0, ""
     try:
         _holder()
         for drive in plan.drives:
             target = plan.bones[drive.bone]
-            local = offset_local(rest_control[drive.control], rest_bone[drive.bone])
+            local = offsets[drive.control]
+            offset = None
             if needs_offset(local, drive.translate):
-                target, helpers = _helper(drive.control, target, local)
-                made += helpers
-                offsets += 1
+                if drive.translate:
+                    target, helpers = _helper(drive.control, target, local)
+                    made += helpers
+                    helped += 1
+                else:
+                    # a rotation-only drive needs no node: the constraint's own
+                    # offset holds exactly O * W_source (measured 2026-09-05)
+                    offset = euler_offset(local,
+                                          cmds.getAttr(drive.control + ".rotateOrder"))
+                    turned += 1
             if drive.translate:
                 made.append(cmds.pointConstraint(target, drive.control)[0])
             if drive.rotate:
-                made.append(cmds.orientConstraint(target, drive.control)[0])
+                if offset is None:
+                    made.append(cmds.orientConstraint(target, drive.control)[0])
+                else:
+                    made.append(cmds.orientConstraint(target, drive.control,
+                                                      offset=offset)[0])
+        if plan.schema.root_bone is None and cmds.objExists("Main") \
+                and plan.schema.pelvis in plan.bones:
+            # no root bone in the source: give `Main` the horizontal travel, which
+            # is what root motion MEANS for translation, and leave the facing in
+            # the pelvis rather than inventing a yaw.  The pelvis is constrained
+            # absolutely, so it absorbs whatever Main does - the pose is untouched.
+            made.append(cmds.pointConstraint(plan.bones[plan.schema.pelvis], "Main",
+                                             skip=["y"])[0])
+            ground = ("Main takes the source's horizontal travel (%s has no root "
+                      "bone); the facing stays in the pelvis" % plan.schema.name)
         _register(made)
     finally:
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=auto)
 
-    lines = ["retarget connected: %d controls driven from %s (%d through a rest "
-             "offset)" % (len(plan.drives), leaf(plan.root), offsets)]
+    lines = ["retarget connected: %d controls driven from %s, schema %s "
+             "(%d rest offsets on constraints, %d through a helper)"
+             % (len(plan.drives), leaf(plan.root), plan.schema.name, turned, helped)]
+    for note in plan.notes:
+        lines.append(note)
+    if ground:
+        lines.append(ground)
     if plan.missing:
         lines.append("no source bone for: "
                      + ", ".join(c for c, _ in plan.missing))

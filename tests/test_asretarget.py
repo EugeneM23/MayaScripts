@@ -124,6 +124,218 @@ class TestDrivePlan(unittest.TestCase):
         self.assertEqual(len(missing), 8 + 2 + 1)
 
 
+# The animator's Mixamo clip, measured 2026-09-05: 65 joints under
+# `mixamorig:Hips`, the side a PREFIX, no metacarpals, three spine joints, one
+# neck joint, and a fourth (end) joint on every finger.
+MIXAMO_BONES = ["Hips", "Spine", "Spine1", "Spine2", "Neck", "Head", "HeadTop_End"]
+for _s in ("Left", "Right"):
+    MIXAMO_BONES += [_s + n for n in ("UpLeg", "Leg", "Foot", "ToeBase", "Toe_End",
+                                      "Shoulder", "Arm", "ForeArm", "Hand")]
+    for _f in ("Index", "Middle", "Ring", "Pinky", "Thumb"):
+        MIXAMO_BONES += ["%sHand%s%d" % (_s, _f, i) for i in (1, 2, 3, 4)]
+
+
+class TestSchemas(unittest.TestCase):
+
+    def test_the_fixture_matches_the_measured_clip(self):
+        self.assertEqual(len(MIXAMO_BONES), 65)
+
+    def test_a_ue5_side_is_a_suffix_and_a_mixamo_side_a_prefix(self):
+        self.assertEqual(ar.bone_name("upperarm", "_l", ar.UE5), "upperarm_l")
+        self.assertEqual(ar.bone_name("UpLeg", "Left", ar.MIXAMO), "LeftUpLeg")
+        self.assertEqual(ar.bone_name("Hips", "", ar.MIXAMO), "Hips")
+
+    def test_each_schema_is_detected_by_its_own_bones(self):
+        self.assertEqual(ar.detect_schema(BONES)[0].name, "ue5")
+        self.assertEqual(ar.detect_schema(MIXAMO_BONES)[0].name, "mixamo")
+
+    def test_a_skeleton_that_is_neither_is_refused_rather_than_guessed(self):
+        schema, score = ar.detect_schema(["Bip01", "Bip01_Spine", "Bip01_L_Hand"])
+        self.assertIsNone(schema)
+        self.assertEqual(score, 0)
+
+    def test_the_twin_needs_no_alignment_and_mixamo_does(self):
+        self.assertFalse(ar.UE5.align)
+        self.assertTrue(ar.MIXAMO.align)
+        self.assertEqual(ar.UE5.rest, "live")
+        self.assertEqual(ar.MIXAMO.rest, "jointOrient")
+
+    def test_only_mixamo_lacks_a_root_bone(self):
+        self.assertEqual(ar.UE5.root_bone, "root")
+        self.assertIsNone(ar.MIXAMO.root_bone)
+
+    def test_a_pole_always_keeps_its_standoff_whatever_the_schema(self):
+        for schema in ar.SCHEMAS:
+            self.assertTrue(ar.keeps_position("PoleLeg_L", schema))
+        self.assertTrue(ar.keeps_position("IKArm_L", ar.UE5))
+        self.assertFalse(ar.keeps_position("IKArm_L", ar.MIXAMO))
+
+    def test_our_own_bone_is_always_the_ue5_one(self):
+        ours = ar.our_bone_map()
+        self.assertEqual(ours["FKShoulder_L"], "upperarm_l")
+        self.assertEqual(ours["IKLeg_R"], "foot_r")
+        self.assertEqual(ours["PoleArm_L"], "upperarm_l")
+        self.assertEqual(ours["RootX_M"], "pelvis")
+        self.assertEqual(ours["Main"], "root")
+
+
+class TestMixamoPlan(unittest.TestCase):
+
+    def setUp(self):
+        self.drives, self.missing = ar.drive_plan(CONTROLS, MIXAMO_BONES, ar.MIXAMO)
+        self.by_control = dict((d.control, d) for d in self.drives)
+
+    def test_nothing_is_missing_on_a_full_mixamo_skeleton(self):
+        self.assertEqual(self.missing, [])
+
+    def test_the_limbs_map_to_mixamo_names(self):
+        self.assertEqual(self.by_control["FKShoulder_L"].bone, "LeftArm")
+        self.assertEqual(self.by_control["FKElbow_R"].bone, "RightForeArm")
+        self.assertEqual(self.by_control["FKHip_L"].bone, "LeftUpLeg")
+        self.assertEqual(self.by_control["FKAnkle_R"].bone, "RightFoot")
+        self.assertEqual(self.by_control["FKToes_L"].bone, "LeftToeBase")
+
+    def test_the_three_mixamo_spine_joints_take_ours_1_3_and_5(self):
+        self.assertEqual(self.by_control["FKSpine1_M"].bone, "Spine")
+        self.assertEqual(self.by_control["FKSpine3_M"].bone, "Spine1")
+        self.assertEqual(self.by_control["FKSpine5_M"].bone, "Spine2")
+        for gap in ("FKSpine2_M", "FKSpine4_M"):
+            self.assertNotIn(gap, self.by_control)
+
+    def test_the_neck_inbetween_is_left_undriven_so_the_neck_smooths_itself(self):
+        self.assertEqual(self.by_control["FKNeck_M"].bone, "Neck")
+        self.assertEqual(self.by_control["FKHead_M"].bone, "Head")
+        self.assertNotIn("FKNeckPart1_M", self.by_control)
+
+    def test_the_metacarpals_are_left_undriven_because_mixamo_has_none(self):
+        for control in ("FKIndexFinger0_L", "FKMiddleFinger0_R"):
+            self.assertNotIn(control, self.by_control)
+        self.assertEqual(self.by_control["FKIndexFinger1_L"].bone, "LeftHandIndex1")
+        self.assertEqual(self.by_control["FKThumbFinger3_R"].bone, "RightHandThumb3")
+
+    def test_main_is_not_driven_because_mixamo_has_no_root_bone(self):
+        self.assertNotIn("Main", self.by_control)
+        self.assertEqual(self.by_control["RootX_M"].bone, "Hips")
+
+    def test_the_ik_ends_and_poles_follow_the_mixamo_names(self):
+        self.assertEqual(self.by_control["IKLeg_L"].bone, "LeftFoot")
+        self.assertEqual(self.by_control["IKArm_R"].bone, "RightHand")
+        self.assertEqual(self.by_control["IKToes_L"].bone, "LeftToeBase")
+        self.assertEqual(self.by_control["PoleLeg_R"].bone, "RightUpLeg")
+        self.assertEqual(self.by_control["PoleArm_L"].bone, "LeftArm")
+
+    def test_a_clip_without_fingers_loses_only_the_fingers(self):
+        bones = [b for b in MIXAMO_BONES if "Hand" not in b or b.endswith("Hand")]
+        drives, missing = ar.drive_plan(CONTROLS, bones, ar.MIXAMO)
+        self.assertEqual(len(missing), 30)
+        self.assertIn("FKWrist_L", [d.control for d in drives])
+
+
+class TestAlignment(unittest.TestCase):
+
+    IDENT = list(om.MMatrix())
+
+    def matrix(self, x, y, z):
+        m = list(om.MMatrix())
+        m[12], m[13], m[14] = x, y, z
+        return m
+
+    def test_a_rotation_angle_is_read_off_the_matrix(self):
+        turn = list(om.MEulerRotation(0.0, 0.0, math.radians(30.0)).asMatrix())
+        self.assertAlmostEqual(ar.rotation_angle(turn), 30.0, places=6)
+        self.assertAlmostEqual(ar.rotation_angle(self.IDENT), 0.0, places=9)
+
+    def test_a_direction_comes_from_two_rest_positions(self):
+        rest = {"a": self.matrix(0, 0, 0), "b": self.matrix(0, 10, 0)}
+        self.assertEqual(tuple(round(v, 6) for v in ar.direction(rest, "a", "b")),
+                         (0.0, 1.0, 0.0))
+
+    def test_a_zero_length_bone_has_no_direction(self):
+        rest = {"a": self.matrix(1, 2, 3), "b": self.matrix(1, 2, 3)}
+        self.assertIsNone(ar.direction(rest, "a", "b"))
+        self.assertIsNone(ar.direction(rest, "a", "missing"))
+
+    def test_the_alignment_turns_our_direction_onto_the_sources(self):
+        ours = om.MVector(1, 0, 0)
+        theirs = om.MVector(0, 1, 0)
+        turned = ours * om.MMatrix(ar.align_rotation(ours, theirs))
+        for got, want in zip((turned.x, turned.y, turned.z), (0.0, 1.0, 0.0)):
+            self.assertAlmostEqual(got, want, places=9)
+
+    def test_equal_directions_align_to_the_identity(self):
+        v = om.MVector(0.3, -0.9, 0.1).normal()
+        self.assertTrue(ar.is_identity(ar.align_rotation(v, v), tol=1e-9))
+
+    def test_depth_and_descent_walk_the_parent_map(self):
+        parents = {"root": None, "pelvis": "root", "spine_01": "pelvis",
+                   "spine_02": "spine_01"}
+        self.assertEqual(ar.depth_of("spine_02", parents), 3)
+        self.assertEqual(ar.descends("spine_02", "pelvis", parents), 2)
+        self.assertEqual(ar.descends("pelvis", "spine_02", parents), 0)
+
+    def test_a_bone_with_no_mapped_child_inherits_its_parents_alignment(self):
+        # our arm hangs down, the source's points sideways: a 90 deg alignment,
+        # and the hand, having no mapped child, must inherit it
+        rig_rest = {"upperarm_l": self.matrix(0, 100, 0),
+                    "lowerarm_l": self.matrix(0, 70, 0),
+                    "hand_l": self.matrix(0, 40, 0)}
+        src_rest = {"Arm": self.matrix(0, 100, 0), "ForeArm": self.matrix(30, 100, 0),
+                    "Hand": self.matrix(60, 100, 0)}
+        triples = [("FKShoulder_L", "upperarm_l", "Arm"),
+                   ("FKElbow_L", "lowerarm_l", "ForeArm"),
+                   ("FKWrist_L", "hand_l", "Hand")]
+        rig_parents = {"upperarm_l": None, "lowerarm_l": "upperarm_l",
+                       "hand_l": "lowerarm_l"}
+        src_parents = {"Arm": None, "ForeArm": "Arm", "Hand": "ForeArm"}
+        align = ar.alignments(triples, rig_rest, src_rest, rig_parents, src_parents)
+        self.assertAlmostEqual(ar.rotation_angle(align["FKShoulder_L"]), 90.0, places=4)
+        self.assertAlmostEqual(ar.rotation_angle(align["FKElbow_L"]), 90.0, places=4)
+        # the wrist has no mapped child: it takes the elbow's answer verbatim
+        self.assertEqual(align["FKWrist_L"], align["FKElbow_L"])
+
+    def test_a_hand_points_along_the_middle_finger_and_not_the_thumb(self):
+        # the thumb is a hand's NEAREST mapped child and the one finger that does
+        # not continue it: taking it rolled the wrist by a measured 30.77 deg
+        rig_rest = {"hand_l": self.matrix(0, 0, 0),
+                    "thumb_01_l": self.matrix(0, -3, 4),      # off across the palm
+                    "middle_01_l": self.matrix(10, 0, 0)}     # along the hand
+        src_rest = {"Hand": self.matrix(0, 0, 0),
+                    "HandThumb1": self.matrix(0, -3, 4),
+                    "HandMiddle1": self.matrix(0, 10, 0)}
+        triples = [("FKWrist_L", "hand_l", "Hand"),
+                   ("FKThumbFinger1_L", "thumb_01_l", "HandThumb1"),
+                   ("FKMiddleFinger1_L", "middle_01_l", "HandMiddle1")]
+        rig_parents = {"hand_l": None, "thumb_01_l": "hand_l",
+                       "middle_01_l": "hand_l"}
+        src_parents = {"Hand": None, "HandThumb1": "Hand", "HandMiddle1": "Hand"}
+        align = ar.alignments(triples, rig_rest, src_rest, rig_parents, src_parents)
+        # +X onto +Y is 90 deg; the thumb pair would have aligned to the identity
+        self.assertAlmostEqual(ar.rotation_angle(align["FKWrist_L"]), 90.0, places=4)
+
+    def test_the_reference_keeps_our_position_or_takes_the_sources(self):
+        control = self.matrix(10, 20, 30)
+        source = self.matrix(-5, 0, 5)
+        kept = ar.reference_matrix(control, self.IDENT, source, True)
+        moved = ar.reference_matrix(control, self.IDENT, source, False)
+        self.assertEqual(tuple(round(v, 6) for v in ar.position(kept)), (10.0, 20.0, 30.0))
+        self.assertEqual(tuple(round(v, 6) for v in ar.position(moved)), (-5.0, 0.0, 5.0))
+
+    def test_the_reference_applies_the_alignment_as_a_world_rotation(self):
+        control = list(om.MMatrix())
+        align = list(om.MEulerRotation(0.0, 0.0, math.radians(45.0)).asMatrix())
+        ref = ar.reference_matrix(control, align, self.IDENT, True)
+        self.assertAlmostEqual(ar.rotation_angle(ref), 45.0, places=6)
+
+    def test_the_euler_offset_round_trips_through_the_rotate_order(self):
+        turn = list(om.MEulerRotation(math.radians(10.0), math.radians(-20.0),
+                                      math.radians(35.0)).asMatrix())
+        for order in range(6):
+            got = ar.euler_offset(turn, order)
+            back = om.MEulerRotation([math.radians(v) for v in got], order).asMatrix()
+            for a, b in zip(list(back), turn):
+                self.assertAlmostEqual(a, b, places=6, msg="rotate order %d" % order)
+
+
 class TestSourceRoot(unittest.TestCase):
 
     # The animator's scene: our rigged skeleton at |root, the AS rig under
@@ -254,6 +466,41 @@ class TestNeedsOffset(unittest.TestCase):
         # the FK controls measure ~1e-7 against their bones after the axis work
         tiny = [1, 1e-7, 0, 0, -1e-7, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
         self.assertFalse(ar.needs_offset(tiny, False))
+
+
+class TestProportions(unittest.TestCase):
+
+    def matrix(self, x, y, z):
+        m = list(om.MMatrix())
+        m[12], m[13], m[14] = x, y, z
+        return m
+
+    def test_the_ratio_is_measured_through_the_schemas_own_map(self):
+        # our arm 30 + 30, the source's 20 + 20 -- names that share nothing
+        rig_rest = {"upperarm_l": self.matrix(0, 0, 0),
+                    "lowerarm_l": self.matrix(30, 0, 0),
+                    "hand_l": self.matrix(60, 0, 0),
+                    "thigh_l": self.matrix(0, 0, 0), "calf_l": self.matrix(0, -40, 0),
+                    "foot_l": self.matrix(0, -80, 0)}
+        src_rest = {"LeftArm": self.matrix(0, 0, 0),
+                    "LeftForeArm": self.matrix(20, 0, 0),
+                    "LeftHand": self.matrix(40, 0, 0),
+                    "LeftUpLeg": self.matrix(0, 0, 0), "LeftLeg": self.matrix(0, -40, 0),
+                    "LeftFoot": self.matrix(0, -80, 0)}
+        ratios = ar.limb_ratios(rig_rest, src_rest, ar.MIXAMO)
+        self.assertAlmostEqual(ratios["arm"], 1.5, places=6)
+        self.assertAlmostEqual(ratios["leg"], 1.0, places=6)
+
+    def test_matching_proportions_say_nothing(self):
+        self.assertEqual(ar.proportion_note({"arm": 1.0, "leg": 1.005}), "")
+
+    def test_a_difference_names_both_modes_rather_than_refusing(self):
+        note = ar.proportion_note({"arm": 1.165, "leg": 0.974})
+        self.assertIn("arm", note)
+        self.assertIn("16.5", note)
+        self.assertIn("FK", note)
+        self.assertIn("IK", note)
+        self.assertNotIn("refus", note.lower())
 
 
 class TestScaleWarning(unittest.TestCase):

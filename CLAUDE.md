@@ -3946,3 +3946,88 @@ Harness note from this session: a probe that set `evaluationManager -mode off`
 outside its own try/finally died on an unrelated error and left the animator's
 Maya in DG evaluation for the rest of the session. Set scene state inside the
 guard that restores it, from the first line.
+
+**And it retargets from MIXAMO too** (2026-09-05, «в открытой сцене у нас есть
+скелет который я взял с миксамо на скелете анимация… сделай так чтобы наш
+скрипт делал ретаргет и для миксамовского скелета»). Spec:
+`docs/superpowers/specs/2026-09-05-asretarget-mixamo-design.md`. Proof:
+`docs/superpowers/plans/verify_asretarget_mixamo.py` — **green live
+2026-09-05, 0 of 18 gates failed** on the animator's own clip, with the twin's
+own `verify_asretarget.py` re-run **green, 0 of 26**; 77 unit tests.
+
+**A source skeleton is a `Schema` row now, not a branch** — `rows`, `sides`
+(`side_before` for Mixamo's `LeftUpLeg` prefix), the IK and pole rows, the
+pelvis, the root bone, where the rest pose comes from, whether to align, and
+five hint bones for `detect_schema`, which **refuses** a skeleton it cannot
+name rather than guessing. Measured on the animator's clip: 65 joints under
+`mixamorig:Hips`, 52 animated, 12084 keys over 0..75, and against our rig —
+different names, side as a PREFIX, bones down local **Y** against our X, bind
+in **jointOrient** against our rotate channels, a **T-pose** rest against our
+A-pose, 3 spine joints against 5, 1 neck against 2, no metacarpals, no root
+bone, arm **+16.5%**, leg **−2.6%**.
+
+**The core is aligning the rest poses bone by bone.** A rigid offset (`-mo`, or
+the twin's `C_rest · S_rest⁻¹`) preserves the source's motion relative to ITS
+rest, so a T-posed source hands an A-posed rig arms **54.83°** too low for the
+whole clip — that is the classic broken retarget and the number is exactly the
+rest difference. So `R_align` is the minimal rotation taking OUR rest bone
+direction onto the SOURCE's, `C_ref = C_rest · R_align`, and the offset is
+`C_ref · S_rest⁻¹`. The property that follows is what "correct" means here and
+it is what gate 11 measures: **our bone POINTS exactly where the source's bone
+points at every frame** — measured worst **0.028°** over 6 samples and 18
+bones. Minimal because the two skeletons agree on where a bone points and say
+nothing about the roll, so our rig keeps the roll its own axis work
+established; and because it is all world-space, the X-against-Y axis
+conventions need no handling at all.
+
+Facts to not re-derive:
+
+- **A bone needs a mapped child to point at.** The hand reaches past the
+  missing metacarpal to `middle_01_l ↔ LeftHandMiddle1`; the head, the toes and
+  the finger tips have none and **inherit their parent's** alignment
+  (`alignments` walks root-down).
+- **The NEAREST mapped child is the wrong one for a hand, and it cost 30.77°.**
+  A hand's nearest mapped descendant is the **thumb** — the one finger that
+  does not continue the hand — and taking it rolled the wrist by that much for
+  the whole clip. `DIRECTION_CHILD` names the two exceptions; every other bone
+  then measured ≤ 0.028°.
+- **The source's rest pose is declared, never observed**: it is not visible at
+  any frame of an animated clip. `rest="jointOrient"` walks the hierarchy with
+  every rotate at 0 (Mixamo; measured to be an exact T-pose, arm along +X to
+  0.000, 47.23 cm out, 0.00 up), `rest="live"` means a twin standing in our own
+  bind pose. **Our own rig must never be read the jointOrient way** — its bind
+  is in the rotate channels, and zeroing them straightened it **76.25 cm**,
+  which is how that probe found the rule.
+- **An `orientConstraint`'s own `offset` holds `W_target = O · W_source`**
+  (measured, worst element 0.000000000 — trap 19's convention), which is exactly
+  our rest offset's shape. So a rotation-only drive needs **no helper node**:
+  53 of the 62 Mixamo drives are one constraint each and only the 9 position
+  drives get the two-node helper. Without it the Mixamo case would add ~140
+  transforms and double the vendor bake, which bakes every object its
+  constraints drive. The euler goes in the CONTROL's rotate order (the rig uses
+  four different ones, `FKWrist_L` is `zyx`); a test round-trips all six.
+- **Maya refuses a negative point-constraint target weight** ("Cannot set the
+  attribute below its min"), so the weighted-constraint trick that would scale
+  the IK reach for a 1.165 arm ratio is not available. Not built; the two modes
+  below are the answer instead.
+- **Both modes are driven and both are named, nothing is scaled**: in **FK** the
+  rig copies the source's ANGLES and keeps its own proportions (our hand
+  therefore sits **8.29 cm** from the source's), in **IK** the hand and foot
+  land on the source's own positions (**0.0003 cm** and **0.0094 cm**) with the
+  elbow bending more to get there. `proportion_note` says it with the measured
+  percentages; the FKIKBlend chooses.
+- **`Main` takes the hips' horizontal travel only** when the schema has no root
+  bone (`pointConstraint`, `skip=["y"]`; measured x −10.85, y 0.00, z −59.73).
+  The travel is unambiguous, a yaw would be invented — and since the pelvis is
+  constrained absolutely it absorbs whatever `Main` does, so the pose is
+  untouched either way.
+- The 3-against-5 spine drives `Spine1←Spine`, `Spine3←Spine1`,
+  `Spine5←Spine2` and leaves `spine_02`/`spine_04` at rest (the driven spans
+  then measure 0.000°); the 1-against-2 neck leaves `NeckPart1` undriven so the
+  rig's own neck in-between does the smoothing it was built for.
+- **A gate must measure its promise in the mode that makes it.** Gate 11's
+  first version measured the FK promise with the legs in IK and read 6–20° —
+  which was the OTHER promise working. It also exposed a real bug in the verify
+  teardown: **`asGoToBuildPose` writes the FKIKBlend values the rig was BUILT
+  with**, so restoring the animator's blends before it hands them back a rig in
+  the wrong mode. Restore them after.
