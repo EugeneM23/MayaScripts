@@ -4083,3 +4083,92 @@ Facts:
 - **Workflow**: Disconnect without Bake leaves the rig posed, so the next
   connect refuses until Go To BuildPose — by design (a pole's offset is
   pose-dependent), and the message names the button.
+
+## AdvancedSkeleton rig over the PlayerMale game skeleton (2026-09-05)
+
+The second AS rig, over a skeleton that is NOT Unreal's — the animator: «В
+открытой сцене новый скелет, это не unreal engine. Давай для этого скелета
+соберем риг на базе advanced skeleton». `PlayerMale_v6.fbx` (a Unity-style
+`Assets/Game/...` project), opened as an FBX: 57 joints `Root > Hip > Spine1..4
+> Neck > Head > Jaw/Eyes`, sides as a PREFIX (`Right_`/`Left_`), five 3-joint
+fingers and no metacarpals, one `Toes` per foot, no twist joints, bones down
+local X with the LEFT side down −X, mixed rotate orders, bind partly in the
+rotate channels, **17.5 units tall in a cm scene (1:10)** — which happens to be
+the scale AS's own templates are drawn at. 70 skinClusters (every outfit) on
+the same joints. Spec:
+`docs/superpowers/specs/2026-09-05-advancedskeleton-playermale-rig-design.md`.
+Procedure, re-runnable: `docs/superpowers/plans/as_playermale_rig_procedure.py`
+(`run()`, or stage by stage). Proof:
+`docs/superpowers/plans/verify_advancedskeleton_playermale_rig.py` — **green
+live 2026-09-05, all 27 gates passed**.
+
+**Same shape as the Manny rig**: the game skeleton untouched (names, hierarchy,
+skin, bind pose to 2.3e-5), each of AS's 56 deformation joints driving its twin
+through point+orient+scale `-mo` written by long path (169 constraints,
+`Root ← Main` so Main is root motion), 55 FK controls carrying their bone's
+axes (0.000003°; 25° on any axis turns the bone 25.00000° about its own), the
+finger SDK groups re-framed on the bones, the fit's foot/head/finger END joints
+placed from the geometry. Legs IK, arms FK. Facts, each measured or paid for:
+
+- **The game joint names collide with AS's fit joints.** `Root`, `Hip`, `Spine1`,
+  `Spine2`, `Spine3`, `Neck`, `Head`, `Jaw` are exactly the FitSkeleton's names,
+  and AS addresses those by SHORT name everywhere (`getAttr Hip.twistJoints`);
+  `asFitModeManualUpdate` runs `asUniqueNameAll`, which renames a non-unique
+  FIT joint to `Hip1`, and `asLabel` errors on ambiguity. `hold()` renames the
+  eight game joints to `PMhold_<name>` (the original kept on `asHeldName`) for
+  the fit and the build, `release()` gives them back — constraints, skin and
+  bindPose are wired to nodes, so the round trip is free (gate 25, 0.00000°).
+  Cost: afterwards both `Hip`s exist, so **a ReBuild needs `hold()` first** and
+  AS's fit-mode buttons complain until then. The vendor's own answer — a
+  permanent `NameMatcher:` namespace on the other skeleton — was rejected: it
+  rides into every exported bone name.
+- **`asFitSkeletonImport` ends in `asImportMatcherScan`, which pops a MODAL**
+  ("External skeleton detected. Align joints with this skeleton?") for any
+  joint named `*Hip*`/`*hip*`/`*pelvis*` under a biped template — a blocked
+  idle queue over the port (note 6). The vendor's own Name Matcher suppresses
+  it with a node named `FitSkeletonNameMatcherImporting`; so does the procedure.
+- **`biped.ma`'s spine is `Root > Spine1 > Chest`** — no Spine2 (the first fit
+  died on that KeyError); Spine2 and Spine3 are duplicated from Spine1 and
+  chained, `Chest` keeps its name so the IK spine and every Chest special case
+  build. `Cup` deleted with its two `SDK1FKCup_*` curves; `twistJoints 0` on
+  Shoulder/Elbow/Hip because the skeleton has no twist bones — the roll then
+  lands on `*_Arm` itself (measured: `FKShoulder_R.rx 25` rolls `Right_Arm`
+  25.00000°, the forearm's local rotate untouched), on Manny AS sent it to the
+  Part joints; `inbetweenJoints 0` everywhere. `reset_fit()` lets a fit start
+  over without the vendor's Replace/Merge dialog; every mapped fit joint landed
+  **0.000000** from its bone.
+- **The IK end controls keep AS's own world-aligned frames** — the one
+  departure from Manny, and the animator's call after seeing them on the
+  bones' axes: «оси контролов руки не совпадают с осями костей и стоят криво…
+  Контролы ног тоже». Measured, the controls were on the bones to 0.00000°;
+  the BONES are crooked — `Right_Ankle` points at the ball 26° below
+  horizontal, `Right_Hand` is rolled 34° against AS's wrist — so the foot
+  boxes stood nose-down into the floor. And AS's deformation skeleton was
+  drawn exactly on the game bones with axes 64° (ankle), 34° (wrist), 85°
+  (head) off theirs, so a viewport click on "the bone" compared against it.
+  Fix = option A of three offered: `as_frames()` put the six IK ends back
+  (drawings to AS's CVs, Detach / set to the IKOffset frame / Attach, pole
+  offset compensated; 0.000000° left), `orient_controls(ik_ends=False)` builds
+  that directly, and AS's 72 deformation joints sit in a hidden display layer
+  `AS_DeformSkeleton` (the game skeleton in the visible `PlayerMale_Skeleton`).
+  On Manny the same bone-axis rule looked right because UE's foot bone is
+  nearly world-aligned (boxes turned 8.71°); the rule is skeleton-dependent.
+- **Finger SDK axes are measured**: on this skeleton the knuckle line is a
+  phalanx's local Y and the palm normal its Z (both hands, same formula — on
+  UE it was Z/Y). **The palm is the side the THUMB sits on**: the cross product
+  `(index−hand)×(pinky−hand)` points to the palm on one hand and the back of
+  the other, and the first probe "fixed" a correct left hand into curling
+  backwards. `finger_probe` / `calibrate_finger_axes` flip y or z per hand
+  only when a measured channel goes the wrong way. Curl mirrors to 8e-6.
+- **`cmds.exactWorldBoundingBox` did not follow the skin over the bridge**:
+  with Main moved 3.0 every joint and every Body vertex had moved 3.000 and the
+  bbox answered 0.00002 — in DG, after refresh, in parallel. A gate about skin
+  reads a vertex (`pointPosition`).
+- The arm stands 99.4 % extended, so an IK push forward reads 0.928 (out of
+  reach, not a bug) — the test lifts the hand; the forearm frames are 0.156°
+  asymmetric between sides, so equal values mirror to 0.003.
+- `bodySetup` (as in `asGoToBuildPose bodySetup`) is a UI name, not a node;
+  `buildPose` is the node. Backups in `Documents/maya/projects/default/scenes/`
+  (`PlayerMale_v6_before_AdvancedSkeleton_*.mb`, `..._rig_*.mb`,
+  `..._rig_final_*.mb`); the scene itself is the opened FBX — Save As is the
+  animator's.
