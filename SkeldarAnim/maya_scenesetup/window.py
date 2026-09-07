@@ -13,8 +13,14 @@ should not be retyped tomorrow, and a sword and a shield want different ones.
 
 Beside the dropdown there is an FBX field: paste a path and it wins over the
 list, for any file the table knows nothing about. It resolves in ONE place
-(`_entry`), so Add, the offset fields, Connect and Add Aim all follow it
-without a line of their own, and the path itself is remembered too.
+(`_entry`), so Add, Remove and the offset fields all follow it without a
+line of their own, and the path itself is remembered too.
+
+Since 2026-09-07 the character is the one the SELECTION names -- any control
+of the AdvancedSkeleton rig, or a joint -- then the rig, then the sole
+skeleton (`skeleton.current_root`); the picker's Connect is off the shelf.
+Connect Arms, Disconnect Arms, Add Aim and Camera Setup left the panel the
+same day; the camera setup happens inside the retarget's Bake.
 """
 
 import traceback
@@ -23,10 +29,8 @@ import maya.cmds as cmds
 
 from maya_overrig import aimrig
 
-from maya_scenesetup import aim as weaponaim
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
-from maya_scenesetup import camera as camerarig
 from maya_scenesetup import catalog
 from maya_scenesetup import character
 from maya_scenesetup import colour as colouring
@@ -58,8 +62,8 @@ _LEGACY_OPTIONVAR = "mayaWeapons_offset_{0}"
 _CUSTOM_OPTIONVAR = "mayaSceneSetup_custom_fbx"
 _CHARACTER_OPTIONVAR = "mayaSceneSetup_character"
 
-NO_CHARACTER = ("no character - open the picker and press Connect, "
-                "or select a joint")
+NO_CHARACTER = ("no character - select any control or joint of it (with one "
+                "rig in the scene nothing needs selecting)")
 NOT_ATTACHED = "nothing attached yet - press Add"
 NO_WEAPON = "no weapon in the hand - press Add first"
 NOT_CONNECTED = "not connected - the hands are not on the weapon"
@@ -115,8 +119,12 @@ def chosen_entry(field_text, entry):
     return catalog.entry_for_path(text, entry.bone)
 
 
-def bound_message(root):
-    return "no character bound" if not root else root.split("|")[-1]
+def bound_message(root, rig=False):
+    """The header: which character the presses act on, and what it is."""
+    if not root:
+        return "no character"
+    return "Character: {0} ({1})".format(root.split("|")[-1],
+                                         "rig" if rig else "skeleton")
 
 
 def missing_bone_message(root, bone):
@@ -272,7 +280,8 @@ def _attached(entry):
 def _bound_root():
     """The character, with the header label refreshed to match."""
     root = skeleton.current_root()
-    cmds.text(_BOUND, edit=True, label=bound_message(root))
+    rig = bool(root) and root == skeleton.rig_root()
+    cmds.text(_BOUND, edit=True, label=bound_message(root, rig))
     return root
 
 
@@ -540,68 +549,13 @@ def offsets_changed():
     _status(attached_message(entry, hand or bone))
 
 
-def connect_arms():
-    """Hand the arms over to the weapon: both to IK, hands onto the prop."""
-    entry = _entry()
-    located = _locate(entry)
-    if located is None:
-        return
-    root, _hand, _bone, weapon, linked = located
-    if linked:
-        _status(ALREADY_CONNECTED)
-        return
-    if not weapon:
-        _status(NO_WEAPON)
-        return
-    _status(linking.connect(weapon, skeleton.scene_map(root)))
-
-
-def add_aim():
-    """Put OverRig's aim on the attached weapon, both locators placed for you.
-
-    Works wherever the weapon is -- in the hand or out in world after Connect.
-    The user's call: the button does not check and does not care.
-    """
-    entry = _entry()
-    located = _locate(entry)
-    if located is None:
-        return
-    _root, _hand, _bone, weapon, _linked = located
-    if not weapon:
-        _status(NO_WEAPON)
-        return
-    _status(weaponaim.add_aim(entry, weapon))
-
-
-def camera_setup():
-    """Bake the camera bone onto a camera, then drive the bone from it.
-
-    No character needs to be bound: the camera bone often sits outside the
-    skeleton's own subtree, so the resolver falls back to the scene.
-    """
-    root = _bound_root()
-
-    bone, problem = camerarig.resolve_bone(skeleton.scene_map(root))
-    if problem:
-        _status(problem)
-        return
-
-    start = cmds.playbackOptions(query=True, minTime=True)
-    end = cmds.playbackOptions(query=True, maxTime=True)
-    _status(camerarig.setup(bone, start, end))
-
-
-def disconnect_arms():
-    """Hands back on the root control, weapon back in the hand."""
-    entry = _entry()
-    located = _locate(entry)
-    if located is None:
-        return
-    _root, hand, _bone, weapon, linked = located
-    if not linked:
-        _status(NOT_CONNECTED)
-        return
-    _status(linking.disconnect(weapon, hand))
+# Connect Arms To Weapon, Disconnect Arms, Add Aim and Camera Setup left
+# this panel on 2026-09-07 with the move to the AdvancedSkeleton rig
+# (`maya_scenesetup.connect`, `aim` and `camera` stay as modules: the
+# retarget's Bake runs the camera setup, and the guards above still protect
+# a file rigged before that day). Their callbacks are gone, not disabled --
+# a hotkey row pressing a button that is not there would fail at the worst
+# moment, and `maya_hotkeys` lost those rows the same day.
 
 
 # ------------------------------------------------------------------ window
@@ -620,13 +574,14 @@ def show_window():
     cmds.text(_BOUND, label="", align="left")
 
     cmds.optionMenu(_CHARACTER, label="Character",
-                    annotation="Which skeleton Add Character puts into the "
-                               "scene. Manny is the UE5 rig with geometry "
-                               "and a camera bone; UE4 Mannequin is the "
-                               "68-bone skeleton the Longsword/Sword "
-                               "AnimsetPro packs animate -- it has no "
-                               "weapon_r and no camera_bone, so Add Weapon "
-                               "and Camera Setup do not apply to it.",
+                    annotation="What Add Character puts into the scene. "
+                               "Manny [rig] is the AdvancedSkeleton rig "
+                               "(one per scene) - the character the UE "
+                               "Bridge retargets onto. The [skeleton] rows "
+                               "are bare skeletons: Manny UE5 with geometry "
+                               "and a camera bone, and the 68-bone UE4 "
+                               "Mannequin the Longsword/SwordAnimsetPro "
+                               "packs animate (no weapon_r, no camera_bone).",
                     changeCommand=lambda *_args: _run(character_changed))
     for label in catalog.character_labels():
         cmds.menuItem(label=label)
@@ -651,10 +606,9 @@ def show_window():
     cmds.setParent("..")
 
     cmds.button(label="Add Character", height=30,
-                annotation="Import the chosen skeleton into this scene -- "
-                           "no manual open. Press it once per character; "
-                           "each one is connected in the picker as it "
-                           "arrives.",
+                annotation="Import the chosen rig or skeleton into this "
+                           "scene -- no manual open. Skeletons as many as "
+                           "you like; the rig once per scene.",
                 command=lambda *_args: _run(add_character))
     cmds.separator(height=8, style="in")
 
@@ -710,31 +664,6 @@ def show_window():
                            "instead of on the next one added.",
                 command=lambda *_a: _run(recolour_weapon))
     cmds.setParent("..")
-
-    cmds.separator(height=8, style="in")
-    cmds.button(label="Connect Arms To Weapon", height=28,
-                annotation="Both arms to IK, the weapon out to world, and the "
-                           "IK hands hung on it. Animation is re-baked at "
-                           "every step.",
-                command=lambda *_args: _run(connect_arms))
-    cmds.button(label="Disconnect Arms", height=24,
-                annotation="Hands back on the root control, weapon back in "
-                           "the hand. The weapon keeps its animation.",
-                command=lambda *_args: _run(disconnect_arms))
-    cmds.button(label="Add Aim", height=28,
-                annotation="OverRig's aim on the weapon: one locator a little "
-                           "past the tip, one out to the side at the same "
-                           "distance. Drag them to aim the blade. Remove it "
-                           "with Bake+Delete in the picker.",
-                command=lambda *_args: _run(add_aim))
-
-    cmds.separator(height=8, style="in")
-    cmds.button(label="Camera Setup", height=28,
-                annotation="Make a camera on camera_bone, bake the bone's "
-                           "animation onto it, and drive the bone from the "
-                           "camera. The camera lands in the bone's transform; "
-                           "only the axes differ (the measured turn).",
-                command=lambda *_args: _run(camera_setup))
 
     cmds.text(_STATUS, label="", align="left")
 

@@ -277,26 +277,32 @@ def choose_target_root(roots, selected_roots=(), bound_root=None):
     return None
 
 
-def picker_root():
-    """The character the Rig Picker is connected to, or None.
+def connected_root():
+    """The character Scene Setup would act on, or None.
 
-    Guarded and lazy: `picker_window` imports PySide6, which Maya 2024 and
-    older do not ship, and the bridge is plain `cmds` on purpose.
+    Since 2026-09-07 that is `maya_scenesetup.skeleton.current_root()` --
+    the selection (a rig control or a joint), then the AdvancedSkeleton
+    rig's skeleton, then the sole skeleton -- where it used to be the Rig
+    Picker's Connect. Lazy and guarded: the bridge is plain `cmds`, and a
+    session without `maya_scenesetup` keeps the older rule below (the sole
+    skeleton, then the one named `root`).
     """
     try:
-        from maya_overrig import picker_window
-    except Exception:
-        return None
-    try:
-        return picker_window.bound_root()
+        from maya_scenesetup import skeleton
+        return skeleton.current_root()
     except Exception:
         return None
 
 
 def resolve_target():
-    """The skeleton to merge onto, asking the scene the three questions."""
+    """The skeleton to merge onto, asking the scene the three questions.
+
+    `connected_root` already applies the selection, so the selection slot
+    and the connect slot agree by construction; Import, Export and Add
+    Weapon can never name different characters.
+    """
     return choose_target_root(skeleton_roots(), selected_roots(),
-                              picker_root())
+                              connected_root())
 
 
 def skeletons_to_hold(roots, target):

@@ -63,8 +63,17 @@ class AimRefusals(unittest.TestCase):
     def test_the_two_add_refusals_are_different(self):
         self.assertNotEqual(window.AIMED_NO_ADD, window.LINKED_NO_ADD)
 
-    def test_there_is_an_add_aim_callback(self):
-        self.assertTrue(callable(window.add_aim))
+    def test_the_overrig_era_callbacks_are_gone(self):
+        """Connect Arms, Disconnect Arms, Add Aim and Camera Setup left the
+        panel on 2026-09-07 (the camera setup runs inside the retarget's
+        Bake). Gone, not disabled: a hotkey row pressing a callback that is
+        not there fails at the worst moment, so the rows went the same day."""
+        for name in ("connect_arms", "disconnect_arms", "add_aim",
+                     "camera_setup"):
+            self.assertFalse(hasattr(window, name), name)
+        for name in ("add_character", "add_weapon", "remove_weapon",
+                     "recolour_character", "recolour_weapon"):
+            self.assertTrue(callable(getattr(window, name)), name)
 
 
 class OptionVars(unittest.TestCase):
@@ -145,9 +154,20 @@ class RemoveWeapon(unittest.TestCase):
 
 class Messages(unittest.TestCase):
 
-    def test_no_character_points_at_both_ways_out(self):
-        self.assertIn("picker", window.NO_CHARACTER)
+    def test_no_character_names_the_new_rule_and_not_the_picker(self):
+        """Since 2026-09-07 the character comes from the selection (a rig
+        control or a joint), then the rig; the picker is off the shelf."""
         self.assertIn("select", window.NO_CHARACTER)
+        self.assertIn("control", window.NO_CHARACTER)
+        self.assertNotIn("picker", window.NO_CHARACTER.lower())
+
+    def test_bound_says_rig_or_skeleton(self):
+        self.assertEqual(window.bound_message("|root", rig=True),
+                         "Character: root (rig)")
+        self.assertEqual(window.bound_message("|clip:root", rig=False),
+                         "Character: clip:root (skeleton)")
+        self.assertEqual(window.bound_message("|SKM_Manny|root"),
+                         "Character: root (skeleton)")
 
     def test_missing_bone_names_the_bone_and_the_character(self):
         message = window.missing_bone_message("|SKM_Manny|root", "weapon_r")
