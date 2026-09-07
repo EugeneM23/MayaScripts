@@ -1,4 +1,5 @@
 import os
+import types
 import unittest
 
 import maya_asretarget as ar
@@ -93,6 +94,123 @@ class TestNativeBake(unittest.TestCase):
         src = self._source(pm)
         self.assertFalse("import maya_asretarget" in src
                          or "from maya_asretarget" in src)
+
+
+
+class TestHelperPlan(unittest.TestCase):
+    """The four bones the rig leaves riding their parents (2026-09-07): moved
+    when both skeletons have them, named when not."""
+
+    SRC = {"weapon_r": "|a:root|a:hand_r|a:weapon_r",
+           "camera_root": "|a:root|a:camera_root"}
+    DST = {"weapon_r": "|root|hand_r|weapon_r", "weapon_l": "|root|hand_l|weapon_l",
+           "camera_root": "|root|camera_root",
+           "camera_bone": "|root|camera_root|camera_bone"}
+
+    def test_moves_what_both_have_and_names_the_rest(self):
+        moves, skipped = rr.helper_plan(self.SRC, self.DST)
+        self.assertEqual(moves, [("weapon_r", self.SRC["weapon_r"], self.DST["weapon_r"]),
+                                 ("camera_root", self.SRC["camera_root"], self.DST["camera_root"])])
+        self.assertEqual(dict(skipped), {"weapon_l": "not in the source",
+                                         "camera_bone": "not in the source"})
+
+    def test_a_foreign_constraint_is_skipped_by_name(self):
+        moves, skipped = rr.helper_plan(self.SRC, self.DST, foreign={"camera_root"})
+        self.assertEqual([m[0] for m in moves], ["weapon_r"])
+        self.assertEqual(dict(skipped)["camera_root"], "driven by somebody else's constraint")
+
+    def test_a_rig_without_the_bone_says_nothing(self):
+        """The PlayerMale skeleton has none of the four."""
+        moves, skipped = rr.helper_plan(self.SRC, {"Hip": "|Root|Hip"})
+        self.assertEqual((moves, skipped), ([], []))
+
+    def test_the_order_is_the_tables(self):
+        both = dict(self.DST)
+        moves, _ = rr.helper_plan(both, both)
+        self.assertEqual([m[0] for m in moves], list(rr.HELPER_BONES))
+
+
+class TestHelperNote(unittest.TestCase):
+
+    def test_names_what_moved_what_was_skipped_and_the_camera(self):
+        text = rr.helper_note(["weapon_r", "camera_bone"],
+                              [("weapon_l", "not in the source")],
+                              "camera SceneSetup_camera on camera_bone (46 frames)")
+        self.assertIn("weapon_r, camera_bone carried from the source", text)
+        self.assertIn("skipped weapon_l (not in the source)", text)
+        self.assertIn("SceneSetup_camera", text)
+
+    def test_nothing_is_an_empty_tail(self):
+        self.assertEqual(rr.helper_note([], [], ""), "")
+
+
+class FakeBakeScene(object):
+    """cmds for the dispatcher's bake(): undo chunks and a playback range."""
+
+    def __init__(self):
+        self.chunks = []
+
+    def undoInfo(self, **kwargs):
+        self.chunks.append(kwargs)
+
+    def playbackOptions(self, **kwargs):
+        return 0.0 if kwargs.get("min") else 100.0
+
+
+class TestBakeOrchestration(unittest.TestCase):
+    """bake() runs the six steps in order and words the result."""
+
+    def setUp(self):
+        self.saved = (rr.rig_module, rr.carry_helpers, rr.cmds)
+        self.calls = []
+        mod = types.SimpleNamespace(
+            __name__="maya_asretarget",
+            connected_source=lambda: "|clip:root",
+            source_key_range=lambda: (3.0, 41.0),
+            rig_paths=lambda: ["|root"],
+            rig_skeleton_root=lambda paths: "|root",
+            bake=lambda disconnect=True: self.calls.append(("bake", disconnect))
+            or "baked 20 controls over 3..41; still connected - disconnect() when done",
+            disconnect=lambda: self.calls.append(("disconnect",)) or "retarget disconnected (82 constraints)")
+        self.mod = mod
+        rr.rig_module = lambda: (mod, "")
+        rr.carry_helpers = lambda source, rig, start, end: (
+            self.calls.append(("carry", source, rig, start, end))
+            or (["weapon_r", "camera_bone"], [], "camera SceneSetup_camera on camera_bone (39 frames)"))
+        rr.cmds = FakeBakeScene()
+
+    def tearDown(self):
+        rr.rig_module, rr.carry_helpers, rr.cmds = self.saved
+
+    def test_the_steps_run_in_order_over_the_clips_range(self):
+        text = rr.bake()
+        self.assertEqual(self.calls, [("bake", False), ("carry", "|clip:root", "|root", 3.0, 41.0),
+                                      ("disconnect",)])
+        self.assertIn("baked 20 controls over 3..41", text)
+        self.assertNotIn("still connected", text)
+        self.assertIn("retarget disconnected", text)
+        self.assertIn("weapon_r, camera_bone carried", text)
+        self.assertIn("SceneSetup_camera", text)
+        self.assertTrue(text.startswith("maya_asretarget: "))
+
+    def test_one_undo_chunk_closed_even_when_a_step_raises(self):
+        def explode(*a, **k):
+            raise RuntimeError("boom")
+        rr.carry_helpers = explode
+        with self.assertRaises(RuntimeError):
+            rr.bake()
+        self.assertEqual([c.get("openChunk") for c in rr.cmds.chunks][:1], [True])
+        self.assertTrue(rr.cmds.chunks[-1].get("closeChunk"))
+
+    def test_nothing_connected_defers_to_the_module(self):
+        self.mod.connected_source = lambda: None
+        self.mod.bake = lambda *a, **k: "nothing connected (MoCapConstraints not found) - connect() first"
+        self.assertIn("nothing connected", rr.bake())
+        self.assertEqual(self.calls, [])
+
+    def test_a_missing_rig_is_the_dispatchers_refusal(self):
+        rr.rig_module = lambda: (None, "no AdvancedSkeleton rig in this scene")
+        self.assertEqual(rr.bake(), "no AdvancedSkeleton rig in this scene")
 
 
 if __name__ == "__main__":
