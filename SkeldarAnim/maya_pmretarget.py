@@ -155,7 +155,7 @@ MIXAMO = Schema("mixamo", MIXAMO_ROWS, MIXAMO_SIDES, True, "Hips", None, "jointO
                 ("Hips", "Spine2", "LeftArm", "RightHand", "LeftToeBase"), ())
 SCHEMAS = (OWN, UE5, UE4, MIXAMO)
 
-ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "SkeldarAnim", "assets")
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
 OFFSET_TOL = 1e-5
 DEFAULTS = (("tx", 0.0), ("ty", 0.0), ("tz", 0.0), ("rx", 0.0), ("ry", 0.0), ("rz", 0.0))

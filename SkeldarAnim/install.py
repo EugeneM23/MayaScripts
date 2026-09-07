@@ -1,8 +1,9 @@
 """Drag this file into an open Maya viewport to install SkeldarAnim.
 
 Copies the toolset into <userAppDir>/scripts/SkeldarAnim and builds the
-SkeldarAnim shelf: Rig Picker, UE Bridge, Scene Setup, Overshoot,
-Hotkeys, Studio, Colour, Curves and the native OverRig panel. Re-dragging
+SkeldarAnim shelf: UE Bridge, Scene Setup, Retarget, Bake, Overshoot,
+Hotkeys, Studio, Colour, Curves -- plus the Rig Picker and the native
+OverRig panel when `skeldar_features` switches them on. Re-dragging
 updates in place. The unzipped folder can be deleted after installing.
 
 Design: docs/superpowers/specs/2026-08-21-installer-design.md
@@ -32,30 +33,66 @@ _PAYLOAD = (
     "icons",
     "assets",
     "overrig",
+    "skeldar_features.py",
+    "maya_asretarget.py",
+    "maya_pmretarget.py",
+    "maya_rig_retarget.py",
     "install.py",
     "README_INSTALL.txt",
 )
 
+# (label, annotation, module, function, icon, feature flag or ""). A row
+# naming a flag is on the shelf only while that flag in skeldar_features
+# is True -- the Rig Picker went behind PICKER on 2026-09-07, when the
+# toolset moved from OverRig to the AdvancedSkeleton rig.
 _PYTHON_BUTTONS = (
     ("Rig Picker", "OverRig picker: build, switch and select the rig",
-     "maya_overrig", "show_picker", "picker.png"),
-    ("UE Bridge", "Import animations from the running Unreal editor",
-     "maya_uebridge", "show_window", "uebridge.png"),
-    ("Scene Setup", "Weapon in the hand, camera on the camera bone",
-     "maya_scenesetup", "show_window", "scenesetup.png"),
+     "maya_overrig", "show_picker", "picker.png", "PICKER"),
+    ("UE Bridge", "Import animations from the running Unreal editor onto "
+     "the AdvancedSkeleton rig", "maya_uebridge", "show_window",
+     "uebridge.png", ""),
+    ("Scene Setup", "Add the rig or a skeleton, a weapon in the hand",
+     "maya_scenesetup", "show_window", "scenesetup.png", ""),
+    ("Retarget", "Select the imported skeleton: the rig follows it",
+     "maya_rig_retarget", "retarget_button", "retarget.png", ""),
+    ("Bake", "Bake the retarget onto the controls, carry the weapon and "
+     "camera bones, set the camera up, disconnect", "maya_rig_retarget",
+     "bake_button", "bake.png", ""),
     ("Overshoot", "Build the stop of a move on the selected keys",
-     "maya_overshoot", "show_overshoot_ui", "overshoot.png"),
+     "maya_overshoot", "show_overshoot_ui", "overshoot.png", ""),
     ("Hotkeys", "Temporary hotkey map on/off - assign keys in Maya's "
-     "Hotkey Editor", "maya_hotkeys", "toggle", "hotkeys.png"),
+     "Hotkey Editor", "maya_hotkeys", "toggle", "hotkeys.png", ""),
     ("Studio", "Viewport Studio: studio light, shadows, ambient occlusion "
      "and motion blur, live in the viewport", "maya_vpstudio",
-     "show_window", "vpstudio.png"),
+     "show_window", "vpstudio.png", ""),
     ("Colour", "Recolour the selected character, bone or mesh from an "
-     "eight-colour palette", "maya_colour", "show_window", "colour.png"),
+     "eight-colour palette", "maya_colour", "show_window", "colour.png",
+     ""),
     ("Curves", "Curve Overlay: the graph editor drawn over the viewport - "
      "LMB selects, MMB drags keys", "maya_curveview", "toggle",
-     "curveview.png"),
+     "curveview.png", ""),
 )
+
+
+def features():
+    """The flag module, loaded from beside this file.
+
+    Not a plain import: at drop time nothing of ours is on sys.path, and
+    the installed folder carries its own copy that must not shadow the
+    one being dragged. Cached in sys.modules under its own name so the
+    tests can flip a flag and see the shelf follow.
+    """
+    import importlib.util
+    path = os.path.join(source_root(), "skeldar_features.py")
+    module = sys.modules.get("skeldar_features")
+    if module is None or os.path.normcase(
+            getattr(module, "__file__", "") or "") != os.path.normcase(path):
+        spec = importlib.util.spec_from_file_location("skeldar_features",
+                                                      path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules["skeldar_features"] = module
+    return module
 
 
 def payload():
@@ -124,8 +161,11 @@ def button_specs(dest):
         "_p = \"{0}\"\n"
         "if _p not in sys.path:\n"
         "    sys.path.insert(0, _p)\n").format(dest)
+    flags = features()
     specs = []
-    for label, note, module, func, icon in _PYTHON_BUTTONS:
+    for label, note, module, func, icon, flag in _PYTHON_BUTTONS:
+        if flag and not getattr(flags, flag, False):
+            continue
         specs.append({
             "label": label,
             "annotation": note,
@@ -134,6 +174,8 @@ def button_specs(dest):
             "command": (bootstrap
                         + "import {0}\n{0}.{1}()\n".format(module, func)),
         })
+    if not flags.OVERRIG:
+        return specs
     # Verbatim from OverRig's own Drag_and_Drop_to_install.mel, paths
     # aside: the two globals and the (1) coloring are the author's own
     # defaults, and $path_to_JGLBN must point at the shipped misc/.

@@ -23,6 +23,7 @@ PLUGIN = os.path.join(
 REPO = PLUGIN
 
 ICON_NAMES = ("picker.png", "uebridge.png", "scenesetup.png",
+              "retarget.png", "bake.png",
               "overshoot.png", "hotkeys.png", "vpstudio.png",
               "colour.png", "curveview.png")
 
@@ -119,30 +120,73 @@ class Payload(unittest.TestCase):
 
 
 class ButtonSpecs(unittest.TestCase):
+    """The shelf as data. Since 2026-09-07 the Rig Picker and the OverRig
+    panel sit behind `skeldar_features` flags: off, the shelf is the nine
+    buttons of the AdvancedSkeleton pipeline; on, both come back in their
+    old places. Nothing was deleted."""
 
     DEST = "C:/Users/Some Body/Documents/maya/scripts/SkeldarAnim"
+
+    def setUp(self):
+        self.features = install.features()
+        self.saved = (self.features.OVERRIG, self.features.PICKER)
+        self.features.OVERRIG = False
+        self.features.PICKER = False
+
+    def tearDown(self):
+        self.features.OVERRIG, self.features.PICKER = self.saved
 
     def _specs(self):
         return install.button_specs(self.DEST)
 
+    def test_the_flags_ship_off(self):
+        """The shipped default: OverRig and the picker are switched off."""
+        self.assertFalse(self.saved[0])
+        self.assertFalse(self.saved[1])
+
+    def test_features_loads_the_module_beside_install(self):
+        self.assertEqual(
+            os.path.normcase(self.features.__file__),
+            os.path.normcase(os.path.join(PLUGIN, "skeldar_features.py")))
+
     def test_nine_buttons_in_shelf_order(self):
         labels = [s["label"] for s in self._specs()]
-        self.assertEqual(labels, ["Rig Picker", "UE Bridge", "Scene Setup",
-                                  "Overshoot", "Hotkeys", "Studio",
-                                  "Colour", "Curves", "OverRig"])
+        self.assertEqual(labels, ["UE Bridge", "Scene Setup", "Retarget",
+                                  "Bake", "Overshoot", "Hotkeys", "Studio",
+                                  "Colour", "Curves"])
+
+    def test_the_flags_bring_the_picker_and_overrig_back(self):
+        self.features.PICKER = True
+        self.features.OVERRIG = True
+        labels = [s["label"] for s in self._specs()]
+        self.assertEqual(labels[0], "Rig Picker")
+        self.assertEqual(labels[-1], "OverRig")
+        self.assertEqual(len(labels), 11)
+
+    def test_each_flag_acts_alone(self):
+        self.features.PICKER = True
+        labels = [s["label"] for s in self._specs()]
+        self.assertIn("Rig Picker", labels)
+        self.assertNotIn("OverRig", labels)
+        self.features.PICKER = False
+        self.features.OVERRIG = True
+        labels = [s["label"] for s in self._specs()]
+        self.assertNotIn("Rig Picker", labels)
+        self.assertEqual(labels[-1], "OverRig")
 
     def test_python_buttons_bootstrap_and_call(self):
         wanted = {
-            "Rig Picker": ("maya_overrig", "show_picker"),
             "UE Bridge": ("maya_uebridge", "show_window"),
             "Scene Setup": ("maya_scenesetup", "show_window"),
+            "Retarget": ("maya_rig_retarget", "retarget_button"),
+            "Bake": ("maya_rig_retarget", "bake_button"),
             "Overshoot": ("maya_overshoot", "show_overshoot_ui"),
             "Hotkeys": ("maya_hotkeys", "toggle"),
             "Studio": ("maya_vpstudio", "show_window"),
             "Colour": ("maya_colour", "show_window"),
             "Curves": ("maya_curveview", "toggle"),
         }
-        for spec in self._specs()[:8]:
+        for spec in self._specs():
             module, func = wanted[spec["label"]]
             self.assertEqual(spec["sourceType"], "python")
             self.assertIn(self.DEST, spec["command"])
@@ -150,22 +194,34 @@ class ButtonSpecs(unittest.TestCase):
             self.assertIn("import {0}".format(module), spec["command"])
             self.assertIn("{0}.{1}()".format(module, func), spec["command"])
 
+    def test_the_picker_button_still_knows_its_module(self):
+        self.features.PICKER = True
+        spec = self._specs()[0]
+        self.assertIn("import maya_overrig", spec["command"])
+        self.assertIn("maya_overrig.show_picker()", spec["command"])
+        self.assertEqual(spec["image"], self.DEST + "/icons/picker.png")
+
     def test_python_buttons_use_our_icons(self):
-        icons = [s["image"] for s in self._specs()[:8]]
-        self.assertEqual(icons, [
-            self.DEST + "/icons/picker.png",
-            self.DEST + "/icons/uebridge.png",
-            self.DEST + "/icons/scenesetup.png",
-            self.DEST + "/icons/overshoot.png",
-            self.DEST + "/icons/hotkeys.png",
-            self.DEST + "/icons/vpstudio.png",
-            self.DEST + "/icons/colour.png",
-            self.DEST + "/icons/curveview.png"])
+        icons = [s["image"] for s in self._specs()]
+        self.assertEqual(icons, [self.DEST + "/icons/" + name for name in (
+            "uebridge.png", "scenesetup.png", "retarget.png", "bake.png",
+            "overshoot.png", "hotkeys.png", "vpstudio.png", "colour.png",
+            "curveview.png")])
+
+    def test_the_payload_carries_the_flags_and_the_retarget(self):
+        for name in ("skeldar_features.py", "maya_asretarget.py",
+                     "maya_pmretarget.py", "maya_rig_retarget.py"):
+            self.assertIn(name, install.payload())
+            self.assertTrue(os.path.isfile(os.path.join(PLUGIN, name)), name)
+        for name in ("maya_asretarget", "maya_pmretarget",
+                     "maya_rig_retarget", "skeldar_features"):
+            self.assertIn(name, install.module_names())
 
     def test_overrig_button_replays_the_native_installer(self):
         """Verbatim from OverRig's own Drag_and_Drop_to_install.mel: the
         source, both globals, misc/ and the coloring argument."""
-        spec = self._specs()[8]
+        self.features.OVERRIG = True
+        spec = self._specs()[-1]
         self.assertEqual(spec["sourceType"], "mel")
         command = spec["command"]
         self.assertIn(

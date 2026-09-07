@@ -1,4 +1,4 @@
-"""Draw the eight SkeldarAnim shelf icons.
+"""Draw the SkeldarAnim shelf icons (ten: nine on the shelf plus the picker's).
 
 32x32 PNG on a dark rounded plate so they read on Maya's shelf: flat
 glyphs, ~2 px strokes, one accent colour per tool. Regenerate with:
@@ -68,17 +68,69 @@ def draw_uebridge(path):
 
 
 def draw_scenesetup(path):
-    """A sword: blade, crossguard, grip, pommel."""
+    """A gear: the scene's settings (2026-09-07 - «шестеренку вместо меча»)."""
+    import math
     image, painter = _canvas()
-    painter.setPen(_pen("#cfd8dc", 2.8))
-    painter.drawLine(QPointF(23.5, 6.5), QPointF(12, 18))
-    painter.setPen(_pen("#cfd8dc", 2.4))
-    painter.drawLine(QPointF(10.1, 14.5), QPointF(15.5, 19.9))
-    painter.setPen(_pen("#cfd8dc", 2.6))
-    painter.drawLine(QPointF(11.3, 18.7), QPointF(8, 22))
+    centre = QPointF(16, 16)
+    painter.setPen(_pen("#cfd8dc", 3.2))
+    for i in range(8):
+        angle = math.radians(i * 45.0)
+        inner = QPointF(16 + 7.6 * math.cos(angle), 16 + 7.6 * math.sin(angle))
+        outer = QPointF(16 + 11.2 * math.cos(angle),
+                        16 + 11.2 * math.sin(angle))
+        painter.drawLine(inner, outer)
+    painter.setPen(_pen("#cfd8dc", 3.0))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawEllipse(centre, 6.8, 6.8)
     painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor("#cfd8dc"))
-    painter.drawEllipse(QPointF(7.2, 22.8), 1.8, 1.8)
+    painter.setBrush(PLATE)
+    painter.drawEllipse(centre, 3.2, 3.2)
+    painter.end()
+    image.save(path)
+
+
+def _figure(painter, x, colour):
+    """A stick figure standing on x: head, spine, arms, legs."""
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(colour))
+    painter.drawEllipse(QPointF(x, 8.0), 2.4, 2.4)
+    painter.setPen(_pen(colour, 1.8))
+    painter.drawLine(QPointF(x, 10.5), QPointF(x, 19.5))
+    painter.drawLine(QPointF(x - 3.5, 13.0), QPointF(x + 3.5, 13.0))
+    painter.drawLine(QPointF(x, 19.5), QPointF(x - 3.0, 26.0))
+    painter.drawLine(QPointF(x, 19.5), QPointF(x + 3.0, 26.0))
+
+
+def draw_retarget(path):
+    """Two figures and an arrow: the clip's skeleton onto the rig."""
+    image, painter = _canvas()
+    _figure(painter, 8.0, "#90a4ae")
+    _figure(painter, 24.0, "#7bd88f")
+    painter.setPen(_pen("#7bd88f", 2.0))
+    painter.drawLine(QPointF(12.5, 16.5), QPointF(19.5, 16.5))
+    painter.drawLine(QPointF(17.0, 14.0), QPointF(19.5, 16.5))
+    painter.drawLine(QPointF(17.0, 19.0), QPointF(19.5, 16.5))
+    painter.end()
+    image.save(path)
+
+
+def draw_bake(path):
+    """A timeline bar with key diamonds: the retarget written into keys."""
+    image, painter = _canvas()
+    painter.setPen(_pen("#ff8a65", 2.0))
+    painter.drawLine(QPointF(5.5, 21.5), QPointF(26.5, 21.5))
+    painter.setPen(_pen("#ff8a65", 1.3))
+    for x in (8.0, 12.5, 17.0, 21.5, 26.0):
+        painter.drawLine(QPointF(x, 19.5), QPointF(x, 23.5))
+    painter.setPen(QPen(QColor("#1e1e1e"), 1))
+    painter.setBrush(QColor("#ffccbc"))
+    for x, y in ((8.0, 13.0), (17.0, 9.5), (26.0, 13.0)):
+        diamond = QPainterPath(QPointF(x, y - 3.0))
+        diamond.lineTo(QPointF(x + 3.0, y))
+        diamond.lineTo(QPointF(x, y + 3.0))
+        diamond.lineTo(QPointF(x - 3.0, y))
+        diamond.closeSubpath()
+        painter.drawPath(diamond)
     painter.end()
     image.save(path)
 
@@ -186,6 +238,8 @@ DRAWERS = {
     "hotkeys.png": draw_hotkeys,
     "uebridge.png": draw_uebridge,
     "scenesetup.png": draw_scenesetup,
+    "retarget.png": draw_retarget,
+    "bake.png": draw_bake,
     "overshoot.png": draw_overshoot,
     "vpstudio.png": draw_vpstudio,
     "colour.png": draw_colour,
