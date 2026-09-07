@@ -4,8 +4,8 @@ Press `Hotkeys` on the SkeldarAnim shelf and Maya switches to a hotkey set
 of our name; press it again and the animator's own set comes back. The map's
 CONTENTS are theirs to lay out, in Maya's own Hotkey Editor -- what this
 module adds is the switch, plus a command list worth binding: every button
-of our panels, and every one-press procedure OverRig's author published in
-`function_for_hotkeys.TXT`.
+of our panels, and -- while `skeldar_features.OVERRIG` is on -- every
+one-press procedure OverRig's author published in `function_for_hotkeys.TXT`.
 
 Design: docs/superpowers/specs/2026-09-02-hotkey-map-design.md
 
@@ -159,6 +159,17 @@ def _scene(func, *args):
         module.show_window()
         return _report("Scene Setup opened - press again")
     return getattr(module, func)(*args)
+
+
+def _retarget_module():
+    """Lazy: the Retarget/Bake shelf buttons' module."""
+    import maya_rig_retarget
+    return maya_rig_retarget
+
+
+def _retarget(func):
+    """Press a Retarget shelf button; it reports in the viewport itself."""
+    return getattr(_retarget_module(), func)()
 
 
 def _overshoot(shape):
@@ -713,18 +724,16 @@ _OURS = (
     ("scene.remove_weapon", "Scene Setup", "Remove Weapon",
      "Bake the bone back off the weapon and delete it",
      partial(_scene, "remove_weapon")),
-    ("scene.connect_arms", "Scene Setup", "Connect Arms To Weapon",
-     "Both arms to IK, the weapon out to world, the hands onto it",
-     partial(_scene, "connect_arms")),
-    ("scene.disconnect_arms", "Scene Setup", "Disconnect Arms",
-     "Lift the hands off the weapon and put it back in the hand",
-     partial(_scene, "disconnect_arms")),
-    ("scene.aim", "Scene Setup", "Add Aim",
-     "OverRig's aim on the weapon, both locators placed",
-     partial(_scene, "add_aim")),
-    ("scene.camera", "Scene Setup", "Camera Setup",
-     "A camera on camera_bone, the bone driven from it",
-     partial(_scene, "camera_setup")),
+    # Connect Arms / Disconnect Arms / Add Aim / Camera Setup left Scene
+    # Setup on 2026-09-07 with the move to the AdvancedSkeleton rig; the
+    # camera setup happens inside the retarget's Bake now.
+
+    ("retarget.connect", "Retarget", "Retarget onto the rig",
+     "The rig follows the selected imported skeleton",
+     partial(_retarget, "retarget_button")),
+    ("retarget.bake", "Retarget", "Bake retarget",
+     "Bake onto the controls, carry the weapon and camera bones, set the "
+     "camera up, disconnect", partial(_retarget, "bake_button")),
 
     ("curve.insert", "Curve Overlay", "Insert key at current frame",
      "A key on every drawn curve at the current frame, leaving the shape "
@@ -1029,6 +1038,24 @@ def _prefixed(root, table):
                  for key, category, label, note, action in table)
 
 
-COMMANDS = _prefixed("SkeldarAnim", _OURS) + _prefixed("OverRig", _OVERRIG)
+def commands(flags):
+    """The table for a set of feature flags. Pure.
+
+    Since 2026-09-07 the picker's six rows ride `flags.PICKER` and the
+    author's 84 OverRig rows ride `flags.OVERRIG` (skeldar_features);
+    both ship off. The rows themselves stay in the tables above, so a
+    flag flipped back registers them again on the next press.
+    """
+    ours = tuple(row for row in _OURS
+                 if flags.PICKER or not row[0].startswith("picker."))
+    table = _prefixed("SkeldarAnim", ours)
+    if flags.OVERRIG:
+        table += _prefixed("OverRig", _OVERRIG)
+    return table
+
+
+import skeldar_features  # noqa: E402 - beside this file, stdlib only
+
+COMMANDS = commands(skeldar_features)
 
 _INDEX = dict((command[0], command) for command in COMMANDS)

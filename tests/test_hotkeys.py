@@ -46,6 +46,16 @@ import maya_hotkeys  # noqa: E402
 
 PLUGIN = os.path.dirname(os.path.abspath(maya_hotkeys.__file__))
 
+# What ships: the table under skeldar_features' own flags. Kept for the
+# FeatureFlags tests; every other test here reads the WHOLE table -- the
+# picker's and OverRig's rows are switched off since 2026-09-07, not gone,
+# and their contract (methods that exist, MEL that ends in a semicolon) is
+# still worth pinning -- so the full table is installed for the run.
+SHIPPED = tuple(maya_hotkeys.COMMANDS)
+maya_hotkeys.COMMANDS = maya_hotkeys.commands(
+    types.SimpleNamespace(PICKER=True, OVERRIG=True))
+maya_hotkeys._INDEX = dict((row[0], row) for row in maya_hotkeys.COMMANDS)
+
 
 class FakeCmds(object):
     """Everything of `cmds` this module touches, and nothing else.
@@ -350,7 +360,7 @@ class SeamCase(unittest.TestCase):
     """
 
     SEAMS = ("_picker_module", "_scene_module", "_overshoot_module",
-             "_overrig_module")
+             "_overrig_module", "_retarget_module")
 
     def setUp(self):
         self._seams = dict((name, getattr(maya_hotkeys, name))
@@ -442,9 +452,9 @@ class TheTable(unittest.TestCase):
 
 
 class OurRows(unittest.TestCase):
-    """33 of ours: four openers plus the map's own toggle and the curve
-    overlay's, four timeline, two editors, three curve overlay, six picker,
-    seven scene, five overshoot."""
+    """31 of ours with every flag on: four openers plus the map's own toggle
+    and the curve overlay's, four timeline, two editors, three curve
+    overlay, six picker, three scene, two retarget, five overshoot."""
 
     def _keys(self, prefix):
         return [row[0] for row in maya_hotkeys.COMMANDS
@@ -453,7 +463,7 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 33)
+        self.assertEqual(len(ours), 31)
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
@@ -477,10 +487,63 @@ class OurRows(unittest.TestCase):
                           "picker.connect", "picker.fk", "picker.ik"])
 
     def test_the_scene_setup_rows(self):
+        """Connect Arms, Disconnect Arms, Add Aim and Camera Setup left the
+        panel on 2026-09-07; a row pressing a button that is not there is a
+        hotkey that fails at the worst moment."""
         self.assertEqual(sorted(self._keys("scene.")),
-                         ["scene.aim", "scene.camera", "scene.character",
-                          "scene.connect_arms", "scene.disconnect_arms",
-                          "scene.remove_weapon", "scene.weapon"])
+                         ["scene.character", "scene.remove_weapon",
+                          "scene.weapon"])
+
+    def test_the_retarget_rows(self):
+        self.assertEqual(sorted(self._keys("retarget.")),
+                         ["retarget.bake", "retarget.connect"])
+
+
+class FeatureFlags(unittest.TestCase):
+    """The shipped table follows skeldar_features (2026-09-07): the picker's
+    and OverRig's rows are off, and the whole table -- what every other test
+    here reads -- comes back with both flags on."""
+
+    def _flags(self, picker, overrig):
+        return types.SimpleNamespace(PICKER=picker, OVERRIG=overrig)
+
+    def test_the_shipped_flags_are_off(self):
+        import skeldar_features
+        self.assertFalse(skeldar_features.PICKER)
+        self.assertFalse(skeldar_features.OVERRIG)
+
+    def test_the_shipped_table_has_neither_picker_nor_overrig_rows(self):
+        keys = [row[0] for row in SHIPPED]
+        self.assertFalse([k for k in keys if k.startswith("picker.")])
+        self.assertFalse([k for k in keys if k.startswith("overrig.")])
+        self.assertIn("retarget.connect", keys)
+        self.assertIn("scene.weapon", keys)
+
+    def test_each_flag_brings_its_rows_back(self):
+        picker_only = [r[0] for r in maya_hotkeys.commands(self._flags(True, False))]
+        self.assertEqual(len([k for k in picker_only if k.startswith("picker.")]), 6)
+        self.assertFalse([k for k in picker_only if k.startswith("overrig.")])
+        overrig_only = [r[0] for r in maya_hotkeys.commands(self._flags(False, True))]
+        self.assertEqual(len([k for k in overrig_only if k.startswith("overrig.")]), 84)
+        self.assertFalse([k for k in overrig_only if k.startswith("picker.")])
+
+    def test_the_full_table_is_the_two_tables_prefixed(self):
+        full = maya_hotkeys.commands(self._flags(True, True))
+        self.assertEqual(len(full), len(maya_hotkeys._OURS) + len(maya_hotkeys._OVERRIG))
+        self.assertEqual(full, maya_hotkeys.COMMANDS)
+
+    def test_the_retarget_rows_press_the_shelf_buttons(self):
+        saved = maya_hotkeys._retarget_module
+        calls = []
+        maya_hotkeys._retarget_module = lambda: types.SimpleNamespace(
+            retarget_button=lambda: calls.append("connect") or "c",
+            bake_button=lambda: calls.append("bake") or "b")
+        try:
+            self.assertEqual(maya_hotkeys.run("retarget.connect"), "c")
+            self.assertEqual(maya_hotkeys.run("retarget.bake"), "b")
+        finally:
+            maya_hotkeys._retarget_module = saved
+        self.assertEqual(calls, ["connect", "bake"])
 
     def test_one_row_per_overshoot_shape(self):
         import maya_overshoot
@@ -514,7 +577,7 @@ class OurRowsNameRealMethods(unittest.TestCase):
     def test_scene_setup_callbacks_exist(self):
         source = self._source("maya_scenesetup", "window.py")
         methods = self._methods(maya_hotkeys._scene)
-        self.assertEqual(len(methods), 7)
+        self.assertEqual(len(methods), 3)
         for name in methods:
             self.assertIn("def {0}(".format(name), source)
 
@@ -555,8 +618,8 @@ class RunPressesThePanel(SeamCase):
         panel = FakePanelModule()
         self.fake.windows.add(panel.WINDOW)
         maya_hotkeys._scene_module = lambda: panel
-        maya_hotkeys.run("scene.camera")
-        self.assertEqual(panel.calls, [("camera_setup",)])
+        maya_hotkeys.run("scene.weapon")
+        self.assertEqual(panel.calls, [("add_weapon",)])
 
     def test_a_closed_scene_setup_is_opened_and_reported(self):
         panel = FakePanelModule()
