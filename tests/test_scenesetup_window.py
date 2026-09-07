@@ -286,8 +286,14 @@ class CharacterDropdown(unittest.TestCase):
         return window.catalog.character_labels()
 
     def test_the_dropdown_names_the_catalog_in_table_order(self):
+        """The rig is row 0 since 2026-09-07 -- the row the menu opens on
+        and the fallback for a label the table no longer carries. The
+        SKELETON stays `default_character()`, which is a different
+        question (`character_path()` with no argument)."""
         self.assertEqual(self._labels()[0],
-                         window.catalog.default_character().label)
+                         window.catalog.default_rig().label)
+        self.assertEqual(self._labels(),
+                         window.catalog.character_labels())
 
     def test_a_chosen_label_resolves_to_its_entry(self):
         wanted = window.catalog.character_by_key("UE4_Mannequin")
@@ -299,18 +305,18 @@ class CharacterDropdown(unittest.TestCase):
         because it asked before the menu existed."""
         self.fake.menu_exists = False
         self.assertIs(window.chosen_character(),
-                      window.catalog.default_character())
+                      window.catalog.default_rig())
 
     def test_an_unknown_label_falls_back_rather_than_raising(self):
         """A scene file outlives a rename of a table row."""
         self.fake.menu_value = "Sevarog"
         self.assertIs(window.chosen_character(),
-                      window.catalog.default_character())
+                      window.catalog.default_rig())
 
     def test_an_empty_menu_value_falls_back(self):
         self.fake.menu_value = ""
         self.assertIs(window.chosen_character(),
-                      window.catalog.default_character())
+                      window.catalog.default_rig())
 
     def test_changing_the_choice_remembers_it(self):
         wanted = window.catalog.character_by_key("UE4_Mannequin")

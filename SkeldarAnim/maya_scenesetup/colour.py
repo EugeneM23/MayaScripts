@@ -373,6 +373,28 @@ def paint(shapes, rgb, key):
     return material
 
 
+def paint_fresh(shapes, rgb, key):
+    """A NEW material in `rgb` on `shapes`, whatever they wear now.
+
+    For an Add (2026-09-07): the shipped rig file carries the animator's own
+    `skeldarColour_red` blinn on its meshes, and `paint` -- which reuses a
+    marked material rather than swapping it -- would bring every rig in red
+    and ignore the swatch. The asset's material is left in the scene
+    unassigned, where `is_assigned` stops counting it; nothing is deleted.
+    """
+    shapes = [shape for shape in (shapes or []) if shape]
+    if not shapes:
+        return None
+    material, engine = make_material(rgb, key)
+    cmds.sets(shapes, edit=True, forceElement=engine)
+    return material
+
+
 def paint_nodes(nodes, rgb, key):
-    """`paint` over whatever `nodes` hold: transforms, shapes or a mix."""
-    return paint(mesh_shapes(nodes), rgb, key)
+    """`paint_fresh` over whatever `nodes` hold: transforms, shapes or a mix.
+
+    Only Add Character calls this, and an import's nodes are fresh by
+    definition -- whatever marked material rides in with the asset is the
+    asset's, not this scene's choice.
+    """
+    return paint_fresh(mesh_shapes(nodes), rgb, key)

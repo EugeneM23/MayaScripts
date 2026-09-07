@@ -366,8 +366,10 @@ def chosen_character():
     label = ""
     if cmds.optionMenu(_CHARACTER, exists=True):
         label = cmds.optionMenu(_CHARACTER, query=True, value=True) or ""
+    # The fallback is the RIG (2026-09-07, «Add character теперь должен
+    # добавлять наш адванцед скелетон риг»): the row the dropdown opens on.
     return (catalog.character_by_label(label)
-            or catalog.default_character())
+            or catalog.default_rig())
 
 
 def remembered_character():

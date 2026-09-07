@@ -208,9 +208,30 @@ class CharacterTable(unittest.TestCase):
     branch. The animator's packs (Longsword/SwordAnimsetPro, ~1200 clips)
     all run on UE4_Mannequin, which is what the second row is for."""
 
-    def test_manny_is_first_so_it_stays_the_default(self):
-        self.assertEqual(catalog.CHARACTERS[0].key, "Manny")
-        self.assertIs(catalog.default_character(), catalog.CHARACTERS[0])
+    def test_the_rig_is_first_and_marked_as_a_rig(self):
+        """2026-09-07: Add Character adds the AdvancedSkeleton rig; the
+        dropdown opens on it."""
+        entry = catalog.CHARACTERS[0]
+        self.assertEqual(entry.key, "Manny_Rig")
+        self.assertEqual(entry.kind, "rig")
+        self.assertIn("[rig]", entry.label)
+        self.assertEqual(entry.file, "Manny_Rig.ma")
+        self.assertTrue(entry.legacy.endswith("Manny_rig_02.ma"))
+        self.assertIs(catalog.default_rig(), entry)
+        self.assertTrue(catalog.is_rig(entry))
+
+    def test_the_skeletons_are_marked_as_skeletons(self):
+        for key in ("Manny", "UE4_Mannequin"):
+            entry = catalog.character_by_key(key)
+            self.assertEqual(entry.kind, "skeleton", key)
+            self.assertIn("[skeleton]", entry.label)
+            self.assertFalse(catalog.is_rig(entry))
+
+    def test_the_default_character_is_still_the_skeleton(self):
+        """`character_path()` with no argument has always meant the Manny
+        SKELETON, whatever row the dropdown opens on."""
+        self.assertEqual(catalog.default_character().key, "Manny")
+        self.assertIsNot(catalog.default_character(), catalog.CHARACTERS[0])
 
     def test_the_ue4_mannequin_is_there(self):
         entry = catalog.character_by_key("UE4_Mannequin")
@@ -247,7 +268,29 @@ class CharacterTable(unittest.TestCase):
         """maya_skelfit, verify_add_character and three test modules ask
         this question and none of them is about the dropdown."""
         self.assertEqual(catalog.character_path(),
-                         catalog.character_file(catalog.CHARACTERS[0]))
+                         catalog.character_file(
+                             catalog.character_by_key("Manny")))
+        self.assertTrue(catalog.character_path().endswith("Manny_Skeleton.ma"))
+
+    def test_the_shipped_rig_is_the_animators_file_minus_camera1(self):
+        """A textual cut, diff-verified when it was made (2026-09-07): the
+        rig file minus the leftover `camera1` transform and shape, nothing
+        else. The file is 53 MB, so only the two facts that matter are
+        pinned: the camera is gone and the rig's own nodes are there."""
+        path = catalog.character_file(catalog.default_rig())
+        self.assertTrue(path.endswith("assets/Manny_Rig.ma"), path)
+        wanted = {'createNode transform -n "Group";': False,
+                  'createNode joint -n "root";': False,
+                  'createNode objectSet -n "ControlSet";': False,
+                  'createNode joint -n "camera_bone" -p "camera_root";': False,
+                  'createNode joint -n "weapon_r" -p "hand_r";': False}
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                self.assertNotIn("camera1", line)
+                stripped = line.rstrip("\r\n")
+                if stripped in wanted:
+                    wanted[stripped] = True
+        self.assertTrue(all(wanted.values()), wanted)
 
     def test_character_path_takes_an_entry(self):
         entry = catalog.character_by_key("UE4_Mannequin")

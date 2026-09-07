@@ -342,3 +342,68 @@ class NeedsGrey(unittest.TestCase):
 
     def test_the_grey_is_maya_s_own_default(self):
         self.assertEqual(character.GREY, (0.5, 0.5, 0.5))
+
+
+class OneRigPerScene(unittest.TestCase):
+    """The AdvancedSkeleton rig is added once (2026-09-07): both retarget
+    modules address it by name, and Maya uniquifies every one of those names
+    on a second import. Bare skeletons stay unlimited -- the 2026-09-01
+    freedom is untouched for them."""
+
+    def setUp(self):
+        self.real_cmds = character.cmds
+        self.real_present = character.rig_present
+
+    def tearDown(self):
+        character.cmds = self.real_cmds
+        character.rig_present = self.real_present
+
+    def _cmds(self, existing):
+        return types.SimpleNamespace(objExists=lambda name: name in existing)
+
+    def test_rig_present_needs_both_of_the_rigs_nodes(self):
+        character.cmds = self._cmds({"ControlSet"})
+        self.assertFalse(character.rig_present())
+        character.cmds = self._cmds({"Main"})
+        self.assertFalse(character.rig_present())
+        character.cmds = self._cmds({"ControlSet", "Main"})
+        self.assertTrue(character.rig_present())
+
+    def test_a_second_rig_is_refused_by_name_before_anything_is_touched(self):
+        character.rig_present = lambda: True
+        self.assertEqual(character.add_character(catalog.default_rig()),
+                         character.RIG_PRESENT)
+        self.assertIn("one AdvancedSkeleton rig per scene",
+                      character.RIG_PRESENT)
+
+    def test_a_skeleton_is_never_refused_for_a_standing_rig(self):
+        """Only the rig row asks; the skeleton rows go straight to the
+        file check, which is the next line and fails on a fake path."""
+        character.rig_present = lambda: True
+        saved = catalog.character_file
+        catalog.character_file = lambda entry: "D:/nowhere/" + entry.file
+        try:
+            text = character.add_character(catalog.default_character())
+        finally:
+            catalog.character_file = saved
+        self.assertEqual(text, character.NO_FILE.format(
+            "D:/nowhere/Manny_Skeleton.ma"))
+
+
+class ConnectFollowsThePickerFlag(unittest.TestCase):
+    """With the picker off the shelf (skeldar_features.PICKER False), a new
+    character is never handed to it -- opening a panel that is not on the
+    shelf from a Scene Setup press would surprise."""
+
+    def test_connect_is_off_while_the_picker_is_off(self):
+        import skeldar_features
+        saved = skeldar_features.PICKER
+        skeldar_features.PICKER = False
+        try:
+            self.assertFalse(character.connect("|root"))
+        finally:
+            skeldar_features.PICKER = saved
+
+    def test_no_root_is_no_connect_whatever_the_flag(self):
+        self.assertFalse(character.connect(None))
+        self.assertFalse(character.connect(""))

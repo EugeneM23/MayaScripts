@@ -52,6 +52,14 @@ RENAMED = "imported as {0} ({1} already in the scene)"
 # and whatever numeric suffix Maya hangs on a clash).
 _MALWARE = ("vaccine", "breed")
 
+# One AdvancedSkeleton rig per scene (2026-09-07): both retarget modules
+# address the rig by NAME -- `Main`, `ControlSet`, `|Group`, `FKWrist_R` --
+# and Maya uniquifies every one of those on a second import. Bare skeletons
+# stay unlimited.
+RIG_PRESENT = ("a rig is already in the scene - one AdvancedSkeleton rig per "
+               "scene; delete it (Group and its skeleton) before adding "
+               "another")
+
 
 # ------------------------------------------------------------------ policy
 
@@ -139,14 +147,22 @@ def added_message(joints, meshes, removed, note="", connected=False,
 
 # ------------------------------------------------------------------ action
 
+def rig_present():
+    """True when an AdvancedSkeleton rig stands in the scene."""
+    return bool(cmds.objExists("ControlSet") and cmds.objExists("Main"))
+
+
 def connect(root):
     """Hand the new character to the picker. True when one took it.
 
     Guarded and lazy: `picker_window` imports PySide6, and Scene Setup is
     plain `cmds` and has to keep working in a session where the picker
-    cannot even be imported (Maya 2024 and older ship PySide2).
+    cannot even be imported (Maya 2024 and older ship PySide2). And off
+    entirely while `skeldar_features.PICKER` is off (2026-09-07): the
+    picker is not on the shelf, so opening it from here would surprise.
     """
-    if not root:
+    import skeldar_features
+    if not root or not skeldar_features.PICKER:
         return False
     try:
         from maya_overrig import picker_window
@@ -378,9 +394,12 @@ def add_character(entry=None, rgb=None):
     from their UUIDs, because the flatten invalidates every long path below
     the wrapper -- trap 16).
     """
+    entry = entry or catalog.default_character()
+    if catalog.is_rig(entry) and rig_present():
+        return RIG_PRESENT
+
     from maya_overrig import builder  # drags maya.mel in; keep import lazy
 
-    entry = entry or catalog.default_character()
     path = catalog.character_file(entry)
     if not os.path.isfile(path):
         return NO_FILE.format(path)

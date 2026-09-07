@@ -18,8 +18,10 @@ Weapon = collections.namedtuple("Weapon", "key label path bone scale")
 # for the same reason the weapons are one: a third skeleton is a row, not a
 # branch. `legacy` stays per entry rather than a special case because
 # Manny's fallback IS the user's original file, typo and infection and all,
-# and that resolution rule has to survive.
-Character = collections.namedtuple("Character", "key label file legacy")
+# and that resolution rule has to survive. `kind` (2026-09-07) is "rig" or
+# "skeleton": the animator's ask was to add the AdvancedSkeleton rig and
+# keep the bare skeletons, «пометим их как скелеты, а риг как риг».
+Character = collections.namedtuple("Character", "key label file legacy kind")
 
 _LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
@@ -34,15 +36,27 @@ _LEGACY_SWORD = "C:/!!!Work/Animations/Sources/LongSword_02.fbx"
 _LEGACY_CHARACTER = ("C:/!!!Work/Animations/Rigs/Characters/"
                      "Manny_Sckeleton.ma")
 
+# The animator's own rig file (final, their word, 2026-09-07). The shipped
+# copy is this file minus its leftover `camera1` -- a textual cut, like the
+# vaccine cut, never an open-and-resave.
+_LEGACY_RIG = "C:/!!!Work/Animations/Rigs/Characters/Manny_rig_02.ma"
+
 
 CHARACTERS = [
-    Character("Manny", "Manny (UE5)", "Manny_Skeleton.ma",
-              _LEGACY_CHARACTER),
+    # The AdvancedSkeleton rig over Manny (built 2026-09-04..05), the working
+    # character since 2026-09-07: 93 UE bones under `root`, the rig under
+    # `Group`, the meshes at world level. ONE per scene -- the retarget
+    # addresses it by name (`Main`, `ControlSet`, `FKWrist_R`), and Maya
+    # uniquifies every one of those on a second import.
+    Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", _LEGACY_RIG, "rig"),
+    Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
+              _LEGACY_CHARACTER, "skeleton"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
     # (Longsword/SwordAnimsetPro, ~1200 clips) all run on it.
-    Character("UE4_Mannequin", "UE4 Mannequin", "UE4_Mannequin.fbx", ""),
+    Character("UE4_Mannequin", "UE4 Mannequin [skeleton]",
+              "UE4_Mannequin.fbx", "", "skeleton"),
 ]
 
 
@@ -66,8 +80,24 @@ def character_by_key(key):
 
 
 def default_character():
-    """Manny, so anyone who never opens the list sees today's behaviour."""
+    """The Manny SKELETON.
+
+    `character_path()` with no argument has always meant Manny_Skeleton.ma,
+    and `maya_skelfit`, `verify_add_character.py` and three test modules
+    ask it that way -- so this keeps answering the skeleton even though the
+    rig is row 0 and the dropdown's default since 2026-09-07.
+    """
+    return character_by_key("Manny")
+
+
+def default_rig():
+    """The AdvancedSkeleton rig: what the dropdown opens on and what the
+    UE bridge adds when the scene has none."""
     return CHARACTERS[0]
+
+
+def is_rig(entry):
+    return entry.kind == "rig"
 
 
 def character_file(entry):

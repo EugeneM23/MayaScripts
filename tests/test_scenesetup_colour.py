@@ -370,6 +370,49 @@ class Painting(unittest.TestCase):
         self.assertEqual(fake.created, [])
 
 
+class PaintingFresh(unittest.TestCase):
+    """An Add paints a NEW material whatever the asset wears (2026-09-07):
+    the shipped rig file carries the animator's own red blinn, and `paint`
+    would have reused it and brought every rig in red, swatch ignored."""
+
+    def setUp(self):
+        self.real = colour.cmds
+
+    def tearDown(self):
+        colour.cmds = self.real
+
+    def test_a_marked_material_is_not_reused(self):
+        fake = FakeCmds(assigned={"|bodyShape": "skeldarColour_red"},
+                        ours=["skeldarColour_red"])
+        colour.cmds = fake
+        material = colour.paint_fresh(["|bodyShape"], (0.25, 0.52, 0.85),
+                                      "Manny_Rig")
+        self.assertTrue(fake.created)
+        self.assertNotEqual(material, "skeldarColour_red")
+        self.assertNotIn("skeldarColour_red.color", fake.colours)
+        self.assertTrue(fake.forced)
+
+    def test_a_bare_mesh_is_painted_like_paint_does(self):
+        fake = FakeCmds(assigned={"|bodyShape": "lambert1"})
+        colour.cmds = fake
+        colour.paint_fresh(["|bodyShape"], (0.8, 0.25, 0.22), "Manny_Rig")
+        self.assertTrue(fake.created)
+        self.assertTrue(fake.forced)
+
+    def test_no_meshes_is_a_quiet_no_op(self):
+        fake = FakeCmds()
+        colour.cmds = fake
+        self.assertIsNone(colour.paint_fresh([], (0.8, 0.25, 0.22), "x"))
+        self.assertEqual(fake.created, [])
+
+    def test_paint_nodes_goes_the_fresh_way(self):
+        """Only Add Character calls it, and an import's nodes are fresh."""
+        with open(colour.__file__.replace(".pyc", ".py"),
+                  encoding="utf-8") as handle:
+            body = handle.read().split("def paint_nodes")[1]
+        self.assertIn("paint_fresh(", body)
+
+
 class ColourOf(unittest.TestCase):
     """What the swatch shows: our colour, or None when there is none. The
     window's standing rule is that the numbers on screen are never a lie
