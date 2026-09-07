@@ -57,6 +57,12 @@ def gate(number, ok, text, detail=""):
     return bool(ok)
 
 
+def _fmt(value):
+    """A measured number, or 'missing' -- never `x or -1`, which turns an
+    exact 0.0 into -1 on the report."""
+    return "missing" if value is None else "%.6f" % value
+
+
 def world(node):
     return cmds.xform(node, query=True, matrix=True, worldSpace=True)
 
@@ -165,18 +171,18 @@ def main():
     bones = bones_under(rig_root)
     errors = compare(reference, frames, bones, WATCHED, 0.05)
     gate(11, errors["hand_r"] is not None and errors["hand_r"] < 0.05,
-         "the retarget itself: hand_r on the reference", "worst %.6f" % (errors["hand_r"] or -1))
+         "the retarget itself: hand_r on the reference", "worst %s" % _fmt(errors["hand_r"]))
     gate(12, errors["root"] is not None and errors["root"] < 0.02,
-         "root motion through Main", "worst %.6f" % (errors["root"] or -1))
+         "root motion through Main", "worst %s" % _fmt(errors["root"]))
     gate(13, errors["weapon_r"] is not None and errors["weapon_r"] < 0.05,
-         "weapon_r carried onto the rig's skeleton", "worst %.6f" % (errors["weapon_r"] or -1))
+         "weapon_r carried onto the rig's skeleton", "worst %s" % _fmt(errors["weapon_r"]))
     gate(14, errors["weapon_l"] is not None and errors["weapon_l"] < 0.05,
-         "weapon_l carried", "worst %.6f" % (errors["weapon_l"] or -1))
+         "weapon_l carried", "worst %s" % _fmt(errors["weapon_l"]))
     gate(15, errors["camera_root"] is not None and errors["camera_root"] < 0.02,
-         "camera_root carried", "worst %.6f" % (errors["camera_root"] or -1))
+         "camera_root carried", "worst %s" % _fmt(errors["camera_root"]))
     gate(16, errors["camera_bone"] is not None and errors["camera_bone"] < 0.02,
          "camera_bone carried (and now driven by the camera)",
-         "worst %.6f" % (errors["camera_bone"] or -1))
+         "worst %s" % _fmt(errors["camera_bone"]))
 
     cams = camera.our_cameras()
     cam_bone = bones.get("camera_bone")
@@ -210,7 +216,7 @@ def main():
     bones = bones_under(rig_root)
     errors2 = compare(reference, frames, bones, ("weapon_r", "hand_r", "camera_bone"), 0.05)
     gate(23, errors2["weapon_r"] is not None and errors2["weapon_r"] < 0.05,
-         "weapon_r on the reference again, through the sword", "worst %.6f" % (errors2["weapon_r"] or -1))
+         "weapon_r on the reference again, through the sword", "worst %s" % _fmt(errors2["weapon_r"]))
     sword_err = max(worst(world(weapon), world(bone)) for _ in at_frames(frames, lambda: None))
     gate(24, sword_err < 0.05, "the sword rides weapon_r at the zero grip", "worst %.6f" % sword_err)
     cams = camera.our_cameras()
@@ -218,7 +224,7 @@ def main():
     gate(25, len(cams) == 1 and cam_bone and camera.our_constraints(cam_bone)
          and errors2["camera_bone"] is not None and errors2["camera_bone"] < 0.02,
          "one camera again, camera_bone on the reference", "%d camera(s), worst %.6f" % (
-             len(cams), errors2["camera_bone"] or -1))
+             len(cams), _fmt(errors2["camera_bone"])))
     left = [ns for ns in (cmds.namespaceInfo(":", listOnlyNamespaces=True) or [])
             if ns not in ("UI", "shared")]
     gate(26, not left, "no namespace left behind", str(left))
@@ -260,4 +266,8 @@ if __name__ == "__main__":
         traceback.print_exc()
         code = 99
     sys.stdout.flush()
+    try:
+        maya.standalone.uninitialize()   # a bare os._exit trips Maya's crash handler
+    except Exception:
+        pass
     os._exit(1 if code else 0)

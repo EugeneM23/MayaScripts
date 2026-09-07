@@ -143,6 +143,7 @@ class FakeCmds(object):
         # Deliberately fractional: the offset capture must not trust it.
         self.now = 7.3
         self.times = []
+        self.reads = []
         if grip:
             self.attrs[weapon + "." + bonedrive.GRIP_ROTATE] = tuple(grip[0])
             self.attrs[weapon + "." + bonedrive.GRIP_TRANSLATE] = tuple(grip[1])
@@ -196,7 +197,13 @@ class FakeCmds(object):
         self._note(("set", plug))
         self.attrs[plug] = tuple(values)
 
-    def getAttr(self, plug):
+    def getAttr(self, plug, **kwargs):
+        if "time" in kwargs:
+            # A keyed channel read off its curve at `time`: a value that
+            # depends on the time asked for, so a test can tell a frame-0
+            # read from a stale one.
+            self.reads.append((plug, kwargs["time"]))
+            return 100.0 + kwargs["time"]
         stored = self.attrs.get(plug)
         return [tuple(stored)] if stored else [(0.0, 0.0, 0.0)]
 
@@ -282,7 +289,8 @@ class Link(WithFake):
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
         frames = bonedrive.link(SWORD, BONE)
         self.assertEqual(self.phases(),
-                         ["constrain", "bake", "delete", "cut", "constrain"])
+                         ["constrain", "bake", "delete", "cut", "set",
+                          "constrain"])
         first = fake.log[0]
         self.assertEqual(first[1], (BONE, SWORD))
         self.assertIs(first[2], True)
@@ -301,6 +309,28 @@ class Link(WithFake):
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
         bonedrive.link(SWORD, BONE)
         self.assertEqual(fake.times, [0.0, 7.3])
+
+    def test_the_bone_is_settled_on_the_capture_frame_before_the_capture(self):
+        """`cutKey` leaves a channel at whatever the DG last EVALUATED, and a
+        session with no viewport pulling the joint evaluates nothing on a
+        bare currentTime -- measured in mayapy 2026-09-07: the bone kept
+        its frame-24 values through a cut "at frame 0" and rode the sword
+        0.319 cm off for the whole take. So the frame-start values are read
+        off the curves before the cut and written back after it, before the
+        constraint captures its offset."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        bonedrive.link(SWORD, BONE)
+        # Read at the range START, one per transform channel.
+        self.assertEqual(fake.reads,
+                         [("{0}.{1}".format(BONE, ch), 0.0)
+                          for ch in bonedrive.CHANNELS])
+        kinds = self.kinds()
+        cut, constrain = kinds.index("cut"), len(kinds) - 1
+        sets = [i for i, k in enumerate(kinds) if k == "set"]
+        self.assertEqual(len(sets), 6)
+        self.assertTrue(all(cut < i < constrain for i in sets))
+        # ... and what is written back is the frame-0 value, not `now`.
+        self.assertEqual(fake.attrs[BONE + ".translateX"], (100.0,))
 
     def test_no_transfer_means_no_time_jump(self):
         """A static sword evaluates exactly at any time - the animator's

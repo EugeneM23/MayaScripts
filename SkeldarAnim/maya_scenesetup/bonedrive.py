@@ -283,6 +283,17 @@ def link(weapon, bone):
     start, time put back): the weapon is a baked curve now, and a capture
     at a fractional currentTime would compare an interpolated weapon
     against the bone's exact cut value, riding that error on every frame.
+
+    And the bone is SETTLED on that frame by hand (2026-09-07): `cutKey`
+    leaves a channel holding whatever value was last EVALUATED, and
+    `currentTime(start)` evaluates nothing by itself in a session with no
+    viewport pulling the joint -- measured in mayapy: the bone kept its
+    frame-24 values through a cut "at frame 0", the capture compared them
+    against the sword's exact frame-0 key, and the bone rode the sword
+    0.319 cm off for the whole take. The live proofs passed because the
+    viewport happened to evaluate the joint (trap 14's family). So the
+    frame-`start` values are read off the curves before the cut and written
+    back after it, and the capture no longer depends on what got drawn.
     """
     start, end = bake_range(bone)
     frames = 0
@@ -297,12 +308,27 @@ def link(weapon, bone):
             parked = cmds.currentTime(query=True)
             cmds.currentTime(start)
         try:
+            settled = _keyed_values_at(bone, start)
             _cut(bone)
+            for plug, value in settled:
+                cmds.setAttr(plug, value)
             cmds.parentConstraint(weapon, bone, maintainOffset=True)
         finally:
             if parked is not None:
                 cmds.currentTime(parked)
     return frames
+
+
+def _keyed_values_at(node, time):
+    """[(plug, value)] of the node's keyed transform channels at `time`,
+    read off the curves themselves -- exact, whatever the DG last evaluated."""
+    out = []
+    for channel in CHANNELS:
+        plug = "{0}.{1}".format(node, channel)
+        if cmds.listConnections(plug, source=True, destination=False,
+                                type="animCurve"):
+            out.append((plug, cmds.getAttr(plug, time=time)))
+    return out
 
 
 def regrip(weapon, bone, rotate, translate):
