@@ -14,14 +14,21 @@ landed 2026-09-01 ("изолируем нашу полку как отдельн
 ```
 MayaScripts/                  the workshop
 ├── SkeldarAnim/              THE PLUGIN -- this, and only this, ships
-│   ├── install.py  README_INSTALL.txt
+│   ├── install.py  README_INSTALL.txt  skeldar_features.py
 │   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/  maya_curveview/
 │   ├── maya_overshoot.py  maya_hotkeys.py  maya_vpstudio.py  maya_colour.py
+│   ├── maya_asretarget.py  maya_pmretarget.py  maya_rig_retarget.py
 │   └── icons/  assets/  overrig/
 ├── make_build.py             dev tool: builds the zip from SkeldarAnim/
 ├── maya_skelfit.py  maya_meltmorph.py  maya_retarget.py  ...
 └── tests/  docs/  archive/  CLAUDE.md
 ```
+
+**Read the next section first — since 2026-09-07 the shelf is the
+AdvancedSkeleton pipeline, and OverRig and the picker are switched OFF.**
+Everything below about OverRig, the Rig Picker, Connect Arms, Add Aim and
+Camera Setup as a button describes code that is still in the repo and the
+payload, and still tested, but not on the shelf; two flags bring it back.
 
 `install.payload()` did not change: its names were always relative to
 `source_root()`, the folder holding `install.py`. Three things did —
@@ -52,6 +59,156 @@ shelf. `function_for_hotkeys.TXT` next to it is the closest thing to an API list
 The user is an animator at a game studio. The target rig is a stock **UE5 Manny**
 skeleton (`root`, `pelvis`, `spine_01..05`, `clavicle_*`, `upperarm_*`, `thigh_*`,
 full fingers with metacarpals, plus export helpers `ik_foot_root`, `ik_hand_gun`).
+
+## The AdvancedSkeleton pipeline (2026-09-07) — what the shelf is NOW
+
+The animator's ask, that morning: «отключим все что связано с over rig и
+полностью перейдем на наш риг и ретаргет адванцед скелетон … Bridge: import
+onto the skeleton поменяем на автоматический импорт нашего рига + импорт
+выбранной анимации, потом ретаргет, бейк, удаление скелета … уберем весь
+функционал по работе с перфорсом … одно окно … Add character добавляет наш
+адванцед скелетон риг … оружие к персонажу по выделенному контролу …
+Connect arms / disconnect / add aim / Camera setup убираем; сетап камеры в
+момент ретаргета … переносим анимацию weapon bone и camera root/bone».
+Spec: `docs/superpowers/specs/2026-09-07-advancedskeleton-pipeline-design.md`,
+plan `docs/superpowers/plans/2026-09-07-advancedskeleton-pipeline.md`.
+Proof: `verify_rig_pipeline.py` — **green 2026-09-07, 0 of 30 gates
+failed**, in **mayapy standalone** (it adds a rig and deletes skeletons, so
+never in the animator's scene); the installed copy refreshed and smoked
+live the same evening (2129 unit tests).
+
+**The shelf**: UE Bridge, Scene Setup, Retarget, Bake, Overshoot, Hotkeys,
+Studio, Colour, Curves. **`skeldar_features.py`** (stdlib, two booleans
+`OVERRIG` / `PICKER`, both False) gates the OverRig panel button and its 84
+hotkey rows, the Rig Picker button and its 6 rows, and handing a new
+character to the picker (`character.connect`). `install.features()` loads
+it from beside `install.py` by path (at drop time nothing of ours is on
+`sys.path`); `maya_hotkeys.commands(flags)` is the pure table. Nothing was
+deleted — the animator's words were «оставь его где-то».
+
+**The retarget lives in the plugin**: `maya_asretarget.py`,
+`maya_pmretarget.py`, `maya_rig_retarget.py` moved from the repo root into
+`SkeldarAnim/` (payload rows; `maya_pmretarget.ASSETS` is `<dir>/assets`
+now, it used to assume the repo root; the three verify scripts' `REPO`
+points at the plugin folder). The Retarget/Bake shelf buttons are the
+INSTALLER's (`maya_rig_retarget.retarget_button` / `bake_button` — call,
+print, `inViewMessage`), which retires the animator's two hand-made ones
+that every re-drag wiped.
+
+**The bake is ours, on the vendor's contract.** `vendor_bake(start, end)`
+in both modules is `asMoCapMatcherBake` read whole and replicated in
+`cmds` flag for flag (constraints off the holder's switch, resolved through
+`constraintParentInverseMatrix`, `bakeResults -simulation` over the range,
+`delete -staticChannels`); `bake()` calls it over `source_key_range()`.
+**No `mel.eval` is left in either module** — AdvancedSkeleton lives under
+one animator's `Downloads/` and a colleague's fresh Maya, or the bridge's
+IMPORT, would otherwise die on `Cannot find procedure` (trap 20's shape).
+The two modules stay independent copies (a test pins that pmretarget
+imports nothing from its sibling), so the helper is duplicated on purpose.
+
+**The Bake button does the whole "after the retarget"**
+(`maya_rig_retarget.bake`, one undo chunk): the module's bake → a standing
+camera setup torn down (`camera.teardown` bakes the bone back first) → any
+weapon link on `weapon_r`/`weapon_l` unlinked → the **helper bones**
+`weapon_r, weapon_l, camera_root, camera_bone` each parent-constrained to
+the source's bone of the same name, baked over the same range, released
+(`transfer_bone`; keys cut FIRST, or the constraint splices a pairBlend —
+trap 37's mechanism) → links relinked (the sword snaps onto the new track
+and takes its stored grip back) → the module's `disconnect()` → **Camera
+Setup** on the rig's `camera_bone` (`camera.setup`; the Scene Setup button
+is gone, this is where it happens). World space, no offset: the source is a
+twin and the rig's hand reproduces the source's to 0.0016 cm. Measured
+standalone: hand_r on the reference **0.000007**, weapon_r/weapon_l
+**0.000001**, camera_root/camera_bone **0.000000**, root motion
+**0.000000**; the camera sits in the bone's transform to **0.000000**. A
+Mixamo source has none of the four and the step says so; a bone under
+somebody else's constraint is skipped by name (`helper_plan`, pure).
+
+**The bridge is one window and IMPORT is the pipeline**
+(`maya_uebridge/rigimport.py`): rig present? else
+`character.add_character(default_rig())` (9.5 s measured) → the previous
+take cleared and the rig returned to build pose (below) → the clip imported
+as its own namespaced skeleton (`import_clip(..., merge=False)`) → source
+root = the topmost joint among `namespaceInfo(recurse=True, dagPath=True)`
+(a Mixamo clip nests `ns:mixamorig:Hips`; `ls("ns:*")` does not reach it) →
+`connect(source_root=...)` → `bake()` → `namespace(removeNamespace,
+deleteNamespaceContent=True)`. Refusals (`precheck`, pure) happen before
+anything is imported: no rig FILE when there is no rig, a standing
+`MoCapConstraints` ("press Bake, or disconnect, first"), a rig still posed
+after the reset. A connect refusal AFTER the import leaves the skeleton in
+the scene and says so. The other mode, «as a new skeleton», is the old
+namespaced import and stops there. The Export tab, Checkout and the VCS row
+left the window — `vcs.py`/`checkouts.py` stay as modules and a test pins
+that `window.py` imports neither; `Export FBX...` is the p4-less export,
+`Export to uasset` unchanged.
+
+**A clip import REPLACES the take** (`reset_build_pose()` in both
+modules): the controls' TIME curves deleted (driven keys are the rig's),
+translate/rotate zeroed where settable. Needed because **a BAKED rig
+passes `posed_controls()`** — a keyed channel is not settable and is
+skipped — while standing in the take's pose, and a connect made there
+measures the pole offsets against that pose. The same rule the merge had
+(trap 27). What is still posed afterwards is a channel the reset may not
+touch, and that IS the refusal, by name.
+
+**Which character — the selection, the rig, the sole skeleton**
+(`maya_scenesetup.skeleton.current_root`, pure `choose_root` +
+`selection_roots`): a node under the rig's top group (the top ancestor of
+`Main`, never `|Group` by name) or a joint's topmost joint; several answers
+→ none; then the rig's game skeleton (`rig_skeleton_root(rig_paths())`,
+schema-blind); then the only skeleton with the rig's own deformation
+joints excluded; then none. `animimport.connected_root()` feeds the same
+answer into the bridge's target rule, so Import, Export and Add Weapon
+never disagree. Scene Setup's header reads «Character: root (rig)».
+
+**Scene Setup**: `catalog.Character` gained `kind`; rows «Manny [rig]»
+(row 0, the dropdown's default, `default_rig()`), «Manny UE5 [skeleton]»
+(`default_character()` — `character_path()` with no argument still means
+`Manny_Skeleton.ma`, `maya_skelfit` asks it that way), «UE4 Mannequin
+[skeleton]». **One rig per scene** (`character.rig_present`, `RIG_PRESENT`):
+both retarget modules address it by name and Maya uniquifies
+`Main`/`ControlSet`/`FKWrist_R` on a second import. Connect Arms,
+Disconnect Arms, Add Aim, Camera Setup are gone from the window and from
+the hotkey table (modules stay; the Add/Remove guards over a standing link
+or aim keep protecting old files).
+
+**The shipped rig** `assets/Manny_Rig.ma` is the animator's final
+`Manny_rig_02.ma` minus its leftover `camera1` (15 lines, transform +
+shape, cut by line range, `diff` shows nothing else changed — textual like
+the vaccine cut, never an open-and-resave). It carries no vaccine, no
+references, no `MoCapConstraints`, and **the animator's own
+`skeldarColour_red` blinn on its meshes**, which `colour.paint` would have
+REUSED — every rig arriving red, swatch ignored. Add Character paints
+through `colour.paint_fresh` (a new material regardless of what the asset
+wears; the file's material is left unassigned and stops counting). Import
+of the `.ma` needs `matrixNodes`/`quatNodes`; interactive Maya auto-loads
+them, mayapy does not (`loadPlugin` in the verify). `requires mtoa /
+materialx / mayaUsdPlugin` in the file print warnings and import fine.
+
+Three things measured on the way, each a trap of its own:
+
+58. **`cutKey` leaves a channel at whatever the DG last EVALUATED, and a
+    bare `currentTime(start)` evaluates nothing in a session with no
+    viewport pulling the joint.** `bonedrive.link` captured its
+    `maintainOffset` at frame 0 against a bone still holding its frame-24
+    values: the sword's own track was exact (0.000000) and the bone rode it
+    **0.319 cm** off for the whole take — the live proofs passed because the
+    viewport happened to evaluate the joint (trap 14's family). The
+    frame-start values are now read off the curves before the cut and
+    written back after it (`_keyed_values_at`). Diagnosed by measuring, not
+    by guessing: `simulation=True` on the bake changed nothing about the
+    sword's track, which was never the problem.
+59. **`getAttr(plug, settable=True)` is False for a KEYED channel**, so a
+    pose check that skips unsettable channels reads a baked rig as "at
+    build pose". Hence the reset before every import.
+60. **A test fixture that installs a fake `maya` when the real one is
+    importable shadows the real package for every test module loaded after
+    it** — `maya.api` is then not a package and `maya.api.OpenMayaAnim`
+    fails to import. Guard on `try: import maya.cmds` first (the window
+    tests' pattern); `"maya.cmds" in sys.modules` alone is not enough.
+
+Not built: several rigs in one scene; a PlayerMale rig row in Add
+Character; Retarget from the Scene Setup window; removal of anything.
 
 ## Driving the user's live Maya
 
@@ -3352,8 +3509,12 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with nine buttons — Rig Picker, UE Bridge, Scene Setup,
-Overshoot, Hotkeys, Studio, Colour, Curves, and the native OverRig panel.
+**SkeldarAnim** with nine buttons — since 2026-09-07 **UE Bridge, Scene
+Setup, Retarget, Bake, Overshoot, Hotkeys, Studio, Colour, Curves**; the
+Rig Picker and the native OverRig panel come back with the two flags in
+`skeldar_features.py` (`install.features()` reads it from beside
+`install.py`, `_PYTHON_BUTTONS` rows carry the flag's name). The zip is
+**26.4 MB, 86 files** now (`assets/Manny_Rig.ma`, 53 MB uncompressed).
 Design: `docs/superpowers/specs/2026-08-21-installer-design.md` (written
 when there were five; the sixth arrived 2026-09-02, Viewport Studio and
 Colour both on 2026-09-03, and the Curve Overlay on 2026-09-05, each with
@@ -3833,7 +3994,7 @@ the live run changed three decisions). Proof:
 26 gates failed**; 47 unit tests.
 
 ```python
-import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
 import maya_asretarget
 print(maya_asretarget.report())      # read-only: what would be driven, from what
 print(maya_asretarget.connect())     # build it, from the SELECTED source skeleton
@@ -4251,7 +4412,9 @@ animator's `Sweep Fall.fbx`); 55 unit tests.
   `maya_pmretarget` — and forwards `report/connect/bake/disconnect`;
   `maya_asretarget` gained the same `bake()` (vendor Bake over the clip's keys,
   then Disconnect) so the pair of buttons means the same on `Manny_rig_02` and
-  `Lugal_Rig_01`. **The two buttons live on the animator's SkeldarAnim shelf
-  (`shelfButton9` RTG = connect, `shelfButton32` BAKE = bake+disconnect), which the
-  installer REBUILDS on a re-drag** — they are the animator's, not the payload's;
-  a re-install wipes them unless they move to the Custom shelf.
+  `Lugal_Rig_01`. **Since 2026-09-07 the two buttons are the INSTALLER's**
+  (Retarget / Bake on the shelf, `maya_rig_retarget.retarget_button` /
+  `bake_button`), the three modules live in `SkeldarAnim/`, the bake is
+  native (`vendor_bake`) and Bake also carries the helper bones and sets the
+  camera up — see the pipeline section at the top. The animator's hand-made
+  `shelfButton9`/`shelfButton32` were replaced by the 2026-09-07 re-install.
