@@ -27,7 +27,7 @@ import maya.api.OpenMaya as om
 import maya.cmds as cmds
 import maya.mel as mel
 
-REPO = "C:/!!!Work/MayaScripts"
+REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"   # the retarget modules live in the plugin since 2026-09-07
 MIXAMO_FBX = "C:/Users/MY PC/Downloads/Sweep Fall.fbx"
 END = 20.0
 SAMPLES = [0.0, 6.0, 13.0, 20.0]

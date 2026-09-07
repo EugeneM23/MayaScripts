@@ -22,7 +22,7 @@ import maya.api.OpenMaya as om
 import maya.cmds as cmds
 import maya.mel as mel
 
-REPO = "C:/!!!Work/MayaScripts"
+REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"   # the retarget modules live in the plugin since 2026-09-07
 AS_MEL = "C:/Users/MY PC/Downloads/AdvancedSkeleton/AdvancedSkeleton.mel"
 BAKE = True                      # the bake gate costs ~76 frames x 70 controls
 

@@ -665,16 +665,21 @@ class TestNames(unittest.TestCase):
         self.assertEqual(ar.HOLDER, "MoCapConstraints")
         self.assertEqual(ar.SWITCH, "disableConstraints")
 
-    def test_no_bake_of_our_own(self):
-        # The bake is AdvancedSkeleton's: bake() (2026-09-06) only presses the
-        # vendor's Bake over the clip's keys and then its Disconnect, so a
-        # Disconnect can no longer be pressed alone by accident.  A second
-        # implementation would drift from the vendor's, so bakeResults stays out.
+    def test_the_only_bake_is_the_vendors_contract(self):
+        # Until 2026-09-07 the bake was the vendor's MEL, pressed from here; a
+        # second implementation "would drift from the vendor's".  It is ours
+        # now -- `vendor_bake`, the vendor's proc read whole and replicated
+        # flag for flag -- because the bridge's IMPORT and a colleague's fresh
+        # Maya have no AdvancedSkeleton sourced.  The drift argument still
+        # holds for everything else: `bakeResults` appears in that one
+        # function and nowhere else, and no MEL is evaluated at all.
         with open(ar.__file__.replace(".pyc", ".py"), encoding="utf-8") as fh:
             src = fh.read()
         self.assertTrue(callable(ar.bake))
-        self.assertIn("asMoCapMatcherBake", src)
-        self.assertNotIn("bakeResults", src)
+        self.assertEqual(src.count("cmds.bakeResults("), 1)
+        self.assertIn("cmds.bakeResults(", src.split("def vendor_bake")[1]
+                      .split("\ndef ")[0])
+        self.assertNotIn("mel.eval(", src)
 
     def test_the_neck_note_only_reports_and_the_setter_only_sets(self):
         # a function whose name says "note" must not change the animator's rig:
@@ -706,3 +711,84 @@ class TestNames(unittest.TestCase):
             source = handle.read()
         for banned in ("PySide", "shiboken", "QtWidgets"):
             self.assertNotIn(banned, source)
+
+
+class FakeBakeCmds(object):
+    """Just enough of cmds for vendor_bake: the holder's switch fans out to
+    three constraints, two of which drive the same control."""
+
+    def __init__(self):
+        self.calls = []
+        self.driven = {"c1": ["FKWrist_R"], "c2": ["IKArm_L"], "c3": ["FKWrist_R"]}
+
+    def objExists(self, name):
+        return True
+
+    def attributeQuery(self, *args, **kwargs):
+        return True
+
+    def getAttr(self, plug):
+        return "|clip:root"
+
+    def listConnections(self, plug, **kwargs):
+        node, attr = plug.split(".")
+        if attr == ar.SWITCH:
+            return ["c1", "c2", "c3"]
+        if attr == "constraintParentInverseMatrix":
+            return self.driven[node]
+        return []
+
+    def bakeResults(self, *objs, **kwargs):
+        self.calls.append(("bakeResults", objs, kwargs))
+
+    def delete(self, *objs, **kwargs):
+        self.calls.append(("delete", objs, kwargs))
+
+
+class TestVendorBake(unittest.TestCase):
+    """The vendor's `asMoCapMatcherBake`, read whole and replicated in cmds
+    (2026-09-07), so a session that never sourced AdvancedSkeleton bakes."""
+
+    def setUp(self):
+        self.real = ar.cmds
+        self.fake = FakeBakeCmds()
+        ar.cmds = self.fake
+
+    def tearDown(self):
+        ar.cmds = self.real
+
+    def test_every_driven_object_is_baked_once(self):
+        self.assertEqual(ar.vendor_bake(3.0, 41.0), ["FKWrist_R", "IKArm_L"])
+
+    def test_the_bake_carries_the_vendors_flags(self):
+        ar.vendor_bake(3.0, 41.0)
+        name, objs, k = self.fake.calls[0]
+        self.assertEqual((name, objs), ("bakeResults", ("FKWrist_R", "IKArm_L")))
+        self.assertEqual(k["time"], (3.0, 41.0))
+        for flag, value in (("simulation", True), ("sampleBy", 1),
+                            ("disableImplicitControl", True),
+                            ("preserveOutsideKeys", False),
+                            ("sparseAnimCurveBake", False),
+                            ("removeBakedAttributeFromLayer", False),
+                            ("bakeOnOverrideLayer", False),
+                            ("controlPoints", False), ("shape", False)):
+            self.assertEqual(k[flag], value, flag)
+
+    def test_static_channels_are_deleted_the_vendors_way(self):
+        ar.vendor_bake(3.0, 41.0)
+        name, objs, k = self.fake.calls[1]
+        self.assertEqual((name, objs), ("delete", ("FKWrist_R", "IKArm_L")))
+        self.assertEqual(
+            (k["staticChannels"], k["unitlessAnimationCurves"], k["hierarchy"],
+             k["controlPoints"], k["shape"]),
+            (True, False, "none", False, True))
+
+    def test_nothing_registered_bakes_nothing(self):
+        self.fake.listConnections = lambda plug, **k: []
+        self.assertEqual(ar.vendor_bake(0.0, 1.0), [])
+        self.assertEqual(self.fake.calls, [])
+
+    def test_connected_source_reads_the_holder(self):
+        self.assertEqual(ar.connected_source(), "|clip:root")
+        self.fake.objExists = lambda name: False
+        self.assertIsNone(ar.connected_source())

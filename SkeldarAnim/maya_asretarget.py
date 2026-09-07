@@ -18,7 +18,7 @@ Design: docs/superpowers/specs/2026-09-04-as-retarget-design.md
         docs/superpowers/specs/2026-09-05-asretarget-mixamo-design.md
 
 Run in Maya (Script Editor, Python tab):
-    import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
+    import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
     import maya_asretarget
     print(maya_asretarget.report())      # read-only: what would be driven
     print(maya_asretarget.connect())     # build it, from the selected skeleton
@@ -32,7 +32,6 @@ import math
 
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
-import maya.mel as mel
 
 # AdvancedSkeleton deform-joint base -> UE bone base.  The rig's own map
 # (2026-09-04), minus the twist Part joints: they have no FK controls and the
@@ -756,29 +755,59 @@ def source_key_range():
     return cmds.findKeyframe(paths, which="first"), cmds.findKeyframe(paths, which="last")
 
 
+def vendor_bake(start, end):
+    """What AdvancedSkeleton's `asMoCapMatcherBake` does, in cmds, flag for flag.
+
+    Read whole from the vendor's MEL (2026-09-07): every constraint on the holder's
+    switch, resolved through `constraintParentInverseMatrix` to the object it drives,
+    baked with -simulation over the range, static channels deleted afterwards.  Ours so
+    the bake needs nothing of AdvancedSkeleton sourced in the session -- the vendor's
+    install lives under one animator's Downloads/, and a colleague's fresh Maya or the
+    bridge's IMPORT would otherwise die on `Cannot find procedure` (trap 20's shape).
+    Returns the objects baked, in the order the constraints were registered.
+    """
+    constraints = cmds.listConnections(HOLDER + "." + SWITCH, source=False, destination=True) or []
+    controls = []
+    for constraint in constraints:
+        driven = cmds.listConnections(constraint + ".constraintParentInverseMatrix") or []
+        if driven and driven[0] not in controls:
+            controls.append(driven[0])
+    if not controls:
+        return []
+    cmds.bakeResults(*controls, simulation=True, time=(start, end), sampleBy=1,
+                     disableImplicitControl=True, preserveOutsideKeys=False,
+                     sparseAnimCurveBake=False, removeBakedAttributeFromLayer=False,
+                     bakeOnOverrideLayer=False, controlPoints=False, shape=False)
+    cmds.delete(*controls, staticChannels=True, unitlessAnimationCurves=False,
+                hierarchy="none", controlPoints=False, shape=True)
+    return controls
+
+
+def connected_source():
+    """The source root connect() remembered on the holder, or None."""
+    if not cmds.objExists(HOLDER) or not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
+        return None
+    root = cmds.getAttr(HOLDER + "." + SOURCE_ATTR)
+    return root if root and cmds.objExists(root) else None
+
+
 def bake(disconnect=True):
     """AdvancedSkeleton's own MoCap Matcher > Bake, over the CLIP's key range, then (by default)
     its Disconnect MoCap Skeleton -- one call, so the bake cannot be skipped by accident
     (2026-09-06: a Disconnect without it left the Lugal rig frozen in one pose).
 
-    The vendor's `asMoCapMatcherBake` bakes every object our constraints drive across the
-    PLAYBACK range and deletes static channels; it reads the holder, not its window.  The
-    range is set to the connected source's keys for the length of the bake and put back.
+    Since 2026-09-07 the bake itself is `vendor_bake` -- the vendor's proc in cmds, flag
+    for flag -- over the connected source's key range, so nothing of AdvancedSkeleton has
+    to be sourced in the session: the bridge's IMPORT and a colleague's fresh Maya both
+    press this without the vendor's shelf button ever having been pressed.
     """
     if not cmds.objExists(HOLDER):
         return "nothing connected (%s not found) - connect() first" % HOLDER
     controls = set(cmds.sets("ControlSet", query=True) or [])
     before = set(c for c in controls if cmds.listConnections(c, type="animCurve", source=True, destination=False))
-    span = source_key_range()
-    saved = (cmds.playbackOptions(query=True, min=True), cmds.playbackOptions(query=True, max=True),
-             cmds.playbackOptions(query=True, animationStartTime=True), cmds.playbackOptions(query=True, animationEndTime=True))
-    if span:
-        cmds.playbackOptions(edit=True, min=span[0], max=span[1], animationStartTime=min(span[0], saved[2]),
-                             animationEndTime=max(span[1], saved[3]))
-    try:
-        mel.eval("asMoCapMatcherBake;")
-    finally:
-        cmds.playbackOptions(edit=True, min=saved[0], max=saved[1], animationStartTime=saved[2], animationEndTime=saved[3])
+    span = source_key_range() or (cmds.playbackOptions(query=True, min=True),
+                                  cmds.playbackOptions(query=True, max=True))
+    vendor_bake(span[0], span[1])
     keyed = [c for c in controls if c not in before and cmds.listConnections(c, type="animCurve", source=True, destination=False)]
     curves = list(set(cmds.listConnections(keyed, type="animCurve", source=True, destination=False) or [])) if keyed else []
     baked = ("%g..%g" % (cmds.findKeyframe(curves, which="first"), cmds.findKeyframe(curves, which="last"))) if curves else "nothing"
