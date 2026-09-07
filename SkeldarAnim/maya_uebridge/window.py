@@ -1,6 +1,19 @@
-"""The window: browse the editor's animations, search, import one.
+"""The window: browse the editor's animations, search, import one onto the rig.
 
 Pure `maya.cmds` - a scroll list and a text field need no Qt.
+
+One window since 2026-09-07 (the animator: «сделаем одно окно для всех
+действий, а не так как сейчас импорт и экспорт отдельно» and «уберем весь
+функционал по работе с перфорсом»): the list, the search, the import mode,
+and three buttons -- Export FBX..., Export to uasset, IMPORT. The Export tab,
+the Checkout button and the version-control row are gone from the window;
+`vcs.py` and `checkouts.py` stay as modules and this file imports neither.
+
+IMPORT in the default mode is the whole pipeline (`rigimport`): the
+AdvancedSkeleton rig added if the scene has none, the clip imported as its
+own skeleton, the retarget connected and baked -- weapon and camera bones
+carried, the camera set up -- and the source skeleton deleted. The other
+mode imports the clip as a new namespaced skeleton and stops there.
 
 Two habits from the rest of this repo are load-bearing here. Every callback
 goes through `_run`, which puts the failure on the status line: an exception
@@ -20,10 +33,8 @@ from maya_uebridge import animimport
 from maya_uebridge import records
 from maya_uebridge import uelink
 from maya_uebridge import uescripts
-from maya_uebridge import vcs
 
 WINDOW = "ueAnimBridgeWindow"
-_TABS = "ueAnimBridgeTabs"
 _LIST = "ueAnimBridgeList"
 _SEARCH = "ueAnimBridgeSearch"
 _STATUS = "ueAnimBridgeStatus"
@@ -31,8 +42,11 @@ _HEADER = "ueAnimBridgeHeader"
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
 _MODE = "ueAnimBridgeMode"
-_VCS = "ueAnimBridgeVcs"
-_VCSROOT = "ueAnimBridgeVcsRoot"
+
+# Windows earlier builds left open: the checkouts popup of 2026-08-21's
+# afternoon. Deleted on every open, or a panel from an older build stays
+# up wired to dead code.
+LEGACY_WINDOWS = ("ueBridgeCheckouts",)
 
 CACHE_NAME = "maya_uebridge_cache.json"
 
@@ -96,6 +110,7 @@ def temp_folder():
 def _status(text):
     if cmds.text(_STATUS, exists=True):
         cmds.text(_STATUS, edit=True, label=text)
+
 
 def _header(text):
     if cmds.text(_HEADER, exists=True):
@@ -161,14 +176,11 @@ def _project_label(project_path):
 
 
 def _repopulate(quiet=False):
-    """Rebuild the import list: rows, the checkout marks, the selection.
+    """Rebuild the list: rows and the selection.
 
-    The tick and green marks come from `checkouts.marks()` - the LAST p4
-    read, never a fresh poll (the user's rule: only Refresh and file
-    actions talk to Perforce). `quiet` skips the status write, for callers
-    that are about to say something more specific.
+    `quiet` skips the status write, for callers that are about to say
+    something more specific.
     """
-    from maya_uebridge import checkouts
     query = cmds.textField(_SEARCH, query=True, text=True) if cmds.textField(
         _SEARCH, exists=True) else ""
     shown = records.filter_records(_STATE["records"], query)
@@ -182,15 +194,9 @@ def _repopulate(quiet=False):
                if 0 < i <= len(previous))
 
     _STATE["filtered"] = shown
-    checked, modified = checkouts.marks()
     cmds.textScrollList(_LIST, edit=True, removeAll=True)
     for record in shown:
-        cmds.textScrollList(
-            _LIST, edit=True,
-            append=checkouts.mark_prefix(record.package, checked)
-            + records.format_row(record))
-    checkouts.paint_rows(_LIST, [index for index, record in enumerate(shown)
-                                 if record.package.lower() in modified])
+        cmds.textScrollList(_LIST, edit=True, append=records.format_row(record))
     for index, record in enumerate(shown, 1):
         if record.package in keep:
             cmds.textScrollList(_LIST, edit=True, selectIndexedItem=index)
@@ -243,13 +249,6 @@ def refresh():
     save_cache(found, _STATE["project"], chosen, _STATE["content_dir"])
 
     _header("connected")
-    # The top Refresh is an allowed p4 moment too (a button press), so the
-    # checkout marks on the fresh list are not stale - but only for a user
-    # who works with Perforce at all, or a p4-less machine would pay two
-    # 15s timeouts per Refresh.
-    if vcs_enabled():
-        from maya_uebridge import checkouts
-        checkouts.refresh_tab()
     # _repopulate writes the count itself, honouring whatever is in the search
     # box - overwriting it here would report the unfiltered total over a
     # filtered list.
@@ -260,67 +259,60 @@ def refresh():
             cmds.text(_STATUS, query=True, label=True), extra))
 
 
-def import_selected():
-    """Export the selected animation from the editor and bring it in."""
-    record = _selected_record()
-    if record is None:
-        _status("select an animation first")
-        return
+def retarget_selected():
+    """True when IMPORT means the whole pipeline (the default); False for
+    "as a new skeleton"."""
+    if not cmds.radioButtonGrp(_MODE, exists=True):
+        return True
+    return cmds.radioButtonGrp(_MODE, query=True, select=True) == 1
 
-    # Resolve the working file BEFORE the export: path dialogs first, and a
-    # cancel costs nothing. p4 runs AFTER the export: no depot state is
-    # touched until a new file actually exists to place.
-    target, is_new = None, False
-    if vcs_enabled():
-        resolved = _vcs_target(record)
-        if resolved is None:
-            _status("import cancelled")
-            return
-        target, is_new = resolved
 
+def _export_from_editor(record):
+    """The clip out of the editor into the temp folder: (fbx path, fps)."""
     out = os.path.join(temp_folder(), "export.json")
     fbx = os.path.join(temp_folder(), "{0}.fbx".format(record.name))
     # Export from the same editor the list came from, or a second open project
     # would answer with an asset path it does not have.
     payload = uelink.run_script(uescripts.export_script(out, record.package, fbx),
                                 out, project=project_choice())
+    return payload.get("path") or fbx, payload.get("fps") or record.fps
 
-    exported = payload.get("path") or fbx
-    suffix = ""
-    if target:
-        proceed, note = vcs.prepare_target(target, _ask_others, _ask_failure)
-        if not proceed:
-            _status("import cancelled - {0} untouched".format(
-                os.path.basename(target)))
-            return
-        vcs.place(exported, target)
-        # "New" is the depot's verdict, not the disk's: a depot file synced
-        # on demand did not exist locally a moment ago and is anything but.
-        suffix = vcs.status_suffix(target, _saved_root(),
-                                   is_new and note == "not in depot", note)
 
-    merge = merge_selected()
-    namespace = ("" if merge else
-                 records.namespace_for(record.name,
-                                       animimport.existing_namespaces()))
+def import_selected():
+    """Export the selected animation from the editor and bring it in.
+
+    Default: onto the rig, through `rigimport` -- add the rig if missing,
+    import the clip as its own skeleton, retarget, bake, delete the source.
+    Otherwise: the clip as a new namespaced skeleton, and nothing more.
+    """
+    record = _selected_record()
+    if record is None:
+        _status("select an animation first")
+        return
+
+    exported, fps = _export_from_editor(record)
     set_timeline = cmds.checkBox(_TIMELINE, query=True, value=True)
 
+    if retarget_selected():
+        from maya_uebridge import rigimport   # lazy: keeps the import graph flat
+        _status(rigimport.import_and_retarget(
+            exported, record.name, clip_fps=fps, set_timeline=set_timeline))
+        return
+
+    namespace = records.namespace_for(record.name,
+                                      animimport.existing_namespaces())
     cmds.undoInfo(openChunk=True, chunkName="UE anim import")
     try:
-        info = animimport.import_clip(
-            target or exported,
-            namespace,
-            set_timeline=set_timeline,
-            clip_fps=payload.get("fps") or record.fps,
-            merge=merge)
+        info = animimport.import_clip(exported, namespace,
+                                      set_timeline=set_timeline,
+                                      clip_fps=fps, merge=False)
     finally:
         cmds.undoInfo(closeChunk=True)
-
-    _status(with_vcs_suffix(import_line(record.name, info), suffix))
+    _status(import_line(record.name, info))
 
 
 def import_line(name, info):
-    """What the status says after an import. Pure, so the wording is tested."""
+    """What the status says after a plain import. Pure, so the wording is tested."""
     span = ""
     if info.get("start") is not None:
         span = ", frames {0:g}-{1:g}".format(info["start"], info["end"])
@@ -350,195 +342,29 @@ def export_uasset_selected():
         project_choice(), temp_folder()))
 
 
-def merge_selected():
-    """True when the clip should land on the skeleton already in the scene."""
-    if not cmds.radioButtonGrp(_MODE, exists=True):
-        return True
-    return cmds.radioButtonGrp(_MODE, query=True, select=True) == 1
+def export_fbx_selected():
+    """A plain FBX of the resolved skeleton, where the dialog says.
 
-
-def checkout_selected():
-    """Open the selected animation's uasset+fbx pair in Perforce."""
-    record = _selected_record()
-    if record is None:
-        _status("select an animation first")
+    The p4-less half of what the Export tab used to do: the skeleton is the
+    same one an import would target (selection, the rig, the sole
+    skeleton), baked on export so no rig is ever touched.
+    """
+    from maya_uebridge import animexport   # lazy: keeps the import graph flat
+    paths = cmds.fileDialog2(fileFilter="FBX (*.fbx)", dialogStyle=2,
+                             fileMode=0, caption="Export skeleton animation")
+    if not paths:
+        _status("export cancelled")
         return
-    # Lazy: checkouts imports this module at its top, so the top-level import
-    # graph must stay one-directional.
-    from maya_uebridge import checkouts
-    line = checkouts.checkout_pair(record)
-    # The Export tab shows the pair the moment it is opened; refresh before
-    # the status write, or the row count would overwrite the checkout line.
-    checkouts.refresh_tab()
-    _status(line)
-
-
-# No handler on the tab switch, deliberately (the user's follow-up: «не
-# нужно каждый раз опрашивать перфорс когда мы открываем вкладку export») -
-# the checkouts list re-reads Perforce only on its Refresh button and after
-# the actions that change it (Checkout, Revert, EXPORT).
-
-
-# ---------------------------------------------------------------- vcs
-
-def vcs_enabled():
-    if not cmds.checkBox(_VCS, exists=True):
-        return False
-    return bool(cmds.checkBox(_VCS, query=True, value=True))
-
-
-def _saved_root():
-    if cmds.optionVar(exists="ueBridgeVcsRoot"):
-        return cmds.optionVar(query="ueBridgeVcsRoot") or ""
-    return ""
-
-
-def _root_label(root):
-    return root or "no source project set"
-
-
-def _pick_root():
-    kwargs = {"fileMode": 3, "dialogStyle": 2,
-              "caption": "Where is the source project (the SourceArt root)?"}
-    saved = _saved_root()
-    if saved and os.path.isdir(saved):
-        kwargs["startingDirectory"] = saved
-    picked = cmds.fileDialog2(**kwargs) or []
-    return picked[0] if picked else ""
-
-
-def _apply_root(root):
-    cmds.optionVar(stringValue=("ueBridgeVcsRoot", root))
-    if cmds.text(_VCSROOT, exists=True):
-        cmds.text(_VCSROOT, edit=True, label=_root_label(root))
-
-
-def _vcs_toggled():
-    """First activation asks where the source project is; declining the
-    dialog flips the checkbox back off."""
-    if cmds.text(_VCSROOT, exists=True):
-        cmds.text(_VCSROOT, edit=True, enable=vcs_enabled())
-    if not vcs_enabled():
-        cmds.optionVar(intValue=("ueBridgeVcs", 0))
-        return
-    root = _saved_root()
-    if not root or not os.path.isdir(root):
-        root = _pick_root()
-        if not root:
-            cmds.checkBox(_VCS, edit=True, value=False)
-            cmds.optionVar(intValue=("ueBridgeVcs", 0))
-            if cmds.text(_VCSROOT, exists=True):
-                cmds.text(_VCSROOT, edit=True, enable=False)
-            _status("version control needs the source project folder")
-            return
-        _apply_root(root)
-    cmds.optionVar(intValue=("ueBridgeVcs", 1))
-
-
-def _change_root():
-    root = _pick_root()
-    if root:
-        _apply_root(root)
-
-
-def _load_dir_map():
-    if not cmds.optionVar(exists="ueBridgeVcsDirMap"):
-        return {}
-    try:
-        return json.loads(cmds.optionVar(query="ueBridgeVcsDirMap") or "{}")
-    except ValueError:
-        return {}
-
-
-def _save_dir_map(dir_map):
-    cmds.optionVar(stringValue=("ueBridgeVcsDirMap", json.dumps(dir_map)))
-
-
-def _ask_which_file(paths):
-    """A numbered dialog, not a file picker: a depot-only candidate does not
-    exist on disk yet, and a picker cannot select a file that is not there."""
-    shown = paths[:6]
-    lines = ["{0}.  {1}".format(index + 1, path)
-             for index, path in enumerate(shown)]
-    answer = cmds.confirmDialog(
-        title="Several working fbx match",
-        message="Pick the working file:\n\n{0}".format("\n".join(lines)),
-        button=[str(index + 1) for index in range(len(shown))] + ["Cancel"],
-        defaultButton="Cancel", cancelButton="Cancel", dismissString="Cancel")
-    if not answer.isdigit():
-        return ""
-    return shown[int(answer) - 1]
-
-
-def _ask_new_folder(name):
-    kwargs = {"fileMode": 3, "dialogStyle": 2,
-              "caption": "Folder for the new {0}.fbx".format(name)}
-    saved = _saved_root()
-    if saved and os.path.isdir(saved):
-        kwargs["startingDirectory"] = saved
-    picked = cmds.fileDialog2(**kwargs) or []
-    return picked[0] if picked else ""
-
-
-def _ask_others(users):
-    answer = cmds.confirmDialog(
-        title="Perforce", icon="warning",
-        message="Already checked out by:\n  {0}".format("\n  ".join(users)),
-        button=["Overwrite locally", "Cancel"], defaultButton="Cancel",
-        cancelButton="Cancel", dismissString="Cancel")
-    return answer == "Overwrite locally"
-
-
-def _ask_failure(reason):
-    answer = cmds.confirmDialog(
-        title="Perforce", icon="warning", message=reason,
-        button=["Continue locally", "Cancel"], defaultButton="Cancel",
-        cancelButton="Cancel", dismissString="Cancel")
-    return answer == "Continue locally"
-
-
-def _vcs_target(record, asks=None):
-    """The working-file path for this asset: (target, is_new), or None when
-    the user cancelled. `asks` overrides the dialogs - the live verify drives
-    this over the command port, where a modal would block Maya (bridge
-    note 6)."""
-    asks = asks or {}
-    root = _saved_root()
-    if not root or not os.path.isdir(root):
-        root = asks.get("root", _pick_root)()
-        if not root:
-            return None
-        _apply_root(root)
-    dir_map = _load_dir_map()
-    target, grown = vcs.choose_target(
-        record.name, record.package, root, dir_map,
-        asks.get("file", _ask_which_file), asks.get("folder", _ask_new_folder),
-        run=asks.get("run", vcs.run_p4))
-    if grown != dir_map:
-        _save_dir_map(grown)
-    if not target:
-        return None
-    return target, not os.path.exists(target)
-
-
-def with_vcs_suffix(line, suffix):
-    """Pure - the status wording is tested without widgets."""
-    if not suffix:
-        return line
-    return "{0}  |  {1}".format(line, suffix)
+    info = animexport.export_hierarchy(paths[0])
+    _status(animexport.export_line(os.path.basename(paths[0]), info))
 
 
 # ---------------------------------------------------------------- window
 
 def show_window():
-    if cmds.window(WINDOW, exists=True):
-        cmds.deleteUI(WINDOW)
-    # Lazy for the import graph (checkouts imports this module at its top).
-    from maya_uebridge import checkouts
-    # The popup the Export tab replaced; one left open from an older build
-    # would stay up wired to dead code.
-    if cmds.window(checkouts.LEGACY_WINDOW, exists=True):
-        cmds.deleteUI(checkouts.LEGACY_WINDOW)
+    for name in (WINDOW,) + LEGACY_WINDOWS:
+        if cmds.window(name, exists=True):
+            cmds.deleteUI(name)
 
     cmds.window(WINDOW, title="UE Animation Bridge", widthHeight=(760, 520))
     form = cmds.formLayout(numberOfDivisions=100)
@@ -553,12 +379,6 @@ def show_window():
         label="Refresh", width=90,
         command=lambda *_: _run(refresh, busy="asking the editor..."))
 
-    # Two tabs since 2026-08-21 evening (the user's ask): Import is the
-    # browse-and-import side, Export is every action on the checkouts.
-    tabs = cmds.tabLayout(_TABS, innerMarginWidth=4, innerMarginHeight=4)
-
-    import_tab = cmds.formLayout(parent=tabs)
-
     search_label = cmds.text(label="Search:", align="left")
     search = cmds.textField(_SEARCH, placeholderText="name or folder",
                             textChangedCommand=lambda *_: _run(_repopulate))
@@ -570,27 +390,23 @@ def show_window():
 
     mode = cmds.radioButtonGrp(
         _MODE, numberOfRadioButtons=2, label="Import:",
-        labelArray2=["onto the skeleton in the scene", "as a new skeleton"],
-        columnWidth3=(52, 216, 160), select=1)
-    saved_vcs = bool(cmds.optionVar(query="ueBridgeVcs")) if cmds.optionVar(
-        exists="ueBridgeVcs") else False
-    vcs_check = cmds.checkBox(
-        _VCS, label="Connect to version control", value=saved_vcs,
-        changeCommand=lambda *_: _run(_vcs_toggled))
-    vcs_root = cmds.text(_VCSROOT, label=_root_label(_saved_root()),
-                         align="left", enable=saved_vcs)
-    vcs_pick = cmds.button(label="...", width=30,
-                           command=lambda *_: _run(_change_root))
+        labelArray2=["retarget onto the rig", "as a new skeleton"],
+        annotation="Retarget onto the rig: the AdvancedSkeleton rig is added "
+                   "if the scene has none, the clip is imported, retargeted "
+                   "and baked onto it (weapon and camera bones carried, the "
+                   "camera set up), and the clip's skeleton is deleted. As a "
+                   "new skeleton: the clip arrives as its own namespaced "
+                   "skeleton and nothing else happens.",
+        columnWidth3=(52, 170, 160), select=1)
     timeline = cmds.checkBox(_TIMELINE, label="set timeline to clip range",
                              value=True)
-    # Checkout lives beside IMPORT because it acts on the same selection in
-    # the same list; the pair it opens shows up on the Export tab.
-    checkout_button = cmds.button(
-        label="Checkout", height=34, width=90,
-        command=lambda *_: _run(checkout_selected, busy="talking to p4..."))
-    # Deliberately NOT called "EXPORT": the Export tab has a button by that
-    # name which does go through Perforce, and two identically-labelled
-    # buttons with different blast radii is how somebody submits by accident.
+    fbx_button = cmds.button(
+        label="Export FBX...", height=34, width=110,
+        annotation="Write the scene skeleton's animation to an FBX of your "
+                   "choosing (selection, else the rig, else the only "
+                   "skeleton), baked on export.",
+        command=lambda *_: _run(export_fbx_selected,
+                                busy="writing the fbx..."))
     uasset_button = cmds.button(
         label="Export to uasset", height=34, width=120,
         annotation="Overwrite the selected AnimSequence with the scene's "
@@ -603,41 +419,7 @@ def show_window():
         label="IMPORT", height=34,
         command=lambda *_: _run(import_selected,
                                 busy="exporting from the editor..."))
-
-    cmds.formLayout(
-        import_tab, edit=True,
-        attachForm=[
-            (search_label, "top", 10), (search_label, "left", 8),
-            (search, "top", 8), (search, "right", 8),
-            (scroll, "left", 8), (scroll, "right", 8),
-            (mode, "left", 4),
-            (vcs_check, "left", 8),
-            (vcs_pick, "right", 8),
-            (timeline, "left", 8),
-            (import_button, "right", 8), (import_button, "bottom", 8),
-            (uasset_button, "bottom", 8),
-            (checkout_button, "bottom", 8),
-        ],
-        attachControl=[
-            (search, "left", 6, search_label),
-            (scroll, "top", 8, search),
-            (scroll, "bottom", 8, mode),
-            (mode, "bottom", 6, vcs_check),
-            (vcs_check, "bottom", 6, timeline),
-            (vcs_root, "bottom", 6, timeline),
-            (vcs_pick, "bottom", 6, timeline),
-            (vcs_root, "left", 10, vcs_check),
-            (vcs_root, "right", 6, vcs_pick),
-            (timeline, "bottom", 10, import_button),
-            (uasset_button, "right", 6, import_button),
-            (checkout_button, "right", 6, uasset_button),
-        ])
-
-    export_tab = checkouts.build_tab(tabs)
-    cmds.tabLayout(tabs, edit=True,
-                   tabLabel=[(import_tab, "Import"), (export_tab, "Export")])
-
-    status = cmds.text(_STATUS, label="", align="left", parent=form)
+    status = cmds.text(_STATUS, label="", align="left")
 
     cmds.formLayout(
         form, edit=True,
@@ -645,14 +427,29 @@ def show_window():
             (project_label, "top", 10), (project_label, "left", 8),
             (project_menu, "top", 6), (header, "top", 10),
             (refresh_button, "top", 4), (refresh_button, "right", 8),
-            (tabs, "left", 2), (tabs, "right", 2),
+            (search_label, "left", 8),
+            (search, "right", 8),
+            (scroll, "left", 8), (scroll, "right", 8),
+            (mode, "left", 4),
+            (timeline, "left", 8),
+            (import_button, "right", 8),
             (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
         ],
         attachControl=[
             (project_menu, "left", 6, project_label),
             (header, "left", 12, project_menu),
-            (tabs, "top", 8, project_menu),
-            (tabs, "bottom", 6, status),
+            (search_label, "top", 12, project_menu),
+            (search, "top", 8, project_menu),
+            (search, "left", 6, search_label),
+            (scroll, "top", 8, search),
+            (scroll, "bottom", 8, mode),
+            (mode, "bottom", 6, timeline),
+            (timeline, "bottom", 10, import_button),
+            (import_button, "bottom", 8, status),
+            (uasset_button, "bottom", 8, status),
+            (fbx_button, "bottom", 8, status),
+            (uasset_button, "right", 6, import_button),
+            (fbx_button, "right", 6, uasset_button),
         ])
 
     cached, project, choice, content_dir = load_cache()

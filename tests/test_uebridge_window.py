@@ -143,19 +143,52 @@ class ImportLine(unittest.TestCase):
         self.assertNotIn("None", line)
 
 
-class VcsStatus(unittest.TestCase):
-    """The suffix joining lives in window.py because it decorates the import
-    line; the wording itself is vcs.status_suffix, tested in
-    test_uebridge_vcs."""
+class NoPerforce(unittest.TestCase):
+    """One window since 2026-09-07, and no Perforce in it: the Export tab,
+    the Checkout button and the VCS row left with the animator's «уберем весь
+    функционал по работе с перфорсом». `vcs.py` and `checkouts.py` stay as
+    modules; this file must not reach either."""
 
-    def test_the_suffix_joins_the_import_line(self):
-        line = window.with_vcs_suffix("A onto root: 92 bones",
-                                      "fbx -> S\\a.fbx")
-        self.assertEqual(line, "A onto root: 92 bones  |  fbx -> S\\a.fbx")
+    def _source(self):
+        with open(window.__file__.replace(".pyc", ".py"),
+                  encoding="utf-8") as handle:
+            return handle.read()
 
-    def test_no_suffix_leaves_the_line_alone(self):
-        line = window.with_vcs_suffix("A onto root: 92 bones", "")
-        self.assertEqual(line, "A onto root: 92 bones")
+    def test_the_window_imports_neither_vcs_nor_checkouts(self):
+        src = self._source()
+        imports = [line for line in src.splitlines()
+                   if line.strip().startswith(("import ", "from "))]
+        for line in imports:
+            self.assertNotIn("vcs", line, line)
+            self.assertNotIn("checkouts", line, line)
+        for name in ("vcs.prepare_target", "vcs.place", "checkouts.marks",
+                     "checkouts.build_tab", "tabLayout", "with_vcs_suffix",
+                     "_vcs_target", "checkout_selected", "ueBridgeVcs"):
+            self.assertNotIn(name, src, name)
+
+    def test_the_three_buttons_and_two_modes(self):
+        src = self._source()
+        for label in ('label="Export FBX..."', 'label="Export to uasset"',
+                      'label="IMPORT"', '"retarget onto the rig"',
+                      '"as a new skeleton"'):
+            self.assertIn(label, src, label)
+        self.assertTrue(callable(window.export_fbx_selected))
+        self.assertTrue(callable(window.export_uasset_selected))
+        self.assertTrue(callable(window.import_selected))
+
+    def test_the_default_mode_is_the_retarget(self):
+        """Without the widget (a headless session) IMPORT means the whole
+        pipeline -- the row the radio opens on."""
+        real = window.cmds
+        window.cmds = types.SimpleNamespace(
+            radioButtonGrp=lambda *a, **k: False)
+        try:
+            self.assertTrue(window.retarget_selected())
+        finally:
+            window.cmds = real
+
+    def test_the_legacy_checkouts_popup_is_still_closed_on_open(self):
+        self.assertIn("ueBridgeCheckouts", window.LEGACY_WINDOWS)
 
 
 class ProjectLabel(unittest.TestCase):
