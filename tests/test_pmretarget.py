@@ -524,3 +524,43 @@ class TestAssets(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResetBuildPose(unittest.TestCase):
+    """The sibling's reset, copied (this module imports nothing from it)."""
+
+    class Fake(object):
+        def __init__(self):
+            self.deleted, self.set = [], []
+            self.values = {"FKWrist_R.tx": 0.0, "FKElbow_R.rx": 25.0}
+
+        def sets(self, name, **kwargs):
+            return ["FKWrist_R", "FKElbow_R"]
+
+        def listConnections(self, node, **kwargs):
+            return {"FKWrist_R": ["FKWrist_R_rotateY", "SDK_curve"]}.get(node, [])
+
+        def objectType(self, node):
+            return "animCurveUA" if node.startswith("SDK") else "animCurveTL"
+
+        def delete(self, nodes):
+            self.deleted.extend(nodes)
+
+        def objExists(self, plug):
+            return plug in self.values
+
+        def getAttr(self, plug, **kwargs):
+            return True if kwargs.get("settable") else self.values[plug]
+
+        def setAttr(self, plug, value):
+            self.set.append((plug, value))
+
+    def test_curves_go_driven_keys_stay_free_channels_zero(self):
+        real, fake = pm.cmds, self.Fake()
+        pm.cmds = fake
+        try:
+            self.assertEqual(pm.reset_build_pose(), (1, 1))
+        finally:
+            pm.cmds = real
+        self.assertEqual(fake.deleted, ["FKWrist_R_rotateY"])
+        self.assertEqual(fake.set, [("FKElbow_R.rx", 0.0)])

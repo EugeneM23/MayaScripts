@@ -705,6 +705,43 @@ def _pole_rig(control, upper, mid, lower):
     return pole, made
 
 
+TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
+
+
+def reset_build_pose():
+    """The controls back to the build pose: the previous take's keys deleted,
+    translate/rotate zeroed where the channel is free. Returns (curves deleted,
+    controls zeroed).
+
+    What AdvancedSkeleton's Go To BuildPose does for the channels this module
+    checks (`posed_controls`, `DEFAULTS`), in cmds -- so the bridge's IMPORT
+    can replace one take with the next without the vendor's button.  A copy of
+    the sibling module's, deliberately (this module imports nothing from it).
+    Time curves only: a driven key (animCurveUA/UU) is part of the rig.
+    """
+    controls = cmds.sets("ControlSet", query=True) or []
+    curves = set()
+    for control in controls:
+        for curve in cmds.listConnections(control, type="animCurve", source=True,
+                                          destination=False) or []:
+            if cmds.objectType(curve) in TIME_CURVES:
+                curves.add(curve)
+    if curves:
+        cmds.delete(list(curves))
+    zeroed = 0
+    for control in controls:
+        touched = False
+        for attr, default in DEFAULTS:
+            plug = control + "." + attr
+            if not cmds.objExists(plug) or not cmds.getAttr(plug, settable=True):
+                continue
+            if abs(cmds.getAttr(plug) - default) > 1e-9:
+                cmds.setAttr(plug, default)
+                touched = True
+        zeroed += 1 if touched else 0
+    return len(curves), zeroed
+
+
 def posed_controls(tol=1e-3):
     """Controls off their default translate/rotate: the rig is not at build pose."""
     out = []

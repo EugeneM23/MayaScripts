@@ -34,7 +34,9 @@ def precheck(rig_present, holder_present, posed, rig_file_ok):
 
     A missing rig FILE matters only when there is no rig to use; a posed
     rig matters only when there is one (a freshly added rig stands in its
-    build pose by construction).
+    build pose by construction). The press itself asks the pose question
+    AFTER `reset_build_pose`, so `posed` there means a channel the reset
+    could not touch.
     """
     if not rig_present and not rig_file_ok:
         return NO_RIG_FILE
@@ -98,19 +100,35 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True):
     present = character.rig_present()
     mod, module_refusal = (maya_rig_retarget.rig_module() if present
                            else (None, ""))
-    holder = bool(mod is not None and cmds.objExists(mod.HOLDER))
-    posed = bool(mod is not None and mod.posed_controls())
-    refusal = precheck(present, holder, posed, _rig_file_ok())
-    if refusal:
-        return refusal
     if present and mod is None:
         return module_refusal
+    holder = bool(mod is not None and cmds.objExists(mod.HOLDER))
+    refusal = precheck(present, holder, False, _rig_file_ok())
+    if refusal:
+        return refusal
 
     notes = []
     deleted = ""
     cmds.undoInfo(openChunk=True, chunkName="UE anim import + retarget")
     try:
-        if not present:
+        if present:
+            # A clip import REPLACES the take, as the old merge did (trap
+            # 27: the target's animation is cleared first): the previous
+            # bake's keys go and the controls return to the build pose. A
+            # baked rig passes `posed_controls` -- a keyed channel is not
+            # settable and is skipped -- while standing in the take's pose,
+            # and a connect made there would measure the pole offsets
+            # against that pose. What is still posed afterwards is a
+            # channel nothing here may touch, and that IS a refusal.
+            curves, zeroed = mod.reset_build_pose()
+            if curves or zeroed:
+                notes.append("previous take cleared ({0} curves), rig at "
+                             "build pose".format(curves))
+            posed = mod.posed_controls()
+            if posed:
+                return "  |  ".join(notes + [
+                    "{0}: {1}".format(POSED, ", ".join(sorted(posed)[:6]))])
+        else:
             notes.append(character.add_character(catalog.default_rig()))
             mod, module_refusal = maya_rig_retarget.rig_module()
             if mod is None:

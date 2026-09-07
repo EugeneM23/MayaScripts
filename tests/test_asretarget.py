@@ -792,3 +792,69 @@ class TestVendorBake(unittest.TestCase):
         self.assertEqual(ar.connected_source(), "|clip:root")
         self.fake.objExists = lambda name: False
         self.assertIsNone(ar.connected_source())
+
+
+class FakeResetCmds(object):
+    """Two controls: one keyed on a time curve and a driven key, one posed
+    by hand with a locked channel."""
+
+    def __init__(self):
+        self.deleted = []
+        self.set = []
+        self.values = {"FKWrist_R.tx": 0.0, "FKWrist_R.ry": 0.0,
+                       "FKElbow_R.rx": 25.0, "FKElbow_R.tz": 3.0}
+        self.locked = {"FKElbow_R.tz"}
+
+    def sets(self, name, **kwargs):
+        return ["FKWrist_R", "FKElbow_R"]
+
+    def listConnections(self, node, **kwargs):
+        return {"FKWrist_R": ["FKWrist_R_rotateY", "SDK_curve"]}.get(node, [])
+
+    def objectType(self, node):
+        return "animCurveUA" if node.startswith("SDK") else "animCurveTA"
+
+    def delete(self, nodes):
+        self.deleted.extend(nodes)
+
+    def objExists(self, plug):
+        return plug in self.values
+
+    def getAttr(self, plug, **kwargs):
+        if kwargs.get("settable"):
+            return plug not in self.locked
+        return self.values[plug]
+
+    def setAttr(self, plug, value):
+        self.set.append((plug, value))
+        self.values[plug] = value
+
+
+class TestResetBuildPose(unittest.TestCase):
+    """Go To BuildPose in cmds (2026-09-07): the take's time curves go, the
+    free channels return to DEFAULTS, a driven key and a locked channel are
+    left alone."""
+
+    def setUp(self):
+        self.real = ar.cmds
+        self.fake = FakeResetCmds()
+        ar.cmds = self.fake
+
+    def tearDown(self):
+        ar.cmds = self.real
+
+    def test_time_curves_go_and_driven_keys_stay(self):
+        curves, zeroed = ar.reset_build_pose()
+        self.assertEqual(self.fake.deleted, ["FKWrist_R_rotateY"])
+        self.assertEqual(curves, 1)
+
+    def test_free_channels_are_zeroed_and_locked_ones_left(self):
+        _curves, zeroed = ar.reset_build_pose()
+        self.assertEqual(self.fake.set, [("FKElbow_R.rx", 0.0)])
+        self.assertEqual(self.fake.values["FKElbow_R.tz"], 3.0)
+        self.assertEqual(zeroed, 1)
+
+    def test_a_clean_rig_reports_nothing_done(self):
+        self.fake.listConnections = lambda node, **k: []
+        self.fake.values = {"FKWrist_R.tx": 0.0}
+        self.assertEqual(ar.reset_build_pose(), (0, 0))

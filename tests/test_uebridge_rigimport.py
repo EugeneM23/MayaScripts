@@ -139,6 +139,7 @@ class ThePress(unittest.TestCase):
         self.mod = types.SimpleNamespace(
             HOLDER="MoCapConstraints",
             posed_controls=lambda: [],
+            reset_build_pose=lambda: self.calls.append(("reset",)) or (12, 3),
         )
         self.rr = types.SimpleNamespace(
             rig_module=lambda: (self.mod, ""),
@@ -193,37 +194,46 @@ class ThePress(unittest.TestCase):
     def _steps(self):
         return [c[0] for c in self.calls if c[0] != "undo"]
 
-    def test_with_a_rig_standing_the_press_imports_connects_bakes_deletes(self):
+    def test_with_a_rig_standing_the_press_resets_imports_connects_bakes_deletes(self):
         text = rigimport.import_and_retarget("C:/t/A_Jump.fbx", "A_Jump")
-        self.assertEqual(self._steps(), ["import", "connect", "bake", "delete_ns"])
+        self.assertEqual(self._steps(), ["reset", "import", "connect", "bake", "delete_ns"])
         self.assertEqual([c for c in self.calls if c[0] == "connect"][0][1],
                          "|A_Jump:root")
+        self.assertIn("previous take cleared (12 curves), rig at build pose", text)
         self.assertIn("A_Jump retargeted onto the rig, frames 0-45", text)
         self.assertIn("source skeleton A_Jump deleted", text)
 
-    def test_without_a_rig_the_press_adds_one_first(self):
+    def test_a_clean_rig_says_nothing_about_a_previous_take(self):
+        self.mod.reset_build_pose = lambda: self.calls.append(("reset",)) or (0, 0)
+        text = rigimport.import_and_retarget("C:/t/A.fbx", "A")
+        self.assertNotIn("previous take", text)
+        self.assertTrue(text.startswith("A retargeted onto the rig"))
+
+    def test_without_a_rig_the_press_adds_one_first_and_resets_nothing(self):
         self.present[0] = False
         text = rigimport.import_and_retarget("C:/t/A.fbx", "A")
         self.assertEqual(self._steps(), ["add", "import", "connect", "bake", "delete_ns"])
         self.assertTrue(text.startswith("Manny [rig] added  |  "))
 
-    def test_a_connected_rig_is_refused_before_anything_is_imported(self):
+    def test_a_connected_rig_is_refused_before_anything_is_touched(self):
         self.holder.add("MoCapConstraints")
         self.assertEqual(rigimport.import_and_retarget("C:/t/A.fbx", "A"),
                          rigimport.CONNECTED)
         self.assertEqual(self.calls, [])
 
-    def test_a_posed_rig_is_refused_before_anything_is_imported(self):
-        self.mod.posed_controls = lambda: ["FKWrist_R"]
-        self.assertEqual(rigimport.import_and_retarget("C:/t/A.fbx", "A"),
-                         rigimport.POSED)
-        self.assertEqual(self.calls, [])
+    def test_a_rig_still_posed_after_the_reset_is_refused_by_name(self):
+        """What the reset cannot zero is a channel nothing here may touch."""
+        self.mod.posed_controls = lambda: ["FKWrist_R", "FKElbow_R"]
+        text = rigimport.import_and_retarget("C:/t/A.fbx", "A")
+        self.assertIn(rigimport.POSED, text)
+        self.assertIn("FKElbow_R, FKWrist_R", text)
+        self.assertEqual(self._steps(), ["reset"])
 
     def test_a_connect_refusal_keeps_the_imported_skeleton(self):
         self.rr.connect = lambda source_root=None: (
             self.calls.append(("connect", source_root)) or "no bone of A matches")
         text = rigimport.import_and_retarget("C:/t/A.fbx", "A")
-        self.assertEqual(self._steps(), ["import", "connect"])
+        self.assertEqual(self._steps(), ["reset", "import", "connect"])
         self.assertIn("retarget refused: no bone of A matches", text)
         self.assertIn("imported as A", text)
 
