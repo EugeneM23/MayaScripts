@@ -2688,6 +2688,39 @@ everywhere are the union of the playback range and the driver's own keys
 
 Spec: `docs/superpowers/specs/2026-08-21-weapon-drives-bone-design.md`.
 
+**The spear is the second catalog weapon** (2026-09-08, «в открытой сцене
+есть Spear1 … добавить в список так же как и sword … выровнять оси этой
+модели чтобы совпадали с осями sword»). `assets/Spear_01.fbx` was exported
+over the command port from a **duplicate** of the animator's `Spear1` (a
+3ds Max export, 266 cm, identity transform, pivot at the origin; the
+original never touched, the duplicate and its temp material deleted, the
+selection put back). Measured before turning it: the head at **−X** (the
+blade 15–22 cm wide in Z and 4 cm thin in Y out to x = −206.7), the butt cap
+at +X (+59.4), the origin on the shaft 59 cm above the butt. The sword's
+frame is the blade along **+Y** with the tip at +Y, the crossguard on X, the
+thickness on Z — so the duplicate took the rotation **spear −X → +Y, spear
+Z → X, spear Y → −Z** (det +1; Y → +Z would have been a mirror) and was
+frozen, and imports back as `SpearMesh` at **X ±10.91, Y −59.4..206.7,
+Z ±6.63**. **The origin's HEIGHT along the shaft stays where the model's
+author put it** (Add puts it on `weapon_r` and the grip fields dial the
+rest, as with the sword), but **transversely the shaft is centred on the
+origin**: after the turn the butt cap's centroid sat **3.81 cm** off the Y
+axis (the author's pivot is the 3ds Max scene origin, beside the shaft),
+while the sword's origin is on its own axis (X ±15.58, Z ±1.57), so the mesh
+was shifted by that centroid before freezing — the first export skipped
+this and the verify's axis gate caught it (both end centroids 3.81 off).
+`catalog._asset_path(name, legacy)` generalises `_sword_path`; the row is
+`Weapon("Spear_01", "Spear 01", ..., "weapon_r", 1.0)`. Spec:
+`docs/superpowers/specs/2026-09-08-spear-weapon-design.md`. Proof:
+`verify_spear_weapon.py` — **green 2026-09-08, 0 of 15 gates failed**, in
+mayapy standalone: both files' frames measured in one run and compared
+(longest axis Y, tip +Y, width X, thickness Z for both), `aim.placement` on
++Y for both, a real Add landing the spear under the hand driving `weapon_r`
+at **0.000000** at the zero grip, and the sword replacing it. One gate
+lesson: a "vertices within the shaft's radius" test measured the head base
+and the butt cap (7–14 cm off-axis by design) and failed on a correct model;
+the axis question is answered by the two end centroids, both within 3 cm.
+
 **The FBX field** takes a path to any file the catalog knows nothing about and
 wins over the dropdown while it holds one. It resolves in ONE place
 (`window.chosen_entry` → `catalog.entry_for_path`), so Add, the offset fields,
@@ -3667,7 +3700,7 @@ Setup, Retarget, Hotkeys, Studio, Colour**; the Rig Picker, the native
 OverRig panel and Overshoot come back with the three flags in
 `skeldar_features.py` (`install.features()` reads it from beside
 `install.py`, `_PYTHON_BUTTONS` rows carry the flag's name). The zip is
-**26.4 MB, 78 files** now (`assets/Manny_Rig.ma`, 53 MB uncompressed;
+**26.4 MB, 79 files** now (`assets/Manny_Rig.ma`, 53 MB uncompressed, `assets/Spear_01.fbx` 34 KB;
 `maya_rigs.py` joined the payload, `maya_curveview/` and two icons left).
 Design: `docs/superpowers/specs/2026-08-21-installer-design.md` (written
 when there were five; the sixth arrived 2026-09-02, Viewport Studio and

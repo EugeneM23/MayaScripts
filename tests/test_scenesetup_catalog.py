@@ -47,6 +47,32 @@ class Table(unittest.TestCase):
     def test_the_sword_goes_to_the_right_hand(self):
         self.assertEqual(catalog.by_key("LongSword_02").bone, "weapon_r")
 
+    def test_holds_the_spear_too(self):
+        """2026-09-08: the animator's Spear1, exported onto the sword's axes
+        (shaft +Y with the head at +Y, blade width X, thickness Z)."""
+        entry = catalog.by_key("Spear_01")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.label, "Spear 01")
+        self.assertEqual(entry.bone, "weapon_r")
+        self.assertEqual(entry.scale, 1.0)
+        self.assertTrue(entry.path.endswith("assets/Spear_01.fbx"), entry.path)
+        self.assertTrue(os.path.isfile(entry.path), entry.path)
+        self.assertEqual(catalog.missing(entry), "")
+
+    def test_the_spear_has_no_legacy_home(self):
+        """No animator's folder to fall back to: with the shipped copy gone
+        the table still names the shipped path, and `missing` says so."""
+        original = catalog.os.path.isfile
+        catalog.os.path.isfile = lambda _p: False
+        try:
+            path = catalog._asset_path("Spear_01.fbx")
+        finally:
+            catalog.os.path.isfile = original
+        self.assertTrue(path.endswith("assets/Spear_01.fbx"), path)
+
+    def test_the_dropdown_order_is_sword_then_spear(self):
+        self.assertEqual(catalog.labels(), ["Long Sword 02", "Spear 01"])
+
     def test_paths_use_forward_slashes(self):
         """A backslash starts an escape in the MEL the FBX plugin sees."""
         for entry in catalog.WEAPONS:

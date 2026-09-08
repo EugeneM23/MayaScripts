@@ -124,20 +124,29 @@ def character_path(entry=None):
     return character_file(entry or default_character())
 
 
-def _sword_path():
-    """The shipped copy first, the legacy absolute path as fallback.
+def _asset_path(name, legacy=""):
+    """The shipped copy first, a legacy absolute path as fallback.
 
     Computed once at import: the table keeps holding a plain absolute
     path, so missing(), attach and the offset optionVars never learn
-    that anything changed.
+    that anything changed. A weapon with no legacy home answers the
+    shipped path either way, and `missing()` says when it is not there.
     """
-    local = os.path.join(_CONTAINER, "assets",
-                         "LongSword_02.fbx").replace("\\", "/")
-    return local if os.path.isfile(local) else _LEGACY_SWORD
+    local = os.path.join(_CONTAINER, "assets", name).replace("\\", "/")
+    return local if os.path.isfile(local) or not legacy else legacy
+
+
+def _sword_path():
+    return _asset_path("LongSword_02.fbx", _LEGACY_SWORD)
 
 
 WEAPONS = [
     Weapon("LongSword_02", "Long Sword 02", _sword_path(), "weapon_r", 1.0),
+    # 2026-09-08, the animator's Spear1 exported onto the sword's axes: the
+    # shaft along +Y with the head at +Y, the blade's width on X, its
+    # thickness on Z, the origin on the shaft where the model's author put
+    # it (59 cm above the butt). 266 cm long, so the scale is 1.0.
+    Weapon("Spear_01", "Spear 01", _asset_path("Spear_01.fbx"), "weapon_r", 1.0),
 ]
 
 
