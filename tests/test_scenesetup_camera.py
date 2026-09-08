@@ -168,6 +168,23 @@ class BoneCandidates(unittest.TestCase):
         self.assertEqual(len(found), 2)
 
 
+class CameraNameFor(unittest.TestCase):
+    """Two rigs mean two cameras (2026-09-08), each in its bone's namespace."""
+
+    def test_a_namespaced_bone_names_a_namespaced_camera(self):
+        self.assertEqual(
+            camera.camera_name_for("|Manny_Rig1:root|Manny_Rig1:camera_root|Manny_Rig1:camera_bone"),
+            "Manny_Rig1:" + camera.CAMERA_NAME)
+
+    def test_a_plain_bone_keeps_the_old_name(self):
+        self.assertEqual(camera.camera_name_for("|root|camera_root|camera_bone"),
+                         camera.CAMERA_NAME)
+
+    def test_only_the_leaf_decides(self):
+        self.assertEqual(camera.camera_name_for("|a:root|camera_bone"),
+                         camera.CAMERA_NAME)
+
+
 class Messages(unittest.TestCase):
 
     def test_names_the_camera_the_bone_and_the_frames(self):

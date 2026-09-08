@@ -1,10 +1,10 @@
 """Drag this file into an open Maya viewport to install SkeldarAnim.
 
 Copies the toolset into <userAppDir>/scripts/SkeldarAnim and builds the
-SkeldarAnim shelf: UE Bridge, Scene Setup, Retarget, Bake, Overshoot,
-Hotkeys, Studio, Colour, Curves -- plus the Rig Picker and the native
-OverRig panel when `skeldar_features` switches them on. Re-dragging
-updates in place. The unzipped folder can be deleted after installing.
+SkeldarAnim shelf: UE Bridge, Scene Setup, Retarget, Hotkeys, Studio,
+Colour -- plus the Rig Picker, the native OverRig panel and Overshoot when
+`skeldar_features` switches them on. Re-dragging updates in place. The
+unzipped folder can be deleted after installing.
 
 Design: docs/superpowers/specs/2026-08-21-installer-design.md
 
@@ -29,11 +29,11 @@ _PAYLOAD = (
     "maya_hotkeys.py",
     "maya_vpstudio.py",
     "maya_colour.py",
-    "maya_curveview",
     "icons",
     "assets",
     "overrig",
     "skeldar_features.py",
+    "maya_rigs.py",
     "maya_asretarget.py",
     "maya_pmretarget.py",
     "maya_rig_retarget.py",
@@ -44,7 +44,9 @@ _PAYLOAD = (
 # (label, annotation, module, function, icon, feature flag or ""). A row
 # naming a flag is on the shelf only while that flag in skeldar_features
 # is True -- the Rig Picker went behind PICKER on 2026-09-07, when the
-# toolset moved from OverRig to the AdvancedSkeleton rig.
+# toolset moved from OverRig to the AdvancedSkeleton rig, and Overshoot
+# behind OVERSHOOT on 2026-09-08. The Curve Overlay left the plugin the
+# same day (archive/maya_curveview), and Bake folded into Retarget.
 _PYTHON_BUTTONS = (
     ("Rig Picker", "OverRig picker: build, switch and select the rig",
      "maya_overrig", "show_picker", "picker.png", "PICKER"),
@@ -53,13 +55,12 @@ _PYTHON_BUTTONS = (
      "uebridge.png", ""),
     ("Scene Setup", "Add the rig or a skeleton, a weapon in the hand",
      "maya_scenesetup", "show_window", "scenesetup.png", ""),
-    ("Retarget", "Select the imported skeleton: the rig follows it",
+    ("Retarget", "Select the imported skeleton (and a control of the rig "
+     "when there are several): the rig takes the clip - retarget, bake, "
+     "weapon and camera bones carried, camera set up",
      "maya_rig_retarget", "retarget_button", "retarget.png", ""),
-    ("Bake", "Bake the retarget onto the controls, carry the weapon and "
-     "camera bones, set the camera up, disconnect", "maya_rig_retarget",
-     "bake_button", "bake.png", ""),
     ("Overshoot", "Build the stop of a move on the selected keys",
-     "maya_overshoot", "show_overshoot_ui", "overshoot.png", ""),
+     "maya_overshoot", "show_overshoot_ui", "overshoot.png", "OVERSHOOT"),
     ("Hotkeys", "Temporary hotkey map on/off - assign keys in Maya's "
      "Hotkey Editor", "maya_hotkeys", "toggle", "hotkeys.png", ""),
     ("Studio", "Viewport Studio: studio light, shadows, ambient occlusion "
@@ -68,9 +69,6 @@ _PYTHON_BUTTONS = (
     ("Colour", "Recolour the selected character, bone or mesh from an "
      "eight-colour palette", "maya_colour", "show_window", "colour.png",
      ""),
-    ("Curves", "Curve Overlay: the graph editor drawn over the viewport - "
-     "LMB selects, MMB drags keys", "maya_curveview", "toggle",
-     "curveview.png", ""),
 )
 
 

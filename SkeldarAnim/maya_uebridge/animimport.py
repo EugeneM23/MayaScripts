@@ -246,10 +246,13 @@ def choose_target_root(roots, selected_roots=(), bound_root=None):
     "the only skeleton" so that a scene holding several characters is
     decidable at all without clicking a bone first.
 
-    Namespaced skeletons are never candidates at any step: an exclusive
-    merge matches plain bone names, so a namespaced skeleton could not
-    receive the clip anyway - and in this tool they are exactly the
-    reference imports of earlier clips.
+    Namespaced skeletons found by scanning the scene are never candidates:
+    an exclusive merge matches plain bone names, so a namespaced skeleton
+    could not receive the clip anyway - and in this tool they are exactly
+    the reference imports of earlier clips. The CONNECT is the exception
+    since 2026-09-08: a rig's game skeleton lives in the rig's namespace
+    (`|Manny_Rig:root`), the connect names it on purpose, and the export
+    strips the namespace for the length of the call (`target_plain_names`).
 
     Guessing between two plausible skeletons would animate the wrong
     character without saying so, which is worse than asking.
@@ -264,9 +267,8 @@ def choose_target_root(roots, selected_roots=(), bound_root=None):
     if chosen:
         return chosen[0]
 
-    bound = plain_only([bound_root])
-    if bound:
-        return bound[0]
+    if bound_root:
+        return bound_root
 
     if len(plain) == 1:
         return plain[0]
@@ -357,9 +359,14 @@ def plain_root_name(root_short, bone_shorts):
     alone. So is a root genuinely called something else. The answer is
     then "" and the behaviour is exactly what it was.
     """
-    leaf = _short(root_short).split(":")[-1]
-    if not leaf or leaf == UE_ROOT:
+    short = _short(root_short)
+    leaf = short.split(":")[-1]
+    if not leaf:
         return ""
+    if leaf == UE_ROOT:
+        # `ns:root` (a rig's skeleton, 2026-09-08) wants the plain name; a
+        # bare `root` already has it.
+        return UE_ROOT if ":" in short else ""
     stripped = _TRAILING_DIGITS.sub("", leaf)
     if stripped == UE_ROOT:
         return UE_ROOT
@@ -459,6 +466,72 @@ def target_root_plain(target_root, joints):
         if took:
             _rename_back(root_uuid, leaf)
         for uuid, short in reversed(displaced):
+            _rename_back(uuid, short)
+
+
+def namespace_of(path):
+    """The namespace of a path's own node, "" for the root namespace. Pure."""
+    short = _short(path)
+    return short.rsplit(":", 1)[0] if ":" in short else ""
+
+
+def plain_names_plan(target_root, joints):
+    """Which joints of the target wear a namespace, as (path, plain leaf). Pure.
+
+    The root is left to `target_root_plain`, which handles its collision.
+    """
+    out = []
+    for joint in joints or []:
+        if joint == target_root:
+            continue
+        if namespace_of(joint):
+            out.append((joint, _short(joint).split(":")[-1]))
+    return out
+
+
+@contextlib.contextmanager
+def target_plain_names(target_root, joints):
+    """Every joint of the target wears its leaf name in the ROOT namespace
+    for the length of the call. Yields the name the root took, or "".
+
+    Since 2026-09-08 a rig lives in a namespace, and **the FBX exporter
+    writes the namespace into the file** -- measured: `rigns:root`,
+    `rigns:pelvis`, and no flag strips it -- so Unreal would receive bones
+    its skeleton does not have. `cmds.rename(path, ":pelvis")` moves a node
+    into the root namespace (measured, and back again with the prefix), and
+    the root's own collision with a plain `root` in the scene is handled by
+    `target_root_plain`, which frees the name first. A plain-named skeleton
+    strips nothing and behaves exactly as before.
+
+    Resolved by UUID on the way back: renaming a parent invalidates every
+    path beneath it (traps 16 and 48). Restored in a `finally`, the root
+    first so the namespace is whole again before its children rejoin it.
+    """
+    wanted = []
+    for path, leaf in plain_names_plan(target_root, joints):
+        uuid = (cmds.ls(path, uuid=True) or [None])[0]
+        if uuid:
+            wanted.append((uuid, _short(path), leaf))
+    stripped = []
+    for uuid, short, leaf in wanted:
+        paths = cmds.ls(uuid, long=True) or []
+        if not paths:
+            continue
+        try:
+            if _short(cmds.rename(paths[0], ":" + leaf)) == leaf:
+                stripped.append((uuid, short))
+            else:
+                _rename_back(uuid, short)
+        except RuntimeError:
+            pass                  # locked, referenced; the bone keeps its name
+    root_uuid = (cmds.ls(target_root, uuid=True) or [None])[0]
+    root_now = (cmds.ls(root_uuid, long=True) or [target_root])[0] \
+        if root_uuid else target_root
+    try:
+        with target_root_plain(root_now, joints) as took:
+            yield took
+    finally:
+        for uuid, short in reversed(stripped):
             _rename_back(uuid, short)
 
 

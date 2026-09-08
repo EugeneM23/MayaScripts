@@ -2,32 +2,58 @@
 
 The animator's button ran `maya_asretarget.connect()` -- the Manny rig's retarget -- and
 on the Lugal (PlayerMale) rig that module can only refuse: the bones it maps are UE's.
-This picks the module from the rig the scene holds and forwards to it, so the press is
-the same on `manny_rig_02` and on `Lugal_Rig_01` (2026-09-06, «я просто выделяю скелет,
-нажимаю на скрипт и ретаргет готов. Точно так же я хочу и для Lugal_Rig_01»).
+This picks the module from the rig and forwards to it, so the press is the same on
+`manny_rig_02` and on `Lugal_Rig_01` (2026-09-06, «я просто выделяю скелет, нажимаю на
+скрипт и ретаргет готов. Точно так же я хочу и для Lugal_Rig_01»).
+
+**One button since 2026-09-08** («Ретаргет и бейк объединим в один скрипт»): `retarget()`
+is the whole thing -- the previous take cleared, connect, bake over the clip's keys, the
+helper bones carried, the camera set up, disconnect -- in one undo chunk. The source
+skeleton is KEPT: the animator imported it, and a second look at the result wants it
+there to press again. `connect()`, `bake()`, `report()` and `disconnect()` stay as API.
 
     import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
     import maya_rig_retarget
-    print(maya_rig_retarget.connect())     # the rig follows the SELECTED skeleton
-    print(maya_rig_retarget.bake())        # the vendor's Bake over the clip's keys, then Disconnect
+    print(maya_rig_retarget.retarget())    # the button: the rig takes the SELECTED skeleton's clip
     print(maya_rig_retarget.report())      # read-only
-    print(maya_rig_retarget.disconnect())  # keeps nothing of the clip
 
-Which rig: the constrained game skeleton under the rig -- UE names (`pelvis`, `spine_05`)
-mean the Manny rig and `maya_asretarget`; PlayerMale names (`Hip`, `Spine4`, `Right_Arm`)
-mean the Lugal rig and `maya_pmretarget`.  Anything else is refused by name.
+**Which rig, with several in the scene** (`maya_rigs`): the one whose control, bone or
+mesh is in the selection, else the only one, else a refusal naming them. The selection
+therefore carries two things at once -- the source skeleton's bones and, when needed, one
+control of the rig -- and each module takes the half that is its own. Which MODULE: the
+rig's constrained game skeleton -- UE names (`pelvis`, `spine_05`) mean the Manny rig and
+`maya_asretarget`; PlayerMale names (`Hip`, `Spine4`, `Right_Arm`) mean the Lugal rig and
+`maya_pmretarget`. Anything else is refused by name.
 """
 import maya.cmds as cmds
 
+import maya_rigs
 
-def rig_module():
-    """The retarget module for the rig in this scene, or a refusal string."""
+POSED = ("the rig is still posed after the reset - AdvancedSkeleton: Go To "
+         "BuildPose, then press again")
+
+
+def resolve(rig=None):
+    """(rig, module, refusal): the rig to act on and the module that knows it."""
+    if rig is None:
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return None, None, refusal
+    mod, refusal = rig_module(rig)
+    return rig, mod, refusal
+
+
+def rig_module(rig=None):
+    """(module, refusal) for `rig` -- the current one when not given."""
     import maya_pmretarget as pm
-    if not cmds.objExists("ControlSet") or not cmds.objExists("Main"):
-        return None, "no AdvancedSkeleton rig in this scene (ControlSet/Main missing)"
-    root = pm.rig_skeleton_root(pm.rig_paths())
+    if rig is None:
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return None, refusal
+    root = rig.skeleton_root
     if not root:
-        return None, "the rig drives no skeleton - nothing to retarget onto"
+        return None, ("the rig %s drives no skeleton - nothing to retarget onto"
+                      % maya_rigs.label(rig))
     names = [pm.leaf(p) for p in [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or [])]
     return pick(names, root)
 
@@ -46,13 +72,13 @@ def pick(names, root=""):
 
 
 def _forward(name, *args, **kwargs):
-    mod, refusal = rig_module()
+    rig, mod, refusal = resolve(kwargs.pop("rig", None))
     if mod is None:
         return refusal
     fn = getattr(mod, name, None)
     if fn is None:
         return "%s has no %s()" % (mod.__name__, name)
-    return "%s: %s" % (mod.__name__, fn(*args, **kwargs))
+    return "%s: %s" % (mod.__name__, fn(*args, rig=rig, **kwargs))
 
 
 def report(*args, **kwargs):
@@ -61,6 +87,10 @@ def report(*args, **kwargs):
 
 def connect(*args, **kwargs):
     return _forward("connect", *args, **kwargs)
+
+
+def disconnect(*args, **kwargs):
+    return _forward("disconnect", *args, **kwargs)
 
 
 # ------------------------------------------------------------- helper bones
@@ -164,7 +194,7 @@ def carry_helpers(source_root, rig_root, start, end):
     (the bone baked back off the sword) and relinked after the transfer, so
     the sword snaps onto the new track and takes its stored grip back -- the
     bridge's merge does exactly this; and the camera is set up LAST, on the
-    bone's new track.
+    bone's new track. Each rig has its own camera, on its own camera_bone.
     """
     from maya_scenesetup import bonedrive, camera
     src, dst = _bones_under(source_root), _bones_under(rig_root)
@@ -189,40 +219,88 @@ def carry_helpers(source_root, rig_root, start, end):
 
 
 def bake(*args, **kwargs):
-    """The Bake button: the module's bake, the helper bones, the camera, the disconnect.
+    """The after-the-connect half: the module's bake, the helper bones, the camera, the disconnect.
 
     Six steps -- controls baked over the clip's key range (`vendor_bake`),
     a standing camera torn down, weapon links lifted, the four helper bones
     carried from the source, links restored, the module's disconnect, and
-    Camera Setup on the rig's `camera_bone` -- so the whole "after the
-    retarget" lives under one press and one undo chunk. With nothing
-    connected the module says so and nothing else happens.
+    Camera Setup on the rig's `camera_bone` -- under one undo chunk. With
+    nothing connected the module says so and nothing else happens.
     """
-    mod, refusal = rig_module()
+    rig, mod, refusal = resolve(kwargs.pop("rig", None))
     if mod is None:
         return refusal
-    source = mod.connected_source()
+    source = mod.connected_source(rig)
     if source is None:
-        return "%s: %s" % (mod.__name__, mod.bake(*args, **kwargs))
-    span = mod.source_key_range() or (cmds.playbackOptions(query=True, min=True),
-                                      cmds.playbackOptions(query=True, max=True))
-    rig_root = mod.rig_skeleton_root(mod.rig_paths())
+        return "%s: %s" % (mod.__name__, mod.bake(*args, rig=rig, **kwargs))
+    span = mod.source_key_range(rig) or (cmds.playbackOptions(query=True, min=True),
+                                         cmds.playbackOptions(query=True, max=True))
+    rig_root = rig.skeleton_root
     cmds.undoInfo(openChunk=True, chunkName="Retarget bake")
     try:
-        note = mod.bake(disconnect=False).split("; still connected")[0]
+        note = mod.bake(disconnect=False, rig=rig).split("; still connected")[0]
         moved, skipped, camera_text = carry_helpers(source, rig_root, span[0], span[1])
-        note += "; " + mod.disconnect()
+        note += "; " + mod.disconnect(rig)
     finally:
         cmds.undoInfo(closeChunk=True)
     extra = helper_note(moved, skipped, camera_text)
     return "%s: %s%s" % (mod.__name__, note, ("; " + extra) if extra else "")
 
 
-def disconnect(*args, **kwargs):
-    return _forward("disconnect", *args, **kwargs)
+# --------------------------------------------------------------- the button
+
+def _first_line(text):
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return lines[0] if lines else ""
 
 
-# ------------------------------------------------------------ shelf buttons
+def run_retarget(source_root=None, rig=None):
+    """The whole retarget. Returns (ok, text).
+
+    Reset first: a rig that already carries a take passes `posed_controls`
+    (a keyed channel is not settable and is skipped) while standing in the
+    take's pose, and a connect made there measures the pole offsets against
+    that pose -- the bridge learned this on 2026-09-07 and this press is the
+    same operation by hand. What is still posed afterwards is a channel the
+    reset may not touch, and that IS the refusal, by name.
+
+    A holder already standing on this rig (an interrupted press, or the
+    vendor's own MoCap Matcher) is baked rather than refused: one button
+    means "finish the retarget".
+    """
+    rig, mod, refusal = resolve(rig)
+    if mod is None:
+        return False, refusal
+    holder = mod.holder_of(rig)
+    notes = []
+    cmds.undoInfo(openChunk=True, chunkName="Retarget")
+    try:
+        if cmds.objExists(holder):
+            notes.append("already connected - baking what stands")
+        else:
+            curves, zeroed = mod.reset_build_pose(rig)
+            if curves or zeroed:
+                notes.append("previous take cleared (%d curves), rig at build pose" % curves)
+            posed = mod.posed_controls(rig=rig)
+            if posed:
+                return False, "  |  ".join(notes + [
+                    "%s: %s" % (POSED, ", ".join(sorted(posed)[:6]))])
+            connect_text = mod.connect(source_root=source_root, rig=rig)
+            if not cmds.objExists(holder):
+                return False, "  |  ".join(notes + ["retarget refused: " + _first_line(connect_text)])
+            notes.append(_first_line(connect_text))
+        notes.append(bake(rig=rig))
+    finally:
+        cmds.undoInfo(closeChunk=True)
+    return True, "%s: %s" % (maya_rigs.label(rig), "  |  ".join(notes))
+
+
+def retarget(source_root=None, rig=None):
+    """The Retarget button's text."""
+    return run_retarget(source_root, rig)[1]
+
+
+# ------------------------------------------------------------ shelf button
 
 def _show(text):
     """The first line in the viewport, the whole text in the Script Editor.
@@ -241,11 +319,5 @@ def _show(text):
 
 
 def retarget_button():
-    """The Retarget shelf button: the rig follows the SELECTED skeleton."""
-    return _show(connect())
-
-
-def bake_button():
-    """The Bake shelf button: bake onto the controls, carry the weapon and
-    camera bones, set the camera up, disconnect."""
-    return _show(bake())
+    """The Retarget shelf button: the rig takes the SELECTED skeleton's clip."""
+    return _show(retarget())

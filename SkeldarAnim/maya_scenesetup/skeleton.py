@@ -1,20 +1,18 @@
 """Which character to act on, and where its weapon bone is.
 
-Since 2026-09-07 the answer is the AdvancedSkeleton rig's, read three ways in
-order (the animator: «какой сейчас персонаж рабочий мы понимаем по выделению,
+Since 2026-09-07 the answer is an AdvancedSkeleton rig's, and since
+2026-09-08 there may be several of them (`maya_rigs`). Read in order (the
+animator: «какой сейчас персонаж рабочий мы понимаем по выделению,
 достаточно выделить любой контрол персонажа»):
 
-1. the SELECTION -- a node under the rig's top group (any control) means the
-   rig's game skeleton; a joint means its topmost joint; a mesh or a locator
-   means nothing. Two different answers is no answer;
-2. the RIG's skeleton, when a rig stands in the scene;
-3. the ONLY skeleton, when there is exactly one;
+1. the SELECTION -- a node of a rig (any control, bone or mesh in its
+   namespace; a node under a root-namespace rig's group or skeleton) means
+   that rig's game skeleton; a bare joint means its topmost joint; anything
+   else means nothing. Two different answers is no answer;
+2. the ONLY rig's skeleton, when exactly one rig stands in the scene;
+3. the ONLY skeleton, when there is no rig and exactly one skeleton;
 4. otherwise none -- arming the wrong character in silence is worse than
    saying no.
-
-The picker's Connect used to sit at the top of this list; the picker is off
-the shelf now (`skeldar_features.PICKER`), and the rig took its place as
-"the character the animator is working on".
 
 The bone is looked up inside the chosen root's subtree, never scene-wide.
 That is what makes a namespace, a per-joint prefix or a second skeleton in
@@ -24,66 +22,61 @@ character Maya happened to list first.
 
 import maya.cmds as cmds
 
+import maya_rigs
 from maya_overrig import bodymap
 from maya_overrig import naming
 
 
 # ------------------------------------------------------------------ the rig
 
-def rig_group():
-    """The rig's top group -- the top ancestor of `Main` -- or None.
-
-    Not `|Group` by name: a `.ma` import renames a clashing top node with
-    the file stem, so the group is found from a node the retarget already
-    addresses by name.
-    """
-    if not (cmds.objExists("ControlSet") and cmds.objExists("Main")):
-        return None
-    main = cmds.ls("Main", long=True) or []
-    parts = [p for p in main[0].split("|") if p] if main else []
-    return "|" + parts[0] if parts else None
+def rigs():
+    """Every AdvancedSkeleton rig in the scene (`maya_rigs.rigs`)."""
+    return maya_rigs.rigs()
 
 
 def rig_root():
-    """The game skeleton the rig drives, or None without a rig.
+    """The game skeleton of the CURRENT rig (selection, else the sole rig),
+    or None."""
+    rig, _ = maya_rigs.current_rig()
+    return (rig.skeleton_root or None) if rig else None
 
-    Schema-blind: `rig_paths`/`rig_skeleton_root` read the constraints our
-    deformation joints leave on the game joints, and both retarget modules
-    carry the same pair -- the PlayerMale one is imported because it asks
-    nothing of the bone names.
-    """
-    if rig_group() is None:
-        return None
-    import maya_pmretarget  # lazy: a cmds module, but a big one
-    return maya_pmretarget.rig_skeleton_root(maya_pmretarget.rig_paths()) \
-        or None
+
+def is_rig_skeleton(root):
+    """True when `root` is the game skeleton some rig drives."""
+    return bool(root) and any(rig.skeleton_root == root for rig in rigs())
 
 
 def inside(path, group):
     """True when `path` is `group` or lies under it. Pure."""
-    return bool(group) and (path == group or path.startswith(group + "|"))
+    return maya_rigs.under(path, group)
 
 
 # --------------------------------------------------------------- the policy
 
-def selection_roots(selection, rig_group_path, rig_root_path, top_joint):
-    """What each selected path means, as a root or nothing. Pure.
+def selection_roots(selection, rigs_, top_joint):
+    """What each selected path means, as a root or None. Pure.
 
-    `top_joint(path)` answers a joint's topmost joint and None for anything
-    that is not a joint -- the one scene question this needs, injected so
-    the policy runs without a scene.
+    `rigs_` are the scene's rigs; `top_joint(path)` answers a joint's
+    topmost joint and None for anything that is not a joint -- the one
+    scene question this needs, injected so the policy runs without a scene.
+    A rig's node means its skeleton root (None when it drives none).
     """
     roots = []
     for path in selection or []:
-        if inside(path, rig_group_path):
-            roots.append(rig_root_path)
+        rig = maya_rigs.rig_of(path, rigs_)
+        if rig is not None:
+            roots.append(rig.skeleton_root or None)
         else:
             roots.append(top_joint(path))
     return roots
 
 
-def choose_root(selection_roots_, rig_root_path, scene_roots):
-    """Selection, then the rig, then the only skeleton. Pure."""
+def choose_root(selection_roots_, rig_roots, scene_roots):
+    """Selection, then the only rig, then the only skeleton. Pure.
+
+    Several rigs and nothing selected is no answer: the wrong character in
+    silence is exactly what this exists to prevent.
+    """
     # dict.fromkeys keeps order and collapses the repeats that come from
     # selecting several controls or bones of the same character.
     selected = list(dict.fromkeys(root for root in selection_roots_ if root))
@@ -91,8 +84,11 @@ def choose_root(selection_roots_, rig_root_path, scene_roots):
         return selected[0]
     if selected:
         return None
-    if rig_root_path:
-        return rig_root_path
+    rig_roots = [root for root in rig_roots if root]
+    if len(rig_roots) == 1:
+        return rig_roots[0]
+    if rig_roots:
+        return None
     if len(scene_roots) == 1:
         return scene_roots[0]
     return None
@@ -109,7 +105,7 @@ def current_root():
     from maya_overrig import active  # drags maya.mel in; not needed to import
     from maya_overrig import builder
 
-    group, rig = rig_group(), rig_root()
+    rigs_ = rigs()
 
     def top_joint(path):
         if cmds.objExists(path) and cmds.objectType(path) == "joint":
@@ -117,12 +113,12 @@ def current_root():
         return None
 
     selection = cmds.ls(selection=True, long=True) or []
-    # The rig's own deformation joints have no joint parent and would count
-    # as skeletons of their own; the game skeleton it drives is the one.
+    # The rigs' own deformation joints have no joint parent and would count
+    # as skeletons of their own; the game skeletons they drive are the ones.
     scene_roots = [root for root in builder.character_roots()
-                   if not inside(root, group)]
-    root = choose_root(selection_roots(selection, group, rig, top_joint),
-                       rig, scene_roots)
+                   if not any(inside(root, rig.group) for rig in rigs_)]
+    root = choose_root(selection_roots(selection, rigs_, top_joint),
+                       [rig.skeleton_root for rig in rigs_], scene_roots)
     active.set_root(root)
     return root
 

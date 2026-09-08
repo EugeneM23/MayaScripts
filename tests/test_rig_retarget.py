@@ -19,30 +19,132 @@ class TestInThePlugin(unittest.TestCase):
 
 
 class TestButtons(unittest.TestCase):
-    """The two shelf buttons forward and report; the report is a print plus
-    an in-view message, and the text comes back for whoever called."""
+    """ONE shelf button since 2026-09-08: it runs the whole retarget and
+    reports; the report is a print plus an in-view message, and the text
+    comes back for whoever called."""
 
     def setUp(self):
-        self.saved = (rr.connect, rr.bake, rr._show)
+        self.saved = (rr.retarget, rr._show)
         self.calls = []
-        rr.connect = lambda *a, **k: self.calls.append("connect") or "connected 74"
-        rr.bake = lambda *a, **k: self.calls.append("bake") or "baked 20"
+        rr.retarget = lambda *a, **k: self.calls.append("retarget") or "Group: connected 74  |  baked"
         rr._show = lambda text: self.calls.append(text) or text
 
     def tearDown(self):
-        rr.connect, rr.bake, rr._show = self.saved
+        rr.retarget, rr._show = self.saved
 
-    def test_retarget_button_connects_and_shows(self):
-        self.assertEqual(rr.retarget_button(), "connected 74")
-        self.assertEqual(self.calls, ["connect", "connected 74"])
+    def test_retarget_button_runs_the_whole_retarget_and_shows(self):
+        self.assertEqual(rr.retarget_button(), "Group: connected 74  |  baked")
+        self.assertEqual(self.calls, ["retarget", "Group: connected 74  |  baked"])
 
-    def test_bake_button_bakes_and_shows(self):
-        self.assertEqual(rr.bake_button(), "baked 20")
-        self.assertEqual(self.calls, ["bake", "baked 20"])
+    def test_there_is_no_bake_button_any_more(self):
+        self.assertFalse(hasattr(rr, "bake_button"))
+        self.assertTrue(callable(rr.bake))      # the API stays for the bridge
 
     def test_show_survives_a_viewport_less_session(self):
-        rr._show = self.saved[2]
+        rr._show = self.saved[1]
         self.assertEqual(rr._show("two\nlines"), "two\nlines")
+
+
+LEGACY = rr.maya_rigs.Rig("", "ControlSet", "|Group|MotionSystem|MainSystem|Main",
+                          "|Group", "|root")
+
+
+class FakeRunScene(object):
+    """cmds for run_retarget: undo chunks recorded, the holder's existence
+    scripted per call."""
+
+    def __init__(self, holder_exists):
+        self.chunks = []
+        self.holder_exists = list(holder_exists)
+
+    def undoInfo(self, **kwargs):
+        self.chunks.append(kwargs)
+
+    def objExists(self, name):
+        return self.holder_exists.pop(0) if self.holder_exists else False
+
+    def playbackOptions(self, **kwargs):
+        return 0.0 if kwargs.get("min") else 100.0
+
+
+class FakeModule(object):
+    def __init__(self, calls, posed=()):
+        self.__name__ = "maya_asretarget"
+        self.calls = calls
+        self.posed = list(posed)
+
+    def holder_of(self, rig):
+        return "MoCapConstraints"
+
+    def reset_build_pose(self, rig=None):
+        self.calls.append(("reset", rig.namespace))
+        return 12, 3
+
+    def posed_controls(self, tol=1e-3, rig=None):
+        return self.posed
+
+    def connect(self, source_root=None, rig=None):
+        self.calls.append(("connect", source_root, rig.namespace))
+        return "retarget connected: 74 controls of Group driven from clip\nmore lines"
+
+
+class TestRunRetarget(unittest.TestCase):
+    """The one button: reset, connect, bake -- or bake alone over a standing
+    holder -- under one undo chunk, with the refusals by name."""
+
+    def setUp(self):
+        self.saved = (rr.resolve, rr.bake, rr.cmds)
+        self.calls = []
+        self.mod = FakeModule(self.calls)
+        rr.resolve = lambda rig=None: (LEGACY, self.mod, "")
+        rr.bake = lambda rig=None: self.calls.append(("bake", rig.namespace)) or "maya_asretarget: baked 20"
+
+    def tearDown(self):
+        rr.resolve, rr.bake, rr.cmds = self.saved
+
+    def test_a_fresh_rig_is_reset_connected_and_baked(self):
+        # holder: absent at the start, present after connect
+        rr.cmds = FakeRunScene([False, True])
+        ok, text = rr.run_retarget("|clip:root")
+        self.assertTrue(ok)
+        self.assertEqual(self.calls, [("reset", ""), ("connect", "|clip:root", ""), ("bake", "")])
+        self.assertIn("previous take cleared (12 curves)", text)
+        self.assertIn("retarget connected: 74 controls", text)
+        self.assertNotIn("more lines", text)
+        self.assertIn("baked 20", text)
+        self.assertTrue(text.startswith("Group: "))
+        self.assertEqual([c.get("openChunk") for c in rr.cmds.chunks][:1], [True])
+        self.assertTrue(rr.cmds.chunks[-1].get("closeChunk"))
+
+    def test_a_standing_holder_is_baked_not_refused(self):
+        rr.cmds = FakeRunScene([True])
+        ok, text = rr.run_retarget()
+        self.assertTrue(ok)
+        self.assertEqual(self.calls, [("bake", "")])
+        self.assertIn("already connected", text)
+
+    def test_a_rig_still_posed_after_the_reset_is_refused_by_name(self):
+        rr.cmds = FakeRunScene([False])
+        self.mod.posed = ["FKElbow_R", "FKWrist_R"]
+        ok, text = rr.run_retarget()
+        self.assertFalse(ok)
+        self.assertIn(rr.POSED, text)
+        self.assertIn("FKElbow_R, FKWrist_R", text)
+        self.assertEqual(self.calls, [("reset", "")])
+        self.assertTrue(rr.cmds.chunks[-1].get("closeChunk"))
+
+    def test_a_connect_refusal_is_reported_and_nothing_is_baked(self):
+        rr.cmds = FakeRunScene([False, False])
+        self.mod.connect = lambda source_root=None, rig=None: "nothing selected - select any joint"
+        ok, text = rr.run_retarget()
+        self.assertFalse(ok)
+        self.assertIn("retarget refused: nothing selected", text)
+        self.assertEqual([c for c in self.calls if c[0] == "bake"], [])
+
+    def test_no_rig_is_the_resolvers_refusal(self):
+        rr.resolve = lambda rig=None: (None, None, "2 rigs in the scene (a, b) - select")
+        self.assertEqual(rr.run_retarget(), (False, "2 rigs in the scene (a, b) - select"))
+        self.assertEqual(rr.retarget(), "2 rigs in the scene (a, b) - select")
 
 OWN = ["Root", "Hip", "Spine1", "Spine2", "Spine3", "Spine4", "Neck", "Head", "Right_Arm", "Left_Hand", "Right_Toes"]
 UE5 = ["root", "pelvis", "spine_01", "spine_05", "upperarm_l", "hand_r", "ball_l", "neck_01", "head"]
@@ -84,8 +186,8 @@ class TestNativeBake(unittest.TestCase):
     def test_both_modules_carry_the_native_bake_and_no_mel(self):
         for mod in (ar, pm):
             src = self._source(mod)
-            self.assertIn("def vendor_bake(start, end):", src, mod.__name__)
-            self.assertIn("def connected_source():", src, mod.__name__)
+            self.assertIn("def vendor_bake(start, end, rig=None):", src, mod.__name__)
+            self.assertIn("def connected_source(rig=None):", src, mod.__name__)
             self.assertNotIn("mel.eval(", src, mod.__name__)
             self.assertNotIn("import maya.mel", src, mod.__name__)
         self.assertIn("NOTHING", ar.disconnect.__doc__)
@@ -161,30 +263,28 @@ class TestBakeOrchestration(unittest.TestCase):
     """bake() runs the six steps in order and words the result."""
 
     def setUp(self):
-        self.saved = (rr.rig_module, rr.carry_helpers, rr.cmds)
+        self.saved = (rr.resolve, rr.carry_helpers, rr.cmds)
         self.calls = []
         mod = types.SimpleNamespace(
             __name__="maya_asretarget",
-            connected_source=lambda: "|clip:root",
-            source_key_range=lambda: (3.0, 41.0),
-            rig_paths=lambda: ["|root"],
-            rig_skeleton_root=lambda paths: "|root",
-            bake=lambda disconnect=True: self.calls.append(("bake", disconnect))
+            connected_source=lambda rig=None: "|clip:root",
+            source_key_range=lambda rig=None: (3.0, 41.0),
+            bake=lambda disconnect=True, rig=None: self.calls.append(("bake", disconnect, rig.namespace))
             or "baked 20 controls over 3..41; still connected - disconnect() when done",
-            disconnect=lambda: self.calls.append(("disconnect",)) or "retarget disconnected (82 constraints)")
+            disconnect=lambda rig=None: self.calls.append(("disconnect",)) or "retarget disconnected (82 constraints)")
         self.mod = mod
-        rr.rig_module = lambda: (mod, "")
+        rr.resolve = lambda rig=None: (LEGACY, mod, "")
         rr.carry_helpers = lambda source, rig, start, end: (
             self.calls.append(("carry", source, rig, start, end))
             or (["weapon_r", "camera_bone"], [], "camera SceneSetup_camera on camera_bone (39 frames)"))
         rr.cmds = FakeBakeScene()
 
     def tearDown(self):
-        rr.rig_module, rr.carry_helpers, rr.cmds = self.saved
+        rr.resolve, rr.carry_helpers, rr.cmds = self.saved
 
     def test_the_steps_run_in_order_over_the_clips_range(self):
         text = rr.bake()
-        self.assertEqual(self.calls, [("bake", False), ("carry", "|clip:root", "|root", 3.0, 41.0),
+        self.assertEqual(self.calls, [("bake", False, ""), ("carry", "|clip:root", "|root", 3.0, 41.0),
                                       ("disconnect",)])
         self.assertIn("baked 20 controls over 3..41", text)
         self.assertNotIn("still connected", text)
@@ -203,13 +303,13 @@ class TestBakeOrchestration(unittest.TestCase):
         self.assertTrue(rr.cmds.chunks[-1].get("closeChunk"))
 
     def test_nothing_connected_defers_to_the_module(self):
-        self.mod.connected_source = lambda: None
+        self.mod.connected_source = lambda rig=None: None
         self.mod.bake = lambda *a, **k: "nothing connected (MoCapConstraints not found) - connect() first"
         self.assertIn("nothing connected", rr.bake())
         self.assertEqual(self.calls, [])
 
     def test_a_missing_rig_is_the_dispatchers_refusal(self):
-        rr.rig_module = lambda: (None, "no AdvancedSkeleton rig in this scene")
+        rr.resolve = lambda rig=None: (None, None, "no AdvancedSkeleton rig in this scene")
         self.assertEqual(rr.bake(), "no AdvancedSkeleton rig in this scene")
 
 

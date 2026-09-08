@@ -40,6 +40,7 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
+import maya_rigs  # noqa: E402
 from maya_scenesetup import skeleton  # noqa: E402
 
 MANNY = "|SKM_Manny|root"
@@ -53,7 +54,18 @@ JOINTS = {
     "|clip:root": CLIP,
     "|root|pelvis|spine_01": RIG,
     "|SKM_Manny|root|pelvis": MANNY,
+    "|Manny_Rig1:root|Manny_Rig1:pelvis": "|Manny_Rig1:root",
 }
+
+# The rigs as maya_rigs describes them: the animator's root-namespace one and
+# a second added on 2026-09-08 into its own namespace.
+LEGACY_RIG = maya_rigs.Rig("", "ControlSet", "|Group|MotionSystem|MainSystem|Main",
+                           GROUP, RIG)
+RIG2 = "|Manny_Rig1:root"
+NS_RIG = maya_rigs.Rig("Manny_Rig1", "Manny_Rig1:ControlSet",
+                       "|Manny_Rig1:Group|Manny_Rig1:MotionSystem|Manny_Rig1:MainSystem|Manny_Rig1:Main",
+                       "|Manny_Rig1:Group", RIG2)
+RIGS = [LEGACY_RIG, NS_RIG]
 
 
 def top_joint(path):
@@ -63,41 +75,49 @@ def top_joint(path):
 
 class SelectionRoots(unittest.TestCase):
     """What a selected path means (2026-09-07: «достаточно выделить любой
-    контрол персонажа»)."""
+    контрол персонажа»), with several rigs since 2026-09-08."""
 
     def test_a_control_means_the_rigs_skeleton(self):
         roots = skeleton.selection_roots(
-            ["|Group|MotionSystem|FKSystem|FKWrist_R"], GROUP, RIG, top_joint)
+            ["|Group|MotionSystem|FKSystem|FKWrist_R"], RIGS, top_joint)
         self.assertEqual(roots, [RIG])
 
+    def test_a_namespaced_control_means_ITS_rigs_skeleton(self):
+        roots = skeleton.selection_roots(
+            ["|Manny_Rig1:Group|Manny_Rig1:MotionSystem|Manny_Rig1:FKWrist_R"],
+            RIGS, top_joint)
+        self.assertEqual(roots, [RIG2])
+
+    def test_a_namespaced_rigs_mesh_means_its_skeleton(self):
+        roots = skeleton.selection_roots(
+            ["|Manny_Rig1:SKM_Manny_Simple|Manny_Rig1:Skin_3p"], RIGS, top_joint)
+        self.assertEqual(roots, [RIG2])
+
     def test_the_group_itself_means_the_rigs_skeleton(self):
-        self.assertEqual(skeleton.selection_roots([GROUP], GROUP, RIG,
-                                                  top_joint), [RIG])
+        self.assertEqual(skeleton.selection_roots([GROUP], RIGS, top_joint), [RIG])
 
     def test_a_joint_means_its_top_joint(self):
-        roots = skeleton.selection_roots(["|clip:root|clip:pelvis"], GROUP,
-                                         RIG, top_joint)
+        roots = skeleton.selection_roots(["|clip:root|clip:pelvis"], RIGS, top_joint)
         self.assertEqual(roots, [CLIP])
 
     def test_the_rigs_own_joint_means_the_rig_too(self):
-        roots = skeleton.selection_roots(["|root|pelvis|spine_01"], GROUP,
-                                         RIG, top_joint)
+        roots = skeleton.selection_roots(["|root|pelvis|spine_01"], RIGS, top_joint)
         self.assertEqual(roots, [RIG])
+        roots = skeleton.selection_roots(["|Manny_Rig1:root|Manny_Rig1:pelvis"], RIGS, top_joint)
+        self.assertEqual(roots, [RIG2])
 
-    def test_a_mesh_or_a_locator_means_nothing(self):
-        roots = skeleton.selection_roots(["|Skin_3p", "|locator1"], GROUP,
-                                         RIG, top_joint)
+    def test_a_legacy_mesh_or_a_locator_means_nothing(self):
+        roots = skeleton.selection_roots(["|Skin_3p", "|locator1"], RIGS, top_joint)
         self.assertEqual(roots, [None, None])
 
     def test_a_group_that_merely_shares_the_prefix_is_not_inside(self):
         """`|Group1|...` is not under `|Group`: the separator counts."""
-        roots = skeleton.selection_roots(["|Group1|thing"], GROUP, RIG,
-                                         top_joint)
+        roots = skeleton.selection_roots(["|Group1|thing"], RIGS, top_joint)
         self.assertEqual(roots, [None])
 
     def test_without_a_rig_a_control_path_is_nothing(self):
         roots = skeleton.selection_roots(
-            ["|Group|MotionSystem|FKSystem|FKWrist_R"], None, None, top_joint)
+            ["|Group|MotionSystem|FKSystem|FKWrist_R"], [], top_joint)
         self.assertEqual(roots, [None])
 
     def test_inside_is_the_separator_aware_prefix_test(self):
@@ -109,38 +129,47 @@ class SelectionRoots(unittest.TestCase):
 
 
 class ChooseRoot(unittest.TestCase):
-    """Selection, then the rig, then the only skeleton. Pure."""
+    """Selection, then the only rig, then the only skeleton. Pure."""
 
     def test_selection_wins_over_the_rig(self):
-        self.assertEqual(skeleton.choose_root([CLIP], RIG, [RIG, CLIP]), CLIP)
+        self.assertEqual(skeleton.choose_root([CLIP], [RIG], [RIG, CLIP]), CLIP)
 
     def test_several_paths_of_one_character_are_one_answer(self):
         self.assertEqual(
-            skeleton.choose_root([RIG, RIG, RIG], RIG, [RIG, CLIP]), RIG)
+            skeleton.choose_root([RIG, RIG, RIG], [RIG], [RIG, CLIP]), RIG)
 
     def test_two_characters_selected_is_no_answer(self):
-        self.assertIsNone(skeleton.choose_root([RIG, CLIP], RIG, [RIG, CLIP]))
+        self.assertIsNone(skeleton.choose_root([RIG, CLIP], [RIG], [RIG, CLIP]))
+        self.assertIsNone(skeleton.choose_root([RIG, RIG2], [RIG, RIG2], [RIG, RIG2]))
 
     def test_the_rig_answers_with_nothing_selected(self):
         """Two skeletons in the scene -- the rig's and a clip's -- and no
         hint: the rig, because that is the character being worked on."""
-        self.assertEqual(skeleton.choose_root([], RIG, [RIG, CLIP]), RIG)
+        self.assertEqual(skeleton.choose_root([], [RIG], [RIG, CLIP]), RIG)
+
+    def test_two_rigs_and_nothing_selected_is_no_answer(self):
+        """2026-09-08: the wrong rig in silence is what this exists to
+        prevent; the selection is the way to say which."""
+        self.assertIsNone(skeleton.choose_root([], [RIG, RIG2], [RIG, RIG2]))
+        self.assertEqual(skeleton.choose_root([RIG2], [RIG, RIG2], [RIG, RIG2]), RIG2)
+
+    def test_a_rig_driving_no_skeleton_does_not_count(self):
+        self.assertEqual(skeleton.choose_root([], ["", RIG], [RIG]), RIG)
 
     def test_a_lone_skeleton_answers_without_a_rig(self):
-        self.assertEqual(skeleton.choose_root([], None, [MANNY]), MANNY)
+        self.assertEqual(skeleton.choose_root([], [], [MANNY]), MANNY)
 
     def test_two_skeletons_no_rig_and_no_hint_is_no_answer(self):
-        self.assertIsNone(skeleton.choose_root([], None, [MANNY, SUIT]))
+        self.assertIsNone(skeleton.choose_root([], [], [MANNY, SUIT]))
 
     def test_an_empty_scene_is_no_answer(self):
-        self.assertIsNone(skeleton.choose_root([], None, []))
+        self.assertIsNone(skeleton.choose_root([], [], []))
 
     def test_selection_outside_any_skeleton_is_ignored(self):
         """A mesh or locator selected beside a lone skeleton still resolves
         to that skeleton -- the selection said nothing, not "no"."""
-        self.assertEqual(skeleton.choose_root([None, None], None, [MANNY]),
-                         MANNY)
-        self.assertEqual(skeleton.choose_root([None], RIG, [RIG]), RIG)
+        self.assertEqual(skeleton.choose_root([None, None], [], [MANNY]), MANNY)
+        self.assertEqual(skeleton.choose_root([None], [RIG], [RIG, CLIP]), RIG)
 
 
 class BoneIn(unittest.TestCase):

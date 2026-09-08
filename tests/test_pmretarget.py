@@ -5,6 +5,13 @@ import unittest
 import maya.api.OpenMaya as om
 
 import maya_pmretarget as pm
+import maya_rigs
+
+# The rig of every scene made before 2026-09-08: the root namespace, found by
+# its group and its skeleton. Passed explicitly so the fakes below need no
+# `maya_rigs.current_rig()` (which asks the scene for its ControlSets).
+LEGACY = maya_rigs.Rig("", "ControlSet", "|Group|MotionSystem|MainSystem|Main",
+                       "|Group", "|root")
 
 # The PlayerMale rig's controls (measured 2026-09-05: 56 deform joints, 176 controls --
 # these are the ones the tables can drive).  Midline bases exist as _M only, the eyes and
@@ -469,10 +476,10 @@ class TestVendorBake(unittest.TestCase):
         pm.cmds = self.real
 
     def test_every_driven_object_is_baked_once(self):
-        self.assertEqual(pm.vendor_bake(3.0, 41.0), ["FKWrist_R", "IKArm_L"])
+        self.assertEqual(pm.vendor_bake(3.0, 41.0, LEGACY), ["FKWrist_R", "IKArm_L"])
 
     def test_the_bake_carries_the_vendors_flags(self):
-        pm.vendor_bake(3.0, 41.0)
+        pm.vendor_bake(3.0, 41.0, LEGACY)
         name, objs, k = self.fake.calls[0]
         self.assertEqual((name, objs), ("bakeResults", ("FKWrist_R", "IKArm_L")))
         self.assertEqual(k["time"], (3.0, 41.0))
@@ -486,7 +493,7 @@ class TestVendorBake(unittest.TestCase):
             self.assertEqual(k[flag], value, flag)
 
     def test_static_channels_are_deleted_the_vendors_way(self):
-        pm.vendor_bake(3.0, 41.0)
+        pm.vendor_bake(3.0, 41.0, LEGACY)
         name, objs, k = self.fake.calls[1]
         self.assertEqual((name, objs), ("delete", ("FKWrist_R", "IKArm_L")))
         self.assertEqual(
@@ -496,13 +503,13 @@ class TestVendorBake(unittest.TestCase):
 
     def test_nothing_registered_bakes_nothing(self):
         self.fake.listConnections = lambda plug, **k: []
-        self.assertEqual(pm.vendor_bake(0.0, 1.0), [])
+        self.assertEqual(pm.vendor_bake(0.0, 1.0, LEGACY), [])
         self.assertEqual(self.fake.calls, [])
 
     def test_connected_source_reads_the_holder(self):
-        self.assertEqual(pm.connected_source(), "|clip:Root")
+        self.assertEqual(pm.connected_source(LEGACY), "|clip:Root")
         self.fake.objExists = lambda name: False
-        self.assertIsNone(pm.connected_source())
+        self.assertIsNone(pm.connected_source(LEGACY))
 
 
 class TestAssets(unittest.TestCase):
@@ -559,7 +566,7 @@ class TestResetBuildPose(unittest.TestCase):
         real, fake = pm.cmds, self.Fake()
         pm.cmds = fake
         try:
-            self.assertEqual(pm.reset_build_pose(), (1, 1))
+            self.assertEqual(pm.reset_build_pose(LEGACY), (1, 1))
         finally:
             pm.cmds = real
         self.assertEqual(fake.deleted, ["FKWrist_R_rotateY"])

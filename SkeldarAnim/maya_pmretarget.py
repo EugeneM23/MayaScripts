@@ -68,6 +68,8 @@ import os
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+import maya_rigs
+
 # ------------------------------------------------------------------ our rig
 
 # AdvancedSkeleton control base -> PlayerMale game bone (without the side prefix).
@@ -159,9 +161,28 @@ ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 OFFSET_TOL = 1e-5
 DEFAULTS = (("tx", 0.0), ("ty", 0.0), ("tz", 0.0), ("rx", 0.0), ("ry", 0.0), ("rz", 0.0))
 
-HOLDER = "MoCapConstraints"      # AdvancedSkeleton's own node name
+HOLDER = "MoCapConstraints"      # AdvancedSkeleton's own node name (leaf; one per rig)
 SWITCH = "disableConstraints"    # ... and its own attribute
 SCALE_GROUP = "pmrtScale"
+
+
+def _n(rig, leaf_name):
+    """The scene name of one of the rig's nodes: `ns:leaf`, or the plain name
+    for a rig in the root namespace. Every rig node this module touches goes
+    through here -- controls, FKX joints, ControlSet, the holder, the helpers."""
+    return maya_rigs.node(rig, leaf_name)
+
+
+def _rig(rig):
+    """The rig to act on: the one given, else the selection's, else the sole
+    rig. Returns (rig, refusal)."""
+    if rig is not None:
+        return rig, ""
+    return maya_rigs.current_rig()
+
+
+def holder_of(rig):
+    return _n(rig, HOLDER)
 FOLLOW_PREFIX = "pmrtFollow_"
 SCALED_PREFIX = "pmrtScaled_"
 OFFSET_PREFIX = "pmrtOffset_"
@@ -562,24 +583,25 @@ def rest_matrices(bones, schema, rig_rest=None):
     return out
 
 
-def rig_paths():
-    """Long paths that belong to the rig: everything under `Group` plus the game skeleton
-    our DeformationSystem drives (its joints carry our constraints)."""
-    out = []
-    for j in cmds.ls(type="joint", long=True) or []:
-        if j == "|Group" or j.startswith("|Group|"):
-            out.append(j)
-        elif cmds.listRelatives(j, children=True, type="constraint"):
-            out.append(j)
-    return out
+def rig_paths(rig=None):
+    """Long paths of every joint that belongs to the rig: its own deformation joints
+    under its group plus the game skeleton it drives (`maya_rigs`)."""
+    rig, _ = _rig(rig)
+    return maya_rigs.rig_paths(rig) if rig else []
 
 
-def rig_skeleton_root(paths):
-    """The game skeleton's root: the shallowest constrained path outside `Group`."""
-    outside = [p for p in paths if not (p == "|Group" or p.startswith("|Group|"))]
-    if not outside:
-        return ""
-    return sorted(outside, key=lambda p: (p.count("|"), p))[0]
+def rig_skeleton_root(paths_or_rig=None):
+    """The game skeleton's root. Takes a Rig; the old `rig_paths()` list is still
+    accepted and answered the old way (the shallowest path outside the rigs' own
+    groups) for the verify scripts that pass one."""
+    if isinstance(paths_or_rig, maya_rigs.Rig):
+        return paths_or_rig.skeleton_root
+    if paths_or_rig is None:
+        rig, _ = _rig(None)
+        return rig.skeleton_root if rig else ""
+    groups = set(maya_rigs.top_of(r.group) for r in maya_rigs.rigs())
+    outside = [p for p in paths_or_rig if not any(maya_rigs.under(p, g) for g in groups)]
+    return maya_rigs.shallowest(outside)
 
 
 def _set_local(node, matrix):
@@ -591,38 +613,38 @@ def _set_local(node, matrix):
     cmds.setAttr(node + ".rotate", math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
 
 
-def _holder():
-    """AdvancedSkeleton's own holder node, created the way its connect does."""
-    if not cmds.objExists(HOLDER):
-        cmds.createNode("transform", name=HOLDER, skipSelect=True)
+def _holder(rig):
+    """AdvancedSkeleton's own holder node, created the way its connect does -- in the
+    rig's namespace, so two connected rigs each have their own."""
+    holder = holder_of(rig)
+    if not cmds.objExists(holder):
+        cmds.createNode("transform", name=holder, skipSelect=True)
         for attr in ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"):
-            cmds.setAttr(HOLDER + "." + attr, lock=True)
-    if not cmds.attributeQuery(SWITCH, node=HOLDER, exists=True):
-        cmds.addAttr(HOLDER, longName=SWITCH, attributeType="bool", keyable=True)
-    return HOLDER
+            cmds.setAttr(holder + "." + attr, lock=True)
+    if not cmds.attributeQuery(SWITCH, node=holder, exists=True):
+        cmds.addAttr(holder, longName=SWITCH, attributeType="bool", keyable=True)
+    return holder
 
 
-def _register(constraints):
+def _register(constraints, holder):
     """The contract: the vendor's Bake walks these, its Disconnect deletes them."""
     for c in constraints:
-        cmds.connectAttr(HOLDER + "." + SWITCH, c + ".nodeState", force=True)
+        cmds.connectAttr(holder + "." + SWITCH, c + ".nodeState", force=True)
 
 
 SOURCE_ATTR = "pmrtSourceRoot"     # on the holder: where the clip came from, for bake()
 
 
-def _remember_source(root):
-    if not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
-        cmds.addAttr(HOLDER, longName=SOURCE_ATTR, dataType="string")
-    cmds.setAttr(HOLDER + "." + SOURCE_ATTR, root, type="string")
+def _remember_source(root, holder):
+    if not cmds.attributeQuery(SOURCE_ATTR, node=holder, exists=True):
+        cmds.addAttr(holder, longName=SOURCE_ATTR, dataType="string")
+    cmds.setAttr(holder + "." + SOURCE_ATTR, root, type="string")
 
 
-def source_key_range():
+def source_key_range(rig=None):
     """(first, last) key of the connected source's bones, or None."""
-    if not cmds.objExists(HOLDER) or not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
-        return None
-    root = cmds.getAttr(HOLDER + "." + SOURCE_ATTR)
-    if not root or not cmds.objExists(root):
+    root = connected_source(rig)
+    if root is None:
         return None
     paths = list(source_bones(root).values())
     if not (cmds.keyframe(paths, query=True, keyframeCount=True) or 0):
@@ -630,16 +652,18 @@ def source_key_range():
     return cmds.findKeyframe(paths, which="first"), cmds.findKeyframe(paths, which="last")
 
 
-def _scale_group(factor):
+def _scale_group(factor, rig):
     """A group under the holder scaled by the size ratio; whatever sits under it at the
-    source's world position stands at OUR scale.  Dies with the holder."""
-    if not cmds.objExists(SCALE_GROUP):
-        grp = cmds.createNode("transform", name=SCALE_GROUP, parent=HOLDER, skipSelect=True)
+    source's world position stands at OUR scale.  Dies with the holder.  In the rig's
+    namespace: a plain `pmrtScale` would find the OTHER rig's on the second connect."""
+    group = _n(rig, SCALE_GROUP)
+    if not cmds.objExists(group):
+        grp = cmds.createNode("transform", name=group, parent=holder_of(rig), skipSelect=True)
         cmds.setAttr(grp + ".scale", factor, factor, factor)
-    return SCALE_GROUP
+    return group
 
 
-def _scaled_follower(source_path, name, factor, offset):
+def _scaled_follower(source_path, name, factor, offset, rig):
     """A node standing at `factor` times the source bone's world position, plus a WORLD offset.
 
     Three transforms and one plain connection, no DG node: `pmrtFollow_` is point-constrained
@@ -651,11 +675,13 @@ def _scaled_follower(source_path, name, factor, offset):
     space -- RootX_M's parent follows Main, so a yaw of Main turned the offset with it
     (measured: 0.115 off after a 25 deg root turn).  All three die with the holder.
     """
-    follower = cmds.createNode("transform", name=FOLLOW_PREFIX + name, parent=HOLDER, skipSelect=True)
+    follower = cmds.createNode("transform", name=_n(rig, FOLLOW_PREFIX + name), parent=holder_of(rig),
+                               skipSelect=True)
     con = cmds.pointConstraint(source_path, follower)[0]
-    scaled = cmds.createNode("transform", name=SCALED_PREFIX + name, parent=_scale_group(factor), skipSelect=True)
+    scaled = cmds.createNode("transform", name=_n(rig, SCALED_PREFIX + name), parent=_scale_group(factor, rig),
+                             skipSelect=True)
     cmds.connectAttr(follower + ".translate", scaled + ".translate")
-    shifted = cmds.createNode("transform", name=OFFSET_PREFIX + name, parent=scaled, skipSelect=True)
+    shifted = cmds.createNode("transform", name=_n(rig, OFFSET_PREFIX + name), parent=scaled, skipSelect=True)
     cmds.setAttr(shifted + ".translate", *[o / factor for o in offset])
     return shifted, [con]
 
@@ -666,7 +692,7 @@ def pole_joints(control):
     return tuple(j + side for j in POLE_CHAIN[base])
 
 
-def _pole_rig(control, upper, mid, lower):
+def _pole_rig(control, upper, mid, lower, rig):
     """Four transforms and three constraints under the holder that put a pole in the FK plane.
 
     `pmrtPoleBase_`  -- on the upper-lower line at the mid joint's share (point constraint to
@@ -678,29 +704,31 @@ def _pole_rig(control, upper, mid, lower):
     `pmrtPole_`      -- a limb's length out along the aim.
     Read at the rig's build pose; every number is measured, none assumed.
     """
+    upper, mid, lower = (_n(rig, j) for j in (upper, mid, lower))
     a, b, c = (om.MVector(cmds.xform(j, q=True, ws=True, t=True)) for j in (upper, mid, lower))
     d_upper, d_lower = (a - b).length(), (b - c).length()
     length = d_upper + d_lower
     on_line = (a * d_lower + c * d_upper) / length
-    side = om.MVector(cmds.xform(control, q=True, ws=True, t=True)) - on_line
+    side = om.MVector(cmds.xform(_n(rig, control), q=True, ws=True, t=True)) - on_line
     if side.length() < 1e-6:
         side = b - on_line
     if side.length() < 1e-6:
         raise RuntimeError("%s rests on the limb's line and the limb is straight: no pole side" % control)
     mid_rot = om.MTransformationMatrix(om.MMatrix(cmds.getAttr(mid + ".worldMatrix[0]"))).rotation(asQuaternion=True).asMatrix()
     local = (side.normal() * -NUDGE * length) * mid_rot.inverse()        # row vectors: local = world * R^-1
-    base = cmds.createNode("transform", name=POLE_BASE_PREFIX + control, parent=HOLDER, skipSelect=True)
+    base = cmds.createNode("transform", name=_n(rig, POLE_BASE_PREFIX + control), parent=holder_of(rig),
+                           skipSelect=True)
     con = cmds.pointConstraint(upper, lower, base)[0]
     w = cmds.pointConstraint(con, query=True, weightAliasList=True)
     cmds.setAttr("%s.%s" % (con, w[0]), d_lower)
     cmds.setAttr("%s.%s" % (con, w[1]), d_upper)
-    frame = cmds.createNode("transform", name=POLE_FRAME_PREFIX + control, parent=base, skipSelect=True)
+    frame = cmds.createNode("transform", name=_n(rig, POLE_FRAME_PREFIX + control), parent=base, skipSelect=True)
     made = [con, cmds.orientConstraint(mid, frame)[0]]
-    nudge = cmds.createNode("transform", name=POLE_NUDGE_PREFIX + control, parent=frame, skipSelect=True)
+    nudge = cmds.createNode("transform", name=_n(rig, POLE_NUDGE_PREFIX + control), parent=frame, skipSelect=True)
     cmds.setAttr(nudge + ".translate", local.x, local.y, local.z)
     made.append(cmds.aimConstraint(mid, nudge, aimVector=(1, 0, 0), upVector=(0, 1, 0),
                                    worldUpType="vector", worldUpVector=(0, 1, 0))[0])
-    pole = cmds.createNode("transform", name=POLE_PREFIX + control, parent=nudge, skipSelect=True)
+    pole = cmds.createNode("transform", name=_n(rig, POLE_PREFIX + control), parent=nudge, skipSelect=True)
     cmds.setAttr(pole + ".translateX", length)
     return pole, made
 
@@ -708,7 +736,7 @@ def _pole_rig(control, upper, mid, lower):
 TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 
 
-def reset_build_pose():
+def reset_build_pose(rig=None):
     """The controls back to the build pose: the previous take's keys deleted,
     translate/rotate zeroed where the channel is free. Returns (curves deleted,
     controls zeroed).
@@ -719,7 +747,8 @@ def reset_build_pose():
     the sibling module's, deliberately (this module imports nothing from it).
     Time curves only: a driven key (animCurveUA/UU) is part of the rig.
     """
-    controls = cmds.sets("ControlSet", query=True) or []
+    rig, _ = _rig(rig)
+    controls = (cmds.sets(rig.control_set, query=True) or []) if rig else []
     curves = set()
     for control in controls:
         for curve in cmds.listConnections(control, type="animCurve", source=True,
@@ -742,10 +771,11 @@ def reset_build_pose():
     return len(curves), zeroed
 
 
-def posed_controls(tol=1e-3):
+def posed_controls(tol=1e-3, rig=None):
     """Controls off their default translate/rotate: the rig is not at build pose."""
     out = []
-    for control in cmds.sets("ControlSet", query=True) or []:
+    rig, _ = _rig(rig)
+    for control in (cmds.sets(rig.control_set, query=True) or []) if rig else []:
         for attr, default in DEFAULTS:
             plug = control + "." + attr
             if not cmds.objExists(plug) or not cmds.getAttr(plug, settable=True):
@@ -765,7 +795,7 @@ def _key_range(paths):
     return "%g..%g" % (cmds.findKeyframe(paths, which="first"), cmds.findKeyframe(paths, which="last"))
 
 
-def foreign_constraints(control):
+def foreign_constraints(control, rig):
     """Constraints already on a control whose targets lie outside the rig -- the animator's
     own work (measured 2026-09-05: the left arm's FK controls parent-constrained to
     locators beside an OverRig setup).  A second constraint on a driven channel would
@@ -773,34 +803,39 @@ def foreign_constraints(control):
     kinds = {"parentConstraint": cmds.parentConstraint, "orientConstraint": cmds.orientConstraint,
              "pointConstraint": cmds.pointConstraint, "scaleConstraint": cmds.scaleConstraint}
     out = []
-    for con in cmds.listRelatives(control, children=True, type="constraint", fullPath=True) or []:
-        if HOLDER in (cmds.listConnections(con + ".nodeState", source=True, destination=False) or []):
+    for con in cmds.listRelatives(_n(rig, control), children=True, type="constraint", fullPath=True) or []:
+        if holder_of(rig) in (cmds.listConnections(con + ".nodeState", source=True, destination=False) or []):
             continue                                  # one of ours, registered on the holder
         fn = kinds.get(cmds.nodeType(con))
         targets = fn(con, query=True, targetList=True) if fn else []
-        if any(not cmds.ls(t, long=True)[0].startswith("|Group|") for t in targets):
+        if any(not maya_rigs.under(cmds.ls(t, long=True)[0], rig.group) for t in targets):
             out.extend(targets)
     return out
 
 
 Plan = collections.namedtuple(
-    "Plan", "root drives missing bones rig_bones refusal schema src_rest rig_rest align scale notes busy")
+    "Plan", "root drives missing bones rig_bones refusal schema src_rest rig_rest align scale notes busy rig")
 
 
-def _plan(source_root=None):
+def _plan(source_root=None, rig=None):
     """Everything connect() needs, computed without touching the scene."""
-    empty = Plan("", [], [], {}, {}, "", OWN, {}, {}, {}, 1.0, [], [])
-    if not cmds.objExists("ControlSet") or not cmds.objExists("Main"):
-        return empty._replace(refusal="no AdvancedSkeleton rig in this scene (ControlSet/Main missing)")
+    empty = Plan("", [], [], {}, {}, "", OWN, {}, {}, {}, 1.0, [], [], None)
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return empty._replace(refusal=refusal)
+    empty = empty._replace(rig=rig)
     joints = cmds.ls(type="joint", long=True) or []
-    rig = rig_paths()
     if source_root is None:
-        source_root, refusal = source_root_of(cmds.ls(selection=True, long=True) or [], joints, rig)
+        # the selection names the SOURCE; a rig control in it named the rig already
+        source_root, refusal = source_root_of(
+            [p for p in (cmds.ls(selection=True, long=True) or [])
+             if maya_rigs.rig_of(p, [rig]) is None or cmds.objectType(p) == "joint"],
+            joints, maya_rigs.rig_paths(rig))
         if refusal:
             return empty._replace(refusal=refusal)
     elif not cmds.objExists(source_root):
         return empty._replace(refusal="%s not found" % source_root)
-    game_root = rig_skeleton_root(rig)
+    game_root = rig.skeleton_root
     if not game_root:
         return empty._replace(refusal="the rig drives no skeleton - is this rig constrained to the game bones?")
     rig_bones = dict((leaf(p), p) for p in [game_root] + (
@@ -812,12 +847,14 @@ def _plan(source_root=None):
             refusal="%s is none of %s (looked for %s)" % (
                 leaf(source_root), "/".join(s.name for s in SCHEMAS),
                 "; ".join("%s: %s" % (s.name, ", ".join(s.required)) for s in SCHEMAS)))
-    controls = [c for c in candidates(schema) if cmds.objExists(c)]
+    controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
     drives, missing = drive_plan(controls, list(bones), schema)
-    drives = [d for d in drives if d.kind in ("fk", "main", "ground", "pelvis") or cmds.objExists(d.source)]
-    drives = [d for d in drives if d.kind != "pole" or all(cmds.objExists(j) for j in pole_joints(d.control))]
+    drives = [d for d in drives
+              if d.kind in ("fk", "main", "ground", "pelvis") or cmds.objExists(_n(rig, d.source))]
+    drives = [d for d in drives
+              if d.kind != "pole" or all(cmds.objExists(_n(rig, j)) for j in pole_joints(d.control))]
     drives = [d for d in drives if our_bone(d.control) in rig_bones]
-    busy = [(d.control, foreign_constraints(d.control)) for d in drives]
+    busy = [(d.control, foreign_constraints(d.control, rig)) for d in drives]
     busy = [(c, t) for c, t in busy if t]
     drives = [d for d in drives if d.control not in dict(busy)]
     rig_rest = dict((name, cmds.getAttr(path + ".worldMatrix[0]")) for name, path in rig_bones.items())
@@ -845,12 +882,13 @@ def _plan(source_root=None):
     if busy:
         notes.append("left alone, already constrained by something that is not the rig: "
                      + ", ".join("%s (%s)" % (c, ", ".join(t)) for c, t in busy))
-    return Plan(source_root, drives, missing, bones, rig_bones, "", schema, src_rest, rig_rest, align, scale, notes, busy)
+    return Plan(source_root, drives, missing, bones, rig_bones, "", schema, src_rest, rig_rest, align, scale,
+                notes, busy, rig)
 
 
 def _rotation_offset(drive, plan):
     """The constant rotation offset for an FK / main / pelvis drive: reference * source_rest^-1."""
-    reference = reference_rotation(cmds.getAttr(drive.control + ".worldMatrix[0]"),
+    reference = reference_rotation(cmds.getAttr(_n(plan.rig, drive.control) + ".worldMatrix[0]"),
                                    plan.align.get(drive.control, list(om.MMatrix())))
     return rotation_only(offset_local(reference, rotation_only(plan.src_rest[drive.source])))
 
@@ -858,16 +896,17 @@ def _rotation_offset(drive, plan):
 def _position_offset(drive, plan):
     """Where the control's rest position sits against the source's rest position, scaled:
     our rest minus scale times theirs -- a pointConstraint's world offset."""
-    ours = position(cmds.getAttr(drive.control + ".worldMatrix[0]"))
+    ours = position(cmds.getAttr(_n(plan.rig, drive.control) + ".worldMatrix[0]"))
     theirs = position(plan.src_rest[drive.source])
     return tuple(o - plan.scale * t for o, t in zip(ours, theirs))
 
 
-def report(source_root=None):
+def report(source_root=None, rig=None):
     """Read-only: what connect() would build, and from what."""
-    plan = _plan(source_root)
+    plan = _plan(source_root, rig)
     if plan.refusal:
         return plan.refusal
+    rig = plan.rig
     kinds = collections.Counter(d.kind for d in plan.drives)
     lines = ["source: %s (%d bones, keys %s)" % (plan.root, len(plan.bones), _key_range(list(plan.bones.values())))]
     lines.append("would drive %d controls: %d FK by rotation only, %d IK ends and %d poles following our own FK "
@@ -877,26 +916,30 @@ def report(source_root=None):
                     ("from the hips' horizontal travel" if kinds["ground"] else "not driven"),
                     "from the pelvis (rotation + scaled position)" if kinds["pelvis"] else "not driven"))
     lines += plan.notes
-    posed = posed_controls()
+    posed = posed_controls(rig=rig)
     if posed:
         lines.append("the rig is posed (%s%s) - connect() will refuse until it is at its build pose"
                      % (", ".join(posed[:4]), " ..." if len(posed) > 4 else ""))
     if plan.missing:
         lines.append("no source bone for: " + ", ".join("%s (%s)" % (c, b) for c, b in plan.missing))
-    if cmds.objExists(HOLDER):
-        lines.append("%s already exists - disconnect first" % HOLDER)
+    if cmds.objExists(holder_of(rig)):
+        lines.append("%s already exists - disconnect first" % holder_of(rig))
     return "\n".join(line for line in lines if line)
 
 
-def connect(source_root=None, require_build_pose=True):
+def connect(source_root=None, require_build_pose=True, rig=None):
     """Make the rig follow the source skeleton, in AdvancedSkeleton's own shape."""
-    if cmds.objExists(HOLDER):
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    holder = holder_of(rig)
+    if cmds.objExists(holder):
         return ("%s already exists - press \"Disconnect MoCap Skeleton\" in AdvancedSkeleton first, "
-                "or run disconnect()" % HOLDER)
-    plan = _plan(source_root)
+                "or run disconnect()" % holder)
+    plan = _plan(source_root, rig)
     if plan.refusal:
         return plan.refusal
-    posed = posed_controls()
+    posed = posed_controls(rig=rig)
     if posed and require_build_pose:
         return ("the rig is posed (%s%s) - press \"Go To BuildPose\" in AdvancedSkeleton first, or "
                 "connect(require_build_pose=False). Every rest offset is read from the pose the rig "
@@ -910,57 +953,59 @@ def connect(source_root=None, require_build_pose=True):
         if d.kind in ("main", "ground", "pelvis"):
             pos[d.control] = _position_offset(d, plan)
         if d.kind in ("ik", "iktoes"):
-            local[d.control] = offset_local(cmds.getAttr(d.control + ".worldMatrix[0]"),
-                                            cmds.getAttr(d.source + ".worldMatrix[0]"))
+            local[d.control] = offset_local(cmds.getAttr(_n(rig, d.control) + ".worldMatrix[0]"),
+                                            cmds.getAttr(_n(rig, d.source) + ".worldMatrix[0]"))
 
     auto = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
     cmds.undoInfo(openChunk=True, chunkName="PlayerMale retarget connect")
     made = []
     try:
-        _holder()
-        _remember_source(plan.root)
+        _holder(rig)
+        _remember_source(plan.root, holder)
         for d in plan.drives:
-            order = cmds.getAttr(d.control + ".rotateOrder")
+            control = _n(rig, d.control)
+            order = cmds.getAttr(control + ".rotateOrder")
             if d.kind == "fk":
                 target = plan.bones[d.source]
                 if is_identity(rot[d.control], OFFSET_TOL):
-                    made.append(cmds.orientConstraint(target, d.control)[0])
+                    made.append(cmds.orientConstraint(target, control)[0])
                 else:
-                    made.append(cmds.orientConstraint(target, d.control,
+                    made.append(cmds.orientConstraint(target, control,
                                                       offset=euler_offset(rot[d.control], order))[0])
             elif d.kind in ("main", "pelvis"):
                 target = plan.bones[d.source]
-                made.append(cmds.orientConstraint(target, d.control, offset=euler_offset(rot[d.control], order))[0])
-                shifted, cons = _scaled_follower(target, d.control, plan.scale, pos[d.control])
+                made.append(cmds.orientConstraint(target, control, offset=euler_offset(rot[d.control], order))[0])
+                shifted, cons = _scaled_follower(target, d.control, plan.scale, pos[d.control], rig)
                 made += cons
-                made.append(cmds.pointConstraint(shifted, d.control)[0])
+                made.append(cmds.pointConstraint(shifted, control)[0])
             elif d.kind == "ground":
-                shifted, cons = _scaled_follower(plan.bones[d.source], d.control, plan.scale, pos[d.control])
+                shifted, cons = _scaled_follower(plan.bones[d.source], d.control, plan.scale, pos[d.control], rig)
                 made += cons
-                made.append(cmds.pointConstraint(shifted, d.control, skip=["y"])[0])
+                made.append(cmds.pointConstraint(shifted, control, skip=["y"])[0])
             elif d.kind == "ik":
-                con = cmds.parentConstraint(d.source, d.control)[0]
+                con = cmds.parentConstraint(_n(rig, d.source), control)[0]
                 move, turn = parent_offsets(local[d.control], order)
                 cmds.setAttr(con + ".target[0].targetOffsetTranslate", *move)
                 cmds.setAttr(con + ".target[0].targetOffsetRotate", *turn)
                 made.append(con)
             elif d.kind == "iktoes":
-                made.append(cmds.orientConstraint(d.source, d.control,
+                made.append(cmds.orientConstraint(_n(rig, d.source), control,
                                                   offset=euler_offset(rotation_only(local[d.control]), order))[0])
             elif d.kind == "pole":
-                pole, helpers = _pole_rig(d.control, *pole_joints(d.control))
+                pole, helpers = _pole_rig(d.control, *pole_joints(d.control), rig=rig)
                 made += helpers
-                made.append(cmds.pointConstraint(pole, d.control)[0])
-        _register(made)
+                made.append(cmds.pointConstraint(pole, control)[0])
+        _register(made, holder)
     finally:
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=auto)
 
     kinds = collections.Counter(d.kind for d in plan.drives)
-    lines = ["retarget connected: %d controls driven from %s -- %d FK by rotation, %d IK ends and %d poles "
+    lines = ["retarget connected: %d controls of %s driven from %s -- %d FK by rotation, %d IK ends and %d poles "
              "following our own FK joints, %d constraints"
-             % (len(plan.drives), leaf(plan.root), kinds["fk"], kinds["ik"] + kinds["iktoes"], kinds["pole"], len(made))]
+             % (len(plan.drives), maya_rigs.label(rig), leaf(plan.root), kinds["fk"], kinds["ik"] + kinds["iktoes"],
+                kinds["pole"], len(made))]
     lines += plan.notes
     if plan.missing:
         lines.append("no source bone for: " + ", ".join(c for c, _ in plan.missing))
@@ -973,7 +1018,7 @@ def connect(source_root=None, require_build_pose=True):
     return "\n".join(line for line in lines if line)
 
 
-def vendor_bake(start, end):
+def vendor_bake(start, end, rig=None):
     """What AdvancedSkeleton's `asMoCapMatcherBake` does, in cmds, flag for flag.
 
     Read whole from the vendor's MEL (2026-09-07): every constraint on the holder's
@@ -983,7 +1028,9 @@ def vendor_bake(start, end):
     sibling module's, deliberately: this module imports nothing from it (a test pins that).
     Returns the objects baked, in the order the constraints were registered.
     """
-    constraints = cmds.listConnections(HOLDER + "." + SWITCH, source=False, destination=True) or []
+    rig, _ = _rig(rig)
+    holder = holder_of(rig) if rig else HOLDER
+    constraints = cmds.listConnections(holder + "." + SWITCH, source=False, destination=True) or []
     controls = []
     for constraint in constraints:
         driven = cmds.listConnections(constraint + ".constraintParentInverseMatrix") or []
@@ -1000,15 +1047,19 @@ def vendor_bake(start, end):
     return controls
 
 
-def connected_source():
-    """The source root connect() remembered on the holder, or None."""
-    if not cmds.objExists(HOLDER) or not cmds.attributeQuery(SOURCE_ATTR, node=HOLDER, exists=True):
+def connected_source(rig=None):
+    """The source root connect() remembered on the rig's holder, or None."""
+    rig, _ = _rig(rig)
+    if rig is None:
         return None
-    root = cmds.getAttr(HOLDER + "." + SOURCE_ATTR)
+    holder = holder_of(rig)
+    if not cmds.objExists(holder) or not cmds.attributeQuery(SOURCE_ATTR, node=holder, exists=True):
+        return None
+    root = cmds.getAttr(holder + "." + SOURCE_ATTR)
     return root if root and cmds.objExists(root) else None
 
 
-def bake(disconnect=True):
+def bake(disconnect=True, rig=None):
     """AdvancedSkeleton's own MoCap Matcher > Bake, over the CLIP's key range, then (by default)
     its Disconnect MoCap Skeleton.
 
@@ -1017,43 +1068,50 @@ def bake(disconnect=True):
     clip does not bake 25 frames of nothing), so nothing of AdvancedSkeleton has to be
     sourced in the session.  Returns what was keyed.
     """
-    if not cmds.objExists(HOLDER):
-        return "nothing connected (%s not found) - connect() first" % HOLDER
-    controls = set(cmds.sets("ControlSet", query=True) or [])
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    if not cmds.objExists(holder_of(rig)):
+        return "nothing connected (%s not found) - connect() first" % holder_of(rig)
+    controls = set(cmds.sets(rig.control_set, query=True) or [])
     before = set(c for c in controls if cmds.listConnections(c, type="animCurve", source=True, destination=False))
-    span = source_key_range() or (cmds.playbackOptions(query=True, min=True),
-                                  cmds.playbackOptions(query=True, max=True))
-    vendor_bake(span[0], span[1])
+    span = source_key_range(rig) or (cmds.playbackOptions(query=True, min=True),
+                                     cmds.playbackOptions(query=True, max=True))
+    vendor_bake(span[0], span[1], rig)
     keyed = [c for c in controls if c not in before and cmds.listConnections(c, type="animCurve", source=True, destination=False)]
     curves = list(set(cmds.listConnections(keyed, type="animCurve", source=True, destination=False) or [])) if keyed else []
     baked = ("%g..%g" % (cmds.findKeyframe(curves, which="first"), cmds.findKeyframe(curves, which="last"))) if curves else "nothing"
     note = "baked %d controls over %s (%d curves; static channels dropped, as the vendor's Bake does)" % (len(keyed), baked, len(curves))
     if disconnect:
-        note += "; " + disconnect_()
+        note += "; " + disconnect_(rig)
     else:
         note += "; still connected - disconnect() when done"
     return note
 
 
-def disconnect():
+def disconnect(rig=None):
     """What AdvancedSkeleton's own \"Disconnect MoCap Skeleton\" button does -- and, like it, it
     keeps NOTHING of the clip: bake() first, or the rig is left frozen in one pose."""
-    return disconnect_()
+    return disconnect_(rig)
 
 
-def disconnect_():
-    if not cmds.objExists(HOLDER):
-        return "nothing connected (%s not found)" % HOLDER
+def disconnect_(rig=None):
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    holder = holder_of(rig)
+    if not cmds.objExists(holder):
+        return "nothing connected (%s not found)" % holder
     doomed = []
-    if cmds.attributeQuery(SWITCH, node=HOLDER, exists=True):
-        doomed = cmds.listConnections(HOLDER + "." + SWITCH, source=False, destination=True) or []
+    if cmds.attributeQuery(SWITCH, node=holder, exists=True):
+        doomed = cmds.listConnections(holder + "." + SWITCH, source=False, destination=True) or []
     cmds.undoInfo(openChunk=True, chunkName="PlayerMale retarget disconnect")
     try:
         for node in sorted(set(doomed)):
             if cmds.objExists(node):
                 cmds.delete(node)
-        if cmds.objExists(HOLDER):     # its children, our helpers, go with it
-            cmds.delete(HOLDER)
+        if cmds.objExists(holder):     # its children, our helpers, go with it
+            cmds.delete(holder)
     finally:
         cmds.undoInfo(closeChunk=True)
     return "retarget disconnected (%d constraints)" % len(set(doomed))

@@ -15,3 +15,14 @@ Standalone tools superseded by the packages for the UE5 Manny workflow
   live proofs, stale against the per-chain manifest redesign
   (`verify_build.py` references the removed `builder.BUILD_SET`;
   `verify_fk.py` asserts the legacy flat FK_SET behavior).
+
+## 2026-09-08
+
+- `maya_curveview/` — the Curve Overlay (the graph editor drawn over the
+  viewport, shelf button "Curves", 2026-09-05), with its six test modules
+  under `tests/` and `verify_curveview.py`. Removed from the plugin at the
+  animator's ask («уберем не только из полки но и из плагина в целом»);
+  last shipped at commit `f65be61`. Spec:
+  `docs/superpowers/specs/2026-09-05-viewport-curve-overlay-design.md`. The
+  tests import `maya_curveview` from the plugin folder and will not run
+  from here without putting `archive/maya_curveview/` on `sys.path`.

@@ -115,9 +115,33 @@ def our_cameras():
 
 
 def existing_camera():
-    """The camera a previous press made, or None."""
+    """Some camera a previous press made, or None. For a scene with one rig;
+    with several, `camera_for(bone)` is the question."""
     found = our_cameras()
     return found[0] if found else None
+
+
+def camera_name_for(bone):
+    """The camera's name, in the bone's own namespace. Pure.
+
+    Two rigs mean two cameras (2026-09-08), and `Manny_Rig1:SceneSetup_camera`
+    says whose it is where `SceneSetup_camera1` would not.
+    """
+    short = (bone or "").split("|")[-1]
+    namespace = short.rsplit(":", 1)[0] if ":" in short else ""
+    return namespace + ":" + CAMERA_NAME if namespace else CAMERA_NAME
+
+
+def camera_for(bone):
+    """The camera of ours driving THIS bone, or None -- never "any of ours"."""
+    for node in our_constraints(bone):
+        for target in cmds.parentConstraint(node, query=True,
+                                            targetList=True) or []:
+            paths = cmds.ls(target, long=True) or []
+            if paths and cmds.attributeQuery(MARKER, node=paths[0],
+                                             exists=True):
+                return paths[0]
+    return None
 
 
 def resolve_bone(scene_map):
@@ -167,8 +191,11 @@ def teardown(bone, start, end):
     The bone's own curves were deleted when it was constrained, so the motion
     lives on the camera. Deleting that camera first would take the animation
     with it -- so the bone is baked back from it before anything goes.
+
+    Only THIS bone's camera: with two rigs in the scene each has one, and
+    tearing down "any camera of ours" would take the other rig's away.
     """
-    camera_node = existing_camera()
+    camera_node = camera_for(bone)
     constraints = our_constraints(bone)
     if not camera_node and not constraints:
         return False
@@ -193,9 +220,10 @@ def setup(bone, start, end):
         # Created then renamed: `cmds.camera(name=...)` leaves a numbered
         # transform, and the animator picks this camera out of a menu by name.
         transform, _shape = cmds.camera()
-        transform = cmds.ls(cmds.rename(transform, CAMERA_NAME), long=True)[0]
+        name = camera_name_for(bone)
+        transform = cmds.ls(cmds.rename(transform, name), long=True)[0]
         shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
-        shape = cmds.rename(shape, CAMERA_NAME + "Shape")
+        shape = cmds.rename(shape, name + "Shape")
         cmds.setAttr(shape + ".focalLength", FOCAL)
         cmds.addAttr(transform, longName=MARKER, attributeType="bool",
                      defaultValue=True)

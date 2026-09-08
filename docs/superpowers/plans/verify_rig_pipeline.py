@@ -44,6 +44,10 @@ cmds.currentUnit(time="ntsc")
 from maya_scenesetup import attach, bonedrive, camera, catalog, character, skeleton  # noqa: E402
 from maya_uebridge import animexport, animimport, rigimport  # noqa: E402
 import maya_rig_retarget  # noqa: E402,F401
+import maya_rigs  # noqa: E402
+
+NS = "Manny_Rig"          # the namespace Add Character gives the first rig (2026-09-08)
+RIG_ROOT = "|%s:root" % NS
 
 RESULTS = []
 
@@ -142,19 +146,22 @@ def main():
     t0 = time.time()
     text = rigimport.import_and_retarget(CLIP, "Heavy1P", set_timeline=True)
     print("    IMPORT #1 (%.1f s): %s" % (time.time() - t0, text))
-    gate(5, "retargeted onto the rig" in text and "deleted" in text
-         and "added" in text, "IMPORT with no rig: rig added, retargeted, source deleted")
+    gate(5, "retargeted onto %s" % NS in text and "deleted" in text
+         and "added as %s" % NS in text,
+         "IMPORT with no rig: rig added (in its namespace), retargeted, source deleted")
     rig_root = skeleton.rig_root()
-    gate(6, character.rig_present() and rig_root == "|root"
-         and cmds.objExists("ControlSet") and cmds.objExists("Main"),
-         "the rig stands and drives |root", "rig_root=%s" % rig_root)
-    gate(7, character.add_character(catalog.default_rig()) == character.RIG_PRESENT,
-         "a second Add Character with the rig is refused (one rig per scene)")
-    gate(8, not cmds.namespace(exists="Heavy1P") and not cmds.objExists("MoCapConstraints")
-         and not cmds.ls("*:*", type="joint"),
-         "no source namespace, no holder, no namespaced joint left")
+    gate(6, character.rig_present() and rig_root == RIG_ROOT
+         and cmds.objExists(NS + ":ControlSet") and cmds.objExists(NS + ":Main"),
+         "the rig stands in its namespace and drives %s" % RIG_ROOT, "rig_root=%s" % rig_root)
+    gate(7, not hasattr(character, "RIG_PRESENT") and len(maya_rigs.rigs()) == 1
+         and maya_rigs.rigs()[0].namespace == NS,
+         "the one-rig refusal is gone; one rig, namespace %s (many rigs: verify_many_rigs.py)" % NS)
+    stray = [j for j in cmds.ls(type="joint", long=True) if not j.split("|")[-1].startswith(NS + ":")]
+    gate(8, not cmds.namespace(exists="Heavy1P") and not cmds.objExists(NS + ":MoCapConstraints")
+         and not stray,
+         "no source namespace, no holder, no joint outside the rig's namespace", str(stray[:3]))
 
-    controls = cmds.sets("ControlSet", query=True) or []
+    controls = cmds.sets(NS + ":ControlSet", query=True) or []
     keyed = [c for c in controls
              if cmds.listConnections(c, type="animCurve", source=True, destination=False)]
     curves = list(set(cmds.listConnections(keyed, type="animCurve", source=True,
@@ -186,7 +193,7 @@ def main():
 
     cams = camera.our_cameras()
     cam_bone = bones.get("camera_bone")
-    gate(17, len(cams) == 1 and cams[0].split("|")[-1] == camera.CAMERA_NAME
+    gate(17, len(cams) == 1 and cams[0].split("|")[-1] == NS + ":" + camera.CAMERA_NAME
          and cam_bone and camera.our_constraints(cam_bone),
          "one camera of ours, named, driving camera_bone", "%s" % cams)
     offset = camera.rotation_only(camera.AXIS_OFFSET)
@@ -199,7 +206,7 @@ def main():
     entry = catalog.by_key("LongSword_02")
     cmds.select(clear=True)
     root = skeleton.current_root()
-    gate(19, root == "|root", "resolver: nothing selected, one rig -> the rig's skeleton", root)
+    gate(19, root == RIG_ROOT, "resolver: nothing selected, one rig -> the rig's skeleton", root)
     bone = skeleton.resolve_bone(root, "weapon_r")
     hand = attach.parent_bone(bone)
     weapon, note = attach.attach(entry, hand, bone)
@@ -209,7 +216,7 @@ def main():
     t0 = time.time()
     text2 = rigimport.import_and_retarget(CLIP, "Heavy1P", set_timeline=True)
     print("    IMPORT #2 (%.1f s): %s" % (time.time() - t0, text2))
-    gate(21, "retargeted onto the rig" in text2 and "previous take cleared" in text2
+    gate(21, "retargeted onto %s" % NS in text2 and "previous take cleared" in text2
          and "added" not in text2, "IMPORT on the standing rig: take replaced, no second rig")
     linked = bonedrive.driving_weapon(bone)
     gate(22, linked == weapon, "the sword is still linked after the second import", str(linked))
@@ -223,16 +230,17 @@ def main():
     cam_bone = bones.get("camera_bone")
     gate(25, len(cams) == 1 and cam_bone and camera.our_constraints(cam_bone)
          and errors2["camera_bone"] is not None and errors2["camera_bone"] < 0.02,
-         "one camera again, camera_bone on the reference", "%d camera(s), worst %.6f" % (
+         "one camera again, camera_bone on the reference", "%d camera(s), worst %s" % (
              len(cams), _fmt(errors2["camera_bone"])))
     left = [ns for ns in (cmds.namespaceInfo(":", listOnlyNamespaces=True) or [])
-            if ns not in ("UI", "shared")]
-    gate(26, not left, "no namespace left behind", str(left))
+            if ns not in ("UI", "shared", NS)]
+    gate(26, not left, "no namespace left behind but the rig's own", str(left))
 
-    cmds.select("FKWrist_R", replace=True)
-    gate(27, skeleton.current_root() == "|root", "resolver: a rig control selected -> the rig")
+    cmds.select(NS + ":FKWrist_R", replace=True)
+    gate(27, skeleton.current_root() == RIG_ROOT, "resolver: a rig control selected -> the rig")
     cmds.select(weapon, replace=True)
-    gate(28, skeleton.current_root() == "|root", "resolver: the sword selected -> the rig (a mesh says nothing)")
+    gate(28, skeleton.current_root() == RIG_ROOT,
+         "resolver: the sword selected -> the rig (a mesh outside every namespace says nothing)")
     stray = cmds.createNode("joint", name="stray_root")
     cmds.createNode("joint", name="stray_child", parent=stray)
     cmds.select(clear=True)
@@ -241,7 +249,7 @@ def main():
     r_stray = skeleton.current_root()
     cmds.delete(stray)
     cmds.select(clear=True)
-    gate(29, r_none == "|root" and r_stray == "|stray_root",
+    gate(29, r_none == RIG_ROOT and r_stray == "|stray_root",
          "resolver: a stray skeleton loses to the rig unless selected", "%s / %s" % (r_none, r_stray))
 
     out = os.path.join(tempfile.gettempdir(), "verify_rig_pipeline_export.fbx")
@@ -249,7 +257,7 @@ def main():
         os.remove(out)
     export_root = animexport.resolve_root()
     export_info = animexport.export_hierarchy(out)
-    gate(30, export_root == "|root" and os.path.isfile(out) and os.path.getsize(out) > 0
+    gate(30, export_root == RIG_ROOT and os.path.isfile(out) and os.path.getsize(out) > 0
          and export_info.get("joints") == 93,
          "Export FBX: the rig's skeleton, 93 bones, a file on disk",
          "%s, %d bytes" % (export_root, os.path.getsize(out) if os.path.isfile(out) else 0))

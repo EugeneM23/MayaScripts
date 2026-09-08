@@ -170,7 +170,7 @@ class NoPerforce(unittest.TestCase):
         src = self._source()
         for label in ('label="Export FBX..."', 'label="Export to uasset"',
                       'label="IMPORT"', '"retarget onto the rig"',
-                      '"as a new skeleton"'):
+                      '"onto a NEW rig"', '"as a new skeleton"'):
             self.assertIn(label, src, label)
         self.assertTrue(callable(window.export_fbx_selected))
         self.assertTrue(callable(window.export_uasset_selected))
@@ -184,8 +184,18 @@ class NoPerforce(unittest.TestCase):
             radioButtonGrp=lambda *a, **k: False)
         try:
             self.assertTrue(window.retarget_selected())
+            self.assertEqual(window.import_mode(), "rig")
         finally:
             window.cmds = real
+
+    def test_the_three_rows_are_the_three_targets(self):
+        """2026-09-08: «onto a NEW rig» is how many rigs arrive through
+        import; the skeleton row is the only one that is not a retarget."""
+        self.assertEqual(window.MODES, ("rig", "new_rig", "skeleton"))
+        self.assertEqual([window.mode_for(i) for i in (1, 2, 3)],
+                         ["rig", "new_rig", "skeleton"])
+        self.assertEqual(window.mode_for(0), "rig")
+        self.assertEqual(window.mode_for(None), "rig")
 
     def test_the_legacy_checkouts_popup_is_still_closed_on_open(self):
         self.assertIn("ueBridgeCheckouts", window.LEGACY_WINDOWS)

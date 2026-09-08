@@ -114,26 +114,6 @@ def draw_retarget(path):
     image.save(path)
 
 
-def draw_bake(path):
-    """A timeline bar with key diamonds: the retarget written into keys."""
-    image, painter = _canvas()
-    painter.setPen(_pen("#ff8a65", 2.0))
-    painter.drawLine(QPointF(5.5, 21.5), QPointF(26.5, 21.5))
-    painter.setPen(_pen("#ff8a65", 1.3))
-    for x in (8.0, 12.5, 17.0, 21.5, 26.0):
-        painter.drawLine(QPointF(x, 19.5), QPointF(x, 23.5))
-    painter.setPen(QPen(QColor("#1e1e1e"), 1))
-    painter.setBrush(QColor("#ffccbc"))
-    for x, y in ((8.0, 13.0), (17.0, 9.5), (26.0, 13.0)):
-        diamond = QPainterPath(QPointF(x, y - 3.0))
-        diamond.lineTo(QPointF(x + 3.0, y))
-        diamond.lineTo(QPointF(x, y + 3.0))
-        diamond.lineTo(QPointF(x - 3.0, y))
-        diamond.closeSubpath()
-        painter.drawPath(diamond)
-    painter.end()
-    image.save(path)
-
 
 def draw_overshoot(path):
     """A curve overshooting a dashed target line and settling."""
@@ -211,35 +191,13 @@ def draw_colour(path):
     image.save(path)
 
 
-def draw_curveview(path):
-    """A curve with keys inside a viewport frame: the graph, over the view."""
-    image, painter = _canvas()
-    painter.setPen(QPen(QColor(255, 255, 255, 60), 1.2))
-    painter.setBrush(Qt.NoBrush)
-    painter.drawRoundedRect(QRectF(5.5, 7.5, 21.0, 17.0), 2.0, 2.0)
-    curve = QPainterPath(QPointF(7.0, 21.5))
-    curve.cubicTo(QPointF(10.5, 21.5), QPointF(11.0, 10.5),
-                  QPointF(15.0, 10.5))
-    curve.cubicTo(QPointF(19.5, 10.5), QPointF(20.0, 19.0),
-                  QPointF(25.0, 19.0))
-    painter.setPen(_pen("#ffb74d", 2.2))
-    painter.drawPath(curve)
-    painter.setPen(QPen(QColor("#1e1e1e"), 1))
-    painter.setBrush(QColor("#ffe0b2"))
-    for x, y in ((7.0, 21.5), (15.0, 10.5), (25.0, 19.0)):
-        painter.drawRect(QRectF(x - 2.1, y - 2.1, 4.2, 4.2))
-    painter.end()
-    image.save(path)
-
 
 DRAWERS = {
     "picker.png": draw_picker,
-    "curveview.png": draw_curveview,
     "hotkeys.png": draw_hotkeys,
     "uebridge.png": draw_uebridge,
     "scenesetup.png": draw_scenesetup,
     "retarget.png": draw_retarget,
-    "bake.png": draw_bake,
     "overshoot.png": draw_overshoot,
     "vpstudio.png": draw_vpstudio,
     "colour.png": draw_colour,

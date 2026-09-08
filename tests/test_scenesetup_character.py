@@ -344,50 +344,47 @@ class NeedsGrey(unittest.TestCase):
         self.assertEqual(character.GREY, (0.5, 0.5, 0.5))
 
 
-class OneRigPerScene(unittest.TestCase):
-    """The AdvancedSkeleton rig is added once (2026-09-07): both retarget
-    modules address it by name, and Maya uniquifies every one of those names
-    on a second import. Bare skeletons stay unlimited -- the 2026-09-01
-    freedom is untouched for them."""
+class ManyRigs(unittest.TestCase):
+    """Since 2026-09-08 a rig arrives in its own namespace and the one-rig
+    refusal of 2026-09-07 is gone («я должен иметь возможность добавить в
+    сцену много ригов»). Bare skeletons keep their plain names."""
 
-    def setUp(self):
-        self.real_cmds = character.cmds
-        self.real_present = character.rig_present
+    def test_the_refusal_is_gone(self):
+        self.assertFalse(hasattr(character, "RIG_PRESENT"))
 
-    def tearDown(self):
-        character.cmds = self.real_cmds
-        character.rig_present = self.real_present
+    def test_the_namespace_is_the_rig_key_uniquified(self):
+        self.assertEqual(character.free_namespace("Manny_Rig", []), "Manny_Rig")
+        self.assertEqual(character.free_namespace("Manny_Rig", ["Manny_Rig"]),
+                         "Manny_Rig1")
+        self.assertEqual(character.free_namespace(
+            "Manny_Rig", ["Manny_Rig", "Manny_Rig1", "UI", "shared"]),
+            "Manny_Rig2")
 
-    def _cmds(self, existing):
-        return types.SimpleNamespace(objExists=lambda name: name in existing)
+    def test_the_namespace_is_maya_legal(self):
+        self.assertEqual(character.free_namespace("Manny Rig.02", []),
+                         "Manny_Rig_02")
+        self.assertEqual(character.free_namespace("2rig", []), "_2rig")
+        self.assertEqual(character.free_namespace("", []), "rig")
 
-    def test_rig_present_needs_both_of_the_rigs_nodes(self):
-        character.cmds = self._cmds({"ControlSet"})
-        self.assertFalse(character.rig_present())
-        character.cmds = self._cmds({"Main"})
-        self.assertFalse(character.rig_present())
-        character.cmds = self._cmds({"ControlSet", "Main"})
-        self.assertTrue(character.rig_present())
+    def test_the_message_names_the_namespace(self):
+        text = character.added_message(93, 6, [], label="Manny [rig]",
+                                       namespace="Manny_Rig1", selected=True)
+        self.assertTrue(text.startswith("Manny [rig] added as Manny_Rig1 - 93 joints"))
+        self.assertTrue(text.endswith(" - selected"))
 
-    def test_a_second_rig_is_refused_by_name_before_anything_is_touched(self):
-        character.rig_present = lambda: True
-        self.assertEqual(character.add_character(catalog.default_rig()),
-                         character.RIG_PRESENT)
-        self.assertIn("one AdvancedSkeleton rig per scene",
-                      character.RIG_PRESENT)
+    def test_a_skeleton_message_says_nothing_about_a_namespace(self):
+        text = character.added_message(93, 6, [], label="Manny UE5 [skeleton]")
+        self.assertEqual(text, "Manny UE5 [skeleton] added - 93 joints, 6 meshes")
 
-    def test_a_skeleton_is_never_refused_for_a_standing_rig(self):
-        """Only the rig row asks; the skeleton rows go straight to the
-        file check, which is the next line and fails on a fake path."""
-        character.rig_present = lambda: True
+    def test_a_missing_rig_file_is_still_the_refusal(self):
         saved = catalog.character_file
         catalog.character_file = lambda entry: "D:/nowhere/" + entry.file
         try:
-            text = character.add_character(catalog.default_character())
+            text = character.add_character(catalog.default_rig())
         finally:
             catalog.character_file = saved
         self.assertEqual(text, character.NO_FILE.format(
-            "D:/nowhere/Manny_Skeleton.ma"))
+            "D:/nowhere/Manny_Rig.ma"))
 
 
 class ConnectFollowsThePickerFlag(unittest.TestCase):

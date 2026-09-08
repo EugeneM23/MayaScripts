@@ -162,11 +162,13 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None):
     exported_as = leaf
     try:
         # The same name Maya decorated on arrival would go into the file,
-        # and the UE skeleton has no bone called `Manny_Skeleton_root`. So
-        # the root wears its plain name for the length of the export -
+        # and the UE skeleton has no bone called `Manny_Skeleton_root` --
+        # nor `Manny_Rig:pelvis`: a rig lives in a namespace since
+        # 2026-09-08 and the exporter writes the namespace (measured). So
+        # every joint wears its plain name for the length of the export -
         # every export road runs through here, which is why this is the
         # one place it lives.
-        with animimport.target_root_plain(root, joints) as took:
+        with animimport.target_plain_names(root, joints) as took:
             exported_as = took or leaf
             # The rename invalidated the path resolved above (trap 16).
             path = (cmds.ls(root_uuid, long=True) or [root])[0] \

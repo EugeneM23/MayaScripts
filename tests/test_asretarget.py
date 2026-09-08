@@ -4,6 +4,13 @@ import unittest
 import maya.api.OpenMaya as om
 
 import maya_asretarget as ar
+import maya_rigs
+
+# The rig of every scene made before 2026-09-08: the root namespace, found by
+# its group and its skeleton. Passed explicitly so the fakes below need no
+# `maya_rigs.current_rig()` (which asks the scene for its ControlSets).
+LEGACY = maya_rigs.Rig("", "ControlSet", "|Group|MotionSystem|MainSystem|Main",
+                       "|Group", "|root")
 
 # The rig, measured 2026-09-04: 79 deform joints, and these are the controls
 # that exist for them.  The sides are the rig's own and NOT symmetric -- the
@@ -641,23 +648,29 @@ class TestSourceBones(unittest.TestCase):
 
 
 class TestRigPaths(unittest.TestCase):
+    """Rig discovery lives in `maya_rigs` since 2026-09-08 (proved live by
+    verify_many_rigs.py); the module's own two names still answer over a Rig,
+    and the old list form of `rig_skeleton_root` still answers the old way."""
 
     def setUp(self):
-        self._real = ar.cmds
-        joints = ["|root", "|root|pelvis", "|Group|MotionSystem|FKXSpine5_M",
+        self._real = (ar.cmds, maya_rigs.cmds)
+        joints = ["|root", "|root|pelvis", "|Group|DeformationSystem|Root_M",
                   "|clip:root", "|clip:root|clip:pelvis"]
-        ar.cmds = FakeCmds(joints, {}, constrained=["|root", "|root|pelvis"])
+        fake = FakeCmds(joints, {"|root": ["|root|pelvis"],
+                                 "|Group": ["|Group|DeformationSystem|Root_M"]},
+                        constrained=["|root", "|root|pelvis"])
+        ar.cmds = maya_rigs.cmds = fake
 
     def tearDown(self):
-        ar.cmds = self._real
+        ar.cmds, maya_rigs.cmds = self._real
 
-    def test_constrained_joints_and_the_rigs_internals_are_the_rig(self):
-        self.assertEqual(sorted(ar.rig_paths()),
-                         ["|Group|MotionSystem|FKXSpine5_M", "|root", "|root|pelvis"])
+    def test_the_rigs_skeleton_root_is_the_rigs_own(self):
+        self.assertEqual(ar.rig_skeleton_root(LEGACY), "|root")
 
-    def test_the_ue_skeleton_root_is_the_shallowest_path_outside_group(self):
-        self.assertEqual(ar.rig_skeleton_root(ar.rig_paths()), "|root")
-
+    def test_the_old_list_form_still_answers_the_shallowest_outside_the_groups(self):
+        paths = ["|Group|DeformationSystem|Root_M", "|root|pelvis", "|root"]
+        self.assertEqual(ar.rig_skeleton_root(paths), "|root")
+        self.assertEqual(ar.rig_skeleton_root([]), "")
 
 class TestNames(unittest.TestCase):
 
@@ -686,9 +699,9 @@ class TestNames(unittest.TestCase):
         # the bias is theirs, and it decides how baked neck keys distribute
         with open(ar.__file__.replace(".pyc", ".py")) as handle:
             source = handle.read()
-        note = source.split("def neck_note()")[1].split("\ndef ")[0]
+        note = source.split("def neck_note(rig)")[1].split("\ndef ")[0]
         self.assertNotIn("setAttr", note)
-        self.assertIn("setAttr", source.split("def set_exact_neck()")[1].split("\ndef ")[0])
+        self.assertIn("setAttr", source.split("def set_exact_neck(rig)")[1].split("\ndef ")[0])
 
     def test_the_neck_bias_is_the_measured_pair(self):
         # measured 2026-09-04: bias 0 -> in-between weight 0.5, bias 10 -> 1.0
@@ -702,7 +715,7 @@ class TestNames(unittest.TestCase):
         # both knobs are what "exact neck" means, and the setter names both
         with open(ar.__file__.replace(".pyc", ".py")) as handle:
             source = handle.read()
-        setter = source.split("def set_exact_neck()")[1].split("\ndef ")[0]
+        setter = source.split("def set_exact_neck(rig)")[1].split("\ndef ")[0]
         self.assertIn("NECK_TWIST", setter)
         self.assertIn("NECK_BIAS", setter)
 
@@ -758,10 +771,10 @@ class TestVendorBake(unittest.TestCase):
         ar.cmds = self.real
 
     def test_every_driven_object_is_baked_once(self):
-        self.assertEqual(ar.vendor_bake(3.0, 41.0), ["FKWrist_R", "IKArm_L"])
+        self.assertEqual(ar.vendor_bake(3.0, 41.0, LEGACY), ["FKWrist_R", "IKArm_L"])
 
     def test_the_bake_carries_the_vendors_flags(self):
-        ar.vendor_bake(3.0, 41.0)
+        ar.vendor_bake(3.0, 41.0, LEGACY)
         name, objs, k = self.fake.calls[0]
         self.assertEqual((name, objs), ("bakeResults", ("FKWrist_R", "IKArm_L")))
         self.assertEqual(k["time"], (3.0, 41.0))
@@ -775,7 +788,7 @@ class TestVendorBake(unittest.TestCase):
             self.assertEqual(k[flag], value, flag)
 
     def test_static_channels_are_deleted_the_vendors_way(self):
-        ar.vendor_bake(3.0, 41.0)
+        ar.vendor_bake(3.0, 41.0, LEGACY)
         name, objs, k = self.fake.calls[1]
         self.assertEqual((name, objs), ("delete", ("FKWrist_R", "IKArm_L")))
         self.assertEqual(
@@ -785,13 +798,13 @@ class TestVendorBake(unittest.TestCase):
 
     def test_nothing_registered_bakes_nothing(self):
         self.fake.listConnections = lambda plug, **k: []
-        self.assertEqual(ar.vendor_bake(0.0, 1.0), [])
+        self.assertEqual(ar.vendor_bake(0.0, 1.0, LEGACY), [])
         self.assertEqual(self.fake.calls, [])
 
     def test_connected_source_reads_the_holder(self):
-        self.assertEqual(ar.connected_source(), "|clip:root")
+        self.assertEqual(ar.connected_source(LEGACY), "|clip:root")
         self.fake.objExists = lambda name: False
-        self.assertIsNone(ar.connected_source())
+        self.assertIsNone(ar.connected_source(LEGACY))
 
 
 class FakeResetCmds(object):
@@ -844,12 +857,12 @@ class TestResetBuildPose(unittest.TestCase):
         ar.cmds = self.real
 
     def test_time_curves_go_and_driven_keys_stay(self):
-        curves, zeroed = ar.reset_build_pose()
+        curves, zeroed = ar.reset_build_pose(LEGACY)
         self.assertEqual(self.fake.deleted, ["FKWrist_R_rotateY"])
         self.assertEqual(curves, 1)
 
     def test_free_channels_are_zeroed_and_locked_ones_left(self):
-        _curves, zeroed = ar.reset_build_pose()
+        _curves, zeroed = ar.reset_build_pose(LEGACY)
         self.assertEqual(self.fake.set, [("FKElbow_R.rx", 0.0)])
         self.assertEqual(self.fake.values["FKElbow_R.tz"], 3.0)
         self.assertEqual(zeroed, 1)
@@ -857,4 +870,4 @@ class TestResetBuildPose(unittest.TestCase):
     def test_a_clean_rig_reports_nothing_done(self):
         self.fake.listConnections = lambda node, **k: []
         self.fake.values = {"FKWrist_R.tx": 0.0}
-        self.assertEqual(ar.reset_build_pose(), (0, 0))
+        self.assertEqual(ar.reset_build_pose(LEGACY), (0, 0))

@@ -53,7 +53,7 @@ PLUGIN = os.path.dirname(os.path.abspath(maya_hotkeys.__file__))
 # still worth pinning -- so the full table is installed for the run.
 SHIPPED = tuple(maya_hotkeys.COMMANDS)
 maya_hotkeys.COMMANDS = maya_hotkeys.commands(
-    types.SimpleNamespace(PICKER=True, OVERRIG=True))
+    types.SimpleNamespace(PICKER=True, OVERRIG=True, OVERSHOOT=True))
 maya_hotkeys._INDEX = dict((row[0], row) for row in maya_hotkeys.COMMANDS)
 
 
@@ -452,9 +452,9 @@ class TheTable(unittest.TestCase):
 
 
 class OurRows(unittest.TestCase):
-    """31 of ours with every flag on: four openers plus the map's own toggle
-    and the curve overlay's, four timeline, two editors, three curve
-    overlay, six picker, three scene, two retarget, five overshoot."""
+    """26 of ours with every flag on: four openers plus the map's own toggle,
+    four timeline, two editors, six picker, three scene, one retarget, five
+    overshoot. The curve overlay's four and Bake's one left 2026-09-08."""
 
     def _keys(self, prefix):
         return [row[0] for row in maya_hotkeys.COMMANDS
@@ -463,23 +463,18 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 31)
+        self.assertEqual(len(ours), 26)
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
                          ["time.insert", "time.next", "time.prev",
                           "time.remove"])
 
-    def test_the_four_openers_and_the_two_toggles(self):
+    def test_the_four_openers_and_the_toggle(self):
         self.assertEqual(sorted(self._keys("window.")),
-                         ["window.curveview", "window.hotkeys",
+                         ["window.hotkeys",
                           "window.overshoot", "window.picker",
                           "window.scenesetup", "window.uebridge"])
-
-    def test_the_curve_overlay_rows(self):
-        self.assertEqual(sorted(self._keys("curve.")),
-                         ["curve.delete", "curve.insert",
-                          "curve.normalise"])
 
     def test_the_picker_rows(self):
         self.assertEqual(sorted(self._keys("picker.")),
@@ -494,9 +489,9 @@ class OurRows(unittest.TestCase):
                          ["scene.character", "scene.remove_weapon",
                           "scene.weapon"])
 
-    def test_the_retarget_rows(self):
-        self.assertEqual(sorted(self._keys("retarget.")),
-                         ["retarget.bake", "retarget.connect"])
+    def test_the_retarget_row(self):
+        """One row since 2026-09-08: Retarget and Bake are one button."""
+        self.assertEqual(self._keys("retarget."), ["retarget.run"])
 
 
 class FeatureFlags(unittest.TestCase):
@@ -504,20 +499,39 @@ class FeatureFlags(unittest.TestCase):
     and OverRig's rows are off, and the whole table -- what every other test
     here reads -- comes back with both flags on."""
 
-    def _flags(self, picker, overrig):
-        return types.SimpleNamespace(PICKER=picker, OVERRIG=overrig)
+    def _flags(self, picker, overrig, overshoot=True):
+        return types.SimpleNamespace(PICKER=picker, OVERRIG=overrig,
+                                     OVERSHOOT=overshoot)
 
     def test_the_shipped_flags_are_off(self):
         import skeldar_features
         self.assertFalse(skeldar_features.PICKER)
         self.assertFalse(skeldar_features.OVERRIG)
+        self.assertFalse(skeldar_features.OVERSHOOT)
 
-    def test_the_shipped_table_has_neither_picker_nor_overrig_rows(self):
+    def test_the_shipped_table_has_no_picker_overrig_or_overshoot_rows(self):
         keys = [row[0] for row in SHIPPED]
         self.assertFalse([k for k in keys if k.startswith("picker.")])
         self.assertFalse([k for k in keys if k.startswith("overrig.")])
-        self.assertIn("retarget.connect", keys)
+        self.assertFalse([k for k in keys if k.startswith("shoot.")])
+        self.assertNotIn("window.overshoot", keys)
+        self.assertIn("retarget.run", keys)
         self.assertIn("scene.weapon", keys)
+
+    def test_the_overshoot_flag_brings_its_six_rows_back(self):
+        keys = [r[0] for r in maya_hotkeys.commands(self._flags(False, False, True))]
+        self.assertEqual(len([k for k in keys if k.startswith("shoot.")]), 5)
+        self.assertIn("window.overshoot", keys)
+        off = [r[0] for r in maya_hotkeys.commands(self._flags(False, False, False))]
+        self.assertFalse([k for k in off if k.startswith("shoot.")])
+
+    def test_the_curve_overlay_rows_are_gone(self):
+        """2026-09-08: the tool left the plugin; a row pressing it would fail
+        at the worst moment."""
+        for key in [r[0] for r in maya_hotkeys.COMMANDS]:
+            self.assertFalse(key.startswith("curve."), key)
+            self.assertNotEqual(key, "window.curveview")
+        self.assertFalse(hasattr(maya_hotkeys, "_curveview_module"))
 
     def test_each_flag_brings_its_rows_back(self):
         picker_only = [r[0] for r in maya_hotkeys.commands(self._flags(True, False))]
@@ -532,18 +546,16 @@ class FeatureFlags(unittest.TestCase):
         self.assertEqual(len(full), len(maya_hotkeys._OURS) + len(maya_hotkeys._OVERRIG))
         self.assertEqual(full, maya_hotkeys.COMMANDS)
 
-    def test_the_retarget_rows_press_the_shelf_buttons(self):
+    def test_the_retarget_row_presses_the_shelf_button(self):
         saved = maya_hotkeys._retarget_module
         calls = []
         maya_hotkeys._retarget_module = lambda: types.SimpleNamespace(
-            retarget_button=lambda: calls.append("connect") or "c",
-            bake_button=lambda: calls.append("bake") or "b")
+            retarget_button=lambda: calls.append("retarget") or "r")
         try:
-            self.assertEqual(maya_hotkeys.run("retarget.connect"), "c")
-            self.assertEqual(maya_hotkeys.run("retarget.bake"), "b")
+            self.assertEqual(maya_hotkeys.run("retarget.run"), "r")
         finally:
             maya_hotkeys._retarget_module = saved
-        self.assertEqual(calls, ["connect", "bake"])
+        self.assertEqual(calls, ["retarget"])
 
     def test_one_row_per_overshoot_shape(self):
         import maya_overshoot
@@ -1299,11 +1311,10 @@ class TheStarterKeysAfterTheMove(unittest.TestCase):
                          [("a", "time.prev"), ("s", "time.next"),
                           ("+", "time.insert"), ("=", "time.insert"),
                           ("-", "time.remove"), ("_", "time.remove"),
-                          ("g", "editor.graph"), ("o", "editor.outliner"),
-                          ("c", "window.curveview")])
+                          ("g", "editor.graph"), ("o", "editor.outliner")])
 
     def test_the_version_went_up_again(self):
-        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 3)
+        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 5)
 
     def test_both_spellings_reach_the_same_command(self):
         maya_hotkeys.bind_defaults()
@@ -1329,10 +1340,23 @@ class ReleasedKeys(unittest.TestCase):
         self.fake = FakeCmds()
         use(self.fake)
 
-    def test_the_table_names_the_old_inbetween_keys(self):
+    def test_the_table_names_the_old_inbetween_keys_and_the_overlay_toggle(self):
         self.assertEqual([(key, row) for key, _mods, row
                           in maya_hotkeys.RELEASED_KEYS],
-                         [("4", "time.insert"), ("5", "time.remove")])
+                         [("4", "time.insert"), ("5", "time.remove"),
+                          ("c", "window.curveview")])
+
+    def test_alt_c_is_given_back_only_while_it_holds_our_toggle(self):
+        """The row left the table with the Curve Overlay (2026-09-08); the
+        spelling of its nameCommand is pure, so the release still works."""
+        self.fake.bindings[("c", True)] = \
+            maya_hotkeys.name_command("window.curveview")
+        self.assertIn("alt+c", maya_hotkeys.release_keys())
+        self.assertEqual(self.fake.bindings[("c", True)], "")
+        self.fake.bindings[("c", True)] = "somebodyElsesCommandName"
+        self.assertNotIn("alt+c", maya_hotkeys.release_keys())
+        self.assertEqual(self.fake.bindings[("c", True)],
+                         "somebodyElsesCommandName")
 
     def test_no_released_key_is_still_in_use(self):
         """Or we would unbind a key we had just bound."""

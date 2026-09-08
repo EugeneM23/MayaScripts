@@ -15,17 +15,20 @@ landed 2026-09-01 ("изолируем нашу полку как отдельн
 MayaScripts/                  the workshop
 ├── SkeldarAnim/              THE PLUGIN -- this, and only this, ships
 │   ├── install.py  README_INSTALL.txt  skeldar_features.py
-│   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/  maya_curveview/
-│   ├── maya_overshoot.py  maya_hotkeys.py  maya_vpstudio.py  maya_colour.py
-│   ├── maya_asretarget.py  maya_pmretarget.py  maya_rig_retarget.py
+│   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/
+│   ├── maya_rigs.py  maya_asretarget.py  maya_pmretarget.py  maya_rig_retarget.py
+│   ├── maya_hotkeys.py  maya_vpstudio.py  maya_colour.py  maya_overshoot.py
 │   └── icons/  assets/  overrig/
 ├── make_build.py             dev tool: builds the zip from SkeldarAnim/
 ├── maya_skelfit.py  maya_meltmorph.py  maya_retarget.py  ...
 └── tests/  docs/  archive/  CLAUDE.md
 ```
 
-**Read the next section first — since 2026-09-07 the shelf is the
-AdvancedSkeleton pipeline, and OverRig and the picker are switched OFF.**
+**Read the next two sections first — since 2026-09-07 the shelf is the
+AdvancedSkeleton pipeline, OverRig and the picker are switched OFF, and
+since 2026-09-08 a scene may hold MANY rigs (each in its own namespace),
+Retarget and Bake are ONE button, Overshoot is off the shelf and the Curve
+Overlay is out of the plugin (`archive/maya_curveview`).**
 Everything below about OverRig, the Rig Picker, Connect Arms, Add Aim and
 Camera Setup as a button describes code that is still in the repo and the
 payload, and still tested, but not on the shelf; two flags bring it back.
@@ -77,11 +80,12 @@ failed**, in **mayapy standalone** (it adds a rig and deletes skeletons, so
 never in the animator's scene); the installed copy refreshed and smoked
 live the same evening (2129 unit tests).
 
-**The shelf**: UE Bridge, Scene Setup, Retarget, Bake, Overshoot, Hotkeys,
-Studio, Colour, Curves. **`skeldar_features.py`** (stdlib, two booleans
-`OVERRIG` / `PICKER`, both False) gates the OverRig panel button and its 84
-hotkey rows, the Rig Picker button and its 6 rows, and handing a new
-character to the picker (`character.connect`). `install.features()` loads
+**The shelf** (since 2026-09-08): UE Bridge, Scene Setup, Retarget,
+Hotkeys, Studio, Colour. **`skeldar_features.py`** (stdlib, three booleans
+`OVERRIG` / `PICKER` / `OVERSHOOT`, all False) gates the OverRig panel
+button and its 84 hotkey rows, the Rig Picker button and its 6 rows and
+handing a new character to the picker (`character.connect`), and the
+Overshoot button with its 6 rows. `install.features()` loads
 it from beside `install.py` by path (at drop time nothing of ours is on
 `sys.path`); `maya_hotkeys.commands(flags)` is the pure table. Nothing was
 deleted — the animator's words were «оставь его где-то».
@@ -165,9 +169,9 @@ never disagree. Scene Setup's header reads «Character: root (rig)».
 (row 0, the dropdown's default, `default_rig()`), «Manny UE5 [skeleton]»
 (`default_character()` — `character_path()` with no argument still means
 `Manny_Skeleton.ma`, `maya_skelfit` asks it that way), «UE4 Mannequin
-[skeleton]». **One rig per scene** (`character.rig_present`, `RIG_PRESENT`):
-both retarget modules address it by name and Maya uniquifies
-`Main`/`ControlSet`/`FKWrist_R` on a second import. Connect Arms,
+[skeleton]». **As many rigs as the animator likes since 2026-09-08**, each in its own
+namespace (`RIG_PRESENT` is gone; `character.rig_present` now means "at
+least one" — see the many-rigs section). Connect Arms,
 Disconnect Arms, Add Aim, Camera Setup are gone from the window and from
 the hotkey table (modules stay; the Add/Remove guards over a standing link
 or aim keep protecting old files).
@@ -207,8 +211,145 @@ Three things measured on the way, each a trap of its own:
     fails to import. Guard on `try: import maya.cmds` first (the window
     tests' pattern); `"maya.cmds" in sys.modules` alone is not enough.
 
-Not built: several rigs in one scene; a PlayerMale rig row in Add
-Character; Retarget from the Scene Setup window; removal of anything.
+Not built: a PlayerMale rig row in Add Character; Retarget from the Scene
+Setup window; removal of anything. Several rigs in one scene: the next
+section.
+
+## Many rigs in one scene, one Retarget button (2026-09-08)
+
+The animator's ask: «Давай уберем с нашей полки оверлапер, кастомный граф
+эдитор (уберем не только из полки но и из плагина в целом). Ретаргет и бейк
+объединим в один скрипт. Дальше давай сделаем так чтобы наша вся система
+поддерживала работу с множеством ригов, я должен иметь возможность добавить
+в сцену много ригов как через add так и через import». Spec:
+`docs/superpowers/specs/2026-09-08-many-rigs-design.md`. Proof:
+`verify_many_rigs.py` — **green 2026-09-08, 0 of 32 gates failed**, in
+**mayapy standalone** (it adds rigs and deletes skeletons); the reworked
+`verify_rig_pipeline.py` **0 of 30** the same day; 2050 unit tests; the
+installed copy refreshed and smoked in the animator's live Maya.
+
+**A rig is a NAMESPACE** (`maya_rigs.py`, the one module that answers
+"which rig"). Add Character imports each rig into its own —
+`Manny_Rig`, `Manny_Rig1`, … (`character.free_namespace`, the clip
+importer's rule) — and the message says `added as Manny_Rig1`. Measured in
+mayapy: every one of the file's 2713 nodes lands under the namespace, none
+stray (`ns:ControlSet`, `ns:Main`, `ns:buildPose`, `ns:FKNeck_M`,
+`|ns:root`); asked for a namespace that exists, Maya makes `Manny_Rig2`
+itself. **A rig already in the ROOT namespace keeps working** — every scene
+made before this — as the rig whose namespace is `""`, found by its group
+and its skeleton (gates 30–32). Bare skeletons stay unnamespaced.
+
+- `Rig(namespace, control_set, main, group, skeleton_root)`; `rigs()` finds
+  every objectSet whose leaf is `ControlSet` with exactly one `Main` beside
+  it in the same namespace; the group is `Main`'s top ancestor (never
+  `|Group` by name); the skeleton root is the shallowest constrained joint
+  of that namespace outside the group. `node(rig, leaf)` → `ns:leaf`, and
+  the root-namespace rig is the identity case — which is why the legacy
+  scenes needed no special path.
+- **Which rig**: `rig_of(path, rigs)` — a path in a rig's namespace is that
+  rig's (a control, a bone, **a mesh**), a path under a root-namespace rig's
+  group or skeleton is that rig's; `choose_rig`: the selection's one rig,
+  else the sole rig, else a refusal that NAMES them («2 rigs in the scene
+  (Manny_Rig, Manny_Rig1) - select any control or bone of the one you
+  mean»). Two rigs selected is no answer. `skeleton.current_root` is
+  rewritten on it (selection → the only rig → the only skeleton → none), so
+  Scene Setup, Colour, the bridge and the retarget all agree.
+- **Add Character SELECTS the new rig's `Main`**, so the rig just added is
+  the one the next press acts on — "add it" and "work on it" stay one
+  press without the picker's Connect.
+
+**Both retarget modules take a `rig`** (`None` means `current_rig()`), and
+every rig node name goes through `_n(rig, leaf)`: the controls,
+`ControlSet`, the neck knobs, the FKX joints, and **the holder** —
+`ns:MoCapConstraints`, one per rig, so two rigs can be connected at once
+and each bake walks its own. The helper nodes (`asrtDriver_*`,
+`pmrtScale`, `pmrtPole_*`) are created in the rig's namespace, or the
+second rig's `pmrtScale` finds the first's. `foreign_constraints` compares
+against the rig's own group. The pure halves did not change: a `Drive`
+keeps its plain control name and the scene name is looked up at the point
+of use. The two modules stay independent copies; both import `maya_rigs`,
+which imports neither. `rig_skeleton_root` still accepts the old
+`rig_paths()` list for the verify scripts that pass one.
+
+**One Retarget button** (`maya_rig_retarget.retarget` / `run_retarget`):
+which rig (above) → which source (the selection's joints that are not the
+rig's own; a rig control in the same selection names the rig and is not a
+source bone) → `reset_build_pose` (a rig carrying a take passes
+`posed_controls` while standing in the take's pose, the bridge's
+2026-09-07 lesson; still posed = refusal by name) → connect → `bake()`
+(controls, helper bones, camera, disconnect) — one undo chunk. **The
+source skeleton is KEPT** (the bridge's IMPORT still deletes its own
+import). A holder already standing on the rig is baked rather than refused:
+one button means "finish the retarget". `bake_button` is gone; `bake()`,
+`connect()`, `report()`, `disconnect()` stay as API and take `rig=`.
+
+**The bridge has three import modes**: «retarget onto the rig» (the
+selected rig, else the only one — a rig is ADDED when the scene has none,
+as before), «onto a NEW rig» (always adds one and retargets onto it — this
+is "many rigs through import"), «as a new skeleton». `window.import_mode`
+/ `mode_for` (pure); `rigimport.import_and_retarget(..., target=)`, with
+`fresh_rig` (pure) finding the rig the add created by namespace diff. Two
+rigs and nothing selected refuses **before the round trip to the editor**.
+
+**Export strips the namespace** (`animimport.target_plain_names`, used by
+`animexport.export_hierarchy`): measured, **the FBX exporter writes
+`rigns:root`, `rigns:pelvis`** and there is no strip flag
+(`FBXExportStripNamespace` does not exist), so Unreal would receive bones a
+UE skeleton does not have. `cmds.rename(path, ":pelvis")` moves a node into
+the root namespace (measured, and back again with the prefix); every joint
+of the target does that for the length of the export, the root's collision
+with a plain `root` handled as `target_root_plain` always did (others held
+aside as `rpHold_`, the name Maya actually gave checked), restored by UUID
+in a `finally`. Gate 28 re-imports the export into a `chk` namespace and
+finds `chk:root`, `chk:pelvis`, nothing nested. **`choose_target_root` now
+takes a namespaced CONNECT** — it used to drop every namespaced root as an
+earlier clip's import, and with the rig's skeleton at `|Manny_Rig:root`
+that read "several skeletons in the scene" on the first export (found by
+the verify, gate 26). Roots found by scanning stay plain-only.
+
+**Per-rig camera**: `camera.setup(bone)` names its camera in the bone's
+namespace (`Manny_Rig1:SceneSetup_camera`, `camera_name_for`, pure) and
+`teardown(bone)` removes only the camera constrained to THIS bone
+(`camera_for`), never "any of ours" — two rigs mean two cameras (gate 15,
+each sitting in its own bone's transform to 0.000000). The weapon already
+resolved inside the chosen root's subtree and needed nothing (gate 29: a
+sword on rig B drives rig B's `weapon_r` only).
+
+Measured on the way (each a gate): the second rig's `hand_r` on its
+reference **0.000007**, root motion and `camera_bone` **0.000000**; the
+OTHER rig unmoved through an import and through the button
+**0.000000000**; a hand-imported source retargeted by the button onto the
+selected rig **0.000006**, source kept, holder gone; the legacy rig's
+`hand_r` **0.000007**.
+
+**The removals.** Overshoot went the way the picker went: `OVERSHOOT =
+False` in `skeldar_features` gates its shelf row and its six hotkey rows
+(the window and the five shapes); the module ships. The Curve Overlay left
+the plugin as asked — `archive/maya_curveview/` holds the package, its six
+test modules and `verify_curveview.py` (last shipped at commit `f65be61`;
+its section below is history) — and `alt+c` is given back through
+`RELEASED_KEYS` on `DEFAULT_KEYS_VERSION` 5, only while it still holds our
+command; `name_command` is a pure spelling, so a released row needs no
+table entry. `bake.png` and `curveview.png` and their drawers are gone;
+the hotkey table is one `retarget.run` row instead of connect + bake.
+
+61. **The FBX exporter writes namespaces into the file and offers no
+    flag to strip them** — measured 2026-09-08: a `rigns:root|rigns:pelvis`
+    chain exports as `Model::rigns:root`, `Model::rigns:pelvis`, and
+    `FBXExportStripNamespace` is "Cannot find procedure". Anything in a
+    namespace that must reach Unreal by bone name has to be renamed into
+    the root namespace for the length of the export (`cmds.rename(path,
+    ":leaf")`) and back.
+62. **A rule that excludes namespaced skeletons "because they are clip
+    imports" excludes the rig the moment the rig has a namespace.**
+    `choose_target_root` dropped the connect's `|Manny_Rig:root` and
+    answered "several skeletons in the scene" on a correct scene; every
+    unit test was green, because none of them had a namespaced connect.
+    The verify's export gate caught it on the first run.
+63. **A verify gate that formats `_fmt(x)` (a string) with `%.6f` raises
+    only when it is reached**: `verify_rig_pipeline.py`'s gate 25 had
+    carried that since 2026-09-07 and was green because an earlier gate's
+    text never got there in this form. `%s` for anything `_fmt` returns.
 
 ## Driving the user's live Maya
 
@@ -2853,6 +2994,11 @@ call `run_on_folder(settings)`, never `run_tool()`.
 
 ## `maya_overshoot` — the stop of a move, on any pose
 
+**Off the shelf since 2026-09-08** («уберем с нашей полки оверлапер»),
+behind `skeldar_features.OVERSHOOT` exactly as the picker is behind
+`PICKER`: the module ships, its button and its six hotkey rows come back
+with the flag.
+
 Root-level standalone tool, rewritten 2026-08-20; it had come in with the
 initial commit and never been touched, and the animator's verdict on the
 original was *"качество какое-то плохое, пользовался только Spring"*. Design:
@@ -3142,7 +3288,14 @@ control (it fires after every press and would discard the colour just
 dialled — `maya_scenesetup.window`'s swatch lesson), and a refusal opens
 no undo chunk, since an empty chunk eats the animator's previous undo step.
 
-## `maya_curveview` — Curve Overlay: the graph editor over the viewport
+## `maya_curveview` — Curve Overlay: the graph editor over the viewport (ARCHIVED 2026-09-08)
+
+**Out of the plugin since 2026-09-08** at the animator's ask («уберем не
+только из полки но и из плагина в целом»): the package, its six test
+modules and `verify_curveview.py` live in `archive/maya_curveview/`, last
+shipped at commit `f65be61`. The section below is kept as the record of
+what was measured building it; nothing in it is on the shelf or in the
+payload.
 
 The **ninth** shelf button (2026-09-05), a package
 (`SkeldarAnim/maya_curveview/`) — the animator's ask: «сделать свой кастомный
@@ -3509,12 +3662,13 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with nine buttons — since 2026-09-07 **UE Bridge, Scene
-Setup, Retarget, Bake, Overshoot, Hotkeys, Studio, Colour, Curves**; the
-Rig Picker and the native OverRig panel come back with the two flags in
+**SkeldarAnim** with six buttons — since 2026-09-08 **UE Bridge, Scene
+Setup, Retarget, Hotkeys, Studio, Colour**; the Rig Picker, the native
+OverRig panel and Overshoot come back with the three flags in
 `skeldar_features.py` (`install.features()` reads it from beside
 `install.py`, `_PYTHON_BUTTONS` rows carry the flag's name). The zip is
-**26.4 MB, 86 files** now (`assets/Manny_Rig.ma`, 53 MB uncompressed).
+**26.4 MB, 78 files** now (`assets/Manny_Rig.ma`, 53 MB uncompressed;
+`maya_rigs.py` joined the payload, `maya_curveview/` and two icons left).
 Design: `docs/superpowers/specs/2026-08-21-installer-design.md` (written
 when there were five; the sixth arrived 2026-09-02, Viewport Studio and
 Colour both on 2026-09-03, and the Curve Overlay on 2026-09-05, each with
@@ -3783,8 +3937,11 @@ clearing the frame and pulling the rest back are two commands, and a
 Ctrl+Z that undid half of that leaves the timeline in a state nobody asked
 for. Everything else inherits its target's undo, as the shelf buttons do.
 
-**Ours are 29 rows, and each one presses a panel button** — bar the four
-timeline ones and the two editor toggles, which are the module's own work.
+**Ours are 26 rows with every flag on, and each one presses a panel
+button** — bar the four timeline ones and the two editor toggles, which are
+the module's own work (2026-09-08: the four Curve Overlay rows left with the
+tool, the two retarget rows became one `retarget.run`, and the six Overshoot
+rows ride `OVERSHOOT`).
 Every action of
 ours already is one — `picker_window.live_window()` hands back the live
 picker and `build_rig()` is the Build button; Scene Setup's and Overshoot's
@@ -4412,9 +4569,10 @@ animator's `Sweep Fall.fbx`); 55 unit tests.
   `maya_pmretarget` — and forwards `report/connect/bake/disconnect`;
   `maya_asretarget` gained the same `bake()` (vendor Bake over the clip's keys,
   then Disconnect) so the pair of buttons means the same on `Manny_rig_02` and
-  `Lugal_Rig_01`. **Since 2026-09-07 the two buttons are the INSTALLER's**
-  (Retarget / Bake on the shelf, `maya_rig_retarget.retarget_button` /
-  `bake_button`), the three modules live in `SkeldarAnim/`, the bake is
-  native (`vendor_bake`) and Bake also carries the helper bones and sets the
-  camera up — see the pipeline section at the top. The animator's hand-made
+  `Lugal_Rig_01`. **Since 2026-09-07 the buttons are the INSTALLER's**
+  (`maya_rig_retarget.retarget_button`), the three modules live in
+  `SkeldarAnim/`, the bake is native (`vendor_bake`) and also carries the
+  helper bones and sets the camera up — see the pipeline section at the
+  top. **Since 2026-09-08 Retarget and Bake are ONE button** and every
+  module function takes a `rig` — see the many-rigs section. The animator's hand-made
   `shelfButton9`/`shelfButton32` were replaced by the 2026-09-07 re-install.

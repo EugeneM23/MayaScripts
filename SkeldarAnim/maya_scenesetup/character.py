@@ -34,6 +34,7 @@ button is retiring.
 """
 
 import os
+import re
 
 import maya.cmds as cmds
 
@@ -52,13 +53,37 @@ RENAMED = "imported as {0} ({1} already in the scene)"
 # and whatever numeric suffix Maya hangs on a clash).
 _MALWARE = ("vaccine", "breed")
 
-# One AdvancedSkeleton rig per scene (2026-09-07): both retarget modules
-# address the rig by NAME -- `Main`, `ControlSet`, `|Group`, `FKWrist_R` --
-# and Maya uniquifies every one of those on a second import. Bare skeletons
-# stay unlimited.
-RIG_PRESENT = ("a rig is already in the scene - one AdvancedSkeleton rig per "
-               "scene; delete it (Group and its skeleton) before adding "
-               "another")
+# A rig arrives in its OWN NAMESPACE (2026-09-08, «я должен иметь возможность
+# добавить в сцену много ригов»): both retarget modules address a rig by
+# name -- `Main`, `ControlSet`, `FKWrist_R` -- and a namespace is what keeps
+# `Manny_Rig1:Main` one node when `Main` would be two. Measured 2026-09-08:
+# every one of the file's 2713 nodes lands under the namespace, none stray.
+# The one-rig-per-scene refusal of 2026-09-07 is gone with its premise.
+RIG_NAMESPACE_BASE = "Manny_Rig"
+
+_ILLEGAL_NAMESPACE = re.compile(r"[^A-Za-z0-9_]")
+
+
+def free_namespace(base, taken):
+    """A Maya-legal namespace from `base`, unique against `taken`. Pure.
+
+    The clip importer's own rule (`records.namespace_for`), spelled here so
+    Scene Setup does not import the bridge for one function.
+    """
+    name = _ILLEGAL_NAMESPACE.sub("_", base or "") or "rig"
+    if name[0].isdigit():
+        name = "_" + name
+    if name not in taken:
+        return name
+    index = 1
+    while "{0}{1}".format(name, index) in taken:
+        index += 1
+    return "{0}{1}".format(name, index)
+
+
+def existing_namespaces():
+    """Every namespace in the scene, nested ones as `a:b`."""
+    return cmds.namespaceInfo(":", listOnlyNamespaces=True, recurse=True) or []
 
 
 # ------------------------------------------------------------------ policy
@@ -127,18 +152,23 @@ def malware_nodes(names):
 
 
 def added_message(joints, meshes, removed, note="", connected=False,
-                  label=None, colour_name=""):
+                  label=None, colour_name="", namespace="", selected=False):
     """What the press says. `label` names WHICH skeleton arrived, now that
-    the dropdown offers more than one, and `colour_name` which colour it is
-    wearing -- the animator picked the press by colour from then on."""
-    message = "{0} added - {1} joints, {2} meshes".format(
-        label or LABEL, joints, meshes)
+    the dropdown offers more than one, `colour_name` which colour it is
+    wearing -- the animator picked the press by colour from then on -- and
+    `namespace` which namespace a RIG landed in, since 2026-09-08 the name
+    every message about it uses."""
+    message = "{0} added{1} - {2} joints, {3} meshes".format(
+        label or LABEL, (" as " + namespace) if namespace else "", joints,
+        meshes)
     if colour_name:
         message += " - " + colour_name
     if note:
         message += " - " + note
     if connected:
         message += " - connected"
+    if selected:
+        message += " - selected"
     if removed:
         message += (" - removed malware script node(s): "
                     + ", ".join(removed))
@@ -148,8 +178,21 @@ def added_message(joints, meshes, removed, note="", connected=False,
 # ------------------------------------------------------------------ action
 
 def rig_present():
-    """True when an AdvancedSkeleton rig stands in the scene."""
-    return bool(cmds.objExists("ControlSet") and cmds.objExists("Main"))
+    """True when at least one AdvancedSkeleton rig stands in the scene."""
+    import maya_rigs
+    return bool(maya_rigs.rigs())
+
+
+def select_rig(namespace):
+    """Select the new rig's `Main`, so the rig just added is the one the next
+    press acts on -- "add it" and "work on it" stay one press without the
+    picker's Connect. True when it was selected."""
+    import maya_rigs
+    main = cmds.ls(maya_rigs.node(namespace, maya_rigs.MAIN), long=True) or []
+    if len(main) != 1:
+        return False
+    cmds.select(main[0], replace=True)
+    return True
 
 
 def connect(root):
@@ -342,8 +385,12 @@ def flatten_wrappers(nodes):
     return removed
 
 
-def import_asset(path):
+def import_asset(path, namespace=None):
     """Import a character asset and return every node that arrived.
+
+    `namespace` is where a RIG lands (2026-09-08); a bare skeleton passes
+    None and keeps its plain bone names, which the merge-by-name import
+    still needs.
 
     Two formats since 2026-09-01. `.ma` is Manny; `.fbx` is the UE4
     mannequin, and it MUST go through `fbximport`, which forces the FBX
@@ -374,8 +421,11 @@ def import_asset(path):
             live.extend(cmds.ls(uuid, long=True) or [])
         grey_black_materials(live)
         return live
+    options = {}
+    if namespace:
+        options["namespace"] = namespace
     return cmds.file(path, i=True, type=scene_type(path),
-                     returnNewNodes=True, ignoreVersion=True) or []
+                     returnNewNodes=True, ignoreVersion=True, **options) or []
 
 
 def add_character(entry=None, rgb=None):
@@ -395,8 +445,6 @@ def add_character(entry=None, rgb=None):
     the wrapper -- trap 16).
     """
     entry = entry or catalog.default_character()
-    if catalog.is_rig(entry) and rig_present():
-        return RIG_PRESENT
 
     from maya_overrig import builder  # drags maya.mel in; keep import lazy
 
@@ -407,8 +455,13 @@ def add_character(entry=None, rgb=None):
     if rgb is None:
         rgb = colour.free_colour().rgb
 
+    # A rig gets a namespace of its own; a bare skeleton keeps plain names.
+    namespace = ""
+    if catalog.is_rig(entry):
+        namespace = free_namespace(RIG_NAMESPACE_BASE, existing_namespaces())
+
     before_roots = builder.character_roots()
-    new = import_asset(path)
+    new = import_asset(path, namespace or None)
 
     # Its own undo chunk: creating the material and assigning it are two
     # commands, and half of that undone is a mesh with no shader.
@@ -427,12 +480,14 @@ def add_character(entry=None, rgb=None):
 
     # After the sweep, so a deleted node cannot be reported as a root.
     root = new_root(before_roots, builder.character_roots())
-    note = rename_note(root, before_roots + ([root] if root else []))
+    note = "" if namespace else rename_note(
+        root, before_roots + ([root] if root else []))
     connected = connect(root)
+    selected = select_rig(namespace) if namespace else False
 
     joints = len(cmds.ls(new, type="joint") or [])
     meshes = len(cmds.ls(new, type="mesh") or [])
     return added_message(joints, meshes, removed, note, connected,
                          label=entry.label,
                          colour_name=colour.colour_name(rgb) if painted
-                         else "")
+                         else "", namespace=namespace, selected=selected)

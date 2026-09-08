@@ -45,9 +45,10 @@ _LEGACY_RIG = "C:/!!!Work/Animations/Rigs/Characters/Manny_rig_02.ma"
 CHARACTERS = [
     # The AdvancedSkeleton rig over Manny (built 2026-09-04..05), the working
     # character since 2026-09-07: 93 UE bones under `root`, the rig under
-    # `Group`, the meshes at world level. ONE per scene -- the retarget
-    # addresses it by name (`Main`, `ControlSet`, `FKWrist_R`), and Maya
-    # uniquifies every one of those on a second import.
+    # `Group`, the meshes at world level. Each one arrives in its OWN
+    # namespace since 2026-09-08 (`Manny_Rig`, `Manny_Rig1`, ...): the
+    # retarget addresses a rig by name (`Main`, `ControlSet`, `FKWrist_R`),
+    # and the namespace is what keeps those names one node each.
     Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", _LEGACY_RIG, "rig"),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               _LEGACY_CHARACTER, "skeleton"),

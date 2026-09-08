@@ -259,12 +259,30 @@ def refresh():
             cmds.text(_STATUS, query=True, label=True), extra))
 
 
-def retarget_selected():
-    """True when IMPORT means the whole pipeline (the default); False for
-    "as a new skeleton"."""
+MODES = ("rig", "new_rig", "skeleton")     # the radio's rows, in order
+
+
+def mode_for(selected):
+    """The radio's 1-based row -> the import target. Pure; an unknown or
+    missing row means the default, the whole pipeline onto the rig."""
+    if selected in (2, 3):
+        return MODES[selected - 1]
+    return MODES[0]
+
+
+def import_mode():
+    """"rig" (the selected rig, else the only one, added if none), "new_rig"
+    (add another rig and retarget onto it) or "skeleton" (the clip as its own
+    namespaced skeleton and nothing more)."""
     if not cmds.radioButtonGrp(_MODE, exists=True):
-        return True
-    return cmds.radioButtonGrp(_MODE, query=True, select=True) == 1
+        return MODES[0]
+    return mode_for(cmds.radioButtonGrp(_MODE, query=True, select=True))
+
+
+def retarget_selected():
+    """True when IMPORT means the whole pipeline (the default, onto the rig
+    or onto a new one); False for "as a new skeleton"."""
+    return import_mode() != "skeleton"
 
 
 def _export_from_editor(record):
@@ -281,22 +299,36 @@ def _export_from_editor(record):
 def import_selected():
     """Export the selected animation from the editor and bring it in.
 
-    Default: onto the rig, through `rigimport` -- add the rig if missing,
-    import the clip as its own skeleton, retarget, bake, delete the source.
-    Otherwise: the clip as a new namespaced skeleton, and nothing more.
+    Default: onto the rig, through `rigimport` -- the selected rig, else the
+    only one, added if the scene has none; import the clip as its own
+    skeleton, retarget, bake, delete the source. "onto a NEW rig" adds
+    another rig first. Otherwise: the clip as a new namespaced skeleton, and
+    nothing more.
     """
     record = _selected_record()
     if record is None:
         _status("select an animation first")
         return
 
+    mode = import_mode()
+    if mode != "skeleton":
+        # Which rig is decided BEFORE the round trip to the editor: two rigs
+        # and nothing selected is a refusal, and it should cost nothing.
+        import maya_rigs
+        if mode == "rig" and maya_rigs.rigs():
+            rig, refusal = maya_rigs.current_rig()
+            if rig is None:
+                _status(refusal)
+                return
+
     exported, fps = _export_from_editor(record)
     set_timeline = cmds.checkBox(_TIMELINE, query=True, value=True)
 
-    if retarget_selected():
+    if mode != "skeleton":
         from maya_uebridge import rigimport   # lazy: keeps the import graph flat
         _status(rigimport.import_and_retarget(
-            exported, record.name, clip_fps=fps, set_timeline=set_timeline))
+            exported, record.name, clip_fps=fps, set_timeline=set_timeline,
+            target=mode))
         return
 
     namespace = records.namespace_for(record.name,
@@ -389,15 +421,19 @@ def show_window():
                                            busy="exporting from the editor..."))
 
     mode = cmds.radioButtonGrp(
-        _MODE, numberOfRadioButtons=2, label="Import:",
-        labelArray2=["retarget onto the rig", "as a new skeleton"],
-        annotation="Retarget onto the rig: the AdvancedSkeleton rig is added "
-                   "if the scene has none, the clip is imported, retargeted "
-                   "and baked onto it (weapon and camera bones carried, the "
-                   "camera set up), and the clip's skeleton is deleted. As a "
-                   "new skeleton: the clip arrives as its own namespaced "
-                   "skeleton and nothing else happens.",
-        columnWidth3=(52, 170, 160), select=1)
+        _MODE, numberOfRadioButtons=3, label="Import:",
+        labelArray3=["retarget onto the rig", "onto a NEW rig",
+                     "as a new skeleton"],
+        annotation="Retarget onto the rig: the SELECTED AdvancedSkeleton rig "
+                   "(any control or bone), else the only one - added if the "
+                   "scene has none; the clip is imported, retargeted and "
+                   "baked onto it (weapon and camera bones carried, the "
+                   "camera set up), and the clip's skeleton is deleted. Onto "
+                   "a NEW rig: another rig is added first and takes the clip "
+                   "- many rigs in one scene. As a new skeleton: the clip "
+                   "arrives as its own namespaced skeleton and nothing else "
+                   "happens.",
+        columnWidth4=(52, 160, 120, 140), select=1)
     timeline = cmds.checkBox(_TIMELINE, label="set timeline to clip range",
                              value=True)
     fbx_button = cmds.button(

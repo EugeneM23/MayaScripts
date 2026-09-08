@@ -23,9 +23,9 @@ PLUGIN = os.path.join(
 REPO = PLUGIN
 
 ICON_NAMES = ("picker.png", "uebridge.png", "scenesetup.png",
-              "retarget.png", "bake.png",
+              "retarget.png",
               "overshoot.png", "hotkeys.png", "vpstudio.png",
-              "colour.png", "curveview.png")
+              "colour.png")
 
 
 class Icons(unittest.TestCase):
@@ -97,9 +97,20 @@ class Payload(unittest.TestCase):
     def test_the_colour_palette_ships(self):
         self.assertIn("maya_colour.py", install.payload())
 
-    def test_the_curve_overlay_ships(self):
-        self.assertIn("maya_curveview", install.payload())
-        self.assertIn("maya_curveview", install.module_names())
+    def test_the_curve_overlay_left_the_plugin(self):
+        """2026-09-08: «уберем не только из полки но и из плагина в
+        целом» -- it lives in archive/ now, and ships nowhere."""
+        self.assertNotIn("maya_curveview", install.payload())
+        self.assertNotIn("maya_curveview", install.module_names())
+        self.assertFalse(os.path.exists(os.path.join(PLUGIN, "maya_curveview")))
+        self.assertTrue(os.path.isfile(os.path.join(
+            os.path.dirname(PLUGIN), "archive", "maya_curveview",
+            "maya_curveview", "tool.py")))
+
+    def test_overshoot_still_ships_behind_its_flag(self):
+        """Off the shelf, not out of the plugin (the picker's precedent)."""
+        self.assertIn("maya_overshoot.py", install.payload())
+        self.assertFalse(install.features().OVERSHOOT)
 
     def test_every_icon_a_button_names_exists(self):
         """A missing icon is a shelf button with a blank square on it."""
@@ -121,39 +132,49 @@ class Payload(unittest.TestCase):
 
 class ButtonSpecs(unittest.TestCase):
     """The shelf as data. Since 2026-09-07 the Rig Picker and the OverRig
-    panel sit behind `skeldar_features` flags: off, the shelf is the nine
-    buttons of the AdvancedSkeleton pipeline; on, both come back in their
-    old places. Nothing was deleted."""
+    panel sit behind `skeldar_features` flags, and since 2026-09-08 so does
+    Overshoot: off, the shelf is the six buttons of the AdvancedSkeleton
+    pipeline; on, each comes back in its old place. Bake folded into
+    Retarget and the Curve Overlay left the plugin the same day."""
 
     DEST = "C:/Users/Some Body/Documents/maya/scripts/SkeldarAnim"
 
     def setUp(self):
         self.features = install.features()
-        self.saved = (self.features.OVERRIG, self.features.PICKER)
+        self.saved = (self.features.OVERRIG, self.features.PICKER,
+                      self.features.OVERSHOOT)
         self.features.OVERRIG = False
         self.features.PICKER = False
+        self.features.OVERSHOOT = False
 
     def tearDown(self):
-        self.features.OVERRIG, self.features.PICKER = self.saved
+        (self.features.OVERRIG, self.features.PICKER,
+         self.features.OVERSHOOT) = self.saved
 
     def _specs(self):
         return install.button_specs(self.DEST)
 
     def test_the_flags_ship_off(self):
-        """The shipped default: OverRig and the picker are switched off."""
-        self.assertFalse(self.saved[0])
-        self.assertFalse(self.saved[1])
+        """The shipped default: OverRig, the picker and Overshoot are off."""
+        self.assertEqual(self.saved, (False, False, False))
 
     def test_features_loads_the_module_beside_install(self):
         self.assertEqual(
             os.path.normcase(self.features.__file__),
             os.path.normcase(os.path.join(PLUGIN, "skeldar_features.py")))
 
-    def test_nine_buttons_in_shelf_order(self):
+    def test_six_buttons_in_shelf_order(self):
         labels = [s["label"] for s in self._specs()]
         self.assertEqual(labels, ["UE Bridge", "Scene Setup", "Retarget",
-                                  "Bake", "Overshoot", "Hotkeys", "Studio",
-                                  "Colour", "Curves"])
+                                  "Hotkeys", "Studio", "Colour"])
+
+    def test_no_bake_and_no_curves_button(self):
+        """Bake folded into Retarget; the Curve Overlay left (2026-09-08)."""
+        for flag in ("PICKER", "OVERRIG", "OVERSHOOT"):
+            setattr(self.features, flag, True)
+        labels = [s["label"] for s in self._specs()]
+        self.assertNotIn("Bake", labels)
+        self.assertNotIn("Curves", labels)
 
     def test_the_flags_bring_the_picker_and_overrig_back(self):
         self.features.PICKER = True
@@ -161,7 +182,14 @@ class ButtonSpecs(unittest.TestCase):
         labels = [s["label"] for s in self._specs()]
         self.assertEqual(labels[0], "Rig Picker")
         self.assertEqual(labels[-1], "OverRig")
-        self.assertEqual(len(labels), 11)
+        self.assertEqual(len(labels), 8)
+
+    def test_the_overshoot_flag_brings_its_button_back_in_place(self):
+        self.features.OVERSHOOT = True
+        labels = [s["label"] for s in self._specs()]
+        self.assertEqual(labels, ["UE Bridge", "Scene Setup", "Retarget",
+                                  "Overshoot", "Hotkeys", "Studio",
+                                  "Colour"])
 
     def test_each_flag_acts_alone(self):
         self.features.PICKER = True
@@ -179,13 +207,12 @@ class ButtonSpecs(unittest.TestCase):
             "UE Bridge": ("maya_uebridge", "show_window"),
             "Scene Setup": ("maya_scenesetup", "show_window"),
             "Retarget": ("maya_rig_retarget", "retarget_button"),
-            "Bake": ("maya_rig_retarget", "bake_button"),
             "Overshoot": ("maya_overshoot", "show_overshoot_ui"),
             "Hotkeys": ("maya_hotkeys", "toggle"),
             "Studio": ("maya_vpstudio", "show_window"),
             "Colour": ("maya_colour", "show_window"),
-            "Curves": ("maya_curveview", "toggle"),
         }
+        self.features.OVERSHOOT = True
         for spec in self._specs():
             module, func = wanted[spec["label"]]
             self.assertEqual(spec["sourceType"], "python")
@@ -204,16 +231,15 @@ class ButtonSpecs(unittest.TestCase):
     def test_python_buttons_use_our_icons(self):
         icons = [s["image"] for s in self._specs()]
         self.assertEqual(icons, [self.DEST + "/icons/" + name for name in (
-            "uebridge.png", "scenesetup.png", "retarget.png", "bake.png",
-            "overshoot.png", "hotkeys.png", "vpstudio.png", "colour.png",
-            "curveview.png")])
+            "uebridge.png", "scenesetup.png", "retarget.png",
+            "hotkeys.png", "vpstudio.png", "colour.png")])
 
     def test_the_payload_carries_the_flags_and_the_retarget(self):
-        for name in ("skeldar_features.py", "maya_asretarget.py",
+        for name in ("skeldar_features.py", "maya_rigs.py", "maya_asretarget.py",
                      "maya_pmretarget.py", "maya_rig_retarget.py"):
             self.assertIn(name, install.payload())
             self.assertTrue(os.path.isfile(os.path.join(PLUGIN, name)), name)
-        for name in ("maya_asretarget", "maya_pmretarget",
+        for name in ("maya_asretarget", "maya_pmretarget", "maya_rigs",
                      "maya_rig_retarget", "skeldar_features"):
             self.assertIn(name, install.module_names())
 

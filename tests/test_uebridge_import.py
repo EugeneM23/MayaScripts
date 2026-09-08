@@ -225,10 +225,19 @@ class ConnectedCharacterIsTheFallback(unittest.TestCase):
             ["|root", "|root1"], bound_root="|root1")
         self.assertEqual(chosen, "|root1")
 
-    def test_a_namespaced_connect_does_not_override(self):
+    def test_a_namespaced_connect_IS_the_target_since_rigs_have_namespaces(self):
+        """2026-09-08: the rig's game skeleton is `|Manny_Rig:root`, and the
+        connect (Scene Setup's resolver: the selected rig, else the only
+        one) names it on purpose. Before that day a namespaced connect was
+        skipped as an earlier clip's import; the export now strips the
+        namespace for the length of the call instead."""
         chosen = animimport.choose_target_root(
-            ["|root", "|AS_Clip:root"], bound_root="|AS_Clip:root")
-        self.assertEqual(chosen, "|root")
+            ["|root", "|Manny_Rig:root"], bound_root="|Manny_Rig:root")
+        self.assertEqual(chosen, "|Manny_Rig:root")
+
+    def test_a_namespaced_skeleton_found_by_scanning_is_still_no_target(self):
+        self.assertIsNone(animimport.choose_target_root(
+            ["|AS_Clip:root", "|other:root"], bound_root=None))
 
     def test_no_connect_falls_through_to_the_old_rules(self):
         self.assertEqual(
@@ -401,7 +410,10 @@ class FakeScene(object):
         if uuid is None:
             raise RuntimeError("no object matches name: " + str(path))
         taken = set(self.names.values()) - {short}
-        assigned = new
+        # `:pelvis` is Maya's spelling for "pelvis in the ROOT namespace"
+        # (measured 2026-09-08: the node comes back as plain `pelvis`).
+        assigned = new[1:] if new.startswith(":") else new
+        new = assigned
         suffix = 1
         while assigned in taken:                       # Maya uniquifies
             assigned = "{0}{1}".format(new, suffix)
@@ -476,6 +488,72 @@ class TheRootWearsItsPlainName(unittest.TestCase):
             pass
         self.assertEqual(sorted(scene.names.values()),
                          ["Manny_Skeleton_root", "root"])
+
+
+class TheWholeSkeletonWearsPlainNames(unittest.TestCase):
+    """2026-09-08: a rig lives in a namespace and the FBX exporter writes the
+    namespace into the file (measured: `rigns:root`, `rigns:pelvis`, no strip
+    flag). So for the export every joint is moved into the root namespace and
+    back."""
+
+    def setUp(self):
+        self.real_cmds = animimport.cmds
+
+    def tearDown(self):
+        animimport.cmds = self.real_cmds
+
+    def use(self, names):
+        scene = FakeScene(names)
+        animimport.cmds = scene
+        return scene
+
+    RIG = ["|Manny_Rig:root", "|Manny_Rig:root|Manny_Rig:pelvis",
+           "|Manny_Rig:root|Manny_Rig:pelvis|Manny_Rig:spine_01"]
+
+    def test_the_plan_lists_every_namespaced_joint_but_the_root(self):
+        self.assertEqual(animimport.plain_names_plan(self.RIG[0], self.RIG),
+                         [("|Manny_Rig:root|Manny_Rig:pelvis", "pelvis"),
+                          ("|Manny_Rig:root|Manny_Rig:pelvis|Manny_Rig:spine_01", "spine_01")])
+        self.assertEqual(animimport.plain_names_plan("|root", ["|root", "|root|pelvis"]), [])
+
+    def test_a_namespaced_root_wants_the_plain_name(self):
+        self.assertEqual(animimport.plain_root_name("Manny_Rig:root", ["Manny_Rig:pelvis"]), "root")
+        self.assertEqual(animimport.plain_root_name("root", ["pelvis"]), "")
+
+    def test_every_joint_is_plain_inside_and_namespaced_again_after(self):
+        scene = self.use(["Manny_Rig:root", "Manny_Rig:pelvis", "Manny_Rig:spine_01"])
+        with animimport.target_plain_names(self.RIG[0], self.RIG) as took:
+            self.assertEqual(took, "root")
+            self.assertEqual(sorted(scene.names.values()), ["pelvis", "root", "spine_01"])
+        self.assertEqual(sorted(scene.names.values()),
+                         ["Manny_Rig:pelvis", "Manny_Rig:root", "Manny_Rig:spine_01"])
+
+    def test_a_plain_root_in_the_scene_is_displaced_and_restored(self):
+        """A bare Manny skeleton beside the rig: its `root` steps aside for
+        the length of the export, exactly as the root-name hold does."""
+        scene = self.use(["Manny_Rig:root", "Manny_Rig:pelvis", "root", "pelvis"])
+        with animimport.target_plain_names(self.RIG[0], self.RIG[:2]) as took:
+            self.assertEqual(took, "root")
+            self.assertIn("rpHold_root", scene.names.values())
+            self.assertEqual(scene.names.values().__len__(), 4)
+        self.assertEqual(sorted(scene.names.values()),
+                         ["Manny_Rig:pelvis", "Manny_Rig:root", "pelvis", "root"])
+
+    def test_a_plain_skeleton_renames_nothing(self):
+        scene = self.use(["root", "pelvis"])
+        with animimport.target_plain_names("|root", ["|root", "|root|pelvis"]) as took:
+            self.assertEqual(took, "")
+        self.assertEqual(scene.renames, 0)
+
+    def test_the_names_come_back_even_when_the_exporter_raises(self):
+        scene = self.use(["Manny_Rig:root", "Manny_Rig:pelvis", "root"])
+        try:
+            with animimport.target_plain_names(self.RIG[0], self.RIG[:2]):
+                raise ValueError("the exporter died")
+        except ValueError:
+            pass
+        self.assertEqual(sorted(scene.names.values()),
+                         ["Manny_Rig:pelvis", "Manny_Rig:root", "root"])
 
 
 class MergeDefault(unittest.TestCase):

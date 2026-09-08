@@ -54,9 +54,8 @@ TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 # one a physical alt+shift+= press fires cannot be measured over the
 # command port. Both bound, so the key works whichever way a hand reaches
 # it. All four were unbound in the animator's set, so nothing was taken.
-# alt+c joined on 2026-09-05 with the Curve Overlay. What it held first was
-# NOT measured -- the press names whatever it displaces, which is the whole
-# reason it does.
+# alt+c joined on 2026-09-05 with the Curve Overlay and left with it on
+# 2026-09-08 (RELEASED_KEYS below).
 DEFAULT_KEYS = (
     ("a", {"altModifier": True}, "time.prev"),
     ("s", {"altModifier": True}, "time.next"),
@@ -66,22 +65,24 @@ DEFAULT_KEYS = (
     ("_", {"altModifier": True}, "time.remove"),
     ("g", {"altModifier": True}, "editor.graph"),
     ("o", {"altModifier": True}, "editor.outliner"),
-    ("c", {"altModifier": True}, "window.curveview"),
 )
 
 # Keys DEFAULT_KEYS used to hold and does not any more. They are given back
 # on the version bump -- unbound, and only while they still hold the very
 # command we put there, so a key the animator has since re-assigned in the
-# editor is left alone. A key must never be in both tables.
+# editor is left alone. A key must never be in both tables. The row key of
+# a released binding need not be in the table any more (`window.curveview`
+# left with the Curve Overlay): `name_command` is a pure spelling.
 RELEASED_KEYS = (
     ("4", {"altModifier": True}, "time.insert"),
     ("5", {"altModifier": True}, "time.remove"),
+    ("c", {"altModifier": True}, "window.curveview"),
 )
 
 # Bumped when either table changes, which re-installs them once -- which is
 # how alt+g and alt+o reached a set that already existed, and how the
-# number keys are handed back.
-DEFAULT_KEYS_VERSION = 4
+# number keys are handed back -- and alt+c, on 2026-09-08.
+DEFAULT_KEYS_VERSION = 5
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -115,11 +116,6 @@ def _scene_module():
 def _overshoot_module():
     import maya_overshoot
     return maya_overshoot
-
-
-def _curveview_module():
-    from maya_curveview import tool
-    return tool
 
 
 def _overrig_module():
@@ -162,13 +158,13 @@ def _scene(func, *args):
 
 
 def _retarget_module():
-    """Lazy: the Retarget/Bake shelf buttons' module."""
+    """Lazy: the Retarget shelf button's module."""
     import maya_rig_retarget
     return maya_rig_retarget
 
 
 def _retarget(func):
-    """Press a Retarget shelf button; it reports in the viewport itself."""
+    """Press the Retarget shelf button; it reports in the viewport itself."""
     return getattr(_retarget_module(), func)()
 
 
@@ -179,15 +175,6 @@ def _overshoot(shape):
         module.show_overshoot_ui()
         return _report("Overshoot opened - press again")
     return module.apply_overshoot(shape)
-
-
-def _curveview(func, *args):
-    """Run one Curve Overlay command.
-
-    No open-and-say-so dance like `_picker`: the mode's own commands answer
-    "Curve Overlay is off" themselves, and the toggle is the way in.
-    """
-    return getattr(_curveview_module(), func)(*args)
 
 
 def step_frame(delta):
@@ -672,9 +659,6 @@ _OURS = (
      partial(_show, "maya_overshoot", "show_overshoot_ui")),
     ("window.hotkeys", "Windows", "Hotkey map on/off",
      "Switch between the SkeldarAnim hotkey set and your own", toggle),
-    ("window.curveview", "Windows", "Curve overlay on/off",
-     "Draw the selected control's curves over the viewport and edit them "
-     "there", partial(_curveview, "toggle")),
 
     ("time.prev", "Timeline", "Frame back", "One frame back",
      partial(step_frame, -1.0)),
@@ -728,22 +712,11 @@ _OURS = (
     # Setup on 2026-09-07 with the move to the AdvancedSkeleton rig; the
     # camera setup happens inside the retarget's Bake now.
 
-    ("retarget.connect", "Retarget", "Retarget onto the rig",
-     "The rig follows the selected imported skeleton",
+    # One row since 2026-09-08: Retarget and Bake are one button.
+    ("retarget.run", "Retarget", "Retarget the selected skeleton onto the rig",
+     "The rig takes the selected imported skeleton's clip: retarget, bake, "
+     "weapon and camera bones carried, camera set up",
      partial(_retarget, "retarget_button")),
-    ("retarget.bake", "Retarget", "Bake retarget",
-     "Bake onto the controls, carry the weapon and camera bones, set the "
-     "camera up, disconnect", partial(_retarget, "bake_button")),
-
-    ("curve.insert", "Curve Overlay", "Insert key at current frame",
-     "A key on every drawn curve at the current frame, leaving the shape "
-     "alone", partial(_curveview, "insert_key_at_time")),
-    ("curve.delete", "Curve Overlay", "Delete selected keys",
-     "Remove the keys selected in the overlay",
-     partial(_curveview, "delete_selected_keys")),
-    ("curve.normalise", "Curve Overlay", "Normalise curves on/off",
-     "One Y window per curve, so channels of different magnitudes are "
-     "comparable in shape", partial(_curveview, "toggle_normalise")),
 
     ("shoot.snap", "Overshoot", "Overshoot Snap",
      "One tight swing out of the pose", partial(_overshoot, "Snap")),
@@ -1043,11 +1016,15 @@ def commands(flags):
 
     Since 2026-09-07 the picker's six rows ride `flags.PICKER` and the
     author's 84 OverRig rows ride `flags.OVERRIG` (skeldar_features);
-    both ship off. The rows themselves stay in the tables above, so a
-    flag flipped back registers them again on the next press.
+    since 2026-09-08 Overshoot's six ride `flags.OVERSHOOT`. All ship off.
+    The rows themselves stay in the tables above, so a flag flipped back
+    registers them again on the next press.
     """
+    overshoot = getattr(flags, "OVERSHOOT", False)
     ours = tuple(row for row in _OURS
-                 if flags.PICKER or not row[0].startswith("picker."))
+                 if (flags.PICKER or not row[0].startswith("picker."))
+                 and (overshoot or not (row[0].startswith("shoot.")
+                                        or row[0] == "window.overshoot")))
     table = _prefixed("SkeldarAnim", ours)
     if flags.OVERRIG:
         table += _prefixed("OverRig", _OVERRIG)
