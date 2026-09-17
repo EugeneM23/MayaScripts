@@ -96,19 +96,29 @@ hand's IK control rides the weapon) or nothing. A *scheme* is
 `{"L": state, "R": state}`; every case the animator named is one, and so
 are "weapon in the left hand, right free" and "weapon in world, nobody".
 
-**The panel is a row of arrows and Apply**:
+**The panel is three parent rows, Apply per row, Apply all** (the
+animator's shape after the arrow row read unclear: «заголовок Hand_R,
+Hand_L, Weapon, напротив каждого выпадающий список с родителем, напротив
+каждого кнопка apply, внизу общая Apply all»):
 
-    [ Left hand ] [ → ] [ Weapon ] [ ← ] [ Right hand ]
+    Hand_R   [ Free | Weapon ]           [Apply]
+    Hand_L   [ Free | Weapon ]           [Apply]
+    Weapon   [ World | Hand_R | Hand_L ] [Apply]
+                                         [ Apply all ]
 
-An arrow button stands between the hand and the weapon and points from the
-driver to the driven (`arrow`, pure): a left hand holding reads `→`, a
-following one `←`; the right side mirrors. A press cycles its link
-(`cycle`, pure: none → follows → holds → none; a second holder clears the
-first) and only repaints the arrows and the status line — the scene is
-untouched until **Apply**. Apply and not click-to-apply, because a
-transition is an OverRig re-bake (seconds on a long clip) and a two-handed
-grip is two clicks. After Apply the arrows are re-read from the scene
-(`read_scheme`), so they always show what IS.
+A hand's parent is Free or Weapon (it follows); the weapon's is World or
+the hand it hangs in (`menus_from_scheme` / `scheme_from_menus`, pure and
+round-tripping). A pick that would make a cycle fixes the other menu and
+says so (`resolve_menus`, pure): the weapon put into Hand_R sets Hand_R to
+Free; Hand_R set to Weapon while the weapon hangs in it sets Weapon to
+World. Picking touches nothing in the scene. A row's **Apply** changes that
+one link (`wanted_for_row`, pure — the holder set Free puts the weapon in
+world; the weapon moved to the other hand frees the old one); **Apply all**
+brings the scene to all three menus. After any Apply the menus are re-read
+from the scene (`read_scheme`), so they always show what IS. Apply and not
+pick-to-apply, because a transition is an OverRig re-bake (seconds on a
+long clip). The arrow design that preceded this stood for an hour and is
+not in the code.
 
 **Apply does only the difference** (`plan`, pure, in this order): hands
 that stop following are released (baked, our constraint deleted); the

@@ -20,16 +20,23 @@ A *scheme* is ``{"L": state, "R": state}``. Every combination the animator
 named is one: both hands follow a weapon standing in world; one hand
 follows; the weapon in a hand with the other hand free or following.
 
-## The panel: a row of arrows and Apply
+## The panel: three rows, a parent for each, Apply per row and Apply all
 
-    [ Left hand ] [ -> ] [ Weapon ] [ <- ] [ Right hand ]
+    Hand_R   [ Free | Weapon         ]  [Apply]
+    Hand_L   [ Free | Weapon         ]  [Apply]
+    Weapon   [ World | Hand_R | Hand_L ] [Apply]
+                                        [ Apply all ]
 
-Each arrow button cycles its link (none -> follows -> holds -> none; a
-second ``holds`` clears the first). The arrows are re-read from the scene
-after every Apply, so they always show what IS, and a press only changes
-what the animator asked to change (`plan`, pure). Apply and not
-click-to-apply: a transition is an OverRig re-bake, seconds on a long clip,
-and a two-handed grip is two clicks.
+(the animator's shape, the same day: «заголовок Hand_R, Hand_L, Weapon,
+напротив каждого выпадающий список с родителем, напротив каждого кнопка
+apply, внизу общая Apply all» - the arrow row that came before it read
+unclear). A hand's parent is Free or Weapon (it follows); the weapon's is
+World or the hand it hangs in. A choice that would make a cycle - the
+weapon in Hand_R while Hand_R follows the weapon - fixes the other menu
+and says so (`resolve_menus`, pure). A row's Apply changes that link only
+(`wanted_for_row`, pure); Apply all brings the scene to all three menus
+(`scheme_from_menus`, pure). The menus are re-read from the scene after
+every Apply, so they always show what IS.
 
 ## How a transition is done, and why in two different ways
 
@@ -75,7 +82,13 @@ from maya_scenesetup import skeleton
 HUB_SECTION = "connections"
 STATUS = "skeldarConnectionsStatus"
 HEADER = "skeldarConnectionsHeader"
-LINK_BUTTON = {"L": "skeldarConnectionsLinkL", "R": "skeldarConnectionsLinkR"}
+MENU = {"R": "skeldarConnectionsParentR", "L": "skeldarConnectionsParentL",
+        "W": "skeldarConnectionsParentW"}
+ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
+FREE, WORLD, WEAPON = "Free", "World", "Weapon"
+HAND_CHOICES = (FREE, WEAPON)
+WEAPON_CHOICES = (WORLD, "Hand_R", "Hand_L")
+HAND_OF = {"Hand_R": "R", "Hand_L": "L"}
 
 MARKER = "skeldarHandLink"          # on our hand constraints: the weapon's UUID
 SIDES = ("L", "R")
@@ -90,17 +103,11 @@ CHANNELS = ("translateX", "translateY", "translateZ",
 
 HOLDS = "holds"
 FOLLOWS = "follows"
-STATES = (None, FOLLOWS, HOLDS)          # the cycle order of an arrow press
-EMPTY = "·"                         # the arrow of no link
 
 NO_WEAPON = "no weapon in the scene - Weapons > Add first"
 NOTHING_TO_DO = "nothing to change"
 RETARGETING = ("a retarget is standing on this rig (MoCapConstraints) - "
                "finish it first")
-LINK_ON_COLOUR = (0.45, 0.60, 0.70)
-LINK_OFF_COLOUR = (0.36, 0.36, 0.36)
-
-_PENDING = {}                            # the arrows as pressed, per rig namespace
 
 
 # ------------------------------------------------------------------- pure
@@ -121,27 +128,62 @@ def other(side):
     return "R" if side == "L" else "L"
 
 
-def cycle(scheme, side):
-    """The scheme after a press on `side`'s arrow: none -> follows -> holds
-    -> none, and a second holder clears the first (one hand holds)."""
-    out = dict(scheme)
-    state = STATES[(STATES.index(out.get(side)) + 1) % len(STATES)]
-    out[side] = state
-    if state == HOLDS and out.get(other(side)) == HOLDS:
-        out[other(side)] = None
-    return out
+def menus_from_scheme(scheme):
+    """What the three dropdowns show for `scheme`. Pure."""
+    held = master(scheme)
+    return {"R": WEAPON if scheme.get("R") == FOLLOWS else FREE,
+            "L": WEAPON if scheme.get("L") == FOLLOWS else FREE,
+            "W": ROW_LABEL[held] if held else WORLD}
 
 
-def arrow(side, state):
-    """The glyph on `side`'s button. The button stands BETWEEN the hand and
-    the weapon, so the arrow points from the driver to the driven: a left
-    hand holding reads `->` (hand -> weapon), a right hand holding `<-`."""
-    if state is None:
-        return EMPTY
-    toward_weapon = (state == HOLDS)      # the weapon follows the hand
-    if side == "L":
-        return "→" if toward_weapon else "←"
-    return "←" if toward_weapon else "→"
+def scheme_from_menus(menus):
+    """The scheme the three dropdowns describe. The weapon's parent wins a
+    conflict: a hand the weapon hangs in holds it whatever its own menu
+    says. Pure."""
+    held = HAND_OF.get(menus.get("W"))
+    scheme = {}
+    for side in SIDES:
+        if side == held:
+            scheme[side] = HOLDS
+        else:
+            scheme[side] = FOLLOWS if menus.get(side) == WEAPON else None
+    return scheme
+
+
+def resolve_menus(menus, changed):
+    """The menus after `changed` was picked, with the cycle fixed: the
+    weapon put into a hand frees that hand; a hand set to follow the weapon
+    it hangs in puts the weapon into the world. Returns (menus, note). Pure."""
+    out = dict(menus)
+    note = ""
+    if changed == "W":
+        held = HAND_OF.get(out["W"])
+        if held and out.get(held) == WEAPON:
+            out[held] = FREE
+            note = "%s set to Free - it holds the weapon" % ROW_LABEL[held]
+    elif out.get(changed) == WEAPON and HAND_OF.get(out.get("W")) == changed:
+        out["W"] = WORLD
+        note = "Weapon set to World - %s follows it" % ROW_LABEL[changed]
+    return out, note
+
+
+def wanted_for_row(current, row, choice):
+    """The scheme after ONE row's Apply: that link changed, the rest as it
+    stands, a cycle resolved the same way the menus resolve it. Pure."""
+    wanted = dict(current)
+    if row == "W":
+        held = HAND_OF.get(choice)
+        for side in SIDES:
+            if wanted.get(side) == HOLDS:
+                wanted[side] = None
+        if held:
+            wanted[held] = HOLDS
+    else:
+        if choice == WEAPON:
+            wanted[row] = FOLLOWS
+        elif wanted.get(row) in (FOLLOWS, HOLDS):
+            wanted[row] = None
+    return wanted
 
 
 def describe(scheme):
@@ -487,36 +529,27 @@ def header_text(rig, weapon, scheme):
                             describe(scheme))
 
 
-def _paint_arrows(scheme):
-    for side in SIDES:
-        name = LINK_BUTTON[side]
-        if cmds.control(name, exists=True):
-            state = scheme.get(side)
-            cmds.button(name, edit=True, label=arrow(side, state),
-                        backgroundColor=(LINK_ON_COLOUR if state
-                                         else LINK_OFF_COLOUR))
+def menus():
+    """What the three dropdowns say now."""
+    return {row: cmds.optionMenu(MENU[row], query=True, value=True)
+            for row in ("R", "L", "W")}
 
 
-def pending(rig):
-    """The arrows as pressed for this rig, seeded from the scene."""
-    key = rig.namespace if rig else ""
-    if key not in _PENDING:
-        _PENDING[key] = read_scheme(rig) if rig else {"L": None, "R": None}
-    return _PENDING[key]
+def _set_menus(values):
+    for row, value in values.items():
+        if cmds.optionMenu(MENU[row], exists=True):
+            cmds.optionMenu(MENU[row], edit=True, value=value)
 
 
 def refresh(*_args):
-    """Re-read the scene into the header and the arrows; the pending
-    choice is dropped - after a press what IS is what the arrows show."""
+    """Re-read the scene into the header and the menus: after a press what
+    IS is what the dropdowns show."""
     if not cmds.control(HEADER, exists=True):
         return ""
     rig, _refusal = maya_rigs.current_rig()
     weapon = weapon_of(rig) if rig else None
     scheme = read_scheme(rig) if rig else {"L": None, "R": None}
-    _PENDING.clear()
-    if rig:
-        _PENDING[rig.namespace] = dict(scheme)
-    _paint_arrows(scheme)
+    _set_menus(menus_from_scheme(scheme))
     text = header_text(rig, weapon, scheme)
     cmds.text(HEADER, edit=True, label=text)
     return text
@@ -532,25 +565,30 @@ def show_window():
     return maya_hub.show(HUB_SECTION)
 
 
-def _press_arrow(side):
+def _menu_changed(row):
+    """A pick fixes a cycle in the other menus and asks for Apply."""
     def go(*_args):
-        rig, refusal = maya_rigs.current_rig()
-        if rig is None:
-            return _status(refusal)
-        scheme = cycle(pending(rig), side)
-        _PENDING[rig.namespace] = scheme
-        _paint_arrows(scheme)
-        return _status("press Apply for: " + describe(scheme))
+        fixed, note = resolve_menus(menus(), row)
+        _set_menus(fixed)
+        text = "press Apply for: " + describe(scheme_from_menus(fixed))
+        _status((note + "; " + text) if note else text)
     return go
 
 
-def _press_apply(*_args):
-    def go():
-        rig, refusal = maya_rigs.current_rig()
-        if rig is None:
-            return refusal
-        return apply(dict(pending(rig)), rig=rig)
-    return _run(go)
+def _press_row(row):
+    def go(*_args):
+        def act():
+            rig, refusal = maya_rigs.current_rig()
+            if rig is None:
+                return refusal
+            wanted = wanted_for_row(read_scheme(rig), row, menus()[row])
+            return apply(wanted, rig=rig)
+        return _run(act)
+    return go
+
+
+def _press_apply_all(*_args):
+    return _run(lambda: apply(scheme_from_menus(menus())))
 
 
 def _press_connect(*_args):
@@ -562,35 +600,38 @@ def _press_disconnect(*_args):
 
 
 def build_panel():
-    """A header, the arrow row, Apply, a status line."""
+    """A header, three parent rows each with its Apply, Apply all, status."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", 8))
     cmds.text(HEADER, label="", align="left", wordWrap=True, height=36)
-    cmds.text(label="Each arrow cycles its link: none, hand follows the "
-                    "weapon, weapon in the hand (one hand at most). Apply "
-                    "does only the difference: hands released are baked, "
-                    "the weapon moves through OverRig with its animation "
-                    "re-baked, new followers take the grip of the current "
-                    "frame.",
-              align="left", wordWrap=True, height=70)
-    cmds.rowLayout(numberOfColumns=5, adjustableColumn=3,
-                   columnWidth5=(80, 44, 80, 44, 80),
-                   columnAlign5=("right", "center", "center", "center", "left"))
-    cmds.text(label="Left hand")
-    cmds.button(LINK_BUTTON["L"], label=EMPTY, width=40, height=26,
-                backgroundColor=LINK_OFF_COLOUR,
-                annotation="Left hand <-> weapon: none / follows / holds",
-                command=_press_arrow("L"))
-    cmds.text(label="Weapon", font="boldLabelFont")
-    cmds.button(LINK_BUTTON["R"], label=EMPTY, width=40, height=26,
-                backgroundColor=LINK_OFF_COLOUR,
-                annotation="Weapon <-> right hand: none / follows / holds",
-                command=_press_arrow("R"))
-    cmds.text(label="Right hand")
-    cmds.setParent("..")
-    cmds.button(label="Apply", height=32, backgroundColor=(0.45, 0.70, 0.50),
-                annotation="Bring the scene to what the arrows show",
-                command=_press_apply)
+    cmds.text(label="Pick each node's parent. A hand's parent Weapon means "
+                    "the hand follows the weapon (IK); the weapon's parent "
+                    "is the hand it hangs in. Apply on a row changes that "
+                    "link only; Apply all brings the scene to all three. "
+                    "Released hands are baked, the weapon moves through "
+                    "OverRig with its animation re-baked, followers take "
+                    "the grip of the current frame.",
+              align="left", wordWrap=True, height=88)
+    for row, choices in (("R", HAND_CHOICES), ("L", HAND_CHOICES),
+                         ("W", WEAPON_CHOICES)):
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                       columnWidth3=(70, 150, 70),
+                       columnAlign3=("left", "left", "center"),
+                       columnAttach=[(1, "left", 0), (2, "both", 4),
+                                     (3, "right", 0)])
+        cmds.text(label=ROW_LABEL[row], font="boldLabelFont")
+        cmds.optionMenu(MENU[row], changeCommand=_menu_changed(row),
+                        annotation="the parent of " + ROW_LABEL[row])
+        for choice in choices:
+            cmds.menuItem(label=choice)
+        cmds.button(label="Apply", width=66, height=24,
+                    annotation="apply this row's parent only",
+                    command=_press_row(row))
+        cmds.setParent("..")
+    cmds.button(label="Apply all", height=32,
+                backgroundColor=(0.45, 0.70, 0.50),
+                annotation="bring the scene to all three parents",
+                command=_press_apply_all)
     cmds.text(STATUS, label="", align="left", wordWrap=True, height=36)
     cmds.setParent("..")
     try:

@@ -472,11 +472,18 @@ buttons** («нужна гибкая система переключений: о
 мечу» — read the spec's addendum). Three nodes, two links: each of L–W and
 R–W is `holds` (the weapon hangs in that hand; one hand at most), `follows`
 (the IK control rides the weapon) or nothing; a scheme is `{"L", "R"}`.
-The panel is `[Left hand] [→] [Weapon] [←] [Right hand]` + **Apply**: an
-arrow press cycles its link (`cycle`, pure; the arrow points from driver
-to driven, `arrow`, pure) and touches nothing; Apply runs `plan(current,
+The panel is **three parent rows** — `Hand_R [Free|Weapon] Apply`,
+`Hand_L [Free|Weapon] Apply`, `Weapon [World|Hand_R|Hand_L] Apply` — and
+**Apply all** (the animator's shape after an arrow row read unclear). A
+pick fixes a cycle in the other menu and says so (`resolve_menus`, pure)
+and touches nothing; a row's Apply changes that link only
+(`wanted_for_row`, pure), Apply all takes all three (`scheme_from_menus`,
+pure, round-trips with `menus_from_scheme`); either runs `plan(current,
 wanted)` (pure) — releases first, then the weapon's move (lift, hang),
-then new followers — and the arrows are re-read from the scene after.
+then new followers — and the menus are re-read from the scene after.
+Photographed live 2026-09-18 on the animator's own scene: «Manny_Rig:
+LongSwordMesh - weapon in the right hand; left hand free», menus
+Free / Free / Hand_R.
 **The drive bone follows the holding hand**: `weapon_r` in the right,
 `weapon_l` in the left, unchanged in world; a bone change unlinks the old
 bone and constrains the new one with NO offset (the socket sits ON the

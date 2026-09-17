@@ -1,9 +1,10 @@
 """Connections: who drives whom - the two hands and the weapon (2026-09-18).
 
-The pure model (scheme, cycle, arrows, plan, messages), the panel on a fake
-`cmds`, and the boundaries the design promises: the hands are constrained
-and never re-parented, only the weapon goes through OverRig, the retarget
-refuses a rig with following hands, no shelf button.
+The pure model (scheme, plan, the three parent menus and their conflicts,
+messages), the panel on a fake `cmds`, and the boundaries the design
+promises: the hands are constrained and never re-parented, only the weapon
+goes through OverRig, the retarget refuses a rig with following hands, no
+shelf button.
 
 Spec: docs/superpowers/specs/2026-09-18-connections-design.md
 """
@@ -36,66 +37,85 @@ class TheModel(unittest.TestCase):
         self.assertEqual(cx.followers(scheme(F, H)), ["L"])
         self.assertEqual(cx.followers(scheme(F, F)), ["L", "R"])
 
-    def test_every_case_the_animator_named_is_a_scheme(self):
-        cases = {
-            "both hands to the sword": scheme(F, F),
-            "one hand to the sword": scheme(right=F),
-            "sword in the right hand": scheme(right=H),
-            "sword in the left hand": scheme(left=H),
-            "sword in the right, left hand to the sword": scheme(F, H),
-        }
-        for name, s in cases.items():
-            self.assertTrue(cx.describe(s), name)
+    def test_every_case_the_animator_named_reads_back(self):
         self.assertEqual(cx.describe(scheme(F, H)),
                          "weapon in the right hand; left hand follows")
         self.assertEqual(cx.describe(scheme(F, F)),
                          "weapon in world; left hand, right hand follow")
         self.assertEqual(cx.describe(scheme(right=H)),
                          "weapon in the right hand; left hand free")
+        self.assertEqual(cx.describe(scheme(left=H)),
+                         "weapon in the left hand; right hand free")
+        self.assertEqual(cx.describe(scheme(right=F)),
+                         "weapon in world; right hand follows")
         self.assertEqual(cx.describe(scheme()), "weapon in world; hands free")
 
 
-class Cycle(unittest.TestCase):
+class Menus(unittest.TestCase):
+    """Hand_R / Hand_L / Weapon, each with a parent."""
 
-    def test_none_follows_holds_none(self):
-        s = scheme()
-        s = cx.cycle(s, "L")
-        self.assertEqual(s["L"], F)
-        s = cx.cycle(s, "L")
-        self.assertEqual(s["L"], H)
-        s = cx.cycle(s, "L")
-        self.assertIsNone(s["L"])
+    def test_menus_from_scheme(self):
+        self.assertEqual(cx.menus_from_scheme(scheme(right=H)),
+                         {"R": "Free", "L": "Free", "W": "Hand_R"})
+        self.assertEqual(cx.menus_from_scheme(scheme(F, F)),
+                         {"R": "Weapon", "L": "Weapon", "W": "World"})
+        self.assertEqual(cx.menus_from_scheme(scheme(F, H)),
+                         {"R": "Free", "L": "Weapon", "W": "Hand_R"})
 
-    def test_one_hand_holds_at_most(self):
-        s = scheme(right=H)
-        s = cx.cycle(cx.cycle(s, "L"), "L")          # L -> follows -> holds
-        self.assertEqual(s, scheme(left=H, right=None))
+    def test_scheme_from_menus_round_trips(self):
+        for s in (scheme(right=H), scheme(F, F), scheme(F, H), scheme(left=H),
+                  scheme(), scheme(right=F)):
+            self.assertEqual(cx.scheme_from_menus(cx.menus_from_scheme(s)), s)
 
-    def test_the_other_link_is_otherwise_untouched(self):
-        s = cx.cycle(scheme(right=F), "L")
-        self.assertEqual(s, scheme(F, F))
+    def test_the_weapon_menu_wins_a_conflict(self):
+        """Weapon in Hand_R while Hand_R says Weapon: the hand holds."""
+        self.assertEqual(cx.scheme_from_menus({"R": "Weapon", "L": "Free",
+                                               "W": "Hand_R"}),
+                         scheme(right=H))
 
-    def test_cycle_does_not_mutate_its_input(self):
-        s = scheme()
-        cx.cycle(s, "R")
-        self.assertEqual(s, scheme())
+    def test_picking_the_weapons_hand_frees_that_hand(self):
+        fixed, note = cx.resolve_menus({"R": "Weapon", "L": "Weapon",
+                                        "W": "Hand_R"}, changed="W")
+        self.assertEqual(fixed, {"R": "Free", "L": "Weapon", "W": "Hand_R"})
+        self.assertIn("Hand_R set to Free", note)
+
+    def test_a_hand_following_the_weapon_it_holds_puts_it_in_world(self):
+        fixed, note = cx.resolve_menus({"R": "Weapon", "L": "Free",
+                                        "W": "Hand_R"}, changed="R")
+        self.assertEqual(fixed, {"R": "Weapon", "L": "Free", "W": "World"})
+        self.assertIn("Weapon set to World", note)
+
+    def test_no_conflict_no_note(self):
+        menus = {"R": "Free", "L": "Weapon", "W": "Hand_R"}
+        self.assertEqual(cx.resolve_menus(menus, "L"), (menus, ""))
 
 
-class Arrows(unittest.TestCase):
-    """The button stands between the hand and the weapon; the arrow points
-    from the driver to the driven."""
+class WantedForRow(unittest.TestCase):
+    """A row's Apply changes that link only."""
 
-    def test_a_holding_hand_points_at_the_weapon(self):
-        self.assertEqual(cx.arrow("L", H), "→")   # L -> W
-        self.assertEqual(cx.arrow("R", H), "←")   # W <- R
+    def test_hand_row_to_weapon(self):
+        self.assertEqual(cx.wanted_for_row(scheme(right=H), "L", "Weapon"),
+                         scheme(F, H))
 
-    def test_a_following_hand_is_pointed_at_by_the_weapon(self):
-        self.assertEqual(cx.arrow("L", F), "←")   # L <- W
-        self.assertEqual(cx.arrow("R", F), "→")   # W -> R
+    def test_hand_row_to_free_releases_a_follower(self):
+        self.assertEqual(cx.wanted_for_row(scheme(F, H), "L", "Free"),
+                         scheme(None, H))
 
-    def test_no_link_is_a_dot(self):
-        self.assertEqual(cx.arrow("L", None), cx.EMPTY)
-        self.assertEqual(cx.arrow("R", None), cx.EMPTY)
+    def test_hand_row_to_free_on_the_holder_puts_the_weapon_in_world(self):
+        self.assertEqual(cx.wanted_for_row(scheme(right=H), "R", "Free"),
+                         scheme())
+
+    def test_weapon_row_to_the_other_hand(self):
+        self.assertEqual(cx.wanted_for_row(scheme(F, H), "W", "Hand_L"),
+                         scheme(H, None))
+
+    def test_weapon_row_to_world_keeps_followers(self):
+        self.assertEqual(cx.wanted_for_row(scheme(F, H), "W", "World"),
+                         scheme(F, None))
+
+    def test_the_holder_asked_to_follow_becomes_a_follower(self):
+        self.assertEqual(cx.wanted_for_row(scheme(right=H), "R", "Weapon"),
+                         scheme(None, F))
 
 
 class Plan(unittest.TestCase):
@@ -121,8 +141,8 @@ class Plan(unittest.TestCase):
 
     def test_releases_come_first_and_follows_last(self):
         steps = cx.plan(scheme(F, H), scheme(H, F))
-        kinds = [k for k, _ in steps]
-        self.assertEqual(kinds, ["release", "lift", "hang", "follow"])
+        self.assertEqual([k for k, _ in steps],
+                         ["release", "lift", "hang", "follow"])
         self.assertEqual(steps[0], ("release", "L"))
         self.assertEqual(steps[-1], ("follow", "R"))
 
@@ -160,63 +180,116 @@ class Messages(unittest.TestCase):
         self.assertIn("weapon in the right hand; left hand follows", text)
 
 
+class FakeMenuCmds(FakeUiCmds):
+    """The UI fake plus optionMenus that hold a value."""
+
+    def __init__(self):
+        FakeUiCmds.__init__(self)
+        self.menu_values = {}
+        self.menu_items = {}
+        self._current_menu = None
+
+    def optionMenu(self, name=None, **kwargs):
+        self.calls.append(("optionMenu", (name,), kwargs))
+        if kwargs.get("exists"):
+            return name in self.menu_values
+        if kwargs.get("query") or kwargs.get("q"):
+            return self.menu_values.get(name)
+        if kwargs.get("edit") or kwargs.get("e"):
+            if "value" in kwargs:
+                self.menu_values[name] = kwargs["value"]
+            return name
+        self.menu_values[name] = None
+        self.menu_items[name] = []
+        self._current_menu = name
+        self.children.append(name)
+        return name
+
+    def menuItem(self, **kwargs):
+        self.menu_items[self._current_menu].append(kwargs.get("label"))
+        if self.menu_values[self._current_menu] is None:
+            self.menu_values[self._current_menu] = kwargs.get("label")
+        return kwargs.get("label")
+
+
 class Panel(unittest.TestCase):
 
     def setUp(self):
-        self.real = (cx.cmds, cx.refresh)
-        self.fake = FakeUiCmds()
+        self.real = (cx.cmds, cx.refresh, cx.maya_rigs.current_rig,
+                     cx.read_scheme)
+        self.fake = FakeMenuCmds()
         cx.cmds = self.fake
         cx.refresh = lambda *a: ""
-        cx._PENDING.clear()
         cx.build_panel()
 
     def tearDown(self):
-        cx.cmds, cx.refresh = self.real
-        cx._PENDING.clear()
+        (cx.cmds, cx.refresh, cx.maya_rigs.current_rig,
+         cx.read_scheme) = self.real
 
     def _buttons(self):
         return [c for c in self.fake.calls if c[0] == "button"
                 and not c[2].get("edit")]
 
-    def test_two_arrow_buttons_apply_a_header_and_a_status_no_window(self):
-        self.assertIn(cx.LINK_BUTTON["L"], self.fake.children)
-        self.assertIn(cx.LINK_BUTTON["R"], self.fake.children)
+    def test_three_rows_each_with_a_parent_menu_and_apply_then_apply_all(self):
+        for row in ("R", "L", "W"):
+            self.assertIn(cx.MENU[row], self.fake.children)
+        self.assertEqual(self.fake.menu_items[cx.MENU["R"]], ["Free", "Weapon"])
+        self.assertEqual(self.fake.menu_items[cx.MENU["L"]], ["Free", "Weapon"])
+        self.assertEqual(self.fake.menu_items[cx.MENU["W"]],
+                         ["World", "Hand_R", "Hand_L"])
+        self.assertEqual([c[2]["label"] for c in self._buttons()],
+                         ["Apply", "Apply", "Apply", "Apply all"])
+        labels = [c[2].get("label") for c in self.fake.calls
+                  if c[0] == "text" and not c[2].get("edit")]
+        for wanted in ("Hand_R", "Hand_L", "Weapon"):
+            self.assertIn(wanted, labels)
         self.assertIn(cx.HEADER, self.fake.children)
         self.assertIn(cx.STATUS, self.fake.children)
-        self.assertEqual([c[2]["label"] for c in self._buttons()],
-                         [cx.EMPTY, cx.EMPTY, "Apply"])
         self.assertEqual(self.fake.windows, {})
         self.assertTrue(cx.is_open())
 
-    def test_the_row_reads_left_hand_weapon_right_hand(self):
-        labels = [c[2].get("label") for c in self.fake.calls
-                  if c[0] == "text" and not c[2].get("edit")]
-        self.assertIn("Left hand", labels)
-        self.assertIn("Weapon", labels)
-        self.assertIn("Right hand", labels)
-        self.assertLess(labels.index("Left hand"), labels.index("Weapon"))
-        self.assertLess(labels.index("Weapon"), labels.index("Right hand"))
-
-    def test_an_arrow_press_repaints_and_asks_for_apply_without_touching_the_scene(self):
-        import maya_rigs
-        rig = maya_rigs.Rig("Manny_Rig", "cs", "|G|Main", "|G", "|root")
-        saved = (cx.maya_rigs.current_rig, cx.read_scheme)
-        cx.maya_rigs.current_rig = lambda selection=None: (rig, "")
-        cx.read_scheme = lambda rig, bones=None, weapon=None: scheme(right=H)
-        try:
-            self._buttons()[0][2]["command"]()            # the left arrow
-        finally:
-            cx.maya_rigs.current_rig, cx.read_scheme = saved
-        edits = [c for c in self.fake.calls if c[0] == "button" and c[2].get("edit")]
-        self.assertEqual(edits[0][1][0], cx.LINK_BUTTON["L"])
-        self.assertEqual(edits[0][2]["label"], "←")     # left follows
-        self.assertEqual(cx._PENDING["Manny_Rig"], scheme(F, H))
+    def test_a_pick_that_makes_a_cycle_fixes_the_other_menu_and_asks_for_apply(self):
+        self.fake.menu_values[cx.MENU["R"]] = "Weapon"
+        self.fake.menu_values[cx.MENU["W"]] = "Hand_R"
+        menus = [c for c in self.fake.calls if c[0] == "optionMenu"
+                 and not c[2].get("edit") and not c[2].get("query")]
+        menus[2][2]["changeCommand"]()                  # the Weapon row picked
+        self.assertEqual(self.fake.menu_values[cx.MENU["R"]], "Free")
         status = [c for c in self.fake.calls
                   if c[0] == "text" and c[1] == (cx.STATUS,) and c[2].get("edit")]
-        self.assertIn("press Apply for: weapon in the right hand; left hand follows",
+        self.assertIn("Hand_R set to Free", status[-1][2]["label"])
+        self.assertIn("press Apply for: weapon in the right hand; left hand free",
                       status[-1][2]["label"])
         self.assertFalse([c for c in self.fake.calls
                           if c[0] in ("parentConstraint", "bakeResults")])
+
+    def test_a_rows_apply_changes_that_link_only(self):
+        import maya_rigs
+        rig = maya_rigs.Rig("Manny_Rig", "cs", "|G|Main", "|G", "|root")
+        asked = []
+        cx.maya_rigs.current_rig = lambda selection=None: (rig, "")
+        cx.read_scheme = lambda rig, bones=None, weapon=None: scheme(right=H)
+        saved_apply = cx.apply
+        cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
+        try:
+            self.fake.menu_values[cx.MENU["L"]] = "Weapon"
+            self._buttons()[1][2]["command"]()          # Hand_L's Apply
+        finally:
+            cx.apply = saved_apply
+        self.assertEqual(asked, [scheme(F, H)])
+
+    def test_apply_all_takes_all_three_menus(self):
+        asked = []
+        saved_apply = cx.apply
+        cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
+        try:
+            self.fake.menu_values[cx.MENU["R"]] = "Weapon"
+            self.fake.menu_values[cx.MENU["L"]] = "Weapon"
+            self.fake.menu_values[cx.MENU["W"]] = "World"
+            self._buttons()[3][2]["command"]()          # Apply all
+        finally:
+            cx.apply = saved_apply
+        self.assertEqual(asked, [scheme(F, F)])
 
     def test_show_window_opens_the_hub_on_connections(self):
         asked = []
@@ -245,8 +318,6 @@ class Boundaries(unittest.TestCase):
             return handle.read()
 
     def test_the_hands_are_never_reparented(self):
-        """The rig hierarchy stays: no `cmds.parent(` anywhere, and the
-        OverRig parent procs are reached only for the weapon."""
         tree = ast.parse(self._source())
         names = [node.func.attr for node in ast.walk(tree)
                  if isinstance(node, ast.Call)
@@ -264,8 +335,6 @@ class Boundaries(unittest.TestCase):
         self.assertIn("attributeQuery(MARKER", self._source())
 
     def test_the_drive_bone_takes_no_offset(self):
-        """The export socket sits ON the weapon wherever the animator put
-        it: the bone's constraint is made without maintainOffset."""
         self.assertIn("cmds.parentConstraint(weapon, bone, maintainOffset=False)",
                       self._source())
 
@@ -283,7 +352,6 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(baked, "connected!")
 
     def test_no_shelf_button_for_connections(self):
-        """The rule of 2026-09-17: a new tool is a section, nothing else."""
         import install
         labels = [row[0] for row in install._PYTHON_BUTTONS]
         self.assertNotIn("Connections", labels)
