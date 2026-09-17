@@ -4204,6 +4204,13 @@ is one flag each whenever it is asked for.
 
 ## Conventions
 
+- **No more per-tool shelf icons** (the animator, 2026-09-17: «точечные
+  иконки для полки мы не рисуем, они больше не нужны»). Since the hub, a
+  new tool is a SECTION of `maya_hub.SECTIONS` — a `build_panel()` and a
+  row in the table — and nothing else: no shelf button of its own, no row
+  in `install._PYTHON_BUTTONS`, no `draw_*` in `icons/make_icons.py`. The
+  eight buttons and ten icons that exist stay as they are (the animator
+  kept them in the brainstorm); the rule is about what gets added.
 - Branch `feature/overrig-picker`, remote `github.com/EugeneM23/MayaScripts`.
   `main` is untouched. Git identity is set **repo-locally** (`EugeneM`,
   `johnyanimation@gmail.com`) because the global `.gitconfig` does not exist.
