@@ -31,6 +31,11 @@ FALLBACK_SET = "Maya_Default"
 PREFIX = "skeldarAnim"
 EDITOR_COMMAND = "HotkeyPreferencesWindow"
 ON_COLOUR = (0.27, 0.38, 0.48)
+HUB_SECTION = "hotkeys"                 # our section of the SkeldarAnim hub
+PANEL_BUTTON = "skeldarHotkeysToggle"   # the hub's toggle, painted like the shelf's
+PANEL_NOTE = ("One press switches Maya to the SkeldarAnim hotkey set (a copy "
+              "of yours, with our commands registered); the next puts your "
+              "own set back. Assign keys in Maya's Hotkey Editor.")
 
 # The time-based curve types, and the whole list of them. Everything else
 # `ls(type="animCurve")` answers is a driven key -- see `time_curves`.
@@ -151,7 +156,7 @@ def _picker(method, *args):
 def _scene(func, *args):
     """Press a Scene Setup button. Its callbacks read their own window."""
     module = _scene_module()
-    if not cmds.window(module.WINDOW, exists=True):
+    if not module.is_open():
         module.show_window()
         return _report("Scene Setup opened - press again")
     return getattr(module, func)(*args)
@@ -543,17 +548,61 @@ def shelf_button(shelf=SHELF, label=BUTTON_LABEL):
 
 
 def paint(active):
-    """Light the button while the map is on. True when it was painted.
+    """Light the button while the map is on. True when one was painted.
 
     Maya shows the active hotkey set nowhere but the Hotkey Editor's own
     dropdown, so a toggle with no feedback is a toggle you lose track of.
+    Both buttons are ours - the shelf's and the hub section's - and either
+    may be absent (the module called from the Script Editor, the hub
+    closed); painting whichever is there is the normal outcome.
     """
+    painted = False
     button = shelf_button()
-    if not button:
-        return False
-    cmds.shelfButton(button, edit=True, enableBackground=bool(active),
-                     backgroundColor=ON_COLOUR)
-    return True
+    if button:
+        cmds.shelfButton(button, edit=True, enableBackground=bool(active),
+                         backgroundColor=ON_COLOUR)
+        painted = True
+    if cmds.control(PANEL_BUTTON, exists=True):
+        cmds.button(PANEL_BUTTON, edit=True, label=panel_label(active),
+                    enableBackground=bool(active), backgroundColor=ON_COLOUR)
+        painted = True
+    return painted
+
+
+def panel_label(active):
+    """What the hub's toggle reads. Pure."""
+    return "Hotkey map: ON" if active else "Hotkey map: OFF"
+
+
+def is_open():
+    """True while our section is built in the hub."""
+    return bool(cmds.control(PANEL_BUTTON, exists=True))
+
+
+def show_window():
+    """Open the SkeldarAnim hub on the Hotkeys section (see `maya_hub`)."""
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)
+
+
+def build_panel():
+    """The hub section: the toggle, lit while the map is on, and a way
+    into Maya's own Hotkey Editor (2026-09-17)."""
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", 8))
+    cmds.text(label=PANEL_NOTE, align="left", wordWrap=True, height=54)
+    active = is_active()
+    cmds.button(PANEL_BUTTON, label=panel_label(active), height=30,
+                enableBackground=active, backgroundColor=ON_COLOUR,
+                annotation="Switch between the SkeldarAnim hotkey set and "
+                           "your own",
+                command=lambda *_a: toggle())
+    cmds.button(label="Hotkey Editor...", height=24,
+                annotation="Maya's Hotkey Editor: assign keys to the "
+                           "SkeldarAnim commands",
+                command=lambda *_a: _maya_mel("HotkeyPreferencesWindow"))
+    cmds.setParent("..")
+    return column
 
 
 def activate():
@@ -659,6 +708,9 @@ _OURS = (
      partial(_show, "maya_overshoot", "show_overshoot_ui")),
     ("window.hotkeys", "Windows", "Hotkey map on/off",
      "Switch between the SkeldarAnim hotkey set and your own", toggle),
+    ("window.hub", "Windows", "SkeldarAnim window",
+     "Open the SkeldarAnim panel: every tool a section, dock it anywhere",
+     partial(_show, "maya_hub", "show")),
 
     ("time.prev", "Timeline", "Frame back", "One frame back",
      partial(step_frame, -1.0)),

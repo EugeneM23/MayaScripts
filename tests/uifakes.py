@@ -13,7 +13,9 @@ class FakeUiCmds(object):
     #  for (ls, objExists inside a refresh) is not a control.
     UI = ("text", "separator", "rowLayout", "optionMenu", "checkBox",
           "floatSliderGrp", "colorSliderGrp", "button", "intField",
-          "floatField", "radioButtonGrp", "frameLayout")
+          "floatField", "radioButtonGrp", "frameLayout", "formLayout",
+          "textScrollList", "textField", "textFieldGrp", "floatFieldGrp",
+          "scrollLayout")
 
     def __init__(self, control_height=25, saved_pref=True, dpi=1.0):
         self.control_height = control_height
@@ -24,6 +26,15 @@ class FakeUiCmds(object):
         self.calls = []
         self.column = {}
         self.selection = []
+        #  The hub: workspaceControl name -> its creation kwargs plus the
+        #  edits made to it, frameLayout name -> its kwargs (collapse read
+        #  back by the tests), optionVars written, deferred callables.
+        self.workspace = {}
+        self.frames = {}
+        self.optionvars = {}
+        self.deferred = []
+        self.existing = set()
+        self.deleted = []
 
     def _record(self, name):
         def call(*args, **kwargs):
@@ -92,8 +103,78 @@ class FakeUiCmds(object):
 
     def optionVar(self, **kwargs):
         if kwargs.get("exists"):
-            return False
+            return kwargs["exists"] in self.optionvars
+        if kwargs.get("query") or kwargs.get("q"):
+            return self.optionvars.get(kwargs.get("query") or kwargs.get("q"))
+        for flag in ("intValue", "floatValue", "stringValue"):
+            if flag in kwargs:
+                name, value = kwargs[flag]
+                self.optionvars[name] = value
         return None
+
+    def workspaceControl(self, name, **kwargs):
+        self.calls.append(("workspaceControl", (name,), kwargs))
+        if kwargs.get("exists"):
+            return name in self.workspace
+        if kwargs.get("query") or kwargs.get("q"):
+            return self.workspace[name].get(
+                [k for k in kwargs if k not in ("query", "q")][0])
+        if kwargs.get("edit") or kwargs.get("e"):
+            self.workspace[name].setdefault("edits", []).append(kwargs)
+            return name
+        self.workspace[name] = dict(kwargs)
+        return name
+
+    def frameLayout(self, name=None, **kwargs):
+        self.calls.append(("frameLayout", (name,), kwargs))
+        if kwargs.get("exists"):
+            return name in self.frames
+        if kwargs.get("query") or kwargs.get("q"):
+            return self.frames[name].get(
+                [k for k in kwargs if k not in ("query", "q")][0])
+        if kwargs.get("edit") or kwargs.get("e"):
+            for k, v in kwargs.items():
+                if k not in ("edit", "e"):
+                    self.frames[name][k] = v
+            return name
+        self.frames[name] = dict(kwargs)
+        self.children.append(name)
+        return name
+
+    def scrollLayout(self, name=None, **kwargs):
+        self.calls.append(("scrollLayout", (name,), kwargs))
+        if kwargs.get("exists"):
+            return name in self.existing
+        if kwargs.get("query") or kwargs.get("q") or kwargs.get("edit")                 or kwargs.get("e"):
+            return None
+        self.existing.add(name)
+        return name
+
+    def evalDeferred(self, fn, **kwargs):
+        self.deferred.append(fn)
+        return None
+
+    def control(self, name, **kwargs):
+        self.calls.append(("control", (name,), kwargs))
+        if kwargs.get("exists"):
+            return name in self.existing or name in self.frames                 or name in self.children
+        if kwargs.get("query") and kwargs.get("height"):
+            return self.control_height
+        return None
+
+    def deleteUI(self, name, **kwargs):
+        self.deleted.append(name)
+        return None
+
+    def setParent(self, *args, **kwargs):
+        self.calls.append(("setParent", args, kwargs))
+        return args[0] if args else None
+
+    def run_deferred(self):
+        """Fire what evalDeferred queued, in order."""
+        queued, self.deferred = self.deferred, []
+        for fn in queued:
+            fn()
 
     def __getattr__(self, name):
         return self._record(name)

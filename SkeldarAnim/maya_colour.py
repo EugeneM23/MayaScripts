@@ -33,8 +33,6 @@ import collections
 
 import maya.cmds as cmds
 
-import maya_winfit
-
 from maya_scenesetup import colour as colouring
 
 
@@ -292,10 +290,9 @@ def taken_message(pairs):
 #  UI
 # ---------------------------------------------------------------------------
 
-WINDOW = "skeldarColourWin"     # read by maya_hotkeys, open vs closed
+HUB_SECTION = "colour"          # our section of the SkeldarAnim hub
 WIDTH = 268
 ROW_SPACING = 4                 # the column's gap between controls
-MARGIN = 12                     # air under the status line
 STATUS_WIDTH = 40
 CUSTOM = "skeldarColourCustom"
 TAKEN = "skeldarColourTaken"
@@ -359,23 +356,23 @@ def _press_free(*_args):
     refresh()
 
 
-def show_window():
-    """A grid of eight colours, a custom swatch, and what is taken."""
-    if cmds.window(WINDOW, exists=True):
-        cmds.deleteUI(WINDOW)
+def is_open():
+    """True while our section is built in the hub (read by maya_hotkeys)."""
+    return bool(cmds.control(STATUS, exists=True))
 
-    #  Sizeable, sized to its content after the build, and the size Maya
-    #  remembered (the clipped 260) forgotten first - `maya_winfit` has
-    #  the measurements. Fixed at 260 this window hid Next free colour,
-    #  the taken line and the status on a 150 % display.
-    maya_winfit.forget_saved_size(WINDOW, cmds)
-    cmds.window(WINDOW, title="Colour", width=WIDTH, sizeable=True)
+
+def show_window():
+    """Open the SkeldarAnim hub on the Colour section (see `maya_hub`)."""
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)
+
+
+def build_panel():
+    """A grid of eight colours, a custom swatch, and what is taken -
+    built into whatever layout is current (the hub's section)."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=ROW_SPACING,
                                columnOffset=("both", 8))
 
-    cmds.separator(height=5, style="none", width=WIDTH - 16)
-    cmds.text(label="Colour", font="boldLabelFont", align="center",
-              width=WIDTH - 16)
     cmds.text(label="paints the selection, else the connected character",
               font="smallObliqueLabelFont", align="center",
               width=WIDTH - 16)
@@ -419,10 +416,9 @@ def show_window():
               align="center", width=WIDTH - 16,
               font="smallFixedWidthFont")
 
-    cmds.showWindow(WINDOW)
-    maya_winfit.fit_window(WINDOW, column, cmds, ROW_SPACING, MARGIN)
+    cmds.setParent("..")
     refresh()
-    return WINDOW
+    return column
 
 
 if __name__ == "__main__":

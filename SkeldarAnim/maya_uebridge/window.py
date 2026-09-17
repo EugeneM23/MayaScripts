@@ -34,7 +34,8 @@ from maya_uebridge import records
 from maya_uebridge import uelink
 from maya_uebridge import uescripts
 
-WINDOW = "ueAnimBridgeWindow"
+HUB_SECTION = "uebridge"        # our section of the SkeldarAnim hub
+LIST_HEIGHT = 300               # the animation list, inside the hub's column
 _LIST = "ueAnimBridgeList"
 _SEARCH = "ueAnimBridgeSearch"
 _STATUS = "ueAnimBridgeStatus"
@@ -44,9 +45,10 @@ _PROJECT = "ueAnimBridgeProject"
 _MODE = "ueAnimBridgeMode"
 
 # Windows earlier builds left open: the checkouts popup of 2026-08-21's
-# afternoon. Deleted on every open, or a panel from an older build stays
-# up wired to dead code.
-LEGACY_WINDOWS = ("ueBridgeCheckouts",)
+# afternoon, and the bridge's own standalone window (before the hub,
+# 2026-09-17). `maya_hub.show` deletes both, or a panel from an older
+# build stays up wired to dead code.
+LEGACY_WINDOWS = ("ueBridgeCheckouts", "ueAnimBridgeWindow")
 
 CACHE_NAME = "maya_uebridge_cache.json"
 
@@ -393,35 +395,59 @@ def export_fbx_selected():
 
 # ---------------------------------------------------------------- window
 
+def is_open():
+    """True while our section is built in the hub (read by maya_hotkeys)."""
+    return bool(cmds.control(_STATUS, exists=True))
+
+
 def show_window():
-    for name in (WINDOW,) + LEGACY_WINDOWS:
-        if cmds.window(name, exists=True):
-            cmds.deleteUI(name)
+    """Open the SkeldarAnim hub on the UE Bridge section (see `maya_hub`)."""
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)
 
-    cmds.window(WINDOW, title="UE Animation Bridge", widthHeight=(760, 520))
-    form = cmds.formLayout(numberOfDivisions=100)
 
-    project_label = cmds.text(label="Project:", align="left")
-    project_menu = cmds.optionMenu(
-        _PROJECT, width=250,
+def build_panel():
+    """The bridge's controls, built into whatever layout is current.
+
+    Rows in a column, not a formLayout: measured in the hub 2026-09-17, a
+    formLayout inside an adjustable column reported a 1128 px minimum
+    width whatever its children were told, and the whole panel grew a
+    horizontal scrollbar with the buttons pushed off the right edge. The
+    mode radios stand in a column for the same reason - three in a row
+    want 670 px at a 150 % display.
+    """
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", 6))
+
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnAttach=[(1, "right", 4), (2, "both", 0),
+                                 (3, "left", 6)])
+    cmds.text(label="Project:", align="right")
+    cmds.optionMenu(
+        _PROJECT,
         changeCommand=lambda *_: _run(_project_changed,
                                       busy="switching editor..."))
-    header = cmds.text(_HEADER, label="not connected", align="left")
-    refresh_button = cmds.button(
+    cmds.button(
         label="Refresh", width=90,
         command=lambda *_: _run(refresh, busy="asking the editor..."))
+    cmds.setParent("..")
+    cmds.text(_HEADER, label="not connected", align="left", wordWrap=True)
 
-    search_label = cmds.text(label="Search:", align="left")
-    search = cmds.textField(_SEARCH, placeholderText="name or folder",
-                            textChangedCommand=lambda *_: _run(_repopulate))
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "right", 4), (2, "both", 0)])
+    cmds.text(label="Search:", align="right")
+    cmds.textField(_SEARCH, placeholderText="name or folder",
+                   textChangedCommand=lambda *_: _run(_repopulate))
+    cmds.setParent("..")
 
-    scroll = cmds.textScrollList(
+    cmds.textScrollList(
         _LIST, allowMultiSelection=False, font="fixedWidthFont",
+        height=LIST_HEIGHT,
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 
-    mode = cmds.radioButtonGrp(
-        _MODE, numberOfRadioButtons=3, label="Import:",
+    cmds.radioButtonGrp(
+        _MODE, numberOfRadioButtons=3, label="Import:", vertical=True,
         labelArray3=["retarget onto the rig", "onto a NEW rig",
                      "as a new skeleton"],
         annotation="Retarget onto the rig: the SELECTED AdvancedSkeleton rig "
@@ -433,17 +459,20 @@ def show_window():
                    "- many rigs in one scene. As a new skeleton: the clip "
                    "arrives as its own namespaced skeleton and nothing else "
                    "happens.",
-        columnWidth4=(52, 160, 120, 140), select=1)
-    timeline = cmds.checkBox(_TIMELINE, label="set timeline to clip range",
-                             value=True)
-    fbx_button = cmds.button(
+        columnWidth2=(52, 200), columnAlign=(1, "left"), select=1)
+    cmds.checkBox(_TIMELINE, label="set timeline to clip range", value=True)
+
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=3,
+                   columnAttach=[(1, "left", 0), (2, "left", 6),
+                                 (3, "both", 6)])
+    cmds.button(
         label="Export FBX...", height=34, width=110,
         annotation="Write the scene skeleton's animation to an FBX of your "
                    "choosing (selection, else the rig, else the only "
                    "skeleton), baked on export.",
         command=lambda *_: _run(export_fbx_selected,
                                 busy="writing the fbx..."))
-    uasset_button = cmds.button(
+    cmds.button(
         label="Export to uasset", height=34, width=120,
         annotation="Overwrite the selected AnimSequence with the scene's "
                    "animation. Asks first. Does NOT touch Perforce: the "
@@ -451,42 +480,14 @@ def show_window():
                    "and a read-only flag is cleared.",
         command=lambda *_: _run(export_uasset_selected,
                                 busy="writing the uasset..."))
-    import_button = cmds.button(
+    cmds.button(
         label="IMPORT", height=34,
         command=lambda *_: _run(import_selected,
                                 busy="exporting from the editor..."))
-    status = cmds.text(_STATUS, label="", align="left")
-
-    cmds.formLayout(
-        form, edit=True,
-        attachForm=[
-            (project_label, "top", 10), (project_label, "left", 8),
-            (project_menu, "top", 6), (header, "top", 10),
-            (refresh_button, "top", 4), (refresh_button, "right", 8),
-            (search_label, "left", 8),
-            (search, "right", 8),
-            (scroll, "left", 8), (scroll, "right", 8),
-            (mode, "left", 4),
-            (timeline, "left", 8),
-            (import_button, "right", 8),
-            (status, "left", 8), (status, "right", 8), (status, "bottom", 8),
-        ],
-        attachControl=[
-            (project_menu, "left", 6, project_label),
-            (header, "left", 12, project_menu),
-            (search_label, "top", 12, project_menu),
-            (search, "top", 8, project_menu),
-            (search, "left", 6, search_label),
-            (scroll, "top", 8, search),
-            (scroll, "bottom", 8, mode),
-            (mode, "bottom", 6, timeline),
-            (timeline, "bottom", 10, import_button),
-            (import_button, "bottom", 8, status),
-            (uasset_button, "bottom", 8, status),
-            (fbx_button, "bottom", 8, status),
-            (uasset_button, "right", 6, import_button),
-            (fbx_button, "right", 6, uasset_button),
-        ])
+    cmds.setParent("..")
+    #  two lines tall: a wrapped label keeps the one-line height it was
+    #  given and clips the rest (measured in the hub, 2026-09-17).
+    cmds.text(_STATUS, label="", align="left", wordWrap=True, height=36)
 
     cached, project, choice, content_dir = load_cache()
     _STATE["records"] = cached
@@ -506,5 +507,5 @@ def show_window():
     else:
         _status("press Refresh to read the animations from the open editor")
 
-    cmds.showWindow(WINDOW)
-    return WINDOW
+    cmds.setParent("..")
+    return column

@@ -979,70 +979,84 @@ class TestAutoKeyIsPutBack(FakeSceneTest):
 
 
 # ---------------------------------------------------------------------------
-#  The window: it must fit its content and let the animator stretch it
+#  The panel: a section of the SkeldarAnim hub (2026-09-17), no window
 # ---------------------------------------------------------------------------
 
-class TestWindowFitsItsContent(unittest.TestCase):
+class TestPanelBuildsIntoTheHub(unittest.TestCase):
+    """The window of its own is gone: `build_panel` puts the controls into
+    whatever layout is current, and `show_window` opens the hub on the
+    Studio section. Before this the panel was a `sizeable=False` window
+    whose bottom buttons were clipped (2026-09-17, morning)."""
 
     def setUp(self):
         self.real = vp.cmds
         self.fake = FakeUiCmds(control_height=25)
         vp.cmds = self.fake
-        vp.show_window()
-        self.win = self.fake.windows[vp.WINDOW]
+        self.column = vp.build_panel()
 
     def tearDown(self):
         vp.cmds = self.real
 
-    def test_the_animator_can_stretch_it(self):
-        """The bug: a fixed 470 px window over 669 px of content, with
-        `sizeable=False`, hid the Apply and Restore buttons and left the
-        animator no way to drag it open."""
-        self.assertTrue(self.win.get("sizeable"))
+    def test_no_window_is_created(self):
+        self.assertEqual(self.fake.windows, {})
+        self.assertFalse([c for c in self.fake.calls
+                          if c[0] in ("showWindow", "windowPref")])
 
-    def test_the_height_is_measured_from_the_controls_not_assumed(self):
-        """Maya scales every control for the display (a 26 px button reads
-        40 at 150 %), so the window takes the height its children really
-        have, summed after they exist."""
-        children = self.fake.children
-        expected = vp.fit_height([25] * len(children),
-                                 spacing=vp.ROW_SPACING, margin=vp.MARGIN)
-        self.assertGreater(len(children), 20)
-        self.assertEqual(self.win.get("height"), expected)
-
-    def test_the_stale_saved_size_is_forgotten_first(self):
-        """Maya restores a window's last saved size over the one the code
-        asks for, and the saved one was the clipped 300 x 470."""
-        removed = [c for c in self.fake.calls
-                   if c[0] == "windowPref" and c[2].get("remove")]
-        self.assertEqual(len(removed), 1)
-        self.assertFalse(self.fake.saved_pref)
-
-    def test_the_column_stretches_with_the_window(self):
+    def test_the_controls_land_in_one_stretching_column(self):
         self.assertTrue(self.fake.column.get("adjustableColumn"))
+        self.assertGreater(len(self.fake.children), 20)
+
+    def test_the_status_line_exists_and_the_panel_reads_open(self):
+        self.assertIn(vp.STATUS, self.fake.children)
+        self.fake.existing.add(vp.STATUS)
+        self.assertTrue(vp.is_open())
+
+    def test_the_dropdowns_go_live_only_after_the_build(self):
+        """Setting an optionMenu's value fires its changeCommand, so the
+        wiring has to come after every remembered value is in place."""
+        menus = [c for c in self.fake.calls if c[0] == "optionMenu"]
+        created = [c for c in menus if not c[2].get("edit")]
+        wired = [c for c in menus
+                 if c[2].get("edit") and "changeCommand" in c[2]]
+        self.assertEqual(len(wired), len(vp.MENUS))
+        for c in created:
+            self.assertNotIn("changeCommand", c[2])
+        last_create = max(self.fake.calls.index(c) for c in created)
+        self.assertTrue(all(self.fake.calls.index(c) > last_create
+                            for c in wired))
 
 
-class TestWindowHeightIsInLogicalUnits(unittest.TestCase):
-    """Measured live 2026-09-17 at a 150 % display: `control -q -height`
-    answers PHYSICAL pixels (a 26 px button reads 40) while
-    `window -e -height N` takes LOGICAL units and Maya multiplies by the
-    scale - writing the measured sum straight back made a 678 px window
-    1018 px tall. The sum has to be divided by the real scale first."""
+class TestShowWindowOpensTheHub(unittest.TestCase):
+
+    def test_it_asks_the_hub_for_the_studio_section(self):
+        import maya_hub
+        asked = []
+        saved = maya_hub.show
+        maya_hub.show = lambda key=None: asked.append(key) or "hub"
+        try:
+            self.assertEqual(vp.show_window(), "hub")
+        finally:
+            maya_hub.show = saved
+        self.assertEqual(asked, ["studio"])
+        self.assertEqual(maya_hub.section("studio").module, "maya_vpstudio")
+
+
+class TestIsOpenGuardsTheReads(unittest.TestCase):
+    """`window_options` and `refresh` used to ask `cmds.window(WINDOW)`;
+    with the panel in the hub the question is whether OUR controls exist."""
 
     def setUp(self):
         self.real = vp.cmds
-        self.fake = FakeUiCmds(control_height=30, dpi=1.5)
+        self.fake = FakeUiCmds()
         vp.cmds = self.fake
-        vp.show_window()
 
     def tearDown(self):
         vp.cmds = self.real
 
-    def test_the_measured_pixels_are_divided_by_the_display_scale(self):
-        physical = vp.fit_height([30] * len(self.fake.children),
-                                 spacing=vp.ROW_SPACING, margin=vp.MARGIN)
-        written = self.fake.windows[vp.WINDOW].get("height")
-        self.assertEqual(written, int(math.ceil(physical / 1.5)))
+    def test_closed_panel_options_are_the_stored_ones(self):
+        self.assertFalse(vp.is_open())
+        self.assertEqual(vp.window_options(), vp.window_options())
+        self.assertEqual(vp.refresh(), "")
 
 
 if __name__ == "__main__":

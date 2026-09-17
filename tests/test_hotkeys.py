@@ -401,13 +401,21 @@ class FakePicker(object):
 
 
 class FakePanelModule(object):
-    """Scene Setup / Overshoot: a module id plus recorded calls."""
+    """Scene Setup / Overshoot: a module id plus recorded calls.
+
+    Scene Setup answers `is_open()` (it lives in the hub since 2026-09-17);
+    Overshoot still has a window of its own, hence WINDOW.
+    """
 
     WINDOW = "fakePanelWindow"
 
-    def __init__(self):
+    def __init__(self, open_=False):
         self.calls = []
         self.shown = 0
+        self.open = open_
+
+    def is_open(self):
+        return self.open
 
     def show_window(self):
         self.shown += 1
@@ -463,16 +471,16 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 26)
+        self.assertEqual(len(ours), 27)
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
                          ["time.insert", "time.next", "time.prev",
                           "time.remove"])
 
-    def test_the_four_openers_and_the_toggle(self):
+    def test_the_five_openers_and_the_toggle(self):
         self.assertEqual(sorted(self._keys("window.")),
-                         ["window.hotkeys",
+                         ["window.hotkeys", "window.hub",
                           "window.overshoot", "window.picker",
                           "window.scenesetup", "window.uebridge"])
 
@@ -597,7 +605,8 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 4)
+        self.assertEqual(len(names), 5)
+        self.assertIn("maya_hub", names)
         for name in names:
             self.assertIsNotNone(importlib.util.find_spec(name), name)
 
@@ -627,8 +636,7 @@ class RunPressesThePanel(SeamCase):
         self.assertIn("Rig Picker", self.fake.messages[-1])
 
     def test_scene_setup_presses_its_callback(self):
-        panel = FakePanelModule()
-        self.fake.windows.add(panel.WINDOW)
+        panel = FakePanelModule(open_=True)
         maya_hotkeys._scene_module = lambda: panel
         maya_hotkeys.run("scene.weapon")
         self.assertEqual(panel.calls, [("add_weapon",)])

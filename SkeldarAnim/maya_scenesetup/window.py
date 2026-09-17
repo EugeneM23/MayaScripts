@@ -37,8 +37,7 @@ from maya_scenesetup import colour as colouring
 from maya_scenesetup import connect as linking
 from maya_scenesetup import skeleton
 
-WINDOW = "mayaSceneSetupWindow"
-_LEGACY_WINDOW = "mayaWeaponsWindow"  # left open across the rename
+HUB_SECTION = "scenesetup"    # our section of the SkeldarAnim hub
 _MENU = "mayaSceneSetupMenu"
 _ROTATE = "mayaSceneSetupRotate"
 _TRANSLATE = "mayaSceneSetupTranslate"
@@ -560,16 +559,27 @@ def offsets_changed():
 
 # ------------------------------------------------------------------ window
 
-def show_window():
-    """Open the window, replacing one left from a previous call."""
-    for name in (WINDOW, _LEGACY_WINDOW):
-        if cmds.window(name, exists=True):
-            cmds.deleteUI(name)
+def is_open():
+    """True while our section is built in the hub (read by maya_hotkeys)."""
+    return bool(cmds.control(_STATUS, exists=True))
 
-    cmds.window(WINDOW, title="Scene Setup", widthHeight=(420, 470),
-                sizeable=True)
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                      columnOffset=("both", 8))
+
+def show_window():
+    """Open the SkeldarAnim hub on the Scene Setup section.
+
+    A `cmds` control has one name per Maya session, so the panel lives in
+    the hub or in a window of its own, never both - since 2026-09-17 it is
+    the hub (`maya_hub`), which also closes the standalone window an older
+    build may have left open.
+    """
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)
+
+
+def build_panel():
+    """The Scene Setup controls, built into whatever layout is current."""
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", 8))
 
     cmds.text(_BOUND, label="", align="left")
 
@@ -592,7 +602,7 @@ def show_window():
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 4)])
     cmds.colorSliderGrp(_CHARACTER_COLOUR, label="Colour",
-                        columnWidth3=(60, 60, 130),
+                        columnWidth3=(50, 50, 70),
                         rgbValue=colouring.PALETTE[0].rgb,
                         annotation="The colour the next Add Character will "
                                    "bring. It is refilled with the next "
@@ -618,6 +628,7 @@ def show_window():
         cmds.menuItem(label=label)
 
     cmds.textFieldGrp(_CUSTOM, label="FBX", text=_remembered_path(),
+                      columnWidth2=(60, 150), adjustableColumn=2,
                       annotation="Paste the path to any .fbx to attach it "
                                  "instead of the weapon in the dropdown. The "
                                  "bone comes from the dropdown; the scale is "
@@ -639,12 +650,14 @@ def show_window():
 
     cmds.floatFieldGrp(_ROTATE, numberOfFields=3, label="Rotate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
+                       columnWidth4=(60, 75, 75, 75),
                        annotation="Grip rotation relative to the weapon "
                                   "bone. Zeros put the weapon exactly on "
                                   "weapon_r.",
                        changeCommand=lambda *_args: _run(offsets_changed))
     cmds.floatFieldGrp(_TRANSLATE, numberOfFields=3, label="Translate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
+                       columnWidth4=(60, 75, 75, 75),
                        annotation="Grip position relative to the weapon "
                                   "bone. Zeros put the weapon exactly on "
                                   "weapon_r.",
@@ -652,7 +665,7 @@ def show_window():
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 4)])
     cmds.colorSliderGrp(_WEAPON_COLOUR, label="Colour",
-                        columnWidth3=(60, 60, 130),
+                        columnWidth3=(50, 50, 70),
                         rgbValue=colouring.PALETTE[0].rgb,
                         annotation="The colour the next Add will give the "
                                    "weapon. One palette for characters and "
@@ -665,7 +678,9 @@ def show_window():
                 command=lambda *_a: _run(recolour_weapon))
     cmds.setParent("..")
 
-    cmds.text(_STATUS, label="", align="left")
+    #  wordWrap: a long refusal must not widen the hub's whole column;
+    #  two lines tall, or the wrapped second line is clipped (hub, 2026-09-17).
+    cmds.text(_STATUS, label="", align="left", wordWrap=True, height=36)
 
     cmds.setParent("..")
     # The remembered skeleton, restored before the first refresh. A label
@@ -675,8 +690,6 @@ def show_window():
     if remembered and remembered in catalog.character_labels():
         cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
 
-    cmds.showWindow(WINDOW)
-
     _run(refresh)
     # After refresh, which does not touch them: both swatches open on the
     # colour the next Add would bring, read from THIS scene. A remembered
@@ -684,4 +697,4 @@ def show_window():
     # by somebody in the file opened today.
     _run(lambda: _advance_swatch(_CHARACTER_COLOUR))
     _run(lambda: _advance_swatch(_WEAPON_COLOUR))
-    return WINDOW
+    return column

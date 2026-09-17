@@ -40,7 +40,6 @@ import math
 
 import maya.cmds as cmds
 
-import maya_winfit
 
 
 VERSION = "1"
@@ -1246,13 +1245,12 @@ def toggle():
 #  UI
 # ---------------------------------------------------------------------------
 
-WINDOW = "skeldarVpStudioWin"       # read by maya_hotkeys, open vs closed
+HUB_SECTION = "studio"              # our section of the SkeldarAnim hub
+STATUS = "vpStudioStatus"           # exists exactly while the panel is built
 WIDTH = 300
 ROW_SPACING = 3                     # the column's gap between controls
-MARGIN = 12                         # air under the status line
 
 
-fit_height = maya_winfit.fit_height   # the shared sizing, one copy
 
 STATUS_WIDTH = 44
 
@@ -1302,7 +1300,7 @@ def window_options():
                 options[key] = float(stored)
             else:
                 options[key] = stored
-    if not cmds.window(WINDOW, exists=True):
+    if not is_open():
         return options
     for key, _label, _note in CHECKS:
         name = _control(key)
@@ -1333,8 +1331,8 @@ def _remember(options):
 def _status(text):
     """Fixed width: a long message must not stretch the window."""
     short = text if len(text) <= STATUS_WIDTH else text[:STATUS_WIDTH - 1] + "…"
-    if cmds.control("vpStudioStatus", exists=True):
-        cmds.text("vpStudioStatus", edit=True, label=short)
+    if cmds.control(STATUS, exists=True):
+        cmds.text(STATUS, edit=True, label=short)
     cmds.headsUpMessage(text, time=2.5)
     return text
 
@@ -1401,7 +1399,7 @@ def refresh(*_args):
     the animator made a second ago, so this reads the rig and writes only
     the status line (`maya_scenesetup.window`'s swatch lesson).
     """
-    if not cmds.window(WINDOW, exists=True):
+    if not is_open():
         return ""
     rig = find_rig()
     if not rig:
@@ -1411,28 +1409,30 @@ def refresh(*_args):
                                            opts.get("quality", "?")))
 
 
-def show_window():
-    """One column of plain `cmds`: a dropdown, ten checks and two dials."""
-    if cmds.window(WINDOW, exists=True):
-        cmds.deleteUI(WINDOW)
+def is_open():
+    """True while our section is built in the hub (read by maya_hotkeys)."""
+    return bool(cmds.control(STATUS, exists=True))
 
+
+def show_window():
+    """Open the SkeldarAnim hub on the Studio section.
+
+    A `cmds` control has one name per Maya session, so the panel lives in
+    the hub or in a window of its own, never both - since 2026-09-17 it is
+    the hub (`maya_hub`), and the standalone window is gone.
+    """
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)
+
+
+def build_panel():
+    """One column of plain `cmds`: a dropdown, ten checks and two dials,
+    built into whatever layout is current (the hub's section)."""
     stored = window_options()
 
-    #  Maya restores a window's LAST SAVED size over the one asked for
-    #  here, and the saved one was the clipped 300 x 470 - so the memory
-    #  goes first, or the fix never reaches a Maya that has opened the old
-    #  panel once.
-    maya_winfit.forget_saved_size(WINDOW, cmds)
-
-    #  Sizeable, and sized to its content AFTER the build (below): the
-    #  controls' heights are only known once Maya has laid them out.
-    cmds.window(WINDOW, title="Viewport Studio", width=WIDTH, sizeable=True)
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=ROW_SPACING,
                                columnOffset=("both", 10))
 
-    cmds.separator(height=6, style="none", width=WIDTH - 20)
-    cmds.text(label="Viewport Studio", font="boldLabelFont", align="center",
-              width=WIDTH - 20)
     cmds.text(label="lighting, shadows, AO and motion blur, live",
               font="smallObliqueLabelFont", align="center",
               width=WIDTH - 20)
@@ -1489,7 +1489,7 @@ def show_window():
                 command=_press_restore)
 
     cmds.separator(height=8, style="in", width=WIDTH - 20)
-    cmds.text("vpStudioStatus", label="pick a look and press Apply",
+    cmds.text(STATUS, label="pick a look and press Apply",
               align="center", width=WIDTH - 20,
               font="smallFixedWidthFont")
 
@@ -1499,16 +1499,9 @@ def show_window():
         cmds.optionMenu(_control(key), edit=True,
                         changeCommand=_menu_change)
 
-    cmds.showWindow(WINDOW)
-    _fit_window(column)
+    cmds.setParent("..")
     refresh()
-    return WINDOW
-
-
-def _fit_window(column):
-    """Give the window the height its controls really take (after
-    `showWindow`, when the heights are real). `maya_winfit` has the why."""
-    return maya_winfit.fit_window(WINDOW, column, cmds, ROW_SPACING, MARGIN)
+    return column
 
 
 if __name__ == "__main__":

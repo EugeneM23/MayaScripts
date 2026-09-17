@@ -1,10 +1,12 @@
 """Drag this file into an open Maya viewport to install SkeldarAnim.
 
 Copies the toolset into <userAppDir>/scripts/SkeldarAnim and builds the
-SkeldarAnim shelf: UE Bridge, Scene Setup, Retarget, Hotkeys, Studio,
-Colour -- plus the Rig Picker, the native OverRig panel and Overshoot when
-`skeldar_features` switches them on. Re-dragging updates in place. The
-unzipped folder can be deleted after installing.
+SkeldarAnim shelf: the SkeldarAnim window (every tool a collapsible
+section, dock it anywhere -- 2026-09-17), then UE Bridge, Scene Setup,
+Retarget, Hotkeys, Studio, Colour, each opening that window on its own
+section -- plus the Rig Picker, the native OverRig panel and Overshoot
+when `skeldar_features` switches them on. Re-dragging updates in place.
+The unzipped folder can be deleted after installing.
 
 Design: docs/superpowers/specs/2026-08-21-installer-design.md
 
@@ -30,6 +32,7 @@ _PAYLOAD = (
     "maya_vpstudio.py",
     "maya_colour.py",
     "maya_winfit.py",
+    "maya_hub.py",
     "icons",
     "assets",
     "overrig",
@@ -49,6 +52,9 @@ _PAYLOAD = (
 # behind OVERSHOOT on 2026-09-08. The Curve Overlay left the plugin the
 # same day (archive/maya_curveview), and Bake folded into Retarget.
 _PYTHON_BUTTONS = (
+    ("SkeldarAnim", "The SkeldarAnim window: every tool a collapsible "
+     "section - dock it to any panel, tear it off, it remembers its place",
+     "maya_hub", "show", "hub.png", ""),
     ("Rig Picker", "OverRig picker: build, switch and select the rig",
      "maya_overrig", "show_picker", "picker.png", "PICKER"),
     ("UE Bridge", "Import animations from the running Unreal editor onto "

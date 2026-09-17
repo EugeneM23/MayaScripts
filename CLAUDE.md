@@ -81,7 +81,10 @@ never in the animator's scene); the installed copy refreshed and smoked
 live the same evening (2129 unit tests).
 
 **The shelf** (since 2026-09-08): UE Bridge, Scene Setup, Retarget,
-Hotkeys, Studio, Colour. **`skeldar_features.py`** (stdlib, three booleans
+Hotkeys, Studio, Colour — **and since 2026-09-17 all six live as
+collapsible sections of ONE dockable window, `maya_hub`, with a seventh
+button `SkeldarAnim` ahead of them that opens it; see "The SkeldarAnim
+hub" below.** **`skeldar_features.py`** (stdlib, three booleans
 `OVERRIG` / `PICKER` / `OVERSHOOT`, all False) gates the OverRig panel
 button and its 84 hotkey rows, the Rig Picker button and its 6 rows and
 handing a new character to the picker (`character.connect`), and the
@@ -350,6 +353,78 @@ the hotkey table is one `retarget.run` row instead of connect + bake.
     only when it is reached**: `verify_rig_pipeline.py`'s gate 25 had
     carried that since 2026-09-07 and was green because an earlier gate's
     text never got there in this form. `%s` for anything `_fmt` returns.
+
+## The SkeldarAnim hub — one dockable window, every tool a section (2026-09-17)
+
+The animator's ask: «объединим наши скрипты в одно окошко которое можно
+будет куда-то прикрепить или открепить; каждый раздел — вкладка с
+возможностью закрыть и раскрыть». Chosen in the brainstorm: an
+**accordion** (sections stacked in one scrollable column, each
+collapsible, several open at once), not a `tabLayout`; the six shelf tools
+as six sections; the shelf keeps its six buttons and gains a seventh,
+`SkeldarAnim`, ahead of them. Spec:
+`docs/superpowers/specs/2026-09-17-skeldar-hub-design.md` — **read its
+addendum**, the live run changed four things. Proof:
+`docs/superpowers/plans/verify_hub.py` — **green live 2026-09-17, 0 of 18
+gates failed**, against the INSTALLED copy; 2125 unit tests; photographed
+at three states through `widget.grab()`.
+
+**`SkeldarAnim/maya_hub.py`** (`cmds` only, in the payload): one
+`workspaceControl` `skeldarAnimHub` (dock it anywhere, tear it off, Maya
+remembers) → `scrollLayout -childResizable` → `columnLayout
+-adjustableColumn` → per section a `frameLayout(collapsable=True)` whose
+collapse is remembered in `skeldarAnimHub_collapsed_<key>`. `SECTIONS` is
+the table (key, label, module, builder, frame) in shelf order: UE Bridge,
+Scene Setup, Retarget, Hotkeys, Studio, Colour. `show(key=None)` deletes
+the four legacy standalone windows, restores the control if it exists or
+creates it with `uiScript=uiscript(plugin_root())` — the script carries
+the `sys.path` bootstrap with the plugin folder baked in, because **Maya
+replays a docked control's uiScript at startup before any shelf button
+ran** — then `expand(key)`: un-collapse, remember, and scroll the section
+into view through `evalDeferred` (heights are real only after the layout
+runs; measured landing at the scroll's maximum for the bottom section).
+A section whose builder raises gets a text with the error and the other
+five still build.
+
+**Every tool gained `build_panel()`** — its controls into whatever layout
+is current, same control NAMES as before, so every callback, `refresh`,
+hotkey row and test kept working — **and every `show_window()` now opens
+the hub on its own section** (`HUB_SECTION`). The `WINDOW` constants are
+gone: a `cmds` control has ONE name per Maya session, so a tool cannot
+live in the hub and in a window of its own; "is the panel open" is
+`is_open()` (its status control exists) in each module, and
+`maya_hotkeys._scene` asks that. Retarget and Hotkeys, which were bare
+shelf actions, got small sections: one instruction, the `Retarget` button
+and a status line `skeldarRetargetStatus` that `_show` also writes; the
+`Hotkey map: ON/OFF` toggle `skeldarHotkeysToggle`, painted by the same
+`paint()` as the shelf button, plus `Hotkey Editor...`. `maya_winfit` is
+no longer called (the hub scrolls) and stays for Overshoot. Overshoot,
+the picker and OverRig are not sections (not on the shelf; the last two
+do not fit an accordion).
+
+Measured in the live run, each a gate or a rewrite:
+
+66. **A `formLayout` inside an adjustable column reports a huge minimum
+    width — 1128 px here — whatever its children are told**, and the
+    column grows a horizontal scrollbar with the right-attached buttons
+    off the edge. Nothing set on the list (`width=100`) changed it. The
+    UE Bridge section is rows in a column now; the three mode radios
+    stand vertically (in a row they want 670 px at 150 %).
+67. **A `text -wordWrap` inside a `columnLayout` keeps its one-line
+    height and clips the wrapped second line**; give it `height=36`. And
+    a long status label WITHOUT wordWrap widens the whole column (Scene
+    Setup's refusal asked for 657 px). Default group widths are wide
+    too: `floatFieldGrp` ×3 = 588 px, `textFieldGrp` 580,
+    `colorSliderGrp (60,60,130)` + button = 544 — set `columnWidth`s.
+    After: the column's minimum is **331 logical** against the hub's
+    initial 500.
+68. **`workspaceControl -q -uiScript` answers None** — Maya keeps the
+    script and will not show it — so a gate about the uiScript proves the
+    string `show()` hands over, not what Maya stored. And **`widget.grab()`
+    in the SAME send as the collapse that changed the layout photographs
+    the OLD layout** (a collapsed frame drawn at full height as an empty
+    grey block — trap 57's family): the state change and its picture must
+    be two sends. The collapsed header is 30 px in the next one.
 
 ## Driving the user's live Maya
 
@@ -3728,8 +3803,10 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with six buttons — since 2026-09-08 **UE Bridge, Scene
-Setup, Retarget, Hotkeys, Studio, Colour**; the Rig Picker, the native
+**SkeldarAnim** with seven buttons — since 2026-09-17 **SkeldarAnim** (the
+hub, `maya_hub.show`) ahead of **UE Bridge, Scene Setup, Retarget,
+Hotkeys, Studio, Colour**, each of which opens the hub on its own
+section; the Rig Picker, the native
 OverRig panel and Overshoot come back with the three flags in
 `skeldar_features.py` (`install.features()` reads it from beside
 `install.py`, `_PYTHON_BUTTONS` rows carry the flag's name). The zip is

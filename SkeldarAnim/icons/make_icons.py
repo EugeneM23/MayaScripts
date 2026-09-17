@@ -1,4 +1,4 @@
-"""Draw the SkeldarAnim shelf icons (ten: nine on the shelf plus the picker's).
+"""Draw the SkeldarAnim shelf icons (the hub's, the eight tools', the picker's).
 
 32x32 PNG on a dark rounded plate so they read on Maya's shelf: flat
 glyphs, ~2 px strokes, one accent colour per tool. Regenerate with:
@@ -191,8 +191,27 @@ def draw_colour(path):
     image.save(path)
 
 
+def draw_hub(path):
+    """A docked panel: a frame with three stacked sections, the middle
+    one collapsed to a bar, the accent on the section headers."""
+    image, painter = _canvas()
+    painter.setPen(_pen("#e6e6e6", 1.6))
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(QRectF(6.0, 5.0, 20.0, 22.0), 2.0, 2.0)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#4fb3bf"))
+    #  three section headers, the first two with their bodies open
+    painter.drawRect(QRectF(8.0, 7.5, 16.0, 3.0))
+    painter.drawRect(QRectF(8.0, 15.5, 16.0, 3.0))
+    painter.drawRect(QRectF(8.0, 21.5, 16.0, 3.0))
+    painter.setBrush(QColor("#8a8a8a"))
+    painter.drawRect(QRectF(8.0, 11.5, 16.0, 3.0))
+    painter.end()
+    image.save(path)
+
 
 DRAWERS = {
+    "hub.png": draw_hub,
     "picker.png": draw_picker,
     "hotkeys.png": draw_hotkeys,
     "uebridge.png": draw_uebridge,

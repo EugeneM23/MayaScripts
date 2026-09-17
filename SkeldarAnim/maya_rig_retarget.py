@@ -302,14 +302,30 @@ def retarget(source_root=None, rig=None):
 
 # ------------------------------------------------------------ shelf button
 
+HUB_SECTION = "retarget"            # our section of the SkeldarAnim hub
+STATUS = "skeldarRetargetStatus"    # exists exactly while the panel is built
+
+PANEL_NOTE = ("Select the imported skeleton (any joint), and a control of "
+              "the rig when the scene holds several. The rig takes the "
+              "clip: retarget, bake, weapon and camera bones carried, "
+              "camera set up. The source skeleton is kept.")
+
+
 def _show(text):
-    """The first line in the viewport, the whole text in the Script Editor.
+    """The first line in the viewport and on the panel's status line, the
+    whole text in the Script Editor.
 
     A shelf button has no status line of its own; the print is the record
     and the in-view message is what the animator sees. Guarded: mayapy
     and a hidden viewport have nowhere to draw it.
     """
     print(text)
+    first = text.splitlines()[0] if text.strip() else ""
+    try:
+        if cmds.control(STATUS, exists=True):
+            cmds.text(STATUS, edit=True, label=first)
+    except Exception:
+        pass
     try:
         cmds.inViewMessage(assistMessage=text.splitlines()[0],
                            position="midCenterBot", fade=True)
@@ -321,3 +337,39 @@ def _show(text):
 def retarget_button():
     """The Retarget shelf button: the rig takes the SELECTED skeleton's clip."""
     return _show(retarget())
+
+
+# ------------------------------------------------------------- hub section
+
+def is_open():
+    """True while our section is built in the hub."""
+    return bool(cmds.control(STATUS, exists=True))
+
+
+def _press(*_args):
+    """The panel's button: the shelf button's work, failures on the line."""
+    try:
+        return retarget_button()
+    except Exception as exc:                                  # noqa: BLE001
+        _show("%s: %s" % (type(exc).__name__, exc))
+        raise
+
+
+def show_window():
+    """Open the SkeldarAnim hub on the Retarget section (see `maya_hub`)."""
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)
+
+
+def build_panel():
+    """One instruction, one button, one status line - the shelf button's
+    action with somewhere to report (2026-09-17, the hub)."""
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", 8))
+    cmds.text(label=PANEL_NOTE, align="left", wordWrap=True, height=70)
+    cmds.button(label="Retarget", height=36,
+                backgroundColor=(0.45, 0.60, 0.70),
+                annotation=PANEL_NOTE, command=_press)
+    cmds.text(STATUS, label="", align="left", wordWrap=True, height=36)
+    cmds.setParent("..")
+    return column

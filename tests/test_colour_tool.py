@@ -9,7 +9,6 @@ here is what this module actually decides: WHAT a press paints.
 import unittest
 
 import maya_colour as mc
-import maya_winfit
 from maya_scenesetup import colour as colouring
 
 from tests.uifakes import FakeUiCmds
@@ -438,40 +437,62 @@ class TestTargetResolution(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-#  The window fits its content and can be stretched (2026-09-17)
+#  The panel: a section of the SkeldarAnim hub (2026-09-17), no window
 # ---------------------------------------------------------------------------
 
-class TestWindowFitsItsContent(unittest.TestCase):
-    """Measured live: a fixed 260 px, `sizeable=False` window over 361 px
-    of content - Next free colour, the taken line and the status were all
-    below the edge, with no way to drag them into view. The same bug the
-    Studio panel had the same day; the sizing is `maya_winfit`'s."""
+class TestPanelBuildsIntoTheHub(unittest.TestCase):
+    """The window of its own is gone (it had clipped Next free colour and
+    the status on a 150 % display that same morning): `build_panel` puts
+    the controls into whatever layout is current, `show_window` opens the
+    hub on the Colour section."""
 
     def setUp(self):
-        self.real = mc.cmds
+        self.real = (mc.cmds, mc.scene_colours)
         self.fake = FakeUiCmds(control_height=30, dpi=1.5)
         mc.cmds = self.fake
-        mc.show_window()
-        self.win = self.fake.windows[mc.WINDOW]
+        #  The taken line is filled on build; the scene read is the
+        #  colour module's and not under test here.
+        mc.scene_colours = lambda: [("red", (0.8, 0.2, 0.2))]
+        self.column = mc.build_panel()
 
     def tearDown(self):
-        mc.cmds = self.real
+        mc.cmds, mc.scene_colours = self.real
 
-    def test_the_animator_can_stretch_it(self):
-        self.assertTrue(self.win.get("sizeable"))
+    def test_no_window_is_created(self):
+        self.assertEqual(self.fake.windows, {})
+        self.assertFalse([c for c in self.fake.calls
+                          if c[0] in ("showWindow", "windowPref")])
 
-    def test_the_column_stretches_with_the_window(self):
+    def test_the_controls_land_in_one_stretching_column(self):
         self.assertTrue(self.fake.column.get("adjustableColumn"))
+        self.assertGreater(len(self.fake.children), 8)
 
-    def test_the_height_is_measured_in_logical_units(self):
-        children = self.fake.children
-        self.assertGreater(len(children), 8)
-        pixels = maya_winfit.fit_height([30] * len(children),
-                                        mc.ROW_SPACING, mc.MARGIN)
-        self.assertEqual(self.win.get("height"), maya_winfit.logical(pixels, 1.5))
+    def test_the_status_and_taken_lines_exist(self):
+        self.assertIn(mc.STATUS, self.fake.children)
+        self.assertIn(mc.TAKEN, self.fake.children)
+        self.fake.existing.add(mc.STATUS)
+        self.assertTrue(mc.is_open())
 
-    def test_the_stale_saved_size_is_forgotten_first(self):
-        self.assertEqual(len(self.fake.removed_prefs()), 1)
+    def test_every_palette_colour_has_a_button(self):
+        labels = [c[2].get("label") for c in self.fake.calls
+                  if c[0] == "button"]
+        for entry in colouring.PALETTE:
+            self.assertIn(entry.name, labels)
+
+
+class TestShowWindowOpensTheHub(unittest.TestCase):
+
+    def test_it_asks_the_hub_for_the_colour_section(self):
+        import maya_hub
+        asked = []
+        saved = maya_hub.show
+        maya_hub.show = lambda key=None: asked.append(key) or "hub"
+        try:
+            self.assertEqual(mc.show_window(), "hub")
+        finally:
+            maya_hub.show = saved
+        self.assertEqual(asked, ["colour"])
+        self.assertEqual(maya_hub.section("colour").module, "maya_colour")
 
 
 if __name__ == "__main__":
