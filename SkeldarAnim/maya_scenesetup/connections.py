@@ -1,48 +1,67 @@
-"""Connections -- the hands on the weapon, and off it again.
+"""Connections -- who drives whom: the two hands and the weapon.
 
 The animator's ask (2026-09-18): «вкладка connections, в которой мы сможем
-привязывать и отвязывать руки к оружию. Привязку и отвязку реализовать при
-помощи OverRig, будем перепекать анимацию (важно, чтобы мы не ломали
-иерархию нашего рига)».
+привязывать и отвязывать руки к оружию … при помощи OverRig, будем
+перепекать анимацию (важно, чтобы мы не ломали иерархию нашего рига)»,
+then the same day: «нужна какая-то гибкая система переключений: обе руки к
+мечу, руки по отдельности, меч к левой или правой руке, меч к правой а
+левую руку к мечу».
 
-The rig is the AdvancedSkeleton one (a namespace, `maya_rigs`), and its IK
-hand controls `IKArm_R` / `IKArm_L` may NOT leave their place in the DAG:
-`CustomOrientIKArm_R|IKExtraArm_R|IKArm_R` is what the arm's IK solver,
-its follow switches and its FK/IK align read. So the two halves of a
-connection are done two different ways, and the split is the whole design:
+## The model: three nodes, two links
 
-- **The WEAPON is re-baked by OverRig.** It hangs under the hand bone
-  (Weapons > Add), and a node cannot both ride a hand and drive it, so
-  Connect lifts it to world through `apply_Parent_out` -- its world track
-  baked onto its own channels, drift measured 0.000000 -- and Disconnect
-  hangs it back under the hand through `apply_Parent_in`, which re-bakes
-  whatever the animator did with it out in the world into the hand's
-  space rather than throwing it away. The weapon is geometry under a bone,
-  not part of the rig, so re-parenting it breaks nothing.
-- **The HANDS are constrained, never re-parented.** Each chosen IK control
-  gets a `parentConstraint` to the weapon's geometry with `maintainOffset`
-  captured on the CURRENT frame (the grip the animator is looking at), its
-  own keys cut first (trap 37: keying a constrained channel splices a
-  pairBlend) and its current values written back before the constraint is
-  made (trap 58: `cutKey` leaves the channel wherever the DG last
-  evaluated). Disconnect bakes the controls over the range through
-  `cmds.bakeResults`, then deletes only OUR constraints -- found by the
-  `skeldarHandLink` attribute they carry, never by name.
+Left hand -- weapon -- right hand. Each link has three states:
 
-`FKIKArm_*.FKIKBlend` is put at 10 (IK) for a connected arm; a blend that
-is KEYED at anything else is a refusal by name rather than a silent
-override. The four poles are left alone (the elbow keeps answering to the
-body, the ordinary prop workflow, and the earlier OverRig-rig Connect made
-the same call).
+- ``holds``   the weapon hangs in this hand (Weapons > Add puts it there);
+              at most ONE hand holds;
+- ``follows`` the hand's IK control rides the weapon;
+- ``None``    no link.
 
-What keeps the retarget honest: `maya_rig_retarget` refuses to retarget or
-bake a rig whose hands are connected -- its `connect` would skip the
-constrained IK controls as somebody else's and the take would arrive with
-the hands standing still.
+A *scheme* is ``{"L": state, "R": state}``. Every combination the animator
+named is one: both hands follow a weapon standing in world; one hand
+follows; the weapon in a hand with the other hand free or following.
 
-Spec: docs/superpowers/specs/2026-09-18-connections-design.md
+## The panel: a row of arrows and Apply
+
+    [ Left hand ] [ -> ] [ Weapon ] [ <- ] [ Right hand ]
+
+Each arrow button cycles its link (none -> follows -> holds -> none; a
+second ``holds`` clears the first). The arrows are re-read from the scene
+after every Apply, so they always show what IS, and a press only changes
+what the animator asked to change (`plan`, pure). Apply and not
+click-to-apply: a transition is an OverRig re-bake, seconds on a long clip,
+and a two-handed grip is two clicks.
+
+## How a transition is done, and why in two different ways
+
+The rig is the AdvancedSkeleton one, and its IK hand controls `IKArm_R` /
+`IKArm_L` may NOT leave their place in the DAG - the solver, the follow
+switches and the FK/IK align read it. So:
+
+- **The WEAPON is re-baked by OverRig.** Leaving a hand: `apply_Parent_out`
+  to world, its track baked onto its own channels (drift 0.000000).
+  Entering a hand: `apply_Parent_in` under that hand's bone, whatever the
+  animator did with it in world re-baked into the hand's space. The weapon
+  is geometry under a bone, not rig, so re-parenting it breaks nothing.
+- **The HANDS are constrained, never re-parented.** A following hand's IK
+  control gets a `parentConstraint` to the weapon's geometry with
+  `maintainOffset` from the CURRENT frame (keys cut first - trap 37; the
+  current values written back after the cut - trap 58). Releasing bakes
+  the control (`cmds.bakeResults`) and deletes only OUR constraint, found
+  by its `skeldarHandLink` attribute.
+- **The drive bone follows the holding hand** (the animator's ruling): in
+  the right hand the weapon drives `weapon_r`, in the left `weapon_l`, and
+  in world it keeps driving the bone it drove last. A bone change unlinks
+  the old bone (`bonedrive.unlink`, baked back) and constrains the new one
+  onto the weapon with no offset, so the export socket sits ON the weapon.
+
+`FKIKArm_*.FKIKBlend` goes to 10 for a following arm; keyed elsewhere it
+is a refusal by name. Poles untouched. The retarget refuses a rig with
+following hands (`maya_rig_retarget.hands_connected`).
+
+Spec: docs/superpowers/specs/2026-09-18-connections-design.md (addendum)
 """
 
+import math
 import traceback
 
 import maya.cmds as cmds
@@ -56,14 +75,12 @@ from maya_scenesetup import skeleton
 HUB_SECTION = "connections"
 STATUS = "skeldarConnectionsStatus"
 HEADER = "skeldarConnectionsHeader"
-_RIGHT = "skeldarConnectionsRight"
-_LEFT = "skeldarConnectionsLeft"
-_OPTIONVAR = "skeldarConnections_{0}"
+LINK_BUTTON = {"L": "skeldarConnectionsLinkL", "R": "skeldarConnectionsLinkR"}
 
-MARKER = "skeldarHandLink"          # on our constraints: the weapon's UUID
-WEAPON_BONE = "weapon_r"
-SIDES = ("R", "L")
+MARKER = "skeldarHandLink"          # on our hand constraints: the weapon's UUID
+SIDES = ("L", "R")
 SIDE_LABEL = {"R": "right hand", "L": "left hand"}
+WEAPON_BONE = {"R": "weapon_r", "L": "weapon_l"}
 IK_CONTROL = "IKArm_{0}"
 BLEND_NODE = "FKIKArm_{0}"
 BLEND_ATTR = "FKIKBlend"
@@ -71,26 +88,107 @@ IK_BLEND = 10.0
 CHANNELS = ("translateX", "translateY", "translateZ",
             "rotateX", "rotateY", "rotateZ")
 
-NO_WEAPON = "no weapon in the hand - Weapons > Add first"
-NO_HANDS = "choose at least one hand"
-NOTHING_CONNECTED = "nothing is connected"
+HOLDS = "holds"
+FOLLOWS = "follows"
+STATES = (None, FOLLOWS, HOLDS)          # the cycle order of an arrow press
+EMPTY = "·"                         # the arrow of no link
+
+NO_WEAPON = "no weapon in the scene - Weapons > Add first"
+NOTHING_TO_DO = "nothing to change"
 RETARGETING = ("a retarget is standing on this rig (MoCapConstraints) - "
                "finish it first")
+LINK_ON_COLOUR = (0.45, 0.60, 0.70)
+LINK_OFF_COLOUR = (0.36, 0.36, 0.36)
+
+_PENDING = {}                            # the arrows as pressed, per rig namespace
 
 
 # ------------------------------------------------------------------- pure
 
-def hands_to_connect(right, left):
-    """The sides the two checkboxes name, in rig order. Pure."""
-    return [side for side, on in (("R", right), ("L", left)) if on]
+def master(scheme):
+    """The side holding the weapon, or None (the weapon stands in world)."""
+    for side in SIDES:
+        if scheme.get(side) == HOLDS:
+            return side
+    return None
+
+
+def followers(scheme):
+    return [side for side in SIDES if scheme.get(side) == FOLLOWS]
+
+
+def other(side):
+    return "R" if side == "L" else "L"
+
+
+def cycle(scheme, side):
+    """The scheme after a press on `side`'s arrow: none -> follows -> holds
+    -> none, and a second holder clears the first (one hand holds)."""
+    out = dict(scheme)
+    state = STATES[(STATES.index(out.get(side)) + 1) % len(STATES)]
+    out[side] = state
+    if state == HOLDS and out.get(other(side)) == HOLDS:
+        out[other(side)] = None
+    return out
+
+
+def arrow(side, state):
+    """The glyph on `side`'s button. The button stands BETWEEN the hand and
+    the weapon, so the arrow points from the driver to the driven: a left
+    hand holding reads `->` (hand -> weapon), a right hand holding `<-`."""
+    if state is None:
+        return EMPTY
+    toward_weapon = (state == HOLDS)      # the weapon follows the hand
+    if side == "L":
+        return "→" if toward_weapon else "←"
+    return "←" if toward_weapon else "→"
+
+
+def describe(scheme):
+    """One line for the header. Pure."""
+    held = master(scheme)
+    parts = []
+    if held:
+        parts.append("weapon in the %s" % SIDE_LABEL[held])
+    else:
+        parts.append("weapon in world")
+    fol = followers(scheme)
+    if fol:
+        parts.append(", ".join(SIDE_LABEL[s] for s in fol)
+                     + (" follows" if len(fol) == 1 else " follow"))
+    elif held:
+        parts.append("%s free" % SIDE_LABEL[other(held)])
+    else:
+        parts.append("hands free")
+    return "; ".join(parts)
+
+
+def plan(current, wanted):
+    """The steps from `current` to `wanted`, in the order they must run.
+
+    Release the hands that stop following (baked where they were), move
+    the weapon (lift to world, then hang in the new hand), then hang the
+    hands that start following - a hand cannot follow a weapon that is
+    about to move under it with a stale offset. Pure.
+    """
+    steps = []
+    for side in SIDES:
+        if current.get(side) == FOLLOWS and wanted.get(side) != FOLLOWS:
+            steps.append(("release", side))
+    was, will = master(current), master(wanted)
+    if was != will:
+        if was:
+            steps.append(("lift", was))
+        if will:
+            steps.append(("hang", will))
+    for side in SIDES:
+        if wanted.get(side) == FOLLOWS and current.get(side) != FOLLOWS:
+            steps.append(("follow", side))
+    return steps
 
 
 def blend_refusal(side, value, keyed):
-    """Why a connect may not put this arm in IK, or None.
-
-    A blend that is keyed at anything but IK is the animator's own
-    switching; overriding it silently would change their take. Pure.
-    """
+    """Why a following arm may not be put in IK, or None. Pure."""
     if keyed and abs(value - IK_BLEND) > 1e-6:
         return ("%s: %s.%s is keyed at %g - set it to %g (IK) or unkey it "
                 "first" % (SIDE_LABEL[side], BLEND_NODE.format(side),
@@ -105,29 +203,17 @@ def union_range(playback, keys):
     if keys:
         start = min(start, min(keys))
         end = max(end, max(keys))
-    import math
     return float(math.floor(start)), float(math.ceil(end))
 
 
-def connected_message(sides, frame, lifted):
-    hands = ", ".join(SIDE_LABEL[s] for s in sides)
-    text = "Connected: %s on the weapon (grip as at frame %g)" % (hands, frame)
-    if lifted:
-        text += "; weapon out to world, animation re-baked"
-    return text
-
-
-def disconnected_message(sides, span, returned):
-    hands = ", ".join(SIDE_LABEL[s] for s in sides)
-    text = "Disconnected: %s baked over %g..%g" % (hands, span[0], span[1])
-    if returned:
-        text += "; weapon back in the hand, animation re-baked"
-    return text
-
-
-def already_message(sides):
-    return "already connected: %s - press Disconnect first" % ", ".join(
-        SIDE_LABEL[s] for s in sides)
+def applied_message(steps, frame, scheme):
+    """What Apply did, then what stands. Pure."""
+    words = {"release": "%s released (baked)",
+             "lift": "weapon out of the %s to world (re-baked)",
+             "hang": "weapon into the %s (re-baked)",
+             "follow": "%s follows (grip as at frame " + "%g" % frame + ")"}
+    done = [words[step] % SIDE_LABEL[side] for step, side in steps]
+    return "Applied: " + "; ".join(done) + " -> " + describe(scheme)
 
 
 # ------------------------------------------------------------------ scene
@@ -148,21 +234,44 @@ def _blend_plug(rig, side):
     return (paths[0] + "." + BLEND_ATTR) if paths else None
 
 
-def weapon_of(rig):
-    """(hand bone, drive bone, weapon) for the rig, weapon None when bare.
-
-    The weapon is what drives `weapon_r` (in the hand or, once connected,
-    out in world), else what hangs under the hand.
-    """
+def bones_of(rig):
+    """{side: (hand bone, drive bone)} for the rig's weapon bones."""
+    out = {}
     root = rig.skeleton_root
-    bone = skeleton.resolve_bone(root, WEAPON_BONE) if root else None
-    if not bone:
-        return None, None, None
-    hand = attach.parent_bone(bone)
-    weapon = bonedrive.driving_weapon(bone)
-    if not weapon and hand:
-        weapon = attach.find_attached(hand)
-    return hand, bone, weapon
+    for side in SIDES:
+        bone = skeleton.resolve_bone(root, WEAPON_BONE[side]) if root else None
+        hand = attach.parent_bone(bone) if bone else None
+        out[side] = (hand, bone)
+    return out
+
+
+def weapon_of(rig, bones=None):
+    """The rig's weapon: what drives a weapon bone, else what hangs under a
+    hand. None when there is none."""
+    bones = bones or bones_of(rig)
+    for side in ("R", "L"):
+        hand, bone = bones[side]
+        if bone:
+            found = bonedrive.driving_weapon(bone)
+            if found:
+                return cmds.ls(found, long=True)[0]
+    for side in ("R", "L"):
+        hand, bone = bones[side]
+        if hand:
+            found = attach.find_attached(hand)
+            if found:
+                return cmds.ls(found, long=True)[0]
+    return None
+
+
+def driven_side(rig, bones=None):
+    """Which weapon bone the weapon drives now, or None."""
+    bones = bones or bones_of(rig)
+    for side in SIDES:
+        bone = bones[side][1]
+        if bone and bonedrive.driving_weapon(bone):
+            return side
+    return None
 
 
 def our_constraints(control):
@@ -177,21 +286,27 @@ def our_constraints(control):
 
 def connected_sides(rig):
     """The sides whose IK control rides a weapon through our constraint."""
-    sides = []
-    for side in SIDES:
-        control = _control(rig, side)
-        if control and our_constraints(control):
-            sides.append(side)
-    return sides
+    return [side for side in SIDES
+            if _control(rig, side) and our_constraints(_control(rig, side))]
 
 
 def is_connected(rig):
     return bool(connected_sides(rig))
 
 
-def _in_hand(weapon, hand):
-    parent = cmds.listRelatives(weapon, parent=True, fullPath=True) or []
-    return bool(parent) and parent[0] == hand
+def read_scheme(rig, bones=None, weapon=None):
+    """The scheme the scene stands in: who holds, who follows."""
+    bones = bones or bones_of(rig)
+    weapon = weapon or weapon_of(rig, bones)
+    scheme = {"L": None, "R": None}
+    if weapon:
+        parent = (cmds.listRelatives(weapon, parent=True, fullPath=True) or [None])[0]
+        for side in SIDES:
+            if parent and bones[side][0] == parent:
+                scheme[side] = HOLDS
+    for side in connected_sides(rig):
+        scheme[side] = FOLLOWS
+    return scheme
 
 
 def _values_now(control, now):
@@ -210,9 +325,13 @@ def _values_now(control, now):
     return values
 
 
-def _hang_hand(control, target, now, weapon_uuid):
-    """Keys cut, current pose written back, the constraint made with the
-    offset the animator is looking at, our mark on it."""
+def _follow(rig, side, target, now, weapon_uuid):
+    """Keys cut, the current pose written back, the constraint made with the
+    offset the animator is looking at, our mark on it; the arm in IK."""
+    plug = _blend_plug(rig, side)
+    if plug and not cmds.listConnections(plug, source=True, destination=False):
+        cmds.setAttr(plug, IK_BLEND)
+    control = _control(rig, side)
     values = _values_now(control, now)
     cmds.cutKey(control, attribute=list(CHANNELS), clear=True)
     for channel, value in values.items():
@@ -224,124 +343,122 @@ def _hang_hand(control, target, now, weapon_uuid):
     return con
 
 
-def connect(rig=None, sides=SIDES):
-    """The chosen hands onto the weapon. Returns the status text."""
+def _release(rig, side, span):
+    """Bake the control where the weapon carried it, drop our constraint."""
+    control = _control(rig, side)
+    cmds.bakeResults([control], attribute=list(CHANNELS),
+                     time=(span[0], span[1]), simulation=True, sampleBy=1,
+                     preserveOutsideKeys=True)
+    for con in our_constraints(control):
+        if cmds.objExists(con):
+            cmds.delete(con)
+
+
+def _drive_bone(weapon, bone):
+    """The drive bone onto the weapon, no offset: the export socket sits ON
+    the weapon wherever the animator put it. Keys cut first (trap 37)."""
+    values = _values_now(bone, cmds.currentTime(query=True))
+    cmds.cutKey(bone, attribute=list(CHANNELS), clear=True)
+    for channel, value in values.items():
+        try:
+            cmds.setAttr(bone + "." + channel, value)
+        except RuntimeError:
+            pass
+    cmds.parentConstraint(weapon, bone, maintainOffset=False)
+
+
+def _span(weapon):
+    keys = cmds.keyframe(weapon, query=True, timeChange=True) if weapon else []
+    return union_range((cmds.playbackOptions(query=True, min=True),
+                        cmds.playbackOptions(query=True, max=True)), keys or [])
+
+
+def apply(wanted, rig=None):
+    """Bring the scene from the scheme it stands in to `wanted`.
+
+    Returns the status text; refusals happen before anything moves.
+    """
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
-    sides = [s for s in SIDES if s in sides]
-    if not sides:
-        return NO_HANDS
-    hand, bone, weapon = weapon_of(rig)
+    bones = bones_of(rig)
+    weapon = weapon_of(rig, bones)
     if not weapon:
         return NO_WEAPON
-    already = connected_sides(rig)
-    if already:
-        return already_message(already)
     if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
         return RETARGETING
-    for side in sides:
-        if not _control(rig, side):
-            return "%s: %s not found in %s" % (SIDE_LABEL[side],
-                                               IK_CONTROL.format(side),
-                                               maya_rigs.label(rig))
-        plug = _blend_plug(rig, side)
-        if plug:
-            keyed = bool(cmds.listConnections(plug, source=True,
-                                              destination=False))
-            text = blend_refusal(side, cmds.getAttr(plug), keyed)
-            if text:
-                return text
-    gate = overrig.mel_gate()
-    if gate:
-        return gate
-
-    cmds.undoInfo(openChunk=True, chunkName="Connect hands to weapon")
-    try:
-        for side in sides:
+    current = read_scheme(rig, bones, weapon)
+    steps = plan(current, wanted)
+    if not steps:
+        return NOTHING_TO_DO
+    for step, side in steps:
+        if step == "hang" and not (bones[side][0] and bones[side][1]):
+            return "%s: no %s bone (or its hand) on this rig" % (
+                SIDE_LABEL[side], WEAPON_BONE[side])
+        if step == "follow":
+            if not _control(rig, side):
+                return "%s: %s not found in %s" % (SIDE_LABEL[side],
+                                                   IK_CONTROL.format(side),
+                                                   maya_rigs.label(rig))
             plug = _blend_plug(rig, side)
-            if plug and not cmds.listConnections(plug, source=True,
-                                                 destination=False):
-                cmds.setAttr(plug, IK_BLEND)
-        weapon = cmds.ls(weapon, long=True)[0]
-        lifted = False
-        if cmds.listRelatives(weapon, parent=True, fullPath=True):
-            # parent_out re-parents, so the path goes stale (trap 16); the
-            # UUID survives the move.
-            uuid = cmds.ls(weapon, uuid=True)[0]
-            overrig.parent_out(weapon)
-            weapon = cmds.ls(uuid, long=True)[0]
-            lifted = True
-        target = attach.model_root(weapon)
-        weapon_uuid = cmds.ls(weapon, uuid=True)[0]
-        now = cmds.currentTime(query=True)
-        for side in sides:
-            _hang_hand(_control(rig, side), target, now, weapon_uuid)
-        return connected_message(sides, now, lifted)
-    finally:
-        cmds.undoInfo(closeChunk=True)
-
-
-def disconnect(rig=None):
-    """Bake the hands where the weapon carried them, drop our constraints,
-    put the weapon back in the hand. Returns the status text."""
-    rig, refusal = _rig(rig)
-    if rig is None:
-        return refusal
-    sides = connected_sides(rig)
-    if not sides:
-        return NOTHING_CONNECTED
-    hand, bone, weapon = weapon_of(rig)
-    weapon = cmds.ls(weapon, long=True)[0] if weapon else None
-    returning = bool(weapon and hand and not _in_hand(weapon, hand))
-    if returning:
+            if plug:
+                keyed = bool(cmds.listConnections(plug, source=True,
+                                                  destination=False))
+                text = blend_refusal(side, cmds.getAttr(plug), keyed)
+                if text:
+                    return text
+    if any(step in ("lift", "hang") for step, _ in steps):
         gate = overrig.mel_gate()
         if gate:
             return gate
 
-    cmds.undoInfo(openChunk=True, chunkName="Disconnect hands from weapon")
+    now = cmds.currentTime(query=True)
+    uuid = cmds.ls(weapon, uuid=True)[0]
+    cmds.undoInfo(openChunk=True, chunkName="Connections: apply")
     try:
-        keys = cmds.keyframe(weapon, query=True, timeChange=True) if weapon else []
-        span = union_range((cmds.playbackOptions(query=True, min=True),
-                            cmds.playbackOptions(query=True, max=True)),
-                           keys or [])
-        controls = [_control(rig, side) for side in sides]
-        cmds.bakeResults(controls, attribute=list(CHANNELS),
-                         time=(span[0], span[1]), simulation=True, sampleBy=1,
-                         preserveOutsideKeys=True)
-        for control in controls:
-            for con in our_constraints(control):
-                if cmds.objExists(con):
-                    cmds.delete(con)
-        if returning:
-            uuid = cmds.ls(weapon, uuid=True)[0]
-            overrig.parent_in(weapon, hand)
+        span = _span(weapon)
+        for step, side in steps:
             weapon = cmds.ls(uuid, long=True)[0]
-        return disconnected_message(sides, span, returning)
+            if step == "release":
+                _release(rig, side, span)
+            elif step == "lift":
+                overrig.parent_out(weapon)
+            elif step == "hang":
+                hand, bone = bones[side]
+                overrig.parent_in(weapon, hand)
+                weapon = cmds.ls(uuid, long=True)[0]
+                if driven_side(rig, bones) != side:
+                    was = driven_side(rig, bones)
+                    if was:
+                        bonedrive.unlink(bones[was][1])
+                    _drive_bone(weapon, bone)
+            elif step == "follow":
+                _follow(rig, side, attach.model_root(weapon), now, uuid)
+        return applied_message(steps, now, read_scheme(rig, bones))
     finally:
         cmds.undoInfo(closeChunk=True)
 
 
+def connect(rig=None, sides=SIDES):
+    """Both (or the given) hands follow the weapon standing in world - the
+    hotkey's meaning; the panel goes through `apply`."""
+    wanted = {"L": None, "R": None}
+    for side in sides:
+        wanted[side] = FOLLOWS
+    return apply(wanted, rig=rig)
+
+
+def disconnect(rig=None):
+    """No hand follows; the weapon back in the hand whose bone it drives."""
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    held = driven_side(rig) or "R"
+    wanted = {"L": None, "R": None, held: HOLDS}
+    return apply(wanted, rig=rig)
+
+
 # ------------------------------------------------------------------ panel
-
-def _remembered(side_key, default=True):
-    var = _OPTIONVAR.format(side_key)
-    if cmds.optionVar(exists=var):
-        return bool(cmds.optionVar(query=var))
-    return default
-
-
-def _remember(side_key, value):
-    cmds.optionVar(intValue=(_OPTIONVAR.format(side_key), int(bool(value))))
-
-
-def chosen_sides():
-    """What the two checkboxes say; both when the panel is not built."""
-    if not cmds.control(_RIGHT, exists=True):
-        return list(SIDES)
-    return hands_to_connect(cmds.checkBox(_RIGHT, query=True, value=True),
-                            cmds.checkBox(_LEFT, query=True, value=True))
-
 
 def _status(text):
     if cmds.control(STATUS, exists=True):
@@ -360,27 +477,47 @@ def _run(action):
         refresh()
 
 
-def header_text(rig, weapon, sides):
+def header_text(rig, weapon, scheme):
     """The header line. Pure."""
     if rig is None:
         return "no rig in the scene"
     if not weapon:
-        return "%s: no weapon in the hand" % maya_rigs.label(rig)
-    leaf = weapon.split("|")[-1]
-    if sides:
-        return "%s: %s connected to %s" % (
-            maya_rigs.label(rig), ", ".join(SIDE_LABEL[s] for s in sides), leaf)
-    return "%s: %s in the hand, hands free" % (maya_rigs.label(rig), leaf)
+        return "%s: no weapon - Weapons > Add first" % maya_rigs.label(rig)
+    return "%s: %s - %s" % (maya_rigs.label(rig), weapon.split("|")[-1],
+                            describe(scheme))
+
+
+def _paint_arrows(scheme):
+    for side in SIDES:
+        name = LINK_BUTTON[side]
+        if cmds.control(name, exists=True):
+            state = scheme.get(side)
+            cmds.button(name, edit=True, label=arrow(side, state),
+                        backgroundColor=(LINK_ON_COLOUR if state
+                                         else LINK_OFF_COLOUR))
+
+
+def pending(rig):
+    """The arrows as pressed for this rig, seeded from the scene."""
+    key = rig.namespace if rig else ""
+    if key not in _PENDING:
+        _PENDING[key] = read_scheme(rig) if rig else {"L": None, "R": None}
+    return _PENDING[key]
 
 
 def refresh(*_args):
-    """Re-read the scene into the header. Never writes a checkbox."""
+    """Re-read the scene into the header and the arrows; the pending
+    choice is dropped - after a press what IS is what the arrows show."""
     if not cmds.control(HEADER, exists=True):
         return ""
     rig, _refusal = maya_rigs.current_rig()
-    weapon = weapon_of(rig)[2] if rig else None
-    sides = connected_sides(rig) if rig else []
-    text = header_text(rig, weapon, sides)
+    weapon = weapon_of(rig) if rig else None
+    scheme = read_scheme(rig) if rig else {"L": None, "R": None}
+    _PENDING.clear()
+    if rig:
+        _PENDING[rig.namespace] = dict(scheme)
+    _paint_arrows(scheme)
+    text = header_text(rig, weapon, scheme)
     cmds.text(HEADER, edit=True, label=text)
     return text
 
@@ -395,45 +532,65 @@ def show_window():
     return maya_hub.show(HUB_SECTION)
 
 
+def _press_arrow(side):
+    def go(*_args):
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return _status(refusal)
+        scheme = cycle(pending(rig), side)
+        _PENDING[rig.namespace] = scheme
+        _paint_arrows(scheme)
+        return _status("press Apply for: " + describe(scheme))
+    return go
+
+
+def _press_apply(*_args):
+    def go():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return refusal
+        return apply(dict(pending(rig)), rig=rig)
+    return _run(go)
+
+
 def _press_connect(*_args):
-    return _run(lambda: connect(sides=chosen_sides()))
+    return _run(lambda: connect())
 
 
 def _press_disconnect(*_args):
     return _run(lambda: disconnect())
 
 
-def _side_changed(side_key):
-    def go(value):
-        _remember(side_key, value)
-    return go
-
-
 def build_panel():
-    """Two checkboxes, two buttons, a header and a status line."""
+    """A header, the arrow row, Apply, a status line."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", 8))
     cmds.text(HEADER, label="", align="left", wordWrap=True, height=36)
-    cmds.text(label="The chosen hands (IK controls) follow the weapon; the "
-                    "weapon leaves the hand for world space with its "
-                    "animation re-baked by OverRig. The grip is taken from "
-                    "the current frame. Disconnect bakes the hands and puts "
-                    "the weapon back.",
+    cmds.text(label="Each arrow cycles its link: none, hand follows the "
+                    "weapon, weapon in the hand (one hand at most). Apply "
+                    "does only the difference: hands released are baked, "
+                    "the weapon moves through OverRig with its animation "
+                    "re-baked, new followers take the grip of the current "
+                    "frame.",
               align="left", wordWrap=True, height=70)
-    cmds.rowLayout(numberOfColumns=2, columnWidth2=(120, 120),
-                   columnAlign2=("left", "left"))
-    cmds.checkBox(_RIGHT, label="Right hand", value=_remembered("right"),
-                  changeCommand=_side_changed("right"))
-    cmds.checkBox(_LEFT, label="Left hand", value=_remembered("left"),
-                  changeCommand=_side_changed("left"))
+    cmds.rowLayout(numberOfColumns=5, adjustableColumn=3,
+                   columnWidth5=(80, 44, 80, 44, 80),
+                   columnAlign5=("right", "center", "center", "center", "left"))
+    cmds.text(label="Left hand")
+    cmds.button(LINK_BUTTON["L"], label=EMPTY, width=40, height=26,
+                backgroundColor=LINK_OFF_COLOUR,
+                annotation="Left hand <-> weapon: none / follows / holds",
+                command=_press_arrow("L"))
+    cmds.text(label="Weapon", font="boldLabelFont")
+    cmds.button(LINK_BUTTON["R"], label=EMPTY, width=40, height=26,
+                backgroundColor=LINK_OFF_COLOUR,
+                annotation="Weapon <-> right hand: none / follows / holds",
+                command=_press_arrow("R"))
+    cmds.text(label="Right hand")
     cmds.setParent("..")
-    cmds.button(label="Connect", height=32, backgroundColor=(0.45, 0.60, 0.70),
-                annotation="Hands onto the weapon; the arms go to IK",
-                command=_press_connect)
-    cmds.button(label="Disconnect", height=26,
-                annotation="Bake the hands where the weapon carried them, "
-                           "weapon back in the hand",
-                command=_press_disconnect)
+    cmds.button(label="Apply", height=32, backgroundColor=(0.45, 0.70, 0.50),
+                annotation="Bring the scene to what the arrows show",
+                command=_press_apply)
     cmds.text(STATUS, label="", align="left", wordWrap=True, height=36)
     cmds.setParent("..")
     try:

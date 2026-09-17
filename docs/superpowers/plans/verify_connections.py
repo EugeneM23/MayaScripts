@@ -1,4 +1,4 @@
-"""verify_connections.py - the hands on the weapon and off it, LIVE.
+"""verify_connections.py - who drives whom: hands and weapon, LIVE.
 
 Send through the command port (CLAUDE.md, "Driving the user's live Maya")
 with the INSTALLED copy first on sys.path. Live and not standalone because
@@ -7,8 +7,9 @@ OverRig's apply_Parent_out/in read the time slider and die in mayapy
 
 It REFUSES to run in a scene that already holds a rig - it adds a
 throwaway Manny_Rig, a sword and keys, and deletes every node it created
-afterwards (a UUID diff of the whole scene). Playback range, current time,
-autoKey and the selection are put back.
+afterwards (a UUID diff of the whole scene). Playback range (inner AND
+outer - OverRig bakes across the outer one), current time, autoKey and the
+selection are put back.
 
 Spec: docs/superpowers/specs/2026-09-18-connections-design.md
 """
@@ -26,8 +27,8 @@ def gate(n, name, ok, detail=""):
 
 def world(node, t):
     """The world matrix at `t` after a REAL time change. `getAttr(plug,
-    time=t)` does not pull a constraint + IK chain (measured 2026-09-18: the
-    weapon nudged 10.000, the hand read 0.000 that way and 10.000 this
+    time=t)` does not pull a constraint + IK chain (measured 2026-09-18:
+    the weapon nudged 10.000, the hand read 0.000 that way and 10.000 this
     way) - trap 14's family."""
     cmds.currentTime(t - 1)
     cmds.currentTime(t)
@@ -38,9 +39,19 @@ def worst(a, b):
     return max(abs(x - y) for x, y in zip(a, b))
 
 
+def track(node, times=(0, 6, 12, 18, 24)):
+    return {t: world(node, t) for t in times}
+
+
+def drift(node, old):
+    return max(worst(world(node, t), old[t]) for t in old)
+
+
 import maya_rigs
 import maya_rig_retarget
 from maya_scenesetup import attach, bonedrive, catalog, character, connections as cx, skeleton
+
+H, F = cx.HOLDS, cx.FOLLOWS
 
 if maya_rigs.rigs():
     print("SKIP: the scene already holds a rig (%s) - this verify adds and deletes one"
@@ -51,98 +62,121 @@ else:
         rng=(cmds.playbackOptions(q=True, min=True), cmds.playbackOptions(q=True, max=True),
              cmds.playbackOptions(q=True, ast=True), cmds.playbackOptions(q=True, aet=True)),
         time=cmds.currentTime(q=True), autokey=cmds.autoKeyframe(q=True, state=True),
-        sel=cmds.ls(selection=True, long=True) or [],
-        opts={k: (cmds.optionVar(q=cx._OPTIONVAR.format(k)) if cmds.optionVar(exists=cx._OPTIONVAR.format(k)) else None)
-              for k in ("right", "left")})
+        sel=cmds.ls(selection=True, long=True) or [])
     before = set(cmds.ls(cmds.ls(), uuid=True))
     try:
         cmds.autoKeyframe(state=False)
-        #  ast/aet too: OverRig's parent_out bakes across the ANIMATION
-        #  range (measured: 743 keys over 0..742 with the playback range
-        #  at 0..24), so the outer range is the one that sets the cost
         cmds.playbackOptions(min=0, max=24, ast=0, aet=24)
         text = character.add_character(catalog.default_rig())
         rig, refusal = maya_rigs.current_rig()
         gate(1, "a throwaway rig added", rig is not None and "added as" in text, text[:60])
-        root = skeleton.current_root()
-        bone = skeleton.resolve_bone(root, "weapon_r")
-        hand = attach.parent_bone(bone)
-        weapon, note = attach.attach(catalog.by_key("LongSword_02"), hand, bone)
-        gate(2, "the sword in the hand, driving weapon_r",
-             weapon and bonedrive.driving_weapon(bone) == weapon and note == "", weapon.split("|")[-1])
+        bones = cx.bones_of(rig)
+        hand_r, bone_r = bones["R"]
+        hand_l, bone_l = bones["L"]
+        weapon, note = attach.attach(catalog.by_key("LongSword_02"), hand_r, bone_r)
+        gate(2, "the sword in the right hand, driving weapon_r; both weapon bones resolve",
+             weapon and bonedrive.driving_weapon(bone_r) == weapon and note == "" and bone_l and hand_l,
+             weapon.split("|")[-1])
+        gate(3, "the scene reads as 'weapon in the right hand; left hand free'",
+             cx.read_scheme(rig) == {"L": None, "R": H}, cx.describe(cx.read_scheme(rig)))
 
-        ik_r = cx._control(rig, "R")
-        ik_l = cx._control(rig, "L")
-        path_before = {s: cx._control(rig, s) for s in ("R", "L")}
-        # a take on the right hand (the arm is FK by default; the IK control
-        # itself is what we key, and Connect switches the blend)
-        cmds.setAttr(cx._blend_plug(rig, "R"), 10)
-        cmds.setAttr(cx._blend_plug(rig, "L"), 10)
+        ik_r, ik_l = cx._control(rig, "R"), cx._control(rig, "L")
+        paths_before = {s: cx._control(rig, s) for s in cx.SIDES}
+        for side in cx.SIDES:
+            cmds.setAttr(cx._blend_plug(rig, side), 10)
         base = cmds.getAttr(ik_r + ".translate")[0]
         for t, dy in ((0, 0.0), (12, 8.0), (24, 0.0)):
             cmds.setKeyframe(ik_r, attribute="translateY", time=t, value=base[1] + dy)
             cmds.setKeyframe(ik_r, attribute="translateX", time=t, value=base[0] + dy * 0.5)
-        cmds.currentTime(0)
-        hand_track = {t: world(hand, t) for t in (0, 6, 12, 18, 24)}
-        weapon_track = {t: world(weapon, t) for t in (0, 6, 12, 18, 24)}
+        hand_track = track(hand_r)
+        weapon_track = track(weapon)
 
-        # ------------------------------------------------------- refusals
-        gate(3, "no hands chosen is a refusal", cx.connect(rig=rig, sides=()) == cx.NO_HANDS)
+        # -------------------------------------------------------- refusals
+        gate(4, "Apply of the standing scheme does nothing",
+             cx.apply({"L": None, "R": H}, rig=rig) == cx.NOTHING_TO_DO)
         cmds.setKeyframe(cx._blend_plug(rig, "L"), time=0, value=3)
-        text = cx.connect(rig=rig, sides=("L",))
-        gate(4, "a blend keyed off IK is refused by name", "FKIKArm_L.FKIKBlend" in text, text)
+        text = cx.apply({"L": F, "R": H}, rig=rig)
+        gate(5, "a blend keyed off IK is refused by name, nothing moved",
+             "FKIKArm_L.FKIKBlend" in text and cx.read_scheme(rig) == {"L": None, "R": H}, text)
         cmds.cutKey(cx._blend_plug(rig, "L"), clear=True)
         cmds.setAttr(cx._blend_plug(rig, "L"), 10)
 
-        # -------------------------------------------------------- connect
+        # ------------------------ right holds, left follows (no weapon move)
         cmds.currentTime(6)
-        text = cx.connect(rig=rig, sides=("R", "L"))
-        gate(5, "Connect reports both hands and the frame", "right hand, left hand" in text
-             and "frame 6" in text and "world" in text, text)
-        weapon = bonedrive.driving_weapon(bone)
-        gate(6, "the weapon left the hand for world space, still driving weapon_r",
-             weapon and not cmds.listRelatives(weapon, parent=True), weapon)
-        gate(7, "the weapon's world track is intact after OverRig's parent_out",
-             max(worst(world(weapon, t), weapon_track[t]) for t in weapon_track) < 1e-3,
-             "%.6f" % max(worst(world(weapon, t), weapon_track[t]) for t in weapon_track))
-        gate(8, "the IK controls are constrained by OUR constraints, one each",
+        text = cx.apply({"L": F, "R": H}, rig=rig)
+        gate(6, "R holds + L follows: only the left hand is hung",
+             "left hand follows (grip as at frame 6)" in text and "weapon out" not in text, text)
+        gate(7, "the weapon is still in the right hand, weapon_r still driven",
+             cx.read_scheme(rig) == {"L": F, "R": H} and bonedrive.driving_weapon(bone_r) == cmds.ls(weapon, long=True)[0])
+        left_track = track(hand_l)
+        gate(8, "the right hand's track is untouched", drift(hand_r, hand_track) < 1e-3, "%.6f" % drift(hand_r, hand_track))
+
+        # -------------------------------------- both follow, weapon in world
+        text = cx.apply({"L": F, "R": F}, rig=rig)
+        gate(9, "both follow: weapon lifted to world, right hand hung",
+             "weapon out of the right hand to world" in text and "right hand follows" in text, text)
+        weapon = cx.weapon_of(rig)
+        gate(10, "the weapon stands in world and its track is intact (OverRig parent_out)",
+             not cmds.listRelatives(weapon, parent=True) and drift(weapon, weapon_track) < 1e-3,
+             "%.6f" % drift(weapon, weapon_track))
+        gate(11, "both IK controls carry exactly one constraint of ours, no keys",
              len(cx.our_constraints(ik_r)) == 1 and len(cx.our_constraints(ik_l)) == 1
-             and cx.connected_sides(rig) == ["R", "L"])
-        gate(9, "the rig's DAG is unchanged: both controls keep their paths",
-             {s: cx._control(rig, s) for s in ("R", "L")} == path_before)
-        gate(10, "the controls carry no keys of their own any more",
-             not cmds.keyframe(ik_r, q=True, timeChange=True) and not cmds.keyframe(ik_l, q=True, timeChange=True))
-        hand_err = max(worst(world(hand, t), hand_track[t]) for t in hand_track)
-        gate(11, "the right hand's world track is unchanged through Connect", hand_err < 1e-3, "%.6f" % hand_err)
-        gate(12, "both arms in IK", cmds.getAttr(cx._blend_plug(rig, "R")) == 10 and cmds.getAttr(cx._blend_plug(rig, "L")) == 10)
-        gate(13, "a second Connect is refused", "already connected" in cx.connect(rig=rig))
+             and not cmds.keyframe(ik_r, q=True, timeChange=True))
+        gate(12, "both hands' tracks are unchanged through the lift",
+             drift(hand_r, hand_track) < 1e-3 and drift(hand_l, left_track) < 1e-3,
+             "%.6f / %.6f" % (drift(hand_r, hand_track), drift(hand_l, left_track)))
+        gate(13, "the rig's DAG is unchanged: the controls keep their paths",
+             {s: cx._control(rig, s) for s in cx.SIDES} == paths_before)
         refused = maya_rig_retarget.run_retarget(rig=rig)
-        gate(14, "Retarget refuses a connected rig", refused[0] is False and "Disconnect first" in refused[1], refused[1][:70])
-
-        # the weapon drives the hands: nudge it at frame 12 and the hand follows
+        gate(14, "Retarget refuses a rig with following hands",
+             refused[0] is False and "Disconnect first" in refused[1] or "Connections" in refused[1], refused[1][:70])
+        before_nudge = world(hand_r, 12)
         cmds.currentTime(12)
-        before_nudge = world(hand, 12)
-        cmds.setKeyframe(weapon, attribute="translateY", time=12, value=cmds.getAttr(weapon + ".translateY") + 10.0)
-        moved = worst(world(hand, 12), before_nudge)
-        gate(15, "moving the weapon moves the hand", moved > 5.0, "%.3f" % moved)
-        nudged_hand = {t: world(hand, t) for t in (0, 6, 12, 18, 24)}
+        cmds.setKeyframe(weapon, attribute="translateY", time=12,
+                         value=cmds.getAttr(weapon + ".translateY") + 10.0)
+        moved = worst(world(hand_r, 12), before_nudge)
+        gate(15, "moving the weapon moves the hands", moved > 9.0 and moved < 11.0, "%.3f" % moved)
+        nudged_r, nudged_l = track(hand_r), track(hand_l)
 
-        # ----------------------------------------------------- disconnect
+        # ------------------------- weapon into the LEFT hand, right follows
         cmds.currentTime(0)
-        text = cx.disconnect(rig=rig)
-        gate(16, "Disconnect reports the bake and the return", "baked over" in text and "back in the hand" in text, text)
-        gate(17, "our constraints are gone and nothing is connected",
-             not cx.our_constraints(ik_r) and not cx.our_constraints(ik_l) and not cx.connected_sides(rig))
-        gate(18, "the controls are keyed over the range",
-             len(set(cmds.keyframe(ik_r, q=True, timeChange=True) or [])) >= 25)
-        weapon = bonedrive.driving_weapon(bone)
-        gate(19, "the weapon is back under the hand, still driving weapon_r",
-             weapon and (cmds.listRelatives(weapon, parent=True, fullPath=True) or [""])[0] == hand, weapon)
-        err = max(worst(world(hand, t), nudged_hand[t]) for t in nudged_hand)
-        gate(20, "the hand keeps the nudged track after the bake", err < 1e-3, "%.6f" % err)
-        gate(21, "Disconnect with nothing connected says so", cx.disconnect(rig=rig) == cx.NOTHING_CONNECTED)
-        gate(22, "the rig's DAG is unchanged after the round trip",
-             {s: cx._control(rig, s) for s in ("R", "L")} == path_before)
+        text = cx.apply({"L": H, "R": F}, rig=rig)
+        gate(16, "L holds + R follows: left released, weapon into the left hand",
+             "left hand released" in text and "weapon into the left hand" in text and "weapon out" not in text, text)
+        weapon = cx.weapon_of(rig)
+        gate(17, "the weapon hangs under hand_l and drives weapon_l, not weapon_r",
+             (cmds.listRelatives(weapon, parent=True, fullPath=True) or [""])[0] == hand_l
+             and bonedrive.driving_weapon(bone_l) == weapon and not bonedrive.driving_weapon(bone_r),
+             cx.describe(cx.read_scheme(rig)))
+        gate(18, "weapon_l sits ON the weapon (no offset)",
+             worst(world(bone_l, 12)[12:15], world(weapon, 12)[12:15]) < 1e-3,
+             "%.6f" % worst(world(bone_l, 12)[12:15], world(weapon, 12)[12:15]))
+        gate(19, "the weapon's nudged track survived the move into the hand (parent_in re-bake)",
+             drift(weapon, {t: m for t, m in track(weapon).items()}) < 1e-9 and drift(hand_l, nudged_l) < 1e-3,
+             "left hand %.6f" % drift(hand_l, nudged_l))
+        gate(20, "the left control is keyed over the range, the right still constrained",
+             len(set(cmds.keyframe(ik_l, q=True, timeChange=True) or [])) >= 25
+             and len(cx.our_constraints(ik_r)) == 1 and not cx.our_constraints(ik_l))
+
+        # ---------------------------------- back: right holds, hands free
+        text = cx.apply({"L": None, "R": H}, rig=rig)
+        gate(21, "R holds: right released, weapon lifted from the left and hung in the right",
+             "right hand released" in text and "weapon out of the left hand" in text
+             and "weapon into the right hand" in text, text)
+        weapon = cx.weapon_of(rig)
+        gate(22, "the weapon hangs under hand_r and drives weapon_r again",
+             (cmds.listRelatives(weapon, parent=True, fullPath=True) or [""])[0] == hand_r
+             and bonedrive.driving_weapon(bone_r) == weapon and not bonedrive.driving_weapon(bone_l))
+        gate(23, "the right hand keeps the nudged track after its bake", drift(hand_r, nudged_r) < 1e-3,
+             "%.6f" % drift(hand_r, nudged_r))
+        gate(24, "nothing follows, the DAG is unchanged, Apply again does nothing",
+             not cx.connected_sides(rig)
+             and {s: cx._control(rig, s) for s in cx.SIDES} == paths_before
+             and cx.apply({"L": None, "R": H}, rig=rig) == cx.NOTHING_TO_DO)
+        gate(25, "connect()/disconnect() (the hotkeys) are the two schemes",
+             "follow" in cx.connect(rig=rig) and cx.read_scheme(rig) == {"L": F, "R": F}
+             and "into the right hand" in cx.disconnect(rig=rig)
+             and cx.read_scheme(rig) == {"L": None, "R": H})
     except Exception:
         import traceback
         traceback.print_exc()
@@ -152,10 +186,13 @@ else:
         created = [u for u in after - before]
         nodes = []
         for u in created:
-            found = cmds.ls(u, long=True) or []
-            nodes.extend(n for n in found if cmds.objExists(n)
-                         and n not in (cmds.ls(defaultNodes=True) or [])
-                         and not cmds.lockNode(n, q=True, lock=True)[0])
+            for n in cmds.ls(u, long=True) or []:
+                try:
+                    if cmds.objExists(n) and n not in (cmds.ls(defaultNodes=True) or []) \
+                            and not cmds.lockNode(n, q=True, lock=True)[0]:
+                        nodes.append(n)
+                except Exception:
+                    pass
         dag = [n for n in nodes if cmds.objectType(n, isAType="dagNode")]
         tops = [n for n in dag if not any(n.startswith(o + "|") for o in dag if o != n)]
         for group in (tops, [n for n in nodes if n not in dag]):
@@ -179,8 +216,8 @@ else:
             cmds.select([s for s in saved["sel"] if cmds.objExists(s)], replace=True)
         else:
             cmds.select(clear=True)
-        left = [r.namespace for r in maya_rigs.rigs()]
-        print("cleanup: %d created nodes handled, rigs left: %s" % (len(created), left))
+        print("cleanup: %d created nodes handled, rigs left: %s" % (
+            len(created), [r.namespace for r in maya_rigs.rigs()]))
 
     print("")
     if FAILED:

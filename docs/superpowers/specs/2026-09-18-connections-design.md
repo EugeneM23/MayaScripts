@@ -82,6 +82,55 @@ Connect, Disconnect, a status line. **No shelf button and no icon** (the
 2026-09-17 rule). Hotkey rows `window.connections`, `connections.connect`,
 `connections.disconnect`.
 
+## Addendum — the switching model (2026-09-18, later the same day)
+
+The animator, after using Connect/Disconnect: «нужна какая-то гибкая
+система переключений: обе руки к мечу, руки по отдельности, меч к левой
+или правой руке, меч к правой а левую руку к мечу». Two checkboxes and
+Connect/Disconnect cannot say "the weapon in the LEFT hand" at all, so the
+section was rebuilt on a model rather than on two buttons.
+
+**Three nodes, two links.** Left hand — weapon — right hand. Each link is
+`holds` (the weapon hangs in this hand; at most one hand), `follows` (the
+hand's IK control rides the weapon) or nothing. A *scheme* is
+`{"L": state, "R": state}`; every case the animator named is one, and so
+are "weapon in the left hand, right free" and "weapon in world, nobody".
+
+**The panel is a row of arrows and Apply**:
+
+    [ Left hand ] [ → ] [ Weapon ] [ ← ] [ Right hand ]
+
+An arrow button stands between the hand and the weapon and points from the
+driver to the driven (`arrow`, pure): a left hand holding reads `→`, a
+following one `←`; the right side mirrors. A press cycles its link
+(`cycle`, pure: none → follows → holds → none; a second holder clears the
+first) and only repaints the arrows and the status line — the scene is
+untouched until **Apply**. Apply and not click-to-apply, because a
+transition is an OverRig re-bake (seconds on a long clip) and a two-handed
+grip is two clicks. After Apply the arrows are re-read from the scene
+(`read_scheme`), so they always show what IS.
+
+**Apply does only the difference** (`plan`, pure, in this order): hands
+that stop following are released (baked, our constraint deleted); the
+weapon moves — lifted to world out of the holding hand (`apply_Parent_out`),
+then hung in the new holding hand (`apply_Parent_in` under its hand bone);
+hands that start following are hung with the current frame's grip. Order
+matters: a hand must not be hung on a weapon that is about to move under
+it with a stale offset.
+
+**The drive bone follows the holding hand** — the animator's ruling: in
+the right hand the weapon drives `weapon_r`, in the left `weapon_l`, in
+world it keeps the bone it drove last. On a bone change the old bone is
+`bonedrive.unlink`ed (baked back) and the new one parent-constrained to the
+weapon with **no offset**, so the export socket sits ON the weapon wherever
+the animator put it — Weapons > Add's grip-inverse offset is the right
+thing when the weapon is PLACED on the bone, not when it comes to the hand
+from the world with its own track.
+
+`connect()` and `disconnect()` stay as the hotkeys' two schemes: both hands
+follow a weapon in world; nobody follows and the weapon in the hand whose
+bone it drives.
+
 ## Testing
 
 Unit: the pure halves (`hands_to_connect`, `blend_refusal`, `union_range`,

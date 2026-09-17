@@ -466,6 +466,26 @@ it in a rig-free scene at the next chance. 2154 unit tests. **Live, not standalo
 time slider and die in mayapy with «Cannot convert data of type int to
 type float[]»** (line 4375 / 4230, measured).
 
+**Since the same evening the section is a SWITCHING MODEL, not two
+buttons** («нужна гибкая система переключений: обе руки к мечу, руки по
+отдельности, меч к левой или правой руке, меч к правой а левую руку к
+мечу» — read the spec's addendum). Three nodes, two links: each of L–W and
+R–W is `holds` (the weapon hangs in that hand; one hand at most), `follows`
+(the IK control rides the weapon) or nothing; a scheme is `{"L", "R"}`.
+The panel is `[Left hand] [→] [Weapon] [←] [Right hand]` + **Apply**: an
+arrow press cycles its link (`cycle`, pure; the arrow points from driver
+to driven, `arrow`, pure) and touches nothing; Apply runs `plan(current,
+wanted)` (pure) — releases first, then the weapon's move (lift, hang),
+then new followers — and the arrows are re-read from the scene after.
+**The drive bone follows the holding hand**: `weapon_r` in the right,
+`weapon_l` in the left, unchanged in world; a bone change unlinks the old
+bone and constrains the new one with NO offset (the socket sits ON the
+weapon). `connect()`/`disconnect()` remain as the hotkeys' two schemes.
+The verify was rewritten for the model (25 gates: right-holds-left-follows,
+both follow, weapon into the LEFT hand driving `weapon_l` with the nudged
+track kept, back to the right) and **has not run**: the animator has had a
+rig of their own in the scene since the first build. 2159 unit tests.
+
 **The split is the design.** The AdvancedSkeleton IK hand controls
 `IKArm_R/L` live at `CustomOrientIKArm_*|IKExtraArm_*|IKArm_*` and that
 place is load-bearing, so **the hands are constrained, never re-parented**
