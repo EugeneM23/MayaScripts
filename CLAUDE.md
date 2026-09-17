@@ -2796,6 +2796,29 @@ lesson: a "vertices within the shaft's radius" test measured the head base
 and the butt cap (7–14 cm off-axis by design) and failed on a correct model;
 the axis question is answered by the two end centroids, both within 3 cm.
 
+**The dagger is the third** (2026-09-17, «по аналогии с мечем и копьем
+нужно добавить нож»): `assets/Dagger_01.fbx`, written from the animator's
+`Animations/Sources/Dagger.fbx` by the re-runnable
+`docs/superpowers/plans/make_dagger_asset.py` in mayapy standalone (the
+source never written). Measured: one mesh, 7292 vertices, long axis **Z**
+(114.3 cm, −84.2..+30.0) with the **tip at −Z**, the blade 8–21 cm wide in
+Y and 1–2 cm thin in X, the guard at −27..+1.5, the grip +1.5..+20, the
+pommel to +30 — the origin between guard and grip, where the sword's is.
+The turn **Z → −Y, Y → −X, X → +Z** (det +1; Y → +X would be a mirror)
+puts the tip at +Y and the grip at −Y like the sword's; the grip's centroid
+(x −0.444, z −0.172 after the turn) is shifted onto the axis (0.0000);
+frozen, a plain lambert in place of the source's untextured
+`openPBRSurface` (a node type not every Maya has), exported as
+`DaggerMesh`. Read back **X −12.60..12.04, Y −30.02..84.24, Z ±2.85**.
+**It is 114 cm as the model came** — scale stays 1.0 (the sword's rule; a
+smaller dagger is one number in the row). Spec:
+`docs/superpowers/specs/2026-09-17-dagger-weapon-design.md`. Proof:
+`verify_dagger_weapon.py` — **green 2026-09-17, 0 of 15 gates failed**,
+in mayapy standalone: the frame compared against the sword's in the same
+run, both grips' centroids on the axis to 0.0000, `aim.placement` on +Y
+for both, a real Add landing the dagger on `weapon_r` at **0.000000**, the
+sword replacing it. The live dropdown lists all three.
+
 **The FBX field** takes a path to any file the catalog knows nothing about and
 wins over the dropdown while it holds one. It resolves in ONE place
 (`window.chosen_entry` → `catalog.entry_for_path`), so Add, the offset fields,

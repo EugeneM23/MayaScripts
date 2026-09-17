@@ -147,6 +147,11 @@ WEAPONS = [
     # thickness on Z, the origin on the shaft where the model's author put
     # it (59 cm above the butt). 266 cm long, so the scale is 1.0.
     Weapon("Spear_01", "Spear 01", _asset_path("Spear_01.fbx"), "weapon_r", 1.0),
+    # 2026-09-17, the animator's Dagger.fbx exported onto the same axes by
+    # docs/superpowers/plans/make_dagger_asset.py: blade along +Y with the
+    # tip at +Y, the grip going -Y, the guard's width on X, the thickness
+    # on Z, the grip centred on the origin. 114 cm as the model came.
+    Weapon("Dagger_01", "Dagger 01", _asset_path("Dagger_01.fbx"), "weapon_r", 1.0),
 ]
 
 

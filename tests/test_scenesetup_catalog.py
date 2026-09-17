@@ -71,7 +71,18 @@ class Table(unittest.TestCase):
         self.assertTrue(path.endswith("assets/Spear_01.fbx"), path)
 
     def test_the_dropdown_order_is_sword_then_spear(self):
-        self.assertEqual(catalog.labels(), ["Long Sword 02", "Spear 01"])
+        self.assertEqual(catalog.labels(),
+                         ["Long Sword 02", "Spear 01", "Dagger 01"])
+
+    def test_the_dagger_is_the_third_row(self):
+        """2026-09-17: the animator's Dagger.fbx, on the sword's axes."""
+        entry = catalog.by_key("Dagger_01")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.label, "Dagger 01")
+        self.assertEqual(entry.bone, "weapon_r")
+        self.assertEqual(entry.scale, 1.0)
+        self.assertTrue(entry.path.endswith("assets/Dagger_01.fbx"), entry.path)
+        self.assertFalse(catalog.missing(entry))
 
     def test_paths_use_forward_slashes(self):
         """A backslash starts an escape in the MEL the FBX plugin sees."""
