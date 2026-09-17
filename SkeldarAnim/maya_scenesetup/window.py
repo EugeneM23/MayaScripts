@@ -276,7 +276,11 @@ def _attached(entry):
     if attached_now:
         return root, hand, bone, attached_now, False
 
-    linked = linking.linked_weapon()
+    # Out in world since a Connect: the OverRig-rig kind hangs the IK hands
+    # under the marked node (`linking`), the AdvancedSkeleton kind
+    # (`connections`, 2026-09-18) leaves the weapon driving `weapon_r` from
+    # world space -- so the drive bone still knows it.
+    linked = linking.linked_weapon() or bonedrive.driving_weapon(bone)
     return root, hand, bone, linked, linked is not None
 
 

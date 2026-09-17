@@ -170,6 +170,20 @@ def _scene(func, *args, **kwargs):
     return getattr(module, func)(*args)
 
 
+def _connections_module():
+    from maya_scenesetup import connections
+    return connections
+
+
+def _connections(func):
+    """Press a Connections button; with the hub closed, open it and say so."""
+    module = _connections_module()
+    if not module.is_open():
+        module.show_window()
+        return _report("Connections opened - press again")
+    return getattr(module, func)()
+
+
 def _retarget_module():
     """Lazy: the Retarget shelf button's module."""
     import maya_rig_retarget
@@ -771,6 +785,16 @@ _OURS = (
     ("scene.remove_weapon", "Scene Setup", "Remove Weapon",
      "Bake the bone back off the weapon and delete it",
      partial(_scene, "remove_weapon", section="weapons")),
+    ("window.connections", "Windows", "Connections",
+     "Open the Connections section: hands on the weapon and off it",
+     partial(_show, "maya_scenesetup.connections", "show_window")),
+    ("connections.connect", "Connections", "Connect hands to weapon",
+     "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
+     "world), the arms in IK",
+     partial(_connections, "_press_connect")),
+    ("connections.disconnect", "Connections", "Disconnect hands",
+     "Bake the hands where the weapon carried them, weapon back in the hand",
+     partial(_connections, "_press_disconnect")),
     # Connect Arms / Disconnect Arms / Add Aim / Camera Setup left Scene
     # Setup on 2026-09-07 with the move to the AdvancedSkeleton rig; the
     # camera setup happens inside the retarget's Bake now.

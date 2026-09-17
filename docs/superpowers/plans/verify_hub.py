@@ -23,6 +23,7 @@ def gate(n, name, ok, detail=""):
 import maya_hub
 from maya_uebridge import window as ue
 from maya_scenesetup import window as ss
+from maya_scenesetup import connections
 import maya_vpstudio
 import maya_colour
 import maya_rig_retarget
@@ -54,8 +55,8 @@ try:
 
     # ---- 4-5: six collapsable frames in shelf order, all open
     frames = [s.frame for s in maya_hub.SECTIONS]
-    gate(4, "seven frames exist", all(cmds.frameLayout(f, exists=True) for f in frames)
-         and len(frames) == 7,
+    gate(4, "eight frames exist", all(cmds.frameLayout(f, exists=True) for f in frames)
+         and len(frames) == 8,
          [s.label for s in maya_hub.SECTIONS])
     gate(5, "all open (memory says open)",
          not any(cmds.frameLayout(f, query=True, collapse=True) for f in frames))
@@ -67,6 +68,7 @@ try:
          and cmds.control(ss._CHARACTER_STATUS, exists=True)
          and cmds.control(ss._BOUND, exists=True)),
         (8, "Retarget", maya_rig_retarget.STATUS, maya_rig_retarget.is_open),
+        (19, "Connections", connections.STATUS, connections.is_open),
         (9, "Hotkeys", maya_hotkeys.PANEL_BUTTON, maya_hotkeys.is_open),
         (10, "Studio", maya_vpstudio.STATUS, maya_vpstudio.is_open),
         (11, "Colour", maya_colour.STATUS, maya_colour.is_open),
@@ -83,7 +85,7 @@ try:
     # ---- 13-15: a shelf button's baked command opens its section
     buttons = cmds.shelfLayout("SkeldarAnim", query=True, childArray=True) or []
     labels = [cmds.shelfButton(b, query=True, label=True) for b in buttons]
-    gate(13, "shelf: the hub first, then the seven", labels[:8] == [
+    gate(13, "shelf: the hub first, then the seven (Connections has none)", labels[:8] == [
         "SkeldarAnim", "UE Bridge", "Characters", "Weapons", "Retarget",
         "Hotkeys", "Studio", "Colour"], labels)
     for key in ("uebridge", "characters", "weapons", "studio", "colour"):

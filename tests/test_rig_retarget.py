@@ -93,14 +93,17 @@ class TestRunRetarget(unittest.TestCase):
     holder -- under one undo chunk, with the refusals by name."""
 
     def setUp(self):
-        self.saved = (rr.resolve, rr.bake, rr.cmds)
+        self.saved = (rr.resolve, rr.bake, rr.cmds, rr.hands_connected)
+        #  the Connections guard (2026-09-18) reads the real scene; these
+        #  tests fake rr.cmds, so it answers "not connected" here
+        rr.hands_connected = lambda rig: ""
         self.calls = []
         self.mod = FakeModule(self.calls)
         rr.resolve = lambda rig=None: (LEGACY, self.mod, "")
         rr.bake = lambda rig=None: self.calls.append(("bake", rig.namespace)) or "maya_asretarget: baked 20"
 
     def tearDown(self):
-        rr.resolve, rr.bake, rr.cmds = self.saved
+        rr.resolve, rr.bake, rr.cmds, rr.hands_connected = self.saved
 
     def test_a_fresh_rig_is_reset_connected_and_baked(self):
         # holder: absent at the start, present after connect
@@ -263,7 +266,8 @@ class TestBakeOrchestration(unittest.TestCase):
     """bake() runs the six steps in order and words the result."""
 
     def setUp(self):
-        self.saved = (rr.resolve, rr.carry_helpers, rr.cmds)
+        self.saved = (rr.resolve, rr.carry_helpers, rr.cmds, rr.hands_connected)
+        rr.hands_connected = lambda rig: ""
         self.calls = []
         mod = types.SimpleNamespace(
             __name__="maya_asretarget",
@@ -280,7 +284,7 @@ class TestBakeOrchestration(unittest.TestCase):
         rr.cmds = FakeBakeScene()
 
     def tearDown(self):
-        rr.resolve, rr.carry_helpers, rr.cmds = self.saved
+        rr.resolve, rr.carry_helpers, rr.cmds, rr.hands_connected = self.saved
 
     def test_the_steps_run_in_order_over_the_clips_range(self):
         text = rr.bake()

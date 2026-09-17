@@ -218,6 +218,28 @@ def carry_helpers(source_root, rig_root, start, end):
     return [move[0] for move in moves], skipped, camera_text
 
 
+CONNECTED = ("the hands are connected to the weapon (%s) - Connections > "
+             "Disconnect first")
+
+
+def hands_connected(rig):
+    """The refusal when the rig's IK hands ride a weapon, else "".
+
+    A retarget's `connect` would skip the constrained IK controls as
+    somebody else's constraints and the take would arrive with the hands
+    standing still; the bake would lift the weapon link under them. Lazy,
+    guarded import: the retarget must keep working without Scene Setup.
+    """
+    try:
+        from maya_scenesetup import connections
+    except Exception:                                        # noqa: BLE001
+        return ""
+    sides = connections.connected_sides(rig)
+    if not sides:
+        return ""
+    return CONNECTED % ", ".join(connections.SIDE_LABEL[s] for s in sides)
+
+
 def bake(*args, **kwargs):
     """The after-the-connect half: the module's bake, the helper bones, the camera, the disconnect.
 
@@ -230,6 +252,9 @@ def bake(*args, **kwargs):
     rig, mod, refusal = resolve(kwargs.pop("rig", None))
     if mod is None:
         return refusal
+    connected = hands_connected(rig)
+    if connected:
+        return connected
     source = mod.connected_source(rig)
     if source is None:
         return "%s: %s" % (mod.__name__, mod.bake(*args, rig=rig, **kwargs))
@@ -271,6 +296,9 @@ def run_retarget(source_root=None, rig=None):
     rig, mod, refusal = resolve(rig)
     if mod is None:
         return False, refusal
+    connected = hands_connected(rig)
+    if connected:
+        return False, connected
     holder = mod.holder_of(rig)
     notes = []
     cmds.undoInfo(openChunk=True, chunkName="Retarget")

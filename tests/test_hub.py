@@ -32,6 +32,7 @@ class FakeToolsMixin(object):
         self.saved = {}
         self.tools = {}
         fakes = {}
+        pkgs = {}
         for sec in hub.SECTIONS:
             fake = fakes.get(sec.module)
             if fake is None:
@@ -41,11 +42,16 @@ class FakeToolsMixin(object):
                 fakes[sec.module] = fake
                 sys.modules[sec.module] = fake
                 if "." in sec.module:
+                    #  one fake package per parent: Scene Setup's window and
+                    #  connections modules share `maya_scenesetup`
                     parent, leaf = sec.module.rsplit(".", 1)
-                    self.saved[parent] = sys.modules.get(parent)
-                    pkg = types.ModuleType(parent)
+                    pkg = pkgs.get(parent)
+                    if pkg is None:
+                        self.saved[parent] = sys.modules.get(parent)
+                        pkg = types.ModuleType(parent)
+                        pkgs[parent] = pkg
+                        sys.modules[parent] = pkg
                     setattr(pkg, leaf, fake)
-                    sys.modules[parent] = pkg
             _add_builder(fake, sec.builder, fails=sec.key in failing)
             self.tools[sec.key] = (fake, sec.builder)
 
@@ -68,14 +74,15 @@ class TheTable(unittest.TestCase):
         2026-09-17; Weapons follows Characters (its refresh writes the
         Characters header)."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["UE Bridge", "Characters", "Weapons", "Retarget",
-                          "Hotkeys", "Studio", "Colour"])
+                         ["UE Bridge", "Characters", "Weapons", "Connections",
+                          "Retarget", "Hotkeys", "Studio", "Colour"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
             "uebridge": ("maya_uebridge.window", "build_panel"),
             "characters": ("maya_scenesetup.window", "build_characters_panel"),
             "weapons": ("maya_scenesetup.window", "build_weapons_panel"),
+            "connections": ("maya_scenesetup.connections", "build_panel"),
             "retarget": ("maya_rig_retarget", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
@@ -199,8 +206,8 @@ class BuildWithABrokenTool(FakeToolsMixin, unittest.TestCase):
         """Weapons shares Characters' module and must still build."""
         hub.build()
         self.assertEqual(self.built("characters"), 0)
-        for key in ("uebridge", "weapons", "retarget", "hotkeys", "studio",
-                    "colour"):
+        for key in ("uebridge", "weapons", "connections", "retarget",
+                    "hotkeys", "studio", "colour"):
             self.assertEqual(self.built(key), 1, key)
 
     def test_the_broken_section_says_so(self):
@@ -264,7 +271,7 @@ class Show(FakeToolsMixin, unittest.TestCase):
         scrolls = [c[2]["scrollByPixel"] for c in self.fake.calls
                    if c[0] == "scrollLayout" and "scrollByPixel" in c[2]]
         index = [s.key for s in hub.SECTIONS].index("studio")
-        expected = hub.scroll_offset([self.fake.control_height] * 7, index,
+        expected = hub.scroll_offset([self.fake.control_height] * 8, index,
                                      hub.ROW_SPACING)
         self.assertEqual(scrolls[0][0], "up")
         self.assertEqual(scrolls[1], ("down", expected))

@@ -445,6 +445,65 @@ Measured in the live run, each a gate or a rewrite:
     grey block — trap 57's family): the state change and its picture must
     be two sends. The collapsed header is 30 px in the next one.
 
+## Connections — the hands on the weapon, on the AdvancedSkeleton rig (2026-09-18)
+
+The animator's ask: «вкладка connections, в которой мы сможем привязывать и
+отвязывать руки к оружию. При помощи OverRig, будем перепекать анимацию
+(важно, чтобы мы не ломали иерархию нашего рига)». Spec:
+`docs/superpowers/specs/2026-09-18-connections-design.md`. Module:
+`maya_scenesetup/connections.py`, a hub section after Weapons (no shelf
+button, no icon — the 2026-09-17 rule); hotkey rows `window.connections`,
+`connections.connect`, `connections.disconnect`. Proof:
+`docs/superpowers/plans/verify_connections.py` — **21 of 22 gates live
+2026-09-18** in the animator's Maya on a throwaway rig it adds and deletes;
+the one failure (gate 15, "moving the weapon moves the hand", read 0.000)
+was the MEASUREMENT (trap 69 below): a probe re-measured the same nudge
+after a real time change at **10.000** and the round trip at 0.000000. The
+gate was rewritten; **the fixed script has not re-run whole** — by then the
+animator had a rig of their own in the scene, with the left hand connected
+through this very section, and the verify SKIPS beside a standing rig. Run
+it in a rig-free scene at the next chance. 2154 unit tests. **Live, not standalone: OverRig's `apply_Parent_out/in` read the
+time slider and die in mayapy with «Cannot convert data of type int to
+type float[]»** (line 4375 / 4230, measured).
+
+**The split is the design.** The AdvancedSkeleton IK hand controls
+`IKArm_R/L` live at `CustomOrientIKArm_*|IKExtraArm_*|IKArm_*` and that
+place is load-bearing, so **the hands are constrained, never re-parented**
+(a `parentConstraint` to the weapon's geometry, `maintainOffset` captured
+on the CURRENT frame — the status names it; keys cut FIRST, trap 37; the
+current values read off the curves with `keyframe -eval` and written back
+after the cut, trap 58), while **the weapon is re-baked by OverRig**:
+`parent_out` lifts it from the hand bone to world (drift **0.000000**,
+still driving `weapon_r` — the link's constraint targets the node),
+`parent_in` hangs it back on Disconnect with whatever the animator did out
+in the world re-baked into the hand's space. Disconnect bakes the controls
+with `cmds.bakeResults` over the playback range ∪ the weapon's keys and
+deletes only OUR constraints — identity by the `skeldarHandLink` attribute
+(the weapon's UUID), never by name. `FKIKArm_*.FKIKBlend` goes to 10; a
+blend KEYED elsewhere is refused by name. Poles untouched. Two checkboxes,
+Right/Left, both on, remembered. **The retarget refuses a connected rig**
+(`maya_rig_retarget.hands_connected`, in `run_retarget` and `bake`): its
+`connect` would skip the constrained controls as foreign. Weapons > Add /
+Remove already refuse a linked weapon; the Weapons panel finds a weapon out
+in world through `bonedrive.driving_weapon`. The old
+`maya_scenesetup/connect.py` (the OverRig-rig picker's Connect Arms) is
+untouched behind its flag.
+
+Measured: the right hand's world track through Connect **0.000192**
+(the constraint's offset re-expressed), the hand following a 10 cm weapon
+nudge by **10.000**, the nudged track kept through Disconnect's bake to
+**0.000000**, the controls' DAG paths identical before and after.
+
+69. **`getAttr(plug, time=t)` does NOT pull a constraint + IK chain.** The
+    weapon nudged 10.000 and the hand's `worldMatrix[0]` read at `time=12`
+    answered **0.000**, while a real `currentTime(11); currentTime(12)` and
+    `xform` answered **10.000**. A gate written the first way passed its
+    "unchanged" checks trivially and failed the one that had to see a
+    change; a gate about a driven node needs a real time change (trap 14's
+    family). And **OverRig's `apply_Parent_out` bakes across the ANIMATION
+    range (`-ast/-aet`), not the playback range**: 743 keys over 0..742
+    with the slider at 0..24 — set the outer range too when it matters.
+
 ## Driving the user's live Maya
 
 The user can open a command port, and that is how everything here gets verified.

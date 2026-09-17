@@ -68,6 +68,8 @@ SECTIONS = (
             "build_characters_panel", "skeldarHubFrameCharacters"),
     Section("weapons", "Weapons", "maya_scenesetup.window",
             "build_weapons_panel", "skeldarHubFrameWeapons"),
+    Section("connections", "Connections", "maya_scenesetup.connections",
+            "build_panel", "skeldarHubFrameConnections"),
     Section("retarget", "Retarget", "maya_rig_retarget",
             "build_panel", "skeldarHubFrameRetarget"),
     Section("hotkeys", "Hotkeys", "maya_hotkeys",
