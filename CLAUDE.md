@@ -3269,6 +3269,32 @@ off" means "as they had it". The first version merely omitted those flags,
 which left the rig invisible until Restore. Manipulators are never hidden:
 an animator who cannot see the manipulator cannot animate.
 
+**The window fits its content and can be stretched** (2026-09-17, the
+animator: «окошко … не растягивается из-за чего кнопочки с применением
+освещения не видно»). It was `sizeable=False` at a hard `height=470` over
+a column that measured **669 px** live, so Apply Look and Restore sat
+below the edge with no way to drag them into view. Now `sizeable=True`,
+`adjustableColumn=True`, the stale `windowPref` (the saved 300 × 470,
+which Maya restores over the size the code asks for) is removed before
+the window is created, and `_fit_window` sums the children's REAL heights
+after `showWindow` (`fit_height`, pure) because Maya scales every control
+for the display. Measured: 716 px window, lowest control ends at 715,
+both buttons visible. Two facts cost a live run each:
+
+64. **`cmds.control -q -height` answers PHYSICAL pixels while
+    `cmds.window -e -height` takes LOGICAL units and Maya multiplies them
+    by the display scale** — measured on a 150 % display: a `height=26`
+    button queries as 40, `window -e -height 600` queries back as 900,
+    and writing the measured 678 px sum straight back made a **1018 px**
+    window. Divide by `cmds.mayaDpiSetting(q=True, realScaleValue=True)`
+    (1.5 there; `scaleValue` answers 1.0 and is not it) before the write.
+65. **A saved `windowPref` wins over the size a `cmds.window` creation
+    asks for**, so a sizing fix never reaches a Maya that has opened the
+    old panel once unless the pref is removed first
+    (`windowPref(name, remove=True)`). `maya_colour` and `maya_overshoot`
+    still open `sizeable=False` at a fixed height and have not been
+    measured against their content.
+
 ## `maya_colour` — the palette on the shelf
 
 Shipped single-file tool (2026-09-03, `SkeldarAnim/maya_colour.py`, `cmds`

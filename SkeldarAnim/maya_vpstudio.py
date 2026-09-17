@@ -1246,6 +1246,22 @@ def toggle():
 
 WINDOW = "skeldarVpStudioWin"       # read by maya_hotkeys, open vs closed
 WIDTH = 300
+ROW_SPACING = 3                     # the column's gap between controls
+MARGIN = 12                         # air under the status line
+
+
+def fit_height(heights, spacing, margin):
+    """The window height that shows every control: the children as Maya
+    actually laid them out, the gaps between them, and a margin.
+
+    Pure. Measured rather than tabulated because Maya scales every control
+    for the display - a 26 px button reads 40 px at 150 % - so a number
+    written here would be right on one monitor and clip the buttons on the
+    next, which is exactly what a fixed 470 did (669 px of content).
+    """
+    heights = list(heights)
+    gaps = spacing * (len(heights) - 1) if heights else 0
+    return int(sum(heights) + gaps + margin)
 STATUS_WIDTH = 44
 
 _OPTION_VAR = "skeldarVpStudio_%s"
@@ -1410,9 +1426,18 @@ def show_window():
 
     stored = window_options()
 
-    cmds.window(WINDOW, title="Viewport Studio", width=WIDTH, height=470,
-                sizeable=False, resizeToFitChildren=False)
-    cmds.columnLayout(width=WIDTH, rowSpacing=3, columnOffset=("both", 10))
+    #  Maya restores a window's LAST SAVED size over the one asked for
+    #  here, and the saved one was the clipped 300 x 470 - so the memory
+    #  goes first, or the fix never reaches a Maya that has opened the old
+    #  panel once.
+    if cmds.windowPref(WINDOW, exists=True):
+        cmds.windowPref(WINDOW, remove=True)
+
+    #  Sizeable, and sized to its content AFTER the build (below): the
+    #  controls' heights are only known once Maya has laid them out.
+    cmds.window(WINDOW, title="Viewport Studio", width=WIDTH, sizeable=True)
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=ROW_SPACING,
+                               columnOffset=("both", 10))
 
     cmds.separator(height=6, style="none", width=WIDTH - 20)
     cmds.text(label="Viewport Studio", font="boldLabelFont", align="center",
@@ -1484,8 +1509,36 @@ def show_window():
                         changeCommand=_menu_change)
 
     cmds.showWindow(WINDOW)
+    _fit_window(column)
     refresh()
     return WINDOW
+
+
+def _fit_window(column):
+    """Give the window the height its controls really take.
+
+    Queried after `showWindow`, when the heights are real, and written
+    with `edit` so it wins over any size Maya remembered for the window.
+    """
+    children = cmds.columnLayout(column, query=True, childArray=True) or []
+    heights = [cmds.control("%s|%s" % (column, child), query=True,
+                            height=True) for child in children]
+    #  Mixed units, measured 2026-09-17 on a 150 % display: `control` answers
+    #  PHYSICAL pixels (a 26 px button reads 40) while `window -e -height`
+    #  takes LOGICAL units and Maya scales them - written straight back, a
+    #  678 px column made a 1018 px window.
+    physical = fit_height(heights, ROW_SPACING, MARGIN)
+    cmds.window(WINDOW, edit=True,
+                height=int(math.ceil(physical / _dpi_scale())))
+
+
+def _dpi_scale():
+    """Maya's real UI scale (1.5 on a 150 % display), 1.0 when unknown."""
+    try:
+        scale = float(cmds.mayaDpiSetting(query=True, realScaleValue=True))
+    except Exception:
+        return 1.0
+    return scale if scale > 0 else 1.0
 
 
 if __name__ == "__main__":
