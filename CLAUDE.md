@@ -2810,13 +2810,16 @@ puts the tip at +Y and the grip at −Y like the sword's; the grip's centroid
 frozen, a plain lambert in place of the source's untextured
 `openPBRSurface` (a node type not every Maya has), exported as
 `DaggerMesh`. Read back **X −12.60..12.04, Y −30.02..84.24, Z ±2.85**.
-**It is 114 cm as the model came** — scale stays 1.0 (the sword's rule; a
-smaller dagger is one number in the row). Spec:
+**The model is 114 cm; the row's scale is 0.4** («в два с половиной раза
+меньше», the animator's call minutes after seeing it at 1.0) — the asset
+untouched, `attach.seat` writes the catalog scale onto the mesh's scale
+channel, which `bonedrive` never touches. Spec:
 `docs/superpowers/specs/2026-09-17-dagger-weapon-design.md`. Proof:
-`verify_dagger_weapon.py` — **green 2026-09-17, 0 of 15 gates failed**,
+`verify_dagger_weapon.py` — **green 2026-09-17, 0 of 16 gates failed**,
 in mayapy standalone: the frame compared against the sword's in the same
 run, both grips' centroids on the axis to 0.0000, `aim.placement` on +Y
-for both, a real Add landing the dagger on `weapon_r` at **0.000000**, the
+for both, a real Add landing the dagger on `weapon_r` at **0.000000** with
+scale 0.4 and the blade **45.71 cm** along its own axis in the hand, the
 sword replacing it. The live dropdown lists all three.
 
 **The FBX field** takes a path to any file the catalog knows nothing about and

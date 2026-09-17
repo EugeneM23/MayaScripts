@@ -150,8 +150,10 @@ WEAPONS = [
     # 2026-09-17, the animator's Dagger.fbx exported onto the same axes by
     # docs/superpowers/plans/make_dagger_asset.py: blade along +Y with the
     # tip at +Y, the grip going -Y, the guard's width on X, the thickness
-    # on Z, the grip centred on the origin. 114 cm as the model came.
-    Weapon("Dagger_01", "Dagger 01", _asset_path("Dagger_01.fbx"), "weapon_r", 1.0),
+    # on Z, the grip centred on the origin. The model is 114 cm; the
+    # animator asked for it two and a half times smaller (45.7 cm), and a
+    # size correction is exactly what this column is for.
+    Weapon("Dagger_01", "Dagger 01", _asset_path("Dagger_01.fbx"), "weapon_r", 0.4),
 ]
 
 

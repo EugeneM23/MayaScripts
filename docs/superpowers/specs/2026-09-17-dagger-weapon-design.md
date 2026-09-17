@@ -20,10 +20,14 @@ sits around −27..+1.5 (5.7 cm thick, 21 cm wide), the grip +1.5..+20
 grip, exactly where the sword's does (sword: guard −6..18 on Y, grip below
 it to −31, blade to +115.9).
 
-**It is 114 cm long as the model came.** A dagger of that length is a
-short sword on Manny; the catalog scale is a fact about the model and was
-left at 1.0, as the sword's (147 cm) and the spear's (266 cm) are. If the
-animator wants it smaller, the row's scale is the one number to change.
+**It is 114 cm long as the model came**, a short sword on Manny. The
+first row shipped at scale 1.0 (the sword's rule: the scale is a fact
+about the model); the animator's answer the same evening was «в два с
+половиной раза меньше», so the row's scale is **0.4** — the asset itself
+is untouched, `attach.seat` writes the catalog scale onto the mesh's
+scale channel and `bonedrive` never touches that channel. Measured after a
+real Add: the blade stands **45.71 cm** along its own axis in the hand,
+origin and axes on `weapon_r` to 0.000000.
 
 ## The asset
 

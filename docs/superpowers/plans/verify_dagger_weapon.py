@@ -136,11 +136,35 @@ def main():
          "%s %r" % (weapon, note))
     gate(12, bonedrive.driving_weapon(bone) == weapon, "the dagger drives weapon_r",
          str(bonedrive.driving_weapon(bone)))
+    # position and rotation on the bone; the scale is the catalog's 0.4
+    # (the animator: two and a half times smaller than the 114 cm model)
     w = cmds.xform(weapon, query=True, matrix=True, worldSpace=True)
     b = cmds.xform(bone, query=True, matrix=True, worldSpace=True)
-    err = max(abs(x - y) for x, y in zip(w, b))
-    gate(13, err < 1e-4, "at the zero grip the dagger's origin and axes sit ON weapon_r",
-         "worst %.6f" % err)
+    err_t = max(abs(w[i] - b[i]) for i in (12, 13, 14))
+    err_r = 0.0
+    for row in range(3):
+        wl = sum(w[row * 4 + k] ** 2 for k in range(3)) ** 0.5
+        bl = sum(b[row * 4 + k] ** 2 for k in range(3)) ** 0.5
+        err_r = max(err_r, max(abs(w[row * 4 + k] / wl - b[row * 4 + k] / bl)
+                               for k in range(3)))
+    scale = cmds.getAttr(weapon + ".scale")[0]
+    gate(13, err_t < 1e-4 and err_r < 1e-6 and all(abs(v - 0.4) < 1e-9 for v in scale),
+         "at the zero grip the dagger's origin and axes sit ON weapon_r, at the catalog's 0.4",
+         "pos %.6f axes %.6f scale %s" % (err_t, err_r, ["%.3f" % v for v in scale]))
+    # the length in the hand, measured along the blade's own axis in world
+    # space (a world bounding box would read a tilted blade short)
+    shape = cmds.listRelatives(weapon, shapes=True, fullPath=True, noIntermediate=True)[0]
+    local = cmds.xform(shape + ".vtx[*]", query=True, translation=True, objectSpace=True)
+    world = cmds.xform(shape + ".vtx[*]", query=True, translation=True, worldSpace=True)
+    ys = local[1::3]
+    tip, butt = ys.index(max(ys)), ys.index(min(ys))
+    axis = [w[4], w[5], w[6]]
+    norm = sum(a * a for a in axis) ** 0.5
+    axis = [a / norm for a in axis]
+    delta = [world[tip * 3 + k] - world[butt * 3 + k] for k in range(3)]
+    length = sum(d * a for d, a in zip(delta, axis))
+    gate(16, abs(length - 114.26 * 0.4) < 0.3,
+         "the dagger stands 45.7 cm long in the hand (114 cm model at 0.4)", "%.2f cm" % length)
     marker = cmds.attributeQuery(bonedrive.MARKER, node=weapon, exists=True)
     gate(14, marker and cmds.getAttr(weapon + "." + bonedrive.MARKER) == "Dagger_01",
          "the marker names the dagger's key, so the grip is remembered per weapon",

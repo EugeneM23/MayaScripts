@@ -80,7 +80,8 @@ class Table(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry.label, "Dagger 01")
         self.assertEqual(entry.bone, "weapon_r")
-        self.assertEqual(entry.scale, 1.0)
+        #  the model is 114 cm; the animator wants it 2.5 times smaller
+        self.assertEqual(entry.scale, 0.4)
         self.assertTrue(entry.path.endswith("assets/Dagger_01.fbx"), entry.path)
         self.assertFalse(catalog.missing(entry))
 
