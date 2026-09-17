@@ -29,6 +29,7 @@ _PAYLOAD = (
     "maya_hotkeys.py",
     "maya_vpstudio.py",
     "maya_colour.py",
+    "maya_winfit.py",
     "icons",
     "assets",
     "overrig",

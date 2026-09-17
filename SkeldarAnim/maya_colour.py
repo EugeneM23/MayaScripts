@@ -33,6 +33,8 @@ import collections
 
 import maya.cmds as cmds
 
+import maya_winfit
+
 from maya_scenesetup import colour as colouring
 
 
@@ -292,6 +294,8 @@ def taken_message(pairs):
 
 WINDOW = "skeldarColourWin"     # read by maya_hotkeys, open vs closed
 WIDTH = 268
+ROW_SPACING = 4                 # the column's gap between controls
+MARGIN = 12                     # air under the status line
 STATUS_WIDTH = 40
 CUSTOM = "skeldarColourCustom"
 TAKEN = "skeldarColourTaken"
@@ -360,9 +364,14 @@ def show_window():
     if cmds.window(WINDOW, exists=True):
         cmds.deleteUI(WINDOW)
 
-    cmds.window(WINDOW, title="Colour", width=WIDTH, height=260,
-                sizeable=False, resizeToFitChildren=False)
-    cmds.columnLayout(width=WIDTH, rowSpacing=4, columnOffset=("both", 8))
+    #  Sizeable, sized to its content after the build, and the size Maya
+    #  remembered (the clipped 260) forgotten first - `maya_winfit` has
+    #  the measurements. Fixed at 260 this window hid Next free colour,
+    #  the taken line and the status on a 150 % display.
+    maya_winfit.forget_saved_size(WINDOW, cmds)
+    cmds.window(WINDOW, title="Colour", width=WIDTH, sizeable=True)
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=ROW_SPACING,
+                               columnOffset=("both", 8))
 
     cmds.separator(height=5, style="none", width=WIDTH - 16)
     cmds.text(label="Colour", font="boldLabelFont", align="center",
@@ -411,6 +420,7 @@ def show_window():
               font="smallFixedWidthFont")
 
     cmds.showWindow(WINDOW)
+    maya_winfit.fit_window(WINDOW, column, cmds, ROW_SPACING, MARGIN)
     refresh()
     return WINDOW
 

@@ -3271,15 +3271,24 @@ an animator who cannot see the manipulator cannot animate.
 
 **The window fits its content and can be stretched** (2026-09-17, the
 animator: «окошко … не растягивается из-за чего кнопочки с применением
-освещения не видно»). It was `sizeable=False` at a hard `height=470` over
-a column that measured **669 px** live, so Apply Look and Restore sat
-below the edge with no way to drag them into view. Now `sizeable=True`,
-`adjustableColumn=True`, the stale `windowPref` (the saved 300 × 470,
-which Maya restores over the size the code asks for) is removed before
-the window is created, and `_fit_window` sums the children's REAL heights
-after `showWindow` (`fit_height`, pure) because Maya scales every control
-for the display. Measured: 716 px window, lowest control ends at 715,
-both buttons visible. Two facts cost a live run each:
+освещения не видно», then «такая же проблема в панеле в которой мы задаем
+цвет»). Studio was `sizeable=False` at a hard `height=470` over a column
+that measured **669 px** live; Colour the same at 260 over **361 px** —
+Apply Look / Restore, and Next free colour / the taken line / the status,
+sat below the edge with no way to drag them into view. The sizing is ONE
+shared module, **`SkeldarAnim/maya_winfit.py`** (payload row; every
+function takes the caller's `cmds`, because each tool's tests rebind its
+own `cmds` to a fake): `forget_saved_size` drops the stale `windowPref`
+(the saved clipped size, which Maya restores over the size the code asks
+for) before the window is created; the window is `sizeable=True` with an
+`adjustableColumn`; and `fit_window` sums the children's REAL heights
+after `showWindow` (`fit_height`, pure) and writes them back in LOGICAL
+units (`logical`, pure) because Maya scales every control for the
+display. Measured after: Studio 716 px with the lowest control ending at
+715, Colour 362 with 361. `tests/uifakes.FakeUiCmds` is the recording
+`cmds` both panels' window tests run on. Overshoot still opens
+`sizeable=False` at a fixed height (off the shelf, unmeasured). Two facts
+cost a live run each:
 
 64. **`cmds.control -q -height` answers PHYSICAL pixels while
     `cmds.window -e -height` takes LOGICAL units and Maya multiplies them
@@ -3291,9 +3300,7 @@ both buttons visible. Two facts cost a live run each:
 65. **A saved `windowPref` wins over the size a `cmds.window` creation
     asks for**, so a sizing fix never reaches a Maya that has opened the
     old panel once unless the pref is removed first
-    (`windowPref(name, remove=True)`). `maya_colour` and `maya_overshoot`
-    still open `sizeable=False` at a fixed height and have not been
-    measured against their content.
+    (`windowPref(name, remove=True)`).
 
 ## `maya_colour` — the palette on the shelf
 

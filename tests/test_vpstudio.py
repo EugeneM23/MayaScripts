@@ -13,6 +13,8 @@ import unittest
 
 import maya_vpstudio as vp
 
+from tests.uifakes import FakeUiCmds
+
 
 def dot(a, b):
     return sum(x * y for x, y in zip(a, b))
@@ -980,108 +982,6 @@ class TestAutoKeyIsPutBack(FakeSceneTest):
 #  The window: it must fit its content and let the animator stretch it
 # ---------------------------------------------------------------------------
 
-class FakeUiCmds(object):
-    """A recording `maya.cmds` for `show_window`: every UI command is
-    accepted, creations are counted as children of the open column, and
-    control heights are whatever the test says they are (Maya scales them
-    for the display, so the code may never assume a number)."""
-
-    def __init__(self, control_height=25, saved_pref=True, dpi=1.0):
-        self.control_height = control_height
-        self.saved_pref = saved_pref
-        self.dpi = dpi
-        self.windows = {}
-        self.children = []
-        self.calls = []
-        self.status = {}
-
-    def _record(self, name):
-        def call(*args, **kwargs):
-            self.calls.append((name, args, kwargs))
-            if kwargs.get("query") or kwargs.get("q"):
-                if kwargs.get("childArray"):
-                    return list(self.children)
-                if kwargs.get("height"):
-                    return self.control_height
-                if kwargs.get("value"):
-                    return 1.0
-                if kwargs.get("exists"):
-                    return False
-                return None
-            if kwargs.get("edit") or kwargs.get("e"):
-                return None
-            if kwargs.get("exists"):
-                return False
-            if name in self.UI:
-                label = args[0] if args else "%s%d" % (name, len(self.children))
-                self.children.append(label)
-                return label
-            return [] if name == "ls" else None
-        return call
-
-    #  What `show_window` creates in the column. Anything else `cmds` is
-    #  asked for (ls, objExists inside refresh) is not a control.
-    UI = ("text", "separator", "rowLayout", "optionMenu", "checkBox",
-          "floatSliderGrp", "button")
-
-    def window(self, name, **kwargs):
-        if kwargs.get("exists"):
-            return name in self.windows
-        if kwargs.get("query") or kwargs.get("q"):
-            return self.windows[name].get(
-                [k for k in kwargs if k not in ("query", "q")][0])
-        if kwargs.get("edit") or kwargs.get("e"):
-            for k, v in kwargs.items():
-                if k not in ("edit", "e"):
-                    self.windows[name][k] = v
-            return name
-        self.windows[name] = dict(kwargs)
-        return name
-
-    def windowPref(self, name, **kwargs):
-        self.calls.append(("windowPref", (name,), kwargs))
-        if kwargs.get("exists"):
-            return self.saved_pref
-        if kwargs.get("remove"):
-            self.saved_pref = False
-        return None
-
-    def mayaDpiSetting(self, **kwargs):
-        if kwargs.get("realScaleValue"):
-            return self.dpi
-        return 1.0
-
-    def columnLayout(self, *args, **kwargs):
-        self.calls.append(("columnLayout", args, kwargs))
-        if kwargs.get("query") or kwargs.get("q"):
-            if kwargs.get("childArray"):
-                return list(self.children)
-            return self.control_height
-        self.column = kwargs
-        return "skeldarVpStudioWin|columnLayout1"
-
-    def optionVar(self, **kwargs):
-        if kwargs.get("exists"):
-            return False
-        return None
-
-    def text(self, *args, **kwargs):
-        return self._record("text")(*args, **kwargs)
-
-    def __getattr__(self, name):
-        return self._record(name)
-
-
-class TestFitHeight(unittest.TestCase):
-
-    def test_it_is_the_children_plus_the_gaps_plus_the_margin(self):
-        self.assertEqual(vp.fit_height([10, 20, 30], spacing=3, margin=8),
-                         60 + 6 + 8)
-
-    def test_no_children_is_the_margin_alone(self):
-        self.assertEqual(vp.fit_height([], spacing=3, margin=8), 8)
-
-
 class TestWindowFitsItsContent(unittest.TestCase):
 
     def setUp(self):
@@ -1143,31 +1043,6 @@ class TestWindowHeightIsInLogicalUnits(unittest.TestCase):
                                  spacing=vp.ROW_SPACING, margin=vp.MARGIN)
         written = self.fake.windows[vp.WINDOW].get("height")
         self.assertEqual(written, int(math.ceil(physical / 1.5)))
-
-
-class TestDpiScale(unittest.TestCase):
-
-    def test_a_maya_without_the_command_means_no_scaling(self):
-        class NoDpi(object):
-            def __getattr__(self, name):
-                raise AttributeError(name)
-        real = vp.cmds
-        vp.cmds = NoDpi()
-        try:
-            self.assertEqual(vp._dpi_scale(), 1.0)
-        finally:
-            vp.cmds = real
-
-    def test_a_nonsense_answer_means_no_scaling(self):
-        class Zero(object):
-            def mayaDpiSetting(self, **_kw):
-                return 0
-        real = vp.cmds
-        vp.cmds = Zero()
-        try:
-            self.assertEqual(vp._dpi_scale(), 1.0)
-        finally:
-            vp.cmds = real
 
 
 if __name__ == "__main__":

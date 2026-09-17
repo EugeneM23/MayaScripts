@@ -9,7 +9,10 @@ here is what this module actually decides: WHAT a press paints.
 import unittest
 
 import maya_colour as mc
+import maya_winfit
 from maya_scenesetup import colour as colouring
+
+from tests.uifakes import FakeUiCmds
 
 
 class TestLeaf(unittest.TestCase):
@@ -432,6 +435,43 @@ class TestTargetResolution(unittest.TestCase):
     def test_the_colour_reaches_the_shapes_unchanged(self):
         mc.paint((0.11, 0.22, 0.33), selection=["|root"], undoable=False)
         self.assertEqual(self.painted["root"][1], (0.11, 0.22, 0.33))
+
+
+# ---------------------------------------------------------------------------
+#  The window fits its content and can be stretched (2026-09-17)
+# ---------------------------------------------------------------------------
+
+class TestWindowFitsItsContent(unittest.TestCase):
+    """Measured live: a fixed 260 px, `sizeable=False` window over 361 px
+    of content - Next free colour, the taken line and the status were all
+    below the edge, with no way to drag them into view. The same bug the
+    Studio panel had the same day; the sizing is `maya_winfit`'s."""
+
+    def setUp(self):
+        self.real = mc.cmds
+        self.fake = FakeUiCmds(control_height=30, dpi=1.5)
+        mc.cmds = self.fake
+        mc.show_window()
+        self.win = self.fake.windows[mc.WINDOW]
+
+    def tearDown(self):
+        mc.cmds = self.real
+
+    def test_the_animator_can_stretch_it(self):
+        self.assertTrue(self.win.get("sizeable"))
+
+    def test_the_column_stretches_with_the_window(self):
+        self.assertTrue(self.fake.column.get("adjustableColumn"))
+
+    def test_the_height_is_measured_in_logical_units(self):
+        children = self.fake.children
+        self.assertGreater(len(children), 8)
+        pixels = maya_winfit.fit_height([30] * len(children),
+                                        mc.ROW_SPACING, mc.MARGIN)
+        self.assertEqual(self.win.get("height"), maya_winfit.logical(pixels, 1.5))
+
+    def test_the_stale_saved_size_is_forgotten_first(self):
+        self.assertEqual(len(self.fake.removed_prefs()), 1)
 
 
 if __name__ == "__main__":

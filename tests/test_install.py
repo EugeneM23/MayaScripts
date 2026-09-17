@@ -97,6 +97,10 @@ class Payload(unittest.TestCase):
     def test_the_colour_palette_ships(self):
         self.assertIn("maya_colour.py", install.payload())
 
+    def test_the_window_fit_helper_ships(self):
+        """Studio and Colour size their windows through it."""
+        self.assertIn("maya_winfit.py", install.payload())
+
     def test_the_curve_overlay_left_the_plugin(self):
         """2026-09-08: «уберем не только из полки но и из плагина в
         целом» -- it lives in archive/ now, and ships nowhere."""
