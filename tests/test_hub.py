@@ -12,38 +12,46 @@ import maya_hub as hub
 from tests.uifakes import FakeUiCmds
 
 
-def _fake_tool(name, builder="build_panel", fails=False):
-    """A tool module whose builder records that it ran (or raises)."""
-    module = types.ModuleType(name)
-    module.built = []
-
+def _add_builder(module, builder, fails=False):
+    """Give a fake tool module a builder that records that it ran (or
+    raises). One module may carry several builders: Scene Setup's holds
+    Characters and Weapons."""
     def build_panel():
         if fails:
-            raise RuntimeError("boom in " + name)
-        module.built.append(name)
-        hub.cmds.text(label=name + " panel")
+            raise RuntimeError("boom in " + module.__name__ + "." + builder)
+        module.built.append(builder)
+        hub.cmds.text(label=builder + " panel")
     setattr(module, builder, build_panel)
-    return module
 
 
 class FakeToolsMixin(object):
-    """Every section's module replaced by a recording fake for the test."""
+    """Every section's module replaced by a recording fake for the test.
+    `self.tools[key]` is (module, builder) for that section."""
 
     def install_fakes(self, failing=()):
         self.saved = {}
         self.tools = {}
+        fakes = {}
         for sec in hub.SECTIONS:
-            self.saved[sec.module] = sys.modules.get(sec.module)
-            fake = _fake_tool(sec.module, sec.builder,
-                              fails=sec.key in failing)
-            sys.modules[sec.module] = fake
-            if "." in sec.module:
-                parent, leaf = sec.module.rsplit(".", 1)
-                self.saved[parent] = sys.modules.get(parent)
-                pkg = types.ModuleType(parent)
-                setattr(pkg, leaf, fake)
-                sys.modules[parent] = pkg
-            self.tools[sec.key] = fake
+            fake = fakes.get(sec.module)
+            if fake is None:
+                self.saved[sec.module] = sys.modules.get(sec.module)
+                fake = types.ModuleType(sec.module)
+                fake.built = []
+                fakes[sec.module] = fake
+                sys.modules[sec.module] = fake
+                if "." in sec.module:
+                    parent, leaf = sec.module.rsplit(".", 1)
+                    self.saved[parent] = sys.modules.get(parent)
+                    pkg = types.ModuleType(parent)
+                    setattr(pkg, leaf, fake)
+                    sys.modules[parent] = pkg
+            _add_builder(fake, sec.builder, fails=sec.key in failing)
+            self.tools[sec.key] = (fake, sec.builder)
+
+    def built(self, key):
+        module, builder = self.tools[key]
+        return module.built.count(builder)
 
     def remove_fakes(self):
         for name, module in self.saved.items():
@@ -55,15 +63,19 @@ class FakeToolsMixin(object):
 
 class TheTable(unittest.TestCase):
 
-    def test_six_sections_in_shelf_order(self):
+    def test_seven_sections_in_shelf_order(self):
+        """Scene Setup is Characters + Weapons since the evening of
+        2026-09-17; Weapons follows Characters (its refresh writes the
+        Characters header)."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["UE Bridge", "Scene Setup", "Retarget", "Hotkeys",
-                          "Studio", "Colour"])
+                         ["UE Bridge", "Characters", "Weapons", "Retarget",
+                          "Hotkeys", "Studio", "Colour"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
             "uebridge": ("maya_uebridge.window", "build_panel"),
-            "scenesetup": ("maya_scenesetup.window", "build_panel"),
+            "characters": ("maya_scenesetup.window", "build_characters_panel"),
+            "weapons": ("maya_scenesetup.window", "build_weapons_panel"),
             "retarget": ("maya_rig_retarget", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
@@ -136,8 +148,8 @@ class Build(FakeToolsMixin, unittest.TestCase):
 
     def test_every_builder_runs_once(self):
         hub.build()
-        for key, tool in self.tools.items():
-            self.assertEqual(len(tool.built), 1, key)
+        for key in self.tools:
+            self.assertEqual(self.built(key), 1, key)
 
     def test_sections_open_by_default(self):
         hub.build()
@@ -177,23 +189,25 @@ class BuildWithABrokenTool(FakeToolsMixin, unittest.TestCase):
         self.real = hub.cmds
         self.fake = FakeUiCmds()
         hub.cmds = self.fake
-        self.install_fakes(failing=("scenesetup",))
+        self.install_fakes(failing=("characters",))
 
     def tearDown(self):
         hub.cmds = self.real
         self.remove_fakes()
 
     def test_the_other_sections_are_still_built(self):
+        """Weapons shares Characters' module and must still build."""
         hub.build()
-        self.assertEqual(len(self.tools["scenesetup"].built), 0)
-        for key in ("uebridge", "retarget", "hotkeys", "studio", "colour"):
-            self.assertEqual(len(self.tools[key].built), 1, key)
+        self.assertEqual(self.built("characters"), 0)
+        for key in ("uebridge", "weapons", "retarget", "hotkeys", "studio",
+                    "colour"):
+            self.assertEqual(self.built(key), 1, key)
 
     def test_the_broken_section_says_so(self):
         hub.build()
         texts = [c[2].get("label", "") for c in self.fake.calls
                  if c[0] == "text"]
-        self.assertTrue(any("Scene Setup could not be built" in t
+        self.assertTrue(any("Characters could not be built" in t
                             and "boom" in t for t in texts))
 
 
@@ -250,7 +264,7 @@ class Show(FakeToolsMixin, unittest.TestCase):
         scrolls = [c[2]["scrollByPixel"] for c in self.fake.calls
                    if c[0] == "scrollLayout" and "scrollByPixel" in c[2]]
         index = [s.key for s in hub.SECTIONS].index("studio")
-        expected = hub.scroll_offset([self.fake.control_height] * 6, index,
+        expected = hub.scroll_offset([self.fake.control_height] * 7, index,
                                      hub.ROW_SPACING)
         self.assertEqual(scrolls[0][0], "up")
         self.assertEqual(scrolls[1], ("down", expected))

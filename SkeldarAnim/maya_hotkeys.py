@@ -153,12 +153,20 @@ def _picker(method, *args):
     return getattr(window, method)(*args)
 
 
-def _scene(func, *args):
-    """Press a Scene Setup button. Its callbacks read their own window."""
+def _scene(func, *args, **kwargs):
+    """Press a Scene Setup button. Its callbacks read their own controls.
+
+    `section="weapons"` opens the hub on the Weapons section when nothing is
+    built yet; the default is Characters (the two sections since 2026-09-17).
+    """
+    section = kwargs.pop("section", "characters")
     module = _scene_module()
     if not module.is_open():
+        if section == "weapons":
+            module.show_weapons()
+            return _report("Weapons opened - press again")
         module.show_window()
-        return _report("Scene Setup opened - press again")
+        return _report("Characters opened - press again")
     return getattr(module, func)(*args)
 
 
@@ -700,9 +708,12 @@ _OURS = (
     ("window.uebridge", "Windows", "UE Bridge",
      "Open the UE animation bridge",
      partial(_show, "maya_uebridge", "show_window")),
-    ("window.scenesetup", "Windows", "Scene Setup",
-     "Open Scene Setup: character, weapon, camera",
+    ("window.scenesetup", "Windows", "Characters",
+     "Open the Characters section: add the rig or a skeleton",
      partial(_show, "maya_scenesetup", "show_window")),
+    ("window.weapons", "Windows", "Weapons",
+     "Open the Weapons section: a weapon in the hand, the grip",
+     partial(_show, "maya_scenesetup", "show_weapons")),
     ("window.overshoot", "Windows", "Overshoot",
      "Open the Overshoot panel",
      partial(_show, "maya_overshoot", "show_overshoot_ui")),
@@ -756,10 +767,10 @@ _OURS = (
      partial(_scene, "add_character")),
     ("scene.weapon", "Scene Setup", "Add Weapon",
      "Import the chosen weapon and drive its bone from it",
-     partial(_scene, "add_weapon")),
+     partial(_scene, "add_weapon", section="weapons")),
     ("scene.remove_weapon", "Scene Setup", "Remove Weapon",
      "Bake the bone back off the weapon and delete it",
-     partial(_scene, "remove_weapon")),
+     partial(_scene, "remove_weapon", section="weapons")),
     # Connect Arms / Disconnect Arms / Add Aim / Camera Setup left Scene
     # Setup on 2026-09-07 with the move to the AdvancedSkeleton rig; the
     # camera setup happens inside the retarget's Bake now.

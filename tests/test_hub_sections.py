@@ -30,45 +30,74 @@ def _hub_asked(show_window):
 
 
 class SceneSetup(unittest.TestCase):
+    """Two sections of one module: Characters, then Weapons."""
 
     def setUp(self):
         self.saved = (scenesetup.cmds, scenesetup.refresh,
-                      scenesetup._advance_swatch)
+                      scenesetup._advance_swatch, scenesetup._bound_root)
         self.fake = FakeUiCmds()
         scenesetup.cmds = self.fake
         #  The scene reads after the build are the module's own and not
         #  under test here.
         scenesetup.refresh = lambda: None
         scenesetup._advance_swatch = lambda name: None
-        scenesetup.build_panel()
+        scenesetup._bound_root = lambda: None
+        scenesetup.build_characters_panel()
+        self.after_characters = list(self.fake.children)
+        scenesetup.build_weapons_panel()
 
     def tearDown(self):
-        (scenesetup.cmds, scenesetup.refresh,
-         scenesetup._advance_swatch) = self.saved
+        (scenesetup.cmds, scenesetup.refresh, scenesetup._advance_swatch,
+         scenesetup._bound_root) = self.saved
 
-    def test_no_window_and_a_stretching_column(self):
+    def test_no_window_and_stretching_columns(self):
         self.assertEqual(self.fake.windows, {})
         self.assertTrue(self.fake.column.get("adjustableColumn"))
 
-    def test_the_named_controls_exist(self):
-        for name in (scenesetup._STATUS, scenesetup._BOUND, scenesetup._MENU,
-                     scenesetup._CHARACTER, scenesetup._ROTATE,
-                     scenesetup._TRANSLATE, scenesetup._CUSTOM):
-            self.assertIn(name, self.fake.children, name)
+    def test_characters_holds_the_character_controls_and_its_own_line(self):
+        for name in (scenesetup._BOUND, scenesetup._CHARACTER,
+                     scenesetup._CHARACTER_COLOUR, scenesetup._CHARACTER_STATUS):
+            self.assertIn(name, self.after_characters, name)
+        for name in (scenesetup._MENU, scenesetup._STATUS, scenesetup._ROTATE):
+            self.assertNotIn(name, self.after_characters, name)
 
-    def test_is_open_follows_the_status_control(self):
+    def test_weapons_holds_the_weapon_controls_and_its_own_line(self):
+        weapons = self.fake.children[len(self.after_characters):]
+        for name in (scenesetup._MENU, scenesetup._CUSTOM, scenesetup._ROTATE,
+                     scenesetup._TRANSLATE, scenesetup._WEAPON_COLOUR,
+                     scenesetup._STATUS):
+            self.assertIn(name, weapons, name)
+        self.assertNotIn(scenesetup._CHARACTER, weapons)
+
+    def test_the_two_status_lines_are_different_controls(self):
+        self.assertNotEqual(scenesetup._STATUS, scenesetup._CHARACTER_STATUS)
+
+    def test_character_presses_report_on_the_characters_line(self):
+        scenesetup._status("hello", scenesetup._CHARACTER_STATUS)
+        scenesetup._status("world")
+        edits = [(c[1][0], c[2]["label"]) for c in self.fake.calls
+                 if c[0] == "text" and c[2].get("edit")]
+        self.assertEqual(edits[-2:], [(scenesetup._CHARACTER_STATUS, "hello"),
+                                      (scenesetup._STATUS, "world")])
+
+    def test_is_open_follows_the_weapons_status_control(self):
         self.assertTrue(scenesetup.is_open())
         self.fake.children.remove(scenesetup._STATUS)
         self.assertFalse(scenesetup.is_open())
 
-    def test_show_window_opens_the_hub_on_its_section(self):
+    def test_show_window_and_show_weapons_open_their_sections(self):
         result, asked = _hub_asked(scenesetup.show_window)
-        self.assertEqual((result, asked), ("hub", ["scenesetup"]))
-        self.assertEqual(maya_hub.section("scenesetup").module,
+        self.assertEqual((result, asked), ("hub", ["characters"]))
+        result, asked = _hub_asked(scenesetup.show_weapons)
+        self.assertEqual((result, asked), ("hub", ["weapons"]))
+        self.assertEqual(maya_hub.section("characters").module,
                          "maya_scenesetup.window")
+        self.assertEqual(maya_hub.section("weapons").builder,
+                         "build_weapons_panel")
 
     def test_the_standalone_window_is_gone(self):
         self.assertFalse(hasattr(scenesetup, "WINDOW"))
+        self.assertFalse(hasattr(scenesetup, "build_panel"))
         self.assertIn("mayaSceneSetupWindow", maya_hub.LEGACY_WINDOWS)
         self.assertIn("mayaWeaponsWindow", maya_hub.LEGACY_WINDOWS)
 

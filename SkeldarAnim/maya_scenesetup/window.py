@@ -37,11 +37,13 @@ from maya_scenesetup import colour as colouring
 from maya_scenesetup import connect as linking
 from maya_scenesetup import skeleton
 
-HUB_SECTION = "scenesetup"    # our section of the SkeldarAnim hub
+HUB_SECTION = "characters"    # the Characters section of the SkeldarAnim hub
+HUB_WEAPONS = "weapons"       # the Weapons section (2026-09-17, «декомпозируем»)
 _MENU = "mayaSceneSetupMenu"
 _ROTATE = "mayaSceneSetupRotate"
 _TRANSLATE = "mayaSceneSetupTranslate"
-_STATUS = "mayaSceneSetupStatus"
+_STATUS = "mayaSceneSetupStatus"                    # the Weapons line
+_CHARACTER_STATUS = "mayaSceneSetupCharacterStatus"  # the Characters line
 _BOUND = "mayaSceneSetupBound"
 _CUSTOM = "mayaSceneSetupCustomFbx"
 _CHARACTER = "mayaSceneSetupCharacter"
@@ -242,8 +244,10 @@ def _remember(entry, rotate, translate):
         cmds.optionVar(floatValueAppend=(name, value))
 
 
-def _status(message):
-    cmds.text(_STATUS, edit=True, label=message)
+def _status(message, control=_STATUS):
+    """The Weapons section's line by default; character presses name
+    theirs. Two sections, two lines (2026-09-17)."""
+    cmds.text(control, edit=True, label=message)
 
 
 def _attached(entry):
@@ -305,12 +309,12 @@ def _locate(entry):
 
 # --------------------------------------------------------------- callbacks
 
-def _run(action):
-    """Run a callback, and put anything it throws on the status line."""
+def _run(action, status=_STATUS):
+    """Run a callback, and put anything it throws on its section's line."""
     try:
         action()
     except Exception:
-        _status(traceback.format_exc().strip().splitlines()[-1])
+        _status(traceback.format_exc().strip().splitlines()[-1], status)
         raise
 
 
@@ -391,7 +395,8 @@ def character_changed():
     """Remember the choice. Nothing else: the press is what imports."""
     entry = chosen_character()
     cmds.optionVar(stringValue=(_CHARACTER_OPTIONVAR, entry.label))
-    _status("Add Character will import: {0}".format(entry.label))
+    _status("Add Character will import: {0}".format(entry.label),
+            _CHARACTER_STATUS)
 
 
 def add_character():
@@ -412,7 +417,7 @@ def add_character():
                                       _swatch(_CHARACTER_COLOUR))
     refresh()
     _advance_swatch(_CHARACTER_COLOUR)
-    _status(message)
+    _status(message, _CHARACTER_STATUS)
 
 
 def recolour_character():
@@ -431,14 +436,14 @@ def recolour_character():
     shapes = colouring.character_meshes(root)
     rgb = _swatch(_CHARACTER_COLOUR)
     if not shapes:
-        _status(NO_COLOUR_TARGET)
+        _status(NO_COLOUR_TARGET, _CHARACTER_STATUS)
         return
     cmds.undoInfo(openChunk=True)
     try:
         colouring.paint(shapes, rgb, root.split("|")[-1])
     finally:
         cmds.undoInfo(closeChunk=True)
-    _status(recoloured_message(root, rgb))
+    _status(recoloured_message(root, rgb), _CHARACTER_STATUS)
 
 
 def recolour_weapon():
@@ -565,19 +570,29 @@ def is_open():
 
 
 def show_window():
-    """Open the SkeldarAnim hub on the Scene Setup section.
+    """Open the SkeldarAnim hub on the Characters section.
 
     A `cmds` control has one name per Maya session, so the panel lives in
     the hub or in a window of its own, never both - since 2026-09-17 it is
     the hub (`maya_hub`), which also closes the standalone window an older
-    build may have left open.
+    build may have left open. Scene Setup is two sections there, Characters
+    and Weapons (the animator's ask the same evening: «декомпозируем
+    scenesetup на characters и weapons»); this module stays one, because
+    the two halves share `refresh`, the character resolution and the
+    colour scan.
     """
     import maya_hub
     return maya_hub.show(HUB_SECTION)
 
 
-def build_panel():
-    """The Scene Setup controls, built into whatever layout is current."""
+def show_weapons():
+    """Open the SkeldarAnim hub on the Weapons section."""
+    import maya_hub
+    return maya_hub.show(HUB_WEAPONS)
+
+
+def build_characters_panel():
+    """The Characters section: which character, the colour, Add Character."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", 8))
 
@@ -592,7 +607,8 @@ def build_panel():
                                "and a camera bone, and the 68-bone UE4 "
                                "Mannequin the Longsword/SwordAnimsetPro "
                                "packs animate (no weapon_r, no camera_bone).",
-                    changeCommand=lambda *_args: _run(character_changed))
+                    changeCommand=lambda *_args: _run(character_changed,
+                                                      _CHARACTER_STATUS))
     for label in catalog.character_labels():
         cmds.menuItem(label=label)
 
@@ -612,15 +628,43 @@ def build_panel():
     cmds.button(label="Recolour", width=90,
                 annotation="Put this colour on the character that is "
                            "CONNECTED now, instead of on the next one added.",
-                command=lambda *_a: _run(recolour_character))
+                command=lambda *_a: _run(recolour_character,
+                                         _CHARACTER_STATUS))
     cmds.setParent("..")
 
     cmds.button(label="Add Character", height=30,
                 annotation="Import the chosen rig or skeleton into this "
                            "scene -- no manual open. Skeletons as many as "
                            "you like; the rig once per scene.",
-                command=lambda *_args: _run(add_character))
-    cmds.separator(height=8, style="in")
+                command=lambda *_args: _run(add_character,
+                                            _CHARACTER_STATUS))
+    cmds.text(_CHARACTER_STATUS, label="", align="left", wordWrap=True,
+              height=36)
+
+    cmds.setParent("..")
+    # The remembered skeleton, restored before anything reads the menu. A
+    # label the table no longer carries is simply not selected, so the menu
+    # stays on Manny -- the default anyone who never opens the list gets.
+    remembered = remembered_character()
+    if remembered and remembered in catalog.character_labels():
+        cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
+    _run(_bound_root, _CHARACTER_STATUS)
+    # The swatch opens on the colour the next Add would bring, read from
+    # THIS scene. A remembered optionVar would be wrong here -- a colour
+    # saved yesterday may be worn by somebody in the file opened today.
+    _run(lambda: _advance_swatch(_CHARACTER_COLOUR), _CHARACTER_STATUS)
+    return column
+
+
+def build_weapons_panel():
+    """The Weapons section: which weapon, Add / Remove, the grip, the colour.
+
+    Built AFTER the Characters section (hub order), and `refresh` - which
+    writes the Characters header - runs from here, so both sections exist
+    by the time it does.
+    """
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", 8))
 
     cmds.optionMenu(_MENU, label="Weapon",
                     changeCommand=lambda *_args: _run(refresh))
@@ -683,18 +727,8 @@ def build_panel():
     cmds.text(_STATUS, label="", align="left", wordWrap=True, height=36)
 
     cmds.setParent("..")
-    # The remembered skeleton, restored before the first refresh. A label
-    # the table no longer carries is simply not selected, so the menu stays
-    # on Manny -- the default anyone who never opens the list gets.
-    remembered = remembered_character()
-    if remembered and remembered in catalog.character_labels():
-        cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
-
     _run(refresh)
-    # After refresh, which does not touch them: both swatches open on the
-    # colour the next Add would bring, read from THIS scene. A remembered
-    # optionVar would be wrong here -- a colour saved yesterday may be worn
-    # by somebody in the file opened today.
-    _run(lambda: _advance_swatch(_CHARACTER_COLOUR))
+    # After refresh, which does not touch it: the swatch opens on the
+    # colour the next Add would bring, read from THIS scene.
     _run(lambda: _advance_swatch(_WEAPON_COLOUR))
     return column

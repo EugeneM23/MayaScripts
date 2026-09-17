@@ -57,12 +57,17 @@ Section = collections.namedtuple("Section",
                                  "key label module builder frame")
 
 # Shelf order. `module.builder()` builds the tool's controls into the
-# current parent; `frame` is the frameLayout's control name.
+# current parent; `frame` is the frameLayout's control name. Scene Setup is
+# two sections of one module (2026-09-17, «декомпозируем scenesetup на
+# characters и weapons»); Weapons must follow Characters, because the
+# weapons builder's refresh writes the Characters header.
 SECTIONS = (
     Section("uebridge", "UE Bridge", "maya_uebridge.window",
             "build_panel", "skeldarHubFrameUebridge"),
-    Section("scenesetup", "Scene Setup", "maya_scenesetup.window",
-            "build_panel", "skeldarHubFrameScenesetup"),
+    Section("characters", "Characters", "maya_scenesetup.window",
+            "build_characters_panel", "skeldarHubFrameCharacters"),
+    Section("weapons", "Weapons", "maya_scenesetup.window",
+            "build_weapons_panel", "skeldarHubFrameWeapons"),
     Section("retarget", "Retarget", "maya_rig_retarget",
             "build_panel", "skeldarHubFrameRetarget"),
     Section("hotkeys", "Hotkeys", "maya_hotkeys",

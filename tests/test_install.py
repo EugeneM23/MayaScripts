@@ -22,7 +22,7 @@ PLUGIN = os.path.join(
     "SkeldarAnim")
 REPO = PLUGIN
 
-ICON_NAMES = ("picker.png", "uebridge.png", "scenesetup.png",
+ICON_NAMES = ("picker.png", "hub.png", "uebridge.png", "characters.png", "weapons.png",
               "retarget.png",
               "overshoot.png", "hotkeys.png", "vpstudio.png",
               "colour.png")
@@ -170,8 +170,9 @@ class ButtonSpecs(unittest.TestCase):
     def test_seven_buttons_in_shelf_order(self):
         """The hub first (2026-09-17), then the six tools it holds."""
         labels = [s["label"] for s in self._specs()]
-        self.assertEqual(labels, ["SkeldarAnim", "UE Bridge", "Scene Setup",
-                                  "Retarget", "Hotkeys", "Studio", "Colour"])
+        self.assertEqual(labels, ["SkeldarAnim", "UE Bridge", "Characters",
+                                  "Weapons", "Retarget", "Hotkeys", "Studio",
+                                  "Colour"])
 
     def test_the_hub_ships(self):
         self.assertIn("maya_hub.py", install.payload())
@@ -190,14 +191,14 @@ class ButtonSpecs(unittest.TestCase):
         labels = [s["label"] for s in self._specs()]
         self.assertEqual(labels[1], "Rig Picker")
         self.assertEqual(labels[-1], "OverRig")
-        self.assertEqual(len(labels), 9)
+        self.assertEqual(len(labels), 10)
 
     def test_the_overshoot_flag_brings_its_button_back_in_place(self):
         self.features.OVERSHOOT = True
         labels = [s["label"] for s in self._specs()]
-        self.assertEqual(labels, ["SkeldarAnim", "UE Bridge", "Scene Setup",
-                                  "Retarget", "Overshoot", "Hotkeys",
-                                  "Studio", "Colour"])
+        self.assertEqual(labels, ["SkeldarAnim", "UE Bridge", "Characters",
+                                  "Weapons", "Retarget", "Overshoot",
+                                  "Hotkeys", "Studio", "Colour"])
 
     def test_each_flag_acts_alone(self):
         self.features.PICKER = True
@@ -214,7 +215,8 @@ class ButtonSpecs(unittest.TestCase):
         wanted = {
             "SkeldarAnim": ("maya_hub", "show"),
             "UE Bridge": ("maya_uebridge", "show_window"),
-            "Scene Setup": ("maya_scenesetup", "show_window"),
+            "Characters": ("maya_scenesetup", "show_window"),
+            "Weapons": ("maya_scenesetup", "show_weapons"),
             "Retarget": ("maya_rig_retarget", "retarget_button"),
             "Overshoot": ("maya_overshoot", "show_overshoot_ui"),
             "Hotkeys": ("maya_hotkeys", "toggle"),
@@ -240,8 +242,8 @@ class ButtonSpecs(unittest.TestCase):
     def test_python_buttons_use_our_icons(self):
         icons = [s["image"] for s in self._specs()]
         self.assertEqual(icons, [self.DEST + "/icons/" + name for name in (
-            "hub.png", "uebridge.png", "scenesetup.png", "retarget.png",
-            "hotkeys.png", "vpstudio.png", "colour.png")])
+            "hub.png", "uebridge.png", "characters.png", "weapons.png",
+            "retarget.png", "hotkeys.png", "vpstudio.png", "colour.png")])
 
     def test_the_payload_carries_the_flags_and_the_retarget(self):
         for name in ("skeldar_features.py", "maya_rigs.py", "maya_asretarget.py",

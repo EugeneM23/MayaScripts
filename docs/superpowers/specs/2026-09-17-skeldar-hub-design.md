@@ -201,3 +201,36 @@ have seen:
 The scroll-into-view was measured: asked for Colour at the bottom, the
 column landed at 2452 of an expected 2831 — the scroll's maximum, with the
 Colour section fully in view.
+
+## Addendum 2 — Scene Setup becomes Characters and Weapons (2026-09-17, later)
+
+The animator's next ask: «декомпозируем scenesetup на characters и
+weapons», and, offered a UI-only split against splitting the module too,
+«как ты предлагаешь». So `SECTIONS` holds seven rows — UE Bridge,
+**Characters**, **Weapons**, Retarget, Hotkeys, Studio, Colour — with the
+two new ones built by `maya_scenesetup.window.build_characters_panel` and
+`build_weapons_panel`. The module stays one: the two halves share
+`refresh` (which writes the Characters header AND the weapon fields), the
+character resolution and the colour scan, and a split of the code would
+have moved those into a third place for no gain.
+
+- **Characters**: the «Character: …» header, the skeleton/rig dropdown,
+  its colour swatch + Recolour, Add Character, and its own status line
+  `mayaSceneSetupCharacterStatus`. Post-build: the remembered dropdown
+  row, the header (`_bound_root`), the swatch.
+- **Weapons**: the weapon dropdown, the FBX field, Add, Remove Weapon,
+  Rotate/Translate, its colour swatch + Recolour, and the line
+  `mayaSceneSetupStatus`. Post-build: `refresh`, the swatch.
+- **Order is load-bearing**: `refresh` writes the Characters header, and
+  it runs from the Weapons builder, so Weapons follows Characters in the
+  table. A test pins the order.
+- `_status(message, control=_STATUS)` and `_run(action, status=_STATUS)`:
+  character presses name the Characters line, everything else defaults to
+  the Weapons line. `is_open()` still asks for the Weapons line (both
+  sections are built by one hub build).
+- The shelf's `Scene Setup` button becomes `Characters` and `Weapons`
+  (eight buttons); `maya_scenesetup.show_weapons` joins `show_window`.
+  Hotkeys: `scene.weapon`/`scene.remove_weapon` open the Weapons section
+  when nothing is built, `scene.character` the Characters one; a new
+  `window.weapons` opener row. Icons `characters.png` / `weapons.png`
+  replace `scenesetup.png`.

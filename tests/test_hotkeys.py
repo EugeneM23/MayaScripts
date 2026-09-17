@@ -420,6 +420,10 @@ class FakePanelModule(object):
     def show_window(self):
         self.shown += 1
 
+    def show_weapons(self):
+        self.shown += 1
+        self.calls.append(("show_weapons",))
+
     def show_overshoot_ui(self):
         self.shown += 1
 
@@ -471,18 +475,19 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 27)
+        self.assertEqual(len(ours), 28)
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
                          ["time.insert", "time.next", "time.prev",
                           "time.remove"])
 
-    def test_the_five_openers_and_the_toggle(self):
+    def test_the_six_openers_and_the_toggle(self):
         self.assertEqual(sorted(self._keys("window.")),
                          ["window.hotkeys", "window.hub",
                           "window.overshoot", "window.picker",
-                          "window.scenesetup", "window.uebridge"])
+                          "window.scenesetup", "window.uebridge",
+                          "window.weapons"])
 
     def test_the_picker_rows(self):
         self.assertEqual(sorted(self._keys("picker.")),
@@ -605,7 +610,7 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 5)
+        self.assertEqual(len(names), 6)
         self.assertIn("maya_hub", names)
         for name in names:
             self.assertIsNotNone(importlib.util.find_spec(name), name)
@@ -642,12 +647,20 @@ class RunPressesThePanel(SeamCase):
         self.assertEqual(panel.calls, [("add_weapon",)])
 
     def test_a_closed_scene_setup_is_opened_and_reported(self):
+        """A weapon hotkey opens the WEAPONS section, a character one the
+        Characters section; neither presses anything on the way."""
         panel = FakePanelModule()
         maya_hotkeys._scene_module = lambda: panel
         maya_hotkeys.run("scene.weapon")
         self.assertEqual(panel.shown, 1)
+        self.assertEqual(panel.calls, [("show_weapons",)])
+        self.assertIn("Weapons", self.fake.messages[-1])
+        panel = FakePanelModule()
+        maya_hotkeys._scene_module = lambda: panel
+        maya_hotkeys.run("scene.character")
+        self.assertEqual(panel.shown, 1)
         self.assertEqual(panel.calls, [])
-        self.assertIn("Scene Setup", self.fake.messages[-1])
+        self.assertIn("Characters", self.fake.messages[-1])
 
     def test_overshoot_passes_the_shape(self):
         panel = FakePanelModule()

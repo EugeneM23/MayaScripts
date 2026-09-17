@@ -1,5 +1,5 @@
 SkeldarAnim — набор инструментов аниматора для Maya:
-UE Bridge, Scene Setup, Retarget, Hotkeys, Studio, Colour — все в одном
+UE Bridge, Characters, Weapons, Retarget, Hotkeys, Studio, Colour — все в одном
 окне SkeldarAnim: каждый инструмент — сворачиваемый раздел, окно
 прикрепляется к любой панели Maya (или отрывается) и запоминает место.
 
@@ -8,12 +8,12 @@ UE Bridge, Scene Setup, Retarget, Hotkeys, Studio, Colour — все в одно
 Установка:
   1. Распакуйте папку куда угодно.
   2. Перетащите файл install.py в открытое окно Maya (во вьюпорт).
-  3. Появится полка SkeldarAnim с семью кнопками: первая (SkeldarAnim)
-     открывает общее окно, остальные шесть открывают его на своём разделе.
+  3. Появится полка SkeldarAnim с восемью кнопками: первая (SkeldarAnim)
+     открывает общее окно, остальные семь открывают его на своём разделе.
      После этого распакованную папку можно удалить.
 
 Рабочий цикл:
-  Scene Setup > Add Character  — риг AdvancedSkeleton (Manny [rig]) в сцену;
+  Characters > Add Character   — риг AdvancedSkeleton (Manny [rig]) в сцену;
                                  каждый риг приходит в своём namespace
                                  (Manny_Rig, Manny_Rig1, ...), ригов в сцене
                                  может быть сколько угодно; чистые скелеты
@@ -33,7 +33,7 @@ UE Bridge, Scene Setup, Retarget, Hotkeys, Studio, Colour — все в одно
                                  запекание, перенос weapon/camera костей,
                                  камера, отключение. Исходный скелет
                                  остаётся.
-  Scene Setup > Add            — оружие в руку персонажа (выделите любой
+  Weapons > Add                — оружие в руку персонажа (выделите любой
                                  его контрол или кость).
 
 Какой риг рабочий: тот, чей контрол или кость выделены; если ничего не

@@ -54,8 +54,8 @@ try:
 
     # ---- 4-5: six collapsable frames in shelf order, all open
     frames = [s.frame for s in maya_hub.SECTIONS]
-    gate(4, "six frames exist", all(cmds.frameLayout(f, exists=True) for f in frames)
-         and len(frames) == 6,
+    gate(4, "seven frames exist", all(cmds.frameLayout(f, exists=True) for f in frames)
+         and len(frames) == 7,
          [s.label for s in maya_hub.SECTIONS])
     gate(5, "all open (memory says open)",
          not any(cmds.frameLayout(f, query=True, collapse=True) for f in frames))
@@ -63,7 +63,9 @@ try:
     # ---- 6-11: every section built its controls, and says it is open
     checks = (
         (6, "UE Bridge", ue._STATUS, ue.is_open),
-        (7, "Scene Setup", ss._STATUS, ss.is_open),
+        (7, "Characters + Weapons", ss._STATUS, lambda: ss.is_open()
+         and cmds.control(ss._CHARACTER_STATUS, exists=True)
+         and cmds.control(ss._BOUND, exists=True)),
         (8, "Retarget", maya_rig_retarget.STATUS, maya_rig_retarget.is_open),
         (9, "Hotkeys", maya_hotkeys.PANEL_BUTTON, maya_hotkeys.is_open),
         (10, "Studio", maya_vpstudio.STATUS, maya_vpstudio.is_open),
@@ -81,10 +83,10 @@ try:
     # ---- 13-15: a shelf button's baked command opens its section
     buttons = cmds.shelfLayout("SkeldarAnim", query=True, childArray=True) or []
     labels = [cmds.shelfButton(b, query=True, label=True) for b in buttons]
-    gate(13, "shelf: the hub first, then the six", labels[:7] == [
-        "SkeldarAnim", "UE Bridge", "Scene Setup", "Retarget", "Hotkeys",
-        "Studio", "Colour"], labels)
-    for key in ("uebridge", "scenesetup", "studio", "colour"):
+    gate(13, "shelf: the hub first, then the seven", labels[:8] == [
+        "SkeldarAnim", "UE Bridge", "Characters", "Weapons", "Retarget",
+        "Hotkeys", "Studio", "Colour"], labels)
+    for key in ("uebridge", "characters", "weapons", "studio", "colour"):
         cmds.frameLayout(maya_hub.section(key).frame, edit=True, collapse=True)
         maya_hub.remember(key, True)
     colour = [b for b, l in zip(buttons, labels) if l == "Colour"]

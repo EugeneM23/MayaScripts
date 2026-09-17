@@ -2,8 +2,8 @@
 
 Copies the toolset into <userAppDir>/scripts/SkeldarAnim and builds the
 SkeldarAnim shelf: the SkeldarAnim window (every tool a collapsible
-section, dock it anywhere -- 2026-09-17), then UE Bridge, Scene Setup,
-Retarget, Hotkeys, Studio, Colour, each opening that window on its own
+section, dock it anywhere -- 2026-09-17), then UE Bridge, Characters,
+Weapons, Retarget, Hotkeys, Studio, Colour, each opening that window on its own
 section -- plus the Rig Picker, the native OverRig panel and Overshoot
 when `skeldar_features` switches them on. Re-dragging updates in place.
 The unzipped folder can be deleted after installing.
@@ -60,8 +60,11 @@ _PYTHON_BUTTONS = (
     ("UE Bridge", "Import animations from the running Unreal editor onto "
      "the AdvancedSkeleton rig", "maya_uebridge", "show_window",
      "uebridge.png", ""),
-    ("Scene Setup", "Add the rig or a skeleton, a weapon in the hand",
-     "maya_scenesetup", "show_window", "scenesetup.png", ""),
+    ("Characters", "Add the AdvancedSkeleton rig or a bare skeleton, in "
+     "its own colour", "maya_scenesetup", "show_window", "characters.png", ""),
+    ("Weapons", "A weapon in the hand: sword, spear, dagger or any FBX; "
+     "the grip, the colour", "maya_scenesetup", "show_weapons",
+     "weapons.png", ""),
     ("Retarget", "Select the imported skeleton (and a control of the rig "
      "when there are several): the rig takes the clip - retarget, bake, "
      "weapon and camera bones carried, camera set up",

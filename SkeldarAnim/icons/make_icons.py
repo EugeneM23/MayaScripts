@@ -67,24 +67,27 @@ def draw_uebridge(path):
     image.save(path)
 
 
-def draw_scenesetup(path):
-    """A gear: the scene's settings (2026-09-07 - «шестеренку вместо меча»)."""
-    import math
+def draw_characters(path):
+    """Two stick figures side by side: characters in the scene."""
     image, painter = _canvas()
-    centre = QPointF(16, 16)
-    painter.setPen(_pen("#cfd8dc", 3.2))
-    for i in range(8):
-        angle = math.radians(i * 45.0)
-        inner = QPointF(16 + 7.6 * math.cos(angle), 16 + 7.6 * math.sin(angle))
-        outer = QPointF(16 + 11.2 * math.cos(angle),
-                        16 + 11.2 * math.sin(angle))
-        painter.drawLine(inner, outer)
+    _figure(painter, 11.0, "#e6e6e6")
+    _figure(painter, 21.0, "#f0a04b")
+    painter.end()
+    image.save(path)
+
+
+def draw_weapons(path):
+    """A sword: blade up the middle, a crossguard, a short grip."""
+    image, painter = _canvas()
     painter.setPen(_pen("#cfd8dc", 3.0))
-    painter.setBrush(Qt.NoBrush)
-    painter.drawEllipse(centre, 6.8, 6.8)
+    painter.drawLine(QPointF(16.0, 5.0), QPointF(16.0, 20.0))
+    painter.setPen(_pen("#f0a04b", 2.6))
+    painter.drawLine(QPointF(9.5, 20.5), QPointF(22.5, 20.5))
+    painter.setPen(_pen("#8a6a3a", 3.0))
+    painter.drawLine(QPointF(16.0, 22.0), QPointF(16.0, 27.5))
     painter.setPen(Qt.NoPen)
-    painter.setBrush(PLATE)
-    painter.drawEllipse(centre, 3.2, 3.2)
+    painter.setBrush(QColor("#cfd8dc"))
+    painter.drawEllipse(QPointF(16.0, 4.6), 1.7, 1.7)
     painter.end()
     image.save(path)
 
@@ -215,7 +218,8 @@ DRAWERS = {
     "picker.png": draw_picker,
     "hotkeys.png": draw_hotkeys,
     "uebridge.png": draw_uebridge,
-    "scenesetup.png": draw_scenesetup,
+    "characters.png": draw_characters,
+    "weapons.png": draw_weapons,
     "retarget.png": draw_retarget,
     "overshoot.png": draw_overshoot,
     "vpstudio.png": draw_vpstudio,

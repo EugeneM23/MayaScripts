@@ -81,10 +81,11 @@ never in the animator's scene); the installed copy refreshed and smoked
 live the same evening (2129 unit tests).
 
 **The shelf** (since 2026-09-08): UE Bridge, Scene Setup, Retarget,
-Hotkeys, Studio, Colour — **and since 2026-09-17 all six live as
-collapsible sections of ONE dockable window, `maya_hub`, with a seventh
-button `SkeldarAnim` ahead of them that opens it; see "The SkeldarAnim
-hub" below.** **`skeldar_features.py`** (stdlib, three booleans
+Hotkeys, Studio, Colour — **and since 2026-09-17 all of them live as
+collapsible sections of ONE dockable window, `maya_hub`, with a button
+`SkeldarAnim` ahead of them that opens it; Scene Setup is two sections
+and two buttons there, Characters and Weapons (eight buttons in all); see
+"The SkeldarAnim hub" below.** **`skeldar_features.py`** (stdlib, three booleans
 `OVERRIG` / `PICKER` / `OVERSHOOT`, all False) gates the OverRig panel
 button and its 84 hotkey rows, the Rig Picker button and its 6 rows and
 handing a new character to the picker (`character.connect`), and the
@@ -385,6 +386,24 @@ into view through `evalDeferred` (heights are real only after the layout
 runs; measured landing at the scroll's maximum for the bottom section).
 A section whose builder raises gets a text with the error and the other
 five still build.
+
+**Scene Setup is TWO sections, Characters and Weapons** (the same evening,
+«декомпозируем scenesetup на characters и weapons»; the animator chose the
+UI-only split over splitting the module): `window.build_characters_panel`
+(the «Character: …» header, the skeleton/rig dropdown, its colour, Add
+Character, its own line `mayaSceneSetupCharacterStatus`) and
+`window.build_weapons_panel` (weapon dropdown, FBX, Add, Remove Weapon,
+Rotate/Translate, its colour, the line `mayaSceneSetupStatus`). One
+module still, because the two halves share `refresh`, the character
+resolution and the colour scan; `_status(message, control)` and
+`_run(action, status)` route each press to its own line. **Weapons must
+follow Characters in `SECTIONS`**: the weapons builder's `refresh` writes
+the Characters header. `show_window()` opens Characters, `show_weapons()`
+Weapons (the package forwards both); the shelf has `Characters` and
+`Weapons` buttons in place of `Scene Setup` (eight in all), the hotkey
+rows `scene.weapon`/`scene.remove_weapon` open the Weapons section when
+nothing is built (`_scene(..., section="weapons")`), and `window.weapons`
+is a new opener row.
 
 **Every tool gained `build_panel()`** — its controls into whatever layout
 is current, same control NAMES as before, so every callback, `refresh`,
@@ -3829,10 +3848,11 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with seven buttons — since 2026-09-17 **SkeldarAnim** (the
-hub, `maya_hub.show`) ahead of **UE Bridge, Scene Setup, Retarget,
-Hotkeys, Studio, Colour**, each of which opens the hub on its own
-section; the Rig Picker, the native
+**SkeldarAnim** with eight buttons — since 2026-09-17 **SkeldarAnim** (the
+hub, `maya_hub.show`) ahead of **UE Bridge, Characters, Weapons,
+Retarget, Hotkeys, Studio, Colour**, each of which opens the hub on its
+own section (Characters and Weapons are Scene Setup's two halves,
+`maya_scenesetup.show_window` / `show_weapons`); the Rig Picker, the native
 OverRig panel and Overshoot come back with the three flags in
 `skeldar_features.py` (`install.features()` reads it from beside
 `install.py`, `_PYTHON_BUTTONS` rows carry the flag's name). The zip is
