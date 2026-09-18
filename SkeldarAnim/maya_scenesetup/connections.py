@@ -103,7 +103,8 @@ HAND_OF = {"Hand_R": "R", "Hand_L": "L"}
 MARKER = "skeldarHandLink"          # on our hand constraints: the proxy's UUID
 PROXY_MARKER = "skeldarHandProxy"   # on the proxy locator: the side it carries
 PROXY_NAME = "handProxy_{0}"
-PROXY_SCALE = 6.0                    # the locator's local scale, cm
+PROXY_SCALE = 8.4                    # the locator's local scale, cm (+40 %)
+HIDDEN_VIS = "skeldarHiddenVis"      # on our constraint: the object's visibility before
 STATIC_TOLERANCE = 1e-6
 SIDES = ("L", "R")
 SIDE_LABEL = {"R": "right hand", "L": "left hand"}
@@ -324,6 +325,14 @@ def weapon_of(rig, bones=None):
             found = attach.find_attached(hand)
             if found:
                 return cmds.ls(found, long=True)[0]
+    # out in world with no bone link left (somebody deleted it): the weapon
+    # is still whatever this rig's hand proxies hang in
+    prefix = rig.namespace + ":"
+    for proxy in proxies():
+        if cmds.getAttr(proxy + "." + PROXY_MARKER).startswith(prefix):
+            parent = cmds.listRelatives(proxy, parent=True, fullPath=True) or []
+            if parent:
+                return parent[0]
     return None
 
 
@@ -388,25 +397,65 @@ def _values_now(control, now):
     return values
 
 
+def proxies():
+    """Every proxy locator of ours in the scene, by attribute (a name
+    pattern would miss the ones in a namespace - `*.attr` does not cross
+    a colon, which is how proxies once survived a bake)."""
+    out = []
+    for shape in cmds.ls(type="locator", long=True) or []:
+        node = (cmds.listRelatives(shape, parent=True, fullPath=True) or [None])[0]
+        if node and cmds.attributeQuery(PROXY_MARKER, node=node, exists=True):
+            out.append(node)
+    return out
+
+
 def proxy_of(rig, side):
-    """The side's proxy locator, by attribute, or None."""
-    for node in cmds.ls("*." + PROXY_MARKER, objectsOnly=True, long=True) or []:
-        if cmds.getAttr(node + "." + PROXY_MARKER) == "%s:%s" % (rig.namespace, side):
+    """The side's proxy locator, or None."""
+    tag = "%s:%s" % (rig.namespace, side)
+    for node in proxies():
+        if cmds.getAttr(node + "." + PROXY_MARKER) == tag:
             return node
     return None
 
 
-def _make_proxy(rig, side, target):
-    """A locator INSIDE the weapon's geometry, marked with its side. The one
-    place this module re-parents anything - and it is our own locator."""
-    proxy = cmds.spaceLocator(name=maya_rigs.node(rig, PROXY_NAME.format(side)))[0]
+def orphan_proxies():
+    """Proxies no constraint of ours points at any more - debris a bake
+    left behind (the first build lost them behind a namespace colon)."""
+    pointed = set()
+    for con in cmds.ls(type="parentConstraint", long=True) or []:
+        if cmds.attributeQuery(MARKER, node=con, exists=True):
+            pointed.add(cmds.getAttr(con + "." + MARKER))
+    return [node for node in proxies()
+            if cmds.ls(node, uuid=True)[0] not in pointed]
+
+
+def sweep_orphans():
+    """Delete the orphan proxies. Returns how many. Called at the front of
+    every Apply and BakeAcross, never from a refresh."""
+    orphans = orphan_proxies()
+    for node in orphans:
+        if cmds.objExists(node):
+            cmds.delete(node)
+    return len(orphans)
+
+
+def proxy_for(constraint):
+    """The proxy our constraint points at (its UUID is the mark), or None."""
+    uuid = cmds.getAttr(constraint + "." + MARKER)
+    found = cmds.ls(uuid, long=True) if uuid else []
+    return found[0] if found else None
+
+
+def _make_proxy(name, parent, tag):
+    """A locator INSIDE `parent`, marked with `tag`. The one place this
+    module re-parents anything - and it is our own locator."""
+    proxy = cmds.spaceLocator(name=name)[0]
     cmds.setAttr(proxy + ".localScale", PROXY_SCALE, PROXY_SCALE, PROXY_SCALE,
                  type="double3")
-    proxy = cmds.parent(proxy, target, relative=True)[0]
+    proxy = cmds.parent(proxy, parent, relative=True)[0]
     proxy = cmds.ls(proxy, long=True)[0]
     cmds.addAttr(proxy, longName=PROXY_MARKER, dataType="string")
-    cmds.setAttr(proxy + "." + PROXY_MARKER, "%s:%s" % (rig.namespace, side),
-                 type="string")
+    cmds.setAttr(proxy + "." + PROXY_MARKER, tag, type="string")
     return proxy
 
 
@@ -426,40 +475,75 @@ def _bake_onto(source, proxy, span):
             cmds.setAttr(plug, value)
 
 
-def _follow(rig, side, target, now, span):
-    """The proxy inside the weapon carrying the hand's own track, the
-    control's keys cut and its pose written back, the control constrained
-    to the proxy with no offset, our mark on it; the arm in IK."""
-    plug = _blend_plug(rig, side)
-    if plug and not cmds.listConnections(plug, source=True, destination=False):
-        cmds.setAttr(plug, IK_BLEND)
-    control = _control(rig, side)
-    proxy = _make_proxy(rig, side, target)
-    _bake_onto(control, proxy, span)
-    values = _values_now(control, now)
-    cmds.cutKey(control, attribute=list(CHANNELS), clear=True)
+def _set_visible(node, visible):
+    """Best effort: a visibility channel may be locked or driven."""
+    try:
+        cmds.setAttr(node + ".visibility", bool(visible))
+        return True
+    except RuntimeError:
+        return False
+
+
+def attach_to_proxy(obj, parent, span, name, tag):
+    """`obj` rides a proxy inside `parent`: the proxy created and baked from
+    the object's own world track, the object's keys cut and its pose written
+    back, the object constrained to the proxy with no offset, hidden (the
+    animator's ask - the constrained control only gets in the way of the
+    proxy), our mark and its old visibility on the constraint."""
+    now = cmds.currentTime(query=True)
+    proxy = _make_proxy(name, parent, tag)
+    _bake_onto(obj, proxy, span)
+    values = _values_now(obj, now)
+    cmds.cutKey(obj, attribute=list(CHANNELS), clear=True)
     for channel, value in values.items():
-        cmds.setAttr(control + "." + channel, value)
-    con = cmds.parentConstraint(proxy, control, maintainOffset=False)[0]
+        cmds.setAttr(obj + "." + channel, value)
+    con = cmds.parentConstraint(proxy, obj, maintainOffset=False)[0]
     con = cmds.ls(con, long=True)[0]
     cmds.addAttr(con, longName=MARKER, dataType="string")
     cmds.setAttr(con + "." + MARKER, cmds.ls(proxy, uuid=True)[0], type="string")
-    return con
+    cmds.addAttr(con, longName=HIDDEN_VIS, attributeType="short")
+    cmds.setAttr(con + "." + HIDDEN_VIS, int(bool(cmds.getAttr(obj + ".visibility"))))
+    _set_visible(obj, False)
+    return proxy, con
+
+
+def detach_from_proxy(obj, span):
+    """Bake `obj` where its proxy carried it, drop our constraint, delete the
+    proxy, show the object again. Returns the number of proxies removed."""
+    cons = our_constraints(obj)
+    if not cons:
+        return 0
+    cmds.bakeResults([obj], attribute=list(CHANNELS),
+                     time=(span[0], span[1]), simulation=True, sampleBy=1,
+                     preserveOutsideKeys=True)
+    removed = 0
+    visible = True
+    for con in cons:
+        proxy = proxy_for(con)
+        if cmds.attributeQuery(HIDDEN_VIS, node=con, exists=True):
+            visible = bool(cmds.getAttr(con + "." + HIDDEN_VIS))
+        if cmds.objExists(con):
+            cmds.delete(con)
+        if proxy and cmds.objExists(proxy):
+            cmds.delete(proxy)
+            removed += 1
+    _set_visible(obj, visible)
+    return removed
+
+
+def _follow(rig, side, target, span):
+    """The hand's IK control onto a proxy inside the weapon; the arm in IK."""
+    plug = _blend_plug(rig, side)
+    if plug and not cmds.listConnections(plug, source=True, destination=False):
+        cmds.setAttr(plug, IK_BLEND)
+    return attach_to_proxy(_control(rig, side), target, span,
+                           maya_rigs.node(rig, PROXY_NAME.format(side)),
+                           "%s:%s" % (rig.namespace, side))
 
 
 def _release(rig, side, span):
-    """Bake the control where the proxy carried it, drop our constraint and
-    the proxy."""
-    control = _control(rig, side)
-    cmds.bakeResults([control], attribute=list(CHANNELS),
-                     time=(span[0], span[1]), simulation=True, sampleBy=1,
-                     preserveOutsideKeys=True)
-    for con in our_constraints(control):
-        if cmds.objExists(con):
-            cmds.delete(con)
-    proxy = proxy_of(rig, side)
-    if proxy and cmds.objExists(proxy):
-        cmds.delete(proxy)
+    """The hand baked where its proxy carried it, constraint and proxy gone."""
+    return detach_from_proxy(_control(rig, side), span)
 
 
 def _drive_bone(weapon, bone):
@@ -524,10 +608,10 @@ def apply(wanted, rig=None):
         if gate:
             return gate
 
-    now = cmds.currentTime(query=True)
     uuid = cmds.ls(weapon, uuid=True)[0]
     cmds.undoInfo(openChunk=True, chunkName="Connections: apply")
     try:
+        sweep_orphans()
         span = _span(weapon, [_control(rig, side) for side in SIDES])
         for step, side in steps:
             weapon = cmds.ls(uuid, long=True)[0]
@@ -545,8 +629,127 @@ def apply(wanted, rig=None):
                         bonedrive.unlink(bones[was][1])
                     _drive_bone(weapon, bone)
             elif step == "follow":
-                _follow(rig, side, attach.model_root(weapon), now, span)
+                _follow(rig, side, attach.model_root(weapon), span)
         return applied_message(steps, read_scheme(rig, bones))
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+
+def across_plan(paths):
+    """(parent, children) for BakeAcross from the selection in order, or
+    (None, refusal). The LAST selected is the parent, everything before it
+    rides. Pure."""
+    paths = list(paths)
+    if len(paths) < 2:
+        return None, "select the objects to attach, then the parent LAST (two or more)"
+    parent, children = paths[-1], paths[:-1]
+    for child in children:
+        if child == parent or parent.startswith(child + "|"):
+            return None, "%s is above the parent %s - a cycle" % (
+                child.split("|")[-1], parent.split("|")[-1])
+        if child.startswith(parent + "|"):
+            return None, "%s is already inside %s" % (
+                child.split("|")[-1], parent.split("|")[-1])
+    return parent, children
+
+
+def across_message(children, parent):
+    return "BakeAcross: %d object(s) ride proxies inside %s (hidden; key the proxies)" % (
+        len(children), parent.split("|")[-1])
+
+
+def release_message(count, proxies):
+    return "Released %d object(s), %d proxy(ies) removed, objects shown" % (count, proxies)
+
+
+def _transforms(paths):
+    """The selection as transform LONG paths, shapes resolved to their
+    transforms, duplicates dropped. Long, or `across_plan`'s cycle check -
+    a prefix test on paths - reads a short name as outside everything."""
+    out = []
+    for path in paths:
+        found = cmds.ls(path, long=True) or []
+        if not found:
+            continue
+        path = found[0]
+        if cmds.objectType(path, isAType="transform"):
+            out.append(path)
+        else:
+            parent = cmds.listRelatives(path, parent=True, fullPath=True) or []
+            if parent and cmds.objectType(parent[0], isAType="transform"):
+                out.append(parent[0])
+    seen = []
+    for path in out:
+        if path not in seen:
+            seen.append(path)
+    return seen
+
+
+def bake_across(selection=None):
+    """The animator's ask: every selected object rides the LAST selected
+    one through a proxy locator of its own - its track kept, keyable on
+    the proxy - the way a following hand rides the weapon."""
+    if selection is None:
+        selection = cmds.ls(selection=True, long=True) or []
+    parent, children = across_plan(_transforms(selection))
+    if parent is None:
+        return children
+    for child in children:
+        if our_constraints(child):
+            return "%s already rides a proxy - Release it first" % child.split("|")[-1]
+    keys = []
+    for node in [parent] + children:
+        keys.extend(cmds.keyframe(node, query=True, timeChange=True) or [])
+    span = union_range((cmds.playbackOptions(query=True, min=True),
+                        cmds.playbackOptions(query=True, max=True)), keys)
+    cmds.undoInfo(openChunk=True, chunkName="BakeAcross")
+    try:
+        sweep_orphans()
+        for child in children:
+            attach_to_proxy(child, parent, span,
+                            child.split("|")[-1].split(":")[-1] + "_proxy",
+                            cmds.ls(child, uuid=True)[0])
+        cmds.select(parent, replace=True)
+        return across_message(children, parent)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+
+def release_across(selection=None):
+    """Every selected object that rides one of our proxies is baked where
+    the proxy carried it and freed; a selected PROXY frees its rider."""
+    if selection is None:
+        selection = cmds.ls(selection=True, long=True) or []
+    riders = []
+    for node in _transforms(selection):
+        if our_constraints(node):
+            riders.append(node)
+        elif cmds.attributeQuery(PROXY_MARKER, node=node, exists=True):
+            uuid = cmds.ls(node, uuid=True)[0]
+            for con in cmds.ls(type="parentConstraint", long=True) or []:
+                if cmds.attributeQuery(MARKER, node=con, exists=True) \
+                        and cmds.getAttr(con + "." + MARKER) == uuid:
+                    rider = (cmds.listRelatives(con, parent=True, fullPath=True) or [None])[0]
+                    if rider and rider not in riders:
+                        riders.append(rider)
+    if not riders:
+        return "nothing selected rides a proxy of ours"
+    keys = []
+    for node in riders:
+        keys.extend(cmds.keyframe(node, query=True, timeChange=True) or [])
+        for con in our_constraints(node):
+            proxy = proxy_for(con)
+            if proxy:
+                keys.extend(cmds.keyframe(proxy, query=True, timeChange=True) or [])
+    span = union_range((cmds.playbackOptions(query=True, min=True),
+                        cmds.playbackOptions(query=True, max=True)), keys)
+    cmds.undoInfo(openChunk=True, chunkName="Release across")
+    try:
+        removed = 0
+        for node in riders:
+            removed += detach_from_proxy(node, span)
+        cmds.select(riders, replace=True)
+        return release_message(len(riders), removed)
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -661,6 +864,14 @@ def _press_apply_all(*_args):
     return _run(lambda: apply(scheme_from_menus(menus())))
 
 
+def _press_bake_across(*_args):
+    return _run(lambda: bake_across())
+
+
+def _press_release_across(*_args):
+    return _run(lambda: release_across())
+
+
 def _press_connect(*_args):
     return _run(lambda: connect())
 
@@ -674,14 +885,6 @@ def build_panel():
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", 8))
     cmds.text(HEADER, label="", align="left", wordWrap=True, height=36)
-    cmds.text(label="Pick each node's parent. A hand's parent Weapon means "
-                    "the hand follows the weapon (IK); the weapon's parent "
-                    "is the hand it hangs in. Apply on a row changes that "
-                    "link only; Apply all brings the scene to all three. "
-                    "Released hands are baked, the weapon moves through "
-                    "OverRig with its animation re-baked, followers take "
-                    "the grip of the current frame.",
-              align="left", wordWrap=True, height=88)
     for row, choices in (("R", HAND_CHOICES), ("L", HAND_CHOICES),
                          ("W", WEAPON_CHOICES)):
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
@@ -702,6 +905,22 @@ def build_panel():
                 backgroundColor=(0.45, 0.70, 0.50),
                 annotation="bring the scene to all three parents",
                 command=_press_apply_all)
+    cmds.separator(height=8, style="in")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 4)])
+    cmds.button(label="BakeAcross", height=30,
+                backgroundColor=(0.45, 0.60, 0.70),
+                annotation="Select the objects, then the parent LAST: each "
+                           "object rides a proxy locator inside the parent "
+                           "with its own track baked onto it, and is hidden. "
+                           "Key the proxies.",
+                command=_press_bake_across)
+    cmds.button(label="Release", height=30, width=110,
+                annotation="Selected objects (or their proxies) baked where "
+                           "the proxies carried them, proxies removed, "
+                           "objects shown again",
+                command=_press_release_across)
+    cmds.setParent("..")
     cmds.text(STATUS, label="", align="left", wordWrap=True, height=36)
     cmds.setParent("..")
     try:

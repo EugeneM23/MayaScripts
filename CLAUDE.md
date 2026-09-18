@@ -509,6 +509,42 @@ the proxy too (`proxy_of`, by attribute). The bake span is playback ∪ the
 weapon's keys ∪ the controls' keys. 2167 unit tests; the verify gained
 four proxy gates (26–29) and still awaits a rig-free scene.
 
+**Five fixes after first use, and BakeAcross** (the same night — the
+spec's addendum 3): proxies are found **by attribute, never by
+`cmds.ls("*.attr")`** (trap 70 below; the old lookup left
+`Manny_Rig:handProxy_*` behind after every bake), `sweep_orphans()` at the
+front of every Apply/BakeAcross; **the rider is hidden while it rides**
+(`visibility` off, the old value on the constraint as `skeldarHiddenVis`,
+back on release); `PROXY_SCALE` 8.4; no description text in the section;
+**BakeAcross** — every selected object rides the LAST selected one through
+a proxy of its own (`attach_to_proxy`, generic; `across_plan` pure:
+parent = last, refusals for fewer than two, a cycle, a child inside the
+parent, a rider already riding), **Release** beside it (riders or their
+proxies baked, freed, shown). `_transforms` resolves the selection to LONG
+paths first — the cycle check is a path-prefix test and a short name read
+as outside everything (a cube got attached to its own proxy). **Proof,
+live on the animator's own rig** («риг в сцене для тебя»):
+`verify_connections.py` **39 of 39 gates, 2026-09-18**, the scene left as
+found (sword in the right hand, linked, controls shown, no keys, no
+proxies) — the borrowed-rig cleanup deletes only the sandbox nodes and our
+proxies and cuts the test keys by name: a blanket UUID diff once took the
+sword's link along with the baked curves. Gates measure the IK CONTROLS,
+not the hand bone: the bone follows only as far as the arm reaches (5.658
+of a 10 cm nudge at the animator's grip), and a proxy key on a SCALED
+weapon moves the control exactly as far as the proxy moved in world
+(3.753 for +5 local, both). 2174 unit tests.
+
+70. **`cmds.ls("*.attr")` does not cross a namespace colon.** A `*`
+    pattern matches a plain `handProxy_L.skeldarHandProxy` and never
+    `Manny_Rig:handProxy_L.skeldarHandProxy`; `"*:*.attr"` reaches one
+    level and no deeper. Every rig lives in a namespace here (2026-09-08),
+    so a by-attribute lookup written with a pattern finds nothing of ours —
+    and fails as "nothing to clean up", silently. Walk the candidates by
+    type (`ls(type="locator")`) and ask `attributeQuery` on each. The one
+    other pattern lookup in the plugin, `maya_vpstudio.find_rig`'s
+    `ls("*.skeldarVpStudio")`, works only because the studio group stands
+    outside every namespace.
+
 **The split is the design.** The AdvancedSkeleton IK hand controls
 `IKArm_R/L` live at `CustomOrientIKArm_*|IKExtraArm_*|IKArm_*` and that
 place is load-bearing, so **the hands are constrained, never re-parented**

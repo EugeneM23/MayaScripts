@@ -183,6 +183,61 @@ a still hand's proxy carries no keys; a +5 key on the proxy moves the hand
 5.0 with the weapon unmoved; the released hand's proxy is gone while the
 other's stays.
 
+## Addendum 3 — five fixes after first use, and BakeAcross (2026-09-18, night)
+
+The animator, after using the proxies: «после бейка нужно удалять прокси
+локаторы; если бейкаем на прокси, приконстрейненный контрол давай будем
+прятать; локатор на 40 % больше; весь текст описания уберём из вкладки;
+отдельная кнопка BakeAcross — все выделенные объекты привязываются к
+последнему выделенному при помощи наших прокси-локаторов». And: «риг в
+сцене для тебя, можешь тестировать на нём».
+
+1. **The proxies did survive a bake — a real bug.** `proxy_of` looked them
+   up with `cmds.ls("*.skeldarHandProxy")`, and a `*` pattern does not
+   cross a namespace colon: `Manny_Rig:handProxy_L` was never found, so
+   the release deleted the constraint and left the locator. Every lookup is
+   by attribute now (`proxies()` walks the scene's locators), a test pins
+   that no `cmds.ls("*.` remains, and `sweep_orphans()` — proxies no
+   constraint of ours points at — runs at the front of every Apply and
+   BakeAcross (never from a refresh). The animator's scene held two such
+   orphans; the verify swept them.
+2. **The rider is hidden while it rides** (`visibility` off, the previous
+   value kept on our constraint as `skeldarHiddenVis`, put back on
+   release; best effort — a locked or driven visibility is skipped).
+3. `PROXY_SCALE` 6.0 → **8.4**.
+4. The description paragraph left the section: header, three rows, Apply
+   all, the BakeAcross row, status.
+5. **BakeAcross**: every selected object rides the LAST selected one
+   through a proxy of its own (`attach_to_proxy`, the same machinery the
+   hands use, now generic: `_make_proxy` / `_bake_onto` /
+   `detach_from_proxy`). `across_plan` (pure) takes the parent as the last
+   selected and refuses fewer than two, a cycle (a child above the parent)
+   and a child already inside the parent; a child already riding a proxy
+   is refused («Release it first»). **Release** beside it bakes the
+   selected riders (or the riders of selected proxies) where their proxies
+   carried them, deletes constraints and proxies, and shows the objects
+   again. `_transforms` resolves the selection to LONG paths first — the
+   cycle check is a path-prefix test and a short name read as outside
+   everything (measured: a cube attached to its own proxy).
+
+**Proof, live on the animator's own rig** (their leave):
+`verify_connections.py` **39 of 39 gates, 2026-09-18**, borrowing the
+scene's sole rig (test keys cut and blends restored afterwards; the
+weapon bones' constraints protected from the cleanup diff, and on a
+borrowed rig only the sandbox nodes and our proxies are deleted — a
+blanket UUID diff once took the sword's link with the baked curves).
+Measured: the hand's track through a follow 0.000000; a proxy key moving
+the IK control exactly as far as the proxy moved in world (the weapon is
+scaled, so +5 local was 3.753 world for both); a 10 cm weapon nudge moving
+both IK controls 10.000; the hand BONE following only as far as the arm
+reaches (5.658 of a 10 nudge at the animator's grip — an IK limit, so the
+gates measure controls); the weapon into the left hand driving `weapon_l`
+to 0.000000; BakeAcross carrying a keyed locator's track to 0.000000 and a
+still one's proxy with no keys; Release restoring both and their
+visibility. Two gate lessons: a still hand against a MOVING weapon has a
+keyed proxy (the relative track is what is kept), and a fixture that picks
+"the first proxy in the scene" picks somebody else's.
+
 ## Testing
 
 Unit: the pure halves (`hands_to_connect`, `blend_refusal`, `union_range`,

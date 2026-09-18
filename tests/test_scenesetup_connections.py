@@ -245,11 +245,27 @@ class Panel(unittest.TestCase):
         self.assertEqual(self.fake.menu_items[cx.MENU["W"]],
                          ["World", "Hand_R", "Hand_L"])
         self.assertEqual([c[2]["label"] for c in self._buttons()],
-                         ["Apply", "Apply", "Apply", "Apply all"])
+                         ["Apply", "Apply", "Apply", "Apply all",
+                          "BakeAcross", "Release"])
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "text" and not c[2].get("edit")]
         for wanted in ("Hand_R", "Hand_L", "Weapon"):
             self.assertIn(wanted, labels)
+        #  no description paragraph (the animator: «весь текст описания
+        #  убираем») - the header, the three row labels and the status
+        self.assertEqual(len(labels), 5)
+
+    def test_bake_across_and_release_press_the_module(self):
+        asked = []
+        saved = (cx.bake_across, cx.release_across)
+        cx.bake_across = lambda selection=None: asked.append("bake") or "done"
+        cx.release_across = lambda selection=None: asked.append("release") or "done"
+        try:
+            self._buttons()[4][2]["command"]()
+            self._buttons()[5][2]["command"]()
+        finally:
+            cx.bake_across, cx.release_across = saved
+        self.assertEqual(asked, ["bake", "release"])
         self.assertIn(cx.HEADER, self.fake.children)
         self.assertIn(cx.STATUS, self.fake.children)
         self.assertEqual(self.fake.windows, {})
@@ -350,11 +366,25 @@ class Boundaries(unittest.TestCase):
         offset, both marked by attribute."""
         source = self._source()
         self.assertEqual(cx.PROXY_MARKER, "skeldarHandProxy")
-        self.assertIn("_bake_onto(control, proxy, span)", source)
-        self.assertIn("cmds.parentConstraint(proxy, control, maintainOffset=False)",
+        self.assertIn("_bake_onto(obj, proxy, span)", source)
+        self.assertIn("cmds.parentConstraint(proxy, obj, maintainOffset=False)",
                       source)
         self.assertIn("is_constant(values)", source)
-        self.assertIn("proxy_of(rig, side)", source)
+        self.assertIn("def proxy_of(rig, side)", source)
+        #  the proxies are found by ATTRIBUTE, never by a name pattern: a
+        #  `*.attr` pattern does not cross a namespace colon, which is how
+        #  proxies once survived a bake in the animator's scene
+        self.assertNotIn('cmds.ls("*.', source)
+
+    def test_the_rider_is_hidden_and_shown_again(self):
+        source = self._source()
+        self.assertIn("_set_visible(obj, False)", source)
+        self.assertIn("_set_visible(obj, visible)", source)
+        self.assertEqual(cx.HIDDEN_VIS, "skeldarHiddenVis")
+
+    def test_the_proxy_is_forty_percent_bigger(self):
+        self.assertAlmostEqual(cx.PROXY_SCALE, 6.0 * 1.4)
+
 
     def test_no_mel_eval_of_our_own(self):
         self.assertNotIn("mel.eval", self._source())
@@ -384,6 +414,32 @@ class Boundaries(unittest.TestCase):
         import install
         labels = [row[0] for row in install._PYTHON_BUTTONS]
         self.assertNotIn("Connections", labels)
+
+
+class BakeAcross(unittest.TestCase):
+    """Every selected object rides the LAST selected through a proxy."""
+
+    def test_the_last_selected_is_the_parent(self):
+        parent, children = cx.across_plan(["|a", "|b", "|c"])
+        self.assertEqual((parent, children), ("|c", ["|a", "|b"]))
+
+    def test_fewer_than_two_is_a_refusal(self):
+        parent, text = cx.across_plan(["|a"])
+        self.assertIsNone(parent)
+        self.assertIn("LAST", text)
+
+    def test_a_cycle_is_refused_by_name(self):
+        parent, text = cx.across_plan(["|a", "|a|b"])       # parent inside child
+        self.assertIsNone(parent)
+        self.assertIn("cycle", text)
+        parent, text = cx.across_plan(["|c|d", "|c"])       # child inside parent
+        self.assertIsNone(parent)
+        self.assertIn("already inside", text)
+
+    def test_messages(self):
+        self.assertIn("2 object(s) ride proxies inside sword",
+                      cx.across_message(["|a", "|b"], "|x|sword"))
+        self.assertIn("2 proxy(ies) removed", cx.release_message(2, 2))
 
 
 if __name__ == "__main__":
