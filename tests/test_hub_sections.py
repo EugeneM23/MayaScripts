@@ -58,6 +58,12 @@ class SceneSetup(unittest.TestCase):
         for name in (scenesetup._BOUND, scenesetup._CHARACTER,
                      scenesetup._CHARACTER_COLOUR, scenesetup._CHARACTER_STATUS):
             self.assertIn(name, self.after_characters, name)
+
+    def test_characters_has_a_camera_setup_button(self):
+        """2026-09-18: the retarget's camera step, by hand, on camera_root."""
+        labels = [c[2].get("label") for c in self.fake.calls if c[0] == "button"]
+        self.assertIn("Camera Setup", labels)
+        self.assertLess(labels.index("Add Character"), labels.index("Camera Setup"))
         for name in (scenesetup._MENU, scenesetup._STATUS, scenesetup._ROTATE):
             self.assertNotIn(name, self.after_characters, name)
 

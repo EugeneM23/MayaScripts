@@ -31,6 +31,7 @@ from maya_overrig import aimrig
 
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
+from maya_scenesetup import camera
 from maya_scenesetup import catalog
 from maya_scenesetup import character
 from maya_scenesetup import colour as colouring
@@ -424,6 +425,38 @@ def add_character():
     _status(message, _CHARACTER_STATUS)
 
 
+def camera_span(bone):
+    """Playback range and the bone's own keys, whole frames."""
+    keys = cmds.keyframe(bone, query=True, timeChange=True) or []
+    start, end = bonedrive.union_range(cmds.playbackOptions(query=True, min=True),
+                                       cmds.playbackOptions(query=True, max=True),
+                                       keys)
+    return start, end
+
+
+def camera_setup():
+    """Camera Setup on the character's camera_root (2026-09-18, the
+    animator: «в наш риг нужно добавить камеру так же, как мы делаем при
+    ретаргете, только camera root»): the bone's animation baked onto a
+    camera, the bone driven by it from then on. A second press bakes the
+    bone back and removes the camera - the retarget's own step, by hand."""
+    root = _bound_root()
+    if not root:
+        _status(NO_CHARACTER, _CHARACTER_STATUS)
+        return
+    bone = skeleton.resolve_bone(root, camera.BONE)
+    if not bone:
+        _status(missing_bone_message(root, camera.BONE), _CHARACTER_STATUS)
+        return
+    start, end = camera_span(bone)
+    if camera.camera_for(bone):
+        camera.teardown(bone, start, end)
+        _status("camera removed - %s baked back and free" % camera.leaf(bone),
+                _CHARACTER_STATUS)
+        return
+    _status(camera.setup(bone, start, end), _CHARACTER_STATUS)
+
+
 def recolour_character():
     """Put the swatch's colour on the connected character.
 
@@ -642,6 +675,13 @@ def build_characters_panel():
                            "you like; the rig once per scene.",
                 command=lambda *_args: _run(add_character,
                                             _CHARACTER_STATUS))
+    cmds.button(label="Camera Setup", height=24,
+                annotation="A camera on the character's camera_root, the "
+                           "bone's animation baked onto it, the bone driven "
+                           "by the camera from then on - what the retarget "
+                           "does at its end. A second press bakes the bone "
+                           "back and removes the camera.",
+                command=lambda *_args: _run(camera_setup, _CHARACTER_STATUS))
     cmds.text(_CHARACTER_STATUS, label="", align="left", wordWrap=True,
               height=36)
 

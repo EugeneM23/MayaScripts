@@ -26,7 +26,11 @@ import math
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
-BONE = "camera_bone"
+# camera_root since 2026-09-18 (the animator: «не camera bone привязывать к
+# камере, а camera root»). At rest the two coincide on the rig (world
+# matrices equal to 0.000000, measured), camera_bone being camera_root's
+# child, so the measured axis turn below holds for either.
+BONE = "camera_root"
 MARKER = "mayaSceneSetupCamera"
 CAMERA_NAME = "SceneSetup_camera"
 
@@ -42,9 +46,9 @@ FOCAL = 16.493949366848657
 CHANNELS = tuple(channel + axis
                  for channel in ("translate", "rotate") for axis in "XYZ")
 
-NO_BONE = "no camera_bone in the scene"
-AMBIGUOUS_BONE = ("several camera_bone candidates - connect the picker to the "
-                  "character you mean")
+NO_BONE = "no camera_root in the scene"
+AMBIGUOUS_BONE = ("several camera_root candidates - select any control or "
+                  "bone of the character you mean")
 
 
 # ------------------------------------------------------------------ algebra

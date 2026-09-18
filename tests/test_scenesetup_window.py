@@ -64,15 +64,15 @@ class AimRefusals(unittest.TestCase):
         self.assertNotEqual(window.AIMED_NO_ADD, window.LINKED_NO_ADD)
 
     def test_the_overrig_era_callbacks_are_gone(self):
-        """Connect Arms, Disconnect Arms, Add Aim and Camera Setup left the
-        panel on 2026-09-07 (the camera setup runs inside the retarget's
-        Bake). Gone, not disabled: a hotkey row pressing a callback that is
-        not there fails at the worst moment, so the rows went the same day."""
-        for name in ("connect_arms", "disconnect_arms", "add_aim",
-                     "camera_setup"):
+        """Connect Arms, Disconnect Arms and Add Aim left the panel on
+        2026-09-07. Gone, not disabled: a hotkey row pressing a callback that
+        is not there fails at the worst moment, so the rows went the same
+        day. Camera Setup came BACK on 2026-09-18 as the retarget's own
+        camera step by hand, on camera_root."""
+        for name in ("connect_arms", "disconnect_arms", "add_aim"):
             self.assertFalse(hasattr(window, name), name)
         for name in ("add_character", "add_weapon", "remove_weapon",
-                     "recolour_character", "recolour_weapon"):
+                     "recolour_character", "recolour_weapon", "camera_setup"):
             self.assertTrue(callable(getattr(window, name)), name)
 
 

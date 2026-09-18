@@ -190,11 +190,12 @@ class Messages(unittest.TestCase):
     def test_names_the_camera_the_bone_and_the_frames(self):
         message = camera.setup_message("SceneSetup_camera", 60)
         self.assertIn("SceneSetup_camera", message)
-        self.assertIn("camera_bone", message)
+        self.assertIn("camera_root", message)
         self.assertIn("60", message)
 
     def test_missing_bone_names_the_bone(self):
-        self.assertIn("camera_bone", camera.NO_BONE)
+        self.assertIn("camera_root", camera.NO_BONE)
+        self.assertEqual(camera.BONE, "camera_root")
 
     def test_ambiguous_asks_for_the_picker(self):
-        self.assertIn("picker", camera.AMBIGUOUS_BONE.lower())
+        self.assertIn("select", camera.AMBIGUOUS_BONE.lower())

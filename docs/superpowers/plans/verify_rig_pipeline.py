@@ -13,7 +13,7 @@ What it proves (spec: docs/superpowers/specs/2026-09-07-advancedskeleton-pipelin
   phase 2  IMPORT with no rig in the scene: the rig is added, the clip
            retargeted and baked, the source deleted; weapon_r / weapon_l /
            camera_root / camera_bone on the rig's skeleton land on the
-           reference; the camera stands on camera_bone and drives it.
+           reference; the camera stands on camera_root and drives it.
   phase 3  a sword attached, then IMPORT again on the standing rig: the
            previous take cleared, the sword still linked and riding the new
            weapon_r track, one camera, the resolver and the FBX export.
@@ -192,14 +192,14 @@ def main():
          "worst %s" % _fmt(errors["camera_bone"]))
 
     cams = camera.our_cameras()
-    cam_bone = bones.get("camera_bone")
+    cam_bone = bones.get("camera_root")     # the camera stands on camera_root since 2026-09-18
     gate(17, len(cams) == 1 and cams[0].split("|")[-1] == NS + ":" + camera.CAMERA_NAME
          and cam_bone and camera.our_constraints(cam_bone),
-         "one camera of ours, named, driving camera_bone", "%s" % cams)
+         "one camera of ours, named, driving camera_root", "%s" % cams)
     offset = camera.rotation_only(camera.AXIS_OFFSET)
     cam_err = max(worst(world(cams[0]), camera.placed_matrix(world(cam_bone), offset))
                   for _ in at_frames(frames[:3], lambda: None)) if cams and cam_bone else -1
-    gate(18, cams and cam_err < 1e-3, "the camera sits in camera_bone's transform, axes turned",
+    gate(18, cams and cam_err < 1e-3, "the camera sits in camera_root's transform, axes turned",
          "worst %.6f" % cam_err)
 
     # ------------------------------------------------------------ phase 3
@@ -227,7 +227,7 @@ def main():
     sword_err = max(worst(world(weapon), world(bone)) for _ in at_frames(frames, lambda: None))
     gate(24, sword_err < 0.05, "the sword rides weapon_r at the zero grip", "worst %.6f" % sword_err)
     cams = camera.our_cameras()
-    cam_bone = bones.get("camera_bone")
+    cam_bone = bones.get("camera_root")
     gate(25, len(cams) == 1 and cam_bone and camera.our_constraints(cam_bone)
          and errors2["camera_bone"] is not None and errors2["camera_bone"] < 0.02,
          "one camera again, camera_bone on the reference", "%d camera(s), worst %s" % (

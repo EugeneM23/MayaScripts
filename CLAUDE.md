@@ -584,6 +584,34 @@ nudge by **10.000**, the nudged track kept through Disconnect's bake to
     range (`-ast/-aet`), not the playback range**: 743 keys over 0..742
     with the slider at 0..24 — set the outer range too when it matters.
 
+## The camera stands on `camera_root` (2026-09-18)
+
+The animator: «в наш риг нужно добавить камеру так же, как мы делаем при
+ретаргете, только не camera bone привязывать к камере, а camera root, и в
+механизм ретаргета тоже внесём эту правку». Spec:
+`docs/superpowers/specs/2026-09-18-camera-on-camera-root-design.md`.
+`maya_scenesetup.camera.BONE` is `camera_root`; measured first: on the rig
+`camera_root` and its child `camera_bone` stand in the SAME world
+transform at rest (0.000000 apart, both at (0, 164, 0) turned (−90, 0, 0),
+local rotates and jointOrients zero), so `AXIS_OFFSET` measured against
+`camera_bone` on 2026-08-17 holds unchanged. `maya_rig_retarget.
+carry_helpers` sets the camera up on `camera_root` and tears a standing
+camera down on BOTH bones first (a camera an older build left on
+`camera_bone` would meet the transfer and splice a pairBlend); both bones
+are still carried from the source. **Camera Setup is a button in the
+Characters section again** (`window.camera_setup`, after Add Character):
+the retarget's step by hand over playback ∪ the bone's keys; a second
+press bakes the bone back and removes the camera. Proof:
+`verify_rig_pipeline.py` **0 of 30 gates, 2026-09-18** with the camera
+gates on `camera_root` (the camera in the bone's transform to 0.000000,
+both camera bones carried to 0.000000); the button pressed twice live on
+the animator's rig over the port — «SceneSetup_camera sits on camera_root
+and drives it - 101 frames baked», the camera in the bone's transform to
+**0.000000**, a 7 cm move of the camera moving `camera_root` **7.000**,
+the second press «camera removed - camera_root baked back and free» with
+the bone back to 0.000000. `verify_many_rigs.py`'s camera gates were
+pointed at `camera_root` too and not re-run. 2175 unit tests.
+
 ## Driving the user's live Maya
 
 The user can open a command port, and that is how everything here gets verified.

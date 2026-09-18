@@ -197,10 +197,10 @@ def main():
     moved_a = drift(rest_a, bones_a, frames_b)
     gate(9, moved_a < 1e-6, "rig A unmoved by rig B's import", "worst %.9f" % moved_a)
     cams = camera.our_cameras()
-    cam_b = bones_b.get("camera_bone")
+    cam_b = bones_b.get("camera_root")     # the camera stands on camera_root since 2026-09-18
     gate(10, len(cams) == 1 and cams[0].split("|")[-1] == "Manny_Rig1:" + camera.CAMERA_NAME
          and cam_b and camera.camera_for(cam_b) == cams[0],
-         "one camera, in rig B's namespace, driving rig B's camera_bone", str(cams))
+         "one camera, in rig B's namespace, driving rig B's camera_root", str(cams))
     gate(11, not cmds.objExists("Manny_Rig1:MoCapConstraints") and not cmds.objExists("Manny_Rig:MoCapConstraints")
          and not cmds.namespace(exists="ClipB"), "no holder and no source namespace left")
 
@@ -220,7 +220,7 @@ def main():
     moved_b = drift(rest_b, bones_b, frames_a)
     gate(14, moved_b < 1e-6, "rig B untouched by rig A's import", "worst %.9f" % moved_b)
     cams = camera.our_cameras()
-    cam_a = bones_a.get("camera_bone")
+    cam_a = bones_a.get("camera_root")
     gate(15, len(cams) == 2 and camera.camera_for(cam_a) and camera.camera_for(cam_b)
          and camera.camera_for(cam_a) != camera.camera_for(cam_b)
          and camera.camera_for(cam_a).split("|")[-1] == "Manny_Rig:" + camera.CAMERA_NAME,

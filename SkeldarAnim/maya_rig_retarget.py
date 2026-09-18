@@ -194,13 +194,17 @@ def carry_helpers(source_root, rig_root, start, end):
     (the bone baked back off the sword) and relinked after the transfer, so
     the sword snaps onto the new track and takes its stored grip back -- the
     bridge's merge does exactly this; and the camera is set up LAST, on the
-    bone's new track. Each rig has its own camera, on its own camera_bone.
+    bone's new track. Each rig has its own camera, on its own camera_root.
     """
     from maya_scenesetup import bonedrive, camera
     src, dst = _bones_under(source_root), _bones_under(rig_root)
-    cam_bone = dst.get("camera_bone")
-    if cam_bone:
-        camera.teardown(cam_bone, start, end)
+    #  the camera stands on camera_root (2026-09-18); a camera an older
+    #  build left on camera_bone is torn down too, or the transfer onto
+    #  that bone would splice a pairBlend into our own constraint
+    cam_root = dst.get(camera.BONE)
+    for name in ("camera_root", "camera_bone"):
+        if name in dst:
+            camera.teardown(dst[name], start, end)
     links = {}
     for name in ("weapon_r", "weapon_l"):
         if name in dst:
@@ -214,7 +218,7 @@ def carry_helpers(source_root, rig_root, start, end):
     for bone, weapon in links.items():
         if cmds.objExists(weapon) and cmds.objExists(bone):
             bonedrive.relink(weapon, bone)
-    camera_text = camera.setup(cam_bone, start, end) if cam_bone else ""
+    camera_text = camera.setup(cam_root, start, end) if cam_root else ""
     return [move[0] for move in moves], skipped, camera_text
 
 
