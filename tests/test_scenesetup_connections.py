@@ -163,10 +163,17 @@ class Messages(unittest.TestCase):
 
     def test_applied_names_each_step_and_the_result(self):
         text = cx.applied_message([("lift", "R"), ("follow", "L"),
-                                   ("follow", "R")], 6.0, scheme(F, F))
+                                   ("follow", "R")], scheme(F, F))
         self.assertIn("weapon out of the right hand to world", text)
-        self.assertIn("left hand follows (grip as at frame 6)", text)
+        self.assertIn("left hand follows (its track kept on the proxy)", text)
         self.assertIn("-> weapon in world; left hand, right hand follow", text)
+
+    def test_is_constant_collapses_a_still_channel_only(self):
+        """A proxy channel that never moved loses its keys so the animator's
+        own keys start from a plain value; a moving one keeps them."""
+        self.assertTrue(cx.is_constant([]))
+        self.assertTrue(cx.is_constant([1.0, 1.0, 1.0 + 1e-9]))
+        self.assertFalse(cx.is_constant([1.0, 1.0, 1.5]))
 
     def test_header(self):
         import maya_rigs
@@ -318,14 +325,36 @@ class Boundaries(unittest.TestCase):
             return handle.read()
 
     def test_the_hands_are_never_reparented(self):
+        """`cmds.parent(` appears in ONE function, `_make_proxy`, and what
+        it parents is our own locator; no control is ever re-parented."""
         tree = ast.parse(self._source())
+        parents_in = []
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef):
+                continue
+            for node in ast.walk(func):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                        and node.func.attr == "parent":
+                    parents_in.append(func.name)
+        self.assertEqual(parents_in, ["_make_proxy"])
         names = [node.func.attr for node in ast.walk(tree)
                  if isinstance(node, ast.Call)
                  and isinstance(node.func, ast.Attribute)]
-        self.assertNotIn("parent", names)
         for wanted in ("parentConstraint", "parent_out", "parent_in",
-                       "bakeResults", "unlink"):
+                       "bakeResults", "unlink", "spaceLocator"):
             self.assertIn(wanted, names, wanted)
+
+    def test_the_proxy_carries_the_hands_track_and_is_marked(self):
+        """The follow goes through a proxy: baked from the control, the
+        still channels collapsed, the control constrained to it with no
+        offset, both marked by attribute."""
+        source = self._source()
+        self.assertEqual(cx.PROXY_MARKER, "skeldarHandProxy")
+        self.assertIn("_bake_onto(control, proxy, span)", source)
+        self.assertIn("cmds.parentConstraint(proxy, control, maintainOffset=False)",
+                      source)
+        self.assertIn("is_constant(values)", source)
+        self.assertIn("proxy_of(rig, side)", source)
 
     def test_no_mel_eval_of_our_own(self):
         self.assertNotIn("mel.eval", self._source())

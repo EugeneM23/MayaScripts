@@ -49,12 +49,22 @@ switches and the FK/IK align read it. So:
   Entering a hand: `apply_Parent_in` under that hand's bone, whatever the
   animator did with it in world re-baked into the hand's space. The weapon
   is geometry under a bone, not rig, so re-parenting it breaks nothing.
-- **The HANDS are constrained, never re-parented.** A following hand's IK
-  control gets a `parentConstraint` to the weapon's geometry with
-  `maintainOffset` from the CURRENT frame (keys cut first - trap 37; the
-  current values written back after the cut - trap 58). Releasing bakes
-  the control (`cmds.bakeResults`) and deletes only OUR constraint, found
-  by its `skeldarHandLink` attribute.
+- **The HANDS are constrained to a PROXY, never re-parented.** A
+  following hand gets a locator `handProxy_<side>` INSIDE the weapon's
+  geometry; the hand's own world track is baked onto that proxy over the
+  range (so, in the weapon's space, the hand keeps exactly the motion it
+  had - nothing is flattened to one frame's grip), channels that came out
+  constant are un-keyed (the vendor's `delete -staticChannels` idea), and
+  the IK control is parent-constrained to the proxy with no offset (keys
+  cut first - trap 37; the current values written back after the cut -
+  trap 58). **The proxy is what the animator animates from then on**: a
+  key on it moves the hand against the weapon, while the weapon still
+  carries the hand (the animator, 2026-09-18: «сейчас мы теряем
+  возможность анимировать объект, который был приконстрейнен … через
+  прокси-локатор внутри родителя, перепечь на него анимацию и уже потом
+  констрейнить»). Releasing bakes the control (`cmds.bakeResults`),
+  deletes only OUR constraint (its `skeldarHandLink` attribute) and the
+  proxy (its `skeldarHandProxy` attribute).
 - **The drive bone follows the holding hand** (the animator's ruling): in
   the right hand the weapon drives `weapon_r`, in the left `weapon_l`, and
   in world it keeps driving the bone it drove last. A bone change unlinks
@@ -90,7 +100,11 @@ HAND_CHOICES = (FREE, WEAPON)
 WEAPON_CHOICES = (WORLD, "Hand_R", "Hand_L")
 HAND_OF = {"Hand_R": "R", "Hand_L": "L"}
 
-MARKER = "skeldarHandLink"          # on our hand constraints: the weapon's UUID
+MARKER = "skeldarHandLink"          # on our hand constraints: the proxy's UUID
+PROXY_MARKER = "skeldarHandProxy"   # on the proxy locator: the side it carries
+PROXY_NAME = "handProxy_{0}"
+PROXY_SCALE = 6.0                    # the locator's local scale, cm
+STATIC_TOLERANCE = 1e-6
 SIDES = ("L", "R")
 SIDE_LABEL = {"R": "right hand", "L": "left hand"}
 WEAPON_BONE = {"R": "weapon_r", "L": "weapon_l"}
@@ -229,6 +243,13 @@ def plan(current, wanted):
     return steps
 
 
+def is_constant(values, tolerance=STATIC_TOLERANCE):
+    """True when a sampled channel never moves: its keys collapse to a plain
+    value so the animator's own keys on the proxy start from nothing. Pure."""
+    values = list(values)
+    return not values or (max(values) - min(values)) <= tolerance
+
+
 def blend_refusal(side, value, keyed):
     """Why a following arm may not be put in IK, or None. Pure."""
     if keyed and abs(value - IK_BLEND) > 1e-6:
@@ -248,12 +269,12 @@ def union_range(playback, keys):
     return float(math.floor(start)), float(math.ceil(end))
 
 
-def applied_message(steps, frame, scheme):
+def applied_message(steps, scheme):
     """What Apply did, then what stands. Pure."""
     words = {"release": "%s released (baked)",
              "lift": "weapon out of the %s to world (re-baked)",
              "hang": "weapon into the %s (re-baked)",
-             "follow": "%s follows (grip as at frame " + "%g" % frame + ")"}
+             "follow": "%s follows (its track kept on the proxy)"}
     done = [words[step] % SIDE_LABEL[side] for step, side in steps]
     return "Applied: " + "; ".join(done) + " -> " + describe(scheme)
 
@@ -367,26 +388,68 @@ def _values_now(control, now):
     return values
 
 
-def _follow(rig, side, target, now, weapon_uuid):
-    """Keys cut, the current pose written back, the constraint made with the
-    offset the animator is looking at, our mark on it; the arm in IK."""
+def proxy_of(rig, side):
+    """The side's proxy locator, by attribute, or None."""
+    for node in cmds.ls("*." + PROXY_MARKER, objectsOnly=True, long=True) or []:
+        if cmds.getAttr(node + "." + PROXY_MARKER) == "%s:%s" % (rig.namespace, side):
+            return node
+    return None
+
+
+def _make_proxy(rig, side, target):
+    """A locator INSIDE the weapon's geometry, marked with its side. The one
+    place this module re-parents anything - and it is our own locator."""
+    proxy = cmds.spaceLocator(name=maya_rigs.node(rig, PROXY_NAME.format(side)))[0]
+    cmds.setAttr(proxy + ".localScale", PROXY_SCALE, PROXY_SCALE, PROXY_SCALE,
+                 type="double3")
+    proxy = cmds.parent(proxy, target, relative=True)[0]
+    proxy = cmds.ls(proxy, long=True)[0]
+    cmds.addAttr(proxy, longName=PROXY_MARKER, dataType="string")
+    cmds.setAttr(proxy + "." + PROXY_MARKER, "%s:%s" % (rig.namespace, side),
+                 type="string")
+    return proxy
+
+
+def _bake_onto(source, proxy, span):
+    """The source's world track onto the proxy's channels (in its parent's
+    space), then the still channels un-keyed."""
+    temporary = cmds.parentConstraint(source, proxy, maintainOffset=False)[0]
+    cmds.bakeResults([proxy], attribute=list(CHANNELS),
+                     time=(span[0], span[1]), simulation=True, sampleBy=1)
+    cmds.delete(temporary)
+    for channel in CHANNELS:
+        plug = proxy + "." + channel
+        values = cmds.keyframe(plug, query=True, valueChange=True) or []
+        if values and is_constant(values):
+            value = values[0]
+            cmds.cutKey(plug, clear=True)
+            cmds.setAttr(plug, value)
+
+
+def _follow(rig, side, target, now, span):
+    """The proxy inside the weapon carrying the hand's own track, the
+    control's keys cut and its pose written back, the control constrained
+    to the proxy with no offset, our mark on it; the arm in IK."""
     plug = _blend_plug(rig, side)
     if plug and not cmds.listConnections(plug, source=True, destination=False):
         cmds.setAttr(plug, IK_BLEND)
     control = _control(rig, side)
+    proxy = _make_proxy(rig, side, target)
+    _bake_onto(control, proxy, span)
     values = _values_now(control, now)
     cmds.cutKey(control, attribute=list(CHANNELS), clear=True)
     for channel, value in values.items():
         cmds.setAttr(control + "." + channel, value)
-    con = cmds.parentConstraint(target, control, maintainOffset=True)[0]
+    con = cmds.parentConstraint(proxy, control, maintainOffset=False)[0]
     con = cmds.ls(con, long=True)[0]
     cmds.addAttr(con, longName=MARKER, dataType="string")
-    cmds.setAttr(con + "." + MARKER, weapon_uuid, type="string")
+    cmds.setAttr(con + "." + MARKER, cmds.ls(proxy, uuid=True)[0], type="string")
     return con
 
 
 def _release(rig, side, span):
-    """Bake the control where the weapon carried it, drop our constraint."""
+    """Bake the control where the proxy carried it, drop our constraint and
+    the proxy."""
     control = _control(rig, side)
     cmds.bakeResults([control], attribute=list(CHANNELS),
                      time=(span[0], span[1]), simulation=True, sampleBy=1,
@@ -394,6 +457,9 @@ def _release(rig, side, span):
     for con in our_constraints(control):
         if cmds.objExists(con):
             cmds.delete(con)
+    proxy = proxy_of(rig, side)
+    if proxy and cmds.objExists(proxy):
+        cmds.delete(proxy)
 
 
 def _drive_bone(weapon, bone):
@@ -409,10 +475,14 @@ def _drive_bone(weapon, bone):
     cmds.parentConstraint(weapon, bone, maintainOffset=False)
 
 
-def _span(weapon):
-    keys = cmds.keyframe(weapon, query=True, timeChange=True) if weapon else []
+def _span(weapon, controls=()):
+    """Playback range, the weapon's keys and the controls' keys, whole frames."""
+    keys = list(cmds.keyframe(weapon, query=True, timeChange=True) or []) if weapon else []
+    for control in controls:
+        if control:
+            keys.extend(cmds.keyframe(control, query=True, timeChange=True) or [])
     return union_range((cmds.playbackOptions(query=True, min=True),
-                        cmds.playbackOptions(query=True, max=True)), keys or [])
+                        cmds.playbackOptions(query=True, max=True)), keys)
 
 
 def apply(wanted, rig=None):
@@ -458,7 +528,7 @@ def apply(wanted, rig=None):
     uuid = cmds.ls(weapon, uuid=True)[0]
     cmds.undoInfo(openChunk=True, chunkName="Connections: apply")
     try:
-        span = _span(weapon)
+        span = _span(weapon, [_control(rig, side) for side in SIDES])
         for step, side in steps:
             weapon = cmds.ls(uuid, long=True)[0]
             if step == "release":
@@ -475,8 +545,8 @@ def apply(wanted, rig=None):
                         bonedrive.unlink(bones[was][1])
                     _drive_bone(weapon, bone)
             elif step == "follow":
-                _follow(rig, side, attach.model_root(weapon), now, uuid)
-        return applied_message(steps, now, read_scheme(rig, bones))
+                _follow(rig, side, attach.model_root(weapon), now, span)
+        return applied_message(steps, read_scheme(rig, bones))
     finally:
         cmds.undoInfo(closeChunk=True)
 

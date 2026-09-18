@@ -493,13 +493,30 @@ both follow, weapon into the LEFT hand driving `weapon_l` with the nudged
 track kept, back to the right) and **has not run**: the animator has had a
 rig of their own in the scene since the first build. 2159 unit tests.
 
+**A following hand rides a PROXY since the same evening** («сейчас мы
+теряем возможность анимировать объект, который был приконстрейнен …
+через прокси-локатор внутри родителя, перепечь на него анимацию и уже
+потом констрейнить» — the spec's addendum 2). `handProxy_<side>` is a
+locator parented under the weapon's geometry (`_make_proxy`, the module's
+one `cmds.parent`, on our own locator — a test pins that), marked
+`skeldarHandProxy`; the hand's world track is baked onto it (`_bake_onto`:
+temp no-offset constraint, `bakeResults`, still channels un-keyed via
+`is_constant`), then the IK control is constrained to the proxy with NO
+offset. So the take is kept frame for frame (the direct constraint had
+flattened it to one frame's grip) **and the proxy is what the animator
+keys** — a key on it moves the hand against the weapon. Release deletes
+the proxy too (`proxy_of`, by attribute). The bake span is playback ∪ the
+weapon's keys ∪ the controls' keys. 2167 unit tests; the verify gained
+four proxy gates (26–29) and still awaits a rig-free scene.
+
 **The split is the design.** The AdvancedSkeleton IK hand controls
 `IKArm_R/L` live at `CustomOrientIKArm_*|IKExtraArm_*|IKArm_*` and that
 place is load-bearing, so **the hands are constrained, never re-parented**
-(a `parentConstraint` to the weapon's geometry, `maintainOffset` captured
-on the CURRENT frame — the status names it; keys cut FIRST, trap 37; the
-current values read off the curves with `keyframe -eval` and written back
-after the cut, trap 58), while **the weapon is re-baked by OverRig**:
+(before the proxy: a `parentConstraint` to the weapon's geometry with
+`maintainOffset` captured on the CURRENT frame; now to the proxy with no
+offset; keys cut FIRST, trap 37; the current values read off the curves
+with `keyframe -eval` and written back after the cut, trap 58), while
+**the weapon is re-baked by OverRig**:
 `parent_out` lifts it from the hand bone to world (drift **0.000000**,
 still driving `weapon_r` — the link's constraint targets the node),
 `parent_in` hangs it back on Disconnect with whatever the animator did out

@@ -104,12 +104,31 @@ else:
         # ------------------------ right holds, left follows (no weapon move)
         cmds.currentTime(6)
         text = cx.apply({"L": F, "R": H}, rig=rig)
-        gate(6, "R holds + L follows: only the left hand is hung",
-             "left hand follows (grip as at frame 6)" in text and "weapon out" not in text, text)
+        gate(6, "R holds + L follows: only the left hand is hung, through a proxy",
+             "left hand follows (its track kept on the proxy)" in text and "weapon out" not in text, text)
         gate(7, "the weapon is still in the right hand, weapon_r still driven",
              cx.read_scheme(rig) == {"L": F, "R": H} and bonedrive.driving_weapon(bone_r) == cmds.ls(weapon, long=True)[0])
         left_track = track(hand_l)
         gate(8, "the right hand's track is untouched", drift(hand_r, hand_track) < 1e-3, "%.6f" % drift(hand_r, hand_track))
+        proxy_l = cx.proxy_of(rig, "L")
+        gate(26, "the left proxy is a locator INSIDE the weapon's geometry, marked",
+             proxy_l and (cmds.listRelatives(proxy_l, parent=True, fullPath=True) or [""])[0]
+             == attach.model_root(weapon) and cmds.listRelatives(proxy_l, shapes=True, type="locator"),
+             proxy_l)
+        # the left hand stood still against a still weapon here, so the
+        # proxy's channels came out constant and were un-keyed
+        gate(27, "a still proxy carries no keys (its channels collapsed to values)",
+             proxy_l and not cmds.keyframe(proxy_l, q=True, timeChange=True))
+        # keying the PROXY animates the hand against the weapon - the point
+        before_key = world(hand_l, 12)
+        cmds.currentTime(12)
+        cmds.setKeyframe(proxy_l, attribute="translateY", time=0, value=cmds.getAttr(proxy_l + ".translateY"))
+        cmds.setKeyframe(proxy_l, attribute="translateY", time=12, value=cmds.getAttr(proxy_l + ".translateY") + 5.0)
+        moved = worst(world(hand_l, 12)[12:15], before_key[12:15])
+        weapon_moved = worst(world(weapon, 12), weapon_track[12])
+        gate(28, "a key on the proxy moves the hand, the weapon stays",
+             4.9 < moved < 5.1 and weapon_moved < 1e-3, "hand %.3f weapon %.6f" % (moved, weapon_moved))
+        left_track = track(hand_l)
 
         # -------------------------------------- both follow, weapon in world
         text = cx.apply({"L": F, "R": F}, rig=rig)
@@ -157,6 +176,8 @@ else:
         gate(20, "the left control is keyed over the range, the right still constrained",
              len(set(cmds.keyframe(ik_l, q=True, timeChange=True) or [])) >= 25
              and len(cx.our_constraints(ik_r)) == 1 and not cx.our_constraints(ik_l))
+        gate(29, "the released hand's proxy is gone, the right hand's stays",
+             cx.proxy_of(rig, "L") is None and cx.proxy_of(rig, "R") is not None)
 
         # ---------------------------------- back: right holds, hands free
         text = cx.apply({"L": None, "R": H}, rig=rig)

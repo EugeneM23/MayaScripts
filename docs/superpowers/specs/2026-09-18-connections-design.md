@@ -141,6 +141,48 @@ from the world with its own track.
 follow a weapon in world; nobody follows and the weapon in the hand whose
 bone it drives.
 
+## Addendum 2 — a following hand rides a PROXY, and the proxy is animatable (2026-09-18, evening)
+
+The animator, after using the section: «сейчас мы теряем возможность
+анимировать объект, который был приконстрейнен. Давай через прокси-локатор,
+который будем размещать внутри родителя, перепечём на него анимацию и уже
+потом констрейним наш объект к прокси. Так мы сможем и анимировать, и
+сохраним уже готовую анимацию».
+
+Two things the direct constraint cost. A constrained IK control cannot be
+keyed (a key splices a pairBlend — trap 37), so a hand on the weapon was
+frozen for the animator. And `maintainOffset` from ONE frame flattened
+whatever the hand did against the weapon over the clip into that frame's
+grip — the take was changed, not kept.
+
+**The follow now goes through a locator inside the weapon.**
+`handProxy_<side>` (in the rig's namespace, marked `skeldarHandProxy` =
+`<namespace>:<side>`) is created and parented under the weapon's geometry
+(`_make_proxy` — the one `cmds.parent` in the module, and it parents our
+own locator; the controls still never move in the DAG). The hand's world
+track is baked onto the proxy over the range (`_bake_onto`: a temporary
+no-offset `parentConstraint` control → proxy, `bakeResults`, the temp
+deleted) — in the weapon's space that is exactly the hand's motion against
+the weapon, frame for frame, so the take is kept whole. Channels that came
+out constant are un-keyed (`is_constant`, pure; the value stays), so a
+rigidly held hand leaves a proxy with plain values and the animator's own
+keys start from nothing. Then the control's keys are cut, its current
+values written back, and it is parent-constrained to the proxy with NO
+offset; our constraint carries the proxy's UUID. **From then on the proxy
+is what the animator keys**: a key on it moves the hand against the
+weapon, while the weapon still carries both.
+
+Release bakes the control as before, deletes our constraint, and deletes
+the proxy (`proxy_of`, by attribute). A proxy rides the weapon through
+`apply_Parent_in`/`_out` as a DAG child — its local keys are in the
+weapon's space and OverRig re-bakes only the weapon. The bake span is the
+playback range ∪ the weapon's keys ∪ the controls' keys.
+
+Verify gates added: the proxy is a locator under the weapon's geometry;
+a still hand's proxy carries no keys; a +5 key on the proxy moves the hand
+5.0 with the weapon unmoved; the released hand's proxy is gone while the
+other's stays.
+
 ## Testing
 
 Unit: the pure halves (`hands_to_connect`, `blend_refusal`, `union_range`,
