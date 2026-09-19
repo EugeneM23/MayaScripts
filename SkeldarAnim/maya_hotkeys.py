@@ -4,7 +4,7 @@ Press `Hotkeys` on the SkeldarAnim shelf and Maya switches to a hotkey set
 of our name; press it again and the animator's own set comes back. The map's
 CONTENTS are theirs to lay out, in Maya's own Hotkey Editor -- what this
 module adds is the switch, plus a command list worth binding: every button
-of our panels, and -- while `skeldar_features.OVERRIG` is on -- every
+of our panels, and -- while `skeldar_features.OVERRIG_HOTKEYS` is on -- every
 one-press procedure OverRig's author published in `function_for_hotkeys.TXT`.
 
 Design: docs/superpowers/specs/2026-09-02-hotkey-map-design.md
@@ -1101,11 +1101,13 @@ def _prefixed(root, table):
 def commands(flags):
     """The table for a set of feature flags. Pure.
 
-    Since 2026-09-07 the picker's six rows ride `flags.PICKER` and the
-    author's 84 OverRig rows ride `flags.OVERRIG` (skeldar_features);
-    since 2026-09-08 Overshoot's six ride `flags.OVERSHOOT`. All ship off.
-    The rows themselves stay in the tables above, so a flag flipped back
-    registers them again on the next press.
+    Since 2026-09-07 the picker's six rows ride `flags.PICKER`; since
+    2026-09-08 Overshoot's six ride `flags.OVERSHOOT`; and since 2026-09-19
+    the author's 84 OverRig rows ride `flags.OVERRIG_HOTKEYS` -- a flag of
+    their own, because `OVERRIG` is the OverRig SHELF BUTTON, which the
+    animator wanted back without the rows. All three ship off. The rows
+    themselves stay in the tables above, so a flag flipped back registers
+    them again on the next press.
     """
     overshoot = getattr(flags, "OVERSHOOT", False)
     ours = tuple(row for row in _OURS
@@ -1113,7 +1115,7 @@ def commands(flags):
                  and (overshoot or not (row[0].startswith("shoot.")
                                         or row[0] == "window.overshoot")))
     table = _prefixed("SkeldarAnim", ours)
-    if flags.OVERRIG:
+    if getattr(flags, "OVERRIG_HOTKEYS", False):
         table += _prefixed("OverRig", _OVERRIG)
     return table
 

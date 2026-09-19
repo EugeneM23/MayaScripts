@@ -83,16 +83,19 @@ live the same evening (2129 unit tests).
 **The shelf** (since 2026-09-08): UE Bridge, Scene Setup, Retarget,
 Hotkeys, Studio, Colour — **and since 2026-09-17 all of them live as
 collapsible sections of ONE dockable window, `maya_hub`, with a button
-`SkeldarAnim` ahead of them that opens it; Scene Setup is two sections
-and two buttons there, Characters and Weapons (eight buttons in all); see
-"The SkeldarAnim hub" below.** **`skeldar_features.py`** (stdlib, three booleans
-`OVERRIG` / `PICKER` / `OVERSHOOT`, all False) gates the OverRig panel
-button and its 84 hotkey rows, the Rig Picker button and its 6 rows and
-handing a new character to the picker (`character.connect`), and the
-Overshoot button with its 6 rows. `install.features()` loads
-it from beside `install.py` by path (at drop time nothing of ours is on
-`sys.path`); `maya_hotkeys.commands(flags)` is the pure table. Nothing was
-deleted — the animator's words were «оставь его где-то».
+`SkeldarAnim` ahead of them that opens it; Scene Setup is two sections,
+Characters and Weapons; see "The SkeldarAnim hub" below. Since
+2026-09-19 the shelf is TWO buttons, `SkeldarAnim` and `OverRig` — the
+seven section buttons wait behind `SECTION_BUTTONS`; see "Two buttons on
+the shelf" below.** **`skeldar_features.py`** (stdlib, five booleans)
+gates the OverRig panel button (`OVERRIG`, True), the 84 OverRig hotkey
+rows (`OVERRIG_HOTKEYS`), the Rig Picker button and its 6 rows and
+handing a new character to the picker (`PICKER`, `character.connect`),
+the Overshoot button with its 6 rows (`OVERSHOOT`) and the seven section
+buttons (`SECTION_BUTTONS`); all but `OVERRIG` False. `install.features()`
+loads it from beside `install.py` by path (at drop time nothing of ours
+is on `sys.path`); `maya_hotkeys.commands(flags)` is the pure table.
+Nothing was deleted — the animator's words were «оставь его где-то».
 
 **The retarget lives in the plugin**: `maya_asretarget.py`,
 `maya_pmretarget.py`, `maya_rig_retarget.py` moved from the repo root into
@@ -611,6 +614,43 @@ and drives it - 101 frames baked», the camera in the bone's transform to
 the second press «camera removed - camera_root baked back and free» with
 the bone back to 0.000000. `verify_many_rigs.py`'s camera gates were
 pointed at `camera_root` too and not re-run. 2175 unit tests.
+
+## Two buttons on the shelf: SkeldarAnim and OverRig (2026-09-19)
+
+The animator: «Давай из нашей полки уберем все лишнии скрипты. Пока
+пусть будет только наш SkeldarAnim ну и овер риг тоже пускай
+устанавливается вместе с ним» — and, asked, the OverRig BUTTON only, not
+its 84 hotkey rows. Spec:
+`docs/superpowers/specs/2026-09-19-two-button-shelf-design.md`. Nothing
+deleted («пока»): two flags in `skeldar_features.py` do it, the shape the
+picker and Overshoot already had.
+
+- **`SECTION_BUTTONS = False`**: the seven per-section rows of
+  `install._PYTHON_BUTTONS` (UE Bridge, Characters, Weapons, Retarget,
+  Hotkeys, Studio, Colour) carry this flag where they carried `""`. The
+  hub row is unflagged. Icons, every `show_window()` and the `window.*`
+  hotkey rows stay and still open the hub on their section; `True`
+  restores all seven in their old places.
+- **`OVERRIG` was split**: `OVERRIG = True` is the shelf button alone
+  (Barnev's own installer command, verbatim, at the shipped `overrig/`);
+  **`OVERRIG_HOTKEYS = False`** is the 84 rows in `maya_hotkeys.commands`.
+  `install.button_specs` and `commands` read their flag with `getattr`, so
+  an older `skeldar_features` beside an installed copy answers False
+  rather than raising.
+- `maya_hotkeys.paint` finds the `Hotkeys` shelf button by label and
+  skips the paint when it is absent (already so); the hub's toggle
+  `skeldarHotkeysToggle` is what lights up now.
+
+Proof: 2178 unit tests; the repo's `install.install(quiet=True)` run in
+the animator's open Maya over the port (the installed folder's own
+`install` and `skeldar_features` purged first) — shelf labels
+`['SkeldarAnim', 'OverRig']`, the installed `skeldar_features.py`
+carrying the new values, the `SkeldarAnim` button's baked command
+opening the hub (`skeldarAnimHub` visible) and the `OverRig` button's
+MEL sourcing `base_OverRig_scripts` and raising `basicOverRigScripts`;
+`docs/superpowers/plans/verify_install.py`'s shelf gates rewritten for
+the two labels (not re-run whole). `make_build.py` →
+`SkeldarAnim_2026-09-19.zip`, 85 files, 26.8 MB.
 
 ## Driving the user's live Maya
 
@@ -4015,14 +4055,16 @@ for UE morph targets.
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
 2026-09-01): `make_build.py` zips it, a colleague unzips and drags
 `SkeldarAnim/install.py` into an open Maya viewport, and gets a shelf named
-**SkeldarAnim** with eight buttons — since 2026-09-17 **SkeldarAnim** (the
-hub, `maya_hub.show`) ahead of **UE Bridge, Characters, Weapons,
-Retarget, Hotkeys, Studio, Colour**, each of which opens the hub on its
-own section (Characters and Weapons are Scene Setup's two halves,
-`maya_scenesetup.show_window` / `show_weapons`); the Rig Picker, the native
-OverRig panel and Overshoot come back with the three flags in
-`skeldar_features.py` (`install.features()` reads it from beside
-`install.py`, `_PYTHON_BUTTONS` rows carry the flag's name). The zip is
+**SkeldarAnim** with **two buttons since 2026-09-19: SkeldarAnim** (the
+hub, `maya_hub.show`) **and OverRig** (the native panel). The seven
+section buttons — **UE Bridge, Characters, Weapons, Retarget, Hotkeys,
+Studio, Colour**, each opening the hub on its own section (Characters
+and Weapons are Scene Setup's two halves, `maya_scenesetup.show_window` /
+`show_weapons`) — come back with `SECTION_BUTTONS`; the Rig Picker,
+Overshoot and the OverRig hotkey rows with `PICKER`, `OVERSHOOT`,
+`OVERRIG_HOTKEYS` in `skeldar_features.py` (`install.features()` reads
+it from beside `install.py`, `_PYTHON_BUTTONS` rows carry the flag's
+name). The zip is
 **26.4 MB, 79 files** now (`assets/Manny_Rig.ma`, 53 MB uncompressed, `assets/Spear_01.fbx` 34 KB;
 `maya_rigs.py` joined the payload, `maya_curveview/` and two icons left).
 Design: `docs/superpowers/specs/2026-08-21-installer-design.md` (written

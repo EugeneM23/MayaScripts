@@ -53,7 +53,7 @@ PLUGIN = os.path.dirname(os.path.abspath(maya_hotkeys.__file__))
 # still worth pinning -- so the full table is installed for the run.
 SHIPPED = tuple(maya_hotkeys.COMMANDS)
 maya_hotkeys.COMMANDS = maya_hotkeys.commands(
-    types.SimpleNamespace(PICKER=True, OVERRIG=True, OVERSHOOT=True))
+    types.SimpleNamespace(PICKER=True, OVERRIG_HOTKEYS=True, OVERSHOOT=True))
 maya_hotkeys._INDEX = dict((row[0], row) for row in maya_hotkeys.COMMANDS)
 
 
@@ -513,14 +513,23 @@ class FeatureFlags(unittest.TestCase):
     here reads -- comes back with both flags on."""
 
     def _flags(self, picker, overrig, overshoot=True):
-        return types.SimpleNamespace(PICKER=picker, OVERRIG=overrig,
+        return types.SimpleNamespace(PICKER=picker, OVERRIG_HOTKEYS=overrig,
                                      OVERSHOOT=overshoot)
 
     def test_the_shipped_flags_are_off(self):
+        """2026-09-19: the OverRig shelf BUTTON is on; its 84 hotkey rows
+        ride a flag of their own and stay off."""
         import skeldar_features
         self.assertFalse(skeldar_features.PICKER)
-        self.assertFalse(skeldar_features.OVERRIG)
+        self.assertFalse(skeldar_features.OVERRIG_HOTKEYS)
         self.assertFalse(skeldar_features.OVERSHOOT)
+        self.assertTrue(skeldar_features.OVERRIG)
+
+    def test_the_overrig_button_flag_does_not_register_the_rows(self):
+        flags = types.SimpleNamespace(PICKER=False, OVERRIG=True,
+                                      OVERRIG_HOTKEYS=False, OVERSHOOT=False)
+        keys = [r[0] for r in maya_hotkeys.commands(flags)]
+        self.assertFalse([k for k in keys if k.startswith("overrig.")])
 
     def test_the_shipped_table_has_no_picker_overrig_or_overshoot_rows(self):
         keys = [row[0] for row in SHIPPED]

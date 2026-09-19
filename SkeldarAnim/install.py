@@ -48,9 +48,12 @@ _PAYLOAD = (
 # (label, annotation, module, function, icon, feature flag or ""). A row
 # naming a flag is on the shelf only while that flag in skeldar_features
 # is True -- the Rig Picker went behind PICKER on 2026-09-07, when the
-# toolset moved from OverRig to the AdvancedSkeleton rig, and Overshoot
-# behind OVERSHOOT on 2026-09-08. The Curve Overlay left the plugin the
-# same day (archive/maya_curveview), and Bake folded into Retarget.
+# toolset moved from OverRig to the AdvancedSkeleton rig, Overshoot
+# behind OVERSHOOT on 2026-09-08, and the seven section buttons behind
+# SECTION_BUTTONS on 2026-09-19 («пока пусть будет только наш
+# SkeldarAnim»): the hub button reaches every section. The Curve Overlay
+# left the plugin on 2026-09-08 (archive/maya_curveview), and Bake folded
+# into Retarget.
 _PYTHON_BUTTONS = (
     ("SkeldarAnim", "The SkeldarAnim window: every tool a collapsible "
      "section - dock it to any panel, tear it off, it remembers its place",
@@ -59,26 +62,29 @@ _PYTHON_BUTTONS = (
      "maya_overrig", "show_picker", "picker.png", "PICKER"),
     ("UE Bridge", "Import animations from the running Unreal editor onto "
      "the AdvancedSkeleton rig", "maya_uebridge", "show_window",
-     "uebridge.png", ""),
+     "uebridge.png", "SECTION_BUTTONS"),
     ("Characters", "Add the AdvancedSkeleton rig or a bare skeleton, in "
-     "its own colour", "maya_scenesetup", "show_window", "characters.png", ""),
+     "its own colour", "maya_scenesetup", "show_window", "characters.png",
+     "SECTION_BUTTONS"),
     ("Weapons", "A weapon in the hand: sword, spear, dagger or any FBX; "
      "the grip, the colour", "maya_scenesetup", "show_weapons",
-     "weapons.png", ""),
+     "weapons.png", "SECTION_BUTTONS"),
     ("Retarget", "Select the imported skeleton (and a control of the rig "
      "when there are several): the rig takes the clip - retarget, bake, "
      "weapon and camera bones carried, camera set up",
-     "maya_rig_retarget", "retarget_button", "retarget.png", ""),
+     "maya_rig_retarget", "retarget_button", "retarget.png",
+     "SECTION_BUTTONS"),
     ("Overshoot", "Build the stop of a move on the selected keys",
      "maya_overshoot", "show_overshoot_ui", "overshoot.png", "OVERSHOOT"),
     ("Hotkeys", "Temporary hotkey map on/off - assign keys in Maya's "
-     "Hotkey Editor", "maya_hotkeys", "toggle", "hotkeys.png", ""),
+     "Hotkey Editor", "maya_hotkeys", "toggle", "hotkeys.png",
+     "SECTION_BUTTONS"),
     ("Studio", "Viewport Studio: studio light, shadows, ambient occlusion "
      "and motion blur, live in the viewport", "maya_vpstudio",
-     "show_window", "vpstudio.png", ""),
+     "show_window", "vpstudio.png", "SECTION_BUTTONS"),
     ("Colour", "Recolour the selected character, bone or mesh from an "
      "eight-colour palette", "maya_colour", "show_window", "colour.png",
-     ""),
+     "SECTION_BUTTONS"),
 )
 
 
@@ -182,7 +188,9 @@ def button_specs(dest):
             "command": (bootstrap
                         + "import {0}\n{0}.{1}()\n".format(module, func)),
         })
-    if not flags.OVERRIG:
+    # OVERRIG is the shelf button alone; the 84 hotkey rows ride
+    # OVERRIG_HOTKEYS in maya_hotkeys.commands (2026-09-19).
+    if not getattr(flags, "OVERRIG", False):
         return specs
     # Verbatim from OverRig's own Drag_and_Drop_to_install.mel, paths
     # aside: the two globals and the (1) coloring are the author's own

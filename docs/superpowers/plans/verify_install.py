@@ -71,9 +71,9 @@ try:
     buttons = (cmds.shelfLayout(install_mod.SHELF, query=True,
                                 childArray=True) or []) if exists else []
     labels = [cmds.shelfButton(b, query=True, label=True) for b in buttons]
-    gate(3, "shelf with five buttons",
-         exists and labels == ["Rig Picker", "UE Bridge", "Scene Setup",
-                               "Overshoot", "OverRig"],
+    # 2026-09-19: the hub and OverRig's native panel, nothing else.
+    gate(3, "shelf with two buttons",
+         exists and labels == ["SkeldarAnim", "OverRig"],
          "exists={0} labels={1}".format(exists, labels))
 except Exception as exc:
     gate(3, "shelf with five buttons", False, repr(exc))
@@ -117,7 +117,7 @@ for button in buttons:
 
 # ---- Gate 5: the OverRig button sources the toolset and its panel ----
 try:
-    overrig_cmd = cmds.shelfButton(buttons[4], query=True, command=True)
+    overrig_cmd = cmds.shelfButton(buttons[-1], query=True, command=True)
     mel.eval(overrig_cmd)
     sourced = bool(mel.eval('exists "base_OverRig_scripts"'))
     dock = cmds.dockControl("basicOverRigScripts", query=True,
@@ -144,7 +144,7 @@ try:
     install_mod.install(quiet=True)
     again = cmds.shelfLayout(install_mod.SHELF, query=True,
                              childArray=True) or []
-    gate(7, "second install keeps five buttons", len(again) == 5,
+    gate(7, "second install keeps two buttons", len(again) == 2,
          "buttons={0}".format(len(again)))
 except Exception as exc:
     gate(7, "second install keeps five buttons", False, repr(exc))

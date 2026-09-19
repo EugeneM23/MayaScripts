@@ -135,40 +135,59 @@ class Payload(unittest.TestCase):
 
 
 class ButtonSpecs(unittest.TestCase):
-    """The shelf as data. Since 2026-09-07 the Rig Picker and the OverRig
-    panel sit behind `skeldar_features` flags, and since 2026-09-08 so does
-    Overshoot: off, the shelf is the six buttons of the AdvancedSkeleton
-    pipeline; on, each comes back in its old place. Bake folded into
-    Retarget and the Curve Overlay left the plugin the same day."""
+    """The shelf as data. Since 2026-09-19 the shipped shelf is TWO buttons,
+    the hub and OverRig's native panel («пока пусть будет только наш
+    SkeldarAnim ну и овер риг»): the seven section buttons sit behind
+    `SECTION_BUTTONS`, the Rig Picker behind `PICKER` (2026-09-07),
+    Overshoot behind `OVERSHOOT` (2026-09-08); on, each comes back in its
+    old place. `OVERRIG` is the shelf button alone -- the 84 hotkey rows
+    ride `OVERRIG_HOTKEYS`, which stays off."""
 
     DEST = "C:/Users/Some Body/Documents/maya/scripts/SkeldarAnim"
 
+    FLAGS = ("OVERRIG", "OVERRIG_HOTKEYS", "PICKER", "OVERSHOOT",
+             "SECTION_BUTTONS")
+
     def setUp(self):
         self.features = install.features()
-        self.saved = (self.features.OVERRIG, self.features.PICKER,
-                      self.features.OVERSHOOT)
-        self.features.OVERRIG = False
-        self.features.PICKER = False
-        self.features.OVERSHOOT = False
+        self.saved = dict((f, getattr(self.features, f)) for f in self.FLAGS)
+        # The "everything off" baseline every test below starts from; the
+        # shipped values are pinned by test_the_flags_ship_as_two_buttons.
+        for flag in self.FLAGS:
+            setattr(self.features, flag, False)
 
     def tearDown(self):
-        (self.features.OVERRIG, self.features.PICKER,
-         self.features.OVERSHOOT) = self.saved
+        for flag, value in self.saved.items():
+            setattr(self.features, flag, value)
 
     def _specs(self):
         return install.button_specs(self.DEST)
 
-    def test_the_flags_ship_off(self):
-        """The shipped default: OverRig, the picker and Overshoot are off."""
-        self.assertEqual(self.saved, (False, False, False))
+    def test_the_flags_ship_as_two_buttons(self):
+        """The shipped default (2026-09-19): the OverRig button on, the
+        section buttons, the picker, Overshoot and the OverRig hotkeys off."""
+        self.assertEqual(self.saved, {
+            "OVERRIG": True, "OVERRIG_HOTKEYS": False, "PICKER": False,
+            "OVERSHOOT": False, "SECTION_BUTTONS": False})
+
+    def test_the_shipped_shelf_is_the_hub_and_overrig(self):
+        for flag, value in self.saved.items():
+            setattr(self.features, flag, value)
+        labels = [s["label"] for s in self._specs()]
+        self.assertEqual(labels, ["SkeldarAnim", "OverRig"])
+
+    def test_the_hub_alone_with_everything_off(self):
+        labels = [s["label"] for s in self._specs()]
+        self.assertEqual(labels, ["SkeldarAnim"])
 
     def test_features_loads_the_module_beside_install(self):
         self.assertEqual(
             os.path.normcase(self.features.__file__),
             os.path.normcase(os.path.join(PLUGIN, "skeldar_features.py")))
 
-    def test_seven_buttons_in_shelf_order(self):
-        """The hub first (2026-09-17), then the six tools it holds."""
+    def test_section_buttons_come_back_in_shelf_order(self):
+        """The hub first (2026-09-17), then the seven sections it holds."""
+        self.features.SECTION_BUTTONS = True
         labels = [s["label"] for s in self._specs()]
         self.assertEqual(labels, ["SkeldarAnim", "UE Bridge", "Characters",
                                   "Weapons", "Retarget", "Hotkeys", "Studio",
@@ -186,6 +205,7 @@ class ButtonSpecs(unittest.TestCase):
         self.assertNotIn("Curves", labels)
 
     def test_the_flags_bring_the_picker_and_overrig_back(self):
+        self.features.SECTION_BUTTONS = True
         self.features.PICKER = True
         self.features.OVERRIG = True
         labels = [s["label"] for s in self._specs()]
@@ -194,6 +214,7 @@ class ButtonSpecs(unittest.TestCase):
         self.assertEqual(len(labels), 10)
 
     def test_the_overshoot_flag_brings_its_button_back_in_place(self):
+        self.features.SECTION_BUTTONS = True
         self.features.OVERSHOOT = True
         labels = [s["label"] for s in self._specs()]
         self.assertEqual(labels, ["SkeldarAnim", "UE Bridge", "Characters",
@@ -203,13 +224,16 @@ class ButtonSpecs(unittest.TestCase):
     def test_each_flag_acts_alone(self):
         self.features.PICKER = True
         labels = [s["label"] for s in self._specs()]
-        self.assertIn("Rig Picker", labels)
-        self.assertNotIn("OverRig", labels)
+        self.assertEqual(labels, ["SkeldarAnim", "Rig Picker"])
         self.features.PICKER = False
         self.features.OVERRIG = True
         labels = [s["label"] for s in self._specs()]
-        self.assertNotIn("Rig Picker", labels)
-        self.assertEqual(labels[-1], "OverRig")
+        self.assertEqual(labels, ["SkeldarAnim", "OverRig"])
+        self.features.OVERRIG = False
+        self.features.OVERRIG_HOTKEYS = True
+        labels = [s["label"] for s in self._specs()]
+        self.assertEqual(labels, ["SkeldarAnim"],
+                         "the hotkey flag must not put a button on the shelf")
 
     def test_python_buttons_bootstrap_and_call(self):
         wanted = {
@@ -223,6 +247,7 @@ class ButtonSpecs(unittest.TestCase):
             "Studio": ("maya_vpstudio", "show_window"),
             "Colour": ("maya_colour", "show_window"),
         }
+        self.features.SECTION_BUTTONS = True
         self.features.OVERSHOOT = True
         for spec in self._specs():
             module, func = wanted[spec["label"]]
@@ -240,6 +265,7 @@ class ButtonSpecs(unittest.TestCase):
         self.assertEqual(spec["image"], self.DEST + "/icons/picker.png")
 
     def test_python_buttons_use_our_icons(self):
+        self.features.SECTION_BUTTONS = True
         icons = [s["image"] for s in self._specs()]
         self.assertEqual(icons, [self.DEST + "/icons/" + name for name in (
             "hub.png", "uebridge.png", "characters.png", "weapons.png",
