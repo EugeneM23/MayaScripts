@@ -46,9 +46,12 @@ switches and the FK/IK align read it. So:
 
 - **The WEAPON is re-baked by OverRig.** Leaving a hand: `apply_Parent_out`
   to world, its track baked onto its own channels (drift 0.000000).
-  Entering a hand: `apply_Parent_in` under that hand's bone, whatever the
-  animator did with it in world re-baked into the hand's space. The weapon
-  is geometry under a bone, not rig, so re-parenting it breaks nothing.
+  Entering a hand: `apply_Parent_in` under that hand's WEAPON SPACE
+  (`weaponspace`, since 2026-09-24: a transform outside the skeleton that
+  follows the hand with no offset - the skeleton holds bones only),
+  whatever the animator did with it in world re-baked into the hand's
+  space. A space left empty by the move is pruned. The weapon is geometry,
+  not rig, so re-parenting it breaks nothing.
 - **The HANDS are constrained to a PROXY, never re-parented.** A
   following hand gets a locator `handProxy_<side>` INSIDE the weapon's
   geometry; the hand's own world track is baked onto that proxy over the
@@ -88,6 +91,7 @@ from maya_overrig import overrig
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
 from maya_scenesetup import skeleton
+from maya_scenesetup import weaponspace
 
 HUB_SECTION = "connections"
 STATUS = "skeldarConnectionsStatus"
@@ -372,9 +376,11 @@ def read_scheme(rig, bones=None, weapon=None):
     weapon = weapon or weapon_of(rig, bones)
     scheme = {"L": None, "R": None}
     if weapon:
-        parent = (cmds.listRelatives(weapon, parent=True, fullPath=True) or [None])[0]
+        # the hand's SPACE holds the weapon since 2026-09-24 (outside the
+        # skeleton); a file from before holds it under the hand bone itself
+        holder = weaponspace.holding_hand(weapon)
         for side in SIDES:
-            if parent and bones[side][0] == parent:
+            if holder and bones[side][0] and cmds.ls(bones[side][0], long=True) == cmds.ls(holder, long=True):
                 scheme[side] = HOLDS
     for side in connected_sides(rig):
         scheme[side] = FOLLOWS
@@ -618,10 +624,17 @@ def apply(wanted, rig=None):
             if step == "release":
                 _release(rig, side, span)
             elif step == "lift":
+                was = (cmds.listRelatives(weapon, parent=True, fullPath=True) or [None])[0]
                 overrig.parent_out(weapon)
+                weaponspace.prune(was)
             elif step == "hang":
                 hand, bone = bones[side]
-                overrig.parent_in(weapon, hand)
+                # into the space that follows the hand -- the skeleton holds
+                # bones only; parent_in re-bakes the track into its space,
+                # which stands exactly where the hand does
+                was = (cmds.listRelatives(weapon, parent=True, fullPath=True) or [None])[0]
+                overrig.parent_in(weapon, weaponspace.ensure_space(hand))
+                weaponspace.prune(was)
                 weapon = cmds.ls(uuid, long=True)[0]
                 if driven_side(rig, bones) != side:
                     was = driven_side(rig, bones)

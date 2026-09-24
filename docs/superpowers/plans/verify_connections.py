@@ -51,9 +51,19 @@ def drift(node, old):
 
 import maya_rigs
 import maya_rig_retarget
-from maya_scenesetup import attach, bonedrive, catalog, character, connections as cx, skeleton
+from maya_scenesetup import attach, bonedrive, catalog, character, connections as cx, skeleton, weaponspace
+
+
+def bones_only(rig):
+    """Since 2026-09-24 the skeleton holds bones and constraints only: the weapon lives in a
+    space OUTSIDE it (weaponspace). The list of anything else found under the skeleton root."""
+    root = rig.skeleton_root
+    return [n.split("|")[-1] for n in cmds.listRelatives(root, allDescendents=True, fullPath=True) or []
+            if cmds.objectType(n) != "joint" and not cmds.objectType(n, isAType="constraint")]
 
 H, F = cx.HOLDS, cx.FOLLOWS
+# which rig a throwaway run adds -- the runner may set it (2026-09-24: the Hunter too)
+VERIFY_RIG = globals().get("VERIFY_RIG", "Manny_Rig")
 
 existing = maya_rigs.rigs()
 if len(existing) > 1:
@@ -77,7 +87,7 @@ else:
             rig = existing[0]
             gate(1, "the scene's own rig is borrowed (the animator's leave)", True, rig.namespace)
         else:
-            text = character.add_character(catalog.default_rig())
+            text = character.add_character(catalog.character_by_key(VERIFY_RIG))
             rig, refusal = maya_rigs.current_rig()
             gate(1, "a throwaway rig added", rig is not None and "added as" in text, text[:60])
         bones = cx.bones_of(rig)
@@ -99,9 +109,9 @@ else:
                 cx.apply({"L": None, "R": H}, rig=rig)
         weapon = cx.weapon_of(rig, bones)
         if not weapon:
-            weapon, note = attach.attach(catalog.by_key("LongSword_02"), hand_r, bone_r)
+            weapon, note = attach.attach(catalog.by_key(globals().get("VERIFY_WEAPON", "LongSword_02")), hand_r, bone_r)
         elif borrowed and not bonedrive.driving_weapon(bone_r) \
-                and (cmds.listRelatives(weapon, parent=True, fullPath=True) or [""])[0] == hand_r:
+                and weaponspace.holding_hand(weapon) == hand_r:
             #  a sword in the hand with no bone link (an earlier run's cleanup
             #  deleted the re-made constraint): give the animator the link back
             bonedrive.link(weapon, bone_r)
@@ -109,6 +119,9 @@ else:
         gate(2, "a sword in the right hand, driving weapon_r; both weapon bones resolve",
              weapon and bonedrive.driving_weapon(bone_r) == cmds.ls(weapon, long=True)[0] and bone_l and hand_l,
              weapon.split("|")[-1])
+        gate(40, "the sword lives in the right hand's SPACE, outside the skeleton; the skeleton holds bones only",
+             weaponspace.holding_hand(weapon) == hand_r and weaponspace.is_space(cmds.listRelatives(weapon, parent=True, fullPath=True)[0])
+             and not bones_only(rig), "%s | under the skeleton: %s" % (cmds.listRelatives(weapon, parent=True, fullPath=True)[0], bones_only(rig)))
         gate(3, "the scene reads as 'weapon in the right hand; left hand free'",
              cx.read_scheme(rig) == {"L": None, "R": H}, cx.describe(cx.read_scheme(rig)))
 
@@ -213,8 +226,9 @@ else:
         gate(16, "L holds + R follows: left released, weapon into the left hand",
              "left hand released" in text and "weapon into the left hand" in text and "weapon out" not in text, text)
         weapon = cx.weapon_of(rig)
-        gate(17, "the weapon hangs under hand_l and drives weapon_l, not weapon_r",
-             (cmds.listRelatives(weapon, parent=True, fullPath=True) or [""])[0] == hand_l
+        gate(17, "the weapon hangs in hand_l's space and drives weapon_l, not weapon_r; bones only in the skeleton",
+             weaponspace.holding_hand(weapon) == hand_l and not bones_only(rig)
+             and not weaponspace.space_of(hand_r)
              and bonedrive.driving_weapon(bone_l) == weapon and not bonedrive.driving_weapon(bone_r),
              cx.describe(cx.read_scheme(rig)))
         gate(18, "weapon_l sits ON the weapon (no offset)",
@@ -235,8 +249,9 @@ else:
              "right hand released" in text and "weapon out of the left hand" in text
              and "weapon into the right hand" in text, text)
         weapon = cx.weapon_of(rig)
-        gate(22, "the weapon hangs under hand_r and drives weapon_r again",
-             (cmds.listRelatives(weapon, parent=True, fullPath=True) or [""])[0] == hand_r
+        gate(22, "the weapon hangs in hand_r's space and drives weapon_r again; the left space pruned",
+             weaponspace.holding_hand(weapon) == hand_r and not bones_only(rig)
+             and not weaponspace.space_of(hand_l)
              and bonedrive.driving_weapon(bone_r) == weapon and not bonedrive.driving_weapon(bone_l))
         gate(23, "the right hand keeps the nudged track after its bake", drift(hand_r, nudged_r) < 1e-3,
              "%.6f" % drift(hand_r, nudged_r))
@@ -350,7 +365,7 @@ else:
                     pass
         if not borrowed:
             for ns in cmds.namespaceInfo(listOnlyNamespaces=True) or []:
-                if ns.startswith("Manny_Rig"):
+                if ns.startswith(VERIFY_RIG):
                     try:
                         cmds.namespace(removeNamespace=ns, deleteNamespaceContent=True)
                     except Exception:

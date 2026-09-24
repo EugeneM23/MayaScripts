@@ -19,6 +19,16 @@ whatever the animator does to the sword -- never the grip itself.
 A file holding no mesh, or several, keeps a group of ours instead: two meshes
 cannot both be the node the offsets live on, and one click cannot select both.
 
+**Since 2026-09-24 the weapon is not inside the skeleton at all** («не нарушали
+иерархию нашего скелета»): it is a child of the hand's WEAPON SPACE
+(`weaponspace`), a transform outside the skeleton parent-constrained to the
+hand with no offset. The space stands exactly where the hand does, so the
+weapon's channels still mean "relative to the hand" and nothing else in this
+design changed -- while an export of the skeleton no longer carries the
+weapon's mesh (it did: 10890 vertices and a material in an animation FBX). A
+weapon a file from before holds directly under the hand is still found and
+still comes off.
+
 Either way there is exactly ONE marked node per bone, and it is found by a
 string attribute, never by name. Maya uniquifies imported names, the animator
 may rename anything, and every tool in this repo that identified a node by
@@ -30,6 +40,7 @@ import maya.cmds as cmds
 from maya_scenesetup import bonedrive
 from maya_scenesetup import colour as colouring
 from maya_scenesetup import fbximport
+from maya_scenesetup import weaponspace
 
 # The marker moved into bonedrive (the leaf) so the bridge can read it
 # without importing this module; every existing reader of attach.MARKER
@@ -93,14 +104,24 @@ def mesh_transforms(paths):
     return found
 
 
-def find_attached(bone):
-    """The weapon this module put in `bone`, or None."""
-    children = cmds.listRelatives(bone, children=True, type="transform",
-                                  fullPath=True) or []
-    for child in children:
+def _marked_child(node):
+    for child in cmds.listRelatives(node, children=True, type="transform",
+                                    fullPath=True) or []:
         if cmds.attributeQuery(MARKER, node=child, exists=True):
             return child
     return None
+
+
+def find_attached(bone):
+    """The weapon this module put in `bone`'s hand, or None: the marked child
+    of the space that follows `bone`, else -- a file from before 2026-09-24 --
+    a marked child of the bone itself."""
+    space = weaponspace.space_of(bone)
+    if space:
+        found = _marked_child(space)
+        if found:
+            return found
+    return _marked_child(bone)
 
 
 def parent_bone(bone):
@@ -125,8 +146,11 @@ def detach(parent_bone_path, drive_bone):
     weapon = find_attached(parent_bone_path) or find_attached(drive_bone)
     if not weapon:
         return None
+    space = weaponspace.space_of(parent_bone_path)
     bonedrive.unlink(drive_bone)
     cmds.delete(weapon)
+    if space:
+        weaponspace.prune(space)
     return weapon
 
 
@@ -224,8 +248,12 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None,
 
         meshes = mesh_transforms(roots)
         note = ""
+        # The hand's space, outside the skeleton (2026-09-24): it stands
+        # exactly on the hand, so everything below reads as it did when the
+        # weapon hung under the hand bone itself.
+        home = weaponspace.ensure_space(parent_bone_path)
         if len(meshes) == 1:
-            weapon = cmds.ls(cmds.parent(meshes[0], parent_bone_path)[0],
+            weapon = cmds.ls(cmds.parent(meshes[0], home)[0],
                              long=True)[0]
             # Only the leftover TRANSFORMS: the shading network arrived in the
             # same import and the mesh still needs it.
@@ -240,7 +268,7 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None,
             group = cmds.group(empty=True, world=True,
                                name=group_name(entry.key))
             cmds.parent(roots, group)
-            weapon = cmds.ls(cmds.parent(group, parent_bone_path)[0],
+            weapon = cmds.ls(cmds.parent(group, home)[0],
                              long=True)[0]
             note = "{0} mesh(es) in the file - kept in a group".format(
                 len(meshes))

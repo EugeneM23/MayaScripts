@@ -50,6 +50,40 @@ from maya_scenesetup import attach  # noqa: E402
 from maya_scenesetup import bonedrive  # noqa: E402
 
 BONE = "|SKM_Manny|root|hand_r|weapon_r"
+SPACE = "|WeaponSpaces|hand_r_weaponSpace"
+
+
+class FakeWeaponSpace(object):
+    """weaponspace as attach sees it (2026-09-24): one space per hand, made
+    on demand, OUTSIDE the skeleton, pruned when it empties."""
+
+    def __init__(self, space=None, log=None):
+        self.space = space
+        self.log = log if log is not None else []
+
+    def space_of(self, hand):
+        return self.space
+
+    def ensure_space(self, hand):
+        self.log.append(("space", hand))
+        self.space = self.space or SPACE
+        return self.space
+
+    def prune(self, space):
+        self.log.append(("prune", space))
+        return True
+
+
+class SpaceSwap(object):
+    """Every test here runs against a FakeWeaponSpace unless it wires its own."""
+
+    def setUp(self):
+        self.real_weaponspace = attach.weaponspace
+        attach.weaponspace = FakeWeaponSpace()
+        self.addCleanup(self._restore_space)
+
+    def _restore_space(self):
+        attach.weaponspace = self.real_weaponspace
 
 
 class FakeCmds(object):
@@ -128,7 +162,14 @@ class GroupName(unittest.TestCase):
         self.assertFalse(hasattr(attach, "carrier_name"))
 
 
-class FindAttached(unittest.TestCase):
+class FindAttached(SpaceSwap, unittest.TestCase):
+
+    def test_finds_the_marked_child_in_the_hands_space(self):
+        """Since 2026-09-24 the weapon lives in the space that follows the
+        hand, outside the skeleton."""
+        attach.cmds = FakeCmds(children=[SPACE + "|sword"], marked=[SPACE + "|sword"])
+        attach.weaponspace = FakeWeaponSpace(space=SPACE)
+        self.assertEqual(attach.find_attached(HAND), SPACE + "|sword")
 
     def test_finds_the_marked_child(self):
         fake = FakeCmds(children=[BONE + "|prop", BONE + "|LongSword_02_weapon"],
@@ -200,7 +241,15 @@ class ParentBone(unittest.TestCase):
         self.assertIsNone(attach.parent_bone(BONE))
 
 
-class Detach(unittest.TestCase):
+class Detach(SpaceSwap, unittest.TestCase):
+
+    def test_a_weapon_in_the_space_comes_off_and_the_empty_space_goes(self):
+        fake = FakeCmds(children=[SPACE + "|sword"], marked=[SPACE + "|sword"])
+        log = self._wire(fake)
+        attach.weaponspace = FakeWeaponSpace(space=SPACE, log=log)
+        removed = attach.detach(HAND, BONE)
+        self.assertEqual(removed, SPACE + "|sword")
+        self.assertEqual(log, [("unlink", BONE), ("delete", SPACE + "|sword"), ("prune", SPACE)])
 
     def _wire(self, fake):
         attach.cmds = fake
@@ -271,7 +320,7 @@ class FakeColouring(object):
         return "skeldarColour_red"
 
 
-class AttachFlow(unittest.TestCase):
+class AttachFlow(SpaceSwap, unittest.TestCase):
     """attach() ordering, with the import and the scene both faked.
 
     What is under test is the design's order: parent, mark, seat, snap onto
@@ -332,6 +381,7 @@ class AttachFlow(unittest.TestCase):
         attach.import_model = lambda path: ["|sword"]
         attach.mesh_transforms = lambda roots: ["|sword"]
         attach.colouring = FakeColouring(fake.log)
+        attach.weaponspace = FakeWeaponSpace(log=fake.log)
         self.addCleanup(self._unwire)
         return fake
 
@@ -354,18 +404,30 @@ class AttachFlow(unittest.TestCase):
         weapon, note = attach.attach(self.Entry(), HAND, BONE,
                                      rotate=(1.0, 2.0, 3.0),
                                      translate=(4.0, 5.0, 6.0))
-        self.assertEqual(weapon, HAND + "|sword")
+        self.assertEqual(weapon, SPACE + "|sword")
         kinds = self._kinds(fake)
         self.assertLess(kinds.index("parent"), kinds.index("mark"))
         self.assertLess(kinds.index("mark"), kinds.index("snap"))
         self.assertLess(kinds.index("snap"), kinds.index("grip"))
         self.assertLess(kinds.index("grip"), kinds.index("link"))
         self.assertEqual(fake.log[kinds.index("snap")],
-                         ("snap", HAND + "|sword", BONE))
+                         ("snap", SPACE + "|sword", BONE))
         self.assertEqual(fake.log[kinds.index("grip")],
-                         ("grip", HAND + "|sword", BONE,
+                         ("grip", SPACE + "|sword", BONE,
                           (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
         self.assertEqual(note, "")
+
+    def test_the_weapon_is_never_parented_into_the_skeleton(self):
+        """2026-09-24, «не нарушали иерархию нашего скелета»: the mesh goes into
+        the hand's space, made before the parent; nothing is parented under
+        the hand or any bone."""
+        fake = self._wire(frames=0)
+        attach.attach(self.Entry(), HAND, BONE)
+        kinds = self._kinds(fake)
+        self.assertEqual(fake.log[kinds.index("space")], ("space", HAND))
+        self.assertLess(kinds.index("space"), kinds.index("parent"))
+        targets = [entry[2] for entry in fake.log if entry[0] == "parent"]
+        self.assertEqual(targets, [SPACE])
 
     def test_no_grip_given_means_stay_on_the_bone(self):
         """None is not zeros: zeros are a real grip (the sword exactly on
@@ -399,7 +461,7 @@ class AttachFlow(unittest.TestCase):
         self.assertIn("paint", kinds)
         self.assertLess(kinds.index("mark"), kinds.index("paint"))
         painted = fake.log[kinds.index("paint")]
-        self.assertEqual(painted[1], [HAND + "|sword"])
+        self.assertEqual(painted[1], [SPACE + "|sword"])
         self.assertEqual(painted[2], FakeColouring.FREE)
         self.assertEqual(painted[3], "sword")
 

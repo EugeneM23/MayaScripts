@@ -36,6 +36,12 @@ _EXPORT_OPTIONS = (
     "FBXExportEmbeddedTextures -v false",
     "FBXExportSkeletonDefinitions -v true",
     "FBXExportUpAxis y",
+    # BONES ONLY (2026-09-24): the exporter takes a selected node's children
+    # along by default, and a sword hung under the hand went into every clip
+    # (measured: 10890 vertices, six curves and a material in an animation
+    # FBX). Every joint is selected instead and nothing else rides along --
+    # whatever anybody parents under a bone.
+    "FBXExportIncludeChildren -v false",
 )
 
 
@@ -159,6 +165,7 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None):
     leaf = root.split("|")[-1]
     previous = cmds.ls(selection=True, long=True) or []
     root_uuid = (cmds.ls(root, uuid=True) or [None])[0]
+    joint_ids = cmds.ls(joints, uuid=True) or []
     exported_as = leaf
     try:
         # The same name Maya decorated on arrival would go into the file,
@@ -170,10 +177,13 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None):
         # one place it lives.
         with animimport.target_plain_names(root, joints) as took:
             exported_as = took or leaf
-            # The rename invalidated the path resolved above (trap 16).
-            path = (cmds.ls(root_uuid, long=True) or [root])[0] \
-                if root_uuid else root
-            cmds.select(path, replace=True)
+            # The rename invalidated every path resolved above (trap 16):
+            # the bones are selected by UUID, all of them, and only them.
+            bones = cmds.ls(joint_ids, long=True) or []
+            if not bones:
+                bones = [(cmds.ls(root_uuid, long=True) or [root])[0]
+                         if root_uuid else root]
+            cmds.select(bones, replace=True)
             mel.eval(export_command(fbx_path))
     finally:
         restored = [node for node in previous if cmds.objExists(node)]

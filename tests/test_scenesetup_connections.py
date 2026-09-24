@@ -393,6 +393,17 @@ class Boundaries(unittest.TestCase):
         self.assertEqual(cx.MARKER, "skeldarHandLink")
         self.assertIn("attributeQuery(MARKER", self._source())
 
+    def test_the_weapon_hangs_in_the_hands_space_never_in_the_skeleton(self):
+        """2026-09-24, «не нарушали иерархию нашего скелета»: a hold is the
+        weapon in the space that follows the hand (weaponspace), re-baked by
+        OverRig's parent_in into THAT -- never parent_in onto the hand bone --
+        and which hand holds is read through the space."""
+        source = self._source()
+        self.assertIn("overrig.parent_in(weapon, weaponspace.ensure_space(hand))", source)
+        self.assertNotIn("overrig.parent_in(weapon, hand)", source)
+        self.assertIn("weaponspace.holding_hand(weapon)", source)
+        self.assertIn("weaponspace.prune(", source)
+
     def test_the_drive_bone_takes_no_offset(self):
         self.assertIn("cmds.parentConstraint(weapon, bone, maintainOffset=False)",
                       self._source())

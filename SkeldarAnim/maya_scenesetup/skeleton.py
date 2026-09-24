@@ -113,6 +113,10 @@ def current_root():
         return None
 
     selection = cmds.ls(selection=True, long=True) or []
+    # A weapon lives in a space OUTSIDE the skeleton since 2026-09-24; selected,
+    # it still names its character -- through the hand the space follows.
+    from maya_scenesetup import weaponspace
+    selection = [weaponspace.hand_for(path) or path for path in selection]
     # The rigs' own deformation joints have no joint parent and would count
     # as skeletons of their own; the game skeletons they drive are the ones.
     scene_roots = [root for root in builder.character_roots()

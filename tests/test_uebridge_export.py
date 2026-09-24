@@ -80,6 +80,22 @@ class OutsideKeysWarning(unittest.TestCase):
         self.assertIn("-5", text)
 
 
+class BonesOnly(unittest.TestCase):
+    """2026-09-24: a sword hung under the hand went into every animation FBX
+    (measured: 10890 vertices, six curves and a material). The export selects
+    the BONES and takes no children along, so nothing but joints is written
+    whatever somebody parents under a bone."""
+
+    def test_the_exporter_takes_no_children_along(self):
+        self.assertIn("FBXExportIncludeChildren -v false", animexport._EXPORT_OPTIONS)
+
+    def test_every_joint_is_selected_by_its_uuid(self):
+        import inspect
+        source = inspect.getsource(animexport.export_hierarchy)
+        self.assertIn("joint_ids", source)
+        self.assertNotIn("cmds.select(path, replace=True)", source)
+
+
 class ExportCommand(unittest.TestCase):
 
     def test_backslashes_become_forward_slashes(self):
