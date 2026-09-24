@@ -14,8 +14,18 @@ twin's FK controls follow their bones in POSITION as well as rotation, because a
 clip can animate a bone's translation and only a twin's positions are ours to
 reproduce (measured 2026-09-05: the Longsword clip slides its clavicles 3.65 cm).
 
+**A rig can ask for ROTATIONS ONLY** (2026-09-24, the Hunter creature -- the animator: the
+retarget must not carry the bones' stretch, bind by rotations only). Its group carries
+`skeldarRetarget = "rotation"` (`rotation_mode`); then every FK control takes the source
+bone's world orientation and nothing of its position -- the rig keeps its own bone
+lengths, exactly UE's "rotations from the animation, translations from the skeleton" --
+the IK ends and poles follow the rig's OWN FK joints (a rotation-only take gives an IK
+hand no source position to stand on), and Main / RootX_M still carry the root motion
+and the hips. An unmarked rig is driven as before.
+
 Design: docs/superpowers/specs/2026-09-04-as-retarget-design.md
         docs/superpowers/specs/2026-09-05-asretarget-mixamo-design.md
+        docs/superpowers/specs/2026-09-24-hunter-rig-rotation-retarget-design.md
 
 Run in Maya (Script Editor, Python tab):
     import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
@@ -98,6 +108,21 @@ MIXAMO_IK_ROWS = [("IKArm", "Hand", True), ("IKLeg", "Foot", True),
                   ("IKToes", "ToeBase", False)]
 MIXAMO_POLE_ROWS = [("PoleArm", "Arm"), ("PoleLeg", "UpLeg")]
 
+# The rotation-only mode (a rig marked MODE_ATTR = ROTATION on its group): the IK ends and
+# poles follow the rig's OWN FK joints, whatever the source -- the rule the PlayerMale
+# retarget has had since 2026-09-06, copied here (this module imports nothing from its
+# sibling).  A pole is placed from its whole FK limb so the IK plane is the FK plane: a base
+# on the upper-lower line at the mid joint's share, nudged NUDGE of the limb off the line in
+# the mid joint's frame (so a straight limb keeps the FK roll), aimed at the mid joint, the
+# pole a limb out along the aim.
+MODE_ATTR = "skeldarRetarget"
+ROTATION = "rotation"
+IK_FOLLOW = [("IKArm", "FKXWrist", True), ("IKLeg", "FKXAnkle", True), ("IKToes", "FKXToes", False)]
+POLE_FOLLOW = [("PoleArm", "FKXElbow"), ("PoleLeg", "FKXKnee")]
+POLE_CHAIN = {"PoleArm": ("FKXShoulder", "FKXElbow", "FKXWrist"),
+              "PoleLeg": ("FKXHip", "FKXKnee", "FKXAnkle")}
+NUDGE = 0.002
+
 # A schema is everything that differs between one source skeleton and another.
 #
 # rest        -- where the source's REST pose comes from.  "live" means the
@@ -162,6 +187,10 @@ HOLDER = "MoCapConstraints"      # AdvancedSkeleton's own node name (leaf; one p
 SWITCH = "disableConstraints"    # ... and its own attribute
 DRIVER_PREFIX = "asrtDriver_"
 TARGET_PREFIX = "asrtTarget_"
+POLE_BASE_PREFIX = "asrtPoleBase_"
+POLE_FRAME_PREFIX = "asrtPoleFrame_"
+POLE_NUDGE_PREFIX = "asrtPoleNudge_"
+POLE_PREFIX = "asrtPole_"
 
 
 def _n(rig, leaf_name):
@@ -183,7 +212,20 @@ def _rig(rig):
 def holder_of(rig):
     return _n(rig, HOLDER)
 
-Drive = collections.namedtuple("Drive", "control bone translate rotate")
+# own -- `bone` is one of the RIG's own nodes (an FKX joint), not a source bone: the
+#        rotation-only mode's IK ends and poles
+Drive = collections.namedtuple("Drive", "control bone translate rotate own")
+Drive.__new__.__defaults__ = (False,)
+
+
+def rotation_mode(rig):
+    """Does this rig take rotations only?  Read off the rig's group (`MODE_ATTR`), which the
+    rig procedure writes -- the Hunter's since 2026-09-24.  No attribute, no rig: False."""
+    if rig is None or not rig.group or not cmds.objExists(rig.group):
+        return False
+    if not cmds.attributeQuery(MODE_ATTR, node=rig.group, exists=True):
+        return False
+    return cmds.getAttr(rig.group + "." + MODE_ATTR) == ROTATION
 
 
 # ---------------------------------------------------------------- pure policy
@@ -213,11 +255,13 @@ def candidates(schema=UE5):
     return out
 
 
-def drive_plan(controls, bones, schema=UE5):
+def drive_plan(controls, bones, schema=UE5, rotation=False):
     """Pure: what to constrain to what.
 
     controls -- control names that exist in this rig
     bones    -- leaf names that exist in the source skeleton
+    rotation -- the rig takes rotations only (`rotation_mode`): FK controls by
+                rotation, IK ends and poles from the rig's own FKX joints
     Returns (drives, missing), missing being [(control, bone)] rows skipped
     because the source has no such bone.  A schema's own gaps -- Mixamo has no
     metacarpals, no second neck joint and three spine joints against our five --
@@ -239,11 +283,22 @@ def drive_plan(controls, bones, schema=UE5):
     add("RootX_M", schema.pelvis, True, True)
     # An FK control of a twin takes the bone's POSITION too: the clip may animate
     # the bone's translation (the Longsword clip slides its clavicles 3.65 cm),
-    # and only a twin's positions are ours to reproduce -- see Schema.twin.
+    # and only a twin's positions are ours to reproduce -- see Schema.twin.  A
+    # rotation-only rig takes none of it: its own bone lengths are the point.
     for as_base, src_base in schema.rows:
         for as_side, src_side in schema.sides:
             add("FK" + as_base + as_side, bone_name(src_base, src_side, schema),
-                schema.twin, True)
+                schema.twin and not rotation, True)
+    if rotation:
+        for as_base, fkx, full in IK_FOLLOW:
+            for side in ("_L", "_R"):
+                if as_base + side in controls:
+                    drives.append(Drive(as_base + side, fkx + side, full, True, True))
+        for as_base, fkx in POLE_FOLLOW:
+            for side in ("_L", "_R"):
+                if as_base + side in controls:
+                    drives.append(Drive(as_base + side, fkx + side, True, False, True))
+        return drives, missing
     for as_base, src_base, translate in schema.ik_rows:
         for as_side, src_side in schema.sides[1:]:
             add(as_base + as_side, bone_name(src_base, src_side, schema),
@@ -253,6 +308,22 @@ def drive_plan(controls, bones, schema=UE5):
             add(as_base + as_side, bone_name(src_base, src_side, schema),
                 True, False)
     return drives, missing
+
+
+def pole_joints(control):
+    """Pure: the FKX upper, mid and lower joint of a pole control's limb."""
+    base, side = control[:-2], control[-2:]
+    return tuple(j + side for j in POLE_CHAIN[base])
+
+
+def rotation_note(ratios, tol=0.02):
+    """Pure: what the rotation-only mode means for this pair of skeletons."""
+    off = dict((limb, r) for limb, r in ratios.items() if abs(r - 1.0) > tol)
+    lengths = ("; the rig's " + ", ".join("%s is %+.1f%% of the source's" % (limb, (r - 1.0) * 100.0)
+                                          for limb, r in sorted(off.items()))) if off else ""
+    return ("rotations only: every bone takes the source bone's orientation and keeps its own "
+            "length%s - IK ends and poles follow the rig's own FK, so FK and IK agree"
+            % lengths)
 
 
 def detect_schema(bones, schemas=SCHEMAS):
@@ -851,6 +922,54 @@ def bake(disconnect=True, rig=None):
     return note
 
 
+def _pole_measure(control, rig):
+    """Everything a pole rig needs, read at the rig's build pose BEFORE any constraint moves the
+    FK limb: (upper, mid, lower, d_upper, d_lower, nudge in the mid joint's frame, limb length)."""
+    upper, mid, lower = (_n(rig, j) for j in pole_joints(control))
+    a, b, c = (om.MVector(cmds.xform(j, q=True, ws=True, t=True)) for j in (upper, mid, lower))
+    d_upper, d_lower = (a - b).length(), (b - c).length()
+    length = d_upper + d_lower
+    on_line = (a * d_lower + c * d_upper) / length
+    side = om.MVector(cmds.xform(_n(rig, control), q=True, ws=True, t=True)) - on_line
+    if side.length() < 1e-6:
+        side = b - on_line
+    if side.length() < 1e-6:
+        raise RuntimeError("%s rests on the limb's line and the limb is straight: no pole side" % control)
+    mid_rot = om.MTransformationMatrix(om.MMatrix(cmds.getAttr(mid + ".worldMatrix[0]"))).rotation(
+        asQuaternion=True).asMatrix()
+    nudge = (side.normal() * -NUDGE * length) * mid_rot.inverse()     # row vectors: local = world * R^-1
+    return upper, mid, lower, d_upper, d_lower, nudge, length
+
+
+def _pole_rig(control, measured, rig):
+    """Four transforms and three constraints under the holder that keep a pole in the FK plane.
+
+    `asrtPoleBase_` on the upper-lower line at the mid joint's share (a point constraint to
+    both, each weighted by the OTHER bone's length); `asrtPoleFrame_` under it, oriented as
+    the mid joint; `asrtPoleNudge_` under that, nudged off the line and aimed at the mid
+    joint; `asrtPole_` a limb's length out along the aim.  All of it dies with the holder.
+    """
+    upper, mid, lower, d_upper, d_lower, nudge_local, length = measured
+    base = cmds.createNode("transform", name=_n(rig, POLE_BASE_PREFIX + control),
+                           parent=holder_of(rig), skipSelect=True)
+    con = cmds.pointConstraint(upper, lower, base)[0]
+    w = cmds.pointConstraint(con, query=True, weightAliasList=True)
+    cmds.setAttr("%s.%s" % (con, w[0]), d_lower)
+    cmds.setAttr("%s.%s" % (con, w[1]), d_upper)
+    frame = cmds.createNode("transform", name=_n(rig, POLE_FRAME_PREFIX + control), parent=base,
+                            skipSelect=True)
+    made = [con, cmds.orientConstraint(mid, frame)[0]]
+    nudge = cmds.createNode("transform", name=_n(rig, POLE_NUDGE_PREFIX + control), parent=frame,
+                            skipSelect=True)
+    cmds.setAttr(nudge + ".translate", nudge_local.x, nudge_local.y, nudge_local.z)
+    made.append(cmds.aimConstraint(mid, nudge, aimVector=(1, 0, 0), upVector=(0, 1, 0),
+                                   worldUpType="vector", worldUpVector=(0, 1, 0))[0])
+    pole = cmds.createNode("transform", name=_n(rig, POLE_PREFIX + control), parent=nudge,
+                           skipSelect=True)
+    cmds.setAttr(pole + ".translateX", length)
+    return pole, made
+
+
 def _helper(control, source_path, local, rig):
     """Driver (follows the source bone 1:1) + target (holds the rest offset),
     both in the rig's namespace under its holder."""
@@ -999,7 +1118,7 @@ def _key_range(paths):
 
 Plan = collections.namedtuple(
     "Plan", "root drives missing warn bones rig_bones refusal schema "
-            "src_rest rig_rest align notes rig")
+            "src_rest rig_rest align notes rig rotation")
 
 
 def _drive_offset(drive, plan):
@@ -1019,7 +1138,7 @@ def _drive_offset(drive, plan):
 
 def _plan(source_root=None, rig=None):
     """Everything connect() needs, computed without touching the scene."""
-    empty = Plan("", [], [], "", {}, {}, "", UE5, {}, {}, {}, [], None)
+    empty = Plan("", [], [], "", {}, {}, "", UE5, {}, {}, {}, [], None, False)
     rig, refusal = _rig(rig)
     if rig is None:
         return empty._replace(refusal=refusal)
@@ -1051,22 +1170,29 @@ def _plan(source_root=None, rig=None):
                     "found) - a third schema needs a row in SCHEMAS"
                     % (leaf(source_root),
                        ", ".join(sorted(set(h for s in SCHEMAS for h in s.hints)))))
+    rotation = rotation_mode(rig)
     controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
-    drives, missing = drive_plan(controls, list(bones), schema)
+    drives, missing = drive_plan(controls, list(bones), schema, rotation=rotation)
     ours = our_bone_map()
     drives = [d for d in drives if ours.get(d.control) in rig_bones]
-    if not drives:
+    # an own drive needs the rig's FKX joints -- the whole limb, for a pole
+    drives = [d for d in drives if not d.own or (
+        cmds.objExists(_n(rig, d.bone)) and (not d.control.startswith("Pole") or all(
+            cmds.objExists(_n(rig, j)) for j in pole_joints(d.control))))]
+    if not [d for d in drives if not d.own]:
         return empty._replace(
             refusal="no bone of %s matches this rig" % leaf(source_root))
 
     src_rest = rest_matrices(bones, schema.rest)
     rig_rest = rest_matrices(rig_bones, "live")
-    triples = [(d.control, ours[d.control], d.bone) for d in drives]
+    triples = [(d.control, ours[d.control], d.bone) for d in drives if not d.own]
     align = (alignments(triples, rig_rest, src_rest,
                         parents_of(rig_bones), parents_of(bones))
              if schema.align else
-             dict((d.control, list(om.MMatrix())) for d in drives))
-    warn = scale_warning(
+             dict((d.control, list(om.MMatrix())) for d in drives if not d.own))
+    # a rotation copy onto a rig with its own proportions is the point of the mode, not a
+    # hazard to warn about: the note below says what it means instead
+    warn = "" if rotation else scale_warning(
         segment_lengths(dict((n, position(m)) for n, m in src_rest.items())),
         segment_lengths(dict((n, position(m)) for n, m in rig_rest.items())))
     notes = []
@@ -1078,11 +1204,11 @@ def _plan(source_root=None, rig=None):
     if tp:
         notes.append(tp)
     ratios = limb_ratios(rig_rest, src_rest, schema)
-    note = proportion_note(ratios)
+    note = rotation_note(ratios) if rotation else proportion_note(ratios)
     if note:
         notes.append(note)
     return Plan(source_root, drives, missing, warn, bones, rig_bones, "",
-                schema, src_rest, rig_rest, align, notes, rig)
+                schema, src_rest, rig_rest, align, notes, rig, rotation)
 
 
 def report(source_root=None, rig=None):
@@ -1095,13 +1221,16 @@ def report(source_root=None, rig=None):
              % (plan.root, len(plan.bones), plan.schema.name,
                 _key_range(list(plan.bones.values())))]
     offsets = [d.control for d in plan.drives
-               if needs_offset(_drive_offset(d, plan), d.translate)]
+               if not d.own and needs_offset(_drive_offset(d, plan), d.translate)]
+    source_drives = [d for d in plan.drives if not d.own]
     lines.append("would drive %d controls: %d rotation only, %d with position; "
-                 "%d need a rest offset (%s)"
+                 "%d need a rest offset (%s)%s"
                  % (len(plan.drives),
-                    len([d for d in plan.drives if not d.translate]),
-                    len([d for d in plan.drives if d.translate]),
-                    len(offsets), ", ".join(offsets[:8])))
+                    len([d for d in source_drives if not d.translate]),
+                    len([d for d in source_drives if d.translate]),
+                    len(offsets), ", ".join(offsets[:8]),
+                    ("; %d IK ends and poles follow the rig's own FK"
+                     % len([d for d in plan.drives if d.own])) if plan.rotation else ""))
     for note in plan.notes:
         lines.append(note)
     posed = posed_controls(rig=rig)
@@ -1148,7 +1277,18 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
     # Read every rest offset BEFORE building anything: the first constraints move
     # controls that later ones measure against (a pole follows the IK control it
     # rides, so its offset came out 0.022 cm wrong when read mid-build).
-    offsets = dict((d.control, _drive_offset(d, plan)) for d in plan.drives)
+    offsets = dict((d.control, _drive_offset(d, plan)) for d in plan.drives if not d.own)
+    # the rotation-only mode's own drives: an IK end keeps its rest offset from its FKX joint,
+    # a pole's whole geometry is measured on the FK limb -- all of it before anything moves
+    own = {}
+    for d in plan.drives:
+        if not d.own:
+            continue
+        if d.control.startswith("Pole"):
+            own[d.control] = _pole_measure(d.control, rig)
+        else:
+            own[d.control] = offset_local(cmds.getAttr(_n(rig, d.control) + ".worldMatrix[0]"),
+                                          cmds.getAttr(_n(rig, d.bone) + ".worldMatrix[0]"))
 
     auto = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
@@ -1159,10 +1299,26 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
         _holder(rig)
         _remember_source(plan.root, holder)
         for drive in plan.drives:
-            target = plan.bones[drive.bone]
             control = _n(rig, drive.control)
-            local = offsets[drive.control]
             order = cmds.getAttr(control + ".rotateOrder")
+            if drive.own:
+                if drive.control.startswith("Pole"):
+                    pole, helpers = _pole_rig(drive.control, own[drive.control], rig)
+                    made += helpers
+                    made.append(cmds.pointConstraint(pole, control)[0])
+                elif drive.translate:
+                    con = cmds.parentConstraint(_n(rig, drive.bone), control)[0]
+                    move, turn = parent_offsets(own[drive.control], order)
+                    cmds.setAttr(con + ".target[0].targetOffsetTranslate", *move)
+                    cmds.setAttr(con + ".target[0].targetOffsetRotate", *turn)
+                    made.append(con)
+                else:
+                    made.append(cmds.orientConstraint(
+                        _n(rig, drive.bone), control,
+                        offset=euler_offset(rotation_only(own[drive.control]), order))[0])
+                continue
+            target = plan.bones[drive.bone]
+            local = offsets[drive.control]
             shifted = needs_offset(local, drive.translate)
             if drive.translate and drive.rotate:
                 # a rigid follow is ONE parentConstraint, its two target offsets
@@ -1208,10 +1364,10 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=auto)
 
-    lines = ["retarget connected: %d controls of %s driven from %s, schema %s "
+    lines = ["retarget connected: %d controls of %s driven from %s, schema %s%s "
              "(%d rest offsets on constraints, %d through a helper)"
              % (len(plan.drives), maya_rigs.label(rig), leaf(plan.root),
-                plan.schema.name, turned, helped)]
+                plan.schema.name, ", ROTATIONS ONLY" if plan.rotation else "", turned, helped)]
     for note in plan.notes:
         lines.append(note)
     if ground:

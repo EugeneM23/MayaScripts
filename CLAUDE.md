@@ -652,6 +652,73 @@ MEL sourcing `base_OverRig_scripts` and raising `basicOverRigScripts`;
 the two labels (not re-run whole). `make_build.py` →
 `SkeldarAnim_2026-09-19.zip`, 85 files, 26.8 MB.
 
+## The Hunter: its own AS rig, and a ROTATION-ONLY retarget (2026-09-24)
+
+A creature on a UE5 Manny skeleton (Manny's bone names plus `weapon_test`; arms 34.8 +
+36.0 cm against Manny's 27.8 + 27.3, a longer neck, the same legs) in the animator's
+`Downloads/creep_T-pose_MIX_06_skin.mb`, group `|Hunter` (it was `|Hanter` in the morning
+— the animator renamed it mid-session, and deleted the UE reference Manny too; find
+things, never hardcode them). Spec:
+`docs/superpowers/specs/2026-09-24-hunter-rig-rotation-retarget-design.md`. In one day:
+joint scales removed (12 joints, mesh unchanged: `BPM' = BPM·WM_old·WM_new⁻¹`), the bind
+re-baked into the UE A-pose in place (Orig shapes written, `BPM = WM⁻¹`), an AS rig, and
+the retarget mode. **The scene was left unsaved** with backups beside it
+(`creep_T-pose_MIX_06_skin_BACKUP_*.mb`).
+
+**The rig** — `docs/superpowers/plans/as_hanter_rig_procedure.py`, proof
+`verify_advancedskeleton_hunter_rig.py` **0 of 25 gates, live**. The Manny procedure by
+LONG PATH (two skeletons with the same bone names were in the scene), the fit put on every
+bone, and three deliberate differences:
+
+- **Bones take ORIENTATION only** (the pelvis its position too). The vendor's point +
+  orient + scale let the LEFT arm's lengths wander 0.01–0.07 cm: AS mirrors the left side
+  from the right fit, the skeleton is 0.045 cm asymmetric, and a `-mo` pointConstraint
+  keeps that offset in the bone's PARENT space. Orientation only = lengths exact, no
+  translation keys below the pelvis in an export.
+- **IK feet LEVEL** in AS's own world frame (the animator: the foot bones' turn tilted the
+  foot boxes). `as_frames` + `align_ik_target` — see trap 71.
+- **`Group.skeldarRetarget = "rotation"`** marks it for the retarget.
+- **Hand helpers, the animator's layout**: `ik_hand_r`/`ik_hand_l` exactly ON the hands and
+  following them with no offset, `ik_hand_gun` (their parent) undriven with zero channels
+  (`place_ik_helpers`); `ik_foot_*` follow the feet as on Manny.
+
+**The retarget** — `maya_asretarget.rotation_mode(rig)` reads that mark; the animator's
+rule «ретаргет не должен учитывать растяжение костей (привязываем только по
+ротейшенам)». FK controls take the source bone's world orientation and NO position; IK
+ends and poles follow the rig's OWN FKX joints (the PlayerMale rule, copied — this module
+still imports nothing from its sibling; the pole's geometry is now measured before the
+first constraint); Main and RootX_M keep the twin drive (root motion and hips exact,
+unscaled). An unmarked rig is driven exactly as before; the dispatcher needed nothing.
+17 unit tests (`tests/test_asretarget_rotation.py`), 2195 in all; the installed copy
+refreshed. Proof: `verify_hunter_rotation_retarget.py` in **mayapy standalone** on a saved
+copy with a Longsword clip — **0 of 10**: bones on the source's orientation to 0.001°,
+lengths unchanged on every frame (0.000000 cm) against a source whose own lengths differ,
+root/pelvis 0.000000, IK = FK to 0.001 cm.
+
+**Limb bones are judged by where they point, not by their roll**: AS's
+Shoulder/Elbow/Hip/Knee never roll — the roll lives in the twist joints (94.9° on that
+clip, the Manny rig's design too) — and AS removes it about ITS joint's axis, so a child
+standing off the bone's X (the Hunter's lowerarm 0.32 cm, 0.53°) swings on a cone; the
+bound is twice each skeleton's off-axis angle, measured from the children's local
+translations.
+
+71. **`asControlOrientAttach` re-orients the FK↔IK align target (`AlignIKToAnkle_*`) only
+    for a control that ends up CUSTOM-oriented.** Put a control back on AS's own frame and
+    it gets no CustomOrient, its align target keeps the old bone-frame turn, and
+    asAlignIK2FK lands the IK foot in the right place turned **117.93°** — exactly the old
+    frame's angle, which is what gave it away. Do Attach's `delete orientConstraint ctrl
+    alignTo` yourself. The Manny verify never tested leg IK→FK, only FK→IK.
+72. **"The mesh is unchanged across the bake" is a trivially-true gate for a bind-pose
+    change.** The first A-pose bake copied the UE hand orientation (a 51° wrist turn),
+    every gate was green, and the animator saw «геометрия в области кистей изменила свои
+    размеры». Edge lengths against the old rest mesh found it: ×4.4 at the wrist. Judge a
+    re-bind by edge ratios; DQ skinning and a temporary deltaMush did not rescue the wrist,
+    keeping the hand's own turn did.
+73. **A scene can hold the dead DG half of a deleted AS rig** — 264 utility nodes in
+    `AllSet`/`Sets`, empty layers `BodyControls`/`DeformationJoints`, no transforms. A new
+    build would get uniquified names beside them. Check they connect to nothing outside
+    themselves, then delete, before `fit()`.
+
 ## Driving the user's live Maya
 
 The user can open a command port, and that is how everything here gets verified.
