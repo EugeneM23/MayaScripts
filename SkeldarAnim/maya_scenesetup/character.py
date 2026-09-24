@@ -138,7 +138,12 @@ def rename_note(root, existing_roots):
     others = [r.split("|")[-1] for r in roots if r != root]
     if not others or leaf in others:
         return ""
-    return RENAMED.format(leaf, others[0])
+    # What collided is a PLAIN top node -- `root` when there is one. A rig's
+    # namespaced joints are never it, and an AdvancedSkeleton rig has dozens
+    # of top joints (2026-09-24: the note named `Hunter_Rig:FKXAnkle_L`).
+    plain = [o for o in others if ":" not in o]
+    named = [o for o in plain if o == "root"]
+    return RENAMED.format(leaf, (named or plain or others)[0])
 
 
 def malware_nodes(names):
@@ -428,6 +433,13 @@ def import_asset(path, namespace=None):
                      returnNewNodes=True, ignoreVersion=True, **options) or []
 
 
+def rig_namespace(entry):
+    """Pure: the namespace a rig row lands in -- its own key (`Manny_Rig`,
+    `Hunter_Rig`), uniquified by `free_namespace`. A second rig row must not
+    arrive as `Manny_Rig1` (2026-09-24, the Hunter)."""
+    return entry.key or RIG_NAMESPACE_BASE
+
+
 def add_character(entry=None, rgb=None):
     """Import a character, colour it, sweep it, connect it, and say so.
 
@@ -458,7 +470,7 @@ def add_character(entry=None, rgb=None):
     # A rig gets a namespace of its own; a bare skeleton keeps plain names.
     namespace = ""
     if catalog.is_rig(entry):
-        namespace = free_namespace(RIG_NAMESPACE_BASE, existing_namespaces())
+        namespace = free_namespace(rig_namespace(entry), existing_namespaces())
 
     before_roots = builder.character_roots()
     new = import_asset(path, namespace or None)

@@ -241,10 +241,32 @@ class Show(FakeToolsMixin, unittest.TestCase):
 
     def test_an_existing_control_is_restored_not_rebuilt(self):
         self.fake.workspace[hub.CONTROL] = {"label": "SkeldarAnim"}
+        hub.build()                                   # this module object built what stands
+        del self.fake.deleted[:]
         hub.show()
         edits = self.fake.workspace[hub.CONTROL]["edits"]
         self.assertTrue(any(e.get("restore") for e in edits))
         self.assertNotIn("uiScript", self.fake.workspace[hub.CONTROL])
+        self.assertNotIn(hub.SCROLL, self.fake.deleted)
+        self.assertEqual(self.built("characters"), 1)
+
+    def test_a_control_an_older_copy_built_is_rebuilt_in_place(self):
+        """2026-09-24: an update purges the plugin's modules while the hub
+        stays open, and a restore alone kept showing the OLD build -- the
+        character dropdown without the Hunter row the update had added
+        («НЕ вижу хантера в списке персонажей»). A module object that did not
+        build the standing accordion rebuilds it inside the same control, so
+        where it is docked survives."""
+        self.fake.workspace[hub.CONTROL] = {"label": "SkeldarAnim"}
+        self.fake.existing.add(hub.SCROLL)
+        hub._BUILT_HERE = False
+        hub.show()
+        self.assertIn(hub.SCROLL, self.fake.deleted)
+        self.assertEqual(self.built("characters"), 1)
+        self.assertNotIn("uiScript", self.fake.workspace[hub.CONTROL])
+        self.assertTrue(any(e.get("restore") for e in self.fake.workspace[hub.CONTROL]["edits"]))
+        hub.show()                                    # built here now: no second rebuild
+        self.assertEqual(self.built("characters"), 1)
 
     def test_legacy_standalone_windows_are_closed(self):
         self.fake.windows["skeldarColourWin"] = {}

@@ -278,8 +278,8 @@ class TestBakeOrchestration(unittest.TestCase):
             disconnect=lambda rig=None: self.calls.append(("disconnect",)) or "retarget disconnected (82 constraints)")
         self.mod = mod
         rr.resolve = lambda rig=None: (LEGACY, mod, "")
-        rr.carry_helpers = lambda source, rig, start, end: (
-            self.calls.append(("carry", source, rig, start, end))
+        rr.carry_helpers = lambda source, rig, start, end, relative=False: (
+            self.calls.append(("carry", source, rig, start, end) + (("relative",) if relative else ()))
             or (["weapon_r", "camera_bone"], [], "camera SceneSetup_camera on camera_bone (39 frames)"))
         rr.cmds = FakeBakeScene()
 
@@ -312,6 +312,20 @@ class TestBakeOrchestration(unittest.TestCase):
         self.assertIn("nothing connected", rr.bake())
         self.assertEqual(self.calls, [])
 
+    def test_a_rotation_only_rig_carries_the_helper_bones_in_their_parents_space(self):
+        """2026-09-24, the Hunter: his arms are 26% longer than the source's, so a
+        weapon_r carried in WORLD space would float off his hand. A rig marked
+        rotation-only takes each helper bone relative to its parent (hand_r)."""
+        self.mod.rotation_mode = lambda rig: True
+        rr.bake()
+        self.assertEqual(self.calls[1], ("carry", "|clip:root", "|root", 3.0, 41.0, "relative"))
+
+    def test_the_space_is_world_unless_the_module_says_rotation_only(self):
+        self.assertEqual(rr.helper_space(self.mod, LEGACY), "world")
+        self.mod.rotation_mode = lambda rig: False
+        self.assertEqual(rr.helper_space(self.mod, LEGACY), "world")
+        self.mod.rotation_mode = lambda rig: True
+        self.assertEqual(rr.helper_space(self.mod, LEGACY), "parent")
     def test_a_missing_rig_is_the_dispatchers_refusal(self):
         rr.resolve = lambda rig=None: (None, None, "no AdvancedSkeleton rig in this scene")
         self.assertEqual(rr.bake(), "no AdvancedSkeleton rig in this scene")

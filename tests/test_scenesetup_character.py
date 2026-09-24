@@ -115,6 +115,15 @@ class RenameNote(unittest.TestCase):
         self.assertIn("root1", note)
         self.assertIn("root", note)
 
+    def test_the_note_names_the_plain_root_it_collided_with_not_a_rigs_joint(self):
+        """2026-09-24: a second Hunter skeleton beside a Hunter rig read
+        "(Hunter_Rig:FKXAnkle_L already in the scene)" -- an AdvancedSkeleton
+        rig has many top joints, and the first of them is not what collided."""
+        note = character.rename_note(
+            "|Hunter_Skeleton_root",
+            ["|Hunter_Rig:FKXAnkle_L", "|Hunter_Rig:root", "|root", "|Hunter_Skeleton_root"])
+        self.assertEqual(note, "imported as Hunter_Skeleton_root (root already in the scene)")
+
     def test_the_first_character_gets_no_note(self):
         self.assertEqual(character.rename_note("|root", ["|root"]), "")
 
@@ -359,6 +368,13 @@ class ManyRigs(unittest.TestCase):
         self.assertEqual(character.free_namespace(
             "Manny_Rig", ["Manny_Rig", "Manny_Rig1", "UI", "shared"]),
             "Manny_Rig2")
+
+    def test_each_rig_lands_in_a_namespace_named_for_its_own_key(self):
+        """2026-09-24, the Hunter: a second rig row must not arrive as
+        `Manny_Rig1`."""
+        from maya_scenesetup import catalog
+        self.assertEqual(character.rig_namespace(catalog.character_by_key("Hunter_Rig")), "Hunter_Rig")
+        self.assertEqual(character.rig_namespace(catalog.character_by_key("Manny_Rig")), "Manny_Rig")
 
     def test_the_namespace_is_maya_legal(self):
         self.assertEqual(character.free_namespace("Manny Rig.02", []),

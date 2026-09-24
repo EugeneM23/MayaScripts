@@ -168,24 +168,60 @@ def _foreign(bones):
     return found
 
 
-def transfer_bone(src, dst, start, end):
-    """The rig's bone onto the source bone's world track: constrain, bake, release.
+def helper_space(mod, rig):
+    """"parent" when the rig takes rotations only (the module says so), else "world".
 
-    The bone's own keys are cut FIRST: constraining a keyed channel splices a
-    pairBlend in (trap 37's mechanism) and a second Bake on the same rig
-    would otherwise blend the new take with the old one.
+    A rotation-only rig keeps its own bone lengths -- the Hunter's arms are 26%
+    longer than a UE clip's -- so a weapon_r carried in WORLD space would stand where
+    the SOURCE's hand is, off the rig's own. Carried relative to its parent it keeps
+    the clip's grip on the rig's hand (2026-09-24)."""
+    probe = getattr(mod, "rotation_mode", None)
+    return "parent" if probe is not None and probe(rig) else "world"
+
+
+def _parent_space_driver(src, dst):
+    """A transform standing at the source bone's pose relative to ITS parent, carried by the rig
+    bone's parent: world = W_src * P_src^-1 * P_dst (row vectors). Returns (driver, nodes)."""
+    src_parent = cmds.listRelatives(src, parent=True, fullPath=True)
+    dst_parent = cmds.listRelatives(dst, parent=True, fullPath=True)
+    mm = cmds.createNode("multMatrix", skipSelect=True)
+    cmds.connectAttr(src + ".worldMatrix[0]", mm + ".matrixIn[0]")
+    if src_parent:
+        cmds.connectAttr(src_parent[0] + ".worldInverseMatrix[0]", mm + ".matrixIn[1]")
+    if dst_parent:
+        cmds.connectAttr(dst_parent[0] + ".worldMatrix[0]", mm + ".matrixIn[2]")
+    dm = cmds.createNode("decomposeMatrix", skipSelect=True)
+    cmds.connectAttr(mm + ".matrixSum", dm + ".inputMatrix")
+    driver = cmds.createNode("transform", name="rrtHelperDriver", skipSelect=True)
+    cmds.connectAttr(dm + ".outputTranslate", driver + ".translate")
+    cmds.connectAttr(dm + ".outputRotate", driver + ".rotate")
+    return driver, [driver, dm, mm]
+
+
+def transfer_bone(src, dst, start, end, relative=False):
+    """The rig's bone onto the source bone's track: constrain, bake, release.
+
+    World space by default; `relative` takes the source bone's pose relative to its
+    parent onto the rig bone's parent instead (`helper_space`). The bone's own keys
+    are cut FIRST: constraining a keyed channel splices a pairBlend in (trap 37's
+    mechanism) and a second Bake on the same rig would otherwise blend the new take
+    with the old one.
     """
     cmds.cutKey(dst, attribute=_CHANNELS, clear=True)
-    constraint = cmds.parentConstraint(src, dst)[0]
+    driver, temp = (_parent_space_driver(src, dst) if relative else (src, []))
+    constraint = cmds.parentConstraint(driver, dst)[0]
     cmds.bakeResults(dst, time=(start, end), attribute=_CHANNELS, simulation=False,
                      sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=False,
                      sparseAnimCurveBake=False)
     cmds.delete(constraint)
+    for node in temp:
+        if cmds.objExists(node):
+            cmds.delete(node)
     cmds.delete(dst, staticChannels=True, unitlessAnimationCurves=False,
                 hierarchy="none", controlPoints=False, shape=True)
 
 
-def carry_helpers(source_root, rig_root, start, end):
+def carry_helpers(source_root, rig_root, start, end, relative=False):
     """The after-bake step. Returns (moved names, skipped pairs, camera text).
 
     Order, each half paid for elsewhere: a standing camera setup is torn down
@@ -214,7 +250,7 @@ def carry_helpers(source_root, rig_root, start, end):
                 bonedrive.unlink(dst[name])
     moves, skipped = helper_plan(src, dst, _foreign(dst))
     for _name, source_path, rig_path in moves:
-        transfer_bone(source_path, rig_path, start, end)
+        transfer_bone(source_path, rig_path, start, end, relative=relative)
     for bone, weapon in links.items():
         if cmds.objExists(weapon) and cmds.objExists(bone):
             bonedrive.relink(weapon, bone)
@@ -268,7 +304,9 @@ def bake(*args, **kwargs):
     cmds.undoInfo(openChunk=True, chunkName="Retarget bake")
     try:
         note = mod.bake(disconnect=False, rig=rig).split("; still connected")[0]
-        moved, skipped, camera_text = carry_helpers(source, rig_root, span[0], span[1])
+        relative = helper_space(mod, rig) == "parent"
+        moved, skipped, camera_text = (carry_helpers(source, rig_root, span[0], span[1], relative=True)
+                                       if relative else carry_helpers(source, rig_root, span[0], span[1]))
         note += "; " + mod.disconnect(rig)
     finally:
         cmds.undoInfo(closeChunk=True)

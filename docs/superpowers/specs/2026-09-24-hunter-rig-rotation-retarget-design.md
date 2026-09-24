@@ -122,3 +122,208 @@ and follow them as before.
 
 Not built: a catalog row for the Hunter rig in Add Character; the IK toes keep their bone's
 frame.
+
+## Addendum — the Hunter ships in the plugin (same day)
+
+«Давай сделаем пуш коммит в гит хаб, после чего добавим хантера как риг в наш плагин» —
+the shelf is ours (SkeldarAnim; "Atone" was the project's name), and `SKM_Manny_Simple` is
+not to be shipped: «Нет! И насчёт мешей давай приведём всё в порядок, назовём как-то
+правильно и сгруппируем, чтобы геометрия не валялась где-то непонятно где».
+
+**The tidy** (`tidy()` in the procedure, run live on the animator's scene; every node held
+by UUID — the first attempt re-parented the root and then asked for the swords by their old
+long paths, CLAUDE.md trap 16): `|root` to world level with the FBX wrapper's turn in its
+jointOrient (Manny_Rig.ma's shape: skeleton at world, meshes in a group, the rig under
+`Group`); `Hunter_Body`, `Hunter_Back`, `Hunter_Arm_L`, `Hunter_Arm_R`, `Hunter_Face` (and
+their shapes) in AdvancedSkeleton's own `Group|Geometry`, which was empty; the two swords
+(`Hunter_Sword` from `SwordPacked`, `Hunter_Sword_Low` from `Sword_Low.001`) out of the
+skeleton — a mesh under a bone rides into every animation export — into
+`Geometry|Hunter_Props`, parent-constrained to `weapon_test`; the old wrapper renamed
+`Manny_Reference`, holding only the Manny mesh. Measured: swords 0.000000, every skin still
+BPM·WM = I (the bones did not move), the sword following an arm pose 44.24 cm and back to
+0.000000. The live verify's gates 1 and 16 were rewritten for this shape: 25/25.
+
+**The asset** `SkeldarAnim/assets/Hunter_Rig.ma` (39 MB), built by
+`make_hunter_rig_asset.py` in mayapy standalone from a saved copy: the reference mesh with
+its skinCluster and animation, `camera1`, `materialXStack1`, the shading networks nothing
+wears (Manny's, mostly), unknown nodes and empty dagPoses deleted; Maya's own two
+configuration script nodes — rewritten by every save — cut out of the text afterwards; the
+file refused if any banned string survives. Catalog row 1, «Hunter [rig]», `kind` "rig";
+`character.rig_namespace(entry)` = the entry's key, so a Hunter lands as `Hunter_Rig`,
+`Hunter_Rig1`. Proof `verify_hunter_rig_asset.py`, 10/10 in standalone.
+
+## Addendum 2 — the clean skeleton row
+
+«Давай добавим возможность загрузить не только риг хантера, а и чистый скелет». Row
+«Hunter [skeleton]» (key `Hunter`, kind "skeleton", after «Manny UE5 [skeleton]»), file
+`assets/Hunter_Skeleton.ma`, derived from the shipped rig so the two can never disagree about
+the bind: `make_hunter_skeleton_asset.py` records every bone's world matrix, deletes the
+skeleton's constraints, re-seats each bone from its world matrix (0.000000000), moves the
+meshes and props out of `Group|Geometry` into `|Hunter`, deletes `|Group`, then deletes every
+node nothing kept depends on — decided by DEPENDENCY, not by type or name: the kept set is the
+two hierarchies, the meshes' and props' whole history, their shading networks, the bind pose,
+the skeleton's display layer and Maya's default nodes. That removed 315 nodes of
+AdvancedSkeleton's network (multiplyDivide 95, blendTwoAttr 25, setRange 24, …, its ik
+solvers, expressions and driven-key curves) and the FBX-embedded textures of the creature's
+original materials, which no assigned material used. Proof `verify_hunter_skeleton_asset.py`,
+9/9 standalone. Like every skeleton row it arrives with plain names: a UE clip merged onto it
+by the bridge would carry the clip's bone translations — the rotation-only rule belongs to
+the rig, which is the road for animating the Hunter.
+
+## Addendum 3 — weapons on the Hunter, as on every rig
+
+«Сейчас у нас оружие хантера встроено прямо в риг. Давай это исправим и сделаем
+консистентно ... добавлять и удалять оружие и анимация переносилась на вепон бону и обратно.
+Также давай добавим меч хантера в список нашего оружия». Two choices, the animator's: the
+sword is `Hunter_Sword` alone (the whole sword; `Hunter_Sword_Low` is a second grip piece),
+and the weapon bone is renamed to the plugin's `weapon_r` with a `weapon_l` added.
+
+Measured first: in `weapon_test`'s frame the sword's blade ran down −Y (tip −74.30, pommel
++19.65), its guard across X (±6.17), its thickness on Z (±1.74) — the catalog's convention
+turned half a turn. So `weapon_r` = `weapon_test` turned 180° about its own Z, and the sword,
+expressed in that frame, IS the convention with the origin where the Hunter held it: Add at
+zero grip lands it exactly where it was. `weapon_l` is the behaviour mirror of weapon_r
+(S·M·S, X negated) under hand_l. `make_hunter_sword_asset.py` does it on the shipped rig in
+standalone (sword exported FIRST — it rides the bone by constraint), then the clean skeleton
+is rebuilt from the new rig.
+
+The retarget's helper bones (weapon_r, weapon_l, camera_*) were carried in WORLD space —
+right for a twin, whose hand stands where the source's does, and wrong for a rotation-only rig
+whose arm is its own length: the Hunter's weapon_r would have stood at Manny's hand.
+`helper_space(mod, rig)` answers "parent" for a rotation-only rig and `transfer_bone` then
+drives the bone through W_src · P_src⁻¹ · P_dst — the clip's grip, on the rig's own hand.
+Proof `verify_hunter_rig_asset.py` 13/13 (the weapon gates 11–13 in the summary above).
+
+## Addendum 4 — the weapon lives OUTSIDE the skeleton (every rig, same day)
+
+The animator asked what the export does with a sword parented under the hand. Measured: the
+exporter takes a selected node's children along, and every animation FBX carried the sword
+(10890 vertices, six curves and a material). Then: «А можем ли мы вообще не располагать наше
+оружие прямо в иерархии скелета? А крепить его к скелету, например, констрейнами», and,
+offered the options, «давай делать всё максимально правильно, так чтобы мы не нарушали
+иерархию нашего скелета». Two changes, both for every rig and skeleton, not only the Hunter.
+
+**A weapon space per hand** (`maya_scenesetup/weaponspace.py`, a leaf): `hand_r_weaponSpace`,
+a plain transform parent-constrained to the hand with NO offset, marked `mayaWeaponSpace` (the
+hand's UUID), standing in a `WeaponSpaces` group (marked `mayaWeaponSpaces`, channels locked)
+under the rig's top group, or at world level beside a bare skeleton. The weapon is the space's
+CHILD, so its channels still mean "relative to the hand" and nothing downstream had to change:
+the bone-relative grip, the bonedrive link, the relink after an import, OverRig's
+`parent_in`/`parent_out`. The space is found FROM the hand, through the constraint the hand
+drives (`space_of`), never by name, so a second character's `hand_r_weaponSpace1` changes
+nothing. `ensure_space` makes it on the first Add or hang; `prune` deletes a space that holds
+nothing but its constraint, and the group once it is empty. `holding_hand(weapon)` answers the
+hand for a weapon in a space AND for one a file from before holds directly under the hand;
+`hand_for(path)` lets a selected weapon still name its character (`skeleton.current_root`).
+
+- `attach.attach` parents into `ensure_space(hand)`, `find_attached` asks the space first and
+  the hand second, `detach` prunes.
+- `connections.apply`: the hang is `parent_in(weapon, ensure_space(hand))`, and the space the
+  weapon left is pruned after a lift or a move; `read_scheme` asks `holding_hand`.
+- A legacy weapon keeps working where it is, and moves into a space on the next Connections
+  hang or a Remove + Add.
+
+**The export writes bones only**: `FBXExportIncludeChildren -v false`, and every joint of the
+hierarchy is selected by UUID inside the plain-name rename (the rename invalidates the paths,
+trap 16). So nothing parented under a bone, by us or by hand, reaches Unreal.
+
+Proof: `verify_weapon_space.py`, **11 of 11 in mayapy standalone**. A Hunter and a Manny rig:
+each sword in its hand's space in its own rig's group, both skeletons bones and constraints
+only, the space on the hand posed (2.8e-16), a selected sword naming the Hunter, both retargeted
+with the sword on weapon_r over the take (4.4e-14 / 1.2e-5), the FBXs read back with 91 and 93
+joints and 0 meshes (a cube parented under hand_l by hand included) and weapon_r's
+hand-relative track kept to 0.0000, Remove pruning the space and the group, a legacy under-hand
+sword found and removed. `verify_connections.py`, **40 of 40 twice**, on a throwaway Manny_Rig
+with the Long Sword and a throwaway Hunter_Rig with the Hunter Sword, in a SEPARATE disposable
+Maya on port 7002 (OverRig's `parent_in`/`_out` need a live Maya, and the animator's scene was
+not the place): hangs into `hand_l`'s and `hand_r`'s spaces, the emptied space pruned each way,
+the skeleton bones-only at every step. 2211 unit tests.
+
+## Addendum 5 — the bind becomes SKM_Manny_Simple's pose (same night)
+
+The animator put the original creature back in a scene — `|SKM_Manny_Simple`, the untouched FBX
+(T bind, the old joint scales 1.12–1.32 on forearms and fingers) — keyed at frame 0 into the pose
+the Hunter should stand in, beside a Hunter rig added from the shipped asset: «исходная поза у рига
+Hunter_Rig:Group и у скелета этого рига не должна никак отличаться от позы скелета SKM_Manny_Simple,
+нужно переделать так, чтобы позы максимально совпадали», and «текущая поза SKM_Manny_Simple должна
+стать байнд позой для Hunter_Rig:root».
+
+Measured (read-only) against the A bind of section 2: bone lengths identical, all five meshes the
+same vertex count; the pose differs by 50.6° on the hands, 55–91° on the fingers, 11° on the neck,
+up to 6° on the spine, 7.5° on the legs, 5° on the feet, 1.4° and 2.4 cm on the pelvis, while
+clavicles, upper arms and forearms matched to 0.001°. The hands' 50.6° is the first A bake's 51°
+wrist turn again, and SKM's own skin shows what it costs: edges stretched ×3.1 at hand_l, ×4.7 at
+thumb_01_r, 62 / 112 edges past 1.5× on the hand meshes (the A bind: 0). Offered the exact pose,
+the exact pose with the wrist turn kept, or the exact pose with smoothed wrist weights, the animator
+chose **the exact pose, the mesh exactly as SKM shows it** — what they see on SKM_Manny_Simple is
+what the bind looks like.
+
+How: the pose (90 world matrices) and SKM's five meshes as its skin deforms them there, plus its T
+rest for a vertex-order check, dumped to `hunter_bind_pose.json.gz`. `rebind_hunter_pose.py`
+re-binds the clean skeleton in place (section 2's method): the bones onto the pose's matrices with
+the scale stripped (ours carry none), the helpers by their rules (ik_hand_r/l on the hands,
+ik_hand_gun at zero, ik_foot_* keeping their relation to the feet, weapon_r/l riding the hands with
+their local channels untouched), each Orig shape set to SKM's deformed points, BPM = WM⁻¹, bindPose1
+reset — joints on the pose to 2e-9, the mesh to 5e-6. The vertex order is checked, not assumed: 100 %
+of the face, 71 % of the body and 48 % of the back sit exactly on SKM's T rest (what the A bake never
+moved), and the two arm meshes, which the A bake moved whole, match by edge length. Then the rig is
+REBUILT, not re-aimed: `rebuild_hunter_rig.py` runs the procedure's steps live in a disposable Maya
+(AdvancedSkeleton reads its own UI), and because `fit()` sets every fit joint on its bone, the new
+rig's build pose IS the new bind (gate 5: 2.6e-13). The asset scripts then produce Hunter_Rig.ma and
+Hunter_Skeleton.ma as before (the rig asset's source is now the rebuilt scene; its asserts expect 91
+joints and no props, and it refuses `Hunter_Sword` / `Hunter_Props` / `weapon_test` in the text).
+
+Proof: `verify_hunter_bind_pose.py` 9/9 (bones on the pose to 9.9e-10, vertices on SKM's to 5.1e-6
+cm, skin at bind, helpers, a positive control, the clean skeleton, and weapon_r/l in the hands as in
+the old asset to 2.8e-14 — the sword's frame); the live rig verify 25/25; the rig asset 13/13; the
+clean skeleton 9/9; the weapon spaces 11/11; Connections 40/40 on the new Hunter; 2211 unit tests.
+
+## Addendum 6 — the rig's joints on the skeleton's, left side included (same night)
+
+«Кости скелета и кости рига не совпадают, как минимум на левой руке». Measured on the rebuilt rig
+(read-only, the animator's scene): the skeleton was on SKM's pose to 0.0000, and the AS joints were
+off their bones in two ways.
+
+- **The left fingers, 1.1–3.2 cm — new.** Exactly the pose's own asymmetry (left bone vs mirrored
+  right bone, per joint): SKM_Manny_Simple bends its fingers differently on each hand, and
+  AdvancedSkeleton builds the left side as the mirror of the right fit. The A-pose rig was symmetric
+  (0.05–0.08 cm, the skeleton's own asymmetry), so it never showed. Fixed with the vendor's own
+  "create non-symmetry joints" (`asCreateNonSymmetryJoints`): the left chains become fit joints of
+  their own (`<joint>_NonSymmetry`, the right side marked `noMirror`), the build names them `_L` as
+  before, and `fit()` puts them on the `_l` bones. The Knee's `twistJoints`, added by the procedure,
+  is copied onto `Knee_NonSymmetry`.
+- **The upper-arm twists 2.35 / 4.70 cm and the neck in-between 0.51 cm — old.** The A-pose asset
+  measured the same numbers. AS spaces a segment's Part joints evenly (`<joint>PartBM<side>` blends
+  toward the child by 1/(n+1), each Part the same step), and the Hunter's upper-arm twists stand at
+  0.266 / 0.532 of the bone (the forearm, thigh and calf twists are at 1/3, 2/3 already). The new
+  `place_parts()` sets the BM weight to the game twists' step. The child joint is point-constrained
+  by AS onto its FK/IK twin, so it keeps its place (checked, and refused if it did not). `NeckPart1_M`
+  is point-constrained onto the neck→head line while neck_02 stands 0.44 cm off it, so the constraint's
+  offset moves it on. The offset is in Neck_M's space, where neck_02 is rigid, and it held under neck
+  bends to 0.0000.
+
+The skeleton takes orientation only, so neither change moves it. Live gate 26: every deformation
+joint on its bone to 0.0000 cm, twist Parts to 0.17 cm (the Hunter's own twist bones stand that far
+off the bone line), 26/26. The pose verify 9/9, rig asset 13/13, skeleton 9/9, weapon spaces 11/11,
+Connections 40/40, 2211 unit tests. What is left and why: under a strong neck bend the rig's head
+drifts ~0.1 cm from the skeleton's head, because the two neck chains are built differently. That is
+cosmetic, since the skeleton copies orientation only.
+
+## Addendum 7 — the normals (same night)
+
+«Что произошло с геометрией, почему она стала такой тёмной?» — the hands of the re-bound Hunter
+shaded dark. Every normal of the five meshes is LOCKED (the FBX's own), and the rebind writes new
+points into the Orig shapes, and locked normals do not follow points. So the rest mesh kept the
+T-pose's normals: measured per vertex against the area-weighted surface normal, the hand meshes
+read a median 55–59° (p90 99–107°) on the new rig and 44° already on the morning's A-pose asset;
+the face and back 3–6°. The skin turns locked normals as the rig moves (a 60° shoulder turn turned
+them 34–56°), so only the rest normals had to change, and unlocking was ruled out (it would lose
+the file's hard edges).
+
+The right rest normals are SKM_Manny_Simple's in the pose, which the skin already turned from its
+T normals, consistent with "the mesh as SKM shows it". `dump_hunter_bind_normals.py` imports that
+FBX in standalone, checks its points against the pose data (1.5e-6), and dumps the world
+face-vertex normals. `rebind_hunter_pose.set_normals` writes them onto the Orig shapes (object
+space, locked); the built rig scene was fixed with `--normals-only` and the assets rebuilt. After:
+the hand meshes 4.6–4.8° median off their surface, the shown normals SKM's to 0.0008°; the pose
+verify's gates 10/11 pin both on the rig and on the clean skeleton.

@@ -50,8 +50,19 @@ CHARACTERS = [
     # retarget addresses a rig by name (`Main`, `ControlSet`, `FKWrist_R`),
     # and the namespace is what keeps those names one node each.
     Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", _LEGACY_RIG, "rig"),
+    # The Hunter creature's AdvancedSkeleton rig (2026-09-24): Manny's 90 UE bone
+    # names on a creature's proportions, bound in the UE A-pose, the bones rigid
+    # (orientation-only constraints), the meshes in the rig's own Geometry group,
+    # and `Group.skeldarRetarget = "rotation"` -- its retarget copies rotations
+    # only. Built from the animator's scene by make_hunter_rig_asset.py.
+    Character("Hunter_Rig", "Hunter [rig]", "Hunter_Rig.ma", "", "rig"),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               _LEGACY_CHARACTER, "skeleton"),
+    # The Hunter without its rig (2026-09-24, «не только риг хантера, а и чистый
+    # скелет»): the same 90 bones in the same A-pose bind, skinned, the meshes in
+    # `|Hunter`, the swords riding weapon_test -- built from Hunter_Rig.ma by
+    # make_hunter_skeleton_asset.py, nothing of AdvancedSkeleton left in it.
+    Character("Hunter", "Hunter [skeleton]", "Hunter_Skeleton.ma", "", "skeleton"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
@@ -154,6 +165,11 @@ WEAPONS = [
     # animator asked for it two and a half times smaller (45.7 cm), and a
     # size correction is exactly what this column is for.
     Weapon("Dagger_01", "Dagger 01", _asset_path("Dagger_01.fbx"), "weapon_r", 0.4),
+    # 2026-09-24, the Hunter's own sword out of its rig («добавим меч хантера в список
+    # нашего оружия»): exported by make_hunter_sword_asset.py in the frame of the
+    # Hunter's weapon_r -- blade +Y (tip at +74.3), guard X, thickness Z, the origin
+    # where the Hunter holds it, so zero grip on the Hunter puts it back exactly there.
+    Weapon("Hunter_Sword", "Hunter Sword", _asset_path("Hunter_Sword.fbx"), "weapon_r", 1.0),
 ]
 
 

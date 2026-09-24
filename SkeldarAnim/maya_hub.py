@@ -164,8 +164,20 @@ def _build_section(sec):
     return sec.frame
 
 
+#  Did THIS module object build the accordion standing in the control?  An
+#  update purges the plugin's modules (install.purge_modules) while the hub
+#  stays open, and a plain restore then kept showing the old build: the old
+#  character dropdown, missing the Hunter row the update had just added
+#  (2026-09-24, «НЕ вижу хантера в списке персонажей»), and callbacks into
+#  module objects nothing imports any more. Maya's startup replay of the
+#  uiScript runs build() in the module object of that session, so a docked
+#  hub counts as ours from the start.
+_BUILT_HERE = False
+
+
 def build():
     """The uiScript body: the accordion inside the workspaceControl."""
+    global _BUILT_HERE
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.setParent(CONTROL)
     cmds.scrollLayout(SCROLL, childResizable=True)
@@ -174,7 +186,16 @@ def build():
         _build_section(sec)
     cmds.setParent("..")
     cmds.setParent("..")
+    _BUILT_HERE = True
     return CONTROL
+
+
+def rebuild():
+    """The accordion rebuilt inside the standing control -- where it is docked
+    survives, which deleting and recreating the control would not."""
+    if cmds.scrollLayout(SCROLL, exists=True):
+        cmds.deleteUI(SCROLL)
+    return build()
 
 
 # -------------------------------------------------------------------- show
@@ -194,6 +215,8 @@ def show(key=None):
     section. The shelf button and every tool's `show_window`."""
     _close_legacy_windows()
     if is_open():
+        if not _BUILT_HERE:
+            rebuild()
         cmds.workspaceControl(CONTROL, edit=True, restore=True)
     else:
         cmds.workspaceControl(

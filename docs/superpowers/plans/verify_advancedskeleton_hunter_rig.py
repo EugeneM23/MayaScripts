@@ -29,14 +29,18 @@ ROWS = [("Root", "pelvis"), ("Spine1", "spine_01"), ("Spine2", "spine_02"), ("Sp
         ("KneePart1", "calf_twist_02"), ("KneePart2", "calf_twist_01"), ("NeckPart1", "neck_02")]
 EXTRAS = {"root": ["Main"], "ik_hand_gun": ["Wrist_R"], "ik_hand_l": ["Wrist_L"], "ik_hand_r": ["Wrist_R"], "ik_foot_l": ["Ankle_L"], "ik_foot_r": ["Ankle_R"]}
 EXTRA_SRC = {"root": "Main", "ik_hand_gun": "hand_r", "ik_hand_l": "hand_l", "ik_hand_r": "hand_r", "ik_foot_l": "foot_l", "ik_foot_r": "foot_r"}
-FOLLOWERS = ["ik_foot_root", "ik_hand_root", "interaction", "center_of_mass", "weapon_test"]
+FOLLOWERS = ["ik_foot_root", "ik_hand_root", "interaction", "center_of_mass", "weapon_r", "weapon_l"]   # weapon_test -> weapon_r, weapon_l added (weapon_bones)
 
 FAILS = []
 def gate(n, ok, msg):
     print("%s gate %02d: %s" % ("PASS" if ok else "FAIL", n, msg))
     if not ok: FAILS.append((n, msg))
 
-roots = [j for j in (cmds.ls("root", type="joint", long=True) or []) if j.split("|")[1] in ("Hunter", "Hanter")]
+# the Hunter's root: at world level since the tidy (it stood in the FBX wrapper |Hunter before),
+# the one `root` that Main drives
+roots = [j for j in (cmds.ls("root", type="joint", long=True) or [])
+         if "Main" in [x.split("|")[-1] for c in cmds.listRelatives(j, c=True, type="parentConstraint", fullPath=True) or []
+                       for x in cmds.listConnections(c + ".target[0].targetParentMatrix", s=True, d=False) or []]]
 ROOT = roots[0]
 ue = [ROOT] + (cmds.listRelatives(ROOT, ad=True, type="joint", fullPath=True) or [])
 B = dict((p.split("|")[-1], p) for p in ue)
@@ -79,7 +83,10 @@ cmds.autoKeyframe(st=False); cmds.select(clear=True); cmds.evaluationManager(mod
 if mel.eval('whatIs "asGoToBuildPose"') == "Unknown":
     mel.eval('source "%s";' % AS_MEL)
 try:
-    gate(1, len(ue) == 90 and "weapon_test" in B, "%d Hunter joints under %s (weapon_test included)" % (len(ue), ROOT))
+    jo = cmds.getAttr(ROOT + ".jointOrient")[0]
+    gate(1, len(ue) == 91 and "weapon_r" in B and "weapon_l" in B and not cmds.listRelatives(ROOT, parent=True) and abs(jo[0] + 90) < 1e-3,
+         "%d Hunter joints under %s, at world level with the Z-up turn in its jointOrient %s (Manny_Rig's shape)"
+         % (len(ue), ROOT, [round(v, 4) for v in jo]))
     deform = cmds.sets("DeformSet", q=True) if cmds.objExists("DeformSet") else []
     gate(2, all(cmds.objExists(n) for n in ("Group", "MotionSystem", "DeformationSystem", "Main", "ControlSet")) and len(deform) == 79 and len(mapping) == 79,
          "Group/MotionSystem/DeformationSystem/Main present, DeformSet %d, mapped %d" % (len(deform), len(mapping)))
@@ -156,15 +163,18 @@ try:
     t1, t2 = ang(t1a, rel("lowerarm_twist_01_l")), ang(t2a, rel("lowerarm_twist_02_l")); cmds.setAttr("FKWrist_L.rotateX", 0)
     gate(13, t1 > t2 + 5 and t1 > 20, "FKWrist_L rx=60: lowerarm_twist_01_l (near wrist) turns %.1f deg in the forearm's frame, twist_02 (near elbow) %.1f deg" % (t1, t2))
     w, wj = worst_drift()
-    gate(14, len(skins()) == 6 and w < 1e-3, "%d Hunter skins; drift after all pokes %.9f (%s)" % (len(skins()), w, wj))
+    gate(14, len(skins()) >= 5 and w < 1e-3, "%d Hunter skins; drift after all pokes %.9f (%s)" % (len(skins()), w, wj))
     keyed = [j for j in ue if cmds.listConnections(j, type="animCurve", s=True, d=False)] + [c for c in cmds.sets("ControlSet", q=True) if cmds.listConnections(c, type="animCurve", s=True, d=False)]
     gate(15, not keyed, "no animCurves on Hunter joints or controls (%d)" % len(keyed))
-    # the Hunter carries its swords under weapon_test (the animator's props); anything else that is not a
-    # joint or one of the rig's constraints would ride into an export
+    # nothing but joints and the rig's constraints under root (a mesh under a bone rides into every
+    # animation export), the meshes named for the character in the rig's Geometry group, and no sword
+    # in the rig at all since 2026-09-24 -- a weapon is the catalog's, added and removed as on any rig
     odd = sorted(set((cmds.nodeType(k), k.split("|")[-1]) for k in (cmds.listRelatives(ROOT, ad=True, fullPath=True) or [])
-                     if cmds.nodeType(k) != "joint" and not cmds.nodeType(k).endswith("Constraint") and "|weapon_test|" not in k))
-    props = sorted(set(k.split("|")[-1] for k in (cmds.listRelatives(B["weapon_test"], ad=True, fullPath=True) or []) if cmds.nodeType(k) == "transform"))
-    gate(16, not odd, "under root: joints, the rig's constraints and the props under weapon_test %s; other: %s" % (props, odd))
+                     if cmds.nodeType(k) != "joint" and not cmds.nodeType(k).endswith("Constraint")))
+    geo = cmds.ls("|Group|Geometry", long=True)[0]
+    kids = cmds.listRelatives(geo, children=True) or []
+    gate(16, not odd and {"Hunter_Body", "Hunter_Back", "Hunter_Arm_L", "Hunter_Arm_R", "Hunter_Face"} <= set(kids) and "Hunter_Props" not in kids,
+         "under root only joints and constraints %s; Geometry %s, no props" % (odd, kids))
     src = {mm: cmds.listConnections(mm + ".matrixIn[1]", s=True, d=False, p=True) for mm in ("NeckInbetweenMM_M", "NeckPart1InbetweenMM_M")}
     gate(17, all(v == ["FKOffsetNeck_M.worldInverseMatrix"] for v in src.values()) and max(abs(v) for v in cmds.getAttr("FKXNeck_M.r")[0]) < 1e-3,
          "neck in-between network in Offset space %s, FKXNeck_M local rotate %s" % (src, [round(v, 4) for v in cmds.getAttr("FKXNeck_M.r")[0]]))
@@ -237,10 +247,23 @@ try:
          % (levels("IKArm_L", 0), levels("IKLeg_L", 1, om.MSpace.kWorld), levels("IKLeg_R", 1, om.MSpace.kWorld)))
     mode = cmds.getAttr("Group.skeldarRetarget") if cmds.attributeQuery("skeldarRetarget", node="Group", exists=True) else None
     gate(25, mode == "rotation", "Group.skeldarRetarget = %r (the retarget copies rotations only onto this rig)" % mode)
+    # 2026-09-24, the animator: «кости скелета и кости рига не совпадают, как минимум на левой руке» --
+    # the left side was AS's mirror of the right fit while the pose is not symmetric (fingers 1-3 cm),
+    # and AS's twist / in-between joints stood at its own even spacing (upper-arm twists 2.35 / 4.70 cm).
+    # Now: every deformation joint ON its bone, both sides; the twists as close as their bones' own
+    # distance off the bone line allows (the Hunter's upper-arm twists stand 0.07-0.17 cm off it).
+    cmds.currentTime(saved["time"])
+    offs = sorted((((om.MVector(wpos(a)) - om.MVector(wpos(g))).length(), a, g) for a, g in mapping.items()), reverse=True)
+    parts = [o for o in offs if "Part" in o[1] and not o[1].startswith("NeckPart")]
+    rest_ = [o for o in offs if not ("Part" in o[1] and not o[1].startswith("NeckPart"))]
+    gate(26, rest_[0][0] < 0.002 and parts[0][0] < 0.2,
+         "rig joints ON the skeleton's: worst %.4f cm (%s), twist parts worst %.4f cm (%s); left hand worst %.4f"
+         % (rest_[0][0], rest_[0][1], parts[0][0], parts[0][1],
+            max(o[0] for o in offs if o[1].endswith("_L") and ("Finger" in o[1] or o[1].startswith("Wrist")))))
 finally:
     for c, v in saved["blends"].items(): cmds.setAttr(c + ".FKIKBlend", v)
     cmds.evaluationManager(mode=saved["em"]); cmds.autoKeyframe(st=saved["autoKey"]); cmds.currentTime(saved["time"])
     if saved["sel"]: cmds.select(saved["sel"])
     else: cmds.select(clear=True)
     print("restored: em %s autoKey %s time %s" % (cmds.evaluationManager(q=True, mode=True)[0], cmds.autoKeyframe(q=True, st=True), cmds.currentTime(q=True)))
-print("RESULT: %d of 25 gates failed %s" % (len(FAILS), FAILS))
+print("RESULT: %d of 26 gates failed %s" % (len(FAILS), FAILS))
