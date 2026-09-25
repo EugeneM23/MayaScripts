@@ -21,6 +21,11 @@ wrong there), and an FBX's smoothing layer is the edge flags.  The assets carry 
 smoothing since (`repair_creep_assets.py`; hard = the seams where the normals split, and the
 borders), and the read-back now checks it: the edges come back hard exactly where the asset has
 them, a mesh with every edge hard is a failure.  `--overwrite` replaces an existing file.
+
+Since 2026-09-25 in CASCADEUR'S LAYOUT, as every export of ours (maya_uebridge.fbxlayout): the
+skeleton under a Null `Creep` rotated -90 X, `root` with no orientation of its own, the meshes at
+world level beside it -- the file Cascadeur itself writes for this creature (its Null is
+`SKM_Manny_Simple` there; ours is named for the character, the animator's choice).
 """
 import math
 import os
@@ -81,6 +86,17 @@ print("asset: %d joints, %d skins" % (len(joints), len(cmds.ls(type="skinCluster
 
 if os.path.exists(OUT) and not OVERWRITE:
     raise RuntimeError("%s exists -- not overwriting it (--overwrite)" % OUT)
+sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "..", "SkeldarAnim")))
+from maya_uebridge import fbxlayout
+# the meshes to world level beside the skeleton, as in Cascadeur's file; the emptied |Creep group
+# goes (it would also take the wrapper's name)
+for m in MESHES:
+    tr = cmds.ls(m, type="transform", long=True)[0]
+    if cmds.listRelatives(tr, parent=True):
+        cmds.parent(tr, world=True)
+if cmds.objExists("|Creep") and not cmds.listRelatives("|Creep", children=True):
+    cmds.delete("|Creep")
+mesh_nodes = [cmds.ls(m, type="transform", long=True)[0] for m in MESHES]
 folder = os.path.dirname(OUT)
 if not os.path.isdir(folder):
     os.makedirs(folder)
@@ -91,8 +107,23 @@ for option in ("FBXExportSkins -v true", "FBXExportShapes -v true", "FBXExportSm
                "FBXExportBakeComplexAnimation -v false", "FBXExportEmbeddedTextures -v false",
                "FBXExportSkeletonDefinitions -v true", "FBXExportUpAxis y", "FBXExportInAscii -v false"):
     mel.eval(option)
-cmds.select("|root", "|Creep", replace=True)
-mel.eval('FBXExport -f "%s" -s' % OUT)
+with fbxlayout.wrapped("|root", "Creep") as (wrapper, note):
+    assert wrapper, note
+    # the wrapper is part of the skeleton's hierarchy now, and the exporter drops the bind pose
+    # whole over a node missing from it (trap 79; measured again: «Unable to find the bind pose
+    # for : / Creep»): the pose is saved again over the wrapper and every joint, the skins moved
+    # onto it -- in this throwaway scene only
+    members = [wrapper] + cmds.ls(wrapper, dag=True, type="joint", long=True)
+    pose = cmds.dagPose(members, save=True, bindPose=True, name="exportBindPose")
+    pose = pose[0] if isinstance(pose, (list, tuple)) else pose
+    strays = [m for m in cmds.ls(cmds.dagPose(pose, q=True, members=True) or [], long=True)
+              if m not in members]
+    if strays:
+        cmds.dagPose(strays, remove=True, name=pose)
+    for sc in cmds.ls(type="skinCluster"):
+        cmds.connectAttr(pose + ".message", sc + ".bindPose", force=True)
+    cmds.select([wrapper] + mesh_nodes, replace=True)
+    mel.eval('FBXExport -f "%s" -s' % OUT)
 print("exported %s (%.1f MB)" % (OUT, os.path.getsize(OUT) / 1e6))
 
 # read back
@@ -101,6 +132,14 @@ mel.eval('FBXResetImport; FBXImportMode -v add; FBXImportSetMayaFrameRate -v fal
 mel.eval('FBXImport -f "%s";' % OUT)
 back_joints = cmds.ls(type="joint")
 skins = cmds.ls(type="skinCluster")
+back_root = cmds.ls("root", type="joint", long=True)[0]
+wrapper_back = cmds.listRelatives(back_root, parent=True, fullPath=True) or []
+print("read back: root under %s turned %s, root jointOrient %s" % (
+    wrapper_back, [round(v, 3) for v in cmds.getAttr(wrapper_back[0] + ".rotate")[0]] if wrapper_back else None,
+    [round(v, 4) for v in cmds.getAttr(back_root + ".jointOrient")[0]]))
+assert wrapper_back == ["|Creep"], "the skeleton is not under the Creep Null"
+assert max(abs(v) for v in cmds.getAttr(back_root + ".jointOrient")[0]) < 1e-3, "root carries an orientation"
+
 worst_p = worst_n = 0.0
 for m in MESHES:
     pts, nrm, locked = shown(m)
