@@ -2408,7 +2408,8 @@ list and an FBX export for the import.
 | `records.py` | record model, search, namespace naming, row text, **the package↔disk-path pair and the reimport reply's wording** | **stdlib only** |
 | `vcs.py` | Perforce placement: fbx name search, path convention, checkout decision table, p4 runner | **stdlib only** |
 | `animimport.py` | FBX import, timeline, fps policy, the target rule (selection then connect) and the exmerge name hold | `maya.cmds` |
-| `animexport.py` | FBX export of the skeleton hierarchy, bake-on-export, range policy | `maya.cmds`, `maya.mel`, `animimport` |
+| `animexport.py` | FBX export of the skeleton hierarchy, bake-on-export, range policy; `LAYOUT` / `UNREAL_LAYOUT` | `maya.cmds`, `maya.mel`, `animimport`, `fbxlayout` |
+| `fbxlayout.py` | **Cascadeur's layout for the length of an export** (2026-09-25): the wrapper named for the character, `root` at zero, restored by UUID; our tag held out of the file | `maya.cmds`, OpenMaya (lazy), `maya_scenesetup.catalog` (lazy) |
 | `uassetexport.py` | **Export to uasset: the direct road.** The warning, the read-only flag, the temp fbx. Imports no `vcs` and a test enforces it | `maya.cmds`, `animexport`, `animimport`, `records`, `uelink`, `uescripts` |
 | `window.py` | the `cmds` window | `maya.cmds` |
 | `checkouts.py` | the checkouts window: pair checkout, revert, export back to the uasset | `maya.cmds` + all of the above |
@@ -2841,6 +2842,92 @@ scene while the tool runs.
     own in root space (Manny's pelvis `(0, −2.281, 95.897)` in both). Every rig
     faces +Z with its left on +X, exactly as Unreal's exported UE4_Mannequin
     imports.
+
+**Exports in Cascadeur's layout (2026-09-25).** The animator moves animation Maya ⇄
+Cascadeur («перенос анимации» was the pain, asked). Of three ways they chose ONE layout for
+every export, Cascadeur's own, with the wrapper named for the character («по персонажу»).
+Spec: `docs/superpowers/specs/2026-09-25-cascadeur-export-layout-design.md`; plan beside it.
+
+**Measured first:**
+- Unreal's clip, Cascadeur's clip and ours agree bone for bone below `root`. They differ only
+  in where the Z-up → Y-up −90° X lives:
+  - Unreal: a Z-up file with `root` at identity;
+  - Cascadeur: a Y-up file with a Null (`SKM_Manny_Simple`) at −90 X, `root` at zero beneath it,
+    its translation in the Null's Z-up space;
+  - ours: `root` at world level carrying the −90 as its jointOrient.
+- **Cascadeur → Maya already worked**, measured on `creep_attack_forward.fbx`: import, retarget
+  onto a Creep_Rig, export. Root 8e-10, every bone 0.0006°, limbs pointing 0.025°. The twist
+  bones are up to 58° off: AdvancedSkeleton spreads the arm roll its own way. That is not an
+  axis matter and is left for the retarget.
+- **`FBXExportUpAxis z` is no shortcut** (trap 81 below).
+- **Z-up Maya was rejected**:
+  - AdvancedSkeleton's author advises against it in `AdvancedSkeleton.mel` («Highly recommended
+    to Stay with Maya Y-Up axis»); the toggle is commented out in 6.797 and its MoCap Library
+    errors under Z-up;
+  - Unreal is left-handed, so one axis would still differ in sign.
+
+**`maya_uebridge/fbxlayout.py`** (cmds; OpenMaya imported lazily because the bridge's tests fake
+`maya`). For the length of an export it:
+1. frees the name: anything answering to it is held as `rpHold_` (the Creep skeleton's meshes
+   stand under a `|Creep` group);
+2. creates a Null named for the character at −90 X;
+3. re-parents `root` under it with `relative=True`;
+4. gives `root` the jointOrient `JO · W⁻¹` (`jo_after`; zero for our −90), and its translate
+   `(x, −z, y)`. That step follows `layout_plan` (pure):
+   - **constrained** (the rig's `root ← Main`): nothing more, the constraint re-solves under the
+     new parent;
+   - **keyed**: the curves are routed through a negating multDoubleLinear, no key edited;
+   - **static**: the values are rewritten and written back after;
+   - **anything else** (a pairBlend, keys plus a constraint, a root already parented): the
+     plain file, with a note.
+
+Everything goes back by UUID in a `finally`.
+
+**The name** (`wrapper_name`, pure), the first answer of:
+- the root's `skeldarCharacter` tag, which Add Character writes (`character.tag_root`; a rig's
+  game-skeleton root through `maya_rigs.find`);
+- a rig namespace without its digits;
+- the ONE character key its skins' `skeldarColour` materials carry;
+- else `Character`.
+
+`catalog.export_name` drops a trailing `_Rig`: `Creep`, `Manny`, `Orc`.
+
+**Where it is on:**
+- `export_hierarchy(..., layout=LAYOUT)` defaults to `"cascadeur"`: Export FBX… and the
+  no-checkout save-as.
+- **Export to uasset and the checkouts' EXPORT follow `animexport.UNREAL_LAYOUT = "plain"`**
+  until `verify_cascadeur_layout_unreal.py` has seen Unreal read the wrapped file as it reads
+  the plain one. It has NOT run: the editor's Remote Execution (UDP 6766) was not listening
+  after a restart. One word flips both.
+- `export_creep_skeleton_fbx.py` writes the Creep's skeletal mesh the same way: the meshes at
+  world level beside the Null, as Cascadeur's file has them. The bind pose is saved again over
+  the Null too (trap 79 again: «Unable to find the bind pose for : / Creep»). The result is
+  root `(0.002, −2.401, 0)` under `Creep` at −90, Cascadeur's own numbers.
+
+**Proof:**
+- `verify_cascadeur_layout.py` — **9/9 standalone**:
+  - root LOCAL values against Cascadeur's own file 1.5e-6 cm and 0.0000°, other bones 0.0006°;
+  - a keyed skeleton, with the `|Creep` group held and restored;
+  - a static skeleton (root `(0.0017, −2.4012, 0)` in the file);
+  - Manny_Rig → `Manny`;
+  - a pairBlend root → plain with a note;
+  - `layout="plain"`;
+  - every case leaving the scene exact: no node added or lost, the same connections,
+    jointOrient and names.
+- 2252 unit tests.
+
+Two things found on the way:
+- **deleting a node takes the animCurves feeding it** (the negate node took `root_translateZ`
+  along: let a temporary node's inputs go first);
+- **the exporter writes our `skeldarCharacter` tag into the file** as a property of `root`,
+  which Unreal would read as root data (trap 40). `fbxlayout.tag_held` takes it off for the
+  length of every export.
+
+81. **`FBXExportUpAxis z` writes a Z-up HEADER and leaves the turn on `root`.** Measured
+    2026-09-25 on our Y-up skeleton: the file declares up +Z, front −Y (Unreal's header), but
+    `root` carries PreRotation +90 X, not Unreal's identity. Read back into a Y-up Maya, the
+    joints stood **169 units** off. It is not Unreal's layout, and it is not a round trip.
+    Moving the turn into the file's hierarchy (fbxlayout) is.
 
 ## `maya_scenesetup` — SceneSetup: the shot, not just the weapon
 
