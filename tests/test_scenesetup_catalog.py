@@ -447,3 +447,20 @@ class CreepSkeleton(unittest.TestCase):
                     skins += 1
         self.assertEqual([k for k, v in wanted.items() if not v], [])
         self.assertEqual(skins, 5)
+
+
+class ExportName(unittest.TestCase):
+    """2026-09-25: the wrapper over `root` in an exported FBX is named for the
+    character («по персонажу») - the rig and the bare skeleton of one character
+    give one name."""
+
+    def test_a_rig_key_loses_its_rig_suffix(self):
+        self.assertEqual(catalog.export_name("Creep_Rig"), "Creep")
+        self.assertEqual(catalog.export_name("Manny_Rig"), "Manny")
+
+    def test_a_skeleton_key_is_its_own_name(self):
+        self.assertEqual(catalog.export_name("Creep"), "Creep")
+        self.assertEqual(catalog.export_name("UE4_Mannequin"), "UE4_Mannequin")
+
+    def test_every_character_key_is_listed(self):
+        self.assertEqual(catalog.character_keys(), [c.key for c in catalog.CHARACTERS])
