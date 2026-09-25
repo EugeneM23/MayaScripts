@@ -270,3 +270,21 @@ class FbxState(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CascadeurLayout(unittest.TestCase):
+    """2026-09-25: every export writes Cascadeur's layout -- the skeleton under a Null named
+    for the character -- unless a caller asks for the plain one."""
+
+    def test_the_default_layout_is_cascadeurs(self):
+        import inspect
+        self.assertEqual(animexport.LAYOUT, "cascadeur")
+        self.assertEqual(inspect.signature(animexport.export_hierarchy).parameters["layout"].default,
+                         "cascadeur")
+
+    def test_the_name_is_read_before_the_plain_rename_and_the_wrapper_is_selected(self):
+        import inspect
+        source = inspect.getsource(animexport.export_hierarchy)
+        self.assertLess(source.index("character_name("), source.index("target_plain_names("))
+        self.assertIn("fbxlayout.wrapped(", source)
+        self.assertIn("[wrapper]", source)

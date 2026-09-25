@@ -13,7 +13,7 @@ import os
 import maya.cmds as cmds
 import maya.mel as mel
 
-from maya_uebridge import animimport
+from maya_uebridge import animimport, fbxlayout
 
 NO_TARGET_MESSAGE = ("no skeleton in the scene to export - select a joint of "
                      "the one you mean")
@@ -43,6 +43,12 @@ _EXPORT_OPTIONS = (
     # whatever anybody parents under a bone.
     "FBXExportIncludeChildren -v false",
 )
+
+# Cascadeur's layout for every export (2026-09-25, the animator's choice): the skeleton under a
+# Null named for the character, rotated -90 X, `root` with no orientation of its own and its
+# translation in Z-up space (fbxlayout). "plain" is the file as it was before: `root` at world
+# level carrying the -90 on its jointOrient.
+LAYOUT = "cascadeur"
 
 
 def union_range(animation, playback):
@@ -145,9 +151,12 @@ def _apply_export_options(start, end):
     return missing
 
 
-def export_hierarchy(fbx_path, root=None, start=None, end=None):
+def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
     """Write `root`'s hierarchy (resolved when not given) to `fbx_path` with
-    the animation baked in, and report what was written."""
+    the animation baked in, and report what was written.
+
+    `layout` is "cascadeur" (the default: the skeleton under a Null named for the
+    character, see fbxlayout) or "plain" (the file as it was before 2026-09-25)."""
     animimport.ensure_fbx_plugin()
     if root is None:
         root = resolve_root()
@@ -167,6 +176,10 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None):
     root_uuid = (cmds.ls(root, uuid=True) or [None])[0]
     joint_ids = cmds.ls(joints, uuid=True) or []
     exported_as = leaf
+    # The wrapper's name comes from the root's tag or its rig namespace, so it is read now,
+    # before the plain-name rename below takes the namespace away.
+    name = fbxlayout.character_name(root) if layout == "cascadeur" else ""
+    wrapper_used = ""
     try:
         # The same name Maya decorated on arrival would go into the file,
         # and the UE skeleton has no bone called `Manny_Skeleton_root` --
@@ -179,12 +192,21 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None):
             exported_as = took or leaf
             # The rename invalidated every path resolved above (trap 16):
             # the bones are selected by UUID, all of them, and only them.
-            bones = cmds.ls(joint_ids, long=True) or []
-            if not bones:
-                bones = [(cmds.ls(root_uuid, long=True) or [root])[0]
-                         if root_uuid else root]
-            cmds.select(bones, replace=True)
-            mel.eval(export_command(fbx_path))
+            root_now = ((cmds.ls(root_uuid, long=True) or [root])[0]
+                        if root_uuid else root)
+            manager = (fbxlayout.wrapped(root_now, name) if name
+                       else fbxlayout.unwrapped())
+            with manager as (wrapper, layout_note):
+                if layout_note:
+                    notes.append(layout_note)
+                # the wrapper re-parented the root: every path is resolved again
+                bones = cmds.ls(joint_ids, long=True) or []
+                if not bones:
+                    bones = [(cmds.ls(root_uuid, long=True) or [root])[0]
+                             if root_uuid else root]
+                cmds.select(bones + ([wrapper] if wrapper else []), replace=True)
+                mel.eval(export_command(fbx_path))
+                wrapper_used = name if wrapper else ""
     finally:
         restored = [node for node in previous if cmds.objExists(node)]
         if restored:
@@ -204,4 +226,6 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None):
             "joints": len(joints),
             "start": start, "end": end,
             "warning": warning,
-            "notes": notes}
+            "notes": notes,
+            "layout": "cascadeur" if wrapper_used else "plain",
+            "wrapper": wrapper_used}
