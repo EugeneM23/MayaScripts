@@ -171,7 +171,7 @@ def _foreign(bones):
 def helper_space(mod, rig):
     """"parent" when the rig takes rotations only (the module says so), else "world".
 
-    A rotation-only rig keeps its own bone lengths -- the Hunter's arms are 26%
+    A rotation-only rig keeps its own bone lengths -- the Creep's arms are 26%
     longer than a UE clip's -- so a weapon_r carried in WORLD space would stand where
     the SOURCE's hand is, off the rig's own. Carried relative to its parent it keeps
     the clip's grip on the rig's hand (2026-09-24)."""

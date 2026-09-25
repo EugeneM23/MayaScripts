@@ -41,6 +41,24 @@ def worst(a, b):
     return max(abs(x - y) for x, y in zip(a, b))
 
 
+def socket_off(bone, weapon, t):
+    """`bone` against `weapon`'s SOCKET at `t`, as (rotation, position): the weapon's own frame
+    undone (bonedrive.FRAME_ROTATE -- the Creep Sword's 45 since 2026-09-24; the identity for the
+    rest), rotation rows unit-length (a weapon's scale is the catalog's, never the bone's)."""
+    import maya.api.OpenMaya as om
+    from maya_scenesetup import bonedrive
+    unframe = om.MMatrix(bonedrive.matrix_of(bonedrive.frame_of(weapon), (0.0, 0.0, 0.0))).inverse()
+    w = unframe * om.MMatrix(world(weapon, t))
+    b = om.MMatrix(world(bone, t))
+
+    def rows(m):
+        return [om.MVector(m.getElement(r, 0), m.getElement(r, 1), m.getElement(r, 2)).normal() for r in range(3)]
+
+    def at(m):
+        return om.MVector(m.getElement(3, 0), m.getElement(3, 1), m.getElement(3, 2))
+    return max((x - y).length() for x, y in zip(rows(w), rows(b))), (at(w) - at(b)).length()
+
+
 def track(node, times=(0, 6, 12, 18, 24)):
     return {t: world(node, t) for t in times}
 
@@ -62,7 +80,7 @@ def bones_only(rig):
             if cmds.objectType(n) != "joint" and not cmds.objectType(n, isAType="constraint")]
 
 H, F = cx.HOLDS, cx.FOLLOWS
-# which rig a throwaway run adds -- the runner may set it (2026-09-24: the Hunter too)
+# which rig a throwaway run adds -- the runner may set it (2026-09-24: the Creep too)
 VERIFY_RIG = globals().get("VERIFY_RIG", "Manny_Rig")
 
 existing = maya_rigs.rigs()
@@ -231,9 +249,9 @@ else:
              and not weaponspace.space_of(hand_r)
              and bonedrive.driving_weapon(bone_l) == weapon and not bonedrive.driving_weapon(bone_r),
              cx.describe(cx.read_scheme(rig)))
-        gate(18, "weapon_l sits ON the weapon (no offset)",
-             worst(world(bone_l, 12)[12:15], world(weapon, 12)[12:15]) < 1e-3,
-             "%.6f" % worst(world(bone_l, 12)[12:15], world(weapon, 12)[12:15]))
+        off_rot, off_pos = socket_off(bone_l, weapon, 12)
+        gate(18, "weapon_l sits ON the weapon's socket (no offset but the weapon's own frame)",
+             off_rot < 1e-3 and off_pos < 1e-3, "rotation %.6f, position %.6f" % (off_rot, off_pos))
         gate(19, "the left hand keeps its (keyed) track through the move into the hand",
              drift(hand_l, nudged_l) < 1e-3, "left hand %.6f" % drift(hand_l, nudged_l))
         gate(20, "the left control is keyed over the range, the right still constrained",

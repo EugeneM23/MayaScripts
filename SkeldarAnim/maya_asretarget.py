@@ -14,7 +14,7 @@ twin's FK controls follow their bones in POSITION as well as rotation, because a
 clip can animate a bone's translation and only a twin's positions are ours to
 reproduce (measured 2026-09-05: the Longsword clip slides its clavicles 3.65 cm).
 
-**A rig can ask for ROTATIONS ONLY** (2026-09-24, the Hunter creature -- the animator: the
+**A rig can ask for ROTATIONS ONLY** (2026-09-24, the Creep creature -- the animator: the
 retarget must not carry the bones' stretch, bind by rotations only). Its group carries
 `skeldarRetarget = "rotation"` (`rotation_mode`); then every FK control takes the source
 bone's world orientation and nothing of its position -- the rig keeps its own bone
@@ -25,7 +25,7 @@ and the hips. An unmarked rig is driven as before.
 
 Design: docs/superpowers/specs/2026-09-04-as-retarget-design.md
         docs/superpowers/specs/2026-09-05-asretarget-mixamo-design.md
-        docs/superpowers/specs/2026-09-24-hunter-rig-rotation-retarget-design.md
+        docs/superpowers/specs/2026-09-24-creep-rig-rotation-retarget-design.md
 
 Run in Maya (Script Editor, Python tab):
     import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
@@ -220,7 +220,7 @@ Drive.__new__.__defaults__ = (False,)
 
 def rotation_mode(rig):
     """Does this rig take rotations only?  Read off the rig's group (`MODE_ATTR`), which the
-    rig procedure writes -- the Hunter's since 2026-09-24.  No attribute, no rig: False."""
+    rig procedure writes -- the Creep's since 2026-09-24.  No attribute, no rig: False."""
     if rig is None or not rig.group or not cmds.objExists(rig.group):
         return False
     if not cmds.attributeQuery(MODE_ATTR, node=rig.group, exists=True):

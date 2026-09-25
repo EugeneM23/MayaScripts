@@ -554,7 +554,13 @@ def _release(rig, side, span):
 
 def _drive_bone(weapon, bone):
     """The drive bone onto the weapon, no offset: the export socket sits ON
-    the weapon wherever the animator put it. Keys cut first (trap 37)."""
+    the weapon wherever the animator put it. Keys cut first (trap 37).
+
+    ON the weapon's socket, that is: a model standing in a frame of its own
+    (`bonedrive.FRAME_ROTATE`, the Creep Sword's 45) is turned against the
+    bone by exactly that frame at zero grip, so the constraint's target
+    offset undoes it -- the bone takes the weapon's world as the weapon's
+    old bone did. The identity for every other weapon."""
     values = _values_now(bone, cmds.currentTime(query=True))
     cmds.cutKey(bone, attribute=list(CHANNELS), clear=True)
     for channel, value in values.items():
@@ -562,7 +568,11 @@ def _drive_bone(weapon, bone):
             cmds.setAttr(bone + "." + channel, value)
         except RuntimeError:
             pass
-    cmds.parentConstraint(weapon, bone, maintainOffset=False)
+    con = cmds.parentConstraint(weapon, bone, maintainOffset=False)[0]
+    frame = bonedrive.frame_of(weapon)
+    if any(frame):
+        cmds.setAttr(con + ".target[0].targetOffsetRotate",
+                     *bonedrive.unframing(frame, cmds.getAttr(bone + ".rotateOrder")))
 
 
 def _span(weapon, controls=()):

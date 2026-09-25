@@ -3,7 +3,7 @@
     mayapy verify_weapon_space.py <UE5 clip .fbx>
 
 The animator: «давай делать всё максимально правильно, так чтобы мы не нарушали иерархию нашего
-скелета». An empty scene, a Hunter rig and a Manny rig (Add Character), a weapon on each (Weapons >
+скелета». An empty scene, a Creep rig and a Manny rig (Add Character), a weapon on each (Weapons >
 Add's own function), the clip retargeted onto both, both exported through the bridge's exporter
 and the files read back. Plus the two old shapes: a sword a file from before holds directly
 under the hand (still found, still comes off) and a mesh somebody parented under a bone by hand
@@ -39,6 +39,13 @@ def wm(n):
     return om.MMatrix(cmds.getAttr(n + ".worldMatrix[0]"))
 
 
+def seat(weapon, bone):
+    """Where zero grip stands `weapon` on `bone`: its own frame (bonedrive.FRAME_ROTATE, the Creep
+    Sword's 45 since 2026-09-24; the identity for the rest) on the bone's world."""
+    from maya_scenesetup import bonedrive
+    return om.MMatrix(bonedrive.framed(bonedrive.frame_of(weapon), list(wm(bone))))
+
+
 def mdiff(a, b):
     return max(abs(x - y) for x, y in zip(list(a), list(b)))
 
@@ -53,10 +60,10 @@ from maya_scenesetup import attach, bonedrive, catalog, character, skeleton, wea
 from maya_uebridge import animexport
 import maya_rigs, maya_rig_retarget as rr
 
-character.add_character(catalog.character_by_key("Hunter_Rig"))
+character.add_character(catalog.character_by_key("Creep_Rig"))
 character.add_character(catalog.character_by_key("Manny_Rig"))
 rigs = dict((r.namespace, r) for r in maya_rigs.rigs())
-H_RIG, M_RIG = rigs["Hunter_Rig"], rigs["Manny_Rig"]
+H_RIG, M_RIG = rigs["Creep_Rig"], rigs["Manny_Rig"]
 
 
 def bones(rig):
@@ -64,7 +71,7 @@ def bones(rig):
 
 
 H, M = bones(H_RIG), bones(M_RIG)
-hs, _ = attach.attach(catalog.by_key("Hunter_Sword"), H["hand_r"], H["weapon_r"], (0, 0, 0), (0, 0, 0))
+hs, _ = attach.attach(catalog.by_key("Creep_Sword"), H["hand_r"], H["weapon_r"], (0, 0, 0), (0, 0, 0))
 ms, _ = attach.attach(catalog.by_key("LongSword_02"), M["hand_r"], M["weapon_r"], (0, 0, 0), (0, 0, 0))
 hs, ms = cmds.ls(hs, long=True)[0], cmds.ls(ms, long=True)[0]
 hspace, mspace = [cmds.listRelatives(w, parent=True, fullPath=True)[0] for w in (hs, ms)]
@@ -77,16 +84,16 @@ gate(2, hspace.startswith(H_RIG.group + "|") and mspace.startswith(M_RIG.group +
 gate(3, not not_bones(H_RIG.skeleton_root) and not not_bones(M_RIG.skeleton_root),
      "both skeletons hold bones and constraints only: %s / %s" % (not_bones(H_RIG.skeleton_root), not_bones(M_RIG.skeleton_root)))
 gate(4, bonedrive.driving_weapon(H["weapon_r"]) == hs and bonedrive.driving_weapon(M["weapon_r"]) == ms
-     and mdiff(wm(hs), wm(H["weapon_r"])) < 1e-4 and mdiff(wm(ms), wm(M["weapon_r"])) < 1e-4,
-     "each sword drives its weapon_r and sits on it at zero grip (%.1e, %.1e)" % (mdiff(wm(hs), wm(H["weapon_r"])), mdiff(wm(ms), wm(M["weapon_r"]))))
+     and mdiff(wm(hs), seat(hs, H["weapon_r"])) < 1e-4 and mdiff(wm(ms), seat(ms, M["weapon_r"])) < 1e-4,
+     "each sword drives its weapon_r and sits on it at zero grip (%.1e, %.1e)" % (mdiff(wm(hs), seat(hs, H["weapon_r"])), mdiff(wm(ms), seat(ms, M["weapon_r"]))))
 cmds.setAttr(maya_rigs.node(H_RIG, "FKShoulder_R") + ".rotateZ", 40)
 follow = mdiff(wm(hspace), wm(H["hand_r"]))
-on_bone = mdiff(wm(hs), wm(H["weapon_r"]))
+on_bone = mdiff(wm(hs), seat(hs, H["weapon_r"]))
 cmds.setAttr(maya_rigs.node(H_RIG, "FKShoulder_R") + ".rotateZ", 0)
 gate(5, follow < 1e-4 and on_bone < 1e-4, "posed: the space stays on the hand (%.1e) and the sword on the bone (%.1e)" % (follow, on_bone))
 cmds.select(hs, replace=True)
 picked = skeleton.current_root()
-gate(6, picked == H_RIG.skeleton_root, "selecting the Hunter's sword names the Hunter: %s" % picked)
+gate(6, picked == H_RIG.skeleton_root, "selecting the Creep's sword names the Creep: %s" % picked)
 cmds.select(clear=True)
 
 # the clip onto both rigs
@@ -107,8 +114,8 @@ frames = list(range(int(f0), int(f1) + 1, max(1, int((f1 - f0) / 8))))
 grip_h = grip_m = 0.0
 for t in frames:
     cmds.currentTime(t)
-    grip_h = max(grip_h, mdiff(wm(hs), wm(H["weapon_r"])))
-    grip_m = max(grip_m, mdiff(wm(ms), wm(M["weapon_r"])))
+    grip_h = max(grip_h, mdiff(wm(hs), seat(hs, H["weapon_r"])))
+    grip_m = max(grip_m, mdiff(wm(ms), seat(ms, M["weapon_r"])))
 gate(7, ok_h and ok_m and grip_h < 1e-3 and grip_m < 1e-3 and weaponspace.is_space(cmds.listRelatives(hs, parent=True, fullPath=True)[0])
      and not not_bones(H_RIG.skeleton_root) and not not_bones(M_RIG.skeleton_root),
      "both retargeted; each sword rides its weapon_r over the take (%.1e, %.1e), still in its space, the skeletons still bones only" % (grip_h, grip_m))
@@ -128,7 +135,7 @@ def exported(rig, name):
     return path, info
 
 
-h_fbx, h_info = exported(H_RIG, "skeldar_weapon_space_hunter.fbx")
+h_fbx, h_info = exported(H_RIG, "skeldar_weapon_space_creep.fbx")
 m_fbx, m_info = exported(M_RIG, "skeldar_weapon_space_manny.fbx")
 
 
@@ -152,7 +159,7 @@ if wr and hr:
         cmds.currentTime(t)
         kept = max(kept, mdiff(wm(wr[0]) * wm(hr[0]).inverse(), track[t]))
 gate(8, len(hj) == h_joints_expected and not hm and wr and kept < 1e-2,
-     "the Hunter's FBX: %d joints, %d meshes; its weapon_r carries the sword's track to %.4f" % (len(hj), len(hm), kept))
+     "the Creep's FBX: %d joints, %d meshes; its weapon_r carries the sword's track to %.4f" % (len(hj), len(hm), kept))
 mj, mm = read_back(m_fbx)
 gate(9, len(mj) == m_joints_expected and not mm,
      "the Manny's FBX, with a stray cube parented under hand_l by hand: %d joints, %d meshes %s" % (len(mj), len(mm), mm[:2]))

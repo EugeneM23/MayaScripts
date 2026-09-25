@@ -253,7 +253,7 @@ class Show(FakeToolsMixin, unittest.TestCase):
     def test_a_control_an_older_copy_built_is_rebuilt_in_place(self):
         """2026-09-24: an update purges the plugin's modules while the hub
         stays open, and a restore alone kept showing the OLD build -- the
-        character dropdown without the Hunter row the update had added
+        character dropdown without the Creep row the update had added
         («НЕ вижу хантера в списке персонажей»). A module object that did not
         build the standing accordion rebuilds it inside the same control, so
         where it is docked survives."""

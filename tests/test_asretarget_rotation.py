@@ -1,4 +1,4 @@
-"""The rotation-only retarget (2026-09-24, the Hunter rig).
+"""The rotation-only retarget (2026-09-24, the Creep rig).
 
 The animator: «ретаргет не должен учитывать растяжение костей (привязываем только по
 ротейшенам)». A rig whose group carries `skeldarRetarget = "rotation"` takes every FK
@@ -86,7 +86,7 @@ class FakeModeCmds(object):
         self.attrs = attrs
 
     def objExists(self, name):
-        return name.split(".")[0] in ("|Group", "|Hunter_Rig:Group")
+        return name.split(".")[0] in ("|Group", "|Creep_Rig:Group")
 
     def attributeQuery(self, attr, node=None, exists=False):
         return (node, attr) in self.attrs
@@ -110,9 +110,9 @@ class TestRigMode(unittest.TestCase):
         self.assertTrue(ar.rotation_mode(rig))
 
     def test_a_namespaced_rig_reads_its_own_group(self):
-        ar.cmds = FakeModeCmds({("|Hunter_Rig:Group", "skeldarRetarget"): "rotation"})
-        rig = maya_rigs.Rig("Hunter_Rig", "Hunter_Rig:ControlSet", "|Hunter_Rig:Group|Hunter_Rig:Main",
-                            "|Hunter_Rig:Group", "|Hunter_Rig:root")
+        ar.cmds = FakeModeCmds({("|Creep_Rig:Group", "skeldarRetarget"): "rotation"})
+        rig = maya_rigs.Rig("Creep_Rig", "Creep_Rig:ControlSet", "|Creep_Rig:Group|Creep_Rig:Main",
+                            "|Creep_Rig:Group", "|Creep_Rig:root")
         self.assertTrue(ar.rotation_mode(rig))
 
     def test_an_unmarked_rig_is_a_twin_rig(self):

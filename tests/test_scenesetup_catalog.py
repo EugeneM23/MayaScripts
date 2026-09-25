@@ -72,16 +72,28 @@ class Table(unittest.TestCase):
 
     def test_the_dropdown_order_is_sword_then_spear(self):
         self.assertEqual(catalog.labels(),
-                         ["Long Sword 02", "Spear 01", "Dagger 01", "Hunter Sword"])
+                         ["Long Sword 02", "Spear 01", "Dagger 01", "Creep Sword"])
 
-    def test_the_hunter_sword_is_the_fourth_row(self):
-        """2026-09-24: the Hunter's own sword out of its rig, on the catalog's
+    def test_the_creep_sword_is_the_fourth_row(self):
+        """2026-09-24: the Creep's own sword out of its rig, on the catalog's
         axes -- blade +Y, guard X, thickness Z -- and on weapon_r like every
         weapon, at its natural size."""
-        entry = catalog.by_key("Hunter_Sword")
-        self.assertEqual((entry.label, entry.bone, entry.scale), ("Hunter Sword", "weapon_r", 1.0))
-        self.assertTrue(entry.path.endswith("assets/Hunter_Sword.fbx"), entry.path)
+        entry = catalog.by_key("Creep_Sword")
+        self.assertEqual((entry.label, entry.bone, entry.scale), ("Creep Sword", "weapon_r", 1.0))
+        self.assertTrue(entry.path.endswith("assets/Creep_Sword.fbx"), entry.path)
         self.assertFalse(catalog.missing(entry))
+
+    def test_only_the_creep_sword_stands_in_a_frame_of_its_own(self):
+        """2026-09-24, «чтобы оси соответствовали направлению геометрии, но при этом меч
+        сохранил свою позу в руке»: the 45 the Creep holds it at is the row's FRAME, not
+        its points; every other row -- and a file off the FBX field -- is on the bone's
+        axes, and a row written without the column reads as the identity."""
+        self.assertEqual(catalog.by_key("Creep_Sword").frame, (0.0, 45.0, 0.0))
+        for entry in catalog.WEAPONS:
+            if entry.key != "Creep_Sword":
+                self.assertEqual(entry.frame, (0.0, 0.0, 0.0), entry.key)
+        self.assertEqual(catalog.entry_for_path("C:/x/Axe.fbx", "weapon_r").frame, (0.0, 0.0, 0.0))
+        self.assertEqual(catalog.Weapon("X", "X", "C:/x.fbx", "weapon_r", 1.0).frame, (0.0, 0.0, 0.0))
 
     def test_the_dagger_is_the_third_row(self):
         """2026-09-17: the animator's Dagger.fbx, on the sword's axes."""
@@ -357,36 +369,36 @@ class CharacterTable(unittest.TestCase):
         self.assertTrue(path.endswith("UE4_Mannequin.fbx"), path)
 
 
-class HunterRig(unittest.TestCase):
-    """2026-09-24: the Hunter's AdvancedSkeleton rig is the second rig row --
+class CreepRig(unittest.TestCase):
+    """2026-09-24: the Creep's AdvancedSkeleton rig is the second rig row --
     «добавим хантера как риг в наш плагин». Manny stays the default."""
 
-    def test_the_hunter_rig_is_the_second_row_and_a_rig(self):
+    def test_the_creep_rig_is_the_second_row_and_a_rig(self):
         entry = catalog.CHARACTERS[1]
         self.assertEqual((entry.key, entry.label, entry.file, entry.kind),
-                         ("Hunter_Rig", "Hunter [rig]", "Hunter_Rig.ma", "rig"))
+                         ("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig"))
         self.assertTrue(catalog.is_rig(entry))
         self.assertIs(catalog.default_rig(), catalog.character_by_key("Manny_Rig"))
 
-    def test_the_shipped_hunter_is_the_rig_and_nothing_else(self):
+    def test_the_shipped_creep_is_the_rig_and_nothing_else(self):
         """Built 2026-09-24 from the animator's scene in mayapy standalone
-        (docs/superpowers/plans/make_hunter_rig_asset.py): the rig marked for
+        (docs/superpowers/plans/make_creep_rig_asset.py): the rig marked for
         the rotation-only retarget, the skeleton at world level, the meshes in
         the rig's Geometry group -- and not the Manny reference mesh, the
         stray camera, the materialX stack or any script node."""
-        path = catalog.character_file(catalog.character_by_key("Hunter_Rig"))
-        self.assertTrue(path.endswith("assets/Hunter_Rig.ma"), path)
+        path = catalog.character_file(catalog.character_by_key("Creep_Rig"))
+        self.assertTrue(path.endswith("assets/Creep_Rig.ma"), path)
         wanted = {'createNode transform -n "Group";': False,
                   'createNode joint -n "root";': False,
                   'createNode objectSet -n "ControlSet";': False,
-                  'createNode transform -n "Hunter_Body" -p "Geometry";': False,
+                  'createNode transform -n "Creep_Body" -p "Geometry";': False,
                   'createNode joint -n "weapon_r" -p "hand_r";': False,
                   'createNode joint -n "weapon_l" -p "hand_l";': False}
         mode = False
         with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
-                for banned in ("SKM_Manny_Simple", "camera1", "materialXStack", "Hunter_Sword", "weapon_test",
-                               "createNode script", "vaccine", "breed_gene"):
+                for banned in ("SKM_Manny_Simple", "camera1", "materialXStack", "Creep_Sword", "weapon_test",
+                               "createNode script", "vaccine", "breed_gene", "Hunter", "Hanter"):
                     self.assertNotIn(banned, line)
                 stripped = line.rstrip("\r\n")
                 if stripped in wanted:
@@ -397,36 +409,36 @@ class HunterRig(unittest.TestCase):
         self.assertTrue(mode, "the rig's retarget mark is not in the file")
 
 
-class HunterSkeleton(unittest.TestCase):
+class CreepSkeleton(unittest.TestCase):
     """2026-09-24: «добавим возможность загрузить не только риг хантера, а и
-    чистый скелет» -- the Hunter's second row, like the Manny's."""
+    чистый скелет» -- the Creep's second row, like the Manny's."""
 
-    def test_the_hunter_skeleton_is_a_skeleton_row_after_the_manny_one(self):
-        entry = catalog.character_by_key("Hunter")
+    def test_the_creep_skeleton_is_a_skeleton_row_after_the_manny_one(self):
+        entry = catalog.character_by_key("Creep")
         self.assertEqual((entry.label, entry.file, entry.kind),
-                         ("Hunter [skeleton]", "Hunter_Skeleton.ma", "skeleton"))
+                         ("Creep [skeleton]", "Creep_Skeleton.ma", "skeleton"))
         self.assertFalse(catalog.is_rig(entry))
         keys = [e.key for e in catalog.CHARACTERS]
-        self.assertEqual(keys.index("Hunter"), keys.index("Manny") + 1)
+        self.assertEqual(keys.index("Creep"), keys.index("Manny") + 1)
         self.assertEqual(catalog.default_character().key, "Manny")
 
     def test_the_shipped_skeleton_carries_nothing_of_the_rig(self):
-        """Built from Hunter_Rig.ma by make_hunter_skeleton_asset.py: the
-        skeleton at world level, the meshes in `|Hunter` -- and no rig group,
+        """Built from Creep_Rig.ma by make_creep_skeleton_asset.py: the
+        skeleton at world level, the meshes in `|Creep` -- and no rig group,
         no control set, no fit skeleton, no retarget mark, no script node."""
-        path = catalog.character_file(catalog.character_by_key("Hunter"))
-        self.assertTrue(path.endswith("assets/Hunter_Skeleton.ma"), path)
+        path = catalog.character_file(catalog.character_by_key("Creep"))
+        self.assertTrue(path.endswith("assets/Creep_Skeleton.ma"), path)
         wanted = {'createNode joint -n "root";': False,
-                  'createNode transform -n "Hunter";': False,
-                  'createNode transform -n "Hunter_Body" -p "Hunter";': False,
+                  'createNode transform -n "Creep";': False,
+                  'createNode transform -n "Creep_Body" -p "Creep";': False,
                   'createNode joint -n "weapon_r" -p "hand_r";': False,
                   'createNode joint -n "weapon_l" -p "hand_l";': False}
         skins = 0
         with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 for banned in ('createNode transform -n "Group"', "ControlSet", "FitSkeleton",
-                               "MoCapConstraints", "skeldarRetarget", "SKM_Manny_Simple", "Hunter_Sword", "weapon_test",
-                               "createNode script", "vaccine", "breed_gene"):
+                               "MoCapConstraints", "skeldarRetarget", "SKM_Manny_Simple", "Creep_Sword", "weapon_test",
+                               "createNode script", "vaccine", "breed_gene", "Hunter", "Hanter"):
                     self.assertNotIn(banned, line)
                 stripped = line.rstrip("\r\n")
                 if stripped in wanted:

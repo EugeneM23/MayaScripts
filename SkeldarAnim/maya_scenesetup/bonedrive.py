@@ -34,6 +34,19 @@ MARKER = "mayaWeapon"
 GRIP_ROTATE = "mayaWeaponGripRotate"
 GRIP_TRANSLATE = "mayaWeaponGripTranslate"
 
+# The weapon's own FRAME on its bone (2026-09-24, the Creep Sword; the
+# animator: «сейчас у меча развёрнута геометрия, а оси стоят ровно ... чтобы
+# оси соответствовали направлению геометрии, но при этом меч сохранил свою
+# позу в руке»). A model whose rest in the hand is turned against the bone's
+# axes used to carry that turn in its POINTS, so the node's axes stood on the
+# bone while the blade stood 45 deg off them. Now the points are the model's
+# own (guard on X, like every catalog weapon) and the turn is the catalog's,
+# written on the marked node at Add: zero grip stands the node IN that frame
+# -- its axes on the geometry -- and every grip is measured from it,
+# world = grip x frame x bone. A node without it has the identity, exactly
+# as before.
+FRAME_ROTATE = "mayaWeaponFrameRotate"
+
 CHANNELS = tuple(channel + axis
                  for channel in ("translate", "rotate") for axis in "XYZ")
 
@@ -74,6 +87,30 @@ def composed_grip(rotate, translate, frame16):
     shift = frame.translation(om.MSpace.kTransform)
     return (tuple(math.degrees(v) for v in (euler.x, euler.y, euler.z)),
             (shift.x, shift.y, shift.z))
+
+
+def framed(frame_rotate, bone16):
+    """`bone16` turned into a weapon's frame: frame x bone, 16 floats. Pure.
+
+    Where zero grip stands a weapon whose frame is `frame_rotate` (XYZ
+    degrees) -- the frame multiplies from the left, in the bone's own axes.
+    """
+    return tuple(om.MMatrix(matrix_of(frame_rotate, (0.0, 0.0, 0.0)))
+                 * om.MMatrix(bone16))
+
+
+def unframing(frame_rotate, rotate_order=0):
+    """The frame undone, as an euler in `rotate_order` (degrees). Pure.
+
+    What a parentConstraint's target offset holds to put a bone on the
+    SOCKET of a weapon standing in that frame: W_bone = frame^-1 x W_weapon
+    (a constraint's target offset is O in W = O x W_target, its euler in the
+    constrained node's rotate order -- measured 2026-09-05).
+    """
+    inverse = om.MMatrix(matrix_of(frame_rotate, (0.0, 0.0, 0.0))).inverse()
+    euler = (om.MTransformationMatrix(inverse).rotation(asQuaternion=False)
+             .reorder(rotate_order))
+    return tuple(math.degrees(v) for v in (euler.x, euler.y, euler.z))
 
 
 def grip_between(child16, parent16):
@@ -204,16 +241,44 @@ def store_grip(weapon, rotate, translate):
         cmds.setAttr("{0}.{1}".format(weapon, attr), *values, type="double3")
 
 
-def place_at_grip(weapon, bone, rotate, translate):
-    """Stand `weapon` at the grip: world pose = grip x the BONE's world.
+def store_frame(weapon, rotate):
+    """The weapon's own frame on its bone, on the node (see FRAME_ROTATE).
 
-    Zeros put the sword exactly on `weapon_r` -- the game's own grip. Two
+    The identity writes nothing on a node that has none: a weapon on the
+    bone's axes keeps looking exactly as it always did.
+    """
+    exists = cmds.attributeQuery(FRAME_ROTATE, node=weapon, exists=True)
+    if not exists and not any(rotate):
+        return
+    if not exists:
+        cmds.addAttr(weapon, longName=FRAME_ROTATE, dataType="double3")
+    cmds.setAttr("{0}.{1}".format(weapon, FRAME_ROTATE), *rotate,
+                 type="double3")
+
+
+def frame_of(weapon):
+    """The frame stored on `weapon` (XYZ degrees), the identity when none."""
+    if not cmds.attributeQuery(FRAME_ROTATE, node=weapon, exists=True):
+        return (0.0, 0.0, 0.0)
+    return tuple(cmds.getAttr(weapon + "." + FRAME_ROTATE)[0])
+
+
+def _seat_of(weapon, bone):
+    """Where zero grip stands `weapon`: its frame on the bone's world."""
+    return framed(frame_of(weapon),
+                  cmds.xform(bone, query=True, matrix=True, worldSpace=True))
+
+
+def place_at_grip(weapon, bone, rotate, translate):
+    """Stand `weapon` at the grip: world = grip x its frame x the BONE's world.
+
+    Zeros put the sword exactly on `weapon_r` -- the game's own grip -- in
+    the model's own frame (FRAME_ROTATE; the identity for most). Two
     channel-shaped writes like `snap`, so scale stays the catalog's and the
     weapon's DAG parent (the hand) never enters the math.
     """
     world_rotate, world_translate = composed_grip(
-        rotate, translate,
-        cmds.xform(bone, query=True, matrix=True, worldSpace=True))
+        rotate, translate, _seat_of(weapon, bone))
     cmds.xform(weapon, worldSpace=True, translation=world_translate)
     cmds.xform(weapon, worldSpace=True, rotation=world_rotate)
 
@@ -242,7 +307,7 @@ def measured_grip(weapon, bone):
     """
     return grip_between(
         cmds.xform(weapon, query=True, matrix=True, worldSpace=True),
-        cmds.xform(bone, query=True, matrix=True, worldSpace=True))
+        _seat_of(weapon, bone))
 
 
 def stored_grip(weapon):
@@ -384,14 +449,13 @@ def relink(weapon, bone):
     rebuilt.
 
     The GRIP is not the clip's to flatten: a stored grip puts the sword back
-    on its dialled pose relative to the bone after the snap, and the
-    transfer keeps that offset (`link`, mo=True). A legacy sword with none
-    stored keeps the snap.
+    on its dialled pose relative to the bone, and the transfer keeps that
+    offset (`link`, mo=True). A legacy sword with none stored goes to zero
+    grip -- onto the bone in its own frame, which for a frameless weapon is
+    the old snap exactly.
     """
     with _autokey_off():
         _cut(weapon)
-        snap(weapon, bone)
-        grip = stored_grip(weapon)
-        if grip:
-            place_at_grip(weapon, bone, grip[0], grip[1])
+        grip = stored_grip(weapon) or ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        place_at_grip(weapon, bone, grip[0], grip[1])
         return link(weapon, bone)

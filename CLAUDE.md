@@ -652,21 +652,31 @@ MEL sourcing `base_OverRig_scripts` and raising `basicOverRigScripts`;
 the two labels (not re-run whole). `make_build.py` →
 `SkeldarAnim_2026-09-19.zip`, 85 files, 26.8 MB.
 
-## The Hunter: its own AS rig, and a ROTATION-ONLY retarget (2026-09-24)
+## The Creep: its own AS rig, and a ROTATION-ONLY retarget (2026-09-24)
+
+**Named the Hunter until the night of 2026-09-24** (the animator: «всё что Hunter переименуем на
+Creep»): the catalog rows «Creep [rig]» / «Creep [skeleton]» / «Creep Sword», the assets
+`Creep_Rig.ma` / `Creep_Skeleton.ma` / `Creep_Sword.fbx`, the meshes `Creep_Body/Back/Arm_L/Arm_R/
+Face`, the layer `Creep_Skeleton`, `CreepSwordMesh`, the rig's namespace `Creep_Rig`, every script
+`*_creep_*`. The animator's own SOURCE files keep the old spelling and the scripts still read them
+by it: the group `|Hunter` (`|Hanter` that morning), `Hanter_Skeleton`, `Hunter_Sword` /
+`Hunter_Sword_Low`. A scene holding a rig added before the rename (namespace `Hunter_Rig`) keeps
+working — a rig is found by its structure, the weapon by its marker attribute, and a remembered
+«Hunter [rig]» in the dropdown falls back to the first row.
 
 A creature on a UE5 Manny skeleton (Manny's bone names plus `weapon_test`; arms 34.8 +
 36.0 cm against Manny's 27.8 + 27.3, a longer neck, the same legs) in the animator's
 `Downloads/creep_T-pose_MIX_06_skin.mb`, group `|Hunter` (it was `|Hanter` in the morning
 — the animator renamed it mid-session, and deleted the UE reference Manny too; find
 things, never hardcode them). Spec:
-`docs/superpowers/specs/2026-09-24-hunter-rig-rotation-retarget-design.md`. In one day:
+`docs/superpowers/specs/2026-09-24-creep-rig-rotation-retarget-design.md`. In one day:
 joint scales removed (12 joints, mesh unchanged: `BPM' = BPM·WM_old·WM_new⁻¹`), the bind
 re-baked into the UE A-pose in place (Orig shapes written, `BPM = WM⁻¹`), an AS rig, and
 the retarget mode. **The scene was left unsaved** with backups beside it
 (`creep_T-pose_MIX_06_skin_BACKUP_*.mb`).
 
-**The rig** — `docs/superpowers/plans/as_hanter_rig_procedure.py`, proof
-`verify_advancedskeleton_hunter_rig.py` **0 of 25 gates, live**. The Manny procedure by
+**The rig** — `docs/superpowers/plans/as_creep_rig_procedure.py`, proof
+`verify_advancedskeleton_creep_rig.py` **0 of 25 gates, live**. The Manny procedure by
 LONG PATH (two skeletons with the same bone names were in the scene), the fit put on every
 bone, and three deliberate differences:
 
@@ -690,7 +700,7 @@ still imports nothing from its sibling; the pole's geometry is now measured befo
 first constraint); Main and RootX_M keep the twin drive (root motion and hips exact,
 unscaled). An unmarked rig is driven exactly as before; the dispatcher needed nothing.
 17 unit tests (`tests/test_asretarget_rotation.py`), 2195 in all; the installed copy
-refreshed. Proof: `verify_hunter_rotation_retarget.py` in **mayapy standalone** on a saved
+refreshed. Proof: `verify_creep_rotation_retarget.py` in **mayapy standalone** on a saved
 copy with a Longsword clip — **0 of 10**: bones on the source's orientation to 0.001°,
 lengths unchanged on every frame (0.000000 cm) against a source whose own lengths differ,
 root/pelvis 0.000000, IK = FK to 0.001 cm.
@@ -698,53 +708,54 @@ root/pelvis 0.000000, IK = FK to 0.001 cm.
 **Limb bones are judged by where they point, not by their roll**: AS's
 Shoulder/Elbow/Hip/Knee never roll — the roll lives in the twist joints (94.9° on that
 clip, the Manny rig's design too) — and AS removes it about ITS joint's axis, so a child
-standing off the bone's X (the Hunter's lowerarm 0.32 cm, 0.53°) swings on a cone; the
+standing off the bone's X (the Creep's lowerarm 0.32 cm, 0.53°) swings on a cone; the
 bound is twice each skeleton's off-axis angle, measured from the children's local
 translations.
 
-**The Hunter ships as the second rig row** (the same day, «добавим хантера как риг в наш
-плагин»): `catalog.CHARACTERS[1]` = «Hunter [rig]», `assets/Hunter_Rig.ma` (39 MB), Manny
+**The Creep ships as the second rig row** (the same day, «добавим хантера как риг в наш
+плагин»): `catalog.CHARACTERS[1]` = «Creep [rig]», `assets/Creep_Rig.ma` (39 MB), Manny
 stays row 0 and `default_rig()`. A rig now lands in a namespace named for its OWN key
-(`character.rig_namespace`: `Hunter_Rig`, `Hunter_Rig1`, …) — `RIG_NAMESPACE_BASE` would
+(`character.rig_namespace`: `Creep_Rig`, `Creep_Rig1`, …) — `RIG_NAMESPACE_BASE` would
 have made it `Manny_Rig1`. Before the export the animator's scene was tidied («назовем
 правильно и сгруппируем, чтобы геометрия не валялась непонятно где»; `tidy()` in the
 procedure): `|root` out of the FBX wrapper to world level with the Z-up turn in its
-jointOrient (Manny_Rig's shape), the meshes `Hunter_Body/Back/Arm_L/Arm_R/Face` in the rig's
-own `Group|Geometry`, the swords out of the skeleton into `Geometry|Hunter_Props` riding
+jointOrient (Manny_Rig's shape), the meshes `Creep_Body/Back/Arm_L/Arm_R/Face` in the rig's
+own `Group|Geometry`, the swords out of the skeleton into `Geometry|Creep_Props` riding
 `weapon_test` by constraint, the wrapper renamed `Manny_Reference` holding only the
 `SKM_Manny_Simple` mesh the animator did not want shipped. The asset is built in mayapy
-standalone from a saved copy (`make_hunter_rig_asset.py`: the reference mesh, its skin and
+standalone from a saved copy (`make_creep_rig_asset.py`: the reference mesh, its skin and
 curves, `camera1`, `materialXStack1`, unused shading networks, unknown nodes and empty
 dagPoses deleted; saved as `.ma`; banned text refused). Proof:
-`verify_hunter_rig_asset.py` — **0 of 10 gates, standalone**: two Hunters and a Manny added
-into an empty scene, each in its own namespace, the Hunters marked rotation-only, at their
-bind, painted, no script node; a Longsword clip retargeted onto the first Hunter through
-the button (orientations 0.001°, lengths 0.000000 cm) while the second Hunter and the Manny
+`verify_creep_rig_asset.py` — **0 of 10 gates, standalone**: two Creeps and a Manny added
+into an empty scene, each in its own namespace, the Creeps marked rotation-only, at their
+bind, painted, no script node; a Longsword clip retargeted onto the first Creep through
+the button (orientations 0.001°, lengths 0.000000 cm) while the second Creep and the Manny
 moved 0.000000000. 2198 unit tests; the installed copy refreshed (the hub's dropdown is
 built when the section opens — close and reopen it).
 
-**And a clean skeleton row, «Hunter [skeleton]»** («не только риг хантера, а и чистый
-скелет»): `assets/Hunter_Skeleton.ma` (37.7 MB), built from `Hunter_Rig.ma` by
-`make_hunter_skeleton_asset.py` in standalone — every bone's world matrix recorded, the
+**And a clean skeleton row, «Creep [skeleton]»** («не только риг хантера, а и чистый
+скелет»): `assets/Creep_Skeleton.ma` (37.7 MB), built from `Creep_Rig.ma` by
+`make_creep_skeleton_asset.py` in standalone — every bone's world matrix recorded, the
 constraints deleted, the bones re-seated from their world matrices (drift 0.000000000),
-the meshes and props to `|Hunter` at world level (the props keep their weapon_test
+the meshes and props to `|Creep` at world level (the props keep their weapon_test
 constraint), `|Group` deleted, then every node nothing kept depends on (the kept set is
 the two hierarchies, the meshes' and props' history, their shading, the bind pose, the
 skeleton's layer, the default nodes) — 315 of AS's utility nodes, its sets and driven-key
 curves, plus FBX-embedded textures nothing wore. Row after «Manny UE5 [skeleton]», plain
-names like every skeleton row. Proof `verify_hunter_skeleton_asset.py`, **0 of 9
+names like every skeleton row. Proof `verify_creep_skeleton_asset.py`, **0 of 9
 standalone**: 90 joints at `|root`, 5 skins at their bind, nothing of the rig, the sword
 following the hand, a rig beside it untouched by it and not moving it. `rename_note` now
 names the PLAIN root that collided — beside an AS rig it had named
-`Hunter_Rig:FKXAnkle_L`, one of the rig's dozens of top joints. 2202 unit tests.
+`Creep_Rig:FKXAnkle_L`, one of the rig's dozens of top joints. 2202 unit tests.
 
-**Weapons on the Hunter, as on every rig** (the same day: «оружие хантера встроено прямо в
+**Weapons on the Creep, as on every rig** (the same day: «оружие хантера встроено прямо в
 риг ... добавлять и удалять оружие и анимация переносилась на вепон бону и обратно ... меч
-хантера в список нашего оружия»). `make_hunter_sword_asset.py` (standalone, on the shipped
-rig): the whole sword (`Hunter_Sword`; the second grip piece `Hunter_Sword_Low` is not taken,
-the animator's call) exported as `assets/Hunter_Sword.fbx` in the frame the Hunter's weapon
-bone WILL have — blade +Y (tip +74.3), guard X, thickness Z, the origin where the Hunter held
-it — catalog row «Hunter Sword» on `weapon_r`, scale 1; the swords dropped from the rig;
+хантера в список нашего оружия»). `make_creep_sword_asset.py` (standalone, on the shipped
+rig): the blade (`Creep_Sword` — and NOT the handle: `Creep_Sword_Low` was described as "a
+second grip piece" when the animator was asked, and it is THE grip; fixed the same night, below)
+exported as `assets/Creep_Sword.fbx` in the frame the Creep's weapon
+bone WILL have — blade +Y (tip +74.3), guard X, thickness Z, the origin where the Creep held
+it — catalog row «Creep Sword» on `weapon_r`, scale 1; the swords dropped from the rig;
 `weapon_test` renamed **`weapon_r`** and turned half a turn about its own Z (the sword lay
 along its −Y, every catalog weapon lies along +Y), **`weapon_l`** created under hand_l as
 its behaviour mirror (S·M·S); BPM re-expressed, bindPose reset; the clean skeleton rebuilt
@@ -752,11 +763,11 @@ from the new rig. Procedure steps `export_sword` (BEFORE the bone turns — the 
 by constraint), `drop_props`, `weapon_bones`. **The retarget carries the helper bones
 RELATIVE TO THEIR PARENT on a rotation-only rig** (`maya_rig_retarget.helper_space`,
 `transfer_bone(relative=True)`: world = W_src · P_src⁻¹ · P_dst through a multMatrix): in
-world space the Hunter's weapon_r would stand at the SOURCE's hand, 26% of an arm away.
-Proof `verify_hunter_rig_asset.py` **0 of 13** (Add at zero grip on weapon_r to 7.8e-14 and
+world space the Creep's weapon_r would stand at the SOURCE's hand, 26% of an arm away.
+Proof `verify_creep_rig_asset.py` **0 of 13** (Add at zero grip on weapon_r to 7.8e-14 and
 driving it; after the retarget weapon_r on the clip's hand-relative track to 1.7e-13, moving
 4.69 in the hand, the sword on it; Remove Weapon hands the bone its track back to 0.0);
-`verify_hunter_skeleton_asset.py` 9/9; 2205 unit tests. A scene holding a Hunter rig added
+`verify_creep_skeleton_asset.py` 9/9; 2205 unit tests. A scene holding a Creep rig added
 BEFORE this has the old rig (swords inside, weapon_test) — re-add it.
 
 **The weapon lives OUTSIDE the skeleton — every rig, every skeleton** (the same evening:
@@ -779,49 +790,49 @@ Proof: `verify_weapon_space.py` **11/11 standalone** (both rigs' skeletons bones
 constraints only, retargeted with the swords on weapon_r, FBXs read back 91/93 joints and 0
 meshes, a hand-parented cube included, Remove pruning the space and group, a legacy sword
 found and removed); `verify_connections.py` **40/40 twice** — Manny_Rig + Long Sword and
-Hunter_Rig + Hunter Sword — **in a SEPARATE disposable Maya** launched with
+Creep_Rig + Creep Sword — **in a SEPARATE disposable Maya** launched with
 `PYTHONPATH` pointing at a scratch `userSetup.py` that opens port 7002 (OverRig's
 `parent_in`/`_out` need a live Maya; the animator's scene was not the place, and the
 process was killed afterwards so it saved no prefs). 2211 unit tests.
 
 **The bind is SKM_Manny_Simple's pose since the same night** (the animator, with the original
 creature `|SKM_Manny_Simple` — the untouched T-bind file, old joint scales and all — keyed at
-frame 0 into the pose wanted: «исходная поза у рига Hunter_Rig:Group и у скелета этого рига не
+frame 0 into the pose wanted: «исходная поза у рига Creep_Rig:Group и у скелета этого рига не
 должна никак отличаться от позы скелета SKM_Manny_Simple … текущая поза SKM_Manny_Simple должна
-стать байнд позой для Hunter_Rig:root»; spec addendum 5). Measured first: the A bind differed by
+стать байнд позой для Creep_Rig:root»; spec addendum 5). Measured first: the A bind differed by
 50.6° on the hands, 55–91° on the fingers, 11° neck, 6° spine, 7.5° legs, 5° feet, 1.4° / 2.4 cm
 pelvis — clavicles/upperarms/forearms already exact. **That pose turns the hands ~50° and SKM's
 skin stretches the hand meshes ×3.1 / ×4.7 at the wrist and thumb** (62 / 112 edges past 1.5×,
 the first A bake's damage); asked, the animator chose the exact pose with the mesh exactly as SKM
 shows it. The pipeline, re-runnable: the pose and SKM's five deformed meshes dumped read-only to
-`docs/superpowers/plans/hunter_bind_pose.json.gz` (2 MB) → `rebind_hunter_pose.py` (mayapy, on
+`docs/superpowers/plans/creep_bind_pose.json.gz` (2 MB) → `rebind_creep_pose.py` (mayapy, on
 the clean skeleton: bones onto the pose's world matrices SCALE STRIPPED, helpers by their rules —
 ik_hand_r/l on the hands, ik_hand_gun at zero, ik_foot_* keeping their relation to the feet,
 weapon_r/l riding the hands untouched — each Orig shape = SKM's deformed points, BPM = WM⁻¹,
 bindPose1 reset; refuses a mesh whose vertex order does not match: face 100 %, body 71 %, back
-48 % on SKM's T rest, the arm meshes by edge lengths) → `rebuild_hunter_rig.py` (LIVE, the
+48 % on SKM's T rest, the arm meshes by edge lengths) → `rebuild_creep_rig.py` (LIVE, the
 procedure's fit → build → constrain → orient → align → SDK axes → level feet → mark, meshes into
-`Group|Geometry`) → `make_hunter_rig_asset.py` → `make_hunter_skeleton_asset.py`. **The rig
+`Group|Geometry`) → `make_creep_rig_asset.py` → `make_creep_skeleton_asset.py`. **The rig
 needed no pose work of its own: `fit()` puts every fit joint on its bone, so a rig built over a
 skeleton standing in the pose has that pose as its build pose.** The AS build ran in a
 **disposable second Maya** on port 7002 (AS reads its own UI, so not mayapy; and not the
-animator's scene). Proof: `verify_hunter_bind_pose.py` **9/9 standalone** (the rig at zero: every
+animator's scene). Proof: `verify_creep_bind_pose.py` **9/9 standalone** (the rig at zero: every
 bone on the pose to 9.9e-10, every vertex on SKM's to 5.1e-6 cm, skin at bind 3e-13, helpers on
 their rules; a positive control; the clean skeleton the same; weapon_r/l in the hands exactly as
-in the old asset to 2.8e-14, so the Hunter Sword's frame holds); `verify_advancedskeleton_hunter_rig.py`
-**25/25 live**; `verify_hunter_rig_asset.py` **13/13** (its gate 11 still expected the sword under
+in the old asset to 2.8e-14, so the Creep Sword's frame holds); `verify_advancedskeleton_creep_rig.py`
+**25/25 live**; `verify_creep_rig_asset.py` **13/13** (its gate 11 still expected the sword under
 hand_r — written before the weapon spaces, never re-run; now asks `holding_hand`);
-`verify_hunter_skeleton_asset.py` 9/9; `verify_weapon_space.py` 11/11; `verify_connections.py`
-40/40 on the new Hunter; 2211 unit tests. The old A-pose assets are NOT in git (the Hunter assets
-were never committed); a scene holding a Hunter added before this has the A bind — re-add it.
+`verify_creep_skeleton_asset.py` 9/9; `verify_weapon_space.py` 11/11; `verify_connections.py`
+40/40 on the new Creep; 2211 unit tests. The old A-pose assets are NOT in git (the Creep assets
+were never committed); a scene holding a Creep added before this has the A bind — re-add it.
 
 **…and the rig's joints stand ON the skeleton's, both sides** (minutes later, the animator: «кости
 скелета и кости рига не совпадают, как минимум на левой руке»; spec addendum 6). Measured: the
 LEFT fingers' AS joints 1.1–3.2 cm off their bones — exactly the pose's own asymmetry (SKM's
 fingers bend differently per hand), because **AdvancedSkeleton builds the left side as the MIRROR
 of the right fit**; and the upper-arm twist Parts 2.35 / 4.70 cm off on both sides plus
-`NeckPart1_M` 0.51 cm — present in every Hunter build since the first (the old asset measured the
-same), because AS spaces Parts evenly (1/3, 2/3) while the Hunter's upper-arm twists stand at
+`NeckPart1_M` 0.51 cm — present in every Creep build since the first (the old asset measured the
+same), because AS spaces Parts evenly (1/3, 2/3) while the Creep's upper-arm twists stand at
 0.266 / 0.532. Two procedure changes: `fit()` runs the vendor's **`asCreateNonSymmetryJoints`**
 (every side chain under a middle joint copied into `<joint>_NonSymmetry` fit joints, `noMirror`
 on the right; the build turns them into the same `_L` names, so nothing downstream changed) and
@@ -831,22 +842,99 @@ twists' step (evenly stepped or refused) — the child (Elbow/Wrist/Knee/Ankle) 
 by AS and holds its place by itself — and shifts `NeckPart1_M_pointConstraint1.offset` (parent =
 Neck_M space, the frame neck_02 is rigid in) onto neck_02. The skeleton does not move (orientation
 only). Live verify gate 26: every deformation joint on its bone to **0.0000 cm** (left fingers
-included), twist Parts to 0.17 cm (the Hunter's own twists stand that far off the bone line);
+included), twist Parts to 0.17 cm (the Creep's own twists stand that far off the bone line);
 **26/26**; the other five verifies and Connections re-run green on the rebuilt assets. The rig now
 carries 360 joints (the fit skeleton's 36 non-symmetry copies stay in the hidden FitSkeleton).
 
 **…and the normals** (the animator, looking at the new hands: «что произошло с геометрией, почему
-она стала такой тёмной?»). Trap 77 below. `dump_hunter_bind_normals.py` (standalone) imports the
+она стала такой тёмной?»). Trap 77 below. `dump_creep_bind_normals.py` (standalone) imports the
 very FBX the animator brought in as SKM_Manny_Simple (`Downloads/creep_T-pose_draft (1).fbx`; its
 points at the pose match the pose data to 1.5e-6, so it is the same mesh) and dumps its skin's own
-world-space face-vertex normals there to `hunter_bind_normals.json.gz`; `rebind_hunter_pose.py`
+world-space face-vertex normals there to `creep_bind_normals.json.gz`; `rebind_creep_pose.py`
 now writes them onto the Orig shapes, locked (`set_normals`, also `--normals-only` for a scene
 already re-bound — the built rig was fixed that way, the rig itself does not depend on normals).
 Measured: the hand meshes' stored normals from **55–59° median off their surface (p90 99–107°)
 to 4.6–4.8°**, the same as the face and back; the shown normals are SKM's to 0.0008°.
-`verify_hunter_bind_pose.py` gates 10/11 (rig and clean skeleton), **11/11**; rig asset 13/13,
+`verify_creep_bind_pose.py` gates 10/11 (rig and clean skeleton), **11/11**; rig asset 13/13,
 skeleton 9/9 after the rebuild. The morning's A-pose asset already had the arms 44° off — nobody
 had looked at the shading.
+
+**The Creep Sword, whole and on the grip** (the animator, with a test take on the rig: «меч хантера
+почему-то оказался без рукоятки … и он повёрнут на 45 градусов; при повороте меча 0 0 0 он должен
+встать так, как сейчас»). Measured first: the creature's sword is TWO meshes on weapon_test —
+`SwordPacked` (10890 vertices, blade/guard/pommel) and `Sword_Low.001` (1170, the grip, −7.3..+13.6
+along the bone) — and the scene's sword stood right at the Weapons grip Rotate (0, 45, 0).
+`make_creep_sword_fbx.py` (standalone, from the tidy backup scene, never saved) takes both pieces
+into weapon_r's frame (FLIP_Z · weapon_test), turns them by that grip, unites them into ONE mesh
+(`CreepSwordMesh`, 12060 vertices — a catalog weapon is one geometry) and exports; read back the
+way Add reads it, the blade is the old asset turned by the grip to 8.7e-7. In the animator's scene
+the sword was swapped through `attach.detach` / `attach.attach` at zero grip in one undo chunk (the
+Connections scheme checked first: the right hand holds, nothing follows) and the remembered grip
+`mayaSceneSetup_offset_Creep_Sword` zeroed — or the next Add would put the 45 on top: the new node
+ON weapon_r (6e-14), every blade vertex where the old one stood at 45 over the whole take (8.7e-7
+cm), weapon_r unmoved. A first check compared the sword NODES' matrices and read 0.69 — the old node
+carried the 45 and the new one carries it in the mesh; compare vertices, not nodes. Rig asset
+verify 13/13, weapon spaces 11/11.
+
+**…and its axes on its geometry: a weapon's FRAME** (minutes later: «сейчас у меча развёрнута
+геометрия, а оси стоят ровно … чтобы оси соответствовали направлению геометрии» — «но при этом меч
+сохранил свою позу в руке»). The 45 in the POINTS left the node's axes on the bone and the guard 45°
+off them. So the points are the model's own again (`make_creep_sword_fbx.py` without the turn: guard
+±6.17 on X, thickness ±1.74 on Z) and the 45 is the catalog row's **`frame`** (`Weapon` gained the
+column, default identity; the Creep Sword's `(0, 45, 0)`), written on the marked node at Add as
+**`bonedrive.FRAME_ROTATE`** (`mayaWeaponFrameRotate`). Zero grip stands the NODE in its frame:
+`world = grip · frame · bone` (`framed`, `_seat_of`), `place_at_grip`/`apply_grip`/`regrip` compose it,
+`measured_grip` takes it away (the fields read 0 0 0), `relink` with nothing stored places at zero
+grip (= the old snap for a frameless weapon), `attach` stores it before any placement. A node without
+it is the identity, so every other weapon and every older sword is unchanged. **Connections' drive
+bone sits on the weapon's SOCKET**, not on the turned node: `_drive_bone` sets the constraint's
+`targetOffsetRotate` to `unframing(frame, bone rotateOrder)` — weapon_l taking the sword over lands
+where weapon_r stands (2.8e-14). Proof: `verify_creep_rig_asset.py` **15/15** (gate 11 the node on
+frame · weapon_r to 1.4e-14; gate 14 the guard along the node's X, the fields 0 0 0, and — given the
+grip-in-its-points asset — every vertex where that one stood to 8.7e-7; gate 15 the socket);
+`verify_weapon_space.py` 11/11 (gates 4/5/7 against frame · bone); `verify_connections.py` **40/40
+twice** in a disposable Maya (gate 18 now the full socket, rotation and position, 0.000000);
+2222 unit tests. The animator's scene held no sword at the time; their next Add took the new one.
+
+**…and the smoothing and the bind pose, for the FBX** (the animator, on
+`Animations/Rigs/Characters/Creep_Skeleton.fbx` from `export_creep_skeleton_fbx.py`: «скелет
+выгрузился без групп сглаживания на геометрии»). Trap 78 below: the file DID carry a smoothing layer
+— of zeros, every edge hard — because every edge of all five Creep meshes was hard in Maya, already
+in the animator's creature scene before any of our work, under all-locked normals. The creature's
+source FBX (`creep_T-pose_draft (1).fbx`) has the real flags and they are exactly the edges whose two
+faces' normals differ (plus the borders): **618 of 2949 on an arm, 2832 of 16735 on the back, 10833
+of 43992 on the body, 1284 of 139827 on the face** — so `rebind_creep_pose.soft_edges`/`set_edges`
+derive them from the normals the meshes carry (0.01°: the same normal), flags only. The same export's
+log said «Unable to find the bind pose for : / root / ik_foot_root / ik_foot_l. No bind poses …
+will be exported» — trap 79 — so `whole_bind_pose` saves bindPose1 again over all 91 joints and moves
+every skin onto it. Both run in the rebind pipeline now, and **`repair_creep_assets.py`** applied them
+to the shipped `Creep_Rig.ma` in place (standalone: points unchanged 0, normals 0.0011°, skins at
+bind, script nodes cut), then `make_creep_skeleton_asset.py` rebuilt `Creep_Skeleton.ma` from it.
+`export_creep_skeleton_fbx.py` refuses an all-hard mesh, reads the smoothing back (hard counts equal
+the asset's) and takes `--overwrite`; the re-export's layer holds 33159 soft / 10833 hard on the body
+and so on, and the log carries no bind-pose warning. Maya 2027 writes "smoothing groups" as a
+**ByEdge** layer (measured on a cube: the option on gives ByEdge, off gives none). Proof:
+`verify_creep_bind_pose.py` **15/15** (gates 12/13 the smoothing on rig and skeleton equal to the
+source's with 0 edges off the rule, 14/15 the bind pose whole), rig asset 15/15, skeleton 9/9, weapon
+spaces 11/11. The assets are smaller now (24.6 / 23.0 MB): shared normals where the edges are soft.
+A Creep added before this carries the all-hard edges — re-add it before exporting its mesh.
+
+79. **Maya's FBX exporter drops the bind pose WHOLE over one bad member.** The Creep's bindPose1
+    held 87 of 91 bones, and three members (ik_foot_l, ik_hand_gun, ik_hand_l) linked
+    `parents[i]` to the parent NODE's `.message` instead of the parent's `members[j]` slot; the log
+    names the first («/ root / ik_foot_root / ik_foot_l») and writes no dagPose at all — the file
+    keeps only the per-cluster poses. Adding the missing bones did NOT fix it (measured); saving
+    the pose again over every joint did. And `dagPose -save` takes the joints' DAG CHILDREN too —
+    85 constraints on the rig — so remove non-joints after the save.
+78. **Locked normals hide all-hard edges — until an FBX export writes the edge flags as the
+    smoothing layer.** In Maya a locked normal wins over the edge flags, so a mesh with every edge
+    hard looks right; the FBX's smoothing is the flags, so it exports with no smoothing at all.
+    Two things that do not fix it: `cleanupEdgeSmoothing` after `setEdgeSmoothings` re-shares the
+    normals around each vertex (5449 face-vertex normals changed on the body, some by 180°), and
+    writing the normals back with `setFaceVertexNormals` per face-vertex hardens every edge again.
+    `setEdgeSmoothings` alone, then `updateSurface`: the flags and the locked normals are separate
+    data, and Maya then shares the normals the soft edges join (the normal counts match the
+    source's exactly: 2077 on an arm). Count hard edges (`isEdgeSmooth`), not only normals.
 
 77. **Moving the points of a mesh with LOCKED normals leaves the normals where they were.** The
     FBX importer locks every normal (the file's own); the rebind in place writes new points into
@@ -872,12 +960,12 @@ had looked at the shading.
     not keep them out of the file. The asset script cuts their blocks out of the saved
     `.ma` text afterwards (a block runs to the next top-level statement), the way the
     vaccine was cut from Manny_Skeleton.ma, and the catalog test pins that no
-    `createNode script` is in the shipped Hunter.
+    `createNode script` is in the shipped Creep.
 
 75. **An update left the OPEN hub showing the old build**: `install.purge_modules` drops
     the plugin's modules, but the hub's workspaceControl stays, and `maya_hub.show()` only
     restored it — the animator pressed the button and saw the character dropdown without
-    the Hunter row the update had just added («НЕ вижу хантера в списке персонажей»),
+    the Creep row the update had just added («НЕ вижу хантера в списке персонажей»),
     while `catalog.character_labels()` in the same session listed him. `maya_hub` now
     remembers whether THIS module object built the accordion (`_BUILT_HERE`, set by
     `build()` — Maya's startup replay of the uiScript sets it too) and `show()` rebuilds in
@@ -2736,6 +2824,24 @@ The scene's frame rate is **never** written: `FBXImportSetMayaFrameRate` is
 forced off and a mismatch is reported instead. The animator is working in that
 scene while the tool runs.
 
+80. **…and the importer switches it anyway.** Measured 2026-09-24 in mayapy: a
+    scene at `film` (24), `FBXImportSetMayaFrameRate -q` answering 0, and one
+    `FBXImport` of a 30 fps UE clip later (bare, or through
+    `animimport.import_clip`) the scene reads `ntsc`, the keys on whole
+    frames 0..71. So a clip round trip through the bridge lands at 30 by the
+    plugin's doing, not ours. Meanwhile a scene that never imported a clip
+    (Add Character, animate, export) exports at ITS rate: our exports write the
+    scene's time unit (`animexport`, measured "cinema 24"). The Atone project
+    is 30 fps (465 of 525 clips in the bridge cache, 15 at 60), and so are the
+    Creep's Cascadeur sources. The animator's Maya opened new scenes at 24 that
+    day. Importing a `.ma` does not change the scene's rate (measured, both
+    ways); opening one does. The Creep assets' headers say `film`, Manny's
+    `ntsc`. The axes need nothing: Maya Y-up cm, our FBX Y-up scale 1.0, the
+    root's −90° X jointOrient carrying UE's Z-up. Our exports match Unreal's
+    own in root space (Manny's pelvis `(0, −2.281, 95.897)` in both). Every rig
+    faces +Z with its left on +X, exactly as Unreal's exported UE4_Mannequin
+    imports.
+
 ## `maya_scenesetup` — SceneSetup: the shot, not just the weapon
 
 Renamed from `maya_weapons` on 2026-08-17 when the camera setup joined it.
@@ -2833,7 +2939,7 @@ import maya_scenesetup; maya_scenesetup.show_window()
 | `colour.py` | the palette, which colour is free, our blinn and who wears it, a character's meshes | `maya.cmds` (a leaf) |
 | `character.py` | the working character into the current scene: import, the rename note, connecting it, the malware sweep | `maya.cmds`, `catalog`, `colour`, `builder` + `picker_window` (both lazy) |
 | `skeleton.py` | which character — and it becomes the ACTIVE one — and where its weapon bone is | `maya.cmds`, `maya_overrig` |
-| `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition, range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
+| `bonedrive.py` | a bone that follows a marked node: `link`/`unlink`/`relink`, grip-space composition (a weapon's own `FRAME_ROTATE` under the grip, 2026-09-24), range policy; owns `MARKER` | `maya.cmds`, OpenMaya (a leaf — the bridge imports it lazily) |
 | `weaponspace.py` | the hand's weapon space OUTSIDE the skeleton (2026-09-24): make, find from the hand, prune; which hand holds a weapon | `maya.cmds`, `maya_rigs` (a leaf) |
 | `attach.py` | find the mesh, parent it into the hand's weapon space, invert the drive, read/write offsets | `maya.cmds`, `bonedrive`, `colour`, `fbximport`, `weaponspace` |
 | `aim.py` | where the aim locators go, and the press that builds it | `maya.cmds`, OpenMaya, `attach`, `overrig`, `aimrig` |

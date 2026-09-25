@@ -140,7 +140,7 @@ def rename_note(root, existing_roots):
         return ""
     # What collided is a PLAIN top node -- `root` when there is one. A rig's
     # namespaced joints are never it, and an AdvancedSkeleton rig has dozens
-    # of top joints (2026-09-24: the note named `Hunter_Rig:FKXAnkle_L`).
+    # of top joints (2026-09-24: the note named `Creep_Rig:FKXAnkle_L`).
     plain = [o for o in others if ":" not in o]
     named = [o for o in plain if o == "root"]
     return RENAMED.format(leaf, (named or plain or others)[0])
@@ -435,8 +435,8 @@ def import_asset(path, namespace=None):
 
 def rig_namespace(entry):
     """Pure: the namespace a rig row lands in -- its own key (`Manny_Rig`,
-    `Hunter_Rig`), uniquified by `free_namespace`. A second rig row must not
-    arrive as `Manny_Rig1` (2026-09-24, the Hunter)."""
+    `Creep_Rig`), uniquified by `free_namespace`. A second rig row must not
+    arrive as `Manny_Rig1` (2026-09-24, the Creep)."""
     return entry.key or RIG_NAMESPACE_BASE
 
 

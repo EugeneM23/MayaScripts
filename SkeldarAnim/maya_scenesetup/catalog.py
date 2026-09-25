@@ -12,7 +12,11 @@ import collections
 import os
 import string
 
-Weapon = collections.namedtuple("Weapon", "key label path bone scale")
+# `frame` (2026-09-24) is the model's own turn on its bone, XYZ degrees: where
+# zero grip stands it, the node's axes on the geometry (bonedrive.FRAME_ROTATE).
+# The identity for a model already on the bone's axes -- every row but one.
+Weapon = collections.namedtuple("Weapon", "key label path bone scale frame",
+                                defaults=((0.0, 0.0, 0.0),))
 
 # The characters Add Character can put into the scene (2026-09-01). A table
 # for the same reason the weapons are one: a third skeleton is a row, not a
@@ -50,19 +54,19 @@ CHARACTERS = [
     # retarget addresses a rig by name (`Main`, `ControlSet`, `FKWrist_R`),
     # and the namespace is what keeps those names one node each.
     Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", _LEGACY_RIG, "rig"),
-    # The Hunter creature's AdvancedSkeleton rig (2026-09-24): Manny's 90 UE bone
+    # The Creep creature's AdvancedSkeleton rig (2026-09-24): Manny's 90 UE bone
     # names on a creature's proportions, bound in the UE A-pose, the bones rigid
     # (orientation-only constraints), the meshes in the rig's own Geometry group,
     # and `Group.skeldarRetarget = "rotation"` -- its retarget copies rotations
-    # only. Built from the animator's scene by make_hunter_rig_asset.py.
-    Character("Hunter_Rig", "Hunter [rig]", "Hunter_Rig.ma", "", "rig"),
+    # only. Built from the animator's scene by make_creep_rig_asset.py.
+    Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "", "rig"),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               _LEGACY_CHARACTER, "skeleton"),
-    # The Hunter without its rig (2026-09-24, «не только риг хантера, а и чистый
+    # The Creep without its rig (2026-09-24, «не только риг хантера, а и чистый
     # скелет»): the same 90 bones in the same A-pose bind, skinned, the meshes in
-    # `|Hunter`, the swords riding weapon_test -- built from Hunter_Rig.ma by
-    # make_hunter_skeleton_asset.py, nothing of AdvancedSkeleton left in it.
-    Character("Hunter", "Hunter [skeleton]", "Hunter_Skeleton.ma", "", "skeleton"),
+    # `|Creep`, the swords riding weapon_test -- built from Creep_Rig.ma by
+    # make_creep_skeleton_asset.py, nothing of AdvancedSkeleton left in it.
+    Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "", "skeleton"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
@@ -165,11 +169,15 @@ WEAPONS = [
     # animator asked for it two and a half times smaller (45.7 cm), and a
     # size correction is exactly what this column is for.
     Weapon("Dagger_01", "Dagger 01", _asset_path("Dagger_01.fbx"), "weapon_r", 0.4),
-    # 2026-09-24, the Hunter's own sword out of its rig («добавим меч хантера в список
-    # нашего оружия»): exported by make_hunter_sword_asset.py in the frame of the
-    # Hunter's weapon_r -- blade +Y (tip at +74.3), guard X, thickness Z, the origin
-    # where the Hunter holds it, so zero grip on the Hunter puts it back exactly there.
-    Weapon("Hunter_Sword", "Hunter Sword", _asset_path("Hunter_Sword.fbx"), "weapon_r", 1.0),
+    # 2026-09-24, the Creep's own sword out of its rig («добавим меч хантера в список
+    # нашего оружия»), blade AND grip (make_creep_sword_fbx.py): in the model's own
+    # axes like every row -- blade +Y (tip at +74.3), guard X, thickness Z, the origin
+    # where the Creep holds it. It stands in the Creep's hand turned 45 deg about the
+    # bone's Y (the animator's grip that day), and that turn is its FRAME, not its
+    # points: zero grip puts it there with the node's axes on the geometry («чтобы оси
+    # соответствовали направлению геометрии, но меч сохранил свою позу в руке»).
+    Weapon("Creep_Sword", "Creep Sword", _asset_path("Creep_Sword.fbx"), "weapon_r", 1.0,
+           (0.0, 45.0, 0.0)),
 ]
 
 

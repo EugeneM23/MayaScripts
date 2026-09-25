@@ -290,15 +290,20 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None,
         # of them are the weapon.
         colouring.paint_nodes([weapon], rgb, entry.key)
 
-        # Onto the drive bone exactly, the grip on top (BONE-relative:
-        # zeros mean exactly on weapon_r), then invert the drive -- the
-        # transfer keeps the sword's offset from the bone, so the grip
-        # rides the clip instead of being flattened by it. No grip given
-        # (None) means "leave it on the bone", same place as zeros but
-        # with nothing stored.
-        bonedrive.snap(weapon, drive_bone)
+        # Onto the drive bone exactly, in the model's own frame (the
+        # catalog's `frame`, stored on the node before anything is placed),
+        # the grip on top (BONE-relative: zeros mean exactly on weapon_r),
+        # then invert the drive -- the transfer keeps the sword's offset
+        # from the bone, so the grip rides the clip instead of being
+        # flattened by it. No grip given (None) means "leave it on the
+        # bone", same place as zeros but with nothing stored.
+        bonedrive.store_frame(weapon, getattr(entry, "frame",
+                                              (0.0, 0.0, 0.0)))
         if rotate is not None and translate is not None:
             bonedrive.apply_grip(weapon, drive_bone, rotate, translate)
+        else:
+            bonedrive.place_at_grip(weapon, drive_bone, (0.0, 0.0, 0.0),
+                                    (0.0, 0.0, 0.0))
         frames = bonedrive.link(weapon, drive_bone)
         if frames:
             moved = ("{0} frame(s) moved from the bone onto the weapon"

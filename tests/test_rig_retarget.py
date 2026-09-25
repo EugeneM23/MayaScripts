@@ -313,7 +313,7 @@ class TestBakeOrchestration(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_a_rotation_only_rig_carries_the_helper_bones_in_their_parents_space(self):
-        """2026-09-24, the Hunter: his arms are 26% longer than the source's, so a
+        """2026-09-24, the Creep: his arms are 26% longer than the source's, so a
         weapon_r carried in WORLD space would float off his hand. A rig marked
         rotation-only takes each helper bone relative to its parent (hand_r)."""
         self.mod.rotation_mode = lambda rig: True

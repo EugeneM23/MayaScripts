@@ -408,6 +408,16 @@ class Boundaries(unittest.TestCase):
         self.assertIn("cmds.parentConstraint(weapon, bone, maintainOffset=False)",
                       self._source())
 
+    def test_a_framed_weapons_frame_is_undone_on_the_new_bone(self):
+        """2026-09-24: the Creep Sword stands turned 45 on its bone at zero
+        grip (its FRAME), so a bone that takes it over sits on its socket,
+        not on the turned node: the target offset holds the frame undone,
+        in the bone's own rotate order."""
+        source = self._source()
+        self.assertIn("bonedrive.frame_of(weapon)", source)
+        self.assertIn('.target[0].targetOffsetRotate', source)
+        self.assertIn('bonedrive.unframing(frame, cmds.getAttr(bone + ".rotateOrder"))', source)
+
     def test_the_retarget_refuses_a_connected_rig(self):
         saved = (maya_rig_retarget.hands_connected, maya_rig_retarget.resolve)
         try:

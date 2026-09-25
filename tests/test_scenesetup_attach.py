@@ -213,6 +213,12 @@ class FakeBonedrive(object):
     def snap(self, node, target):
         self.log.append(("snap", node, target))
 
+    def store_frame(self, weapon, rotate):
+        self.log.append(("frame", weapon, tuple(rotate)))
+
+    def place_at_grip(self, weapon, bone, rotate, translate):
+        self.log.append(("place", weapon, bone, rotate, translate))
+
     def apply_grip(self, weapon, bone, rotate, translate):
         self.log.append(("grip", weapon, bone, rotate, translate))
 
@@ -394,12 +400,14 @@ class AttachFlow(SpaceSwap, unittest.TestCase):
     def _kinds(self, fake):
         return [entry[0] for entry in fake.log]
 
-    def test_parent_mark_seat_snap_grip_then_link(self):
+    def test_parent_mark_frame_grip_then_link(self):
         """The grip lands BEFORE the link (2026-08-25): the transfer keeps
         the sword's offset from the bone (mo=True), so a dialled grip rides
         the clip. The placement is bonedrive.apply_grip - BONE-relative
         (the same day's space ruling: zeros mean exactly on weapon_r),
-        never raw channels under the hand."""
+        never raw channels under the hand - and the model's own frame is
+        on the node before it (2026-09-24), since the placement stands the
+        node in it."""
         fake = self._wire(frames=0)
         weapon, note = attach.attach(self.Entry(), HAND, BONE,
                                      rotate=(1.0, 2.0, 3.0),
@@ -407,15 +415,28 @@ class AttachFlow(SpaceSwap, unittest.TestCase):
         self.assertEqual(weapon, SPACE + "|sword")
         kinds = self._kinds(fake)
         self.assertLess(kinds.index("parent"), kinds.index("mark"))
-        self.assertLess(kinds.index("mark"), kinds.index("snap"))
-        self.assertLess(kinds.index("snap"), kinds.index("grip"))
+        self.assertLess(kinds.index("mark"), kinds.index("frame"))
+        self.assertLess(kinds.index("frame"), kinds.index("grip"))
         self.assertLess(kinds.index("grip"), kinds.index("link"))
-        self.assertEqual(fake.log[kinds.index("snap")],
-                         ("snap", SPACE + "|sword", BONE))
         self.assertEqual(fake.log[kinds.index("grip")],
                          ("grip", SPACE + "|sword", BONE,
                           (1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
+        self.assertNotIn("snap", kinds)
         self.assertEqual(note, "")
+
+    def test_the_entrys_frame_goes_on_the_node(self):
+        """The catalog's frame (the Creep Sword's 45) is written on the
+        marked node; an entry written without the column is the identity."""
+        fake = self._wire(frames=0)
+        attach.attach(self.Entry(), HAND, BONE)
+        self.assertIn(("frame", SPACE + "|sword", (0.0, 0.0, 0.0)), fake.log)
+
+    def test_a_framed_entry_writes_its_frame(self):
+        class Framed(self.Entry):
+            frame = (0.0, 45.0, 0.0)
+        fake = self._wire(frames=0)
+        attach.attach(Framed(), HAND, BONE)
+        self.assertIn(("frame", SPACE + "|sword", (0.0, 45.0, 0.0)), fake.log)
 
     def test_the_weapon_is_never_parented_into_the_skeleton(self):
         """2026-09-24, «не нарушали иерархию нашего скелета»: the mesh goes into
@@ -431,11 +452,17 @@ class AttachFlow(SpaceSwap, unittest.TestCase):
 
     def test_no_grip_given_means_stay_on_the_bone(self):
         """None is not zeros: zeros are a real grip (the sword exactly on
-        the bone). With no grip the snap is the placement and apply_grip
-        is never called."""
+        the bone). With no grip the sword is placed at zero grip - on the
+        bone in its own frame - and nothing is stored (apply_grip is never
+        called)."""
         fake = self._wire(frames=0)
         attach.attach(self.Entry(), HAND, BONE)
-        self.assertNotIn("grip", self._kinds(fake))
+        kinds = self._kinds(fake)
+        self.assertNotIn("grip", kinds)
+        self.assertEqual(fake.log[kinds.index("place")],
+                         ("place", SPACE + "|sword", BONE,
+                          (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+        self.assertLess(kinds.index("place"), kinds.index("link"))
 
     def test_the_grip_rides_a_transferred_bone(self):
         """The user's 2026-08-25 report: adding into an animated scene

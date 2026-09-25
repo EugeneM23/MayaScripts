@@ -107,6 +107,29 @@ class ComposedGrip(unittest.TestCase):
         self.assertAlmostEqual(rotate[2], 0.0, places=9)
         self.assertAlmostEqual(translate[0], 5.0, places=9)
 
+    def test_framed_is_the_frame_times_the_bone(self):
+        bone = bonedrive.matrix_of((30.0, 40.0, -25.0), (5.0, -1.0, 2.0))
+        got = om.MMatrix(bonedrive.framed((0.0, 45.0, 0.0), bone))
+        want = (om.MMatrix(bonedrive.matrix_of((0.0, 45.0, 0.0), (0.0, 0.0, 0.0)))
+                * om.MMatrix(bone))
+        self.assertLess(max(abs(got[i] - want[i]) for i in range(16)), 1e-12)
+        same = bonedrive.framed((0.0, 0.0, 0.0), bone)
+        self.assertLess(max(abs(a - b) for a, b in zip(same, bone)), 1e-12)
+
+    def test_unframing_undoes_the_frame_in_every_rotate_order(self):
+        """The target offset that puts a bone on the socket of a framed
+        weapon: O = frame^-1, as an euler in the BONE's rotate order (a
+        constraint reads its offset in the constrained node's order)."""
+        frame = (12.0, 45.0, -30.0)
+        want = om.MMatrix(bonedrive.matrix_of(frame, (0.0, 0.0, 0.0))).inverse()
+        for order in range(6):
+            euler = om.MEulerRotation(
+                *[math.radians(v) for v in bonedrive.unframing(frame, order)],
+                order=order)
+            got = euler.asMatrix()
+            self.assertLess(max(abs(got[i] - want[i]) for i in range(16)), 1e-9, order)
+        self.assertLess(max(abs(v) for v in bonedrive.unframing((0.0, 0.0, 0.0))), 1e-12)
+
     def test_composition_matches_the_matrix_product(self):
         grip_rotate = (10.0, -35.0, 4.0)
         grip_translate = (0.5, -2.0, 12.0)
@@ -144,6 +167,7 @@ class FakeCmds(object):
         self.now = 7.3
         self.times = []
         self.reads = []
+        self.matrices = {}
         if grip:
             self.attrs[weapon + "." + bonedrive.GRIP_ROTATE] = tuple(grip[0])
             self.attrs[weapon + "." + bonedrive.GRIP_TRANSLATE] = tuple(grip[1])
@@ -226,10 +250,11 @@ class FakeCmds(object):
     def xform(self, node, **kwargs):
         if kwargs.get("query"):
             if kwargs.get("matrix"):
-                return [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
-                        0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+                return list(self.matrices.get(node, (
+                    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)))
             return (0.0, 0.0, 0.0)
-        self._note(("xform", node))
+        self._note(("xform", node, kwargs))
 
     def autoKeyframe(self, query=False, state=None):
         if query:
@@ -423,25 +448,92 @@ class Relink(WithFake):
         self.assertNotIn("bake", self.kinds())
         self.assertEqual(self.kinds().count("constrain"), 1)
 
-    def test_a_stored_grip_is_reapplied_between_snap_and_link(self):
+    def _placed(self):
+        """The last placement's world (translation, rotation)."""
+        writes = [entry[2] for entry in self.fake.log if entry[0] == "xform"]
+        translation = [w["translation"] for w in writes if "translation" in w][-1]
+        rotation = [w["rotation"] for w in writes if "rotation" in w][-1]
+        return tuple(translation), tuple(rotation)
+
+    def test_a_stored_grip_is_reapplied_before_the_link(self):
         """A merge's contract is 'the scene plays this clip', but the GRIP
         is not the clip's to flatten: the sword goes back to its dialled
-        pose relative to the bone after the snap, and the transfer keeps
-        that offset. Two placement xforms on top of the snap's two."""
+        pose relative to the bone, and the transfer keeps that offset. One
+        placement (two writes), before any constraint."""
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True,
                                  grip=((10.0, 0.0, 0.0), (0.0, 5.0, 0.0))))
         bonedrive.relink(SWORD, BONE)
         kinds = self.kinds()
         placements = [i for i, kind in enumerate(kinds) if kind == "xform"]
-        self.assertEqual(len(placements), 4)
+        self.assertEqual(len(placements), 2)
         self.assertLess(placements[-1], kinds.index("constrain"))
+        translation, rotation = self._placed()
+        self.assertAlmostEqual(translation[1], 5.0, places=9)
+        self.assertAlmostEqual(rotation[0], 10.0, places=9)
 
-    def test_no_stored_grip_means_the_snap_is_the_placement(self):
+    def test_no_stored_grip_means_onto_the_bone(self):
         """A legacy sword (attached before the grip lived on the node)
         relinks exactly as before: onto the bone, nothing more."""
         fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        fake.matrices[BONE] = bonedrive.matrix_of((0.0, 0.0, 30.0), (1.0, 2.0, 3.0))
         bonedrive.relink(SWORD, BONE)
         self.assertEqual(self.kinds().count("xform"), 2)
+        translation, rotation = self._placed()
+        self.assertLess(max(abs(a - b) for a, b in zip(translation, (1.0, 2.0, 3.0))), 1e-9)
+        self.assertLess(max(abs(a - b) for a, b in zip(rotation, (0.0, 0.0, 30.0))), 1e-9)
+
+    def test_a_framed_weapon_with_no_grip_relinks_into_its_frame(self):
+        """The Creep Sword's 45 is its FRAME: zero grip stands it turned on
+        the bone, so a relink with nothing stored lands it there too."""
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        fake.attrs[SWORD + "." + bonedrive.FRAME_ROTATE] = (0.0, 45.0, 0.0)
+        bonedrive.relink(SWORD, BONE)
+        _translation, rotation = self._placed()
+        self.assertLess(max(abs(a - b) for a, b in zip(rotation, (0.0, 45.0, 0.0))), 1e-9)
+
+
+class Frame(WithFake):
+    """The weapon's own frame on its bone (2026-09-24): stored on the node,
+    composed under every grip, removed from every read-back."""
+
+    def test_the_identity_writes_nothing_on_a_node_that_has_none(self):
+        self.use(FakeCmds())
+        bonedrive.store_frame(SWORD, (0.0, 0.0, 0.0))
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(bonedrive.frame_of(SWORD), (0.0, 0.0, 0.0))
+
+    def test_round_trips(self):
+        self.use(FakeCmds())
+        bonedrive.store_frame(SWORD, (0.0, 45.0, 0.0))
+        self.assertEqual(bonedrive.frame_of(SWORD), (0.0, 45.0, 0.0))
+        bonedrive.store_frame(SWORD, (0.0, 0.0, 0.0))
+        self.assertEqual(bonedrive.frame_of(SWORD), (0.0, 0.0, 0.0))
+        self.assertEqual(self.kinds().count("addattr"), 1)
+
+    def test_zero_grip_stands_the_weapon_in_its_frame_on_the_bone(self):
+        fake = self.use(FakeCmds())
+        bone = bonedrive.matrix_of((10.0, 20.0, 30.0), (1.0, 2.0, 3.0))
+        fake.matrices[BONE] = bone
+        fake.attrs[SWORD + "." + bonedrive.FRAME_ROTATE] = (0.0, 45.0, 0.0)
+        bonedrive.place_at_grip(SWORD, BONE, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        writes = [entry[2] for entry in fake.log if entry[0] == "xform"]
+        placed = bonedrive.matrix_of(writes[1]["rotation"], writes[0]["translation"])
+        want = bonedrive.framed((0.0, 45.0, 0.0), bone)
+        self.assertLess(max(abs(a - b) for a, b in zip(placed, want)), 1e-9)
+
+    def test_the_read_back_takes_the_frame_away(self):
+        """A framed sword standing where zero grip puts it reads 0 0 0 --
+        the fields show the grip, never the model's own turn."""
+        fake = self.use(FakeCmds())
+        bone = bonedrive.matrix_of((10.0, 20.0, 30.0), (1.0, 2.0, 3.0))
+        fake.matrices[BONE] = bone
+        grip = om.MMatrix(bonedrive.matrix_of((5.0, 0.0, 0.0), (0.0, 7.0, 0.0)))
+        fake.matrices[SWORD] = tuple(
+            grip * om.MMatrix(bonedrive.framed((0.0, 45.0, 0.0), bone)))
+        fake.attrs[SWORD + "." + bonedrive.FRAME_ROTATE] = (0.0, 45.0, 0.0)
+        rotate, translate = bonedrive.measured_grip(SWORD, BONE)
+        self.assertLess(max(abs(a - b) for a, b in zip(rotate, (5.0, 0.0, 0.0))), 1e-9)
+        self.assertLess(max(abs(a - b) for a, b in zip(translate, (0.0, 7.0, 0.0))), 1e-9)
 
 
 class Regrip(WithFake):

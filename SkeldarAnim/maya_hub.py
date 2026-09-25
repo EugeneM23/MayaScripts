@@ -167,7 +167,7 @@ def _build_section(sec):
 #  Did THIS module object build the accordion standing in the control?  An
 #  update purges the plugin's modules (install.purge_modules) while the hub
 #  stays open, and a plain restore then kept showing the old build: the old
-#  character dropdown, missing the Hunter row the update had just added
+#  character dropdown, missing the Creep row the update had just added
 #  (2026-09-24, «НЕ вижу хантера в списке персонажей»), and callbacks into
 #  module objects nothing imports any more. Maya's startup replay of the
 #  uiScript runs build() in the module object of that session, so a docked

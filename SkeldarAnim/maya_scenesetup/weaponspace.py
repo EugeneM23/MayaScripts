@@ -2,8 +2,8 @@
 
 2026-09-24, the animator: «давай делать всё максимально правильно, так чтобы мы не нарушали
 иерархию нашего скелета». Until then Weapons > Add parented the weapon's mesh under the hand
-bone, and every export of the skeleton carried it -- measured: an animation FBX of the Hunter
-held `HunterSwordMesh`, 10890 vertices, its six animation curves and its material, 1.4 MB of
+bone, and every export of the skeleton carried it -- measured: an animation FBX of the Creep
+held `CreepSwordMesh`, 10890 vertices, its six animation curves and its material, 1.4 MB of
 geometry in a file Unreal reads bones from.
 
 Now each hand that holds a weapon has a SPACE: a plain transform parent-constrained to the
