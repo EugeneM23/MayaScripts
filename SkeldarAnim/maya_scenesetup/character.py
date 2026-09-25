@@ -61,6 +61,11 @@ _MALWARE = ("vaccine", "breed")
 # The one-rig-per-scene refusal of 2026-09-07 is gone with its premise.
 RIG_NAMESPACE_BASE = "Manny_Rig"
 
+# The catalog key on a character's skeleton root (2026-09-25): every export writes Cascadeur's
+# layout, the skeleton under a Null named for the character, and a bare skeleton's plain names
+# say nothing about which one it is. Read by maya_uebridge.fbxlayout.
+CHARACTER_TAG = "skeldarCharacter"
+
 _ILLEGAL_NAMESPACE = re.compile(r"[^A-Za-z0-9_]")
 
 
@@ -440,6 +445,15 @@ def rig_namespace(entry):
     return entry.key or RIG_NAMESPACE_BASE
 
 
+def tag_root(root, key):
+    """The catalog `key` on a character's skeleton root, as CHARACTER_TAG."""
+    if not root or not cmds.objExists(root):
+        return
+    if not cmds.attributeQuery(CHARACTER_TAG, node=root, exists=True):
+        cmds.addAttr(root, longName=CHARACTER_TAG, dataType="string")
+    cmds.setAttr(root + "." + CHARACTER_TAG, key, type="string")
+
+
 def add_character(entry=None, rgb=None):
     """Import a character, colour it, sweep it, connect it, and say so.
 
@@ -492,6 +506,14 @@ def add_character(entry=None, rgb=None):
 
     # After the sweep, so a deleted node cannot be reported as a root.
     root = new_root(before_roots, builder.character_roots())
+    # which character this is, on its skeleton root -- a rig's is its game skeleton's
+    # (new_root may answer any of AdvancedSkeleton's top joints for a rig)
+    skeleton_root = root
+    if namespace:
+        import maya_rigs
+        rig = maya_rigs.find(namespace)
+        skeleton_root = rig.skeleton_root if rig else None
+    tag_root(skeleton_root, entry.key)
     note = "" if namespace else rename_note(
         root, before_roots + ([root] if root else []))
     connected = connect(root)
