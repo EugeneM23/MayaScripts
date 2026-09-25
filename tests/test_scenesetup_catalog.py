@@ -460,7 +460,6 @@ class OrcRig(unittest.TestCase):
                          ("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "rig"))
         self.assertTrue(catalog.is_rig(entry))
         self.assertIs(catalog.default_rig(), catalog.character_by_key("Manny_Rig"))
-        self.assertEqual(catalog.export_name("Orc_Rig"), "Orc")
 
     def test_the_shipped_orc_is_the_rig_with_manny_s_helper_bones(self):
         """Built in mayapy standalone from the animator's own FBX export of the
@@ -500,17 +499,12 @@ class OrcRig(unittest.TestCase):
 
 
 class ExportName(unittest.TestCase):
-    """2026-09-25: the wrapper over `root` in an exported FBX is named for the
-    character («по персонажу») - the rig and the bare skeleton of one character
-    give one name."""
+    """2026-09-25: the wrapper over `root` in an exported FBX was named for the character
+    in the morning («по персонажу») and is `Armature` since the evening
+    (maya_uebridge.fbxlayout.WRAPPER_NAME) -- the catalog no longer names it."""
 
-    def test_a_rig_key_loses_its_rig_suffix(self):
-        self.assertEqual(catalog.export_name("Creep_Rig"), "Creep")
-        self.assertEqual(catalog.export_name("Manny_Rig"), "Manny")
-
-    def test_a_skeleton_key_is_its_own_name(self):
-        self.assertEqual(catalog.export_name("Creep"), "Creep")
-        self.assertEqual(catalog.export_name("UE4_Mannequin"), "UE4_Mannequin")
+    def test_the_catalog_names_no_wrapper(self):
+        self.assertFalse(hasattr(catalog, "export_name"))
 
     def test_every_character_key_is_listed(self):
         self.assertEqual(catalog.character_keys(), [c.key for c in catalog.CHARACTERS])

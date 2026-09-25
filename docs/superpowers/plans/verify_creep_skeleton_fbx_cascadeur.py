@@ -156,10 +156,10 @@ root_o, root_c = file_o.get("root"), file_c.get("root")
 meshes_o = dict((n, v) for n, v in file_o.items() if v[0] == "Mesh")
 # root's PreRotation: our jointOrient after the wrapper's turn, JO·W⁻¹ -- zero up to the -90's own
 # float noise (measured 4e-5 deg)
-top_ok = (null_o == ["Creep"] and len(null_c) == 1 and root_o and root_c
-          and root_o[1] == "Creep" and root_c[1] == null_c[0]
+top_ok = (null_o == ["Armature"] and len(null_c) == 1 and root_o and root_c
+          and root_o[1] == "Armature" and root_c[1] == null_c[0]
           # Cascadeur writes its own Null at (-89.99998, -2e-5, 2e-5): float noise
-          and close(file_o["Creep"][3], file_c[null_c[0]][3], 1e-3) and close(file_o["Creep"][3], (-90, 0, 0), 1e-6)
+          and close(file_o["Armature"][3], file_c[null_c[0]][3], 1e-3) and close(file_o["Armature"][3], (-90, 0, 0), 1e-6)
           and close(root_o[2], root_c[2], 1e-3) and close(root_o[3], root_c[3], 1e-3) and close(root_o[5], (0, 0, 0), 1e-3))
 # the meshes: at the top of the scene, unturned and unscaled, as Cascadeur's.  A mesh's own TRANSLATE
 # may differ: Creep_Face keeps the source model's pivot (0, 6.058, 0) -- the animator's Maya file of the
@@ -173,7 +173,7 @@ pivots = ["%s T %s (Cascadeur's %s)" % (m, [round(x, 3) for x in meshes_o[m][2]]
 gate(2, bool(top_ok and mesh_ok),
      "in the file: our Null %s at R %s holds root (T %s R %s PreR %s) -- Cascadeur's %s at R %s holds root "
      "(T %s R %s); the meshes at the top %s, unturned and unscaled as Cascadeur's: %s; own pivots: %s"
-     % (null_o, [round(x, 3) for x in file_o.get("Creep", (0, 0, 0, (0, 0, 0)))[3]],
+     % (null_o, [round(x, 3) for x in file_o.get("Armature", (0, 0, 0, (0, 0, 0)))[3]],
         [round(x, 4) for x in root_o[2]] if root_o else None, [round(x, 4) for x in root_o[3]] if root_o else None,
         [round(x, 5) for x in root_o[5]] if root_o else None, null_c,
         [round(x, 3) for x in file_c[null_c[0]][3]] if null_c else None,
@@ -305,4 +305,43 @@ cmds.setAttr(null_node + ".rotate", *was)
 gate(5, flipped_p > 50.0 and flipped_r > 90.0,
      "control: with Cascadeur's Null at +90 the same gate reads %.1f cm (%s), %.1f deg -- it can fail"
      % (flipped_p, fp, flipped_r))
-print("RESULT: %d of 5 gates failed %s" % (len(FAILS), FAILS))
+# the one shader (2026-09-25 evening, «единый шейдер ... сейчас модель выглядит темной и на модели
+# много материалов»): ONE material in our file, on all five meshes, carrying the numbers Cascadeur
+# writes into its own -- phong, specular 0.2, shininess 20, no reflection, the colour at full
+def materials(path):
+    doc = parse(path)
+    objects = kid(doc, "Objects")
+    by_id = dict((o.props[0], o) for o in objects.children if o.props)
+    out = {}
+    for o in objects.children:
+        if o.name != "Material":
+            continue
+        worn = [by_id[c.props[2]].props[1].split("\x00")[0] for c in kid(doc, "Connections").children
+                if c.props[0] == "OO" and c.props[1] == o.props[0] and c.props[2] in by_id]
+        sm = kid(o, "ShadingModel")
+        out[o.props[1].split("\x00")[0]] = (sm.props[0] if sm else "", worn, p70(o))
+    return out
+
+
+mats_o, mats_c = materials(OURS), materials(CASC)
+one = list(mats_o.values())[0] if len(mats_o) == 1 else None
+casc_body = next((v for v in mats_c.values() if "body" in v[1]), None)
+
+
+def val(props, key, default):
+    return (props.get(key) or [default])[0]
+
+
+shade_ok = bool(one and casc_body) and one[0] == casc_body[0] == "phong" and sorted(one[1]) == sorted(MESHES) and all(
+    abs(val(one[2], k, d) - val(casc_body[2], k, d)) < 1e-4
+    for k, d in (("Shininess", 20.0), ("Reflectivity", 0.0))) and close(one[2].get("Specular", [0, 0, 0]),
+                                                                        casc_body[2].get("Specular", [0, 0, 0]), 1e-4) \
+    and val(one[2], "ReflectionFactor", 0.0) == 0.0 and val(one[2], "DiffuseFactor", 1.0) == 1.0
+gate(6, shade_ok,
+     "materials in our file: %s; the one's %s against Cascadeur's body material's %s"
+     % (dict((k, (v[0], len(v[1]))) for k, v in mats_o.items()),
+        dict((k, [round(x, 3) for x in one[2][k]]) for k in ("Specular", "Shininess", "Reflectivity", "ReflectionFactor", "Diffuse")
+             if one and k in one[2]),
+        dict((k, [round(x, 3) for x in casc_body[2][k]]) for k in ("Specular", "Shininess", "Reflectivity", "Diffuse")
+             if casc_body and k in casc_body[2])))
+print("RESULT: %d of 6 gates failed %s" % (len(FAILS), FAILS))

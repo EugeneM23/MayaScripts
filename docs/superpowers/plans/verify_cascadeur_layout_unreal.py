@@ -159,7 +159,7 @@ try:
         cmds.select(clear=True)
         info = animexport.export_hierarchy(path, root=rig.skeleton_root, layout=layout)
         ours[layout] = (path, info)
-    gate(2, ours["cascadeur"][1]["layout"] == "cascadeur" and ours["cascadeur"][1]["wrapper"] == "Manny"
+    gate(2, ours["cascadeur"][1]["layout"] == "cascadeur" and ours["cascadeur"][1]["wrapper"] == "Armature"
          and ours["plain"][1]["layout"] == "plain",
          "our two files: %s / %s" % ((ours["cascadeur"][1]["layout"], ours["cascadeur"][1]["wrapper"]),
                                      ours["plain"][1]["layout"]))
@@ -200,7 +200,7 @@ try:
         extra = sorted(set(back) - set(truth_bones))
         result[layout]["worst"] = (worst_p, worst_r)
         gate(n, bool(result[layout]["reimport"].get("ok")) and worst_p < 0.5 and worst_r < 1.0 and not extra
-             and "Manny" not in back,
+             and "Armature" not in back,
              "%s layout through Unreal: every bone's world on ours to %.4f cm (%s) and %.4f deg; bones Unreal "
              "added: %s" % (layout, worst_p, where, worst_r, extra))
     if "cascadeur" in result and "plain" in result:
@@ -213,9 +213,9 @@ try:
         with open(log, "rb") as handle:
             handle.seek(log_start)
             text = handle.read().decode("utf-8", "replace")
-    suspicious = [l for l in text.splitlines() if ("Manny" in l and ("bone" in l.lower() or "skeleton" in l.lower()))
+    suspicious = [l for l in text.splitlines() if ("Armature" in l and ("bone" in l.lower() or "skeleton" in l.lower()))
                   or ("Warning" in l and "FBX" in l)]
-    gate(7, not [l for l in suspicious if "Manny" in l],
+    gate(7, not [l for l in suspicious if "Armature" in l],
          "the editor log since the start: %d FBX warning line(s), none naming the wrapper%s"
          % (len(suspicious), (" -- " + " | ".join(l.strip()[:140] for l in suspicious[:4])) if suspicious else ""))
 except Exception:

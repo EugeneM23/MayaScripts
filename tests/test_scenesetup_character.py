@@ -423,41 +423,13 @@ class ConnectFollowsThePickerFlag(unittest.TestCase):
 
 
 class TagsItsRoot(unittest.TestCase):
-    """2026-09-25: the export names its wrapper for the character (Cascadeur's layout), and a bare
-    skeleton's plain names say nothing about which character it is -- Add Character writes the
-    catalog key on the skeleton root."""
+    """2026-09-25: Add Character wrote the catalog key on the skeleton root for the morning's
+    export wrapper named for the character; since the evening the wrapper is `Armature` for
+    every character and nothing reads the tag, so nothing writes it. (A root tagged that one
+    day is still held out of every export by maya_uebridge.fbxlayout.tag_held.)"""
 
-    def test_add_character_tags_the_root(self):
+    def test_add_character_no_longer_tags_the_root(self):
         import inspect
-        source = inspect.getsource(character.add_character)
-        self.assertIn("tag_root(", source)
-        self.assertLess(source.index("new_root("), source.index("tag_root("))
-
-    def test_the_tag_is_the_one_the_export_reads(self):
-        self.assertEqual(character.CHARACTER_TAG, "skeldarCharacter")
-
-    def test_tag_root_writes_a_string_attribute(self):
-        calls = []
-
-        class Fake(object):
-            def objExists(self, node):
-                return True
-
-            def attributeQuery(self, attr, node=None, exists=False):
-                return False
-
-            def addAttr(self, node, longName=None, dataType=None):
-                calls.append(("add", node, longName, dataType))
-
-            def setAttr(self, plug, value, type=None):
-                calls.append(("set", plug, value, type))
-
-        real = character.cmds
-        character.cmds = Fake()
-        try:
-            character.tag_root("|root", "Creep")
-            character.tag_root(None, "Creep")
-        finally:
-            character.cmds = real
-        self.assertEqual(calls, [("add", "|root", "skeldarCharacter", "string"),
-                                 ("set", "|root.skeldarCharacter", "Creep", "string")])
+        self.assertNotIn("tag_root(", inspect.getsource(character.add_character))
+        self.assertFalse(hasattr(character, "tag_root"))
+        self.assertFalse(hasattr(character, "CHARACTER_TAG"))

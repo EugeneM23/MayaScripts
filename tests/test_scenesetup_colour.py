@@ -185,21 +185,32 @@ class MeshSet(unittest.TestCase):
 
 
 class Shader(unittest.TestCase):
-    """blinn, not lambert (2026-09-03): «у него лучше шейдинг и он блестит».
-    A lambert is flat, so a coloured figure lost the form the grey one had."""
+    """One shader for every model and rig we put in the scene (2026-09-25, «на все наши
+    модели и риги нужно настроить единый шейдер, такой чтобы он смотрелся хорошо в мае и в
+    каскадере»): a phong carrying the values Cascadeur writes into its own FBX -- diffuse 1,
+    specular 0.2, shininess 20, no reflection. The blinn before it (2026-09-03, still shiny,
+    which is why it is not a lambert) exported DiffuseFactor 0.8 and ReflectionFactor 0.5."""
 
-    def test_the_shader_is_a_blinn(self):
-        self.assertEqual(colour.SHADER, "blinn")
+    def test_the_shader_is_a_phong(self):
+        self.assertEqual(colour.SHADER, "phong")
 
-    def test_make_material_creates_that_type(self):
+    def test_the_look_is_cascadeurs_own(self):
+        self.assertEqual(colour.LOOK, {"diffuse": 1.0, "specularColor": (0.2, 0.2, 0.2),
+                                       "cosinePower": 20.0, "reflectivity": 0.0})
+
+    def test_make_material_creates_that_type_wearing_the_look(self):
         real = colour.cmds
         fake = FakeCmds()
         colour.cmds = fake
         try:
-            colour.make_material((0.8, 0.25, 0.22), "Manny")
+            material, _ = colour.make_material((0.8, 0.25, 0.22), "Manny")
         finally:
             colour.cmds = real
         self.assertEqual(fake.kinds, [colour.SHADER])
+        for attr, value in colour.LOOK.items():
+            want = tuple(value) if isinstance(value, tuple) else (value,)
+            self.assertEqual(fake.colours[material + "." + attr], want, attr)
+        self.assertEqual(fake.colours[material + ".color"], (0.8, 0.25, 0.22))
 
 
 class Unambiguous(unittest.TestCase):

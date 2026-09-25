@@ -2431,7 +2431,7 @@ list and an FBX export for the import.
 | `vcs.py` | Perforce placement: fbx name search, path convention, checkout decision table, p4 runner | **stdlib only** |
 | `animimport.py` | FBX import, timeline, fps policy, the target rule (selection then connect) and the exmerge name hold | `maya.cmds` |
 | `animexport.py` | FBX export of the skeleton hierarchy, bake-on-export, range policy; `LAYOUT` / `UNREAL_LAYOUT` | `maya.cmds`, `maya.mel`, `animimport`, `fbxlayout` |
-| `fbxlayout.py` | **Cascadeur's layout for the length of an export** (2026-09-25): the wrapper named for the character, `root` at zero, restored by UUID; our tag held out of the file | `maya.cmds`, OpenMaya (lazy), `maya_scenesetup.catalog` (lazy) |
+| `fbxlayout.py` | **Cascadeur's layout for the length of an export** (2026-09-25): the wrapper `Armature` (`WRAPPER_NAME`), `root` at zero, restored by UUID; a legacy tag held out of the file | `maya.cmds`, OpenMaya (lazy) |
 | `uassetexport.py` | **Export to uasset: the direct road.** The warning, the read-only flag, the temp fbx. Imports no `vcs` and a test enforces it | `maya.cmds`, `animexport`, `animimport`, `records`, `uelink`, `uescripts` |
 | `window.py` | the `cmds` window | `maya.cmds` |
 | `checkouts.py` | the checkouts window: pair checkout, revert, export back to the uasset | `maya.cmds` + all of the above |
@@ -2867,7 +2867,9 @@ scene while the tool runs.
 
 **Exports in Cascadeur's layout (2026-09-25).** The animator moves animation Maya ⇄
 Cascadeur («перенос анимации» was the pain, asked). Of three ways they chose ONE layout for
-every export, Cascadeur's own, with the wrapper named for the character («по персонажу»).
+every export, Cascadeur's own, with the wrapper named for the character («по персонажу») — and
+the same evening **`Armature`** for every character («появилось требование чтобы верхняя группа
+называлась Armature»; see "The wrapper is `Armature`, and one shader" below).
 Spec: `docs/superpowers/specs/2026-09-25-cascadeur-export-layout-design.md`; plan beside it.
 
 **Measured first:**
@@ -2890,9 +2892,9 @@ Spec: `docs/superpowers/specs/2026-09-25-cascadeur-export-layout-design.md`; pla
 
 **`maya_uebridge/fbxlayout.py`** (cmds; OpenMaya imported lazily because the bridge's tests fake
 `maya`). For the length of an export it:
-1. frees the name: anything answering to it is held as `rpHold_` (the Creep skeleton's meshes
-   stand under a `|Creep` group);
-2. creates a Null named for the character at −90 X;
+1. frees the name: anything answering to it is held as `rpHold_` (a node of the animator's
+   called `Armature`; in the morning's per-character naming, the Creep skeleton's `|Creep` group);
+2. creates the Null `Armature` (`WRAPPER_NAME`) at −90 X;
 3. re-parents `root` under it with `relative=True`;
 4. gives `root` the jointOrient `JO · W⁻¹` (`jo_after`; zero for our −90), and its translate
    `(x, −z, y)`. That step follows `layout_plan` (pure):
@@ -2905,14 +2907,10 @@ Spec: `docs/superpowers/specs/2026-09-25-cascadeur-export-layout-design.md`; pla
 
 Everything goes back by UUID in a `finally`.
 
-**The name** (`wrapper_name`, pure), the first answer of:
-- the root's `skeldarCharacter` tag, which Add Character writes (`character.tag_root`; a rig's
-  game-skeleton root through `maya_rigs.find`);
-- a rig namespace without its digits;
-- the ONE character key its skins' `skeldarColour` materials carry;
-- else `Character`.
-
-`catalog.export_name` drops a trailing `_Rig`: `Creep`, `Manny`, `Orc`.
+**The name** was the character's that morning (`wrapper_name`: the root's `skeldarCharacter` tag
+Add Character wrote, else the rig namespace, else the skins' colour key, through
+`catalog.export_name`) and is **`Armature`** for everyone since the evening; the naming, the tag's
+writer and `export_name` are gone, `tag_held` stays for roots tagged that one day.
 
 **Where it is on:**
 - `export_hierarchy(..., layout=LAYOUT)` defaults to `"cascadeur"`: Export FBX… and the
@@ -2924,7 +2922,7 @@ Everything goes back by UUID in a `finally`.
 - `export_creep_skeleton_fbx.py` writes the Creep's skeletal mesh the same way: the meshes at
   world level beside the Null, as Cascadeur's file has them. The bind pose is saved again over
   the Null too (trap 79 again: «Unable to find the bind pose for : / Creep»). The result is
-  root `(0.002, −2.401, 0)` under `Creep` at −90, Cascadeur's own numbers.
+  root `(0.002, −2.401, 0)` under `Armature` at −90, Cascadeur's own numbers, and ONE material.
 
 **Proof:**
 - `verify_cascadeur_layout.py` — **9/9 standalone**:
@@ -2962,6 +2960,40 @@ Two things found on the way:
 - **the exporter writes our `skeldarCharacter` tag into the file** as a property of `root`,
   which Unreal would read as root data (trap 40). `fbxlayout.tag_held` takes it off for the
   length of every export.
+
+**The wrapper is `Armature`, and one shader on every model (2026-09-25, evening).** The
+animator: «Появилось требование чтобы верхняя группа называлась Armature. Еще нужно на все наши
+модели и риги настроить единый шейдер. Такой чтобы он смотрелся хорошо в мае и в каскадере. Сейчас
+при экспорте в каскадер модель выглядит темной и на модели много материалов» — then away for an
+hour («сделай все самостоятельно»), so every choice here was taken alone and is in the spec
+`docs/superpowers/specs/2026-09-25-armature-and-one-shader-design.md`.
+- **`fbxlayout.WRAPPER_NAME = "Armature"`** for every export (`animexport`, the Creep skeletal-mesh
+  script). The per-character naming is deleted with its only users.
+- **Measured before choosing the shader**: the assets were a patchwork (the Creep's arms and face a
+  0.5 grey blinn at diffuse 0.8, its back red, its body NO material; the Orc five per-face
+  materials; Manny's skeleton MaterialX; 8–15 unworn materials per file, textures on `E:\work\...`),
+  and the skeletal-mesh FBX sent to Cascadeur carried three materials, each with DiffuseFactor 0.8,
+  SpecularColor 0.5 and ReflectionFactor 0.5. Cascadeur's own FBX of the creature carries phongs
+  at full colour, Specular 0.2, Shininess 20, Reflectivity 0. Its viewport is PBR and the FBX →
+  PBR mapping is C++ (none of its Python).
+- **The one shader = that material**: `colour.SHADER = "phong"` wearing `colour.LOOK` (diffuse 1,
+  specularColor 0.2, cosinePower 20, reflectivity 0), applied by `colour.dress` inside
+  `make_material` — so Add Character, Add Weapon and any fresh Recolour make it. A phong's
+  cosinePower is FBX's ShininessExponent: the numbers land in the file unconverted. The colours per
+  character stay (one shader TYPE and look, one material per character); a whole-shape
+  `forceElement` replaces a per-face assignment (the Orc's five sets become one). Asset files were
+  NOT rewritten (Add repaints them anyway; Manny's `.ma` cannot be resaved without mtoa/USD/MaterialX).
+  Old scenes keep their blinns until a re-Add.
+- `export_creep_skeleton_fbx.py` paints the five meshes with one `Creep_Mat` in 0.8 grey
+  (Cascadeur's default base colour), its marker removed.
+- Proof: `verify_one_shader.py` **4/4 standalone** (all six characters and four weapons wear one
+  material of the shader; an artist's own FBX of the Orc's meshes carries one phong with
+  Cascadeur's numbers; the animation export's top node is `Armature`);
+  `verify_creep_skeleton_fbx_cascadeur.py` **6/6** (gate 6: one material in the file on all five
+  meshes, specular/shininess/reflectivity equal to Cascadeur's own body material);
+  `verify_cascadeur_layout.py` **9/9**; 2249 unit tests. **Not verified: Cascadeur's viewport** —
+  installed and running, but its script runner starts from its own menu (`MCP.Start script
+  server`) on 127.0.0.1:8765, which another session's server held that afternoon.
 
 81. **`FBXExportUpAxis z` writes a Z-up HEADER and leaves the turn on `root`.** Measured
     2026-09-25 on our Y-up skeleton: the file declares up +Z, front −Y (Unreal's header), but
@@ -5494,7 +5526,7 @@ camera_root/camera_bone/weapon_r/weapon_l with Manny's LOCAL values from
 in `SKEL_Orc_Marauder`, so Unreal skips them or they are added there); **the shoulder pads
 `AB_Armor_Shoulder_L/R` ride their clavicles**, no control. Decided without asking: LOD0 only
 (`Orc_Body`), the blendShape kept (52 ARKit + 4 elbow correctives, weights 0, undriven), key
-`Orc_Rig`, label «Orc [rig]», the third row; export wrapper `Orc`.
+`Orc_Rig`, label «Orc [rig]», the third row; export wrapper `Orc` (`Armature` since the evening).
 
 Pipeline: `make_orc_source.py` (mayapy: out of the FBX wrapper into Manny's shape, helper bones,
 bind pose whole over 95 joints, Blender properties deleted) → `rebuild_orc_rig.py` (LIVE, a

@@ -45,7 +45,7 @@ _EXPORT_OPTIONS = (
 )
 
 # Cascadeur's layout for every export (2026-09-25, the animator's choice): the skeleton under a
-# Null named for the character, rotated -90 X, `root` with no orientation of its own and its
+# Null `Armature` (fbxlayout.WRAPPER_NAME), rotated -90 X, `root` with no orientation of its own and its
 # translation in Z-up space (fbxlayout). "plain" is the file as it was before: `root` at world
 # level carrying the -90 on its jointOrient.
 LAYOUT = "cascadeur"
@@ -161,8 +161,8 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
     """Write `root`'s hierarchy (resolved when not given) to `fbx_path` with
     the animation baked in, and report what was written.
 
-    `layout` is "cascadeur" (the default: the skeleton under a Null named for the
-    character, see fbxlayout) or "plain" (the file as it was before 2026-09-25)."""
+    `layout` is "cascadeur" (the default: the skeleton under the Null `Armature`,
+    see fbxlayout) or "plain" (the file as it was before 2026-09-25)."""
     animimport.ensure_fbx_plugin()
     if root is None:
         root = resolve_root()
@@ -182,9 +182,8 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
     root_uuid = (cmds.ls(root, uuid=True) or [None])[0]
     joint_ids = cmds.ls(joints, uuid=True) or []
     exported_as = leaf
-    # The wrapper's name comes from the root's tag or its rig namespace, so it is read now,
-    # before the plain-name rename below takes the namespace away.
-    name = fbxlayout.character_name(root) if layout == "cascadeur" else ""
+    # One name for every character since 2026-09-25's evening: `Armature`.
+    name = fbxlayout.WRAPPER_NAME if layout == "cascadeur" else ""
     wrapper_used = ""
     try:
         # The same name Maya decorated on arrival would go into the file,

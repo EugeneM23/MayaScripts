@@ -289,10 +289,13 @@ class CascadeurLayout(unittest.TestCase):
         self.assertEqual(inspect.signature(animexport.export_hierarchy).parameters["layout"].default,
                          "cascadeur")
 
-    def test_the_name_is_read_before_the_plain_rename_and_the_wrapper_is_selected(self):
+    def test_the_wrapper_is_armature_and_is_selected(self):
+        """2026-09-25: «верхняя группа называлась Armature» -- the name no longer comes from
+        the character."""
         import inspect
         source = inspect.getsource(animexport.export_hierarchy)
-        self.assertLess(source.index("character_name("), source.index("target_plain_names("))
+        self.assertIn("fbxlayout.WRAPPER_NAME", source)
+        self.assertNotIn("character_name(", source)
         self.assertIn("fbxlayout.wrapped(", source)
         self.assertIn("[wrapper]", source)
 

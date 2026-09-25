@@ -1,8 +1,10 @@
-"""Export in Cascadeur's layout: a Null named for the character over `root`, `root` at zero.
+"""Export in Cascadeur's layout: a Null `Armature` over `root`, `root` at zero.
 
 2026-09-25. The animator moves animation Maya <-> Cascadeur and chose one layout for every
-export, Cascadeur's own. Cascadeur writes a Y-up file whose skeleton hangs under a Null (named
-for the character) rotated -90 deg X; `root` stands beneath it with no orientation of its own,
+export, Cascadeur's own. Cascadeur writes a Y-up file whose skeleton hangs under a Null rotated
+-90 deg X (named for the character in Cascadeur's own files, and in ours that morning; since the
+evening `Armature` for every character -- «появилось требование чтобы верхняя группа
+называлась Armature»); `root` stands beneath it with no orientation of its own,
 its translation in the Null's Z-up space -- which is also Unreal's root space. We keep that
 turn on `root`'s jointOrient in the scene (Maya is Y-up and stays Y-up: AdvancedSkeleton's
 author advises against Z-up, and Unreal is left-handed anyway). So for the length of an export
@@ -18,14 +20,14 @@ Spec: docs/superpowers/specs/2026-09-25-cascadeur-export-layout-design.md
 """
 import contextlib
 import math
-import re
 
 import maya.cmds as cmds
 
 WRAP_ROTATE = (-90.0, 0.0, 0.0)     # Cascadeur's Null: Z-up content in a Y-up file
-TAG = "skeldarCharacter"            # the catalog key Add Character writes on a root
-COLOUR_MARKER = "skeldarColour"     # maya_scenesetup.colour.MARKER; its value is the owner's key
-FALLBACK_NAME = "Character"
+WRAPPER_NAME = "Armature"           # the Null's name, one for every character (2026-09-25 evening)
+# the catalog key Add Character wrote on a root on 2026-09-25 alone (the morning's per-character
+# wrapper); nothing writes it since, but a root tagged that day must still not carry it into a file
+TAG = "skeldarCharacter"
 HOLD_PREFIX = "rpHold_"             # the bridge's own prefix for a name held aside
 TRANSLATE = ("translateX", "translateY", "translateZ")
 ROTATE = ("rotateX", "rotateY", "rotateZ")
@@ -58,26 +60,6 @@ def jo_after(jo):
     m = _euler_matrix(jo) * _euler_matrix(WRAP_ROTATE).inverse()
     e = om.MTransformationMatrix(m).rotation(asQuaternion=False).reorder(om.MEulerRotation.kXYZ)
     return tuple(math.degrees(v) for v in (e.x, e.y, e.z))
-
-
-def wrapper_name(tag, namespace, colour_keys, known):
-    """The character's name for the wrapper. Pure.
-
-    The root's own tag (Add Character writes the catalog key), else its rig namespace without
-    the digits Maya adds (`Creep_Rig1` -> `Creep_Rig`), else the ONE character its skins' colour
-    materials name (Add Character paints with the key; a weapon's owner is not a character),
-    else FALLBACK_NAME. A key becomes a name through `catalog.export_name`.
-    """
-    from maya_scenesetup.catalog import export_name
-    if tag and tag in known:
-        return export_name(tag)
-    base = re.sub(r"\d+$", "", namespace or "")
-    if base and base in known:
-        return export_name(base)
-    owners = sorted(set(k for k in colour_keys if k in known))
-    if len(owners) == 1:
-        return export_name(owners[0])
-    return FALLBACK_NAME
 
 
 def layout_plan(parent, kinds):
@@ -123,37 +105,6 @@ def root_state(root):
     """(parent long path or "", {channel: kind}) for `root`."""
     parent = (cmds.listRelatives(root, parent=True, fullPath=True) or [""])[0]
     return parent, dict((c, _kind(root + "." + c)) for c in TRANSLATE + ROTATE)
-
-
-def _colour_keys(root):
-    joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
-                                          fullPath=True) or [])
-    skins = set()
-    for joint in joints:
-        skins.update(cmds.listConnections(joint + ".worldMatrix", type="skinCluster") or [])
-    keys = set()
-    for skin in skins:
-        for shape in cmds.skinCluster(skin, query=True, geometry=True) or []:
-            for sg in cmds.listConnections(shape, type="shadingEngine") or []:
-                for material in cmds.listConnections(sg + ".surfaceShader") or []:
-                    if cmds.attributeQuery(COLOUR_MARKER, node=material, exists=True):
-                        keys.add(cmds.getAttr(material + "." + COLOUR_MARKER) or "")
-    return sorted(keys)
-
-
-def character_name(root):
-    """The wrapper's name for `root`. Read it BEFORE any rename: the namespace is a clue."""
-    try:
-        from maya_scenesetup import catalog
-        known = catalog.character_keys()
-    except Exception:
-        known = []
-    tag = ""
-    if cmds.attributeQuery(TAG, node=root, exists=True):
-        tag = cmds.getAttr(root + "." + TAG) or ""
-    leaf = root.split("|")[-1]
-    namespace = leaf.rsplit(":", 1)[0] if ":" in leaf else ""
-    return wrapper_name(tag, namespace, _colour_keys(root), known)
 
 
 @contextlib.contextmanager

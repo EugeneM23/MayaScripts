@@ -53,25 +53,15 @@ class JointOrientAfter(unittest.TestCase):
 
 
 class WrapperName(unittest.TestCase):
-    KNOWN = ["Manny_Rig", "Creep_Rig", "Manny", "Creep", "UE4_Mannequin"]
+    """2026-09-25, the same evening: «появилось требование чтобы верхняя группа называлась
+    Armature» -- one name for every character, in place of the character's own."""
 
-    def test_the_tag_comes_first(self):
-        self.assertEqual(fbxlayout.wrapper_name("Creep", "Manny_Rig", ["Manny_Rig"], self.KNOWN), "Creep")
+    def test_the_wrapper_is_armature(self):
+        self.assertEqual(fbxlayout.WRAPPER_NAME, "Armature")
 
-    def test_a_rig_namespace_without_its_digits(self):
-        self.assertEqual(fbxlayout.wrapper_name("", "Creep_Rig1", [], self.KNOWN), "Creep")
-        self.assertEqual(fbxlayout.wrapper_name("", "Manny_Rig", [], self.KNOWN), "Manny")
-
-    def test_the_one_character_the_skins_colour_names(self):
-        """A weapon's colour owner (Creep_Sword) is not a character and does not count."""
-        self.assertEqual(fbxlayout.wrapper_name("", "", ["Creep", "Creep_Sword"], self.KNOWN), "Creep")
-
-    def test_two_characters_in_the_colours_is_no_answer(self):
-        self.assertEqual(fbxlayout.wrapper_name("", "", ["Creep", "Manny"], self.KNOWN),
-                         fbxlayout.FALLBACK_NAME)
-
-    def test_an_unknown_tag_or_namespace_falls_through(self):
-        self.assertEqual(fbxlayout.wrapper_name("Goblin", "casc", [], self.KNOWN), fbxlayout.FALLBACK_NAME)
+    def test_the_per_character_naming_is_gone(self):
+        for gone in ("wrapper_name", "character_name", "FALLBACK_NAME", "COLOUR_MARKER", "_colour_keys"):
+            self.assertFalse(hasattr(fbxlayout, gone), gone)
 
 
 class LayoutPlan(unittest.TestCase):

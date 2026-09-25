@@ -5,10 +5,10 @@
 mayapy STANDALONE: it adds rigs and skeletons and exports files.
 - A Cascadeur clip retargeted onto a fresh Creep_Rig and exported through the bridge's own
   export (`animexport.export_hierarchy`). The file then carries Cascadeur's layout: a Null
-  `Creep` at -90 X over a `root` with no orientation, whose LOCAL values equal the ones in
-  Cascadeur's own file of the same clip.
-- The same for a bare keyed skeleton (the `|Creep` mesh group holds the name meanwhile), a
-  static one and a Manny rig.
+  `Armature` at -90 X (one name for every character since 2026-09-25's evening) over a `root`
+  with no orientation, whose LOCAL values equal the ones in Cascadeur's own file of the same clip.
+- The same for a bare keyed skeleton (a node of the animator's called `Armature` held aside
+  meanwhile), a static one and a Manny rig.
 - A root the layout cannot move without editing keys (a pairBlend) falls back to the plain
   file with a note; `layout="plain"` writes the old file.
 - Every case leaves the scene exactly as it found it.
@@ -148,10 +148,13 @@ ok, text = rr.run_retarget()
 print("retarget:", ok, text.splitlines()[0][:120])
 frames = list(range(int(first), int(last) + 1, 3))
 root = rig.skeleton_root
+# a root tagged by the one day's build that wrote the tag (2026-09-25): held out of the file, put back
+cmds.addAttr(root, longName="skeldarCharacter", dataType="string")
+cmds.setAttr(root + ".skeldarCharacter", "Creep_Rig", type="string")
 before = snapshot(root, frames)
 path_a, info = export(root, "creep_rig")
 tag_in_file = b"skeldarCharacter" in open(path_a, "rb").read()
-gate(1, info["layout"] == "cascadeur" and info["wrapper"] == "Creep" and not info["notes"] and not tag_in_file
+gate(1, info["layout"] == "cascadeur" and info["wrapper"] == "Armature" and not info["notes"] and not tag_in_file
      and cmds.attributeQuery("skeldarCharacter", node=root, exists=True),
      "Creep_Rig on the Cascadeur clip exported in Cascadeur's layout, wrapper %r, notes %s; our tag in the file: %s, "
      "back on the root: %s" % (info["wrapper"], info["notes"], tag_in_file,
@@ -185,7 +188,7 @@ for t in frames:
                 worst_limb = max(worst_limb, math.degrees(da.angle(db)))
         else:
             worst_bone = max(worst_bone, ang(wm(pa), wm(B[n])))
-gate(2, wrapper[0] == "|B:Creep" and mdiff(lm(wrapper[0]) if wrapper[0] else om.MMatrix(),
+gate(2, wrapper[0] == "|B:Armature" and mdiff(lm(wrapper[0]) if wrapper[0] else om.MMatrix(),
                                            om.MEulerRotation(math.radians(-90), 0, 0).asMatrix()) < 1e-9
      and max(abs(v) for v in cmds.getAttr(b_root + ".jointOrient")[0]) < 1e-3
      and worst_t < 1e-3 and worst_r < 0.01,
@@ -196,7 +199,7 @@ gate(3, worst_bone < 0.01 and worst_limb < 0.05,
      "every other bone on Cascadeur's: orientation %.4f deg, limbs pointing %.4f deg (twists: the rig's own share)"
      % (worst_bone, worst_limb))
 
-# ------------------------------------------------ B: a bare keyed skeleton, the |Creep group holding the name
+# ------------------------------------------------ B: a bare keyed skeleton, a node of the animator's holding the name
 fresh()
 print(character.add_character(catalog.character_by_key("Creep")))
 root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True)][0]
@@ -207,11 +210,12 @@ for t, dx, dz, ry in ((0, 0, 0, 0), (10, 20, 50, 30)):
     cmds.setKeyframe(root, attribute="rotateY", time=t, value=ry)
 cmds.playbackOptions(min=0, max=10, animationStartTime=0, animationEndTime=10)
 kframes = [0, 3, 7, 10]
-group = cmds.ls("|Creep", uuid=True)[0]
+cmds.parent(cmds.spaceLocator(name="animatorsLocator")[0], cmds.group(empty=True, name="Armature"))
+group = cmds.ls("|Armature", uuid=True)[0]
 before = snapshot(root, kframes)
 path_b, info = export(root, "creep_keyed")
 same, text = restored(before, kframes)
-group_ok = cmds.ls(group, long=True) == ["|Creep"] and bool(cmds.listRelatives("|Creep", children=True))
+group_ok = cmds.ls(group, long=True) == ["|Armature"] and bool(cmds.listRelatives("|Armature", children=True))
 fresh()
 b_root = read(path_b, "B")
 back = []
@@ -219,10 +223,10 @@ for t in kframes:
     cmds.currentTime(t)
     back.append(wm(b_root))
 worst = max(mdiff(x, y) for x, y in zip(back, before["worlds"]))
-gate(5, info["layout"] == "cascadeur" and info["wrapper"] == "Creep" and same and group_ok
-     and [p.split(":")[-1] for p in cmds.listRelatives(b_root, parent=True) or []] == ["Creep"] and worst < 1e-4
+gate(5, info["layout"] == "cascadeur" and info["wrapper"] == "Armature" and same and group_ok
+     and [p.split(":")[-1] for p in cmds.listRelatives(b_root, parent=True) or []] == ["Armature"] and worst < 1e-4
      and b"skeldarCharacter" not in open(path_b, "rb").read(),
-     "a keyed Creep skeleton: wrapper %r while |Creep held the name (back: %s); the file's root world on the "
+     "a keyed Creep skeleton: wrapper %r while the animator's |Armature held the name (back: %s); the file's root world on the "
      "scene's %.1e; the scene after: %s" % (info["wrapper"], group_ok, worst, text))
 
 # ------------------------------------------------ C: a static skeleton
@@ -247,7 +251,7 @@ root = maya_rigs.find("Manny_Rig").skeleton_root
 before = snapshot(root, [0])
 path_d, info = export(root, "manny_rig", start=0, end=1)
 same, text = restored(before, [0])
-gate(7, info["layout"] == "cascadeur" and info["wrapper"] == "Manny" and same,
+gate(7, info["layout"] == "cascadeur" and info["wrapper"] == "Armature" and same,
      "Manny_Rig: wrapper %r; the scene: %s" % (info["wrapper"], text))
 
 # ------------------------------------------------ E: a pairBlend on root, and layout="plain"

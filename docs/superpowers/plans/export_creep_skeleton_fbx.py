@@ -23,9 +23,18 @@ borders), and the read-back now checks it: the edges come back hard exactly wher
 them, a mesh with every edge hard is a failure.  `--overwrite` replaces an existing file.
 
 Since 2026-09-25 in CASCADEUR'S LAYOUT, as every export of ours (maya_uebridge.fbxlayout): the
-skeleton under a Null `Creep` rotated -90 X, `root` with no orientation of its own, the meshes at
+skeleton under a Null rotated -90 X, `root` with no orientation of its own, the meshes at
 world level beside it -- the file Cascadeur itself writes for this creature (its Null is
-`SKM_Manny_Simple` there; ours is named for the character, the animator's choice).
+`SKM_Manny_Simple` there). The Null is `Armature` since the evening («появилось требование чтобы
+верхняя группа называлась Armature»; it was `Creep` that morning).
+
+And ONE material on all five meshes since the same evening («нужно на все наши модели и риги
+настроить единый шейдер ... сейчас при экспорте в каскадер модель выглядит темной и на модели
+много материалов»): the export carried three -- a grey blinn at 0.4 effective on the arms and face,
+a red one on the back and FBX's `Default_Material` on the body, which wore none -- every one with
+a ReflectionFactor of 0.5. Now the one shader (maya_scenesetup.colour: SHADER wearing LOOK, the
+values Cascadeur writes in its own FBX) in a light neutral grey, NEUTRAL, and the read-back checks
+it: one material, on all five, phong, diffuse 1, specular 0.2, no reflection.
 """
 import math
 import os
@@ -88,6 +97,14 @@ if os.path.exists(OUT) and not OVERWRITE:
     raise RuntimeError("%s exists -- not overwriting it (--overwrite)" % OUT)
 sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..", "..", "SkeldarAnim")))
 from maya_uebridge import fbxlayout
+from maya_scenesetup import colour
+# the one shader on every mesh, one material for the whole character; its marker stays home too
+NEUTRAL = (0.8, 0.8, 0.8)                  # Cascadeur's own default base colour
+material, engine = colour.make_material(NEUTRAL, "Creep")
+cmds.sets([s for m in MESHES for s in cmds.listRelatives(cmds.ls(m, type="transform", long=True)[0], shapes=True, fullPath=True)
+           if not cmds.getAttr(s + ".intermediateObject")], edit=True, forceElement=engine)
+cmds.deleteAttr(material + "." + colour.MARKER)
+material = cmds.rename(material, "Creep_Mat")
 # the meshes to world level beside the skeleton, as in Cascadeur's file; the emptied |Creep group
 # goes (it would also take the wrapper's name)
 for m in MESHES:
@@ -107,7 +124,7 @@ for option in ("FBXExportSkins -v true", "FBXExportShapes -v true", "FBXExportSm
                "FBXExportBakeComplexAnimation -v false", "FBXExportEmbeddedTextures -v false",
                "FBXExportSkeletonDefinitions -v true", "FBXExportUpAxis y", "FBXExportInAscii -v false"):
     mel.eval(option)
-with fbxlayout.wrapped("|root", "Creep") as (wrapper, note):
+with fbxlayout.wrapped("|root", fbxlayout.WRAPPER_NAME) as (wrapper, note):
     assert wrapper, note
     # the wrapper is part of the skeleton's hierarchy now, and the exporter drops the bind pose
     # whole over a node missing from it (trap 79; measured again: «Unable to find the bind pose
@@ -137,7 +154,7 @@ wrapper_back = cmds.listRelatives(back_root, parent=True, fullPath=True) or []
 print("read back: root under %s turned %s, root jointOrient %s" % (
     wrapper_back, [round(v, 3) for v in cmds.getAttr(wrapper_back[0] + ".rotate")[0]] if wrapper_back else None,
     [round(v, 4) for v in cmds.getAttr(back_root + ".jointOrient")[0]]))
-assert wrapper_back == ["|Creep"], "the skeleton is not under the Creep Null"
+assert wrapper_back == ["|" + fbxlayout.WRAPPER_NAME], "the skeleton is not under the %s Null" % fbxlayout.WRAPPER_NAME
 assert max(abs(v) for v in cmds.getAttr(back_root + ".jointOrient")[0]) < 1e-3, "root carries an orientation"
 
 worst_p = worst_n = 0.0
@@ -167,6 +184,20 @@ print("every vertex where the asset has it: worst %.2e cm; normals the asset's: 
 hard_back = dict((m, hard_edges(m)) for m in MESHES)
 print("smoothing read back (hard, edges):", hard_back)
 assert hard_back == hard_before, "the smoothing did not survive the round trip"
+# one material on all five meshes, wearing the one shader's look
+worn = {}
+for m in MESHES:
+    tr = cmds.ls(m, type="transform", long=True)[0]
+    live = [x for x in cmds.listRelatives(tr, shapes=True, fullPath=True) if not cmds.getAttr(x + ".intermediateObject")][0]
+    for sg in set(cmds.listConnections(live, type="shadingEngine") or []):
+        for mat in cmds.listConnections(sg + ".surfaceShader") or []:
+            worn.setdefault(mat, []).append(m)
+look = dict((a, cmds.getAttr(list(worn)[0] + "." + a)) for a in ("color", "diffuse", "specularColor", "cosinePower", "reflectivity")
+            if len(worn) == 1 and cmds.attributeQuery(a, node=list(worn)[0], exists=True))
+print("materials read back: %s | %s %s" % (dict((k, len(v)) for k, v in worn.items()),
+                                           cmds.nodeType(list(worn)[0]) if worn else None, look))
+assert len(worn) == 1 and sorted(list(worn.values())[0]) == sorted(MESHES), "not ONE material on all five meshes"
+assert cmds.nodeType(list(worn)[0]) == colour.SHADER, "the material came back as %s" % cmds.nodeType(list(worn)[0])
 # 0.5 deg: the importer recomputes the normals through the smoothing groups (measured worst 0.22)
 assert len(back_joints) == len(joints) and len(skins) == 5 and worst_p < 1e-3 and worst_n < 0.5
 print("OK")

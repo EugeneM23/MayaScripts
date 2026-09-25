@@ -2,7 +2,7 @@
 
 Since 2026-09-01 Add Character can be pressed as many times as the animator
 likes, and every press brought the same grey figure: the outliner can tell
-two Mannys apart and the eye cannot. So each press now creates one blinn
+two Mannys apart and the eye cannot. So each press now creates one material (SHADER)
 and assigns it to every mesh it brought, in the colour the panel's swatch is
 showing («нужно добавить опцию выбора цвета для персонажа и оружия которого
 мы добавляем в сцену», 2026-09-03).
@@ -40,16 +40,21 @@ MARKER = "skeldarColour"
 
 PREFIX = "skeldarColour"
 
-# blinn, not lambert (2026-09-03, the animator's second look at it: «давай
-# материал поменяем на maya blin у него лучше шейдинг и он блестит»). A
-# lambert is flat, so a coloured figure lost the form the grey one had --
-# a blinn's specular puts the highlight back and reads as a surface.
-#
-# Its specular attributes are left at Maya's defaults. The ask was for the
-# shine, the defaults give it, and inventing eccentricity numbers for
-# somebody else's look is how a tool ends up with a table of magic values
-# nobody can justify.
-SHADER = "blinn"
+# ONE shader for every model and rig we put into the scene (2026-09-25: «на все
+# наши модели и риги нужно настроить единый шейдер, такой чтобы он смотрелся
+# хорошо в мае и в каскадере. Сейчас при экспорте в каскадер модель выглядит
+# темной»). A phong wearing LOOK, the numbers Cascadeur itself writes into the
+# FBX it exports (measured on creep_T-pose_draft (1).fbx, Cascadeur 2024.1: phong,
+# DiffuseFactor 1, Specular 0.2, Shininess 20, Reflectivity 0) -- the look
+# Cascadeur reads back as its own. Still not a lambert (2026-09-03, «у него лучше
+# шейдинг и он блестит»): a lambert is flat, the specular keeps the form. The
+# blinn it replaces left its attributes at Maya's defaults and exported
+# DiffuseFactor 0.8, SpecularColor 0.5 and ReflectionFactor 0.5 -- the colour at
+# 80 % with a reflection Cascadeur has no environment for. A phong's cosinePower IS
+# the FBX ShininessExponent, so the numbers land in the file unconverted.
+SHADER = "phong"
+LOOK = {"diffuse": 1.0, "specularColor": (0.2, 0.2, 0.2), "cosinePower": 20.0,
+        "reflectivity": 0.0}
 
 # Mid-bright, one per hue stop. Two requirements the values have to meet, both
 # pinned by tests: none is near black -- `character.needs_grey` reads a
@@ -324,10 +329,20 @@ def colour_of(shapes):
     return colour_plug(material) if material else None
 
 
+def dress(material):
+    """LOOK on `material`: the one shader's settings, the colour aside."""
+    for attr, value in LOOK.items():
+        if isinstance(value, tuple):
+            cmds.setAttr(material + "." + attr, *value, type="double3")
+        else:
+            cmds.setAttr(material + "." + attr, value)
+
+
 def make_material(rgb, key):
-    """A fresh blinn in `rgb`, marked as ours, with its shading engine."""
+    """A fresh SHADER in `rgb` wearing LOOK, marked as ours, with its shading engine."""
     material = cmds.shadingNode(SHADER, asShader=True,
                                 name=material_name(rgb))
+    dress(material)
     cmds.setAttr(material + ".color", rgb[0], rgb[1], rgb[2], type="double3")
     cmds.addAttr(material, longName=MARKER, dataType="string")
     cmds.setAttr(material + "." + MARKER, key or "", type="string")

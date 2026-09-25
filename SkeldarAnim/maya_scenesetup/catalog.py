@@ -107,17 +107,6 @@ def character_keys():
     return [entry.key for entry in CHARACTERS]
 
 
-def export_name(key):
-    """The character's name for an exported file's top node (2026-09-25).
-
-    Every export writes Cascadeur's layout -- the skeleton under a Null named for
-    the character («по персонажу») -- and the rig and the bare skeleton of one
-    character are one name: the key without a trailing `_Rig` (`Creep_Rig` and
-    `Creep` -> `Creep`).
-    """
-    return key[:-len("_Rig")] if key.endswith("_Rig") else key
-
-
 def default_character():
     """The Manny SKELETON.
 

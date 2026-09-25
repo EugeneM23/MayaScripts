@@ -1,6 +1,6 @@
 """Standalone gates for the shipped Orc rig (assets/Orc_Rig.ma) going through the plugin.
 
-    mayapy verify_orc_rig_asset.py <UE5 clip .fbx> <scratch dir>
+    mayapy verify_orc_rig_asset.py <UE5 clip .fbx WITH camera_root, e.g. Animations/Export/LongSword_Attack_Right_Heavy_3P.FBX> <scratch dir>
 
 mayapy STANDALONE, an empty scene (2026-09-25).  `verify_creep_rig_asset.py` for the orc: Add
 Character twice with "Orc [rig]" and once with "Manny [rig]", then a UE5 clip retargeted onto the
@@ -236,7 +236,7 @@ for t in frames:
 gate(15, not cmds.objExists(weapon) and not bonedrive.driving_weapon(O["weapon_r"]) and back < 1e-3,
      "Remove Weapon %s: the sword gone, weapon_r free and keyed on its own track to %.2e" % (removed, back))
 
-# the export: bones only, 95 of them, under a Null named for the character
+# the export: bones only, 95 of them, under the Null `Armature` (2026-09-25 evening)
 from maya_uebridge import animexport
 fbx = SCRATCH + "/orc_export_check.fbx"
 if os.path.exists(fbx):
@@ -252,6 +252,6 @@ back_in = [n for n in cmds.ls(long=True) if n not in before]
 j_in = [n for n in back_in if cmds.nodeType(n) == "joint"]
 m_in = [n for n in back_in if cmds.nodeType(n) == "mesh"]
 tops = sorted(set(n.split("|")[1] for n in back_in if n.startswith("|chk:")))
-gate(16, len(j_in) == 95 and not m_in and (tops == ["chk:Orc"] or tops == ["chk:root"]),
+gate(16, len(j_in) == 95 and not m_in and (tops == ["chk:Armature"] or tops == ["chk:root"]),
      "the FBX read back: %d joints, %d meshes, top node(s) %s" % (len(j_in), len(m_in), tops))
 print("RESULT: %d of %d gates failed %s" % (len(FAILS), TOTAL, FAILS))
