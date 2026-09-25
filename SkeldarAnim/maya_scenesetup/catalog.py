@@ -60,6 +60,13 @@ CHARACTERS = [
     # and `Group.skeldarRetarget = "rotation"` -- its retarget copies rotations
     # only. Built from the animator's scene by make_creep_rig_asset.py.
     Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "", "rig"),
+    # The Orc Marauder's AdvancedSkeleton rig (2026-09-25): the Unreal asset
+    # SK_Orc_Marauder_F on Manny's bone names with its own proportions (neck
+    # 1.39x, upper arm 1.07x; pelvis, spine, legs and hands exactly Manny's),
+    # Manny's four helper bones added on Manny's local values, the shoulder pads
+    # riding their clavicles, one mesh with its 56-target blendShape, the Creep's
+    # procedure and rotation-only mark. Built by make_orc_rig_asset.py.
+    Character("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "", "rig"),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               _LEGACY_CHARACTER, "skeleton"),
     # The Creep without its rig (2026-09-24, «не только риг хантера, а и чистый

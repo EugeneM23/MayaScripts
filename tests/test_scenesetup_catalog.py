@@ -449,6 +449,56 @@ class CreepSkeleton(unittest.TestCase):
         self.assertEqual(skins, 5)
 
 
+class OrcRig(unittest.TestCase):
+    """2026-09-25: «В открытом проекте в Unreal есть персонаж SK_Orc_Marauder_F его
+    скелет совпадает с нашим manny rig ... добавим к нам в проект еще один риг "ORC"»
+    -- the third rig row, after the Creep's; Manny stays the default."""
+
+    def test_the_orc_rig_is_the_third_row_and_a_rig(self):
+        entry = catalog.CHARACTERS[2]
+        self.assertEqual((entry.key, entry.label, entry.file, entry.kind),
+                         ("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "rig"))
+        self.assertTrue(catalog.is_rig(entry))
+        self.assertIs(catalog.default_rig(), catalog.character_by_key("Manny_Rig"))
+        self.assertEqual(catalog.export_name("Orc_Rig"), "Orc")
+
+    def test_the_shipped_orc_is_the_rig_with_manny_s_helper_bones(self):
+        """Built in mayapy standalone from the animator's own FBX export of the
+        Unreal asset (make_orc_source.py -> rebuild_orc_rig.py -> make_orc_rig_asset.py):
+        the rig marked for the rotation-only retarget, one mesh in the rig's
+        Geometry group with its skin and blendShape, the four helper bones Manny
+        has (the animator: «все четыре») and the shoulder pads -- and none of the
+        LODs, the dead-path texture or any script node."""
+        path = catalog.character_file(catalog.character_by_key("Orc_Rig"))
+        self.assertTrue(path.endswith("assets/Orc_Rig.ma"), path)
+        wanted = {'createNode transform -n "Group";': False,
+                  'createNode joint -n "root";': False,
+                  'createNode objectSet -n "ControlSet";': False,
+                  'createNode transform -n "Orc_Body" -p "Geometry";': False,
+                  'createNode joint -n "camera_root" -p "root";': False,
+                  'createNode joint -n "camera_bone" -p "camera_root";': False,
+                  'createNode joint -n "weapon_r" -p "hand_r";': False,
+                  'createNode joint -n "weapon_l" -p "hand_l";': False,
+                  'createNode joint -n "AB_Armor_Shoulder_L" -p "clavicle_l";': False,
+                  'createNode joint -n "AB_Armor_Shoulder_R" -p "clavicle_r";': False}
+        mode, skins, blends = False, 0, 0
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                for banned in ("createNode script", "vaccine", "breed_gene", "SK_Orc_Marauder_F_LOD1",
+                               "LodGroup", "D:/Characters", "camera1", "arp_rig_name", "flip_fluid", "ori_name"):
+                    self.assertNotIn(banned, line)
+                stripped = line.rstrip("\r\n")
+                if stripped in wanted:
+                    wanted[stripped] = True
+                if '".skeldarRetarget"' in line and '"rotation"' in line:
+                    mode = True
+                skins += line.startswith("createNode skinCluster ")
+                blends += line.startswith("createNode blendShape ")
+        self.assertEqual([k for k, v in wanted.items() if not v], [])
+        self.assertTrue(mode, "the rig's retarget mark is not in the file")
+        self.assertEqual((skins, blends), (1, 1))
+
+
 class ExportName(unittest.TestCase):
     """2026-09-25: the wrapper over `root` in an exported FBX is named for the
     character («по персонажу») - the rig and the bare skeleton of one character

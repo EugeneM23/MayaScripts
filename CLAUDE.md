@@ -5424,3 +5424,66 @@ animator's `Sweep Fall.fbx`); 55 unit tests.
   top. **Since 2026-09-08 Retarget and Bake are ONE button** and every
   module function takes a `rig` — see the many-rigs section. The animator's hand-made
   `shelfButton9`/`shelfButton32` were replaced by the 2026-09-07 re-install.
+
+## The Orc: Unreal's SK_Orc_Marauder_F as a third rig row (2026-09-25)
+
+The animator: «В открытом проекте в Unreal есть персонаж SK_Orc_Marauder_F его скелет
+совпадает с нашим manny rig ... добавим к нам в проект еще один риг "ORC". я так понимаю что у
+нас все готово просто нужно перенести». Spec:
+`docs/superpowers/specs/2026-09-25-orc-rig-design.md`. The asset is in the animator's
+`MyProject2` (`/Game/Orc_Marauder/Meshes/`, skeleton `SKEL_Orc_Marauder`), where Remote Execution
+was OFF (UDP 6766 unbound) — the animator exported the FBX by hand; the copy the scripts read is
+`C:/!!!Work/Animations/Sources/SK_Orc_Marauder_F.FBX`. `Content/Orc_Marauder/ORC.zip` is the
+same uassets again, no source files.
+
+**"Совпадает" meant the NAMES.** Measured: 91 joints, Manny's hierarchy for every shared bone,
+root/pelvis/spine/legs/forearms/hands exactly Manny's (the hands' world positions to 0.0000) —
+but the neck 1.39× (head 5.16 cm higher), the upper arm 1.07×, clavicle 1.05×, fingers up to
+2.3 cm. So Manny's rig was NOT reused (its AS stands on Manny's bones; the orc's skin on it
+tears the neck); the orc got its own rig by **the Creep's procedure** unchanged — the case it was
+written for: Manny's names, a body of its own, bones orientation-only, controls on the bones'
+frames, IK feet level, `skeldarRetarget = "rotation"`. Three things set from
+`rebuild_orc_rig.py`: HEAD_MESH/ROOT/LAYER, and **Manny's ik_hand rule** (ik_hand_gun and
+ik_hand_r follow hand_r, ik_hand_l hand_l, from where the file has them) in place of the
+Creep's (ik_hand_gun zeroed — that animator's layout). The twist bones stand at exactly 1/3,
+2/3 (AS's own spacing), so `place_parts` moved nothing.
+
+Two design answers from the animator: **all four helper bones added** («все четыре») —
+camera_root/camera_bone/weapon_r/weapon_l with Manny's LOCAL values from
+`manny_skeleton_template.json` (relative to their parents as on Manny to 2.8e-14; they are not
+in `SKEL_Orc_Marauder`, so Unreal skips them or they are added there); **the shoulder pads
+`AB_Armor_Shoulder_L/R` ride their clavicles**, no control. Decided without asking: LOD0 only
+(`Orc_Body`), the blendShape kept (52 ARKit + 4 elbow correctives, weights 0, undriven), key
+`Orc_Rig`, label «Orc [rig]», the third row; export wrapper `Orc`.
+
+Pipeline: `make_orc_source.py` (mayapy: out of the FBX wrapper into Manny's shape, helper bones,
+bind pose whole over 95 joints, Blender properties deleted) → `rebuild_orc_rig.py` (LIVE, a
+disposable Maya — this time on port **7003**, because a peer session may hold 7002) →
+`make_orc_rig_asset.py` (mayapy → `assets/Orc_Rig.ma`, 22.1 MB). Proof:
+`verify_advancedskeleton_orc_rig.py` **29/29 live**; `verify_orc_rig_asset.py` **16/16
+standalone** (orientations 0.00127°, limb directions 0.062°, lengths 0.000000 cm, the other two
+rigs 0.000000000, weapon_r carried in the hand to 2e-6, camera_root to 3e-16, the export 95
+joints / 0 meshes under `Orc`); `verify_connections.py` with `VERIFY_RIG = "Orc_Rig"` **40/40
+live**; 2254 unit tests. The fur cards read dark in the viewport under our colour blinn (no
+opacity map in the asset) — cosmetic, stated.
+
+82. **An FBX from Unreal can carry the DCC's own properties on its joints, and our exports then
+    write them back into every clip.** The orc was made in Blender with Auto-Rig Pro: root held
+    `flip_fluid` (a `<bpy id prop ...>` string), `set`, `binded`, `arp_rig_name`, eleven helpers
+    `ori_name`. The first export of the rig wrote them (the read-back printed `setAttr: No object
+    matches name: Orc|root.flip_fluid`), and Unreal reads the root's properties as game data
+    (trap 40). Delete every user attribute on the joints but Maya's own `filmboxTypeID` /
+    `lockInfluenceWeights` (and our `skeldarCharacter`, which the export holds off itself).
+83. **No clip on this disk moves `weapon_r` in the hand or `camera_root` at all** (measured on
+    five, 2026-09-25) — so a gate "the retarget carries the helper bones" passes on a bone that
+    stands still. `verify_orc_rig_asset.py` keys a move of each into the clip's own copy at
+    mid-take and requires the motion (0.43 in the hand, 20 cm) before it trusts the match.
+84. **Purging SOME of our modules splits a class in two** (trap 49 from the harness side): a
+    payload that dropped `maya_rigs` but not `maya_asretarget` left the latter holding the old
+    `Rig` class, and `maya_rigs.node(rig, ...)` fell through `isinstance(rig, Rig)` into
+    `TypeError: can only concatenate tuple (not "str") to tuple`. Purge all our package roots
+    together, or none.
+85. **A disposable Maya is a real window on the animator's desktop, and the animator can click
+    in it.** Mid-session its scene suddenly held `Manny_Rig:*` and no orc; no process of ours had
+    sent it anything — «это случайно», the animator had pressed something there. Re-read a
+    disposable scene's state before trusting it, like the live one (note 4).
