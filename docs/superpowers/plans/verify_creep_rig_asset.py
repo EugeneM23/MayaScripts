@@ -166,6 +166,18 @@ gate(14, guard_x > 2 * thick_z and max(abs(v) for v in fields[0] + fields[1]) < 
      "the node's axes on the geometry: guard %.2f along its own X, thickness %.2f on Z; the fields read %s; %s"
      % (guard_x, thick_z, tuple(round(v, 6) for v in fields[0] + fields[1]), kept))
 
+# the size the creature holds it at (2026-09-25, «меч крипа стал меньше чем был изначально»): in the
+# creature's own file lowerarm_r scales the hand 1.32 and the sword with it -- 124.017 cm pommel to tip
+# (measured in creep_T-pose_draft (1).fbx and the animator's scene before our work); the shrunk asset
+# stood 93.952.  Measured in the hand, in world, along the node's own blade axis.
+CREATURE_SWORD = 124.017
+node_m = wm(weapon)
+blade_axis = om.MVector(node_m.getElement(1, 0), node_m.getElement(1, 1), node_m.getElement(1, 2)).normal()
+along = [om.MVector(p) * blade_axis for p in mesh_points(weapon, om.MSpace.kWorld)]
+length = max(along) - min(along)
+gate(16, abs(length - CREATURE_SWORD) < 0.01,
+     "the sword in the Creep's hand %.3f cm from pommel to tip (the creature's own %.3f)" % (length, CREATURE_SWORD))
+
 cmds.select(cmds.ls("Creep_Rig:Main")[0], src)
 ok, text = rr.run_retarget()
 print(text.splitlines()[0][:220])
@@ -225,4 +237,4 @@ on_weapon_r = mdiff(socket, wm(H2["weapon_r"]))
 gate(15, on_socket < 1e-4 and on_weapon_r < 1e-4,
      "weapon_l taking the sword over sits on its socket to %.2e (the socket is weapon_r's own place to %.2e)"
      % (on_socket, on_weapon_r))
-print("RESULT: %d of 15 gates failed %s" % (len(FAILS), FAILS))
+print("RESULT: %d of 16 gates failed %s" % (len(FAILS), FAILS))

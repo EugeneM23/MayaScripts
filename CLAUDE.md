@@ -919,6 +919,28 @@ source's with 0 edges off the rule, 14/15 the bind pose whole), rig asset 15/15,
 spaces 11/11. The assets are smaller now (24.6 / 23.0 MB): shared normals where the edges are soft.
 A Creep added before this carries the all-hard edges — re-add it before exporting its mesh.
 
+**…and the sword at the size the creature holds it** (2026-09-25, the animator: «наш меч крипа стал
+меньше чем был изначально, нужно вернуть прежний размер»). Trap 86 below: in the creature's own files
+(Cascadeur's `creep_T-pose_draft (1).fbx`, the animator's scene before our work) `lowerarm_r` scales
+1.32 and the sword, a plain child of weapon_test, inherits it — **124.017 cm** pommel to tip; every
+asset since the morning's joint-scale removal held **93.952**, exactly 1/1.32. `make_creep_sword_fbx.py`
+now takes the creature's ORIGINAL file and expresses the pieces in weapon_test's RIGID frame (scale
+stripped), so the chain's 1.32 lands in the points: read back, the new sword is the shrunk one ×1.32
+about weapon_r's origin to 1.6e-5 cm — the grip stays in the hand, the handle −17.9..+9.7 on the bone.
+Catalog scale stays 1.0 (the size is the model's, not a correction). Proof:
+`verify_creep_rig_asset.py` **16/16** (new gate 16: the sword in the Creep's hand 124.017 cm),
+`verify_weapon_space.py` 11/11. Against Cascadeur's own sword at frame 0 our zero-grip sword stands 3.3 cm
+median / 11 cm at the tip away — the frame's (0, 45, 0) against Cascadeur's (0.2, 46.1, −6.3), the
+same length. The animator's scene held no Creep Sword; the next Add takes the new one.
+
+86. **Removing joint scales in place keeps the skin and loses every UNSKINNED child's size.** The
+    rebind's `BPM' = BPM·WM_old·WM_new⁻¹` holds each skinned vertex where it was; a mesh parented under
+    the scaled chain (the Creep's sword under weapon_test, under `lowerarm_r` at 1.32) just loses the
+    inherited scale — 124 cm became 94, silently, and every later asset was cut from that. Every gate
+    since compared the sword against the PREVIOUS asset, never against the creature's source; the
+    animator saw it. Before removing a scale, list the non-skinned shapes under it and carry their
+    world matrices across; and gate a prop against its source file, not against yesterday's copy.
+
 79. **Maya's FBX exporter drops the bind pose WHOLE over one bad member.** The Creep's bindPose1
     held 87 of 91 bones, and three members (ik_foot_l, ik_hand_gun, ik_hand_l) linked
     `parents[i]` to the parent NODE's `.message` instead of the parent's `members[j]` slot; the log
@@ -2915,6 +2937,24 @@ Everything goes back by UUID in a `finally`.
   - every case leaving the scene exact: no node added or lost, the same connections,
     jointOrient and names.
 - 2252 unit tests.
+- **The skeletal mesh against the file Cascadeur itself wrote for this creature** (2026-09-25,
+  the animator: «экспорт персонажа creep с группой по новому пайплайну, чтобы в каскадере всё было
+  хорошо и его не переворачивало»; Cascadeur is not installed here):
+  `verify_creep_skeleton_fbx_cascadeur.py` — **5/5 standalone**, against `Downloads/creep_T-pose_draft
+  (1).fbx` (Cascadeur 2024.1; its frame 0 is the Creep's bind pose):
+  - the header, read from each file: +Y up, +Z front, +X coord, unit 1, both;
+  - in the file: `Creep` at −90 X holds `root` at Cascadeur's `(0.0017, −2.4012, 0)`, the meshes at the
+    top unturned and unscaled, like Cascadeur's (it writes its own Null as −89.99998, float noise);
+    `Creep_Face` keeps the model's pivot `(0, 6.058, 0)`, which the animator's own Maya file of the
+    creature (`creep_T-pose_draft2.fbx`) has too and Cascadeur's bakes to 0;
+  - imported alike: 85 bones where Cascadeur has them at frame 0 to 2e-6 cm and 0.00000°, all 70738
+    vertices to 9.5e-5 cm;
+  - named, not gated: the five IK helpers stand by the Creep's own rules (`ik_hand_gun` at zero,
+    `ik_hand_r/_l` on the hands, `ik_foot_*` by the feet), and Cascadeur's file never took them into
+    its pose (54 / 7.4 cm off); `weapon_r` is in place, turned 46.5° in the hand from Cascadeur's
+    `weapon_test` (which Cascadeur's file holds turned (0.2, 46.1, −6.3)° at frame 0; the Creep Sword's
+    frame (0, 45, 0) was dialled to it by eye);
+  - a control: Cascadeur's Null at +90, the flip, reads 335 cm.
 
 Two things found on the way:
 - **deleting a node takes the animCurves feeding it** (the negate node took `root_translateZ`

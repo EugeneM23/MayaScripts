@@ -194,8 +194,10 @@ WEAPONS = [
     Weapon("Dagger_01", "Dagger 01", _asset_path("Dagger_01.fbx"), "weapon_r", 0.4),
     # 2026-09-24, the Creep's own sword out of its rig («добавим меч хантера в список
     # нашего оружия»), blade AND grip (make_creep_sword_fbx.py): in the model's own
-    # axes like every row -- blade +Y (tip at +74.3), guard X, thickness Z, the origin
-    # where the Creep holds it. It stands in the Creep's hand turned 45 deg about the
+    # axes like every row -- blade +Y (tip at +98.1), guard X, thickness Z, the origin
+    # where the Creep holds it, 124.0 cm long: the size the creature holds it at, its
+    # arm's 1.32 scale kept in the points (2026-09-25, «меч крипа стал меньше чем был
+    # изначально»). It stands in the Creep's hand turned 45 deg about the
     # bone's Y (the animator's grip that day), and that turn is its FRAME, not its
     # points: zero grip puts it there with the node's axes on the geometry («чтобы оси
     # соответствовали направлению геометрии, но меч сохранил свою позу в руке»).
