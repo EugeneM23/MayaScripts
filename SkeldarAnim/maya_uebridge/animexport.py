@@ -196,7 +196,7 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
                         if root_uuid else root)
             manager = (fbxlayout.wrapped(root_now, name) if name
                        else fbxlayout.unwrapped())
-            with manager as (wrapper, layout_note):
+            with fbxlayout.tag_held(root_now), manager as (wrapper, layout_note):
                 if layout_note:
                     notes.append(layout_note)
                 # the wrapper re-parented the root: every path is resolved again

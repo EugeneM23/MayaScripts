@@ -157,6 +157,28 @@ def character_name(root):
 
 
 @contextlib.contextmanager
+def tag_held(root):
+    """Our TAG off `root` for the length of the block, put back after.
+
+    The FBX exporter writes a node's user attributes into the file (measured: `skeldarCharacter`
+    rode into every export as a property of `root`), and Unreal reads the root's properties as
+    the game's own data (trap 40's Pose_* / MoveData_*). Our bookkeeping stays home.
+    """
+    uuid = (cmds.ls(root, uuid=True) or [None])[0]
+    value = None
+    if uuid and cmds.attributeQuery(TAG, node=root, exists=True):
+        value = cmds.getAttr(root + "." + TAG) or ""
+        cmds.deleteAttr(root + "." + TAG)
+    try:
+        yield
+    finally:
+        now = (cmds.ls(uuid, long=True) or [None])[0] if uuid else None
+        if now and value is not None and not cmds.attributeQuery(TAG, node=now, exists=True):
+            cmds.addAttr(now, longName=TAG, dataType="string")
+            cmds.setAttr(now + "." + TAG, value, type="string")
+
+
+@contextlib.contextmanager
 def unwrapped():
     """The plain layout: nothing to do."""
     yield None, ""

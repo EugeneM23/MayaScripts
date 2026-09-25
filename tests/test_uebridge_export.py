@@ -8,6 +8,13 @@ import unittest
 
 
 def _install_fake_maya():
+    # the real one wins when mayapy has it: a fake installed over it shadows maya.api for every
+    # module loaded after this one (trap 60 -- test_uebridge_fbxlayout needs OpenMaya)
+    try:
+        import maya.cmds  # noqa: F401
+        return
+    except ImportError:
+        pass
     if "maya.cmds" in sys.modules:
         return
     maya = types.ModuleType("maya")
@@ -288,3 +295,8 @@ class CascadeurLayout(unittest.TestCase):
         self.assertLess(source.index("character_name("), source.index("target_plain_names("))
         self.assertIn("fbxlayout.wrapped(", source)
         self.assertIn("[wrapper]", source)
+
+    def test_our_character_tag_stays_out_of_the_file(self):
+        """Measured: the exporter wrote `skeldarCharacter` into the FBX as a property of root."""
+        import inspect
+        self.assertIn("fbxlayout.tag_held(", inspect.getsource(animexport.export_hierarchy))
