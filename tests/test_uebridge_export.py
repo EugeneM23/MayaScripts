@@ -296,6 +296,15 @@ class CascadeurLayout(unittest.TestCase):
         self.assertIn("fbxlayout.wrapped(", source)
         self.assertIn("[wrapper]", source)
 
+    def test_the_roads_into_unreal_take_the_unreal_layout(self):
+        """Export to uasset and the checkouts' EXPORT end in Unreal's import: they follow
+        UNREAL_LAYOUT, plain until the sandbox round trip has passed."""
+        import inspect
+        from maya_uebridge import uassetexport, checkouts
+        self.assertIn("layout=animexport.UNREAL_LAYOUT", inspect.getsource(uassetexport.export_to_uasset))
+        self.assertIn("layout=animexport.UNREAL_LAYOUT", inspect.getsource(checkouts))
+        self.assertIn(animexport.UNREAL_LAYOUT, ("plain", "cascadeur"))
+
     def test_our_character_tag_stays_out_of_the_file(self):
         """Measured: the exporter wrote `skeldarCharacter` into the FBX as a property of root."""
         import inspect

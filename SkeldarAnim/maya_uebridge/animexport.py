@@ -50,6 +50,12 @@ _EXPORT_OPTIONS = (
 # level carrying the -90 on its jointOrient.
 LAYOUT = "cascadeur"
 
+# The roads that end in Unreal's own import (Export to uasset, the checkouts' EXPORT) keep the
+# plain layout until Unreal has been seen reading Cascadeur's the same way: the sandbox round trip
+# docs/superpowers/plans/verify_cascadeur_layout_unreal.py (spec: "verified before the switch is
+# kept"). One word here switches both.
+UNREAL_LAYOUT = "plain"
+
 
 def union_range(animation, playback):
     """The exported range: animation range UNION playback range, snapped to

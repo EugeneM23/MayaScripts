@@ -402,14 +402,19 @@ class ExportToUasset(unittest.TestCase):
         shutil.rmtree(self.folder, ignore_errors=True)
 
     class _FakeExport(object):
+        # the roads into Unreal pass animexport.UNREAL_LAYOUT (2026-09-25)
+        UNREAL_LAYOUT = "plain"
+
         def __init__(self, calls, fail=False):
             self.calls = calls
             self.fail = fail
+            self.layouts = []
 
         def resolve_root(self):
             return "|root"
 
-        def export_hierarchy(self, path, root=None):
+        def export_hierarchy(self, path, root=None, layout=None):
+            self.layouts.append(layout)
             self.calls.append(("export", path, root))
             if self.fail:
                 raise RuntimeError("the exporter wrote nothing")

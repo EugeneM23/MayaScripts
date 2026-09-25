@@ -310,7 +310,7 @@ def export_to(row, asks=None):
 
     temp = os.path.join(window.temp_folder(),
                         "{0}.export.fbx".format(record.name))
-    info = animexport.export_hierarchy(temp)
+    info = animexport.export_hierarchy(temp, layout=animexport.UNREAL_LAYOUT)
 
     proceed, note = vcs.prepare_target(
         target, asks.get("others", window._ask_others),

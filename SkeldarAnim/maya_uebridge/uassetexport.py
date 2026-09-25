@@ -195,7 +195,7 @@ def export_to_uasset(record, content_dir, project, temp_folder, asks=None):
     # The export first, and into a temp file: a failed export must leave the
     # uasset exactly as it was, flag included.
     fbx = fbx_staging_path(record.name, temp_folder)
-    info = animexport.export_hierarchy(fbx, root=root)
+    info = animexport.export_hierarchy(fbx, root=root, layout=animexport.UNREAL_LAYOUT)
 
     if read_only:
         failure = clear_read_only(uasset)
