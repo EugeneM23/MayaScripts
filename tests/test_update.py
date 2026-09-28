@@ -83,6 +83,13 @@ class Describe(unittest.TestCase):
     def test_a_source_install_without_git(self):
         self.assertIn("source folder", up.describe({"source": "C:/x"}))
 
+    def test_the_panel_lines_carry_no_subject(self):
+        """A subject wrapped the installed line past its height in a
+        360 px dock (live, 2026-09-28) - the dialog lists it anyway."""
+        text = up.describe(record(A, source="C:/repo"), subject=False)
+        self.assertEqual(text,
+                         "aaaaaaa, 2026-09-28 12:10 (from the source folder)")
+
     def test_a_long_subject_is_cut(self):
         rec = record(A, subject="x" * 200)
         self.assertLess(len(up.describe(rec, width=60)), 100)
@@ -550,6 +557,7 @@ class Panel(unittest.TestCase):
             json.dump(record(A), handle)
         up.build_panel()
         self.assertIn("aaaaaaa", self.fake.labels[up.INSTALLED])
+        self.assertNotIn("subject of a", self.fake.labels[up.INSTALLED])
 
     def test_show_window_opens_the_hub_on_its_section(self):
         import maya_hub

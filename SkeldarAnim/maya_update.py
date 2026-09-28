@@ -86,8 +86,12 @@ def _cut(text, width):
     return text
 
 
-def describe(rec, width=SUBJECT_WIDTH):
-    """«bc51aee, 2026-09-25 14:07 - feat(...)» for a record. Pure."""
+def describe(rec, width=SUBJECT_WIDTH, subject=True):
+    """«bc51aee, 2026-09-25 14:07 - feat(...)» for a record. Pure.
+
+    `subject=False` for the panel's lines: a subject wraps them past their
+    height in a narrow dock (trap 67) and the dialog lists it anyway.
+    """
     rec = rec or {}
     source = rec.get("source")
     short = rec.get("short") or (rec.get("commit") or "")[:7]
@@ -98,9 +102,9 @@ def describe(rec, width=SUBJECT_WIDTH):
     date = (rec.get("date") or "")[:16].replace("T", " ")
     if date:
         text += ", " + date
-    subject = _cut(rec.get("subject"), width)
-    if subject:
-        text += " - " + subject
+    title = _cut(rec.get("subject"), width) if subject else ""
+    if title:
+        text += " - " + title
     if source:
         text += (" (from the source folder, uncommitted changes)"
                  if rec.get("dirty") else " (from the source folder)")
@@ -330,7 +334,7 @@ def check_update(ask=None):
     except UpdateError as exc:
         return _status("{0} - nothing changed.".format(exc))
     if is_current(installed, latest):
-        return _status("Up to date: " + describe(latest))
+        return _status("Up to date: " + describe(latest, subject=False))
     if not (ask or _ask)(confirm_text(installed, latest, dest)):
         return _status("Update cancelled - nothing changed.")
     work = tempfile.mkdtemp(prefix="skeldar_update_")
@@ -352,7 +356,7 @@ def check_update(ask=None):
                        "{1} - drag its install.py into Maya to finish.".format(
                            exc, folder.replace("\\", "/")))
     shutil.rmtree(work, ignore_errors=True)
-    message = "Updated to " + describe(rec)
+    message = "Updated to " + describe(rec, subject=False)
     #  The installer purged our modules; this function is the old module's.
     #  The hub is rebuilt from the new ones once this callback has returned
     #  - the rebuild deletes the layout holding the button pressed.
@@ -384,7 +388,8 @@ def refresh():
     """The installed line, read from the installed folder."""
     if cmds.text(INSTALLED, exists=True):
         cmds.text(INSTALLED, edit=True,
-                  label="Installed: " + describe(read_record(installed_dir())))
+                  label="Installed: " + describe(read_record(installed_dir()),
+                                                 subject=False))
 
 
 def _press(*_args):
@@ -406,7 +411,8 @@ def build_panel():
                 annotation="Compare with the latest build on "
                            "github.com/{0} and install it".format(REPO),
                 command=_press)
-    cmds.text(STATUS, label="", align="left", wordWrap=True, height=36)
+    #  Three lines: the no-build refusal wraps to three in a narrow dock.
+    cmds.text(STATUS, label="", align="left", wordWrap=True, height=54)
     cmds.setParent("..")
     refresh()
     return column
