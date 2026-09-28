@@ -5,6 +5,7 @@ big-endian at bytes 16..24 -- because there is no PIL in the Maya tree
 and none is going in.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -350,6 +351,71 @@ class CopyPayload(unittest.TestCase):
 
     def test_same_place_is_false_for_a_missing_destination(self):
         self.assertFalse(install.same_place(REPO, self.dest))
+
+
+class VersionRecord(unittest.TestCase):
+    """`version.json`: which build an installed copy is, for Check update
+    (2026-09-28). A build carries its own; a copy installed from the
+    repository records its git commit and says it came from the source."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="skeldar_version_")
+        self.src = os.path.join(self.tmp, "src")
+        self.dest = os.path.join(self.tmp, "dest")
+        os.makedirs(self.src)
+        os.makedirs(self.dest)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_the_update_section_ships(self):
+        self.assertIn("maya_update.py", install.payload())
+        self.assertIn("maya_update", install.module_names())
+
+    def test_the_repository_answers_its_head(self):
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=PLUGIN,
+                              capture_output=True, text=True).stdout.strip()
+        rec = install.git_record(PLUGIN)
+        self.assertEqual(rec["commit"], head)
+        self.assertEqual(rec["short"], head[:7])
+        self.assertEqual(rec["log"][0][0], head)
+        self.assertLessEqual(len(rec["log"]), install.LOG_LENGTH)
+        self.assertTrue(rec["subject"])
+        self.assertTrue(rec["branch"])
+        self.assertIn("dirty", rec)
+
+    def test_no_git_is_an_empty_record(self):
+        self.assertEqual(install.git_record(self.src), {})
+
+    def test_a_build_s_own_record_is_copied(self):
+        with open(os.path.join(self.src, "version.json"), "w") as handle:
+            json.dump({"commit": "c" * 40, "built": "then"}, handle)
+        rec = install.write_version(self.src, self.dest)
+        self.assertEqual(rec, {"commit": "c" * 40, "built": "then"})
+        self.assertEqual(install.read_version(self.dest), rec)
+
+    def test_a_source_without_a_record_says_where_it_came_from(self):
+        rec = install.write_version(self.src, self.dest)
+        self.assertEqual(rec["source"], self.src.replace("\\", "/"))
+        self.assertNotIn("commit", rec)
+        self.assertEqual(install.read_version(self.dest), rec)
+
+    def test_the_repository_as_a_source_records_its_commit(self):
+        rec = install.write_version(PLUGIN, self.dest)
+        self.assertEqual(len(rec["commit"]), 40)
+        self.assertEqual(rec["source"], PLUGIN.replace("\\", "/"))
+
+    def test_no_record_reads_as_empty(self):
+        self.assertEqual(install.read_version(self.dest), {})
+
+    def test_a_broken_record_reads_as_empty(self):
+        with open(os.path.join(self.dest, "version.json"), "w") as handle:
+            handle.write("{not json")
+        self.assertEqual(install.read_version(self.dest), {})
+
+    def test_the_record_is_not_a_payload_row(self):
+        """The source tree holds none; every payload row must exist there."""
+        self.assertNotIn("version.json", install.payload())
 
 
 class PurgeModules(unittest.TestCase):

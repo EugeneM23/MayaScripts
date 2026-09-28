@@ -1,10 +1,17 @@
 """Build the SkeldarAnim distribution archive.
 
-    mayapy make_build.py [--out <path>]
+    mayapy make_build.py [--out <path>] [--version-out <path>]
 
 Writes `SkeldarAnim_<date>.zip` next to the repository folder: the same
 payload the installer copies, wrapped in one `SkeldarAnim/` directory so
 the instruction stays "unzip, drag SkeldarAnim/install.py into Maya".
+
+The archive carries `SkeldarAnim/version.json` -- the commit it was built
+from, for Check update (2026-09-28) -- and `--version-out` writes the same
+record beside it: GitHub Actions publishes both on every push
+(.github/workflows/build.yml), and Maya reads the small one first. A
+release build refuses to run without git: a record naming no commit would
+read as "not current" to every colleague, for ever.
 
 The payload lives in the repo's `SkeldarAnim/` folder (2026-09-01) and
 `install.py` with it, so this script puts that folder on sys.path before
@@ -26,8 +33,8 @@ runs outside Maya. There is no system Python on this machine; use mayapy.
 
 import datetime
 import fnmatch
+import json
 import os
-import subprocess
 import sys
 import zipfile
 
@@ -112,12 +119,22 @@ def entries(src_root, names=None):
 
 
 def _git(src_root, *args):
-    try:
-        out = subprocess.check_output(("git",) + args, cwd=src_root,
-                                      stderr=subprocess.STDOUT)
-    except Exception:
-        return ""
-    return out.decode("utf-8", "replace").strip()
+    return install.git_output(src_root, *args)
+
+
+def version_record(src_root, names=None, day=None):
+    """The installer's git record plus when it was built. The installer
+    owns the shape: it writes the same record for a source install."""
+    names = payload_names() if names is None else names
+    day = day or datetime.datetime.now()
+    record = {"name": install.SHELF}
+    record.update(install.git_record(src_root, names))
+    record["built"] = day.strftime("%Y-%m-%d %H:%M")
+    return record
+
+
+def _json(record):
+    return json.dumps(record, indent=1, ensure_ascii=False) + "\n"
 
 
 def build_info(src_root, names=None, day=None):
@@ -146,7 +163,7 @@ def build_info(src_root, names=None, day=None):
     return "\n".join(lines) + "\n"
 
 
-def write_archive(src_root, out_path, names=None, stamp=None):
+def write_archive(src_root, out_path, names=None, stamp=None, record=None):
     """The payload into `out_path`. Returns the archive names written."""
     written = []
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -156,6 +173,10 @@ def write_archive(src_root, out_path, names=None, stamp=None):
         if stamp:
             arcname = "{0}/{1}".format(install.SHELF, _STAMP)
             zf.writestr(arcname, stamp)
+            written.append(arcname)
+        if record is not None:
+            arcname = "{0}/{1}".format(install.SHELF, install.VERSION_FILE)
+            zf.writestr(arcname, _json(record))
             written.append(arcname)
     return written
 
@@ -181,11 +202,13 @@ def verify(out_path, expected):
     return problems
 
 
-def build(out_path=None, src_root=None, names=None):
+def build(out_path=None, src_root=None, names=None, version_out=None):
     """Write and verify the archive. Returns its path.
 
     A verification failure deletes the archive: a broken build must not
     leave something zip-shaped lying around to be handed off by mistake.
+    `version_out` also writes the version record there -- a release
+    build, which refuses to run without a commit to name.
     """
     src_root = src_root or source_root()
     names = payload_names() if names is None else names
@@ -193,28 +216,49 @@ def build(out_path=None, src_root=None, names=None):
     if absent:
         raise RuntimeError(
             "not in {0}: {1}".format(src_root, ", ".join(absent)))
+    record = version_record(src_root, names)
+    if version_out and not record.get("commit"):
+        raise RuntimeError("a release build needs git: {0} names no "
+                           "commit".format(src_root))
     if out_path is None:
         out_path = os.path.join(default_out_dir(), archive_name())
     out_dir = os.path.dirname(os.path.abspath(out_path))
     if not os.path.isdir(out_dir):
         os.makedirs(out_dir)
     stamp = build_info(src_root, names)
-    written = write_archive(src_root, out_path, names, stamp)
+    written = write_archive(src_root, out_path, names, stamp, record)
     problems = verify(out_path, written)
     if problems:
         os.remove(out_path)
         raise RuntimeError("archive rejected:\n  "
                            + "\n  ".join(problems))
+    if version_out:
+        folder = os.path.dirname(os.path.abspath(version_out))
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        with open(version_out, "w", encoding="utf-8") as handle:
+            handle.write(_json(record))
     return out_path
 
 
+def parse_args(argv):
+    """`(out_path, version_out)` from `--out <p>` / `--version-out <p>`."""
+    argv = list(argv)
+    found = {"--out": None, "--version-out": None}
+    while argv:
+        flag = argv.pop(0)
+        if flag not in found or not argv:
+            raise SystemExit("usage: make_build.py [--out <zip>] "
+                             "[--version-out <json>]")
+        found[flag] = argv.pop(0)
+    return found["--out"], found["--version-out"]
+
+
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    out_path = None
-    if argv and argv[0] == "--out":
-        out_path = argv[1]
+    out_path, version_out = parse_args(
+        sys.argv[1:] if argv is None else argv)
     src_root = source_root()
-    path = build(out_path, src_root)
+    path = build(out_path, src_root, version_out=version_out)
     size = os.path.getsize(path)
     with zipfile.ZipFile(path) as zf:
         files = [n for n in zf.namelist() if not n.endswith("/")]

@@ -15,11 +15,19 @@ maya.cmds exists only inside the running Maya -- so the Maya imports live
 inside the functions that run there.
 """
 
+import json
 import os
 import shutil
+import subprocess
 import sys
 
 SHELF = "SkeldarAnim"
+
+# Which build an installed copy is (2026-09-28, Check update): a build
+# carries this file, and an install from the repository writes its git
+# commit instead. Not a payload row -- the source tree holds none.
+VERSION_FILE = "version.json"
+LOG_LENGTH = 30
 
 # The whitelist. Everything the animator's prefs receive, and nothing
 # else: tests, docs, archive and the other root-level tools stay home.
@@ -41,6 +49,7 @@ _PAYLOAD = (
     "maya_asretarget.py",
     "maya_pmretarget.py",
     "maya_rig_retarget.py",
+    "maya_update.py",
     "install.py",
     "README_INSTALL.txt",
 )
@@ -236,6 +245,77 @@ def copy_payload(src_root, dest):
             shutil.copy2(src, target)
 
 
+def git_output(cwd, *args):
+    """`git <args>` in `cwd`, stripped; "" when git or the repo is absent.
+
+    CREATE_NO_WINDOW on Windows: from the Maya GUI a console program would
+    flash a console window per call.
+    """
+    flags = 0x08000000 if os.name == "nt" else 0
+    try:
+        out = subprocess.check_output(("git",) + args, cwd=cwd,
+                                      stderr=subprocess.DEVNULL,
+                                      creationflags=flags)
+    except Exception:
+        return ""
+    return out.decode("utf-8", "replace").strip()
+
+
+def git_record(src_root, names=None):
+    """The source's commit as a version record; {} without git.
+
+    `log` is the last LOG_LENGTH commits, newest first, `[sha, subject]`:
+    Check update lists the ones newer than what is installed. `dirty`
+    asks about the payload only (`names`, the payload by default).
+    """
+    commit = git_output(src_root, "rev-parse", "HEAD")
+    if len(commit) != 40:
+        return {}
+    names = payload() if names is None else names
+    log = []
+    for line in git_output(src_root, "log", "-{0}".format(LOG_LENGTH),
+                           "--format=%H %s").splitlines():
+        sha, _, subject = line.partition(" ")
+        log.append([sha, subject])
+    return {
+        "name": SHELF,
+        "commit": commit,
+        "short": commit[:7],
+        "subject": git_output(src_root, "log", "-1", "--format=%s"),
+        "date": git_output(src_root, "log", "-1", "--format=%cI"),
+        "branch": git_output(src_root, "rev-parse", "--abbrev-ref", "HEAD"),
+        "dirty": bool(git_output(src_root, "status", "--porcelain", "--",
+                                 *names)),
+        "log": log,
+    }
+
+
+def read_version(folder):
+    """The version record in `folder`, or {}."""
+    try:
+        with open(os.path.join(folder, VERSION_FILE),
+                  encoding="utf-8") as handle:
+            record = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def write_version(src, dest):
+    """`<dest>/version.json`: the build's own when `src` is a build, else
+    the source's git record marked with where it came from."""
+    own = os.path.join(src, VERSION_FILE)
+    if os.path.isfile(own):
+        shutil.copy2(own, os.path.join(dest, VERSION_FILE))
+        return read_version(dest)
+    record = git_record(src)
+    record["source"] = src.replace("\\", "/")
+    with open(os.path.join(dest, VERSION_FILE), "w",
+              encoding="utf-8") as handle:
+        json.dump(record, handle, indent=1, ensure_ascii=False)
+    return record
+
+
 def _build_shelf(dest):
     """The SkeldarAnim tab, rebuilt button-for-button.
 
@@ -276,6 +356,7 @@ def install(dropped=None, quiet=False):
                         "scripts", SHELF)
     if not same_place(src, dest):
         copy_payload(src, dest)
+        write_version(src, dest)
     _build_shelf(dest.replace("\\", "/"))
     reloaded = purge_modules()
     if not quiet:

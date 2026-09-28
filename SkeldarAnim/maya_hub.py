@@ -78,6 +78,9 @@ SECTIONS = (
             "build_panel", "skeldarHubFrameStudio"),
     Section("colour", "Colour", "maya_colour",
             "build_panel", "skeldarHubFrameColour"),
+    #  2026-09-28: Check update, the latest build from GitHub's releases.
+    Section("update", "Update", "maya_update",
+            "build_panel", "skeldarHubFrameUpdate"),
 )
 
 _BY_KEY = dict((s.key, s) for s in SECTIONS)

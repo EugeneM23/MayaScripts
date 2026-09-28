@@ -69,13 +69,14 @@ class FakeToolsMixin(object):
 
 class TheTable(unittest.TestCase):
 
-    def test_seven_sections_in_shelf_order(self):
+    def test_the_sections_in_shelf_order(self):
         """Scene Setup is Characters + Weapons since the evening of
         2026-09-17; Weapons follows Characters (its refresh writes the
-        Characters header)."""
+        Characters header). Update closes the column (2026-09-28)."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["UE Bridge", "Characters", "Weapons", "Connections",
-                          "Retarget", "Hotkeys", "Studio", "Colour"])
+                          "Retarget", "Hotkeys", "Studio", "Colour",
+                          "Update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -87,6 +88,7 @@ class TheTable(unittest.TestCase):
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
             "colour": ("maya_colour", "build_panel"),
+            "update": ("maya_update", "build_panel"),
         }
         for sec in hub.SECTIONS:
             self.assertEqual((sec.module, sec.builder), wanted[sec.key])

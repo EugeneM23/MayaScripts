@@ -1,0 +1,77 @@
+# Every push to the working branch becomes a SkeldarAnim build on the
+# repository's Releases page, marked Latest. Maya's hub > Update >
+# Check update reads releases/latest/download/version.json and, when the
+# commit differs from the installed copy's, downloads SkeldarAnim.zip.
+#
+# Spec: docs/superpowers/specs/2026-09-28-update-button-design.md
+
+name: build
+
+on:
+  push:
+    branches: [feature/overrig-picker]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One release at a time, none cancelled: the last push's build is the
+# last release, which is what "Latest" has to mean.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  KEEP: 10          # builds kept on the Releases page
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the notes read before..sha
+
+      # make_build.py is stdlib only; the runner's own python3 is enough.
+      - name: Build
+        run: python3 make_build.py --out dist/SkeldarAnim.zip --version-out dist/version.json
+
+      - name: Notes
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          {
+            echo "Built from \`${GITHUB_SHA::7}\` on \`${GITHUB_REF_NAME}\`."
+            echo
+            if [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              git log --format='- `%h` %s' "$BEFORE..$GITHUB_SHA"
+            else
+              git log -1 --format='- `%h` %s' "$GITHUB_SHA"
+            fi
+            echo
+            echo "Install: unzip, drag \`SkeldarAnim/install.py\` into a Maya viewport."
+            echo "Update: SkeldarAnim window > Update > Check update."
+          } > dist/notes.md
+          cat dist/notes.md
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="build-$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}"
+          gh release create "$tag" dist/SkeldarAnim.zip dist/version.json \
+            --target "$GITHUB_SHA" \
+            --title "SkeldarAnim $(date -u +%Y-%m-%d) ${GITHUB_SHA::7}" \
+            --notes-file dist/notes.md \
+            --latest
+
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --json tagName,createdAt \
+            --jq '(env.KEEP | tonumber) as $k | [.[] | select(.tagName | startswith("build-"))] | sort_by(.createdAt) | reverse | .[$k:] | .[].tagName' |
+          while read -r tag; do
+            echo "pruning $tag"
+            gh release delete "$tag" --yes --cleanup-tag
+          done

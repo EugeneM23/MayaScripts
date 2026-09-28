@@ -5,8 +5,10 @@ Everything runs against a fake source tree in a temp dir, so the real
 that touches the repository asks only where the composition comes from.
 """
 
+import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -132,6 +134,61 @@ class Build(FakeTree):
         deep = os.path.join(self.root, "a", "b", "dist.zip")
         make_build.build(deep, self.root, self.NAMES)
         self.assertTrue(os.path.isfile(deep))
+
+
+class VersionRecord(FakeTree):
+    """The build's `version.json` (2026-09-28): inside the archive for the
+    installer, beside it for GitHub's release, one record in both."""
+
+    def _git(self, *args):
+        subprocess.check_output(("git",) + args, cwd=self.root,
+                                stderr=subprocess.STDOUT)
+
+    def _commit(self):
+        self._git("init", "-q")
+        self._git("-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+        self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit",
+                  "-q", "-m", "the first build")
+        return subprocess.check_output(
+            ("git", "rev-parse", "HEAD"), cwd=self.root).decode().strip()
+
+    def _record_in(self, path):
+        with zipfile.ZipFile(path) as zf:
+            return json.loads(zf.read(install.SHELF + "/version.json"))
+
+    def test_the_archive_carries_a_record(self):
+        path = make_build.build(self.out, self.root, self.NAMES)
+        rec = self._record_in(path)
+        self.assertEqual(rec["name"], install.SHELF)
+        self.assertIn("built", rec)
+
+    def test_a_committed_tree_records_its_commit(self):
+        head = self._commit()
+        beside = os.path.join(self.root, "out", "version.json")
+        path = make_build.build(self.out, self.root, self.NAMES,
+                                version_out=beside)
+        rec = self._record_in(path)
+        self.assertEqual(rec["commit"], head)
+        self.assertEqual(rec["log"][0], [head, "the first build"])
+        self.assertFalse(rec["dirty"])
+        with open(beside, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), rec)
+
+    def test_a_release_without_git_is_refused(self):
+        """A record with no commit would read as "not current" to every
+        colleague, for ever."""
+        beside = os.path.join(self.root, "out", "version.json")
+        with self.assertRaises(RuntimeError):
+            make_build.build(self.out, self.root, self.NAMES,
+                             version_out=beside)
+        self.assertFalse(os.path.exists(beside))
+
+    def test_the_command_line_takes_both_paths(self):
+        self.assertEqual(
+            make_build.parse_args(["--out", "d/S.zip",
+                                   "--version-out", "d/v.json"]),
+            ("d/S.zip", "d/v.json"))
+        self.assertEqual(make_build.parse_args([]), (None, None))
 
 
 class Verify(FakeTree):
