@@ -5810,3 +5810,14 @@ refraction, the skin's subsurface scattering.
     `get_material_property_input_node(m, MaterialProperty.MP_BASE_COLOR)` walk the whole graph —
     the parameter NAMES alone said "BC_Intensity", the graph said `pow(base·I, C)` after a
     clamped saturation, and which mask channel the tattoos read.
+
+94. **An install with the hub open left the hub on the OLD build** — trap 75 from the
+    installer's side (2026-09-28, the Orc D: «у меня нет возможности выбрать orc d»). The copy
+    and the purge happened, the catalog in memory listed the row, and the dropdown on screen
+    was still the one the old modules had built; nothing rebuilt it until somebody pressed the
+    shelf button (only `maya_update._reopen` did it for them). `install.install` now schedules
+    `rebuild_open_hub(dest)` (`evalDeferred`, lowest priority — an install run from a hub
+    button must not delete the layout holding it) when `HUB_CONTROL` stands: the FRESH
+    `maya_hub`, the installed folder first on `sys.path`, `rebuild()` in the standing control.
+    Measured live: `maya_hub` absent right after the install, then a new module object from the
+    installed copy with `_BUILT_HERE` True and the new row in the dropdown, no press.

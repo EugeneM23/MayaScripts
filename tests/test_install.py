@@ -438,10 +438,19 @@ class InstallOrder(unittest.TestCase):
         def confirmDialog(self, **kwargs):
             self.dialogs.append(kwargs.get("message", ""))
 
+        hub_open = False
+
+        def workspaceControl(self, name, **kwargs):
+            return self.hub_open and name == install.HUB_CONTROL
+
+        def evalDeferred(self, call, **kwargs):
+            self.deferred.append(call)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="skeldar_order_")
         self.order = []
         self.fake = self.FakeCmds(self.tmp + "/")
+        self.fake.deferred = []
         self.saved = (install._cmds, install.copy_payload,
                       install.write_version, install._build_shelf,
                       install.purge_modules)
@@ -487,6 +496,80 @@ class InstallOrder(unittest.TestCase):
         install.install(os.path.join(PLUGIN, "install.py"))
         self.assertIn("previous version", self.fake.dialogs[0])
         self.assertIn("2 modules", self.fake.dialogs[0])
+
+
+class RebuildsTheOpenHub(unittest.TestCase):
+    """An install with the hub open used to leave it showing the OLD build: the modules were
+    purged, the widgets stayed, and nothing rebuilt them until somebody pressed the shelf button
+    (2026-09-28, the Orc D: «у меня нет возможности выбрать orc d» -- the dropdown was the one built
+    before the install). The installer rebuilds it now, deferred like the updater's `_reopen` (an
+    install run from a hub button must not delete the layout holding that button under itself)."""
+
+    FakeCmds = InstallOrder.FakeCmds
+
+    def setUp(self):
+        InstallOrder.setUp(self)
+
+    def tearDown(self):
+        InstallOrder.tearDown(self)
+
+    def test_an_open_hub_is_rebuilt_after_the_install(self):
+        self.fake.hub_open = True
+        install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.assertEqual(len(self.fake.deferred), 1)
+        self.assertTrue(callable(self.fake.deferred[0]))
+
+    def test_no_hub_no_rebuild(self):
+        install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.assertEqual(self.fake.deferred, [])
+
+    def test_the_dialog_says_the_hub_was_rebuilt(self):
+        self.fake.hub_open = True
+        self.purged = ["maya_hub", "maya_scenesetup.catalog"]
+        install.install(os.path.join(PLUGIN, "install.py"))
+        self.assertIn("hub is rebuilt", self.fake.dialogs[0])
+
+
+class RebuildOpenHub(unittest.TestCase):
+    """What the deferred call does: the FRESH maya_hub, from the installed folder, rebuilds the
+    accordion inside the standing control -- where it is docked survives."""
+
+    class Hub(object):
+        def __init__(self, open_):
+            self.open_, self.rebuilt = open_, 0
+
+        def is_open(self):
+            return self.open_
+
+        def rebuild(self):
+            self.rebuilt += 1
+
+    def setUp(self):
+        self.path = list(sys.path)
+
+    def tearDown(self):
+        sys.path[:] = self.path
+
+    def test_the_fresh_hub_rebuilds(self):
+        hub = self.Hub(True)
+        asked = []
+        self.assertTrue(install.rebuild_open_hub("C:/prefs/SkeldarAnim",
+                                                 importer=lambda n: asked.append(n) or hub))
+        self.assertEqual((asked, hub.rebuilt), (["maya_hub"], 1))
+
+    def test_the_installed_folder_is_importable_first(self):
+        install.rebuild_open_hub("C:/prefs/SkeldarAnim", importer=lambda n: self.Hub(True))
+        self.assertIn("C:/prefs/SkeldarAnim", sys.path)
+
+    def test_a_hub_closed_meanwhile_is_left_alone(self):
+        hub = self.Hub(False)
+        self.assertFalse(install.rebuild_open_hub("C:/x", importer=lambda n: hub))
+        self.assertEqual(hub.rebuilt, 0)
+
+    def test_a_failing_rebuild_is_reported_not_raised(self):
+        def boom(name):
+            raise ImportError("no maya_hub")
+        self.assertFalse(install.rebuild_open_hub("C:/x", importer=boom))
 
 
 class PurgeModules(unittest.TestCase):

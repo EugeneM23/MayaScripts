@@ -23,6 +23,10 @@ import sys
 
 SHELF = "SkeldarAnim"
 
+# The hub's workspaceControl (maya_hub.CONTROL). Named here, not imported: at
+# drop time nothing of ours is on sys.path.
+HUB_CONTROL = "skeldarAnimHub"
+
 # Which build an installed copy is (2026-09-28, Check update): a build
 # carries this file, and an install from the repository writes its git
 # commit instead. Not a payload row -- the source tree holds none.
@@ -376,20 +380,56 @@ def install(dropped=None, quiet=False):
     # ...and the flags the shelf just read were the SOURCE's (a temp folder,
     # for the one-file installer): the next import finds the installed copy.
     sys.modules.pop("skeldar_features", None)
+    # An open hub keeps the widgets the OLD modules built (2026-09-28, the
+    # Orc D missing from its dropdown after an install); it is rebuilt from
+    # the new ones once this call has returned -- deferred, as the updater's
+    # `_reopen`, so an install run from a hub button never deletes the layout
+    # holding that button under itself.
+    hub_open = bool(cmds.workspaceControl(HUB_CONTROL, exists=True))
+    if hub_open:
+        target = dest.replace("\\", "/")
+        cmds.evalDeferred(lambda: rebuild_open_hub(target),
+                          lowestPriority=True)
     if not quiet:
         note = ""
         if reloaded:
+            then = ("The open SkeldarAnim hub is rebuilt from\nthe new one;"
+                    " restart Maya if anything still\nlooks old."
+                    if hub_open else
+                    "Close any of our panels that\nare open and reopen them"
+                    " from the shelf; restart\nMaya if anything still looks"
+                    " old.")
             note = ("\n\nThe previous version was loaded in this session"
-                    "\n({0} modules dropped). Close any of our panels that"
-                    "\nare open and reopen them from the shelf; restart"
-                    "\nMaya if anything still looks old.".format(
-                        len(reloaded)))
+                    "\n({0} modules dropped). {1}".format(len(reloaded),
+                                                          then))
         cmds.confirmDialog(
             title="SkeldarAnim",
             message="Installed: shelf {0}, {1} buttons.\n{2}{3}".format(
                 SHELF, buttons, dest, note),
             button=["OK"])
     return dest
+
+
+def rebuild_open_hub(dest, importer=None):
+    """The hub's accordion rebuilt inside its standing control from the FRESH
+    maya_hub -- the installed copy's, `dest` first on sys.path. True when it
+    was rebuilt; a hub closed meanwhile is left alone, and a failure is
+    printed, never raised (this runs deferred, after the install said so)."""
+    if importer is None:
+        import importlib
+        importer = importlib.import_module
+    if dest not in sys.path:
+        sys.path.insert(0, dest)
+    try:
+        hub = importer("maya_hub")
+        if not hub.is_open():
+            return False
+        hub.rebuild()
+        return True
+    except Exception as exc:                                 # noqa: BLE001
+        print("SkeldarAnim: the open hub was not rebuilt ({0}) - press the"
+              " SkeldarAnim shelf button".format(exc))
+        return False
 
 
 def onMayaDroppedPythonFile(*args):

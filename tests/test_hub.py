@@ -104,6 +104,15 @@ class TheTable(unittest.TestCase):
         self.assertIsNone(hub.section("nonsense"))
 
 
+class TheInstallerKnowsTheControl(unittest.TestCase):
+    """install.py names the hub's control itself (nothing of ours is importable at drop time) to
+    rebuild an open hub after an install (2026-09-28); the two names must not drift apart."""
+
+    def test_the_installer_s_name_is_the_hub_s(self):
+        import install
+        self.assertEqual(install.HUB_CONTROL, hub.CONTROL)
+
+
 class TheUiScript(unittest.TestCase):
     """Maya replays it at startup, before any shelf button ran."""
 
