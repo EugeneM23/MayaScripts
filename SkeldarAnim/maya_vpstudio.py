@@ -1458,7 +1458,7 @@ def build_panel():
     cmds.setParent("..")
 
     for start in range(0, len(CHECKS), 2):
-        cmds.rowLayout(numberOfColumns=2, columnWidth2=(150, 150),
+        cmds.rowLayout(numberOfColumns=2, columnWidth2=(140, 140),
                        columnAttach=[(1, "left", 0), (2, "left", 4)])
         for key, label, note in CHECKS[start:start + 2]:
             hubstyle.mark(cmds.checkBox(

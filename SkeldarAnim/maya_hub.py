@@ -375,7 +375,13 @@ def rebuild():
         _SKIN.destroy()
         _SKIN = None
     if cmds.scrollLayout(SCROLL, exists=True):
+        #  Deleting the classic frames runs their collapseCommand (measured
+        #  2026-09-28: every section came back remembered collapsed after a
+        #  classic hub was deleted), so the memory is put back after.
+        memory = dict((s.key, collapsed(s.key)) for s in SECTIONS)
         cmds.deleteUI(SCROLL)
+        for key, value in memory.items():
+            remember(key, value)
     return build()
 
 

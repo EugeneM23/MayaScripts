@@ -304,8 +304,40 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
                                                  or self.controls.get(name))
         hubqt.apply_marks([style.Mark("segRow", "segments", None, True,
                                       None)], self.card, 1.0)
-        self.assertEqual(seen, [True])
+        #  twice: its own mark, then the segments pass
+        self.assertEqual(seen, [True, True])
         self.assertEqual(row.property("skRole"), "segments")
+
+    def test_segments_share_their_track_equally(self):
+        """Measured 2026-09-28: Maya's rowLayout (QmayaRowLayout) places
+        its children at their own widths whatever their stretch says, so
+        the segments move into a row of ours laid over the track."""
+        row = self.control(QtWidgets.QWidget, "track", self.card.body)
+        box = QtWidgets.QHBoxLayout(row)
+        buttons = [self.control(QtWidgets.QPushButton, "seg" + t, row)
+                   for t in ("Free", "Weapon")]
+        for button in buttons:
+            box.addWidget(button)
+        hubqt.apply_marks(
+            [style.Mark("track", "segments", None, True, None),
+             style.Mark("segFree", "segment", None, False, None),
+             style.Mark("segWeapon", "segment", None, False, None)],
+            self.card, 1.0)
+        cover = buttons[0].parentWidget()
+        self.assertIs(cover.parentWidget(), row)
+        self.assertEqual(cover.objectName(), "track_skinSegments")
+        stretch = cover.layout()
+        self.assertEqual([stretch.stretch(i) for i in range(stretch.count())],
+                         [1, 1])
+        self.assertIs(buttons[1].parentWidget(), cover)
+        self.assertGreater(row.minimumHeight(), 0)
+        self.assertEqual(row.minimumWidth(), 0)       # the dock may narrow
+        row.resize(300, 30)
+        QtWidgets.QApplication.sendEvent(
+            row, __import__("PySide6.QtGui", fromlist=["QResizeEvent"])
+            .QResizeEvent(QtCore.QSize(300, 30), QtCore.QSize(10, 10)))
+        self.assertEqual(cover.geometry().width(), 300)
+        self.assertEqual(buttons[0].property("skRole"), "segment")
 
     def test_a_swatch_is_painted_its_colour(self):
         dot = self.control(QtWidgets.QPushButton, "dot1", self.card.body)
@@ -347,6 +379,21 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
         self.assertTrue(slider.isHidden())
         self.assertTrue(label.isHidden())
         self.assertFalse(port.isHidden())
+
+    def test_one_control_refusing_its_look_costs_only_itself(self):
+        good = self.control(QtWidgets.QPushButton, "good", self.card.body)
+        saved = hubqt.find
+
+        def find(name, layout=False):
+            if name == "bad":
+                raise RuntimeError("Internal C++ object already deleted")
+            return saved(name, layout)
+        hubqt.find = find
+        applied = hubqt.apply_marks(
+            [style.Mark("bad", "primary", None, False, None),
+             style.Mark("good", "primary", None, False, None)], self.card, 1.0)
+        self.assertEqual(applied, 1)
+        self.assertEqual(good.property("skRole"), "primary")
 
     def test_a_missing_control_is_skipped(self):
         self.assertEqual(hubqt.apply_marks(

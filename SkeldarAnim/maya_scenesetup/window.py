@@ -695,8 +695,10 @@ def _colour_row(slider, dot_name, annotation, recolour, recolour_note,
             annotation="the next Add brings " + entry.name,
             command=lambda *_a, rgb=entry.rgb: _run(
                 lambda: pick_dot(slider, rgb), status)), entry.rgb)
+    #  the skin hides the slider, so it gets no width there: the row has to
+    #  fit a 360 px dock (measured 2026-09-28, 29 px too wide with it)
     hubstyle.mark(cmds.colorSliderGrp(
-        slider, label="", columnWidth3=(1, 34, 60),
+        slider, label="", columnWidth3=hubstyle.pick((1, 30, 1), (1, 34, 60)),
         rgbValue=colouring.PALETTE[0].rgb, annotation=annotation),
         "swatchonly")
     hubstyle.mark(cmds.button(

@@ -589,6 +589,27 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(hub.say("hello"), "hello")
         self.assertFalse(hub.paint_hotkeys(False))
 
+    def test_leaving_the_classic_hub_keeps_the_collapse_memory(self):
+        """Deleting classic frames runs their collapseCommand (measured):
+        the memory from before the delete is what the skin opens with."""
+        self.fake.optionvars[hub.CLASSIC_VAR] = 1
+        hub.build()
+        self.fake.optionvars[hub.OPTIONVAR.format("colour")] = 0
+        self.fake.existing.add(hub.SCROLL)
+        real_delete = self.fake.deleteUI
+
+        def delete(name, **kwargs):
+            for sec in hub.SECTIONS:                   # what Maya does
+                self.fake.frames[sec.frame]["collapseCommand"]()
+            return real_delete(name, **kwargs)
+        self.fake.deleteUI = delete
+        self.fake.optionvars[hub.CLASSIC_VAR] = 0
+        hub.rebuild()
+        self.assertTrue(hub.is_skinned())
+        self.assertFalse(hub._SKIN.cards["colour"].collapsed())
+        self.assertEqual(self.fake.optionvars[hub.OPTIONVAR.format("colour")],
+                         0)
+
     def test_rebuild_destroys_the_skin_first(self):
         hub.build()
         first = hub._SKIN

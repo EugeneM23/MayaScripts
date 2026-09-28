@@ -935,7 +935,7 @@ def build_panel():
                             height=36), "context")
     for row, choices in _ROWS:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
-                       columnWidth3=(64, 150, hubstyle.tool_width(66)),
+                       columnWidth3=(64, 110, hubstyle.tool_width(66)),
                        columnAlign3=("left", "left", "center"),
                        columnAttach=[(1, "left", 0), (2, "both", 4),
                                      (3, "right", 0)])

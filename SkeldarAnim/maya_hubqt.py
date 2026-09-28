@@ -89,7 +89,15 @@ def find(name, layout=False):
         ptr = omui.MQtUtil.findLayout(name)
     if not ptr:
         return None
-    return q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QWidget)
+    widget = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QWidget)
+    if not q.shiboken.isValid(widget):
+        #  a dead wrapper cached at this address (see _spread): drop it and
+        #  wrap afresh; still dead means nothing to style
+        q.shiboken.invalidate(widget)
+        widget = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QWidget)
+        if not q.shiboken.isValid(widget):
+            return None
+    return widget
 
 
 def path_of(obj):
@@ -604,35 +612,125 @@ def _swatch_sheet(hex_colour, radius, scale):
                                           hubstyle.TOKENS["text"])
 
 
+def _fill_class():
+    """An event filter keeping a widget of ours over the whole of another."""
+    if "fill" not in _CLASSES:
+        q = qt()
+
+        class Fill(q.QtCore.QObject):
+
+            def __init__(self, cover, parent=None):
+                super(Fill, self).__init__(parent)
+                self._cover = cover
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                if event.type() == q.QtCore.QEvent.Resize:
+                    self._cover.setGeometry(obj.rect())
+                return False
+
+        _CLASSES["fill"] = Fill
+    return _CLASSES["fill"]
+
+
+def _spread(row, scale=1.0):
+    """The segments of a Maya rowLayout share its width equally.
+
+    Measured 2026-09-28: the rowLayout's layout is `QmayaRowLayout` (a
+    QHBoxLayout underneath) and it places its children at their own widths
+    whatever their stretch or size policy says -- the segments packed to
+    the left of their track. A minimum width does move them, and would
+    also stop the dock from ever getting narrower. So the buttons go into
+    a row of OURS laid over the track (kept over it on every resize), with
+    equal stretches; the track keeps no minimum width of theirs. Maya
+    finds a moved control by name as before (the subtitle's move proved
+    it). `row` stays referenced while its children are used."""
+    q = qt()
+    w = q.QtWidgets
+    buttons = [child for child in row.children()
+               if isinstance(child, w.QAbstractButton)]
+    if not buttons:
+        return 0
+    cover = _named(w.QWidget(row), row.objectName() + "_skinSegments")
+    box = w.QHBoxLayout(cover)
+    box.setObjectName(row.objectName() + "_skinSegmentsLayout")
+    inset = hubstyle.px(2, scale)
+    box.setContentsMargins(inset, inset, inset, inset)
+    box.setSpacing(inset)
+    height = 0
+    for button in buttons:
+        button.setSizePolicy(w.QSizePolicy.Expanding, w.QSizePolicy.Preferred)
+        box.addWidget(button, 1)
+        height = max(height, button.sizeHint().height())
+    row.setMinimumHeight(height + 2 * inset)
+    watcher = _fill_class()(cover, cover)
+    row.installEventFilter(watcher)
+    cover.setGeometry(row.rect())
+    cover.show()
+    return len(buttons)
+
+
 def apply_marks(marks, card, scale):
     """Turn a builder's marks into the skin: properties, icons, swatches,
     subtitles moved into `card`'s header. Returns how many were applied."""
-    q = qt()
     applied = 0
     size = hubstyle.px(15, scale)
     for mark in marks:
-        widget = find(mark.name, mark.layout)
-        if widget is None:
+        try:
+            if _apply_mark(mark, card, scale, size):
+                applied += 1
+        except Exception:                                    # noqa: BLE001
+            #  one control that will not take its look must not cost the
+            #  whole skin (the hub would fall back to classic)
+            import traceback
+            print("SkeldarAnim hub: no look for {0} ({1})".format(
+                mark.name, mark.role))
+            print(traceback.format_exc())
+    #  The segment tracks last: their buttons have their own marks applied
+    #  by now, and move into the skin's row with them (_spread).
+    for mark in marks:
+        if mark.role != "segments":
             continue
-        applied += 1
-        if mark.role == "subtitle":
-            card.add_subtitle(widget)
-            continue
-        if mark.role == "swatchonly":
-            for child in widget.findChildren(q.QtWidgets.QWidget):
-                if child.objectName() in ("slider", "color"):
-                    child.setVisible(False)
-            widget.setProperty("skRole", "swatchonly")
-            continue
-        widget.setProperty("skRole", mark.role)
-        if mark.role == "swatch":
-            side = min(widget.maximumWidth(), widget.maximumHeight())
-            radius = (side // 2 if side <= hubstyle.px(24, scale)
-                      else hubstyle.px(6, scale))
-            widget.setStyleSheet(_swatch_sheet(mark.colour, radius, scale))
-            continue
-        if mark.icon:
-            colour = hubstyle.TOKENS[_ICON_COLOUR.get(mark.role, "text2")]
-            widget.setProperty("icon", icon(mark.icon, colour, size))
-            widget.setProperty("iconSize", q.QtCore.QSize(size, size))
+        try:
+            row = find(mark.name, True)
+            if row is not None:
+                _spread(row, scale)
+        except Exception:                                    # noqa: BLE001
+            import traceback
+            print(traceback.format_exc())
     return applied
+
+
+def _apply_mark(mark, card, scale, size):
+    """One mark onto its control; False when the control is not there."""
+    q = qt()
+    widget = find(mark.name, mark.layout)
+    if widget is None:
+        return False
+    if mark.role == "subtitle":
+        card.add_subtitle(widget)
+        return True
+    if mark.role == "swatchonly":
+        for child in widget.findChildren(q.QtWidgets.QWidget):
+            if child.objectName() in ("slider", "color"):
+                child.setVisible(False)
+        widget.setProperty("skRole", "swatchonly")
+        return True
+    widget.setProperty("skRole", mark.role)
+    if mark.role == "segments":
+        #  after the segment marks (they come later in the list): see
+        #  apply_marks
+        return True
+    if mark.role == "segment":
+        widget.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,
+                             q.QtWidgets.QSizePolicy.Preferred)
+    if mark.role == "swatch":
+        side = min(widget.maximumWidth(), widget.maximumHeight())
+        radius = (side // 2 if side <= hubstyle.px(24, scale)
+                  else hubstyle.px(6, scale))
+        widget.setStyleSheet(_swatch_sheet(mark.colour, radius, scale))
+        return True
+    if mark.icon:
+        colour = hubstyle.TOKENS[_ICON_COLOUR.get(mark.role, "text2")]
+        widget.setProperty("icon", icon(mark.icon, colour, size))
+        widget.setProperty("iconSize", q.QtCore.QSize(size, size))
+    return True

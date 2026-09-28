@@ -398,7 +398,8 @@ def build_panel():
                                  (3, "left", 0)])
     hubstyle.mark(cmds.colorSliderGrp(
         CUSTOM, label="", rgbValue=colouring.PALETTE[0].rgb,
-        columnWidth3=(1, 36, 60), annotation="any colour off the palette"),
+        columnWidth3=hubstyle.pick((1, 30, 1), (1, 36, 60)),
+        annotation="any colour off the palette"),
         "swatchonly")
     hubstyle.mark(cmds.button(
         label="Paint", height=26,
