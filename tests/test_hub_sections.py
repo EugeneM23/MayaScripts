@@ -246,6 +246,35 @@ class Hotkeys(unittest.TestCase):
         self.assertEqual(self._button_edits()[-1][2]["label"],
                          "Hotkey map: OFF")
 
+    def test_paint_lights_the_skinned_hub_s_header(self):
+        """2026-09-28: the header switch, when a skinned hub stands."""
+        import sys
+        import types
+        painted = []
+        hub = types.ModuleType("maya_hub")
+        hub.is_skinned = lambda: True
+        hub.paint_hotkeys = painted.append
+        saved = sys.modules.get("maya_hub")
+        sys.modules["maya_hub"] = hub
+        try:
+            self.fake.children.remove(maya_hotkeys.PANEL_BUTTON)
+            self.assertTrue(maya_hotkeys.paint(True))
+            hub.is_skinned = lambda: False
+            self.assertFalse(maya_hotkeys.paint(False))
+        finally:
+            sys.modules["maya_hub"] = saved
+        self.assertEqual(painted, [True])
+
+    def test_paint_imports_no_hub(self):
+        import sys
+        saved = sys.modules.pop("maya_hub", None)
+        try:
+            maya_hotkeys.paint(True)
+            self.assertNotIn("maya_hub", sys.modules)
+        finally:
+            if saved is not None:
+                sys.modules["maya_hub"] = saved
+
     def test_paint_with_neither_button_is_quiet(self):
         self.fake.children.remove(maya_hotkeys.PANEL_BUTTON)
         self.assertFalse(maya_hotkeys.paint(True))

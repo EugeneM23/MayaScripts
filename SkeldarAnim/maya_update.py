@@ -334,7 +334,8 @@ def check_update(ask=None):
     except UpdateError as exc:
         return _status("{0} - nothing changed.".format(exc))
     if is_current(installed, latest):
-        return _status("Up to date: " + describe(latest, subject=False))
+        return _status("Up to date: " + describe(latest, subject=False),
+                       state="ok")
     if not (ask or _ask)(confirm_text(installed, latest, dest)):
         return _status("Update cancelled - nothing changed.")
     work = tempfile.mkdtemp(prefix="skeldar_update_")
@@ -369,18 +370,28 @@ def _reopen(message, importer=importlib.import_module):
     importer("maya_hub").show(HUB_SECTION)
     fresh = importer("maya_update")
     fresh.refresh()
-    fresh._status(message)
+    fresh._status(message, state="new")
 
 
 # -------------------------------------------------------------------- UI
 
-def _status(message):
+def _status(message, state=None):
+    """The status line (the classic hub's section) and the skinned hub's
+    header message; state "ok" / "new" colours the header's version chip.
+    Only a hub already imported is told: a message is no reason to import
+    one."""
     print("SkeldarAnim update: " + message)
     try:
         if cmds.text(STATUS, exists=True):
             cmds.text(STATUS, edit=True, label=message)
     except Exception:                                        # noqa: BLE001
         pass
+    hub = sys.modules.get("maya_hub")
+    if hub is not None:
+        try:
+            hub.say(message, state=state)
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
     return message
 
 

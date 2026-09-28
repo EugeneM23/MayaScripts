@@ -17,6 +17,7 @@ The seams are also where the tests hand in a fake panel.
 
 import importlib
 import os
+import sys
 import traceback
 from functools import partial
 
@@ -588,6 +589,16 @@ def paint(active):
         cmds.button(PANEL_BUTTON, edit=True, label=panel_label(active),
                     enableBackground=bool(active), backgroundColor=ON_COLOUR)
         painted = True
+    #  The skinned hub's header switch (2026-09-28). Only a hub already
+    #  imported is asked: a paint is no reason to import one.
+    hub = sys.modules.get("maya_hub")
+    if hub is not None:
+        try:
+            if hub.is_skinned():
+                hub.paint_hotkeys(active)
+                painted = True
+        except Exception:                                    # noqa: BLE001
+            traceback.print_exc()
     return painted
 
 

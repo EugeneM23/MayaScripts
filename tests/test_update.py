@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 import urllib.error
 import zipfile
@@ -407,6 +408,23 @@ class Press(unittest.TestCase):
         self.assertEqual(self.asked, [])
         self.assertEqual(self.installed, [])
 
+    def test_up_to_date_lights_the_header_chip(self):
+        said = []
+        hub = types.ModuleType("maya_hub")
+        hub.say = lambda message, state=None: said.append(state)
+        saved = sys.modules.get("maya_hub")
+        sys.modules["maya_hub"] = hub
+        try:
+            self.install_record(record(A))
+            self.publish(record(A))
+            up.check_update(ask=self.ask(True))
+        finally:
+            if saved is None:
+                sys.modules.pop("maya_hub", None)
+            else:
+                sys.modules["maya_hub"] = saved
+        self.assertEqual(said, ["ok"])
+
     def test_a_new_build_is_asked_about_then_installed(self):
         self.install_record(record(B))
         self.publish(record(D, log=(D, C, B)))
@@ -520,13 +538,56 @@ class Reopen(unittest.TestCase):
                 statuses.append("refresh")
 
             @staticmethod
-            def _status(message):
-                statuses.append(message)
+            def _status(message, state=None):
+                statuses.append((message, state))
 
         modules = {"maya_hub": Hub, "maya_update": Update}
         up._reopen("Updated to x", importer=modules.__getitem__)
         self.assertEqual(shown, ["update"])
-        self.assertEqual(statuses, ["refresh", "Updated to x"])
+        #  "new" colours the skinned header's version chip (2026-09-28)
+        self.assertEqual(statuses, ["refresh", ("Updated to x", "new")])
+
+
+class TheHeaderIsTold(unittest.TestCase):
+    """2026-09-28, the skin: the messages reach the hub's header too -- but
+    only a hub already imported; a message is no reason to import one."""
+
+    def setUp(self):
+        self.saved_cmds = up.cmds
+        self.saved_hub = sys.modules.get("maya_hub")
+        up.cmds = PressCmds(tempfile.gettempdir() + "/")
+        self.said = []
+        hub = types.ModuleType("maya_hub")
+        hub.say = lambda message, state=None: self.said.append((message,
+                                                                state))
+        self.hub = hub
+
+    def tearDown(self):
+        up.cmds = self.saved_cmds
+        if self.saved_hub is None:
+            sys.modules.pop("maya_hub", None)
+        else:
+            sys.modules["maya_hub"] = self.saved_hub
+
+    def test_a_status_reaches_the_header(self):
+        sys.modules["maya_hub"] = self.hub
+        up._status("Update cancelled - nothing changed.")
+        up._status("Up to date: aaaaaaa", state="ok")
+        self.assertEqual(self.said, [
+            ("Update cancelled - nothing changed.", None),
+            ("Up to date: aaaaaaa", "ok")])
+
+    def test_no_hub_imported_imports_none(self):
+        sys.modules.pop("maya_hub", None)
+        up._status("hello")
+        self.assertNotIn("maya_hub", sys.modules)
+
+    def test_a_broken_hub_does_not_break_the_status(self):
+        def explode(message, state=None):
+            raise RuntimeError("boom")
+        self.hub.say = explode
+        sys.modules["maya_hub"] = self.hub
+        self.assertEqual(up._status("hello"), "hello")
 
 
 class Panel(unittest.TestCase):
