@@ -579,6 +579,15 @@ checks; `maya_update._status` writes the card's line and only colours the chip
      `skeldarAnimHubRoot` in the control first (`maya_hubqt.destroy_roots`) — found by name,
      never by module state (trap 75's family).
 
+**And the light follows the mouse** («когда я наводил мышкой на какой-то раздел у него включалась
+подсветка»): the card under the mouse is lit; with the mouse off every card (in the gaps, the
+header, the viewport, another window) the one worked in is lit again — last pressed or focused
+in, or jumped to (`Skin.pinned`; `set_active` pins, `_light` only shows). The same
+application-wide watcher now takes `Enter` (and `Leave` on the root, for leaving to a window
+where no Enter of ours arrives); `card_of` answers None after ONE `isAncestorOf` for everything
+outside the hub, so Maya's own widgets cost one parent walk per entry. Verify gate 27, **27/27
+live**.
+
 ## Connections — the hands on the weapon, on the AdvancedSkeleton rig (2026-09-18)
 
 The animator's ask: «вкладка connections, в которой мы сможем привязывать и
