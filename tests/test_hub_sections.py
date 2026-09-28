@@ -10,6 +10,7 @@ import unittest
 
 import maya_hub
 import maya_hotkeys
+import maya_hubstyle
 import maya_rig_retarget as rr
 from maya_scenesetup import window as scenesetup
 from maya_uebridge import window as uebridge
@@ -42,9 +43,13 @@ class SceneSetup(unittest.TestCase):
         scenesetup.refresh = lambda: None
         scenesetup._advance_swatch = lambda name: None
         scenesetup._bound_root = lambda: None
+        maya_hubstyle.take_marks()
         scenesetup.build_characters_panel()
         self.after_characters = list(self.fake.children)
         scenesetup.build_weapons_panel()
+        self.marks = maya_hubstyle.take_marks()
+        self._unnamed = [n for n in self.fake.children
+                         if n.startswith("button")]
 
     def tearDown(self):
         (scenesetup.cmds, scenesetup.refresh, scenesetup._advance_swatch,
@@ -100,6 +105,111 @@ class SceneSetup(unittest.TestCase):
                          "maya_scenesetup.window")
         self.assertEqual(maya_hub.section("weapons").builder,
                          "build_weapons_panel")
+
+    def _marks(self):
+        return dict((m.name, m) for m in self.marks)
+
+    def test_the_character_line_is_the_card_s_subtitle(self):
+        self.assertEqual(self._marks()[scenesetup._BOUND].role, "subtitle")
+
+    def test_the_character_dropdown_needs_no_label(self):
+        menus = [c for c in self.fake.calls if c[0] == "optionMenu"
+                 and c[1] == (scenesetup._CHARACTER,) and not c[2].get("edit")]
+        self.assertNotIn("label", menus[0][2])
+
+    def test_eight_palette_dots_per_colour_row(self):
+        from maya_scenesetup import colour as colouring
+        marks = self._marks()
+        for pattern in (scenesetup._CHARACTER_DOT, scenesetup._WEAPON_DOT):
+            for index, entry in enumerate(colouring.PALETTE):
+                mark = marks[pattern.format(index)]
+                self.assertEqual(mark.role, "swatch")
+                self.assertEqual(mark.colour, maya_hubstyle.hex_of(entry.rgb))
+
+    def test_a_dot_sets_its_swatch(self):
+        from maya_scenesetup import colour as colouring
+        dot = [c for c in self.fake.calls if c[0] == "button"
+               and c[1] == (scenesetup._WEAPON_DOT.format(2),)][0]
+        dot[2]["command"]()
+        edits = [c for c in self.fake.calls if c[0] == "colorSliderGrp"
+                 and c[1] == (scenesetup._WEAPON_COLOUR,) and c[2].get("edit")]
+        self.assertEqual(tuple(edits[-1][2]["rgbValue"]),
+                         tuple(colouring.PALETTE[2].rgb))
+
+    def test_the_swatches_show_only_the_swatch_in_the_skin(self):
+        marks = self._marks()
+        for name in (scenesetup._CHARACTER_COLOUR, scenesetup._WEAPON_COLOUR):
+            self.assertEqual(marks[name].role, "swatchonly")
+
+    def test_one_primary_action_per_section(self):
+        roles = self._button_roles()
+        self.assertEqual(roles["Add Character"], ("primary", "plus"))
+        self.assertEqual(roles["Camera Setup"], ("secondary", "camera"))
+        self.assertEqual(roles["Add"], ("primary", "plus"))
+        self.assertEqual(roles["Remove Weapon"], ("danger", "trash"))
+        primaries = [label for label, (role, _i) in roles.items()
+                     if role == "primary"]
+        self.assertEqual(sorted(primaries), ["Add", "Add Character"])
+
+    def test_recolour_is_a_brush_tool_on_both(self):
+        tools = [m for m in self.marks if m.role == "tool"
+                 and m.icon == "brush"]
+        self.assertEqual(len(tools), 2)
+
+    def test_add_and_remove_share_a_row(self):
+        index = self._created_index()
+        add, remove = index["Add"], index["Remove Weapon"]
+        rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"]
+        row = max(i for i in rows if i < add)
+        self.assertLess(row, remove)
+        between = [c for c in self.fake.calls[add:remove]
+                   if c[0] == "setParent"]
+        self.assertEqual(between, [])
+
+    def test_the_status_lines_are_marked(self):
+        marks = self._marks()
+        for name in (scenesetup._STATUS, scenesetup._CHARACTER_STATUS):
+            self.assertEqual(marks[name].role, "status")
+
+    def test_the_folder_button_fills_the_fbx_field(self):
+        self.assertEqual(self._marks()[scenesetup._BROWSE].icon, "folder")
+        saved = scenesetup.custom_changed
+        changed = []
+        scenesetup.custom_changed = lambda: changed.append(True)
+        try:
+            self.fake.fileDialog2 = lambda **kw: ["C:/weapons/Axe.fbx"]
+            self.assertEqual(scenesetup.browse_fbx(), "C:/weapons/Axe.fbx")
+            edits = [c for c in self.fake.calls if c[0] == "textFieldGrp"
+                     and c[2].get("edit")]
+            self.assertEqual(edits[-1][2]["text"], "C:/weapons/Axe.fbx")
+            self.assertEqual(changed, [True])
+            self.fake.fileDialog2 = lambda **kw: None
+            self.assertIsNone(scenesetup.browse_fbx())
+            self.assertEqual(changed, [True])
+        finally:
+            scenesetup.custom_changed = saved
+
+    def _created_index(self):
+        return dict((c[2].get("label"), i) for i, c in
+                    enumerate(self.fake.calls) if c[0] == "button"
+                    and not c[2].get("edit") and c[2].get("label"))
+
+    def _button_roles(self):
+        """label -> (role, icon) for the marked buttons, by the name the
+        fake handed back for each creation."""
+        marks = self._marks()
+        names = [c for c in self.fake.calls if c[0] == "button"
+                 and not c[2].get("edit")]
+        out = {}
+        for call in names:
+            label = call[2].get("label")
+            name = call[1][0] if call[1] else None
+            if name is None:
+                #  unnamed: the fake's own counter name, in creation order
+                name = self._unnamed.pop(0)
+            if name in marks and label:
+                out[label] = (marks[name].role, marks[name].icon)
+        return out
 
     def test_the_standalone_window_is_gone(self):
         self.assertFalse(hasattr(scenesetup, "WINDOW"))

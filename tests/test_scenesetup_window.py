@@ -162,12 +162,14 @@ class Messages(unittest.TestCase):
         self.assertNotIn("picker", window.NO_CHARACTER.lower())
 
     def test_bound_says_rig_or_skeleton(self):
+        """No "Character:" prefix since 2026-09-28: in the skin the line is
+        the subtitle of the card called Characters."""
         self.assertEqual(window.bound_message("|root", rig=True),
-                         "Character: root (rig)")
+                         "root (rig)")
         self.assertEqual(window.bound_message("|clip:root", rig=False),
-                         "Character: clip:root (skeleton)")
+                         "clip:root (skeleton)")
         self.assertEqual(window.bound_message("|SKM_Manny|root"),
-                         "Character: root (skeleton)")
+                         "root (skeleton)")
 
     def test_missing_bone_names_the_bone_and_the_character(self):
         message = window.missing_bone_message("|SKM_Manny|root", "weapon_r")

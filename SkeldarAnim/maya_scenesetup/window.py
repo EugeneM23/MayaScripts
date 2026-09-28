@@ -27,6 +27,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubstyle as hubstyle
 from maya_overrig import aimrig
 
 from maya_scenesetup import attach
@@ -50,6 +51,9 @@ _CUSTOM = "mayaSceneSetupCustomFbx"
 _CHARACTER = "mayaSceneSetupCharacter"
 _CHARACTER_COLOUR = "mayaSceneSetupCharacterColour"
 _WEAPON_COLOUR = "mayaSceneSetupWeaponColour"
+_CHARACTER_DOT = "mayaSceneSetupCharDot{0}"     # the palette dots (2026-09-28)
+_WEAPON_DOT = "mayaSceneSetupWeaponDot{0}"
+_BROWSE = "mayaSceneSetupBrowseFbx"
 
 # The grip is BONE-relative (2026-08-25, the user's ruling): zeros mean the
 # sword exactly on weapon_r, and the numbers survive any reparenting. That
@@ -125,8 +129,10 @@ def bound_message(root, rig=False):
     """The header: which character the presses act on, and what it is."""
     if not root:
         return "no character"
-    return "Character: {0} ({1})".format(root.split("|")[-1],
-                                         "rig" if rig else "skeleton")
+    #  No "Character:" prefix since 2026-09-28: in the skin this line is the
+    #  subtitle of a card that already says Characters.
+    return "{0} ({1})".format(root.split("|")[-1],
+                              "rig" if rig else "skeleton")
 
 
 def missing_bone_message(root, bone):
@@ -649,62 +655,106 @@ def show_weapons():
     return maya_hub.show(HUB_WEAPONS)
 
 
+def browse_fbx():
+    """The folder button beside the weapon list: pick any .fbx and it goes
+    into the FBX field, exactly as a pasted path would. Cancel: nothing."""
+    picked = cmds.fileDialog2(fileMode=1, caption="Attach an FBX",
+                              fileFilter="FBX (*.fbx *.FBX)")
+    if not picked:
+        return None
+    cmds.textFieldGrp(_CUSTOM, edit=True, text=picked[0])
+    custom_changed()
+    return picked[0]
+
+
+def pick_dot(slider, rgb):
+    """A palette dot pressed: its colour into the swatch beside it -- the
+    colour of the next Add. Nothing in the scene changes."""
+    _set_swatch(slider, rgb)
+    return rgb
+
+
+def _colour_row(slider, dot_name, annotation, recolour, recolour_note,
+                status):
+    """The palette as eight dots, the swatch, the brush that Recolours.
+
+    One row: the dots choose the next Add's colour, the swatch shows it (and
+    opens Maya's chooser for any other), the brush puts it on what is in the
+    scene. The skin shows the swatch alone (`swatchonly`); the classic hub
+    keeps the swatch's slider.
+    """
+    count = len(colouring.PALETTE)
+    attach_ = [(i + 1, "left", 2) for i in range(count)]
+    attach_ += [(count + 1, "left", 6), (count + 2, "right", 0)]
+    cmds.rowLayout(numberOfColumns=count + 2, adjustableColumn=count + 1,
+                   columnAttach=attach_)
+    for index, entry in enumerate(colouring.PALETTE):
+        hubstyle.swatch(cmds.button(
+            dot_name.format(index), label="", width=18, height=18,
+            backgroundColor=entry.rgb,
+            annotation="the next Add brings " + entry.name,
+            command=lambda *_a, rgb=entry.rgb: _run(
+                lambda: pick_dot(slider, rgb), status)), entry.rgb)
+    hubstyle.mark(cmds.colorSliderGrp(
+        slider, label="", columnWidth3=(1, 34, 60),
+        rgbValue=colouring.PALETTE[0].rgb, annotation=annotation),
+        "swatchonly")
+    hubstyle.mark(cmds.button(
+        label=hubstyle.tool_label("Recolour"),
+        width=hubstyle.tool_width(80), height=24, annotation=recolour_note,
+        command=lambda *_a: _run(recolour, status)), "tool", "brush")
+    cmds.setParent("..")
+
+
 def build_characters_panel():
-    """The Characters section: which character, the colour, Add Character."""
+    """The Characters section: which character, the colour, Add Character.
+
+    2026-09-28 (the skin): the character line is the card's subtitle, the
+    dropdown needs no label under a card called Characters, the palette is
+    eight dots, and Add Character is the section's one primary action.
+    """
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", 8))
+                               columnOffset=("both", hubstyle.pick(0, 8)))
 
-    cmds.text(_BOUND, label="", align="left")
+    hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
 
-    cmds.optionMenu(_CHARACTER, label="Character",
+    cmds.optionMenu(_CHARACTER,
                     annotation="What Add Character puts into the scene. "
-                               "Manny [rig] is the AdvancedSkeleton rig "
-                               "(one per scene) - the character the UE "
-                               "Bridge retargets onto. The [skeleton] rows "
-                               "are bare skeletons: Manny UE5 with geometry "
-                               "and a camera bone, and the 68-bone UE4 "
-                               "Mannequin the Longsword/SwordAnimsetPro "
-                               "packs animate (no weapon_r, no camera_bone).",
+                               "The [rig] rows are AdvancedSkeleton rigs - "
+                               "the characters the UE Bridge retargets onto; "
+                               "the [skeleton] rows are bare skeletons.",
                     changeCommand=lambda *_args: _run(character_changed,
                                                       _CHARACTER_STATUS))
     for label in catalog.character_labels():
         cmds.menuItem(label=label)
 
-    # The swatch and its Recolour button share a row: the button acts on the
-    # swatch beside it, and a full-width button of its own would read as a
-    # step in the sequence rather than as that swatch's verb.
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 4)])
-    cmds.colorSliderGrp(_CHARACTER_COLOUR, label="Colour",
-                        columnWidth3=(50, 50, 70),
-                        rgbValue=colouring.PALETTE[0].rgb,
-                        annotation="The colour the next Add Character will "
-                                   "bring. It is refilled with the next "
-                                   "unused colour after every press, so two "
-                                   "characters never arrive the same even if "
-                                   "you never touch it.")
-    cmds.button(label="Recolour", width=90,
-                annotation="Put this colour on the character that is "
-                           "CONNECTED now, instead of on the next one added.",
-                command=lambda *_a: _run(recolour_character,
-                                         _CHARACTER_STATUS))
-    cmds.setParent("..")
+    _colour_row(_CHARACTER_COLOUR, _CHARACTER_DOT,
+                "The colour the next Add Character will bring. It is "
+                "refilled with the next unused colour after every press, so "
+                "two characters never arrive the same even if you never "
+                "touch it.",
+                recolour_character,
+                "Recolour: put this colour on the character that is "
+                "CONNECTED now, instead of on the next one added.",
+                _CHARACTER_STATUS)
 
-    cmds.button(label="Add Character", height=30,
-                annotation="Import the chosen rig or skeleton into this "
-                           "scene -- no manual open. Skeletons as many as "
-                           "you like; the rig once per scene.",
-                command=lambda *_args: _run(add_character,
-                                            _CHARACTER_STATUS))
-    cmds.button(label="Camera Setup", height=24,
-                annotation="A camera on the character's camera_root, the "
-                           "bone's animation baked onto it, the bone driven "
-                           "by the camera from then on - what the retarget "
-                           "does at its end. A second press bakes the bone "
-                           "back and removes the camera.",
-                command=lambda *_args: _run(camera_setup, _CHARACTER_STATUS))
-    cmds.text(_CHARACTER_STATUS, label="", align="left", wordWrap=True,
-              height=36)
+    hubstyle.mark(cmds.button(
+        label="Add Character", height=32,
+        annotation="Import the chosen rig or skeleton into this scene -- no "
+                   "manual open. As many as you like, each rig in its own "
+                   "namespace.",
+        command=lambda *_args: _run(add_character, _CHARACTER_STATUS)),
+        "primary", "plus")
+    hubstyle.mark(cmds.button(
+        label="Camera Setup", height=26,
+        annotation="A camera on the character's camera_root, the bone's "
+                   "animation baked onto it, the bone driven by the camera "
+                   "from then on - what the retarget does at its end. A "
+                   "second press bakes the bone back and removes the camera.",
+        command=lambda *_args: _run(camera_setup, _CHARACTER_STATUS)),
+        "secondary", "camera")
+    hubstyle.mark(cmds.text(_CHARACTER_STATUS, label="", align="left",
+                            wordWrap=True, height=36), "status")
 
     cmds.setParent("..")
     # The remembered skeleton, restored before anything reads the menu. A
@@ -726,70 +776,80 @@ def build_weapons_panel():
 
     Built AFTER the Characters section (hub order), and `refresh` - which
     writes the Characters header - runs from here, so both sections exist
-    by the time it does.
+    by the time it does. 2026-09-28 (the skin): a folder button picks any
+    FBX, Add and Remove share a row, the palette is dots.
     """
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", 8))
+                               columnOffset=("both", hubstyle.pick(0, 8)))
 
-    cmds.optionMenu(_MENU, label="Weapon",
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 4)])
+    cmds.optionMenu(_MENU, annotation="The weapon Add brings, and the bone "
+                                      "it drives",
                     changeCommand=lambda *_args: _run(refresh))
     for label in catalog.labels():
         cmds.menuItem(label=label)
+    hubstyle.mark(cmds.button(
+        _BROWSE, label=hubstyle.tool_label("FBX..."),
+        width=hubstyle.tool_width(50), height=24,
+        annotation="Pick any .fbx to attach instead of the weapon in the "
+                   "list",
+        command=lambda *_args: _run(browse_fbx)), "tool", "folder")
+    cmds.setParent("..")
 
     cmds.textFieldGrp(_CUSTOM, label="FBX", text=_remembered_path(),
-                      columnWidth2=(60, 150), adjustableColumn=2,
+                      columnWidth2=(40, 150), adjustableColumn=2,
                       annotation="Paste the path to any .fbx to attach it "
                                  "instead of the weapon in the dropdown. The "
                                  "bone comes from the dropdown; the scale is "
                                  "1. Clear the field to go back to the list.",
                       changeCommand=lambda *_args: _run(custom_changed))
 
-    cmds.button(label="Add", height=30,
-                annotation="Import the weapon under the hand bone, move any "
-                           "weapon-bone animation onto it, and drive the "
-                           "bone from the weapon. Replaces what a previous "
-                           "Add put there, animation preserved.",
-                command=lambda *_args: _run(add_weapon))
-    cmds.button(label="Remove Weapon", height=24,
-                annotation="Bake the weapon bone's animation back from the "
-                           "weapon, then delete the weapon and its "
-                           "constraint. Deleting the sword by hand instead "
-                           "loses that animation.",
-                command=lambda *_args: _run(remove_weapon))
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 4)])
+    hubstyle.mark(cmds.button(
+        label="Add", height=32,
+        annotation="Import the weapon into the hand, move any weapon-bone "
+                   "animation onto it, and drive the bone from the weapon. "
+                   "Replaces what a previous Add put there, animation "
+                   "preserved.",
+        command=lambda *_args: _run(add_weapon)), "primary", "plus")
+    hubstyle.mark(cmds.button(
+        label="Remove Weapon", height=32, width=130,
+        annotation="Bake the weapon bone's animation back from the weapon, "
+                   "then delete the weapon and its constraint. Deleting the "
+                   "sword by hand instead loses that animation.",
+        command=lambda *_args: _run(remove_weapon)), "danger", "trash")
+    cmds.setParent("..")
 
     cmds.floatFieldGrp(_ROTATE, numberOfFields=3, label="Rotate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
-                       columnWidth4=(60, 75, 75, 75),
+                       columnWidth4=(64, 70, 70, 70),
                        annotation="Grip rotation relative to the weapon "
                                   "bone. Zeros put the weapon exactly on "
                                   "weapon_r.",
                        changeCommand=lambda *_args: _run(offsets_changed))
     cmds.floatFieldGrp(_TRANSLATE, numberOfFields=3, label="Translate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
-                       columnWidth4=(60, 75, 75, 75),
+                       columnWidth4=(64, 70, 70, 70),
                        annotation="Grip position relative to the weapon "
                                   "bone. Zeros put the weapon exactly on "
                                   "weapon_r.",
                        changeCommand=lambda *_args: _run(offsets_changed))
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 4)])
-    cmds.colorSliderGrp(_WEAPON_COLOUR, label="Colour",
-                        columnWidth3=(50, 50, 70),
-                        rgbValue=colouring.PALETTE[0].rgb,
-                        annotation="The colour the next Add will give the "
-                                   "weapon. One palette for characters and "
-                                   "weapons together, so a sword never "
-                                   "arrives the colour of the hand holding "
-                                   "it.")
-    cmds.button(label="Recolour", width=90,
-                annotation="Put this colour on the weapon already attached, "
-                           "instead of on the next one added.",
-                command=lambda *_a: _run(recolour_weapon))
-    cmds.setParent("..")
+
+    _colour_row(_WEAPON_COLOUR, _WEAPON_DOT,
+                "The colour the next Add will give the weapon. One palette "
+                "for characters and weapons together, so a sword never "
+                "arrives the colour of the hand holding it.",
+                recolour_weapon,
+                "Recolour: put this colour on the weapon already attached, "
+                "instead of on the next one added.",
+                _STATUS)
 
     #  wordWrap: a long refusal must not widen the hub's whole column;
     #  two lines tall, or the wrapped second line is clipped (hub, 2026-09-17).
-    cmds.text(_STATUS, label="", align="left", wordWrap=True, height=36)
+    hubstyle.mark(cmds.text(_STATUS, label="", align="left", wordWrap=True,
+                            height=36), "status")
 
     cmds.setParent("..")
     _run(refresh)
