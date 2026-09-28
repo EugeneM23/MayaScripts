@@ -588,6 +588,14 @@ where no Enter of ours arrives); `card_of` answers None after ONE `isAncestorOf`
 outside the hub, so Maya's own widgets cost one parent walk per entry. Verify gate 27, **27/27
 live**.
 
+**…but not back to a closed card, and not at once** (minutes later: «если я убираю курсор с
+раздела, то подсветка перепрыгивает на последний активный раздел ... картинка как бы мигает.
+Давай будем переключать подсветку на последний активный раздел только если он открыт»): off
+every card the light goes to `Skin.resting()` — the pinned card only while it is OPEN, else
+nothing — and only after `FALLBACK_MS` (150) on a single-shot timer that entering another card
+cancels, so crossing the gap between two cards no longer flashes the pinned one. Gate 27 checks
+the pause, the closed case and the open case: **27/27 live**.
+
 ## Connections — the hands on the weapon, on the AdvancedSkeleton rig (2026-09-18)
 
 The animator's ask: «вкладка connections, в которой мы сможем привязывать и
