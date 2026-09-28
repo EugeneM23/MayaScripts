@@ -35,6 +35,13 @@ a red one on the back and FBX's `Default_Material` on the body, which wore none 
 a ReflectionFactor of 0.5. Now the one shader (maya_scenesetup.colour: SHADER wearing LOOK, the
 values Cascadeur writes in its own FBX) in a light neutral grey, NEUTRAL, and the read-back checks
 it: one material, on all five, phong, diffuse 1, specular 0.2, no reflection.
+
+At 30 fps since 2026-09-28: the file was written at the asset's own `film` (24) and Cascadeur,
+whose scenes and the Atone project run at 30, warned about the mismatch on every import. Seen in
+Cascadeur itself that day (its script server): the character stands up (pelvis 95.9, head 167.8,
+left foot on +X), `Armature` at the top, one material `Creep_Mat` read as base 0.8, roughness 0.8,
+reflectance 0 -- metallic 0.5 and ambient occlusion 0.5 are its importer's constants, the same for
+its own FBX of this creature and for any material we tried.
 """
 import math
 import os
@@ -92,6 +99,12 @@ for mat in cmds.ls(materials=True):
     if cmds.attributeQuery("skeldarColour", node=mat, exists=True):
         cmds.deleteAttr(mat + ".skeldarColour")
 print("asset: %d joints, %d skins" % (len(joints), len(cmds.ls(type="skinCluster"))))
+# the file's frame rate is the project's, 30 (trap 80), not the asset's `film`: a skeletal mesh
+# carries no keys, but the rate is still written, and at 24 Cascadeur said «Incompatible fps.
+# Scene: 30, fbx: 24» on every import (measured 2026-09-28). No time curve is in the scene to retime.
+time_curves = cmds.ls(type=("animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT"))
+print("time curves in the scene: %d; frame rate %s -> ntsc" % (len(time_curves), cmds.currentUnit(q=True, time=True)))
+cmds.currentUnit(time="ntsc", updateAnimation=False)
 
 if os.path.exists(OUT) and not OVERWRITE:
     raise RuntimeError("%s exists -- not overwriting it (--overwrite)" % OUT)

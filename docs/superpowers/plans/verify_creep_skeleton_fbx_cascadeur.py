@@ -9,7 +9,8 @@ The animator: «сделай мне экспорт персонажа creep с �
 SKM_Manny_Simple the Creep was re-bound onto, whose frame 0 IS the Creep's bind pose.  What Cascadeur
 does with a file it does to both alike; where the two files agree, it reads ours as its own.
 
-1. the header, read from each file: up +Y, front +Z, coord +X, unit scale 1;
+1. the header, read from each file: up +Y, front +Z, coord +X, unit scale 1, time mode 6 (30 fps --
+   the project's rate and Cascadeur's; at 24 its importer warned on every import, 2026-09-28);
 2. the top of the tree, read from each file: a Null at Lcl Rotation (-90, 0, 0) holding `root`,
    root at Cascadeur's own local values with no PreRotation, the five meshes at the top of the scene
    beside the Null with Cascadeur's transforms -- the group is the character's (`Creep`), the rest is
@@ -125,7 +126,7 @@ def file_view(path):
     v = lambda k: (g.get(k) or [None])[0]
     axes = ("%s%s" % ("+" if v("UpAxisSign") == 1 else "-", "XYZ"[v("UpAxis")]),
             "%s%s" % ("+" if v("FrontAxisSign") == 1 else "-", "XYZ"[v("FrontAxis")]),
-            "%s%s" % ("+" if v("CoordAxisSign") == 1 else "-", "XYZ"[v("CoordAxis")]), v("UnitScaleFactor"))
+            "%s%s" % ("+" if v("CoordAxisSign") == 1 else "-", "XYZ"[v("CoordAxis")]), v("UnitScaleFactor"), v("TimeMode"))
     models = dict((m.props[0], m) for m in kid(doc, "Objects").children if m.name == "Model")
     parent = {}
     for c in kid(doc, "Connections").children:
@@ -147,8 +148,8 @@ def close(a, b, tol):
 
 ax_o, file_o = file_view(OURS)
 ax_c, file_c = file_view(CASC)
-gate(1, ax_o == ax_c == ("+Y", "+Z", "+X", 1.0),
-     "the header: ours up %s front %s coord %s unit %s -- Cascadeur's %s %s %s %s" % (ax_o + ax_c))
+gate(1, ax_o == ax_c == ("+Y", "+Z", "+X", 1.0, 6),
+     "the header: ours up %s front %s coord %s unit %s time mode %s -- Cascadeur's %s %s %s %s %s" % (ax_o + ax_c))
 
 null_c = [n for n, v in file_c.items() if v[0] == "Null" and not v[1]]
 null_o = [n for n, v in file_o.items() if v[0] == "Null" and not v[1]]

@@ -3119,9 +3119,25 @@ hour («сделай все самостоятельно»), so every choice her
   Cascadeur's numbers; the animation export's top node is `Armature`);
   `verify_creep_skeleton_fbx_cascadeur.py` **6/6** (gate 6: one material in the file on all five
   meshes, specular/shininess/reflectivity equal to Cascadeur's own body material);
-  `verify_cascadeur_layout.py` **9/9**; 2249 unit tests. **Not verified: Cascadeur's viewport** —
-  installed and running, but its script runner starts from its own menu (`MCP.Start script
-  server`) on 127.0.0.1:8765, which another session's server held that afternoon.
+  `verify_cascadeur_layout.py` **9/9**; 2249 unit tests.
+- **Seen in Cascadeur itself, 2026-09-28** (its script server, menu **Scripts → MCP → Start script
+  server**, 127.0.0.1:8765; each file imported into a tab of its own, the window photographed with
+  Win32 `PrintWindow`). `Creep_Skeleton.fbx`: `Armature` at the top, the character standing (pelvis
+  Y 95.9, head 167.8, foot 8.2, left on +X), ONE `Creep_Mat` read as base 0.8, roughness 0.8,
+  reflectance 0. The export before (three materials) came in at base 0.5 × factor 0.8 on the arms
+  and face, red on the back, FBX's `Default_Material` on the body — **dark on screen, next to ours
+  light**: that was the complaint. **metallic 0.5 and ambient occlusion 0.5 are Cascadeur's importer
+  constants** — the same for a blinn, our phong, a material-less mesh and Cascadeur's own FBX of the
+  creature; nothing in a file moves them. Roughness follows the file (phong spec 0.2 → 0.8, blinn
+  → 0.937, none → 0.75). Its viewport shows materials only with textures on (`MeshObject.
+  always_show_textures`; off, even a red handle draws clay grey). Cascadeur's own file looks more
+  detailed because it EMBEDS textures — per group a diffuse (dark brown scans) and a normal map,
+  2048², six images — and Cascadeur draws the normal maps; ours carry none. Not the smoothing
+  groups (an export without them looked the same) and not the normals (both files' normals sit on
+  their surfaces alike: arm median 0.68° against 0.72°, p90 26° against 27°, same polygon order).
+  And the file is at **30 fps** since (`export_creep_skeleton_fbx.py`; TimeMode 6, Cascadeur's own):
+  at the asset's 24 Cascadeur warned «Incompatible fps. Scene: 30, fbx: 24» on every import.
+  `verify_creep_skeleton_fbx_cascadeur.py` **6/6** with the time mode in gate 1.
 
 81. **`FBXExportUpAxis z` writes a Z-up HEADER and leaves the turn on `root`.** Measured
     2026-09-25 on our Y-up skeleton: the file declares up +Z, front −Y (Unreal's header), but
