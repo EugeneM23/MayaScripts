@@ -87,7 +87,10 @@ def hard_edges(name):
 
 cmds.file(new=True, force=True)
 cmds.file(ASSET, i=True, executeScriptNodes=False)
-joints = cmds.ls("|root", dag=True, type="joint", long=True)
+# the asset stands in the FBX's own layout since 2026-09-28 (`Armature` over `root`,
+# make_creep_armature_layout.py); fbxlayout.wrapped then writes that Null as it is
+ROOT = (cmds.ls("|Armature|root", type="joint", long=True) or cmds.ls("|root", type="joint", long=True))[0]
+joints = cmds.ls(ROOT, dag=True, type="joint", long=True)
 before = dict((m, shown(m)) for m in MESHES)
 hard_before = dict((m, hard_edges(m)) for m in MESHES)
 print("the asset's smoothing (hard, edges):", hard_before)
@@ -137,7 +140,7 @@ for option in ("FBXExportSkins -v true", "FBXExportShapes -v true", "FBXExportSm
                "FBXExportBakeComplexAnimation -v false", "FBXExportEmbeddedTextures -v false",
                "FBXExportSkeletonDefinitions -v true", "FBXExportUpAxis y", "FBXExportInAscii -v false"):
     mel.eval(option)
-with fbxlayout.wrapped("|root", fbxlayout.WRAPPER_NAME) as (wrapper, note):
+with fbxlayout.wrapped(ROOT, fbxlayout.WRAPPER_NAME) as (wrapper, note):
     assert wrapper, note
     # the wrapper is part of the skeleton's hierarchy now, and the exporter drops the bind pose
     # whole over a node missing from it (trap 79; measured again: «Unable to find the bind pose

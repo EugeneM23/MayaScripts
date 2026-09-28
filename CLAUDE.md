@@ -5684,6 +5684,46 @@ animator's `Sweep Fall.fbx`); 55 unit tests.
   module function takes a `rig` — see the many-rigs section. The animator's hand-made
   `shelfButton9`/`shelfButton32` were replaced by the 2026-09-07 re-install.
 
+## The Creep in its FBX's layout: `Armature` over `root` in the scene (2026-09-28)
+
+The animator: «При добавлении крипа у нас добавляется не последняя версия скелета. Последняя
+версия скелета вот тут C:\!!!Work\Animations\Rigs\Characters\Creep_Skeleton.fbx». **Measured
+first: the same skeleton** — that FBX is `export_creep_skeleton_fbx.py`'s, from our own
+`assets/Creep_Skeleton.ma`: 91 bones, the hierarchy, the pose to 0.0 cm / 0.0°, five meshes to
+0.0001 cm, uvs 0.0, weights to the FBX's 0.003. What differed was the LAYOUT — asked: «Структура
+сцены», and why: «Как в файле, единообразно» + «И риг крипа тоже». So both Creep assets now stand
+in Cascadeur's layout in the scene: a transform `Armature` at the origin turned -90 X, `root` under
+it with what is left of its jointOrient (2e-5, -4e-5, -3e-5 — the FBX's own PreRotation) and, on the
+skeleton, its translate in the Null's space; the rig's root rides Main by its parentConstraint,
+which re-solves; the clean skeleton's five meshes at the top beside `Armature` (the `|Creep` group
+gone), the rig's in `Group|Geometry`; the bind pose saved again whole over the joints AND the Null
+(trap 79). `make_creep_armature_layout.py` (mayapy, in place, idempotent) did it: every joint
+moved 3e-14, every vertex 0.0, skins at bind unchanged (3.84e-6 on ik_hand_l, as before), the rig
+posed through Main/RootX_M and back to 5e-7. `make_creep_skeleton_asset.py` knows both layouts and
+keeps the Null; the layout script after it takes the meshes out (a rebuild from the new rig gave the
+same asset). A second Creep skeleton arrives with its Null renamed (the top node clashes) and its
+`root` still called `root`.
+
+**The exports read the standing layout** (`maya_uebridge.fbxlayout`): `in_layout` (pure — the
+parent a plain transform whose world IS `WRAP_ROTATE` at the origin, the root's own orient under
+0.01°) / `root_in_layout`. Cascadeur's layout writes the Null as it stands, called `Armature` in the
+root namespace for the length of the export (`_named`: a rig's `Creep_Rig:Armature`, a second
+Creep's `Creep_Skeleton_Armature`, whatever else answers to `Armature` held aside, all put back);
+the plain layout (the roads into Unreal) takes the root OUT to world level for the length of it
+(`flattened`: `jo_before` = `jo_after` undone, `unswizzled` = (x, z, -y), a keyed translate routed,
+never edited, a constraint re-solving) — and a root that cannot be moved (a pairBlend) goes out in
+the layout it stands in, with its Null, and says so, never as bones missing their Null. A root at
+world level behaves exactly as before. Proof: `verify_cascadeur_layout.py` **10/10** (gate 5 the
+keyed Creep while the animator's `|Armature` holds the name, gate 8 the pairBlend both ways, gate 10
+new: a keyed Creep under its Armature to the plain file, root world 1.7e-6, the scene back exact);
+`verify_creep_rig_asset.py` **16/16**, `verify_creep_skeleton_asset.py` **9/9**,
+`verify_weapon_space.py` **11/11**, `verify_creep_bind_pose.py` all gates, `verify_one_shader.py`
+**4/4**, and the skeletal-mesh FBX re-exported from the new asset against Cascadeur's own file
+**6/6** (`verify_creep_skeleton_fbx_cascadeur.py`). The Manny and the Orc D are unchanged (root at
+world level); the UE bridge's imports retarget (world space) and need nothing — there is no merge
+onto a skeleton in its window any more, and a UE clip merged by exmerge onto a skeleton under a -90
+Null would lie down (the wrapper trap of 2026-09-01), which is why nothing else was moved.
+
 ## The Orc: Unreal's SK_Orc_Marauder_F as a third rig row (2026-09-25)
 
 **Out of the plugin since 2026-09-28** («орка без текстур уберем из плагина он больше не нужен»):

@@ -78,8 +78,9 @@ gate(2, set(rigs) == {"Creep_Rig", "Creep_Rig1", "Manny_Rig"}, "three rigs, each
 h, h2, manny = rigs.get("Creep_Rig"), rigs.get("Creep_Rig1"), rigs.get("Manny_Rig")
 gate(3, ar.rotation_mode(h) and ar.rotation_mode(h2) and not ar.rotation_mode(manny),
      "rotation-only mark: Creep %s, Creep1 %s, Manny %s" % (ar.rotation_mode(h), ar.rotation_mode(h2), ar.rotation_mode(manny)))
-gate(4, h.skeleton_root == "|Creep_Rig:root" and len(cmds.listRelatives(h.skeleton_root, ad=True, type="joint")) == 90 and cmds.objExists("Creep_Rig:weapon_r") and cmds.objExists("Creep_Rig:weapon_l"),
-     "the Creep's skeleton at world level: %s, %d joints below it" % (h.skeleton_root, len(cmds.listRelatives(h.skeleton_root, ad=True, type="joint") or [])))
+#  since 2026-09-28 in the layout of the Creep's own FBX: `root` under the Null `Armature`
+gate(4, h.skeleton_root == "|Creep_Rig:Armature|Creep_Rig:root" and len(cmds.listRelatives(h.skeleton_root, ad=True, type="joint")) == 90 and cmds.objExists("Creep_Rig:weapon_r") and cmds.objExists("Creep_Rig:weapon_l"),
+     "the Creep's skeleton under its Armature: %s, %d joints below it" % (h.skeleton_root, len(cmds.listRelatives(h.skeleton_root, ad=True, type="joint") or [])))
 scripts = [s for s in cmds.ls(type="script") if s.startswith(("Creep_Rig", "Manny_Rig"))]
 gate(5, not [s for s in scripts if s.startswith("Creep_Rig")], "script nodes the Creep asset brought: %s" % [s for s in scripts if s.startswith("Creep_Rig")])
 worst, skins = 0.0, []
@@ -186,7 +187,8 @@ worst_rot, worst_len, moved = 0.0, 0.0, 0.0
 for t in range(int(first), int(last) + 1, max(1, int((last - first) / 10))):
     cmds.currentTime(t)
     for b in ("pelvis", "spine_03", "neck_01", "head", "clavicle_l", "hand_l", "hand_r", "foot_l", "ball_r", "middle_02_r"):
-        worst_rot = max(worst_rot, ang(rot(wm(S[b])), rot(wm(H[b]))))
+        if b in S:                     # a 3P clip may carry fewer bones (LongSword_Attack_Right_Heavy_3P: no neck_01)
+            worst_rot = max(worst_rot, ang(rot(wm(S[b])), rot(wm(H[b]))))
     for n, p in H.items():
         if n not in ("root", "pelvis", "weapon_r", "weapon_l") and not n.startswith("ik_"):   # the weapon bones carry the clip's weapon motion in the hand
             worst_len = max(worst_len, (om.MVector(cmds.getAttr(p + ".translate")[0]) - om.MVector(rest_t[n])).length())

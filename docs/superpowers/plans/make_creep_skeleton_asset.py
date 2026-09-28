@@ -19,6 +19,11 @@ mayapy STANDALONE.  From the shipped rig, in this order:
    go, whatever their type;
 4. saved as mayaAscii, Maya's configuration script nodes cut from the text, and the file
    refused if anything of the rig or anything banned survived in it.
+
+Since 2026-09-28 the rig -- and the skeleton made from it -- stand in the layout of the Creep's own
+FBX, `root` under a Null `Armature` (make_creep_armature_layout.py); this keeps that Null with the
+skeleton, and make_creep_armature_layout.py run on the result afterwards takes the meshes out of
+`|Creep` to the top, as the FBX has them.
 """
 import os
 import sys
@@ -57,7 +62,8 @@ def path(u):
     return cmds.ls(u, long=True)[0]
 
 
-root = cmds.ls("|root", type="joint", long=True)[0]
+ROOT_PATHS = ("|Armature|root", "|root")      # the FBX's layout since 2026-09-28, or the old one
+root = [r for p in ROOT_PATHS for r in cmds.ls(p, type="joint", long=True)][0]
 joints = sorted([root] + cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True), key=lambda j: j.count("|"))
 world = [(uid(j), wm(j)) for j in joints]
 skins = [sc for sc in cmds.ls(type="skinCluster")]
@@ -82,7 +88,7 @@ for u in kid_ids:
 
 # 3. the rig, and everything nothing kept depends on
 cmds.delete("|Group")
-keep_dag = set(cmds.ls("|root", "|Creep", dag=True, long=True))
+keep_dag = set(cmds.ls(cmds.ls("|Armature", "|root", long=True) or [], "|Creep", dag=True, long=True))
 meshes = cmds.ls("|Creep", dag=True, type="mesh", long=True)
 keep = set(keep_dag)
 for m in meshes:
@@ -123,7 +129,7 @@ print("deleted %d nodes by type: %s" % (len(doomed), sorted(kinds.items(), key=l
 cmds.delete(cmds.ls(type="script") or [])
 
 # what must be true
-root = cmds.ls("|root", type="joint", long=True)[0]
+root = [r for p in ROOT_PATHS for r in cmds.ls(p, type="joint", long=True)][0]
 assert len(cmds.listRelatives(root, allDescendents=True, type="joint")) == 90, "the Creep skeleton (weapon_l added 2026-09-24)"
 assert not cmds.listRelatives(root, allDescendents=True, type="constraint"), "constraints left on the skeleton"
 worst = 0.0

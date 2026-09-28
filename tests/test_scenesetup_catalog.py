@@ -410,13 +410,16 @@ class CreepRig(unittest.TestCase):
     def test_the_shipped_creep_is_the_rig_and_nothing_else(self):
         """Built 2026-09-24 from the animator's scene in mayapy standalone
         (docs/superpowers/plans/make_creep_rig_asset.py): the rig marked for
-        the rotation-only retarget, the skeleton at world level, the meshes in
-        the rig's Geometry group -- and not the Manny reference mesh, the
-        stray camera, the materialX stack or any script node."""
+        the rotation-only retarget, the meshes in the rig's Geometry group, and
+        since 2026-09-28 the skeleton in the layout of the Creep's own FBX --
+        `root` under a Null `Armature` («как в файле, единообразно», «и риг
+        крипа тоже»; make_creep_armature_layout.py) -- and not the Manny
+        reference mesh, the stray camera, the materialX stack or any script node."""
         path = catalog.character_file(catalog.character_by_key("Creep_Rig"))
         self.assertTrue(path.endswith("assets/Creep_Rig.ma"), path)
         wanted = {'createNode transform -n "Group";': False,
-                  'createNode joint -n "root";': False,
+                  'createNode transform -n "Armature";': False,
+                  'createNode joint -n "root" -p "Armature";': False,
                   'createNode objectSet -n "ControlSet";': False,
                   'createNode transform -n "Creep_Body" -p "Geometry";': False,
                   'createNode joint -n "weapon_r" -p "hand_r";': False,
@@ -450,20 +453,23 @@ class CreepSkeleton(unittest.TestCase):
         self.assertEqual(catalog.default_character().key, "Manny")
 
     def test_the_shipped_skeleton_carries_nothing_of_the_rig(self):
-        """Built from Creep_Rig.ma by make_creep_skeleton_asset.py: the
-        skeleton at world level, the meshes in `|Creep` -- and no rig group,
-        no control set, no fit skeleton, no retarget mark, no script node."""
+        """Built from Creep_Rig.ma by make_creep_skeleton_asset.py, and since
+        2026-09-28 in the layout of the Creep's own FBX (make_creep_armature_layout.py):
+        `root` under a Null `Armature`, the five meshes at the top of the scene
+        beside it -- and no rig group, no control set, no fit skeleton, no
+        retarget mark, no script node."""
         path = catalog.character_file(catalog.character_by_key("Creep"))
         self.assertTrue(path.endswith("assets/Creep_Skeleton.ma"), path)
-        wanted = {'createNode joint -n "root";': False,
-                  'createNode transform -n "Creep";': False,
-                  'createNode transform -n "Creep_Body" -p "Creep";': False,
+        wanted = {'createNode transform -n "Armature";': False,
+                  'createNode joint -n "root" -p "Armature";': False,
+                  'createNode transform -n "Creep_Body";': False,
                   'createNode joint -n "weapon_r" -p "hand_r";': False,
                   'createNode joint -n "weapon_l" -p "hand_l";': False}
         skins = 0
         with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
-                for banned in ('createNode transform -n "Group"', "ControlSet", "FitSkeleton",
+                for banned in ('createNode transform -n "Group"', 'createNode transform -n "Creep";',
+                               "ControlSet", "FitSkeleton",
                                "MoCapConstraints", "skeldarRetarget", "SKM_Manny_Simple", "Creep_Sword", "weapon_test",
                                "createNode script", "vaccine", "breed_gene", "Hunter", "Hanter"):
                     self.assertNotIn(banned, line)

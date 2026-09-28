@@ -54,7 +54,10 @@ CHARACTERS = [
     # names on a creature's proportions, bound in the UE A-pose, the bones rigid
     # (orientation-only constraints), the meshes in the rig's own Geometry group,
     # and `Group.skeldarRetarget = "rotation"` -- its retarget copies rotations
-    # only. Built from the animator's scene by make_creep_rig_asset.py.
+    # only. Built from the animator's scene by make_creep_rig_asset.py. Since
+    # 2026-09-28 the skeleton in the layout of the Creep's own FBX -- `root`
+    # under a Null `Armature` turned -90 X («как в файле, единообразно», «и риг
+    # крипа тоже»; make_creep_armature_layout.py).
     Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig"),
     # The Orc Marauder D (2026-09-28, «еще один вариант орка ... SK_Orc_Marauder_D ... материал с
     # текстурами»): the Orc rig -- the Unreal asset's AdvancedSkeleton rig on Manny's bone names
@@ -69,9 +72,11 @@ CHARACTERS = [
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton"),
     # The Creep without its rig (2026-09-24, «не только риг хантера, а и чистый
-    # скелет»): the same 90 bones in the same A-pose bind, skinned, the meshes in
-    # `|Creep`, the swords riding weapon_test -- built from Creep_Rig.ma by
-    # make_creep_skeleton_asset.py, nothing of AdvancedSkeleton left in it.
+    # скелет»): the same 90 bones in the same bind, skinned -- built from
+    # Creep_Rig.ma by make_creep_skeleton_asset.py, nothing of AdvancedSkeleton
+    # left in it. Since 2026-09-28 laid out as the Creep's own FBX
+    # (Animations/Rigs/Characters/Creep_Skeleton.fbx): `root` under a Null
+    # `Armature`, the five meshes at the top beside it.
     Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "skeleton"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no

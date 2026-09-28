@@ -247,7 +247,7 @@ for bone, hand in (("weapon_r", "hand_r"), ("weapon_l", "hand_l")):
 # -------------------------------------------------------------- the clean skeleton
 cmds.file(new=True, force=True)
 text = character.add_character(catalog.character_by_key("Creep"))
-root = [j for j in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(j, parent=True)][0]
+root = [j for j in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(j, parent=True, type="joint")][0]
 S = bones(root)
 e, a, leaf = pose_error(S)
 me, mn = mesh_error()
@@ -268,7 +268,7 @@ gate(8, all(mdiff(in_hand(S, bone, hand), grips[bone]) < 1e-4 for bone, hand in 
 if OLD:
     cmds.file(new=True, force=True)
     cmds.file(OLD, i=True, namespace="old", executeScriptNodes=False)
-    O = bones([j for j in cmds.ls("old:root", type="joint", long=True) if not cmds.listRelatives(j, parent=True)][0])
+    O = bones([j for j in cmds.ls("old:root", type="joint", long=True) if not cmds.listRelatives(j, parent=True, type="joint")][0])
     d = [mdiff(in_hand(O, bone, hand), grips[bone]) for bone, hand in (("weapon_r", "hand_r"), ("weapon_l", "hand_l"))]
     gate(9, max(d) < 1e-4, "weapon_r / weapon_l keep their place in the hand against the old asset: %s (the Creep Sword's frame)"
          % ["%.1e" % x for x in d])
