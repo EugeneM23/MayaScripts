@@ -1,0 +1,542 @@
+"""maya_hubqt - the SkeldarAnim hub's skin: its Qt widgets.
+
+What `maya_hub` builds when Qt is there (2026-09-28, style B + scheme 3 of
+the brainstorm): a root of ours inside the same workspaceControl, holding
+
+    header    the SA mark, "SkeldarAnim", the hotkeys button (lit while the
+              map is on), the version chip (click: Check update), a menu
+    message   one line under the header, shown while it holds text
+    strip     one icon per section: expand it and scroll to it
+    scroll    group labels and CARDS - a clickable header (icon chip,
+              title, the moved subtitle, chevron) over a BODY whose named
+              layout is where a tool's `build_panel()` runs
+
+Every cmds control a builder makes lands in a body through
+`cmds.setParent(path_of(body_layout))` -- measured 2026-09-28 in a probe
+window: names, exists/edit/query all as before, the full path running
+through the Qt objects (which is why every object here has a name). The
+look is `maya_hubstyle.stylesheet()` on the root; the builders' marks are
+turned into `skRole` properties, icons, swatches and moved subtitles by
+`apply_marks`.
+
+Two Maya seams, replaced by the tests: `find` (MQtUtil -> a QWidget
+wrapper) and `path_of` (MQtUtil.fullName). Class-specific calls on Maya's
+own widgets go through Qt PROPERTIES (`wordWrap`, `icon`, `iconSize`):
+`wrapInstance(ptr, QLabel)` hands back the cached QWidget wrapper when one
+exists, and its `setWordWrap` raises AttributeError (measured).
+
+Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
+"""
+
+import types
+
+import maya_hubicons as hubicons
+import maya_hubstyle as hubstyle
+
+_QT = []
+
+
+def qt():
+    """PySide6 (Maya 2025+), else PySide2, as one namespace; None without Qt."""
+    if _QT:
+        return _QT[0]
+    ns = None
+    try:
+        from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
+        import shiboken6 as shiboken
+        ns = types.SimpleNamespace(QtCore=QtCore, QtGui=QtGui, QtSvg=QtSvg,
+                                   QtWidgets=QtWidgets, shiboken=shiboken)
+    except ImportError:
+        try:
+            from PySide2 import QtCore, QtGui, QtSvg, QtWidgets
+            import shiboken2 as shiboken
+            ns = types.SimpleNamespace(QtCore=QtCore, QtGui=QtGui,
+                                       QtSvg=QtSvg, QtWidgets=QtWidgets,
+                                       shiboken=shiboken)
+        except ImportError:
+            ns = None
+    _QT.append(ns)
+    return ns
+
+
+def _maya_ui_ok():
+    """Maya's UI is up: OpenMayaUI imports, not batch, a QApplication runs."""
+    try:
+        import maya.cmds as cmds
+        import maya.OpenMayaUI  # noqa: F401
+        if cmds.about(batch=True):
+            return False
+    except Exception:                                        # noqa: BLE001
+        return False
+    q = qt()
+    return bool(q and q.QtWidgets.QApplication.instance())
+
+
+def available():
+    """Whether the skin can be built here."""
+    return qt() is not None and _maya_ui_ok()
+
+
+# ------------------------------------------------------------------- seams
+
+def find(name, layout=False):
+    """The QWidget of Maya control (or layout) `name`, or None."""
+    import maya.OpenMayaUI as omui
+    q = qt()
+    ptr = (omui.MQtUtil.findLayout(name) if layout
+           else omui.MQtUtil.findControl(name))
+    if not ptr and not layout:
+        ptr = omui.MQtUtil.findLayout(name)
+    if not ptr:
+        return None
+    return q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QWidget)
+
+
+def path_of(obj):
+    """The Maya path of a Qt object of ours: what `cmds.setParent` takes."""
+    import maya.OpenMayaUI as omui
+    q = qt()
+    return omui.MQtUtil.fullName(int(q.shiboken.getCppPointer(obj)[0]))
+
+
+def host_layout(control):
+    """The layout inside workspaceControl `control` a root goes into."""
+    widget = find(control)
+    return widget.layout() if widget is not None else None
+
+
+# ------------------------------------------------------------------- icons
+
+def pixmap(name, colour, size):
+    """Icon `name` in `colour`, `size` physical pixels square."""
+    q = qt()
+    data = q.QtCore.QByteArray(hubicons.svg(name, colour).encode("utf-8"))
+    renderer = q.QtSvg.QSvgRenderer(data)
+    image = q.QtGui.QPixmap(size, size)
+    image.fill(q.QtCore.Qt.transparent)
+    painter = q.QtGui.QPainter(image)
+    renderer.render(painter)
+    painter.end()
+    return image
+
+
+def icon(name, colour, size, on_colour=None):
+    """A QIcon; `on_colour` draws its checked state."""
+    q = qt()
+    result = q.QtGui.QIcon()
+    result.addPixmap(pixmap(name, colour, size), q.QtGui.QIcon.Normal,
+                     q.QtGui.QIcon.Off)
+    if on_colour:
+        result.addPixmap(pixmap(name, on_colour, size), q.QtGui.QIcon.Normal,
+                         q.QtGui.QIcon.On)
+    return result
+
+
+# ICON colour per role: the text colour the stylesheet gives that role.
+_ICON_COLOUR = {"primary": "on_accent", "danger": "danger"}
+
+
+def repolish(widget):
+    """Re-read the stylesheet after a property the rules select on changed."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
+
+
+def _named(widget, name, role=None):
+    widget.setObjectName(name)
+    if role:
+        widget.setProperty("skRole", role)
+    return widget
+
+
+# ------------------------------------------------------------------- cards
+
+_CLASSES = {}
+
+
+def _head_class():
+    """A QWidget that calls back on a left click: the card's header."""
+    if "head" not in _CLASSES:
+        q = qt()
+
+        class CardHead(q.QtWidgets.QWidget):
+
+            def __init__(self, on_click, parent=None):
+                super(CardHead, self).__init__(parent)
+                self._on_click = on_click
+                self.setCursor(q.QtCore.Qt.PointingHandCursor)
+
+            def mousePressEvent(self, event):              # noqa: N802
+                if event.button() == q.QtCore.Qt.LeftButton:
+                    self._on_click()
+                    event.accept()
+                    return
+                super(CardHead, self).mousePressEvent(event)
+
+        _CLASSES["head"] = CardHead
+    return _CLASSES["head"]
+
+
+class Card(object):
+    """One section: header over body. `body_layout` is where a builder runs."""
+
+    def __init__(self, key, label, icon_name, colour, chip, scale,
+                 collapsed=False, on_toggle=None):
+        q = qt()
+        w = q.QtWidgets
+        self.key = key
+        self.scale = scale
+        self._on_toggle = on_toggle
+        s = lambda n: hubstyle.px(n, scale)             # noqa: E731
+
+        self.frame = _named(w.QFrame(), "skeldarHubCard_" + key)
+        self.frame.setProperty("skCard", True)
+        column = w.QVBoxLayout(self.frame)
+        column.setObjectName("skeldarHubCardLayout_" + key)
+        column.setContentsMargins(s(8), s(7), s(8), s(8))
+        column.setSpacing(s(6))
+
+        self.header = _named(_head_class()(self.toggle),
+                             "skeldarHubCardHead_" + key, "cardhead")
+        row = w.QHBoxLayout(self.header)
+        row.setObjectName("skeldarHubCardHeadLayout_" + key)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(s(7))
+        chip_label = _named(w.QLabel(), "skeldarHubCardIcon_" + key,
+                            "cardicon")
+        chip_label.setFixedSize(s(22), s(22))
+        chip_label.setAlignment(q.QtCore.Qt.AlignCenter)
+        chip_label.setPixmap(pixmap(icon_name, colour, s(14)))
+        chip_label.setStyleSheet("background: {0}; border-radius: {1}px;"
+                                 .format(chip, s(6)))
+        title = _named(w.QLabel(label), "skeldarHubCardTitle_" + key,
+                       "cardtitle")
+        #  Where a moved subtitle goes: takes what the title leaves and never
+        #  asks for more, so a long line clips instead of widening the hub.
+        self.subtitle_slot = _named(w.QWidget(), "skeldarHubCardSub_" + key)
+        self.subtitle_slot.setSizePolicy(w.QSizePolicy.Ignored,
+                                         w.QSizePolicy.Preferred)
+        sub = w.QHBoxLayout(self.subtitle_slot)
+        sub.setObjectName("skeldarHubCardSubLayout_" + key)
+        sub.setContentsMargins(0, 0, 0, 0)
+        self.chevron = _named(w.QLabel(), "skeldarHubCardChevron_" + key)
+        row.addWidget(chip_label)
+        row.addWidget(title)
+        row.addWidget(self.subtitle_slot, 1)
+        row.addWidget(self.chevron)
+
+        self.body = _named(w.QWidget(), "skeldarHubBody_" + key)
+        self.body_layout = w.QVBoxLayout(self.body)
+        self.body_layout.setObjectName("skeldarHubBodyLayout_" + key)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(0)
+        column.addWidget(self.header)
+        column.addWidget(self.body)
+        self._collapsed = None
+        self.set_collapsed(collapsed)
+
+    def body_path(self):
+        return path_of(self.body_layout)
+
+    def collapsed(self):
+        return bool(self._collapsed)
+
+    def set_collapsed(self, collapsed):
+        """Show or hide the body. No callback: code opening a card remembers
+        through the hub; only the animator's click calls back (`toggle`)."""
+        collapsed = bool(collapsed)
+        if collapsed == self._collapsed:
+            return
+        self._collapsed = collapsed
+        self.body.setVisible(not collapsed)
+        name = "chevron-right" if collapsed else "chevron-down"
+        self.chevron.setPixmap(pixmap(name, hubstyle.TOKENS["muted"],
+                                      hubstyle.px(14, self.scale)))
+
+    def toggle(self):
+        self.set_collapsed(not self._collapsed)
+        if self._on_toggle:
+            self._on_toggle(self.key, self._collapsed)
+
+    def add_subtitle(self, widget):
+        """Move a builder's line into the header, one line, never widening."""
+        q = qt()
+        widget.setProperty("wordWrap", False)
+        widget.setProperty("skRole", "subtitle")
+        widget.setProperty("alignment", q.QtCore.Qt.AlignRight
+                           | q.QtCore.Qt.AlignVCenter)
+        widget.setMinimumHeight(0)
+        widget.setMaximumHeight(16777215)
+        widget.setMinimumWidth(0)
+        widget.setSizePolicy(q.QtWidgets.QSizePolicy.Ignored,
+                             q.QtWidgets.QSizePolicy.Preferred)
+        self.subtitle_slot.layout().addWidget(widget, 1)
+        return widget
+
+
+# -------------------------------------------------------------------- skin
+
+class Skin(object):
+    """The whole skinned hub. `parent_layout` is the workspaceControl's."""
+
+    def __init__(self, parent_layout, scale=1.0, callbacks=None):
+        q = qt()
+        w = q.QtWidgets
+        self.scale = scale
+        self.cb = callbacks or {}
+        self.cards = {}
+        self.jumps = {}
+        s = self.px
+
+        self.root = _named(w.QWidget(), hubstyle.ROOT)
+        top = w.QVBoxLayout(self.root)
+        top.setObjectName("skeldarHubRootLayout")
+        top.setContentsMargins(s(6), s(6), s(6), s(6))
+        top.setSpacing(s(6))
+        if parent_layout is not None:
+            parent_layout.addWidget(self.root)
+
+        self.header = self._build_header()
+        top.addWidget(self.header)
+        self.message = self._build_message()
+        top.addWidget(self.message)
+
+        self.strip = _named(w.QWidget(), "skeldarHubStrip", "strip")
+        strip = w.QHBoxLayout(self.strip)
+        strip.setObjectName("skeldarHubStripLayout")
+        strip.setContentsMargins(s(3), s(3), s(3), s(3))
+        strip.setSpacing(s(2))
+        top.addWidget(self.strip)
+
+        self.scroll = _named(w.QScrollArea(), hubstyle.SCROLL)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(w.QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(
+            q.QtCore.Qt.ScrollBarAlwaysOff)
+        self.content = _named(w.QWidget(), hubstyle.CONTENT)
+        self.column = w.QVBoxLayout(self.content)
+        self.column.setObjectName("skeldarHubColumnLayout")
+        self.column.setContentsMargins(0, 0, s(2), 0)
+        self.column.setSpacing(s(6))
+        self.column.addStretch(1)
+        self.scroll.setWidget(self.content)
+        self.scroll.viewport().setObjectName(hubstyle.VIEWPORT)
+        top.addWidget(self.scroll, 1)
+
+    # --------------------------------------------------------------- parts
+
+    def px(self, value):
+        return hubstyle.px(value, self.scale)
+
+    def _call(self, key, *args):
+        fn = self.cb.get(key)
+        if fn:
+            return fn(*args)
+        return None
+
+    def _head_button(self, name, icon_name, tip, checkable=False):
+        q = qt()
+        button = _named(q.QtWidgets.QToolButton(), name, "headbtn")
+        button.setIcon(icon(icon_name, hubstyle.TOKENS["muted"], self.px(16),
+                            on_colour=hubstyle.TOKENS["accent_text"]))
+        button.setIconSize(q.QtCore.QSize(self.px(16), self.px(16)))
+        button.setToolTip(tip)
+        button.setCheckable(checkable)
+        button.setAutoRaise(True)
+        return button
+
+    def _build_header(self):
+        q = qt()
+        w = q.QtWidgets
+        s = self.px
+        header = _named(w.QWidget(), "skeldarHubHeader", "header")
+        row = w.QHBoxLayout(header)
+        row.setObjectName("skeldarHubHeaderLayout")
+        row.setContentsMargins(s(2), s(2), s(2), s(2))
+        row.setSpacing(s(6))
+        logo = _named(w.QLabel("SA"), "skeldarHubLogo", "logo")
+        logo.setFixedSize(s(20), s(20))
+        logo.setAlignment(q.QtCore.Qt.AlignCenter)
+        title = _named(w.QLabel("SkeldarAnim"), "skeldarHubTitle",
+                       "hubtitle")
+        self.hotkeys = self._head_button(
+            "skeldarHubHotkeys", "keyboard", "Hotkey map: OFF",
+            checkable=True)
+        self.hotkeys.clicked.connect(lambda *_a: self._call("hotkeys"))
+        self.version = _named(w.QToolButton(), "skeldarHubVersion", "version")
+        self.version.setText("")
+        self.version.setCursor(q.QtCore.Qt.PointingHandCursor)
+        self.version.clicked.connect(lambda *_a: self._call("version"))
+        self.menu_button = self._head_button("skeldarHubMenu",
+                                             "dots-vertical", "More")
+        self.menu = w.QMenu(self.menu_button)
+        self.menu.setObjectName("skeldarHubMenuPopup")
+        for text, key in (("Check update", "check_update"),
+                          ("Hotkey Editor...", "hotkey_editor"),
+                          (None, None),
+                          ("Classic look", "classic")):
+            if text is None:
+                self.menu.addSeparator()
+                continue
+            action = self.menu.addAction(text)
+            action.triggered.connect(lambda *_a, k=key: self._call(k))
+        self.menu_button.setMenu(self.menu)
+        self.menu_button.setPopupMode(w.QToolButton.InstantPopup)
+        row.addWidget(logo)
+        row.addWidget(title)
+        row.addStretch(1)
+        row.addWidget(self.hotkeys)
+        row.addWidget(self.version)
+        row.addWidget(self.menu_button)
+        return header
+
+    def _build_message(self):
+        q = qt()
+        w = q.QtWidgets
+        s = self.px
+        box = _named(w.QWidget(), "skeldarHubMessage", "message")
+        row = w.QHBoxLayout(box)
+        row.setObjectName("skeldarHubMessageLayout")
+        row.setContentsMargins(s(8), s(4), s(4), s(4))
+        row.setSpacing(s(4))
+        self.message_text = _named(w.QLabel(""), "skeldarHubMessageText",
+                                   "messagetext")
+        self.message_text.setWordWrap(True)
+        self.message_text.setSizePolicy(w.QSizePolicy.Ignored,
+                                        w.QSizePolicy.Preferred)
+        self.message_close = self._head_button("skeldarHubMessageClose", "x",
+                                               "Hide")
+        self.message_close.clicked.connect(lambda *_a: box.setVisible(False))
+        row.addWidget(self.message_text, 1)
+        row.addWidget(self.message_close, 0, q.QtCore.Qt.AlignTop)
+        box.setVisible(False)
+        return box
+
+    # ----------------------------------------------------------------- api
+
+    def add_group(self, key, label):
+        q = qt()
+        group = _named(q.QtWidgets.QLabel(label), "skeldarHubGroup_" + key,
+                       "grouplabel")
+        group.setContentsMargins(self.px(3), self.px(2), 0, 0)
+        self.column.insertWidget(self.column.count() - 1, group)
+        return group
+
+    def add_card(self, key, label, icon_name, colour, chip, collapsed=False):
+        card = Card(key, label, icon_name, colour, chip, self.scale,
+                    collapsed=collapsed,
+                    on_toggle=lambda k, c: self._call("toggled", k, c))
+        self.column.insertWidget(self.column.count() - 1, card.frame)
+        self.cards[key] = card
+        return card
+
+    def add_jump(self, key, label, icon_name, colour):
+        q = qt()
+        button = _named(q.QtWidgets.QToolButton(), "skeldarHubJump_" + key,
+                        "jump")
+        button.setIcon(icon(icon_name, colour, self.px(16)))
+        button.setIconSize(q.QtCore.QSize(self.px(16), self.px(16)))
+        button.setToolTip(label)
+        button.setAutoRaise(True)
+        button.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,
+                             q.QtWidgets.QSizePolicy.Fixed)
+        button.clicked.connect(lambda *_a, k=key: self._call("jump", k))
+        self.strip.layout().addWidget(button)
+        self.jumps[key] = button
+        return button
+
+    def finish(self, sheet):
+        self.root.setStyleSheet(sheet)
+
+    def say(self, text, state=None):
+        """The header's message line: shown while it holds text."""
+        self.message_text.setText(text or "")
+        self.message.setVisible(bool(text))
+        if state is not None:
+            self.set_state(state)
+
+    def set_state(self, state):
+        self.version.setProperty("skState", state or "")
+        repolish(self.version)
+
+    def set_version(self, text, tooltip, state=None):
+        self.version.setText(text)
+        self.version.setToolTip(tooltip)
+        if state is not None:
+            self.set_state(state)
+
+    def paint_hotkeys(self, active):
+        self.hotkeys.setChecked(bool(active))
+        self.hotkeys.setToolTip("Hotkey map: " + ("ON" if active else "OFF")
+                                + " - press to switch")
+
+    def scroll_to(self, key):
+        card = self.cards.get(key)
+        if card is None:
+            return None
+        offset = card.frame.y()
+        self.scroll.verticalScrollBar().setValue(offset)
+        return offset
+
+    def alive(self):
+        q = qt()
+        try:
+            return bool(q.shiboken.isValid(self.root))
+        except Exception:                                    # noqa: BLE001
+            return False
+
+    def destroy(self):
+        """Delete the root NOW (not deferred): a classic build right after
+        must not meet the controls' names still standing."""
+        if not self.alive():
+            return
+        q = qt()
+        self.root.setParent(None)
+        q.shiboken.delete(self.root)
+
+
+# ------------------------------------------------------------------- marks
+
+def _swatch_sheet(hex_colour, radius, scale):
+    text = hubstyle.TOKENS["panel"]
+    return ("QPushButton {{ background: {0}; border: none; border-radius: "
+            "{1}px; padding: 0px; color: {2}; }} QPushButton:hover {{ border: "
+            "{3}px solid {4}; }}").format(hex_colour, radius, text,
+                                          hubstyle.px(2, scale),
+                                          hubstyle.TOKENS["text"])
+
+
+def apply_marks(marks, card, scale):
+    """Turn a builder's marks into the skin: properties, icons, swatches,
+    subtitles moved into `card`'s header. Returns how many were applied."""
+    q = qt()
+    applied = 0
+    size = hubstyle.px(15, scale)
+    for mark in marks:
+        widget = find(mark.name, mark.layout)
+        if widget is None:
+            continue
+        applied += 1
+        if mark.role == "subtitle":
+            card.add_subtitle(widget)
+            continue
+        if mark.role == "swatchonly":
+            for child in widget.findChildren(q.QtWidgets.QWidget):
+                if child.objectName() in ("slider", "color"):
+                    child.setVisible(False)
+            widget.setProperty("skRole", "swatchonly")
+            continue
+        widget.setProperty("skRole", mark.role)
+        if mark.role == "swatch":
+            side = min(widget.maximumWidth(), widget.maximumHeight())
+            radius = (side // 2 if side <= hubstyle.px(24, scale)
+                      else hubstyle.px(6, scale))
+            widget.setStyleSheet(_swatch_sheet(mark.colour, radius, scale))
+            continue
+        if mark.icon:
+            colour = hubstyle.TOKENS[_ICON_COLOUR.get(mark.role, "text2")]
+            widget.setProperty("icon", icon(mark.icon, colour, size))
+            widget.setProperty("iconSize", q.QtCore.QSize(size, size))
+    return applied
