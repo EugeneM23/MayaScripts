@@ -464,6 +464,7 @@ def expand(key):
         if card is None:
             return None
         card.set_collapsed(False)
+        _SKIN.set_active(key)
         remember(key, False)
         cmds.evalDeferred(lambda: scroll_to(key), lowestPriority=True)
         return card

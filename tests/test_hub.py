@@ -411,6 +411,9 @@ class FakeSkin(object):
     def scroll_to(self, key):
         return 42 if key in self.cards else None
 
+    def set_active(self, key):
+        self.active = key
+
     def alive(self):
         return self._alive
 
@@ -566,6 +569,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(len(self.fake.deferred), 1)
         self.fake.run_deferred()
         self.assertEqual(hub.scroll_to("studio"), 42)
+        self.assertEqual(hub._SKIN.active, "studio")       # and lit
 
     def test_expanding_a_header_section_is_quiet(self):
         """maya_hotkeys.show_window / maya_update.show_window still ask for

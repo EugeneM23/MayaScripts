@@ -232,6 +232,56 @@ class Cards(SeamsMixin, unittest.TestCase):
         self.assertEqual(self.host_layout.count(), 0)
 
 
+class ActiveCard(SeamsMixin, unittest.TestCase):
+    """2026-09-28: «активное окно подсвечивалось немного другим цветом» -
+    the card being worked in is lit."""
+
+    def setUp(self):
+        SeamsMixin.setUp(self)
+        self.a = self.skin.add_card("characters", "Characters", "user",
+                                    "#f0a26b", "#4a3322")
+        self.b = self.skin.add_card("colour", "Colour", "palette", "#c89be8",
+                                    "#3a2a4a")
+        self.field = QtWidgets.QLineEdit(self.b.body)
+
+    def test_none_is_lit_at_first(self):
+        self.assertIsNone(self.skin.active)
+        self.assertFalse(self.a.frame.property("skActive"))
+
+    def test_set_active_lights_one_and_puts_the_other_back(self):
+        self.skin.set_active("characters")
+        self.assertTrue(self.a.frame.property("skActive"))
+        self.skin.set_active("colour")
+        self.assertTrue(self.b.frame.property("skActive"))
+        self.assertFalse(self.a.frame.property("skActive"))
+        self.assertEqual(self.skin.active, "colour")
+
+    def test_the_card_of_a_widget_inside_it(self):
+        self.assertEqual(self.skin.card_of(self.field), "colour")
+        self.assertEqual(self.skin.card_of(self.a.header), "characters")
+        self.assertIsNone(self.skin.card_of(self.skin.header))
+        self.assertIsNone(self.skin.card_of(None))
+
+    def test_focus_inside_a_card_lights_it(self):
+        from PySide6 import QtCore as C, QtGui as G
+        QtWidgets.QApplication.sendEvent(
+            self.field, G.QFocusEvent(C.QEvent.FocusIn))
+        self.assertEqual(self.skin.active, "colour")
+
+    def test_a_press_inside_a_card_lights_it(self):
+        from PySide6 import QtCore as C, QtGui as G
+        press = G.QMouseEvent(C.QEvent.MouseButtonPress, C.QPointF(2, 2),
+                              C.QPointF(2, 2), C.Qt.LeftButton,
+                              C.Qt.LeftButton, C.Qt.NoModifier)
+        QtWidgets.QApplication.sendEvent(self.a.header, press)
+        self.assertEqual(self.skin.active, "characters")
+
+    def test_the_stylesheet_lights_it(self):
+        sheet = style.stylesheet()
+        self.assertIn('[skActive="true"]', sheet)
+        self.assertIn(style.TOKENS["card_active"], sheet)
+
+
 class ApplyMarks(SeamsMixin, unittest.TestCase):
 
     def setUp(self):

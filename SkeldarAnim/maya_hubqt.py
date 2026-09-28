@@ -200,6 +200,31 @@ def _head_class():
     return _CLASSES["head"]
 
 
+def _watcher_class():
+    """An application-wide event filter: a press or a focus change anywhere
+    is handed to `callback(widget)`; it never swallows the event."""
+    if "watch" not in _CLASSES:
+        q = qt()
+        watched = (q.QtCore.QEvent.MouseButtonPress, q.QtCore.QEvent.FocusIn)
+
+        class Watcher(q.QtCore.QObject):
+
+            def __init__(self, callback, parent=None):
+                super(Watcher, self).__init__(parent)
+                self._callback = callback
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                if event.type() in watched:
+                    try:
+                        self._callback(obj)
+                    except Exception:                        # noqa: BLE001
+                        pass
+                return False
+
+        _CLASSES["watch"] = Watcher
+    return _CLASSES["watch"]
+
+
 class Card(object):
     """One section: header over body. `body_layout` is where a builder runs."""
 
@@ -351,6 +376,16 @@ class Skin(object):
         self.scroll.viewport().setObjectName(hubstyle.VIEWPORT)
         top.addWidget(self.scroll, 1)
 
+        #  The card being worked in is lit (2026-09-28, «активное окно
+        #  подсвечивалось немного другим цветом»): the one last pressed or
+        #  focused in, or jumped to. The watcher is the root's child, so it
+        #  leaves the application's filters when the root is deleted.
+        self.active = None
+        self._watcher = _watcher_class()(self._activate_from, self.root)
+        app = q.QtWidgets.QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._watcher)
+
     # --------------------------------------------------------------- parts
 
     def px(self, value):
@@ -497,6 +532,32 @@ class Skin(object):
         self.hotkeys.setChecked(bool(active))
         self.hotkeys.setToolTip("Hotkey map: " + ("ON" if active else "OFF")
                                 + " - press to switch")
+
+    def set_active(self, key):
+        """Light card `key` (None: none), the previous one back to plain."""
+        if key == self.active:
+            return
+        for other in (self.active, key):
+            card = self.cards.get(other) if other else None
+            if card is not None:
+                card.frame.setProperty("skActive", other == key)
+                repolish(card.frame)
+        self.active = key if key in self.cards else None
+
+    def card_of(self, widget):
+        """The key of the card holding `widget`, or None."""
+        q = qt()
+        if not isinstance(widget, q.QtWidgets.QWidget):
+            return None
+        for key, card in self.cards.items():
+            if card.frame is widget or card.frame.isAncestorOf(widget):
+                return key
+        return None
+
+    def _activate_from(self, widget):
+        key = self.card_of(widget)
+        if key is not None:
+            self.set_active(key)
 
     def scroll_to(self, key):
         card = self.cards.get(key)
