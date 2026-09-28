@@ -202,7 +202,7 @@ gate(3, worst_bone < 0.01 and worst_limb < 0.05,
 # ------------------------------------------------ B: a bare keyed skeleton, a node of the animator's holding the name
 fresh()
 print(character.add_character(catalog.character_by_key("Creep")))
-root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True)][0]
+root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True, type="joint")][0]
 tx, ty, tz = cmds.getAttr(root + ".translate")[0]
 for t, dx, dz, ry in ((0, 0, 0, 0), (10, 20, 50, 30)):
     cmds.setKeyframe(root, attribute="translateX", time=t, value=tx + dx)
@@ -210,6 +210,12 @@ for t, dx, dz, ry in ((0, 0, 0, 0), (10, 20, 50, 30)):
     cmds.setKeyframe(root, attribute="rotateY", time=t, value=ry)
 cmds.playbackOptions(min=0, max=10, animationStartTime=0, animationEndTime=10)
 kframes = [0, 3, 7, 10]
+# since 2026-09-28 the Creep arrives under its own `Armature`; here it is called what a second Creep's
+# is called on arrival, and the animator's own node holds the name the file needs
+creep_null = cmds.listRelatives(root, parent=True, fullPath=True)[0]
+root_uuid = cmds.ls(root, uuid=True)[0]
+cmds.rename(creep_null, "Creep_Skeleton_Armature")
+root = cmds.ls(root_uuid, long=True)[0]
 cmds.parent(cmds.spaceLocator(name="animatorsLocator")[0], cmds.group(empty=True, name="Armature"))
 group = cmds.ls("|Armature", uuid=True)[0]
 before = snapshot(root, kframes)
@@ -232,7 +238,7 @@ gate(5, info["layout"] == "cascadeur" and info["wrapper"] == "Armature" and same
 # ------------------------------------------------ C: a static skeleton
 fresh()
 character.add_character(catalog.character_by_key("Creep"))
-root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True)][0]
+root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True, type="joint")][0]
 before = snapshot(root, [0])
 path_c, info = export(root, "creep_static", start=0, end=1)
 same, text = restored(before, [0])
@@ -254,23 +260,70 @@ same, text = restored(before, [0])
 gate(7, info["layout"] == "cascadeur" and info["wrapper"] == "Armature" and same,
      "Manny_Rig: wrapper %r; the scene: %s" % (info["wrapper"], text))
 
-# ------------------------------------------------ E: a pairBlend on root, and layout="plain"
+# ------------------------------------------------ B2: the same keyed Creep, layout="plain": out of its Armature and back
 fresh()
 character.add_character(catalog.character_by_key("Creep"))
-root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True)][0]
-cmds.setKeyframe(root, attribute="translateX", time=0)
-loc = cmds.spaceLocator(name="layoutProbeDriver")[0]
-cmds.pointConstraint(loc, root, maintainOffset=True)
-blended = bool(cmds.listConnections(root + ".translateX", type="pairBlend"))
+root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True, type="joint")][0]
+tx, ty, tz = cmds.getAttr(root + ".translate")[0]
+for t, dx, dy, ry in ((0, 0, 0, 0), (10, 20, -50, 30)):
+    cmds.setKeyframe(root, attribute="translateX", time=t, value=tx + dx)
+    cmds.setKeyframe(root, attribute="translateY", time=t, value=ty + dy)
+    cmds.setKeyframe(root, attribute="rotateY", time=t, value=ry)
+cmds.playbackOptions(min=0, max=10, animationStartTime=0, animationEndTime=10)
+parent_before = cmds.listRelatives(root, parent=True, fullPath=True)
+before = snapshot(root, kframes)
+path_b2, info = export(root, "creep_keyed_plain", layout="plain")
+same, text = restored(before, kframes)
+parent_after = cmds.listRelatives(cmds.ls(cmds.ls(root, uuid=True)[0], long=True)[0], parent=True, fullPath=True)
+fresh()
+p_root = read(path_b2, "P")
+back = []
+for t in kframes:
+    cmds.currentTime(t)
+    back.append(wm(p_root))
+worst = max(mdiff(x, y) for x, y in zip(back, before["worlds"]))
+jo = cmds.getAttr(p_root + ".jointOrient")[0]
+gate(10, info["layout"] == "plain" and not info["notes"] and not cmds.listRelatives(p_root, parent=True)
+     and abs(jo[0] + 90) < 1e-2 and worst < 1e-4 and same and parent_after == parent_before,
+     'a keyed Creep standing under its Armature, layout="plain": the root in the file at world level (jointOrient %s), '
+     "its world on the scene's %.1e; the scene after: %s, back under %s"
+     % ([round(v, 3) for v in jo], worst, text, parent_after))
+
+# ------------------------------------------------ E: a pairBlend on root, and layout="plain"
+def pairblended(key):
+    fresh()
+    character.add_character(catalog.character_by_key(key))
+    r = [j for j in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(j, parent=True, type="joint")][0]
+    cmds.setKeyframe(r, attribute="translateX", time=0)
+    cmds.pointConstraint(cmds.spaceLocator(name="layoutProbeDriver")[0], r, maintainOffset=True)
+    return r, bool(cmds.listConnections(r + ".translateX", type="pairBlend"))
+
+
+# a root at world level (Manny's skeleton): it cannot be moved under the wrapper -- the plain file, said
+root, blended = pairblended("Manny")
 before = snapshot(root, [0])
-path_e, info = export(root, "creep_pairblend", start=0, end=1)
+path_e, info = export(root, "manny_pairblend", start=0, end=1)
 same, text = restored(before, [0])
-gate(8, blended and info["layout"] == "plain" and any("pairBlend" in n for n in info["notes"]) and same,
-     "a pairBlend on root (%s): layout %s, notes %s; the scene: %s" % (blended, info["layout"], info["notes"], text))
+ok_world = blended and info["layout"] == "plain" and any("pairBlend" in n for n in info["notes"]) and same
+report = ["at world: layout %s, notes %s, scene %s" % (info["layout"], info["notes"], "same" if same else text)]
+# a root standing under its Armature (the Creep since 2026-09-28): Cascadeur's file is it as it stands --
+# nothing to move -- and the plain file, which would have to move it, goes out in the layout it stands in
+root, blended2 = pairblended("Creep")
+before = snapshot(root, [0])
+path_e2, info2 = export(root, "creep_pairblend", start=0, end=1)
+same2, text2 = restored(before, [0])
+path_e3, info3 = export(root, "creep_pairblend_plain", start=0, end=1, layout="plain")
+same3, text3 = restored(before, [0])
+ok_standing = (blended2 and info2["layout"] == "cascadeur" and not info2["notes"] and same2
+               and info3["layout"] == "cascadeur" and any("pairBlend" in n for n in info3["notes"]) and same3)
+report.append("under its Armature: cascadeur %s %s, plain asked -> %s %s; scene %s / %s"
+              % (info2["layout"], info2["notes"], info3["layout"], info3["notes"],
+                 "same" if same2 else text2, "same" if same3 else text3))
+gate(8, ok_world and ok_standing, "a pairBlend on root -- " + "; ".join(report))
 
 fresh()
 character.add_character(catalog.character_by_key("Creep"))
-root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True)][0]
+root = [r for r in cmds.ls("root", type="joint", long=True) if not cmds.listRelatives(r, parent=True, type="joint")][0]
 path_f, info = export(root, "creep_plain", start=0, end=1, layout="plain")
 fresh()
 f_root = read(path_f, "F")
@@ -278,4 +331,4 @@ jo = cmds.getAttr(f_root + ".jointOrient")[0]
 gate(9, info["layout"] == "plain" and not cmds.listRelatives(f_root, parent=True) and abs(jo[0] + 90) < 1e-3,
      'layout="plain": root at world level, jointOrient %s' % [round(v, 3) for v in jo])
 
-print("RESULT: %d of 9 gates failed %s" % (len(FAILS), sorted(FAILS)))
+print("RESULT: %d of 10 gates failed %s" % (len(FAILS), sorted(FAILS)))

@@ -199,8 +199,10 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
             # the bones are selected by UUID, all of them, and only them.
             root_now = ((cmds.ls(root_uuid, long=True) or [root])[0]
                         if root_uuid else root)
+            # A root standing in Cascadeur's layout already (2026-09-28, the Creep): `wrapped`
+            # writes its own Null as it is, `flattened` takes it out for the plain file.
             manager = (fbxlayout.wrapped(root_now, name) if name
-                       else fbxlayout.unwrapped())
+                       else fbxlayout.flattened(root_now))
             with fbxlayout.tag_held(root_now), manager as (wrapper, layout_note):
                 if layout_note:
                     notes.append(layout_note)
@@ -211,7 +213,8 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
                              if root_uuid else root]
                 cmds.select(bones + ([wrapper] if wrapper else []), replace=True)
                 mel.eval(export_command(fbx_path))
-                wrapper_used = name if wrapper else ""
+                # a Null went into the file -- ours, or the one the root stands under
+                wrapper_used = fbxlayout.WRAPPER_NAME if wrapper else ""
     finally:
         restored = [node for node in previous if cmds.objExists(node)]
         if restored:

@@ -46,6 +46,31 @@ def swizzled(t):
     return (t[0], -t[2], t[1])
 
 
+def unswizzled(t):
+    """`t` out of the wrapper's space: t . W, i.e. (x, z, -y) -- `swizzled` undone. Pure."""
+    return (t[0], t[2], -t[1])
+
+
+# how near the wrapper's turn and a zero root orient must be to count as the layout standing
+LAYOUT_TOLERANCE = 1e-3                 # matrix elements
+ORIENT_TOLERANCE = 0.01                 # degrees
+
+
+def in_layout(parent_type, parent_world, root_jo):
+    """Pure: does `root` already stand in Cascadeur's layout -- under a plain transform (not a
+    joint) whose world matrix is WRAP_ROTATE at the origin, unscaled, its own jointOrient near
+    zero? (2026-09-28: the Creep arrives in the scene the way its FBX has it.) `parent_world` is
+    the 16 floats of the parent's worldMatrix, None with no parent."""
+    if parent_type != "transform" or not parent_world:
+        return False
+    wanted = list(_euler_matrix(WRAP_ROTATE))
+    if max(abs(a - b) for a, b in zip(parent_world, wanted)) > LAYOUT_TOLERANCE:
+        return False
+    om = _om()
+    q = om.MTransformationMatrix(_euler_matrix(root_jo)).rotation(asQuaternion=True)
+    return math.degrees(2 * math.acos(min(1.0, abs(q.w)))) <= ORIENT_TOLERANCE
+
+
 def _euler_matrix(degrees):
     return _om().MEulerRotation(*[math.radians(v) for v in degrees]).asMatrix()
 
@@ -58,6 +83,14 @@ def jo_after(jo):
     """
     om = _om()
     m = _euler_matrix(jo) * _euler_matrix(WRAP_ROTATE).inverse()
+    e = om.MTransformationMatrix(m).rotation(asQuaternion=False).reorder(om.MEulerRotation.kXYZ)
+    return tuple(math.degrees(v) for v in (e.x, e.y, e.z))
+
+
+def jo_before(jo):
+    """`jo_after` undone: JO . W, the orient a root out of the wrapper needs to keep its world."""
+    om = _om()
+    m = _euler_matrix(jo) * _euler_matrix(WRAP_ROTATE)
     e = om.MTransformationMatrix(m).rotation(asQuaternion=False).reorder(om.MEulerRotation.kXYZ)
     return tuple(math.degrees(v) for v in (e.x, e.y, e.z))
 
@@ -147,10 +180,21 @@ def _set(plug, value):
         cmds.setAttr(plug, lock=True)
 
 
-def _route_translate(root):
+def root_in_layout(root):
+    """`in_layout` asked of the scene: (True, parent long path) when `root` stands under a
+    Cascadeur-layout Null already, else (False, parent or "")."""
+    parent = (cmds.listRelatives(root, parent=True, fullPath=True) or [""])[0]
+    if not parent:
+        return False, ""
+    return (in_layout(cmds.nodeType(parent), cmds.getAttr(parent + ".worldMatrix[0]"),
+                      tuple(cmds.getAttr(root + ".jointOrient")[0])), parent)
+
+
+def _route_translate(root, inverse=False):
     """Put `root`'s translate into the wrapper's space -- x' = x, y' = -z, z' = y -- without
     touching a key: a curve is routed (through a negating multDoubleLinear for -z), a static
-    channel's value is rewritten. Returns what `_unroute_translate` needs to put it back."""
+    channel's value is rewritten. `inverse` goes the other way, out of the wrapper's space --
+    x = x', y = z', z = -y'. Returns what `_unroute_translate` needs to put it back."""
     record = {"sources": {}, "values": {}, "nodes": []}
     conversions = set(cmds.ls(type="unitConversion") or [])
     for channel in TRANSLATE:
@@ -160,8 +204,13 @@ def _route_translate(root):
         record["values"][channel] = cmds.getAttr(plug)
         if src:
             cmds.disconnectAttr(src[0], plug)
-    values = swizzled(tuple(record["values"][c] for c in TRANSLATE))
-    feeds = (("translateX", 1.0), ("translateZ", -1.0), ("translateY", 1.0))
+    current = tuple(record["values"][c] for c in TRANSLATE)
+    if inverse:
+        values = unswizzled(current)
+        feeds = (("translateX", 1.0), ("translateZ", 1.0), ("translateY", -1.0))
+    else:
+        values = swizzled(current)
+        feeds = (("translateX", 1.0), ("translateZ", -1.0), ("translateY", 1.0))
     for target, (source, sign), value in zip(TRANSLATE, feeds, values):
         src = record["sources"][source]
         plug = root + "." + target
@@ -203,6 +252,80 @@ def _unroute_translate(root, record):
 
 
 @contextlib.contextmanager
+def _named(node, name):
+    """`node` called `name` in the root namespace for the length of the block, whatever else
+    answers to it held aside as HOLD_PREFIX + name; both put back by UUID. Yields (its long
+    path, "") -- or (None, reason) when Maya would not give it the name."""
+    uuid = cmds.ls(node, uuid=True)[0]
+    original = node.split("|")[-1]
+    held, renamed = [], False
+    try:
+        if original != name:
+            for other in cmds.ls(":" + name, long=True) or []:
+                held.append(cmds.ls(other, uuid=True)[0])
+                cmds.rename(other, HOLD_PREFIX + name)
+            got = cmds.rename(cmds.ls(uuid, long=True)[0], ":" + name)
+            renamed = True
+            if got.split("|")[-1] != name:
+                yield None, ("could not name %s %s (Maya gave %s) - exported in the plain layout"
+                             % (original, name, got))
+                return
+        yield cmds.ls(uuid, long=True)[0], ""
+    finally:
+        if renamed:
+            for path in cmds.ls(uuid, long=True) or []:
+                cmds.rename(path, ":" + original if ":" not in original else original)
+        for other in held:
+            for path in cmds.ls(other, long=True) or []:
+                cmds.rename(path, name)
+
+
+@contextlib.contextmanager
+def flattened(root):
+    """The PLAIN layout for a root standing in Cascadeur's (2026-09-28: the Creep arrives under its
+    `Armature`): for the length of the block `root` is out at world level with the wrapper's turn
+    back on its jointOrient (`jo_before`) and its translate out of the wrapper's space
+    (`unswizzled`, a curve routed, never edited) -- the file every export wrote before 2026-09-25,
+    which the roads into Unreal still take. A root not in the layout: nothing to do. Yields
+    (None, "") or (None, reason) when the root's drivers are not ones this can move; everything is
+    put back in a `finally`, found again by UUID."""
+    standing, parent = root_in_layout(root)
+    if not standing:
+        yield None, ""
+        return
+    _parent, kinds = root_state(root)
+    mode, reason = layout_plan("", kinds)
+    if mode is None:
+        # not one this can move: the file goes out in the layout the root stands in -- its Null
+        # included, named WRAPPER_NAME -- and says so, rather than bones missing their Null
+        with _named(parent, WRAPPER_NAME) as (null, why):
+            yield null, why or reason.replace(
+                "plain layout", "layout it stands in (under %s)" % WRAPPER_NAME)
+        return
+    root_uuid = cmds.ls(root, uuid=True)[0]
+    parent_uuid = cmds.ls(parent, uuid=True)[0]
+    jo, record, moved = None, None, False
+    try:
+        cmds.parent(cmds.ls(root_uuid, long=True)[0], world=True, relative=True)
+        moved = True
+        now = cmds.ls(root_uuid, long=True)[0]
+        jo = tuple(cmds.getAttr(now + ".jointOrient")[0])
+        _set(now + ".jointOrient", jo_before(jo))
+        if mode in ("keyed", "static"):
+            record = _route_translate(now, inverse=True)
+        yield None, ""
+    finally:
+        now = (cmds.ls(root_uuid, long=True) or [None])[0]
+        if now and record is not None:
+            _unroute_translate(now, record)
+        if now and jo is not None:
+            _set(now + ".jointOrient", jo)
+        home = (cmds.ls(parent_uuid, long=True) or [None])[0]
+        if now and moved and home:
+            cmds.parent(now, home, relative=True)
+
+
+@contextlib.contextmanager
 def wrapped(root, name):
     """For the length of the block, `root` stands under a Null `name` rotated WRAP_ROTATE.
 
@@ -212,7 +335,16 @@ def wrapped(root, name):
     `|Creep`, which would make the wrapper `Creep1`): whatever answers to it is held aside as
     HOLD_PREFIX + name. Everything is put back in a `finally`, found again by UUID -- the
     re-parent changes every path below the root (trap 16).
+
+    A root already standing in the layout (2026-09-28: the Creep arrives that way) is exported
+    as it is: its own Null, called `name` in the root namespace for the length of the block --
+    the exporter writes whatever the node is called, a rig's namespace included (trap 61).
     """
+    standing, parent = root_in_layout(root)
+    if standing:
+        with _named(parent, name) as (null, reason):
+            yield null, reason
+        return
     parent, kinds = root_state(root)
     mode, reason = layout_plan(parent, kinds)
     if mode is None:

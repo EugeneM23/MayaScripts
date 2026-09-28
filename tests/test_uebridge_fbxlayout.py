@@ -122,3 +122,53 @@ class SceneHalf(unittest.TestCase):
         source = inspect.getsource(fbxlayout)
         header = source.split("def ", 1)[0]
         self.assertNotIn("import maya.api", header)
+
+
+class AlreadyInTheLayout(unittest.TestCase):
+    """2026-09-28, the animator: the Creep arrives in the scene the way its FBX has it -- `Armature`
+    (-90 X) over `root` with no orientation of its own («как в файле, единообразно»). An export then
+    finds the layout already standing: Cascadeur's is written as it is, the plain one takes `root`
+    out to world level for the length of the export."""
+
+    CREEP_JO = (2.0e-5, -4.0e-5, -3.0e-5)          # measured: the Creep's root under its Armature
+
+    def test_the_creep_under_its_armature_is_in_the_layout(self):
+        self.assertTrue(fbxlayout.in_layout("transform", list(euler(fbxlayout.WRAP_ROTATE)), self.CREEP_JO))
+
+    def test_a_joint_parent_is_not(self):
+        self.assertFalse(fbxlayout.in_layout("joint", list(euler(fbxlayout.WRAP_ROTATE)), (0, 0, 0)))
+
+    def test_no_parent_is_not(self):
+        self.assertFalse(fbxlayout.in_layout("", None, (-90.0, 0.0, 0.0)))
+
+    def test_a_parent_turned_the_other_way_is_not(self):
+        self.assertFalse(fbxlayout.in_layout("transform", list(euler((90.0, 0.0, 0.0))), (0, 0, 0)))
+
+    def test_a_moved_parent_is_not(self):
+        m = list(euler(fbxlayout.WRAP_ROTATE))
+        m[13] = 5.0
+        self.assertFalse(fbxlayout.in_layout("transform", m, (0, 0, 0)))
+
+    def test_a_root_keeping_its_own_turn_is_not(self):
+        self.assertFalse(fbxlayout.in_layout("transform", list(euler(fbxlayout.WRAP_ROTATE)), (-90.0, 0, 0)))
+
+    def test_unswizzled_undoes_swizzled(self):
+        t = (1.5, -2.25, 3.0)
+        self.assertEqual(fbxlayout.unswizzled(fbxlayout.swizzled(t)), t)
+        self.assertEqual(fbxlayout.unswizzled((0.002, -2.401, 0.0)), (0.002, 0.0, 2.401))
+
+    def test_jo_before_undoes_jo_after(self):
+        for jo in ((-90.0, 0.0, 0.0), (12.0, -30.0, 47.0), self.CREEP_JO):
+            back = euler(fbxlayout.jo_before(fbxlayout.jo_after(jo)))
+            self.assertLess(max(abs(a - b) for a, b in zip(list(back), list(euler(jo)))), 1e-9)
+
+    def test_the_standing_layout_is_exported_as_it_is(self):
+        source = inspect.getsource(fbxlayout.wrapped)
+        self.assertIn("in_layout", source)
+
+    def test_the_plain_layout_takes_the_root_out_and_back(self):
+        source = inspect.getsource(fbxlayout.flattened)
+        for needed in ("in_layout", "relative=True", "finally:", "uuid=True", "jo_before"):
+            self.assertIn(needed, source)
+        for forbidden in ("keyframe(", "scaleKey", "setKeyframe", "cutKey"):
+            self.assertNotIn(forbidden, source)
