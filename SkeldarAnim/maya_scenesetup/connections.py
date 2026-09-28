@@ -86,6 +86,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubstyle as hubstyle
 import maya_rigs
 from maya_overrig import overrig
 from maya_scenesetup import attach
@@ -103,6 +104,9 @@ FREE, WORLD, WEAPON = "Free", "World", "Weapon"
 HAND_CHOICES = (FREE, WEAPON)
 WEAPON_CHOICES = (WORLD, "Hand_R", "Hand_L")
 HAND_OF = {"Hand_R": "R", "Hand_L": "L"}
+_ROWS = (("R", HAND_CHOICES), ("L", HAND_CHOICES), ("W", WEAPON_CHOICES))
+#  what a segment reads (2026-09-28); the values stay the choices above
+SEGMENT_LABEL = {"Hand_R": "Hand R", "Hand_L": "Hand L"}
 
 MARKER = "skeldarHandLink"          # on our hand constraints: the proxy's UUID
 PROXY_MARKER = "skeldarHandProxy"   # on the proxy locator: the side it carries
@@ -825,16 +829,33 @@ def header_text(rig, weapon, scheme):
                             describe(scheme))
 
 
+def segment_name(row, choice):
+    """The segment button of choice in ow's collection. Pure."""
+    return "{0}_{1}".format(MENU[row], choice)
+
+
 def menus():
-    """What the three dropdowns say now."""
-    return {row: cmds.optionMenu(MENU[row], query=True, value=True)
-            for row in ("R", "L", "W")}
+    """What the three rows say now: each row's selected segment, the row's
+    first choice when none is (a collection answers nothing before a pick).
+
+    The three parents were dropdowns until 2026-09-28; since the skin they
+    are segments (iconTextRadioCollection named MENU[row]) - the values
+    and every pure function over them unchanged."""
+    out = {}
+    for row, choices in _ROWS:
+        chosen = cmds.iconTextRadioCollection(MENU[row], query=True,
+                                              select=True) or ""
+        chosen = chosen.split("|")[-1]
+        out[row] = next((c for c in choices if segment_name(row, c) == chosen),
+                        choices[0])
+    return out
 
 
 def _set_menus(values):
     for row, value in values.items():
-        if cmds.optionMenu(MENU[row], exists=True):
-            cmds.optionMenu(MENU[row], edit=True, value=value)
+        name = segment_name(row, value)
+        if cmds.iconTextRadioButton(name, exists=True):
+            cmds.iconTextRadioButton(name, edit=True, select=True)
 
 
 def refresh(*_args):
@@ -904,47 +925,62 @@ def _press_disconnect(*_args):
 
 
 def build_panel():
-    """A header, three parent rows each with its Apply, Apply all, status."""
+    """A context line, three parent rows - label, segments, Apply - then
+    Apply all, Bake across / Release, the status. 2026-09-28 (the skin):
+    segments in place of the dropdowns, Apply all the section's one
+    primary action."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", 8))
-    cmds.text(HEADER, label="", align="left", wordWrap=True, height=36)
-    for row, choices in (("R", HAND_CHOICES), ("L", HAND_CHOICES),
-                         ("W", WEAPON_CHOICES)):
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+    hubstyle.mark(cmds.text(HEADER, label="", align="left", wordWrap=True,
+                            height=36), "context")
+    for row, choices in _ROWS:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
-                       columnWidth3=(70, 150, 70),
+                       columnWidth3=(64, 150, hubstyle.tool_width(66)),
                        columnAlign3=("left", "left", "center"),
                        columnAttach=[(1, "left", 0), (2, "both", 4),
                                      (3, "right", 0)])
         cmds.text(label=ROW_LABEL[row], font="boldLabelFont")
-        cmds.optionMenu(MENU[row], changeCommand=_menu_changed(row),
-                        annotation="the parent of " + ROW_LABEL[row])
-        for choice in choices:
-            cmds.menuItem(label=choice)
-        cmds.button(label="Apply", width=66, height=24,
-                    annotation="apply this row's parent only",
-                    command=_press_row(row))
+        segments = cmds.rowLayout(numberOfColumns=len(choices),
+                                  columnAttach=[(i + 1, "both", 1)
+                                                for i in range(len(choices))])
+        hubstyle.mark(segments, "segments", layout=True)
+        cmds.iconTextRadioCollection(MENU[row])
+        for index, choice in enumerate(choices):
+            hubstyle.mark(cmds.iconTextRadioButton(
+                segment_name(row, choice), style="textOnly",
+                label=SEGMENT_LABEL.get(choice, choice), height=22,
+                select=index == 0,
+                annotation="the parent of {0}: {1}".format(ROW_LABEL[row],
+                                                           choice),
+                onCommand=_menu_changed(row)), "segment")
         cmds.setParent("..")
-    cmds.button(label="Apply all", height=32,
-                backgroundColor=(0.45, 0.70, 0.50),
-                annotation="bring the scene to all three parents",
-                command=_press_apply_all)
-    cmds.separator(height=8, style="in")
+        hubstyle.mark(cmds.button(
+            label=hubstyle.tool_label("Apply"),
+            width=hubstyle.tool_width(66), height=24,
+            annotation="apply this row's parent only",
+            command=_press_row(row)), "tool", "check")
+        cmds.setParent("..")
+    hubstyle.mark(cmds.button(
+        label="Apply all", height=32, backgroundColor=(0.45, 0.70, 0.50),
+        annotation="bring the scene to all three parents",
+        command=_press_apply_all), "primary", "check")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 4)])
-    cmds.button(label="BakeAcross", height=30,
-                backgroundColor=(0.45, 0.60, 0.70),
-                annotation="Select the objects, then the parent LAST: each "
-                           "object rides a proxy locator inside the parent "
-                           "with its own track baked onto it, and is hidden. "
-                           "Key the proxies.",
-                command=_press_bake_across)
-    cmds.button(label="Release", height=30, width=110,
-                annotation="Selected objects (or their proxies) baked where "
-                           "the proxies carried them, proxies removed, "
-                           "objects shown again",
-                command=_press_release_across)
+    hubstyle.mark(cmds.button(
+        label="BakeAcross", height=28,
+        annotation="Select the objects, then the parent LAST: each object "
+                   "rides a proxy locator inside the parent with its own "
+                   "track baked onto it, and is hidden. Key the proxies.",
+        command=_press_bake_across), "secondary", "link")
+    hubstyle.mark(cmds.button(
+        label="Release", height=28, width=110,
+        annotation="Selected objects (or their proxies) baked where the "
+                   "proxies carried them, proxies removed, objects shown "
+                   "again",
+        command=_press_release_across), "secondary", "unlink")
     cmds.setParent("..")
-    cmds.text(STATUS, label="", align="left", wordWrap=True, height=36)
+    hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
+                            height=36), "status")
     cmds.setParent("..")
     try:
         refresh()

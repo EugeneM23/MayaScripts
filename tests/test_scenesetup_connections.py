@@ -188,35 +188,50 @@ class Messages(unittest.TestCase):
 
 
 class FakeMenuCmds(FakeUiCmds):
-    """The UI fake plus optionMenus that hold a value."""
+    """The UI fake plus the three rows' segments (2026-09-28): radio
+    collections that remember which of their buttons is selected."""
 
     def __init__(self):
         FakeUiCmds.__init__(self)
-        self.menu_values = {}
-        self.menu_items = {}
-        self._current_menu = None
+        self.selected = {}          # collection -> selected button name
+        self.segments = {}          # collection -> [(button, label)]
+        self.owner = {}             # button -> collection
+        self.on = {}                # button -> onCommand
+        self._current = None
 
-    def optionMenu(self, name=None, **kwargs):
-        self.calls.append(("optionMenu", (name,), kwargs))
-        if kwargs.get("exists"):
-            return name in self.menu_values
+    def iconTextRadioCollection(self, name=None, **kwargs):
+        self.calls.append(("iconTextRadioCollection", (name,), kwargs))
         if kwargs.get("query") or kwargs.get("q"):
-            return self.menu_values.get(name)
+            return self.selected.get(name)
+        self.selected[name] = None
+        self.segments[name] = []
+        self._current = name
+        return name
+
+    def iconTextRadioButton(self, name=None, **kwargs):
+        self.calls.append(("iconTextRadioButton", (name,), kwargs))
+        if kwargs.get("exists"):
+            return name in self.owner
         if kwargs.get("edit") or kwargs.get("e"):
-            if "value" in kwargs:
-                self.menu_values[name] = kwargs["value"]
+            if kwargs.get("select"):
+                self.selected[self.owner[name]] = name
             return name
-        self.menu_values[name] = None
-        self.menu_items[name] = []
-        self._current_menu = name
+        self.owner[name] = self._current
+        self.segments[self._current].append((name, kwargs.get("label")))
+        self.on[name] = kwargs.get("onCommand")
+        if kwargs.get("select"):
+            self.selected[self._current] = name
         self.children.append(name)
         return name
 
-    def menuItem(self, **kwargs):
-        self.menu_items[self._current_menu].append(kwargs.get("label"))
-        if self.menu_values[self._current_menu] is None:
-            self.menu_values[self._current_menu] = kwargs.get("label")
-        return kwargs.get("label")
+    def pick(self, row, choice):
+        """The animator presses a segment: selected, then its onCommand."""
+        name = cx.segment_name(row, choice)
+        self.selected[cx.MENU[row]] = name
+        self.on[name]()
+
+    def value(self, row):
+        return cx.menus()[row]
 
 
 class Panel(unittest.TestCase):
@@ -227,7 +242,9 @@ class Panel(unittest.TestCase):
         self.fake = FakeMenuCmds()
         cx.cmds = self.fake
         cx.refresh = lambda *a: ""
+        cx.hubstyle.take_marks()
         cx.build_panel()
+        self.marks = dict((m.name, m) for m in cx.hubstyle.take_marks())
 
     def tearDown(self):
         (cx.cmds, cx.refresh, cx.maya_rigs.current_rig,
@@ -237,13 +254,12 @@ class Panel(unittest.TestCase):
         return [c for c in self.fake.calls if c[0] == "button"
                 and not c[2].get("edit")]
 
-    def test_three_rows_each_with_a_parent_menu_and_apply_then_apply_all(self):
-        for row in ("R", "L", "W"):
-            self.assertIn(cx.MENU[row], self.fake.children)
-        self.assertEqual(self.fake.menu_items[cx.MENU["R"]], ["Free", "Weapon"])
-        self.assertEqual(self.fake.menu_items[cx.MENU["L"]], ["Free", "Weapon"])
-        self.assertEqual(self.fake.menu_items[cx.MENU["W"]],
-                         ["World", "Hand_R", "Hand_L"])
+    def test_three_rows_each_with_segments_and_apply_then_apply_all(self):
+        labels_of = lambda row: [label for _n, label in
+                                 self.fake.segments[cx.MENU[row]]]
+        self.assertEqual(labels_of("R"), ["Free", "Weapon"])
+        self.assertEqual(labels_of("L"), ["Free", "Weapon"])
+        self.assertEqual(labels_of("W"), ["World", "Hand R", "Hand L"])
         self.assertEqual([c[2]["label"] for c in self._buttons()],
                          ["Apply", "Apply", "Apply", "Apply all",
                           "BakeAcross", "Release"])
@@ -254,6 +270,32 @@ class Panel(unittest.TestCase):
         #  no description paragraph (the animator: «весь текст описания
         #  убираем») - the header, the three row labels and the status
         self.assertEqual(len(labels), 5)
+
+    def test_every_row_starts_on_its_first_choice(self):
+        self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
+
+    def test_the_segments_are_marked_for_the_skin(self):
+        for row, choices in cx._ROWS:
+            for choice in choices:
+                self.assertEqual(self.marks[cx.segment_name(row, choice)].role,
+                                 "segment")
+        segment_rows = [m for m in self.marks.values()
+                        if m.role == "segments"]
+        self.assertEqual(len(segment_rows), 3)
+        self.assertTrue(all(m.layout for m in segment_rows))
+        self.assertEqual(self.marks[cx.HEADER].role, "context")
+        self.assertEqual(self.marks[cx.STATUS].role, "status")
+        roles = [(m.role, m.icon) for m in self.marks.values()
+                 if m.role in ("primary", "tool", "secondary")]
+        self.assertEqual(roles.count(("tool", "check")), 3)
+        self.assertIn(("primary", "check"), roles)
+        self.assertIn(("secondary", "link"), roles)
+        self.assertIn(("secondary", "unlink"), roles)
+
+    def test_set_menus_selects_the_segment(self):
+        cx._set_menus({"R": "Weapon", "W": "Hand_L"})
+        self.assertEqual(cx.menus(), {"R": "Weapon", "L": "Free",
+                                      "W": "Hand_L"})
 
     def test_bake_across_and_release_press_the_module(self):
         asked = []
@@ -271,13 +313,10 @@ class Panel(unittest.TestCase):
         self.assertEqual(self.fake.windows, {})
         self.assertTrue(cx.is_open())
 
-    def test_a_pick_that_makes_a_cycle_fixes_the_other_menu_and_asks_for_apply(self):
-        self.fake.menu_values[cx.MENU["R"]] = "Weapon"
-        self.fake.menu_values[cx.MENU["W"]] = "Hand_R"
-        menus = [c for c in self.fake.calls if c[0] == "optionMenu"
-                 and not c[2].get("edit") and not c[2].get("query")]
-        menus[2][2]["changeCommand"]()                  # the Weapon row picked
-        self.assertEqual(self.fake.menu_values[cx.MENU["R"]], "Free")
+    def test_a_pick_that_makes_a_cycle_fixes_the_other_row_and_asks_for_apply(self):
+        cx._set_menus({"R": "Weapon"})
+        self.fake.pick("W", "Hand_R")                   # the Weapon row picked
+        self.assertEqual(self.fake.value("R"), "Free")
         status = [c for c in self.fake.calls
                   if c[0] == "text" and c[1] == (cx.STATUS,) and c[2].get("edit")]
         self.assertIn("Hand_R set to Free", status[-1][2]["label"])
@@ -295,25 +334,22 @@ class Panel(unittest.TestCase):
         saved_apply = cx.apply
         cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
         try:
-            self.fake.menu_values[cx.MENU["L"]] = "Weapon"
+            cx._set_menus({"L": "Weapon"})
             self._buttons()[1][2]["command"]()          # Hand_L's Apply
         finally:
             cx.apply = saved_apply
         self.assertEqual(asked, [scheme(F, H)])
 
-    def test_apply_all_takes_all_three_menus(self):
+    def test_apply_all_takes_all_three_rows(self):
         asked = []
         saved_apply = cx.apply
         cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
         try:
-            self.fake.menu_values[cx.MENU["R"]] = "Weapon"
-            self.fake.menu_values[cx.MENU["L"]] = "Weapon"
-            self.fake.menu_values[cx.MENU["W"]] = "World"
+            cx._set_menus({"R": "Weapon", "L": "Weapon", "W": "World"})
             self._buttons()[3][2]["command"]()          # Apply all
         finally:
             cx.apply = saved_apply
         self.assertEqual(asked, [scheme(F, F)])
-
     def test_show_window_opens_the_hub_on_connections(self):
         asked = []
         saved = maya_hub.show
