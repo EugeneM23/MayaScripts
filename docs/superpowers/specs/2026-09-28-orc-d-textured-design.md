@@ -98,3 +98,15 @@ A playblast in a disposable Maya shows it.
 
 The F orc textured (the same maps fit it but for its fur); the fur material; Unreal's cloth
 simulation; the eye's refraction and the body's subsurface scattering.
+
+## Addendum — the cut-out only where there is a cut (same day)
+
+The animator, after the first Add: «при стандартных настройках рендера определенные части орка
+просвечиваются». Viewport 2.0's default transparency (Object Sorting) draws a material with any
+transparency input in the transparent pass whole and does not depth-sort inside one render item,
+so with the cut on the whole cloth the vest's leather drew over the shoulder plates, the belt over
+its buckle, the wraps over the knee pads. Decision 6 changes: the cloth is **two** materials — the
+opaque cloth, and `ClothCut` (the same colour and normal file nodes, plus the cut) worn only by the
+faces whose uvs touch a cut texel, 106 of 20122. Four materials in all. Measured: the diff against
+the same scene with no transparency fell from 12k–57k pixels a view to 44–1515, all on the vest's
+torn edge; gate 19 of the verify samples every opaque cloth face on the mask and finds no cut.

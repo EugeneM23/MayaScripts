@@ -40,7 +40,7 @@ CLIP = sys.argv[1].replace("\\", "/")
 SCRATCH = sys.argv[2].replace("\\", "/")
 FBX = REPO + "/sources/orc/SK_Orc_Marauder_D.fbx"
 FAILS = []
-TOTAL = 18
+TOTAL = 19
 
 
 def gate(n, ok, msg):
@@ -163,20 +163,27 @@ home = catalog.asset_path("Orc_D/")
 bad = [(x, p) for x, p in paths.items() if not (p.startswith(home) and os.path.isfile(p))]
 marks_ok = all(cmds.attributeQuery(colour.TEXTURE_MARKER, node=m, exists=True) and not colour.is_ours(m)
                and cmds.nodeType(m) == colour.SHADER for m in on_d)
-counts = sorted(on_d.values())
-gate(6, len(on_d) == 3 and marks_ok and counts == [960, 20122, 26292] and len(files) == 6 and not bad,
-     "D wears %s; 6 file nodes, all on %s: off it %s" % (on_d, home, bad))
+by_name = dict((m.split(":")[-1].replace("skeldarTexture_", ""), n) for m, n in on_d.items())
+gate(6, len(on_d) == 4 and marks_ok and by_name.get("Orc_D_Body") == 26292 and by_name.get("Orc_D_Eye") == 960
+     and by_name.get("Orc_D_Cloth", 0) + by_name.get("Orc_D_ClothCut", 0) == 20122
+     and 0 < by_name.get("Orc_D_ClothCut", 0) < 0.02 * 20122 and len(files) == 6 and not bad,
+     "D wears %s; 6 file nodes, all on %s: off it %s" % (by_name, home, bad))
 colour_files = dict((m, cmds.listConnections(m + ".color", type="file")[0]) for m in on_d)
 marker_ok = all(cmds.getAttr(m + "." + colour.TEXTURE_MARKER) == paths[fl] for m, fl in colour_files.items())
 body_mat = [m for m in on_d if m.endswith("Orc_D_Body")][0]
 cloth_mat = [m for m in on_d if m.endswith("Orc_D_Cloth")][0]
+cut_mat = [m for m in on_d if m.endswith("Orc_D_ClothCut")][0]
 bump = cmds.listConnections(body_mat + ".normalCamera", type="bump2d") or []
-cut = cmds.listConnections(cloth_mat + ".transparency", type="file") or []
+cut = cmds.listConnections(cut_mat + ".transparency", type="file") or []
+see_through = [m for m in on_d if cmds.listConnections(m + ".transparency", s=True, d=False)]
+shared = (colour_files[cut_mat] == colour_files[cloth_mat] and
+          cmds.listConnections(cut_mat + ".normalCamera") == cmds.listConnections(cloth_mat + ".normalCamera"))
 spaces = dict((x, cmds.getAttr(x + ".colorSpace")) for x in files)
-gate(7, marker_ok and bump and cmds.getAttr(bump[0] + ".bumpInterp") == 1 and cut
-     and all((spaces[x] == "Raw") == (not x.endswith("_color")) for x in files),
-     "each marker names its colour image; body normal through %s (tangent space); cloth cut by %s; colour spaces %s"
-     % (bump, cut, sorted(set(spaces.values()))))
+gate(7, marker_ok and bump and cmds.getAttr(bump[0] + ".bumpInterp") == 1 and cut and see_through == [cut_mat]
+     and shared and all((spaces[x] == "Raw") == (not x.endswith("_color")) for x in files),
+     "each marker names its colour image; body normal through %s (tangent space); only %s has a transparency "
+     "input (cut by %s), sharing the cloth's colour and normal: %s; colour spaces %s"
+     % (bump, see_through, cut, shared, sorted(set(spaces.values()))))
 
 # the file node samples the shipped image's own pixels, the right way up
 body_file = colour_files[body_mat]
@@ -316,7 +323,7 @@ gate(14, painted and list(d2_worn) == [painted] and colour.is_ours(painted) and 
 text = character.add_character(orc_d, colour.PALETTE[0].rgb)
 third = live_shape("|Orc_D_Rig2:Group|Orc_D_Rig2:Geometry|Orc_D_Rig2:Orc_D_Body") if cmds.objExists("Orc_D_Rig2:Orc_D_Body") else None
 third_worn = worn(third) if third else {}
-gate(15, third and " - textured" in text and len(third_worn) == 3
+gate(15, third and " - textured" in text and len(third_worn) == 4
      and all(cmds.attributeQuery(colour.TEXTURE_MARKER, node=m, exists=True) for m in third_worn),
      "the next Add: %s -> %s" % (text.splitlines()[0][:120], sorted(third_worn)))
 
@@ -329,6 +336,27 @@ seen = [cmds.colorAtPoint(cut[0], output="A", u=(c + 0.5) / mw, v=(r + 0.5) / mh
 gate(16, cut_at and kept_at and seen[0][0] < 0.01 and seen[1][0] > 0.99,
      "the cloth's cut mask: alpha %.3f at a cut texel %s, %.3f at a kept one %s (transparency = 1 - alpha)"
      % (seen[0][0], cut_at, seen[1][0], kept_at))
+# the opaque cloth never lies on the cut (2026-09-28: the viewport's Object Sorting draws a material
+# with a transparency input whole in the transparent pass, and the vest's leather drew over the
+# shoulder plates) -- Maya's own sampler, at every opaque cloth face's centre and near its corners
+cloth_sg = cmds.listConnections(cloth_mat + ".outColor", type="shadingEngine")[0]
+opaque_faces = sorted(int(x.split("[")[1].rstrip("]")) for x in cmds.ls(cmds.sets(cloth_sg, q=True), flatten=True)
+                      if ".f[" in x and x.split(".")[0].endswith("Orc_D_Body"))
+us, vs = [], []
+for fi in opaque_faces:
+    uv = [fn.getPolygonUV(fi, j, "map1") for j in range(fn.polygonVertexCount(fi))]
+    cu, cv = sum(p[0] for p in uv) / len(uv), sum(p[1] for p in uv) / len(uv)
+    for pu, pv in [(cu, cv)] + [(cu + 0.8 * (p[0] - cu), cv + 0.8 * (p[1] - cv)) for p in uv]:
+        us.append(pu)
+        vs.append(pv)
+alphas = []
+for k in range(0, len(us), 2000):
+    got = cmds.colorAtPoint(cut[0], output="A", u=us[k:k + 2000], v=vs[k:k + 2000])
+    alphas.extend(got if isinstance(got, list) else [got])
+holes = sum(1 for a in alphas if a < 0.99)
+gate(19, len(opaque_faces) > 19000 and len(alphas) == len(us) and holes == 0,
+     "the %d opaque cloth faces: %d samples on the cut mask, %d of them in a cut" % (len(opaque_faces), len(alphas), holes))
+
 # nothing of Unreal's FBX, or of the clip, is needed after: the reference goes
 cmds.delete(cmds.ls("|ref:*", assemblies=True))
 

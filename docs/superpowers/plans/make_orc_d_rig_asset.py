@@ -154,6 +154,91 @@ def material(key, colour_map, normal_map=None, cut_map=None):
     return mat, engine
 
 
+def cut_material(cloth, key, cut_map):
+    """The cloth's CUT-OUT faces' material: the cloth's own colour and normal (the same file
+    nodes), plus the cut on `transparency`.
+
+    Only the faces whose uvs touch a cut texel wear it (`faces_touching_cut`). Viewport 2.0's
+    default transparency (Object Sorting) draws a material with a transparency input in the
+    transparent pass WHOLE, and inside one render item it does not sort by depth: with the cut on
+    the whole cloth the vest's leather drew over the shoulder plates, the belt over its buckle,
+    the wraps over the knee pads (2026-09-28, the animator: «определенные части орка
+    просвечиваются»). The rest of the cloth is opaque and depth-tested like any mesh."""
+    mat = cmds.shadingNode(colour.SHADER, asShader=True, name="skeldarTexture_" + key)
+    colour.dress(mat)
+    colour_file = cmds.listConnections(cloth + ".color", type="file")[0]
+    cmds.connectAttr(colour_file + ".outColor", mat + ".color", force=True)
+    bump = cmds.listConnections(cloth + ".normalCamera", type="bump2d")[0]
+    cmds.connectAttr(bump + ".outNormal", mat + ".normalCamera", force=True)
+    cut = file_node(MAPS + cut_map, key + "_cut", raw=True)
+    cmds.setAttr(cut + ".alphaIsLuminance", 1)
+    cmds.connectAttr(cut + ".outTransparency", mat + ".transparency", force=True)
+    cmds.addAttr(mat, longName=colour.TEXTURE_MARKER, dataType="string")
+    cmds.setAttr(mat + "." + colour.TEXTURE_MARKER, cmds.getAttr(colour_file + ".fileTextureName"),
+                 type="string")
+    engine = cmds.sets(renderable=True, noSurfaceShader=True, empty=True, name=mat + "SG")
+    cmds.connectAttr(mat + ".outColor", engine + ".surfaceShader", force=True)
+    return mat, engine
+
+
+def cut_texels(mask_path):
+    """The cut-out mask as booleans, rows by v (MImage stores the bottom row first, which is v 0),
+    grown by one texel: the viewport's bilinear filter reaches a texel beyond the edge."""
+    import ctypes
+    import numpy as np
+    img = om.MImage()
+    img.readFromFile(mask_path)
+    w, h = img.getSize()
+    px = np.frombuffer(ctypes.string_at(img.pixels(), w * h * img.depth()), np.uint8)
+    cut = px.reshape(h, w, img.depth())[..., 0] < 128
+    grown = cut.copy()
+    grown[1:] |= cut[:-1]
+    grown[:-1] |= cut[1:]
+    grown[:, 1:] |= cut[:, :-1]
+    grown[:, :-1] |= cut[:, 1:]
+    return grown
+
+
+def faces_touching_cut(shape, faces, mask_path):
+    """Which of `faces` has a cut texel inside its uv polygon (map1): a summed-area table rules
+    out the faces whose uv bounding box holds none, texel centres are tested inside the fan
+    triangles of the rest."""
+    import numpy as np
+    cut = cut_texels(mask_path)
+    h, w = cut.shape
+    table = np.pad(cut.astype(np.int32).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+    fn_ = mfn(shape)
+    touching = []
+    for f in faces:
+        uv = [fn_.getPolygonUV(f, j, "map1") for j in range(fn_.polygonVertexCount(f))]
+        xs = [u * w - 0.5 for u, _v in uv]
+        ys = [v * h - 0.5 for _u, v in uv]
+        x0, x1 = max(0, int(np.floor(min(xs)))), min(w - 1, int(np.ceil(max(xs))))
+        y0, y1 = max(0, int(np.floor(min(ys)))), min(h - 1, int(np.ceil(max(ys))))
+        if x1 < x0 or y1 < y0:
+            continue
+        if table[y1 + 1, x1 + 1] - table[y0, x1 + 1] - table[y1 + 1, x0] + table[y0, x0] == 0:
+            continue
+        gy, gx = np.nonzero(cut[y0:y1 + 1, x0:x1 + 1])
+        px, py = gx + x0, gy + y0
+        for k in range(1, len(uv) - 1):
+            (ax, ay), (bx, by), (cx, cy) = (xs[0], ys[0]), (xs[k], ys[k]), (xs[k + 1], ys[k + 1])
+            d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+            if abs(d) < 1e-12:
+                continue
+            l1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d
+            l2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d
+            if np.any((l1 >= -0.02) & (l2 >= -0.02) & (1 - l1 - l2 >= -0.02)):
+                touching.append(f)
+                break
+        else:
+            # a face smaller than a texel: its own corners and centre sampled
+            if len(uv) and any(cut[min(h - 1, max(0, int(round(y)))), min(w - 1, max(0, int(round(x))))]
+                               for x, y in list(zip(xs, ys)) + [(sum(xs) / len(xs), sum(ys) / len(ys))]):
+                touching.append(f)
+    return touching
+
+
 # ------------------------------------------------------------------ the shipped rig, F out
 cmds.file(SRC_RIG, open=True, force=True, executeScriptNodes=False)
 root = cmds.ls("|root", type="joint", long=True)[0]
@@ -310,14 +395,17 @@ print("  uv sets %s, colour sets %s, under %s" % (cmds.polyUVSet(shape, q=True, 
 # the materials, per face
 cmds.select(clear=True)
 made = {"body": material("Orc_D_Body", "Orc_D_Body_Color.jpg", "Orc_D_Body_Normal.jpg"),
-        "cloth": material("Orc_D_Cloth", "Orc_D_Cloth_Color.jpg", "Orc_D_Cloth_Normal.jpg",
-                          "Orc_D_Cloth_Mask.png"),
+        "cloth": material("Orc_D_Cloth", "Orc_D_Cloth_Color.jpg", "Orc_D_Cloth_Normal.jpg"),
         "eye": material("Orc_D_Eye", "Orc_D_Eye_Color.jpg")}
+made["cut"] = cut_material(made["cloth"][0], "Orc_D_ClothCut", "Orc_D_Cloth_Mask.png")
 new_face = dict((f, k) for k, f in enumerate(kept_faces))
-for key in ("body", "cloth", "eye"):
-    ids = [new_face[f] for f in section[key]]
-    cmds.sets(["%s.f[%d]" % (dup, i) for i in ids], edit=True, forceElement=made[key][1])
-    print("  %-5s %s: %d faces" % (key, made[key][0], len(ids)))
+cloth_ids = [new_face[f] for f in section["cloth"]]
+cut_ids = set(faces_touching_cut(shape, cloth_ids, os.path.join(PLUGIN, "assets", MAPS, "Orc_D_Cloth_Mask.png")))
+faces_for = {"body": [new_face[f] for f in section["body"]], "eye": [new_face[f] for f in section["eye"]],
+             "cloth": [i for i in cloth_ids if i not in cut_ids], "cut": sorted(cut_ids)}
+for key in ("body", "cloth", "cut", "eye"):
+    cmds.sets(["%s.f[%d]" % (dup, i) for i in faces_for[key]], edit=True, forceElement=made[key][1])
+    print("  %-5s %s: %d faces" % (key, made[key][0], len(faces_for[key])))
 
 # the blendShape: the 56 targets as meshes of the new topology, then gone (the deltas stay)
 target_meshes = []

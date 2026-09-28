@@ -5766,9 +5766,12 @@ Measured first:
 - **2048 JPG** (the animator's pick over 4096 JPG and 4096 PNG, «2048, JPG»): six maps, 7.4 MB in
   `assets/Orc_D/`; the build zip 65.0 MB, 102 files.
 
-**Three materials, one shader** (phong wearing `colour.LOOK`, `colour.TEXTURE_MARKER`): body
-(colour + normal through a bump2d in tangent-space mode), cloth (the same + the cut on
-`transparency`), eye. So a textured character wears one material per texture set. **The asset
+**Four materials, one shader** (phong wearing `colour.LOOK`, `colour.TEXTURE_MARKER`): body
+(colour + normal through a bump2d in tangent-space mode), cloth (the same), eye, and **ClothCut** —
+the cloth's own colour and normal file nodes plus the cut on `transparency`, worn ONLY by the 106 of
+20122 cloth faces whose uvs touch a cut texel (the mask grown a texel for the bilinear filter;
+`faces_touching_cut`: a summed-area table, then texel centres in the fan triangles) — trap 95.
+So a textured character wears one material per texture set. **The asset
 names its images RELATIVELY**: each file node carries `colour.ASSET_IMAGE`
 (`skeldarAssetImage`, "Orc_D/<file>"), colour space set with `ignoreColorSpaceFileRules` (Raw for
 normals and the cut), and **Add Character points them at the installed copy**
@@ -5779,7 +5782,8 @@ the swatch, turns Textures on in every model panel where they are off, and says 
 still arrives). **Recolour replaces the textures** with a colour (Spear 03's ruling, a whole-shape
 assignment over the per-face ones); the next Add is textured again.
 
-Proof: `verify_orc_d_rig_asset.py` — **18/18 standalone**: two Orc D and an F orc added (the F red,
+Proof: `verify_orc_d_rig_asset.py` — **19/19 standalone** (gate 19: Maya's own sampler at the
+centre and near the corners of all 20016 opaque cloth faces, 80064 samples, 0 in a cut): two Orc D and an F orc added (the F red,
 the palette untouched by the D's), rotation-marked, at bind, controls at default; the file node
 samples the JPG's pixels to 0.0000 the right way up (flipped rows 0.61); the cut mask 0 / 1;
 Unreal's mesh minus the proxy to 7.45e-9 cm; the targets to 2.4e-7; **under a retargeted take,
@@ -5821,3 +5825,13 @@ refraction, the skin's subsurface scattering.
     `maya_hub`, the installed folder first on `sys.path`, `rebuild()` in the standing control.
     Measured live: `maya_hub` absent right after the install, then a new module object from the
     installed copy with `_BUILT_HERE` True and the new row in the dropdown, no press.
+95. **Viewport 2.0's default transparency (Object Sorting) draws a material with ANY transparency
+    input in the transparent pass whole, and does not depth-sort inside one render item.** The
+    Orc D's whole cloth wore the cut-out: from behind the vest's leather drew over the metal
+    shoulder plates, the belt over its buckle, the wraps over the knee pads (the animator: «при
+    стандартных настройках рендера определенные части орка просвечиваются»). The distant shots
+    had looked right; a diff against the same scene with the transparency disconnected found
+    12k–57k pixels per view. A binary mask does not help — the pass is chosen by the connection.
+    Give the transparency only to the faces that touch the cut (106 of 20122 here): the diff
+    fell to 44–1515 pixels, all on the vest's torn edge. `hardwareRenderingGlobals.
+    transparencyAlgorithm` is the animator's scene setting, not ours to change on an Add.
