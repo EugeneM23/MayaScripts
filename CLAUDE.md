@@ -558,6 +558,27 @@ must fit the animator's 360 px dock: `content.minimumSizeHint().width()` ≤ the
 live); the colour rows were 29 px too wide until the hidden slider stopped taking width
 (`pick((1, 30, 1), (1, 34, 60))`).
 
+**The same evening, after using it** («UE bridge давай передвинем наверх как он и был. При нажатии
+на верхнюю панель с разделами все другие панели должны закрыться и открыться только нужная.
+Выделение активной панели должно быть ярче. Раздел с обновлением давай вернём»): the order is
+UE Bridge first — a group stays together, so **Animation** (UE Bridge, Retarget) is the first
+group, then Scene, Look, and **Settings** holding the **Update card** again (its installed line
+the subtitle; `HEADER_ONLY = ("hotkeys",)` replaced the settings-group rule). A **jump is
+exclusive** (`maya_hub.focus`: every other card closed and remembered so), a card's own header
+still toggles that card alone; `show(key)` stays non-exclusive. The active card: `card_active`
+`#383a41` and a 2 px outline in the accent itself. The header chip opens the Update card and
+checks; `maya_update._status` writes the card's line and only colours the chip
+(`maya_hub.chip_state`), the header's message line serving a skin without the card. Proof:
+`verify_hub_skin.py` **26/26 live again**, with gate 2 now counting the roots in the control.
+
+102. **An install left TWO skins in the hub**: the fresh `maya_hub` does not know the `_SKIN` an
+     older module object built (the install purges modules, not widgets), so its rebuild added a
+     root beside the old one — two hubs at half height each, every control name twice, and
+     `find` styling the OLD set (the verify: subtitles not moved, Apply all / Import without a
+     role, focus lighting the wrong card). `_build_skin` now deletes every root named
+     `skeldarAnimHubRoot` in the control first (`maya_hubqt.destroy_roots`) — found by name,
+     never by module state (trap 75's family).
+
 ## Connections — the hands on the weapon, on the AdvancedSkeleton rig (2026-09-18)
 
 The animator's ask: «вкладка connections, в которой мы сможем привязывать и
