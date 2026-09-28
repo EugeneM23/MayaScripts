@@ -14,13 +14,18 @@ from tests.uifakes import FakeUiCmds
 
 def _add_builder(module, builder, fails=False):
     """Give a fake tool module a builder that records that it ran (or
-    raises). One module may carry several builders: Scene Setup's holds
-    Characters and Weapons."""
+    raises), where it ran (the last setParent), and marks one control. One
+    module may carry several builders: Scene Setup's holds Characters and
+    Weapons."""
     def build_panel():
         if fails:
             raise RuntimeError("boom in " + module.__name__ + "." + builder)
         module.built.append(builder)
+        parents = [c[1][0] for c in hub.cmds.calls
+                   if c[0] == "setParent" and c[1]]
+        module.parents.append(parents[-1] if parents else None)
         hub.cmds.text(label=builder + " panel")
+        hub.hubstyle.mark(module.__name__ + "." + builder, "primary")
     setattr(module, builder, build_panel)
 
 
@@ -39,6 +44,7 @@ class FakeToolsMixin(object):
                 self.saved[sec.module] = sys.modules.get(sec.module)
                 fake = types.ModuleType(sec.module)
                 fake.built = []
+                fake.parents = []
                 fakes[sec.module] = fake
                 sys.modules[sec.module] = fake
                 if "." in sec.module:
@@ -69,14 +75,39 @@ class FakeToolsMixin(object):
 
 class TheTable(unittest.TestCase):
 
-    def test_the_sections_in_shelf_order(self):
-        """Scene Setup is Characters + Weapons since the evening of
-        2026-09-17; Weapons follows Characters (its refresh writes the
-        Characters header). Update closes the column (2026-09-28)."""
+    def test_the_sections_in_the_hub_s_order(self):
+        """2026-09-28, the skin: grouped Scene / Animation / Look, then the
+        header's two. Weapons still follows Characters (its refresh writes
+        the Characters header)."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["UE Bridge", "Characters", "Weapons", "Connections",
-                          "Retarget", "Hotkeys", "Studio", "Colour",
+                         ["Characters", "Weapons", "Connections", "UE Bridge",
+                          "Retarget", "Studio", "Colour", "Hotkeys",
                           "Update"])
+
+    def test_the_groups_and_their_icons(self):
+        import maya_hubicons
+        groups = [(s.key, s.group) for s in hub.SECTIONS]
+        self.assertEqual(groups, [
+            ("characters", "scene"), ("weapons", "scene"),
+            ("connections", "scene"), ("uebridge", "animation"),
+            ("retarget", "animation"), ("studio", "look"),
+            ("colour", "look"), ("hotkeys", "settings"),
+            ("update", "settings")])
+        for sec in hub.SECTIONS:
+            self.assertIn(sec.icon, maya_hubicons.ICONS, sec.key)
+            self.assertIsNotNone(hub.hubstyle.group(sec.group), sec.key)
+
+    def test_a_group_is_contiguous(self):
+        seen = []
+        for sec in hub.SECTIONS:
+            if not seen or seen[-1] != sec.group:
+                self.assertNotIn(sec.group, seen, sec.key)
+                seen.append(sec.group)
+
+    def test_the_cards_are_every_section_but_the_header_s(self):
+        self.assertEqual([s.key for s in hub.card_sections()],
+                         ["characters", "weapons", "connections", "uebridge",
+                          "retarget", "studio", "colour"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -315,6 +346,264 @@ class Show(FakeToolsMixin, unittest.TestCase):
 
     def test_scroll_to_without_the_layout_is_quiet(self):
         self.assertIsNone(hub.scroll_to("colour"))
+
+
+# ------------------------------------------------------------------ the skin
+
+class FakeCard(object):
+
+    def __init__(self, key, collapsed):
+        self.key = key
+        self._collapsed = collapsed
+
+    def body_path(self):
+        return "body|" + self.key
+
+    def set_collapsed(self, value):
+        self._collapsed = value
+
+    def collapsed(self):
+        return self._collapsed
+
+
+class FakeSkin(object):
+
+    fail_finish = False
+
+    def __init__(self, layout, scale=1.0, callbacks=None):
+        self.layout = layout
+        self.scale = scale
+        self.callbacks = callbacks
+        self.cards = {}
+        self.jumps = []
+        self.order = []
+        self.said = []
+        self.painted = []
+        self.sheet = None
+        self._alive = True
+
+    def add_jump(self, key, label, icon, colour):
+        self.jumps.append(key)
+
+    def add_group(self, key, label):
+        self.order.append(("group", key))
+
+    def add_card(self, key, label, icon, colour, chip, collapsed=False):
+        card = FakeCard(key, collapsed)
+        self.cards[key] = card
+        self.order.append(("card", key))
+        return card
+
+    def finish(self, sheet):
+        if FakeSkin.fail_finish:
+            raise RuntimeError("the skin broke")
+        self.sheet = sheet
+
+    def say(self, text, state=None):
+        self.said.append((text, state))
+
+    def paint_hotkeys(self, active):
+        self.painted.append(active)
+
+    def set_version(self, text, tooltip, state=None):
+        pass
+
+    def scroll_to(self, key):
+        return 42 if key in self.cards else None
+
+    def alive(self):
+        return self._alive
+
+    def destroy(self):
+        self._alive = False
+
+
+def _fake_qt(available=True):
+    module = types.ModuleType("maya_hubqt_fake")
+    module.available = lambda: available
+    module.host_layout = lambda control: "layout of " + control
+    module.Skin = FakeSkin
+    module.applied = []
+    module.apply_marks = lambda marks, card, scale: module.applied.append(
+        (card.key, [m.name for m in marks]))
+    return module
+
+
+class Skinned(FakeToolsMixin, unittest.TestCase):
+
+    def setUp(self):
+        self.real = (hub.cmds, hub._hubqt, hub._dress_header)
+        self.fake = FakeUiCmds(dpi=1.5)
+        hub.cmds = self.fake
+        self.qt = _fake_qt()
+        hub._hubqt = lambda: self.qt
+        hub._dress_header = lambda skin: None
+        FakeSkin.fail_finish = False
+        self.install_fakes()
+
+    def tearDown(self):
+        hub.cmds, hub._hubqt, hub._dress_header = self.real
+        FakeSkin.fail_finish = False
+        hub._SKIN = None
+        self.remove_fakes()
+
+    def test_skinned_when_qt_is_there(self):
+        self.assertTrue(hub.skinned())
+        hub.build()
+        self.assertTrue(hub.is_skinned())
+        self.assertEqual(hub._SKIN.layout, "layout of " + hub.CONTROL)
+        self.assertEqual(hub._SKIN.scale, 1.5)
+
+    def test_cards_under_group_labels_and_no_frames(self):
+        hub.build()
+        self.assertEqual(hub._SKIN.order, [
+            ("group", "scene"), ("card", "characters"), ("card", "weapons"),
+            ("card", "connections"), ("group", "animation"),
+            ("card", "uebridge"), ("card", "retarget"), ("group", "look"),
+            ("card", "studio"), ("card", "colour")])
+        self.assertEqual(self.fake.frames, {})
+        self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])
+
+    def test_every_card_builder_runs_once_into_its_body(self):
+        hub.build()
+        for sec in hub.card_sections():
+            self.assertEqual(self.built(sec.key), 1, sec.key)
+            module, builder = self.tools[sec.key]
+            index = module.built.index(builder)
+            self.assertEqual(module.parents[index], "body|" + sec.key)
+
+    def test_the_header_sections_are_not_cards(self):
+        hub.build()
+        self.assertEqual(self.built("hotkeys"), 0)
+        self.assertEqual(self.built("update"), 0)
+        self.assertNotIn("hotkeys", hub._SKIN.cards)
+
+    def test_each_card_gets_its_own_marks(self):
+        hub.build()
+        applied = dict(self.qt.applied)
+        self.assertEqual(applied["characters"],
+                         ["maya_scenesetup.window.build_characters_panel"])
+        self.assertEqual(applied["colour"], ["maya_colour.build_panel"])
+
+    def test_the_stylesheet_is_set_at_the_display_scale(self):
+        hub.build()
+        self.assertEqual(hub._SKIN.sheet, hub.hubstyle.stylesheet(1.5))
+
+    def test_remembered_collapse_reaches_the_card(self):
+        self.fake.optionvars[hub.OPTIONVAR.format("studio")] = 1
+        hub.build()
+        self.assertTrue(hub._SKIN.cards["studio"].collapsed())
+        self.assertFalse(hub._SKIN.cards["colour"].collapsed())
+
+    def test_the_callbacks_remember_and_jump(self):
+        hub.build()
+        callbacks = hub._SKIN.callbacks
+        callbacks["toggled"]("colour", True)
+        self.assertEqual(self.fake.optionvars[hub.OPTIONVAR.format("colour")],
+                         1)
+        hub._SKIN.cards["colour"].set_collapsed(True)
+        callbacks["jump"]("colour")
+        self.assertFalse(hub._SKIN.cards["colour"].collapsed())
+
+    def test_a_broken_skin_falls_back_to_the_classic_hub(self):
+        FakeSkin.fail_finish = True
+        hub.build()
+        self.assertFalse(hub.is_skinned())
+        self.assertEqual([c for c in self.fake.children
+                          if c in self.fake.frames],
+                         [s.frame for s in hub.SECTIONS])
+        self.assertEqual(self.built("characters"), 2)       # skin, then classic
+        self.assertEqual(self.built("hotkeys"), 1)
+
+    def test_classic_when_asked(self):
+        self.fake.optionvars[hub.CLASSIC_VAR] = 1
+        self.assertFalse(hub.skinned())
+        hub.build()
+        self.assertFalse(hub.is_skinned())
+        self.assertIn("skeldarHubFrameCharacters", self.fake.frames)
+
+    def test_the_classic_hub_offers_the_way_back(self):
+        self.fake.optionvars[hub.CLASSIC_VAR] = 1
+        hub.build()
+        buttons = [c for c in self.fake.calls if c[0] == "button"
+                   and c[1] == (hub.NEW_LOOK_BUTTON,)]
+        self.assertEqual(len(buttons), 1)
+        buttons[0][2]["command"]()
+        self.assertEqual(self.fake.optionvars[hub.CLASSIC_VAR], 0)
+        self.assertEqual(len(self.fake.deferred), 1)
+
+    def test_set_classic_defers_the_rebuild(self):
+        hub.build()
+        hub.set_classic(True)
+        self.assertEqual(self.fake.optionvars[hub.CLASSIC_VAR], 1)
+        skin = hub._SKIN
+        self.assertTrue(skin.alive())                     # not yet
+        self.fake.run_deferred()
+        self.assertFalse(skin.alive())
+        self.assertFalse(hub.is_skinned())
+        self.assertIn("skeldarHubFrameColour", self.fake.frames)
+
+    def test_expand_opens_the_card_and_scrolls_deferred(self):
+        self.fake.optionvars[hub.OPTIONVAR.format("studio")] = 1
+        hub.build()
+        hub.show("studio")
+        self.assertFalse(hub._SKIN.cards["studio"].collapsed())
+        self.assertEqual(self.fake.optionvars[hub.OPTIONVAR.format("studio")],
+                         0)
+        self.assertEqual(len(self.fake.deferred), 1)
+        self.fake.run_deferred()
+        self.assertEqual(hub.scroll_to("studio"), 42)
+
+    def test_expanding_a_header_section_is_quiet(self):
+        """maya_hotkeys.show_window / maya_update.show_window still ask for
+        their keys; in the skin those are the header."""
+        hub.build()
+        self.assertIsNone(hub.expand("hotkeys"))
+        self.assertIsNone(hub.expand("update"))
+
+    def test_say_and_paint_reach_the_skin(self):
+        hub.build()
+        hub.say("Up to date: 601eaae", state="ok")
+        hub.paint_hotkeys(True)
+        self.assertEqual(hub._SKIN.said, [("Up to date: 601eaae", "ok")])
+        self.assertEqual(hub._SKIN.painted, [True])
+
+    def test_say_and_paint_are_quiet_without_a_skin(self):
+        self.assertEqual(hub.say("hello"), "hello")
+        self.assertFalse(hub.paint_hotkeys(False))
+
+    def test_rebuild_destroys_the_skin_first(self):
+        hub.build()
+        first = hub._SKIN
+        hub.rebuild()
+        self.assertFalse(first.alive())
+        self.assertTrue(hub._SKIN.alive())
+        self.assertIsNot(hub._SKIN, first)
+
+
+class ClassicWithoutQt(FakeToolsMixin, unittest.TestCase):
+
+    def setUp(self):
+        self.real = (hub.cmds, hub._hubqt)
+        self.fake = FakeUiCmds()
+        hub.cmds = self.fake
+        hub._hubqt = lambda: _fake_qt(available=False)
+        self.install_fakes()
+
+    def tearDown(self):
+        hub.cmds, hub._hubqt = self.real
+        self.remove_fakes()
+
+    def test_no_way_to_a_skin_that_cannot_be_built(self):
+        hub.build()
+        self.assertFalse(hub.is_skinned())
+        self.assertNotIn(hub.NEW_LOOK_BUTTON,
+                         [c[1][0] for c in self.fake.calls
+                          if c[0] == "button" and c[1]])
+
+    def test_the_marks_are_dropped(self):
+        hub.build()
+        self.assertEqual(hub.hubstyle.take_marks(), [])
 
 
 if __name__ == "__main__":
