@@ -197,6 +197,19 @@ class ButtonSpecs(unittest.TestCase):
     def test_the_hub_ships(self):
         self.assertIn("maya_hub.py", install.payload())
 
+    def test_the_hub_s_skin_ships(self):
+        """2026-09-28: without them the hub falls back to classic, and
+        every builder's `import maya_hubstyle` fails outright."""
+        for name in ("maya_hubstyle.py", "maya_hubicons.py", "maya_hubqt.py"):
+            self.assertIn(name, install.payload())
+
+    def test_every_plugin_module_ships(self):
+        """A module beside install.py that the payload forgets reaches a
+        colleague as an ImportError days later."""
+        for name in os.listdir(REPO):
+            if name.endswith(".py") and name.startswith("maya_"):
+                self.assertIn(name, install.payload(), name)
+
     def test_no_bake_and_no_curves_button(self):
         """Bake folded into Retarget; the Curve Overlay left (2026-09-08)."""
         for flag in ("PICKER", "OVERRIG", "OVERSHOOT"):

@@ -45,6 +45,9 @@ _PAYLOAD = (
     "maya_colour.py",
     "maya_winfit.py",
     "maya_hub.py",
+    "maya_hubstyle.py",         # the hub's skin (2026-09-28): the look as data
+    "maya_hubicons.py",         # its Tabler icons
+    "maya_hubqt.py",            # its Qt widgets
     "icons",
     "assets",
     "overrig",
