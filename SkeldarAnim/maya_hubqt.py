@@ -35,6 +35,11 @@ import maya_hubstyle as hubstyle
 
 _QT = []
 
+#  How long the mouse may be off every card before the light goes to the
+#  resting card (see Skin.resting): long enough to cross the gap between two
+#  cards without a flash, short enough to read as immediate.
+FALLBACK_MS = 150
+
 
 def qt():
     """PySide6 (Maya 2025+), else PySide2, as one namespace; None without Qt."""
@@ -416,12 +421,21 @@ class Skin(object):
 
         #  The lit card (2026-09-28, «активное окно подсвечивалось немного
         #  другим цветом»; then «когда я наводил мышкой на какой-то раздел у
-        #  него включалась подсветка»): the card under the mouse, and with
-        #  the mouse off every card, the one last pressed or focused in, or
-        #  jumped to (`pinned`). The watcher is the root's child, so it
-        #  leaves the application's filters when the root is deleted.
+        #  него включалась подсветка»): the card under the mouse. With the
+        #  mouse off every card, the one last pressed or focused in, or
+        #  jumped to (`pinned`) -- only while it is OPEN, and only after
+        #  FALLBACK_MS («подсветка перепрыгивает на последний активный
+        #  раздел ... картинка как бы мигает»): crossing the gap between two
+        #  cards lit the pinned one for a moment. The watcher is the root's
+        #  child, so it leaves the application's filters when the root is
+        #  deleted; the timer likewise.
         self.active = None
         self.pinned = None
+        self._fallback = q.QtCore.QTimer(self.root)
+        self._fallback.setObjectName("skeldarHubFallback")
+        self._fallback.setSingleShot(True)
+        self._fallback.setInterval(FALLBACK_MS)
+        self._fallback.timeout.connect(self._fall_back)
         self._watcher = _watcher_class()(self._activate_from,
                                          self._hover_from, self._left_from,
                                          self.root)
@@ -578,8 +592,20 @@ class Skin(object):
 
     def set_active(self, key):
         """Card `key` is the one worked in (None: none): pinned and lit."""
+        self._fallback.stop()
         self.pinned = key if key in self.cards else None
         self._light(self.pinned)
+
+    def resting(self):
+        """What is lit with the mouse off every card: the pinned card if it
+        is open, else none."""
+        card = self.cards.get(self.pinned) if self.pinned else None
+        if card is not None and not card.collapsed():
+            return self.pinned
+        return None
+
+    def _fall_back(self):
+        self._light(self.resting())
 
     def _light(self, key):
         """Light card `key` (None: none), the previous one back to plain."""
@@ -611,16 +637,21 @@ class Skin(object):
             self.set_active(key)
 
     def _hover_from(self, widget):
-        """The mouse entered `widget`: its card lit, or with none under the
-        mouse the pinned one."""
+        """The mouse entered `widget`: its card lit at once; off every card,
+        the resting light after FALLBACK_MS -- entering another card first
+        cancels it, so a gap between cards lights nothing in between."""
         key = self.card_of(widget)
-        self._light(key if key is not None else self.pinned)
+        if key is not None:
+            self._fallback.stop()
+            self._light(key)
+        elif self.active != self.resting():
+            self._fallback.start()
 
     def _left_from(self, widget):
         """The mouse left the hub (to another window, where no Enter of
-        ours arrives): the pinned card lit again."""
-        if widget is self.root:
-            self._light(self.pinned)
+        ours arrives): the resting light, after the same pause."""
+        if widget is self.root and self.active != self.resting():
+            self._fallback.start()
 
     def scroll_to(self, key):
         card = self.cards.get(key)

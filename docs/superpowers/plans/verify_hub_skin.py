@@ -234,9 +234,19 @@ elif PHASE == 1:
     hovered = skin.active
     qt.QtWidgets.QApplication.sendEvent(
         skin.root, qt.QtCore.QEvent(qt.QtCore.QEvent.Leave))
-    gate(27, "the mouse over a card lights it; off the hub, the one worked "
-             "in again", hovered == "colour" and skin.active == "uebridge",
-         (hovered, skin.active))
+    pending = skin._fallback.isActive() and skin.active == "colour"
+    skin._fallback.timeout.emit()
+    #  uebridge was pinned by the focus above while CLOSED (the jump to
+    #  studio closed it): off the hub nothing is lit; opened, it is
+    closed_rest = skin.active
+    skin.cards["uebridge"].set_collapsed(False)
+    open_rest = skin.resting()
+    skin.cards["uebridge"].set_collapsed(True)
+    gate(27, "the mouse over a card lights it; off the hub, after a pause, "
+             "the one worked in only if open",
+         hovered == "colour" and pending and closed_rest is None
+         and open_rest == "uebridge", (hovered, pending, closed_rest,
+                                       open_rest))
     skin.set_active(None)
 
     # ---- memory back

@@ -304,27 +304,63 @@ class ActiveCard(SeamsMixin, unittest.TestCase):
         self.assertTrue(self.a.frame.property("skActive"))
         self.assertFalse(self.b.frame.property("skActive"))
 
-    def test_off_every_card_the_one_worked_in_is_lit_again(self):
+    def test_off_every_card_the_open_one_worked_in_is_lit_after_a_pause(self):
         self.skin.set_active("colour")                   # pressed in
         self._enter(self.a.header)                       # hovering
         self.assertEqual(self.skin.active, "characters")
         self._enter(self.skin.header)                    # off the cards
+        self.assertEqual(self.skin.active, "characters")  # not yet
+        self.assertTrue(self.skin._fallback.isActive())
+        self.assertEqual(self.skin._fallback.interval(), hubqt.FALLBACK_MS)
+        self.skin._fallback.timeout.emit()
         self.assertEqual(self.skin.active, "colour")
         self.assertEqual(self.skin.pinned, "colour")
 
-    def test_leaving_the_hub_lights_the_one_worked_in(self):
+    def test_a_gap_between_two_cards_lights_nothing_in_between(self):
+        """«подсветка перепрыгивает на последний активный раздел ...
+        картинка как бы мигает»: the next card, entered within the pause,
+        cancels the fall back."""
+        self.skin.set_active("colour")
+        self._enter(self.a.header)
+        self._enter(self.skin.content)                   # the gap
+        self._enter(self.field)                          # the next card
+        self.assertFalse(self.skin._fallback.isActive())
+        self.assertEqual(self.skin.active, "colour")
+
+    def test_a_closed_card_worked_in_stays_dark(self):
+        """2026-09-28: back to the last card worked in only if it is open."""
+        self.skin.set_active("colour")
+        self.b.set_collapsed(True)
+        self._enter(self.a.header)
+        self._enter(self.skin.header)
+        self.skin._fallback.timeout.emit()
+        self.assertIsNone(self.skin.active)
+        self.assertEqual(self.skin.resting(), None)
+        self.b.set_collapsed(False)
+        self.assertEqual(self.skin.resting(), "colour")
+
+    def test_leaving_the_hub_lights_the_open_one_worked_in(self):
         from PySide6 import QtCore as C
         self.skin.set_active("characters")
         self._enter(self.field)
         QtWidgets.QApplication.sendEvent(self.skin.root,
                                          C.QEvent(C.QEvent.Leave))
+        self.skin._fallback.timeout.emit()
         self.assertEqual(self.skin.active, "characters")
 
     def test_a_hover_pins_nothing(self):
         self._enter(self.field)
         self.assertIsNone(self.skin.pinned)
         self._enter(self.skin.header)
+        self.skin._fallback.timeout.emit()
         self.assertIsNone(self.skin.active)
+
+    def test_a_press_cancels_a_pending_fall_back(self):
+        self._enter(self.a.header)
+        self._enter(self.skin.header)
+        self.skin.set_active("colour")
+        self.assertFalse(self.skin._fallback.isActive())
+        self.assertEqual(self.skin.active, "colour")
 
     def test_widgets_outside_the_hub_are_no_card(self):
         outside = QtWidgets.QLineEdit()
