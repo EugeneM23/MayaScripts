@@ -476,27 +476,32 @@ class CreepSkeleton(unittest.TestCase):
         self.assertEqual(skins, 5)
 
 
-class OrcRig(unittest.TestCase):
-    """2026-09-25: «В открытом проекте в Unreal есть персонаж SK_Orc_Marauder_F его
-    скелет совпадает с нашим manny rig ... добавим к нам в проект еще один риг "ORC"»
-    -- the third rig row, after the Creep's; Manny stays the default."""
+ORC_SOURCE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "sources", "orc", "Orc_Rig.ma")
 
-    def test_the_orc_rig_is_the_third_row_and_a_rig(self):
-        entry = catalog.CHARACTERS[2]
-        self.assertEqual((entry.key, entry.label, entry.file, entry.kind),
-                         ("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "rig"))
-        self.assertTrue(catalog.is_rig(entry))
+
+class OrcRig(unittest.TestCase):
+    """2026-09-25: «В открытом проекте в Unreal есть персонаж SK_Orc_Marauder_F ... добавим к нам в
+    проект еще один риг "ORC"» -- the third rig row until 2026-09-28, when it left the plugin
+    («орка без текстур уберем из плагина он больше не нужен»). Its file stays in sources/orc/ as
+    what the textured Orc D is built from, and these tests pin that file."""
+
+    def test_the_untextured_orc_left_the_plugin(self):
+        self.assertIsNone(catalog.character_by_key("Orc_Rig"))
+        self.assertNotIn("Orc [rig]", catalog.character_labels())
+        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(catalog.character_file(
+            catalog.default_rig())), "Orc_Rig.ma")))
+        self.assertTrue(os.path.isfile(ORC_SOURCE), ORC_SOURCE)
         self.assertIs(catalog.default_rig(), catalog.character_by_key("Manny_Rig"))
 
-    def test_the_shipped_orc_is_the_rig_with_manny_s_helper_bones(self):
+    def test_the_orc_source_is_the_rig_with_manny_s_helper_bones(self):
         """Built in mayapy standalone from the animator's own FBX export of the
         Unreal asset (make_orc_source.py -> rebuild_orc_rig.py -> make_orc_rig_asset.py):
         the rig marked for the rotation-only retarget, one mesh in the rig's
         Geometry group with its skin and blendShape, the four helper bones Manny
         has (the animator: «все четыре») and the shoulder pads -- and none of the
         LODs, the dead-path texture or any script node."""
-        path = catalog.character_file(catalog.character_by_key("Orc_Rig"))
-        self.assertTrue(path.endswith("assets/Orc_Rig.ma"), path)
+        path = ORC_SOURCE
         wanted = {'createNode transform -n "Group";': False,
                   'createNode joint -n "root";': False,
                   'createNode objectSet -n "ControlSet";': False,
@@ -541,13 +546,14 @@ class OrcD(unittest.TestCase):
     """2026-09-28: «Давай добавим еще один вариант орка но на этот раз SK_Orc_Marauder_D ... и для
     этой версии сделаем материал с текстурами» -- the fourth rig row, the first CHARACTER that
     arrives in its textures. Its skeleton is the F orc's to 0.0, so the asset is Orc_Rig.ma with
-    D's mesh re-skinned onto the same game joints (make_orc_d_rig_asset.py)."""
+    D's mesh re-skinned onto the same game joints (make_orc_d_rig_asset.py). The third row since the
+    untextured «Orc [rig]» left the plugin the same day."""
 
     MAPS = ("Orc_D_Body_Color.jpg", "Orc_D_Body_Normal.jpg", "Orc_D_Cloth_Color.jpg",
             "Orc_D_Cloth_Normal.jpg", "Orc_D_Cloth_Mask.png", "Orc_D_Eye_Color.jpg")
 
-    def test_the_fourth_row_is_the_textured_orc_d_rig(self):
-        entry = catalog.CHARACTERS[3]
+    def test_the_third_row_is_the_textured_orc_d_rig(self):
+        entry = catalog.CHARACTERS[2]
         self.assertEqual((entry.key, entry.label, entry.file, entry.kind),
                          ("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig"))
         self.assertTrue(entry.textured)

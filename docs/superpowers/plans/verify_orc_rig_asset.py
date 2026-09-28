@@ -1,5 +1,9 @@
 """Standalone gates for the shipped Orc rig (assets/Orc_Rig.ma) going through the plugin.
 
+HISTORY: «Orc [rig]» left the plugin on 2026-09-28 (its file is sources/orc/Orc_Rig.ma, the Orc D's source),
+so the catalog no longer offers it and this script no longer runs as it is; it proved the rig while it
+shipped (16/16, 2026-09-25). The textured Orc D on the same rig: verify_orc_d_rig_asset.py.
+
     mayapy verify_orc_rig_asset.py <UE5 clip .fbx WITH camera_root, e.g. Animations/Export/LongSword_Attack_Right_Heavy_3P.FBX> <scratch dir>
 
 mayapy STANDALONE, an empty scene (2026-09-25).  `verify_creep_rig_asset.py` for the orc: Add

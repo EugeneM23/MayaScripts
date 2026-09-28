@@ -497,6 +497,6 @@ class TexturedAddKeepsTheSwatch(unittest.TestCase):
         self.assertEqual(self.advanced, [])
 
     def test_a_coloured_character_still_advances_it(self):
-        window.chosen_character = lambda: catalog.character_by_key("Orc_Rig")
+        window.chosen_character = lambda: catalog.character_by_key("Manny_Rig")
         window.add_character()
         self.assertEqual(self.advanced, [window._CHARACTER_COLOUR])

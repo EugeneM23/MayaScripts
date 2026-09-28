@@ -9,9 +9,11 @@ catalog weapon through Add onto the Creep rig's hand. Gates:
 
 1. every character's renderable meshes wear ONE material, SHADER, wearing LOOK, in the colour Add
    gave it -- the asset's own many materials (the Orc's five per-face sets, the Creep body's none,
-   Manny's MaterialX) no longer on any face;
+   Manny's MaterialX) no longer on any face. A TEXTURED row (2026-09-28, the Orc D) wears one
+   material per texture set, each SHADER wearing LOOK and marked textured -- verify_orc_d_rig_asset.py
+   is its proof; here it is only checked for the shader and the look;
 2. every weapon the same;
-3. an FBX of one character's meshes (FBXExport -s, what an artist does by hand) carries that one
+3. an FBX of one character's meshes (the Creep's since the untextured Orc left the plugin, 2026-09-28) (FBXExport -s, what an artist does by hand) carries that one
    material with Cascadeur's own numbers: phong, specular 0.2, shininess 20, no reflection, the
    colour at full (no DiffuseFactor below 1);
 4. the animation export's top node is `Armature`.
@@ -78,7 +80,11 @@ for entry in catalog.CHARACTERS:
     print(character.add_character(entry))
     shapes = [s for s in cmds.ls(type="mesh", long=True, noIntermediate=True) if s not in before]
     w = worn(shapes)
-    ok = len(w) == 1 and looks_right(list(w)[0]) and len(list(w.values())[0]) == len(shapes)
+    if entry.textured:
+        ok = w and all(looks_right(m) and cmds.attributeQuery(colour.TEXTURE_MARKER, node=m, exists=True)
+                       for m in w)
+    else:
+        ok = len(w) == 1 and looks_right(list(w)[0]) and len(list(w.values())[0]) == len(shapes)
     report.append("%s: %d meshes wear %s" % (entry.key, len(shapes), dict((k, len(v)) for k, v in w.items())))
     if not ok:
         bad.append(entry.key)
@@ -100,9 +106,11 @@ for entry in catalog.WEAPONS:
 gate(2, not bad, "every weapon: " + "; ".join(report) + ("  -- BAD: %s" % bad if bad else ""))
 
 # an artist's own export of one character's meshes: what reaches Cascadeur is what they wear
-orc = maya_rigs.find("Orc_Rig")
+orc = maya_rigs.find("Creep_Rig")
 orc_meshes = [cmds.listRelatives(s, parent=True, fullPath=True)[0] for s in cmds.ls(type="mesh", long=True, noIntermediate=True)
-              if s.startswith(orc.group + "|")]
+              if s.startswith(orc.group + "|")
+              #  its own meshes, not the weapons gate 2 hung in its WeaponSpaces
+              and any(c.split(":")[-1] == "Geometry" for c in s.split("|"))]
 path = OUT + "/orc_meshes.fbx"
 mel.eval("FBXResetExport; FBXExportSkins -v false; FBXExportShapes -v false; FBXExportInAscii -v true;")
 cmds.select(orc_meshes, replace=True)
@@ -128,7 +136,7 @@ spec = [round(v, 6) for v in got["SpecularColor"] or []]
 ok = (len(blocks) == 1 and shading and (got["DiffuseFactor"] in (None, [1.0])) and spec == [0.2, 0.2, 0.2]
       and (got["ShininessExponent"] or [20.0]) == [20.0] and got["Shininess"] == [20.0]
       and got["ReflectionFactor"] in (None, [0.0]))
-gate(3, ok, "the Orc's meshes exported by hand: %d material(s), phong %s, %s" % (len(blocks), shading, got))
+gate(3, ok, "the Creep's meshes exported by hand: %d material(s), phong %s, %s" % (len(blocks), shading, got))
 
 anim = OUT + "/creep_anim.fbx"
 cmds.select(clear=True)

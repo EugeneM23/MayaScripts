@@ -5,7 +5,8 @@
 mayapy STANDALONE.  2026-09-28 (spec: docs/superpowers/specs/2026-09-28-orc-d-textured-design.md).
 Measured first: D's 91 joints stand where F's do -- every rest world matrix and every skin
 bindPreMatrix equal to 0.0 (one `SKEL_Orc_Marauder`, one reference pose) -- so D needs no rig of
-its own.  This opens `assets/Orc_Rig.ma` (script nodes NOT executed), takes its F mesh out, and puts
+its own.  This opens `sources/orc/Orc_Rig.ma` (script nodes NOT executed; the untextured «Orc [rig]»,
+which shipped in assets/ until it left the plugin the same day), takes its F mesh out, and puts
 D's in, bound to the same game joints:
 
 - `Orc_D_Body` in `Group|Geometry`, in F's shape: its transform the importer's Z-up turn, locked;
@@ -45,7 +46,7 @@ PLUGIN = os.path.join(REPO, "SkeldarAnim")
 sys.path.insert(0, PLUGIN)
 from maya_scenesetup import colour  # noqa: E402
 
-SRC_RIG = os.path.join(PLUGIN, "assets", "Orc_Rig.ma").replace("\\", "/")
+SRC_RIG = os.path.join(REPO, "sources", "orc", "Orc_Rig.ma").replace("\\", "/")
 FBX = os.path.join(REPO, "sources", "orc", "SK_Orc_Marauder_D.fbx").replace("\\", "/")
 OUT = os.path.join(PLUGIN, "assets", "Orc_D_Rig.ma").replace("\\", "/")
 NS = "srcD"

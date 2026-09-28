@@ -5686,6 +5686,14 @@ animator's `Sweep Fall.fbx`); 55 unit tests.
 
 ## The Orc: Unreal's SK_Orc_Marauder_F as a third rig row (2026-09-25)
 
+**Out of the plugin since 2026-09-28** («орка без текстур уберем из плагина он больше не нужен»):
+the catalog row is gone and `Orc_Rig.ma` moved to `sources/orc/`, where it is what
+`make_orc_d_rig_asset.py` builds the textured «Orc D [rig]» from (next section; the rebuild from the
+new place gave the same asset but for node UUIDs). `make_orc_rig_asset.py` writes there now;
+`verify_orc_rig_asset.py` is history and no longer runs as it is. A scene holding an `Orc_Rig`
+keeps working (a rig is found by its structure), and a remembered «Orc [rig]» in the dropdown
+falls back to the first row. What follows is the record of building it.
+
 The animator: «В открытом проекте в Unreal есть персонаж SK_Orc_Marauder_F его скелет
 совпадает с нашим manny rig ... добавим к нам в проект еще один риг "ORC". я так понимаю что у
 нас все готово просто нужно перенести». Spec:
@@ -5798,7 +5806,8 @@ the swatch, turns Textures on in every model panel where they are off, and says 
 still arrives). **Recolour replaces the textures** with a colour (Spear 03's ruling, a whole-shape
 assignment over the per-face ones); the next Add is textured again.
 
-Proof: `verify_orc_d_rig_asset.py` — **19/19 standalone** (gate 19: Maya's own sampler at the
+Proof: `verify_orc_d_rig_asset.py` — **19/19 standalone** (the third rig beside the two Orc D is
+a Manny since the F orc left the plugin; gate 19: Maya's own sampler at the
 centre and near the corners of all 20016 opaque cloth faces, 80064 samples, 0 in a cut): two Orc D and an F orc added (the F red,
 the palette untouched by the D's), rotation-marked, at bind, controls at default; the file node
 samples the JPG's pixels to 0.0000 the right way up (flipped rows 0.61); the cut mask 0 / 1;

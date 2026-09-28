@@ -517,6 +517,6 @@ class TexturedAdd(unittest.TestCase):
         self.assertNotIn(" - red", text)
 
     def test_an_untextured_rig_is_still_painted_and_nothing_relinked(self):
-        text = character.add_character(catalog.character_by_key("Orc_Rig"), (0.8, 0.25, 0.22))
+        text = character.add_character(catalog.character_by_key("Manny_Rig"), (0.8, 0.25, 0.22))
         self.assertEqual(self.calls, [("paint",)])
         self.assertIn(" - red", text)

@@ -1,4 +1,8 @@
-"""Build SkeldarAnim/assets/Orc_Rig.ma from the scene `rebuild_orc_rig.py` saved.
+"""Build sources/orc/Orc_Rig.ma from the scene `rebuild_orc_rig.py` saved.
+
+(It shipped as SkeldarAnim/assets/Orc_Rig.ma, «Orc [rig]», from 2026-09-25 until it left the plugin on
+2026-09-28 -- «орка без текстур уберем из плагина». It stays in sources/ as what make_orc_d_rig_asset.py
+builds the textured Orc D from.)
 
     mayapy make_orc_rig_asset.py <built rig .mb> [<out .ma>]
 
@@ -31,7 +35,7 @@ for p in ("matrixNodes", "quatNodes"):
 
 SRC = sys.argv[1]
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "SkeldarAnim", "assets", "Orc_Rig.ma")
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "sources", "orc", "Orc_Rig.ma")
 OUT = os.path.abspath(OUT).replace("\\", "/")
 BANNED = ("createNode script", "vaccine", "breed_gene", "SK_Orc_Marauder_F_LOD1", "SK_Orc_Marauder_F_LodGroup",
           "D:/Characters", "Orc_Low_Body_Normal", "FitSkeletonNameMatcherImporting",

@@ -3,12 +3,12 @@
     mayapy verify_orc_d_rig_asset.py <UE5 clip .fbx, e.g. Animations/Export/LongSword_Attack_Right_Heavy_3P.FBX> <scratch dir>
 
 mayapy STANDALONE, an empty scene (2026-09-28; spec docs/superpowers/specs/2026-09-28-orc-d-textured-design.md).
-Add Character twice with «Orc D [rig]» and once with «Orc [rig]», then everything checked against
+Add Character twice with «Orc D [rig]» and once with «Manny [rig]» (the untextured «Orc [rig]» left the plugin the same day), then everything checked against
 the FBX Unreal wrote (sources/orc/SK_Orc_Marauder_D.fbx, imported into a `ref` namespace):
 
 - each orc in its own namespace, marked rotation-only, at its bind, controls at default, no script
   node; the Orc D arriving TEXTURED -- its three materials the one shader, every file node on an
-  image in the installed assets/Orc_D/, the palette untouched by it (the F orc still painted);
+  image in the installed assets/Orc_D/, the palette untouched by it (the Manny still painted);
 - the texture the file node samples IS the shipped image's pixels, the right way up;
 - D's mesh: Unreal's minus the Skirt_Proxy, vertex for vertex where the FBX has it, its UVs and
   normals the FBX's, its 56 targets the FBX's, and -- the one that matters -- under a real pose
@@ -116,15 +116,15 @@ gate(1, orc_d is not None and orc_d.textured and catalog.is_rig(orc_d) and orc_d
 free_before = colour.free_colour().name
 texts = [character.add_character(orc_d, colour.PALETTE[0].rgb), character.add_character(orc_d, colour.PALETTE[0].rgb)]
 free_after_d = colour.free_colour().name
-texts.append(character.add_character(catalog.character_by_key("Orc_Rig"), colour.PALETTE[0].rgb))
+texts.append(character.add_character(catalog.character_by_key("Manny_Rig"), colour.PALETTE[0].rgb))
 for t in texts:
     print("   ", t.splitlines()[0])
 rigs = dict((r.namespace, r) for r in maya_rigs.rigs())
-gate(2, set(rigs) == {"Orc_D_Rig", "Orc_D_Rig1", "Orc_Rig"} and all(" - textured" in t for t in texts[:2])
+gate(2, set(rigs) == {"Orc_D_Rig", "Orc_D_Rig1", "Manny_Rig"} and all(" - textured" in t for t in texts[:2])
      and " - red" in texts[2] and free_before == free_after_d == "red",
-     "three rigs %s; the two D messages say textured, the F red; the palette's next free colour %s -> %s after the D adds"
+     "three rigs %s; the two D messages say textured, the Manny red; the palette's next free colour %s -> %s after the D adds"
      % (sorted(rigs), free_before, free_after_d))
-d, d2, f = rigs.get("Orc_D_Rig"), rigs.get("Orc_D_Rig1"), rigs.get("Orc_Rig")
+d, d2, f = rigs.get("Orc_D_Rig"), rigs.get("Orc_D_Rig1"), rigs.get("Manny_Rig")
 D, D2, F = bones(d.skeleton_root), bones(d2.skeleton_root), bones(f.skeleton_root)
 foreign = sorted(set(a for p in D.values() for a in cmds.listAttr(p, userDefined=True) or []
                      if a not in ("filmboxTypeID", "lockInfluenceWeights")))
@@ -292,7 +292,7 @@ for t in frames:
     moved = max(moved, max(mdiff(m, wm(p)) for p, m in still.items()))
 gate(11, ok and "ROTATIONS ONLY" in text and worst_rot[0] < 0.05 and worst_len < 1e-3,
      "the button onto Orc D: orientations on the clip's to %.5f deg (%s), bone lengths kept to %.6f cm" % (worst_rot[0], worst_rot[1], worst_len))
-gate(12, moved < 1e-6, "the second Orc D and the F orc did not move: %.9f" % moved)
+gate(12, moved < 1e-6, "the second Orc D and the Manny did not move: %.9f" % moved)
 
 # the skin, under that real pose: the FBX's own skin, its joints put where the rig's stand
 worst_skin, worst_j = 0.0, 0.0

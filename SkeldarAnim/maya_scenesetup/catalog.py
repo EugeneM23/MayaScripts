@@ -56,18 +56,15 @@ CHARACTERS = [
     # and `Group.skeldarRetarget = "rotation"` -- its retarget copies rotations
     # only. Built from the animator's scene by make_creep_rig_asset.py.
     Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig"),
-    # The Orc Marauder's AdvancedSkeleton rig (2026-09-25): the Unreal asset
-    # SK_Orc_Marauder_F on Manny's bone names with its own proportions (neck
-    # 1.39x, upper arm 1.07x; pelvis, spine, legs and hands exactly Manny's),
-    # Manny's four helper bones added on Manny's local values, the shoulder pads
-    # riding their clavicles, one mesh with its 56-target blendShape, the Creep's
-    # procedure and rotation-only mark. Built by make_orc_rig_asset.py.
-    Character("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "rig"),
     # The Orc Marauder D (2026-09-28, «еще один вариант орка ... SK_Orc_Marauder_D ... материал с
-    # текстурами»): its skeleton is the F orc's to 0.0, so this is Orc_Rig.ma with D's mesh
-    # re-skinned onto the same game joints (the skirt's cloth-simulation proxy dropped), in three
-    # materials carrying Unreal's own textures at 2048 with its material maths baked in
-    # (assets/Orc_D/, the animator's pick: «2048, JPG»). Built by make_orc_d_rig_asset.py.
+    # текстурами»): the Orc rig -- the Unreal asset's AdvancedSkeleton rig on Manny's bone names
+    # with its own proportions (neck 1.39x, upper arm 1.07x), Manny's four helper bones, the
+    # shoulder pads riding their clavicles, the Creep's procedure and rotation-only mark -- with
+    # D's mesh re-skinned onto its game joints (D's skeleton is F's to 0.0; the skirt's
+    # cloth-simulation proxy dropped), in materials carrying Unreal's own textures at 2048 with its
+    # material maths baked in (assets/Orc_D/, the animator's pick: «2048, JPG»). Built by
+    # make_orc_d_rig_asset.py from sources/orc/Orc_Rig.ma -- the untextured «Orc [rig]», which left
+    # the plugin the same day («орка без текстур уберем из плагина он больше не нужен»).
     Character("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig", textured=True),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton"),
