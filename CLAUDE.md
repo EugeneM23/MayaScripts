@@ -5730,3 +5730,83 @@ opacity map in the asset) — cosmetic, stated.
     in it.** Mid-session its scene suddenly held `Manny_Rig:*` and no orc; no process of ours had
     sent it anything — «это случайно», the animator had pressed something there. Re-read a
     disposable scene's state before trusting it, like the live one (note 4).
+
+## The Orc D: SK_Orc_Marauder_D in Unreal's own textures (2026-09-28)
+
+The animator: «Давай добавим еще один вариант орка но на этот раз SK_Orc_Marauder_D ... и для этой
+версии сделаем материал с текстурами», MyProject2 open in the editor. Spec:
+`docs/superpowers/specs/2026-09-28-orc-d-textured-design.md`, plan beside it. **The fourth rig row
+«Orc D [rig]»** (`Orc_D_Rig`, `assets/Orc_D_Rig.ma`, 12.4 MB) and **the first CHARACTER that
+arrives in its textures** (`catalog.Character.textured`).
+
+**Out of the editor by script, not by hand**: the animator ticked Project Settings > Plugins >
+Python > Enable Remote Execution (instant, no restart; UDP 6766 came up) and
+`export_orc_d_from_unreal.py` (mayapy, `uelink`) wrote `sources/orc/`: the FBX (LOD0 + 56 morph
+targets), seven Texture2Ds as PNG — **an `AssetExportTask` of a Texture2D to `.png` writes its
+SOURCE data** (the image as imported, 4096², not the platform compression; byte-identical on a
+re-run) — and `orc_d_materials.json`, every parameter the maps are baked with. A
+`CurveLinearColorAtlas` does not export (FAILED); its `gradient_curves` are sampled instead.
+
+Measured first:
+- **D's skeleton IS F's**: 91 joints, every rest world matrix and every bindPreMatrix equal to F's to
+  **0.0**. So nothing was rebuilt live: `make_orc_d_rig_asset.py` (mayapy) opens `Orc_Rig.ma`,
+  deletes F's mesh, and binds D's onto the same game joints — the FBX's weights vertex for vertex
+  (0.0), its 56 targets sampled at weight 1 (2.4e-7 cm), the FBX's own output mesh duplicated (so
+  points, UVs and normals are Unreal's to 7e-9 / 0.001° / 7e-9), `map1` the only UV set.
+- **Five sections in Unreal**: Cloth, Body, Eye, Skirt_Sim (the one using cloth simulation,
+  `SkeletalMesh.is_section_using_cloth`) and **Skirt_Proxy** — 885 faces / 489 vertices, one shell
+  a median 1.65 cm off the skirt: the clothing asset's cage. Dropped (trap 92). No fur in D.
+- **Unreal's material maths, read off the master materials' GRAPHS** (trap 93), baked into the
+  maps by `make_orc_d_textures.py` (numpy, all in linear, sRGB last, refuses clipping): body
+  `lerp(pow(base·1.70377, 1.095925), TattooColorA·atlas(u), tattooMask.R)` (Saturation clamped to 1
+  by the graph, the body colour mask off, Skin_Color white — no-ops); cloth `base·1.5`, its
+  opacity mask the base colour's ALPHA at clip 0.3333 → a 0/255 PNG (4.8 % cut: the chain-mail
+  netting, the fringes); eye `shadow(uv)·lerp(sclera·2.30, iris·4.16·limbus, irisMask)` without the
+  refraction, 1024²; normal maps renormalised with green flipped (Unreal's are DirectX).
+- **2048 JPG** (the animator's pick over 4096 JPG and 4096 PNG, «2048, JPG»): six maps, 7.4 MB in
+  `assets/Orc_D/`; the build zip 65.0 MB, 102 files.
+
+**Three materials, one shader** (phong wearing `colour.LOOK`, `colour.TEXTURE_MARKER`): body
+(colour + normal through a bump2d in tangent-space mode), cloth (the same + the cut on
+`transparency`), eye. So a textured character wears one material per texture set. **The asset
+names its images RELATIVELY**: each file node carries `colour.ASSET_IMAGE`
+(`skeldarAssetImage`, "Orc_D/<file>"), colour space set with `ignoreColorSpaceFileRules` (Raw for
+normals and the cut), and **Add Character points them at the installed copy**
+(`colour.relink_images(nodes, catalog.asset_path)`, pure half `relink_plan`) — no path of the
+building machine is in the `.ma`, and a test pins it. A textured Add paints nothing, does not move
+the swatch, turns Textures on in every model panel where they are off, and says «textured
+(viewport textures on)» (`character.appearance`, pure; a missing image is named, the character
+still arrives). **Recolour replaces the textures** with a colour (Spear 03's ruling, a whole-shape
+assignment over the per-face ones); the next Add is textured again.
+
+Proof: `verify_orc_d_rig_asset.py` — **18/18 standalone**: two Orc D and an F orc added (the F red,
+the palette untouched by the D's), rotation-marked, at bind, controls at default; the file node
+samples the JPG's pixels to 0.0000 the right way up (flipped rows 0.61); the cut mask 0 / 1;
+Unreal's mesh minus the proxy to 7.45e-9 cm; the targets to 2.4e-7; **under a retargeted take,
+D's mesh where the FBX's OWN skin puts it with its joints on the rig's: 4.2e-5 cm**; the button
+onto D (orientations 0.0008°, lengths 0.000000 cm), the other two 0.000000000; Recolour, re-Add;
+the export 95 bones, 0 meshes under `Armature`. A playblast in a disposable Maya (port 7003,
+scratch `MAYA_APP_DIR`) shows it textured, normal-mapped, the vest's torn edges cut, the eyes.
+2379 unit tests; the installed copy refreshed in the animator's Maya over the port.
+
+Not built: F textured (the same maps fit all but its fur), the fur, the cloth simulation, the eye's
+refraction, the skin's subsurface scattering.
+
+90. **A duplicate of a deformed mesh carries its source's COMPONENT TAGS** — `gtag[i].gtagnm`
+    naming the SOURCE's deformers (`srcD:skinCluster1`), written into the saved `.ma`. The asset's
+    banned-word check caught the namespace. `removeMultiInstance` every `gtag` on the copy before
+    deforming it; the new deformers make their own.
+91. **Deleting a skinCluster takes its bindPose with it.** `Orc_Rig.ma`'s `bindPose1` (95 joints)
+    was gone the moment F's skin was deleted; a new one saved WHOLE over every joint (trap 79's
+    rule, its constraint children removed again) is what the new skin connects to.
+92. **Unreal's FBX export of a skeletal mesh writes every section, the clothing asset's proxy
+    cage included**, as its own material slot, with nothing to say it is not drawn. Identify it
+    (the slot's name, `is_section_using_cloth` on the neighbour, one shell hovering off the
+    render mesh) and drop it, or it pokes through the skirt.
+93. **Unreal Python: `Material.expressions` is protected**, but
+    `MaterialEditingLibrary.get_material_expressions(m)` +
+    `get_inputs_for_material_expression(m, e)` +
+    `get_input_node_output_name_for_material_expression(e, input)` +
+    `get_material_property_input_node(m, MaterialProperty.MP_BASE_COLOR)` walk the whole graph —
+    the parameter NAMES alone said "BC_Intensity", the graph said `pow(base·I, C)` after a
+    clamped saturation, and which mask channel the tattoos read.
