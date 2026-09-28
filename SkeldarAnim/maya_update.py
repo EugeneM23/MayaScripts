@@ -377,7 +377,7 @@ def _reopen(message, importer=importlib.import_module):
 
 def _status(message, state=None):
     """The status line (the classic hub's section) and the skinned hub's
-    header message; state "ok" / "new" colours the header's version chip.
+    header message; `state` "ok" / "new" colours the header's version chip.
     Only a hub already imported is told: a message is no reason to import
     one."""
     print("SkeldarAnim update: " + message)

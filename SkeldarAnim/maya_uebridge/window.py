@@ -29,6 +29,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubstyle as hubstyle
 from maya_uebridge import animimport
 from maya_uebridge import records
 from maya_uebridge import uelink
@@ -261,7 +262,22 @@ def refresh():
             cmds.text(_STATUS, query=True, label=True), extra))
 
 
-MODES = ("rig", "new_rig", "skeleton")     # the radio's rows, in order
+MODES = ("rig", "new_rig", "skeleton")     # the segments, in order
+
+#  (mode, the segment's label, its tooltip) -- the three import targets.
+MODE_SEGMENTS = (
+    ("rig", "Rig",
+     "Retarget onto the rig: the SELECTED AdvancedSkeleton rig (any control "
+     "or bone), else the only one - added if the scene has none; the clip is "
+     "imported, retargeted and baked onto it (weapon and camera bones "
+     "carried, the camera set up), and the clip's skeleton is deleted."),
+    ("new_rig", "New rig",
+     "Onto a NEW rig: another rig is added first and takes the clip - many "
+     "rigs in one scene."),
+    ("skeleton", "Skeleton",
+     "As a new skeleton: the clip arrives as its own namespaced skeleton and "
+     "nothing else happens."),
+)
 
 
 def mode_for(selected):
@@ -276,9 +292,20 @@ def import_mode():
     """"rig" (the selected rig, else the only one, added if none), "new_rig"
     (add another rig and retarget onto it) or "skeleton" (the clip as its own
     namespaced skeleton and nothing more)."""
-    if not cmds.radioButtonGrp(_MODE, exists=True):
+    if not cmds.iconTextRadioCollection(_MODE, exists=True):
         return MODES[0]
-    return mode_for(cmds.radioButtonGrp(_MODE, query=True, select=True))
+    chosen = (cmds.iconTextRadioCollection(_MODE, query=True, select=True)
+              or "").split("|")[-1]
+    for index, mode in enumerate(MODES):
+        if chosen == mode_button(mode):
+            return mode_for(index + 1)
+    return MODES[0]
+
+
+def mode_button(mode):
+    """The segment of import mode `mode` (2026-09-28: segments in place of
+    the vertical radios, short labels, the long text as the tooltip)."""
+    return "{0}_{1}".format(_MODE, mode)
 
 
 def retarget_selected():
@@ -412,33 +439,33 @@ def build_panel():
     Rows in a column, not a formLayout: measured in the hub 2026-09-17, a
     formLayout inside an adjustable column reported a 1128 px minimum
     width whatever its children were told, and the whole panel grew a
-    horizontal scrollbar with the buttons pushed off the right edge. The
-    mode radios stand in a column for the same reason - three in a row
-    want 670 px at a 150 % display.
+    horizontal scrollbar with the buttons pushed off the right edge.
+    2026-09-28 (the skin): the import mode is three short segments (the
+    long explanation is their tooltip), Import the section's one primary
+    action, the two exports a row under it, the connection line the card's
+    subtitle.
     """
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", 6))
+                               columnOffset=("both", hubstyle.pick(0, 6)))
 
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
-                   columnAttach=[(1, "right", 4), (2, "both", 0),
-                                 (3, "left", 6)])
-    cmds.text(label="Project:", align="right")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 4)])
     cmds.optionMenu(
-        _PROJECT,
+        _PROJECT, annotation="The running Unreal editor to read from",
         changeCommand=lambda *_: _run(_project_changed,
                                       busy="switching editor..."))
-    cmds.button(
-        label="Refresh", width=90,
-        command=lambda *_: _run(refresh, busy="asking the editor..."))
+    hubstyle.mark(cmds.button(
+        label=hubstyle.tool_label("Refresh"),
+        width=hubstyle.tool_width(90), height=24,
+        annotation="Read the animations from the open editor",
+        command=lambda *_: _run(refresh, busy="asking the editor...")),
+        "tool", "refresh")
     cmds.setParent("..")
-    cmds.text(_HEADER, label="not connected", align="left", wordWrap=True)
+    hubstyle.mark(cmds.text(_HEADER, label="not connected", align="left",
+                            wordWrap=True), "subtitle")
 
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
-                   columnAttach=[(1, "right", 4), (2, "both", 0)])
-    cmds.text(label="Search:", align="right")
-    cmds.textField(_SEARCH, placeholderText="name or folder",
+    cmds.textField(_SEARCH, placeholderText="search name or folder",
                    textChangedCommand=lambda *_: _run(_repopulate))
-    cmds.setParent("..")
 
     cmds.textScrollList(
         _LIST, allowMultiSelection=False, font="fixedWidthFont",
@@ -446,49 +473,52 @@ def build_panel():
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 
-    cmds.radioButtonGrp(
-        _MODE, numberOfRadioButtons=3, label="Import:", vertical=True,
-        labelArray3=["retarget onto the rig", "onto a NEW rig",
-                     "as a new skeleton"],
-        annotation="Retarget onto the rig: the SELECTED AdvancedSkeleton rig "
-                   "(any control or bone), else the only one - added if the "
-                   "scene has none; the clip is imported, retargeted and "
-                   "baked onto it (weapon and camera bones carried, the "
-                   "camera set up), and the clip's skeleton is deleted. Onto "
-                   "a NEW rig: another rig is added first and takes the clip "
-                   "- many rigs in one scene. As a new skeleton: the clip "
-                   "arrives as its own namespaced skeleton and nothing else "
-                   "happens.",
-        columnWidth2=(52, 200), columnAlign=(1, "left"), select=1)
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 4)])
+    cmds.text(label="Import", align="left")
+    segments = cmds.rowLayout(numberOfColumns=len(MODES),
+                              columnAttach=[(i + 1, "both", 1)
+                                            for i in range(len(MODES))])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(_MODE)
+    for mode, label, note in MODE_SEGMENTS:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            mode_button(mode), style="textOnly", label=label, height=22,
+            select=mode == MODES[0], annotation=note), "segment")
+    cmds.setParent("..")
+    cmds.setParent("..")
     cmds.checkBox(_TIMELINE, label="set timeline to clip range", value=True)
 
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=3,
-                   columnAttach=[(1, "left", 0), (2, "left", 6),
-                                 (3, "both", 6)])
-    cmds.button(
-        label="Export FBX...", height=34, width=110,
+    hubstyle.mark(cmds.button(
+        label="Import", height=32,
+        annotation="Import the selected animation the way the mode says",
+        command=lambda *_: _run(import_selected,
+                                busy="exporting from the editor...")),
+        "primary", "download")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 4)])
+    hubstyle.mark(cmds.button(
+        label="Export FBX...", height=28,
         annotation="Write the scene skeleton's animation to an FBX of your "
                    "choosing (selection, else the rig, else the only "
                    "skeleton), baked on export.",
         command=lambda *_: _run(export_fbx_selected,
-                                busy="writing the fbx..."))
-    cmds.button(
-        label="Export to uasset", height=34, width=120,
+                                busy="writing the fbx...")),
+        "secondary", "upload")
+    hubstyle.mark(cmds.button(
+        label="Export to uasset", height=28, width=130,
         annotation="Overwrite the selected AnimSequence with the scene's "
                    "animation. Asks first. Does NOT touch Perforce: the "
                    "uasset is written on disk with no changelist behind it, "
                    "and a read-only flag is cleared.",
         command=lambda *_: _run(export_uasset_selected,
-                                busy="writing the uasset..."))
-    cmds.button(
-        label="IMPORT", height=34,
-        command=lambda *_: _run(import_selected,
-                                busy="exporting from the editor..."))
+                                busy="writing the uasset...")),
+        "secondary")
     cmds.setParent("..")
     #  two lines tall: a wrapped label keeps the one-line height it was
     #  given and clips the rest (measured in the hub, 2026-09-17).
-    cmds.text(_STATUS, label="", align="left", wordWrap=True, height=36)
-
+    hubstyle.mark(cmds.text(_STATUS, label="", align="left", wordWrap=True,
+                            height=36), "status")
     cached, project, choice, content_dir = load_cache()
     _STATE["records"] = cached
     _STATE["project"] = project

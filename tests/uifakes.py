@@ -15,7 +15,7 @@ class FakeUiCmds(object):
           "floatSliderGrp", "colorSliderGrp", "button", "intField",
           "floatField", "radioButtonGrp", "frameLayout", "formLayout",
           "textScrollList", "textField", "textFieldGrp", "floatFieldGrp",
-          "scrollLayout")
+          "scrollLayout", "iconTextRadioButton")
 
     def __init__(self, control_height=25, saved_pref=True, dpi=1.0):
         self.control_height = control_height

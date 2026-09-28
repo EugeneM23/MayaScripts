@@ -228,7 +228,9 @@ class UeBridge(unittest.TestCase):
         uebridge.load_cache = lambda: ([], "", "", "")
         uebridge._repopulate = lambda: []
         uebridge.fill_project_menu = lambda labels: None
+        maya_hubstyle.take_marks()
         self.form = uebridge.build_panel()
+        self.marks = maya_hubstyle.take_marks()
 
     def tearDown(self):
         (uebridge.cmds, uebridge.load_cache, uebridge._repopulate,
@@ -248,10 +250,38 @@ class UeBridge(unittest.TestCase):
         self.assertEqual(lists[0][2].get("height"), uebridge.LIST_HEIGHT)
         self.assertGreaterEqual(uebridge.LIST_HEIGHT, 200)
 
-    def test_the_mode_radios_stand_in_a_column(self):
-        """Three in a row want 670 px at a 150 % display."""
-        modes = [c for c in self.fake.calls if c[0] == "radioButtonGrp"]
-        self.assertTrue(modes[0][2].get("vertical"))
+    def test_the_import_mode_is_three_short_segments(self):
+        """2026-09-28: the vertical radios (three long labels in a row
+        wanted 670 px) became Rig / New rig / Skeleton, the long text the
+        tooltip."""
+        self.assertFalse([c for c in self.fake.calls
+                          if c[0] == "radioButtonGrp"])
+        segments = [c for c in self.fake.calls if c[0] == "iconTextRadioButton"
+                    and not c[2].get("edit")]
+        self.assertEqual([c[2]["label"] for c in segments],
+                         ["Rig", "New rig", "Skeleton"])
+        self.assertEqual([c[1][0] for c in segments],
+                         [uebridge.mode_button(m) for m in uebridge.MODES])
+        self.assertTrue(segments[0][2]["select"])
+        for call in segments:
+            self.assertGreater(len(call[2]["annotation"]), 40)
+        marks = dict((m.name, m) for m in self.marks)
+        for call in segments:
+            self.assertEqual(marks[call[1][0]].role, "segment")
+
+    def test_import_is_the_primary_action(self):
+        marks = [m for m in self.marks if m.role == "primary"]
+        self.assertEqual([m.icon for m in marks], ["download"])
+        labels = [c[2]["label"] for c in self.fake.calls if c[0] == "button"
+                  and not c[2].get("edit")]
+        self.assertIn("Import", labels)
+        self.assertIn("Export FBX...", labels)
+        self.assertIn("Export to uasset", labels)
+
+    def test_the_connection_line_is_the_card_s_subtitle(self):
+        marks = dict((m.name, m) for m in self.marks)
+        self.assertEqual(marks[uebridge._HEADER].role, "subtitle")
+        self.assertEqual(marks[uebridge._STATUS].role, "status")
 
     def test_the_status_line_wraps(self):
         texts = [c for c in self.fake.calls
@@ -260,9 +290,11 @@ class UeBridge(unittest.TestCase):
 
     def test_the_named_controls_exist(self):
         for name in (uebridge._LIST, uebridge._SEARCH, uebridge._STATUS,
-                     uebridge._HEADER, uebridge._TIMELINE, uebridge._PROJECT,
-                     uebridge._MODE):
+                     uebridge._HEADER, uebridge._TIMELINE, uebridge._PROJECT):
             self.assertIn(name, self.fake.children, name)
+        #  the mode is a collection of segments now (2026-09-28)
+        self.assertIn(("iconTextRadioCollection", (uebridge._MODE,), {}),
+                      self.fake.calls)
         self.assertTrue(uebridge.is_open())
 
     def test_show_window_opens_the_hub_on_its_section(self):

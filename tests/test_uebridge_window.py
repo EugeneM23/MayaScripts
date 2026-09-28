@@ -169,8 +169,9 @@ class NoPerforce(unittest.TestCase):
     def test_the_three_buttons_and_two_modes(self):
         src = self._source()
         for label in ('label="Export FBX..."', 'label="Export to uasset"',
-                      'label="IMPORT"', '"retarget onto the rig"',
-                      '"onto a NEW rig"', '"as a new skeleton"'):
+                      'label="Import"', '"Rig"', '"New rig"',
+                      '"Skeleton"', 'Retarget onto the rig', 'Onto a NEW rig',
+                      'As a new skeleton'):
             self.assertIn(label, src, label)
         self.assertTrue(callable(window.export_fbx_selected))
         self.assertTrue(callable(window.export_uasset_selected))
@@ -181,7 +182,7 @@ class NoPerforce(unittest.TestCase):
         pipeline -- the row the radio opens on."""
         real = window.cmds
         window.cmds = types.SimpleNamespace(
-            radioButtonGrp=lambda *a, **k: False)
+            iconTextRadioCollection=lambda *a, **k: False)
         try:
             self.assertTrue(window.retarget_selected())
             self.assertEqual(window.import_mode(), "rig")

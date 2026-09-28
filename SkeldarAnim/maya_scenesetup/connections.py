@@ -830,7 +830,7 @@ def header_text(rig, weapon, scheme):
 
 
 def segment_name(row, choice):
-    """The segment button of choice in ow's collection. Pure."""
+    """The segment button of `choice` in `row`'s collection. Pure."""
     return "{0}_{1}".format(MENU[row], choice)
 
 
@@ -839,7 +839,7 @@ def menus():
     first choice when none is (a collection answers nothing before a pick).
 
     The three parents were dropdowns until 2026-09-28; since the skin they
-    are segments (iconTextRadioCollection named MENU[row]) - the values
+    are segments (`iconTextRadioCollection` named MENU[row]) - the values
     and every pure function over them unchanged."""
     out = {}
     for row, choices in _ROWS:
