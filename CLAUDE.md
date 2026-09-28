@@ -750,6 +750,22 @@ animator's 360 px dock the installed line wrapped past its height (trap
 67). 2314 unit tests. A colleague on a build from before this has no
 Update section: one manual drag of a new build, then the button.
 
+**…and one file installs it from GitHub** (the same day: «скрипт который можно кинуть в
+открытую сцену и он установит наш плагин с гит хаба»; spec
+`docs/superpowers/specs/2026-09-28-setup-script-design.md`). **`SkeldarAnim_Install.py`** at the
+repo root — beside the plugin, not in the payload: what a colleague has BEFORE the plugin.
+Dropped into a viewport it downloads `releases/latest/download/SkeldarAnim.zip` (cancellable
+progress window), checks and unpacks it to a temp folder, runs **that build's own `install.py`**
+(loaded by path as `skeldar_setup_installer`, not quiet — its dialog reports the install), removes
+the temp folder and opens the hub from the installed copy. Refusals say «nothing was installed»;
+an installer failure keeps the unpacked build and names it; the scene is never touched; a second
+drop updates. Stdlib at import — **Maya's drop handler
+(`maya.app.general.executeDroppedPythonFile`) `import_module`s the file by its stem, so
+`__name__` is never `"__main__"` there** and the `__main__` block only serves a Script Editor
+`exec`. Every release carries it as a third asset (stable link
+`releases/latest/download/SkeldarAnim_Install.py`); a push touching only it builds nothing and
+re-uploads it onto the latest release (`--clobber`). `README_INSTALL.txt` leads with it.
+
 ## The Creep: its own AS rig, and a ROTATION-ONLY retarget (2026-09-24)
 
 **Named the Hunter until the night of 2026-09-24** (the animator: «всё что Hunter переименуем на

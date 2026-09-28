@@ -6,7 +6,13 @@ Colour, Update — все в одном
 
 Работает в Maya 2024 и новее (все кнопки — обычные cmds и MEL).
 
-Установка:
+Установка одним файлом (проще всего):
+  Скачайте SkeldarAnim_Install.py —
+  https://github.com/EugeneM23/MayaScripts/releases/latest/download/SkeldarAnim_Install.py
+  — и перетащите его в открытое окно Maya (во вьюпорт). Он сам скачает
+  последнюю сборку с GitHub и установит её; сцена не затрагивается.
+
+Установка из архива:
   1. Распакуйте папку куда угодно.
   2. Перетащите файл install.py в открытое окно Maya (во вьюпорт).
   3. Появится полка SkeldarAnim с двумя кнопками: SkeldarAnim открывает

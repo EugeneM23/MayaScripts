@@ -16,6 +16,7 @@ on:
     branches: [feature/overrig-picker]
     paths:
       - "SkeldarAnim/**"
+      - "SkeldarAnim_Install.py"
       - "make_build.py"
       - ".github/workflows/build.yml"
   workflow_dispatch:
@@ -71,7 +72,8 @@ jobs:
               git log -1 --format='- `%h` %s' "$GITHUB_SHA" -- SkeldarAnim
             fi
             echo
-            echo "Install: unzip, drag \`SkeldarAnim/install.py\` into a Maya viewport."
+            echo "Install: download \`SkeldarAnim_Install.py\` below and drag it into a Maya viewport"
+            echo "(it fetches the latest build itself) - or unzip and drag \`SkeldarAnim/install.py\`."
             echo "Update: SkeldarAnim window > Update > Check update."
           } > dist/notes.md
           cat dist/notes.md
@@ -83,11 +85,21 @@ jobs:
           SHORT: ${{ steps.known.outputs.short }}
         run: |
           tag="build-$(date -u +%Y%m%d-%H%M%S)-$SHORT"
-          gh release create "$tag" dist/SkeldarAnim.zip dist/version.json \
+          gh release create "$tag" dist/SkeldarAnim.zip dist/version.json SkeldarAnim_Install.py \
             --target "$GITHUB_SHA" \
             --title "SkeldarAnim $(date -u +%Y-%m-%d) $SHORT" \
             --notes-file dist/notes.md \
             --latest
+
+      # The one-file installer changes without the plugin: refresh it on the
+      # latest release, so releases/latest/download/ always serves this one.
+      - name: Installer on the latest release
+        if: steps.known.outputs.skip == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release view --json tagName --jq .tagName)
+          gh release upload "$latest" SkeldarAnim_Install.py --clobber
 
       - name: Prune
         if: steps.known.outputs.skip != '1'
