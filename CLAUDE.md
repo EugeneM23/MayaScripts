@@ -472,6 +472,92 @@ Measured in the live run, each a gate or a rewrite:
     grey block — trap 57's family): the state change and its picture must
     be two sends. The collapsed header is 30 px in the next one.
 
+## The hub's skin — style B, grouped cards, the header (2026-09-28)
+
+The animator: «Давай попробуем для нашего плагина нарисовать кастомный красивый интерфейс. За одно
+можно подумать над тем как сделать расположение кнопок более красивым». Picked in the brainstorm from
+mockups: **style B** (our own dark charcoal, rounded cards, ONE orange primary action per section,
+the palette as dots) over A (Maya's greys tidied) and C (a dense icon grid); **scheme 3** — the
+accordion stays (several open at once), grouped **Scene** (Characters, Weapons, Connections),
+**Animation** (UE Bridge, Retarget), **Look** (Studio, Colour), with a strip of icons on top that
+opens a section and scrolls to it; **Hotkeys and Update are the header** (the keyboard lights while
+the map is on, the chip is the installed commit and checks for an update on a click, ⋮ holds Hotkey
+Editor / Check update / Classic look). Mid-build: «сделаем чтобы активное окно подсвечивалось
+немного другим цветом» — the card last pressed or focused in, or jumped to, is lit (`card_active`
+background, a thin warm `card_edge`). Spec: `docs/superpowers/specs/2026-09-28-hub-skin-design.md`,
+plan beside it. Proof: `docs/superpowers/plans/verify_hub_skin.py` — **26/26 live in the animator's
+Maya, 2026-09-28**, against the installed copy, the hub docked and rebuilt IN PLACE (five sends:
+open every card, measure, classic, back, memory); 2522 unit tests.
+
+**Three new modules** (payload rows, and a test now pins that every `maya_*.py` beside install.py
+ships): `maya_hubstyle.py` (stdlib: `TOKENS`, `GROUPS`, `stylesheet(scale, arrow=)`, the MARKS —
+`hubstyle.mark(cmds.button(...), "primary", "plus")` records what a control IS and returns its name;
+`swatch(name, rgb)`; `take_marks()`; `pick(skin, classic)` / `tool_label` / `tool_width` for the few
+things one arrangement does differently in the two hubs, while `set_skinning` says which is being
+built), `maya_hubicons.py` (stdlib: 24 Tabler outline icons, MIT notice in the module, `svg(name,
+colour)`), `maya_hubqt.py` (the Qt layer: `Skin` — root, header, message line, strip, group labels,
+`Card`s — and `apply_marks`). `maya_hub` builds the SKIN where `maya_hubqt.available()` and the
+optionVar `skeldarAnimHub_classic` is not 1, else the CLASSIC frameLayout accordion (the 2026-09-17
+hub, every section, plus a «Switch to the new look» button when Qt is there); a skin failing as a
+whole is destroyed at once and the classic hub built instead. `SECTIONS` gained `group` and `icon`
+and the new order (characters, weapons, connections, uebridge, retarget, studio, colour, hotkeys,
+update); **a new tool is now a row with a group and an icon** (`maya_hubicons.ICONS`). `say(message,
+state)`, `paint_hotkeys`, `set_classic` (deferred — the press comes from inside what the rebuild
+deletes). `maya_hotkeys.paint` and `maya_update._status` tell the hub only if `maya_hub` is already
+in `sys.modules`.
+
+**How cmds controls live in Qt cards** (measured in a probe window first): the workspaceControl's
+widget has a QVBoxLayout; our root goes into it; each card's body is a named `QVBoxLayout`, and
+`cmds.setParent(MQtUtil.fullName(getCppPointer(layout)))` puts the builder's controls in it — names,
+exists/edit/query unchanged, the path running through our Qt objects (so every one is named). Maya's
+controls are Qt subclasses a stylesheet reaches (`QmayaOptionMenu`→QComboBox, `QmayaField`→QLineEdit,
+`QmayaIconTextRadioButton`→a checkable QPushButton, `QmayaLabel`→QLabel, layouts plain QWidgets that
+paint nothing); one stylesheet on the root styles them by `skRole`. Every builder kept its control
+names and callbacks; what changed is arrangement: dots + swatch + brush instead of a colour slider,
+Add + Remove in one row, a folder button for any FBX (`browse_fbx`), Connections' three parents and
+the bridge's import mode as SEGMENTS (`iconTextRadioCollection`; `menus()` / `import_mode()` read
+them, the pure halves untouched), Studio's checks as chips two to a row and no fixed widths, the
+Retarget paragraph a tooltip, `bound_message` without its "Character:" prefix (it is the card's
+subtitle).
+
+96. **A layout reached through a temporary wrapper dies with it.** `find(control).layout()` answered
+    valid and was «Internal C++ object (QVBoxLayout) already deleted» one call later, when the
+    widget's wrapper had been collected — the skin fell back to classic on its very first live
+    build. Hold the WIDGET (`host_widget`) for as long as its layout is used. The same family:
+    `layout.itemAt(i).widget()` wrappers are invalidated with the item wrapper and handed back DEAD
+    by the next `wrapInstance` of that address («QPushButton already deleted» one mark later);
+    `find` now `shiboken.invalidate`s a dead wrapper and wraps afresh, and `wrapInstance(ptr,
+    QLabel)` returns the cached QWidget wrapper when one exists, so class methods (`setWordWrap`,
+    `setIcon`) go through `setProperty("wordWrap"/"icon"/"iconSize")`.
+97. **Maya's rowLayout places its children at their own widths whatever Qt says.** Its layout is
+    `QmayaRowLayout` (a QHBoxLayout underneath); `setStretch(i, 1)` and Expanding size policies
+    changed nothing (segments 35 / 62 px in a 314 px track). A minimum width moves them — and would
+    stop the dock ever getting narrower. The segments are moved into a row of OURS laid over the
+    track (an event filter keeps it over it); Maya still finds them by name. And
+    `findChildren(type, "", FindDirectChildrenOnly)` answered nothing in PySide6 6.8.3 —
+    `children()` with an isinstance filter did.
+98. **Stylesheet specificity and Maya's QLabels**: a blanket `QFrame[skCard] QWidget {background:
+    transparent}` outranked `QPushButton[skRole=primary]` and emptied every field; a `QLabel`
+    background hid the colour slider's swatch (`QmayaColorSliderLabel` is a QLabel). No blanket
+    rules; a test pins it. Stylesheet PIXELS ARE PHYSICAL here (devicePixelRatio 1.0, logical DPI
+    144, the UI font 16 px): every px × `mayaDpiSetting -q -realScaleValue`.
+99. **Deleting a classic hub runs every frameLayout's collapseCommand**: after a classic hub was
+    deleted every section came back remembered collapsed. `rebuild()` saves the collapse memory
+    before deleting the classic scroll layout and writes it back after.
+100. **The disposable Maya is on the animator's screen, and they use it** (trap 85 again): all seven
+     cards came back collapsed twice in the dev Maya — the first time it was clicks (only card
+     sections were set), the second was trap 99 (Hotkeys, a classic frame, was set too). Tell the
+     two apart by WHICH memory changed before blaming either.
+101. **PowerShell's `@" "@` here-string expands backticks**: `` `r `` in a Python docstring became a
+     carriage return (git then called connections.py binary, `-text`) and every other backticked
+     word lost its quotes. Python source goes through Write/Edit, or a literal `@' '@` string.
+
+A hidden card body is never laid out: measure segments or widths with the card OPEN, in a send
+after opening it (the verify's phase 0 — Connections collapsed read 35 and 56 px). The content
+must fit the animator's 360 px dock: `content.minimumSizeHint().width()` ≤ the viewport (465 ≤ 510
+live); the colour rows were 29 px too wide until the hidden slider stopped taking width
+(`pick((1, 30, 1), (1, 34, 60))`).
+
 ## Connections — the hands on the weapon, on the AdvancedSkeleton rig (2026-09-18)
 
 The animator's ask: «вкладка connections, в которой мы сможем привязывать и
