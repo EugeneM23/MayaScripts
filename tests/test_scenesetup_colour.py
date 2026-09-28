@@ -614,5 +614,91 @@ class ShowTextures(unittest.TestCase):
         self.assertEqual(fake.edited, [])
 
 
+class RelinkCmds(object):
+    """File nodes and materials with string attributes, enough for relink_images."""
+
+    def __init__(self):
+        self.kinds = {"Orc_D_Body_file": "file", "Orc_D_Eye_file": "file", "place": "place2dTexture",
+                      "Orc_D_Body": "phong", "Orc_D_Eye": "phong", "someoneElse_file": "file"}
+        self.attrs = {"Orc_D_Body_file.skeldarAssetImage": "Orc_D/Orc_D_Body_Color.jpg",
+                      "Orc_D_Body_file.fileTextureName": "Orc_D/Orc_D_Body_Color.jpg",
+                      "Orc_D_Eye_file.skeldarAssetImage": "Orc_D/Orc_D_Eye_Color.jpg",
+                      "Orc_D_Eye_file.fileTextureName": "Orc_D/Orc_D_Eye_Color.jpg",
+                      "someoneElse_file.fileTextureName": "D:/their/own.png",
+                      "Orc_D_Body.skeldarTexture": "Orc_D/Orc_D_Body_Color.jpg",
+                      "Orc_D_Eye.skeldarTexture": "Orc_D/Orc_D_Eye_Color.jpg"}
+
+    def ls(self, nodes, **kwargs):
+        if kwargs.get("type") == "file":
+            return [n for n in nodes if self.kinds.get(n) == "file"]
+        if kwargs.get("materials"):
+            return [n for n in nodes if self.kinds.get(n) == "phong"]
+        return list(nodes)
+
+    def attributeQuery(self, name, **kwargs):
+        return kwargs["node"] + "." + name in self.attrs
+
+    def getAttr(self, plug):
+        return self.attrs[plug]
+
+    def setAttr(self, plug, value, **kwargs):
+        self.attrs[plug] = value
+
+
+class RelinkImages(unittest.TestCase):
+    """A textured CHARACTER (2026-09-28, the Orc D) ships its materials inside its .ma, each file
+    node naming its image RELATIVE to assets/ in `skeldarAssetImage`; Add points them at the
+    installed copy. No path of the machine that built the asset is in the file."""
+
+    ASSETS = "C:/prefs/SkeldarAnim/assets/"
+
+    def resolve(self, relative):
+        return self.ASSETS + relative
+
+    def test_the_plan_is_pure(self):
+        links, missing = colour.relink_plan(
+            [("a_file", "Orc_D/a.jpg"), ("b_file", "Orc_D/b.png")], self.resolve,
+            lambda path: path.endswith("a.jpg"))
+        self.assertEqual(links, [("a_file", self.ASSETS + "Orc_D/a.jpg"),
+                                 ("b_file", self.ASSETS + "Orc_D/b.png")])
+        self.assertEqual(missing, [self.ASSETS + "Orc_D/b.png"])
+
+    def test_nothing_to_relink_is_nothing(self):
+        self.assertEqual(colour.relink_plan([], self.resolve, lambda p: True), ([], []))
+
+    def test_the_file_nodes_and_their_materials_are_pointed_at_the_install(self):
+        real, fake = colour.cmds, RelinkCmds()
+        real_isfile = colour.os.path.isfile
+        colour.cmds = fake
+        colour.os.path.isfile = lambda p: True
+        try:
+            count, missing = colour.relink_images(list(fake.kinds), self.resolve)
+        finally:
+            colour.cmds = real
+            colour.os.path.isfile = real_isfile
+        self.assertEqual((count, missing), (2, []))
+        self.assertEqual(fake.attrs["Orc_D_Body_file.fileTextureName"],
+                         self.ASSETS + "Orc_D/Orc_D_Body_Color.jpg")
+        self.assertEqual(fake.attrs["Orc_D_Body.skeldarTexture"],
+                         self.ASSETS + "Orc_D/Orc_D_Body_Color.jpg")
+        self.assertEqual(fake.attrs["Orc_D_Eye.skeldarTexture"],
+                         self.ASSETS + "Orc_D/Orc_D_Eye_Color.jpg")
+        #  somebody's own file node is never touched
+        self.assertEqual(fake.attrs["someoneElse_file.fileTextureName"], "D:/their/own.png")
+
+    def test_a_missing_image_is_reported_and_still_relinked(self):
+        real, fake = colour.cmds, RelinkCmds()
+        real_isfile = colour.os.path.isfile
+        colour.cmds = fake
+        colour.os.path.isfile = lambda p: "Eye" not in p
+        try:
+            count, missing = colour.relink_images(list(fake.kinds), self.resolve)
+        finally:
+            colour.cmds = real
+            colour.os.path.isfile = real_isfile
+        self.assertEqual(count, 2)
+        self.assertEqual(missing, [self.ASSETS + "Orc_D/Orc_D_Eye_Color.jpg"])
+
+
 if __name__ == "__main__":
     unittest.main()

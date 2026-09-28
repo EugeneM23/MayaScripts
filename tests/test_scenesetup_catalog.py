@@ -535,3 +535,62 @@ class ExportName(unittest.TestCase):
 
     def test_every_character_key_is_listed(self):
         self.assertEqual(catalog.character_keys(), [c.key for c in catalog.CHARACTERS])
+
+
+class OrcD(unittest.TestCase):
+    """2026-09-28: «Давай добавим еще один вариант орка но на этот раз SK_Orc_Marauder_D ... и для
+    этой версии сделаем материал с текстурами» -- the fourth rig row, the first CHARACTER that
+    arrives in its textures. Its skeleton is the F orc's to 0.0, so the asset is Orc_Rig.ma with
+    D's mesh re-skinned onto the same game joints (make_orc_d_rig_asset.py)."""
+
+    MAPS = ("Orc_D_Body_Color.jpg", "Orc_D_Body_Normal.jpg", "Orc_D_Cloth_Color.jpg",
+            "Orc_D_Cloth_Normal.jpg", "Orc_D_Cloth_Mask.png", "Orc_D_Eye_Color.jpg")
+
+    def test_the_fourth_row_is_the_textured_orc_d_rig(self):
+        entry = catalog.CHARACTERS[3]
+        self.assertEqual((entry.key, entry.label, entry.file, entry.kind),
+                         ("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig"))
+        self.assertTrue(entry.textured)
+        self.assertTrue(catalog.is_rig(entry))
+
+    def test_only_the_orc_d_is_textured(self):
+        self.assertEqual([c.key for c in catalog.CHARACTERS if c.textured], ["Orc_D_Rig"])
+
+    def test_textured_defaults_to_false(self):
+        self.assertFalse(catalog.Character("X", "X", "X.ma", "rig").textured)
+
+    def test_an_asset_path_is_under_assets_with_forward_slashes(self):
+        path = catalog.asset_path("Orc_D/Orc_D_Body_Color.jpg")
+        self.assertTrue(path.endswith("/assets/Orc_D/Orc_D_Body_Color.jpg"), path)
+        self.assertNotIn("\\", path)
+
+    def test_the_maps_ship_in_assets(self):
+        for name in self.MAPS:
+            self.assertTrue(os.path.isfile(catalog.asset_path("Orc_D/" + name)), name)
+
+    def test_the_shipped_orc_d_names_its_images_relatively(self):
+        """Every file node carries `skeldarAssetImage` (the path under assets/) and Add Character
+        points it at the installed copy: no path of the machine that built the asset is in it."""
+        path = catalog.character_file(catalog.character_by_key("Orc_D_Rig"))
+        self.assertTrue(path.endswith("assets/Orc_D_Rig.ma"), path)
+        images, files, mode, skins, blends, body = [], 0, False, 0, 0, False
+        banned = ("createNode script", "vaccine", "breed_gene", "C:/", "c:/", "Unreal Projects",
+                  "scratchpad", "Skirt_Proxy", "srcD:", "D:/Characters", "arp_rig_name",
+                  "flip_fluid", "ori_name")
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                for word in banned:
+                    self.assertNotIn(word, line)
+                files += line.startswith("createNode file ")
+                if '".skeldarAssetImage"' in line:
+                    images.append(line.split('"')[-2])
+                if '".skeldarRetarget"' in line and '"rotation"' in line:
+                    mode = True
+                skins += line.startswith("createNode skinCluster ")
+                blends += line.startswith("createNode blendShape ")
+                body = body or line.startswith('createNode transform -n "Orc_D_Body" -p "Geometry";')
+        self.assertTrue(mode, "the rig's retarget mark is not in the file")
+        self.assertTrue(body, "Orc_D_Body is not in the rig's Geometry group")
+        self.assertEqual((skins, blends), (1, 1))
+        self.assertEqual(sorted(set(images)), sorted("Orc_D/" + m for m in self.MAPS))
+        self.assertEqual(files, len(images))

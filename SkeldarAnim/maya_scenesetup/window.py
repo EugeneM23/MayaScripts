@@ -429,10 +429,13 @@ def add_character():
     is optional and two presses in a row still never collide. The advance
     comes after `refresh`, which does not touch the swatches at all.
     """
-    message = character.add_character(chosen_character(),
-                                      _swatch(_CHARACTER_COLOUR))
+    entry = chosen_character()
+    message = character.add_character(entry, _swatch(_CHARACTER_COLOUR))
     refresh()
-    _advance_swatch(_CHARACTER_COLOUR)
+    if not getattr(entry, "textured", False):
+        # A textured row (2026-09-28, the Orc D) used no colour, so the one
+        # picked is still the next coloured Add's -- Weapons > Add's rule.
+        _advance_swatch(_CHARACTER_COLOUR)
     _status(message, _CHARACTER_STATUS)
 
 

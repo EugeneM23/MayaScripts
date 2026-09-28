@@ -469,3 +469,34 @@ class NextAddColour(unittest.TestCase):
         body = chr(10).join(code)
         self.assertNotIn("_set_swatch(", body)
         self.assertNotIn("_advance_swatch(", body)
+
+
+class TexturedAddKeepsTheSwatch(unittest.TestCase):
+    """A textured character used no colour (2026-09-28, the Orc D), so the swatch is not moved on:
+    the colour the animator picked is still the next coloured Add's -- Weapons > Add's rule for
+    Spear 03."""
+
+    def setUp(self):
+        self.saved = [(window, n, getattr(window, n)) for n in
+                      ("chosen_character", "_swatch", "refresh", "_advance_swatch", "_status")]
+        self.saved.append((window.character, "add_character", window.character.add_character))
+        self.advanced = []
+        window._swatch = lambda control: (0.1, 0.2, 0.3)
+        window.refresh = lambda: None
+        window._advance_swatch = lambda control: self.advanced.append(control)
+        window._status = lambda message, control=None: None
+        window.character.add_character = lambda entry, rgb: "added"
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+
+    def test_the_textured_orc_leaves_the_swatch(self):
+        window.chosen_character = lambda: catalog.character_by_key("Orc_D_Rig")
+        window.add_character()
+        self.assertEqual(self.advanced, [])
+
+    def test_a_coloured_character_still_advances_it(self):
+        window.chosen_character = lambda: catalog.character_by_key("Orc_Rig")
+        window.add_character()
+        self.assertEqual(self.advanced, [window._CHARACTER_COLOUR])

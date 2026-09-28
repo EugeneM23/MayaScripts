@@ -433,3 +433,90 @@ class TagsItsRoot(unittest.TestCase):
         self.assertNotIn("tag_root(", inspect.getsource(character.add_character))
         self.assertFalse(hasattr(character, "tag_root"))
         self.assertFalse(hasattr(character, "CHARACTER_TAG"))
+
+
+class Appearance(unittest.TestCase):
+    """What an Add says a character arrived wearing (2026-09-28, the Orc D): its colour's name,
+    or «textured» -- with the viewport's Textures named when this press turned them on, and any
+    image the installed copy is missing named too (the character still arrives)."""
+
+    def test_a_coloured_character_says_its_colour(self):
+        from maya_scenesetup import colour
+        rgb = colour.PALETTE[1].rgb
+        self.assertEqual(character.appearance(False, rgb, [], []), colour.colour_name(rgb))
+
+    def test_a_textured_character_says_textured(self):
+        self.assertEqual(character.appearance(True, None, [], []), "textured")
+
+    def test_turning_the_textures_on_is_said(self):
+        self.assertEqual(character.appearance(True, None, ["modelPanel4"], []),
+                         "textured (viewport textures on)")
+
+    def test_a_missing_image_is_named_by_its_file(self):
+        text = character.appearance(True, None, [], ["C:/x/assets/Orc_D/Orc_D_Eye_Color.jpg"])
+        self.assertEqual(text, "textured - missing image(s): Orc_D_Eye_Color.jpg")
+
+
+class TexturedAdd(unittest.TestCase):
+    """A textured row keeps the asset's own materials: no palette colour is painted, the images
+    are pointed at the installed copy, the viewport's Textures come on."""
+
+    class Cmds(object):
+        def undoInfo(self, **kwargs):
+            pass
+
+        def ls(self, *args, **kwargs):
+            return []
+
+        def objExists(self, name):
+            return False
+
+        def delete(self, *args):
+            pass
+
+    def setUp(self):
+        import tempfile
+        from maya_overrig import builder
+        from maya_scenesetup import colour
+        handle, self.file = tempfile.mkstemp(suffix=".ma")
+        os.close(handle)
+        self.calls = []
+        self.saved = [(character, "cmds", character.cmds),
+                      (character, "import_asset", character.import_asset),
+                      (character, "connect", character.connect),
+                      (character, "select_rig", character.select_rig),
+                      (character, "existing_namespaces", character.existing_namespaces),
+                      (catalog, "character_file", catalog.character_file),
+                      (builder, "character_roots", builder.character_roots)]
+        for name in ("paint_nodes", "relink_images", "show_textures"):
+            self.saved.append((colour, name, getattr(colour, name)))
+        character.cmds = self.Cmds()
+        character.import_asset = lambda path, namespace=None: ["|Orc_D_Rig:root"]
+        character.connect = lambda root: False
+        character.select_rig = lambda namespace: True
+        character.existing_namespaces = lambda: []
+        catalog.character_file = lambda entry: self.file
+        builder.character_roots = lambda: []
+        colour.paint_nodes = lambda *a: self.calls.append(("paint",)) or "phong1"
+        colour.relink_images = lambda nodes, resolve: (
+            self.calls.append(("relink", resolve("Orc_D/a.jpg"))) or (6, []))
+        colour.show_textures = lambda: self.calls.append(("show",)) or ["modelPanel4"]
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+        os.remove(self.file)
+
+    def test_the_orc_d_is_not_painted_and_its_images_are_relinked(self):
+        text = character.add_character(catalog.character_by_key("Orc_D_Rig"), (0.8, 0.25, 0.22))
+        self.assertNotIn(("paint",), self.calls)
+        self.assertEqual(self.calls[0], ("relink", catalog.asset_path("Orc_D/a.jpg")))
+        self.assertIn(("show",), self.calls)
+        self.assertIn("Orc D [rig] added as Orc_D_Rig", text)
+        self.assertIn(" - textured (viewport textures on)", text)
+        self.assertNotIn(" - red", text)
+
+    def test_an_untextured_rig_is_still_painted_and_nothing_relinked(self):
+        text = character.add_character(catalog.character_by_key("Orc_Rig"), (0.8, 0.25, 0.22))
+        self.assertEqual(self.calls, [("paint",)])
+        self.assertIn(" - red", text)

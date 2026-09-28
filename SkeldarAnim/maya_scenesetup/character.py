@@ -180,6 +180,21 @@ def added_message(joints, meshes, removed, note="", connected=False,
     return message
 
 
+def appearance(textured, rgb, switched, missing):
+    """Pure: what an Add says the character arrived wearing -- its colour's
+    name, or «textured» for a row that arrives in its own images (2026-09-28,
+    the Orc D), with the viewport's Textures named when this press turned
+    them on and any image the installed copy lacks named by its file.
+    Weapons > Add's wording for Spear 03 (`window.appearance`)."""
+    if not textured:
+        return colour.colour_name(rgb)
+    text = "textured (viewport textures on)" if switched else "textured"
+    if missing:
+        text += " - missing image(s): " + ", ".join(
+            os.path.basename(path) for path in missing)
+    return text
+
+
 # ------------------------------------------------------------------ action
 
 def rig_present():
@@ -451,6 +466,7 @@ def add_character(entry=None, rgb=None):
     `rgb` is the colour the character arrives wearing; None means the next
     free palette colour, which is what the button passes -- two characters
     can then never arrive identical even when nobody touches the swatch.
+    A `textured` row ignores it and arrives in its own images.
     The meshes are taken from the import's OWN nodes, which is exact and
     needs no searching (and `import_asset` has already re-resolved them
     from their UUIDs, because the flatten invalidates every long path below
@@ -464,7 +480,8 @@ def add_character(entry=None, rgb=None):
     if not os.path.isfile(path):
         return NO_FILE.format(path)
 
-    if rgb is None:
+    textured = getattr(entry, "textured", False)
+    if rgb is None and not textured:
         rgb = colour.free_colour().rgb
 
     # A rig gets a namespace of its own; a bare skeleton keeps plain names.
@@ -475,13 +492,22 @@ def add_character(entry=None, rgb=None):
     before_roots = builder.character_roots()
     new = import_asset(path, namespace or None)
 
-    # Its own undo chunk: creating the material and assigning it are two
-    # commands, and half of that undone is a mesh with no shader.
-    cmds.undoInfo(openChunk=True)
-    try:
-        painted = colour.paint_nodes(new, rgb, entry.key)
-    finally:
-        cmds.undoInfo(closeChunk=True)
+    # A textured row (2026-09-28, the Orc D) keeps the materials it ships
+    # with: its images pointed at the installed copy, the viewport's Textures
+    # on. Everything else gets a fresh palette colour -- in its own undo
+    # chunk: creating the material and assigning it are two commands, and half
+    # of that undone is a mesh with no shader.
+    switched, missing = [], []
+    if textured:
+        _count, missing = colour.relink_images(new, catalog.asset_path)
+        switched = colour.show_textures()
+        painted = None
+    else:
+        cmds.undoInfo(openChunk=True)
+        try:
+            painted = colour.paint_nodes(new, rgb, entry.key)
+        finally:
+            cmds.undoInfo(closeChunk=True)
 
     # Format-blind on purpose: an FBX cannot carry a script node, but the
     # sweep costs nothing and the `.ma` path genuinely needs it.
@@ -499,7 +525,8 @@ def add_character(entry=None, rgb=None):
 
     joints = len(cmds.ls(new, type="joint") or [])
     meshes = len(cmds.ls(new, type="mesh") or [])
+    wearing = (appearance(textured, rgb, switched, missing)
+               if textured or painted else "")
     return added_message(joints, meshes, removed, note, connected,
-                         label=entry.label,
-                         colour_name=colour.colour_name(rgb) if painted
-                         else "", namespace=namespace, selected=selected)
+                         label=entry.label, colour_name=wearing,
+                         namespace=namespace, selected=selected)

@@ -49,6 +49,12 @@ PREFIX = "skeldarColour"
 # which is the animator's ruling («заменяет текстуру цветом»).
 TEXTURE_MARKER = "skeldarTexture"
 
+# A file node inside a textured CHARACTER's asset (2026-09-28, the Orc D) names
+# its image by THIS attribute, relative to the plugin's assets/; Add points the
+# node at the installed copy (`relink_images`). The asset then holds no path of
+# the machine that built it.
+ASSET_IMAGE = "skeldarAssetImage"
+
 # What Hypershade wires from a place2dTexture into a file node, besides the
 # two uv plugs.
 _PLACE2D = ("coverage", "translateFrame", "rotateFrame", "mirrorU", "mirrorV",
@@ -504,6 +510,40 @@ def paint_texture(shapes, image, key):
 def paint_texture_nodes(nodes, image, key):
     """`paint_texture` over whatever `nodes` hold, as `paint_nodes` is."""
     return paint_texture(mesh_shapes(nodes), image, key)
+
+
+def relink_plan(images, resolve, exists):
+    """Pure: where each shipped image goes. `images` is [(file node, path under
+    assets/)], `resolve` turns such a path into the installed file's, `exists`
+    asks the disk. Returns ([(file node, installed path)], [missing paths])."""
+    links = [(node, resolve(relative)) for node, relative in images]
+    return links, [path for _node, path in links if not exists(path)]
+
+
+def relink_images(nodes, resolve):
+    """A textured CHARACTER's images pointed at the installed copy (2026-09-28,
+    the Orc D). The asset's own file nodes carry ASSET_IMAGE -- their image's
+    path under assets/, never a path of the machine that built the asset --
+    and each takes `resolve(that)` as its fileTextureName; a material of ours
+    whose TEXTURE_MARKER named that relative path names the installed one too.
+    Only file nodes among `nodes` that carry ASSET_IMAGE are touched. Returns
+    (file nodes relinked, images the installed copy does not have): a missing
+    image is still relinked, and the character still arrives -- grey there."""
+    images = []
+    for node in cmds.ls(nodes, type="file") or []:
+        if cmds.attributeQuery(ASSET_IMAGE, node=node, exists=True):
+            images.append((node, cmds.getAttr(node + "." + ASSET_IMAGE)))
+    links, missing = relink_plan(images, resolve, os.path.isfile)
+    installed = dict((relative, resolve(relative)) for _node, relative in images)
+    for node, path in links:
+        cmds.setAttr(node + ".fileTextureName", path, type="string")
+    for material in cmds.ls(nodes, materials=True) or []:
+        if cmds.attributeQuery(TEXTURE_MARKER, node=material, exists=True):
+            named = cmds.getAttr(material + "." + TEXTURE_MARKER)
+            if named in installed:
+                cmds.setAttr(material + "." + TEXTURE_MARKER, installed[named],
+                             type="string")
+    return len(links), missing
 
 
 def show_textures():

@@ -29,7 +29,11 @@ Weapon = collections.namedtuple("Weapon",
 # animator's own files under Animations/, Manny's infected original among
 # them -- went on 2026-09-28: the plugin reads nothing outside its folder,
 # and the sources live in the repository's sources/ (never shipped).
-Character = collections.namedtuple("Character", "key label file kind")
+# `textured` (2026-09-28, the Orc D) marks a row that arrives in its OWN
+# materials -- Unreal's textures, shipped under assets/ and named relatively in
+# the asset -- rather than in a palette colour (colour.relink_images).
+Character = collections.namedtuple("Character", "key label file kind textured",
+                                   defaults=(False,))
 
 _LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
@@ -59,6 +63,12 @@ CHARACTERS = [
     # riding their clavicles, one mesh with its 56-target blendShape, the Creep's
     # procedure and rotation-only mark. Built by make_orc_rig_asset.py.
     Character("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "rig"),
+    # The Orc Marauder D (2026-09-28, «еще один вариант орка ... SK_Orc_Marauder_D ... материал с
+    # текстурами»): its skeleton is the F orc's to 0.0, so this is Orc_Rig.ma with D's mesh
+    # re-skinned onto the same game joints (the skirt's cloth-simulation proxy dropped), in three
+    # materials carrying Unreal's own textures at 2048 with its material maths baked in
+    # (assets/Orc_D/, the animator's pick: «2048, JPG»). Built by make_orc_d_rig_asset.py.
+    Character("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig", textured=True),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
               "skeleton"),
     # The Creep without its rig (2026-09-24, «не только риг хантера, а и чистый
@@ -138,14 +148,19 @@ def character_path(entry=None):
     return character_file(entry or default_character())
 
 
-def _asset_path(name):
-    """`name` in the plugin's assets/, forward slashes (they reach MEL).
+def asset_path(name):
+    """`name` -- a file, or a path under it like "Orc_D/Orc_D_Body_Color.jpg" -- in
+    the plugin's assets/, forward slashes (they reach MEL).
 
-    Computed once at import: the table holds a plain absolute path, and
-    `missing()` says when the file is not there. No fallback outside the
-    plugin since 2026-09-28.
+    The weapon rows compute it once at import: the table holds a plain absolute
+    path, and `missing()` says when the file is not there. No fallback outside
+    the plugin since 2026-09-28. A textured character's images are resolved
+    through it at Add (2026-09-28), so they land on the installed copy.
     """
     return os.path.join(_CONTAINER, "assets", name).replace("\\", "/")
+
+
+_asset_path = asset_path
 
 
 WEAPONS = [
