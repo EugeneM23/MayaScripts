@@ -577,6 +577,20 @@ class TheHeaderIsTold(unittest.TestCase):
             ("Update cancelled - nothing changed.", None),
             ("Up to date: aaaaaaa", "ok")])
 
+    def test_with_the_card_built_its_line_answers_and_the_chip_colours(self):
+        """2026-09-28, the Update card came back: the answer on its own
+        line, not twice; the state still colours the header's chip."""
+        chips = []
+        self.hub.chip_state = chips.append
+        sys.modules["maya_hub"] = self.hub
+        up.cmds.labels[up.STATUS] = ""
+        up._status("Up to date: aaaaaaa", state="ok")
+        up._status("Update cancelled - nothing changed.")
+        self.assertEqual(up.cmds.labels[up.STATUS],
+                         "Update cancelled - nothing changed.")
+        self.assertEqual(self.said, [])
+        self.assertEqual(chips, ["ok"])
+
     def test_no_hub_imported_imports_none(self):
         sys.modules.pop("maya_hub", None)
         up._status("hello")

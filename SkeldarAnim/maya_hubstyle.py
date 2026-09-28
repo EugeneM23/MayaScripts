@@ -35,8 +35,11 @@ import collections
 TOKENS = {
     "panel": "#1f2023",         # the hub's background
     "card": "#2a2c30",          # a section card
-    "card_active": "#303238",   # the card being worked in (2026-09-28)
-    "card_edge": "#5a3f2c",     # its thin warm outline
+    #  the card being worked in (2026-09-28); brighter the same evening
+    #  («выделение активной панели должно быть ярче»): a lighter face and
+    #  the accent itself as its outline
+    "card_active": "#383a41",
+    "card_edge": "#e07a36",
     "field": "#1b1c1f",         # fields, lists, segment tracks
     "field_hover": "#232428",
     "line": "#45474d",          # outlines, the checked segment
@@ -184,9 +187,9 @@ _SHEET = """
 #{CONTENT}, #{VIEWPORT} {{ background: {panel}; }}
 QScrollArea#{SCROLL} {{ background: {panel}; border: none; }}
 QFrame[skCard="true"] {{ background: {card}; border-radius: {r8}px;
-    border: {b1}px solid {card}; }}
+    border: {p2}px solid {card}; }}
 QFrame[skCard="true"][skActive="true"] {{ background: {card_active};
-    border: {b1}px solid {card_edge}; }}
+    border: {p2}px solid {card_edge}; }}
 
 QPushButton {{ background: transparent; border: {b1}px solid {line};
     border-radius: {r6}px; padding: {p3}px {p8}px; color: {text2}; }}

@@ -124,7 +124,8 @@ elif PHASE == 1:
              "uebridge": (ue._LIST, ue._STATUS),
              "retarget": ("skeldarRetargetStatus",),
              "studio": ("vpStudioStatus",),
-             "colour": (maya_colour.STATUS,)}
+             "colour": (maya_colour.STATUS,),
+             "update": (maya_update.STATUS,)}
     wrong = [(key, name, body_of(name)) for key, names in homes.items()
              for name in names if body_of(name) != key]
     gate(8, "every card's controls are in its body", not wrong, wrong)
@@ -132,11 +133,12 @@ elif PHASE == 1:
     # ---- 9-10: subtitles moved and still written by cmds
     moved = []
     for key, name in (("characters", ss._BOUND), ("uebridge", ue._HEADER),
-                      ("colour", maya_colour.TAKEN)):
+                      ("colour", maya_colour.TAKEN),
+                      ("update", maya_update.INSTALLED)):
         widget = maya_hubqt.find(name)
         moved.append(bool(widget) and skin.cards[key].header.isAncestorOf(
             widget))
-    gate(9, "the three subtitles sit in their card headers", all(moved),
+    gate(9, "the four subtitles sit in their card headers", all(moved),
          moved)
     before = cmds.text(ss._BOUND, query=True, label=True)
     cmds.text(ss._BOUND, edit=True, label="verify subtitle")
@@ -212,9 +214,11 @@ elif PHASE == 1:
     # ---- 20-21: expand from the strip, the active card
     skin.cards["studio"].set_collapsed(True)
     skin.jumps["studio"].click()
-    gate(20, "a jump opens its card and lights it",
+    others = [k for k, c in skin.cards.items()
+              if k != "studio" and not c.collapsed()]
+    gate(20, "a jump opens its card ONLY and lights it",
          not skin.cards["studio"].collapsed() and skin.active == "studio"
-         and not maya_hub.collapsed("studio"))
+         and not maya_hub.collapsed("studio") and not others, others)
     field = maya_hubqt.find(ue._SEARCH)
     qt.QtWidgets.QApplication.sendEvent(
         field, qt.QtGui.QFocusEvent(qt.QtCore.QEvent.FocusIn))

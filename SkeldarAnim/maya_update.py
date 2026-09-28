@@ -376,20 +376,26 @@ def _reopen(message, importer=importlib.import_module):
 # -------------------------------------------------------------------- UI
 
 def _status(message, state=None):
-    """The status line (the classic hub's section) and the skinned hub's
-    header message; `state` "ok" / "new" colours the header's version chip.
-    Only a hub already imported is told: a message is no reason to import
-    one."""
+    """The section's status line; `state` "ok" / "new" colours the skinned
+    hub's version chip. With no section built (a skin without the Update
+    card) the message goes to the hub's header line instead. Only a hub
+    already imported is told: a message is no reason to import one."""
     print("SkeldarAnim update: " + message)
+    shown = False
     try:
         if cmds.text(STATUS, exists=True):
             cmds.text(STATUS, edit=True, label=message)
+            shown = True
     except Exception:                                        # noqa: BLE001
         pass
     hub = sys.modules.get("maya_hub")
     if hub is not None:
         try:
-            hub.say(message, state=state)
+            if shown:
+                if state is not None:
+                    hub.chip_state(state)
+            else:
+                hub.say(message, state=state)
         except Exception:                                    # noqa: BLE001
             print(traceback.format_exc())
     return message
@@ -413,11 +419,12 @@ def _press(*_args):
 
 def build_panel():
     """The installed build, the button, a status line (the hub's section)."""
-    import maya_hubstyle as hubstyle   # stdlib; the section is classic-only
+    import maya_hubstyle as hubstyle   # stdlib
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", 8))
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+    #  the card's subtitle in the skin (2026-09-28, the card came back)
     hubstyle.mark(cmds.text(INSTALLED, label="Installed:", align="left",
-                            wordWrap=True, height=36), "note")
+                            wordWrap=True, height=36), "subtitle")
     hubstyle.mark(cmds.button(
         label="Check update", height=36, backgroundColor=(0.45, 0.60, 0.70),
         annotation="Compare with the latest build on github.com/{0} and "

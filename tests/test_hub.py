@@ -76,21 +76,22 @@ class FakeToolsMixin(object):
 class TheTable(unittest.TestCase):
 
     def test_the_sections_in_the_hub_s_order(self):
-        """2026-09-28, the skin: grouped Scene / Animation / Look, then the
-        header's two. Weapons still follows Characters (its refresh writes
-        the Characters header)."""
+        """2026-09-28, the skin: grouped; UE Bridge on top where it always
+        was (the same evening), so Animation is the first group. Weapons
+        still follows Characters (its refresh writes the Characters
+        header)."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["Characters", "Weapons", "Connections", "UE Bridge",
-                          "Retarget", "Studio", "Colour", "Hotkeys",
+                         ["UE Bridge", "Retarget", "Characters", "Weapons",
+                          "Connections", "Studio", "Colour", "Hotkeys",
                           "Update"])
 
     def test_the_groups_and_their_icons(self):
         import maya_hubicons
         groups = [(s.key, s.group) for s in hub.SECTIONS]
         self.assertEqual(groups, [
+            ("uebridge", "animation"), ("retarget", "animation"),
             ("characters", "scene"), ("weapons", "scene"),
-            ("connections", "scene"), ("uebridge", "animation"),
-            ("retarget", "animation"), ("studio", "look"),
+            ("connections", "scene"), ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
             ("update", "settings")])
         for sec in hub.SECTIONS:
@@ -105,9 +106,11 @@ class TheTable(unittest.TestCase):
                 seen.append(sec.group)
 
     def test_the_cards_are_every_section_but_the_header_s(self):
+        """Hotkeys is the header's keyboard; Update is a card again
+        (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
-                         ["characters", "weapons", "connections", "uebridge",
-                          "retarget", "studio", "colour"])
+                         ["uebridge", "retarget", "characters", "weapons",
+                          "connections", "studio", "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -408,6 +411,9 @@ class FakeSkin(object):
     def set_version(self, text, tooltip, state=None):
         pass
 
+    def set_state(self, state):
+        self.state = state
+
     def scroll_to(self, key):
         return 42 if key in self.cards else None
 
@@ -460,10 +466,11 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
     def test_cards_under_group_labels_and_no_frames(self):
         hub.build()
         self.assertEqual(hub._SKIN.order, [
+            ("group", "animation"), ("card", "uebridge"), ("card", "retarget"),
             ("group", "scene"), ("card", "characters"), ("card", "weapons"),
-            ("card", "connections"), ("group", "animation"),
-            ("card", "uebridge"), ("card", "retarget"), ("group", "look"),
-            ("card", "studio"), ("card", "colour")])
+            ("card", "connections"), ("group", "look"),
+            ("card", "studio"), ("card", "colour"), ("group", "settings"),
+            ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])
 
@@ -488,11 +495,12 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(seen, [True])
         self.assertFalse(hub.hubstyle.skinning())            # and after
 
-    def test_the_header_sections_are_not_cards(self):
+    def test_the_hotkeys_are_the_header_s_and_update_a_card(self):
         hub.build()
         self.assertEqual(self.built("hotkeys"), 0)
-        self.assertEqual(self.built("update"), 0)
         self.assertNotIn("hotkeys", hub._SKIN.cards)
+        self.assertEqual(self.built("update"), 1)
+        self.assertIn("update", hub._SKIN.cards)
 
     def test_each_card_gets_its_own_marks(self):
         hub.build()
@@ -520,6 +528,41 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         hub._SKIN.cards["colour"].set_collapsed(True)
         callbacks["jump"]("colour")
         self.assertFalse(hub._SKIN.cards["colour"].collapsed())
+
+    def test_a_jump_opens_that_card_only(self):
+        """2026-09-28: «при нажатии на верхнюю панель с разделами все другие
+        панели должны закрыться и открыться только нужная»."""
+        hub.build()
+        hub._SKIN.callbacks["jump"]("studio")
+        for key, card in hub._SKIN.cards.items():
+            self.assertEqual(card.collapsed(), key != "studio", key)
+            self.assertEqual(
+                self.fake.optionvars[hub.OPTIONVAR.format(key)],
+                int(key != "studio"), key)
+        self.assertEqual(hub._SKIN.active, "studio")
+        self.fake.run_deferred()                            # and scrolled
+
+    def test_a_header_click_still_opens_one_card_alone(self):
+        """Only the strip closes the others; a card's own header toggles
+        that card."""
+        hub.build()
+        hub._SKIN.callbacks["toggled"]("colour", True)
+        self.assertFalse(hub._SKIN.cards["studio"].collapsed())
+
+    def test_the_chip_opens_the_update_card_then_checks(self):
+        pressed = []
+        #  maya_update is the recording fake here (install_fakes)
+        self.tools["update"][0]._press = lambda *a: pressed.append(True)
+        hub.build()
+        hub._SKIN.cards["update"].set_collapsed(True)
+        hub._SKIN.callbacks["version"]()
+        self.assertFalse(hub._SKIN.cards["update"].collapsed())
+        self.assertEqual(pressed, [True])
+
+    def test_chip_state_colours_the_chip(self):
+        hub.build()
+        hub.chip_state("ok")
+        self.assertEqual(hub._SKIN.state, "ok")
 
     def test_a_broken_skin_falls_back_to_the_classic_hub(self):
         FakeSkin.fail_finish = True
@@ -572,11 +615,11 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(hub._SKIN.active, "studio")       # and lit
 
     def test_expanding_a_header_section_is_quiet(self):
-        """maya_hotkeys.show_window / maya_update.show_window still ask for
-        their keys; in the skin those are the header."""
+        """maya_hotkeys.show_window still asks for its key; in the skin the
+        hotkeys are the header."""
         hub.build()
         self.assertIsNone(hub.expand("hotkeys"))
-        self.assertIsNone(hub.expand("update"))
+        self.assertIsNotNone(hub.expand("update"))
 
     def test_say_and_paint_reach_the_skin(self):
         hub.build()

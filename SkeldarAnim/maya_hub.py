@@ -74,8 +74,16 @@ Section = collections.namedtuple("Section",
 # and `icon` are the skin's (maya_hubstyle.GROUPS, maya_hubicons.ICONS).
 # Scene Setup is two sections of one module (2026-09-17); Weapons must
 # follow Characters, because the weapons builder's refresh writes the
-# Characters header. The settings group is the skin's header.
+# Characters header. UE Bridge on top, where it always was (2026-09-28,
+# the evening: «UE bridge давай передвинем наверх как он и был») - and a
+# group stays together, so Animation is the first group.
 SECTIONS = (
+    Section("uebridge", "UE Bridge", "maya_uebridge.window",
+            "build_panel", "skeldarHubFrameUebridge",
+            "animation", "transfer-in"),
+    Section("retarget", "Retarget", "maya_rig_retarget",
+            "build_panel", "skeldarHubFrameRetarget",
+            "animation", "arrows-exchange"),
     Section("characters", "Characters", "maya_scenesetup.window",
             "build_characters_panel", "skeldarHubFrameCharacters",
             "scene", "user"),
@@ -85,12 +93,6 @@ SECTIONS = (
     Section("connections", "Connections", "maya_scenesetup.connections",
             "build_panel", "skeldarHubFrameConnections",
             "scene", "hand-grab"),
-    Section("uebridge", "UE Bridge", "maya_uebridge.window",
-            "build_panel", "skeldarHubFrameUebridge",
-            "animation", "transfer-in"),
-    Section("retarget", "Retarget", "maya_rig_retarget",
-            "build_panel", "skeldarHubFrameRetarget",
-            "animation", "arrows-exchange"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),
@@ -106,7 +108,11 @@ SECTIONS = (
             "settings", "refresh"),
 )
 
-HEADER_GROUP = "settings"       # in the skin these are the header, not cards
+#  In the skin these are the header's, not cards: the hotkey map is the
+#  keyboard button. Update was the header's chip alone for an afternoon and
+#  is a card again (2026-09-28, «раздел с обновлением давай вернём»); the
+#  chip stays and opens it.
+HEADER_ONLY = ("hotkeys",)
 
 _BY_KEY = dict((s.key, s) for s in SECTIONS)
 
@@ -120,7 +126,7 @@ def section(key):
 
 def card_sections():
     """The sections the skin draws as cards, in order."""
-    return [s for s in SECTIONS if s.group != HEADER_GROUP]
+    return [s for s in SECTIONS if s.key not in HEADER_ONLY]
 
 
 def uiscript(root):
@@ -273,7 +279,7 @@ def _callbacks():
         "check_update": _press_update,
         "hotkey_editor": _press_hotkey_editor,
         "classic": lambda: set_classic(True),
-        "jump": expand,
+        "jump": focus,
         "toggled": remember,
     }
 
@@ -420,8 +426,19 @@ def _press_hotkeys():
 
 
 def _press_update():
+    """The header's chip and the menu's Check update: the Update card opened
+    (its status line is where the answer goes), then the check."""
     import maya_update
+    if is_skinned() and "update" in _SKIN.cards:
+        expand("update")
     return maya_update._press()
+
+
+def chip_state(state):
+    """Colour the header's version chip ("ok", "new", "" plain)."""
+    if is_skinned():
+        _SKIN.set_state(state)
+    return state
 
 
 def _press_hotkey_editor():
@@ -459,9 +476,25 @@ def show(key=None):
     return CONTROL
 
 
+def focus(key):
+    """The jump strip's press: section `key` opened and every other card
+    closed (2026-09-28: «при нажатии на верхнюю панель с разделами все другие
+    панели должны закрыться и открыться только нужная»), remembered so, lit,
+    scrolled to. Outside the skin it is `expand`."""
+    if not is_skinned():
+        return expand(key)
+    if key not in _SKIN.cards:
+        return None
+    for other, card in _SKIN.cards.items():
+        if other != key:
+            card.set_collapsed(True)
+            remember(other, True)
+    return expand(key)
+
+
 def expand(key):
     """Un-collapse section `key`, remember it open, scroll it into view. In
-    the skin a header section (Hotkeys, Update) has no card: nothing to do."""
+    the skin a header section (Hotkeys) has no card: nothing to do."""
     sec = section(key)
     if sec is None:
         raise KeyError("no section '{0}'".format(key))
