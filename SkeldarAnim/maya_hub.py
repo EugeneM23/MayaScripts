@@ -302,8 +302,9 @@ def _build_skin():
     """The skinned hub. Deleted whole if any of it fails, then re-raised."""
     qt = _hubqt()
     scale = _scale()
-    skin = qt.Skin(qt.host_layout(CONTROL), scale=scale,
+    skin = qt.Skin(qt.host_widget(CONTROL), scale=scale,
                    callbacks=_callbacks())
+    hubstyle.set_skinning(True)
     try:
         for sec in card_sections():
             skin.add_jump(sec.key, sec.label, sec.icon,
@@ -320,12 +321,22 @@ def _build_skin():
             _run_builder(sec)
             qt.apply_marks(hubstyle.take_marks(), card, scale)
         _dress_header(skin)
-        skin.finish(hubstyle.stylesheet(scale))
+        skin.finish(hubstyle.stylesheet(scale, arrow=_arrow(qt)))
     except Exception:
         hubstyle.take_marks()
         skin.destroy()
         raise
+    finally:
+        hubstyle.set_skinning(False)
     return skin
+
+
+def _arrow(qt):
+    """The dropdowns' arrow as a file, or None (the style's own arrow)."""
+    try:
+        return qt.icon_file("chevron-down", hubstyle.TOKENS["muted"])
+    except Exception:                                        # noqa: BLE001
+        return None
 
 
 def build():

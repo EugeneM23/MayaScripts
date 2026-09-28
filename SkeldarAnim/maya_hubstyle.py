@@ -88,6 +88,7 @@ def group(key):
 #  What a builder may say a control IS.
 ROLES = (
     "primary",      # the section's one main action: orange
+    "secondary",    # an ordinary button that carries an icon
     "danger",       # a destructive action: red text
     "tool",         # a small square icon button beside a field
     "chip",         # a checkBox drawn as a pill, lit when on
@@ -126,6 +127,36 @@ def take_marks():
     out = list(_MARKS)
     del _MARKS[:]
     return out
+
+
+#  Whether the build running now is the skin's. A builder lays out ONE
+#  arrangement for both hubs; the few things that differ -- a tool button
+#  is an icon in the skin and a word in the classic hub, the skin's card
+#  already has margins -- ask `pick`. Set by maya_hub around a skinned build.
+_SKINNING = [False]
+
+
+def set_skinning(on):
+    _SKINNING[0] = bool(on)
+
+
+def skinning():
+    return _SKINNING[0]
+
+
+def pick(skin, classic):
+    """`skin` while the skin is being built, `classic` otherwise."""
+    return skin if _SKINNING[0] else classic
+
+
+def tool_label(text):
+    """A tool button's label: none in the skin (its icon says it)."""
+    return pick("", text)
+
+
+def tool_width(classic):
+    """A tool button's width: an icon's in the skin, the word's otherwise."""
+    return pick(30, classic)
 
 
 # -------------------------------------------------------------------- pure
@@ -204,8 +235,8 @@ QSlider::sub-page:horizontal {{ background: {accent}; border-radius: {r2}px; }}
 QSlider::handle:horizontal {{ background: {text}; width: {p12}px;
     height: {p12}px; margin: -{p4}px 0px; border-radius: {r6}px; }}
 
-QLabel[skRole="status"] {{ background: {status}; border-radius: {r6}px;
-    padding: {p3}px {p8}px; color: {status_text}; }}
+QPushButton[skRole="secondary"] {{ color: {text2}; }}
+QLabel[skRole="status"] {{ color: {status_text}; padding: {p2}px {p2}px; }}
 QLabel[skRole="note"] {{ color: {muted}; }}
 QLabel[skRole="context"] {{ color: {muted}; }}
 QLabel[skRole="subtitle"] {{ color: {muted}; font-size: {small}px; }}
@@ -252,8 +283,9 @@ QLabel[skRole="cardtitle"] {{ color: {text}; font-weight: bold; }}
 """
 
 
-def stylesheet(scale=1.0, tokens=None):
-    """The hub's whole Qt stylesheet at display `scale`."""
+def stylesheet(scale=1.0, tokens=None, arrow=None):
+    """The hub's whole Qt stylesheet at display `scale`. `arrow` is a file
+    (an SVG the Qt layer writes) drawn as every dropdown's arrow."""
     values = dict(TOKENS)
     values.update(tokens or {})
     values.update(ROOT=ROOT, CONTENT=CONTENT, VIEWPORT=VIEWPORT,
@@ -263,4 +295,11 @@ def stylesheet(scale=1.0, tokens=None):
         values["r%d" % n] = px(n, scale)
     values["b1"] = px(1, scale)
     values["small"] = px(9.5, scale)     # the UI font is ~10.7 logical
-    return _SHEET.format(**values).strip() + "\n"
+    sheet = _SHEET.format(**values).strip() + "\n"
+    if arrow:
+        sheet += ("QComboBox::drop-down {{ border: none; width: {0}px; }}\n"
+                  "QComboBox::down-arrow {{ image: url({1}); width: {2}px; "
+                  "height: {2}px; }}\n").format(px(18, scale),
+                                                arrow.replace("\\", "/"),
+                                                px(11, scale))
+    return sheet

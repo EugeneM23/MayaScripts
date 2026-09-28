@@ -421,7 +421,7 @@ class FakeSkin(object):
 def _fake_qt(available=True):
     module = types.ModuleType("maya_hubqt_fake")
     module.available = lambda: available
-    module.host_layout = lambda control: "layout of " + control
+    module.host_widget = lambda control: "widget of " + control
     module.Skin = FakeSkin
     module.applied = []
     module.apply_marks = lambda marks, card, scale: module.applied.append(
@@ -451,7 +451,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertTrue(hub.skinned())
         hub.build()
         self.assertTrue(hub.is_skinned())
-        self.assertEqual(hub._SKIN.layout, "layout of " + hub.CONTROL)
+        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
         self.assertEqual(hub._SKIN.scale, 1.5)
 
     def test_cards_under_group_labels_and_no_frames(self):
@@ -471,6 +471,19 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             module, builder = self.tools[sec.key]
             index = module.built.index(builder)
             self.assertEqual(module.parents[index], "body|" + sec.key)
+
+    def test_the_builders_know_they_build_the_skin(self):
+        seen = []
+        module, builder = self.tools["colour"]
+        real = getattr(module, builder)
+
+        def build_panel():
+            seen.append(hub.hubstyle.skinning())
+            real()
+        setattr(module, builder, build_panel)
+        hub.build()
+        self.assertEqual(seen, [True])
+        self.assertFalse(hub.hubstyle.skinning())            # and after
 
     def test_the_header_sections_are_not_cards(self):
         hub.build()

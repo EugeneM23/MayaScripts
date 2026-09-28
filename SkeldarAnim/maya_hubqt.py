@@ -99,10 +99,16 @@ def path_of(obj):
     return omui.MQtUtil.fullName(int(q.shiboken.getCppPointer(obj)[0]))
 
 
-def host_layout(control):
-    """The layout inside workspaceControl `control` a root goes into."""
-    widget = find(control)
-    return widget.layout() if widget is not None else None
+def host_widget(control):
+    """The QWidget of workspaceControl `control`, which a root goes into.
+
+    The WIDGET, not its layout: a layout reached through a temporary
+    wrapper is invalidated with that wrapper -- measured 2026-09-28,
+    `find(control).layout()` returned valid and was "Internal C++ object
+    already deleted" one call later, when the wrapper had been collected.
+    The Skin holds the widget for as long as it needs the layout.
+    """
+    return find(control)
 
 
 # ------------------------------------------------------------------- icons
@@ -118,6 +124,21 @@ def pixmap(name, colour, size):
     renderer.render(painter)
     painter.end()
     return image
+
+
+def icon_file(name, colour, folder=None):
+    """Icon `name` in `colour` written as an SVG file; its path, forward
+    slashes (what a stylesheet's `url()` takes -- the dropdown arrow)."""
+    import os
+    import tempfile
+    folder = folder or os.path.join(tempfile.gettempdir(), "skeldar_hub")
+    if not os.path.isdir(folder):
+        os.makedirs(folder)
+    path = os.path.join(folder, "{0}_{1}.svg".format(name,
+                                                     colour.lstrip("#")))
+    with open(path, "w") as handle:
+        handle.write(hubicons.svg(name, colour))
+    return path.replace("\\", "/")
 
 
 def icon(name, colour, size, on_colour=None):
@@ -281,9 +302,14 @@ class Card(object):
 class Skin(object):
     """The whole skinned hub. `parent_layout` is the workspaceControl's."""
 
-    def __init__(self, parent_layout, scale=1.0, callbacks=None):
+    def __init__(self, parent, scale=1.0, callbacks=None):
         q = qt()
         w = q.QtWidgets
+        #  a widget (the workspaceControl's) or a layout; the widget wrapper
+        #  is kept, or its layout's wrapper dies with it (see host_widget)
+        self.host = parent
+        parent_layout = (parent if isinstance(parent, w.QLayout) or parent
+                         is None else parent.layout())
         self.scale = scale
         self.cb = callbacks or {}
         self.cards = {}

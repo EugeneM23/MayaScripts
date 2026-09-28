@@ -67,6 +67,16 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertEqual(self.skin.scroll.viewport().objectName(),
                          style.VIEWPORT)
 
+    def test_a_host_widget_is_taken_and_kept(self):
+        """The workspaceControl's WIDGET: a layout reached through a
+        temporary wrapper died with it (measured 2026-09-28)."""
+        host = QtWidgets.QWidget()
+        QtWidgets.QVBoxLayout(host)
+        skin = hubqt.Skin(host, scale=1.0)
+        self.assertIs(skin.root.parent(), host)
+        self.assertIs(skin.host, host)
+        skin.destroy()
+
     def test_the_scroll_area_never_scrolls_sideways(self):
         self.assertEqual(self.skin.scroll.horizontalScrollBarPolicy(),
                          QtCore.Qt.ScrollBarAlwaysOff)
@@ -288,6 +298,19 @@ class Icons(unittest.TestCase):
 
     def setUp(self):
         _app()
+
+    def test_an_icon_file_is_the_svg_in_its_colour(self):
+        import shutil
+        import tempfile
+        folder = tempfile.mkdtemp()
+        try:
+            path = hubqt.icon_file("chevron-down", "#9a9ca3", folder=folder)
+            self.assertNotIn("\\", path)
+            self.assertTrue(path.endswith("chevron-down_9a9ca3.svg"))
+            with open(path) as handle:
+                self.assertIn('stroke="#9a9ca3"', handle.read())
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
     def test_an_icon_renders(self):
         icon = hubqt.icon("sword", "#f0a26b", 16)

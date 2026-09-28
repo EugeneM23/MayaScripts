@@ -143,6 +143,36 @@ class Stylesheet(unittest.TestCase):
                         colours - set(style.TOKENS.values()))
 
 
+class Skinning(unittest.TestCase):
+
+    def tearDown(self):
+        style.set_skinning(False)
+
+    def test_classic_by_default(self):
+        self.assertFalse(style.skinning())
+        self.assertEqual(style.pick("skin", "classic"), "classic")
+        self.assertEqual(style.tool_label("Recolour"), "Recolour")
+        self.assertEqual(style.tool_width(90), 90)
+
+    def test_the_skin_s_tool_button_is_an_icon(self):
+        style.set_skinning(True)
+        self.assertTrue(style.skinning())
+        self.assertEqual(style.pick("skin", "classic"), "skin")
+        self.assertEqual(style.tool_label("Recolour"), "")
+        self.assertEqual(style.tool_width(90), 30)
+
+
+class Arrow(unittest.TestCase):
+
+    def test_no_arrow_rule_without_a_file(self):
+        self.assertNotIn("down-arrow", style.stylesheet(1.5))
+
+    def test_the_arrow_file_is_the_dropdown_arrow(self):
+        sheet = style.stylesheet(1.5, arrow="C:\\tmp\\chevron.svg")
+        self.assertIn("QComboBox::down-arrow { image: url(C:/tmp/chevron.svg)",
+                      sheet)
+
+
 class StdlibOnly(unittest.TestCase):
 
     def test_imports_nothing_of_maya_or_qt(self):
