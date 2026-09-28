@@ -15,15 +15,13 @@ import maya.mel as mel
 
 # Two dirnames up from this file is the container that holds both the
 # packages and the shipped overrig/ folder -- true in the repo and in an
-# installed copy alike. The user's original install stays as fallback for
-# machines that predate the bundle.
+# installed copy alike. The fallback to the user's original install under
+# Animations/ went on 2026-09-28: the plugin reads nothing outside its folder.
 _CONTAINER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MEL_CANDIDATES = (
     os.path.join(_CONTAINER, "overrig",
                  "base_OverRig_scripts.mel").replace("\\", "/"),
-    "C:/!!!Work/Animations/Scripts/base_OverRig_scripts_V10_2_f1/"
-    "base_OverRig_scripts.mel",
 )
 
 

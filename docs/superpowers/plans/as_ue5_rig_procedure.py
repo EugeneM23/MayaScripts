@@ -21,7 +21,7 @@ import maya.cmds as cmds
 import maya.mel as mel
 import maya.api.OpenMaya as om
 
-AS_MEL = "C:/Users/MY PC/Downloads/AdvancedSkeleton/AdvancedSkeleton.mel"
+AS_MEL = "C:/!!!Work/MayaScripts/sources/AdvancedSkeleton/AdvancedSkeleton.mel"  # local, not in git
 
 # Name Matcher "Unreal5" table, as the vendor ships it (right side only in the fit
 # skeleton; the build mirrors the left).  Sides are appended as _r/_l, middle none.

@@ -1,6 +1,6 @@
 """The Orc Marauder's skeleton and skin, prepared for its AdvancedSkeleton rig.
 
-    mayapy make_orc_source.py <SK_Orc_Marauder_F.FBX> <out .mb>
+    mayapy make_orc_source.py C:/!!!Work/MayaScripts/sources/orc/SK_Orc_Marauder_F.FBX <out .mb>
 
 mayapy STANDALONE.  2026-09-25, the animator: «В открытом проекте в Unreal есть персонаж
 SK_Orc_Marauder_F его скелет совпадает с нашим manny rig ... добавим к нам в проект еще один

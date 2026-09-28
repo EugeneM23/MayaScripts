@@ -13,7 +13,7 @@ frame, autoKey and the selection.
 import maya.cmds as cmds, maya.mel as mel, math
 import maya.api.OpenMaya as om
 
-AS_MEL = "C:/Users/MY PC/Downloads/AdvancedSkeleton/AdvancedSkeleton.mel"
+AS_MEL = "C:/!!!Work/MayaScripts/sources/AdvancedSkeleton/AdvancedSkeleton.mel"  # local, not in git
 
 # AS deformation joint -> UE bone.  Name Matcher "Unreal5" table plus the twist /
 # in-between rows added by hand (UE numbers the lower twists from the far end).

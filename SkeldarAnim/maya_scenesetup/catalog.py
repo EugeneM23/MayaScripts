@@ -23,30 +23,19 @@ Weapon = collections.namedtuple("Weapon",
 
 # The characters Add Character can put into the scene (2026-09-01). A table
 # for the same reason the weapons are one: a third skeleton is a row, not a
-# branch. `legacy` stays per entry rather than a special case because
-# Manny's fallback IS the user's original file, typo and infection and all,
-# and that resolution rule has to survive. `kind` (2026-09-07) is "rig" or
-# "skeleton": the animator's ask was to add the AdvancedSkeleton rig and
-# keep the bare skeletons, «пометим их как скелеты, а риг как риг».
-Character = collections.namedtuple("Character", "key label file legacy kind")
+# branch. `kind` (2026-09-07) is "rig" or "skeleton": the animator's ask was
+# to add the AdvancedSkeleton rig and keep the bare skeletons, «пометим их
+# как скелеты, а риг как риг». The `legacy` column -- a fallback to the
+# animator's own files under Animations/, Manny's infected original among
+# them -- went on 2026-09-28: the plugin reads nothing outside its folder,
+# and the sources live in the repository's sources/ (never shipped).
+Character = collections.namedtuple("Character", "key label file kind")
 
 _LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
 # Two dirnames up from this file is the container that holds both the
 # packages and assets/ -- true in the repo and in an installed copy alike.
 _CONTAINER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-_LEGACY_SWORD = "C:/!!!Work/Animations/Sources/LongSword_02.fbx"
-
-# The user's original file, spelling and all: the fallback has to match what
-# is actually on that disk. Our shipped copy fixes the typo.
-_LEGACY_CHARACTER = ("C:/!!!Work/Animations/Rigs/Characters/"
-                     "Manny_Sckeleton.ma")
-
-# The animator's own rig file (final, their word, 2026-09-07). The shipped
-# copy is this file minus its leftover `camera1` -- a textual cut, like the
-# vaccine cut, never an open-and-resave.
-_LEGACY_RIG = "C:/!!!Work/Animations/Rigs/Characters/Manny_rig_02.ma"
 
 
 CHARACTERS = [
@@ -56,33 +45,33 @@ CHARACTERS = [
     # namespace since 2026-09-08 (`Manny_Rig`, `Manny_Rig1`, ...): the
     # retarget addresses a rig by name (`Main`, `ControlSet`, `FKWrist_R`),
     # and the namespace is what keeps those names one node each.
-    Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", _LEGACY_RIG, "rig"),
+    Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", "rig"),
     # The Creep creature's AdvancedSkeleton rig (2026-09-24): Manny's 90 UE bone
     # names on a creature's proportions, bound in the UE A-pose, the bones rigid
     # (orientation-only constraints), the meshes in the rig's own Geometry group,
     # and `Group.skeldarRetarget = "rotation"` -- its retarget copies rotations
     # only. Built from the animator's scene by make_creep_rig_asset.py.
-    Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "", "rig"),
+    Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig"),
     # The Orc Marauder's AdvancedSkeleton rig (2026-09-25): the Unreal asset
     # SK_Orc_Marauder_F on Manny's bone names with its own proportions (neck
     # 1.39x, upper arm 1.07x; pelvis, spine, legs and hands exactly Manny's),
     # Manny's four helper bones added on Manny's local values, the shoulder pads
     # riding their clavicles, one mesh with its 56-target blendShape, the Creep's
     # procedure and rotation-only mark. Built by make_orc_rig_asset.py.
-    Character("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "", "rig"),
+    Character("Orc_Rig", "Orc [rig]", "Orc_Rig.ma", "rig"),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
-              _LEGACY_CHARACTER, "skeleton"),
+              "skeleton"),
     # The Creep without its rig (2026-09-24, «не только риг хантера, а и чистый
     # скелет»): the same 90 bones in the same A-pose bind, skinned, the meshes in
     # `|Creep`, the swords riding weapon_test -- built from Creep_Rig.ma by
     # make_creep_skeleton_asset.py, nothing of AdvancedSkeleton left in it.
-    Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "", "skeleton"),
+    Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "skeleton"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
     # (Longsword/SwordAnimsetPro, ~1200 clips) all run on it.
     Character("UE4_Mannequin", "UE4 Mannequin [skeleton]",
-              "UE4_Mannequin.fbx", "", "skeleton"),
+              "UE4_Mannequin.fbx", "skeleton"),
 ]
 
 
@@ -132,17 +121,12 @@ def is_rig(entry):
 
 
 def character_file(entry):
-    """Where a character's scene is: shipped copy first, legacy second.
+    """Where a character's scene is: the plugin's assets/, and only there.
 
-    Resolved at call time rather than frozen into the table -- a copy that
-    appears in assets/ mid-session (a colleague re-running the installer)
-    should win immediately.
+    A missing copy still answers its path, so the refusal names the file
+    rather than reading as a bug.
     """
-    local = os.path.join(_CONTAINER, "assets",
-                         entry.file).replace("\\", "/")
-    if os.path.isfile(local):
-        return local
-    return entry.legacy or local
+    return os.path.join(_CONTAINER, "assets", entry.file).replace("\\", "/")
 
 
 def character_path(entry=None):
@@ -154,24 +138,19 @@ def character_path(entry=None):
     return character_file(entry or default_character())
 
 
-def _asset_path(name, legacy=""):
-    """The shipped copy first, a legacy absolute path as fallback.
+def _asset_path(name):
+    """`name` in the plugin's assets/, forward slashes (they reach MEL).
 
-    Computed once at import: the table keeps holding a plain absolute
-    path, so missing(), attach and the offset optionVars never learn
-    that anything changed. A weapon with no legacy home answers the
-    shipped path either way, and `missing()` says when it is not there.
+    Computed once at import: the table holds a plain absolute path, and
+    `missing()` says when the file is not there. No fallback outside the
+    plugin since 2026-09-28.
     """
-    local = os.path.join(_CONTAINER, "assets", name).replace("\\", "/")
-    return local if os.path.isfile(local) or not legacy else legacy
-
-
-def _sword_path():
-    return _asset_path("LongSword_02.fbx", _LEGACY_SWORD)
+    return os.path.join(_CONTAINER, "assets", name).replace("\\", "/")
 
 
 WEAPONS = [
-    Weapon("LongSword_02", "Long Sword 02", _sword_path(), "weapon_r", 1.0),
+    Weapon("LongSword_02", "Long Sword 02", _asset_path("LongSword_02.fbx"),
+           "weapon_r", 1.0),
     # 2026-09-08, the animator's Spear1 exported onto the sword's axes: the
     # shaft along +Y with the head at +Y, the blade's width on X, its
     # thickness on Z, the origin on the shaft where the model's author put

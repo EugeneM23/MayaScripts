@@ -119,8 +119,9 @@ class TestAimProcs(unittest.TestCase):
 
 
 class MelPathCandidates(unittest.TestCase):
-    """The shipped copy first (installer and repo both put OverRig in
-    overrig/ next to the package), the user's original install second."""
+    """The shipped copy (installer and repo both put OverRig in overrig/
+    next to the package), and since 2026-09-28 nothing else: the fallback to
+    the user's original install under Animations/ went with the others."""
 
     def test_shipped_candidate_leads(self):
         first = overrig.MEL_CANDIDATES[0]
@@ -128,9 +129,9 @@ class MelPathCandidates(unittest.TestCase):
             first.endswith("overrig/base_OverRig_scripts.mel"), first)
         self.assertNotIn("\\", first)
 
-    def test_legacy_candidate_survives(self):
-        self.assertIn("base_OverRig_scripts_V10_2_f1",
-                      overrig.MEL_CANDIDATES[1])
+    def test_only_the_shipped_copy_is_looked_for(self):
+        self.assertEqual(len(overrig.MEL_CANDIDATES), 1)
+        self.assertNotIn("Animations", overrig.MEL_CANDIDATES[0])
 
     def test_shipped_copy_exists_and_wins(self):
         """Task 1 landed the file, so in this repo mel_path() is the
@@ -154,7 +155,7 @@ class MelPathCandidates(unittest.TestCase):
             overrig.mel_path(candidates=("C:/no.mel", "C:/also/no.mel")),
             "")
 
-    def test_not_loaded_message_names_both_places(self):
+    def test_not_loaded_message_names_where_it_looked(self):
         for candidate in overrig.MEL_CANDIDATES:
             self.assertIn(candidate, overrig.NOT_LOADED_MESSAGE)
 

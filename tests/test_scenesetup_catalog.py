@@ -234,8 +234,9 @@ class EntryForPath(unittest.TestCase):
 
 
 class SwordShipsWithTheTool(unittest.TestCase):
-    """The sword resolves next to the container first (repo or installed
-    copy alike), the user's legacy absolute path only as fallback."""
+    """The sword resolves next to the container (repo or installed copy
+    alike) and nowhere else: the animator's Animations/ fallback went on
+    2026-09-28 («все нужные файлы ... в папку плагина»)."""
 
     def test_table_path_is_the_shipped_copy(self):
         path = catalog.WEAPONS[0].path
@@ -250,24 +251,23 @@ class SwordShipsWithTheTool(unittest.TestCase):
     def test_missing_is_empty_for_the_shipped_sword(self):
         self.assertEqual(catalog.missing(catalog.WEAPONS[0]), "")
 
-    def test_falls_back_to_the_legacy_path(self):
-        """With no shipped copy on disk the old absolute path returns --
-        a machine that predates assets/ keeps working."""
+    def test_a_missing_shipped_copy_is_named_never_replaced(self):
+        """No fallback outside the plugin: with the shipped copy gone the
+        path is still the shipped one, and `missing` names it."""
         original = catalog.os.path.isfile
         catalog.os.path.isfile = lambda _p: False
         try:
-            path = catalog._sword_path()
+            path = catalog._asset_path("LongSword_02.fbx")
         finally:
             catalog.os.path.isfile = original
-        self.assertEqual(
-            path, "C:/!!!Work/Animations/Sources/LongSword_02.fbx")
+        self.assertTrue(path.endswith("assets/LongSword_02.fbx"), path)
+        self.assertNotIn("Animations", path)
 
 
 class CharacterShipsWithTheTool(unittest.TestCase):
     """The character scene resolves like the sword: the copy next to the
-    container first, the user's original file as fallback. The fallback
-    keeps the filename's real spelling, typo and all -- it has to match
-    the file that is actually on that disk."""
+    container and nowhere else. The fallback it had to the animator's
+    original -- typo, vaccine and all -- went on 2026-09-28."""
 
     def test_path_is_the_shipped_copy(self):
         path = catalog.character_path()
@@ -277,16 +277,15 @@ class CharacterShipsWithTheTool(unittest.TestCase):
     def test_shipped_path_uses_forward_slashes(self):
         self.assertNotIn("\\", catalog.character_path())
 
-    def test_falls_back_to_the_legacy_path(self):
+    def test_a_missing_shipped_copy_is_named_never_replaced(self):
         original = catalog.os.path.isfile
         catalog.os.path.isfile = lambda _p: False
         try:
             path = catalog.character_path()
         finally:
             catalog.os.path.isfile = original
-        self.assertEqual(
-            path,
-            "C:/!!!Work/Animations/Rigs/Characters/Manny_Sckeleton.ma")
+        self.assertTrue(path.endswith("assets/Manny_Skeleton.ma"), path)
+        self.assertNotIn("Sckeleton", path)
 
 
 class CharacterTable(unittest.TestCase):
@@ -302,7 +301,8 @@ class CharacterTable(unittest.TestCase):
         self.assertEqual(entry.kind, "rig")
         self.assertIn("[rig]", entry.label)
         self.assertEqual(entry.file, "Manny_Rig.ma")
-        self.assertTrue(entry.legacy.endswith("Manny_rig_02.ma"))
+        #  its source, Manny_rig_02.ma, is in sources/manny/ (2026-09-28)
+        self.assertFalse(hasattr(entry, "legacy"))
         self.assertIs(catalog.default_rig(), entry)
         self.assertTrue(catalog.is_rig(entry))
 
@@ -383,9 +383,9 @@ class CharacterTable(unittest.TestCase):
         self.assertTrue(
             catalog.character_path(entry).endswith("UE4_Mannequin.fbx"))
 
-    def test_an_entry_with_no_legacy_still_answers_a_path(self):
-        """Only Manny has a legacy file. A missing shipped copy for the
-        others must not answer "" and make the refusal read as a bug."""
+    def test_a_missing_copy_still_answers_a_path(self):
+        """A missing shipped copy must not answer "" and make the refusal
+        read as a bug."""
         entry = catalog.character_by_key("UE4_Mannequin")
         original = catalog.os.path.isfile
         catalog.os.path.isfile = lambda _p: False

@@ -42,7 +42,7 @@ except Exception:
     pass
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 OURS = (ARGS[0] if ARGS else "C:/!!!Work/Animations/Rigs/Characters/Creep_Skeleton.fbx").replace("\\", "/")
-CASC = (ARGS[1] if len(ARGS) > 1 else "C:/Users/MY PC/Downloads/creep_T-pose_draft (1).fbx").replace("\\", "/")
+CASC = (ARGS[1] if len(ARGS) > 1 else "C:/!!!Work/MayaScripts/sources/creep/creep_T-pose_draft.fbx").replace("\\", "/")
 MESHES = {"Creep_Body": "body", "Creep_Back": "back", "Creep_Arm_L": "arm_l", "Creep_Arm_R": "arm_r", "Creep_Face": "face"}
 FLIP_Z = om.MMatrix([-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])   # weapon_test -> weapon_r
 FAILS = []

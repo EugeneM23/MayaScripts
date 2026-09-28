@@ -5,7 +5,8 @@ Spear_03.png. mayapy STANDALONE:
     & 'C:\\Program Files\\Autodesk\\Maya2027\\bin\\mayapy.exe' docs/superpowers/plans/make_spear03_asset.py
 
 Spec: docs/superpowers/specs/2026-09-28-spear03-textured-weapon-design.md.
-The sources (the animator's Downloads) are never written.
+The sources (sources/weapons/, copied from the animator's Downloads) are never
+written.
 
 Measured on the source (2026-09-28, a Blender 2.83 export from a Unity
 project): TWO meshes, `Spear_03_LOD0` (230 vertices, 185 faces) and
@@ -42,8 +43,8 @@ cmds.loadPlugin("fbxmaya", quiet=True)
 
 from maya_scenesetup import attach  # noqa: E402
 
-SOURCE = "C:/Users/MY PC/Downloads/Spear_03.fbx"
-SOURCE_TEXTURE = "C:/Users/MY PC/Downloads/Halberd_A.tga"
+SOURCE = "C:/!!!Work/MayaScripts/sources/weapons/Spear_03.fbx"
+SOURCE_TEXTURE = "C:/!!!Work/MayaScripts/sources/weapons/Halberd_A.tga"
 REFERENCE = PLUGIN + "/assets/Spear_01.fbx"
 TARGET = PLUGIN + "/assets/Spear_03.fbx"
 TARGET_TEXTURE = PLUGIN + "/assets/Spear_03.png"

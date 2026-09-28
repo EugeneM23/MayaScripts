@@ -39,7 +39,7 @@ convention (blade +Y, tip +Y), checked against the asset it replaces (the turned
 back; a re-run's, unchanged; or the shrunk one, at the chain's scale), and its handle checked to
 be there.
 
-    mayapy make_creep_sword_fbx.py "C:/Users/MY PC/Downloads/creep_T-pose_draft (1).fbx"
+    mayapy make_creep_sword_fbx.py "C:/!!!Work/MayaScripts/sources/creep/creep_T-pose_draft.fbx"
 """
 import math
 import os

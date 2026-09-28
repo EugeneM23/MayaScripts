@@ -33,7 +33,7 @@ for plugin in ("matrixNodes", "quatNodes", "fbxmaya"):
 from maya_scenesetup import (aim, attach, bonedrive, catalog, character,  # noqa: E402
                              colour, skeleton, weaponspace)
 
-SOURCE_TEXTURE = "C:/Users/MY PC/Downloads/Halberd_A.tga"
+SOURCE_TEXTURE = "C:/!!!Work/MayaScripts/sources/weapons/Halberd_A.tga"
 RESULTS = []
 
 

@@ -23,7 +23,7 @@ import maya.cmds as cmds
 import maya.mel as mel
 
 REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"   # the retarget modules live in the plugin since 2026-09-07
-AS_MEL = "C:/Users/MY PC/Downloads/AdvancedSkeleton/AdvancedSkeleton.mel"
+AS_MEL = "C:/!!!Work/MayaScripts/sources/AdvancedSkeleton/AdvancedSkeleton.mel"  # local, not in git
 NS = "asrtVerify"
 END = 20.0
 

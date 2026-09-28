@@ -2,3 +2,10 @@ __pycache__/
 *.py[cod]
 *.swp
 .DS_Store
+
+# sources/ (2026-09-28): AdvancedSkeleton is kept beside the other sources
+# but never committed -- its licence forbids redistributing the software and
+# the repository is public. A .fbm is the FBX importer's extraction of the
+# textures the FBX already embeds.
+sources/AdvancedSkeleton/
+*.fbm/

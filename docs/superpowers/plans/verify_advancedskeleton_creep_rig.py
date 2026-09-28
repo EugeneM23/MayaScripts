@@ -14,7 +14,7 @@ selection.
 import maya.cmds as cmds, maya.mel as mel, math
 import maya.api.OpenMaya as om
 
-AS_MEL = "C:/Users/MY PC/Downloads/AdvancedSkeleton/AdvancedSkeleton.mel"
+AS_MEL = "C:/!!!Work/MayaScripts/sources/AdvancedSkeleton/AdvancedSkeleton.mel"  # local, not in git
 ROWS = [("Root", "pelvis"), ("Spine1", "spine_01"), ("Spine2", "spine_02"), ("Spine3", "spine_03"), ("Spine4", "spine_04"),
         ("Spine5", "spine_05"), ("Scapula", "clavicle"), ("Shoulder", "upperarm"), ("Elbow", "lowerarm"), ("Wrist", "hand"),
         ("IndexFinger0", "index_metacarpal"), ("IndexFinger1", "index_01"), ("IndexFinger2", "index_02"), ("IndexFinger3", "index_03"),

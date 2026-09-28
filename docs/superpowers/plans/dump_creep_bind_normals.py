@@ -1,6 +1,6 @@
 """The normals of SKM_Manny_Simple's five meshes as its own skin shows them in the keyed pose -> a data file.
 
-    mayapy dump_creep_bind_normals.py <creep_T-pose_draft.fbx>
+    mayapy dump_creep_bind_normals.py C:/!!!Work/MayaScripts/sources/creep/creep_T-pose_draft.fbx
 
 2026-09-24, the animator, after the rebind: «что произошло с геометрией, почему она стала такой
 тёмной?»  The Creep's meshes carry LOCKED normals (the FBX's own, every one of them), and the

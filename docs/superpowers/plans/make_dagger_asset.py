@@ -32,7 +32,7 @@ cmds.loadPlugin("fbxmaya", quiet=True)
 
 from maya_scenesetup import attach  # noqa: E402
 
-SOURCE = "C:/!!!Work/Animations/Sources/Dagger.fbx"
+SOURCE = "C:/!!!Work/MayaScripts/sources/weapons/Dagger.fbx"
 TARGET = PLUGIN + "/assets/Dagger_01.fbx"
 MESH_NAME = "DaggerMesh"
 MATERIAL = "Dagger_01_material"

@@ -47,7 +47,7 @@ import maya.cmds as cmds
 import maya.mel as mel
 import maya.api.OpenMaya as om
 
-AS_MEL = "C:/Users/MY PC/Downloads/AdvancedSkeleton/AdvancedSkeleton.mel"
+AS_MEL = "C:/!!!Work/MayaScripts/sources/AdvancedSkeleton/AdvancedSkeleton.mel"  # local, not in git
 ROOT = "|Hunter|root"               # the group was renamed from Hanter the same day; bones() finds it either way
 HEAD_MESH = "faceShape"
 RETARGET_ATTR = "skeldarRetarget"

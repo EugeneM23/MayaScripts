@@ -19,10 +19,34 @@ MayaScripts/                  the workshop
 │   ├── maya_rigs.py  maya_asretarget.py  maya_pmretarget.py  maya_rig_retarget.py
 │   ├── maya_hotkeys.py  maya_vpstudio.py  maya_colour.py  maya_overshoot.py
 │   └── icons/  assets/  overrig/
+├── sources/                  what the assets are REBUILT from -- never ships
+│   ├── weapons/  orc/  creep/  manny/  README.md
+│   └── AdvancedSkeleton/     local only, .gitignore (its licence)
 ├── make_build.py             dev tool: builds the zip from SkeldarAnim/
+├── .github/workflows/        every plugin push -> a release (Check update)
 ├── maya_skelfit.py  maya_meltmorph.py  maya_retarget.py  ...
 └── tests/  docs/  archive/  CLAUDE.md
 ```
+
+**Nothing outside the repository is needed since 2026-09-28** («все нужные
+файлы для работы нашего плагина давай перенесем в папку плагина»). The
+plugin reads only its own folder — the fallbacks to the animator's
+`Animations/` (the sword, Manny's infected original skeleton, `Manny_rig_02`,
+the old OverRig install) and the `Character.legacy` column are gone, and
+`tests/test_sources.py` pins that no plugin string names `Animations/` or
+`Downloads`. The asset scripts' inputs were COPIED (originals left where they
+were) into `sources/`, beside the plugin rather than in it — in git, never in
+a build — as the animator chose: `weapons/Spear_03.fbx` + `Halberd_A.tga` +
+`Dagger.fbx`, `orc/SK_Orc_Marauder_F.FBX`, `creep/creep_T-pose_draft.fbx`
+(Cascadeur's, byte-identical to the Downloads `(1)` copy; its textures are
+embedded, so the `.fbm` an import extracts is ignored), `manny/Manny_rig_02.ma`;
+`sources/README.md` says what reads each. **AdvancedSkeleton 6.797 is in
+`sources/AdvancedSkeleton/` but NOT in git**: its EULA says «You may not
+resell, redistribute, or sublicense the software itself» and the repository
+is public — the animator chose local-only; a fresh clone unpacks it there
+before a rig build. Every script's `AS_MEL` points there. Proof: 2341 unit
+tests; `verify_spear03_weapon.py` 19/19 and
+`verify_creep_skeleton_fbx_cascadeur.py` 6/6 reading from `sources/`.
 
 **Read the next two sections first — since 2026-09-07 the shelf is the
 AdvancedSkeleton pipeline, OverRig and the picker are switched OFF, and
