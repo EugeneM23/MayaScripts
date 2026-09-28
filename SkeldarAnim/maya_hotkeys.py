@@ -621,19 +621,23 @@ def show_window():
 def build_panel():
     """The hub section: the toggle, lit while the map is on, and a way
     into Maya's own Hotkey Editor (2026-09-17)."""
+    import maya_hubstyle as hubstyle   # stdlib; the section is classic-only
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", 8))
-    cmds.text(label=PANEL_NOTE, align="left", wordWrap=True, height=54)
+    hubstyle.mark(cmds.text(label=PANEL_NOTE, align="left", wordWrap=True,
+                            height=54), "note")
     active = is_active()
-    cmds.button(PANEL_BUTTON, label=panel_label(active), height=30,
-                enableBackground=active, backgroundColor=ON_COLOUR,
-                annotation="Switch between the SkeldarAnim hotkey set and "
-                           "your own",
-                command=lambda *_a: toggle())
-    cmds.button(label="Hotkey Editor...", height=24,
-                annotation="Maya's Hotkey Editor: assign keys to the "
-                           "SkeldarAnim commands",
-                command=lambda *_a: _maya_mel("HotkeyPreferencesWindow"))
+    hubstyle.mark(cmds.button(
+        PANEL_BUTTON, label=panel_label(active), height=30,
+        enableBackground=active, backgroundColor=ON_COLOUR,
+        annotation="Switch between the SkeldarAnim hotkey set and your own",
+        command=lambda *_a: toggle()), "secondary", "keyboard")
+    hubstyle.mark(cmds.button(
+        label="Hotkey Editor...", height=24,
+        annotation="Maya's Hotkey Editor: assign keys to the SkeldarAnim "
+                   "commands",
+        command=lambda *_a: _maya_mel("HotkeyPreferencesWindow")),
+        "secondary")
     cmds.setParent("..")
     return column
 

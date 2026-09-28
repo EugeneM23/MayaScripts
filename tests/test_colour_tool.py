@@ -473,6 +473,20 @@ class TestPanelBuildsIntoTheHub(unittest.TestCase):
         self.fake.existing.add(mc.STATUS)
         self.assertTrue(mc.is_open())
 
+    def test_the_skin_s_marks(self):
+        """2026-09-28: rounded swatches, "taken" the card's subtitle."""
+        import maya_hubstyle
+        maya_hubstyle.take_marks()
+        mc.build_panel()
+        marks = maya_hubstyle.take_marks()
+        swatches = [m.colour for m in marks if m.role == "swatch"]
+        self.assertEqual(swatches, [maya_hubstyle.hex_of(e.rgb)
+                                    for e in colouring.PALETTE])
+        by_name = dict((m.name, m.role) for m in marks)
+        self.assertEqual(by_name[mc.TAKEN], "subtitle")
+        self.assertEqual(by_name[mc.STATUS], "status")
+        self.assertEqual(by_name[mc.CUSTOM], "swatchonly")
+
     def test_every_palette_colour_has_a_button(self):
         labels = [c[2].get("label") for c in self.fake.calls
                   if c[0] == "button"]

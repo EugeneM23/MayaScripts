@@ -33,6 +33,7 @@ import collections
 
 import maya.cmds as cmds
 
+import maya_hubstyle as hubstyle
 from maya_scenesetup import colour as colouring
 
 
@@ -370,13 +371,13 @@ def show_window():
 def build_panel():
     """A grid of eight colours, a custom swatch, and what is taken -
     built into whatever layout is current (the hub's section)."""
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=ROW_SPACING,
-                               columnOffset=("both", 8))
+    #  2026-09-28 (the skin): the colours as rounded swatches, the custom
+    #  swatch with its two verbs in one row, "taken" the card's subtitle.
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", hubstyle.pick(0, 8)))
 
-    cmds.text(label="paints the selection, else the connected character",
-              font="smallObliqueLabelFont", align="center",
-              width=WIDTH - 16)
-    cmds.separator(height=7, style="in", width=WIDTH - 16)
+    hubstyle.mark(cmds.text(label="paints the selection, else the connected "
+                                  "character", align="left"), "note")
 
     cell = (WIDTH - 16) // COLUMNS
     for start in range(0, len(colouring.PALETTE), COLUMNS):
@@ -385,36 +386,35 @@ def build_panel():
                        columnWidth=[(i + 1, cell)
                                     for i in range(len(row))])
         for entry in row:
-            cmds.button(label=entry.name, width=cell - 3, height=30,
-                        backgroundColor=entry.rgb,
-                        annotation="paint the selection " + entry.name,
-                        command=_press(entry.rgb))
+            hubstyle.swatch(cmds.button(
+                label=entry.name, width=cell - 4, height=28,
+                backgroundColor=entry.rgb,
+                annotation="paint the selection " + entry.name,
+                command=_press(entry.rgb)), entry.rgb)
         cmds.setParent("..")
 
-    cmds.separator(height=7, style="in", width=WIDTH - 16)
-
-    cmds.rowLayout(numberOfColumns=2, columnWidth2=(158, 92),
-                   columnAlign2=("left", "left"))
-    cmds.colorSliderGrp(CUSTOM, label="", rgbValue=colouring.PALETTE[0].rgb,
-                        columnWidth3=(1, 44, 105), width=155,
-                        annotation="any colour off the palette")
-    cmds.button(label="Paint", width=88, height=24,
-                annotation="paint the selection with the swatch's colour",
-                command=_press_custom)
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 4),
+                                 (3, "left", 0)])
+    hubstyle.mark(cmds.colorSliderGrp(
+        CUSTOM, label="", rgbValue=colouring.PALETTE[0].rgb,
+        columnWidth3=(1, 36, 60), annotation="any colour off the palette"),
+        "swatchonly")
+    hubstyle.mark(cmds.button(
+        label="Paint", height=26,
+        annotation="paint the selection with the swatch's colour",
+        command=_press_custom), "secondary", "brush")
+    hubstyle.mark(cmds.button(
+        label="Next free colour", width=130, height=26,
+        backgroundColor=(0.45, 0.60, 0.70),
+        annotation="the first colour nothing in the scene wears - the same "
+                   "question Add Character asks",
+        command=_press_free), "secondary", "palette")
     cmds.setParent("..")
 
-    cmds.button(label="Next free colour", width=WIDTH - 16, height=26,
-                backgroundColor=(0.45, 0.60, 0.70),
-                annotation="the first colour nothing in the scene wears - "
-                           "the same question Add Character asks",
-                command=_press_free)
-
-    cmds.separator(height=7, style="in", width=WIDTH - 16)
-    cmds.text(TAKEN, label="", align="center", width=WIDTH - 16,
-              font="smallObliqueLabelFont")
-    cmds.text(STATUS, label="select something and pick a colour",
-              align="center", width=WIDTH - 16,
-              font="smallFixedWidthFont")
+    hubstyle.mark(cmds.text(TAKEN, label="", align="left"), "subtitle")
+    hubstyle.mark(cmds.text(STATUS, label="select something and pick a "
+                                          "colour", align="left"), "status")
 
     cmds.setParent("..")
     refresh()

@@ -1011,6 +1011,29 @@ class TestPanelBuildsIntoTheHub(unittest.TestCase):
         self.fake.existing.add(vp.STATUS)
         self.assertTrue(vp.is_open())
 
+    def test_no_fixed_widths_and_no_fixed_width_font(self):
+        """2026-09-28, the skin: Studio stretches like every other section
+        (it sat in a 300 px column) and its status is in the UI font."""
+        for call in self.fake.calls:
+            #  a button beside the primary one keeps its own width; nothing
+            #  is sized to the old column (WIDTH - 20 = 280)
+            self.assertLess(call[2].get("width", 0), 200, call)
+            self.assertNotEqual(call[2].get("font"), "smallFixedWidthFont")
+        separators = [c for c in self.fake.calls if c[0] == "separator"]
+        self.assertEqual(separators, [])
+
+    def test_the_checks_are_chips_two_to_a_row(self):
+        import maya_hubstyle
+        maya_hubstyle.take_marks()
+        vp.build_panel()
+        marks = maya_hubstyle.take_marks()
+        chips = [m.name for m in marks if m.role == "chip"]
+        self.assertEqual(chips, [vp._control(k) for k, _l, _n in vp.CHECKS])
+        roles = dict((m.role, m.icon) for m in marks
+                     if m.role in ("primary", "secondary"))
+        self.assertEqual(roles, {"primary": "bulb",
+                                 "secondary": "arrow-back-up"})
+
     def test_the_dropdowns_go_live_only_after_the_build(self):
         """Setting an optionMenu's value fires its changeCommand, so the
         wiring has to come after every remembered value is in place."""

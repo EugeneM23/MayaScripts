@@ -313,6 +313,16 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
                                       "#e05a4f")], self.card, 1.0)
         self.assertIn("#e05a4f", dot.styleSheet())
 
+    def test_a_swatch_s_label_reads_on_its_colour(self):
+        light = self.control(QtWidgets.QPushButton, "amber", self.card.body)
+        dark = self.control(QtWidgets.QPushButton, "blue", self.card.body)
+        hubqt.apply_marks([
+            style.Mark("amber", "swatch", None, False, "#d9b93a"),
+            style.Mark("blue", "swatch", None, False, "#2c4fa8")],
+            self.card, 1.0)
+        self.assertIn("color: " + style.TOKENS["panel"], light.styleSheet())
+        self.assertIn("color: " + style.TOKENS["text"], dark.styleSheet())
+
     def test_a_subtitle_moves_into_the_card_header(self):
         line = self.control(QtWidgets.QLabel, "boundLine", self.card.body)
         line.setWordWrap(True)

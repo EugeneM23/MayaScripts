@@ -413,17 +413,19 @@ def _press(*_args):
 
 def build_panel():
     """The installed build, the button, a status line (the hub's section)."""
+    import maya_hubstyle as hubstyle   # stdlib; the section is classic-only
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", 8))
-    cmds.text(INSTALLED, label="Installed:", align="left", wordWrap=True,
-              height=36)
-    cmds.button(label="Check update", height=36,
-                backgroundColor=(0.45, 0.60, 0.70),
-                annotation="Compare with the latest build on "
-                           "github.com/{0} and install it".format(REPO),
-                command=_press)
+    hubstyle.mark(cmds.text(INSTALLED, label="Installed:", align="left",
+                            wordWrap=True, height=36), "note")
+    hubstyle.mark(cmds.button(
+        label="Check update", height=36, backgroundColor=(0.45, 0.60, 0.70),
+        annotation="Compare with the latest build on github.com/{0} and "
+                   "install it".format(REPO),
+        command=_press), "primary", "refresh")
     #  Three lines: the no-build refusal wraps to three in a narrow dock.
-    cmds.text(STATUS, label="", align="left", wordWrap=True, height=54)
+    hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
+                            height=54), "status")
     cmds.setParent("..")
     refresh()
     return column

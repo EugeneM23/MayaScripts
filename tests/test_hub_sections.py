@@ -327,6 +327,24 @@ class Retarget(unittest.TestCase):
         self.assertEqual(buttons[0][2]["label"], "Retarget")
         self.assertTrue(rr.is_open())
 
+    def test_one_line_of_hint_the_paragraph_is_the_tooltip(self):
+        """2026-09-28: 296 px for one button and a paragraph was the
+        section's cost; the paragraph is the button's tooltip now."""
+        texts = [c[2].get("label") for c in self.fake.calls
+                 if c[0] == "text" and not c[2].get("edit")]
+        self.assertIn(rr.PANEL_HINT, texts)
+        self.assertNotIn(rr.PANEL_NOTE, texts)
+        buttons = [c for c in self.fake.calls if c[0] == "button"]
+        self.assertEqual(buttons[0][2]["annotation"], rr.PANEL_NOTE)
+        self.assertLess(len(rr.PANEL_HINT), 60)
+
+    def test_retarget_is_the_primary_action(self):
+        maya_hubstyle.take_marks()
+        rr.build_panel()
+        roles = [(m.role, m.icon) for m in maya_hubstyle.take_marks()]
+        self.assertIn(("primary", "arrows-exchange"), roles)
+        self.assertIn(("status", None), roles)
+
     def test_the_button_runs_the_shelf_action_and_reports_on_the_line(self):
         buttons = [c for c in self.fake.calls if c[0] == "button"]
         buttons[0][2]["command"]()

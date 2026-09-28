@@ -27,9 +27,10 @@ rig's constrained game skeleton -- UE names (`pelvis`, `spine_05`) mean the Mann
 """
 import maya.cmds as cmds
 
+import maya_hubstyle as hubstyle
 import maya_rigs
 
-POSED = ("the rig is still posed after the reset - AdvancedSkeleton: Go To "
+POSED =("the rig is still posed after the reset - AdvancedSkeleton: Go To "
          "BuildPose, then press again")
 
 
@@ -379,6 +380,8 @@ PANEL_NOTE = ("Select the imported skeleton (any joint), and a control of "
               "the rig when the scene holds several. The rig takes the "
               "clip: retarget, bake, weapon and camera bones carried, "
               "camera set up. The source skeleton is kept.")
+#  What the panel shows (2026-09-28, the skin); PANEL_NOTE is the tooltip.
+PANEL_HINT = "Select the clip's skeleton (and the rig, when several)"
 
 
 def _show(text):
@@ -435,11 +438,15 @@ def build_panel():
     """One instruction, one button, one status line - the shelf button's
     action with somewhere to report (2026-09-17, the hub)."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", 8))
-    cmds.text(label=PANEL_NOTE, align="left", wordWrap=True, height=70)
-    cmds.button(label="Retarget", height=36,
-                backgroundColor=(0.45, 0.60, 0.70),
-                annotation=PANEL_NOTE, command=_press)
-    cmds.text(STATUS, label="", align="left", wordWrap=True, height=36)
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+    #  One line since the skin (2026-09-28): the paragraph is the tooltip.
+    hubstyle.mark(cmds.text(label=PANEL_HINT, align="left", wordWrap=True,
+                            height=36), "note")
+    hubstyle.mark(cmds.button(label="Retarget", height=34,
+                              backgroundColor=(0.45, 0.60, 0.70),
+                              annotation=PANEL_NOTE, command=_press),
+                  "primary", "arrows-exchange")
+    hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
+                            height=36), "status")
     cmds.setParent("..")
     return column

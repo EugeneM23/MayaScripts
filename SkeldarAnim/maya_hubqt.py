@@ -586,8 +586,17 @@ class Skin(object):
 
 # ------------------------------------------------------------------- marks
 
+def _luminance(hex_colour):
+    """Relative brightness 0..1 of "#rrggbb" (Rec. 709 weights)."""
+    r, g, b = (int(hex_colour[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
 def _swatch_sheet(hex_colour, radius, scale):
-    text = hubstyle.TOKENS["panel"]
+    #  a colour's name readable on it: dark on the light ones, light on
+    #  the dark ones (blue and violet)
+    text = (hubstyle.TOKENS["panel"] if _luminance(hex_colour) > 0.45
+            else hubstyle.TOKENS["text"])
     return ("QPushButton {{ background: {0}; border: none; border-radius: "
             "{1}px; padding: 0px; color: {2}; }} QPushButton:hover {{ border: "
             "{3}px solid {4}; }}").format(hex_colour, radius, text,

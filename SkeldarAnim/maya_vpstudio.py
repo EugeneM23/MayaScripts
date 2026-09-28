@@ -40,6 +40,8 @@ import math
 
 import maya.cmds as cmds
 
+import maya_hubstyle as hubstyle
+
 
 
 VERSION = "1"
@@ -1430,68 +1432,69 @@ def build_panel():
     built into whatever layout is current (the hub's section)."""
     stored = window_options()
 
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=ROW_SPACING,
-                               columnOffset=("both", 10))
+    #  2026-09-28 (the skin): no fixed widths -- the column stretches like
+    #  every other section's; the two menus side by side, the ten checks
+    #  as chips two to a row, Apply Look the one primary action.
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", hubstyle.pick(0, 10)))
 
-    cmds.text(label="lighting, shadows, AO and motion blur, live",
-              font="smallObliqueLabelFont", align="center",
-              width=WIDTH - 20)
-    cmds.separator(height=8, style="in", width=WIDTH - 20)
+    hubstyle.mark(cmds.text(label="lighting, shadows, AO and motion blur, "
+                                  "live", align="left"), "note")
 
-    for key, label in (("look", "Look "), ("quality", "Quality ")):
-        cmds.rowLayout(numberOfColumns=2, columnWidth2=(70, 200),
-                       columnAlign2=("right", "left"))
-        cmds.text(label=label)
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnWidth2=(150, 120),
+                   columnAttach=[(1, "both", 0), (2, "left", 4)])
+    for key, note in (("look", "Look: the lights, floor and sky"),
+                      ("quality", "Quality: how much the viewport renders")):
         #  No changeCommand yet: it is attached at the end of the build.
         #  Setting an optionMenu's value FIRES its changeCommand, so
         #  wiring it here would rebuild the whole studio as a side effect
         #  of merely opening the panel.
-        cmds.optionMenu(_control(key), width=195)
+        cmds.optionMenu(_control(key), annotation=note)
         for name in MENU_ITEMS[key]:
             cmds.menuItem(label=name)
-        cmds.setParent("..")
         if stored.get(key) in MENU_ITEMS[key]:
             cmds.optionMenu(_control(key), edit=True, value=stored[key])
+    cmds.setParent("..")
 
-    cmds.separator(height=6, style="in", width=WIDTH - 20)
-
-    for key, label, note in CHECKS:
-        cmds.checkBox(_control(key), label=label,
-                      value=bool(stored.get(key, DEFAULTS[key])),
-                      annotation=note)
-
-    cmds.separator(height=6, style="in", width=WIDTH - 20)
+    for start in range(0, len(CHECKS), 2):
+        cmds.rowLayout(numberOfColumns=2, columnWidth2=(150, 150),
+                       columnAttach=[(1, "left", 0), (2, "left", 4)])
+        for key, label, note in CHECKS[start:start + 2]:
+            hubstyle.mark(cmds.checkBox(
+                _control(key), label=label,
+                value=bool(stored.get(key, DEFAULTS[key])),
+                annotation=note), "chip")
+        cmds.setParent("..")
 
     cmds.floatSliderGrp(_control("brightness"), label="Brightness ",
                         field=True, minValue=0.1, maxValue=3.0,
                         value=float(stored.get("brightness", 1.0)),
                         fieldMinValue=0.0, fieldMaxValue=10.0,
-                        width=WIDTH - 20, columnWidth3=(70, 45, 165),
+                        columnWidth3=(70, 45, 150), adjustableColumn=3,
                         changeCommand=_live_change)
     cmds.floatSliderGrp(_control("rotate"), label="Rotate ", field=True,
                         minValue=-180.0, maxValue=180.0,
                         value=float(stored.get("rotate", 0.0)),
                         fieldMinValue=-720.0, fieldMaxValue=720.0,
-                        width=WIDTH - 20, columnWidth3=(70, 45, 165),
+                        columnWidth3=(70, 45, 150), adjustableColumn=3,
                         changeCommand=_live_change)
 
-    cmds.separator(height=8, style="in", width=WIDTH - 20)
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 4)])
+    hubstyle.mark(cmds.button(
+        label="Apply Look", height=32, backgroundColor=(0.45, 0.70, 0.50),
+        annotation="build the chosen look on whatever the scene holds",
+        command=_press_setup), "primary", "bulb")
+    hubstyle.mark(cmds.button(
+        label="Restore Viewport", height=32, width=130,
+        annotation="put the animator's own viewport back and delete our "
+                   "nodes",
+        command=_press_restore), "secondary", "arrow-back-up")
+    cmds.setParent("..")
 
-    cmds.button(label="Apply Look", height=34, width=WIDTH - 20,
-                backgroundColor=(0.45, 0.70, 0.50),
-                annotation="build the chosen look on whatever the scene "
-                           "holds",
-                command=_press_setup)
-    cmds.button(label="Restore Viewport", height=26, width=WIDTH - 20,
-                backgroundColor=(0.62, 0.48, 0.44),
-                annotation="put the animator's own viewport back and "
-                           "delete our nodes",
-                command=_press_restore)
-
-    cmds.separator(height=8, style="in", width=WIDTH - 20)
-    cmds.text(STATUS, label="pick a look and press Apply",
-              align="center", width=WIDTH - 20,
-              font="smallFixedWidthFont")
+    hubstyle.mark(cmds.text(STATUS, label="pick a look and press Apply",
+                            align="left"), "status")
 
     #  Only now, with every control built and every remembered value in
     #  place, do the dropdowns become live.
