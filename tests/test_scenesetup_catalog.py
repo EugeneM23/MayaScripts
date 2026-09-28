@@ -585,7 +585,7 @@ class OrcD(unittest.TestCase):
         points it at the installed copy: no path of the machine that built the asset is in it."""
         path = catalog.character_file(catalog.character_by_key("Orc_D_Rig"))
         self.assertTrue(path.endswith("assets/Orc_D_Rig.ma"), path)
-        images, files, mode, skins, blends, body = [], 0, False, 0, 0, False
+        images, files, mode, skins, blends, body, view = [], 0, False, 0, 0, 0, False
         banned = ("createNode script", "vaccine", "breed_gene", "C:/", "c:/", "Unreal Projects",
                   "scratchpad", "Skirt_Proxy", "srcD:", "D:/Characters", "arp_rig_name",
                   "flip_fluid", "ori_name")
@@ -600,9 +600,13 @@ class OrcD(unittest.TestCase):
                     mode = True
                 skins += line.startswith("createNode skinCluster ")
                 blends += line.startswith("createNode blendShape ")
-                body = body or line.startswith('createNode transform -n "Orc_D_Body" -p "Geometry";')
+                body += line.startswith('createNode transform -n "Orc_D_3P" -p "Geometry";')
+                body += line.startswith('createNode transform -n "Orc_D_1P" -p "Geometry";')
+                view = view or ('-ln "view"' in line and '-en "3P:1P"' in line)
         self.assertTrue(mode, "the rig's retarget mark is not in the file")
-        self.assertTrue(body, "Orc_D_Body is not in the rig's Geometry group")
-        self.assertEqual((skins, blends), (1, 1))
+        # the 3P and, since 2026-09-28, the animator's 1P (the 3P without its head), Main's switch
+        self.assertEqual(body, 2, "Orc_D_3P and Orc_D_1P are not both in the rig's Geometry group")
+        self.assertTrue(view, "Main has no view (3P:1P) switch")
+        self.assertEqual((skins, blends), (2, 1))
         self.assertEqual(sorted(set(images)), sorted("Orc_D/" + m for m in self.MAPS))
         self.assertEqual(files, len(images))

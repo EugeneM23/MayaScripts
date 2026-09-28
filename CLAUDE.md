@@ -5861,6 +5861,26 @@ scratch `MAYA_APP_DIR`) shows it textured, normal-mapped, the vest's torn edges 
 Not built: F textured (the same maps fit all but its fur), the fur, the cloth simulation, the eye's
 refraction, the skin's subsurface scattering.
 
+**A first-person mesh beside it, `Orc_D_1P`, and `Main.view` (2026-09-28)** — the animator: «В сцене я
+добавил новый меш для 1P анимацией. Давай обновим риг орка в нашем плагине». Measured in their scene
+first: the rig untouched node for node, `Orc_D_Body` renamed `Orc_D_3P` (out of the rig's namespace —
+a rename in the outliner does that), and a new `Orc_D_1P`: the 3P without its head (8049 vertices
+gone, y 155–183, the eyes with them) — every one of its 33365 faces a 3P face by its vertices'
+positions, none ambiguous, in the same order, its 19458 vertices likewise (coincident vertices in the
+3P, where shells touch, make a match by vertex position alone ambiguous — 4872 faces unmatched that
+way; by whole faces, none), uvs identical. Its skin was a quick bind: max 5 influences, weight on
+`weapon_r` (0.50), `weapon_l`, `camera_root`/`camera_bone` (0.31 at the neck) and `ik_hand_gun` on
+the LEFT hand — bones that move on their own. Asked: «Веса 3P» and «Переключатель на Main».
+`sources/orc/orc_d_1p_faces.json` records which 3P faces the 1P keeps (read off the animator's mesh
+over the port); `make_orc_d_rig_asset.py` builds the 1P from the 3P by deleting the rest (the same
+order again), skins it on the same 91 joints with the 3P's weights one for one, both skins on the
+whole bindPose1, no blendShape (the face shapes went with the head), and adds `Main.view` — enum
+`3P:1P`, 3P by default, in the channel box, NOT keyable (a view, not animation: no bake or key takes
+it) — driving each mesh's visibility through a `condition`. The asset: 17.7 MB. Proof:
+`verify_orc_d_rig_asset.py` **22/22** (gate 20: under the retargeted take every 1P vertex on its 3P
+vertex to 0.0 cm; 21: the 3P's materials, no eye — 13243 / 20016 / 106; 22: the switch both ways, not
+keyable, untouched by the retarget). A scene with an Orc D added before this has no 1P: re-add it.
+
 90. **A duplicate of a deformed mesh carries its source's COMPONENT TAGS** — `gtag[i].gtagnm`
     naming the SOURCE's deformers (`srcD:skinCluster1`), written into the saved `.ma`. The asset's
     banned-word check caught the namespace. `removeMultiInstance` every `gtag` on the copy before

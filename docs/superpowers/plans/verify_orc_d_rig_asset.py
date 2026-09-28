@@ -18,6 +18,7 @@ the FBX Unreal wrote (sources/orc/SK_Orc_Marauder_D.fbx, imported into a `ref` n
 - the export: 95 bones, no mesh.
 """
 import ctypes
+import json
 import math
 import os
 import re
@@ -40,7 +41,8 @@ CLIP = sys.argv[1].replace("\\", "/")
 SCRATCH = sys.argv[2].replace("\\", "/")
 FBX = REPO + "/sources/orc/SK_Orc_Marauder_D.fbx"
 FAILS = []
-TOTAL = 19
+TOTAL = 22
+ONE_P = json.load(open(REPO + "/sources/orc/orc_d_1p_faces.json"))
 
 
 def gate(n, ok, msg):
@@ -141,17 +143,18 @@ for sc in skin:
         if src:
             worst = max(worst, mdiff(om.MMatrix(cmds.getAttr("%s.bindPreMatrix[%d]" % (sc, idx))) * wm(src[0]), om.MMatrix()))
 off = ar.posed_controls(rig=d)
-gate(4, len(skin) == 1 and worst < 1e-4 and not off, "one D skin at its bind (%.2e), controls at default %s" % (worst, off[:3]))
+gate(4, len(skin) == 2 and worst < 1e-4 and not off, "the two D skins (3P, 1P) at their bind (%.2e), controls at default %s" % (worst, off[:3]))
 
-mesh = "|Orc_D_Rig:Group|Orc_D_Rig:Geometry|Orc_D_Rig:Orc_D_Body"
+mesh = "|Orc_D_Rig:Group|Orc_D_Rig:Geometry|Orc_D_Rig:Orc_D_3P"      # «Orc_D_Body» until 2026-09-28
+mesh1 = "|Orc_D_Rig:Group|Orc_D_Rig:Geometry|Orc_D_Rig:Orc_D_1P"
 shape = live_shape(mesh)
 fn = mfn(shape)
 bs = [b for b in cmds.ls(type="blendShape") if b.startswith("Orc_D_Rig:")]
-gate(5, cmds.listRelatives("|Orc_D_Rig:Group|Orc_D_Rig:Geometry", children=True) == ["Orc_D_Rig:Orc_D_Body"]
+gate(5, cmds.listRelatives("|Orc_D_Rig:Group|Orc_D_Rig:Geometry", children=True) == ["Orc_D_Rig:Orc_D_3P", "Orc_D_Rig:Orc_D_1P"]
      and (fn.numVertices, fn.numPolygons) == (27546, 47374) and cmds.polyUVSet(shape, q=True, allUVSets=True) == ["map1"]
      and len(bs) == 1 and len(cmds.blendShape(bs[0], q=True, weight=True)) == 56
      and not cmds.listAttr(mesh, userDefined=True),
-     "Geometry holds Orc_D_Body: %d vertices, %d faces, uv sets %s, blendShape %s with %d targets"
+     "Geometry holds Orc_D_3P and Orc_D_1P; the 3P: %d vertices, %d faces, uv sets %s, blendShape %s with %d targets"
      % (fn.numVertices, fn.numPolygons, cmds.polyUVSet(shape, q=True, allUVSets=True), bs,
         len(cmds.blendShape(bs[0], q=True, weight=True)) if bs else 0))
 
@@ -309,6 +312,37 @@ gate(13, worst_j < 1e-4 and worst_skin < 1e-3,
      "under the take, D's mesh where Unreal's own skin puts it to %.2e cm (the FBX's joints on the rig's to %.2e)"
      % (worst_skin, worst_j))
 
+# the 1P (2026-09-28): the 3P without its head, the 3P's vertices and weights one for one --
+# under the retargeted take every 1P vertex where its 3P vertex is, and the switch on Main
+shape1 = live_shape(mesh1)
+fn1 = mfn(shape1)
+vmap = ONE_P["vertices_3p"]
+worst_1p = 0.0
+for t in (frames[len(frames) // 3], frames[2 * len(frames) // 3]):
+    cmds.currentTime(t)
+    cmds.dgdirty([shape, shape1])
+    a1, a3 = mfn(shape1).getPoints(om.MSpace.kWorld), mfn(shape).getPoints(om.MSpace.kWorld)
+    worst_1p = max(worst_1p, max(a1[k].distanceTo(a3[j]) for k, j in enumerate(vmap)))
+bs1 = cmds.ls(cmds.listHistory(shape1, pruneDagObjects=True) or [], type="blendShape")
+gate(20, (fn1.numVertices, fn1.numPolygons) == (19458, 33365) and worst_1p < 1e-5 and not bs1
+     and cmds.polyUVSet(shape1, q=True, allUVSets=True) == ["map1"],
+     "Orc_D_1P: %d vertices, %d faces, no blendShape; under the take every vertex on its 3P vertex to %.2e cm"
+     % (fn1.numVertices, fn1.numPolygons, worst_1p))
+on_1p = dict((m.split(":")[-1].replace("skeldarTexture_", ""), n) for m, n in worn(shape1).items())
+gate(21, on_1p == {"Orc_D_Body": 13243, "Orc_D_Cloth": 20016, "Orc_D_ClothCut": 106},
+     "the 1P wears the 3P's materials, no eye: %s" % on_1p)
+main = cmds.ls("Orc_D_Rig:Main", type="transform", long=True)[0]
+states = []
+for value in (0, 1, 0):
+    cmds.setAttr(main + ".view", value)
+    states.append((value, bool(cmds.getAttr(mesh + ".visibility")), bool(cmds.getAttr(mesh1 + ".visibility"))))
+keyed = cmds.listConnections(main + ".view", source=True, destination=False, type="animCurve")
+gate(22, states == [(0, True, False), (1, False, True), (0, True, False)]
+     and not cmds.getAttr(main + ".view", keyable=True) and cmds.getAttr(main + ".view", channelBox=True)
+     and cmds.attributeQuery("view", node=main, listEnum=True) == ["3P:1P"] and not keyed,
+     "Main.view (view, 3P, 1P): %s; keyable %s, in the channel box %s, keyed by the retarget %s"
+     % (states, cmds.getAttr(main + ".view", keyable=True), cmds.getAttr(main + ".view", channelBox=True), bool(keyed)))
+
 # ------------------------------------------------------------------ Recolour, then Add again
 d2_shapes = colour.character_meshes(d2.skeleton_root)
 cmds.undoInfo(openChunk=True)
@@ -316,12 +350,14 @@ try:
     painted = colour.paint(d2_shapes, colour.PALETTE[4].rgb, "Orc_D_Rig1")
 finally:
     cmds.undoInfo(closeChunk=True)
-d2_worn = worn(live_shape("|Orc_D_Rig1:Group|Orc_D_Rig1:Geometry|Orc_D_Rig1:Orc_D_Body"))
+d2_worn = worn(live_shape("|Orc_D_Rig1:Group|Orc_D_Rig1:Geometry|Orc_D_Rig1:Orc_D_3P"))
+d2_worn_1p = worn(live_shape("|Orc_D_Rig1:Group|Orc_D_Rig1:Geometry|Orc_D_Rig1:Orc_D_1P"))
 d1_worn = worn(shape)
-gate(14, painted and list(d2_worn) == [painted] and colour.is_ours(painted) and d1_worn == on_d,
+gate(14, painted and list(d2_worn) == [painted] and list(d2_worn_1p) == [painted] and colour.is_ours(painted)
+     and d1_worn == on_d,
      "Recolour on the second Orc D: it wears %s only (teal, ours); the first still %s" % (d2_worn, sorted(d1_worn)))
 text = character.add_character(orc_d, colour.PALETTE[0].rgb)
-third = live_shape("|Orc_D_Rig2:Group|Orc_D_Rig2:Geometry|Orc_D_Rig2:Orc_D_Body") if cmds.objExists("Orc_D_Rig2:Orc_D_Body") else None
+third = live_shape("|Orc_D_Rig2:Group|Orc_D_Rig2:Geometry|Orc_D_Rig2:Orc_D_3P") if cmds.objExists("Orc_D_Rig2:Orc_D_3P") else None
 third_worn = worn(third) if third else {}
 gate(15, third and " - textured" in text and len(third_worn) == 4
      and all(cmds.attributeQuery(colour.TEXTURE_MARKER, node=m, exists=True) for m in third_worn),
@@ -341,7 +377,7 @@ gate(16, cut_at and kept_at and seen[0][0] < 0.01 and seen[1][0] > 0.99,
 # shoulder plates) -- Maya's own sampler, at every opaque cloth face's centre and near its corners
 cloth_sg = cmds.listConnections(cloth_mat + ".outColor", type="shadingEngine")[0]
 opaque_faces = sorted(int(x.split("[")[1].rstrip("]")) for x in cmds.ls(cmds.sets(cloth_sg, q=True), flatten=True)
-                      if ".f[" in x and x.split(".")[0].endswith("Orc_D_Body"))
+                      if ".f[" in x and x.split(".")[0].endswith("Orc_D_3P"))
 us, vs = [], []
 for fi in opaque_faces:
     uv = [fn.getPolygonUV(fi, j, "map1") for j in range(fn.polygonVertexCount(fi))]

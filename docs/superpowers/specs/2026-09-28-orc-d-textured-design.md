@@ -99,6 +99,15 @@ A playblast in a disposable Maya shows it.
 The F orc textured (the same maps fit it but for its fur); the fur material; Unreal's cloth
 simulation; the eye's refraction and the body's subsurface scattering.
 
+## Addendum — the first-person mesh `Orc_D_1P` and `Main.view` (same day)
+
+«В сцене я добавил новый меш для 1P анимацией. Давай обновим риг орка в нашем плагине.» The
+animator's 1P is the 3P without its head (every face and vertex a 3P one, in order; the face list in
+`sources/orc/orc_d_1p_faces.json`); its own quick bind carried weight on weapon, camera and IK-helper
+bones. Decisions (the animator's): the 1P takes the **3P's weights** vertex for vertex; **a switch on
+Main**, `view` (3P / 1P, 3P by default, not keyable), shows one of the two. The 3P mesh is named
+`Orc_D_3P` (the animator's rename of `Orc_D_Body`).
+
 ## Addendum — the cut-out only where there is a cut (same day)
 
 The animator, after the first Add: «при стандартных настройках рендера определенные части орка

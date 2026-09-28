@@ -9,7 +9,7 @@ its own.  This opens `sources/orc/Orc_Rig.ma` (script nodes NOT executed; the un
 which shipped in assets/ until it left the plugin the same day), takes its F mesh out, and puts
 D's in, bound to the same game joints:
 
-- `Orc_D_Body` in `Group|Geometry`, in F's shape: its transform the importer's Z-up turn, locked;
+- `Orc_D_3P` (named `Orc_D_Body` until 2026-09-28) in `Group|Geometry`, in F's shape: its transform the importer's Z-up turn, locked;
   its points, UVs and normals exactly the FBX's at bind -- a copy of the FBX's own output, not a
   rebuild -- **minus the Skirt_Proxy section** (885 faces, 489 vertices, one shell hovering 1.65 cm
   off the skirt: the cage Unreal's clothing asset was made from, not what Unreal draws).  Vertex and
@@ -26,9 +26,16 @@ D's in, bound to the same game joints:
   Every file node names its image RELATIVELY (`colour.ASSET_IMAGE`, "Orc_D/<file>"), and Add
   Character points it at the installed copy: no path of this machine is in the asset.
 
+- since 2026-09-28 the animator's first-person mesh beside it, `Orc_D_1P`: the 3P without its head
+  (sources/orc/orc_d_1p_faces.json names the 3P faces it keeps -- read off the animator's own 1P,
+  every face and vertex a 3P one in the same order), the 3P's weights one for one («Веса 3P»), no
+  blendShape (the face shapes left with the head); and `Main.view` (enum 3P:1P, not keyable, 3P by
+  default) showing one of the two («Переключатель на Main»).
+
 Then make_orc_rig_asset.py's clean-up, `.ma`, script-node blocks cut from the text (trap 74), and
 banned words refused.  Refuses (raises) anything that does not measure right on the way.
 """
+import json
 import os
 import re
 import sys
@@ -50,7 +57,10 @@ SRC_RIG = os.path.join(REPO, "sources", "orc", "Orc_Rig.ma").replace("\\", "/")
 FBX = os.path.join(REPO, "sources", "orc", "SK_Orc_Marauder_D.fbx").replace("\\", "/")
 OUT = os.path.join(PLUGIN, "assets", "Orc_D_Rig.ma").replace("\\", "/")
 NS = "srcD"
-MESH = "Orc_D_Body"
+MESH = "Orc_D_3P"            # «Orc_D_Body» until 2026-09-28, when the animator named it for its view
+MESH_1P = "Orc_D_1P"         # the animator's first-person mesh: MESH without its head
+ONE_P = os.path.join(REPO, "sources", "orc", "orc_d_1p_faces.json").replace("\\", "/")
+VIEW = "view"                # Main's switch between the two, «3P:1P»
 MAPS = "Orc_D/"
 PROXY = (885, 489)            # faces, vertices of Unreal's Skirt_Proxy section, measured
 BANNED = ("createNode script", "vaccine", "breed_gene", "C:/", "c:/", "Unreal Projects", "scratchpad",
@@ -339,7 +349,7 @@ src_names = [leaf(p.fullPathName()) for p in src_fn.influenceObjects()]
 skin_settings = dict((a, cmds.getAttr(src_skin + "." + a))
                      for a in ("skinningMethod", "maxInfluences", "maintainMaxInfluences", "normalizeWeights"))
 
-# ------------------------------------------------------------------ Orc_D_Body
+# ------------------------------------------------------------------ Orc_D_3P
 dup = cmds.duplicate(src, name=":" + MESH)[0]
 dup = cmds.ls(dup, long=True)[0]
 for shape in cmds.listRelatives(dup, shapes=True, fullPath=True) or []:
@@ -370,7 +380,7 @@ new_fn = mfn(shape)
 assert (new_fn.numVertices, new_fn.numPolygons) == (len(kept_verts), len(kept_faces))
 new_world = new_fn.getPoints(om.MSpace.kWorld)
 drift = max(new_world[k].distanceTo(base_world[v]) for k, v in enumerate(kept_verts))
-print("Orc_D_Body: %d vertices, %d faces; each where the FBX has its vertex to %.2e cm"
+print(MESH + ": %d vertices, %d faces; each where the FBX has its vertex to %.2e cm"
       % (new_fn.numVertices, new_fn.numPolygons, drift))
 assert drift < 1e-5, "the vertex map is wrong: %.3e" % drift
 for f in (0, len(kept_faces) // 2, len(kept_faces) - 1):
@@ -408,6 +418,46 @@ for key in ("body", "cloth", "cut", "eye"):
     cmds.sets(["%s.f[%d]" % (dup, i) for i in faces_for[key]], edit=True, forceElement=made[key][1])
     print("  %-5s %s: %d faces" % (key, made[key][0], len(faces_for[key])))
 
+# Orc_D_1P (2026-09-28, the animator: «В сцене я добавил новый меш для 1P анимацией. Давай обновим риг
+# орка»): MESH without its head. Measured in the animator's scene: every one of its 33365 faces is a
+# face of MESH (by the positions of its vertices, none ambiguous), in the same order, and so are its
+# 19458 vertices -- faces deleted from a copy, nothing else; sources/orc/orc_d_1p_faces.json holds
+# which. Built the same way here, so its vertices are MESH's one for one and its skin can be
+# MESH's weights (the animator's pick, «Веса 3P», over their own quick bind, which had weight on
+# weapon_r/_l, camera_root/_bone and ik_hand_gun -- bones that move on their own).
+one_p = json.load(open(ONE_P))
+keep_1p, vmap_1p = one_p["faces_3p"], one_p["vertices_3p"]
+n3_faces = mfn(shape).numPolygons
+dup1 = cmds.ls(cmds.duplicate(dup, name=":" + MESH_1P)[0], long=True)[0]
+for extra in [x for x in cmds.listRelatives(dup1, shapes=True, fullPath=True) or [] if cmds.getAttr(x + ".intermediateObject")]:
+    cmds.delete(extra)
+dup1_uid = cmds.ls(dup1, uuid=True)[0]
+kept1 = set(keep_1p)
+cmds.delete(["%s.f[%d]" % (dup1, f) for f in range(n3_faces) if f not in kept1])
+cmds.delete(dup1, constructionHistory=True)
+dup1 = cmds.ls(dup1_uid, long=True)[0]
+shape1 = cmds.listRelatives(dup1, shapes=True, fullPath=True)[0]
+shape1 = cmds.ls(cmds.rename(shape1, ":" + MESH_1P + "Shape"), long=True)[0]
+fn1, fn3 = mfn(shape1), mfn(shape)
+assert (fn1.numVertices, fn1.numPolygons) == (one_p["counts"]["vertices"], one_p["counts"]["faces"]), (fn1.numVertices, fn1.numPolygons)
+p1_, p3_ = fn1.getPoints(om.MSpace.kObject), fn3.getPoints(om.MSpace.kObject)
+off_1p = max(p1_[k].distanceTo(p3_[j]) for k, j in enumerate(vmap_1p))
+for k in (0, len(keep_1p) // 3, len(keep_1p) - 1):
+    assert [vmap_1p[v] for v in fn1.getPolygonVertices(k)] == list(fn3.getPolygonVertices(keep_1p[k])), "the 1P face map at %d" % k
+assert off_1p < 1e-9, off_1p
+of_face = {}
+for key in ("body", "cloth", "cut", "eye"):
+    for f in faces_for[key]:
+        of_face[f] = key
+faces_for_1p = {}
+for k, f in enumerate(keep_1p):
+    faces_for_1p.setdefault(of_face[f], []).append(k)
+for key, ids in sorted(faces_for_1p.items()):
+    cmds.sets(["%s.f[%d]" % (dup1, i) for i in ids], edit=True, forceElement=made[key][1])
+print("  %s: %d vertices, %d faces, each vertex on %s's to %.1e; %s"
+      % (MESH_1P, fn1.numVertices, fn1.numPolygons, MESH, off_1p,
+         dict((k, len(v)) for k, v in sorted(faces_for_1p.items()))))
+
 # the blendShape: the 56 targets as meshes of the new topology, then gone (the deltas stay)
 target_meshes = []
 for name, pts in zip(names, targets):
@@ -432,15 +482,18 @@ assert worst < 1e-4 and len(cmds.blendShape(blend, q=True, weight=True)) == 56
 joints = [game[n] for n in src_names]
 skin = cmds.skinCluster(joints, dup, toSelectedBones=True, bindMethod=0, normalizeWeights=1,
                         maximumInfluences=8, obeyMaxInfluences=False, name=MESH + "_skinCluster")[0]
+skin1 = cmds.skinCluster(joints, dup1, toSelectedBones=True, bindMethod=0, normalizeWeights=1,
+                         maximumInfluences=8, obeyMaxInfluences=False, name=MESH_1P + "_skinCluster")[0]
 for attr, value in skin_settings.items():
-    try:
-        cmds.setAttr(skin + "." + attr, value)
-    except RuntimeError as exc:
-        print("  (the FBX's %s = %s does not take: %s)" % (attr, value, str(exc).strip()))
+    for sc in (skin, skin1):
+        try:
+            cmds.setAttr(sc + "." + attr, value)
+        except RuntimeError as exc:
+            print("  (the FBX's %s = %s does not take on %s: %s)" % (attr, value, sc, str(exc).strip()))
 # the bind pose saved again, WHOLE, over all 95 joints (trap 79: the FBX exporter drops a bind pose
 # over one bad member) -- F's went with F's skin; dagPose -save takes the joints' constraint children
 # too, and those come out again
-made_pose = cmds.listConnections(skin + ".bindPose", type="dagPose") or []
+made_pose = [p for sc in (skin, skin1) for p in cmds.listConnections(sc + ".bindPose", type="dagPose") or []]
 for pose in set(made_pose + cmds.ls("bindPose*", type="dagPose")):
     if cmds.objExists(pose) and not pose.startswith(NS + ":"):
         cmds.delete(pose)
@@ -451,7 +504,8 @@ strays = [m for m in cmds.ls(cmds.dagPose(bind_pose, q=True, members=True) or []
           if cmds.objectType(m) != "joint"]
 if strays:
     cmds.dagPose(strays, remove=True, name=bind_pose)
-cmds.connectAttr(bind_pose + ".message", skin + ".bindPose", force=True)
+for sc in (skin, skin1):
+    cmds.connectAttr(bind_pose + ".message", sc + ".bindPose", force=True)
 bind_pose = cmds.rename(bind_pose, "bindPose1")
 dst_fn = oma.MFnSkinCluster(om.MSelectionList().add(skin).getDependNode(0))
 dst_names = [leaf(p.fullPathName()) for p in dst_fn.influenceObjects()]
@@ -477,6 +531,53 @@ print("  at bind every vertex where the FBX has it to %.2e cm" % still)
 assert still < 1e-3
 for a in ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"):
     cmds.setAttr(dup + "." + a, lock=True)
+
+# the 1P skin: MESH's weights at the 1P's vertices, one for one
+fn_1p = oma.MFnSkinCluster(om.MSelectionList().add(skin1).getDependNode(0))
+names_1p = [leaf(p.fullPathName()) for p in fn_1p.influenceObjects()]
+assert sorted(names_1p) == sorted(dst_names), "the two skins' influences differ"
+order_1p = [names_1p.index(n) for n in dst_names]
+comp3 = om.MFnSingleIndexedComponent().create(om.MFn.kMeshVertComponent)
+om.MFnSingleIndexedComponent(comp3).setCompleteData(len(kept_verts))
+w3, k3 = dst_fn.getWeights(dag(shape), comp3)
+w1 = om.MDoubleArray()
+for j in vmap_1p:
+    for i in range(k3):
+        w1.append(w3[j * k3 + i])
+comp1 = om.MFnSingleIndexedComponent().create(om.MFn.kMeshVertComponent)
+om.MFnSingleIndexedComponent(comp1).setCompleteData(len(vmap_1p))
+fn_1p.setWeights(dag(shape1), comp1, om.MIntArray(order_1p), w1, False)
+g1, _k = fn_1p.getWeights(dag(shape1), comp1)
+wdiff1 = max(abs(g1[k * k3 + order_1p[i]] - w3[j * k3 + i])
+             for k, j in enumerate(vmap_1p) if k % 17 == 0 for i in range(k3))
+cmds.dgdirty([shape, shape1])
+at1, at3 = mfn(shape1).getPoints(om.MSpace.kWorld), mfn(shape).getPoints(om.MSpace.kWorld)
+still1 = max(at1[k].distanceTo(at3[j]) for k, j in enumerate(vmap_1p))
+print("  skin %s: the 3P's weights to %.2e, off its bind %.2e, each vertex on the 3P's to %.2e cm, bindPose %s"
+      % (skin1, wdiff1, bind_error(skin1), still1, cmds.listConnections(skin1 + ".bindPose")))
+assert wdiff1 < 1e-12 and bind_error(skin1) < 1e-4 and still1 < 1e-6
+for a in ("tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"):
+    cmds.setAttr(dup1 + "." + a, lock=True)
+
+# Main's switch between the two (the animator's pick: «Переключатель на Main»): `view`, 3P by default,
+# in the channel box but not keyable -- a view, not animation, so no bake and no key ever takes it
+main = cmds.ls("|Group|Main", "Main", type="transform", long=True)
+assert len(set(main)) == 1, main
+main = main[0]
+cmds.addAttr(main, longName=VIEW, attributeType="enum", enumName="3P:1P", defaultValue=0, keyable=False)
+cmds.setAttr(main + "." + VIEW, channelBox=True)
+for mesh_node, value in ((dup, 0), (dup1, 1)):
+    cond = cmds.createNode("condition", name=leaf(mesh_node) + "_viewCondition", skipSelect=True)
+    cmds.connectAttr(main + "." + VIEW, cond + ".firstTerm")
+    cmds.setAttr(cond + ".secondTerm", value)
+    cmds.setAttr(cond + ".colorIfTrueR", 1.0)
+    cmds.setAttr(cond + ".colorIfFalseR", 0.0)
+    cmds.connectAttr(cond + ".outColorR", mesh_node + ".visibility", force=True)
+for value, shown, hidden in ((0, dup, dup1), (1, dup1, dup)):
+    cmds.setAttr(main + "." + VIEW, value)
+    assert cmds.getAttr(shown + ".visibility") and not cmds.getAttr(hidden + ".visibility"), value
+cmds.setAttr(main + "." + VIEW, 0)
+print("  %s.%s: 3P shows %s, 1P shows %s" % (leaf(main), VIEW, MESH, MESH_1P))
 
 # ------------------------------------------------------------------ the FBX out, the leftovers
 cmds.namespace(removeNamespace=NS, deleteNamespaceContent=True)
@@ -520,11 +621,12 @@ for _ in range(8):
 below = cmds.listRelatives("|root", allDescendents=True, type="joint")
 assert len(below) == 94, len(below)
 assert cmds.getAttr("|Group.skeldarRetarget") == "rotation"
-assert cmds.listRelatives("|Group|Geometry", children=True) == [MESH], cmds.listRelatives("|Group|Geometry", children=True)
-assert len(cmds.ls(type="skinCluster")) == 1 and len(cmds.ls(type="blendShape")) == 1
+assert cmds.listRelatives("|Group|Geometry", children=True) == [MESH, MESH_1P], cmds.listRelatives("|Group|Geometry", children=True)
+assert len(cmds.ls(type="skinCluster")) == 2 and len(cmds.ls(type="blendShape")) == 1
 assert cmds.ls(type="dagPose") == ["bindPose1"], cmds.ls(type="dagPose")
 assert len(cmds.dagPose("bindPose1", q=True, members=True)) == 95
-assert not cmds.listAttr("|Group|Geometry|" + MESH, userDefined=True), cmds.listAttr("|Group|Geometry|" + MESH, userDefined=True)
+for m in (MESH, MESH_1P):
+    assert not cmds.listAttr("|Group|Geometry|" + m, userDefined=True), cmds.listAttr("|Group|Geometry|" + m, userDefined=True)
 assert not cmds.namespace(exists=NS)
 ours = [m for m in cmds.ls(materials=True) if m not in KEEP]
 assert sorted(ours) == sorted(m for m, _e in made.values()), ours
