@@ -227,6 +227,16 @@ elif PHASE == 1:
         field, qt.QtGui.QFocusEvent(qt.QtCore.QEvent.FocusIn))
     gate(21, "focus inside a card lights that card",
          skin.active == "uebridge", skin.active)
+    point = qt.QtCore.QPointF(1, 1)
+    qt.QtWidgets.QApplication.sendEvent(
+        maya_hubqt.find(maya_colour.STATUS),
+        qt.QtGui.QEnterEvent(point, point, point))
+    hovered = skin.active
+    qt.QtWidgets.QApplication.sendEvent(
+        skin.root, qt.QtCore.QEvent(qt.QtCore.QEvent.Leave))
+    gate(27, "the mouse over a card lights it; off the hub, the one worked "
+             "in again", hovered == "colour" and skin.active == "uebridge",
+         (hovered, skin.active))
     skin.set_active(None)
 
     # ---- memory back

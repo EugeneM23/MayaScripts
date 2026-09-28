@@ -288,6 +288,48 @@ class ActiveCard(SeamsMixin, unittest.TestCase):
         QtWidgets.QApplication.sendEvent(self.a.header, press)
         self.assertEqual(self.skin.active, "characters")
 
+    def _enter(self, widget):
+        from PySide6 import QtCore as C, QtGui as G
+        QtWidgets.QApplication.sendEvent(
+            widget, G.QEnterEvent(C.QPointF(1, 1), C.QPointF(1, 1),
+                                  C.QPointF(1, 1)))
+
+    def test_the_mouse_over_a_card_lights_it(self):
+        """2026-09-28: «когда я наводил мышкой на какой-то раздел у него
+        включалась подсветка» - not only after a click."""
+        self._enter(self.field)
+        self.assertEqual(self.skin.active, "colour")
+        self._enter(self.a.header)
+        self.assertEqual(self.skin.active, "characters")
+        self.assertTrue(self.a.frame.property("skActive"))
+        self.assertFalse(self.b.frame.property("skActive"))
+
+    def test_off_every_card_the_one_worked_in_is_lit_again(self):
+        self.skin.set_active("colour")                   # pressed in
+        self._enter(self.a.header)                       # hovering
+        self.assertEqual(self.skin.active, "characters")
+        self._enter(self.skin.header)                    # off the cards
+        self.assertEqual(self.skin.active, "colour")
+        self.assertEqual(self.skin.pinned, "colour")
+
+    def test_leaving_the_hub_lights_the_one_worked_in(self):
+        from PySide6 import QtCore as C
+        self.skin.set_active("characters")
+        self._enter(self.field)
+        QtWidgets.QApplication.sendEvent(self.skin.root,
+                                         C.QEvent(C.QEvent.Leave))
+        self.assertEqual(self.skin.active, "characters")
+
+    def test_a_hover_pins_nothing(self):
+        self._enter(self.field)
+        self.assertIsNone(self.skin.pinned)
+        self._enter(self.skin.header)
+        self.assertIsNone(self.skin.active)
+
+    def test_widgets_outside_the_hub_are_no_card(self):
+        outside = QtWidgets.QLineEdit()
+        self.assertIsNone(self.skin.card_of(outside))
+
     def test_the_stylesheet_lights_it(self):
         sheet = style.stylesheet()
         self.assertIn('[skActive="true"]', sheet)

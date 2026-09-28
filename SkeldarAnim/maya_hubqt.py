@@ -230,23 +230,33 @@ def _head_class():
 
 def _watcher_class():
     """An application-wide event filter: a press or a focus change anywhere
-    is handed to `callback(widget)`; it never swallows the event."""
+    is handed to `on_press(widget)`, the mouse entering a widget to
+    `on_enter(widget)`; it never swallows the event."""
     if "watch" not in _CLASSES:
         q = qt()
-        watched = (q.QtCore.QEvent.MouseButtonPress, q.QtCore.QEvent.FocusIn)
+        pressed = (q.QtCore.QEvent.MouseButtonPress, q.QtCore.QEvent.FocusIn)
+        entered = q.QtCore.QEvent.Enter
+        left = q.QtCore.QEvent.Leave
 
         class Watcher(q.QtCore.QObject):
 
-            def __init__(self, callback, parent=None):
+            def __init__(self, on_press, on_enter, on_leave, parent=None):
                 super(Watcher, self).__init__(parent)
-                self._callback = callback
+                self._on_press = on_press
+                self._on_enter = on_enter
+                self._on_leave = on_leave
 
             def eventFilter(self, obj, event):             # noqa: N802
-                if event.type() in watched:
-                    try:
-                        self._callback(obj)
-                    except Exception:                        # noqa: BLE001
-                        pass
+                kind = event.type()
+                try:
+                    if kind in pressed:
+                        self._on_press(obj)
+                    elif kind == entered:
+                        self._on_enter(obj)
+                    elif kind == left:
+                        self._on_leave(obj)
+                except Exception:                            # noqa: BLE001
+                    pass
                 return False
 
         _CLASSES["watch"] = Watcher
@@ -404,12 +414,17 @@ class Skin(object):
         self.scroll.viewport().setObjectName(hubstyle.VIEWPORT)
         top.addWidget(self.scroll, 1)
 
-        #  The card being worked in is lit (2026-09-28, «активное окно
-        #  подсвечивалось немного другим цветом»): the one last pressed or
-        #  focused in, or jumped to. The watcher is the root's child, so it
+        #  The lit card (2026-09-28, «активное окно подсвечивалось немного
+        #  другим цветом»; then «когда я наводил мышкой на какой-то раздел у
+        #  него включалась подсветка»): the card under the mouse, and with
+        #  the mouse off every card, the one last pressed or focused in, or
+        #  jumped to (`pinned`). The watcher is the root's child, so it
         #  leaves the application's filters when the root is deleted.
         self.active = None
-        self._watcher = _watcher_class()(self._activate_from, self.root)
+        self.pinned = None
+        self._watcher = _watcher_class()(self._activate_from,
+                                         self._hover_from, self._left_from,
+                                         self.root)
         app = q.QtWidgets.QApplication.instance()
         if app is not None:
             app.installEventFilter(self._watcher)
@@ -562,7 +577,13 @@ class Skin(object):
                                 + " - press to switch")
 
     def set_active(self, key):
+        """Card `key` is the one worked in (None: none): pinned and lit."""
+        self.pinned = key if key in self.cards else None
+        self._light(self.pinned)
+
+    def _light(self, key):
         """Light card `key` (None: none), the previous one back to plain."""
+        key = key if key in self.cards else None
         if key == self.active:
             return
         for other in (self.active, key):
@@ -570,13 +591,15 @@ class Skin(object):
             if card is not None:
                 card.frame.setProperty("skActive", other == key)
                 repolish(card.frame)
-        self.active = key if key in self.cards else None
+        self.active = key
 
     def card_of(self, widget):
         """The key of the card holding `widget`, or None."""
         q = qt()
         if not isinstance(widget, q.QtWidgets.QWidget):
             return None
+        if widget is not self.root and not self.root.isAncestorOf(widget):
+            return None                     # most of Maya: one walk, out
         for key, card in self.cards.items():
             if card.frame is widget or card.frame.isAncestorOf(widget):
                 return key
@@ -586,6 +609,18 @@ class Skin(object):
         key = self.card_of(widget)
         if key is not None:
             self.set_active(key)
+
+    def _hover_from(self, widget):
+        """The mouse entered `widget`: its card lit, or with none under the
+        mouse the pinned one."""
+        key = self.card_of(widget)
+        self._light(key if key is not None else self.pinned)
+
+    def _left_from(self, widget):
+        """The mouse left the hub (to another window, where no Enter of
+        ours arrives): the pinned card lit again."""
+        if widget is self.root:
+            self._light(self.pinned)
 
     def scroll_to(self, key):
         card = self.cards.get(key)
