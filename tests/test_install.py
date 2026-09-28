@@ -421,6 +421,74 @@ class VersionRecord(unittest.TestCase):
         self.assertNotIn("version.json", install.payload())
 
 
+class InstallOrder(unittest.TestCase):
+    """A fresh install must not report «the previous version was loaded»
+    (2026-09-28, seen on a Maya with nothing of ours): building the shelf
+    loads skeldar_features, and a purge AFTER it dropped that very module
+    and counted it. The purge runs first."""
+
+    class FakeCmds(object):
+        def __init__(self, app):
+            self.app = app
+            self.dialogs = []
+
+        def internalVar(self, **kwargs):
+            return self.app
+
+        def confirmDialog(self, **kwargs):
+            self.dialogs.append(kwargs.get("message", ""))
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="skeldar_order_")
+        self.order = []
+        self.fake = self.FakeCmds(self.tmp + "/")
+        self.saved = (install._cmds, install.copy_payload,
+                      install.write_version, install._build_shelf,
+                      install.purge_modules)
+        install._cmds = lambda: self.fake
+        install.copy_payload = lambda src, dest: self.order.append("copy")
+        install.write_version = lambda src, dest: self.order.append("version")
+        install._build_shelf = lambda dest: self.order.append("shelf")
+        self.purged = []
+        install.purge_modules = lambda: self.order.append("purge") or \
+            list(self.purged)
+
+    def tearDown(self):
+        (install._cmds, install.copy_payload, install.write_version,
+         install._build_shelf, install.purge_modules) = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_the_purge_comes_before_the_shelf_loads_the_flags(self):
+        install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.assertEqual(self.order, ["copy", "version", "purge", "shelf"])
+
+    def test_a_fresh_install_says_nothing_of_a_previous_version(self):
+        install.install(os.path.join(PLUGIN, "install.py"))
+        self.assertEqual(len(self.fake.dialogs), 1)
+        self.assertNotIn("previous version", self.fake.dialogs[0])
+
+    def test_the_flags_the_shelf_read_are_not_left_loaded(self):
+        """The shelf read them from the SOURCE (for the one-file installer, a
+        temp folder deleted a moment later); the next import must find the
+        installed copy's."""
+        sentinel = object()
+        install._build_shelf = lambda dest: sys.modules.__setitem__(
+            "skeldar_features", sentinel)
+        saved = sys.modules.get("skeldar_features")
+        try:
+            install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+            self.assertIsNot(sys.modules.get("skeldar_features"), sentinel)
+        finally:
+            if saved is not None:
+                sys.modules["skeldar_features"] = saved
+
+    def test_a_real_update_says_so(self):
+        self.purged = ["maya_hub", "maya_update"]
+        install.install(os.path.join(PLUGIN, "install.py"))
+        self.assertIn("previous version", self.fake.dialogs[0])
+        self.assertIn("2 modules", self.fake.dialogs[0])
+
+
 class PurgeModules(unittest.TestCase):
     """The update's other half: the import cache, not just the files.
 

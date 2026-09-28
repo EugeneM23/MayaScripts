@@ -344,6 +344,11 @@ def _build_shelf(dest):
         )
 
 
+def _cmds():
+    import maya.cmds as cmds
+    return cmds
+
+
 def install(dropped=None, quiet=False):
     """Copy the payload, build the shelf, say so.
 
@@ -351,8 +356,13 @@ def install(dropped=None, quiet=False):
     is the fallback. `quiet` skips the confirm dialog: a modal dialog
     over the command port blocks Maya's idle queue, so scripted runs
     must never raise one.
+
+    The purge runs BEFORE the shelf is built: building it loads
+    skeldar_features (`features()`), and a purge after dropped that very
+    module and told a fresh Maya «the previous version was loaded»
+    (2026-09-28, the one-file installer's first run).
     """
-    import maya.cmds as cmds
+    cmds = _cmds()
     src = os.path.dirname(os.path.abspath(dropped)) if dropped \
         else source_root()
     dest = os.path.join(cmds.internalVar(userAppDir=True),
@@ -360,8 +370,12 @@ def install(dropped=None, quiet=False):
     if not same_place(src, dest):
         copy_payload(src, dest)
         write_version(src, dest)
-    _build_shelf(dest.replace("\\", "/"))
     reloaded = purge_modules()
+    _build_shelf(dest.replace("\\", "/"))
+    buttons = len(button_specs(dest))
+    # ...and the flags the shelf just read were the SOURCE's (a temp folder,
+    # for the one-file installer): the next import finds the installed copy.
+    sys.modules.pop("skeldar_features", None)
     if not quiet:
         note = ""
         if reloaded:
@@ -373,7 +387,7 @@ def install(dropped=None, quiet=False):
         cmds.confirmDialog(
             title="SkeldarAnim",
             message="Installed: shelf {0}, {1} buttons.\n{2}{3}".format(
-                SHELF, len(button_specs(dest)), dest, note),
+                SHELF, buttons, dest, note),
             button=["OK"])
     return dest
 

@@ -80,6 +80,10 @@ def phase_drop():
          len(dialogs) == 1 and dialogs[0].startswith("Installed: shelf "
                                                      "SkeldarAnim"),
          "%.1f s" % took)
+    #  The first run's dialog told this very Maya «the previous version was
+    #  loaded» - the installer purged the flags module it had just loaded.
+    gate("a fresh Maya is not told about a previous version",
+         dialogs and "previous version" not in dialogs[0])
 
     dest = dest_dir()
     with open(os.path.join(dest, "version.json"), encoding="utf-8") as h:

@@ -765,6 +765,20 @@ drop updates. Stdlib at import — **Maya's drop handler
 `exec`. Every release carries it as a third asset (stable link
 `releases/latest/download/SkeldarAnim_Install.py`); a push touching only it builds nothing and
 re-uploads it onto the latest release (`--clobber`). `README_INSTALL.txt` leads with it.
+Proof: `verify_setup_script.py` in a disposable Maya with a FRESH `MAYA_APP_DIR` (nothing of ours
+installed or importable): the file downloaded from the real release (8.9 KB), dropped through
+Maya's own `executeDroppedPythonFile` with `confirmDialog` recorded, **installed in 10.0 s**, the
+record the published one, the payload in place, the shelf two buttons, the download gone, the hub
+open from the installed copy, Check update «Up to date». **That run's dialog told the fresh Maya
+«The previous version was loaded in this session (1 modules dropped)»** — trap 89 below; fixed in
+`install.install`, the gate added. 2361 unit tests.
+
+89. **The installer purged the flags module it had just loaded itself and called it the previous
+    version.** `_build_shelf` → `button_specs` → `features()` puts `skeldar_features` into
+    `sys.modules`, and `purge_modules()` ran AFTER the shelf, dropped it and counted it — so every
+    install into a fresh Maya (a hand drag of `install.py` too) said an old build had been loaded.
+    The purge runs first now, the button count is taken before `skeldar_features` is popped (it
+    was read from the SOURCE, a temp folder for the one-file installer), and a test pins the order.
 
 ## The Creep: its own AS rig, and a ROTATION-ONLY retarget (2026-09-24)
 
