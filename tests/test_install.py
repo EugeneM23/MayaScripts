@@ -372,9 +372,12 @@ class VersionRecord(unittest.TestCase):
         self.assertIn("maya_update.py", install.payload())
         self.assertIn("maya_update", install.module_names())
 
-    def test_the_repository_answers_its_head(self):
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=PLUGIN,
-                              capture_output=True, text=True).stdout.strip()
+    def test_the_repository_answers_its_last_payload_commit(self):
+        """Not HEAD: a CLAUDE.md-only commit is not a new build."""
+        head = subprocess.run(
+            ["git", "log", "-1", "--format=%H", "--"]
+            + list(install.payload()), cwd=PLUGIN,
+            capture_output=True, text=True).stdout.strip()
         rec = install.git_record(PLUGIN)
         self.assertEqual(rec["commit"], head)
         self.assertEqual(rec["short"], head[:7])

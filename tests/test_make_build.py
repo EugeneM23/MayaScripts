@@ -174,6 +174,18 @@ class VersionRecord(FakeTree):
         with open(beside, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle), rec)
 
+    def test_a_commit_outside_the_payload_is_not_a_new_build(self):
+        """A CLAUDE.md-only commit changes nothing a colleague receives."""
+        head = self._commit()
+        _write(os.path.join(self.root, "notes.md"), "docs")
+        self._git("add", "notes.md")
+        self._git("-c", "user.name=t", "-c", "user.email=t@t", "commit",
+                  "-q", "-m", "docs only")
+        rec = make_build.version_record(self.root, self.NAMES)
+        self.assertEqual(rec["commit"], head)
+        self.assertEqual([sha for sha, _ in rec["log"]], [head])
+        self.assertEqual(rec["subject"], "the first build")
+
     def test_a_release_without_git_is_refused(self):
         """A record with no commit would read as "not current" to every
         colleague, for ever."""

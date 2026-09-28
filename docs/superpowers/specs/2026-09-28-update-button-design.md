@@ -128,6 +128,19 @@ subjects of the commits in the push. Then releases whose tag starts with
 `build-` beyond the newest 10 are deleted with their tags. Nothing else in
 the repository is touched by CI.
 
+## Addendum (the same morning): a build is the last PAYLOAD commit
+
+With the record naming HEAD, a push of CLAUDE.md alone would publish a
+new release of identical files, every colleague's Check update would offer
+it, and the animator's own source install (recording the docs commit)
+would be offered the previous build as "available". So `git_record` names
+the last commit that touched the payload (`git log -1 -- <payload>`), the
+log lists only such commits, and the workflow runs on pushes touching
+`SkeldarAnim/**`, `make_build.py` or itself — the last two build the same
+commit, so a release whose tag already ends in that commit is skipped.
+Tags and titles carry the payload commit; the notes list the push's
+commits under `SkeldarAnim/`.
+
 ## Not built
 
 A check at Maya start, a rollback button, per-colleague channels, running

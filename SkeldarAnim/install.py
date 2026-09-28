@@ -262,27 +262,30 @@ def git_output(cwd, *args):
 
 
 def git_record(src_root, names=None):
-    """The source's commit as a version record; {} without git.
+    """The source's version record; {} without git.
 
-    `log` is the last LOG_LENGTH commits, newest first, `[sha, subject]`:
-    Check update lists the ones newer than what is installed. `dirty`
-    asks about the payload only (`names`, the payload by default).
+    The commit is the last one that touched the PAYLOAD (`names`, the
+    payload by default), not HEAD: a commit to CLAUDE.md or a spec changes
+    nothing a colleague receives, and must not read as a new build to
+    download. `log` is the last LOG_LENGTH such commits, newest first,
+    `[sha, subject]` -- Check update lists the ones newer than what is
+    installed. `dirty` asks about the payload only.
     """
-    commit = git_output(src_root, "rev-parse", "HEAD")
+    names = payload() if names is None else names
+    commit = git_output(src_root, "log", "-1", "--format=%H", "--", *names)
     if len(commit) != 40:
         return {}
-    names = payload() if names is None else names
     log = []
     for line in git_output(src_root, "log", "-{0}".format(LOG_LENGTH),
-                           "--format=%H %s").splitlines():
+                           "--format=%H %s", "--", *names).splitlines():
         sha, _, subject = line.partition(" ")
         log.append([sha, subject])
     return {
         "name": SHELF,
         "commit": commit,
         "short": commit[:7],
-        "subject": git_output(src_root, "log", "-1", "--format=%s"),
-        "date": git_output(src_root, "log", "-1", "--format=%cI"),
+        "subject": git_output(src_root, "log", "-1", "--format=%s", commit),
+        "date": git_output(src_root, "log", "-1", "--format=%cI", commit),
         "branch": git_output(src_root, "rev-parse", "--abbrev-ref", "HEAD"),
         "dirty": bool(git_output(src_root, "status", "--porcelain", "--",
                                  *names)),

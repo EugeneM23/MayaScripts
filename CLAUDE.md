@@ -666,15 +666,21 @@ of history. The private road (read-only token) was offered and declined.
 The visibility flip is theirs; nothing here does it.
 
 - **CI**: `.github/workflows/build.yml`, on push to `feature/overrig-picker`
-  (+ `workflow_dispatch`): `python3 make_build.py --out dist/SkeldarAnim.zip
+  touching `SkeldarAnim/**`, `make_build.py` or the workflow (+
+  `workflow_dispatch`): `python3 make_build.py --out dist/SkeldarAnim.zip
   --version-out dist/version.json` (stdlib — the runner's python is
-  enough), `gh release create build-<utc>-<sha7>` with both assets,
-  `--latest`, notes = the push's commit subjects; builds beyond the newest
-  10 pruned with their tags. `concurrency: release`, nothing cancelled.
+  enough), `gh release create build-<utc>-<payload sha7>` with both assets,
+  `--latest`, notes = the push's commits under `SkeldarAnim/`; skipped when
+  a release for that payload commit exists; builds beyond the newest 10
+  pruned with their tags. `concurrency: release`, nothing cancelled.
 - **`version.json`** — one record (`commit`, `short`, `subject`, `date`,
   `branch`, `dirty`, `log` = the last 30 `[sha, subject]`, plus `built` in a
   build), shaped by `install.git_record` (stdlib `subprocess` git,
-  `CREATE_NO_WINDOW`; `{}` without git). `make_build` writes it INTO the
+  `CREATE_NO_WINDOW`; `{}` without git). **The commit is the last one that
+  touched the PAYLOAD, not HEAD** (`git log -1 -- <payload>`), and so is
+  the log: a CLAUDE.md-only push is not a new build — it would otherwise
+  publish identical files, and a source install would be offered the
+  previous build. `make_build` writes it INTO the
   archive and, with `--version-out`, beside it; a release build refuses
   without a commit. `install.install` writes `<dest>/version.json`: the
   build's own, or — installed from the repo — the git record plus
@@ -705,13 +711,20 @@ record wound back a commit, Check update asking once with both builds and
 the new commit's subject, the old build's stray file gone, the record the
 published one, the modules purged; then the hub rebuilt from fresh modules
 with the message, a second press «Up to date», 404 / cancel / refused
-connection each changing nothing. **The real address answered «No build is
-published … (or the repository is private)»** — correct for the private
-repo, and proof that HTTPS from Maya's Python reaches GitHub. **Not yet
-proved: a real Actions run and a download from the real release** — both
-wait for the push and the visibility flip. 2312 unit tests. A colleague on
-a build from before this has no Update section: one manual drag of a new
-build, then the button.
+connection each changing nothing. While the repo was private the real
+address answered «No build is published … (or the repository is private)».
+**The real road, after the animator made the repository public the same
+morning**: Actions runs 1 and 2 green, releases `build-…-e298bdc` and
+`build-…-601eaae` (48.3 MB each), `latest/download/version.json` = 601eaae,
+clean; the animator's live Maya pressed «Up to date: 601eaae» with no
+question asked; the disposable Maya (scratch prefs holding an older build)
+asked once listing the two new commits, downloaded and installed from
+GitHub in **7.5 s**, its record equal to the release's, the hub rebuilt
+from fresh modules, a second press «Up to date», the shelf still two
+buttons. The panel's lines carry no commit subject since `601eaae`: in the
+animator's 360 px dock the installed line wrapped past its height (trap
+67). 2314 unit tests. A colleague on a build from before this has no
+Update section: one manual drag of a new build, then the button.
 
 ## The Creep: its own AS rig, and a ROTATION-ONLY retarget (2026-09-24)
 
