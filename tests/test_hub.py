@@ -431,6 +431,8 @@ def _fake_qt(available=True):
     module = types.ModuleType("maya_hubqt_fake")
     module.available = lambda: available
     module.host_widget = lambda control: "widget of " + control
+    module.destroyed = []
+    module.destroy_roots = lambda control: module.destroyed.append(control)
     module.Skin = FakeSkin
     module.applied = []
     module.apply_marks = lambda marks, card, scale: module.applied.append(
@@ -462,6 +464,12 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertTrue(hub.is_skinned())
         self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
         self.assertEqual(hub._SKIN.scale, 1.5)
+
+    def test_an_older_skin_in_the_control_goes_first(self):
+        """After an install the fresh module does not know the old skin:
+        the roots are found in the control by name and deleted."""
+        hub.build()
+        self.assertEqual(self.qt.destroyed, [hub.CONTROL])
 
     def test_cards_under_group_labels_and_no_frames(self):
         hub.build()

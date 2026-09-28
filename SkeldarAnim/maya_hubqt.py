@@ -107,6 +107,26 @@ def path_of(obj):
     return omui.MQtUtil.fullName(int(q.shiboken.getCppPointer(obj)[0]))
 
 
+def destroy_roots(control):
+    """Delete every skin root standing in workspaceControl `control`, NOW.
+
+    Measured 2026-09-28: after an install the fresh `maya_hub` does not know
+    the skin an older module object built, so a rebuild left that root in
+    the control beside the new one -- two sets of controls with the same
+    names, and `find` styling the old set. Found by objectName, never by
+    module state. Returns how many were deleted."""
+    q = qt()
+    host = host_widget(control)
+    if host is None:
+        return 0
+    roots = [w for w in host.findChildren(q.QtWidgets.QWidget)
+             if w.objectName() == hubstyle.ROOT]
+    for root in roots:
+        root.setParent(None)
+        q.shiboken.delete(root)
+    return len(roots)
+
+
 def host_widget(control):
     """The QWidget of workspaceControl `control`, which a root goes into.
 

@@ -82,10 +82,13 @@ elif PHASE == 1:
     gate(1, "the skin stands (built by the installed copy)",
          maya_hub.is_skinned() and here.startswith(installed), here)
     host = skin.root.parentWidget()
-    gate(2, "its root sits in the workspaceControl",
+    roots = [w for w in host.findChildren(qt.QtWidgets.QWidget)
+             if w.objectName() == maya_hubstyle.ROOT] if host else []
+    gate(2, "its root, alone, sits in the workspaceControl",
          host is not None and host.objectName() == maya_hub.CONTROL
-         and skin.root.objectName() == maya_hubstyle.ROOT,
-         host.objectName() if host else None)
+         and skin.root.objectName() == maya_hubstyle.ROOT
+         and len(roots) == 1,
+         (host.objectName() if host else None, len(roots)))
 
     # ---- 3-5: the header
     actions = [a.text() for a in skin.menu.actions() if not a.isSeparator()]

@@ -77,6 +77,18 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertIs(skin.host, host)
         skin.destroy()
 
+    def test_destroy_roots_takes_every_skin_in_the_control(self):
+        """A root an older module object built is found by name."""
+        host = self.control(QtWidgets.QWidget, "hubControl")
+        QtWidgets.QVBoxLayout(host)
+        old = hubqt.Skin(host, scale=1.0)
+        new = hubqt.Skin(host, scale=1.0)
+        self.assertEqual(hubqt.destroy_roots("hubControl"), 2)
+        self.assertFalse(old.alive())
+        self.assertFalse(new.alive())
+        self.assertEqual(hubqt.destroy_roots("hubControl"), 0)
+        self.assertEqual(hubqt.destroy_roots("nothing"), 0)
+
     def test_the_scroll_area_never_scrolls_sideways(self):
         self.assertEqual(self.skin.scroll.horizontalScrollBarPolicy(),
                          QtCore.Qt.ScrollBarAlwaysOff)

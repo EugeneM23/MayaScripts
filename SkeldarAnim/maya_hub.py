@@ -308,6 +308,9 @@ def _build_skin():
     """The skinned hub. Deleted whole if any of it fails, then re-raised."""
     qt = _hubqt()
     scale = _scale()
+    #  a skin an older module object built (an install purges the modules,
+    #  not the widgets) goes first, or its controls answer to our names
+    qt.destroy_roots(CONTROL)
     skin = qt.Skin(qt.host_widget(CONTROL), scale=scale,
                    callbacks=_callbacks())
     hubstyle.set_skinning(True)
