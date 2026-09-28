@@ -453,5 +453,166 @@ class ColourOf(unittest.TestCase):
         self.assertIsNone(colour.colour_of([]))
 
 
+class TextureCmds(object):
+    """A scene with nodes, attributes and connections: enough to build a
+    textured material and find it again."""
+
+    def __init__(self, panels=None):
+        self.kinds = {}                        # node -> type
+        self.attrs = {}                        # "node.attr" -> value
+        self.links = []                        # (source plug, target plug)
+        self.forced = []
+        self.panels = dict(panels or {})       # panel -> textures on?
+        self.edited = []
+
+    def shadingNode(self, kind, **kwargs):
+        name = kwargs.get("name", kind)
+        while name in self.kinds:
+            name += "1"
+        self.kinds[name] = kind
+        return name
+
+    def sets(self, *args, **kwargs):
+        if kwargs.get("empty"):
+            name = kwargs.get("name", "SG")
+            self.kinds[name] = "shadingEngine"
+            return name
+        self.forced.append((list(args[0]), kwargs.get("forceElement")))
+        return kwargs.get("forceElement")
+
+    def connectAttr(self, source, target, **kwargs):
+        self.links.append((source, target))
+
+    def setAttr(self, plug, *values, **kwargs):
+        self.attrs[plug] = values[0] if len(values) == 1 else tuple(values)
+
+    def getAttr(self, plug, **kwargs):
+        return self.attrs[plug]
+
+    def addAttr(self, node, **kwargs):
+        self.attrs[node + "." + kwargs["longName"]] = ""
+
+    def attributeQuery(self, name, **kwargs):
+        return kwargs.get("node", "") + "." + name in self.attrs
+
+    def ls(self, *args, **kwargs):
+        if kwargs.get("materials"):
+            return [n for n, k in self.kinds.items() if k in ("phong", "lambert")]
+        return list(args[0]) if args else []
+
+    def listConnections(self, plug, **kwargs):
+        found = []
+        for source, target in self.links:
+            if target == plug:
+                found.append(source.split(".")[0])
+            elif source == plug:
+                found.append(target.split(".")[0])
+        kind = kwargs.get("type")
+        return [n for n in found if not kind or self.kinds.get(n) == kind]
+
+    def getPanel(self, **kwargs):
+        if kwargs.get("type") == "modelPanel":
+            return list(self.panels)
+        if kwargs.get("visiblePanels"):
+            #  what a Maya whose window was never exposed answers
+            return None
+        return "modelPanel" if kwargs["typeOf"] in self.panels else "outlinerPanel"
+
+    def modelEditor(self, panel, **kwargs):
+        if kwargs.get("query"):
+            return self.panels[panel]
+        self.edited.append(panel)
+        self.panels[panel] = kwargs["displayTextures"]
+
+
+class Textured(unittest.TestCase):
+    """A weapon that arrives in its own texture (2026-09-28, Spear 03):
+    the one shader wearing LOOK, a file node on its colour, and a marker
+    that is NOT the palette's - so no colour scan reads it and Recolour
+    builds a colour material over it."""
+
+    IMAGE = "C:/prefs/SkeldarAnim/assets/Spear_03.png"
+
+    def setUp(self):
+        self.real = colour.cmds
+        self.fake = TextureCmds()
+        colour.cmds = self.fake
+
+    def tearDown(self):
+        colour.cmds = self.real
+
+    def test_the_one_shader_with_the_image_on_its_colour(self):
+        material = colour.paint_texture(["|spearShape"], self.IMAGE, "Spear_03")
+        self.assertEqual(self.fake.kinds[material], colour.SHADER)
+        for attr, value in colour.LOOK.items():
+            self.assertEqual(self.fake.attrs[material + "." + attr], value, attr)
+        files = [n for n, k in self.fake.kinds.items() if k == "file"]
+        self.assertEqual(len(files), 1)
+        self.assertEqual(self.fake.attrs[files[0] + ".fileTextureName"],
+                         self.IMAGE)
+        self.assertIn((files[0] + ".outColor", material + ".color"),
+                      self.fake.links)
+
+    def test_the_file_reads_its_uvs_from_a_place2d(self):
+        colour.paint_texture(["|spearShape"], self.IMAGE, "Spear_03")
+        place = [n for n, k in self.fake.kinds.items()
+                 if k == "place2dTexture"][0]
+        targets = [t for s, t in self.fake.links if s.startswith(place + ".")]
+        self.assertTrue(any(t.endswith(".uvCoord") for t in targets))
+        self.assertTrue(any(t.endswith(".uvFilterSize") for t in targets))
+
+    def test_the_shapes_wear_it(self):
+        material = colour.paint_texture(["|spearShape"], self.IMAGE, "Spear_03")
+        engine = colour.engine_of(material)
+        self.assertEqual(self.fake.forced, [(["|spearShape"], engine)])
+
+    def test_marked_as_textured_never_as_a_palette_colour(self):
+        material = colour.paint_texture(["|spearShape"], self.IMAGE, "Spear_03")
+        self.assertEqual(self.fake.attrs[material + "." + colour.TEXTURE_MARKER],
+                         self.IMAGE)
+        self.assertFalse(colour.is_ours(material))
+        self.assertNotIn(material, colour.our_materials())
+
+    def test_a_second_add_reuses_the_material(self):
+        first = colour.paint_texture(["|a"], self.IMAGE, "Spear_03")
+        second = colour.paint_texture(["|b"], self.IMAGE, "Spear_03")
+        self.assertEqual(first, second)
+        self.assertEqual(
+            len([n for n, k in self.fake.kinds.items() if k == "file"]), 1)
+
+    def test_another_image_is_another_material(self):
+        first = colour.paint_texture(["|a"], self.IMAGE, "Spear_03")
+        second = colour.paint_texture(["|b"], "C:/x/Axe.png", "Axe")
+        self.assertNotEqual(first, second)
+
+    def test_no_meshes_is_a_quiet_no_op(self):
+        self.assertIsNone(colour.paint_texture([], self.IMAGE, "Spear_03"))
+        self.assertEqual(self.fake.kinds, {})
+
+
+class ShowTextures(unittest.TestCase):
+    """A textured material reads flat grey in a viewport with Textures off,
+    so a textured Add turns them on where they are off - and only there."""
+
+    def setUp(self):
+        self.real = colour.cmds
+
+    def tearDown(self):
+        colour.cmds = self.real
+
+    def test_only_the_model_panels_that_had_them_off(self):
+        fake = TextureCmds(panels={"modelPanel4": False, "modelPanel1": True})
+        colour.cmds = fake
+        self.assertEqual(colour.show_textures(), ["modelPanel4"])
+        self.assertEqual(fake.edited, ["modelPanel4"])
+        self.assertTrue(fake.panels["modelPanel4"])
+
+    def test_nothing_to_do_is_nothing_done(self):
+        fake = TextureCmds(panels={"modelPanel4": True})
+        colour.cmds = fake
+        self.assertEqual(colour.show_textures(), [])
+        self.assertEqual(fake.edited, [])
+
+
 if __name__ == "__main__":
     unittest.main()

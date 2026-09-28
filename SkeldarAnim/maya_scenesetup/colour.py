@@ -29,6 +29,7 @@ colour and can also just not bother.
 """
 
 import collections
+import os
 
 import maya.cmds as cmds
 
@@ -39,6 +40,21 @@ Colour = collections.namedtuple("Colour", "name rgb")
 MARKER = "skeldarColour"
 
 PREFIX = "skeldarColour"
+
+# A textured material of ours (2026-09-28, Spear 03) carries THIS marker, the
+# image path as its value, and never MARKER: the palette scan must not read
+# its `.color` (a file node's output) as a worn colour, and `paint` -- which
+# recolours a MARKER material with a setAttr on `.color` -- must not find it.
+# So Recolour and the Colour tool build a colour material over it instead,
+# which is the animator's ruling («заменяет текстуру цветом»).
+TEXTURE_MARKER = "skeldarTexture"
+
+# What Hypershade wires from a place2dTexture into a file node, besides the
+# two uv plugs.
+_PLACE2D = ("coverage", "translateFrame", "rotateFrame", "mirrorU", "mirrorV",
+            "stagger", "wrapU", "wrapV", "repeatUV", "offset", "rotateUV",
+            "noiseUV", "vertexUvOne", "vertexUvTwo", "vertexUvThree",
+            "vertexCameraOne")
 
 # ONE shader for every model and rig we put into the scene (2026-09-25: «на все
 # наши модели и риги нужно настроить единый шейдер, такой чтобы он смотрелся
@@ -413,3 +429,95 @@ def paint_nodes(nodes, rgb, key):
     asset's, not this scene's choice.
     """
     return paint_fresh(mesh_shapes(nodes), rgb, key)
+
+
+def _same_path(first, second):
+    def norm(path):
+        return os.path.normcase(os.path.normpath((path or "").replace("\\",
+                                                                      "/")))
+    return norm(first) == norm(second)
+
+
+def textured_material(image):
+    """Our textured material already dressed in `image` and still wired, or
+    None -- so re-adding a weapon does not pile up file nodes."""
+    for material in cmds.ls(materials=True) or []:
+        try:
+            if not cmds.attributeQuery(TEXTURE_MARKER, node=material,
+                                       exists=True):
+                continue
+            wanted = cmds.getAttr(material + "." + TEXTURE_MARKER)
+        except Exception:
+            continue
+        if _same_path(wanted, image) and cmds.listConnections(
+                material + ".color", type="file"):
+            return material
+    return None
+
+
+def make_textured_material(image, key):
+    """SHADER wearing LOOK with `image` on its colour, marked TEXTURE_MARKER,
+    with its shading engine. The file node is colour-managed sRGB and reads
+    its uvs from a place2dTexture wired as Hypershade wires one."""
+    name = "skeldarTexture_" + (key or "weapon")
+    material = cmds.shadingNode(SHADER, asShader=True, name=name)
+    dress(material)
+    texture = cmds.shadingNode("file", asTexture=True, isColorManaged=True,
+                               name=name + "_file")
+    place = cmds.shadingNode("place2dTexture", asUtility=True,
+                             name=name + "_place2d")
+    for attr in _PLACE2D:
+        cmds.connectAttr(place + "." + attr, texture + "." + attr, force=True)
+    cmds.connectAttr(place + ".outUV", texture + ".uvCoord", force=True)
+    cmds.connectAttr(place + ".outUvFilterSize", texture + ".uvFilterSize",
+                     force=True)
+    cmds.setAttr(texture + ".fileTextureName", image, type="string")
+    try:
+        cmds.setAttr(texture + ".colorSpace", "sRGB", type="string")
+    except Exception:
+        pass                    # colour management off: the default is sRGB
+    cmds.connectAttr(texture + ".outColor", material + ".color", force=True)
+    cmds.addAttr(material, longName=TEXTURE_MARKER, dataType="string")
+    cmds.setAttr(material + "." + TEXTURE_MARKER, image, type="string")
+
+    engine = cmds.sets(renderable=True, noSurfaceShader=True, empty=True,
+                       name=material + "SG")
+    cmds.connectAttr(material + ".outColor", engine + ".surfaceShader",
+                     force=True)
+    return material, engine
+
+
+def paint_texture(shapes, image, key):
+    """`shapes` dressed in `image`: the material already made for it, else a
+    new one. Returns the material, or None when there is nothing to paint."""
+    shapes = [shape for shape in (shapes or []) if shape]
+    if not shapes:
+        return None
+    material = textured_material(image)
+    engine = engine_of(material) if material else None
+    if not engine:
+        material, engine = make_textured_material(image, key)
+    cmds.sets(shapes, edit=True, forceElement=engine)
+    return material
+
+
+def paint_texture_nodes(nodes, image, key):
+    """`paint_texture` over whatever `nodes` hold, as `paint_nodes` is."""
+    return paint_texture(mesh_shapes(nodes), image, key)
+
+
+def show_textures():
+    """Textures on in every model panel where they are off. Returns the
+    panels switched: a textured material reads flat grey without them, and
+    the Add that brought one says what it turned on.
+
+    Every model panel, not the visible ones: `getPanel -visiblePanels`
+    answered None in a Maya whose viewport was up and focused (measured
+    2026-09-28), and a viewport hidden behind the Graph Editor at the press
+    would come back without the texture."""
+    switched = []
+    for panel in cmds.getPanel(type="modelPanel") or []:
+        if not cmds.modelEditor(panel, query=True, displayTextures=True):
+            cmds.modelEditor(panel, edit=True, displayTextures=True)
+            switched.append(panel)
+    return switched

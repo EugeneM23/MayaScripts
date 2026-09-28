@@ -15,8 +15,11 @@ import string
 # `frame` (2026-09-24) is the model's own turn on its bone, XYZ degrees: where
 # zero grip stands it, the node's axes on the geometry (bonedrive.FRAME_ROTATE).
 # The identity for a model already on the bone's axes -- every row but one.
-Weapon = collections.namedtuple("Weapon", "key label path bone scale frame",
-                                defaults=((0.0, 0.0, 0.0),))
+# `texture` (2026-09-28) is the shipped image the weapon arrives in instead of
+# a palette colour (colour.paint_texture); "" for every row that has none.
+Weapon = collections.namedtuple("Weapon",
+                                "key label path bone scale frame texture",
+                                defaults=((0.0, 0.0, 0.0), ""))
 
 # The characters Add Character can put into the scene (2026-09-01). A table
 # for the same reason the weapons are one: a third skeleton is a row, not a
@@ -174,6 +177,15 @@ WEAPONS = [
     # thickness on Z, the origin on the shaft where the model's author put
     # it (59 cm above the butt). 266 cm long, so the scale is 1.0.
     Weapon("Spear_01", "Spear 01", _asset_path("Spear_01.fbx"), "weapon_r", 1.0),
+    # 2026-09-28, the animator's Spear_03.fbx + Halberd_A.tga («это должно
+    # выдаваться сразу с текстурой»), built by
+    # docs/superpowers/plans/make_spear03_asset.py: the LOD0 alone, a quarter
+    # turn about Y onto the sword's axes (the head's width on X), 199.6 cm
+    # with the origin at Spear 01's fraction of the length from the butt
+    # (0.2233, the animator's pick), the TGA as a lossless PNG. The first row
+    # that arrives in its texture rather than a palette colour.
+    Weapon("Spear_03", "Spear 03", _asset_path("Spear_03.fbx"), "weapon_r", 1.0,
+           texture=_asset_path("Spear_03.png")),
     # 2026-09-17, the animator's Dagger.fbx exported onto the same axes by
     # docs/superpowers/plans/make_dagger_asset.py: blade along +Y with the
     # tip at +Y, the grip going -Y, the guard's width on X, the thickness
@@ -215,8 +227,11 @@ def by_key(key):
 
 
 def missing(entry):
-    """The entry's path if the file is not on disk, "" if it is."""
-    return "" if os.path.isfile(entry.path) else entry.path
+    """The entry's model -- or its texture -- if not on disk, "" if both are."""
+    if not os.path.isfile(entry.path):
+        return entry.path
+    texture = getattr(entry, "texture", "")
+    return texture if texture and not os.path.isfile(texture) else ""
 
 
 def node_key(text):

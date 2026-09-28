@@ -3637,6 +3637,49 @@ for both, a real Add landing the dagger on `weapon_r` at **0.000000** with
 scale 0.4 and the blade **45.71 cm** along its own axis in the hand, the
 sword replacing it. The live dropdown lists all three.
 
+**Spear 03 is the first weapon that arrives in its TEXTURE** (2026-09-28,
+the animator, with `Downloads/Spear_03.fbx` + `Halberd_A.tga`: «это должно
+выдаваться сразу с текстурой»). Spec:
+`docs/superpowers/specs/2026-09-28-spear03-textured-weapon-design.md`.
+Measured: a Blender FBX from a Unity project, LOD0 (230 vertices) + LOD1, 199.6
+cm along +Y, head at +Y but its width on **Z**, the butt ON the origin, a phong
+whose file node points at a `D:\Unity_Project\...` path, the UV set `UVКарта`
+(Maya shows `UV?????`); the TGA 2048², 24-bit, no alpha, 12.6 MB. The animator
+chose the grip **at Spear 01's fraction of the length** (0.2233, measured on
+`Spear_01.fbx` in the script's own run) and **Recolour replaces the texture
+with a colour** (one meaning per control; the next Add brings it back).
+`make_spear03_asset.py` (standalone): LOD0 alone, a quarter turn about +Y,
+the origin up to the grip, UV set `map1`, a plain lambert, and the TGA as
+**`assets/Spear_03.png`** (6.7 MB, pixel-for-pixel). **`catalog.Weapon`
+gained `texture`** (default ""; `missing()` names a missing image);
+**`colour.paint_texture`** dresses the shapes in the one shader wearing LOOK
+with a colour-managed file node (place2dTexture wired as Hypershade wires
+it) on `.color`, marked **`skeldarTexture`** = the image — never
+`skeldarColour`, so the palette scan does not count it and `paint`'s reuse
+path (a `setAttr` on `.color`) never finds it; the same image's material is
+reused on the next Add. **Weapons > Add** says «textured», leaves the swatch,
+and turns **Textures on in every model panel** where they are off, saying so
+(«textured (viewport textures on)»). Proof: `verify_spear03_weapon.py` **19/19
+standalone** (the frame and the grip fraction against Spear 01 in the same
+run, the PNG = the TGA, on weapon_r at zero grip 4.8e-7, the file node's
+samples at six texel centres equal to the PNG's pixels to **0.0000** — the
+rows flipped read 0.43, so an upside-down image cannot pass — outside the
+palette, Recolour over it, the second Add on the same material with one file
+node, the sword replacing it); the real Weapons > Add in a disposable Maya
+(textures turned on in all four panels, the playblast showing a wood shaft
+and a steel head); 2330 unit tests.
+
+87. **`MImage.pixels()` answers an ADDRESS and `MImage.getSize()` a LIST.**
+    `bytes(image.pixels())` is a MemoryError (an int that size), and
+    `image.getSize() == (w, h)` is always False — which, short-circuiting,
+    made a first "the PNG equals the TGA" check report False without ever
+    comparing a pixel. `ctypes.string_at(image.pixels(), w * h *
+    image.depth())` is the buffer.
+88. **`cmds.getPanel(visiblePanels=True)` can answer None with a model panel
+    up and focused** (a GUI Maya launched to the background, measured
+    2026-09-28). A viewport setting meant to be seen goes through
+    `getPanel(type="modelPanel")`; the visible-only version turned nothing on.
+
 **The FBX field** takes a path to any file the catalog knows nothing about and
 wins over the dropdown while it holds one. It resolves in ONE place
 (`window.chosen_entry` → `catalog.entry_for_path`), so Add, the offset fields,

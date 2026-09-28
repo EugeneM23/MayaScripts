@@ -184,6 +184,22 @@ class Messages(unittest.TestCase):
         self.assertIn("weapon_r", message)
         self.assertNotIn("|", message)
 
+    def test_a_coloured_weapon_names_its_colour(self):
+        self.assertEqual(window.appearance(SWORD, (0.80, 0.25, 0.22), []),
+                         "red")
+
+    def test_a_textured_weapon_says_textured_not_a_colour(self):
+        """2026-09-28, Spear 03: no swatch colour went on it."""
+        spear = catalog.by_key("Spear_03")
+        self.assertEqual(window.appearance(spear, (0.80, 0.25, 0.22), []),
+                         "textured")
+
+    def test_viewport_textures_turned_on_are_said(self):
+        spear = catalog.by_key("Spear_03")
+        text = window.appearance(spear, (0.80, 0.25, 0.22), ["modelPanel4"])
+        self.assertIn("textured", text)
+        self.assertIn("viewport textures on", text)
+
     def test_bound_names_the_character(self):
         self.assertIn("root", window.bound_message("|SKM_Manny|root"))
 

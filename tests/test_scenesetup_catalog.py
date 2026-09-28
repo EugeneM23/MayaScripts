@@ -72,7 +72,34 @@ class Table(unittest.TestCase):
 
     def test_the_dropdown_order_is_sword_then_spear(self):
         self.assertEqual(catalog.labels(),
-                         ["Long Sword 02", "Spear 01", "Dagger 01", "Creep Sword"])
+                         ["Long Sword 02", "Spear 01", "Spear 03", "Dagger 01",
+                          "Creep Sword"])
+
+    def test_spear_03_ships_with_its_texture(self):
+        """2026-09-28, «это должно выдаваться сразу с текстурой»: the first
+        row that arrives in an image rather than a palette colour."""
+        entry = catalog.by_key("Spear_03")
+        self.assertEqual((entry.label, entry.bone, entry.scale, entry.frame),
+                         ("Spear 03", "weapon_r", 1.0, (0.0, 0.0, 0.0)))
+        self.assertTrue(entry.path.endswith("assets/Spear_03.fbx"), entry.path)
+        self.assertTrue(entry.texture.endswith("assets/Spear_03.png"),
+                        entry.texture)
+        self.assertNotIn("\\", entry.texture)
+        self.assertFalse(catalog.missing(entry))
+
+    def test_only_spear_03_is_textured(self):
+        for entry in catalog.WEAPONS:
+            if entry.key != "Spear_03":
+                self.assertEqual(entry.texture, "", entry.key)
+        self.assertEqual(
+            catalog.entry_for_path("C:/x/Axe.fbx", "weapon_r").texture, "")
+        self.assertEqual(
+            catalog.Weapon("X", "X", "C:/x.fbx", "weapon_r", 1.0).texture, "")
+
+    def test_a_missing_texture_is_named_like_a_missing_model(self):
+        entry = catalog.by_key("Spear_03")._replace(
+            texture="C:/nowhere/Spear_03.png")
+        self.assertEqual(catalog.missing(entry), "C:/nowhere/Spear_03.png")
 
     def test_the_creep_sword_is_the_fourth_row(self):
         """2026-09-24: the Creep's own sword out of its rig, on the catalog's

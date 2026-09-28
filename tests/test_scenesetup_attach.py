@@ -325,6 +325,10 @@ class FakeColouring(object):
         self.log.append(("paint", list(nodes), tuple(rgb), key))
         return "skeldarColour_red"
 
+    def paint_texture_nodes(self, nodes, image, key):
+        self.log.append(("texture", list(nodes), image, key))
+        return "skeldarTexture_Spear_03"
+
 
 class AttachFlow(SpaceSwap, unittest.TestCase):
     """attach() ordering, with the import and the scene both faked.
@@ -491,6 +495,20 @@ class AttachFlow(SpaceSwap, unittest.TestCase):
         self.assertEqual(painted[1], [SPACE + "|sword"])
         self.assertEqual(painted[2], FakeColouring.FREE)
         self.assertEqual(painted[3], "sword")
+
+    def test_a_textured_entry_arrives_in_its_texture(self):
+        """2026-09-28, Spear 03: the image, never the swatch's colour."""
+        fake = self._wire(frames=0)
+
+        class Textured(self.Entry):
+            texture = "C:/x/assets/Spear_03.png"
+        attach.attach(Textured(), HAND, BONE, rgb=(0.1, 0.2, 0.3))
+        kinds = self._kinds(fake)
+        self.assertNotIn("paint", kinds)
+        dressed = fake.log[kinds.index("texture")]
+        self.assertEqual(dressed[1:], ([SPACE + "|sword"],
+                                       "C:/x/assets/Spear_03.png", "sword"))
+        self.assertLess(kinds.index("mark"), kinds.index("texture"))
 
     def test_a_given_colour_beats_the_palette(self):
         """None means the next free colour, which is what the button passes.

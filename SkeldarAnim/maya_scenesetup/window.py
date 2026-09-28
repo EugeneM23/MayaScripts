@@ -150,6 +150,17 @@ def added_message(entry, bone):
     return "{0} added to {1}".format(entry.label, bone.split("|")[-1])
 
 
+def appearance(entry, rgb, switched):
+    """What an Add says the weapon arrived wearing: its colour's name, or
+    «textured» for a row that arrives in its image (2026-09-28), with the
+    viewport's Textures named when this press turned them on. Pure."""
+    if not getattr(entry, "texture", ""):
+        return colouring.colour_name(rgb)
+    if switched:
+        return "textured (viewport textures on)"
+    return "textured"
+
+
 def linked_message(entry):
     return "{0} drives the arms".format(entry.label)
 
@@ -535,9 +546,16 @@ def add_weapon():
     rgb = _swatch(_WEAPON_COLOUR)
     _weapon, note = attach.attach(entry, hand, bone, rotate, translate, rgb)
     _remember(entry, rotate, translate)
-    _advance_swatch(_WEAPON_COLOUR)
+    switched = []
+    if getattr(entry, "texture", ""):
+        # No colour was used, so the swatch stays; and a textured material
+        # reads flat grey until the viewport shows textures.
+        switched = colouring.show_textures()
+    else:
+        _advance_swatch(_WEAPON_COLOUR)
 
-    message = added_message(entry, hand) + " - " + colouring.colour_name(rgb)
+    message = added_message(entry, hand) + " - " + appearance(entry, rgb,
+                                                              switched)
     _status(message + " - " + note if note else message)
 
 

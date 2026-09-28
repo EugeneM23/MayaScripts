@@ -283,12 +283,19 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None,
         # in a red character's hand arrives orange -- telling those two
         # apart is half of what the colour is for. Painted here, inside the
         # chunk this function already opened.
-        if rgb is None:
-            rgb = colouring.free_colour().rgb
+        # A textured row (2026-09-28, Spear 03) arrives in its image and the
+        # swatch's colour is not used: «это должно выдаваться сразу с
+        # текстурой».
         # `weapon` rather than `model_root(weapon)`: usually the same node,
         # but a file that kept a group of ours holds several meshes and all
         # of them are the weapon.
-        colouring.paint_nodes([weapon], rgb, entry.key)
+        texture = getattr(entry, "texture", "")
+        if texture:
+            colouring.paint_texture_nodes([weapon], texture, entry.key)
+        else:
+            if rgb is None:
+                rgb = colouring.free_colour().rgb
+            colouring.paint_nodes([weapon], rgb, entry.key)
 
         # Onto the drive bone exactly, in the model's own frame (the
         # catalog's `frame`, stored on the node before anything is placed),
