@@ -5,6 +5,7 @@ against the INSTALLED copy (the shelf's), in PHASES, one send each - a
 rebuild is deferred and a grab in the same send as a layout change
 photographs the old layout (trap 68):
 
+    PHASE = 0   every card opened (the collapse memory saved first)
     PHASE = 1   the standing skin: structure, marks, sizes, the header, the
                 segments, the subtitles, expand + the active card; photos
     PHASE = 2   set_classic(True)  (the rebuild runs after this send)
@@ -57,12 +58,23 @@ def body_of(name):
     return None
 
 
-if PHASE == 1:
-    skin = maya_hub._SKIN
+if PHASE == 0:
+    #  Every card open for the measurements, in a send of its own: a hidden
+    #  body is never laid out (the segments read their size hints, 35 and
+    #  56 px, in the animator's hub with Connections collapsed). The memory
+    #  is saved first and put back at the end of phase 1.
     memory = dict((s.key, maya_hub.collapsed(s.key))
                   for s in maya_hub.SECTIONS)
     with open(MEMORY, "w") as handle:
         json.dump(memory, handle)
+    for card in maya_hub._SKIN.cards.values():
+        card.set_collapsed(False)
+    print("cards opened; memory saved", memory)
+
+elif PHASE == 1:
+    skin = maya_hub._SKIN
+    with open(MEMORY) as handle:
+        memory = json.load(handle)
     installed = maya_update.installed_dir().replace("\\", "/")
     here = maya_hub.__file__.replace("\\", "/")
 
