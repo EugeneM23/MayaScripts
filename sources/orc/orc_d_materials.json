@@ -1,0 +1,709 @@
+{
+ "atlas_CA_Mannequin": [
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ],
+  [
+   4.396929216454737e-05,
+   2.7214648071094416e-05,
+   0.0017026436980813742,
+   1.0
+  ],
+  [
+   0.0006056721904315054,
+   0.00037502002669498324,
+   0.023439664393663406,
+   1.0
+  ],
+  [
+   0.0014764185762032866,
+   0.0009141764021478593,
+   0.05713697522878647,
+   1.0
+  ],
+  [
+   0.002526190597563982,
+   0.0015641840873286128,
+   0.09776239842176437,
+   1.0
+  ],
+  [
+   0.0036847968585789204,
+   0.0022815780248492956,
+   0.1425999253988266,
+   1.0
+  ],
+  [
+   0.004901778418570757,
+   0.003035125555470586,
+   0.18969567120075226,
+   1.0
+  ],
+  [
+   0.006136272568255663,
+   0.0037995101884007454,
+   0.23746979236602783,
+   1.0
+  ],
+  [
+   0.007353002205491066,
+   0.0045528956688940525,
+   0.28455644845962524,
+   1.0
+  ],
+  [
+   0.00852005835622549,
+   0.005275523290038109,
+   0.32972076535224915,
+   1.0
+  ],
+  [
+   0.009607605636119843,
+   0.005948920734226704,
+   0.37180817127227783,
+   1.0
+  ],
+  [
+   0.010586998425424099,
+   0.006555349100381136,
+   0.40971001982688904,
+   1.0
+  ],
+  [
+   0.011430040933191776,
+   0.0070773521438241005,
+   0.44233524799346924,
+   1.0
+  ],
+  [
+   0.01210836786776781,
+   0.007497364189475775,
+   0.4685860574245453,
+   1.0
+  ],
+  [
+   0.012592758052051067,
+   0.007797292899340391,
+   0.4873316287994385,
+   1.0
+  ],
+  [
+   0.01285234559327364,
+   0.007958026602864265,
+   0.49737751483917236,
+   1.0
+  ],
+  [
+   0.011455921456217766,
+   0.007965565659105778,
+   0.4978486895561218,
+   1.0
+  ],
+  [
+   0.007851535454392433,
+   0.015210804529488087,
+   0.49072179198265076,
+   1.0
+  ],
+  [
+   0.007633821107447147,
+   0.03555358201265335,
+   0.47711461782455444,
+   1.0
+  ],
+  [
+   0.00732411490753293,
+   0.0645042434334755,
+   0.45775794982910156,
+   1.0
+  ],
+  [
+   0.006933451630175114,
+   0.10121046751737595,
+   0.43334147334098816,
+   1.0
+  ],
+  [
+   0.006472441367805004,
+   0.14494767785072327,
+   0.40452826023101807,
+   1.0
+  ],
+  [
+   0.005951445549726486,
+   0.19511854648590088,
+   0.3719659745693207,
+   1.0
+  ],
+  [
+   0.0053807469084858894,
+   0.2512713670730591,
+   0.33629724383354187,
+   1.0
+  ],
+  [
+   0.0049952249974012375,
+   0.3122020959854126,
+   0.2975958287715912,
+   1.0
+  ],
+  [
+   0.005637000314891338,
+   0.3523131310939789,
+   0.24141810834407806,
+   1.0
+  ],
+  [
+   0.006229085382074118,
+   0.3893184959888458,
+   0.190642848610878,
+   1.0
+  ],
+  [
+   0.006757790222764015,
+   0.4223625957965851,
+   0.14517398178577423,
+   1.0
+  ],
+  [
+   0.0072095030918717384,
+   0.4505947232246399,
+   0.10513069480657578,
+   1.0
+  ],
+  [
+   0.007570426911115646,
+   0.4731524884700775,
+   0.07079019397497177,
+   1.0
+  ],
+  [
+   0.007826292887330055,
+   0.48914414644241333,
+   0.04256105795502663,
+   1.0
+  ],
+  [
+   0.007962021976709366,
+   0.4976271986961365,
+   0.020979713648557663,
+   1.0
+  ],
+  [
+   0.007964951917529106,
+   0.49781036376953125,
+   0.011454831808805466,
+   1.0
+  ],
+  [
+   0.015210949815809727,
+   0.49069344997406006,
+   0.007851081900298595,
+   1.0
+  ],
+  [
+   0.035552557557821274,
+   0.47719475626945496,
+   0.007635103072971106,
+   1.0
+  ],
+  [
+   0.06449546664953232,
+   0.45802637934684753,
+   0.00732840970158577,
+   1.0
+  ],
+  [
+   0.10117964446544647,
+   0.43386030197143555,
+   0.006941752973943949,
+   1.0
+  ],
+  [
+   0.14487019181251526,
+   0.40534213185310364,
+   0.006485463120043278,
+   1.0
+  ],
+  [
+   0.19495591521263123,
+   0.3731020987033844,
+   0.005969623569399118,
+   1.0
+  ],
+  [
+   0.25096744298934937,
+   0.33776453137397766,
+   0.005404223222285509,
+   1.0
+  ],
+  [
+   0.3122020959854126,
+   0.2998349070549011,
+   0.0049952249974012375,
+   1.0
+  ],
+  [
+   0.3523131310939789,
+   0.24382779002189636,
+   0.005637000314891338,
+   1.0
+  ],
+  [
+   0.3893184959888458,
+   0.19311900436878204,
+   0.006229085382074118,
+   1.0
+  ],
+  [
+   0.4223625957965851,
+   0.1475919634103775,
+   0.006757790222764015,
+   1.0
+  ],
+  [
+   0.4505947232246399,
+   0.10734528303146362,
+   0.0072095030918717384,
+   1.0
+  ],
+  [
+   0.4731524884700775,
+   0.07263272255659103,
+   0.007570426911115646,
+   1.0
+  ],
+  [
+   0.48914414644241333,
+   0.043838173151016235,
+   0.007826292887330055,
+   1.0
+  ],
+  [
+   0.4976271986961365,
+   0.02146831713616848,
+   0.007962021976709366,
+   1.0
+  ],
+  [
+   0.4974279999732971,
+   0.0128535320982337,
+   0.007958834059536457,
+   1.0
+  ],
+  [
+   0.4874633252620697,
+   0.012596044689416885,
+   0.007799400016665459,
+   1.0
+  ],
+  [
+   0.46877577900886536,
+   0.012113158591091633,
+   0.007500399835407734,
+   1.0
+  ],
+  [
+   0.44256290793418884,
+   0.01143581885844469,
+   0.007080994546413422,
+   1.0
+  ],
+  [
+   0.4099583029747009,
+   0.01059331651777029,
+   0.006559321656823158,
+   1.0
+  ],
+  [
+   0.37206223607063293,
+   0.009614082053303719,
+   0.005952985491603613,
+   1.0
+  ],
+  [
+   0.32996776700019836,
+   0.008526361547410488,
+   0.00527947535738349,
+   1.0
+  ],
+  [
+   0.2847859263420105,
+   0.007358863949775696,
+   0.004556566942483187,
+   1.0
+  ],
+  [
+   0.23767314851284027,
+   0.006141470279544592,
+   0.0038027639966458082,
+   1.0
+  ],
+  [
+   0.18986649811267853,
+   0.004906147252768278,
+   0.0030378587543964386,
+   1.0
+  ],
+  [
+   0.14273394644260406,
+   0.0036882259882986546,
+   0.002283722162246704,
+   1.0
+  ],
+  [
+   0.09785769134759903,
+   0.0025286294985562563,
+   0.0015657087787985802,
+   1.0
+  ],
+  [
+   0.057194486260414124,
+   0.0014778909971937537,
+   0.0009150966070592403,
+   1.0
+  ],
+  [
+   0.023463929072022438,
+   0.0006062935572117567,
+   0.0003754082426894456,
+   1.0
+  ],
+  [
+   0.0017044711858034134,
+   4.4016080209985375e-05,
+   2.724385922192596e-05,
+   1.0
+  ],
+  [
+   0.0,
+   0.0,
+   0.0,
+   1.0
+  ]
+ ],
+ "materials": {
+  "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Body_A_Inst": {
+   "parent": "/Game/Orc_Marauder/Materials/MasterMaterial/M_Orc_Marauder_MasterMaterial_SP",
+   "parent_clip": 0.33329999446868896,
+   "parent_two_sided": false,
+   "scalars": {
+    "BC_Contrast": 1.095924973487854,
+    "BC_Intensity": 1.7037700414657593,
+    "Roughness": 1.350000023841858,
+    "SSS_MapMin": 0.0,
+    "SSS_MaskValue": 0.0,
+    "SSS_Max": 0.3944700062274933,
+    "SSS_Min": 0.04800000041723251,
+    "SSS_Value": 1.0,
+    "Saturation": 1.17038094997406,
+    "Spec_Power": 0.3499999940395355,
+    "Tattoos_Power_A": 1.0
+   },
+   "textures": {
+    "Base Color": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Body_BaseColor",
+    "Base_Color_Mask": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Body_Mask",
+    "Normal": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Body_Normal",
+    "ORM": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Body_ORM",
+    "SSSMaskMap": null,
+    "SSS_Map": null,
+    "Specular": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Body_Spec",
+    "Tatoo_Base_Color": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/Functions/CA_Mannequin",
+    "Tattoos_Mask": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Body_Tatoo_Mask"
+   },
+   "vectors": {
+    "Mask_Chanel": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "SSS_Channel": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "SSS_MaskChannel": [
+     1.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "Skin_Color": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Tattoos_Color_A": [
+     0.010413999669253826,
+     0.03449200093746185,
+     0.046875,
+     1.0
+    ]
+   }
+  },
+  "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Cloth_Inst": {
+   "parent": "/Game/Orc_Marauder/Materials/MasterMaterial/M_Orc_Marauder_MasterMaterial",
+   "parent_clip": 0.33329999446868896,
+   "parent_two_sided": true,
+   "scalars": {
+    "BC_Contrast": 1.0,
+    "BC_Intensity": 1.5,
+    "Metalic": 1.419435977935791,
+    "Normal Flatten": 0.0,
+    "Roughness": 1.560431957244873,
+    "Saturation": 1.100000023841858
+   },
+   "textures": {
+    "Base Color": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Cloth_BaseColor",
+    "ID Map A": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Cloth_ID_A",
+    "ID Map B": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Cloth_ID_B",
+    "Normal": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Cloth_Normal",
+    "ORM": "/Game/Orc_Marauder/Textures/T_Orc_Marauder_Cloth_ORM",
+    "Opasity_Mask": "/Engine/EngineMaterials/T_Default_BaseColor"
+   },
+   "vectors": {
+    "Alpha_chanel": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "Color A": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Color B": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Color C": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Color D": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Color E": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Color F": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Color G": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ],
+    "Color H": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ]
+   }
+  },
+  "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Eye_Inst": {
+   "parent": "/Game/Orc_Marauder/Materials/MasterMaterial/M_Orc_Marauder_Eye_MasterMaterial",
+   "parent_clip": 0.33329999446868896,
+   "parent_two_sided": false,
+   "scalars": {
+    "Emission": 0.0,
+    "Iris UV Radius": 0.16599999368190765,
+    "Iris_BRightness": 4.160154819488525,
+    "LimbusDarkScale": 2.1500000953674316,
+    "LimbusPow": 8.0,
+    "LimbusUVWidthColor": 0.0430000014603138,
+    "Pupil_Scale": 0.9279999732971191,
+    "RoughnessA": 0.10000000149011612,
+    "RoughnessB": 0.10000000149011612,
+    "ScleraBrightness": 2.300924062728882,
+    "ShadowHardness": 0.07235900312662125,
+    "ShadowRadius": 0.1860000044107437
+   },
+   "textures": {
+    "Emission_Image": "/Game/Orc_Marauder/Textures/Eye/T_Orc_Marauder_Eyes_Emissive",
+    "Emission_Map": "/Game/Orc_Marauder/Textures/Eye/T_Orc_Marauder_Eyes_Emision_Alpaha",
+    "Iris_Texture": "/Game/Orc_Marauder/Textures/Eye/T_Orc_Marauder_Eyes_BaseColor",
+    "NormalMap": "/Game/Orc_Marauder/Textures/Eye/T_Orc_Marauder_Eyes_Wet_Normal",
+    "Sclera_Color": "/Game/Orc_Marauder/Textures/Eye/T_Orc_Marauder_Eyes_ScleraBaseColor"
+   },
+   "vectors": {
+    "Emission_Color": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "Iris_Color": [
+     1.0,
+     1.0,
+     1.0,
+     0.0
+    ]
+   }
+  },
+  "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Fur_Inst": {
+   "parent": "/Game/Orc_Marauder/Materials/MasterMaterial/M_Orc_Marauder_Fur",
+   "parent_clip": 0.33329999446868896,
+   "parent_two_sided": true,
+   "scalars": {
+    "AODepthMasking": 4.934439182281494,
+    "AO_DepthMax": 0.9273250102996826,
+    "AO_FacingExponent": 1.3513180017471313,
+    "AO_Max": 1.0,
+    "AO_Min": 0.0,
+    "AO_power": 1.0,
+    "Depth": 2.5,
+    "DitherOp": 1.0,
+    "RandomHueVariation": 0.10000000149011612,
+    "RandomValueVariation": 1.100000023841858,
+    "Root_power": 0.0,
+    "Roughness": 0.3959999978542328,
+    "Shatter": 0.8399999737739563,
+    "Specular": 0.7435089945793152
+   },
+   "textures": {
+    "AO": "/Engine/EngineMaterials/T_Default_BaseColor",
+    "Albedo_03": "/Engine/EngineMaterials/T_Default_BaseColor",
+    "Alpha": "/Game/Orc_Marauder/Textures/Fur/T_Orc_Marauder_Fur_Opacity",
+    "Color_Add_Uv": "/Game/Orc_Marauder/Textures/Fur/T_Orc_Marauder_Fur_Cap_BaseColor",
+    "Color_map": "/Engine/EngineMaterials/T_Default_BaseColor",
+    "Depth": "/Game/Orc_Marauder/Textures/Fur/T_Orc_Marauder_Fur_Depth",
+    "Specular": "/Game/Orc_Marauder/Textures/Fur/T_Orc_Marauder_Fur_ID",
+    "Tangent": "/Game/Orc_Marauder/Textures/Fur/T_Orc_Marauder_Fur_Flow",
+    "Unique_Hair_Value": "/Game/Orc_Marauder/Textures/Fur/T_Orc_Marauder_Fur_ID"
+   },
+   "vectors": {
+    "HairColor": [
+     1.0,
+     0.8252509832382202,
+     0.44270798563957214,
+     1.0
+    ],
+    "Root_Color": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "Tangent": [
+     0.0,
+     -1.0,
+     0.0,
+     1.0
+    ],
+    "TangentA": [
+     0.0,
+     0.0,
+     0.30000001192092896,
+     1.0
+    ],
+    "TangentB": [
+     0.0,
+     0.0,
+     -0.30000001192092896,
+     1.0
+    ]
+   }
+  }
+ },
+ "slots": [
+  [
+   "MI_OrcMarauder_Cloth_Inst",
+   "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Cloth_Inst"
+  ],
+  [
+   "MI_OrcMarauder_Body_Inst",
+   "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Body_A_Inst"
+  ],
+  [
+   "MI_OrcMarauder_Eye_Inst",
+   "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Eye_Inst"
+  ],
+  [
+   "MI_OrcMarauder_Skirt_Sim",
+   "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Cloth_Inst"
+  ],
+  [
+   "MI_OrcMarauder_Skirt_Proxy",
+   "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Cloth_Inst"
+  ],
+  [
+   "MI_Orc_Marauder_Fur_Inst",
+   "/Game/Orc_Marauder/Materials/MI_Orc_Marauder_Fur_Inst"
+  ]
+ ],
+ "textures": {
+  "T_Orc_Marauder_Body_BaseColor": {
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": true
+  },
+  "T_Orc_Marauder_Body_Normal": {
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": false
+  },
+  "T_Orc_Marauder_Body_Tatoo_Mask": {
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": false
+  },
+  "T_Orc_Marauder_Cloth_BaseColor": {
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": true
+  },
+  "T_Orc_Marauder_Cloth_Normal": {
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": false
+  },
+  "T_Orc_Marauder_Eyes_BaseColor": {
+   "size": [
+    512,
+    512
+   ],
+   "srgb": true
+  },
+  "T_Orc_Marauder_Eyes_ScleraBaseColor": {
+   "size": [
+    2048,
+    2048
+   ],
+   "srgb": true
+  }
+ }
+}
