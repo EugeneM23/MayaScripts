@@ -100,3 +100,105 @@ class MirrorGrip(unittest.TestCase):
             return tuple(rng.uniform(-20, 20) for _ in range(3))
         for _ in range(20):
             self._check(r(), t(), r(), m(r(), t()), m(r(), t()))
+
+
+# --------------------------------------------------------------- the grips
+
+from maya_scenesetup import grips  # noqa: E402
+
+
+class FakeVars(object):
+    """optionVar as Maya answers it."""
+
+    def __init__(self, stored=None):
+        self.vars = dict(stored or {})
+
+    def optionVar(self, **kwargs):
+        if "exists" in kwargs:
+            return kwargs["exists"] in self.vars
+        if "query" in kwargs:
+            return self.vars.get(kwargs["query"])
+        if "clearArray" in kwargs:
+            self.vars[kwargs["clearArray"]] = []
+        if "floatValueAppend" in kwargs:
+            name, value = kwargs["floatValueAppend"]
+            self.vars.setdefault(name, []).append(value)
+        return None
+
+
+class Entry(object):
+    key = "LongSword_02"
+    bone = "weapon_r"
+    frame = (0.0, 0.0, 0.0)
+
+
+class GripMemory(unittest.TestCase):
+
+    def setUp(self):
+        real = (grips.cmds, grips.sockets, grips.bonedrive.mirror_grip)
+        self.addCleanup(self._restore, real)
+
+    def _restore(self, real):
+        grips.cmds, grips.sockets, grips.bonedrive.mirror_grip = real
+
+    def test_the_right_hand_keeps_its_old_name(self):
+        self.assertEqual(grips.optionvar_name("LongSword_02"),
+                         "mayaSceneSetup_offset_LongSword_02")
+        self.assertEqual(grips.optionvar_name("LongSword_02", "R"),
+                         "mayaSceneSetup_offset_LongSword_02")
+
+    def test_the_left_hand_has_its_own(self):
+        self.assertEqual(grips.optionvar_name("LongSword_02", "L"),
+                         "mayaSceneSetup_offset_LongSword_02_L")
+
+    def test_nothing_stored_is_none_not_zeros(self):
+        grips.cmds = FakeVars()
+        self.assertIsNone(grips.stored("LongSword_02", "L"))
+
+    def test_the_legacy_name_serves_the_right_hand_only(self):
+        grips.cmds = FakeVars({"mayaWeapons_offset_LongSword_02":
+                               [0, 90, 0, 1, 2, 3]})
+        self.assertEqual(grips.stored("LongSword_02", "R"),
+                         ((0.0, 90.0, 0.0), (1.0, 2.0, 3.0)))
+        self.assertIsNone(grips.stored("LongSword_02", "L"))
+
+    def test_remember_then_stored(self):
+        grips.cmds = FakeVars()
+        grips.remember("LongSword_02", "L", (1, 2, 3), (4, 5, 6))
+        self.assertEqual(grips.stored("LongSword_02", "L"),
+                         ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
+
+    def test_a_dialled_left_grip_wins(self):
+        grips.cmds = FakeVars({"mayaSceneSetup_offset_LongSword_02_L":
+                               [1, 2, 3, 4, 5, 6]})
+        grips.sockets = lambda root, bone="weapon_r": self.fail("no mirror")
+        self.assertEqual(grips.for_hand(Entry(), "L", "|root"),
+                         ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)))
+
+    def test_an_undialled_left_grip_is_the_right_ones_mirror(self):
+        grips.cmds = FakeVars({"mayaSceneSetup_offset_LongSword_02":
+                               [0, 0, 0, 1, 0, 0]})
+        seen = []
+        grips.sockets = lambda root, bone="weapon_r": ("SR", "SL")
+        grips.bonedrive.mirror_grip = (
+            lambda *a: seen.append(a) or ((0, 0, 180), (-1, 0, 0)))
+        self.assertEqual(grips.for_hand(Entry(), "L", "|root"),
+                         ((0, 0, 180), (-1, 0, 0)))
+        self.assertEqual(seen, [((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                                 (0.0, 0.0, 0.0), "SR", "SL")])
+
+    def test_the_right_hand_never_mirrors(self):
+        grips.cmds = FakeVars()
+        grips.sockets = lambda root, bone="weapon_r": self.fail("no mirror")
+        self.assertEqual(grips.for_hand(Entry(), "R", "|root"), grips.ZERO)
+
+    def test_no_sockets_means_zeros(self):
+        grips.cmds = FakeVars()
+        grips.sockets = lambda root, bone="weapon_r": None
+        self.assertEqual(grips.for_hand(Entry(), "L", "|root"), grips.ZERO)
+
+    def test_the_window_delegates(self):
+        from maya_scenesetup import window
+        self.assertEqual(window.optionvar_name("X"), grips.optionvar_name("X"))
+        self.assertIs(window.pack_offsets, grips.pack)
+        self.assertIs(window.unpack_offsets, grips.unpack)

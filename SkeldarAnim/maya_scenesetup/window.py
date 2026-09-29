@@ -37,6 +37,7 @@ from maya_scenesetup import catalog
 from maya_scenesetup import character
 from maya_scenesetup import colour as colouring
 from maya_scenesetup import connect as linking
+from maya_scenesetup import grips
 from maya_scenesetup import skeleton
 
 HUB_SECTION = "characters"    # the Characters section of the SkeldarAnim hub
@@ -87,29 +88,11 @@ NO_COLOUR_TARGET = ("nothing to recolour - the swatch is the colour the "
 
 # ------------------------------------------------------------------ policy
 
-def optionvar_name(key):
-    return _OPTIONVAR.format(key)
-
-
-def pack_offsets(rotate, translate):
-    return [float(value) for value in tuple(rotate) + tuple(translate)]
-
-
-def unpack_offsets(values):
-    """Six stored numbers -> (rotate, translate). Anything else -> zeros.
-
-    Maya answers a missing optionVar with 0 or an empty list, and a stored
-    value of the wrong length can only come from an older version of this
-    tool; half a grip is worse than none.
-    """
-    zeros = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
-    try:
-        numbers = [float(value) for value in values]
-    except (TypeError, ValueError):
-        return zeros
-    if len(numbers) != 6:
-        return zeros
-    return tuple(numbers[:3]), tuple(numbers[3:])
+# The grip memory is `grips`' since 2026-09-29 (per weapon AND per hand, the
+# left one mirrored from the right); the inventory reads it too.
+optionvar_name = grips.optionvar_name
+pack_offsets = grips.pack
+unpack_offsets = grips.unpack
 
 
 def chosen_entry(field_text, entry):

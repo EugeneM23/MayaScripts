@@ -47,6 +47,11 @@ from maya_scenesetup import weaponspace
 # keeps working through this re-export.
 MARKER = bonedrive.MARKER
 
+# The file a weapon came from, on the marked node (2026-09-29): the inventory
+# puts the same weapon into another hand by importing it again, and a custom
+# FBX has no catalog row to find it by.
+SOURCE = "mayaWeaponSource"
+
 # Everything that can hold an offset between a node and its parent. Zeroing
 # translate and rotate is not enough: a pivot sits at the centre of the
 # geometry, and parenting compensates for it in rotatePivotTranslate -- so the
@@ -136,18 +141,29 @@ def parent_bone(bone):
 
 
 def detach(parent_bone_path, drive_bone):
-    """Remove our weapon and give the bone its animation back.
+    """Take off the weapon this hand holds or this bone follows, and give the
+    bone its animation back.
 
     Unlink FIRST: the bone's motion lives on the weapon while the link
     stands, and deleting the weapon first would take it away (the camera's
-    second press, same order). The legacy home -- a sword parented under
-    weapon_r by the old version -- is searched second.
+    second press, same order). Looked for in the hand's space, under the bone
+    (a sword parented under weapon_r by the old version), and -- since
+    2026-09-29 -- as the node driving the bone from world: a weapon on the
+    floor, or lifted in Connections. One that PARKED the bone's own track (a
+    floor drop, `bonedrive.park`) hands it back verbatim instead of a bake.
+    The caller refuses a weapon hands ride before calling this.
     """
     weapon = find_attached(parent_bone_path) or find_attached(drive_bone)
+    held = bool(weapon)
     if not weapon:
-        return None
-    space = weaponspace.space_of(parent_bone_path)
-    bonedrive.unlink(drive_bone)
+        weapon = bonedrive.driving_weapon(drive_bone)
+        if not weapon:
+            return None
+    space = weaponspace.space_of(parent_bone_path) if held else None
+    if not held and bonedrive.is_parked(weapon):
+        bonedrive.unpark(weapon, drive_bone)
+    else:
+        bonedrive.unlink(drive_bone)
     cmds.delete(weapon)
     if space:
         weaponspace.prune(space)
@@ -242,70 +258,19 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None,
     try:
         detach(parent_bone_path, drive_bone)
 
-        roots = import_model(entry.path)
-        if not roots:
-            raise RuntimeError("nothing came out of " + entry.path)
-
-        meshes = mesh_transforms(roots)
-        note = ""
         # The hand's space, outside the skeleton (2026-09-24): it stands
         # exactly on the hand, so everything below reads as it did when the
         # weapon hung under the hand bone itself.
         home = weaponspace.ensure_space(parent_bone_path)
-        if len(meshes) == 1:
-            weapon = cmds.ls(cmds.parent(meshes[0], home)[0],
-                             long=True)[0]
-            # Only the leftover TRANSFORMS: the shading network arrived in the
-            # same import and the mesh still needs it.
-            leftovers = [path for path in cmds.ls(roots, long=True) or []
-                         if cmds.objExists(path) and path != weapon]
-            if leftovers:
-                cmds.delete(leftovers)
-        else:
-            # Built empty and filled, rather than grouping the model: a group
-            # made around geometry takes that geometry's pivot with it, and
-            # the pivot then has to be undone on the other side.
-            group = cmds.group(empty=True, world=True,
-                               name=group_name(entry.key))
-            cmds.parent(roots, group)
-            weapon = cmds.ls(cmds.parent(group, home)[0],
-                             long=True)[0]
-            note = "{0} mesh(es) in the file - kept in a group".format(
-                len(meshes))
-
-        # The marker after the parent, and `seat` after both: parenting is
-        # what leaves the pivot compensation `seat` exists to clear.
-        cmds.addAttr(weapon, longName=MARKER, dataType="string")
-        cmds.setAttr(weapon + "." + MARKER, entry.key, type="string")
-        seat(weapon, entry.scale)
-
-        # The colour comes from the same scan the characters use, so a sword
-        # in a red character's hand arrives orange -- telling those two
-        # apart is half of what the colour is for. Painted here, inside the
-        # chunk this function already opened.
-        # A textured row (2026-09-28, Spear 03) arrives in its image and the
-        # swatch's colour is not used: «это должно выдаваться сразу с
-        # текстурой».
-        # `weapon` rather than `model_root(weapon)`: usually the same node,
-        # but a file that kept a group of ours holds several meshes and all
-        # of them are the weapon.
-        texture = getattr(entry, "texture", "")
-        if texture:
-            colouring.paint_texture_nodes([weapon], texture, entry.key)
-        else:
-            if rgb is None:
-                rgb = colouring.free_colour().rgb
-            colouring.paint_nodes([weapon], rgb, entry.key)
+        weapon, note = import_weapon(entry, home, rgb)
 
         # Onto the drive bone exactly, in the model's own frame (the
-        # catalog's `frame`, stored on the node before anything is placed),
-        # the grip on top (BONE-relative: zeros mean exactly on weapon_r),
-        # then invert the drive -- the transfer keeps the sword's offset
-        # from the bone, so the grip rides the clip instead of being
-        # flattened by it. No grip given (None) means "leave it on the
-        # bone", same place as zeros but with nothing stored.
-        bonedrive.store_frame(weapon, getattr(entry, "frame",
-                                              (0.0, 0.0, 0.0)))
+        # catalog's `frame`, stored on the node by `import_weapon`), the grip
+        # on top (BONE-relative: zeros mean exactly on weapon_r), then invert
+        # the drive -- the transfer keeps the sword's offset from the bone,
+        # so the grip rides the clip instead of being flattened by it. No
+        # grip given (None) means "leave it on the bone", same place as zeros
+        # but with nothing stored.
         if rotate is not None and translate is not None:
             bonedrive.apply_grip(weapon, drive_bone, rotate, translate)
         else:
@@ -320,3 +285,71 @@ def attach(entry, parent_bone_path, drive_bone, rotate=None, translate=None,
     finally:
         cmds.autoKeyframe(state=autokey)
         cmds.undoInfo(closeChunk=True)
+
+
+def _home(node, parent):
+    """`node` under `parent`, or at world level with no parent; its long path."""
+    if parent:
+        return cmds.ls(cmds.parent(node, parent)[0], long=True)[0]
+    if cmds.listRelatives(node, parent=True):
+        node = cmds.parent(node, world=True)[0]
+    return cmds.ls(node, long=True)[0]
+
+
+def import_weapon(entry, parent=None, rgb=None):
+    """`entry`'s model in the scene as OUR weapon. Returns (weapon, note).
+
+    Imported; one mesh in the file and that mesh IS the weapon, parented
+    under `parent` (a weapon space) or at world level (a weapon on the floor,
+    2026-09-29), whatever scaffolding it came wrapped in deleted; zero meshes
+    or several keep a group of ours, and the note says so. Then marked with
+    its key and its source file, seated, dressed (its colour, or its image)
+    and its own frame stored. The caller holds the undo chunk and autoKey.
+    """
+    roots = import_model(entry.path)
+    if not roots:
+        raise RuntimeError("nothing came out of " + entry.path)
+
+    meshes = mesh_transforms(roots)
+    note = ""
+    if len(meshes) == 1:
+        weapon = _home(meshes[0], parent)
+        # Only the leftover TRANSFORMS: the shading network arrived in the
+        # same import and the mesh still needs it.
+        leftovers = [path for path in cmds.ls(roots, long=True) or []
+                     if cmds.objExists(path) and path != weapon]
+        if leftovers:
+            cmds.delete(leftovers)
+    else:
+        # Built empty and filled, rather than grouping the model: a group
+        # made around geometry takes that geometry's pivot with it, and the
+        # pivot then has to be undone on the other side.
+        group = cmds.group(empty=True, world=True, name=group_name(entry.key))
+        cmds.parent(roots, group)
+        weapon = _home(group, parent)
+        note = "{0} mesh(es) in the file - kept in a group".format(len(meshes))
+
+    # The marker after the parent, and `seat` after both: parenting is what
+    # leaves the pivot compensation `seat` exists to clear.
+    cmds.addAttr(weapon, longName=MARKER, dataType="string")
+    cmds.setAttr(weapon + "." + MARKER, entry.key, type="string")
+    cmds.addAttr(weapon, longName=SOURCE, dataType="string")
+    cmds.setAttr(weapon + "." + SOURCE, entry.path, type="string")
+    seat(weapon, entry.scale)
+
+    # The colour comes from the same scan the characters use, so a sword in a
+    # red character's hand arrives orange -- telling those two apart is half
+    # of what the colour is for. A textured row (2026-09-28, Spear 03)
+    # arrives in its image and the swatch's colour is not used: «это должно
+    # выдаваться сразу с текстурой». `weapon` rather than `model_root`: a
+    # file that kept a group of ours holds several meshes, all the weapon.
+    texture = getattr(entry, "texture", "")
+    if texture:
+        colouring.paint_texture_nodes([weapon], texture, entry.key)
+    else:
+        if rgb is None:
+            rgb = colouring.free_colour().rgb
+        colouring.paint_nodes([weapon], rgb, entry.key)
+
+    bonedrive.store_frame(weapon, getattr(entry, "frame", (0.0, 0.0, 0.0)))
+    return weapon, note

@@ -226,6 +226,21 @@ class FakeBonedrive(object):
         self.log.append(("link", weapon, bone))
         return 0
 
+    #  2026-09-29: a weapon out in world (on the floor) drives the bone with
+    #  nothing holding it; a floor drop parked the bone's own track on it.
+    world = None
+    parked = False
+
+    def driving_weapon(self, bone):
+        return self.world
+
+    def is_parked(self, weapon):
+        return self.parked
+
+    def unpark(self, weapon, bone):
+        self.log.append(("unpark", weapon, bone))
+        return True
+
 
 class Marker(unittest.TestCase):
 
@@ -300,6 +315,27 @@ class Detach(SpaceSwap, unittest.TestCase):
         log = self._wire(fake)
         self.assertIsNone(attach.detach(HAND, BONE))
         self.assertEqual(log, [])
+
+    def test_a_weapon_out_in_world_comes_off_too(self):
+        """2026-09-29: a weapon on the floor (or lifted in Connections) drives
+        the bone from world; Remove and a replacing Add take it off."""
+        fake = FakeCmds()
+        log = self._wire(fake)
+        attach.bonedrive.world = "|SpearMesh"
+        removed = attach.detach(HAND, BONE)
+        self.assertEqual(removed, "|SpearMesh")
+        self.assertEqual(log, [("unlink", BONE), ("delete", "|SpearMesh")])
+
+    def test_a_parked_weapon_gives_the_bone_its_track_back(self):
+        """A floor drop parked the bone's own curves on the weapon; taking it
+        off hands them back verbatim instead of baking the floor pose."""
+        fake = FakeCmds()
+        log = self._wire(fake)
+        attach.bonedrive.world = "|SpearMesh"
+        attach.bonedrive.parked = True
+        attach.detach(HAND, BONE)
+        self.assertEqual(log, [("unpark", "|SpearMesh", BONE),
+                               ("delete", "|SpearMesh")])
 
 
 class FakeColouring(object):
@@ -509,6 +545,14 @@ class AttachFlow(SpaceSwap, unittest.TestCase):
         self.assertEqual(dressed[1:], ([SPACE + "|sword"],
                                        "C:/x/assets/Spear_03.png", "sword"))
         self.assertLess(kinds.index("mark"), kinds.index("texture"))
+
+    def test_the_source_file_is_recorded(self):
+        """2026-09-29: so the inventory can put the same weapon into the other
+        hand by importing it again - a custom FBX too."""
+        fake = self._wire(frames=0)
+        attach.attach(self.Entry(), HAND, BONE)
+        self.assertEqual(fake.attrs[SPACE + "|sword." + attach.SOURCE],
+                         "C:/x/sword.fbx")
 
     def test_a_given_colour_beats_the_palette(self):
         """None means the next free colour, which is what the button passes.

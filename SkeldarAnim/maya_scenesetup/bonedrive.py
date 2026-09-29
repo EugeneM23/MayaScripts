@@ -456,6 +456,16 @@ def regrip(weapon, bone, rotate, translate):
             cmds.parentConstraint(weapon, bone, maintainOffset=True)
 
 
+def is_parked(weapon):
+    """Whether a floor drop parked a bone's own track on `weapon` (filled in
+    with the floor, below)."""
+    return False
+
+
+def unpark(weapon, bone):
+    return False
+
+
 def unlink(bone):
     """Bake the bone back from the weapon driving it, drop the constraint.
 
