@@ -827,6 +827,12 @@ def build_characters_panel():
     return column
 
 
+def open_inventory():
+    """The weapon inventory window (maya_inventory), over Maya."""
+    import maya_inventory
+    maya_inventory.show()
+
+
 def hand_changed(key):
     """A Hand segment's onCommand: remember the hand, re-read the fields."""
     def go(*_args):
@@ -911,6 +917,12 @@ def build_weapons_panel():
                    "sword by hand instead loses that animation.",
         command=lambda *_args: _run(remove_weapon)), "danger", "trash")
     cmds.setParent("..")
+
+    hubstyle.mark(cmds.button(
+        label="Inventory", height=28,
+        annotation="The weapon inventory: drag a weapon onto a hand in the "
+                   "viewport, or onto the floor (2026-09-29)",
+        command=lambda *_args: _run(open_inventory)), "secondary", "backpack")
 
     cmds.floatFieldGrp(_ROTATE, numberOfFields=3, label="Rotate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,

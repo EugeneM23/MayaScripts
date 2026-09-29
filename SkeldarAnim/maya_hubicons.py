@@ -154,6 +154,13 @@ ICONS = {
         "M9 14l-4 -4l4 -4",
         "M5 10h11a4 4 0 1 1 0 8h-1",
     ),
+    "backpack": (                         # the weapon inventory (2026-09-29)
+        "M5 18v-6a6 6 0 0 1 6 -6h2a6 6 0 0 1 6 6v6a3 3 0 0 1 -3 3h-8a3 3 0 0 "
+        "1 -3 -3z",
+        "M10 6v-1a2 2 0 1 1 4 0v1",
+        "M9 21v-4a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v4",
+        "M11 10h2",
+    ),
 }
 
 NAMES = tuple(sorted(ICONS))

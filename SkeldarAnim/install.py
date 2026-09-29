@@ -49,6 +49,7 @@ _PAYLOAD = (
     "maya_hubicons.py",         # its Tabler icons
     "maya_hubqt.py",            # its Qt widgets
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
+    "maya_inventory.py",        # the weapon inventory window
     "icons",
     "assets",
     "overrig",

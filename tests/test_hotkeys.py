@@ -475,7 +475,7 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 31)
+        self.assertEqual(len(ours), 32)       # + window.inventory (2026-09-29)
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
@@ -485,7 +485,8 @@ class OurRows(unittest.TestCase):
     def test_the_six_openers_and_the_toggle(self):
         self.assertEqual(sorted(self._keys("window.")),
                          ["window.connections", "window.hotkeys",
-                          "window.hub", "window.overshoot", "window.picker",
+                          "window.hub", "window.inventory",
+                          "window.overshoot", "window.picker",
                           "window.scenesetup", "window.uebridge",
                           "window.weapons"])
 
@@ -619,8 +620,9 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 7)
+        self.assertEqual(len(names), 8)
         self.assertIn("maya_hub", names)
+        self.assertIn("maya_inventory", names)
         self.assertIn("maya_scenesetup.connections", names)
         for name in names:
             self.assertIsNotNone(importlib.util.find_spec(name), name)
