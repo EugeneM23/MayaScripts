@@ -6146,7 +6146,18 @@ test pins it): re-run the script.
      and dialling the fields saved the dagger's grip under the sword's key. Messages and grip memory
      follow the weapon in the hand (`_held_entry`, by its marker key).
 
-Not built: rearranging the grid; custom FBX files in the inventory (Weapons > FBX... stays); a pickup
+**The grid is rearranged by hand** (minutes later: «Давай сделаем так что бы оружие в инвентаре можно было
+перетаскивать по инвентарю»; spec `2026-09-29-inventory-rearrange-design.md`): a grid item released in the
+grid MOVES - its grab point stays under the cursor, the spot clamped into the grid - or SWAPS with the one
+item it lands on when that one fits where the first came from (the animator's pick over refusing and over
+Diablo 2's pick-up-the-other); two items under it, or the other not fitting back, is «no room» and nothing
+moves. `maya_invlook.plan_move` / `arrange` / the record are pure; a green or red preview of the cells while
+dragging; the layout remembered in `skeldarInventoryLayout` (JSON) and read back through `arrange` - a stored
+spot kept while it lies in the grid and overlaps nothing, a new catalog row or a broken record packed into
+the free cells, never an item lost; right click on the grid → «Sort the inventory». No scene change, no
+undo. 2672 unit tests.
+
+Not built: custom FBX files in the inventory (Weapons > FBX... stays); a pickup
 at a chosen frame; a ray against meshes; more than two weapons per character — the floor counts:
 a floor weapon holds its hand's bone, so a character has at most two weapons in hands and on the
 floor together. **The drag itself (a real mouse over the viewport) is the animator's to try**: the
