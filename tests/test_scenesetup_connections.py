@@ -442,19 +442,29 @@ class Boundaries(unittest.TestCase):
         self.assertIn("weaponspace.holding_hand(weapon)", source)
         self.assertIn("weaponspace.prune(", source)
 
+    def _bonedrive_source(self):
+        path = os.path.join(PLUGIN, "maya_scenesetup", "bonedrive.py")
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()
+
     def test_the_drive_bone_takes_no_offset(self):
-        self.assertIn("cmds.parentConstraint(weapon, bone, maintainOffset=False)",
+        """`bonedrive.drive_socket` since 2026-09-29 (the floor drives its
+        bone the same way); Connections' hang goes through it."""
+        self.assertIn("return bonedrive.drive_socket(weapon, bone)",
                       self._source())
+        self.assertIn("cmds.parentConstraint(weapon, bone, maintainOffset=False)",
+                      self._bonedrive_source())
 
     def test_a_framed_weapons_frame_is_undone_on_the_new_bone(self):
         """2026-09-24: the Creep Sword stands turned 45 on its bone at zero
         grip (its FRAME), so a bone that takes it over sits on its socket,
         not on the turned node: the target offset holds the frame undone,
         in the bone's own rotate order."""
-        source = self._source()
-        self.assertIn("bonedrive.frame_of(weapon)", source)
-        self.assertIn('.target[0].targetOffsetRotate', source)
-        self.assertIn('bonedrive.unframing(frame, cmds.getAttr(bone + ".rotateOrder"))', source)
+        source = self._bonedrive_source()
+        socket = source[source.index("def drive_socket("):]
+        self.assertIn("frame_of(weapon)", socket)
+        self.assertIn('.target[0].targetOffsetRotate', socket)
+        self.assertIn('unframing(frame, cmds.getAttr(bone + ".rotateOrder"))', socket)
 
     def test_the_retarget_refuses_a_connected_rig(self):
         saved = (maya_rig_retarget.hands_connected, maya_rig_retarget.resolve)

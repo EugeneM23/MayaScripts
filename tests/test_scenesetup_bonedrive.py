@@ -192,7 +192,15 @@ class FakeCmds(object):
         if type == "parentConstraint":
             found = self._constraints.get(node)
             return [found] if found else None
+        if kwargs.get("parent"):
+            #  the sword hangs under the hand joint (a hold - `is_held`,
+            #  2026-09-29: a weapon out in world is relinked where it lies)
+            parent = node.rsplit("|", 1)[0]
+            return [parent] if parent else None
         return None
+
+    def objectType(self, node, **kwargs):
+        return "joint"
 
     def parentConstraint(self, *nodes, **kwargs):
         if kwargs.get("query"):

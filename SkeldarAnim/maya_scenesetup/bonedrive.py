@@ -470,14 +470,134 @@ def is_held(weapon):
                 or cmds.objectType(parent) == "joint")
 
 
+# ------------------------------------------------ the floor (2026-09-29)
+#
+# A weapon dropped on the floor drives its hand's bone from where it lies, so
+# the bone's own track has to go somewhere while it does: it is PARKED on the
+# weapon - each channel's animCurve reconnected to a matching attribute there
+# (not baked: «главное чтобы наша анимация сохранилась в исходном виде») - and
+# handed back verbatim when the weapon is taken off while still out in world.
+# A hang into a hand (Connections) drops the parked data: from then on the
+# bone's truth is the weapon's motion, exactly as for a weapon Add put there.
+
+PARK_BONE = "skeldarParkBone"
+
+
+def park_attr(channel):
+    """The weapon's attribute holding `channel` of the parked bone."""
+    return "skeldarPark" + channel[0].upper() + channel[1:]
+
+
 def is_parked(weapon):
-    """Whether a floor drop parked a bone's own track on `weapon` (filled in
-    with the floor, below)."""
-    return False
+    """Whether a floor drop parked a bone's own track on `weapon`."""
+    return bool(weapon) and cmds.objExists(weapon) and cmds.attributeQuery(
+        PARK_BONE, node=weapon, exists=True)
+
+
+def drop_park(weapon):
+    """The parked data off `weapon`, its curves deleted with it."""
+    if not weapon or not cmds.objExists(weapon):
+        return
+    for channel in CHANNELS:
+        attr = weapon + "." + park_attr(channel)
+        if cmds.objExists(attr):
+            for curve in cmds.listConnections(attr, source=True,
+                                              destination=False) or []:
+                if cmds.objExists(curve):
+                    cmds.delete(curve)
+            cmds.deleteAttr(attr)
+    if cmds.attributeQuery(PARK_BONE, node=weapon, exists=True):
+        cmds.deleteAttr(weapon + "." + PARK_BONE)
+
+
+def park(weapon, bone):
+    """The bone's own track onto `weapon`, before the weapon drives it.
+
+    Each transform channel's animCurve is reconnected to a matching attribute
+    on the weapon (doubleLinear / doubleAngle, so no unitConversion is
+    spliced in - trap 42), a plain channel's value copied, the bone's UUID
+    recorded. What was parked before goes first: a retarget parks the fresh
+    clip over a stale one.
+    """
+    drop_park(weapon)
+    cmds.addAttr(weapon, longName=PARK_BONE, dataType="string")
+    cmds.setAttr(weapon + "." + PARK_BONE, cmds.ls(bone, uuid=True)[0],
+                 type="string")
+    for channel in CHANNELS:
+        attr = park_attr(channel)
+        kind = "doubleLinear" if channel.startswith("translate") else "doubleAngle"
+        cmds.addAttr(weapon, longName=attr, attributeType=kind, keyable=False)
+        plug = bone + "." + channel
+        curves = cmds.listConnections(plug, source=True, destination=False,
+                                      type="animCurve", plugs=True) or []
+        if curves:
+            cmds.connectAttr(curves[0], weapon + "." + attr)
+            cmds.disconnectAttr(curves[0], plug)
+        else:
+            cmds.setAttr(weapon + "." + attr, cmds.getAttr(plug))
+
+
+def _our_constraints(bone, weapon):
+    """The parentConstraints on `bone` whose target is `weapon`."""
+    out = []
+    for constraint in _constraints_on(bone):
+        targets = cmds.parentConstraint(constraint, query=True,
+                                        targetList=True) or []
+        if any(cmds.ls(t, long=True) == cmds.ls(weapon, long=True)
+               for t in targets):
+            out.append(constraint)
+    return out
 
 
 def unpark(weapon, bone):
-    return False
+    """The parked track back onto the bone and our constraint off it: the
+    bone exactly as it was before the drop. False when nothing was parked."""
+    if not is_parked(weapon):
+        return False
+    with _autokey_off():
+        for constraint in _our_constraints(bone, weapon):
+            cmds.delete(constraint)
+        for channel in CHANNELS:
+            attr = weapon + "." + park_attr(channel)
+            if not cmds.objExists(attr):
+                continue
+            plug = bone + "." + channel
+            curves = cmds.listConnections(attr, source=True, destination=False,
+                                          plugs=True) or []
+            if curves:
+                cmds.connectAttr(curves[0], plug, force=True)
+                cmds.disconnectAttr(curves[0], attr)
+            else:
+                try:
+                    cmds.setAttr(plug, cmds.getAttr(attr))
+                except RuntimeError:
+                    pass
+        drop_park(weapon)
+    return True
+
+
+def drive_socket(weapon, bone):
+    """The bone onto the weapon's SOCKET with no offset - wherever the weapon
+    is, the export socket sits on it (Connections' bone rule, moved here
+    2026-09-29 for the floor). Keys cut first (a constraint over a keyed
+    channel splices a pairBlend, trap 37), the current values written back
+    after the cut (trap 58). A model standing in a frame of its own
+    (FRAME_ROTATE, the Creep Sword's 45) is turned against the bone by that
+    frame at zero grip, so the target offset undoes it."""
+    with _autokey_off():
+        settled = _keyed_values_at(bone, cmds.currentTime(query=True))
+        _cut(bone)
+        for plug, value in settled:
+            try:
+                cmds.setAttr(plug, value)
+            except RuntimeError:
+                pass
+        constraint = cmds.parentConstraint(weapon, bone, maintainOffset=False)[0]
+        frame = frame_of(weapon)
+        if any(frame):
+            cmds.setAttr(constraint + ".target[0].targetOffsetRotate",
+                         *unframing(frame, cmds.getAttr(bone + ".rotateOrder")))
+    return constraint
 
 
 def unlink(bone):
@@ -511,7 +631,17 @@ def relink(weapon, bone):
     offset (`link`, mo=True). A legacy sword with none stored goes to zero
     grip -- onto the bone in its own frame, which for a frameless weapon is
     the old snap exactly.
+
+    A weapon no hand holds (2026-09-29: on the floor, or lifted in
+    Connections) STAYS where it is: the bone's fresh track is parked on it
+    and the bone follows it again. Taken off later, it hands the new clip's
+    track back.
     """
+    if not is_held(weapon):
+        with _autokey_off():
+            park(weapon, bone)
+            drive_socket(weapon, bone)
+        return 0
     with _autokey_off():
         _cut(weapon)
         grip = stored_grip(weapon) or ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))

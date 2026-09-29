@@ -687,19 +687,9 @@ def _drive_bone(weapon, bone):
     (`bonedrive.FRAME_ROTATE`, the Creep Sword's 45) is turned against the
     bone by exactly that frame at zero grip, so the constraint's target
     offset undoes it -- the bone takes the weapon's world as the weapon's
-    old bone did. The identity for every other weapon."""
-    values = _values_now(bone, cmds.currentTime(query=True))
-    cmds.cutKey(bone, attribute=list(CHANNELS), clear=True)
-    for channel, value in values.items():
-        try:
-            cmds.setAttr(bone + "." + channel, value)
-        except RuntimeError:
-            pass
-    con = cmds.parentConstraint(weapon, bone, maintainOffset=False)[0]
-    frame = bonedrive.frame_of(weapon)
-    if any(frame):
-        cmds.setAttr(con + ".target[0].targetOffsetRotate",
-                     *bonedrive.unframing(frame, cmds.getAttr(bone + ".rotateOrder")))
+    old bone did. The identity for every other weapon. `bonedrive.drive_socket`
+    since 2026-09-29 - the floor drives its bone the same way."""
+    return bonedrive.drive_socket(weapon, bone)
 
 
 def _span(weapon, controls=()):
@@ -788,6 +778,9 @@ def apply(wanted, rig=None, weapon=None):
                     if was:
                         bonedrive.unlink(bones[was][1])
                     _drive_bone(weapon, bone)
+                # In a hand the bone's truth is the weapon's motion: a track
+                # a floor drop parked on it no longer belongs to anybody.
+                bonedrive.drop_park(weapon)
             elif step == "follow":
                 _follow(rig, side, attach.model_root(weapon), span)
         weapon = cmds.ls(uuid, long=True)[0]
