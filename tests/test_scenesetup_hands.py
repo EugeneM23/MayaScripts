@@ -80,9 +80,12 @@ class MirrorGrip(unittest.TestCase):
         angle = turned.asQuaternion().asAxisAngle()[1]
         self.assertGreater(math.degrees(angle), 170.0)
 
-    def test_a_geometric_mirror_pair_needs_no_correction(self):
-        """The Creep's weapon_l is the geometric mirror of weapon_r (+1.0000
-        measured): zero right grip -> zero left grip."""
+    def test_a_pair_mirrored_through_the_thickness_needs_no_correction(self):
+        """Sockets already standing as each other's mirror through the
+        model's thickness: zero right grip -> zero left grip. (The Creep's
+        own pair is mirrored another way: its zero grip comes out a half
+        turn about the blade - the same sword for a symmetric one, measured
+        in verify_inventory.py.)"""
         s_r = m((92.87, -14.60, -21.18), (-9.80, -4.61, 1.01))
         s_l = MZ * s_r * F
         rotate, translate = self._check((0, 0, 0), (0, 0, 0), (0, 0, 0),
