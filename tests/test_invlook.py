@@ -129,3 +129,87 @@ class Icons(unittest.TestCase):
         out = subprocess.check_output([sys.executable, "-c", code],
                                       cwd=PLUGIN).decode().strip()
         self.assertEqual(out, "")
+
+
+# ------------------------------------------- the grid rearranged (2026-09-29)
+
+DEFAULT = {"LongSword_02": (0, 0), "Spear_01": (1, 0), "Spear_03": (2, 0),
+           "Dagger_01": (3, 0), "Creep_Sword": (3, 2)}
+SIZES = {"LongSword_02": (1, 4), "Spear_01": (1, 5), "Spear_03": (1, 5),
+         "Dagger_01": (1, 2), "Creep_Sword": (1, 3)}
+
+
+class PlanMove(unittest.TestCase):
+    """«можно было перетаскивать по инвентарю»: move into free cells, swap
+    with the one item it lands on when that one fits back, else nothing."""
+
+    def test_into_free_cells_it_moves(self):
+        kind, placed, other = look.plan_move(DEFAULT, SIZES, "Dagger_01", (6, 1))
+        self.assertEqual((kind, placed["Dagger_01"], other), ("move", (6, 1), None))
+        self.assertEqual(DEFAULT["Dagger_01"], (3, 0))       # the input untouched
+
+    def test_over_its_own_old_cells_it_moves(self):
+        kind, _placed, _other = look.plan_move(DEFAULT, SIZES, "Creep_Sword", (3, 1))
+        self.assertIsNone(kind)                  # (3, 1) is the dagger's, and it won't fit back
+        _kind, placed, _other = look.plan_move(DEFAULT, SIZES, "Dagger_01", (4, 0))
+        kind, placed, _other = look.plan_move(placed, SIZES, "Dagger_01", (4, 1))
+        self.assertEqual((kind, placed["Dagger_01"]), ("move", (4, 1)))
+
+    def test_the_same_spot_is_nothing(self):
+        self.assertEqual(look.plan_move(DEFAULT, SIZES, "Dagger_01", (3, 0))[0], "same")
+
+    def test_onto_one_item_that_fits_back_they_swap(self):
+        kind, placed, other = look.plan_move(DEFAULT, SIZES, "LongSword_02", (1, 0))
+        self.assertEqual((kind, other), ("swap", "Spear_01"))
+        self.assertEqual((placed["LongSword_02"], placed["Spear_01"]), ((1, 0), (0, 0)))
+
+    def test_onto_one_item_that_does_not_fit_back_nothing(self):
+        kind, placed, other = look.plan_move(DEFAULT, SIZES, "Dagger_01", (0, 0))
+        self.assertEqual((kind, other), (None, "LongSword_02"))
+        self.assertEqual(placed, DEFAULT)
+
+    def test_onto_two_items_nothing(self):
+        spots = dict(DEFAULT, Dagger_01=(5, 0), Creep_Sword=(5, 2))
+        kind, placed, _other = look.plan_move(spots, SIZES, "LongSword_02", (5, 0))
+        self.assertIsNone(kind)
+        self.assertEqual(placed, spots)
+
+    def test_the_spot_is_clamped_into_the_grid(self):
+        kind, placed, _other = look.plan_move(DEFAULT, SIZES, "Spear_01", (9, 3))
+        self.assertEqual((kind, placed["Spear_01"]), ("move", (9, 0)))
+        self.assertEqual(look.clamp((-3, 7), (1, 4)), (0, 1))
+
+    def test_a_footprint_is_its_cells(self):
+        self.assertEqual(look.footprint((2, 1), (1, 3)), {(2, 1), (2, 2), (2, 3)})
+
+
+class Arrange(unittest.TestCase):
+    """The remembered layout read back: kept where valid, never an item lost."""
+
+    ITEMS = [(k, SIZES[k]) for k in ("LongSword_02", "Spear_01", "Spear_03",
+                                      "Dagger_01", "Creep_Sword")]
+
+    def test_nothing_stored_is_the_pack(self):
+        self.assertEqual(look.arrange(self.ITEMS, {}), look.pack(self.ITEMS))
+        self.assertEqual(look.arrange(self.ITEMS, {}), DEFAULT)
+
+    def test_stored_spots_are_kept(self):
+        placed = look.arrange(self.ITEMS, {"Dagger_01": [9, 3], "LongSword_02": [8, 0]})
+        self.assertEqual((placed["Dagger_01"], placed["LongSword_02"]), ((9, 3), (8, 0)))
+        self.assertEqual(set(placed), set(k for k, _ in self.ITEMS))
+
+    def test_an_overlap_or_a_spot_outside_is_repacked_not_lost(self):
+        placed = look.arrange(self.ITEMS, {"LongSword_02": [0, 0], "Spear_01": [0, 0],
+                                           "Dagger_01": [9, 4], "Creep_Sword": "x",
+                                           "Gone_Row": [5, 0]})
+        self.assertEqual(placed["LongSword_02"], (0, 0))
+        self.assertEqual(set(placed), set(k for k, _ in self.ITEMS))
+        cells = [c for k, s in placed.items() for c in look.footprint(s, SIZES[k])]
+        self.assertEqual(len(cells), len(set(cells)))
+
+    def test_the_record_round_trips_and_a_bad_one_reads_empty(self):
+        self.assertEqual(look.read_record(look.layout_record(DEFAULT)),
+                         dict((k, list(v)) for k, v in DEFAULT.items()))
+        self.assertEqual(look.read_record("{not json"), {})
+        self.assertEqual(look.read_record(None), {})
+        self.assertEqual(look.read_record("[1, 2]"), {})

@@ -73,10 +73,11 @@ def item_cells(length):
 
 # ------------------------------------------------------------------ grid
 
-def pack(items, cols=COLS, rows=ROWS):
+def pack(items, cols=COLS, rows=ROWS, taken=None):
     """{key: (col, row)} for [(key, (w, h))]: column by column, first fit,
-    in the given order; what fits nowhere is left out. Pure."""
-    taken = set()
+    in the given order, around the cells already `taken`; what fits nowhere
+    is left out. Pure."""
+    taken = set(taken or ())
     placed = {}
     for key, (w, h) in items:
         spot = None
@@ -93,6 +94,105 @@ def pack(items, cols=COLS, rows=ROWS):
             placed[key] = (spot[0], spot[1])
             taken |= spot[2]
     return placed
+
+
+# --------------------------------------------------- rearranged by hand
+#
+# 2026-09-29, the animator: «можно было перетаскивать по инвентарю». An item
+# dropped in the grid moves into free cells (its own old cells count as free),
+# or SWAPS with the one item it lands on when that one fits where the first
+# came from - the animator's pick over refusing and over Diablo 2's
+# pick-up-the-other; anything else is "no room". The layout is remembered as
+# a record and read back through `arrange`, which never loses an item.
+
+def footprint(spot, size):
+    """The cells an item of `size` covers at `spot`. Pure."""
+    col, row = spot
+    return set((col + i, row + j) for i in range(size[0]) for j in range(size[1]))
+
+
+def clamp(spot, size, cols=COLS, rows=ROWS):
+    """`spot` moved just far enough for the item to lie inside the grid."""
+    return (max(0, min(cols - size[0], int(spot[0]))),
+            max(0, min(rows - size[1], int(spot[1]))))
+
+
+def _clear(placements, cells, cols, rows):
+    """True when every item lies inside the grid and none overlaps another."""
+    seen = set()
+    for key, spot in placements.items():
+        size = cells.get(key, (1, 3))
+        if (spot[0] < 0 or spot[1] < 0 or spot[0] + size[0] > cols
+                or spot[1] + size[1] > rows):
+            return False
+        mine = footprint(spot, size)
+        if mine & seen:
+            return False
+        seen |= mine
+    return True
+
+
+def plan_move(placements, cells, key, spot, cols=COLS, rows=ROWS):
+    """(kind, placements, other) for dropping `key` at `spot` (clamped into
+    the grid): kind "move", "swap" (with `other`), "same", or None - refused,
+    the placements as they were. Pure; the input is never changed."""
+    size = cells.get(key, (1, 3))
+    spot = clamp(spot, size, cols, rows)
+    if placements.get(key) == spot:
+        return ("same", dict(placements), None)
+    wanted = footprint(spot, size)
+    under = [other for other, where in placements.items()
+             if other != key and footprint(where, cells.get(other, (1, 3))) & wanted]
+    moved = dict(placements)
+    moved[key] = spot
+    if not under:
+        return ("move", moved, None)
+    if len(under) > 1:
+        return (None, dict(placements), None)
+    other = under[0]
+    moved[other] = placements[key]
+    if _clear(moved, cells, cols, rows):
+        return ("swap", moved, other)
+    return (None, dict(placements), other)
+
+
+def arrange(items, stored, cols=COLS, rows=ROWS):
+    """The placements for [(key, size)] from a remembered record: a stored
+    spot kept (in item order) while it lies in the grid and overlaps nothing
+    placed before it; everything else - a new catalog row, a stale or broken
+    record - packed into the free cells. Pure."""
+    placed, taken = {}, set()
+    for key, size in items:
+        try:
+            spot = (int(stored[key][0]), int(stored[key][1]))
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        if (spot[0] < 0 or spot[1] < 0 or spot[0] + size[0] > cols
+                or spot[1] + size[1] > rows):
+            continue
+        mine = footprint(spot, size)
+        if mine & taken:
+            continue
+        placed[key] = spot
+        taken |= mine
+    placed.update(pack([(k, s) for k, s in items if k not in placed],
+                       cols, rows, taken))
+    return placed
+
+
+def layout_record(placements):
+    """The placements as the JSON the window remembers."""
+    return json.dumps(dict((k, list(v)) for k, v in placements.items()),
+                      sort_keys=True)
+
+
+def read_record(text):
+    """A remembered record back as {key: [col, row]}; {} for anything else."""
+    try:
+        data = json.loads(text or "")
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def layout():
