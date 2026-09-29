@@ -231,3 +231,21 @@ weapons per character; a weapon without a character (a free prop).
   disposable Maya (OverRig needs a live one): the chooser, each refusal, both moves.
 - The drop in a disposable GUI Maya: the window open, `drop_at(global point)` onto a projected
   hand and onto the floor — everything but the mouse itself. The mouse is the animator's to try.
+
+## Addendum: what the build measured and changed (the same day)
+
+- **The Creep's sockets are not "a geometric pair, zero is right".** Its zero grip mirrors to a half
+  turn ABOUT the blade, (179.9, 0.05, 179.8): the same sword for a symmetric one (the +1.0000 above
+  measured only the blade's direction), and the true mirror through the thickness for an axe head.
+  The formula stands; the claim about the Creep was wrong.
+- **A bone following a floor weapon is not on its socket** (live, 134 cm off): `grips.socket_of`
+  reads it from its own parked track, and `equip.to_hand` computes the grip after the old weapon is
+  off.
+- **The chooser's pick holds while the selection is what it was at the pick** — an Apply leaves the
+  weapon selected, and "the selection's first" snapped the pick back.
+- **The Weapons section names, and remembers the grip of, the weapon in the chosen hand**, not the
+  dropdown's (the dropdown is the next Add).
+- A floor weapon holds its hand's bone, so a character has at most two weapons in hands and on the
+  floor together: a weapon into a hand whose bone a floor weapon holds replaces that floor weapon.
+- Proof as run: `verify_inventory.py` 14/14 standalone, `verify_inventory_live.py` setup 13/13 and
+  drops 8/8 in a disposable Maya, `verify_connections.py` 40/40 there, 2651 unit tests.

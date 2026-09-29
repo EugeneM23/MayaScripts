@@ -6044,3 +6044,110 @@ keyable, untouched by the retarget). A scene with an Orc D added before this has
     Give the transparency only to the faces that touch the cut (106 of 20122 here): the diff
     fell to 44–1515 pixels, all on the vest's torn edge. `hardwareRenderingGlobals.
     transparencyAlgorithm` is the animator's scene setting, not ours to change on an Add.
+
+## The weapon inventory: two hands, the floor, a Diablo window (2026-09-29)
+
+The animator: «Возможно ли сделать во вкладке Weapon кнопку которая будет инвентарь похожий на
+инвентарь как в игре diablo что бы я оружие переносил из этого инвентаря прямо на персонажа и оно как
+вставлялось в руку или выпадало на пол?» Asked, and answered: a weapon on the floor is the
+CHARACTER's (its hand's bone follows it — the Connections "World" state); **two weapons per
+character, one per hand**; a weapon dropped into an occupied hand REPLACES (Add's rule); look A,
+Diablo. «делай все». Spec: `docs/superpowers/specs/2026-09-29-weapon-inventory-design.md`, plan
+beside it. Proof: `verify_inventory.py` **14/14 standalone** (Manny + Creep, two hands, the floor, a
+retarget, the export); `verify_inventory_live.py` **setup 13/13 + drops 8/8 live** in a disposable
+Maya (a scratch `MAYA_APP_DIR`, port 7003, killed after) — Connections with two weapons, the window
+open, `drop_at` onto the projected left hand and onto the floor; `verify_connections.py` **40/40**
+there (one weapon: unchanged); 2651 unit tests.
+
+**Two weapons.** Structurally the hands were already independent (a space and a drive bone each);
+what assumed one weapon was the Weapons section (every press on `weapon_r`), Connections
+(`weapon_of` answered one node) and `window._attached` (a weapon out in world read as "the hands
+ride it").
+- **Weapons > `Hand [Right | Left]`** (`window._HAND`, remembered in `mayaSceneSetup_hand`): Add,
+  Remove, the grip fields and Recolour act on that hand; its bone is `catalog.side_bone` (`weapon_r`
+  → `weapon_l`). The panel names, and remembers the grip of, the weapon IN that hand
+  (`_held_entry`), not the dropdown's.
+- **The grip is remembered per hand** (`grips.py`, shared with the inventory): the right hand keeps
+  `mayaSceneSetup_offset_<key>`, the left has `..._L`. An undialled left grip is the MIRROR of the
+  right one through the rig's own sockets — `bonedrive.mirror_grip`: G_l = Mz · G_r · Fr · S_r · F ·
+  S_l⁻¹ (Mz the model's thickness mirror, Fr its frame, S the drive bones' local matrices in their
+  hands, F the hands' behaviour mirror). Measured: every shipped rig's hands are UE's behaviour mirror
+  (`hand_l = F · hand_r · Mx`, 0.0003 cm on Manny/Orc, 0.045 on the Creep) but the weapon bones are
+  not — Manny's `weapon_l` stands **6.9 cm / 2.16°** off the mirror of `weapon_r` and at ZERO grip a
+  left sword points its blade **backwards** (−0.9993); the mirror grip is (1.39, 0.49, −178.42) /
+  (6.62, −1.71, −0.98) and stands the left sword as the world mirror of the right to **2.9e-4** at
+  the build pose. The Creep's own `weapon_l` mirrors differently: its zero grip comes out a half turn
+  ABOUT the blade (179.9, 0.05, 179.8) — the same sword for a symmetric one, the true mirror for an
+  axe head.
+- **`linked` means the hands ride it** (`connections.followers_of`, the proxies inside it): a weapon
+  out in world that nothing rides is its hand's to replace or remove, and `attach.detach` takes it
+  off (a weapon on the floor hands its parked track back). A hand holds XOR follows, in every path.
+- `attach.import_weapon` is split out of `attach` (the import, mark, seat, dress — a weapon at world
+  level for the floor) and records `mayaWeaponSource` (the file), so the inventory can put the same
+  weapon into another hand.
+- **Connections acts on ONE weapon at a time**: an `Acts on [<A> | <B>]` chooser (two fixed segments,
+  an empty one disabled "-"), the selection naming one too — `choose_weapon` (pure): the pick while
+  the selection is what it was at the pick, else the selection's, else the pick, else the first.
+  Each weapon keeps its own scheme; `blocked` (pure) refuses by name a hand the other weapon hangs in
+  or rides, and a hand whose bone the other weapon drives from world. A holding hand rides nothing,
+  so no chain of rides can loop. The drive bone is per weapon (`driven_side(rig, bones, weapon)`).
+
+**The floor** (`floor.py`): `attach.import_weapon` at world level, `lying_pose` (pure: thickness up,
+blade along the camera's right, the box's middle over the point, its lowest point on Y = 0), the
+bone's own curves **parked** on the weapon (`bonedrive.park`: reconnected to doubleLinear/doubleAngle
+attributes, never baked — «анимация сохранилась в исходном виде»), the bone on the weapon's socket
+(`bonedrive.drive_socket`, moved out of Connections). Taking it off while it lies there reconnects
+the SAME curve nodes (measured: keys, values, tangents identical). **`bonedrive.relink` leaves a
+weapon no hand holds where it is** and parks the fresh track — a retarget kept the floor spear to
+0.0 and parked the clip's `weapon_r` (2.4e-4 cm). A hang in Connections drops the parked track. Whose
+weapon: the character nearest the point; which bone: the free one, right first; both taken → the
+right one's replaced.
+
+**The window** (`maya_inventory.py`, `maya_invlook.py` — stdlib: palette, cells, packing, layout,
+hits; `maya_scenesetup/droptarget.py`, `equip.py`): Weapons > **Inventory** or the hotkey row
+`window.inventory`. A frameless tool window (bronze bevel, gold small-caps «Inventory», parchment),
+object name `skeldarInventory` (an update's `show()` deletes an older module's window by name), its
+position in `skeldarInventoryGeometry`. The grid (10 × 5 cells of 40 logical px) is the catalog;
+two hand slots show the current character's hands (the right hand on the viewer's LEFT) — held,
+dimmed «on the floor», or «follows <weapon>». A press on an item captures the mouse for the whole
+drag (Maya's viewport never sees it, Maya's drop handling never enters); a ghost with the icon and
+a caption naming the target follows the cursor; Esc / right button cancels. The target
+(`droptarget.choose`, pure): a character whose nearest bone ON SCREEN is within max(16 px, 8 % of
+its projected height) is under the cursor, its hand nearer the cursor the target; else the camera
+ray meets Y = 0 and the nearest character owns the weapon. Bones, not meshes — a bare skeleton too,
+no ray against 70 000 skinned vertices per move. Measured live: the cursor on the projected
+`hand_l` aimed at the left hand; Spear 01 dropped on the floor lay **0.2 cm** from the point, its
+lowest vertex at 0.000000. **Icons**: `docs/superpowers/plans/make_weapon_icons.py` renders each
+catalog model's own triangles (mayapy, offscreen QPainter: steel above the grip, bronze guard,
+leather grip, wooden shaft by a shape rule — no model says which part is which; Spear 03 from its
+texture) into `assets/weapon_icons/<key>.png` at 80 px per cell with `weapon_icons.json` (cells from
+the length: Dagger 2, Creep Sword 3, Long Sword 4, spears 5). A new catalog row needs its icon (a
+test pins it): re-run the script.
+
+103. **A drive bone that follows a weapon on the FLOOR is not standing on its socket.** The mirror
+     grip read `weapon_l`'s local matrix while it followed a floor spear, so the "socket" was the
+     floor: a sword moved into the left hand stood **134 cm** off it, and `to_hand` REMEMBERED that
+     grip. `grips.socket_of` reads such a bone from its own parked track (1.1e-16 against the socket
+     before the drop), and `to_hand` computes the grip after the old weapon is off (6.9 cm from
+     `weapon_l` after — Manny's own socket asymmetry). Anything that reads a weapon bone's local
+     matrix must ask first whether a world weapon drives it.
+104. **A chooser pick lost to the selection an Apply leaves behind.** Connections' own presses
+     (OverRig's parent_in/out) leave the weapon selected, and "the selection names the weapon"
+     snapped a pick of the other one straight back. The pick holds while the selection is what it
+     was at the pick (`_PICKED["selection"]`).
+105. **A disposable Maya with a fresh `MAYA_APP_DIR` opens the Home screen and keeps `MayaWindow`
+     hidden**: every model panel reads 100 × 30 with a 1 × 1 port, `getPanel(visiblePanels=True)`
+     answers None, and a projection lands nowhere — while `playblast` still works (it renders
+     offscreen), which hides the problem. `showWindow MayaWindow` and a Win32 `ShowWindow` did not
+     tell Qt; hiding the `MayaAppHomeWindow` top-level (a `QWebEngineView`) and `setVisible(True)`
+     on the main window did. Probe `M3dView.portWidth()` before trusting a projection.
+106. **The Weapons dropdown names the NEXT Add, not what the hand holds.** With one weapon the two
+     rarely differed; with two, the Left hand's status read «Long Sword 02 on hand_l» over a dagger,
+     and dialling the fields saved the dagger's grip under the sword's key. Messages and grip memory
+     follow the weapon in the hand (`_held_entry`, by its marker key).
+
+Not built: rearranging the grid; custom FBX files in the inventory (Weapons > FBX... stays); a pickup
+at a chosen frame; a ray against meshes; more than two weapons per character — the floor counts:
+a floor weapon holds its hand's bone, so a character has at most two weapons in hands and on the
+floor together. **The drag itself (a real mouse over the viewport) is the animator's to try**: the
+bridge drives `drop_at`, everything but the mouse.
