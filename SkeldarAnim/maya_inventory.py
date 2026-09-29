@@ -36,6 +36,7 @@ import maya_invlook as look
 OBJECT_NAME = "skeldarInventory"
 GHOST_NAME = "skeldarInventoryGhost"
 POSITION_OPTIONVAR = "skeldarInventoryGeometry"
+LAYOUT_OPTIONVAR = "skeldarInventoryLayout"     # the grid as the animator left it
 THROTTLE_MS = 33
 HINT = "Drag a weapon onto a hand in the viewport, or onto the floor"
 SLOT_LABEL = {"R": "Right hand", "L": "Left hand"}
@@ -134,6 +135,17 @@ class Scene(object):
     def remember_position(self, x, y):
         import maya.cmds as cmds
         cmds.optionVar(stringValue=(POSITION_OPTIONVAR, "%d %d" % (x, y)))
+
+    def remembered_layout(self):
+        """The grid as it was left ({key: [col, row]}), {} when never moved."""
+        import maya.cmds as cmds
+        if not cmds.optionVar(exists=LAYOUT_OPTIONVAR):
+            return {}
+        return look.read_record(cmds.optionVar(query=LAYOUT_OPTIONVAR))
+
+    def remember_layout(self, placements):
+        import maya.cmds as cmds
+        cmds.optionVar(stringValue=(LAYOUT_OPTIONVAR, look.layout_record(placements)))
 
 
 # -------------------------------------------------------------------- Qt
@@ -257,8 +269,14 @@ def _classes():
             stored = look.load_cells()
             self.cells = dict((e.key, stored.get(e.key, (1, 3)))
                               for e in catalog.WEAPONS)
-            self.placements = look.pack([(e.key, self.cells[e.key])
-                                         for e in catalog.WEAPONS])
+            # the grid as the animator left it (2026-09-29), new rows in the
+            # free cells, a broken record never losing an item
+            try:
+                record = scene.remembered_layout()
+            except Exception:                                # noqa: BLE001
+                record = {}
+            self.placements = look.arrange(self._items(), record)
+            self.preview = None
             self.pixmaps = {}
             for entry in catalog.WEAPONS:
                 path = look.icon_path(entry.key)
@@ -321,6 +339,53 @@ def _classes():
         def _entry(self, key):
             return catalog.by_key(key)
 
+        def _items(self):
+            return [(e.key, self.cells[e.key]) for e in catalog.WEAPONS]
+
+        def _label(self, key):
+            entry = catalog.by_key(key)
+            return entry.label if entry else key
+
+        # ------------------------------------------------ the grid by hand
+
+        def grid_plan(self, x, y, key, grab):
+            """(kind, placements, other, spot) for `key` released at local
+            (x, y), pressed `grab` cells into itself - the grab point stays
+            under the cursor (`look.plan_move`: move, swap, same or None)."""
+            gx, gy = self.rects["grid"][:2]
+            spot = (int((x - gx) // self.cell) - grab[0],
+                    int((y - gy) // self.cell) - grab[1])
+            size = self.cells.get(key, (1, 3))
+            spot = look.clamp(spot, size)
+            kind, placed, other = look.plan_move(self.placements, self.cells,
+                                                 key, spot)
+            return kind, placed, other, spot
+
+        def _rearrange(self, key, x, y, grab):
+            kind, placed, other, _spot = self.grid_plan(x, y, key, grab)
+            if kind == "same":
+                return self.status_text
+            if kind is None:
+                return self._say("no room there for the %s" % self._label(key))
+            self.placements = placed
+            self.scene.remember_layout(placed)
+            if kind == "swap":
+                return self._say("%s and %s swapped" % (self._label(key),
+                                                        self._label(other)))
+            return self._say("%s moved" % self._label(key))
+
+        def sort(self):
+            """The catalog packed again in its order, and remembered."""
+            self.placements = look.pack(self._items())
+            self.scene.remember_layout(self.placements)
+            return self._say("inventory sorted")
+
+        def _grid_menu(self, point):
+            menu = QtWidgets.QMenu(self)
+            action = menu.addAction("Sort the inventory")
+            if menu.exec(point) is action:
+                self.sort()
+
         def source_at(self, x, y):
             """What a press at local (x, y) would drag, or None."""
             what = look.hit(self.rects, self.placements, self.cells, x, y,
@@ -341,10 +406,14 @@ def _classes():
 
         # ----------------------------------------------------------- drop
 
-        def drop_at(self, gx, gy, source):
+        def drop_at(self, gx, gy, source, grab=None):
             """The release of a drag from `source` at the global point: the
-            spec's table. Public, so a verify can drive it without a mouse."""
+            spec's table. Public, so a verify can drive it without a mouse.
+            `grab` is where a grid item was pressed, in its own cells (the
+            drag's when a drag is on)."""
             kind, arg = source
+            if grab is None:
+                grab = (self._drag or {}).get("grab") or (0, 0)
             key = self._key_of(source)
             entry = self._entry(key) if kind == "grid" else None
             local = self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy)))
@@ -361,6 +430,8 @@ def _classes():
                     return self.status_text
                 if what and what[0] in ("grid", "item") and kind == "slot":
                     return self._act(lambda: self.scene.take_off(self.root, arg))
+                if what and what[0] in ("grid", "item") and kind == "grid":
+                    return self._rearrange(arg, local.x(), local.y(), grab)
                 return self.status_text
             snap = self._drag["snap"] if self._drag else self.scene.snapshot()
             freed = (self.root, arg) if kind == "slot" else None
@@ -385,7 +456,7 @@ def _classes():
 
         # ---------------------------------------------------------- drag
 
-        def _start(self, source, point):
+        def _start(self, source, point, grab=(0, 0)):
             key = self._key_of(source)
             pixmap = self.pixmaps.get(key) or QtGui.QPixmap()
             ghost = Ghost(pixmap, self.cells.get(key, (1, 3)), self.k)
@@ -394,7 +465,7 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 snap = []
                 self._say(_last_line(traceback.format_exc()))
-            self._drag = dict(source=source, ghost=ghost, snap=snap)
+            self._drag = dict(source=source, ghost=ghost, snap=snap, grab=grab)
             ghost.follow(point)
             ghost.show()
             self.grabKeyboard()
@@ -406,6 +477,7 @@ def _classes():
                 ghost.hide()
                 ghost.deleteLater()
             self._drag = None
+            self.preview = None
             try:
                 self.releaseKeyboard()
             except Exception:                                # noqa: BLE001
@@ -421,15 +493,30 @@ def _classes():
             if self.rect().contains(local):
                 what = look.hit(self.rects, self.placements, self.cells,
                                 local.x(), local.y(), self.cell)
+                self.preview = None
                 if what and what[0] == "slot":
                     same = source == ("slot", what[1])
                     drag["ghost"].set_caption(SLOT_LABEL[what[1]], not same)
                 elif what and what[0] in ("grid", "item") and source[0] == "slot":
                     drag["ghost"].set_caption("back to the inventory", True)
+                elif what and what[0] in ("grid", "item") and source[0] == "grid":
+                    kind, _placed, other, spot = self.grid_plan(
+                        local.x(), local.y(), source[1], drag["grab"])
+                    size = self.cells.get(source[1], (1, 3))
+                    fits = kind in ("move", "swap")
+                    if kind != "same":
+                        self.preview = (look.footprint(spot, size), fits)
+                    caption = {"move": "move here", "same": "",
+                               "swap": "swap with %s" % self._label(other)}
+                    drag["ghost"].set_caption(caption.get(kind, "no room"), fits
+                                              or kind == "same")
                 else:
                     drag["ghost"].set_caption("", True)
                 self.update()
                 return
+            if self.preview is not None:
+                self.preview = None
+                self.update()
             if not force and self._clock.elapsed() < THROTTLE_MS:
                 return
             self._clock.restart()
@@ -458,17 +545,26 @@ def _classes():
                     self._end()
                     self._say("cancelled")
                 return
-            if event.button() != Qt.LeftButton:
-                return
             local = self._local(event)
             what = look.hit(self.rects, self.placements, self.cells,
                             local.x(), local.y(), self.cell)
+            if event.button() == Qt.RightButton and what and what[0] in ("grid", "item"):
+                self._grid_menu(self._global(event))
+                return
+            if event.button() != Qt.LeftButton:
+                return
             if what == ("close",):
                 self.close()
                 return
             source = self.source_at(local.x(), local.y())
             if source:
-                self._start(source, self._global(event))
+                grab = (0, 0)
+                if source[0] == "grid":
+                    ix, iy = look.item_rect(self.rects, self.placements[source[1]],
+                                            self.cells[source[1]], self.cell)[:2]
+                    grab = (int((local.x() - ix) // self.cell),
+                            int((local.y() - iy) // self.cell))
+                self._start(source, self._global(event), grab)
                 return
             if what in (("title",), None):
                 self._moving = self._global(event) - self.frameGeometry().topLeft()
@@ -630,6 +726,16 @@ def _classes():
             for row in range(1, look.ROWS):
                 y = grid.top() + int(row * self.cell)
                 p.drawLine(grid.left() + 1, y, grid.right() - 1, y)
+            if self.preview:
+                # where the dragged item would land: green it fits (or
+                # swaps), red no room (2026-09-29)
+                cells, fits = self.preview
+                tint = colour("valid" if fits else "invalid", 110)
+                for col, row in cells:
+                    if 0 <= col < look.COLS and 0 <= row < look.ROWS:
+                        p.fillRect(QtCore.QRect(grid.left() + int(col * self.cell) + 1,
+                                                grid.top() + int(row * self.cell) + 1,
+                                                int(self.cell) - 1, int(self.cell) - 1), tint)
             for key, spot in self.placements.items():
                 item = rect_of(look.item_rect(self.rects, spot, self.cells[key], self.cell))
                 if self._hover == ("item", key) or dragging == ("grid", key):

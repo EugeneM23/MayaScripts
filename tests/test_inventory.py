@@ -88,6 +88,15 @@ class FakeScene(object):
     def remember_position(self, x, y):
         pass
 
+    layout_in = {}
+    layout_out = None
+
+    def remembered_layout(self):
+        return dict(self.layout_in)
+
+    def remember_layout(self, placements):
+        self.layout_out = dict(placements)
+
 
 @unittest.skipIf(QT is None, "no Qt")
 class Window(unittest.TestCase):
@@ -185,6 +194,88 @@ class Window(unittest.TestCase):
         x, y = look.item_rect(self.win.rects, self.win.placements["Dagger_01"],
                               self.win.cells["Dagger_01"])[:2]
         self.assertEqual(self.win.source_at(x + 3, y + 3), ("grid", "Dagger_01"))
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class Rearranged(unittest.TestCase):
+    """2026-09-29, «можно было перетаскивать по инвентарю»: a grid item
+    dropped in the grid moves, swaps with the one it lands on when that one
+    fits back, or stays; the layout is remembered and a Sort packs it again.
+    Nothing in the scene is touched."""
+
+    def setUp(self):
+        self.app = (QT.QtWidgets.QApplication.instance()
+                    or QT.QtWidgets.QApplication([]))
+        self.scene = FakeScene()
+        self.win = inv.make_window(self.scene, parent=None, remember=False)
+        self.win.move(3000, 3000)
+        self.addCleanup(self.win.deleteLater)
+
+    def at_cell(self, col, row, dx=5, dy=5):
+        gx, gy = self.win.rects["grid"][:2]
+        p = self.win.mapToGlobal(QT.QtCore.QPoint(int(gx + col * look.CELL + dx),
+                                                  int(gy + row * look.CELL + dy)))
+        return p.x(), p.y()
+
+    def scene_actions(self):
+        return [e for e in self.scene.log if e[0] != "target"]
+
+    def test_a_grid_drop_moves_the_item_and_remembers(self):
+        self.win.drop_at(*self.at_cell(6, 1), source=("grid", "Dagger_01"), grab=(0, 0))
+        self.assertEqual(self.win.placements["Dagger_01"], (6, 1))
+        self.assertEqual(self.scene.layout_out["Dagger_01"], (6, 1))
+        self.assertEqual(self.scene_actions(), [])
+        self.assertIn("moved", self.win.status_text)
+
+    def test_the_grab_point_stays_under_the_cursor(self):
+        self.win.drop_at(*self.at_cell(6, 3), source=("grid", "LongSword_02"),
+                         grab=(0, 2))
+        self.assertEqual(self.win.placements["LongSword_02"], (6, 1))
+
+    def test_onto_another_item_that_fits_back_they_swap(self):
+        self.win.drop_at(*self.at_cell(1, 0), source=("grid", "LongSword_02"),
+                         grab=(0, 0))
+        self.assertEqual((self.win.placements["LongSword_02"],
+                          self.win.placements["Spear_01"]), ((1, 0), (0, 0)))
+        self.assertIn("swapped", self.win.status_text)
+        self.assertEqual(self.scene_actions(), [])
+
+    def test_no_room_leaves_the_grid_as_it_was(self):
+        before = dict(self.win.placements)
+        self.win.drop_at(*self.at_cell(0, 0), source=("grid", "Dagger_01"), grab=(0, 0))
+        self.assertEqual(self.win.placements, before)
+        self.assertIsNone(self.scene.layout_out)
+        self.assertIn("no room", self.win.status_text)
+
+    def test_a_slot_dropped_on_the_grid_still_takes_it_off(self):
+        self.win.drop_at(*self.at_cell(6, 1), source=("slot", "R"))
+        self.assertEqual(self.scene_actions(), [("take_off", ROOT, "R")])
+
+    def test_sort_packs_the_catalog_again_and_remembers(self):
+        self.win.drop_at(*self.at_cell(6, 1), source=("grid", "Dagger_01"), grab=(0, 0))
+        self.win.sort()
+        self.assertEqual(self.win.placements["Dagger_01"], (3, 0))
+        self.assertEqual(self.scene.layout_out["Dagger_01"], (3, 0))
+
+    def test_a_remembered_layout_opens_as_it_was_left(self):
+        self.scene.layout_in = {"Dagger_01": [9, 3]}
+        win = inv.make_window(self.scene, parent=None, remember=False)
+        self.addCleanup(win.deleteLater)
+        self.assertEqual(win.placements["Dagger_01"], (9, 3))
+
+    def test_the_plan_under_the_cursor(self):
+        x, y = self.win.rects["grid"][:2]
+        kind, _placed, other, spot = self.win.grid_plan(
+            x + 1 * look.CELL + 3, y + 3, "LongSword_02", (0, 0))
+        self.assertEqual((kind, other, spot), ("swap", "Spear_01", (1, 0)))
+
+    def test_the_preview_paints(self):
+        self.win.preview = (look.footprint((6, 1), (1, 2)), True)
+        image = QT.QtGui.QImage(self.win.size(), QT.QtGui.QImage.Format_ARGB32)
+        self.win.render(image)
+        gx, gy = self.win.rects["grid"][:2]
+        lit = image.pixelColor(int(gx + 6 * look.CELL + 20), int(gy + 1 * look.CELL + 20))
+        self.assertGreater(lit.green(), lit.red())
 
 
 class Wiring(unittest.TestCase):
