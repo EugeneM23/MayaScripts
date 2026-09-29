@@ -164,6 +164,7 @@ gate(4, abs(abs(zero[0][2]) - 180.0) < 5.0 or abs(abs(zero[0][0]) - 180.0) < 5.0
      % (tuple(round(v, 3) for v in zero[0]),))
 
 # ------------------------------------------------------------ the floor
+socket_before = grips.socket_of(B["weapon_r"])
 print(equip.to_floor(ROOT, SPEAR, (60.0, 0.0, 40.0), (1.0, 0.0, 0.0)))
 spear = bonedrive.driving_weapon(B["weapon_r"])
 low = lowest_point(spear) if spear else None
@@ -178,6 +179,11 @@ gate(6, low is not None and abs(low) < 1e-4 and thick_up > 0.9999,
      "lying flat: lowest vertex at y = %s, thickness axis up %.6f" % (low, thick_up))
 gate(7, socket < 1e-4 and bonedrive.is_parked(spear) and equip.holdings(ROOT)["R"].where == "floor",
      "weapon_r stands on the spear's socket (%.1e), its track parked, the doll says floor" % socket)
+socket_after = grips.socket_of(B["weapon_r"])
+gate(14, mdiff(socket_before, socket_after) < 1e-6,
+     "while weapon_r follows the floor spear its socket is still read from its OWN (parked) track "
+     "(%.1e) - the mirror grip must not be computed from the floor (measured live: 134 cm off)"
+     % mdiff(socket_before, socket_after))
 
 # the exact round trip on the left bone: a known track, dropped, taken off
 print(equip.take_off(ROOT, "L"))

@@ -13,6 +13,9 @@ Window policy the Weapons section and the inventory share, so both put the
 same weapon into the same hand the same way.
 """
 
+import math
+
+import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
 from maya_scenesetup import bonedrive
@@ -69,6 +72,38 @@ def remember(key, side, rotate, translate):
         cmds.optionVar(floatValueAppend=(name, value))
 
 
+def _parked_local(bone, weapon):
+    """The bone's own local matrix from the track parked on `weapon` (a floor
+    drop): its channels there, its own rotate order, jointOrient and
+    rotateAxis. Joint order, row vectors: RA . R . JO, then the translation."""
+    def value(channel):
+        return cmds.getAttr(weapon + "." + bonedrive.park_attr(channel))
+
+    order = cmds.getAttr(bone + ".rotateOrder")
+    rotate = om.MEulerRotation(*[math.radians(value("rotate" + a)) for a in "XYZ"],
+                               order=order).asMatrix()
+    orient = om.MEulerRotation(*[math.radians(v) for v in
+                                 cmds.getAttr(bone + ".jointOrient")[0]]).asMatrix() \
+        if cmds.attributeQuery("jointOrient", node=bone, exists=True) else om.MMatrix()
+    axis = om.MEulerRotation(*[math.radians(v) for v in
+                               cmds.getAttr(bone + ".rotateAxis")[0]]).asMatrix()
+    local = om.MTransformationMatrix(axis * rotate * orient)
+    local.setTranslation(om.MVector(*[value("translate" + a) for a in "XYZ"]),
+                         om.MSpace.kTransform)
+    return tuple(local.asMatrix())
+
+
+def socket_of(bone):
+    """A drive bone's own LOCAL matrix in its hand. Its channels, or - while
+    it follows a weapon lying on the floor, whose pose is not the bone's -
+    the track parked on that weapon (measured live 2026-09-29: read the other
+    way, weapon_l stood 134 cm off its hand and the mirror grip with it)."""
+    weapon = bonedrive.driving_weapon(bone)
+    if weapon and bonedrive.is_parked(weapon):
+        return _parked_local(bone, weapon)
+    return tuple(cmds.xform(bone, query=True, matrix=True, objectSpace=True))
+
+
 def sockets(root, bone="weapon_r"):
     """The two drive bones' LOCAL matrices in their hands (right, left), or
     None when the skeleton lacks one. Read at the current frame: no clip on
@@ -77,8 +112,7 @@ def sockets(root, bone="weapon_r"):
              for side in catalog.SIDES]
     if not all(paths):
         return None
-    return tuple(tuple(cmds.xform(path, query=True, matrix=True,
-                                  objectSpace=True)) for path in paths)
+    return tuple(socket_of(path) for path in paths)
 
 
 def for_hand(entry, side, root):

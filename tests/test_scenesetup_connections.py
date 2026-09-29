@@ -532,6 +532,15 @@ class TwoWeapons(unittest.TestCase):
     def test_else_the_picked_one(self):
         self.assertEqual(cx.choose_weapon([self.A, self.B], [], self.B), self.B)
 
+    def test_a_pick_beats_the_selection_it_was_made_under(self):
+        """Measured live 2026-09-29: an Apply leaves the sword selected, and a
+        pick of the dagger in the chooser snapped straight back to the
+        sword. The pick is the newer word until the selection changes."""
+        self.assertEqual(cx.choose_weapon([self.A, self.B], [self.A], self.B,
+                                          [self.A]), self.B)
+        self.assertEqual(cx.choose_weapon([self.A, self.B], [self.A], self.B,
+                                          []), self.A)
+
     def test_a_picked_weapon_that_went_is_forgotten(self):
         self.assertEqual(cx.choose_weapon([self.A], [], self.B), self.A)
 

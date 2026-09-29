@@ -104,7 +104,7 @@ ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
 # Which of two weapons the rows act on (2026-09-29): a segment row above them,
 # its pick kept by UUID (a rename or a re-parent keeps it).
 CHOOSER = "skeldarConnectionsWeapon"
-_PICKED = {"uuid": None}
+_PICKED = {"uuid": None, "selection": None}
 NO_SLOT = "-"
 FREE, WORLD, WEAPON = "Free", "World", "Weapon"
 HAND_CHOICES = (FREE, WEAPON)
@@ -258,11 +258,15 @@ def plan(current, wanted):
     return steps
 
 
-def choose_weapon(weapons, selection, picked):
+def choose_weapon(weapons, selection, picked, picked_selection=None):
     """The weapon the section acts on, of the rig's `weapons` (long paths).
-    Pure. The selection's - the weapon itself or anything under it, one of
-    its proxies too - else the one picked in the chooser while it is still
-    the rig's, else the first."""
+    Pure. The one picked in the chooser while the selection is what it was
+    at the pick (`picked_selection`) - the pick is the newer word; else the
+    selection's (the weapon itself or anything under it, one of its proxies
+    too); else the picked one while it is still the rig's; else the first."""
+    if picked in weapons and picked_selection is not None \
+            and list(selection or []) == list(picked_selection):
+        return picked
     for path in selection or []:
         for weapon in weapons:
             if path == weapon or path.startswith(weapon + "|"):
@@ -406,7 +410,8 @@ def chosen_weapon(rig, bones=None, weapons=None):
     weapons = weapons if weapons is not None else weapons_of(rig, bones)
     picked = cmds.ls(_PICKED["uuid"], long=True) if _PICKED["uuid"] else []
     return choose_weapon(weapons, cmds.ls(selection=True, long=True) or [],
-                         picked[0] if picked else None)
+                         picked[0] if picked else None,
+                         _PICKED.get("selection"))
 
 
 def weapon_of(rig, bones=None):
@@ -1006,6 +1011,8 @@ def _chooser_picked(index):
         weapons = weapons_of(rig) if rig else []
         if index < len(weapons):
             _PICKED["uuid"] = cmds.ls(weapons[index], uuid=True)[0]
+            #  the pick holds while the selection stays as it is now
+            _PICKED["selection"] = cmds.ls(selection=True, long=True) or []
         refresh()
     return go
 

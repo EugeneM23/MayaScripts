@@ -280,6 +280,18 @@ def _remember(entry, rotate, translate):
     grips.remember(entry.key, side(), rotate, translate)
 
 
+def _held_entry(weapon, entry):
+    """The catalog row of the weapon IN the hand (its marker key), else
+    `entry` - the dropdown names the next Add, and with two weapons
+    (2026-09-29) the chosen hand often holds another one: its messages and
+    its grip memory are that weapon's own."""
+    key = ""
+    if weapon and cmds.objExists(weapon) and cmds.attributeQuery(
+            attach.MARKER, node=weapon, exists=True):
+        key = cmds.getAttr(weapon + "." + attach.MARKER) or ""
+    return catalog.by_key(key) or entry
+
+
 def _status(message, control=_STATUS):
     """The Weapons section's line by default; character presses name
     theirs. Two sections, two lines (2026-09-17)."""
@@ -387,16 +399,17 @@ def refresh():
 
     if weapon:
         held = bonedrive.is_held(weapon)
+        own = _held_entry(weapon, entry)
         if bone and held and not attach.is_animated(weapon):
             _set_fields(*bonedrive.measured_grip(weapon, bone))
         else:
-            _set_fields(*_remembered(entry, root))
+            _set_fields(*_remembered(own, root))
         if linked:
-            _status(linked_message(entry))
+            _status(linked_message(own))
         elif held:
-            _status(attached_message(entry, hand or bone))
+            _status(attached_message(own, hand or bone))
         else:
-            _status(in_world_message(entry, bone))
+            _status(in_world_message(own, bone))
         return
 
     _set_fields(*_remembered(entry, root))
@@ -549,7 +562,7 @@ def recolour_weapon():
         colouring.paint_nodes([weapon], rgb, entry.key)
     finally:
         cmds.undoInfo(closeChunk=True)
-    _status(recoloured_message(entry.label, rgb))
+    _status(recoloured_message(_held_entry(weapon, entry).label, rgb))
 
 
 def add_weapon():
@@ -638,8 +651,9 @@ def remove_weapon():
     if aimrig.aim_for(attach.model_root(weapon)):
         _status(AIMED_NO_ADD)
         return
+    own = _held_entry(weapon, entry)
     removed = attach.detach(hand, bone)
-    _status(removed_message(entry) if removed else NOT_ATTACHED)
+    _status(removed_message(own) if removed else NOT_ATTACHED)
 
 
 def offsets_changed():
@@ -653,9 +667,11 @@ def offsets_changed():
     """
     entry = _entry()
     rotate, translate = _fields()
-    _remember(entry, rotate, translate)  # the next Add still wants them
-
     _root, hand, bone, weapon, _linked = _attached(entry)
+    # the weapon IN the hand owns the numbers when there is one (two weapons,
+    # 2026-09-29: the dropdown may name another); the next Add of it wants them
+    entry = _held_entry(weapon, entry)
+    _remember(entry, rotate, translate)
     if not weapon:
         _status(NOT_ATTACHED)
         return

@@ -167,10 +167,13 @@ def to_hand(root, side, entry):
     if refusal:
         return refusal
     hand, bone = bones(root, side)
-    rotate, translate = grips.for_hand(entry, side, root)
     cmds.undoInfo(openChunk=True, chunkName="Inventory: into a hand")
     try:
         attach.detach(hand, bone)
+        # the grip AFTER the old weapon is off: a bone that followed a weapon
+        # on the floor stands on its own track only now (the mirror of the
+        # right grip is read from the sockets)
+        rotate, translate = grips.for_hand(entry, side, root)
         _weapon, note = attach.attach(entry, hand, bone, rotate, translate)
         grips.remember(entry.key, side, rotate, translate)
     finally:
