@@ -222,6 +222,23 @@ def by_key(key):
     return None
 
 
+SIDES = ("R", "L")
+
+
+def side_bone(bone, side):
+    """The drive bone `side`'s hand uses for a row whose bone is `bone`. Pure.
+
+    The rows name the right hand's bone (`weapon_r`); the left hand takes its
+    twin (2026-09-29, two weapons per character): a trailing `_r` becomes `_l`
+    and back. A bone with no side suffix is its own twin.
+    """
+    if side == "L" and bone.endswith("_r"):
+        return bone[:-2] + "_l"
+    if side == "R" and bone.endswith("_l"):
+        return bone[:-2] + "_r"
+    return bone
+
+
 def missing(entry):
     """The entry's model -- or its texture -- if not on disk, "" if both are."""
     if not os.path.isfile(entry.path):

@@ -120,11 +120,45 @@ def grip_between(child16, parent16):
     bone's world matrices it answers the grip the fields should show.
     """
     product = om.MMatrix(child16) * om.MMatrix(parent16).inverse()
+    return _as_grip(product)
+
+
+# The model's thickness mirror (every catalog weapon lies with its thickness
+# on Z) and the hands' behaviour mirror (UE's left hand: the three axes of the
+# mirrored right hand negated - 0.0003 cm on Manny, 0.045 on the Creep).
+MODEL_MIRROR = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+BEHAVIOUR_MIRROR = (-1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0,
+                    0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+
+def _as_grip(product):
+    """A matrix as grip channels: (XYZ degrees, translate)."""
     frame = om.MTransformationMatrix(product)
     euler = frame.rotation(asQuaternion=False).reorder(om.MEulerRotation.kXYZ)
     shift = frame.translation(om.MSpace.kTransform)
     return (tuple(math.degrees(v) for v in (euler.x, euler.y, euler.z)),
             (shift.x, shift.y, shift.z))
+
+
+def mirror_grip(rotate, translate, frame_rotate, socket_r16, socket_l16):
+    """The left hand's grip standing a weapon as the world mirror of where the
+    right grip (`rotate`, `translate`) stands it. Pure.
+
+    Wanted: G_l . Fr . B_l = Mz . G_r . Fr . B_r . Mx, with B = S . H (the
+    weapon bone's LOCAL matrix in its hand, the hand) and H_l = F . H_r . Mx.
+    So G_l = Mz . G_r . Fr . S_r . F . S_l^-1 . Fr^-1 - the sockets decide it,
+    which is why Manny (weapon_l 6.9 cm off the mirror of weapon_r, the blade
+    backwards at zero grip) and the Creep (a geometric pair, zero is right)
+    come out differently from the same numbers (measured 2026-09-29). Row
+    vectors, as everywhere here.
+    """
+    frame = om.MMatrix(matrix_of(frame_rotate, (0.0, 0.0, 0.0)))
+    product = (om.MMatrix(MODEL_MIRROR)
+               * om.MMatrix(matrix_of(rotate, translate))
+               * frame * om.MMatrix(socket_r16) * om.MMatrix(BEHAVIOUR_MIRROR)
+               * om.MMatrix(socket_l16).inverse() * frame.inverse())
+    return _as_grip(product)
 
 
 # ------------------------------------------------------------------- scene
