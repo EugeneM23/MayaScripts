@@ -456,6 +456,20 @@ def regrip(weapon, bone, rotate, translate):
             cmds.parentConstraint(weapon, bone, maintainOffset=True)
 
 
+SPACE_MARKER = "mayaWeaponSpace"   # weaponspace.SPACE_MARKER; this module stays a leaf
+
+
+def is_held(weapon):
+    """True when a hand holds `weapon`: its parent is a weapon space, or a
+    joint (a file from before 2026-09-24). A weapon out in world - on the
+    floor, or lifted in Connections - is not held."""
+    parent = (cmds.listRelatives(weapon, parent=True, fullPath=True) or [None])[0]
+    if parent is None:
+        return False
+    return bool(cmds.attributeQuery(SPACE_MARKER, node=parent, exists=True)
+                or cmds.objectType(parent) == "joint")
+
+
 def is_parked(weapon):
     """Whether a floor drop parked a bone's own track on `weapon` (filled in
     with the floor, below)."""

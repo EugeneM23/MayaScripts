@@ -91,6 +91,7 @@ import maya_rigs
 from maya_overrig import overrig
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
+from maya_scenesetup import catalog
 from maya_scenesetup import skeleton
 from maya_scenesetup import weaponspace
 
@@ -362,6 +363,55 @@ def our_constraints(control):
         if cmds.attributeQuery(MARKER, node=node, exists=True):
             out.append(node)
     return out
+
+
+def followers_of(weapon):
+    """The sides whose hands ride `weapon`: the proxies inside it, found by
+    attribute (a following hand's proxy is a locator in the weapon's
+    geometry). What makes a weapon out in world "linked" (2026-09-29): one
+    nothing rides is its hand's to replace or take off."""
+    out = []
+    if not weapon or not cmds.objExists(weapon):
+        return out
+    for node in cmds.listRelatives(weapon, allDescendents=True,
+                                   type="transform", fullPath=True) or []:
+        if cmds.attributeQuery(PROXY_MARKER, node=node, exists=True):
+            side = (cmds.getAttr(node + "." + PROXY_MARKER) or "").split(":")[-1]
+            if side in SIDES and side not in out:
+                out.append(side)
+    return out
+
+
+def _marked_above(node):
+    """The nearest marked weapon at or above `node`, or None."""
+    while node:
+        if cmds.attributeQuery(attach.MARKER, node=node, exists=True):
+            return cmds.ls(node, long=True)[0]
+        node = (cmds.listRelatives(node, parent=True, fullPath=True) or [None])[0]
+    return None
+
+
+def following(rig, side):
+    """The weapon `side`'s IK hand rides (through our proxy), or None."""
+    control = _control(rig, side)
+    for con in our_constraints(control) if control else []:
+        proxy = proxy_for(con)
+        if proxy:
+            found = _marked_above(proxy)
+            if found:
+                return found
+    return None
+
+
+def weapon_label(weapon):
+    """A weapon node's catalog label (its marker key), else its leaf name."""
+    if not weapon:
+        return ""
+    key = ""
+    if cmds.objExists(weapon) and cmds.attributeQuery(attach.MARKER, node=weapon, exists=True):
+        key = cmds.getAttr(weapon + "." + attach.MARKER) or ""
+    entry = catalog.by_key(key) if key else None
+    return entry.label if entry else weapon.split("|")[-1]
 
 
 def connected_sides(rig):

@@ -202,3 +202,105 @@ class GripMemory(unittest.TestCase):
         self.assertEqual(window.optionvar_name("X"), grips.optionvar_name("X"))
         self.assertIs(window.pack_offsets, grips.pack)
         self.assertIs(window.unpack_offsets, grips.unpack)
+
+
+# ------------------------------------------------------ the Weapons section
+
+from tests.uifakes import FakeUiCmds  # noqa: E402
+
+
+class HandCmds(FakeUiCmds):
+    """The UI fake plus radio collections (as in the Connections tests)."""
+
+    def __init__(self):
+        FakeUiCmds.__init__(self)
+        self.selected, self.owner, self.on, self._current = {}, {}, {}, None
+
+    def iconTextRadioCollection(self, name=None, **kwargs):
+        if kwargs.get("query"):
+            return self.selected.get(name)
+        self.selected[name] = None
+        self._current = name
+        return name
+
+    def iconTextRadioButton(self, name=None, **kwargs):
+        if kwargs.get("exists"):
+            return name in self.owner
+        if kwargs.get("edit"):
+            if kwargs.get("select"):
+                self.selected[self.owner[name]] = name
+            return name
+        self.owner[name] = self._current
+        self.on[name] = kwargs.get("onCommand")
+        if kwargs.get("select"):
+            self.selected[self._current] = name
+        self.children.append(name)
+        self.calls.append(("iconTextRadioButton", (name,), kwargs))
+        return name
+
+
+class HandRow(unittest.TestCase):
+
+    def setUp(self):
+        from maya_scenesetup import window
+        self.window = window
+        self.fake = HandCmds()
+        real = (window.cmds, window.refresh, window.skeleton.resolve_bone,
+                window._bound_root)
+        window.cmds = self.fake
+        self.addCleanup(self._restore, real)
+
+    def _restore(self, real):
+        (self.window.cmds, self.window.refresh,
+         self.window.skeleton.resolve_bone, self.window._bound_root) = real
+
+    def test_the_segments_are_right_and_left(self):
+        self.window._hand_row()
+        labels = [c[2]["label"] for c in self.fake.calls
+                  if c[0] == "iconTextRadioButton"]
+        self.assertEqual(labels, ["Right", "Left"])
+
+    def test_the_right_hand_is_the_default(self):
+        self.window._hand_row()
+        self.assertEqual(self.window.side(), "R")
+
+    def test_a_remembered_left_hand_opens_on_left(self):
+        self.fake.optionvars[self.window._HAND_OPTIONVAR] = "L"
+        self.window._hand_row()
+        self.assertEqual(self.window.side(), "L")
+
+    def test_picking_a_hand_remembers_it_and_refreshes(self):
+        self.window._hand_row()
+        refreshed = []
+        self.window.refresh = lambda: refreshed.append(1)
+        self.fake.selected[self.window._HAND] = self.window.hand_segment("L")
+        self.fake.on[self.window.hand_segment("L")]()
+        self.assertEqual(self.fake.optionvars[self.window._HAND_OPTIONVAR], "L")
+        self.assertEqual(refreshed, [1])
+
+    def test_the_left_hand_asks_for_weapon_l(self):
+        asked = []
+        self.fake.selected[self.window._HAND] = self.window.hand_segment("L")
+        self.window.skeleton.resolve_bone = (
+            lambda root, name: asked.append(name))
+        self.window._bound_root = lambda: "|root"
+        self.window._attached(catalog.by_key("LongSword_02"))
+        self.assertEqual(asked, ["weapon_l"])
+
+    def test_the_right_hand_asks_for_the_rows_bone(self):
+        asked = []
+        self.window.skeleton.resolve_bone = (
+            lambda root, name: asked.append(name))
+        self.window._bound_root = lambda: "|root"
+        self.window._attached(catalog.by_key("LongSword_02"))
+        self.assertEqual(asked, ["weapon_r"])
+
+    def test_the_follow_refusal_names_the_hand_and_the_weapon(self):
+        text = self.window.hand_follows_message("L", "Long Sword 02")
+        self.assertIn("left hand follows the Long Sword 02", text)
+        self.assertIn("Connections", text)
+
+    def test_the_panel_builds_the_hand_row(self):
+        import inspect
+        self.assertIn("_hand_row()",
+                      inspect.getsource(self.window.build_weapons_panel))

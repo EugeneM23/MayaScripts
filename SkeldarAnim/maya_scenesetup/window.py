@@ -28,6 +28,7 @@ import traceback
 import maya.cmds as cmds
 
 import maya_hubstyle as hubstyle
+import maya_rigs
 from maya_overrig import aimrig
 
 from maya_scenesetup import attach
@@ -55,6 +56,12 @@ _WEAPON_COLOUR = "mayaSceneSetupWeaponColour"
 _CHARACTER_DOT = "mayaSceneSetupCharDot{0}"     # the palette dots (2026-09-28)
 _WEAPON_DOT = "mayaSceneSetupWeaponDot{0}"
 _BROWSE = "mayaSceneSetupBrowseFbx"
+# Which hand the Weapons presses act on (2026-09-29, two weapons per
+# character): a segment row under the weapon list, remembered.
+_HAND = "mayaSceneSetupHand"
+_HAND_OPTIONVAR = "mayaSceneSetup_hand"
+HAND_LABEL = {"R": "Right", "L": "Left"}
+SIDE_LABEL = {"R": "right hand", "L": "left hand"}
 
 # The grip is BONE-relative (2026-08-25, the user's ruling): zeros mean the
 # sword exactly on weapon_r, and the numbers survive any reparenting. That
@@ -158,9 +165,26 @@ def attached_message(entry, bone):
     return "{0} on {1}".format(entry.label, bone.split("|")[-1])
 
 
+def in_world_message(entry, bone):
+    """A weapon out in world - on the floor, or lifted in Connections -
+    driving this hand's bone (2026-09-29)."""
+    return "{0} out in world - {1} follows it".format(entry.label,
+                                                      bone.split("|")[-1])
+
+
 def recoloured_message(what, rgb):
     return "{0} is now {1}".format(what.split("|")[-1],
                                    colouring.colour_name(rgb))
+
+
+def hand_segment(key):
+    """The Hand row's segment for side `key` ("R" / "L")."""
+    return "{0}_{1}".format(_HAND, key)
+
+
+def hand_follows_message(key, label):
+    return ("the {0} follows the {1} - release it in Connections first"
+            .format(SIDE_LABEL[key], label))
 
 
 # ------------------------------------------------------------------- state
@@ -216,19 +240,33 @@ def _advance_swatch(control):
     _set_swatch(control, colouring.free_colour().rgb)
 
 
-def _remembered(entry):
-    """The remembered grip for this weapon: bone-relative, read verbatim.
+def side():
+    """The hand the Weapons presses act on: the segment picked, else "R"."""
+    chosen = (cmds.iconTextRadioCollection(_HAND, query=True, select=True)
+              or "").split("|")[-1]
+    for key in catalog.SIDES:
+        if chosen == hand_segment(key):
+            return key
+    return "R"
 
-    Both names hold the same space (the legacy one predates the
-    weapons->scenesetup rename), so the first that exists wins and no
-    composition is needed -- the numbers mean "offset from weapon_r"
-    whether they were dialled yesterday or before the inverted drive.
-    """
-    for name in (optionvar_name(entry.key),
-                 _LEGACY_OPTIONVAR.format(entry.key)):
-        if cmds.optionVar(exists=name):
-            return unpack_offsets(cmds.optionVar(query=name))
-    return unpack_offsets(None)
+
+def _remembered_side():
+    if cmds.optionVar(exists=_HAND_OPTIONVAR):
+        value = cmds.optionVar(query=_HAND_OPTIONVAR)
+        if value in catalog.SIDES:
+            return value
+    return "R"
+
+
+def _bone_name(entry):
+    """The drive bone of `entry` for the chosen hand (weapon_r / weapon_l)."""
+    return catalog.side_bone(entry.bone, side())
+
+
+def _remembered(entry, root):
+    """The grip the chosen hand gives this weapon: dialled, or - the left
+    hand - the right one's mirror (`grips.for_hand`). Bone-relative."""
+    return grips.for_hand(entry, side(), root)
 
 
 def _remembered_path():
@@ -239,10 +277,7 @@ def _remembered_path():
 
 
 def _remember(entry, rotate, translate):
-    name = optionvar_name(entry.key)
-    cmds.optionVar(clearArray=name)
-    for value in pack_offsets(rotate, translate):
-        cmds.optionVar(floatValueAppend=(name, value))
+    grips.remember(entry.key, side(), rotate, translate)
 
 
 def _status(message, control=_STATUS):
@@ -267,7 +302,7 @@ def _attached(entry):
     root = _bound_root()
     if not root:
         return None, None, None, None, False
-    bone = skeleton.resolve_bone(root, entry.bone)
+    bone = skeleton.resolve_bone(root, _bone_name(entry))
     if not bone:
         return root, None, None, None, False
     hand = attach.parent_bone(bone)
@@ -277,12 +312,20 @@ def _attached(entry):
     if attached_now:
         return root, hand, bone, attached_now, False
 
-    # Out in world since a Connect: the OverRig-rig kind hangs the IK hands
-    # under the marked node (`linking`), the AdvancedSkeleton kind
-    # (`connections`, 2026-09-18) leaves the weapon driving `weapon_r` from
-    # world space -- so the drive bone still knows it.
-    linked = linking.linked_weapon() or bonedrive.driving_weapon(bone)
-    return root, hand, bone, linked, linked is not None
+    # Out in world: the OverRig-rig kind hangs the IK hands under the marked
+    # node (`linking`) - the hands ride it; the AdvancedSkeleton kind
+    # (`connections`, 2026-09-18) and a weapon on the floor (2026-09-29) leave
+    # it driving the bone from world. That one is "linked" - refused by Add
+    # and Remove - only while a hand's IK actually rides it: one nothing
+    # rides is this hand's weapon to replace or take off.
+    legacy = linking.linked_weapon()
+    if legacy:
+        return root, hand, bone, legacy, True
+    world = bonedrive.driving_weapon(bone)
+    if world:
+        from maya_scenesetup import connections
+        return root, hand, bone, world, bool(connections.followers_of(world))
+    return root, hand, bone, None, False
 
 
 def _bound_root():
@@ -304,10 +347,10 @@ def _locate(entry):
         _status(NO_CHARACTER)
         return None
     if not bone:
-        _status(missing_bone_message(root, entry.bone))
+        _status(missing_bone_message(root, _bone_name(entry)))
         return None
     if not hand:
-        _status(missing_parent_message(entry.bone))
+        _status(missing_parent_message(_bone_name(entry)))
         return None
     return root, hand, bone, weapon, linked
 
@@ -343,21 +386,26 @@ def refresh():
     # advanced after each Add (`_advance_swatch`).
 
     if weapon:
-        if bone and not attach.is_animated(weapon):
+        held = bonedrive.is_held(weapon)
+        if bone and held and not attach.is_animated(weapon):
             _set_fields(*bonedrive.measured_grip(weapon, bone))
         else:
-            _set_fields(*_remembered(entry))
-        _status(linked_message(entry) if linked
-                else attached_message(entry, hand or bone))
+            _set_fields(*_remembered(entry, root))
+        if linked:
+            _status(linked_message(entry))
+        elif held:
+            _status(attached_message(entry, hand or bone))
+        else:
+            _status(in_world_message(entry, bone))
         return
 
-    _set_fields(*_remembered(entry))
+    _set_fields(*_remembered(entry, root))
     if not root:
         _status(NO_CHARACTER)
     elif not bone:
-        _status(missing_bone_message(root, entry.bone))
+        _status(missing_bone_message(root, _bone_name(entry)))
     elif not hand:
-        _status(missing_parent_message(entry.bone))
+        _status(missing_parent_message(_bone_name(entry)))
     else:
         _status(NOT_ATTACHED)
 
@@ -517,11 +565,17 @@ def add_weapon():
     located = _locate(entry)
     if located is None:
         return
-    _root, hand, bone, attached_now, linked = located
+    root, hand, bone, attached_now, linked = located
     if linked:
         # Replacing deletes the weapon, and the IK hand controls are its DAG
         # children: this press would take both arm rigs down unbaked.
         _status(LINKED_NO_ADD)
+        return
+    rides = _rides(root)
+    if rides:
+        # A hand holds XOR follows (2026-09-29): a weapon hung in a hand whose
+        # IK rides another weapon could close a loop with the other hand.
+        _status(rides)
         return
     if attached_now and aimrig.aim_for(attach.model_root(attached_now)):
         # Same shape of problem: the aim's locators drive the geometry, so
@@ -549,6 +603,18 @@ def add_weapon():
     message = added_message(entry, hand) + " - " + appearance(entry, rgb,
                                                               switched)
     _status(message + " - " + note if note else message)
+
+
+def _rides(root):
+    """The refusal when the chosen hand's IK rides a weapon, else ""."""
+    rig = maya_rigs.rig_of(root, maya_rigs.rigs()) if root else None
+    if rig is None:
+        return ""
+    from maya_scenesetup import connections
+    weapon = connections.following(rig, side())
+    if not weapon:
+        return ""
+    return hand_follows_message(side(), connections.weapon_label(weapon))
 
 
 def remove_weapon():
@@ -592,6 +658,11 @@ def offsets_changed():
     _root, hand, bone, weapon, _linked = _attached(entry)
     if not weapon:
         _status(NOT_ATTACHED)
+        return
+    if not bonedrive.is_held(weapon):
+        # On the floor (2026-09-29): no grip to dial - the numbers wait for
+        # the next time this weapon goes into this hand.
+        _status(in_world_message(entry, bone) + " - the grip applies in the hand")
         return
     if attach.is_animated(weapon):
         _status(LINKED_NO_OFFSETS)
@@ -756,6 +827,38 @@ def build_characters_panel():
     return column
 
 
+def hand_changed(key):
+    """A Hand segment's onCommand: remember the hand, re-read the fields."""
+    def go(*_args):
+        cmds.optionVar(stringValue=(_HAND_OPTIONVAR, key))
+        _run(refresh)
+    return go
+
+
+def _hand_row():
+    """`Hand [Right | Left]`: which hand Add, Remove, the grip fields and
+    Recolour act on (2026-09-29, two weapons per character). Segments, like
+    Connections' rows; the choice is remembered."""
+    start = _remembered_side()
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnWidth2=(64, 120),
+                   columnAttach=[(1, "left", 0), (2, "both", 4)])
+    cmds.text(label="Hand", align="left")
+    segments = cmds.rowLayout(numberOfColumns=2,
+                              columnAttach=[(1, "both", 1), (2, "both", 1)])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(_HAND)
+    for key in catalog.SIDES:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            hand_segment(key), style="textOnly", label=HAND_LABEL[key],
+            height=22, select=key == start,
+            annotation="Add, Remove, the grip and Recolour act on the {0}"
+                       .format(SIDE_LABEL[key]),
+            onCommand=hand_changed(key)), "segment")
+    cmds.setParent("..")
+    cmds.setParent("..")
+
+
 def build_weapons_panel():
     """The Weapons section: which weapon, Add / Remove, the grip, the colour.
 
@@ -781,6 +884,8 @@ def build_weapons_panel():
                    "list",
         command=lambda *_args: _run(browse_fbx)), "tool", "folder")
     cmds.setParent("..")
+
+    _hand_row()
 
     cmds.textFieldGrp(_CUSTOM, label="FBX", text=_remembered_path(),
                       columnWidth2=(40, 150), adjustableColumn=2,
@@ -812,14 +917,14 @@ def build_weapons_panel():
                        columnWidth4=(64, 70, 70, 70),
                        annotation="Grip rotation relative to the weapon "
                                   "bone. Zeros put the weapon exactly on "
-                                  "weapon_r.",
+                                  "the hand's weapon bone (weapon_r / weapon_l).",
                        changeCommand=lambda *_args: _run(offsets_changed))
     cmds.floatFieldGrp(_TRANSLATE, numberOfFields=3, label="Translate",
                        value1=0.0, value2=0.0, value3=0.0, precision=3,
                        columnWidth4=(64, 70, 70, 70),
                        annotation="Grip position relative to the weapon "
                                   "bone. Zeros put the weapon exactly on "
-                                  "weapon_r.",
+                                  "the hand's weapon bone (weapon_r / weapon_l).",
                        changeCommand=lambda *_args: _run(offsets_changed))
 
     _colour_row(_WEAPON_COLOUR, _WEAPON_DOT,
