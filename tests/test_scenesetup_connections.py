@@ -268,8 +268,10 @@ class Panel(unittest.TestCase):
         for wanted in ("Hand_R", "Hand_L", "Weapon"):
             self.assertIn(wanted, labels)
         #  no description paragraph (the animator: «весь текст описания
-        #  убираем») - the header, the three row labels and the status
-        self.assertEqual(len(labels), 5)
+        #  убираем») - the header, the chooser's label (2026-09-29), the
+        #  three row labels and the status
+        self.assertIn("Acts on", labels)
+        self.assertEqual(len(labels), 6)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -281,7 +283,7 @@ class Panel(unittest.TestCase):
                                  "segment")
         segment_rows = [m for m in self.marks.values()
                         if m.role == "segments"]
-        self.assertEqual(len(segment_rows), 3)
+        self.assertEqual(len(segment_rows), 4)      # the chooser's too
         self.assertTrue(all(m.layout for m in segment_rows))
         self.assertEqual(self.marks[cx.HEADER].role, "context")
         self.assertEqual(self.marks[cx.STATUS].role, "status")
@@ -501,3 +503,92 @@ class BakeAcross(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TwoWeapons(unittest.TestCase):
+    """2026-09-29: a sword in one hand, a dagger in the other. The section
+    acts on one of them; a hand holds XOR follows, across both."""
+
+    A = "|g|WeaponSpaces|hand_r_weaponSpace|LongSwordMesh"
+    B = "|g|WeaponSpaces|hand_l_weaponSpace|DaggerMesh"
+
+    def test_the_selection_names_the_weapon(self):
+        self.assertEqual(cx.choose_weapon([self.A, self.B],
+                                          [self.B + "|handProxy_R"], None),
+                         self.B)
+        self.assertEqual(cx.choose_weapon([self.A, self.B], [self.A], self.B),
+                         self.A)
+
+    def test_else_the_picked_one(self):
+        self.assertEqual(cx.choose_weapon([self.A, self.B], [], self.B), self.B)
+
+    def test_a_picked_weapon_that_went_is_forgotten(self):
+        self.assertEqual(cx.choose_weapon([self.A], [], self.B), self.A)
+
+    def test_else_the_first(self):
+        self.assertEqual(cx.choose_weapon([self.A, self.B], ["|elsewhere"],
+                                          None), self.A)
+        self.assertIsNone(cx.choose_weapon([], [], None))
+
+    def test_a_prefix_is_not_containment(self):
+        self.assertEqual(cx.choose_weapon([self.A, self.B], [self.B + "X"],
+                                          None), self.A)
+
+    def test_labels_of_one_key_carry_their_hand(self):
+        self.assertEqual(cx.labels_for([("Long Sword 02", "R"),
+                                        ("Long Sword 02", "L")]),
+                         ["Long Sword 02 (R)", "Long Sword 02 (L)"])
+        self.assertEqual(cx.labels_for([("Long Sword 02", "R"),
+                                        ("Dagger 01", "L")]),
+                         ["Long Sword 02", "Dagger 01"])
+
+    def test_a_hand_the_other_weapon_hangs_in_takes_nothing(self):
+        self.assertEqual(
+            cx.blocked(scheme(right=H), scheme(left=H), scheme(left=H),
+                       "Dagger 01"),
+            "Hand_L holds the Dagger 01 - move it first")
+        self.assertEqual(
+            cx.blocked(scheme(right=H), scheme(left=F, right=H),
+                       scheme(left=H), "Dagger 01"),
+            "Hand_L holds the Dagger 01 - move it first")
+
+    def test_a_hand_riding_the_other_weapon_takes_nothing(self):
+        self.assertEqual(
+            cx.blocked(scheme(right=H), scheme(left=F, right=H),
+                       scheme(left=F), "Dagger 01"),
+            "Hand_L follows the Dagger 01 - release it first")
+
+    def test_a_bone_the_other_weapon_drives_from_world(self):
+        self.assertEqual(
+            cx.blocked(scheme(right=H), scheme(left=H), scheme(),
+                       "Dagger 01", bone_taken="L"),
+            "weapon_l is driven by the Dagger 01 (in world) - remove it or "
+            "put it in a hand first")
+
+    def test_what_already_stands_is_never_blocked(self):
+        self.assertEqual(cx.blocked(scheme(right=H), scheme(right=H),
+                                    scheme(left=H), "Dagger 01"), "")
+
+    def test_the_free_hand_is_free(self):
+        self.assertEqual(cx.blocked(scheme(right=H), scheme(right=F),
+                                    scheme(left=H), "Dagger 01"), "")
+
+    def test_the_chooser_row_has_two_segments(self):
+        fake = FakeMenuCmds()
+        real = (cx.cmds, cx.refresh)
+        cx.cmds, cx.refresh = fake, (lambda *a: "")
+        try:
+            cx.hubstyle.take_marks()
+            cx.build_panel()
+            cx.hubstyle.take_marks()
+        finally:
+            cx.cmds, cx.refresh = real
+        names = [n for n, _l in fake.segments[cx.CHOOSER]]
+        self.assertEqual(names, [cx.chooser_segment(0), cx.chooser_segment(1)])
+
+    def test_the_header_names_the_other_weapon(self):
+        import maya_rigs
+        rig = maya_rigs.Rig("Manny_Rig", "cs", "|G|Main", "|G", "|root")
+        text = cx.header_text(rig, "|a|LongSwordMesh", scheme(right=H),
+                              "Dagger 01 in the left hand")
+        self.assertIn("also Dagger 01 in the left hand", text)

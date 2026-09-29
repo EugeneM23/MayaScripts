@@ -101,6 +101,11 @@ HEADER = "skeldarConnectionsHeader"
 MENU = {"R": "skeldarConnectionsParentR", "L": "skeldarConnectionsParentL",
         "W": "skeldarConnectionsParentW"}
 ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
+# Which of two weapons the rows act on (2026-09-29): a segment row above them,
+# its pick kept by UUID (a rename or a re-parent keeps it).
+CHOOSER = "skeldarConnectionsWeapon"
+_PICKED = {"uuid": None}
+NO_SLOT = "-"
 FREE, WORLD, WEAPON = "Free", "World", "Weapon"
 HAND_CHOICES = (FREE, WEAPON)
 WEAPON_CHOICES = (WORLD, "Hand_R", "Hand_L")
@@ -253,6 +258,56 @@ def plan(current, wanted):
     return steps
 
 
+def choose_weapon(weapons, selection, picked):
+    """The weapon the section acts on, of the rig's `weapons` (long paths).
+    Pure. The selection's - the weapon itself or anything under it, one of
+    its proxies too - else the one picked in the chooser while it is still
+    the rig's, else the first."""
+    for path in selection or []:
+        for weapon in weapons:
+            if path == weapon or path.startswith(weapon + "|"):
+                return weapon
+    if picked in weapons:
+        return picked
+    return weapons[0] if weapons else None
+
+
+def labels_for(pairs):
+    """[(label, side)] -> the chooser's labels, the hand named where two
+    weapons share a label. Pure."""
+    labels = [label for label, _side in pairs]
+    return [("%s (%s)" % (label, side)
+             if labels.count(label) > 1 and side else label)
+            for label, side in pairs]
+
+
+def blocked(current, wanted, other, other_label, bone_taken=None):
+    """Why `wanted` (this weapon's scheme, from `current`) may not stand
+    beside the other weapon's scheme `other`, or "". Pure.
+
+    A hand holds XOR follows, across both weapons (2026-09-29): a holding
+    hand rides nothing, so no chain of rides can close into a loop. A hand
+    whose bone the other weapon drives from world (`bone_taken`) takes no
+    weapon - one bone, one weapon. Only the links that change are checked:
+    what already stands is never refused.
+    """
+    for side in SIDES:
+        mine = wanted.get(side)
+        if not mine or mine == current.get(side):
+            continue
+        theirs = (other or {}).get(side)
+        if theirs == HOLDS:
+            return "%s holds the %s - move it first" % (ROW_LABEL[side],
+                                                        other_label)
+        if theirs == FOLLOWS:
+            return "%s follows the %s - release it first" % (ROW_LABEL[side],
+                                                            other_label)
+        if mine == HOLDS and side == bone_taken:
+            return ("%s is driven by the %s (in world) - remove it or put it "
+                    "in a hand first" % (WEAPON_BONE[side], other_label))
+    return ""
+
+
 def is_constant(values, tolerance=STATIC_TOLERANCE):
     """True when a sampled channel never moves: its keys collapse to a plain
     value so the animator's own keys on the proxy start from nothing. Pure."""
@@ -318,39 +373,55 @@ def bones_of(rig):
     return out
 
 
-def weapon_of(rig, bones=None):
-    """The rig's weapon: what drives a weapon bone, else what hangs under a
-    hand. None when there is none."""
+def _same(a, b):
+    return bool(a and b) and cmds.ls(a, long=True) == cmds.ls(b, long=True)
+
+
+def weapons_of(rig, bones=None):
+    """Every weapon of the rig, right-hand related first (2026-09-29, up to
+    two): what drives a weapon bone, what hangs in a hand's space, what a
+    hand's proxy rides - out in world with no bone link left (somebody
+    deleted it) it is still whatever this rig's hands ride."""
     bones = bones or bones_of(rig)
+    found = []
+
+    def add(node):
+        paths = cmds.ls(node, long=True) if node else []
+        if paths and paths[0] not in found:
+            found.append(paths[0])
+
     for side in ("R", "L"):
         hand, bone = bones[side]
         if bone:
-            found = bonedrive.driving_weapon(bone)
-            if found:
-                return cmds.ls(found, long=True)[0]
-    for side in ("R", "L"):
-        hand, bone = bones[side]
+            add(bonedrive.driving_weapon(bone))
         if hand:
-            found = attach.find_attached(hand)
-            if found:
-                return cmds.ls(found, long=True)[0]
-    # out in world with no bone link left (somebody deleted it): the weapon
-    # is still whatever this rig's hand proxies hang in
-    prefix = rig.namespace + ":"
-    for proxy in proxies():
-        if cmds.getAttr(proxy + "." + PROXY_MARKER).startswith(prefix):
-            parent = cmds.listRelatives(proxy, parent=True, fullPath=True) or []
-            if parent:
-                return parent[0]
-    return None
+            add(attach.find_attached(hand))
+    for side in ("R", "L"):
+        add(following(rig, side))
+    return found
 
 
-def driven_side(rig, bones=None):
-    """Which weapon bone the weapon drives now, or None."""
+def chosen_weapon(rig, bones=None, weapons=None):
+    """The weapon the section acts on (`choose_weapon` over the scene)."""
+    weapons = weapons if weapons is not None else weapons_of(rig, bones)
+    picked = cmds.ls(_PICKED["uuid"], long=True) if _PICKED["uuid"] else []
+    return choose_weapon(weapons, cmds.ls(selection=True, long=True) or [],
+                         picked[0] if picked else None)
+
+
+def weapon_of(rig, bones=None):
+    """The rig's weapon the section acts on, or None (kept for its callers:
+    with one weapon, that weapon)."""
+    return chosen_weapon(rig, bones)
+
+
+def driven_side(rig, bones=None, weapon=None):
+    """Which weapon bone `weapon` drives now (any weapon, without one), or None."""
     bones = bones or bones_of(rig)
     for side in SIDES:
         bone = bones[side][1]
-        if bone and bonedrive.driving_weapon(bone):
+        driver = bonedrive.driving_weapon(bone) if bone else None
+        if driver and (weapon is None or _same(driver, weapon)):
             return side
     return None
 
@@ -425,7 +496,8 @@ def is_connected(rig):
 
 
 def read_scheme(rig, bones=None, weapon=None):
-    """The scheme the scene stands in: who holds, who follows."""
+    """The scheme `weapon` (the chosen one without it) stands in: which hand
+    holds it, which hands ride it. The other weapon's hands are not in it."""
     bones = bones or bones_of(rig)
     weapon = weapon or weapon_of(rig, bones)
     scheme = {"L": None, "R": None}
@@ -436,8 +508,9 @@ def read_scheme(rig, bones=None, weapon=None):
         for side in SIDES:
             if holder and bones[side][0] and cmds.ls(bones[side][0], long=True) == cmds.ls(holder, long=True):
                 scheme[side] = HOLDS
-    for side in connected_sides(rig):
-        scheme[side] = FOLLOWS
+        for side in connected_sides(rig):
+            if _same(following(rig, side), weapon):
+                scheme[side] = FOLLOWS
     return scheme
 
 
@@ -639,16 +712,19 @@ def _span(weapon, controls=()):
                         cmds.playbackOptions(query=True, max=True)), keys)
 
 
-def apply(wanted, rig=None):
-    """Bring the scene from the scheme it stands in to `wanted`.
+def apply(wanted, rig=None, weapon=None):
+    """Bring `weapon` (the chosen one without it) from the scheme it stands
+    in to `wanted`.
 
-    Returns the status text; refusals happen before anything moves.
+    Returns the status text; refusals happen before anything moves - the
+    other weapon's included (`blocked`).
     """
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
     bones = bones_of(rig)
-    weapon = weapon_of(rig, bones)
+    weapons = weapons_of(rig, bones)
+    weapon = weapon or chosen_weapon(rig, bones, weapons)
     if not weapon:
         return NO_WEAPON
     if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
@@ -657,6 +733,13 @@ def apply(wanted, rig=None):
     steps = plan(current, wanted)
     if not steps:
         return NOTHING_TO_DO
+    for other in [w for w in weapons if not _same(w, weapon)]:
+        taken = (None if weaponspace.holding_hand(other)
+                 else driven_side(rig, bones, other))
+        text = blocked(current, wanted, read_scheme(rig, bones, other),
+                       weapon_label(other), taken)
+        if text:
+            return text
     for step, side in steps:
         if step == "hang" and not (bones[side][0] and bones[side][1]):
             return "%s: no %s bone (or its hand) on this rig" % (
@@ -700,14 +783,15 @@ def apply(wanted, rig=None):
                 overrig.parent_in(weapon, weaponspace.ensure_space(hand))
                 weaponspace.prune(was)
                 weapon = cmds.ls(uuid, long=True)[0]
-                if driven_side(rig, bones) != side:
-                    was = driven_side(rig, bones)
+                if driven_side(rig, bones, weapon) != side:
+                    was = driven_side(rig, bones, weapon)
                     if was:
                         bonedrive.unlink(bones[was][1])
                     _drive_bone(weapon, bone)
             elif step == "follow":
                 _follow(rig, side, attach.model_root(weapon), span)
-        return applied_message(steps, read_scheme(rig, bones))
+        weapon = cmds.ls(uuid, long=True)[0]
+        return applied_message(steps, read_scheme(rig, bones, weapon))
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -841,11 +925,13 @@ def connect(rig=None, sides=SIDES):
 
 
 def disconnect(rig=None):
-    """No hand follows; the weapon back in the hand whose bone it drives."""
+    """No hand follows the chosen weapon; it goes back into the hand whose
+    bone it drives."""
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
-    held = driven_side(rig) or "R"
+    weapon = weapon_of(rig)
+    held = driven_side(rig, None, weapon) or "R"
     wanted = {"L": None, "R": None, held: HOLDS}
     return apply(wanted, rig=rig)
 
@@ -869,14 +955,66 @@ def _run(action):
         refresh()
 
 
-def header_text(rig, weapon, scheme):
-    """The header line. Pure."""
+def header_text(rig, weapon, scheme, others=""):
+    """The header line; `others` says where the other weapon is. Pure."""
     if rig is None:
         return "no rig in the scene"
     if not weapon:
         return "%s: no weapon - Weapons > Add first" % maya_rigs.label(rig)
-    return "%s: %s - %s" % (maya_rigs.label(rig), weapon.split("|")[-1],
+    text = "%s: %s - %s" % (maya_rigs.label(rig), weapon.split("|")[-1],
                             describe(scheme))
+    return text + ("; also " + others if others else "")
+
+
+def where_text(label, scheme):
+    """«Dagger 01 in the left hand» - the other weapon, for the header. Pure."""
+    held = master(scheme)
+    return "%s in the %s" % (label, SIDE_LABEL[held]) if held else \
+        "%s in world" % label
+
+
+def chooser_segment(index):
+    """The chooser's segment `index` (0, 1)."""
+    return "{0}_{1}".format(CHOOSER, index)
+
+
+def _side_of(rig, bones, weapon):
+    """The hand `weapon` hangs in, else the side whose bone it drives."""
+    holder = weaponspace.holding_hand(weapon)
+    for side in SIDES:
+        if holder and _same(holder, bones[side][0]):
+            return side
+    return driven_side(rig, bones, weapon)
+
+
+def _set_chooser(weapons, chosen, sides=()):
+    """The chooser's two segments: the weapons' labels (`sides` names each
+    one's hand, for two of one kind), an empty slot "-" and disabled, the
+    chosen one selected."""
+    sides = list(sides) + [None] * (len(weapons) - len(sides))
+    labels = labels_for([(weapon_label(weapon), side)
+                         for weapon, side in zip(weapons[:2], sides)])
+    for index in (0, 1):
+        name = chooser_segment(index)
+        if not cmds.iconTextRadioButton(name, exists=True):
+            continue
+        present = index < len(labels)
+        cmds.iconTextRadioButton(name, edit=True,
+                                 label=labels[index] if present else NO_SLOT,
+                                 enable=present)
+        if present and _same(weapons[index], chosen):
+            cmds.iconTextRadioButton(name, edit=True, select=True)
+
+
+def _chooser_picked(index):
+    """A chooser segment's onCommand: that weapon, by UUID, then re-read."""
+    def go(*_args):
+        rig, _refusal = maya_rigs.current_rig()
+        weapons = weapons_of(rig) if rig else []
+        if index < len(weapons):
+            _PICKED["uuid"] = cmds.ls(weapons[index], uuid=True)[0]
+        refresh()
+    return go
 
 
 def segment_name(row, choice):
@@ -914,10 +1052,15 @@ def refresh(*_args):
     if not cmds.control(HEADER, exists=True):
         return ""
     rig, _refusal = maya_rigs.current_rig()
-    weapon = weapon_of(rig) if rig else None
-    scheme = read_scheme(rig) if rig else {"L": None, "R": None}
+    bones = bones_of(rig) if rig else None
+    weapons = weapons_of(rig, bones) if rig else []
+    weapon = chosen_weapon(rig, bones, weapons) if rig else None
+    scheme = read_scheme(rig, bones, weapon) if weapon else {"L": None, "R": None}
+    _set_chooser(weapons, weapon, [_side_of(rig, bones, w) for w in weapons])
     _set_menus(menus_from_scheme(scheme))
-    text = header_text(rig, weapon, scheme)
+    others = "; ".join(where_text(weapon_label(w), read_scheme(rig, bones, w))
+                       for w in weapons if not _same(w, weapon))
+    text = header_text(rig, weapon, scheme, others)
     cmds.text(HEADER, edit=True, label=text)
     return text
 
@@ -983,6 +1126,26 @@ def build_panel():
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(HEADER, label="", align="left", wordWrap=True,
                             height=36), "context")
+    #  Which of two weapons the rows act on (2026-09-29): the selection names
+    #  one too. Two fixed segments - labels written by refresh, an empty slot
+    #  disabled - rather than rows that come and go, which the skin's
+    #  segment tracks would not follow.
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnWidth2=(64, 110),
+                   columnAttach=[(1, "left", 0), (2, "both", 4)])
+    cmds.text(label="Acts on", font="boldLabelFont")
+    chooser = cmds.rowLayout(numberOfColumns=2,
+                             columnAttach=[(1, "both", 1), (2, "both", 1)])
+    hubstyle.mark(chooser, "segments", layout=True)
+    cmds.iconTextRadioCollection(CHOOSER)
+    for index in (0, 1):
+        hubstyle.mark(cmds.iconTextRadioButton(
+            chooser_segment(index), style="textOnly", label=NO_SLOT, height=22,
+            select=index == 0, enable=index == 0,
+            annotation="the weapon the rows below act on - or select it",
+            onCommand=_chooser_picked(index)), "segment")
+    cmds.setParent("..")
+    cmds.setParent("..")
     for row, choices in _ROWS:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
                        columnWidth3=(64, 110, hubstyle.tool_width(66)),
