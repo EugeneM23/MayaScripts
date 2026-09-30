@@ -50,7 +50,7 @@ from maya_graphoverlay import geometry, winstyle
 
 PANEL = "skeldarGraphOverlayPanel"          # our own, when nothing is borrowed
 BORROWED = "graphEditor1"                   # Maya's own Graph Editor panel
-LIST_WIDTH = 260                            # the channel list, when it was shut
+LIST_WIDTH = 320                            # the channel list, when it was shut
 MIN_LIST = 120
 HOST = "skeldarGraphOverlayHost"
 LAYOUT = "skeldarGraphOverlayLayout"
@@ -134,6 +134,7 @@ class Ghost(object):
         self.borrowed = False
         self.home = None            # where the borrowed panel lived
         self.list_sizes = None      # its splitter's sizes, when we opened it
+        self._list_done = False
         host = QtWidgets.QWidget(parent, QtCore.Qt.Tool
                                  | QtCore.Qt.FramelessWindowHint)
         host.setObjectName(HOST)
@@ -220,24 +221,32 @@ class Ghost(object):
         return None, -1
 
     def open_channel_list(self):
-        """The channel list open at least `MIN_LIST` wide: a fresh panel
-        comes up with it shut (measured: 15 px of border, sizes [0, 1686]),
-        and it is where the channels are picked. What it was is kept for
-        `destroy` to put back."""
+        """The channel list open, once, when the host is laid out: a panel
+        can come up with it shut (measured: sizes [0, 1681]), and it is
+        where the channels are picked. Never narrower than its own minimum
+        (310 px measured) - QSplitter collapses a side set below it, which
+        is how a 260 px list came back as 0. What it was is kept for
+        `give_back`. A list the animator shuts afterwards stays shut."""
+        if self._list_done or not self.chrome:
+            return False
         split, index = self._splitter()
         if split is None or split.count() < 2:
             return False
         sizes = split.sizes()
+        total = sum(sizes)
+        if total < 0.8 * self.host.width():         # not laid out yet
+            return False
+        self._list_done = True
         other = 1 - index
         if sizes[other] >= MIN_LIST:
             return False
+        want = max(LIST_WIDTH, split.widget(other).minimumSizeHint().width())
         self.list_sizes = sizes
         if not split.handleWidth():
             split.setHandleWidth(10)
-        total = sum(sizes)
         wanted = [0, 0]
-        wanted[other] = LIST_WIDTH
-        wanted[index] = max(1, total - LIST_WIDTH)
+        wanted[other] = want
+        wanted[index] = max(1, total - want)
         split.setSizes(wanted)
         return True
 

@@ -150,6 +150,7 @@ def enable():
         return "Graph Overlay: no viewport to lie on"
     from maya_graphoverlay import ghost, glass, keying
     parent = viewport.maya_main_window()
+    reset_state()                   # whatever an older copy left in it
     try:
         _STATE.model_panel = panel
         _STATE.ghost = ghost.Ghost(parent, rect, chrome=CHROME, borrow=BORROW)
@@ -414,6 +415,7 @@ def _follow_once():
         if not ghost_.aligned(rect):
             ghost_.place(rect)
             _on_chrome_paint()
+        ghost_.open_channel_list()          # once, when laid out
         glass_.keep_click_through()
     ghost_.keep_invisible()
     # Re-parenting a panel can recreate its canvas window: follow the new one.
