@@ -62,6 +62,9 @@ _PAYLOAD = (
     "maya_rig_retarget.py",
     "maya_graphoverlay",        # the Graph Editor over the viewport (2026-09-30)
     "maya_update.py",
+    "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
+    "maya_sharenet.py",         # its network: litterbox + ntfy.sh
+    "maya_share.py",            # the section
     "install.py",
     "README_INSTALL.txt",
 )

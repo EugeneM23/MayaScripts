@@ -815,6 +815,10 @@ _OURS = (
      "Open the Weapons card - the inventory: drag a weapon onto a hand in "
      "the viewport, or onto the floor",
      partial(_show, "maya_inventory", "show")),
+    ("window.shared", "Windows", "Shared",
+     "Open the Shared section: send the scene or an FBX to everybody, open "
+     "what they sent",
+     partial(_show, "maya_share", "show_window")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",

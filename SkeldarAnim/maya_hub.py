@@ -97,6 +97,10 @@ SECTIONS = (
     Section("connections", "Connections", "maya_scenesetup.connections",
             "build_panel", "skeldarHubFrameConnections",
             "scene", "hand-grab"),
+    #  2026-09-30: scenes and FBX between colleagues, over ntfy.sh + litterbox.
+    Section("shared", "Shared", "maya_share",
+            "build_panel", "skeldarHubFrameShared",
+            "scene", "send"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

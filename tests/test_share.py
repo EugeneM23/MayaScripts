@@ -434,5 +434,31 @@ class Panel(_Base):
         self.assertEqual(asked, ["shared"])
 
 
+class Registered(unittest.TestCase):
+    """The section in the hub, its icon, its payload rows, its hotkey row."""
+
+    def test_a_scene_section_after_connections(self):
+        keys = [s.key for s in maya_hub.SECTIONS]
+        self.assertEqual(keys.index("shared"), keys.index("connections") + 1)
+        section = maya_hub.section("shared")
+        self.assertEqual(section.group, "scene")
+        self.assertEqual(section.module, "maya_share")
+
+    def test_its_icon(self):
+        import maya_hubicons
+        self.assertIn(maya_hub.section("shared").icon, maya_hubicons.ICONS)
+
+    def test_the_payload_rows(self):
+        import install
+        for name in ("maya_sharerecords.py", "maya_sharenet.py",
+                     "maya_share.py"):
+            self.assertIn(name, install.payload())
+
+    def test_the_hotkey_row(self):
+        import maya_hotkeys
+        rows = [row[0] for row in maya_hotkeys.COMMANDS]
+        self.assertIn("window.shared", rows)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -475,8 +475,9 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        #  + window.inventory (2026-09-29), + graph.overlay (2026-09-30)
-        self.assertEqual(len(ours), 33)
+        #  + window.inventory (2026-09-29), + graph.overlay (2026-09-30),
+        #  + window.shared (2026-09-30)
+        self.assertEqual(len(ours), 34)
 
     def test_the_graph_overlay_row(self):
         """Maya's Graph Editor over the viewport, see-through (2026-09-30)."""
@@ -495,8 +496,8 @@ class OurRows(unittest.TestCase):
                          ["window.connections", "window.hotkeys",
                           "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
-                          "window.scenesetup", "window.uebridge",
-                          "window.weapons"])
+                          "window.scenesetup", "window.shared",
+                          "window.uebridge", "window.weapons"])
 
     def test_the_picker_rows(self):
         self.assertEqual(sorted(self._keys("picker.")),
@@ -628,8 +629,9 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 9)
+        self.assertEqual(len(names), 10)
         self.assertIn("maya_hub", names)
+        self.assertIn("maya_share", names)
         self.assertIn("maya_inventory", names)
         self.assertIn("maya_graphoverlay", names)
         self.assertIn("maya_scenesetup.connections", names)
