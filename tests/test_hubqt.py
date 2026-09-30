@@ -533,3 +533,32 @@ class Available(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Ghost(unittest.TestCase):
+    """2026-09-30: the inventory's drag ghost, shared with the Characters grid."""
+
+    def setUp(self):
+        from PySide6 import QtGui
+        self.app = _app()
+        self.QtGui = QtGui
+
+    def test_the_caption_grows_the_ghost_and_the_cursor_sits_on_the_anchor(self):
+        pix = self.QtGui.QPixmap(40, 40)
+        pix.fill(QtCore.Qt.red)
+        ghost = hubqt.ghost_class()(pix, 40, 80, 1.0, anchor=(0.5, 0.5),
+                                    name="skeldarTestGhost", backdrop="field")
+        self.addCleanup(ghost.deleteLater)
+        self.assertEqual(ghost.objectName(), "skeldarTestGhost")
+        ghost.set_caption("a caption far wider than the icon is", True)
+        self.assertGreater(ghost.width(), 40)
+        ghost.follow(QtCore.QPoint(500, 500))
+        self.assertEqual(ghost.x() + ghost.width() // 2, 500)
+        self.assertEqual(ghost.y() + 40, 500)
+        image = self.QtGui.QImage(ghost.size(), self.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        ghost.render(image)
+        self.assertGreater(image.pixelColor(ghost.width() // 2, 20).alpha(), 0)
+
+    def test_one_class_for_every_drag(self):
+        self.assertIs(hubqt.ghost_class(), hubqt.ghost_class())

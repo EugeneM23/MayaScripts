@@ -718,6 +718,113 @@ def _fill_class():
     return _CLASSES["fill"]
 
 
+def ghost_class():
+    """The drag ghost the hub's drags share: a pixmap riding the cursor with a
+    caption pill under it naming what a release would do - the accent where
+    it lands, danger where it does not. The weapon inventory's since
+    2026-09-29, the Characters portrait grid's too since 2026-09-30.
+
+    `icon_w` / `icon_h` are physical px; `anchor` is where the cursor sits on
+    the icon (fractions of its width and height); `backdrop` is a token
+    painted rounded behind the icon, or None. `name` is the objectName an
+    owner finds its ghosts by (an update's show() deletes an older build's)."""
+    if "ghost" not in _CLASSES:
+        q = qt()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+        Qt = QtCore.Qt
+
+        def colour(name):
+            return QtGui.QColor(hubstyle.TOKENS[name])
+
+        def font(px):
+            f = QtGui.QFont()
+            f.setPixelSize(max(1, int(round(px))))
+            return f
+
+        class Ghost(QtWidgets.QWidget):
+
+            def __init__(self, pixmap, icon_w, icon_h, k, anchor=(0.5, 0.25),
+                         name="skeldarDragGhost", backdrop=None):
+                QtWidgets.QWidget.__init__(
+                    self, None, Qt.ToolTip | Qt.FramelessWindowHint
+                    | Qt.WindowStaysOnTopHint)
+                self.setObjectName(name)
+                self.setAttribute(Qt.WA_TranslucentBackground)
+                self.setAttribute(Qt.WA_TransparentForMouseEvents)
+                self.setAttribute(Qt.WA_ShowWithoutActivating)
+                self.pixmap, self.k = pixmap, float(k or 1.0)
+                self.icon_w, self.icon_h = int(icon_w), int(icon_h)
+                self.anchor, self.backdrop = anchor, backdrop
+                self.text, self.good = "", True
+                self._resize()
+
+            def _caption_width(self):
+                if not self.text:
+                    return 0
+                metrics = QtGui.QFontMetrics(font(12 * self.k))
+                return metrics.horizontalAdvance(self.text) + int(16 * self.k)
+
+            def _resize(self):
+                width = max(self.icon_w, self._caption_width())
+                self.resize(width, self.icon_h + int(26 * self.k))
+
+            def set_caption(self, text, good):
+                if (text, good) != (self.text, self.good):
+                    self.text, self.good = text, good
+                    self._resize()
+                    self.update()
+
+            def follow(self, point):
+                """The cursor on the icon's anchor; the caption hangs below."""
+                left = (self.width() - self.icon_w) // 2
+                self.move(point.x() - left - int(self.icon_w * self.anchor[0]),
+                          point.y() - int(self.icon_h * self.anchor[1]))
+
+            def paintEvent(self, _event):                    # noqa: N802
+                p = QtGui.QPainter(self)
+                p.setRenderHint(QtGui.QPainter.Antialiasing)
+                p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+                box = QtCore.QRect((self.width() - self.icon_w) // 2, 0,
+                                   self.icon_w, self.icon_h)
+                radius = 6 * self.k
+                p.setOpacity(0.85)
+                if self.backdrop:
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(colour(self.backdrop))
+                    p.drawRoundedRect(QtCore.QRectF(box), radius, radius)
+                inset = int(2 * self.k)
+                inner = box.adjusted(inset, inset, -inset, -inset)
+                if not self.pixmap.isNull() and inner.width() > 0 \
+                        and inner.height() > 0:
+                    size = self.pixmap.size().scaled(inner.size(),
+                                                     Qt.KeepAspectRatio)
+                    target = QtCore.QRect(
+                        inner.x() + (inner.width() - size.width()) // 2,
+                        inner.y() + (inner.height() - size.height()) // 2,
+                        size.width(), size.height())
+                    p.drawPixmap(target, self.pixmap)
+                p.setOpacity(1.0)
+                if self.text:
+                    cw = self._caption_width()
+                    cap = QtCore.QRectF((self.width() - cw) // 2,
+                                        self.icon_h + int(3 * self.k), cw,
+                                        int(21 * self.k))
+                    edge = max(1.0, self.k)
+                    shape = cap.adjusted(edge / 2, edge / 2, -edge / 2,
+                                         -edge / 2)
+                    p.setPen(QtGui.QPen(colour("accent" if self.good
+                                               else "danger"), edge))
+                    p.setBrush(colour("card"))
+                    p.drawRoundedRect(shape, radius, radius)
+                    p.setFont(font(12 * self.k))
+                    p.setPen(colour("text" if self.good else "muted"))
+                    p.drawText(cap, Qt.AlignCenter, self.text)
+                p.end()
+
+        _CLASSES["ghost"] = Ghost
+    return _CLASSES["ghost"]
+
+
 def _spread(row, scale=1.0):
     """The segments of a Maya rowLayout share its width equally.
 

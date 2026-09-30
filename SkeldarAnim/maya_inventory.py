@@ -201,65 +201,9 @@ def _classes():
                             inner.y() + (inner.height() - size.height()) // 2,
                             size.width(), size.height())
 
-    class Ghost(QtWidgets.QWidget):
-        """The weapon riding the cursor, and the caption naming its target."""
-
-        def __init__(self, pixmap, cells, k):
-            QtWidgets.QWidget.__init__(
-                self, None, Qt.ToolTip | Qt.FramelessWindowHint
-                | Qt.WindowStaysOnTopHint)
-            self.setObjectName(GHOST_NAME)
-            self.setAttribute(Qt.WA_TranslucentBackground)
-            self.setAttribute(Qt.WA_TransparentForMouseEvents)
-            self.setAttribute(Qt.WA_ShowWithoutActivating)
-            self.pixmap, self.k = pixmap, k
-            self.icon_w = int(cells[0] * look.CELL * k)
-            self.icon_h = int(cells[1] * look.CELL * k)
-            self.text, self.good = "", True
-            self._resize()
-
-        def _caption_width(self):
-            metrics = QtGui.QFontMetrics(font(12 * self.k))
-            return metrics.horizontalAdvance(self.text) + int(16 * self.k) \
-                if self.text else 0
-
-        def _resize(self):
-            width = max(self.icon_w, self._caption_width())
-            self.resize(width, self.icon_h + int(26 * self.k))
-
-        def set_caption(self, text, good):
-            if (text, good) != (self.text, self.good):
-                self.text, self.good = text, good
-                self._resize()
-                self.update()
-
-        def follow(self, point):
-            """The icon's middle on the cursor's x, the cursor a quarter down
-            its height - the grip end under the hand that holds it."""
-            self.move(point.x() - self.width() // 2,
-                      point.y() - self.icon_h // 4)
-
-        def paintEvent(self, _event):
-            p = QtGui.QPainter(self)
-            p.setRenderHint(QtGui.QPainter.Antialiasing)
-            p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
-            box = QtCore.QRect((self.width() - self.icon_w) // 2, 0,
-                               self.icon_w, self.icon_h)
-            p.setOpacity(0.85)
-            p.drawPixmap(fitted(self.pixmap, box, int(2 * self.k)), self.pixmap)
-            p.setOpacity(1.0)
-            if self.text:
-                cw = self._caption_width()
-                cap = QtCore.QRect((self.width() - cw) // 2,
-                                   self.icon_h + int(3 * self.k), cw,
-                                   int(21 * self.k))
-                # a card pill: the accent where it lands, danger where not
-                rounded(p, cap, look.RADIUS["well"] * self.k, "card",
-                        "accent" if self.good else "danger", max(1.0, self.k))
-                p.setFont(font(12 * self.k))
-                p.setPen(colour("text" if self.good else "muted"))
-                p.drawText(cap, Qt.AlignCenter, self.text)
-            p.end()
+    #  The drag ghost is the hub's own since 2026-09-30, shared with the
+    #  Characters portrait grid (maya_hubqt.ghost_class).
+    Ghost = maya_hubqt.ghost_class()
 
     class InventoryWindow(QtWidgets.QWidget):
         """The inventory. `scene` is `Scene()` in Maya, a fake in the tests."""
@@ -470,7 +414,10 @@ def _classes():
         def _start(self, source, point, grab=(0, 0)):
             key = self._key_of(source)
             pixmap = self.pixmaps.get(key) or QtGui.QPixmap()
-            ghost = Ghost(pixmap, self.cells.get(key, (1, 3)), self.k)
+            cells = self.cells.get(key, (1, 3))
+            ghost = Ghost(pixmap, int(cells[0] * look.CELL * self.k),
+                          int(cells[1] * look.CELL * self.k), self.k,
+                          anchor=(0.5, 0.25), name=GHOST_NAME)
             try:
                 snap = self.scene.snapshot()
             except Exception:                                # noqa: BLE001
