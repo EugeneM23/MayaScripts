@@ -70,6 +70,16 @@ def backgrounds(bgra, step=SAMPLE_STEP, share=BACKGROUND_SHARE,
     return found
 
 
+def is_uniform(bgra, step=SAMPLE_STEP, share=0.995):
+    """One colour covering `share` of a sparse sample: an unrendered or
+    empty framebuffer, nothing to learn a background from."""
+    sample = np.ascontiguousarray(bgra[::step, ::step, :3])
+    sample = sample.reshape(-1, 3).astype(np.uint32)
+    packed = (sample[:, 2] << 16) | (sample[:, 1] << 8) | sample[:, 0]
+    _values, counts = np.unique(packed, return_counts=True)
+    return bool(counts.max() >= share * packed.size)
+
+
 def background(bgra, step=SAMPLE_STEP):
     """The commonest background tone as (r, g, b)."""
     return backgrounds(bgra, step)[0]

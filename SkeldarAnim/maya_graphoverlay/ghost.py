@@ -1,9 +1,18 @@
-"""Our own Graph Editor: invisible, its curve area exactly on the viewport.
+"""The Graph Editor on the viewport, invisible, in a frameless host of ours.
 
-A `scriptedPanel` of type graphEditor inside a frameless Qt host of ours
-(the hub skin's `cmds.setParent(fullName(layout))`), never the animator's
-graphEditor1 - their Graph Editor stays where they docked it. Measured
-2026-09-30 on this very construction:
+The panel is Maya's OWN `graphEditor1`, borrowed for as long as the mode is
+on and put back where it lived (its dock, its window, or unparented) when it
+ends. Measured 2026-09-30: 55 of Maya's runtime commands name
+`graphEditor1GraphEd` outright - Copy/Paste/Delete keys, the view modes,
+infinity, frame all/selected, bake, simplify, the smoothness - and the
+toolbar, the menus and the hotkeys reach them; in a panel of our own the
+Stacked View button switched the animator's Graph Editor instead (read off
+the button: `GraphEditorStackedView` = `graphEditorSetViewMode
+graphEditor1GraphEd 1`). Borrowed, every one of them acts on the Graph
+Editor over the viewport, with the animator's own settings. Without a
+graphEditor1 (or with `borrow=False`) a `scriptedPanel` of our own stands
+in. It goes into the host with the hub skin's `setParent(fullName(layout))`.
+Measured on this construction:
 
 - the curve area is `TanimCurveCanvas`, a QOpenGLWindow named
   `<panel>GraphEdImpl` inside a QWindowContainer - a native child HWND;
@@ -39,7 +48,10 @@ import shiboken6
 
 from maya_graphoverlay import geometry, winstyle
 
-PANEL = "skeldarGraphOverlayPanel"
+PANEL = "skeldarGraphOverlayPanel"          # our own, when nothing is borrowed
+BORROWED = "graphEditor1"                   # Maya's own Graph Editor panel
+LIST_WIDTH = 260                            # the channel list, when it was shut
+MIN_LIST = 120
 HOST = "skeldarGraphOverlayHost"
 LAYOUT = "skeldarGraphOverlayLayout"
 PANE = "skeldarGraphOverlayPane"
@@ -61,13 +73,40 @@ def _widget(name):
         if pointer else None
 
 
+def _control_path(panel):
+    try:
+        return cmds.scriptedPanel(panel, query=True, control=True) or ""
+    except Exception:                                         # noqa: BLE001
+        return ""
+
+
+def home_of(panel):
+    """The layout `panel` lives in, or None when it is unparented."""
+    control = _control_path(panel)
+    if not control:
+        return None
+    try:
+        return cmds.control(control, query=True, parent=True) or None
+    except Exception:                                         # noqa: BLE001
+        return None
+
+
+def in_host(panel):
+    """Whether `panel` lives in a host of ours right now."""
+    return _control_path(panel).startswith(HOST + "|")
+
+
 def delete_leftovers():
     """A panel of ours a saved scene brought back; a host or a glass an
     older module object built (an install purges modules, not widgets -
-    trap 102). Found by name, never by module state."""
+    trap 102). Found by name, never by module state. A borrowed
+    graphEditor1 left in such a host is unparented first - deleting the
+    host would delete Maya's own Graph Editor with it."""
     try:
         if cmds.scriptedPanel(PANEL, exists=True):
             cmds.deleteUI(PANEL, panel=True)
+        if cmds.scriptedPanel(BORROWED, exists=True) and in_host(BORROWED):
+            cmds.scriptedPanel(BORROWED, edit=True, unParent=True)
     except Exception:                                         # noqa: BLE001
         pass
     app = QtWidgets.QApplication.instance()
@@ -83,14 +122,18 @@ def delete_leftovers():
 class Ghost(object):
     """The panel, its host, and the canvas wrapper, held together."""
 
-    def __init__(self, parent, rect, chrome=True):
+    def __init__(self, parent, rect, chrome=True, borrow=True):
         """`chrome`: the whole Graph Editor on `rect` - menu bar, toolbar,
         channel list and the curve area (2026-09-30, the animator: «я не
         могу выделить отдельно каналы для редактирования кривых и нет
         остальных инструментов»). False: the curve area alone on `rect`,
-        everything else hidden - the first build's shape."""
+        everything else hidden - the first build's shape. `borrow`: Maya's
+        own graphEditor1 rather than a panel of ours (see the module)."""
         delete_leftovers()
         self.chrome = bool(chrome)
+        self.borrowed = False
+        self.home = None            # where the borrowed panel lived
+        self.list_sizes = None      # its splitter's sizes, when we opened it
         host = QtWidgets.QWidget(parent, QtCore.Qt.Tool
                                  | QtCore.Qt.FramelessWindowHint)
         host.setObjectName(HOST)
@@ -109,13 +152,20 @@ class Ghost(object):
         previous = cmds.setParent(query=True)
         cmds.setParent(_full_name(layout))
         pane = cmds.paneLayout(PANE, configuration="single")
-        self.panel = cmds.scriptedPanel(PANEL, type="graphEditor",
-                                        label=LABEL, parent=pane)
+        if borrow and cmds.scriptedPanel(BORROWED, exists=True):
+            self.home = home_of(BORROWED)
+            cmds.scriptedPanel(BORROWED, edit=True, parent=pane)
+            self.panel, self.borrowed = BORROWED, True
+        else:
+            self.panel = cmds.scriptedPanel(PANEL, type="graphEditor",
+                                            label=LABEL, parent=pane)
         try:
             cmds.setParent(previous)
         except Exception:                                     # noqa: BLE001
             pass
-        if not self.chrome:
+        if self.chrome:
+            self.open_channel_list()
+        else:
             self.hide_chrome()
 
     # ------------------------------------------------------------ the chrome
@@ -161,6 +211,35 @@ class Ghost(object):
             pixmap = self.host.grab(QtCore.QRect(*band))
             pieces.append((pixmap.toImage(), band[0], band[1]))
         return pieces
+
+    def _splitter(self):
+        port = _widget(self.panel + "GraphEd")
+        split = port.parentWidget() if port is not None else None
+        if isinstance(split, QtWidgets.QSplitter):
+            return split, split.indexOf(port)
+        return None, -1
+
+    def open_channel_list(self):
+        """The channel list open at least `MIN_LIST` wide: a fresh panel
+        comes up with it shut (measured: 15 px of border, sizes [0, 1686]),
+        and it is where the channels are picked. What it was is kept for
+        `destroy` to put back."""
+        split, index = self._splitter()
+        if split is None or split.count() < 2:
+            return False
+        sizes = split.sizes()
+        other = 1 - index
+        if sizes[other] >= MIN_LIST:
+            return False
+        self.list_sizes = sizes
+        if not split.handleWidth():
+            split.setHandleWidth(10)
+        total = sum(sizes)
+        wanted = [0, 0]
+        wanted[other] = LIST_WIDTH
+        wanted[index] = max(1, total - LIST_WIDTH)
+        split.setSizes(wanted)
+        return True
 
     def hide_chrome(self):
         """Menu bar, toolbar and channel list out; idempotent."""
@@ -279,19 +358,44 @@ class Ghost(object):
         return self.canvas_rect() == tuple(target)
 
     def alive(self):
+        """The host stands and the panel is still in it. A borrowed
+        graphEditor1 can be taken back by Maya itself (the Graph Editor
+        opened meanwhile re-parents it into its own window) - the mode
+        then ends."""
         try:
             self.host.objectName()
-            return bool(cmds.scriptedPanel(self.panel, exists=True))
+            if not cmds.scriptedPanel(self.panel, exists=True):
+                return False
+            return in_host(self.panel) if self.borrowed else True
         except Exception:                                     # noqa: BLE001
             return False
+
+    def give_back(self):
+        """The borrowed panel back where it lived - its dock, its window,
+        or unparented as it was - with its channel list's sizes; nothing
+        when Maya already took it back."""
+        if not self.borrowed or not in_host(self.panel):
+            return False
+        if self.list_sizes:
+            split, _index = self._splitter()
+            if split is not None:
+                split.setSizes(self.list_sizes)
+        if self.home and cmds.layout(self.home, exists=True):
+            cmds.scriptedPanel(self.panel, edit=True, parent=self.home)
+        else:
+            cmds.scriptedPanel(self.panel, edit=True, unParent=True)
+        return True
 
     def destroy(self):
         self._canvas = None
         try:
-            if cmds.scriptedPanel(self.panel, exists=True):
+            if self.borrowed:
+                self.give_back()
+            elif cmds.scriptedPanel(self.panel, exists=True):
                 cmds.deleteUI(self.panel, panel=True)
         except Exception:                                     # noqa: BLE001
-            pass
+            import traceback
+            traceback.print_exc()
         try:
             self.host.hide()
             self.host.deleteLater()

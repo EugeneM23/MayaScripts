@@ -80,6 +80,15 @@ class LearnTones(unittest.TestCase):
             mode.learn_tones([tone])
         self.assertEqual(len(mode._STATE.keys), mode.MOST_TONES)
 
+    def test_a_tone_far_from_the_background_is_never_learnt(self):
+        """Measured live 2026-09-30: (0, 0, 0) was learnt as a third tone
+        (a frame drawn half black while the host grew) and would have keyed
+        out the black range flags. The Graph Editor's tones stand within a
+        few levels of each other (64 and 55)."""
+        mode.learn_tones([(64, 64, 64), (55, 55, 55)])
+        self.assertEqual(mode.learn_tones([(0, 0, 0)]),
+                         [(64, 64, 64), (55, 55, 55)])
+
 
 class TheChrome(unittest.TestCase):
     """The whole Graph Editor, its curve area alone see-through
@@ -91,6 +100,16 @@ class TheChrome(unittest.TestCase):
 
     def test_the_menus_toolbar_and_channel_list_are_on_by_default(self):
         self.assertTrue(mode.CHROME)
+
+    def test_maya_s_own_graph_editor_is_borrowed(self):
+        """55 of Maya's runtime commands name graphEditor1GraphEd outright;
+        in a panel of our own the Stacked View button switched the
+        animator's Graph Editor (measured 2026-09-30)."""
+        self.assertTrue(mode.BORROW)
+
+    def test_two_wrappers_of_nothing_are_not_the_same_object(self):
+        self.assertFalse(mode._same_object(None, None))
+        self.assertFalse(mode._same_object(object(), None))
 
     def test_a_chrome_repaint_with_the_mode_off_does_nothing(self):
         mode._on_chrome_paint()

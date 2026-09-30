@@ -166,6 +166,11 @@ def setup():
     from maya_graphoverlay import viewport
     if _mode().is_on():                       # one state per session
         print("already on - off first:", _mode().disable())
+    from maya_graphoverlay import ghost
+    S["ge_home"] = ghost.home_of(ghost.BORROWED)
+    S["ge_stacked"] = cmds.animCurveEditor(ghost.BORROWED + "GraphEd",
+                                           query=True, stackedCurves=True)
+    print("graphEditor1 lives in", S["ge_home"], "stacked", S["ge_stacked"])
     S["maya_active"] = viewport.maya_active
     viewport.maya_active = lambda: True               # simulated, see top
     print("toggle:", maya_graphoverlay.toggle())
@@ -509,8 +514,17 @@ def leave():
     print("toggle:", maya_graphoverlay.toggle())
     gate(15, not mode.is_on() and not mode._STATE.timers,
          "off: no state, no timers")
-    gate(16, not cmds.scriptedPanel(S["panel"], exists=True),
-         "our Graph Editor panel is gone")
+    from maya_graphoverlay import ghost
+    if S["panel"] == ghost.BORROWED:
+        home = ghost.home_of(ghost.BORROWED)
+        gate(16, home == S.get("ge_home") and not ghost.in_host(S["panel"])
+             and cmds.animCurveEditor(ghost.BORROWED + "GraphEd", query=True,
+                                      stackedCurves=True) == S.get("ge_stacked"),
+             "Maya's graphEditor1 is back where it lived (%s), its view "
+             "mode as it was" % home)
+    else:
+        gate(16, not cmds.scriptedPanel(S["panel"], exists=True),
+             "our Graph Editor panel is gone")
     label = cmds.button(mode.BUTTON, query=True, label=True) \
         if cmds.control(mode.BUTTON, exists=True) else ""
     gate(17, label == "Graph Overlay: OFF", "the button says OFF (%r)" % label)

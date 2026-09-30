@@ -64,6 +64,13 @@ class Backgrounds(unittest.TestCase):
         bgra[5, :, :3] = 55                        # one row: 2.5 %
         self.assertEqual(keying.backgrounds(bgra, step=1), [(64, 64, 64)])
 
+    def test_a_frame_of_one_colour_is_uniform(self):
+        """An unrendered framebuffer - nothing to learn a background from."""
+        self.assertTrue(keying.is_uniform(frame(20, 20, (0, 0, 0)), step=1))
+        busy = frame(20, 20)
+        busy[:, :4, :3] = 55
+        self.assertFalse(keying.is_uniform(busy, step=1))
+
     def test_the_commonest_first_and_at_most_two(self):
         bgra = frame(30, 30)
         bgra[:, :12, :3] = 55

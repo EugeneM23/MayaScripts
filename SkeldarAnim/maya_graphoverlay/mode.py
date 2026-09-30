@@ -41,11 +41,16 @@ ALT_MS = 30
 MIN_UPDATE_S = 0.015
 MIN_CHROME_S = 0.03
 MOST_TONES = 3      # background tones learnt over a session of frames
+TONE_SPREAD = 24    # levels a later tone may stand from the first
 # The whole Graph Editor on the viewport - menus, toolbar, channel list -
 # with only the curve area see-through (2026-09-30, the animator: «я не могу
 # выделить отдельно каналы для редактирования кривых и нет остальных
 # инструментов»). False is the first build: the curve area alone.
 CHROME = True
+# Maya's own graphEditor1 borrowed rather than a panel of ours: 55 of Maya's
+# runtime commands name it outright (the view modes, Copy/Paste keys,
+# infinity, frame all...) and the toolbar, menus and hotkeys reach them.
+BORROW = True
 REWATCH_TICKS = 10  # follow ticks between looks for new chrome widgets
 
 HINT = "alt+mouse: camera  |  F / A: frame the graph  |  alt+c: leave"
@@ -136,7 +141,7 @@ def enable():
     parent = viewport.maya_main_window()
     try:
         _STATE.model_panel = panel
-        _STATE.ghost = ghost.Ghost(parent, rect, chrome=CHROME)
+        _STATE.ghost = ghost.Ghost(parent, rect, chrome=CHROME, borrow=BORROW)
         _STATE.glass = glass.Glass(parent)
         _STATE.glass.place(rect)
         _STATE.rect, _STATE.placed = rect, True
@@ -197,6 +202,18 @@ def _connect_canvas():
     _on_swap()
 
 
+def _same_object(first, second):
+    """Whether two wrappers hold the same live Qt object."""
+    if first is None or second is None:
+        return False
+    try:
+        import shiboken6
+        return (shiboken6.getCppPointer(first)[0]
+                == shiboken6.getCppPointer(second)[0])
+    except (RuntimeError, TypeError):
+        return False
+
+
 def _on_swap():
     """The graph drew a frame: key it now, or as soon as it is due."""
     if not is_on() or _STATE.pending:
@@ -210,10 +227,19 @@ def _on_swap():
 def learn_tones(found):
     """Grow the background tones with what this frame shows, never shrink
     them: the out-of-range tint leaves the frame when the view is inside
-    the range and must not flash back grey when it returns."""
+    the range and must not flash back grey when it returns.
+
+    A tone further than `TONE_SPREAD` from the first is never one: measured
+    live, a frame drawn half black while the host grew taught (0, 0, 0),
+    which would key out the black range flags. The Graph Editor's own tones
+    stand a few levels apart (64 and 55)."""
     for tone in found:
-        if tone not in _STATE.keys and len(_STATE.keys) < MOST_TONES:
-            _STATE.keys.append(tone)
+        if tone in _STATE.keys or len(_STATE.keys) >= MOST_TONES:
+            continue
+        if _STATE.keys and max(abs(int(a) - int(b)) for a, b
+                               in zip(tone, _STATE.keys[0])) > TONE_SPREAD:
+            continue
+        _STATE.keys.append(tone)
     return list(_STATE.keys)
 
 
@@ -232,6 +258,8 @@ def _update():
         width, height = image.width(), image.height()
         pixels = np.frombuffer(image.constBits(), np.uint8).reshape(
             height, image.bytesPerLine() // 4, 4)[:, :width]
+        if not _STATE.keys and keying.is_uniform(pixels):
+            return                          # not drawn yet: nothing to show
         learn_tones(keying.backgrounds(pixels))
         _STATE.glass.set_frame(
             keying.key_out(pixels, _STATE.keys, _STATE.table,
@@ -351,7 +379,9 @@ def _follow_once():
     from maya_graphoverlay import viewport, winstyle
     ghost_, glass_ = _STATE.ghost, _STATE.glass
     if not ghost_.alive():
-        _show(disable() + " - its Graph Editor panel was deleted")
+        why = (" - the Graph Editor was opened in its own window"
+               if ghost_.borrowed else " - its Graph Editor panel was deleted")
+        _show(disable() + why)
         return
     if not viewport.visible(_STATE.model_panel):
         _STATE.model_panel = viewport.active_panel()
@@ -370,7 +400,8 @@ def _follow_once():
             _on_chrome_paint()
         glass_.keep_click_through()
     ghost_.keep_invisible()
-    if _STATE.canvas is None:
+    # Re-parenting a panel can recreate its canvas window: follow the new one.
+    if not _same_object(ghost_.canvas(), _STATE.canvas):
         _connect_canvas()
     _STATE.ticks += 1
     if _STATE.ticks % REWATCH_TICKS == 0:
