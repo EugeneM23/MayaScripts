@@ -1,11 +1,14 @@
-"""The weapon inventory: a Diablo window whose weapons go onto the character.
+"""The weapon inventory: a window whose weapons go onto the character.
 
 2026-09-29, the animator: «кнопка которая будет инвентарь похожий на
 инвентарь как в игре diablo, чтобы я оружие переносил из этого инвентаря
-прямо на персонажа и оно как вставлялось в руку или выпадало на пол».
+прямо на персонажа и оно как вставлялось в руку или выпадало на пол». The
+grid and the drag are the game's; the look is the hub's own since 2026-09-30
+(«дизайн инвентаря все же не в стиле диабло а в стиле нашего интерфейса»):
+the charcoal panel, rounded cards, the orange accent on the drop target.
 
-A frameless tool window over Maya (look A: bronze, parchment, a gold serif
-title), opened by Weapons > Inventory or the hotkey row `window.inventory`:
+A frameless tool window over Maya, opened by Weapons > Inventory or the
+hotkey row `window.inventory`:
 
 - the GRID is the catalog - every weapon always there, taken as often as
   wanted, by any character, each sized in cells by its model's length;
@@ -169,14 +172,21 @@ def _classes():
         c.setAlpha(alpha)
         return c
 
-    def font(px, title=False, bold=False):
+    def font(px, bold=False):
+        """The UI font, as the hub's stylesheet leaves it."""
         f = QtGui.QFont()
-        if title:
-            f.setFamilies(list(look.TITLE_FONTS))
-            f.setCapitalization(QtGui.QFont.SmallCaps)
         f.setPixelSize(max(1, int(round(px))))
         f.setBold(bold)
         return f
+
+    def rounded(p, box, radius, fill=None, edge=None, width=1.0):
+        """A rounded rect in the hub's corners: `fill` and `edge` are token
+        names (None for none), the pen drawn inside the box."""
+        half = width / 2.0
+        shape = QtCore.QRectF(box).adjusted(half, half, -half, -half)
+        p.setPen(QtGui.QPen(colour(edge), width) if edge else Qt.NoPen)
+        p.setBrush(colour(fill) if fill else Qt.NoBrush)
+        p.drawRoundedRect(shape, radius, radius)
 
     def rect_of(r):
         return QtCore.QRect(int(r[0]), int(r[1]), int(r[2]), int(r[3]))
@@ -243,12 +253,11 @@ def _classes():
                 cap = QtCore.QRect((self.width() - cw) // 2,
                                    self.icon_h + int(3 * self.k), cw,
                                    int(21 * self.k))
-                p.setPen(QtGui.QPen(colour("frame_hi" if self.good else "invalid"),
-                                    max(1.0, self.k)))
-                p.setBrush(colour("ground", 235))
-                p.drawRoundedRect(cap, 3 * self.k, 3 * self.k)
+                # a card pill: the accent where it lands, danger where not
+                rounded(p, cap, look.RADIUS["well"] * self.k, "card",
+                        "accent" if self.good else "danger", max(1.0, self.k))
                 p.setFont(font(12 * self.k))
-                p.setPen(colour("ghost_text" if self.good else "parchment"))
+                p.setPen(colour("text" if self.good else "muted"))
                 p.drawText(cap, Qt.AlignCenter, self.text)
             p.end()
 
@@ -260,6 +269,8 @@ def _classes():
                                        Qt.Tool | Qt.FramelessWindowHint)
             self.setObjectName(OBJECT_NAME)
             self.setWindowTitle("Inventory")
+            # the panel's rounded corners: nothing painted outside them
+            self.setAttribute(Qt.WA_TranslucentBackground)
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
             self.cell = look.CELL * self.k
@@ -581,7 +592,7 @@ def _classes():
             local = self._local(event)
             what = look.hit(self.rects, self.placements, self.cells,
                             local.x(), local.y(), self.cell)
-            hover = what if what and what[0] in ("item", "slot") else None
+            hover = what if what and what[0] in ("item", "slot", "close") else None
             if hover != self._hover:
                 self._hover = hover
                 self.update()
@@ -623,34 +634,34 @@ def _classes():
 
         # --------------------------------------------------------- paint
 
-        def _bevel(self, p, rect, width):
-            """Diablo's frame: a dark outer line, bronze, a light inner line."""
-            k = self.k
-            for name, inset, pen in (("frame_lo", 0, 3), ("frame", 2, 2),
-                                     ("frame_hi", 4, 1)):
-                p.setPen(QtGui.QPen(colour(name), max(1.0, pen * k * width)))
-                p.setBrush(Qt.NoBrush)
-                d = int(inset * k)
-                p.drawRect(rect.adjusted(d, d, -d - 1, -d - 1))
-
-        def _box(self, p, r, lit=None):
-            """A cell-floored box with a bronze border (valid / invalid lit)."""
+        def _card(self, p, r, lit=None):
+            """A hub card: `card`, rounded; lit "target" is the hub's active
+            card (`card_active`, a 2 px accent outline), "refused" a danger
+            outline."""
             box = rect_of(r)
-            p.fillRect(box, colour("cell"))
-            edge = {"valid": "valid", "invalid": "invalid"}.get(lit, "frame")
-            p.setPen(QtGui.QPen(colour(edge), max(1.0, (2 if lit else 1) * self.k)))
-            p.setBrush(Qt.NoBrush)
-            p.drawRect(box.adjusted(0, 0, -1, -1))
+            fill = "card_active" if lit == "target" else "card"
+            edge = {"target": "accent", "refused": "danger"}.get(lit)
+            rounded(p, box, look.RADIUS["card"] * self.k, fill, edge,
+                    max(1.0, 2 * self.k) if edge else 1.0)
             return box
 
-        def _diamond(self, p, x, y, size):
-            path = QtGui.QPainterPath()
-            path.moveTo(x, y - size)
-            path.lineTo(x + size, y)
-            path.lineTo(x, y + size)
-            path.lineTo(x - size, y)
-            path.closeSubpath()
-            p.fillPath(path, colour("frame_hi"))
+        def _well(self, p, box):
+            """A field-coloured well inside a card, rounded."""
+            rounded(p, box, look.RADIUS["well"] * self.k, "field")
+            return box
+
+        def _icon(self, size):
+            """The hub's backpack icon in `muted`, cached per size."""
+            cached = getattr(self, "_icon_cache", None)
+            if cached is None or cached.width() != size:
+                try:
+                    import maya_hubqt
+                    cached = maya_hubqt.pixmap("backpack", look.PALETTE["muted"], size)
+                except Exception:                            # noqa: BLE001
+                    cached = QtGui.QPixmap(size, size)
+                    cached.fill(Qt.transparent)
+                self._icon_cache = cached
+            return cached
 
         def paintEvent(self, _event):
             k = self.k
@@ -658,42 +669,47 @@ def _classes():
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
             whole = self.rect()
-            p.fillRect(whole, colour("ground"))
-            self._bevel(p, whole, 1.0)
-            for x, y in ((whole.left(), whole.top()), (whole.right(), whole.top()),
-                         (whole.left(), whole.bottom()), (whole.right(), whole.bottom())):
-                self._diamond(p, x + (6 if x == whole.left() else -6) * k,
-                              y + (6 if y == whole.top() else -6) * k, 4 * k)
+            rounded(p, whole, look.RADIUS["card"] * k, "panel", "line", max(1.0, k))
 
+            # the title: the hub's icon and bold text, left, like a card title
             title = rect_of(self.rects["title"])
-            p.setFont(font(22 * k, title=True))
-            p.setPen(colour("gold"))
-            p.drawText(title, Qt.AlignCenter, "Inventory")
-            line_y = title.bottom() - int(3 * k)
-            p.setPen(QtGui.QPen(colour("frame"), max(1.0, k)))
-            p.drawLine(title.left() + int(40 * k), line_y, title.right() - int(40 * k), line_y)
+            icon = int(18 * k)
+            p.drawPixmap(title.left(), title.center().y() - icon // 2, self._icon(icon))
+            p.setFont(font(15 * k, bold=True))
+            p.setPen(colour("text"))
+            p.drawText(title.adjusted(icon + int(8 * k), 0, 0, 0),
+                       Qt.AlignLeft | Qt.AlignVCenter, "Inventory")
 
             close = rect_of(self.rects["close"])
-            p.setPen(QtGui.QPen(colour("frame_hi"), max(1.5, 2 * k)))
-            d = int(7 * k)
+            lit_close = self._hover == ("close",)
+            if lit_close:
+                rounded(p, close, look.RADIUS["item"] * k, "hover")
+            p.setPen(QtGui.QPen(colour("text" if lit_close else "muted"), max(1.2, 1.6 * k)))
+            d = int(8 * k)
             p.drawLine(close.left() + d, close.top() + d, close.right() - d, close.bottom() - d)
             p.drawLine(close.right() - d, close.top() + d, close.left() + d, close.bottom() - d)
 
-            p.setFont(font(13 * k))
-            p.setPen(colour("parchment"))
-            p.drawText(rect_of(self.rects["name"]), Qt.AlignCenter, self.name)
+            p.setFont(font(11.5 * k))
+            p.setPen(colour("muted"))
+            p.drawText(rect_of(self.rects["name"]), Qt.AlignLeft | Qt.AlignVCenter, self.name)
 
             dragging = self._drag["source"] if self._drag else None
+            label_h = int(20 * k)
+            pad = int(6 * k)
             for side in ("R", "L"):
                 lit = None
                 if dragging:
-                    lit = "invalid" if dragging == ("slot", side) else "valid"
+                    lit = "refused" if dragging == ("slot", side) else "target"
                 elif self._hover == ("slot", side):
-                    lit = "valid"
-                box = self._box(p, self.rects["slot_" + side], lit)
-                label_h = int(18 * k)
+                    lit = "target"
+                box = self._card(p, self.rects["slot_" + side], lit)
+                p.setFont(font(11 * k))
+                p.setPen(colour("muted"))
+                p.drawText(QtCore.QRect(box.left() + pad, box.top(), box.width() - 2 * pad,
+                                        label_h), Qt.AlignLeft | Qt.AlignVCenter,
+                           SLOT_LABEL[side])
+                inner = self._well(p, box.adjusted(pad, label_h, -pad, -pad))
                 held = self.holding.get(side)
-                inner = box.adjusted(0, 0, 0, -label_h)
                 if held and held.where in ("hand", "floor") and held.key in self.pixmaps \
                         and dragging != ("slot", side):
                     pix = self.pixmaps[held.key]
@@ -702,59 +718,62 @@ def _classes():
                     p.setOpacity(1.0)
                     if held.where == "floor":
                         tag = QtCore.QRect(inner.left() + int(4 * k), inner.top() + int(4 * k),
-                                           inner.width() - int(8 * k), int(16 * k))
-                        p.fillRect(tag, colour("ground", 220))
-                        p.setFont(font(11 * k))
-                        p.setPen(colour("parchment"))
+                                           inner.width() - int(8 * k), int(18 * k))
+                        rounded(p, tag, look.RADIUS["item"] * k, "status")
+                        p.setFont(font(10.5 * k))
+                        p.setPen(colour("status_text"))
                         p.drawText(tag, Qt.AlignCenter, "on the floor")
                 elif held and held.weapon and dragging != ("slot", side):
                     p.setFont(font(11 * k))
-                    p.setPen(colour("parchment"))
+                    p.setPen(colour("muted"))
                     text = ("follows\n" if held.where == "follows" else "") + held.label
                     p.drawText(inner, Qt.AlignCenter | Qt.TextWordWrap, text)
-                p.setFont(font(11 * k))
-                p.setPen(colour("dim"))
-                p.drawText(QtCore.QRect(box.left(), box.bottom() - label_h, box.width(), label_h),
-                           Qt.AlignCenter, SLOT_LABEL[side])
 
-            grid = self._box(p, self.rects["grid"],
-                             "valid" if dragging and dragging[0] == "slot" else None)
-            p.setPen(QtGui.QPen(colour("cell_line"), 1))
+            grid_rect = rect_of(self.rects["grid"])
+            self._card(p, (grid_rect.x() - pad, grid_rect.y() - pad,
+                           grid_rect.width() + 2 * pad, grid_rect.height() + 2 * pad),
+                       "target" if dragging and dragging[0] == "slot" else None)
+            grid = self._well(p, grid_rect)
+            p.setPen(QtGui.QPen(colour("line", 90), 1))
             for col in range(1, look.COLS):
                 x = grid.left() + int(col * self.cell)
-                p.drawLine(x, grid.top() + 1, x, grid.bottom() - 1)
+                p.drawLine(x, grid.top() + 2, x, grid.bottom() - 2)
             for row in range(1, look.ROWS):
                 y = grid.top() + int(row * self.cell)
-                p.drawLine(grid.left() + 1, y, grid.right() - 1, y)
+                p.drawLine(grid.left() + 2, y, grid.right() - 2, y)
             if self.preview:
-                # where the dragged item would land: green it fits (or
-                # swaps), red no room (2026-09-29)
+                # where the dragged item would land: the hub's ok it fits (or
+                # swaps), danger no room (2026-09-29)
                 cells, fits = self.preview
-                tint = colour("valid" if fits else "invalid", 110)
                 for col, row in cells:
                     if 0 <= col < look.COLS and 0 <= row < look.ROWS:
-                        p.fillRect(QtCore.QRect(grid.left() + int(col * self.cell) + 1,
-                                                grid.top() + int(row * self.cell) + 1,
-                                                int(self.cell) - 1, int(self.cell) - 1), tint)
+                        cell = QtCore.QRect(grid.left() + int(col * self.cell) + 1,
+                                            grid.top() + int(row * self.cell) + 1,
+                                            int(self.cell) - 2, int(self.cell) - 2)
+                        rounded(p, cell, look.RADIUS["item"] * k,
+                                "ok_tint" if fits else "danger_tint",
+                                "ok" if fits else "danger")
             for key, spot in self.placements.items():
                 item = rect_of(look.item_rect(self.rects, spot, self.cells[key], self.cell))
                 if self._hover == ("item", key) or dragging == ("grid", key):
-                    p.fillRect(item.adjusted(1, 1, -1, -1), colour("hover"))
+                    rounded(p, item.adjusted(1, 1, -1, -1), look.RADIUS["item"] * k, "hover")
                 pix = self.pixmaps.get(key)
                 if pix is not None:
-                    p.setOpacity(0.5 if dragging == ("grid", key) else 1.0)
+                    p.setOpacity(0.4 if dragging == ("grid", key) else 1.0)
                     p.drawPixmap(fitted(pix, item, int(2 * k)), pix)
                     p.setOpacity(1.0)
                 else:
                     p.setFont(font(10 * k))
-                    p.setPen(colour("parchment"))
+                    p.setPen(colour("muted"))
                     p.drawText(item, Qt.AlignCenter | Qt.TextWordWrap, key)
 
-            p.setFont(font(12 * k))
-            p.setPen(colour("parchment"))
-            p.drawText(rect_of(self.rects["status"]),
-                       Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap,
-                       self.status_text)
+            # the status: the hub's message line
+            status = rect_of(self.rects["status"])
+            rounded(p, status, look.RADIUS["well"] * k, "status")
+            p.setFont(font(11.5 * k))
+            p.setPen(colour("status_text"))
+            p.drawText(status.adjusted(int(10 * k), 0, -int(10 * k), 0),
+                       Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, self.status_text)
             p.end()
 
     _CLASSES.update(Ghost=Ghost, InventoryWindow=InventoryWindow, qt=q)

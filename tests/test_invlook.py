@@ -110,6 +110,21 @@ class Hits(unittest.TestCase):
         self.assertIsNone(look.hit(self.rects, self.placements, self.cells, -5, -5))
 
 
+class Look(unittest.TestCase):
+    """2026-09-30, «в стиле нашего интерфейса»: the hub's own tokens, so the
+    inventory can never drift from the hub's colours."""
+
+    def test_the_palette_is_the_hubs(self):
+        import maya_hubstyle
+        self.assertIs(look.PALETTE, maya_hubstyle.TOKENS)
+
+    def test_no_serif_title(self):
+        self.assertFalse(hasattr(look, "TITLE_FONTS"))
+
+    def test_the_radii(self):
+        self.assertEqual(look.RADIUS, {"card": 8, "well": 6, "item": 4})
+
+
 class Icons(unittest.TestCase):
 
     def test_every_catalog_row_has_an_icon_and_cells(self):

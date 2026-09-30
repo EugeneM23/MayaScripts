@@ -1,10 +1,13 @@
-"""The weapon inventory's look as data (2026-09-29): Diablo's bronze and
-parchment, the cells, where each weapon sits, what a point in the window is.
+"""The weapon inventory's look as data: the hub's colours, the cells, where
+each weapon sits, what a point in the window is.
 
-The animator's ask: «инвентарь похожий на инвентарь как в игре diablo», and
-look A of the two mocked up (dark bronze, a gold serif title, the grid) over
-the hub's own style. Stdlib only, like maya_hubstyle: the window paints what
-this module says, and every decision here is tested without Qt.
+Built 2026-09-29 in Diablo's bronze (the animator's «инвентарь похожий на
+инвентарь как в игре diablo»); restyled 2026-09-30 in the hub's own look
+(«дизайн инвентаря все же не в стиле диабло а в стиле нашего интерфейса»):
+the palette IS `maya_hubstyle.TOKENS`, so the inventory can never drift from
+the hub's colours - charcoal, rounded cards, one orange accent. Stdlib only,
+like maya_hubstyle: the window paints what this module says, and every
+decision here is tested without Qt.
 
 Everything is in LOGICAL px; the window multiplies by the display scale
 (trap 98 - Qt pixels are physical here).
@@ -12,6 +15,8 @@ Everything is in LOGICAL px; the window multiplies by the display scale
 
 import json
 import os
+
+import maya_hubstyle
 
 CELL = 40                 # one inventory cell
 COLS, ROWS = 10, 5        # the grid: the catalog, every row always there
@@ -23,22 +28,8 @@ STATUS_H = 34
 GAP = 12
 ICON_PX = 80              # an icon's pixels per cell (twice CELL, for 150 %)
 
-PALETTE = {
-    "ground": "#16110c",      # the window
-    "frame": "#7a5a2e",       # the bronze frame
-    "frame_hi": "#b08a3c",
-    "frame_lo": "#3a2a14",
-    "cell": "#0d0a07",        # a cell's floor
-    "cell_line": "#3a2c18",
-    "gold": "#d8b36a",        # the title
-    "parchment": "#a08a64",   # names, labels, the status
-    "dim": "#7d6a4a",
-    "valid": "#4f8f45",       # a slot a drag may land on
-    "invalid": "#8a2f24",
-    "hover": "#1f2a3a",       # the item under the mouse (Diablo's blue)
-    "ghost_text": "#e8d6a8",
-}
-TITLE_FONTS = ("Palatino Linotype", "Book Antiqua", "Georgia", "serif")
+PALETTE = maya_hubstyle.TOKENS
+RADIUS = {"card": 8, "well": 6, "item": 4}      # the hub stylesheet's corners
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -213,7 +204,7 @@ def layout():
     rects["slot_L"] = (middle + CELL, y, slot_w, slot_h)
     y += slot_h + GAP
     rects["grid"] = (MARGIN, y, grid_w, grid_h)
-    y += grid_h + GAP // 2
+    y += grid_h + GAP            # the grid's card stands 6 px out of it (2026-09-30)
     rects["status"] = (MARGIN, y, grid_w, STATUS_H)
     y += STATUS_H + MARGIN
     rects["window"] = (0, 0, width, y)

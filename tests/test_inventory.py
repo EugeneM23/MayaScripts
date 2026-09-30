@@ -269,6 +269,15 @@ class Rearranged(unittest.TestCase):
             x + 1 * look.CELL + 3, y + 3, "LongSword_02", (0, 0))
         self.assertEqual((kind, other, spot), ("swap", "Spear_01", (1, 0)))
 
+    def test_the_ground_is_the_hubs_panel(self):
+        import maya_hubstyle
+        image = QT.QtGui.QImage(self.win.size(), QT.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        self.win.render(image)
+        x, y, _w, h = self.win.rects["name"]
+        got = image.pixelColor(int(look.MARGIN // 2), int(y + h // 2))
+        self.assertEqual(got.name(), maya_hubstyle.TOKENS["panel"])
+
     def test_the_preview_paints(self):
         self.win.preview = (look.footprint((6, 1), (1, 2)), True)
         image = QT.QtGui.QImage(self.win.size(), QT.QtGui.QImage.Format_ARGB32)
@@ -276,6 +285,32 @@ class Rearranged(unittest.TestCase):
         gx, gy = self.win.rects["grid"][:2]
         lit = image.pixelColor(int(gx + 6 * look.CELL + 20), int(gy + 1 * look.CELL + 20))
         self.assertGreater(lit.green(), lit.red())
+
+
+class Skin(unittest.TestCase):
+    """2026-09-30: the hub's look (style B), not Diablo's."""
+
+    def _source(self):
+        with open(inv.__file__, encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_no_colour_of_its_own(self):
+        import re
+        self.assertEqual(re.findall(r"#[0-9a-fA-F]{6}\b", self._source()), [])
+
+    def test_no_diablo_left(self):
+        """The styling, not the history: the docstring still quotes the ask."""
+        source = self._source().lower()
+        for word in ("bronze", "parchment", "gold", "_diamond", "_bevel",
+                     "title_fonts", "smallcaps"):
+            self.assertNotIn(word, source)
+
+    def test_every_colour_it_names_is_a_hub_token(self):
+        import re
+        import maya_hubstyle
+        names = set(re.findall(r'colour\("([a-z_]+)"', self._source()))
+        self.assertTrue(names)
+        self.assertEqual(sorted(names - set(maya_hubstyle.TOKENS)), [])
 
 
 class Wiring(unittest.TestCase):
@@ -301,5 +336,9 @@ class Wiring(unittest.TestCase):
         self.assertIn("backpack", maya_hubicons.ICONS)
 
     def test_no_maya_ui_is_imported_by_the_look(self):
+        import re
         with open(os.path.join(PLUGIN, "maya_invlook.py"), encoding="utf-8") as handle:
-            self.assertNotIn("import maya", handle.read())
+            source = handle.read()
+        # Maya itself, not maya_hubstyle (stdlib, the palette since 2026-09-30)
+        self.assertEqual(re.findall(r"^\s*(?:import|from)\s+maya(?:\.|\s|$)", source,
+                                    re.MULTILINE), [])
