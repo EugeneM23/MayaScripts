@@ -175,6 +175,17 @@ def _save(raw, out):
     return corner.alpha()
 
 
+def _idle(seconds):
+    """Let Maya be idle for `seconds`: its idle queue and Qt's events, not a sleep."""
+    import maya.utils
+    from PySide6 import QtWidgets
+    end = time.time() + seconds
+    while time.time() < end:
+        maya.utils.processIdleEvents()
+        QtWidgets.QApplication.processEvents()
+        time.sleep(0.05)
+
+
 def render(model, out_dir):
     """One model's portrait into `out_dir`; its path and a line of numbers."""
     entry = catalog.character_for(model, "rig") or catalog.character_for(model, "skeleton")
@@ -194,16 +205,27 @@ def render(model, out_dir):
     camera = _camera(centre, side)
     _panel(camera)
     # Viewport 2.0 loads textures in the background: the first try at the
-    # Orc D blasted its shoulder pads black. A few forced draws, a pause.
-    for _ in range(6 if getattr(entry, "textured", False) else 1):
-        cmds.refresh(force=True)
-        if getattr(entry, "textured", False):
-            time.sleep(0.5)
+    # Orc D blasted its shoulder pads black, and six draws half a second apart
+    # still blasted the textured Manny (2026-09-30) near black. The loading
+    # moves on only while Maya is IDLE (a sleep holding the main thread let two
+    # blasts agree on a half-loaded torso), so between blasts the idle queue and
+    # Qt's events are run; a textured row is blasted until two agree.
     raw = os.path.join(out_dir, model + "_raw.png").replace("\\", "/")
-    cmds.playblast(frame=[cmds.currentTime(query=True)], format="image", compression="png",
-                   completeFilename=raw, widthHeight=(RENDER, RENDER), percent=100,
-                   viewer=False, showOrnaments=False, offScreen=True, forceOverwrite=True,
-                   clearCache=True, editorPanelName=PANEL)
+    previous = None
+    for attempt in range(40 if getattr(entry, "textured", False) else 1):
+        cmds.refresh(force=True)
+        cmds.playblast(frame=[cmds.currentTime(query=True)], format="image", compression="png",
+                       completeFilename=raw, widthHeight=(RENDER, RENDER), percent=100,
+                       viewer=False, showOrnaments=False, offScreen=True, forceOverwrite=True,
+                       clearCache=True, editorPanelName=PANEL)
+        with open(raw, "rb") as handle:
+            picture = handle.read()
+        if picture == previous and attempt >= 2:
+            print("%s: the picture settled after %d blasts" % (model, attempt + 1))
+            break
+        previous = picture
+        if getattr(entry, "textured", False):
+            _idle(1.0)
     out = os.path.join(out_dir, model + ".png").replace("\\", "/")
     alpha = _save(raw, out)
     os.remove(raw)
