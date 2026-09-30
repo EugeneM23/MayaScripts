@@ -150,3 +150,44 @@ letting the ghost click through and taking it back, the cost per update at
 full size, the look composited offscreen over a playblast, and leaving the
 mode removing every window, panel and timer while the colour preferences
 stay as they were.
+
+## Addendum — the live run (the animator's Maya on port 7001, 2026-09-30)
+
+The animator chose their own Maya (an untitled scene) for the proof over a
+disposable one — the disposable windows had been appearing on their screen
+and were closed twice. Five things the run changed, each measured:
+
+1. **Qt drops a WS_EX_LAYERED it did not set.** `winstyle.make_ghost` set the
+   bit and the alpha behind Qt's back; the style came back `0xa0` (the bit
+   gone), the "invisible" Graph Editor stood grey over the viewport, and the
+   follow timer's re-assertions made it redraw ~40 times a second. The ghost
+   is made invisible with Qt's own `setWindowOpacity(1/255)` now: `0x80080`,
+   alpha 1, no redraw at rest. That same call dropped our WS_EX_TRANSPARENT,
+   so the alt poll compares with the window's REAL style every time instead
+   of a remembered one, and the glass asks Qt for `WindowTransparentForInput`
+   (the follow timer puts WS_EX_TRANSPARENT back should it go).
+2. **Four copies of `mode` each held a state.** Purges (an install, the
+   verify's own, the hub's rebuild importing afresh) left the running overlay
+   in a copy nobody could reach while `import` handed out one that said it was
+   off — trap 49's shape. The state hangs off `sys`
+   (`_skeldar_graphoverlay_state`) and a state an older copy made gains any
+   new field.
+3. **The background is two tones**: 64 inside the playback range (48 % of the
+   frame), 55 outside it (45 %); keyed against 64 alone the 55 stood 32 %
+   opaque — grey panels over the animator's light viewport. Every colour
+   covering 5 % of a frame is a key (`keying.backgrounds`), learnt over frames
+   and never forgotten (`mode.learn_tones`, at most three), alpha from the
+   nearest. 93 % of a framed view is clear.
+4. **A posted click drags.** Maya's PySide6 ships no QtTest, so the proof posts
+   WM_LBUTTONDOWN/UP to the canvas; the Graph Editor takes the press at the
+   posted pixel but reads the REAL cursor while the button is down, so it drags
+   the grabbed key towards wherever the mouse is (60 → 80.46 on the first try).
+   The gate proves which key was grabbed — the one under the pixel, and no
+   other curve — and puts every key back.
+5. **Hit tests see other programs.** Gate 12 (`WindowFromPoint` on the canvas
+   after alt) failed once with the canvas of the animator's OTHER Maya's
+   floating Graph Editor answering; rerun with that window moved, it passed.
+
+Numbers on the animator's viewport (1526×1044): one frame grabbed, keyed and
+shown in **8.5–9.3 ms**, the grab alone 3.7 ms; the canvas on the viewport
+pixel for pixel; no redraw at rest.

@@ -6269,3 +6269,72 @@ Proof:
      `show()`, `appHome -visible 0` / `-toggleVisibility` all left the viewport invisible.
      **`MAYA_NO_HOME=1` in the environment at launch** is the reliable road: the viewport was up at
      1662 × 1044 on the first probe.
+
+## Graph Overlay: Maya's own Graph Editor over the viewport, background out (2026-09-30)
+
+The animator: «А возможно ли для Maya graph editor сделать так что бы его задний фон стал прозрачным но
+при этом все остальные эллементы кривые и тд остались такимиже?» — offered a colour key with its costs
+(floating only, a click-through background, a fringe): «мне нужен граф эдитор с прозрачным фоном». Two
+answers: shape **Б**, a mode on a key with the curve area on the whole viewport («А весь функционал графа
+останется?» — yes, every click and key is the real Graph Editor's), and **alt+mouse is the camera**
+(«1, камеры»). The Curve Overlay's idea (2026-09-05, archived) done with Maya's own drawing and input.
+Spec: `docs/superpowers/specs/2026-09-30-graph-overlay-design.md` — **read its addendum**, the live run
+changed five things. Plan beside it.
+
+**Why not Maya itself** (measured in a disposable Maya first): the curve area is `TanimCurveCanvas`, a
+`QOpenGLWindow` (→ `QmayaCanvasWidgetGL`) in a QWindowContainer, a native child HWND with 8 alpha bits;
+its background colour `modernGraphEditorBackground` takes an alpha (`displayRGBColor ... alpha=True`) and
+**the canvas ignores it** — `grabFramebuffer()` reads alpha 255 on every pixel; DWM glass on the window
+changed nothing. So the route is two windows:
+
+- **The ghost** (`ghost.py`): a `scriptedPanel(type="graphEditor")` of OURS (never graphEditor1) in a
+  frameless Qt host via the hub skin's `setParent(fullName(layout))`; menu bar `menuBarVisible=False`,
+  the toolbar frameLayout (parent of the panel's `QadskFrameLayoutFrame`) unmanaged, the channel list's
+  QSplitter side 0 with handle 0; placed by `geometry.host_rect` so its canvas equals the viewport's GL
+  rect pixel for pixel; made invisible by **Qt's own `setWindowOpacity(1/255)`**. Measured: at alpha 1 it
+  keeps rendering (`frameSwapped`, the marker moves) and keeps taking clicks (`WindowFromPoint` answers
+  its canvas) — a layered window lets the mouse through only where alpha is 0.
+- **The glass** (`glass.py`): a frameless translucent click-through Qt top-level
+  (`WindowTransparentForInput` + WS_EX_TRANSPARENT) on the same rect, showing each `grabFramebuffer()`
+  frame (PySide hands the canvas back as QPaintDeviceWindow: `shiboken6.invalidate`, then wrap as
+  `QtOpenGL.QOpenGLWindow`) with the background keyed out.
+- **Keying** (`keying.py`, numpy only): straight alpha, `table[min over keys of max_c |P - K|]`, 0→255
+  over 28 levels, colours untouched; the keys are the colours covering 5 % of a frame (64 in the playback
+  range, 55 outside it on the animator's Graph Editor), learnt over frames (`mode.learn_tones`, ≤ 3).
+  uint8 on four threads: 5.7 ms at 1850×1067 (float32 was 54 ms at 968×723).
+- **The mode** (`mode.py`): every `frameSwapped` coalesced (≥ 15 ms apart) → grab (WGL context kept,
+  `winstyle.gl_kept`) → key → glass; a 10 Hz follow (the viewport moved, Maya behind another app, our
+  panel gone, the ghost's opacity, the glass's click-through); a 30 ms alt poll (`GetAsyncKeyState`) —
+  held, the ghost is click-through and the viewport's camera takes the drag. Scene opened → the mode ends.
+
+Hub section **Graph Overlay** in Animation (icon `chart-line`); hotkey row `graph.overlay` on **alt+c** —
+the Curve Overlay's key, out of `RELEASED_KEYS`, `DEFAULT_KEYS_VERSION` 6, so it binds in the SkeldarAnim
+set on the next switch of the hotkey map (in `Maya_Default` alt+c is Maya's own); a payload row. Proof:
+`docs/superpowers/plans/verify_graphoverlay.py`, phased, **in the animator's own Maya on port 7001** (an
+untitled scene; their choice after the disposable Maya was closed twice): 20 gates — 19 on the full run,
+gate 12 failing once on another Maya's window over the point (below), 15/15 on the rerun of its phases:
+canvas and glass on the viewport (1526×1044) to the pixel, alpha 1, a time change reaching the glass, a
+posted click grabbing the key under its pixel, alt handing the mouse over and back, **8.5–9.3 ms a frame**
+(grab 3.7), 93 % of a framed view clear, the section ON/OFF, nothing left after, the colour preference
+untouched. 2806 unit tests. The scene was put back to an empty untitled one.
+
+110. **Qt drops a window style it did not set.** WS_EX_LAYERED written with ctypes on our Qt host came
+     back gone (`0xa0`): the "invisible" Graph Editor stood grey on the viewport and the timer's
+     re-assertions redrew it ~40 times a second. `setWindowOpacity` makes Qt keep the bit (`0x80080`,
+     alpha 1) — and that very call dropped the WS_EX_TRANSPARENT we had set. Ask Qt (opacity,
+     `WindowTransparentForInput`), and compare with the window's REAL style, never a cached flag.
+111. **Module state is per module OBJECT, and purges multiply the objects.** Four copies of `mode` lived
+     in one session (an install, a verify's purge, the hub's rebuild importing afresh); the running
+     overlay sat in one nobody could reach and `import` handed out one that said "off". A mode that owns
+     windows keeps its state on `sys` (trap 49/102 from the module side).
+112. **Maya's Graph Editor reads the real cursor while a button is down.** A posted
+     WM_LBUTTONDOWN/UP at a key's pixel grabbed THAT key and dragged it towards the animator's actual
+     mouse (60 → 80.46). A scripted click proves which key was taken, not a clean click; put the keys
+     back. Maya 2027's PySide6 has no QtTest.
+113. **An install from a working tree another session is editing can die halfway.** A peer's uncommitted
+     `install.py` listed a file not yet written; `copy_payload` raised FileNotFoundError after the rmtree
+     and the animator's installed folder was left without assets, icons, overrig or install.py. With
+     other sessions in the repo install from a snapshot of a commit (`git archive <commit> SkeldarAnim`),
+     compare it back (`diff -rq`), and write `version.json` into the snapshot first.
+114. **A `WindowFromPoint` gate sees every program's windows.** Gate 12 read the canvas of the
+     animator's other Maya's floating Graph Editor lying over the point; the rerun, with it moved, passed.
