@@ -1,0 +1,360 @@
+"""Graph Overlay: Maya's own Graph Editor over the viewport, background out.
+
+The animator (2026-09-30): «мне нужен граф эдитор с прозрачным фоном» -
+shape Б, a mode on a key, the curve area on the whole viewport; alt+mouse
+is the camera («1, камеры»). Maya's drawing cannot be made transparent (the
+canvas clears opaque whatever the background alpha, measured), so:
+
+- the GHOST (`ghost.py`): a Graph Editor panel of ours, chrome hidden, its
+  canvas on the viewport pixel for pixel, invisible at a layered alpha of
+  1 - it still renders and takes every click and key;
+- the GLASS (`glass.py`): a click-through translucent window on the same
+  rectangle showing the ghost's frames with the flat background keyed out
+  (`keying.py`) - grabbed on every `frameSwapped`, coalesced, at most every
+  `MIN_UPDATE_S`;
+- a 30 ms alt poll: held, the ghost lets the mouse through to the viewport
+  and Maya's camera takes it; released, the graph takes it again;
+- a 10 Hz follow timer: the viewport moved, the two follow it; Maya behind
+  another program or no viewport, the glass hides and the ghost lets
+  clicks through; our panel gone, the mode ends.
+
+    import maya_graphoverlay; maya_graphoverlay.toggle()      # alt+c
+
+Spec: docs/superpowers/specs/2026-09-30-graph-overlay-design.md
+"""
+
+import time
+import traceback
+
+import maya.cmds as cmds
+
+import maya_hubstyle as hubstyle
+from maya_graphoverlay import geometry
+
+HUB_SECTION = "graphoverlay"
+STATUS = "skeldarGraphOverlayStatus"
+BUTTON = "skeldarGraphOverlayButton"
+
+FOLLOW_MS = 100
+ALT_MS = 30
+MIN_UPDATE_S = 0.015
+
+HINT = "alt+mouse: camera  |  F / A: frame the graph  |  alt+c: leave"
+PANEL_HINT = "The Graph Editor over the viewport, see-through (alt+c)"
+PANEL_NOTE = ("Maya's own Graph Editor lies on the viewport with its "
+              "background taken out: every click and key is the Graph "
+              "Editor's. Hold alt for the camera; select objects in the "
+              "outliner or the channel box, or leave the mode.")
+
+
+class _State(object):
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.ghost = None
+        self.glass = None
+        self.canvas = None
+        self.model_panel = None
+        self.timers = []
+        self.jobs = []
+        self.rect = None
+        self.placed = False
+        self.active = True
+        self.through = None
+        self.key = None
+        self.table = None
+        self.pending = False
+        self.last = None
+        self.frames = 0
+        self.cost = 0.0
+        self.closing = False
+
+
+_STATE = _State()
+_POOL = []          # the keying threads, made once a session
+
+
+# ------------------------------------------------------------------ the mode
+
+def is_on():
+    return _STATE.ghost is not None
+
+
+def enable():
+    if is_on():
+        return "Graph Overlay is already on"
+    from maya_graphoverlay import viewport, winstyle
+    if not winstyle.available():
+        return "Graph Overlay needs Windows"
+    panel = viewport.active_panel()
+    rect = viewport.gl_rect(panel)
+    if not geometry.usable(rect):
+        return "Graph Overlay: no viewport to lie on"
+    from maya_graphoverlay import ghost, glass, keying
+    parent = viewport.maya_main_window()
+    try:
+        _STATE.model_panel = panel
+        _STATE.ghost = ghost.Ghost(parent, rect)
+        _STATE.glass = glass.Glass(parent)
+        _STATE.glass.place(rect)
+        _STATE.rect, _STATE.placed = rect, True
+        _STATE.table = keying.alpha_table()
+        if not _POOL:
+            _POOL.append(keying.make_pool())
+        _connect_canvas()
+        _start_timers()
+        _install_jobs()
+    except Exception:
+        traceback.print_exc()
+        disable()
+        raise
+    return "Graph Overlay ON  -  " + HINT
+
+
+def disable():
+    if not is_on():
+        return "Graph Overlay is already off"
+    _STATE.closing = True
+    try:
+        _stop_timers()
+        _kill_jobs()
+        canvas = _STATE.canvas
+        if canvas is not None:
+            try:
+                canvas.frameSwapped.disconnect(_on_swap)
+            except (RuntimeError, TypeError):
+                pass
+        if _STATE.glass is not None:
+            _STATE.glass.close_glass()
+        if _STATE.ghost is not None:
+            _STATE.ghost.destroy()
+    finally:
+        _STATE.reset()
+    return "Graph Overlay OFF"
+
+
+def toggle():
+    return _show(disable() if is_on() else enable())
+
+
+# ------------------------------------------------------------- the pipeline
+
+def _connect_canvas():
+    canvas = _STATE.ghost.canvas() if _STATE.ghost is not None else None
+    if canvas is None:
+        return
+    canvas.frameSwapped.connect(_on_swap)
+    _STATE.canvas = canvas
+    _on_swap()
+
+
+def _on_swap():
+    """The graph drew a frame: key it now, or as soon as it is due."""
+    if not is_on() or _STATE.pending:
+        return
+    _STATE.pending = True
+    from PySide6 import QtCore
+    delay = geometry.due_in(time.perf_counter(), _STATE.last, MIN_UPDATE_S)
+    QtCore.QTimer.singleShot(int(round(delay * 1000)), _update)
+
+
+def _update():
+    _STATE.pending = False
+    if not is_on() or not _STATE.placed or _STATE.closing:
+        return
+    started = time.perf_counter()
+    try:
+        import numpy as np
+        from maya_graphoverlay import keying, winstyle
+        with winstyle.gl_kept():
+            image = _STATE.ghost.grab()
+        if image is None or image.isNull():
+            return
+        width, height = image.width(), image.height()
+        pixels = np.frombuffer(image.constBits(), np.uint8).reshape(
+            height, image.bytesPerLine() // 4, 4)[:, :width]
+        if _STATE.key is None:
+            _STATE.key = keying.background(pixels)
+        _STATE.glass.set_frame(keying.key_out(
+            pixels, _STATE.key, _STATE.table, _POOL[0] if _POOL else None))
+    except Exception:                                         # noqa: BLE001
+        traceback.print_exc()
+        return
+    _STATE.last = time.perf_counter()
+    _STATE.frames += 1
+    _STATE.cost = _STATE.last - started
+
+
+# ---------------------------------------------------------------- following
+
+def _start_timers():
+    from PySide6 import QtCore
+    for interval, slot in ((FOLLOW_MS, _follow), (ALT_MS, _alt_tick)):
+        timer = QtCore.QTimer()
+        timer.setInterval(interval)
+        timer.timeout.connect(slot)
+        timer.start()
+        _STATE.timers.append(timer)
+
+
+def _stop_timers():
+    for timer in _STATE.timers:
+        try:
+            timer.stop()
+            timer.timeout.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+    _STATE.timers = []
+
+
+def _follow():
+    if not is_on() or _STATE.closing:
+        return
+    try:
+        _follow_once()
+    except Exception:                                         # noqa: BLE001
+        traceback.print_exc()
+
+
+def _follow_once():
+    from maya_graphoverlay import viewport, winstyle
+    ghost_, glass_ = _STATE.ghost, _STATE.glass
+    if not ghost_.alive():
+        _show(disable() + " - its Graph Editor panel was deleted")
+        return
+    if not viewport.visible(_STATE.model_panel):
+        _STATE.model_panel = viewport.active_panel()
+    rect = viewport.gl_rect(_STATE.model_panel)
+    _STATE.active = viewport.maya_active()
+    _STATE.placed = geometry.usable(rect)
+    if not (_STATE.active and _STATE.placed):
+        if glass_.isVisible():
+            glass_.hide()
+    else:
+        if rect != _STATE.rect or not glass_.isVisible():
+            _STATE.rect = rect
+            glass_.place(rect)
+        if not ghost_.aligned(rect):
+            ghost_.place(rect)
+    if winstyle.layered_alpha(ghost_.hwnd()) != winstyle.GHOST_ALPHA:
+        winstyle.make_ghost(ghost_.hwnd())
+        _STATE.through = None
+    if _STATE.canvas is None:
+        _connect_canvas()
+    _poll_alt()
+
+
+def _alt_tick():
+    try:
+        _poll_alt()
+    except Exception:                                         # noqa: BLE001
+        traceback.print_exc()
+
+
+def _poll_alt(alt=None):
+    if not is_on() or _STATE.closing:
+        return
+    from maya_graphoverlay import winstyle
+    if alt is None:
+        alt = winstyle.alt_down()
+    through = geometry.let_through(alt, _STATE.active, _STATE.placed)
+    if through != _STATE.through:
+        winstyle.set_click_through(_STATE.ghost.hwnd(), through)
+        _STATE.through = through
+
+
+def _install_jobs():
+    for event in ("SceneOpened", "NewSceneOpened"):
+        try:
+            _STATE.jobs.append(cmds.scriptJob(event=[event, _on_scene],
+                                              killWithScene=False))
+        except Exception:                                     # noqa: BLE001
+            pass
+
+
+def _kill_jobs():
+    for job in _STATE.jobs:
+        try:
+            cmds.scriptJob(kill=job, force=True)
+        except Exception:                                     # noqa: BLE001
+            pass
+    _STATE.jobs = []
+
+
+def _leave_for_scene():
+    if is_on():
+        _show(disable() + " - a scene was opened")
+
+
+def _on_scene():
+    """A scene's UI configuration may delete panels: leave cleanly first."""
+    if is_on() and not _STATE.closing:
+        cmds.evalDeferred(_leave_for_scene)
+
+
+# --------------------------------------------------------------- the section
+
+def button_label():
+    return "Graph Overlay: ON" if is_on() else "Graph Overlay: OFF"
+
+
+def _paint_button():
+    try:
+        if cmds.control(BUTTON, exists=True):
+            cmds.button(BUTTON, edit=True, label=button_label())
+    except Exception:                                         # noqa: BLE001
+        pass
+
+
+def _show(text):
+    """The first line on the section's status line and in the viewport, the
+    whole of it in the Script Editor."""
+    print(text)
+    first = text.splitlines()[0] if text.strip() else ""
+    try:
+        if cmds.control(STATUS, exists=True):
+            cmds.text(STATUS, edit=True, label=first)
+    except Exception:                                         # noqa: BLE001
+        pass
+    _paint_button()
+    try:
+        cmds.inViewMessage(assistMessage=first, position="midCenterTop",
+                           fade=True)
+    except Exception:                                         # noqa: BLE001
+        pass
+    return text
+
+
+def _press(*_args):
+    try:
+        return toggle()
+    except Exception as exc:                                  # noqa: BLE001
+        _show("%s: %s" % (type(exc).__name__, exc))
+        raise
+
+
+def is_open():
+    return bool(cmds.control(STATUS, exists=True))
+
+
+def show_window():
+    """Open the SkeldarAnim hub on this section."""
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)
+
+
+def build_panel():
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+    hubstyle.mark(cmds.text(label=PANEL_HINT, align="left", wordWrap=True,
+                            height=36), "note")
+    hubstyle.mark(cmds.button(BUTTON, label=button_label(), height=34,
+                              backgroundColor=(0.45, 0.60, 0.70),
+                              annotation=PANEL_NOTE, command=_press),
+                  "primary", "chart-line")
+    hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
+                            height=36), "status")
+    cmds.setParent("..")
+    return column
