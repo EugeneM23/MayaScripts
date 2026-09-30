@@ -221,6 +221,30 @@ class Upload(_WithServer):
             net.upload(self._file(1000), url="http://127.0.0.1:1/api.php")
         self.assertIn("could not reach", str(caught.exception))
 
+    def test_the_upload_writes_in_big_pieces(self):
+        """http.client given the body itself reads it 8 KB at a time, and
+        that ran at 0.20 MB/s against 1.56 in 1 MB pieces (2026-09-30)."""
+        seen = []
+        saved = net._open
+
+        def spy(request, timeout=net.TIMEOUT):
+            seen.append(request.data)
+            return saved(request, timeout)
+
+        net._open = spy
+        try:
+            net.upload(self._file(3 * 1024 * 1024 + 5),
+                       url=self.server.base + "/api.php")
+        finally:
+            net._open = saved
+        self.assertFalse(hasattr(seen[0], "read"))
+        body = net.MultipartBody(self._file(3 * 1024 * 1024 + 5), [], "f",
+                                 "share.zip")
+        sizes = [len(piece) for piece in body.chunks()]
+        body.close()
+        self.assertEqual(sizes[0], net.SEND_BLOCK)
+        self.assertEqual(sum(sizes), body.length)
+
     def test_the_body_length_is_exact(self):
         path = self._file(12345)
         body = net.MultipartBody(path, [("a", "1")], "f", "share.zip")

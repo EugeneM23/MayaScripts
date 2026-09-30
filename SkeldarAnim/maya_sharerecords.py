@@ -32,9 +32,9 @@ VERSION = 1
 STATES = ("sending", "ready", "failed")
 KINDS = {".ma": "scene", ".mb": "scene", ".fbx": "fbx"}
 SCENE_TYPES = {".ma": "mayaAscii", ".mb": "mayaBinary"}
-#  Where a file may be: temp.sh first, litterbox when temp.sh fails
-#  (2026-09-30: litterbox fell to 0.15 MB/s in the afternoon, temp.sh held
-#  1.2 MB/s; see maya_sharenet).
+#  Where a file may be: temp.sh first (steady at 1.3-1.6 MB/s both ways,
+#  measured 2026-09-30), litterbox when temp.sh fails (0.3-2 MB/s, all over
+#  the place); see maya_sharenet.
 HOSTS = ("temp.sh", "litter.catbox.moe")
 
 LIFETIME = 72 * 3600         # both hosts keep 3 days: the file is gone after

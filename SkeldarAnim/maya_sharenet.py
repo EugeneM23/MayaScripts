@@ -10,9 +10,11 @@ Measured from the animator's machine on 2026-09-30:
 
 - ntfy.sh: a publish reached a second process's open stream in 1.08 s; a
   message stays in the channel 12 hours (its `expires`);
-- litterbox, the morning: 1.3-3.3 MB/s up and down (8 MB: 2.6-5.8 s up);
-  the afternoon: 5 MB up in 33-64 s (0.15 MB/s), while the same uplink sent
-  5 MB to temp.sh in 4.2 s and to filebin in 3.4 s. Hence temp.sh first;
+- 5 MB up and down, through this module once it wrote in 1 MB pieces
+  (`MultipartBody.chunks`): temp.sh 3.5-3.8 s / 3.1-3.4 s, steady;
+  litterbox 2.6-16.3 s / 2.2-5.6 s, all over the place. Hence temp.sh
+  first. (An afternoon "litterbox fell to 0.15 MB/s" was this module's own
+  8 KB writes, not litterbox: temp.sh read 0.20 MB/s the same way.);
 - temp.sh: `curl -F file=@...` up (its own page's example), and the file
   comes back to a POST -- what its download page's button sends; a GET
   answers that page (3 KB of HTML);
@@ -51,6 +53,7 @@ USER_AGENT = "SkeldarAnim-share"
 TIMEOUT = 60                    # seconds per socket read, uploads and downloads
 STREAM_TIMEOUT = 120            # ntfy sends a keepalive on an idle stream
 CHUNK = 256 * 1024              # how often progress is reported
+SEND_BLOCK = 1024 * 1024        # an upload's write size (see chunks())
 DELAYS = (1, 2, 4, 8, 16, 30)   # the subscriber's waits between reconnects
 UPLOAD_NAME = "share.zip"       # the real name travels in the record
 
@@ -146,6 +149,18 @@ class MultipartBody(object):
         if self._progress(self.done, self.length) is False:
             raise Cancelled("cancelled")
 
+    def chunks(self, size=None):
+        """The body as SEND_BLOCK pieces: what an upload hands http.client.
+        Given the body itself, http.client reads it 8 KB at a time and each
+        small TLS write waits on the peer's acknowledgement -- measured
+        2026-09-30 on temp.sh: 5 MB in 25.0 s (0.20 MB/s) that way, in
+        3.2 s (1.56 MB/s) in 1 MB pieces."""
+        while True:
+            data = self.read(size or SEND_BLOCK)
+            if not data:
+                return
+            yield data
+
     def close(self):
         if self._file is not None:
             self._file.close()
@@ -156,7 +171,7 @@ def _post_file(host, url, fields, file_field, path, progress):
     """A multipart upload; the address the host answers with."""
     body = MultipartBody(path, fields, file_field, UPLOAD_NAME, progress)
     request = urllib.request.Request(
-        url, data=body, method="POST",
+        url, data=body.chunks(), method="POST",
         headers={"User-Agent": USER_AGENT, "Content-Type": body.content_type,
                  "Content-Length": str(body.length)})
     try:
