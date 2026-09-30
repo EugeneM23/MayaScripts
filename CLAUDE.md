@@ -6700,3 +6700,97 @@ Not built: legs (toes, heel roll, IKToes), scale, an IK stretched to a longer FK
      the full update, measured in parallel AND with the evaluation manager off. A frame walk that reads
      a rig needs the full update (14 ms a frame on Manny live), and `refresh -suspend` does not make it
      cheaper - the cost is evaluation, not drawing.
+
+## Shared: scenes and FBX between colleagues, one press (2026-09-30)
+
+The animator: «Мне очень часто приходится передавать какие-то сцены локально между сотрудниками. Можем ли
+мы сделать какое-то Shared Temp хранилище ... не только сцен а еще и fbx файлов». Asked, in order:
+
+- GitHub was asked about and rejected: an upload to GitHub always needs a key. A write key to the
+  plugin's own public repository would also let anyone holding it replace the build every
+  colleague's Check update installs. Their words: «Ключи никакие не нужны. Мне нужен максимально
+  быстрый и удобный способ ... Один человек нажал кнопочку у второго через 2 секунды появился файлик
+  в списке. Пока что мы не переживаем за приватность проекта».
+- **Everyone works remotely**, so there is no office LAN for a Maya-to-Maya road.
+- Of the two internet roads they chose **free services with no account for anybody** over our own
+  Cloudflare Worker.
+
+Spec: `docs/superpowers/specs/2026-09-30-shared-files-design.md` (read its addendum). Plan beside it.
+
+**What it is.** A hub card **Shared** (group Scene, after Connections, icon `send`; hotkey row
+`window.shared`). It holds a Name field (`skeldarShareName`; the Windows user here is «MY PC»,
+which names nobody), a Comment, **Send scene** (primary) and **Send file...** (.ma/.mb/.fbx), the
+list, **Open / Import / Save to...**, and a status line that spells out the picked row.
+
+- **The file** goes to **temp.sh** (anonymous, 4 GB, 3 days), else to **litterbox.catbox.moe**
+  (1 GB, 72 h).
+- **A RECORD of it** (JSON: id, state, from, machine, name, sizes, url, comment, fps, range) goes
+  to the ntfy.sh channel `maya_sharenet.TOPIC`.
+- **Every Maya with the hub open** holds that channel on a `Subscriber` thread. A colleague's
+  ready file downloads into `<userAppDir>/SkeldarShare/<date_time_sender_id6>/` at once, with an
+  in-view message when it is news. Nothing ever opens by itself.
+
+| module | does | imports |
+|---|---|---|
+| `maya_sharerecords.py` | the record: make, parse (strict), merge, rows, expiry, the history file, `playback_from_script` | stdlib only (a subprocess test) |
+| `maya_sharenet.py` | temp.sh / litterbox upload (`upload_any`), publish, download, `Subscriber` | stdlib only |
+| `maya_share.py` | the card, the presses, the state on `sys._skeldar_share` (trap 111), the Maya glue | `cmds` + the two, `maya_scenesetup`, `maya_uebridge` (lazy) |
+
+- **Send scene** writes a COPY (`cmds.file(path, exportAll=True, type=<the scene's>,
+  preserveReferences=False)`): the working file, its name and its modified flag are untouched.
+  It then publishes "sending" (the colleagues' row appears), and on a thread zips, uploads and
+  publishes "ready". A failure publishes "failed", and the colleagues drop the row.
+- **Open**: `executeScriptNodes=False, prompt=False`, then the scene's ranges are restored (trap
+  129), the vaccine swept, and the plugin's images relinked through `skeldarAssetImage`. An FBX
+  opens as a new scene with `animimport.import_clip` into a namespace.
+- **Import**: the same without the new scene; every script node that arrived is deleted.
+- **Trust**: records are unauthenticated and the topic is in a public repository. `parse` accepts
+  only our app/version, a 32-hex id, a plain .ma/.mb/.fbx name, and an https url on temp.sh or
+  litterbox. Expressions in a hostile scene would still run when evaluated: that is stated, the
+  cost of "no keys".
+- **Not built**: delete (litterbox has no delete; files die at 3 days), sending to one person,
+  the files a scene references, listening before the hub is opened.
+
+**Proof** — `verify_shared_sender.py` (a disposable GUI Maya on port 7006) and
+`verify_shared_receiver.py` (a mayapy colleague), on a test topic, the plugin from a `git archive`.
+A 17.2 MB Orc D scene (5.0 MB zipped):
+
+- in the colleague's list **1.2 s** after the press, ready at **6.3 s**, downloaded by two
+  colleagues at **9.6-9.9 s**;
+- opened with its script node never run, the 6 textures on the colleague's plugin, ntsc and both
+  ranges (5-45 / 0-50), the unsaved edit along;
+- an FBX sent back imported as 68 joints in its namespace;
+- a send whose two hosts refuse published "failed", the colleague dropped the row, the sender's
+  line named both refusals.
+
+The animator pressed Send scene in the disposable Maya during the run and their file arrived too.
+2960 unit tests. The installed copy was refreshed from a `git archive` of HEAD (the payload at `055e11a`;
+`diff -rq` clean, the peer's files identical but for line endings). The live hub's card is online on the
+studio channel.
+
+128. **http.client sends a body that has `read()` in 8 KB writes, and a TLS upload crawls.**
+     Measured 2026-09-30, 5 MB to temp.sh: 25.0 s as a file-like body (0.20 MB/s), 3.2 s given
+     as an iterator of 1 MB pieces (1.56 MB/s). The same defect produced an afternoon's "litterbox
+     fell to 0.15 MB/s", which was then wrongly blamed on litterbox; the morning's probes had
+     sent `bytes`. Stream an upload as `MultipartBody.chunks()` with an explicit Content-Length,
+     and probe a network road through the code that will use it.
+129. **`executeScriptNodes=False` drops the scene's time ranges**: `sceneConfigurationScriptNode`
+     is what sets `playbackOptions`, so a scene opened that way keeps the defaults (1.25-150 at
+     ntsc, i.e. 1-120 film). The unit comes back; it is in the header. The first probe said the
+     ranges survived only because it opened the copy in the same session that had set them. Parse
+     the node's `playbackOptions` line (`records.playback_from_script`, numbers only) and apply
+     it; never eval it.
+130. **Maya clears the modified flag on the idle after a save, even over an edit made after the
+     save in the same command** (measured: `file -save`, `setAttr`, `file -q -modified` answers
+     True; the next send answers False). A verify that saves and edits in one send reads a clean
+     scene afterwards: save and edit in separate sends. Our send and receive never touch the flag
+     (measured step by step).
+131. **Stopping a thread blocked on an HTTP stream (Windows)**: `response.close()` from another
+     thread waits on the buffer's lock until the read times out, and `socket.shutdown` does not
+     wake a read waiting under a timeout. `response.fp.raw.close()` (the SocketIO under the
+     buffer) wakes it at once. The reader's own `response.close()` then raises; swallow it.
+132. **Anonymous hosts gate their downloads differently.** filebin.net serves the file only to a
+     client calling itself curl (an HTML warning page otherwise), so it is not used: we do not
+     pretend to be curl. temp.sh answers a GET with its download page and the file to a POST —
+     what that page's own button sends. `cmds.file(..., exportAll=True)` of a 17 MB scene takes
+     0.4 s; `zipfile` level 6 takes a 51 MB rig scene to 12.4 MB in 2.1 s.

@@ -176,3 +176,23 @@ told to the animator.
     sender is unchanged;
   - an FBX is sent and imported;
   - a failure publishes `failed`.
+
+## Addendum: what the live runs changed (2026-09-30, the same day)
+
+- **temp.sh is the first host, litterbox the fallback** (`upload_any`). Through the fixed upload,
+  5 MB went up in 3.5-3.8 s on temp.sh and in 2.6-16.3 s on litterbox. temp.sh is steady;
+  litterbox is all over the place. A temp.sh file comes back to a POST, which is what its own
+  download page's button sends. `parse` accepts both hosts. Files live 3 days on either.
+- **An upload is written in 1 MB pieces.** Handed a body with `read()`, http.client reads it
+  8 KB at a time, and the TLS upload crawled at 0.20 MB/s. In 1 MB pieces it ran at 1.56 MB/s.
+  This defect was also behind the afternoon's "litterbox slowed down", which was wrongly blamed
+  on litterbox at first.
+- **Open restores the scene's ranges** from its `sceneConfigurationScriptNode`'s
+  `playbackOptions` line, parsed and never evaluated. Without script nodes, the first live run
+  opened the scene at the defaults. The early probe had missed this because it reopened the copy
+  in the same session.
+- **The sender's modified flag**: the send never touches it (measured step by step). What
+  cleared it in the first run was Maya's own idle after a save made in the same command as the
+  edit.
+- **filebin.net was measured fastest and is not used**: it serves the file only to a client
+  calling itself curl.
