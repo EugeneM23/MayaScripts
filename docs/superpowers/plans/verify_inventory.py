@@ -157,7 +157,9 @@ left = attach.find_attached(B["hand_l"])
 err = mirror_error(left, right)
 gate(3, err < 2e-3, "Manny at build pose: the left sword against the world mirror of the right one "
      "(grip 10,-20,35 / 1.5,-2,4 on the right, the left undialled): %.2e" % err)
-zero = bonedrive.mirror_grip((0, 0, 0), (0, 0, 0), (0, 0, 0), *grips.sockets(ROOT))
+# the frame the node carries (2026-09-30: the socket turn composed in)
+zero = bonedrive.mirror_grip((0, 0, 0), (0, 0, 0), bonedrive.socket_frame(SWORD.frame),
+                             *grips.sockets(ROOT))
 gate(4, abs(abs(zero[0][2]) - 180.0) < 5.0 or abs(abs(zero[0][0]) - 180.0) < 5.0
      or abs(abs(zero[0][1]) - 180.0) < 5.0,
      "Manny's zero right grip mirrors to a half turn on the left (the blade was backwards): %s"
@@ -170,7 +172,9 @@ spear = bonedrive.driving_weapon(B["weapon_r"])
 low = lowest_point(spear) if spear else None
 up = wm(spear) if spear else None
 thick_up = (om.MVector(up[8], up[9], up[10]).normal().y) if spear else 0.0
-socket = mdiff(unscaled(wm(B["weapon_r"])), unscaled(wm(spear))) if spear else 9.0
+# the bone on the weapon's SOCKET: its frame undone (2026-09-30: every node carries one)
+socket = mdiff(unscaled(wm(B["weapon_r"])), om.MMatrix(bonedrive.matrix_of(
+    bonedrive.frame_of(spear), (0, 0, 0))).inverse() * unscaled(wm(spear))) if spear else 9.0
 gate(5, spear is not None and not attach.find_attached(B["hand_r"])
      and not cmds.listRelatives(spear, parent=True)
      and cmds.getAttr(spear + "." + attach.MARKER) == "Spear_01",
@@ -271,12 +275,19 @@ creep_sword = catalog.by_key("Creep_Sword")
 print(equip.to_hand(CR.skeleton_root, "R", creep_sword))
 print(equip.to_hand(CR.skeleton_root, "L", creep_sword))
 err = mirror_error(attach.find_attached(CB["hand_l"]), attach.find_attached(CB["hand_r"]))
-zero = bonedrive.mirror_grip((0, 0, 0), (0, 0, 0), (0, 0, 0), *grips.sockets(CR.skeleton_root))
+zero = bonedrive.mirror_grip((0, 0, 0), (0, 0, 0), bonedrive.socket_frame(creep_sword.frame),
+                             *grips.sockets(CR.skeleton_root))
 turn = om.MEulerRotation(*[om.MAngle(v, om.MAngle.kDegrees).asRadians() for v in zero[0]]).asMatrix()
 blade_kept = om.MVector(turn[4], turn[5], turn[6]) * om.MVector(0, 1, 0)
-gate(13, err < 0.1 and blade_kept > 0.999 and max(abs(v) for v in zero[1]) < 0.5,
+thick_kept = om.MVector(turn[8], turn[9], turn[10]) * om.MVector(0, 0, 1)
+# 2026-09-30, one socket for every rig: the Creep's weapon_l is UE's now (the
+# grip line along its -Z, as Manny's), so its zero grip mirrors as Manny's
+# does (gate 04) - a half turn about the THICKNESS, the blade reversed by the
+# left socket and put back by the grip. Before, its weapon_l held the grip
+# line along +Y like weapon_r and the half turn was about the blade.
+gate(13, err < 0.1 and blade_kept < -0.999 and thick_kept > 0.999
+     and max(abs(v) for v in zero[1]) < 0.5,
      "the Creep (framed sword, its own weapon_l): left against the mirror of right %.2e; its zero "
-     "grip mirrors to a half turn ABOUT the blade (%s, blade kept %.4f) - the same sword for a "
-     "symmetric one, the true mirror for an axe head" % (err, tuple(round(v, 3) for v in zero[0]),
-                                                         blade_kept))
+     "grip mirrors to a half turn about the thickness as Manny's does (%s, blade %.4f, thickness "
+     "%.4f)" % (err, tuple(round(v, 3) for v in zero[0]), blade_kept, thick_kept))
 print("RESULT: %d of %d gates failed %s" % (len(FAILS), TOTAL[0], FAILS))

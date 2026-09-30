@@ -128,13 +128,16 @@ sword_entry = catalog.by_key("Creep_Sword")
 cmds.currentTime(first)
 weapon, wnote = attach.attach(sword_entry, H["hand_r"], H["weapon_r"], (0, 0, 0), (0, 0, 0))
 weapon = cmds.ls(weapon, long=True)[0]
-FRAME = om.MMatrix(bonedrive.matrix_of(sword_entry.frame, (0, 0, 0)))
+# the frame the node carries: the row's own, then the socket turn (2026-09-30)
+FRAME = om.MMatrix(bonedrive.matrix_of(bonedrive.socket_frame(sword_entry.frame), (0, 0, 0)))
 off = max(abs(a - b) for a, b in zip(list(wm(weapon)), list(FRAME * wm(H["weapon_r"]))))
 #  since 2026-09-24 a weapon lives in its hand's SPACE, outside the skeleton (weaponspace)
 gate(11, weaponspace.holding_hand(weapon) == H["hand_r"] and not weapon.startswith(H["root"] + "|")
      and bonedrive.driving_weapon(H["weapon_r"]) and off < 1e-4 and sword_entry.frame == (0.0, 45.0, 0.0),
-     "Add 'Creep Sword': %s in hand_r's space (%s) drives weapon_r, standing in its frame %s on the bone to %.2e at zero grip %s"
-     % (weapon.split("|")[-1], weapon.rsplit("|", 2)[-2], sword_entry.frame, off, wnote))
+     "Add 'Creep Sword': %s in hand_r's space (%s) drives weapon_r, standing in its frame %s "
+     "(with the socket turn %s) on the bone to %.2e at zero grip %s"
+     % (weapon.split("|")[-1], weapon.rsplit("|", 2)[-2], sword_entry.frame,
+        bonedrive.socket_frame(sword_entry.frame), off, wnote))
 
 
 def mesh_points(node, space):
