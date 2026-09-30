@@ -6794,3 +6794,51 @@ studio channel.
      pretend to be curl. temp.sh answers a GET with its download page and the file to a POST —
      what that page's own button sends. `cmds.file(..., exportAll=True)` of a 17 MB scene takes
      0.4 s; `zipfile` level 6 takes a 51 MB rig scene to 12.4 MB in 2.1 s.
+
+## Open scene on the right button: a portrait's or a weapon's own file (2026-09-30)
+
+The animator, having asked whether Maya allows a context menu on the icons at all: «Давай сделаем так
+что бы когда я нажимал правой клавишей по иконке рига или оружия то у меня появлялось опция Open scene
+и при нажатии на нее у нас бы открывался соответствующий фаил». Spec
+`docs/superpowers/specs/2026-09-30-open-scene-menu-design.md`.
+
+- **Characters grid**: the right button on a portrait shows one row, **Open scene** — the model's file in
+  the kind the `[Rig | Skeleton]` switch shows (`catalog.character_file`). A dimmed portrait shows it
+  disabled, «Open scene (no skeleton)». A right press never picks; during a drag it still cancels.
+- **Weapons inventory**: on a weapon in the grid, or on a hand card holding one (held or on the floor),
+  **Open scene** — the row's FBX; on the grid **Sort the inventory** stays under a separator; an empty
+  hand offers nothing (`InventoryPanel.context_actions`, `PortraitGrid.context_actions`, both pure over
+  the hit and tested without a menu).
+- **One menu helper**, `maya_hubqt.build_menu` / `run_menu`: rows (label, callable), a None callable
+  disabled, None a separator; the QMenu is parented to the grid, so the hub's stylesheet reaches it.
+- **`maya_scenesetup/opener.py`** does the opening: Maya's own «save changes?» (`saveChanges("")`, Cancel
+  → «Open scene cancelled - nothing changed»); a `.ma` with `executeScriptNodes=False` (Shared's rule),
+  its ranges parsed out of the configuration node (trap 129), a vaccine node deleted, the shipped images
+  pointed at the plugin's copy (`colour.relink_images` — the assets name them relatively); an `.fbx`
+  through **`fbximport.open_file`**, the trap-33 import-mode guard now shared by import and open; then
+  `file -modified false` either way. The line: «Opened Manny [rig] - assets/Manny_Rig.ma. Save As to
+  keep changes: a save writes into the plugin, and an update replaces its files» — the ask was the file
+  itself, so Ctrl+S does write into the installed plugin, and the line says so. The file opens as it is
+  on disk: Spear 03's FBX untextured (Add applies its texture), the UE4 Mannequin in its importer wrapper.
+- **An FBX open reads as a modified scene** (measured 2026-09-30 on every catalog weapon and the UE4
+  Mannequin): it is an import into a new scene. Without the reset the next Open scene asked to save an
+  untouched file.
+
+Proof: `verify_open_scene_files.py` **61/61 in mayapy standalone** — every character row and every weapon
+opened from the repo's assets: the scene is that file, unmodified, its geometry in, no script node of its
+own, every shipped image on the plugin's copy (Manny 4/4, Creep 6/6, Orc D 6/6), the FBXs whole under a
+forced `exmerge` with the mode put back. 2992 unit tests. The installed copy refreshed in the animator's
+Maya from a `git archive` of `688ba9d`, their modified scene untouched; the open hub rebuilt on the new
+modules (read back: the grid offers «Open scene» over Manny, the inventory «Open scene / Sort the
+inventory» over Spear 03). **`verify_open_scene_menu.py` (real right-button events, the real QMenu read
+and activated while its `exec()` runs, Maya's save dialog answered by clicking) is written and NOT run**:
+every new GUI Maya launched that afternoon hung before Python (below), and the animator's own Maya held
+a modified scene an Open scene would have replaced.
+
+133. **A new GUI Maya hung at startup, three times in a row, whatever the launch** (2026-09-30 afternoon:
+     scratch `MAYA_APP_DIR` with a short path, with a long path, and the shared prefs; `MAYA_NO_HOME=1`,
+     `-hideConsole`, a PYTHONPATH userSetup — the recipe that worked that morning). Licensing authorized
+     it (MayaCLM log «Authorized»), then it sat at **277 MB with one core busy** for 5 minutes, no visible
+     window, nothing written to its prefs but `Maya.env`, no userSetup run — two other Mayas running
+     beside it. Cause not found. Before blaming a verify, look at the new process's working set: a Maya
+     that loads climbs past ~900 MB within a minute; a flat 277 MB never gets there.
