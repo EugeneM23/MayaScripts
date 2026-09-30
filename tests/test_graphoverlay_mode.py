@@ -67,6 +67,38 @@ class TheHint(unittest.TestCase):
         self.assertIn("alt+c", mode.HINT)
 
 
+class OneStatePerSession(unittest.TestCase):
+    """Measured live 2026-09-30: an install purges our modules, the hub's
+    button stays bound to the copy that built it, and four copies of this
+    module each kept their own state - the live overlay ran in a copy
+    nobody could reach, and the one `import` handed out said it was off.
+    Every copy shares the one state now."""
+
+    def test_a_second_copy_of_the_module_sees_the_same_state(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mode_second_copy",
+                                                      mode.__file__)
+        copy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(copy)
+        self.assertIs(copy._STATE, mode._STATE)
+        mode._STATE.reset()
+        mode._STATE.ghost = object()
+        try:
+            self.assertTrue(copy.is_on())
+        finally:
+            mode._STATE.reset()
+
+    def test_a_state_from_an_older_copy_gains_the_new_fields(self):
+        import sys
+        state = getattr(sys, mode.SESSION_STATE)
+        del state.cost
+        try:
+            mode._shared_state()
+            self.assertEqual(state.cost, 0.0)
+        finally:
+            mode._STATE.reset()
+
+
 class ThePackage(unittest.TestCase):
 
     def test_the_package_names_resolve_lazily_to_the_mode(self):

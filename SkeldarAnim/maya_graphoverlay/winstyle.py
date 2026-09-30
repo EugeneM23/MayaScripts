@@ -1,10 +1,11 @@
 """The Win32 styles the overlay stands on. ctypes only - never Maya, never Qt.
 
-* The GHOST - our Graph Editor made invisible with WS_EX_LAYERED and a
-  layered alpha of 1. Measured 2026-09-30: it keeps rendering
-  (frameSwapped fires, the time marker moves) and keeps taking clicks
-  (WindowFromPoint answers its canvas) - a layered window lets the mouse
-  through only where its alpha is ZERO.
+* The GHOST - our Graph Editor at a layered alpha of 1 (set by Qt's own
+  `setWindowOpacity` in ghost.py; Qt drops a WS_EX_LAYERED it did not set,
+  measured). It keeps rendering (frameSwapped fires, the time marker
+  moves) and keeps taking clicks (WindowFromPoint answers its canvas) - a
+  layered window lets the mouse through only where its alpha is ZERO.
+  `layered_alpha` is how the mode checks it.
 * CLICK-THROUGH - WS_EX_TRANSPARENT on a layered window: the OS hit-tests
   straight through it (the Curve Overlay measured it, 2026-09-05). The
   glass carries it for good; the ghost while alt is held, so the click
@@ -53,9 +54,6 @@ def _user32():
                                     ctypes.c_int, ctypes.c_int, ctypes.c_int,
                                     ctypes.c_uint]
     user32.SetWindowPos.restype = wt.BOOL
-    user32.SetLayeredWindowAttributes.argtypes = [wt.HWND, wt.DWORD,
-                                                  ctypes.c_ubyte, wt.DWORD]
-    user32.SetLayeredWindowAttributes.restype = wt.BOOL
     user32.GetLayeredWindowAttributes.argtypes = [
         wt.HWND, ctypes.POINTER(wt.DWORD), ctypes.POINTER(ctypes.c_ubyte),
         ctypes.POINTER(wt.DWORD)]
@@ -108,18 +106,6 @@ def _write(hwnd, style):
     handle = _hwnd(hwnd)
     user32.SetWindowLongPtrW(handle, GWL_EXSTYLE, style)
     user32.SetWindowPos(handle, wt.HWND(0), 0, 0, 0, 0, _SWP_REFRESH)
-
-
-def make_ghost(hwnd, alpha=GHOST_ALPHA):
-    """Layered, at `alpha` of 255: drawn at next to nothing, clicks taken."""
-    user32 = _user32()
-    if user32 is None:
-        return False
-    style = exstyle(hwnd)
-    if not style & WS_EX_LAYERED:
-        _write(hwnd, with_bits(style, on=WS_EX_LAYERED))
-    return bool(user32.SetLayeredWindowAttributes(_hwnd(hwnd), 0,
-                                                  int(alpha), LWA_ALPHA))
 
 
 def layered_alpha(hwnd):

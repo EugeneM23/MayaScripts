@@ -23,6 +23,7 @@ canvas clears opaque whatever the background alpha, measured), so:
 Spec: docs/superpowers/specs/2026-09-30-graph-overlay-design.md
 """
 
+import sys
 import time
 import traceback
 
@@ -72,8 +73,32 @@ class _State(object):
         self.closing = False
 
 
-_STATE = _State()
-_POOL = []          # the keying threads, made once a session
+SESSION_STATE = "_skeldar_graphoverlay_state"
+
+
+def _shared_state():
+    """ONE state per Maya session, whichever copy of this module asks.
+
+    Measured live 2026-09-30: an install purges our modules, the hub's
+    button stays bound to the copy that built it, and four copies each
+    kept a state of their own - the running overlay lived in a copy nobody
+    could reach and `import` handed out one that said it was off (trap 49's
+    shape). So the state hangs off `sys`, and a state an older copy made
+    gains any field this one has added.
+    """
+    state = getattr(sys, SESSION_STATE, None)
+    if state is None:
+        state = _State()
+        setattr(sys, SESSION_STATE, state)
+    else:
+        for name, value in vars(_State()).items():
+            if not hasattr(state, name):
+                setattr(state, name, value)
+    return state
+
+
+_STATE = _shared_state()
+_POOL = []          # the keying threads, made once a module
 
 
 # ------------------------------------------------------------------ the mode
@@ -238,9 +263,8 @@ def _follow_once():
             glass_.place(rect)
         if not ghost_.aligned(rect):
             ghost_.place(rect)
-    if winstyle.layered_alpha(ghost_.hwnd()) != winstyle.GHOST_ALPHA:
-        winstyle.make_ghost(ghost_.hwnd())
-        _STATE.through = None
+        glass_.keep_click_through()
+    ghost_.keep_invisible()
     if _STATE.canvas is None:
         _connect_canvas()
     _poll_alt()
@@ -254,15 +278,20 @@ def _alt_tick():
 
 
 def _poll_alt(alt=None):
+    """Compared with the window's REAL style, never a remembered one: Qt
+    rewrites the styles of its windows (measured - it dropped our
+    WS_EX_TRANSPARENT when the opacity was set), so a cached "already
+    through" can be a lie."""
     if not is_on() or _STATE.closing:
         return
     from maya_graphoverlay import winstyle
     if alt is None:
         alt = winstyle.alt_down()
     through = geometry.let_through(alt, _STATE.active, _STATE.placed)
-    if through != _STATE.through:
-        winstyle.set_click_through(_STATE.ghost.hwnd(), through)
-        _STATE.through = through
+    hwnd = _STATE.ghost.hwnd()
+    if winstyle.is_click_through(hwnd) != through:
+        winstyle.set_click_through(hwnd, through)
+    _STATE.through = through
 
 
 def _install_jobs():

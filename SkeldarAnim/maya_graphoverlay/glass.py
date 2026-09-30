@@ -4,7 +4,10 @@ Qt and ctypes - never Maya. The Curve Overlay's measured window
 (2026-09-05): frameless, translucent, a TOP-LEVEL (a native GL child would
 paint over any child of ours), owned by Maya's main window so it rides its
 z-order; WA_TransparentForMouseEvents does not cross a native window, so
-the click-through is WS_EX_TRANSPARENT, set after `show()`.
+the click-through is WS_EX_TRANSPARENT: asked of Qt itself with the
+`WindowTransparentForInput` flag (Qt rewrites the style of its windows and
+drops a bit it did not set - measured on the ghost 2026-09-30), and set
+again after `show()` and by the mode's follow timer should it go.
 """
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -18,7 +21,8 @@ class Glass(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super(Glass, self).__init__(parent, QtCore.Qt.Tool
-                                    | QtCore.Qt.FramelessWindowHint)
+                                    | QtCore.Qt.FramelessWindowHint
+                                    | QtCore.Qt.WindowTransparentForInput)
         self.setObjectName(NAME)
         for attribute in (QtCore.Qt.WA_TranslucentBackground,
                           QtCore.Qt.WA_NoSystemBackground,
@@ -49,6 +53,14 @@ class Glass(QtWidgets.QWidget):
 
     def frame(self):
         return self._image
+
+    def keep_click_through(self):
+        """Set WS_EX_TRANSPARENT again if it went; True when it had to."""
+        hwnd = int(self.winId())
+        if winstyle.is_click_through(hwnd):
+            return False
+        winstyle.set_click_through(hwnd, True)
+        return True
 
     def paintEvent(self, event):
         self.paint_count += 1

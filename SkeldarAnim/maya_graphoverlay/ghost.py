@@ -17,6 +17,14 @@ graphEditor1 - their Graph Editor stays where they docked it. Measured
 PySide hands the canvas back as a QPaintDeviceWindow; the cached wrapper is
 invalidated and the pointer wrapped as the QOpenGLWindow it is, which is
 what reaches `grabFramebuffer()` and `frameSwapped`.
+
+The ghost is made invisible by Qt's OWN window opacity, 1/255 - never by
+setting WS_EX_LAYERED behind Qt's back: measured live 2026-09-30, Qt
+rewrote the style of a window it thought opaque and dropped the bit (the
+style read 0xa0), so the "invisible" Graph Editor stood grey over the
+viewport and the follow timer's re-assertions made it redraw ~40 times a
+second. With `setWindowOpacity` Qt keeps it layered itself (0x80080,
+alpha 1, no redraws at rest).
 """
 
 import maya.cmds as cmds
@@ -34,6 +42,8 @@ LABEL = "Graph Overlay"
 CANVAS_CLASS = "TanimCurveCanvas"
 CONTAINER_CLASS = "QWindowContainer"
 FRAME_CLASS = "QadskFrameLayoutFrame"
+GHOST_OPACITY = winstyle.GHOST_ALPHA / 255.0
+GLASS_NAME = "skeldarGraphOverlayGlass"      # glass.NAME, not imported here
 
 
 def _full_name(qobject):
@@ -47,8 +57,9 @@ def _widget(name):
 
 
 def delete_leftovers():
-    """A panel of ours a saved scene brought back; a host an older module
-    object built (an install purges modules, not widgets - trap 102)."""
+    """A panel of ours a saved scene brought back; a host or a glass an
+    older module object built (an install purges modules, not widgets -
+    trap 102). Found by name, never by module state."""
     try:
         if cmds.scriptedPanel(PANEL, exists=True):
             cmds.deleteUI(PANEL, panel=True)
@@ -57,7 +68,7 @@ def delete_leftovers():
     app = QtWidgets.QApplication.instance()
     for widget in (app.topLevelWidgets() if app else []):
         try:
-            if widget.objectName() == HOST:
+            if widget.objectName() in (HOST, GLASS_NAME):
                 widget.hide()
                 widget.deleteLater()
         except RuntimeError:
@@ -82,7 +93,7 @@ class Ghost(object):
         host.setGeometry(*[int(v) for v in rect])
         # Invisible before it is ever shown: no frame of a grey Graph
         # Editor flashes over the viewport.
-        winstyle.make_ghost(int(host.winId()))
+        host.setWindowOpacity(GHOST_OPACITY)
         host.show()
         previous = cmds.setParent(query=True)
         cmds.setParent(_full_name(layout))
@@ -178,6 +189,14 @@ class Ghost(object):
 
     def hwnd(self):
         return int(self.host.winId())
+
+    def keep_invisible(self):
+        """Put the 1/255 back if anything took it; True when it had to."""
+        if winstyle.layered_alpha(self.hwnd()) == winstyle.GHOST_ALPHA:
+            return False
+        self.host.setWindowOpacity(1.0)
+        self.host.setWindowOpacity(GHOST_OPACITY)
+        return True
 
     def host_rect(self):
         g = self.host.geometry()
