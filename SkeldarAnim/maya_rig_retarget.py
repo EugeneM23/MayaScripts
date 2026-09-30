@@ -214,6 +214,10 @@ def transfer_bone(src, dst, start, end, relative=False):
     cmds.bakeResults(dst, time=(start, end), attribute=_CHANNELS, simulation=False,
                      sampleBy=1, disableImplicitControl=True, preserveOutsideKeys=False,
                      sparseAnimCurveBake=False)
+    # the relative driver's decomposed rotation wraps, so the bake keeps a
+    # different euler from key to key: made continuous (2026-09-30)
+    from maya_scenesetup import bonedrive
+    bonedrive.euler_filter(dst)
     cmds.delete(constraint)
     for node in temp:
         if cmds.objExists(node):

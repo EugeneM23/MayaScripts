@@ -331,5 +331,18 @@ class TestBakeOrchestration(unittest.TestCase):
         self.assertEqual(rr.bake(), "no AdvancedSkeleton rig in this scene")
 
 
+class HelperBake(unittest.TestCase):
+
+    def test_a_carried_helper_bone_is_euler_filtered_after_its_bake(self):
+        """2026-09-30: the relative driver's decomposed rotation wraps, and a UE
+        take on the Creep baked the same rotations as different eulers from
+        key to key - the filter follows the bake, before the constraint goes."""
+        import inspect
+        source = inspect.getsource(rr.transfer_bone)
+        self.assertIn("bonedrive.euler_filter(dst)", source)
+        self.assertLess(source.index("bakeResults"), source.index("euler_filter"))
+        self.assertLess(source.index("euler_filter"), source.index("cmds.delete(constraint)"))
+
+
 if __name__ == "__main__":
     unittest.main()

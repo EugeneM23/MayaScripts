@@ -272,6 +272,12 @@ class FakeCmds(object):
 
     def bakeResults(self, node, **kwargs):
         self._note(("bake", node, kwargs.get("time")))
+        self._baked = getattr(self, "_baked", []) + [node]
+
+    def filterCurve(self, *curves, **kwargs):
+        # kept out of the ordered log: the filter is a tidy-up inside a bake
+        self.filtered = getattr(self, "filtered", []) + [
+            (tuple(curves), kwargs.get("filter"), tuple(getattr(self, "_baked", [])))]
 
     def cutKey(self, node, **kwargs):
         self._note(("cut", node, kwargs.get("attribute")))
@@ -429,6 +435,27 @@ class Link(WithFake):
                                             else [-20.0, 45.0])
         bonedrive.link(SWORD, BONE)
         self.assertEqual(fake.log[1][2], (-20.0, 45.0))
+
+
+class EulerFilter(WithFake):
+    """2026-09-30, measured on a UE take retargeted onto the Creep: the same
+    rotation baked as a different euler from one key to the next (steps of
+    347 / 538 / 188 deg on the sword), so it spun between frames. Every bake
+    here filters its rotate curves - the same rotations at every key."""
+
+    def test_the_bakes_rotate_curves_are_filtered_after_it(self):
+        fake = self.use(FakeCmds(bone_keys=[0.0, 25.0], bone_curves=True))
+        bonedrive.link(SWORD, BONE)
+        self.assertTrue(fake.filtered)
+        curves, kind, baked = fake.filtered[0]
+        self.assertEqual(kind, "euler")
+        self.assertEqual(baked, (SWORD,))           # after the bake it tidies
+        self.assertTrue(curves)
+
+    def test_the_unlink_bake_is_filtered_too(self):
+        fake = self.use(FakeCmds(constrained=True, bone_curves=True))
+        bonedrive.unlink(BONE)
+        self.assertEqual([f[2] for f in fake.filtered], [(BONE,)])
 
 
 class Unlink(WithFake):

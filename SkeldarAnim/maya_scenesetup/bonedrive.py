@@ -266,6 +266,26 @@ def _bake(node, start, end):
                      simulation=False, sampleBy=1,
                      disableImplicitControl=True, preserveOutsideKeys=False,
                      sparseAnimCurveBake=False)
+    euler_filter(node)
+
+
+def euler_filter(node):
+    """`node`'s rotate curves made continuous: the same rotation at every key,
+    written as the euler nearest the previous key's.
+
+    A bake keeps whichever euler each frame evaluated to. Measured 2026-09-30
+    on a UE take retargeted onto the Creep: the sword stood in the hand
+    exactly (0.0007 deg at every key) and its curves stepped 347 / 538 / 188
+    deg from one key to the next - the same rotations written the other way
+    round, so it spun BETWEEN frames.
+    """
+    curves = []
+    for axis in "XYZ":
+        curves.extend(cmds.listConnections(
+            "{0}.rotate{1}".format(node, axis), source=True,
+            destination=False, type="animCurve") or [])
+    if curves:
+        cmds.filterCurve(*curves, filter="euler")
 
 
 def snap(node, target):
