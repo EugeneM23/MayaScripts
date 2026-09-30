@@ -6767,9 +6767,12 @@ The animator: «Мне очень часто приходится передав
 Spec: `docs/superpowers/specs/2026-09-30-shared-files-design.md` (read its addendum). Plan beside it.
 
 **What it is.** A hub card **Shared** (group Scene, after Connections, icon `send`; hotkey row
-`window.shared`). It holds a Name field (`skeldarShareName`; the Windows user here is «MY PC»,
-which names nobody), a Comment, **Send scene** (primary) and **Send file...** (.ma/.mb/.fbx), the
-list, **Open / Import / Save to...**, and a status line that spells out the picked row.
+`window.shared`). It holds an **Author** field (`skeldarShareAuthor`, remembered in the optionVar
+`skeldarShareName`; the Windows user here is «MY PC», which names nobody), a **Name** field naming
+the upload (below), **Send scene** (primary) and **Send file...** (.ma/.mb/.fbx), the list (several
+rows can be picked), **Open / Import / Save to... / Delete**, and a status line that spells out the
+picked row. (Until the evening the fields were Name and Comment: see "Delete, Author, and a name
+for every upload" below.)
 
 - **The file** goes to **temp.sh** (anonymous, 4 GB, 3 days), else to **litterbox.catbox.moe**
   (1 GB, 72 h).
@@ -6797,8 +6800,9 @@ list, **Open / Import / Save to...**, and a status line that spells out the pick
   only our app/version, a 32-hex id, a plain .ma/.mb/.fbx name, and an https url on temp.sh or
   litterbox. Expressions in a hostile scene would still run when evaluated: that is stated, the
   cost of "no keys".
-- **Not built**: delete (litterbox has no delete; files die at 3 days), sending to one person,
-  the files a scene references, listening before the hub is opened.
+- **Not built**: deleting a file off its host (neither host has a delete; files die at 3 days —
+  Delete takes it off every list and disk), sending to one person, the files a scene references,
+  listening before the hub is opened.
 
 **Proof** — `verify_shared_sender.py` (a disposable GUI Maya on port 7006) and
 `verify_shared_receiver.py` (a mayapy colleague), on a test topic, the plugin from a `git archive`.
@@ -6843,6 +6847,52 @@ studio channel.
      pretend to be curl. temp.sh answers a GET with its download page and the file to a POST —
      what that page's own button sends. `cmds.file(..., exportAll=True)` of a 17 MB scene takes
      0.4 s; `zipfile` level 6 takes a 51 MB rig scene to 12.4 MB in 2.1 s.
+
+**Delete, Author, and a name for every upload** (the same evening: «кнопку которая будет удалять
+выбранные файлы. И Name заменить на author а comment на имя файла или сцены, что бы можно было
+удобно называть заливки»). Asked what Delete removes (the hosts have no delete), the animator chose
+**«Всё у всех»**: any picked file, theirs or a colleague's, leaves every colleague's list. Spec
+`docs/superpowers/specs/2026-09-30-shared-delete-and-naming-design.md`.
+
+- **Name** (`skeldarShareFileName`) names the upload: `records.upload_name(typed, fallback)` (pure)
+  keeps the SOURCE's extension (a scene its .ma/.mb, a file its own; a typed .ma/.mb/.fbx is dropped,
+  so «attack.fbx» over a scene is `attack.ma`), collapses whitespace, turns Windows' forbidden
+  characters into `_`, strips leading dots and trailing dots/spaces, caps at 80, prefixes a device
+  name (CON, NUL, COM1 ...); empty means the scene's or the file's own name. Cleared after a send.
+  `send_scene(name=)` / `send_file(path, name=)` replace the `comment=` parameters. **No comment is
+  sent any more**; an older build's comment still shows in its row.
+- **Delete**: a danger button (the trash alone in the skin, «Delete» in the classic hub) and the
+  Delete key on the list (`deleteKeyCommand`); the list is `allowMultiSelection`, and Open / Import
+  / Save to... take ONE («Pick one file to open - 2 are picked.»). One confirm names the files
+  (`records.delete_question`; batch skips it). Then one **`deleted` record** per file (the record in
+  state `deleted` + `by`, `by_machine`), published side by side on a thread (`DELETE_WORKERS` 4), and
+  what the channel took is applied here (`_deleted`); what it refused stays, named.
+- **Applying a `deleted`** (`_apply_delete`, here and from the channel): **terminal** (`_RANK` 2), so
+  a `sending`/`ready` arriving after it in any order changes nothing, and the entry stays in the
+  history as a tombstone until it expires; the row goes; a transfer stops at its next tick
+  (`_progress` answers False — net's Cancelled — and a stopped send publishes no `failed`, a `ready`
+  that raced past it is never applied); the local copy and its folder go (`_forget_local`: only
+  inside SkeldarShare/, **never the scene open in this Maya** — that one stays and the status says
+  so); a colleague's delete says «Oleg deleted Longsword.fbx», our own echo says nothing.
+- **An older build refuses the unknown state** and keeps the row until the file expires.
+
+Proof: `verify_shared_delete.py` — **9/9, two mayapy colleagues** (own `MAYA_APP_DIR` each) on a test
+topic over the real ntfy.sh and temp.sh: A sends one scene three times under typed names, B's rows
+carry them (row at **0.86 s**, ready at 2.5 s), B opens «one»; A deletes one and three together: B's
+rows go in **0.85 s**, three's copy and folder go, one's copy STAYS (it is B's open scene) and the
+status says so; B deletes two (A's file): A's row and sent copy go in **0.93 s**. And the card in a
+disposable GUI Maya (port 7008, scratch prefs, started minimized, killed after) at the animator's
+dock (viewport 510 physical): two rows picked through `selectIndexedItem`, kept across a refresh,
+the trash clicked — «Deleted 2 files for everybody», the subtitle «0 files»; the Delete key sent to
+the list's widget deletes too; every button at or above its size hint in the skin (Open 99 ≥ 93,
+trash 58 ≥ 55) and the classic hub (Delete 96 ≥ 61). 3054 unit tests.
+
+140. **ntfy.sh can deliver a message to the stream BEFORE the publish call returns.** A delete's own
+     echo reached the subscriber first (the row gone, `_receive_delete` silent for our machine) and
+     the press's «Deleted 1 file» came 0.8 s later, when `publish` answered; a gate that checked the
+     status on "the row is gone" failed on correct code. Anything applied from both the press and the
+     channel must be idempotent and may run in either order — `_deleted` asks the entry, not its
+     own `_apply_delete`'s answer, whether the copy was kept.
 
 ## Open scene on the right button: a portrait's or a weapon's own file (2026-09-30)
 

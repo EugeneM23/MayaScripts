@@ -162,7 +162,7 @@ def main():
             shutil.copy2(FBX, fbx_copy)
             LOG["fbx_press"] = time.time()
             LOG["fbx_send"] = share.send_file(fbx_copy,
-                                              comment="verify fbx back")
+                                              name="verify_mannequin")
             sent_back = True
             LOG["phase"] = "sent back"
             write()

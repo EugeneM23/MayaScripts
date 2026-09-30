@@ -91,7 +91,7 @@ elif PHASE == "send":                                       # noqa: F821
     maya_hub.show("shared")
     before = scene_state()
     press = time.time()
-    message = share.send_scene(comment="verify orc")
+    message = share.send_scene()
     report({"press": press, "send": message,
             "before": before, "after": scene_state(),
             "machine": share.machine_id()})
@@ -141,7 +141,7 @@ elif PHASE == "fail":                                       # noqa: F821
     net.UPLOAD_URL = "http://127.0.0.1:1/api.php"
     net.TEMPSH_URL = "http://127.0.0.1:1/upload"
     try:
-        message = share.send_file(small, comment="verify fail")
+        message = share.send_file(small)
     finally:
         pass
     report({"fail_press": time.time(), "fail_send": message,

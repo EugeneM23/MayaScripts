@@ -1,9 +1,11 @@
-"""maya_share: the Shared section - sending, receiving, history, the panel.
+"""maya_share: the Shared section - sending, receiving, history, deleting,
+the panel.
 
 On a recording `cmds`, a fake network that keeps uploads by address, and
 threads and deferred calls that run at once.
 
-Spec: docs/superpowers/specs/2026-09-30-shared-files-design.md
+Spec: docs/superpowers/specs/2026-09-30-shared-files-design.md,
+      docs/superpowers/specs/2026-09-30-shared-delete-and-naming-design.md
 """
 
 import os
@@ -31,8 +33,10 @@ class _Cmds(FakeUiCmds):
         self.app_dir = app_dir
         self.scene_name = ""
         self.files = []
-        self.comment = ""
+        self.fields = {}             # textField name -> its text
+        self.picked = None           # the list's picked indices, when it is up
         self.dialog = None
+        self.confirms = []
         self.messages = []
         self.playback = None
         self.config = "playbackOptions -min 5 -max 45 -ast 0 -aet 50 "
@@ -90,9 +94,37 @@ class _Cmds(FakeUiCmds):
         self.messages.append(kwargs.get("assistMessage"))
 
     def textField(self, *args, **kwargs):
+        name = args[0] if args else None
+        if kwargs.get("exists"):
+            return name in self.fields
         if kwargs.get("query") or kwargs.get("q"):
-            return self.comment
+            return self.fields.get(name, "")
+        if kwargs.get("edit") or kwargs.get("e"):
+            if "text" in kwargs:
+                self.fields[name] = kwargs["text"]
+            return None
+        self.fields[name] = kwargs.get("text", "")
         return FakeUiCmds.__getattr__(self, "textField")(*args, **kwargs)
+
+    def textScrollList(self, *args, **kwargs):
+        """Up once a test says what is picked (`picked`): the rows are the
+        state's, the selection those indices."""
+        if self.picked is None:
+            return FakeUiCmds.__getattr__(self, "textScrollList")(
+                *args, **kwargs)
+        if kwargs.get("exists"):
+            return True
+        if kwargs.get("query") or kwargs.get("q"):
+            if kwargs.get("selectIndexedItem"):
+                return list(self.picked)
+            if kwargs.get("numberOfItems"):
+                return len(share.state()["rows"])
+            return None
+        return None
+
+    def confirmDialog(self, **kwargs):
+        self.confirms.append(kwargs)
+        return "Delete"
 
 
 class _Sub(object):
@@ -121,30 +153,46 @@ class _Net(object):
         self.published = []
         self.store = {}
         self.fail = None
+        self.refuse = set()          # names whose publish ntfy.sh refuses
+        self.midway = None           # called at the first progress tick
 
     def publish(self, text, topic=None, base=None):
-        self.published.append(records.parse(text))
+        record = records.parse(text)
+        if record["name"] in self.refuse:
+            raise net.ShareError("could not reach ntfy.sh: refused")
+        self.published.append(record)
         return "m{0}".format(len(self.published))
+
+    def _tick(self, progress, done, total):
+        """A progress tick, as net makes it: False from the callback cancels."""
+        if self.midway is not None:
+            midway, self.midway = self.midway, None
+            midway()
+        if progress is not None and progress(done, total) is False:
+            raise net.Cancelled("cancelled")
 
     def upload_any(self, path, progress=None):
         if self.fail is not None:
             raise self.fail
         with open(path, "rb") as handle:
             data = handle.read()
+        self._tick(progress, len(data) // 2, len(data))
         url = "https://litter.catbox.moe/f{0}.zip".format(len(self.store))
         self.store[url] = data
-        if progress is not None:
-            progress(len(data), len(data))
+        self._tick(progress, len(data), len(data))
         return url
 
     def download(self, url, path, progress=None):
         if url not in self.store:
             raise net.Expired("gone")
+        data = self.store[url]
         with open(path, "wb") as out:
-            out.write(self.store[url])
-        if progress is not None:
-            progress(len(self.store[url]), len(self.store[url]))
-        return len(self.store[url])
+            out.write(data[:len(data) // 2])
+        self._tick(progress, len(data) // 2, len(data))
+        with open(path, "wb") as out:
+            out.write(data)
+        self._tick(progress, len(data), len(data))
+        return len(data)
 
 
 class _Base(unittest.TestCase):
@@ -200,12 +248,13 @@ class Sending(_Base):
 
     def test_send_file_publishes_sending_then_ready(self):
         path = self._source()
-        message = share.send_file(path, comment="look at the root")
+        message = share.send_file(path)
         self.assertIn("clip.fbx", message)
         states = [r["state"] for r in self.net.published]
         self.assertEqual(states, ["sending", "ready"])
         ready = self.net.published[-1]
-        self.assertEqual(ready["comment"], "look at the root")
+        self.assertEqual(ready["name"], "clip.fbx")
+        self.assertEqual(ready["comment"], "")
         self.assertEqual(ready["kind"], "fbx")
         self.assertEqual(ready["machine"], share.machine_id())
         entry = share.state()["entries"][ready["id"]]
@@ -241,7 +290,7 @@ class Sending(_Base):
 
     def test_send_scene_exports_all_and_leaves_the_scene_alone(self):
         self.fake.scene_name = "C:/work/Orc_attack.mb"
-        share.send_scene(comment="v2")
+        share.send_scene()
         exports = [(a, k) for a, k in self.fake.files if k.get("exportAll")]
         self.assertEqual(len(exports), 1)
         args, kwargs = exports[0]
@@ -256,6 +305,53 @@ class Sending(_Base):
         self.assertEqual(ready["name"], "Orc_attack.mb")
         self.assertEqual(ready["fps"], 30.0)
         self.assertEqual(ready["range"], [0.0, 60.0])
+
+
+class Naming(_Base):
+    """Author is who a file is from; Name names the upload."""
+
+    def test_a_scene_under_the_typed_name_keeps_its_type(self):
+        self.fake.scene_name = "C:/work/Orc_attack.mb"
+        share.send_scene(name="attack v2")
+        exports = [(a, k) for a, k in self.fake.files if k.get("exportAll")]
+        self.assertTrue(exports[0][0][0].endswith("attack v2.mb"))
+        self.assertEqual(exports[0][1]["type"], "mayaBinary")
+        self.assertEqual(self.net.published[-1]["name"], "attack v2.mb")
+
+    def test_a_file_under_the_typed_name_keeps_its_extension(self):
+        share.send_file(self._source("clip.fbx"), name="run cycle.ma")
+        ready = self.net.published[-1]
+        self.assertEqual(ready["name"], "run cycle.fbx")
+        local = share.state()["entries"][ready["id"]]["local"]
+        self.assertEqual(os.path.basename(local), "run cycle.fbx")
+        with zipfile.ZipFile(__import__("io").BytesIO(
+                self.net.store[ready["url"]])) as z:
+            self.assertEqual(z.namelist(), ["run cycle.fbx"])
+
+    def test_the_field_names_the_upload_and_is_cleared(self):
+        self.fake.fields[share.FILE_NAME_FIELD] = "  Orc  hit  "
+        share.send_file(self._source("clip.fbx"))
+        self.assertEqual(self.net.published[-1]["name"], "Orc hit.fbx")
+        self.assertEqual(self.fake.fields[share.FILE_NAME_FIELD], "")
+
+    def test_an_empty_field_is_the_files_own_name(self):
+        self.fake.fields[share.FILE_NAME_FIELD] = ""
+        share.send_file(self._source("clip.fbx"))
+        self.assertEqual(self.net.published[-1]["name"], "clip.fbx")
+
+    def test_the_author_is_remembered_where_the_name_was(self):
+        self.fake.fields[share.AUTHOR_FIELD] = "  Oleg "
+        share._author_changed()
+        self.assertEqual(self.fake.optionvars["skeldarShareName"], "Oleg")
+        self.assertEqual(share.sender_name(), "Oleg")
+        share.send_file(self._source())
+        self.assertEqual(self.net.published[-1]["from"], "Oleg")
+
+    def test_no_comment_is_sent_any_more(self):
+        self.assertFalse(hasattr(share, "COMMENT_FIELD"))
+        self.assertFalse(hasattr(share, "NAME_FIELD"))
+        share.send_file(self._source())
+        self.assertEqual(self.net.published[-1]["comment"], "")
 
 
 class Receiving(_Base):
@@ -392,6 +488,207 @@ class Actions(_Base):
             "animationEndTime": 50.0})
 
 
+class Deleting(_Base):
+    """Delete takes the picked files off EVERYBODY's list («Всё у всех»)."""
+
+    def _here(self, name="Longsword.fbx"):
+        """A colleague's file, received and downloaded."""
+        rec = self._colleague(name=name)
+        share.receive(rec)
+        local = share.state()["entries"][rec["id"]]["local"]
+        self.assertTrue(os.path.isfile(local))
+        return rec, local
+
+    def _pick(self, *rids):
+        """The list up, with `rids` picked in it."""
+        self.fake.picked = []
+        share.refresh()
+        rows = share.state()["rows"]
+        self.fake.picked = [rows.index(rid) + 1 for rid in rids]
+
+    def test_a_delete_publishes_and_takes_the_row_and_the_copy(self):
+        rec, local = self._here()
+        share.delete_entries([rec["id"]])
+        gone = self.net.published[-1]
+        self.assertEqual(gone["state"], "deleted")
+        self.assertEqual(gone["id"], rec["id"])
+        self.assertEqual(gone["by"], share.sender_name())
+        self.assertEqual(gone["by_machine"], share.machine_id())
+        entry = share.state()["entries"][rec["id"]]
+        self.assertEqual(entry["record"]["state"], "deleted")
+        self.assertEqual(entry["local"], "")
+        self.assertFalse(os.path.exists(local))
+        self.assertFalse(os.path.exists(os.path.dirname(local)))
+        self.assertEqual(self.statuses[-1], "Deleted 1 file for everybody")
+        self.assertEqual(share._labels(time.time())[0], [])
+
+    def test_the_confirm_names_the_files(self):
+        saved = share._confirm_delete
+        asked = []
+        share._confirm_delete = lambda text: asked.append(text) or True
+        try:
+            rec, _local = self._here()
+            share.delete_entries([rec["id"]])
+        finally:
+            share._confirm_delete = saved
+        self.assertIn("Longsword.fbx (Oleg)", asked[0])
+        self.assertIn("for everybody", asked[0])
+
+    def test_the_confirm_is_maya_s_dialog_outside_batch(self):
+        saved = self.fake.about
+        self.fake.about = lambda **kw: (False if kw.get("batch")
+                                        else saved(**kw))
+        try:
+            self.assertTrue(share._confirm_delete("Delete 1 file?"))
+        finally:
+            self.fake.about = saved
+        self.assertEqual(self.fake.confirms[0]["button"], ["Delete", "Cancel"])
+        self.assertEqual(self.fake.confirms[0]["defaultButton"], "Cancel")
+
+    def test_cancel_changes_nothing(self):
+        rec, local = self._here()
+        before = len(self.net.published)
+        saved = share._confirm_delete
+        share._confirm_delete = lambda text: False
+        try:
+            message = share.delete_entries([rec["id"]])
+        finally:
+            share._confirm_delete = saved
+        self.assertEqual(message, "Delete cancelled - nothing changed.")
+        self.assertEqual(len(self.net.published), before)
+        self.assertEqual(
+            share.state()["entries"][rec["id"]]["record"]["state"], "ready")
+        self.assertTrue(os.path.isfile(local))
+
+    def test_several_at_once_and_one_refused(self):
+        a, local_a = self._here("a.fbx")
+        b, local_b = self._here("b.fbx")
+        self.net.refuse.add("b.fbx")
+        share.delete_entries([a["id"], b["id"]])
+        entries = share.state()["entries"]
+        self.assertEqual(entries[a["id"]]["record"]["state"], "deleted")
+        self.assertFalse(os.path.exists(local_a))
+        self.assertEqual(entries[b["id"]]["record"]["state"], "ready")
+        self.assertTrue(os.path.isfile(local_b))
+        self.assertIn("Deleted 1 file for everybody", self.statuses[-1])
+        self.assertIn("b.fbx not deleted: could not reach ntfy.sh",
+                      self.statuses[-1])
+        self.assertIn("nothing changed for it", self.statuses[-1])
+
+    def test_my_own_file_goes_too(self):
+        share.send_file(self._source())
+        rid = self.net.published[-1]["id"]
+        local = share.state()["entries"][rid]["local"]
+        share.delete_entries([rid])
+        self.assertEqual(self.net.published[-1]["state"], "deleted")
+        self.assertFalse(os.path.exists(local))
+
+    def test_nothing_picked(self):
+        self.assertEqual(share.delete_selected(),
+                         "Pick files in the list first.")
+        self.assertEqual(self.net.published, [])
+
+    def test_the_picked_rows(self):
+        a, _ = self._here("a.fbx")
+        b, _ = self._here("b.fbx")
+        c, local_c = self._here("c.fbx")
+        self._pick(a["id"], c["id"])
+        self.assertEqual(sorted(share.selected_ids()),
+                         sorted([a["id"], c["id"]]))
+        self.assertIsNone(share.selected_id())
+        self.assertIn("2 files picked", share._selected())
+        share.delete_selected()
+        states = dict((r["id"], r["state"]) for r in self.net.published)
+        self.assertEqual(states[a["id"]], "deleted")
+        self.assertEqual(states[c["id"]], "deleted")
+        self.assertNotIn(b["id"], states)
+        self.assertFalse(os.path.exists(local_c))
+
+    def test_open_import_and_save_take_one(self):
+        a, _ = self._here("a.fbx")
+        b, _ = self._here("b.fbx")
+        self._pick(a["id"], b["id"])
+        self.assertEqual(share.open_selected(),
+                         "Pick one file to open - 2 are picked.")
+        self.assertEqual(share.import_selected(),
+                         "Pick one file to import - 2 are picked.")
+        self.assertEqual(share.save_selected(),
+                         "Pick one file to save - 2 are picked.")
+
+    def test_a_colleagues_delete_takes_the_row_and_the_copy(self):
+        rec, local = self._here()
+        self.assertTrue(share.receive(records.deleted(rec, "Oleg", "theirs")))
+        self.assertFalse(os.path.exists(local))
+        self.assertEqual(share.state()["entries"][rec["id"]]["local"], "")
+        self.assertEqual(self.statuses[-1], "Oleg deleted Longsword.fbx")
+
+    def test_our_own_echo_changes_nothing(self):
+        rec, _local = self._here()
+        share.delete_entries([rec["id"]])
+        said = len(self.statuses)
+        self.assertFalse(share.receive(self.net.published[-1]))
+        self.assertEqual(len(self.statuses), said)
+
+    def test_the_open_scene_stays_on_the_disk(self):
+        rec, local = self._here("Orc.ma")
+        self.fake.scene_name = local.replace("\\", "/")
+        share.receive(records.deleted(rec, "Oleg", "theirs"))
+        self.assertTrue(os.path.isfile(local))
+        self.assertIn("it is the open scene", self.statuses[-1])
+        self.assertEqual(share._labels(time.time())[0], [])
+
+    def test_nothing_outside_the_share_folder_is_deleted(self):
+        rec, _local = self._here()
+        outside = self._source("mine.fbx")
+        share.state()["entries"][rec["id"]]["local"] = outside
+        share.receive(records.deleted(rec, "Oleg", "theirs"))
+        self.assertTrue(os.path.isfile(outside))
+
+    def test_a_ready_after_the_delete_changes_nothing(self):
+        rec = self._colleague()
+        self.assertTrue(share.receive(records.deleted(rec, "Oleg", "theirs")))
+        self.assertFalse(share.receive(rec))
+        entry = share.state()["entries"][rec["id"]]
+        self.assertEqual(entry["record"]["state"], "deleted")
+        self.assertEqual(entry["local"], "")
+        self.assertEqual(self.fake.messages, [])
+        self.assertEqual(share.fetch(rec["id"]), False)
+
+    def test_a_delete_during_my_upload_stops_it(self):
+        def midway():
+            rid = list(share.state()["transfers"])[0]
+            share.delete_entries([rid])
+        self.net.midway = midway
+        share.send_file(self._source())
+        states = [r["state"] for r in self.net.published]
+        self.assertEqual(states, ["sending", "deleted"])
+        self.assertEqual(self.net.store, {})
+        self.assertEqual(share.state()["transfers"], {})
+        self.assertFalse(any("failed" in s for s in self.statuses),
+                         self.statuses)
+
+    def test_a_delete_during_a_download_stops_it(self):
+        rec = self._colleague()
+        self.net.midway = lambda: share.receive(
+            records.deleted(rec, "Oleg", "theirs"))
+        share.receive(rec)
+        entry = share.state()["entries"][rec["id"]]
+        self.assertEqual(entry["record"]["state"], "deleted")
+        self.assertEqual(entry["local"], "")
+        self.assertEqual(share.state()["transfers"], {})
+        folder = os.path.dirname(share.inbox_path(rec))
+        self.assertFalse(os.path.exists(folder))
+
+    def test_the_tombstone_survives_a_fresh_state(self):
+        rec, _local = self._here()
+        share.delete_entries([rec["id"]])
+        del sys._skeldar_share
+        share.load_history()
+        self.assertEqual(
+            share.state()["entries"][rec["id"]]["record"]["state"], "deleted")
+        self.assertFalse(share.receive(rec))
+
+
 class Listening(_Base):
 
     def test_listen_replaces_the_subscriber(self):
@@ -423,9 +720,32 @@ class Panel(_Base):
         _Base.tearDown(self)
 
     def test_the_named_controls(self):
-        for name in (share.NAME_FIELD, share.COMMENT_FIELD, share.LIST,
+        for name in (share.AUTHOR_FIELD, share.FILE_NAME_FIELD, share.LIST,
                      share.STATUS, share.SUBTITLE):
             self.assertIn(name, self.fake.children, name)
+
+    def test_author_and_name(self):
+        labels = [c[2].get("label") for c in self.fake.calls
+                  if c[0] == "text"]
+        self.assertIn("Author", labels)
+        self.assertIn("Name", labels)
+        self.assertNotIn("Comment", labels)
+        self.assertEqual(self.fake.fields[share.AUTHOR_FIELD],
+                         share.sender_name())
+        self.assertEqual(self.fake.fields[share.FILE_NAME_FIELD], "")
+
+    def test_the_list_takes_several_rows_and_the_delete_key(self):
+        made = [c[2] for c in self.fake.calls
+                if c[0] == "textScrollList" and c[1] == (share.LIST,)]
+        self.assertIs(made[0]["allowMultiSelection"], True)
+        self.assertTrue(callable(made[0]["deleteKeyCommand"]))
+
+    def test_a_delete_button(self):
+        danger = [m for m in self.marks if m.role == "danger"]
+        self.assertEqual(len(danger), 1)
+        self.assertEqual(danger[0].icon, "trash")
+        buttons = [c[2] for c in self.fake.calls if c[0] == "button"]
+        self.assertIn("Delete", [b.get("label") for b in buttons])
 
     def test_one_primary_action(self):
         primary = [m for m in self.marks if m.role == "primary"]

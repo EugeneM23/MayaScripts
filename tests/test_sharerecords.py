@@ -95,7 +95,11 @@ class ParseRefuses(unittest.TestCase):
         self._refused(_record(id=RID.upper()))
 
     def test_an_unknown_state(self):
-        self._refused(_record(state="deleted"))
+        self._refused(_record(state="gone"))
+
+    def test_a_deleter_that_is_not_a_string(self):
+        self._refused(records.deleted(_ready(), 3, "m2"))
+        self._refused(records.deleted(_ready(), "Oleg", ["m2"]))
 
     def test_a_name_that_is_a_path_or_not_ours(self):
         for name in ("../x.ma", "a/b.ma", "C:x.ma", ".hidden.ma", "x.exe",
@@ -150,6 +154,130 @@ class Merge(unittest.TestCase):
         rec = _record()
         self.assertIs(records.merge(None, rec), rec)
 
+    def test_deleted_beats_everything_and_stays(self):
+        gone = records.deleted(_ready(), "Oleg", "m2")
+        for known in (_record(), _ready(),
+                      records.with_state(_record(), "failed")):
+            self.assertIs(records.merge(known, gone), gone)
+        #  a "sending" or "ready" arriving after the delete changes nothing
+        for late in (_record(), _ready(),
+                     records.with_state(_record(), "failed")):
+            self.assertIs(records.merge(gone, late), gone)
+
+
+class Deleted(unittest.TestCase):
+
+    def test_a_deleted_record_round_trips(self):
+        gone = records.deleted(_ready(), "Oleg", "m2")
+        self.assertEqual(gone["state"], "deleted")
+        self.assertEqual(gone["by"], "Oleg")
+        self.assertEqual(gone["by_machine"], "m2")
+        self.assertEqual(gone["name"], "Orc_attack.ma")
+        self.assertEqual(records.parse(records.encode(gone)), gone)
+        self.assertTrue(records.is_deleted(gone))
+        self.assertFalse(records.is_deleted(_ready()))
+
+    def test_a_sending_record_can_be_deleted(self):
+        gone = records.deleted(_record(), "Oleg", "m2")
+        self.assertEqual(records.parse(records.encode(gone)), gone)
+
+    def test_it_leaves_the_list(self):
+        gone = records.deleted(_ready(id="6" * 32), "Oleg", "m2")
+        shown = records.visible([gone, _ready()], NOW)
+        self.assertEqual([r["id"] for r in shown], [RID])
+
+    def test_deleted_text(self):
+        gone = records.deleted(_ready(), "Oleg", "m2")
+        self.assertEqual(records.deleted_text(gone),
+                         "Oleg deleted Orc_attack.ma")
+        self.assertEqual(records.deleted_text(
+            records.deleted(_ready(), "", "m2")),
+            "someone deleted Orc_attack.ma")
+
+    def test_the_question_names_the_files(self):
+        mine = _ready(name="Orc_attack.ma")
+        theirs = _ready(id="7" * 32, name="Longsword.fbx",
+                        machine="m2", **{"from": "Oleg"})
+        text = records.delete_question([mine, theirs], "m1")
+        self.assertIn("Delete 2 files for everybody?", text)
+        self.assertIn("Orc_attack.ma (you)", text)
+        self.assertIn("Longsword.fbx (Oleg)", text)
+        self.assertIn("cannot be undone", text)
+        one = records.delete_question([mine], "m1")
+        self.assertIn("Delete 1 file for everybody?", one)
+
+    def test_the_question_counts_the_rest(self):
+        many = [_ready(id="%032x" % i, name="f%d.ma" % i) for i in range(8)]
+        text = records.delete_question(many, "m1")
+        self.assertIn("f4.ma", text)
+        self.assertNotIn("f5.ma", text)
+        self.assertIn("and 3 more", text)
+
+    def test_picked_text(self):
+        self.assertEqual(records.picked_text(3),
+                         "3 files picked - Delete takes them off "
+                         "everybody's list; Open, Import and Save to... "
+                         "take one")
+
+    def test_history_keeps_the_tombstone(self):
+        gone = records.deleted(_ready(), "Oleg", "m2")
+        text = records.to_history({RID: {"record": gone, "local": ""}}, "m9")
+        back, _since = records.from_history(text, NOW)
+        self.assertEqual(back[RID]["record"], gone)
+
+
+class UploadName(unittest.TestCase):
+
+    def test_empty_is_the_fallback(self):
+        for typed in ("", "   ", None, " .ma "):
+            self.assertEqual(records.upload_name(typed, "Orc_attack.mb"),
+                             "Orc_attack.mb")
+
+    def test_the_sources_extension(self):
+        self.assertEqual(records.upload_name("attack v2", "Orc.ma"),
+                         "attack v2.ma")
+        self.assertEqual(records.upload_name("attack v2", "Orc.mb"),
+                         "attack v2.mb")
+        self.assertEqual(records.upload_name("run", "clip.FBX"), "run.FBX")
+
+    def test_a_typed_extension_is_dropped(self):
+        self.assertEqual(records.upload_name("attack.ma", "Orc.mb"),
+                         "attack.mb")
+        self.assertEqual(records.upload_name("attack.FBX", "Orc.ma"),
+                         "attack.ma")
+        self.assertEqual(records.upload_name("v1.2", "Orc.ma"), "v1.2.ma")
+
+    def test_whitespace_collapses(self):
+        self.assertEqual(records.upload_name("  orc   attack\tv2 ", "a.ma"),
+                         "orc attack v2.ma")
+
+    def test_forbidden_characters_and_dots(self):
+        self.assertEqual(records.upload_name('a/b\\c:d*e?f"g<h>i|j', "x.ma"),
+                         "a_b_c_d_e_f_g_h_i_j.ma")
+        self.assertEqual(records.upload_name("..hidden", "x.ma"), "hidden.ma")
+        self.assertEqual(records.upload_name("end. . ", "x.ma"), "end.ma")
+
+    def test_a_device_name(self):
+        self.assertEqual(records.upload_name("con", "x.ma"), "_con.ma")
+        self.assertEqual(records.upload_name("COM1", "x.fbx"), "_COM1.fbx")
+        self.assertEqual(records.upload_name("console", "x.ma"),
+                         "console.ma")
+
+    def test_the_length(self):
+        name = records.upload_name("a" * 200, "x.ma")
+        self.assertEqual(name, "a" * records.NAME_MAX + ".ma")
+
+    def test_cyrillic(self):
+        self.assertEqual(records.upload_name("Атака орка", "x.ma"),
+                         "Атака орка.ma")
+
+    def test_every_answer_parses(self):
+        for typed in ("attack v2", "..", "a/b", "con", "Атака", "x" * 300,
+                      "attack.fbx"):
+            name = records.upload_name(typed, "Orc.ma")
+            rec = _record(name=name)
+            self.assertIsNotNone(records.parse(records.encode(rec)), name)
+
 
 class Visible(unittest.TestCase):
 
@@ -193,6 +321,8 @@ class Labels(unittest.TestCase):
                          "failed, retry")
         self.assertEqual(records.status_label(ready, False, 0.3), "30%")
         self.assertEqual(records.status_label(ready, False), "waiting")
+        self.assertEqual(records.status_label(
+            records.deleted(ready, "Oleg", "m2"), False), "deleted")
 
     def test_size_text(self):
         self.assertEqual(records.size_text(0), "0 KB")

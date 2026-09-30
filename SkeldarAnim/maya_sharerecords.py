@@ -29,7 +29,9 @@ from urllib.parse import urlsplit
 
 APP = "skeldaranim-share"
 VERSION = 1
-STATES = ("sending", "ready", "failed")
+#  "deleted" since 2026-09-30 (the Delete button): an older build refuses it
+#  as an unknown state and keeps the row until the file expires.
+STATES = ("sending", "ready", "failed", "deleted")
 KINDS = {".ma": "scene", ".mb": "scene", ".fbx": "fbx"}
 SCENE_TYPES = {".ma": "mayaAscii", ".mb": "mayaBinary"}
 #  Where a file may be: temp.sh first (steady at 1.3-1.6 MB/s both ways,
@@ -53,7 +55,13 @@ WHEN_WIDTH = 11
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _BAD_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _SAFE = re.compile(r"[^\w-]+")
-_RANK = {"sending": 0, "ready": 1, "failed": 1}
+#  A delete is terminal: whatever arrives after it, in any order, loses.
+_RANK = {"sending": 0, "ready": 1, "failed": 1, "deleted": 2}
+NAME_MAX = 80                # an upload's typed name, before its extension
+DELETE_NAMES = 5             # the files a delete question names
+_DEVICES = set(["CON", "PRN", "AUX", "NUL"]
+               + ["COM%d" % i for i in range(1, 10)]
+               + ["LPT%d" % i for i in range(1, 10)])
 
 
 def new_id():
@@ -76,6 +84,30 @@ def scene_file_name(scene_path, now):
     if ext not in SCENE_TYPES:
         ext = ".ma"
     return stem + ext, SCENE_TYPES[ext]
+
+
+def upload_name(typed, fallback):
+    """The file name an upload travels under: what the animator typed in the
+    Name field, with `fallback`'s extension (the source's: a scene stays the
+    type it is saved as, a file keeps its own), or `fallback` itself when
+    nothing usable was typed. A typed .ma/.mb/.fbx is dropped rather than
+    doubled; Windows' forbidden characters become "_"; leading dots and
+    trailing dots and spaces go (Windows drops those); a device name (CON,
+    NUL, COM1 ...) is prefixed, since no file may be called that."""
+    ext = os.path.splitext(fallback)[1]
+    text = " ".join((typed or "").split())
+    for known in KINDS:
+        if text.lower().endswith(known):
+            text = text[:-len(known)]
+            break
+    text = _BAD_NAME.sub("_", text)
+    text = text.lstrip(". ").rstrip(". ")
+    text = text[:NAME_MAX].rstrip(". ")
+    if not text:
+        return fallback
+    if text.split(".")[0].strip().upper() in _DEVICES:
+        text = "_" + text
+    return text + ext
 
 
 def make_record(state, rid, sender, machine, name, size, sent, comment="",
@@ -147,7 +179,7 @@ def parse(text):
             or _BAD_NAME.search(name) or name.startswith(".")
             or kind_of(name) is None):
         return None
-    for key in ("from", "machine", "comment"):
+    for key in ("from", "machine", "comment", "by", "by_machine"):
         if not isinstance(record.get(key, ""), str):
             return None
     if not _is_int(record.get("bytes")) or not _is_int(record.get("sent")):
@@ -176,6 +208,46 @@ def merge(known, record):
     return known
 
 
+def deleted(record, by, by_machine):
+    """`record` deleted from everybody's list by `by` (an author's name) on
+    `by_machine`. Its file stays on its host until it expires: neither host
+    has a delete."""
+    return with_state(record, "deleted", by=by, by_machine=by_machine)
+
+
+def is_deleted(record):
+    return record.get("state") == "deleted"
+
+
+def deleted_text(record):
+    """«Oleg deleted Longsword.fbx»: what a colleague's delete says here."""
+    return "{0} deleted {1}".format(record.get("by") or "someone",
+                                    record["name"])
+
+
+def delete_question(picked, machine):
+    """The confirm before a delete: which files, whose, and that it is for
+    everybody."""
+    count = len(picked)
+    names = []
+    for record in picked[:DELETE_NAMES]:
+        who = "you" if is_mine(record, machine) else (
+            record.get("from") or "someone")
+        names.append("{0} ({1})".format(record["name"], who))
+    if count > DELETE_NAMES:
+        names.append("and {0} more".format(count - DELETE_NAMES))
+    return ("Delete {0} file{1} for everybody?\n\n{2}\n\nThey leave every "
+            "colleague's list and the copies on their disks. This cannot be "
+            "undone.".format(count, "" if count == 1 else "s",
+                             "\n".join(names)))
+
+
+def picked_text(count):
+    """The status line when several rows are picked."""
+    return ("{0} files picked - Delete takes them off everybody's list; "
+            "Open, Import and Save to... take one".format(count))
+
+
 def is_mine(record, machine):
     """Sent from this machine (its id, not its sender's name)."""
     return bool(machine) and record.get("machine") == machine
@@ -187,11 +259,11 @@ def expired(record, now):
 
 
 def visible(records, now):
-    """The list's rows, newest first: not expired, not failed, and not a
-    "sending" whose sender never finished."""
+    """The list's rows, newest first: not expired, not failed, not deleted,
+    and not a "sending" whose sender never finished."""
     out = []
     for record in records:
-        if expired(record, now) or record["state"] == "failed":
+        if expired(record, now) or record["state"] in ("failed", "deleted"):
             continue
         if (record["state"] == "sending"
                 and now - record["sent"] > SENDING_TIMEOUT):
@@ -208,8 +280,8 @@ def is_news(record, now):
 
 def status_label(record, mine, progress=None, local=False, error=""):
     """The row's state."""
-    if record["state"] == "failed":
-        return "failed"
+    if record["state"] in ("failed", "deleted"):
+        return record["state"]
     if record["state"] == "sending":
         if mine and progress is not None:
             return "sending {0}%".format(int(progress * 100))

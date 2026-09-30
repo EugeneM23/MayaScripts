@@ -27,9 +27,20 @@ executeDeferred). The state lives on `sys._skeldar_share`, so a purge of our
 modules (an update, a verify run) does not leave a second subscriber
 running beside the first: `listen()` stops whichever is there.
 
-Spec: docs/superpowers/specs/2026-09-30-shared-files-design.md
+The same evening («кнопку которая будет удалять выбранные файлы. И Name
+заменить на author а comment на имя файла или сцены»): **Author** is who a
+file is from, **Name** names the upload (empty: the scene's or the file's
+own), and **Delete** takes the picked rows off EVERYBODY's list -- the
+animator's choice, «Всё у всех» -- through a "deleted" record per file: every
+Maya drops the row, stops the transfer and deletes its copy on the disk
+(not the scene open in it). The hosts keep the file until it expires; they
+have no delete.
+
+Spec: docs/superpowers/specs/2026-09-30-shared-files-design.md,
+      docs/superpowers/specs/2026-09-30-shared-delete-and-naming-design.md
 """
 
+import concurrent.futures
 import getpass
 import os
 import shutil
@@ -49,13 +60,15 @@ import maya_sharenet as net
 import maya_sharerecords as records
 
 HUB_SECTION = "shared"
-NAME_FIELD = "skeldarShareName"
-COMMENT_FIELD = "skeldarShareComment"
+AUTHOR_FIELD = "skeldarShareAuthor"
+FILE_NAME_FIELD = "skeldarShareFileName"
 LIST = "skeldarShareList"
 STATUS = "skeldarShareStatus"
 SUBTITLE = "skeldarShareSubtitle"
 
-NAME_VAR = "skeldarShareName"
+#  The author's remembered name keeps the optionVar it had when the field
+#  was called Name, so what the animator typed survives the relabel.
+AUTHOR_VAR = "skeldarShareName"
 MACHINE_VAR = "skeldarShareMachine"
 FOLDER = "SkeldarShare"
 HISTORY = "history.json"
@@ -63,6 +76,7 @@ HISTORY = "history.json"
 LIST_HEIGHT = 150
 REFRESH_EVERY = 0.3             # seconds between progress repaints
 FIRST_SINCE = "12h"             # all ntfy.sh keeps: a first start replays it
+DELETE_WORKERS = 4              # deletes published side by side (~0.8 s each)
 
 
 # ------------------------------------------------------------------ seams
@@ -105,13 +119,13 @@ def _option(name):
 
 
 def sender_name():
-    """What colleagues see as "from": the field's remembered value, else the
-    Windows user name."""
-    return _option(NAME_VAR) or records.sender_default(getpass.getuser())
+    """What colleagues see as "from": the Author field's remembered value,
+    else the Windows user name."""
+    return _option(AUTHOR_VAR) or records.sender_default(getpass.getuser())
 
 
 def set_sender_name(value):
-    cmds.optionVar(stringValue=(NAME_VAR, (value or "").strip()))
+    cmds.optionVar(stringValue=(AUTHOR_VAR, (value or "").strip()))
 
 
 def machine_id():
@@ -173,19 +187,20 @@ def save_history():
 
 # ----------------------------------------------------------------- sending
 
-def _comment(comment):
-    if comment is not None:
-        return comment
-    if cmds.textField(COMMENT_FIELD, exists=True):
-        return cmds.textField(COMMENT_FIELD, query=True, text=True) or ""
+def _typed_name(name):
+    """What the upload is to be called: `name` when a caller gives one, else
+    the Name field's text."""
+    if name is not None:
+        return name
+    if cmds.textField(FILE_NAME_FIELD, exists=True):
+        return cmds.textField(FILE_NAME_FIELD, query=True, text=True) or ""
     return ""
 
 
-def _new_record(name, comment):
+def _new_record(name):
     return records.make_record(
         "sending", records.new_id(), sender_name(), machine_id(), name, 0,
-        time.time(), comment=" ".join(_comment(comment).split()),
-        maya=str(cmds.about(version=True) or ""))
+        time.time(), maya=str(cmds.about(version=True) or ""))
 
 
 def _foreign_textures():
@@ -202,12 +217,13 @@ def _foreign_textures():
     return out
 
 
-def send_scene(comment=None):
-    """The press: a copy of the open scene to everybody."""
+def send_scene(name=None):
+    """The press: a copy of the open scene to everybody, called `name` (else
+    the Name field's text, else the scene's own name)."""
     from maya_uebridge import animimport
-    name, file_type = records.scene_file_name(
+    own, file_type = records.scene_file_name(
         cmds.file(query=True, sceneName=True), time.time())
-    record = _new_record(name, comment)
+    record = _new_record(records.upload_name(_typed_name(name), own))
     path = inbox_path(record)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     #  A copy, not a save: the working file, its name and its modified flag
@@ -231,18 +247,20 @@ def _pick_file():
     return picked[0] if picked else ""
 
 
-def send_file(path=None, comment=None):
-    """The press: `path` (else a file dialog's pick) to everybody."""
+def send_file(path=None, name=None):
+    """The press: `path` (else a file dialog's pick) to everybody, called
+    `name` (else the Name field's text, else the file's own name) with the
+    file's extension."""
     path = path or _pick_file()
     if not path:
         return _status("Nothing sent.")
-    name = os.path.basename(path)
-    if records.kind_of(name) is None:
+    own = os.path.basename(path)
+    if records.kind_of(own) is None:
         return _status("Only .ma, .mb and .fbx files can be sent - "
                        "nothing sent.")
     if not os.path.isfile(path):
         return _status("No file at {0} - nothing sent.".format(path))
-    record = _new_record(name, comment)
+    record = _new_record(records.upload_name(_typed_name(name), own))
     local = inbox_path(record)
     os.makedirs(os.path.dirname(local), exist_ok=True)
     #  A copy of what was sent: a later edit of the original does not change
@@ -258,8 +276,9 @@ def _send(record, path, note):
     st["entries"][rid] = {"record": record, "local": path}
     st["transfers"][rid] = {"progress": 0.0, "error": ""}
     save_history()
-    if cmds.textField(COMMENT_FIELD, exists=True):
-        cmds.textField(COMMENT_FIELD, edit=True, text="")
+    #  a name is one upload's: the next send is called what it is again
+    if cmds.textField(FILE_NAME_FIELD, exists=True):
+        cmds.textField(FILE_NAME_FIELD, edit=True, text="")
     refresh()
     message = _status("Sending {0} ({1}){2}".format(
         record["name"], records.size_text(record["bytes"]),
@@ -285,11 +304,22 @@ def _remove(path):
         pass
 
 
+def _gone(rid):
+    """`rid` has been deleted (read from a transfer's thread too)."""
+    entry = state()["entries"].get(rid)
+    return entry is not None and records.is_deleted(entry["record"])
+
+
 def _send_work(record, path):
-    """On a thread: announce, zip, upload, say ready -- or say failed."""
+    """On a thread: announce, zip, upload, say ready -- or say failed. A file
+    deleted meanwhile stops at the next step and says nothing: its "deleted"
+    is already on the channel, and a "failed" after it would change nothing
+    anywhere."""
     rid = record["id"]
     archive = None
     try:
+        if _gone(rid):
+            raise net.Cancelled("deleted")
         net.publish(records.encode(record))
         archive = _zip(path, record["name"])
         size = os.path.getsize(archive)
@@ -298,10 +328,15 @@ def _send_work(record, path):
                                  .format(records.size_text(size)))
         url = net.upload_any(archive, progress=lambda done, total: _progress(
             rid, done, total))
+        if _gone(rid):
+            raise net.Cancelled("deleted")
         ready = records.with_state(record, "ready", url=url, zip=size)
         net.publish(records.encode(ready))
         _defer(_sent, ready)
     except Exception as exc:                                 # noqa: BLE001
+        if _gone(rid):
+            _defer(_transfer_done, rid)
+            return
         try:
             net.publish(records.encode(records.with_state(record, "failed")))
         except Exception:                                    # noqa: BLE001
@@ -311,9 +346,17 @@ def _send_work(record, path):
         _remove(archive)
 
 
+def _transfer_done(rid):
+    """A transfer of a deleted file has stopped (main thread)."""
+    state()["transfers"].pop(rid, None)
+    refresh()
+
+
 def _progress(rid, done, total):
     """A transfer's progress, from its thread; the list is repainted at most
-    every REFRESH_EVERY."""
+    every REFRESH_EVERY. False -- net's cancel -- once the file is deleted."""
+    if _gone(rid):
+        return False
     st = state()
     transfer = st["transfers"].get(rid)
     if transfer is not None:
@@ -325,6 +368,8 @@ def _progress(rid, done, total):
 
 
 def _sent(ready):
+    if _gone(ready["id"]):
+        return _transfer_done(ready["id"])
     st = state()
     entry = st["entries"].get(ready["id"])
     if entry is not None:
@@ -338,10 +383,13 @@ def _sent(ready):
 
 
 def _send_failed(rid, reason):
+    if _gone(rid):
+        return _transfer_done(rid)
     st = state()
     entry = st["entries"].get(rid)
     if entry is not None:
-        entry["record"] = records.with_state(entry["record"], "failed")
+        entry["record"] = records.merge(
+            entry["record"], records.with_state(entry["record"], "failed"))
     st["transfers"].pop(rid, None)
     save_history()
     refresh()
@@ -387,6 +435,8 @@ def receive(record, now=None):
     when it is news, not when a first start replays the channel."""
     st = state()
     now = time.time() if now is None else now
+    if records.is_deleted(record):
+        return _receive_delete(record, now)
     rid = record["id"]
     known = st["entries"].get(rid)
     merged = records.merge(known["record"] if known else None, record)
@@ -402,6 +452,84 @@ def receive(record, now=None):
         fetch(rid)
     refresh()
     return True
+
+
+def _receive_delete(record, now):
+    """A "deleted" off the channel: the row goes, the copy on this disk goes
+    (not the open scene), and a colleague's delete says so. Our own echo
+    changes nothing -- the press applied it already."""
+    known = state()["entries"].get(record["id"])
+    shown = bool(known) and bool(records.visible([known["record"]], now))
+    changed, kept = _apply_delete(record)
+    if not changed:
+        return False
+    save_history()
+    refresh()
+    if shown and record.get("by_machine") != machine_id():
+        _status(records.deleted_text(record) + (
+            " - your copy stays on this disk: it is the open scene"
+            if kept else ""))
+    return True
+
+
+def _apply_delete(record):
+    """`record` (a "deleted") into the state: (whether anything changed,
+    whether the local copy was kept because it is the open scene). A known
+    entry becomes the tombstone; an unknown one becomes one too, so a
+    "sending" or "ready" arriving after the delete cannot bring it back."""
+    st = state()
+    rid = record["id"]
+    known = st["entries"].get(rid)
+    merged = records.merge(known["record"] if known else None, record)
+    if known is not None and merged is known["record"]:
+        return False, False
+    local = known["local"] if known else ""
+    kept = _forget_local(local)
+    st["entries"][rid] = {"record": merged, "local": local if kept else ""}
+    transfer = st["transfers"].get(rid)
+    if transfer is not None and transfer.get("error"):
+        #  a failed download is not running: nothing else will clear it
+        st["transfers"].pop(rid, None)
+    return True, kept
+
+
+def _inside_share_dir(path):
+    root = os.path.normcase(os.path.abspath(share_dir()))
+    return os.path.normcase(os.path.abspath(path)).startswith(root + os.sep)
+
+
+def _is_open_scene(path):
+    scene = cmds.file(query=True, sceneName=True) or ""
+    return bool(scene) and (os.path.normcase(os.path.abspath(scene))
+                            == os.path.normcase(os.path.abspath(path)))
+
+
+def _forget_local(path):
+    """A deleted file's copy off this disk, and its folder when that is
+    empty -- never the scene open in this Maya (it stays, and True says so),
+    and never anything outside SkeldarShare/."""
+    if not path or not os.path.isfile(path) or not _inside_share_dir(path):
+        return False
+    if _is_open_scene(path):
+        return True
+    _remove(path)
+    _prune(path)
+    return False
+
+
+def _prune(path):
+    """`path`'s folder, when it is one of SkeldarShare/'s file folders and
+    nothing is left in it."""
+    if not path:
+        return
+    folder = os.path.dirname(os.path.abspath(path))
+    try:
+        if (os.path.normcase(os.path.dirname(folder))
+                == os.path.normcase(os.path.abspath(share_dir()))
+                and os.path.isdir(folder) and not os.listdir(folder)):
+            os.rmdir(folder)
+    except OSError:
+        pass
 
 
 def _announce(record):
@@ -452,14 +580,21 @@ def _fetch_work(record, path):
         net.download(record["url"], archive,
                      progress=lambda done, total: _progress(rid, done, total))
         _unzip(archive, record["name"], path)
-        _defer(_fetched, rid, path)
     except Exception as exc:                                 # noqa: BLE001
-        _defer(_fetch_failed, rid, _reason(exc))
-    finally:
+        #  the archive goes first: a delete that stopped this download
+        #  prunes the folder it was in
         _remove(archive)
+        _defer(_fetch_failed, rid, _reason(exc), path)
+        return
+    _remove(archive)
+    _defer(_fetched, rid, path)
 
 
 def _fetched(rid, path):
+    if _gone(rid):
+        #  deleted while its last bytes came in
+        _forget_local(path)
+        return _transfer_done(rid)
     st = state()
     entry = st["entries"].get(rid)
     if entry is not None:
@@ -471,7 +606,10 @@ def _fetched(rid, path):
         _selected()
 
 
-def _fetch_failed(rid, reason):
+def _fetch_failed(rid, reason, path=None):
+    if _gone(rid):
+        _prune(path)
+        return _transfer_done(rid)
     st = state()
     st["transfers"][rid] = {"progress": None, "error": reason}
     refresh()
@@ -483,22 +621,27 @@ def _fetch_failed(rid, reason):
 
 # ----------------------------------------------------------------- actions
 
-def selected_id():
+def selected_ids():
+    """The picked rows' ids, top to bottom (the list takes several)."""
     if not cmds.textScrollList(LIST, exists=True):
-        return None
+        return []
     picked = cmds.textScrollList(LIST, query=True,
                                  selectIndexedItem=True) or []
     rows = state()["rows"]
-    if picked and 0 < picked[0] <= len(rows):
-        return rows[picked[0] - 1]
-    return None
+    return [rows[index - 1] for index in picked if 0 < index <= len(rows)]
+
+
+def selected_id():
+    """The one picked row's id; None when none or several are picked."""
+    ids = selected_ids()
+    return ids[0] if len(ids) == 1 else None
 
 
 def _local_or_fetch(rid):
     """(local path, "") when the file is here, else (None, what to say) --
     and a ready file not here yet is fetched (again, after a failure)."""
     entry = state()["entries"].get(rid)
-    if entry is None:
+    if entry is None or records.is_deleted(entry["record"]):
         return None, "That file is no longer in the list."
     if entry["local"] and os.path.isfile(entry["local"]):
         return entry["local"], ""
@@ -649,23 +792,104 @@ def save_entry(rid, dest=None):
                                              dest.replace("\\", "/")))
 
 
-def _on_selected(action):
-    rid = selected_id()
-    if rid is None:
+def _on_selected(action, verb):
+    """`action` on the one picked row."""
+    ids = selected_ids()
+    if not ids:
         return _status("Pick a file in the list first.")
-    return action(rid)
+    if len(ids) > 1:
+        return _status("Pick one file to {0} - {1} are picked.".format(
+            verb, len(ids)))
+    return action(ids[0])
 
 
 def open_selected(*_args):
-    return _on_selected(open_entry)
+    return _on_selected(open_entry, "open")
 
 
 def import_selected(*_args):
-    return _on_selected(import_entry)
+    return _on_selected(import_entry, "import")
 
 
 def save_selected(*_args):
-    return _on_selected(save_entry)
+    return _on_selected(save_entry, "save")
+
+
+def _confirm_delete(text):
+    """Maya's confirm before a delete; True to go on. Batch has nobody to
+    answer (a verify run, a test): it goes on."""
+    if cmds.about(batch=True):
+        return True
+    answer = cmds.confirmDialog(
+        title="Shared - Delete", message=text, icon="warning",
+        button=["Delete", "Cancel"], defaultButton="Cancel",
+        cancelButton="Cancel", dismissString="Cancel")
+    return answer == "Delete"
+
+
+def delete_entries(rids):
+    """The press: `rids` off everybody's list. One confirm; then a "deleted"
+    per file goes to the channel on a thread, and what the channel took is
+    applied here too (`_deleted`)."""
+    st = state()
+    picked = [st["entries"][rid]["record"] for rid in rids
+              if rid in st["entries"]
+              and not records.is_deleted(st["entries"][rid]["record"])]
+    if not picked:
+        return _status("Pick files in the list first.")
+    if not _confirm_delete(records.delete_question(picked, machine_id())):
+        return _status("Delete cancelled - nothing changed.")
+    gone = [records.deleted(record, sender_name(), machine_id())
+            for record in picked]
+    message = _status("Deleting {0} file{1} for everybody...".format(
+        len(gone), "" if len(gone) == 1 else "s"))
+    _spawn(lambda: _delete_work(gone))
+    return message
+
+
+def delete_selected(*_args):
+    return delete_entries(selected_ids())
+
+
+def _delete_work(gone):
+    """On a thread: every "deleted" to the channel, side by side (a publish
+    takes ~0.8 s), then the answers to the main thread."""
+    def one(record):
+        try:
+            net.publish(records.encode(record))
+            return record, ""
+        except Exception as exc:                             # noqa: BLE001
+            return record, _reason(exc)
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=DELETE_WORKERS) as pool:
+        answers = list(pool.map(one, gone))
+    _defer(_deleted, [r for r, why in answers if not why],
+           [(r, why) for r, why in answers if why])
+
+
+def _deleted(done, refused):
+    """The channel's answers to a delete (main thread): what it took is
+    applied here as everywhere else; what it refused stays, named."""
+    kept = []
+    for record in done:
+        #  the channel's echo may have applied it first: ask the entry
+        _apply_delete(record)
+        if state()["entries"][record["id"]]["local"]:
+            kept.append(record["name"])
+    save_history()
+    refresh()
+    parts = []
+    if done:
+        parts.append("Deleted {0} file{1} for everybody".format(
+            len(done), "" if len(done) == 1 else "s"))
+    if kept:
+        parts.append("{0} stays on this disk: it is the open scene".format(
+            ", ".join(kept)))
+    if refused:
+        parts.append("{0} not deleted: {1} - nothing changed for {2}".format(
+            ", ".join(r["name"] for r, _why in refused), refused[0][1],
+            "it" if len(refused) == 1 else "them"))
+    return _status(" - ".join(parts))
 
 
 # ---------------------------------------------------------------------- UI
@@ -712,12 +936,12 @@ def _label(rid, record, mine_id):
 
 
 def refresh():
-    """The list, keeping the picked row by id. Only the rows that changed
+    """The list, keeping the picked rows by id. Only the rows that changed
     are rewritten, so a progress tick does not jump the scroll."""
     if not cmds.textScrollList(LIST, exists=True):
         return
     st = state()
-    keep = selected_id()
+    keep = selected_ids()
     ids, texts = _labels(time.time())
     old = st["texts"]
     count = cmds.textScrollList(LIST, query=True, numberOfItems=True) or 0
@@ -733,9 +957,9 @@ def refresh():
         for text in texts:
             cmds.textScrollList(LIST, edit=True, append=text)
     st["rows"], st["texts"] = ids, texts
-    if keep in ids:
-        cmds.textScrollList(LIST, edit=True,
-                            selectIndexedItem=ids.index(keep) + 1)
+    again = [ids.index(rid) + 1 for rid in keep if rid in ids]
+    if again:
+        cmds.textScrollList(LIST, edit=True, selectIndexedItem=again)
     refresh_subtitle()
 
 
@@ -748,19 +972,22 @@ def refresh_subtitle():
 
 
 def _selected(*_args):
-    rid = selected_id()
-    entry = state()["entries"].get(rid) if rid else None
+    ids = selected_ids()
+    if len(ids) > 1:
+        return _status(records.picked_text(len(ids)))
+    entry = state()["entries"].get(ids[0]) if ids else None
     if entry is None:
-        return
+        return None
     record = entry["record"]
     mine_id = machine_id()
-    _status(records.details_text(record, records.is_mine(record, mine_id),
-                                 _label(rid, record, mine_id), time.time()))
+    return _status(records.details_text(
+        record, records.is_mine(record, mine_id),
+        _label(ids[0], record, mine_id), time.time()))
 
 
-def _name_changed(*_args):
-    if cmds.textField(NAME_FIELD, exists=True):
-        set_sender_name(cmds.textField(NAME_FIELD, query=True, text=True))
+def _author_changed(*_args):
+    if cmds.textField(AUTHOR_FIELD, exists=True):
+        set_sender_name(cmds.textField(AUTHOR_FIELD, query=True, text=True))
 
 
 def _run(action):
@@ -772,19 +999,18 @@ def _run(action):
 
 
 def build_panel():
-    """The name, the comment, Send scene / Send file..., the list, Open /
-    Import / Save to..., a status line (the hub's section). Starts
-    listening."""
+    """The author, the upload's name, Send scene / Send file..., the list
+    (several rows can be picked), Open / Import / Save to... / Delete, a
+    status line (the hub's section). Starts listening."""
     import maya_hubstyle as hubstyle   # stdlib
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label="connecting...", align="left"),
                   "subtitle")
     for field, label, text, hint, command in (
-            (NAME_FIELD, "Name", sender_name(),
-             "your name, as your colleagues see it", _name_changed),
-            (COMMENT_FIELD, "Comment", "", "a comment for this file "
-             "(optional)", None)):
+            (AUTHOR_FIELD, "Author", sender_name(),
+             "your name, as your colleagues see it", _author_changed),
+            (FILE_NAME_FIELD, "Name", "", "empty: the scene's own name", None)):
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
                        columnAttach=[(1, "left", 0), (2, "both", 4)])
         cmds.text(label=label, align="left", width=hubstyle.pick(64, 60))
@@ -808,26 +1034,36 @@ def build_panel():
         command=lambda *_: _run(send_file)), "secondary", "upload")
     cmds.setParent("..")
     cmds.textScrollList(
-        LIST, allowMultiSelection=False, font="fixedWidthFont",
+        LIST, allowMultiSelection=True, font="fixedWidthFont",
         height=LIST_HEIGHT,
         selectCommand=lambda *_: _run(_selected),
-        doubleClickCommand=lambda *_: _run(open_selected))
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
+        doubleClickCommand=lambda *_: _run(open_selected),
+        deleteKeyCommand=lambda *_: _run(delete_selected))
+    cmds.rowLayout(numberOfColumns=4, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 4),
-                                 (3, "both", 4)])
+                                 (3, "both", 4), (4, "both", 4)])
     hubstyle.mark(cmds.button(
         label="Open", height=28,
         annotation="Open the picked file (script nodes are not run)",
         command=lambda *_: _run(open_selected)), "secondary", "download")
     hubstyle.mark(cmds.button(
-        label="Import", height=28, width=hubstyle.pick(90, 80),
+        label="Import", height=28, width=hubstyle.pick(84, 80),
         annotation="Import the picked file into the open scene (an FBX "
                    "arrives as its own skeleton, in a namespace)",
         command=lambda *_: _run(import_selected)), "secondary", "transfer-in")
     hubstyle.mark(cmds.button(
-        label="Save to...", height=28, width=hubstyle.pick(100, 90),
+        label="Save to...", height=28, width=hubstyle.pick(94, 90),
         annotation="Save a copy of the picked file where you choose",
         command=lambda *_: _run(save_selected)), "secondary", "folder")
+    #  The trash alone in the skin: a fourth word does not fit the 360 px
+    #  dock beside the other three.
+    hubstyle.mark(cmds.button(
+        label=hubstyle.pick("", "Delete"), height=28,
+        width=hubstyle.pick(38, 64),
+        annotation="Delete the picked files from everybody's list and "
+                   "disks (the Delete key too). The hosts keep a file until "
+                   "it expires.",
+        command=lambda *_: _run(delete_selected)), "danger", "trash")
     cmds.setParent("..")
     #  two lines tall: a wrapped label keeps the height it was given (trap 67)
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
