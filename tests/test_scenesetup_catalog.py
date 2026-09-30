@@ -821,3 +821,63 @@ class MainControlSize(unittest.TestCase):
             self.assertEqual(len(curve[3]), len(reference[3]), path)
             worst = max(abs(a - b) for cv, ref in zip(curve[3], reference[3]) for a, b in zip(cv, ref))
             self.assertLess(worst, 1e-9, "%s: Main %.4f cm off Manny's" % (path, worst))
+
+
+def _curve_cvs(path, shape, parent):
+    """The CVs of `shape`'s `.cc` in a .ma, read as text (one CV a line, as Maya writes them)."""
+    start = 'createNode nurbsCurve -n "%s" -p "%s";' % (shape, parent)
+    tokens, inside = None, False
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not inside:
+                inside = line.startswith(start)
+                continue
+            if tokens is None:
+                if line.startswith("createNode"):
+                    break
+                if line.strip().startswith('setAttr ".cc" -type "nurbsCurve"'):
+                    tokens = []
+                continue
+            tokens.extend(line.replace(";", " ; ").split())
+            if ";" in tokens:
+                break
+    if not tokens:
+        return None
+    values = tokens[:tokens.index(";")]
+    dim, knots = int(values[4]), int(values[5])
+    count = int(values[6 + knots])
+    # the CVs, and only them: since Maya 2022 the data can end in component tags ("gtag" ...)
+    flat = [float(v) for v in values[7 + knots:7 + knots + count * dim]]
+    return [tuple(flat[i * dim:i * dim + 3]) for i in range(count)]
+
+
+class ClavicleShoulderSize(unittest.TestCase):
+    """The Creep's and the Orc's clavicle and shoulder controls grown to be seen on their bodies
+    (2026-09-30, «контролы ключиц плечей не видны они внутри шеометрии тела»; asked, «Увеличить под
+    тело»). Each drawing is the AdvancedSkeleton one scaled about its origin, L and R alike, to be seen
+    at least as well as Manny's (measure_control_sizes.py, make_control_sizes.py)."""
+
+    RADII = {"Creep": {"FKScapula": 16.183303, "FKShoulder": 20.707995},
+             "Orc": {"FKScapula": 16.183303, "FKShoulder": 22.590540}}
+
+    def files(self):
+        return [(catalog.character_file(catalog.character_by_key("Creep_Rig")), "Creep"),
+                (catalog.character_file(catalog.character_by_key("Orc_D_Rig")), "Orc"),
+                (ORC_SOURCE, "Orc")]
+
+    def test_the_four_controls_are_at_their_radii(self):
+        for path, who in self.files():
+            for name, wanted in self.RADII[who].items():
+                for side in ("L", "R"):
+                    cvs = _curve_cvs(path, "%s_%sShape" % (name, side), "%s_%s" % (name, side))
+                    self.assertIsNotNone(cvs, (path, name, side))
+                    radius = max((x * x + y * y + z * z) ** 0.5 for x, y, z in cvs)
+                    self.assertAlmostEqual(radius, wanted, places=5, msg=(path, name, side))
+
+    def test_left_and_right_are_the_same_size(self):
+        for path, _who in self.files():
+            for name in ("FKScapula", "FKShoulder"):
+                r = [max(sum(v * v for v in cv) ** 0.5 for cv in _curve_cvs(path, "%s_%sShape" % (name, s),
+                                                                              "%s_%s" % (name, s)))
+                     for s in ("L", "R")]
+                self.assertAlmostEqual(r[0], r[1], places=6, msg=(path, name))

@@ -6966,3 +6966,39 @@ Proof: `verify_main_control_size.py` **9/9 standalone** (the old Creep's 7.757 a
 ×5.223893 then ×1.0, three rigs added side by side each 40.523613 cm in world, flat, only the drawing
 changed, Main still carrying the root). 2994 unit tests. A rig already in a scene keeps its small circle:
 re-add it.
+
+## The Creep's and the Orc's clavicle and shoulder controls, sized for the body (2026-09-30)
+
+The animator: «У орка и крипа контролы ключиц плечей не видны они внутри шеометрии тела»; asked how, **grow
+them to fit the body** (over `alwaysDrawOnTop`, or both). Spec
+`docs/superpowers/specs/2026-09-30-clavicle-shoulder-control-size-design.md`. Measured: AdvancedSkeleton
+draws every rig's controls alike — `FKShoulder_*` Manny's to the CV (radius 12.5503 about its origin),
+`FKScapula_*` AS's default 9.2476 where Manny's is 12.3966 — and the Creep's and the Orc D's necks and
+shoulders (the Orc's pads) are bulkier, so the drawings were buried.
+
+- **"Seen"** (`measure_control_sizes.py`): per point of the curve, the share of 32 directions (a Fibonacci
+  sphere) along which a ray reaches open space past the character's own visible meshes. No inside/outside
+  test, so open or overlapping meshes do not fool it (a ray-parity probe read the Creep's five overlapping
+  meshes 0.69 or 0.95 "inside" depending on its rays). Before: Manny's clavicle 0.25, shoulder 0.47; the
+  Creep's 0.003 / 0.28–0.32; the Orc's **0.000** / 0.07.
+- **The rule**: the drawing grows uniformly about the control's origin (its pivot, checked) by the smallest
+  factor on a 0.05 grid at which both sides are seen at least as well as Manny's pair, L and R alike.
+  Clavicle ×1.75 on both (16.183303), shoulder ×1.65 on the Creep (20.707995), ×1.80 on the Orc (22.590540).
+  Manny is the standard and is untouched. Checked by eye first: viewport playblasts from a disposable Maya
+  (port 7011, minimized, scratch prefs, killed after) showed the fins at the throat and on the back as
+  Manny's are, and the rings round the Orc's pads.
+- **The files, as text**: `make_control_sizes.py` (stdlib) scales the CV lines of the four shapes' `.cc` in
+  `Creep_Rig.ma`, `Orc_D_Rig.ma`, `sources/orc/Orc_Rig.ma` — 64 lines a file, nothing else, idempotent. These
+  `.cc` blocks end in component tags (`"gtag" 1 "tempCluster" ...`) after the CVs: a parser takes exactly as
+  many numbers as the header announces.
+- **The build**: `as_creep_rig_procedure.control_sizes()` (`CONTROL_RADII`, the Creep's; `rebuild_orc_rig.py`
+  sets the Orc's) after `main_size()`.
+- `tests/test_scenesetup_catalog.ClavicleShoulderSize` pins the radii and L = R.
+
+Proof: `verify_control_sizes.py` **9/9 standalone** (the old files as the control, seen less than Manny's;
+the procedure step ×1.75 / ×1.65 / ×1.80 then ×1.0; the eight controls seen 0.26–0.49 against Manny's
+0.25–0.48; L = R; Manny untouched; `FKShoulder_L` +30 about Z turning `upperarm_l` 30.000 as before — its X is
+the roll, which AS hands to the twist joints, 0.23° on the bone; only the curves changed). 3056 unit tests.
+A rig in a scene keeps its small drawings: re-add it. In a second scene the verify's Manny arrived as
+`Manny_Rig1`: mayaUsd's `UsdDefaultRenderSettings` lands in the first rig's namespace and keeps it alive
+across a new scene — find a rig by its namespace, never by the name you expect.

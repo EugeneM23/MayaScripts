@@ -57,6 +57,11 @@ LAYER = "Creep_Skeleton"            # renamed from Hanter_Skeleton by tidy()
 # же как и у menny»).  AdvancedSkeleton draws it 7.76 cm across whatever the character's height, lost inside
 # the feet; Manny's is 40.52 -- the same circle 5.22x.
 MAIN_RADIUS = 40.523612701541616
+# The clavicle and shoulder drawings grown to be seen on the body (the animator, 2026-09-30: «контролы
+# ключиц плечей не видны они внутри шеометрии тела»; asked, «Увеличить под тело»): the radius each must
+# have (largest CV distance from its origin) to be seen at least as well as Manny's, measured by
+# measure_control_sizes.py on the shipped Creep.  rebuild_orc_rig.py sets the Orc's.
+CONTROL_RADII = {"FKScapula": 16.183303, "FKShoulder": 20.707995}
 
 ROWS = [("Root", "pelvis"), ("Spine1", "spine_01"), ("Spine2", "spine_02"), ("Spine3", "spine_03"), ("Spine4", "spine_04"),
         ("Spine5", "spine_05"), ("Scapula", "clavicle"), ("Shoulder", "upperarm"), ("Elbow", "lowerarm"), ("Wrist", "hand"),
@@ -760,6 +765,28 @@ def main_size():
     return factor
 
 
+def control_sizes(radii=None):
+    """Each `<name>_L` / `<name>_R` of `radii` (CONTROL_RADII) drawn at its radius: the CVs scaled in the
+    control's own space about its origin, which must be its pivot, so only the drawing changes.  Returns
+    {control: factor}; 1.0 once it is at its radius."""
+    out = {}
+    for name, wanted in sorted((radii or CONTROL_RADII).items()):
+        for side in ("L", "R"):
+            ctrl = "%s_%s" % (name, side)
+            if max(abs(v) for v in cmds.xform(ctrl, q=True, os=True, rp=True)) > 1e-6:
+                raise RuntimeError(ctrl + ": the pivot is off the origin - scaling the CVs would move it")
+            shapes = cmds.listRelatives(ctrl, shapes=True, type="nurbsCurve", fullPath=True) or []
+            cvs = dict((s, cmds.getAttr(s + ".cv[*]")) for s in shapes)
+            factor = wanted / max(math.sqrt(x * x + y * y + z * z) for pts in cvs.values() for x, y, z in pts)
+            if abs(factor - 1.0) > 1e-9:
+                for s, pts in cvs.items():
+                    for i, (x, y, z) in enumerate(pts):
+                        cmds.xform("%s.cv[%d]" % (s, i), objectSpace=True,
+                                   translation=(x * factor, y * factor, z * factor))
+            out[ctrl] = factor
+    return out
+
+
 def mark():
     """The retarget reads this: the Creep's rig takes rotations only."""
     if not cmds.attributeQuery(RETARGET_ATTR, node="Group", exists=True):
@@ -786,6 +813,7 @@ def run():
         print("// IK foot controls level (AS's frame): worst %.5f deg" % as_frames(LEVEL_CONTROLS))
         mark()
         print("// Main drawn at Manny's size (x%.4f)" % main_size())
+        print("// clavicle / shoulder drawings grown: %s" % control_sizes())
         drift = max(max(abs(a - c) for a, c in zip(m, cmds.getAttr(j + ".worldMatrix[0]"))) for j, m in rest.items())
         tidy()                                          # re-parents the root: the paths above are stale after it
         print("// the sword out as a catalog weapon: %s" % (export_sword(SWORD_FBX),))

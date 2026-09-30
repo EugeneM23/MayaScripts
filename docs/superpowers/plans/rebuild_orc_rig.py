@@ -44,6 +44,8 @@ exec(compile(open(P, encoding="utf-8").read(), P, "exec"), g)
 g["HEAD_MESH"] = "Orc_BodyShape"
 g["ROOT"] = "|root"
 g["LAYER"] = "Orc_Skeleton"
+# the orc's shoulders are bulkier than the Creep's (measure_control_sizes.py on the shipped Orc D)
+g["CONTROL_RADII"] = {"FKScapula": 16.183303, "FKShoulder": 22.590540}
 
 
 def place_ik_helpers():
@@ -92,6 +94,7 @@ try:
     print("// IK foot controls level (AS's frame): worst %.5f deg" % g["as_frames"](g["LEVEL_CONTROLS"]))
     g["mark"]()
     print("// Main drawn at Manny's size (x%.4f)" % g["main_size"]())
+    print("// clavicle / shoulder drawings grown: %s" % g["control_sizes"]())
     drift = max(max(abs(a - c) for a, c in zip(m, cmds.getAttr(j + ".worldMatrix[0]"))) for j, m in rest.items())
     print("// %d controls oriented (worst frame angle %.5f deg), %d curves aligned, %d finger SDK groups re-framed; "
           "bind-pose drift %.9f" % (n, worst, shapes, sdk, drift))
