@@ -11,7 +11,7 @@ from maya_graphoverlay import mode, viewport, winstyle
 class Refusals(unittest.TestCase):
 
     def setUp(self):
-        mode._STATE.reset()
+        mode.reset_state()
 
     def test_off_when_already_off(self):
         self.assertEqual(mode.disable(), "Graph Overlay is already off")
@@ -34,7 +34,7 @@ class Refusals(unittest.TestCase):
 class HubSection(unittest.TestCase):
 
     def setUp(self):
-        mode._STATE.reset()
+        mode.reset_state()
         self.fake = FakeUiCmds()
         self.real = mode.cmds
         mode.cmds = self.fake
@@ -54,7 +54,7 @@ class HubSection(unittest.TestCase):
         try:
             self.assertEqual(mode.button_label(), "Graph Overlay: ON")
         finally:
-            mode._STATE.reset()
+            mode.reset_state()
 
     def test_the_section_key(self):
         self.assertEqual(mode.HUB_SECTION, "graphoverlay")
@@ -63,10 +63,10 @@ class HubSection(unittest.TestCase):
 class LearnTones(unittest.TestCase):
 
     def setUp(self):
-        mode._STATE.reset()
+        mode.reset_state()
 
     def tearDown(self):
-        mode._STATE.reset()
+        mode.reset_state()
 
     def test_tones_grow_and_never_shrink(self):
         self.assertEqual(mode.learn_tones([(64, 64, 64)]), [(64, 64, 64)])
@@ -96,7 +96,7 @@ class TheChrome(unittest.TestCase):
     инструментов»)."""
 
     def setUp(self):
-        mode._STATE.reset()
+        mode.reset_state()
 
     def test_the_menus_toolbar_and_channel_list_are_on_by_default(self):
         self.assertTrue(mode.CHROME)
@@ -143,12 +143,28 @@ class OneStatePerSession(unittest.TestCase):
         copy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(copy)
         self.assertIs(copy._STATE, mode._STATE)
-        mode._STATE.reset()
+        mode.reset_state()
         mode._STATE.ghost = object()
         try:
             self.assertTrue(copy.is_on())
         finally:
-            mode._STATE.reset()
+            mode.reset_state()
+
+    def test_a_reset_clears_the_fields_an_older_class_never_knew(self):
+        """Measured live 2026-09-30: the session's state was made by the
+        first build, whose `reset()` knew no chrome fields - after an off
+        the dead event filter stayed, and the next on died on it."""
+        class Older(object):
+            def reset(self):
+                self.ghost = None
+
+        older = Older()
+        older.watch = "a dead filter"
+        older.watched = {1, 2}
+        mode.reset_state(older)
+        self.assertIsNone(older.watch)
+        self.assertEqual(older.watched, set())
+        self.assertIsNone(older.ghost)
 
     def test_a_state_from_an_older_copy_gains_the_new_fields(self):
         import sys
@@ -158,7 +174,7 @@ class OneStatePerSession(unittest.TestCase):
             mode._shared_state()
             self.assertEqual(state.cost, 0.0)
         finally:
-            mode._STATE.reset()
+            mode.reset_state()
 
 
 class ThePackage(unittest.TestCase):

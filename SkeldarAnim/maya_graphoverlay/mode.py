@@ -117,6 +117,17 @@ def _shared_state():
     return state
 
 
+def reset_state(state=None):
+    """Every field back to THIS module's defaults. Never `state.reset()`:
+    the session's state may have been made by an older copy whose class
+    knows fewer fields (measured - its `reset()` left a dead event filter
+    in place, and the next switch-on died on it)."""
+    state = _STATE if state is None else state
+    for name, value in vars(_State()).items():
+        setattr(state, name, value)
+    return state
+
+
 _STATE = _shared_state()
 _POOL = []          # the keying threads, made once a module
 
@@ -183,7 +194,7 @@ def disable():
         if _STATE.ghost is not None:
             _STATE.ghost.destroy()
     finally:
-        _STATE.reset()
+        reset_state()
     return "Graph Overlay OFF"
 
 
@@ -300,6 +311,11 @@ def _watch_chrome():
     if not is_on() or not _STATE.ghost.chrome:
         return 0
     import shiboken6
+    if _STATE.watch is not None:
+        try:
+            _STATE.watch.objectName()
+        except RuntimeError:                    # deleted: start over
+            _STATE.watch, _STATE.watched = None, set()
     if _STATE.watch is None:
         _STATE.watch = _make_watch()
     added = 0
