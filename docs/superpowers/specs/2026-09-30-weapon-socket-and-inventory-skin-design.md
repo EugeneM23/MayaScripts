@@ -173,3 +173,27 @@ The weapon icons themselves (steel, bronze guard, leather, wood) stay; they are 
   `verify_weapon_space.py`, `verify_creep_bind_pose.py`, `verify_inventory.py`.
 - The live inventory stages in a disposable Maya on port 7003, and a photograph of the restyled
   window.
+
+## Addendum — what the build found (2026-09-30)
+
+- **Measured after the build**:
+  - Zero-grip blade off the fist's grip line:
+
+    | rig | right hand | left hand (the mirror) |
+    |---|---|---|
+    | Manny | 11.9° | 11.9° |
+    | Orc D | 11.3° | 11.3° |
+    | Creep | 5.8° | 5.9° |
+
+  - Manny's left fields show the mirror (1.38, −1.58, −179.51) / (6.62, −0.98, 1.71). The Creep's
+    left zero grip now mirrors like Manny's, a half turn about the thickness.
+  - The Creep's thickness sits 17.0° off its palm normal: its socket's own roll, the creature's
+    `weapon_test`, unchanged by a turn about X.
+- **The inventory remembered grips it had only computed.** `equip.to_hand` stored the left hand's
+  mirror as if it had been dialled, so the next rig got Manny's numbers. It remembers nothing now.
+- **Euler flips between keys** in the weapon and helper-bone bakes: a UE take on the Creep held the
+  sword exactly at every key while its curves stepped up to 538°. Both bakes are euler-filtered now:
+  17.1° at most, equal to Manny's.
+- **A weapon node added before the turn** reads and dials in the standard (`grips.standard` /
+  `on_node`), so an old scene's sword at (90, 0, 0) reads 0 0 0 and a re-Add adds nothing.
+- The installed copy was not refreshed: port 7001 stopped listening before the end of the build.

@@ -1011,7 +1011,8 @@ it — catalog row «Creep Sword» on `weapon_r`, scale 1; the swords dropped fr
 `weapon_test` renamed **`weapon_r`** and turned half a turn about its own Z (the sword lay
 along its −Y, every catalog weapon lies along +Y), **`weapon_l`** created under hand_l as
 its behaviour mirror (S·M·S); BPM re-expressed, bindPose reset; the clean skeleton rebuilt
-from the new rig. Procedure steps `export_sword` (BEFORE the bone turns — the sword rides it
+from the new rig (**both turned a further quarter into UE's orientation on 2026-09-30** —
+"One weapon socket for every rig" below). Procedure steps `export_sword` (BEFORE the bone turns — the sword rides it
 by constraint), `drop_props`, `weapon_bones`. **The retarget carries the helper bones
 RELATIVE TO THEIR PARENT on a rotation-only rig** (`maya_rig_retarget.helper_space`,
 `transfer_bone(relative=True)`: world = W_src · P_src⁻¹ · P_dst through a multMatrix): in
@@ -6076,9 +6077,11 @@ ride it").
   not — Manny's `weapon_l` stands **6.9 cm / 2.16°** off the mirror of `weapon_r` and at ZERO grip a
   left sword points its blade **backwards** (−0.9993); the mirror grip is (1.39, 0.49, −178.42) /
   (6.62, −1.71, −0.98) and stands the left sword as the world mirror of the right to **2.9e-4** at
-  the build pose. The Creep's own `weapon_l` mirrors differently: its zero grip comes out a half turn
-  ABOUT the blade (179.9, 0.05, 179.8) — the same sword for a symmetric one, the true mirror for an
-  axe head.
+  the build pose. The Creep's own `weapon_l` mirrored differently: its zero grip came out a half turn
+  ABOUT the blade (179.9, 0.05, 179.8). **Since 2026-09-30 (one socket, below) the numbers moved**:
+  the frame is the socket-composed one, Manny's left fields read (1.38, −1.58, −179.51) / (6.62,
+  −0.98, 1.71), and the Creep's weapon_l is UE's, so its zero grip mirrors like Manny's, a half turn
+  about the THICKNESS (0.09, −0.05, −179.77) / (0.01, 0.08, 0.01).
 - **`linked` means the hands ride it** (`connections.followers_of`, the proxies inside it): a weapon
   out in world that nothing rides is its hand's to replace or remove, and `attach.detach` takes it
   off (a weapon on the floor hands its parked track back). A hand holds XOR follows, in every path.
@@ -6105,8 +6108,8 @@ right one's replaced.
 
 **The window** (`maya_inventory.py`, `maya_invlook.py` — stdlib: palette, cells, packing, layout,
 hits; `maya_scenesetup/droptarget.py`, `equip.py`): Weapons > **Inventory** or the hotkey row
-`window.inventory`. A frameless tool window (bronze bevel, gold small-caps «Inventory», parchment),
-object name `skeldarInventory` (an update's `show()` deletes an older module's window by name), its
+`window.inventory`. A frameless tool window (bronze bevel, gold small-caps «Inventory», parchment —
+in the hub's own look since 2026-09-30, below), object name `skeldarInventory` (an update's `show()` deletes an older module's window by name), its
 position in `skeldarInventoryGeometry`. The grid (10 × 5 cells of 40 logical px) is the catalog;
 two hand slots show the current character's hands (the right hand on the viewer's LEFT) — held,
 dimmed «on the floor», or «follows <weapon>». A press on an item captures the mouse for the whole
@@ -6130,7 +6133,8 @@ test pins it): re-run the script.
      grip. `grips.socket_of` reads such a bone from its own parked track (1.1e-16 against the socket
      before the drop), and `to_hand` computes the grip after the old weapon is off (6.9 cm from
      `weapon_l` after — Manny's own socket asymmetry). Anything that reads a weapon bone's local
-     matrix must ask first whether a world weapon drives it.
+     matrix must ask first whether a world weapon drives it. (Since 2026-09-30 `to_hand` remembers
+     nothing at all — trap 107.)
 104. **A chooser pick lost to the selection an Apply leaves behind.** Connections' own presses
      (OverRig's parent_in/out) leave the weapon selected, and "the selection names the weapon"
      snapped a pick of the other one straight back. The pick holds while the selection is what it
@@ -6162,3 +6166,106 @@ at a chosen frame; a ray against meshes; more than two weapons per character —
 a floor weapon holds its hand's bone, so a character has at most two weapons in hands and on the
 floor together. **The drag itself (a real mouse over the viewport) is the animator's to try**: the
 bridge drives `drop_at`, everything but the mouse.
+
+## One weapon socket for every rig, and the inventory in the hub's look (2026-09-30)
+
+The animator: «Давай сделаем дизайн инвентаря все же не в стиле диабло а в стиле нашего интерфейса.
+Также сейчас некоторые виды оружия нужно поворачивать на 90 а некоторые сразу встают в руку, давай
+сделаем так что бы по умолчанию все виды оружия вставлялись в руку правильно без офсетов». Asked
+whether the Creep's weapon bones should follow the same standard (it changes a shipped rig):
+«Yes, one standard». Spec: `docs/superpowers/specs/2026-09-30-weapon-socket-and-inventory-skin-design.md`,
+plan beside it.
+
+**Measured first** (standalone), the fist at the bind pose in each weapon bone's own axes. A hammer
+grip holds the blade along the knuckle line pinky_01 → index_01, the width along the metacarpals,
+the thickness along the palm normal.
+- **Manny's and the Orc D's `weapon_r` is UE's**: the grip line along its +Z (0.978), the palm
+  normal along −Y. `weapon_l` is its behaviour mirror (grip line −Z).
+- Every catalog model lies along +Y, so **every weapon stood 84° off the fist at zero grip**. The
+  animator's prefs held exactly the correction: (90, 0, 0) on Long Sword 02, Dagger 01 and Spear 03.
+- **The Creep's weapon bones (ours, 2026-09-24) held the grip line along +Y**, so the same models
+  fitted there at its bind. But a UE clip retargeted onto the Creep hands its `weapon_r` UE's local
+  rotation (helper bones travel relative to the hand on a rotation-only rig), and a sword that
+  fitted at the bind stood **101.9°** off the fist mid-take.
+
+**The standard:**
+- **`catalog.SOCKET_TURN = (90, 0, 0)`** takes a model's axes (blade +Y) into a UE weapon bone's
+  (grip line +Z, palm −Y). `bonedrive.socket_frame(frame)` = R(frame) · R(SOCKET_TURN) is what a new
+  weapon node stores (`attach.import_weapon`) and what the left hand's mirror uses (`grips.for_hand`).
+- A row's `frame` stays the model's own extra turn (the Creep Sword's 45 about its blade). Everything
+  downstream already read the node's frame: the grip fields read 0 0 0 at zero grip, and relink,
+  mirror, floor and Connections are unchanged.
+- **The Creep's `weapon_r` / `weapon_l` were turned a quarter about their own X** (Rx(−90) / Rx(+90))
+  in both Creep assets by `make_creep_weapon_sockets.py`: grip line 0.995 / −0.995 on ±Z, every
+  other joint and every vertex 0.0, skins at their bind, the bind pose saved whole. It is
+  idempotent BY MEASUREMENT (a second run turns nothing and saves nothing), and it is the Creep
+  pipeline's last step, after `make_creep_armature_layout.py`. The Creep Sword stands on the Creep
+  exactly where it did (8.5e-14): Rx(90) · Rx(−90) = I.
+- **Remembered grips are carried once** (`grips.migrate`, on the first read, gated by
+  `mayaSceneSetup_gripSocket`): G · R(frame) · R(socket_frame)⁻¹, both hands and the legacy name.
+  The animator's (90, 0, 0) became 0 0 0 with the weapon where it stood (4.9e-7 live).
+- **A weapon node added before this keeps its old frame** and still reads and dials in the standard
+  (`grips.standard` / `on_node`, the Weapons fields' two edges), so an old scene's correctly held
+  sword reads 0 0 0 and a re-Add does not add another 90.
+- A Creep added before this has the old weapon bones: re-add it. A clip exported from Maya off the old
+  Creep skeleton carries `weapon_r` in the old orientation; Cascadeur's own Creep clips carry
+  `weapon_test` and are untouched. The animator's `Animations/Rigs/Characters/Creep_Skeleton.fbx`
+  was not re-exported.
+
+**Two defects found on the way, both fixed:**
+- **The inventory remembered grips it had only computed** (trap 107).
+- **Weapon and helper-bone bakes left euler flips between keys** (trap 108): `bonedrive._bake` and
+  `transfer_bone` now run `bonedrive.euler_filter`.
+
+**The inventory in the hub's look:**
+- `maya_invlook.PALETTE` IS `maya_hubstyle.TOKENS` (`RADIUS` card 8 / well 6 / item 4); no serif,
+  no bevel, no diamonds.
+- The window: the `panel` with a `line` outline, rounded (a translucent top-level), the hub's
+  `backpack` icon and a bold «Inventory».
+- The hand slots and the grid are `card`s on `field` wells.
+- A drop target is lit as the hub's active card (`card_active`, a 2 px `accent` outline); a dragged
+  slot is lit `danger`.
+- The grid preview is `ok_tint` / `danger_tint` with an outline, the status the hub's message line,
+  the ghost's caption a card pill.
+- Tests pin that no colour of its own and no Diablo styling is left; the layout is unchanged but
+  for the grid's card gap.
+
+Proof:
+- `verify_weapon_socket.py` **10/10 standalone**, run with a scratch `MAYA_APP_DIR`:
+  - every catalog weapon at zero grip in the right fist of Manny / Orc D / Creep: blade 11.9 / 11.3
+    / 5.8° off the grip line, thickness 8.8 / 8.3 / 17.0° off the palm (each socket's own roll —
+    the Creep's is its creature's `weapon_test`), fields 0;
+  - the left mirror through each rig's OWN sockets, 11.9 / 11.3 / 5.9°;
+  - the Creep Sword where the old asset stood it;
+  - the migration;
+  - a UE take on the Creep holding the sword in the hand as Manny does, at every key (0.0007°) and
+    every half frame (0.001°).
+- Re-run on the new assets: `verify_creep_rig_asset.py` 16/16, `verify_inventory.py` 14/14,
+  `verify_weapon_space.py` 11/11, `verify_creep_skeleton_asset.py` 9/9, `verify_creep_bind_pose.py`
+  all gates.
+- Live in a disposable Maya (port 7003, `MAYA_NO_HOME=1`):
+  - the three seeded (90, 0, 0) grips migrated to 0;
+  - `verify_inventory_live.py` setup 13/13 + drops 8/8;
+  - front, side and top playblasts: a Long Sword and a Spear 03 pointing forward out of the fists
+    at the default grips.
+- 2696 unit tests.
+
+107. **The inventory froze a COMPUTED grip as a dialled one.** `equip.to_hand` ran
+     `grips.remember` with whatever `for_hand` answered, the left hand's mirror included. From then
+     on that weapon's left grip was "dialled": it stopped following the right grip and each rig's
+     own sockets. Measured: the Orc and the Creep got Manny's mirror numbers. The inventory dials
+     nothing and remembers nothing; the Weapons fields are what remember.
+108. **A bake keeps whichever euler each frame evaluated to.** On a UE take retargeted onto the Creep
+     the sword stood in the hand exactly at every key (0.0007°), while its rotate curves stepped
+     **347 / 538 / 188°** from key to key: the same rotations written the other way round, so it
+     spun BETWEEN frames. Manny's, baked from a direct world-space constraint, stepped 17°. The
+     Creep's went through the relative helper-bone transfer, where a decomposeMatrix rotation wraps.
+     `cmds.filterCurve(..., filter="euler")` after the bake: 17.1°, equal to Manny's. A gate
+     sampling only whole frames cannot see this; sample half frames too.
+109. **A relaunched disposable Maya did not run the userSetup on `PYTHONPATH`** (the same boot
+     folder that worked the day before): CPU flat, no port, only the Home screen up. With the
+     userSetup copied into `<MAYA_APP_DIR>/2027/scripts/` it came up in 35 s. And a Home screen that
+     keeps `MayaWindow` hidden (trap 105) did NOT give way this time: hiding it, `setVisible(True)`,
+     `show()`, `appHome -visible 0` / `-toggleVisibility` all left the viewport invisible.
+     **`MAYA_NO_HOME=1` in the environment at launch** is the reliable road: the viewport was up at
+     1662 × 1044 on the first probe.
