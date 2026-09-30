@@ -113,10 +113,14 @@ from maya_scenesetup import grips  # noqa: E402
 class FakeVars(object):
     """optionVar as Maya answers it."""
 
-    def __init__(self, stored=None):
+    def __init__(self, stored=None, migrated=True):
         self.vars = dict(stored or {})
+        if migrated:                 # past the 2026-09-30 socket migration
+            self.vars[grips.MIGRATED] = 1
 
     def optionVar(self, **kwargs):
+        if kwargs.get("list"):
+            return list(self.vars)
         if "exists" in kwargs:
             return kwargs["exists"] in self.vars
         if "query" in kwargs:
@@ -126,6 +130,9 @@ class FakeVars(object):
         if "floatValueAppend" in kwargs:
             name, value = kwargs["floatValueAppend"]
             self.vars.setdefault(name, []).append(value)
+        if "intValue" in kwargs:
+            name, value = kwargs["intValue"]
+            self.vars[name] = value
         return None
 
 
@@ -206,6 +213,82 @@ class GripMemory(unittest.TestCase):
         self.assertEqual(window.optionvar_name("X"), grips.optionvar_name("X"))
         self.assertIs(window.pack_offsets, grips.pack)
         self.assertIs(window.unpack_offsets, grips.unpack)
+
+
+class Migration(unittest.TestCase):
+    """2026-09-30: a grip dialled against the old zero keeps the weapon where
+    the animator put it - their (90, 0, 0) becomes exactly 0 0 0."""
+
+    def setUp(self):
+        self.real = grips.cmds
+        self.addCleanup(setattr, grips, "cmds", self.real)
+
+    def test_rebased_undoes_the_old_quarter_turn(self):
+        rotate, translate = grips.rebased((90, 0, 0), (0, 0, 0), (0, 0, 0),
+                                          (90, 0, 0))
+        self.assertTrue(close(rotate, (0, 0, 0)) and close(translate, (0, 0, 0)))
+
+    def test_rebased_keeps_the_world(self):
+        grip, old = ((10, -20, 35), (1.5, -2, 4)), (0, 45, 0)
+        new = bonedrive.socket_frame(old)
+        r, t = grips.rebased(grip[0], grip[1], old, new)
+        before = (om.MMatrix(bonedrive.matrix_of(*grip))
+                  * om.MMatrix(bonedrive.matrix_of(old, (0, 0, 0))))
+        after = (om.MMatrix(bonedrive.matrix_of(r, t))
+                 * om.MMatrix(bonedrive.matrix_of(new, (0, 0, 0))))
+        self.assertTrue(close(before, after))
+
+    def test_the_frame_of_a_key(self):
+        self.assertEqual(grips.frame_for_key("Creep_Sword"), (0.0, 45.0, 0.0))
+        self.assertEqual(grips.frame_for_key("Creep_Sword_L"), (0.0, 45.0, 0.0))
+        self.assertEqual(grips.frame_for_key("LongSword_02"), (0.0, 0.0, 0.0))
+        self.assertEqual(grips.frame_for_key("SomeFile"), (0.0, 0.0, 0.0))
+
+    def test_migrate_once_every_hand_and_the_legacy_name(self):
+        grips.cmds = FakeVars({
+            "mayaSceneSetup_offset_LongSword_02": [90, 0, 0, 0, 0, 0],
+            "mayaSceneSetup_offset_Dagger_01_L": [90, 0, 0, 1, 0, 0],
+            "mayaWeapons_offset_Spear_03": [90, 0, 0, 0, 0, 0],
+            "mayaSceneSetup_offset_Broken": [1, 2],
+            "somethingElse": [90, 0, 0, 0, 0, 0]}, migrated=False)
+        self.assertEqual(grips.migrate(), 3)
+        v = grips.cmds.vars
+        self.assertTrue(close(v["mayaSceneSetup_offset_LongSword_02"], (0,) * 6))
+        self.assertTrue(close(v["mayaWeapons_offset_Spear_03"], (0,) * 6))
+        self.assertTrue(close(v["mayaSceneSetup_offset_Dagger_01_L"], (0, 0, 0, 1, 0, 0)))
+        self.assertEqual(v["mayaSceneSetup_offset_Broken"], [1, 2])
+        self.assertEqual(v["somethingElse"], [90, 0, 0, 0, 0, 0])
+        self.assertIn(grips.MIGRATED, v)
+        v["mayaSceneSetup_offset_LongSword_02"] = [90, 0, 0, 0, 0, 0]
+        self.assertEqual(grips.migrate(), 0)
+        self.assertEqual(v["mayaSceneSetup_offset_LongSword_02"], [90, 0, 0, 0, 0, 0])
+
+    def test_the_first_read_migrates(self):
+        grips.cmds = FakeVars({"mayaSceneSetup_offset_LongSword_02":
+                               [90, 0, 0, 0, 0, 0]}, migrated=False)
+        rotate, translate = grips.stored("LongSword_02")
+        self.assertTrue(close(rotate, (0, 0, 0)) and close(translate, (0, 0, 0)))
+
+
+class OlderNodes(unittest.TestCase):
+    """A weapon added before 2026-09-30 carries the old frame on its node: its
+    fields speak the standard all the same (an old sword held at 90 0 0 reads
+    0 0 0), and a dial goes back through its own frame."""
+
+    def test_an_old_node_reads_in_the_standard(self):
+        rotate, translate = grips.standard((90, 0, 0), (0, 0, 0), (0, 0, 0), Entry())
+        self.assertTrue(close(rotate, (0, 0, 0)) and close(translate, (0, 0, 0)))
+
+    def test_a_new_node_reads_as_it_is(self):
+        got = grips.standard((1, 2, 3), (4, 5, 6), (90, 0, 0), Entry())
+        self.assertEqual(got, ((1, 2, 3), (4, 5, 6)))
+
+    def test_a_dial_goes_back_through_the_nodes_own_frame(self):
+        grip = ((10, -20, 35), (1.5, -2, 4))
+        on_node = grips.on_node(grip[0], grip[1], (0, 0, 0), Entry())
+        back = grips.standard(on_node[0], on_node[1], (0, 0, 0), Entry())
+        self.assertTrue(close(back[0], grip[0]) and close(back[1], grip[1]))
+        self.assertEqual(grips.on_node(grip[0], grip[1], (90, 0, 0), Entry()), grip)
 
 
 # ------------------------------------------------------ the Weapons section
@@ -308,3 +391,11 @@ class HandRow(unittest.TestCase):
         import inspect
         self.assertIn("_hand_row()",
                       inspect.getsource(self.window.build_weapons_panel))
+
+    def test_the_fields_and_the_dial_go_through_the_standard(self):
+        """2026-09-30: refresh shows grips.standard of the measured grip, and
+        offsets_changed regrips with grips.on_node - an older weapon node
+        keeps its own frame and still reads and dials in the standard."""
+        import inspect
+        self.assertIn("grips.standard(", inspect.getsource(self.window.refresh))
+        self.assertIn("grips.on_node(", inspect.getsource(self.window.offsets_changed))

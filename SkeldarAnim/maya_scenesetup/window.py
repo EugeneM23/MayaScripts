@@ -401,7 +401,11 @@ def refresh():
         held = bonedrive.is_held(weapon)
         own = _held_entry(weapon, entry)
         if bone and held and not attach.is_animated(weapon):
-            _set_fields(*bonedrive.measured_grip(weapon, bone))
+            # in the standard (2026-09-30): a weapon added before the socket
+            # turn keeps its old frame on the node and reads the same way
+            rotate, translate = bonedrive.measured_grip(weapon, bone)
+            _set_fields(*grips.standard(rotate, translate,
+                                        bonedrive.frame_of(weapon), own))
         else:
             _set_fields(*_remembered(own, root))
         if linked:
@@ -683,7 +687,9 @@ def offsets_changed():
     if attach.is_animated(weapon):
         _status(LINKED_NO_OFFSETS)
         return
-    bonedrive.regrip(weapon, bone, rotate, translate)
+    # the fields speak the standard; an older node dials in its own frame
+    bonedrive.regrip(weapon, bone, *grips.on_node(
+        rotate, translate, bonedrive.frame_of(weapon), entry))
     _status(attached_message(entry, hand or bone))
 
 

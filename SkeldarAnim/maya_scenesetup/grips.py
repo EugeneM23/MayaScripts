@@ -53,9 +53,99 @@ def unpack(values):
     return tuple(numbers[:3]), tuple(numbers[3:])
 
 
+# ------------------------------------------- the socket turn (2026-09-30)
+#
+# Every grip remembered before `catalog.SOCKET_TURN` was dialled against the
+# old zero, R(frame) . bone. It is re-expressed ONCE so the weapon stands
+# where the animator put it - their (90, 0, 0) becomes exactly 0 0 0 - and a
+# weapon node added before the turn (its old frame stored on it) reads and
+# dials in the standard all the same (`standard` / `on_node`).
+
+MIGRATED = "mayaSceneSetup_gripSocket"
+_PREFIXES = ("mayaSceneSetup_offset_", "mayaWeapons_offset_")
+_ORIGIN = (0.0, 0.0, 0.0)
+
+
+def rebased(rotate, translate, from_frame, to_frame):
+    """A grip dialled under `from_frame`, re-expressed under `to_frame` so the
+    weapon stands where it stood: G . R(from) . R(to)^-1. Pure."""
+    child = (om.MMatrix(bonedrive.matrix_of(rotate, translate))
+             * om.MMatrix(bonedrive.matrix_of(from_frame, _ORIGIN)))
+    return bonedrive.grip_between(tuple(child),
+                                  bonedrive.matrix_of(to_frame, _ORIGIN))
+
+
+def _same_frame(a, b):
+    ma, mb = bonedrive.matrix_of(a, _ORIGIN), bonedrive.matrix_of(b, _ORIGIN)
+    return max(abs(x - y) for x, y in zip(ma, mb)) < 1e-9
+
+
+def _wanted(entry):
+    return bonedrive.socket_frame(getattr(entry, "frame", _ORIGIN))
+
+
+def standard(rotate, translate, node_frame, entry):
+    """A grip measured on a weapon node, as the standard means it (against
+    `entry`'s socket frame). A node carrying that frame already answers as
+    it is; an older one (its old frame on it) is re-expressed."""
+    want = _wanted(entry)
+    if _same_frame(node_frame, want):
+        return tuple(rotate), tuple(translate)
+    return rebased(rotate, translate, node_frame, want)
+
+
+def on_node(rotate, translate, node_frame, entry):
+    """`standard` undone: a standard grip as the node's own frame means it,
+    for a dial on an older node (`bonedrive.regrip` works in its frame)."""
+    want = _wanted(entry)
+    if _same_frame(node_frame, want):
+        return tuple(rotate), tuple(translate)
+    return rebased(rotate, translate, want, node_frame)
+
+
+def frame_for_key(key):
+    """The catalog row's own frame for a remembered key (a left hand's `_L`
+    stripped); the identity for a file the catalog does not know."""
+    for candidate in (key, key[:-2] if key.endswith("_L") else None):
+        entry = catalog.by_key(candidate) if candidate else None
+        if entry is not None:
+            return tuple(float(v) for v in getattr(entry, "frame", _ORIGIN))
+    return _ORIGIN
+
+
+def migrate():
+    """Every remembered grip re-expressed once for the socket turn, both
+    hands and the legacy name; gated by MIGRATED, written after the pass.
+    Returns how many were re-expressed. Anything not six numbers is left as
+    it is (`unpack` reads it as zeros anyway)."""
+    if cmds.optionVar(exists=MIGRATED):
+        return 0
+    count = 0
+    for name in cmds.optionVar(list=True) or []:
+        prefix = [p for p in _PREFIXES if name.startswith(p)]
+        if not prefix:
+            continue
+        try:
+            numbers = [float(v) for v in cmds.optionVar(query=name)]
+        except (TypeError, ValueError):
+            continue
+        if len(numbers) != 6:
+            continue
+        frame = frame_for_key(name[len(prefix[0]):])
+        rotate, translate = rebased(numbers[:3], numbers[3:], frame,
+                                    bonedrive.socket_frame(frame))
+        cmds.optionVar(clearArray=name)
+        for value in pack(rotate, translate):
+            cmds.optionVar(floatValueAppend=(name, value))
+        count += 1
+    cmds.optionVar(intValue=(MIGRATED, 1))
+    return count
+
+
 def stored(key, side="R"):
     """The remembered grip, or None when there is none - zeros are a real
     grip (exactly on the bone), so they cannot mean "nothing"."""
+    migrate()
     names = [optionvar_name(key, side)]
     if side == "R":
         names.append(_LEGACY_OPTIONVAR.format(key))
