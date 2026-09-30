@@ -65,8 +65,13 @@ CHARACTERS = [
     # only. Built from the animator's scene by make_creep_rig_asset.py. Since
     # 2026-09-28 the skeleton in the layout of the Creep's own FBX -- `root`
     # under a Null `Armature` turned -90 X («как в файле, единообразно», «и риг
-    # крипа тоже»; make_creep_armature_layout.py).
-    Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig", model="Creep"),
+    # крипа тоже»; make_creep_armature_layout.py). Textured since 2026-09-30
+    # («Вот текстуры для крипа давай сделаем тоже самое что и для мени», «Весь
+    # Крип»): the body, the head and the back/arms set of its own Cascadeur FBX,
+    # whose UVs its meshes carry, at 2048 (assets/Creep/; dressed in place by
+    # make_creep_textured_assets.py, the pipeline's last step).
+    Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig", textured=True,
+              model="Creep"),
     # The Orc Marauder D (2026-09-28, «еще один вариант орка ... SK_Orc_Marauder_D ... материал с
     # текстурами»): the Orc rig -- the Unreal asset's AdvancedSkeleton rig on Manny's bone names
     # with its own proportions (neck 1.39x, upper arm 1.07x), Manny's four helper bones, the
@@ -87,8 +92,9 @@ CHARACTERS = [
     # left in it. Since 2026-09-28 laid out as the Creep's own FBX
     # (Animations/Rigs/Characters/Creep_Skeleton.fbx): `root` under a Null
     # `Armature`, the five meshes at the top beside it.
+    # The same five meshes in the same maps as the rig (2026-09-30).
     Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "skeleton",
-              model="Creep"),
+              textured=True, model="Creep"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations

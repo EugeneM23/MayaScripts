@@ -525,9 +525,9 @@ class TexturedAdd(unittest.TestCase):
         self.assertIn(" - textured (viewport textures on)", text)
         self.assertNotIn(" - red", text)
 
-    def test_both_mannys_are_not_painted_and_their_images_are_relinked(self):
-        """Textured since 2026-09-30, the rig and the skeleton alike."""
-        for key in ("Manny_Rig", "Manny"):
+    def test_the_mannys_and_the_creeps_are_not_painted_and_their_images_are_relinked(self):
+        """Textured since 2026-09-30, the rigs and the skeletons alike."""
+        for key in ("Manny_Rig", "Manny", "Creep_Rig", "Creep"):
             del self.calls[:]
             text = character.add_character(catalog.character_by_key(key), (0.8, 0.25, 0.22))
             self.assertNotIn(("paint",), self.calls, key)
@@ -535,9 +535,9 @@ class TexturedAdd(unittest.TestCase):
             self.assertIn(" - textured (viewport textures on)", text, key)
             self.assertNotIn(" - red", text, key)
 
-    def test_an_untextured_rig_is_still_painted_and_nothing_relinked(self):
-        """The Creep (the Manny until 2026-09-30, when it was textured too)."""
-        text = character.add_character(catalog.character_by_key("Creep_Rig"), (0.8, 0.25, 0.22))
+    def test_an_untextured_row_is_still_painted_and_nothing_relinked(self):
+        """The UE4 Mannequin, the one row left untextured (a Manny, then a Creep, until 2026-09-30)."""
+        text = character.add_character(catalog.character_by_key("UE4_Mannequin"), (0.8, 0.25, 0.22))
         self.assertEqual(self.calls, [("paint",)])
         self.assertIn(" - red", text)
 

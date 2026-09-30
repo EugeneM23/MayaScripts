@@ -565,10 +565,9 @@ class OrcD(unittest.TestCase):
         self.assertTrue(entry.textured)
         self.assertTrue(catalog.is_rig(entry))
 
-    def test_the_textured_rows_are_the_orc_d_and_both_mannys(self):
-        """The Orc D since 2026-09-28, both Manny rows since 2026-09-30."""
-        self.assertEqual([c.key for c in catalog.CHARACTERS if c.textured],
-                         ["Manny_Rig", "Orc_D_Rig", "Manny"])
+    def test_every_row_but_the_ue4_mannequin_is_textured(self):
+        """The Orc D since 2026-09-28, both Manny rows and both Creep rows since 2026-09-30."""
+        self.assertEqual([c.key for c in catalog.CHARACTERS if not c.textured], ["UE4_Mannequin"])
 
     def test_textured_defaults_to_false(self):
         self.assertFalse(catalog.Character("X", "X", "X.ma", "rig").textured)
@@ -659,6 +658,50 @@ class MannyTextured(unittest.TestCase):
             self.assertEqual(sorted(materials), ["skeldarTexture_Manny_HeadLegs",
                                                  "skeldarTexture_Manny_Torso"], key)
 
+
+
+class CreepTextured(unittest.TestCase):
+    """2026-09-30: «Вот текстуры для крипа давай сделаем тоже самое что и для мени» -- and the whole
+    Creep («Весь Крип»): the animator's body colour + normal and head colour, the head's normal and the
+    back/arms set out of the Creep's own Cascadeur FBX, whose UVs our meshes carry index for index; three
+    sets at 2048 JPG, one material per mesh (make_creep_textured_assets.py dressed both .ma in place)."""
+
+    MAPS = tuple("Creep_%s_%s.jpg" % (k, kind) for k in ("Body", "Face", "Limbs") for kind in ("Color", "Normal"))
+
+    def test_both_creep_rows_are_textured(self):
+        for key in ("Creep_Rig", "Creep"):
+            self.assertTrue(catalog.character_by_key(key).textured, key)
+
+    def test_the_maps_ship_in_assets(self):
+        for name in self.MAPS:
+            self.assertTrue(os.path.isfile(catalog.asset_path("Creep/" + name)), name)
+
+    def test_the_shipped_creeps_name_their_images_relatively(self):
+        """Six file nodes, each storing the relative path it is marked with; three materials; nothing
+        of Cascadeur's paths or the palette materials the assets wore, nor the animator's own path the
+        scene they were cut out of left in `fileInfo "exportedFrom"`."""
+        banned = ("createNode script", "vaccine", "C:/", "c:/", "D:/", "E:/", "FBXASC", "creep_T-pose",
+                  "skeldarColour", "exportedFrom", "scratchpad")
+        for key in ("Creep_Rig", "Creep"):
+            path = catalog.character_file(catalog.character_by_key(key))
+            images, stored, files, materials = [], [], 0, []
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    for word in banned:
+                        self.assertNotIn(word, line, key)
+                    files += line.startswith("createNode file ")
+                    if line.startswith("createNode phong "):
+                        materials.append(line.split('"')[1])
+                    if '".skeldarAssetImage"' in line:
+                        images.append(line.split('"')[-2])
+                    if line.startswith('	setAttr ".ftn" -type "string"'):
+                        stored.append(line.split('"')[-2])
+            want = sorted("Creep/" + m for m in self.MAPS)
+            self.assertEqual(sorted(images), want, key)
+            self.assertEqual(sorted(stored), want, key)
+            self.assertEqual(files, 6, key)
+            self.assertEqual(sorted(materials), ["skeldarTexture_Creep_Body", "skeldarTexture_Creep_Face",
+                                                 "skeldarTexture_Creep_Limbs"], key)
 
 class Models(unittest.TestCase):
     """2026-09-30, the portrait grid: one portrait per MODEL, the kind a switch.
