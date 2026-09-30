@@ -124,6 +124,15 @@ class RenameNote(unittest.TestCase):
             ["|Creep_Rig:FKXAnkle_L", "|Creep_Rig:root", "|root", "|Creep_Skeleton_root"])
         self.assertEqual(note, "imported as Creep_Skeleton_root (root already in the scene)")
 
+    def test_beside_rigs_alone_nothing_collided(self):
+        """2026-09-30, the portrait grid's live run: a Creep skeleton added
+        beside rigs only kept its plain `root`, and the note still said
+        "imported as root (Manny_Rig:FKXAnkle_L already in the scene)". A
+        rig's joints are namespaced; with no plain top joint nothing collides."""
+        self.assertEqual(character.rename_note(
+            "|Armature|root", ["|Manny_Rig:FKXAnkle_L", "|Manny_Rig:root",
+                               "|Armature|root"]), "")
+
     def test_the_first_character_gets_no_note(self):
         self.assertEqual(character.rename_note("|root", ["|root"]), "")
 
@@ -531,7 +540,9 @@ class Placed(unittest.TestCase):
             self.log = []
 
         def undoInfo(self, **kwargs):
-            self.log.append(("undo", "open" if kwargs.get("openChunk") else "close"))
+            if kwargs.get("query"):
+                return True
+            self.log.append(("undo", kwargs.get("stateWithoutFlush")))
 
         def ls(self, *args, **kwargs):
             if args and args[0] == "Manny_Rig:Main":
@@ -601,10 +612,16 @@ class Placed(unittest.TestCase):
         self.assertEqual(self.moves(), [])
         self.assertNotIn(" - at (", text)
 
-    def test_one_undo_chunk_around_the_whole_press(self):
+    def test_nothing_after_the_import_is_recorded_for_undo(self):
+        """Measured live 2026-09-30: `file -import` flushes Maya's undo queue,
+        so a character can never be undone - Maya's own File > Import cannot
+        be either. What follows it (the colour, the move, the selection) is
+        therefore not recorded: a Ctrl+Z must not leave the character
+        unpainted at the origin."""
         character.add_character(catalog.character_by_key("Manny_Rig"), (0.8, 0.25, 0.22),
                                 at=(1.0, 0.0, 2.0))
-        chunks = [e[1] for e in self.cmds.log if e[0] == "undo"]
-        self.assertEqual(chunks, ["open", "close"])
-        self.assertEqual(self.cmds.log[0], ("undo", "open"))
-        self.assertEqual(self.cmds.log[-1], ("undo", "close"))
+        undo = [e for e in self.cmds.log if e[0] == "undo"]
+        self.assertEqual(undo, [("undo", False), ("undo", True)])
+        first_move = self.cmds.log.index([e for e in self.cmds.log if e[0] == "move"][0])
+        self.assertLess(self.cmds.log.index(("undo", False)), first_move)
+        self.assertEqual(self.cmds.log[-1], ("undo", True))

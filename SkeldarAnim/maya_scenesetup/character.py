@@ -142,8 +142,12 @@ def rename_note(root, existing_roots):
     # namespaced joints are never it, and an AdvancedSkeleton rig has dozens
     # of top joints (2026-09-24: the note named `Creep_Rig:FKXAnkle_L`).
     plain = [o for o in others if ":" not in o]
+    if not plain:
+        # Beside rigs alone nothing collided (2026-09-30): their top joints
+        # are namespaced, so a plain `root` keeps its name.
+        return ""
     named = [o for o in plain if o == "root"]
-    return RENAMED.format(leaf, (named or plain or others)[0])
+    return RENAMED.format(leaf, (named or plain)[0])
 
 
 def malware_nodes(names):
@@ -511,9 +515,15 @@ def add_character(entry=None, rgb=None, at=None):
     the wrapper -- trap 16).
 
     `at` is a floor point (2026-09-30, a portrait dropped into a viewport):
-    the character stands there (`place`). The whole press is ONE undo chunk
-    -- the import, the colour, the sweep, the move, the selection -- so one
-    Ctrl+Z takes the character out whole.
+    the character stands there (`place`).
+
+    Nothing of the press can be undone, and on purpose. Measured live
+    2026-09-30: `file -import` FLUSHES Maya's undo queue (a cube made before
+    it in the same call could not be undone after it), exactly as Maya's own
+    File > Import. What followed the import - the colour, the sweep, the
+    move, the selection - used to be recorded, so a Ctrl+Z left the new
+    character unpainted at the origin. It runs with undo recording off now
+    (`_unrecorded`): the character arrives whole or not at all.
     """
     entry = entry or catalog.default_character()
 
@@ -523,15 +533,27 @@ def add_character(entry=None, rgb=None, at=None):
     if not os.path.isfile(path):
         return NO_FILE.format(path)
 
-    cmds.undoInfo(openChunk=True, chunkName="Add Character")
-    try:
-        return _add(entry, path, rgb, at, builder)
-    finally:
-        cmds.undoInfo(closeChunk=True)
+    return _add(entry, path, rgb, at, builder)
+
+
+class _unrecorded(object):
+    """Undo recording off for the block - without the flush that
+    `undoInfo(state=False)` does - and back as it was after."""
+
+    def __enter__(self):
+        self.was = bool(cmds.undoInfo(query=True, state=True))
+        if self.was:
+            cmds.undoInfo(stateWithoutFlush=False)
+        return self
+
+    def __exit__(self, *_exc):
+        if self.was:
+            cmds.undoInfo(stateWithoutFlush=True)
+        return False
 
 
 def _add(entry, path, rgb, at, builder):
-    """The body of `add_character`, inside its undo chunk."""
+    """The body of `add_character`: the import, then the rest unrecorded."""
     textured = getattr(entry, "textured", False)
     if rgb is None and not textured:
         rgb = colour.free_colour().rgb
@@ -543,11 +565,17 @@ def _add(entry, path, rgb, at, builder):
 
     before_roots = builder.character_roots()
     new = import_asset(path, namespace or None)
+    with _unrecorded():
+        return _after_import(entry, new, namespace, before_roots, rgb, at,
+                             textured, builder)
 
+
+def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
+                  builder):
+    """Dress, sweep, place and select what the import brought (unrecorded)."""
     # A textured row (2026-09-28, the Orc D) keeps the materials it ships
     # with: its images pointed at the installed copy, the viewport's Textures
-    # on. Everything else gets a fresh palette colour (the press's one undo
-    # chunk covers it: half of a paint undone is a mesh with no shader).
+    # on. Everything else gets a fresh palette colour.
     switched, missing = [], []
     if textured:
         _count, missing = colour.relink_images(new, catalog.asset_path)

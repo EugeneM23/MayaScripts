@@ -93,8 +93,10 @@ The inventory's gesture, for a character:
 The move is relative, so the feet keep the height the file gives them. **Facing is the
 file's (+Z)**: no rotation is written.
 
-**One undo.** The import, the colour, the malware sweep, the selection and the move are one
-undo chunk, the Add button's press too: one Ctrl+Z takes the character out whole.
+**No half-undo** (the live run changed this; see the addendum). A character cannot be
+undone: `file -import` flushes Maya's undo queue, as Maya's own File > Import does. So what
+follows the import (the colour, the sweep, the move, the selection) runs with undo recording
+off: a Ctrl+Z never leaves the new character unpainted at the origin.
 
 **What a placement means, and what it does not.** The retarget works in world space: `Main`
 follows the source's root. A rig dropped at (120, 0, -35) and then given a clip through the
@@ -203,8 +205,53 @@ back to the old dropdown of all six rows, and the rest of the card works as befo
     `fbxlayout.root_in_layout` still answers True;
   - a press of Add Character imports at the origin;
   - the Colour section's paint on the selection repaints the rig just added;
-  - one undo removes a dropped character whole;
+  - a Ctrl+Z after a drop leaves the character whole where it stands;
   - a synthetic press-drag-release on the grid (QMouseEvents at global points) adds a
     character at the release point.
 - **The picture**: the card grabbed (`widget.grab()`, a send of its own - trap 68) for the
   animator.
+
+## Addendum - what the live run changed (2026-09-30)
+
+- **The import cannot be undone, and nothing after it is recorded.** The plan wrapped the
+  press in one undo chunk, and the live gate failed. Measured in the disposable Maya:
+  - a cube made before a `file -import` in the same deferred call could not be undone after
+    it ("There are no more commands to undo");
+  - the chunk left in the queue held only what followed the import, so a Ctrl+Z moved the
+    dropped Orc D back to the origin.
+
+  `character._unrecorded` turns undo recording off (`stateWithoutFlush`) for everything
+  after the import and puts it back as it was. Gate 10 now proves that a Ctrl+Z leaves the
+  dropped character exactly where it stands.
+- **A scripted `iconTextRadioButton -e -select` is not a click.** It ran the segment's
+  `onCommand` in one hub build and not in the next (the grid kept its kind while the
+  segment moved). A Qt `click()` on the button runs it every time, and that is how the
+  verify switches the kind. The animator's real click was never in question.
+- **The rename note named a rig's joint again.** A Creep skeleton added beside rigs alone
+  kept its plain `root`, yet the note said «imported as root (Manny_Rig:FKXAnkle_L already
+  in the scene)». With no plain top joint among the others, nothing collided and there is
+  no note.
+- **The disposable Maya is on the animator's screen** (trap 85 again). Between two sends
+  its hub moved and shrank (the placeholder went from 685 to 546 px), and the undo queue
+  held a `selectionMaskResetAll` nobody sent. The drop's point is projected afresh on every
+  send, and the floating hub is moved off it when it stands in the way.
+
+Proof: `verify_character_grid.py`, all 11 gates passed in the disposable Maya (port 7004):
+- gates 1-9 in one run;
+- gates 10 and 11 in a re-run: a drop queued with `evalDeferred`, then the classic hub.
+
+The measurements:
+- the card holds the grid, 4 portraits, and the placeholder is 685 x 192 physical px at
+  150 % (192 = the grid's height for its width);
+- no colour control and no dropdown in the card;
+- Skeleton dims Orc D, Rig dims the UE4 Mannequin;
+- floor_at within 0.1-1.3 cm of the projected world points;
+- Manny [rig] dropped with `Main` on that floor point to 1e-6, unturned;
+- the Creep skeleton's root moved by exactly (x, 0, z), its `Armature` at the origin, still
+  in Cascadeur's layout;
+- Add Character at the origin;
+- the Colour section repainting the rig Add left selected;
+- a synthetic press-drag-release on the Creep portrait standing a Creep rig at the release
+  point to 1e-6;
+- Ctrl+Z after a drop changing nothing;
+- the grid standing in the classic hub.
