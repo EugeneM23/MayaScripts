@@ -6118,6 +6118,62 @@ textures give way to a colour, the next Add is textured again).
 123. **`difflib.SequenceMatcher` on a 1.2-million-line `.ma` ran over half an hour**; `git diff --no-index -U0`
      answers in seconds.
 
+## The Creep in its own textures, the rig and the skeleton (2026-09-30)
+
+The animator, with three images (`Downloads/creep_body_diff.png`, `creep_body_norm.png`, `creep_face_diff.jpg`):
+«Вот текстуры для крипа давай сделаем тоже самое что и для мени»; asked, **the whole Creep** («Весь Крип»).
+Spec `docs/superpowers/specs/2026-09-30-creep-textured-design.md`. «Creep [rig]» and «Creep [skeleton]» are
+`textured=True` since — so **every row but the UE4 Mannequin arrives textured**, and that mannequin is what the
+unit tests' "an untextured row is still painted" uses now.
+
+**Measured first:**
+- the body's two images are byte for byte what the Creep's Cascadeur FBX (`sources/creep/creep_T-pose_draft.fbx`)
+  embeds as `8.png`/`9.png`, the head's colour its `0.jpg` re-encoded (mean 0.0006). That FBX's meshes wear:
+  `body` 8/9, `face` 0/1, and `back`, `arm_l`, `arm_r` ONE shared set 2/3 (4/5 and 6/7 are the same bytes).
+  Its materials are phongs at full colour — no maths to bake;
+- **our five meshes carry that FBX's UVs index for index** (counts, values to 7.5e-9, per-face uv ids);
+- **the normal maps' green, by the curl of the field**: a height field's normals are curl-free, so in image
+  coordinates (x right, rows down) `d(nx)/dy` and `d(ny)/dx` correlate positively for DirectX, negatively for
+  OpenGL. Unreal's own maps as controls (+0.27, +0.39 at 512²), our flipped Manny map −0.39: **the body −0.24
+  and the back/arms −0.30 are OpenGL (Maya's) already, the head +0.61 DirectX** — at 256..2048 alike, and by
+  the residual curl of either reading. One character's sources can mix conventions.
+
+**The pipeline**, the Manny's with its machinery shared:
+- `docs/superpowers/plans/asset_dress.py` — what dressing a shipped `.ma` needs whatever the character (the empty
+  working folder of trap 119, the open with mayaUsd's extra `UsdDefaultRenderSettings` dropped, the one-shader
+  textured material, a previous run's materials, unused shading, the relative-image check, the save with the
+  header, banned words and `git diff` explained line by line, one process per asset). `make_manny_textured_assets.py`
+  runs on it now; re-run into scratch (`--out DIR`) it gave its committed assets again, down to shading
+  bookkeeping (group ids renumbered, component lists, SG links);
+- `sources/creep/textures/`: the animator's three under their names, the FBX's `1.jpg`/`2.png`/`3.png` as
+  `creep_face_norm.jpg`, `creep_limbs_diff.png`, `creep_limbs_norm.png` (the `.fbm` folder is not in git);
+- `make_creep_textures.py` → `assets/Creep/Creep_{Body,Face,Limbs}_{Color,Normal}.jpg`, 2048 q95, 8.2 MB: the
+  colour as it is, the normals renormalised with the green flipped where the curl test says DirectX (the head),
+  a map it cannot decide (|corr| < 0.1) refused;
+- `make_creep_textured_assets.py` dresses `Creep_Rig.ma` and `Creep_Skeleton.ma` in place — **the Creep pipeline's
+  last step now**, after `make_creep_weapon_sockets.py`: `skeldarTexture_Creep_Body` on `Creep_Body`, `_Face` on
+  `Creep_Face`, `_Limbs` on `Creep_Back`/`Creep_Arm_L`/`Creep_Arm_R`, each mesh whole; the uv counts checked
+  against the FBX's; `fileInfo "exportedFrom"` removed (both assets carried the path of the animator's creature
+  scene in Downloads); **0** body lines changed but shading. The Creep portrait rendered again textured.
+
+Proof: `verify_creep_textured.py` **12/12** standalone (per mesh, our colour against its own set's source 0.011–0.035
+on the mean over its faces, against each other set 0.07–0.15, own/nearest-other at worst 0.26; the normals as
+decided to 2.3/1.0/2.4° against 10.4/1.6/11.5° the other way; skins at their bind 3.8e-6); `verify_creep_rig_asset.py`
+**16/16**, `verify_creep_skeleton_asset.py` **9/9** (their "painted" gates now ask for the three textured materials),
+`verify_creep_bind_pose.py` all gates, `verify_one_shader.py` **4/4** (its hand export of the Creep's meshes carries
+three materials, each with the look), `verify_orc_d_rig_asset.py` **22/22**, `verify_weapon_space.py` **11/11**,
+`verify_inventory.py` **14/14**; 2959 unit tests. A Creep added before this still wears its palette colour:
+re-add it.
+
+124. **The Creep assets carried `fileInfo "exportedFrom" "C:/Users/MY PC/Downloads/creep_T-pose_MIX_06_skin.mb"`**
+     since they were first cut out of the creature scene — a path of the animator's machine in a file every colleague
+     receives, which no check had looked at (the catalog tests read `createNode` lines). The dressing's banned-word
+     check found it; `asset_dress.save_checked(drop_info=...)` removes a fileInfo and expects exactly that line gone.
+125. **An open-and-resave rewrites numbers that did not change**: a constrained joint's cached rotate comes back
+     re-evaluated (1e-6°), and a double is printed with other digits (`5.497270456626897e-05` /
+     `5.4972704566268963e-05`). A text check allows a hunk that replaces lines one for one with the same text but
+     for numbers within 1e-5 — nothing looser.
+
 ## The weapon inventory: two hands, the floor, a Diablo window (2026-09-29)
 
 The animator: «Возможно ли сделать во вкладке Weapon кнопку которая будет инвентарь похожий на
