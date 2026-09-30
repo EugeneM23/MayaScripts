@@ -39,6 +39,7 @@ BUTTON = "skeldarGraphOverlayButton"
 FOLLOW_MS = 100
 ALT_MS = 30
 MIN_UPDATE_S = 0.015
+MOST_TONES = 3      # background tones learnt over a session of frames
 
 HINT = "alt+mouse: camera  |  F / A: frame the graph  |  alt+c: leave"
 PANEL_HINT = "The Graph Editor over the viewport, see-through (alt+c)"
@@ -64,7 +65,7 @@ class _State(object):
         self.placed = False
         self.active = True
         self.through = None
-        self.key = None
+        self.keys = []
         self.table = None
         self.pending = False
         self.last = None
@@ -185,6 +186,16 @@ def _on_swap():
     QtCore.QTimer.singleShot(int(round(delay * 1000)), _update)
 
 
+def learn_tones(found):
+    """Grow the background tones with what this frame shows, never shrink
+    them: the out-of-range tint leaves the frame when the view is inside
+    the range and must not flash back grey when it returns."""
+    for tone in found:
+        if tone not in _STATE.keys and len(_STATE.keys) < MOST_TONES:
+            _STATE.keys.append(tone)
+    return list(_STATE.keys)
+
+
 def _update():
     _STATE.pending = False
     if not is_on() or not _STATE.placed or _STATE.closing:
@@ -200,10 +211,9 @@ def _update():
         width, height = image.width(), image.height()
         pixels = np.frombuffer(image.constBits(), np.uint8).reshape(
             height, image.bytesPerLine() // 4, 4)[:, :width]
-        if _STATE.key is None:
-            _STATE.key = keying.background(pixels)
+        learn_tones(keying.backgrounds(pixels))
         _STATE.glass.set_frame(keying.key_out(
-            pixels, _STATE.key, _STATE.table, _POOL[0] if _POOL else None))
+            pixels, _STATE.keys, _STATE.table, _POOL[0] if _POOL else None))
     except Exception:                                         # noqa: BLE001
         traceback.print_exc()
         return

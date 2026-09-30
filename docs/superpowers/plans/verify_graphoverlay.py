@@ -186,8 +186,8 @@ def placed():
          "the glass lies on it too")
     gate(4, winstyle.is_click_through(int(glass.winId())),
          "the glass is click-through")
-    gate(5, st.frames >= 1, "frames keyed: %d, key colour %s"
-         % (st.frames, st.key))
+    gate(5, st.frames >= 1, "frames keyed: %d, background tones %s"
+         % (st.frames, st.keys))
     image = glass.frame()
     import numpy as np
     ok = image is not None and (image.width(), image.height()) == vp[2:]
@@ -364,6 +364,13 @@ def look():
     back.save(os.path.join(OUT_DIR, "graph_overlay_look.png"))
     image.save(os.path.join(OUT_DIR, "glass_full.png"))
     print("saved", os.path.join(OUT_DIR, "graph_overlay_look.png"))
+    import numpy as np
+    alpha = np.frombuffer(image.constBits(), np.uint8).reshape(
+        image.height(), image.bytesPerLine() // 4, 4)[..., 3]
+    clear = float((alpha == 0).mean())
+    gate(20, len(st.keys) >= 2 and clear > 0.85,
+         "both background tones out (in range and out of it): %.1f%% of "
+         "the frame clear, tones %s" % (clear * 100, st.keys))
 
 
 def hub():

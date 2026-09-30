@@ -46,7 +46,43 @@ class Background(unittest.TestCase):
                          (30, 20, 10))
 
 
+class Backgrounds(unittest.TestCase):
+    """Measured 2026-09-30 on the animator's Graph Editor: the background is
+    TWO tones - 64 inside the playback range (48 % of the frame), 55 outside
+    it (45 %) - and the 55 keyed against 64 alone stood 32 % opaque, a grey
+    panel over a light viewport."""
+
+    def test_both_tones_are_background(self):
+        bgra = frame(40, 40)
+        bgra[:, :18, :3] = 55                      # out of range, left
+        bgra[5, :, :3] = (0, 170, 255)             # a curve
+        self.assertEqual(keying.backgrounds(bgra, step=1),
+                         [(64, 64, 64), (55, 55, 55)])
+
+    def test_a_thin_colour_is_never_background(self):
+        bgra = frame(40, 40)
+        bgra[5, :, :3] = 55                        # one row: 2.5 %
+        self.assertEqual(keying.backgrounds(bgra, step=1), [(64, 64, 64)])
+
+    def test_the_commonest_first_and_at_most_two(self):
+        bgra = frame(30, 30)
+        bgra[:, :12, :3] = 55
+        bgra[:, 12:20, :3] = 50
+        self.assertEqual(keying.backgrounds(bgra, step=1),
+                         [(55, 55, 55), (64, 64, 64)])
+
+
 class KeyOut(unittest.TestCase):
+
+    def test_the_nearest_key_decides(self):
+        table = keying.alpha_table(28)
+        bgra = frame()
+        bgra[0, :4, :3] = 55                       # the second tone
+        bgra[1, 1, :3] = 50                        # 5 off 55, 14 off 64
+        out = keying.key_out(bgra, [(64, 64, 64), (55, 55, 55)], table)
+        self.assertTrue(np.all(out[0, :4, 3] == 0))
+        self.assertTrue(np.all(out[2:, :, 3] == 0))
+        self.assertEqual(out[1, 1, 3], table[5])
 
     def setUp(self):
         self.table = keying.alpha_table(28)

@@ -60,6 +60,27 @@ class HubSection(unittest.TestCase):
         self.assertEqual(mode.HUB_SECTION, "graphoverlay")
 
 
+class LearnTones(unittest.TestCase):
+
+    def setUp(self):
+        mode._STATE.reset()
+
+    def tearDown(self):
+        mode._STATE.reset()
+
+    def test_tones_grow_and_never_shrink(self):
+        self.assertEqual(mode.learn_tones([(64, 64, 64)]), [(64, 64, 64)])
+        self.assertEqual(mode.learn_tones([(55, 55, 55), (64, 64, 64)]),
+                         [(64, 64, 64), (55, 55, 55)])
+        self.assertEqual(mode.learn_tones([(64, 64, 64)]),
+                         [(64, 64, 64), (55, 55, 55)])
+
+    def test_at_most_three(self):
+        for tone in ((1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)):
+            mode.learn_tones([tone])
+        self.assertEqual(len(mode._STATE.keys), mode.MOST_TONES)
+
+
 class TheHint(unittest.TestCase):
 
     def test_it_names_the_camera_and_the_key(self):
