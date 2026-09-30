@@ -58,6 +58,7 @@ _PAYLOAD = (
     "maya_asretarget.py",
     "maya_pmretarget.py",
     "maya_rig_retarget.py",
+    "maya_graphoverlay",        # the Graph Editor over the viewport (2026-09-30)
     "maya_update.py",
     "install.py",
     "README_INSTALL.txt",

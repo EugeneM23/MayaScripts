@@ -475,7 +475,15 @@ class OurRows(unittest.TestCase):
     def test_the_count(self):
         ours = [row for row in maya_hotkeys.COMMANDS
                 if not row[0].startswith("overrig.")]
-        self.assertEqual(len(ours), 32)       # + window.inventory (2026-09-29)
+        #  + window.inventory (2026-09-29), + graph.overlay (2026-09-30)
+        self.assertEqual(len(ours), 33)
+
+    def test_the_graph_overlay_row(self):
+        """Maya's Graph Editor over the viewport, see-through (2026-09-30)."""
+        found = maya_hotkeys.row("graph.overlay")
+        self.assertIsNotNone(found)
+        self.assertEqual(found[1], "SkeldarAnim.Editors")
+        self.assertEqual(found[2], "Graph Overlay")
 
     def test_the_timeline_rows(self):
         self.assertEqual(sorted(self._keys("time.")),
@@ -620,9 +628,10 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 8)
+        self.assertEqual(len(names), 9)
         self.assertIn("maya_hub", names)
         self.assertIn("maya_inventory", names)
+        self.assertIn("maya_graphoverlay", names)
         self.assertIn("maya_scenesetup.connections", names)
         for name in names:
             self.assertIsNotNone(importlib.util.find_spec(name), name)
@@ -1344,10 +1353,11 @@ class TheStarterKeysAfterTheMove(unittest.TestCase):
                          [("a", "time.prev"), ("s", "time.next"),
                           ("+", "time.insert"), ("=", "time.insert"),
                           ("-", "time.remove"), ("_", "time.remove"),
-                          ("g", "editor.graph"), ("o", "editor.outliner")])
+                          ("g", "editor.graph"), ("o", "editor.outliner"),
+                          ("c", "graph.overlay")])
 
     def test_the_version_went_up_again(self):
-        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 5)
+        self.assertGreaterEqual(maya_hotkeys.DEFAULT_KEYS_VERSION, 6)
 
     def test_both_spellings_reach_the_same_command(self):
         maya_hotkeys.bind_defaults()
@@ -1373,23 +1383,21 @@ class ReleasedKeys(unittest.TestCase):
         self.fake = FakeCmds()
         use(self.fake)
 
-    def test_the_table_names_the_old_inbetween_keys_and_the_overlay_toggle(self):
+    def test_the_table_names_the_old_inbetween_keys(self):
         self.assertEqual([(key, row) for key, _mods, row
                           in maya_hotkeys.RELEASED_KEYS],
-                         [("4", "time.insert"), ("5", "time.remove"),
-                          ("c", "window.curveview")])
+                         [("4", "time.insert"), ("5", "time.remove")])
 
-    def test_alt_c_is_given_back_only_while_it_holds_our_toggle(self):
-        """The row left the table with the Curve Overlay (2026-09-08); the
-        spelling of its nameCommand is pure, so the release still works."""
+    def test_alt_c_is_ours_again(self):
+        """Given back with the Curve Overlay on 2026-09-08, taken again for
+        the Graph Overlay on 2026-09-30 - the same idea, the same key; a set
+        still holding the Curve Overlay's toggle there is simply rebound."""
         self.fake.bindings[("c", True)] = \
             maya_hotkeys.name_command("window.curveview")
-        self.assertIn("alt+c", maya_hotkeys.release_keys())
-        self.assertEqual(self.fake.bindings[("c", True)], "")
-        self.fake.bindings[("c", True)] = "somebodyElsesCommandName"
         self.assertNotIn("alt+c", maya_hotkeys.release_keys())
+        maya_hotkeys.bind_defaults()
         self.assertEqual(self.fake.bindings[("c", True)],
-                         "somebodyElsesCommandName")
+                         maya_hotkeys.name_command("graph.overlay"))
 
     def test_no_released_key_is_still_in_use(self):
         """Or we would unbind a key we had just bound."""

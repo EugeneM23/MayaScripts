@@ -84,6 +84,10 @@ SECTIONS = (
     Section("retarget", "Retarget", "maya_rig_retarget",
             "build_panel", "skeldarHubFrameRetarget",
             "animation", "arrows-exchange"),
+    #  2026-09-30: Maya's own Graph Editor over the viewport, see-through.
+    Section("graphoverlay", "Graph Overlay", "maya_graphoverlay.mode",
+            "build_panel", "skeldarHubFrameGraphOverlay",
+            "animation", "chart-line"),
     Section("characters", "Characters", "maya_scenesetup.window",
             "build_characters_panel", "skeldarHubFrameCharacters",
             "scene", "user"),

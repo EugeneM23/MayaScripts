@@ -79,17 +79,18 @@ class TheTable(unittest.TestCase):
         """2026-09-28, the skin: grouped; UE Bridge on top where it always
         was (the same evening), so Animation is the first group. Weapons
         still follows Characters (its refresh writes the Characters
-        header)."""
+        header). The Graph Overlay joined Animation on 2026-09-30."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["UE Bridge", "Retarget", "Characters", "Weapons",
-                          "Connections", "Studio", "Colour", "Hotkeys",
-                          "Update"])
+                         ["UE Bridge", "Retarget", "Graph Overlay",
+                          "Characters", "Weapons", "Connections", "Studio",
+                          "Colour", "Hotkeys", "Update"])
 
     def test_the_groups_and_their_icons(self):
         import maya_hubicons
         groups = [(s.key, s.group) for s in hub.SECTIONS]
         self.assertEqual(groups, [
             ("uebridge", "animation"), ("retarget", "animation"),
+            ("graphoverlay", "animation"),
             ("characters", "scene"), ("weapons", "scene"),
             ("connections", "scene"), ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
@@ -109,8 +110,9 @@ class TheTable(unittest.TestCase):
         """Hotkeys is the header's keyboard; Update is a card again
         (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
-                         ["uebridge", "retarget", "characters", "weapons",
-                          "connections", "studio", "colour", "update"])
+                         ["uebridge", "retarget", "graphoverlay",
+                          "characters", "weapons", "connections", "studio",
+                          "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -119,6 +121,7 @@ class TheTable(unittest.TestCase):
             "weapons": ("maya_scenesetup.window", "build_weapons_panel"),
             "connections": ("maya_scenesetup.connections", "build_panel"),
             "retarget": ("maya_rig_retarget", "build_panel"),
+            "graphoverlay": ("maya_graphoverlay.mode", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
             "colour": ("maya_colour", "build_panel"),
@@ -475,6 +478,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         hub.build()
         self.assertEqual(hub._SKIN.order, [
             ("group", "animation"), ("card", "uebridge"), ("card", "retarget"),
+            ("card", "graphoverlay"),
             ("group", "scene"), ("card", "characters"), ("card", "weapons"),
             ("card", "connections"), ("group", "look"),
             ("card", "studio"), ("card", "colour"), ("group", "settings"),

@@ -60,8 +60,11 @@ TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 # one a physical alt+shift+= press fires cannot be measured over the
 # command port. Both bound, so the key works whichever way a hand reaches
 # it. All four were unbound in the animator's set, so nothing was taken.
-# alt+c joined on 2026-09-05 with the Curve Overlay and left with it on
-# 2026-09-08 (RELEASED_KEYS below).
+# alt+c joined on 2026-09-05 with the Curve Overlay, left with it on
+# 2026-09-08, and came back on 2026-09-30 for the Graph Overlay - the same
+# idea (the graph over the viewport, see-through) done with Maya's own
+# Graph Editor. A set still holding the Curve Overlay's toggle there is
+# simply rebound; nobody else's binding was on it.
 DEFAULT_KEYS = (
     ("a", {"altModifier": True}, "time.prev"),
     ("s", {"altModifier": True}, "time.next"),
@@ -71,6 +74,7 @@ DEFAULT_KEYS = (
     ("_", {"altModifier": True}, "time.remove"),
     ("g", {"altModifier": True}, "editor.graph"),
     ("o", {"altModifier": True}, "editor.outliner"),
+    ("c", {"altModifier": True}, "graph.overlay"),
 )
 
 # Keys DEFAULT_KEYS used to hold and does not any more. They are given back
@@ -82,13 +86,13 @@ DEFAULT_KEYS = (
 RELEASED_KEYS = (
     ("4", {"altModifier": True}, "time.insert"),
     ("5", {"altModifier": True}, "time.remove"),
-    ("c", {"altModifier": True}, "window.curveview"),
 )
 
 # Bumped when either table changes, which re-installs them once -- which is
 # how alt+g and alt+o reached a set that already existed, and how the
-# number keys are handed back -- and alt+c, on 2026-09-08.
-DEFAULT_KEYS_VERSION = 5
+# number keys are handed back -- and alt+c, given back on 2026-09-08 (5)
+# and taken again for the Graph Overlay on 2026-09-30 (6).
+DEFAULT_KEYS_VERSION = 6
 DEFAULT_KEYS_VAR = "skeldarAnimDefaultKeys"
 
 
@@ -771,6 +775,10 @@ _OURS = (
              "GraphEditor")),
     ("editor.outliner", "Editors", "Toggle Outliner",
      "Show or hide the Outliner in this layout", toggle_outliner),
+    ("graph.overlay", "Editors", "Graph Overlay",
+     "Maya's Graph Editor over the viewport with its background taken out; "
+     "alt+mouse is the camera. The same key leaves it",
+     partial(_show, "maya_graphoverlay", "toggle")),
 
     ("picker.connect", "Rig Picker", "Connect",
      "Bind the picker to the selected character",

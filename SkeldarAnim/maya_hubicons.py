@@ -161,6 +161,10 @@ ICONS = {
         "M9 21v-4a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v4",
         "M11 10h2",
     ),
+    "chart-line": (                       # the Graph Overlay (2026-09-30)
+        "M4 19l16 0",
+        "M4 15l4 -6l4 2l4 -5l4 4",
+    ),
 }
 
 NAMES = tuple(sorted(ICONS))
