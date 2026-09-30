@@ -159,11 +159,17 @@ else:
         # -------------------------------------------------------- refusals
         gate(4, "Apply of the standing scheme does nothing",
              cx.apply({"L": None, "R": H}, rig=rig) == cx.NOTHING_TO_DO)
-        cmds.setKeyframe(cx._blend_plug(rig, "L"), time=0, value=3)
+        #  2026-09-30: a KEYED blend is no longer refused (the arm is switched to
+        #  IK keeping what it shows, verify_fkik_switch.py); a blend DRIVEN by
+        #  somebody's node is
+        driver = cmds.createNode("transform", name="verifyBlendDriver")
+        cmds.setAttr(driver + ".tx", 3)
+        cmds.connectAttr(driver + ".tx", cx._blend_plug(rig, "L"), force=True)
         text = cx.apply({"L": F, "R": H}, rig=rig)
-        gate(5, "a blend keyed off IK is refused by name, nothing moved",
-             "FKIKArm_L.FKIKBlend" in text and cx.read_scheme(rig) == {"L": None, "R": H}, text)
-        cmds.cutKey(cx._blend_plug(rig, "L"), clear=True)
+        gate(5, "a blend driven by somebody's node is refused by name, nothing moved",
+             "FKIKArm_L.FKIKBlend is driven by verifyBlendDriver" in text
+             and cx.read_scheme(rig) == {"L": None, "R": H}, text)
+        cmds.delete(driver)
         cmds.setAttr(cx._blend_plug(rig, "L"), 10)
 
         # ------------------------ right holds, left follows (no weapon move)

@@ -149,12 +149,19 @@ class Plan(unittest.TestCase):
 
 class Messages(unittest.TestCase):
 
-    def test_blend_refusal(self):
-        self.assertIsNone(cx.blend_refusal("R", 0.0, keyed=False))
-        self.assertIsNone(cx.blend_refusal("L", 10.0, keyed=True))
-        text = cx.blend_refusal("L", 3.0, keyed=True)
-        self.assertIn("left hand", text)
-        self.assertIn("FKIKArm_L.FKIKBlend", text)
+    def test_a_keyed_blend_is_no_longer_a_refusal(self):
+        """2026-09-30: a following arm is switched to IK keeping what it
+        shows, so a keyed blend is made IK instead of refused."""
+        self.assertFalse(hasattr(cx, "blend_refusal"))
+        self.assertFalse(hasattr(cx, "IK_BLEND"))
+
+    def test_arms_text_names_the_mixed_arms(self):
+        self.assertEqual(cx.arms_text({"R": "FK", "L": "IK"}), "")
+        self.assertEqual(cx.arms_text({"R": None, "L": "IK"}),
+                         "Arm_R mixed FK/IK (keyed)")
+        self.assertEqual(cx.arms_text({"R": None, "L": None}),
+                         "Arm_R, Arm_L mixed FK/IK (keyed)")
+        self.assertEqual(cx.arms_text({}), "")          # a rig with no arms
 
     def test_union_range_snaps_outward(self):
         self.assertEqual(cx.union_range((0.4, 88.792), []), (0.0, 89.0))
@@ -185,6 +192,8 @@ class Messages(unittest.TestCase):
         text = cx.header_text(rig, "|a|LongSwordMesh", scheme(F, H))
         self.assertIn("LongSwordMesh", text)
         self.assertIn("weapon in the right hand; left hand follows", text)
+        text = cx.header_text(rig, None, scheme(), arms="Arm_R mixed FK/IK (keyed)")
+        self.assertTrue(text.endswith("; Arm_R mixed FK/IK (keyed)"))
 
 
 class FakeMenuCmds(FakeUiCmds):
@@ -197,6 +206,7 @@ class FakeMenuCmds(FakeUiCmds):
         self.segments = {}          # collection -> [(button, label)]
         self.owner = {}             # button -> collection
         self.on = {}                # button -> onCommand
+        self.boxes = {}             # FK/IK check box -> value, commands
         self._current = None
 
     def iconTextRadioCollection(self, name=None, **kwargs):
@@ -223,6 +233,31 @@ class FakeMenuCmds(FakeUiCmds):
             self.selected[self._current] = name
         self.children.append(name)
         return name
+
+    def iconTextCheckBox(self, name=None, **kwargs):
+        """The FK / IK boxes (2026-09-30): a value, an on and an off command;
+        an edit of the value runs neither (the real control's, too)."""
+        self.calls.append(("iconTextCheckBox", (name,), kwargs))
+        if kwargs.get("exists"):
+            return name in self.boxes
+        if kwargs.get("query") or kwargs.get("q"):
+            return self.boxes[name]["value"]
+        if kwargs.get("edit") or kwargs.get("e"):
+            if "value" in kwargs:
+                self.boxes[name]["value"] = kwargs["value"]
+            return name
+        self.boxes[name] = {"value": kwargs.get("value", False),
+                            "on": kwargs.get("onCommand"),
+                            "off": kwargs.get("offCommand"),
+                            "label": kwargs.get("label")}
+        self.children.append(name)
+        return name
+
+    def press_box(self, name):
+        """The animator clicks a box: it toggles, then its command runs."""
+        box = self.boxes[name]
+        box["value"] = not box["value"]
+        return (box["on"] if box["value"] else box["off"])()
 
     def pick(self, row, choice):
         """The animator presses a segment: selected, then its onCommand."""
@@ -268,10 +303,11 @@ class Panel(unittest.TestCase):
         for wanted in ("Hand_R", "Hand_L", "Weapon"):
             self.assertIn(wanted, labels)
         #  no description paragraph (the animator: «весь текст описания
-        #  убираем») - the header, the chooser's label (2026-09-29), the
-        #  three row labels and the status
+        #  убираем») - the header, the two FK/IK rows (2026-09-30), the
+        #  chooser's label (2026-09-29), the three row labels and the status
         self.assertIn("Acts on", labels)
-        self.assertEqual(len(labels), 6)
+        self.assertEqual(labels[1:3], ["Arm_R", "Arm_L"])
+        self.assertEqual(len(labels), 8)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -283,7 +319,10 @@ class Panel(unittest.TestCase):
                                  "segment")
         segment_rows = [m for m in self.marks.values()
                         if m.role == "segments"]
-        self.assertEqual(len(segment_rows), 4)      # the chooser's too
+        self.assertEqual(len(segment_rows), 6)      # the chooser's, FK/IK's too
+        for side in ("R", "L"):
+            for mode in ("FK", "IK"):
+                self.assertEqual(self.marks[cx.fkik_box(side, mode)].role, "segment")
         self.assertTrue(all(m.layout for m in segment_rows))
         self.assertEqual(self.marks[cx.HEADER].role, "context")
         self.assertEqual(self.marks[cx.STATUS].role, "status")
@@ -368,6 +407,134 @@ class Panel(unittest.TestCase):
     def test_the_section_follows_weapons(self):
         keys = [s.key for s in maya_hub.SECTIONS]
         self.assertEqual(keys.index("connections"), keys.index("weapons") + 1)
+
+    def _stub_switch(self):
+        asked = []
+        saved = cx.switch_arm
+        cx.switch_arm = lambda side, mode, rig=None, highlight=None: \
+            asked.append((side, mode)) or "switched"
+        self.addCleanup(setattr, cx, "switch_arm", saved)
+        return asked
+
+    def test_fkik_rows_have_two_boxes_each(self):
+        for side in ("R", "L"):
+            self.assertEqual([self.fake.boxes[cx.fkik_box(side, m)]["label"]
+                              for m in ("FK", "IK")], ["FK", "IK"])
+
+    def test_either_press_of_a_box_switches_that_arm(self):
+        """Lighting a box or un-lighting the lit one: both switch - a range
+        inside a take already in that mode must still be pressable."""
+        asked = self._stub_switch()
+        self.fake.press_box(cx.fkik_box("R", "IK"))        # off -> on
+        self.fake.press_box(cx.fkik_box("R", "IK"))        # on -> off
+        self.fake.press_box(cx.fkik_box("L", "FK"))
+        self.assertEqual(asked, [("R", "IK"), ("R", "IK"), ("L", "FK")])
+
+    def test_the_refresh_lights_the_mode_and_presses_nothing(self):
+        """Even if Maya ran a box's command on an edit (trap 116)."""
+        asked = self._stub_switch()
+        plain = self.fake.iconTextCheckBox
+
+        def edit_fires(name=None, **kwargs):
+            out = plain(name, **kwargs)
+            if kwargs.get("edit"):
+                box = self.fake.boxes[name]
+                (box["on"] if box["value"] else box["off"])()
+            return out
+        self.fake.iconTextCheckBox = edit_fires
+        cx._set_fkik({"R": "IK", "L": None})
+        value = lambda side, mode: self.fake.boxes[cx.fkik_box(side, mode)]["value"]
+        self.assertEqual((value("R", "FK"), value("R", "IK")), (False, True))
+        self.assertEqual((value("L", "FK"), value("L", "IK")), (False, False))
+        self.assertEqual(asked, [])
+
+
+class SwitchArm(unittest.TestCase):
+    """`switch_arm`'s order of things, on stubs: refusals before anything
+    moves, a following hand released before FK, IK refused on it."""
+
+    def setUp(self):
+        import maya_rigs
+        self.rig = maya_rigs.Rig("Manny_Rig", "cs", "|G|Main", "|G", "|root")
+        self.done = []
+        self.saved = dict((name, getattr(cx, name)) for name in
+                          ("cmds", "_rig", "following", "_release", "_span",
+                           "sweep_orphans", "_control", "weapon_label"))
+        self.saved_fkik = dict((name, getattr(cx.fkik, name)) for name in
+                               ("limb", "whole_take", "refusal", "switch",
+                                "blend_values"))
+
+        class Cmds(object):
+            existing = set()
+
+            def objExists(self, name):
+                return name in self.existing
+
+            def undoInfo(inner, **kwargs):
+                self.done.append(("undo", "open" if kwargs.get("openChunk") else "close"))
+
+        self.cmds = Cmds()
+        cx.cmds = self.cmds
+        cx._rig = lambda rig: (self.rig, "")
+        cx.following = lambda rig, side: None
+        cx._release = lambda rig, side, span: self.done.append(("release", side))
+        cx._span = lambda weapon, controls: (0.0, 24.0)
+        cx.sweep_orphans = lambda: 0
+        cx._control = lambda rig, side: "|IKArm_" + side
+        cx.weapon_label = lambda weapon: "Long Sword 02"
+        cx.fkik.limb = lambda rig, side: ("arm_" + side, "")
+        cx.fkik.whole_take = lambda arm: (0.0, 24.0)
+        cx.fkik.refusal = lambda arm, mode, span, ignore=(): ""
+        cx.fkik.switch = lambda arm, mode, span: self.done.append(
+            ("switch", arm, mode, span)) or "Arm_R to %s" % mode
+        cx.fkik.blend_values = lambda arm: [10.0]
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(cx, name, value)
+        for name, value in self.saved_fkik.items():
+            setattr(cx.fkik, name, value)
+
+    def test_a_free_arm_is_switched_over_the_whole_take(self):
+        text = cx.switch_arm("R", "FK", highlight=False)
+        self.assertEqual(self.done, [("undo", "open"),
+                                     ("switch", "arm_R", "FK", (0, 24, False)),
+                                     ("undo", "close")])
+        self.assertEqual(text, "Arm_R to FK")
+
+    def test_a_highlight_is_the_span(self):
+        cx.switch_arm("L", "IK", highlight=(10.0, 16.0))
+        self.assertIn(("switch", "arm_L", "IK", (10, 15, True)), self.done)
+
+    def test_fk_on_a_following_hand_releases_it_first(self):
+        cx.following = lambda rig, side: "|sword"
+        text = cx.switch_arm("R", "FK", highlight=False)
+        self.assertEqual([d[0] for d in self.done],
+                         ["undo", "release", "switch", "undo"])
+        self.assertIn("Hand_R released from Long Sword 02", text)
+
+    def test_ik_on_a_following_hand_is_already_ik(self):
+        cx.following = lambda rig, side: "|sword"
+        text = cx.switch_arm("R", "IK", highlight=False)
+        self.assertIn("already IK (it follows Long Sword 02)", text)
+        self.assertEqual(self.done, [])
+
+    def test_ik_on_a_following_hand_in_a_mixed_take_asks_for_free(self):
+        cx.following = lambda rig, side: "|sword"
+        cx.fkik.blend_values = lambda arm: [10.0, 0.0]
+        text = cx.switch_arm("R", "IK", highlight=False)
+        self.assertEqual(text, "Hand_R follows Long Sword 02 - set it Free first")
+        self.assertEqual(self.done, [])
+
+    def test_a_refusal_moves_nothing(self):
+        cx.fkik.refusal = lambda arm, mode, span, ignore=(): "Arm_R is already FK"
+        self.assertEqual(cx.switch_arm("R", "FK", highlight=False), "Arm_R is already FK")
+        self.assertEqual(self.done, [])
+
+    def test_a_standing_retarget_is_refused(self):
+        self.cmds.existing.add("Manny_Rig:MoCapConstraints")
+        self.assertEqual(cx.switch_arm("R", "FK", highlight=False), cx.RETARGETING)
+        self.assertEqual(self.done, [])
 
 
 class Boundaries(unittest.TestCase):

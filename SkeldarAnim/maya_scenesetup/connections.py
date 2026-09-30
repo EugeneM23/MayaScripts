@@ -74,9 +74,19 @@ switches and the FK/IK align read it. So:
   the old bone (`bonedrive.unlink`, baked back) and constrains the new one
   onto the weapon with no offset, so the export socket sits ON the weapon.
 
-`FKIKArm_*.FKIKBlend` goes to 10 for a following arm; keyed elsewhere it
-is a refusal by name. Poles untouched. The retarget refuses a rig with
-following hands (`maya_rig_retarget.hands_connected`).
+A following arm is brought to IK over the whole take first, by the FK/IK
+switch (`fkik`, 2026-09-30): the IK is keyed to what the arm SHOWS, so an FK
+arm edited after the retarget no longer jumps when its hand goes onto the
+weapon, and a keyed blend is no longer a refusal. The retarget refuses a rig
+with following hands (`maya_rig_retarget.hands_connected`).
+
+## FK / IK (2026-09-30)
+
+Two rows at the top, `Arm_R [FK | IK]`, `Arm_L [FK | IK]`: a press switches
+that arm at once, over the highlighted range on the time slider or else the
+whole take, keeping what the arm shows (`fkik`); the lit segment is the mode
+read from the rig, none when the blend is mixed. FK on a hand that rides the
+weapon releases it first (baked where its proxy carried it).
 
 Spec: docs/superpowers/specs/2026-09-18-connections-design.md (addendum)
 """
@@ -92,6 +102,7 @@ from maya_overrig import overrig
 from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
 from maya_scenesetup import catalog
+from maya_scenesetup import fkik
 from maya_scenesetup import skeleton
 from maya_scenesetup import weaponspace
 
@@ -124,10 +135,10 @@ SIDES = ("L", "R")
 SIDE_LABEL = {"R": "right hand", "L": "left hand"}
 WEAPON_BONE = {"R": "weapon_r", "L": "weapon_l"}
 IK_CONTROL = "IKArm_{0}"
-BLEND_NODE = "FKIKArm_{0}"
-BLEND_ATTR = "FKIKBlend"
-IK_BLEND = 10.0
-CHANNELS = ("translateX", "translateY", "translateZ",
+# the FK / IK rows (2026-09-30): two check boxes a row, either press switches
+FKIK_BOX = "skeldarConnectionsFKIK_{0}_{1}"
+ARM_ROW = "Arm_{0}"
+CHANNELS =("translateX", "translateY", "translateZ",
             "rotateX", "rotateY", "rotateZ")
 
 HOLDS = "holds"
@@ -319,15 +330,6 @@ def is_constant(values, tolerance=STATIC_TOLERANCE):
     return not values or (max(values) - min(values)) <= tolerance
 
 
-def blend_refusal(side, value, keyed):
-    """Why a following arm may not be put in IK, or None. Pure."""
-    if keyed and abs(value - IK_BLEND) > 1e-6:
-        return ("%s: %s.%s is keyed at %g - set it to %g (IK) or unkey it "
-                "first" % (SIDE_LABEL[side], BLEND_NODE.format(side),
-                           BLEND_ATTR, value, IK_BLEND))
-    return None
-
-
 def union_range(playback, keys):
     """(start, end) covering the playback range and the weapon's keys,
     snapped outward to whole frames. Pure."""
@@ -362,8 +364,21 @@ def _control(rig, side):
 
 
 def _blend_plug(rig, side):
-    paths = cmds.ls(maya_rigs.node(rig, BLEND_NODE.format(side)), long=True) or []
-    return (paths[0] + "." + BLEND_ATTR) if paths else None
+    paths = cmds.ls(maya_rigs.node(rig, fkik.FKIK_NODE.format(fkik.LIMB, side)),
+                    long=True) or []
+    return (paths[0] + "." + fkik.BLEND_ATTR) if paths else None
+
+
+def _not_ik(rig, side):
+    """The arm, when it is not IK over the whole take (else None)."""
+    arm, _refusal = fkik.limb(rig, side)
+    if arm and fkik.mode_of(fkik.blend_values(arm)) != fkik.IK:
+        return arm
+    return None
+
+
+def _whole(arm):
+    return fkik.span_for(None, fkik.whole_take(arm))
 
 
 def bones_of(rig):
@@ -670,13 +685,17 @@ def detach_from_proxy(obj, span):
 
 
 def _follow(rig, side, target, span):
-    """The hand's IK control onto a proxy inside the weapon; the arm in IK."""
-    plug = _blend_plug(rig, side)
-    if plug and not cmds.listConnections(plug, source=True, destination=False):
-        cmds.setAttr(plug, IK_BLEND)
-    return attach_to_proxy(_control(rig, side), target, span,
-                           maya_rigs.node(rig, PROXY_NAME.format(side)),
-                           "%s:%s" % (rig.namespace, side))
+    """The hand's IK control onto a proxy inside the weapon. An arm not in
+    IK over the whole take is switched first, keeping what it shows (before
+    2026-09-30 the blend was only set to 10 over whatever the IK held, and
+    an FK arm edited after the retarget jumped). Returns the switch's note,
+    or ''."""
+    arm = _not_ik(rig, side)
+    note = fkik.switch(arm, fkik.IK, _whole(arm)) if arm else ""
+    attach_to_proxy(_control(rig, side), target, span,
+                    maya_rigs.node(rig, PROXY_NAME.format(side)),
+                    "%s:%s" % (rig.namespace, side))
+    return note
 
 
 def _release(rig, side, span):
@@ -744,19 +763,17 @@ def apply(wanted, rig=None, weapon=None):
                 return "%s: %s not found in %s" % (SIDE_LABEL[side],
                                                    IK_CONTROL.format(side),
                                                    maya_rigs.label(rig))
-            plug = _blend_plug(rig, side)
-            if plug:
-                keyed = bool(cmds.listConnections(plug, source=True,
-                                                  destination=False))
-                text = blend_refusal(side, cmds.getAttr(plug), keyed)
-                if text:
-                    return text
+            arm = _not_ik(rig, side)
+            text = fkik.refusal(arm, fkik.IK, _whole(arm)) if arm else ""
+            if text:
+                return text
     if any(step in ("lift", "hang") for step, _ in steps):
         gate = overrig.mel_gate()
         if gate:
             return gate
 
     uuid = cmds.ls(weapon, uuid=True)[0]
+    notes = []
     cmds.undoInfo(openChunk=True, chunkName="Connections: apply")
     try:
         sweep_orphans()
@@ -787,9 +804,12 @@ def apply(wanted, rig=None, weapon=None):
                 # a floor drop parked on it no longer belongs to anybody.
                 bonedrive.drop_park(weapon)
             elif step == "follow":
-                _follow(rig, side, attach.model_root(weapon), span)
+                note = _follow(rig, side, attach.model_root(weapon), span)
+                if note:
+                    notes.append(note)
         weapon = cmds.ls(uuid, long=True)[0]
-        return applied_message(steps, read_scheme(rig, bones, weapon))
+        return applied_message(steps, read_scheme(rig, bones, weapon)) + \
+            "".join(" | " + note for note in notes)
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -934,6 +954,54 @@ def disconnect(rig=None):
     return apply(wanted, rig=rig)
 
 
+def _highlight():
+    """The range highlighted on the time slider, or None (none in batch)."""
+    try:
+        return overrig.slider_selection()
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def switch_arm(side, mode, rig=None, highlight=None):
+    """The arm on `side` to FK or IK over the highlighted range, else the
+    whole take, keeping what it shows (`fkik.switch`). FK on a hand that
+    rides a weapon releases it first (over the whole take - the link is the
+    take's). `highlight` overrides the slider (a verify has none). One undo
+    chunk; refusals before anything moves."""
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
+        return RETARGETING
+    arm, text = fkik.limb(rig, side)
+    if arm is None:
+        return text
+    span = fkik.span_for(_highlight() if highlight is None else highlight or None,
+                         fkik.whole_take(arm))
+    rides = following(rig, side)
+    if rides and mode == fkik.IK:
+        if fkik.mode_of(fkik.blend_values(arm)) == fkik.IK:
+            return fkik.ALREADY % (fkik.ARM_LABEL.format(side), "IK (it follows %s)"
+                                   % weapon_label(rides))
+        return "%s follows %s - set it Free first" % (ROW_LABEL[side],
+                                                      weapon_label(rides))
+    text = fkik.refusal(arm, mode, span)
+    if text:
+        return text
+    notes = []
+    cmds.undoInfo(openChunk=True, chunkName="Connections: %s to %s"
+                  % (fkik.ARM_LABEL.format(side), mode))
+    try:
+        if rides:
+            sweep_orphans()
+            _release(rig, side, _span(rides, [_control(rig, s) for s in SIDES]))
+            notes.append("%s released from %s" % (ROW_LABEL[side], weapon_label(rides)))
+        notes.append(fkik.switch(arm, mode, span))
+        return "; ".join(notes)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+
 # ------------------------------------------------------------------ panel
 
 def _status(text):
@@ -953,15 +1021,29 @@ def _run(action):
         refresh()
 
 
-def header_text(rig, weapon, scheme, others=""):
-    """The header line; `others` says where the other weapon is. Pure."""
+def header_text(rig, weapon, scheme, others="", arms=""):
+    """The header line; `others` says where the other weapon is, `arms`
+    which arm is mixed FK/IK. Pure."""
     if rig is None:
         return "no rig in the scene"
+    tail = "; " + arms if arms else ""
     if not weapon:
-        return "%s: no weapon - Weapons > Add first" % maya_rigs.label(rig)
+        return "%s: no weapon - Weapons > Add first%s" % (maya_rigs.label(rig), tail)
     text = "%s: %s - %s" % (maya_rigs.label(rig), weapon.split("|")[-1],
                             describe(scheme))
-    return text + ("; also " + others if others else "")
+    return text + ("; also " + others if others else "") + tail
+
+
+def arms_text(modes):
+    """«Arm_R mixed FK/IK» for each arm whose blend is keyed between the two
+    ({side: mode or None}, an arm the rig lacks left out). Pure."""
+    mixed = [ARM_ROW.format(side) for side in ("R", "L")
+             if side in modes and modes[side] is None]
+    return ", ".join(mixed) + " mixed FK/IK (keyed)" if mixed else ""
+
+
+def fkik_box(side, mode):
+    return FKIK_BOX.format(side, mode)
 
 
 def where_text(label, scheme):
@@ -1058,11 +1140,42 @@ def refresh(*_args):
     scheme = read_scheme(rig, bones, weapon) if weapon else {"L": None, "R": None}
     _set_chooser(weapons, weapon, [_side_of(rig, bones, w) for w in weapons])
     _set_menus(menus_from_scheme(scheme))
+    modes = _arm_modes(rig)
+    _set_fkik(modes)
     others = "; ".join(where_text(weapon_label(w), read_scheme(rig, bones, w))
                        for w in weapons if not _same(w, weapon))
-    text = header_text(rig, weapon, scheme, others)
+    text = header_text(rig, weapon, scheme, others, arms_text(modes))
     cmds.text(HEADER, edit=True, label=text)
     return text
+
+
+def _arm_modes(rig):
+    """{side: FK / IK / None (mixed)} for each arm the rig has."""
+    modes = {}
+    for side in SIDES:
+        arm = fkik.limb(rig, side)[0] if rig else None
+        if arm:
+            modes[side] = fkik.mode_of(fkik.blend_values(arm))
+    return modes
+
+
+_FKIK_QUIET = {"on": False}
+
+
+def _set_fkik(modes):
+    """Light each arm's mode, neither when mixed or missing. Quiet: a box's
+    own command must not fire from here (trap 116 - an edit ran a radio's
+    onCommand in one hub build)."""
+    _FKIK_QUIET["on"] = True
+    try:
+        for side in SIDES:
+            for mode in fkik.MODES:
+                name = fkik_box(side, mode)
+                if cmds.iconTextCheckBox(name, exists=True):
+                    cmds.iconTextCheckBox(name, edit=True,
+                                          value=modes.get(side) == mode)
+    finally:
+        _FKIK_QUIET["on"] = False
 
 
 def is_open():
@@ -1109,6 +1222,16 @@ def _press_release_across(*_args):
     return _run(lambda: release_across())
 
 
+def _press_fkik(side, mode):
+    """Either press of a box - lighting it or not - switches the arm; the
+    refresh after it lights what IS."""
+    def go(*_args):
+        if _FKIK_QUIET["on"]:
+            return None
+        return _run(lambda: switch_arm(side, mode))
+    return go
+
+
 def _press_connect(*_args):
     return _run(lambda: connect())
 
@@ -1126,6 +1249,28 @@ def build_panel():
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(HEADER, label="", align="left", wordWrap=True,
                             height=36), "context")
+    #  FK / IK per arm (2026-09-30): check boxes, not radios - a radio does
+    #  not fire on the lit segment (a range inside a take of that mode), and
+    #  a mixed take lights neither. A press switches at once.
+    for side in SIDES[::-1]:
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                       columnWidth2=(64, 110),
+                       columnAttach=[(1, "left", 0), (2, "both", 4)])
+        cmds.text(label=ARM_ROW.format(side), font="boldLabelFont")
+        segments = cmds.rowLayout(numberOfColumns=2,
+                                  columnAttach=[(1, "both", 1), (2, "both", 1)])
+        hubstyle.mark(segments, "segments", layout=True)
+        for mode in fkik.MODES:
+            hubstyle.mark(cmds.iconTextCheckBox(
+                fkik_box(side, mode), style="textOnly", label=mode, height=22,
+                value=False,
+                annotation="{0} to {1} - over the highlighted range, else the "
+                           "whole take; the arm keeps what it shows".format(
+                               ARM_ROW.format(side), mode),
+                onCommand=_press_fkik(side, mode),
+                offCommand=_press_fkik(side, mode)), "segment")
+        cmds.setParent("..")
+        cmds.setParent("..")
     #  Which of two weapons the rows act on (2026-09-29): the selection names
     #  one too. Two fixed segments - labels written by refresh, an empty slot
     #  disabled - rather than rows that come and go, which the skin's
@@ -1192,8 +1337,11 @@ def build_panel():
                    "again",
         command=_press_release_across), "secondary", "unlink")
     cmds.setParent("..")
+    #  three lines (2026-09-30): an Apply plus the FK/IK switch it made first
+    #  is longer than two - a wordWrap text keeps the height it is given
+    #  (trap 67)
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
-                            height=36), "status")
+                            height=54), "status")
     cmds.setParent("..")
     try:
         refresh()

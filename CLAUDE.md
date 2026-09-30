@@ -6629,3 +6629,74 @@ and the classic one), Add (primary) + Remove Weapon (danger) in one row, the lin
      had the animator using the disposable Maya between sends (trap 85 again: its optionVars and undo
      queue showed an Orc D picked, Spear 01 dropped into a hand, the hub resized): the clean sequence
      card -> hands -> photo is what the 10/10 stands on.
+
+## Connections: FK / IK for the arms (2026-09-30)
+
+The animator: «Для вкладки connections нужно реализовать кнопочки которые будут переключать руки в FK IK.
+Тут нужно учесть несколько нюансов. У адванцед скелетона уже есть встроенный переключатель FK IK.» Asked,
+and answered: the span is **the highlighted range on the time slider, else the whole take**; FK on a hand
+that rides the weapon **releases it, then switches**; **[FK | IK] per arm, acting at once**. Spec:
+`docs/superpowers/specs/2026-09-30-connections-fkik-switch-design.md` — **read its addendum**, the build
+changed the source. Module `maya_scenesetup/fkik.py` (cmds + OpenMaya, imports no panel and no OverRig).
+Proof: `docs/superpowers/plans/verify_fkik_switch.py` **63/63 standalone** (21 per rig: Manny, Creep,
+Orc D, a UE clip retargeted through the button); `verify_connections.py` **40/40 live** in a disposable
+Maya; the card clicked through Qt there; 2959 unit tests.
+
+**AdvancedSkeleton's own switch, read and replicated** (`asSwitchFKIK` / `asAlignFKIK` in
+`AdvancedSkeleton.mel`): the state is `FKIKArm_<side>.FKIKBlend` (0 FK, 10 IK); FK2IK puts `IKArm` on
+`AlignIKTo<Wrist>`, the pole from the FKX chain and every custom attribute to its default; IK2FK turns
+each FK control onto its IKX joint. It is not called - a colleague's Maya has no AS and the plugin runs
+none of it since 2026-09-07 (`vendor_bake`).
+
+- **The arm keeps what it shows**: the FKX and IKX chains and the blend are sampled on every frame BEFORE
+  anything moves and blended as the rig blends them (the twist network's `<Joint>BM_<side>` blendMatrix:
+  positions lerped, rotations slerped the short way) - so a switch works from FK, IK or a keyed / half-way
+  blend alike. NOT the deformation joints (trap 126).
+- **to FK**: control world = `L⁻¹ · source` (L = the FKX joint in its control, constant -
+  `CustomOrientReverse`, 172.9–180°), the elbow's and wrist's parents the rigid chain from the NEW upper
+  joint; translate + rotate, the euler nearest the frame before (trap 108). **Exact: 0.0000 cm, 0.000°.**
+- **to IK**: `IKArm = K · source_wrist` (K = `AlignIKTo<Wrist>` in the FKX wrist - it stands where `IKArm`
+  does at build pose on all three rigs, ≤ 3e-6°); the pole on the source's plane (`maya_pmretarget`'s:
+  base on the shoulder-wrist line at the elbow's share, nudged 0.2 % of the limb in the elbow's frame,
+  aimed at the elbow, a limb out); `swivel`, `antiPop`, `Lenght1/2`, the pole's `followArm` and `lock`
+  reset over a whole take (named), a refusal inside a range. **An IK elbow is a hinge, so the FK elbow's
+  twist about its own bone is lost** - the clip's forearm pronation, up to 59° at one frame of
+  `LongSword_Attack_Right_Heavy_3P`, the same on every rig; AS's own switch has the same limit. Places
+  kept to 0.016–0.048 cm (a retargeted FK arm has the SOURCE's bone lengths, the IK the rig's -
+  `TOLERANCE_CM` 0.05), the hand's turn to 0.0001°. On an FK take an IK arm can hold, exact both ways.
+- **Measured and said**: after the write the deformation joints are read again - places, the hand's turn,
+  the arm's roll - and the status line says which («hand and elbow kept to 0.026 cm; the FK forearm twist
+  is lost, up to 59 deg at frame 32 (an IK elbow does not twist)»).
+- **A range** (`timeControl -rangeArray`, end exclusive, through `overrig.slider_selection`): the blend
+  keyed `a-1` (inserted, shape kept) / `a` / `b` target / `b+1` (inserted), stepped out of `a-1` and `b`;
+  the target controls' keys outside the range kept. **The whole take**: playback ∪ every involved
+  control's keys, the blend unkeyed, a constant channel collapsed to a value. autoKey off, one undo chunk.
+- **The card**: two rows at the top, `Arm_R [FK | IK]`, `Arm_L [FK | IK]` - `iconTextCheckBox`es
+  (`QmayaIconTextCheckBox`, a QPushButton, so the skin's segment style lights it), not radios: a radio
+  does not fire on the lit segment (a range inside a take in that mode) and a mixed take must light
+  neither. Either press switches; `refresh` lights the mode read from the rig (FK / IK when every blend
+  value sits at one end) under a quiet flag (trap 116); the header names a mixed arm. The status line is
+  three lines now (54, trap 67).
+- **Connections**: FK on a following hand = its release (baked where the proxy carried it) + the switch;
+  IK on it «already IK (it follows …)», or «set it Free first» in a mixed take. **Hand -> Weapon switches
+  the arm to IK over the whole take first** - the old «blend to 10» put the arm on whatever the IK held,
+  and **the retarget's own IK stands 20.7 cm off its FK on Manny** (its pole rides the upper arm's frame;
+  0.06 cm on the rotation-only Creep and Orc D); so `blend_refusal` is gone (a keyed blend is switched),
+  and `verify_connections.py`'s gate 5 refuses a blend DRIVEN by a node instead.
+- **The cost is the rig's evaluation**: 14 ms a frame on Manny live, two walks (sample, measure) - 1.35–2.2
+  s for 61 frames; `refresh -suspend` saved nothing (trap 127).
+
+Not built: legs (toes, heel roll, IKToes), scale, an IK stretched to a longer FK arm, hotkey rows
+(`maya_hotkeys.py` held another session's uncommitted work, and nobody asked).
+
+126. **AdvancedSkeleton's deformation arm joints are NOT the FK/IK blend.** Their orient constraint's
+     `offsetX` is driven by the twist network (`twistAdditionElbow_R_output1DUC1.o ->
+     Elbow_R_orientConstraint1.ox`, memory "constraint offset can be driven"), so `Shoulder/Elbow_R`
+     stand off both chains by the arm's own roll - 59–83° at one frame of a UE clip - while their places
+     are exact. A switch that took them as "what the arm shows" and put the FKX chain on them came out
+     with every position right and the forearm rolled 83°. The shown arm is the FKX and IKX blend the
+     network itself reads (`ElbowBM_R`, a blendMatrix); the deformation joints are only for measuring.
+127. **`currentTime -update false` + `getAttr` reads stale values**: 12x faster over 82 frames and 289 off
+     the full update, measured in parallel AND with the evaluation manager off. A frame walk that reads
+     a rig needs the full update (14 ms a frame on Manny live), and `refresh -suspend` does not make it
+     cheaper - the cost is evaluation, not drawing.
