@@ -6338,3 +6338,92 @@ untouched. 2806 unit tests. The scene was put back to an empty untitled one.
      compare it back (`diff -rq`), and write `version.json` into the snapshot first.
 114. **A `WindowFromPoint` gate sees every program's windows.** Gate 12 read the canvas of the
      animator's other Maya's floating Graph Editor lying over the point; the rerun, with it moved, passed.
+
+## The Characters card: a portrait grid, a character dragged into the scene (2026-09-30)
+
+The animator: «Все что касается покраски вынесем из меню, будем красить в меню с красками.
+Давай полностью переделаем наше меню на сетку с портретами (как меню выбора героев в Mortal
+Kombat или Dota 2) ... кликнув по нему мышкой и потом нажав кнопочку Add Character ... зажать
+на портрете и перетащить его в сцену Maya, и персонаж создастся в том месте, куда я его
+перетащил». Asked, and answered:
+- head and shoulders, square (MK);
+- ONE portrait per model with a `[Rig | Skeleton]` switch;
+- a dropped character faces +Z as its file does, translation only;
+- «делай все до самого конца».
+
+Spec `docs/superpowers/specs/2026-09-30-character-portrait-grid-design.md` (read its addendum),
+plan beside it. Proof `verify_character_grid.py`, **11/11 live in a disposable Maya** (port 7004,
+scratch `MAYA_APP_DIR`, `MAYA_NO_HOME=1`). 2808 unit tests. The installed copy refreshed in
+the animator's Maya from a `git archive HEAD` export (not the working tree, which held another
+session's edits), `diff -rq` clean.
+
+**The card** (`window.build_characters_panel`):
+- the subtitle, the `[Rig | Skeleton]` segments `mayaSceneSetupCharacterKind_<kind>`, the grid,
+  Add Character (primary), Camera Setup, the status line;
+- **no colour**: the dots, the swatch and Recolour are gone (`_CHARACTER_COLOUR`,
+  `_CHARACTER_DOT`, `recolour_character` deleted, gone-tests pin it). Add passes no colour, so
+  the character arrives in the next free palette colour, and the **Colour** section repaints
+  the selection. Add leaves the rig's `Main` selected, so one click there paints it (gate 8).
+  The Weapons card keeps its colour row;
+- the pick is remembered as `mayaSceneSetup_characterModel` + `mayaSceneSetup_characterKind`
+  (`remembered_choice`; the old dropdown's `mayaSceneSetup_character` label is the fallback,
+  so the animator's last pick survived: the live card opened on Creep);
+- a model without the chosen kind (Orc D has no skeleton, the UE4 Mannequin no rig) is dimmed
+  with a «no rig» pill, cannot be picked or dragged, and Add refuses it by name;
+- where Qt cannot stand, the card builds the old dropdown of six rows (`_character_dropdown`)
+  and `chosen_character()` reads it.
+
+**The catalog**: `Character.model` and `catalog.MODELS` (Manny, Creep, Orc_D, UE4_Mannequin
+in grid order), `KINDS`, `character_for(model, kind)`, `kinds_of`, `portrait_path`. **A new
+character row needs a model and, for a new model, a portrait** (a test pins one per model):
+re-run `docs/superpowers/plans/make_character_portraits.py` in a disposable GUI Maya. It
+renders:
+- each model's rig row (else its skeleton), a clay phong on all but the textured Orc D;
+- three directional lights, AO, 16x AA;
+- an 85 mm camera framed from the upper arms and the meshes' top, turned 22 degrees;
+- a 512 px playblast with alpha, scaled to a 256 px RGBA PNG in
+  `assets/character_portraits/`.
+
+Viewport 2.0 loads textures in the background: the first Orc D blast had black shoulder pads,
+hence a few forced draws for a textured row.
+
+**The grid** (`maya_chargrid`, Qt; its look `maya_charlook`, stdlib; both in the payload):
+- columns of at least 72 and at most 120 logical px (one row of four in the 360 px dock);
+- how it sits in the card: the builder makes an empty `cmds.columnLayout`
+  `mayaSceneSetupPortraits`, and `attach()` lays the grid OVER it (the `_spread` pattern) with
+  a `Keeper` filter that keeps the placeholder `setFixedHeight(grid.height_for(width))` on every
+  resize. Measured: 685 x 192 physical at 150 %, honoured by Maya's layouts in the skin and the
+  classic hub alike (gates 1, 11);
+- a click selects (`window.select_model`);
+- a press past `startDragDistance` starts the drag:
+  - the shared ghost rides the cursor (`maya_hubqt.ghost_class()`, moved there from the
+    inventory, which uses it too), the caption «Manny [rig] · floor (120, -36)»;
+  - Esc or the right button cancels; a release on the hub does nothing (`Scene.over_hub`:
+    widget ancestry, else the `skeldarAnimHub` control's rect);
+- the release: `droptarget.floor_at` (the camera ray meets Y = 0), then
+  `window.place_character` → `character.add_character(entry, at=point)`.
+
+**Placement** (`character.place`): a rig's `Main`, else the skeleton's `root`, moved by
+`(x, 0, z)` relative in world space. **Never the Creep skeleton's `Armature`**: a moved Null
+is no longer Cascadeur's layout to `fbxlayout.in_layout`. Measured:
+- Main on the floor point to 1e-6, unturned;
+- the Creep root moved by exactly (x, 0, z), `Armature` at the origin, `root_in_layout` True;
+- a synthetic press-drag-release on the Creep portrait: a rig at the release point, 1e-6.
+
+A retarget then puts `Main` where the clip's root is, world space as always: the drop chooses
+where a character appears.
+
+115. **`file -import` FLUSHES Maya's undo queue.** Measured 2026-09-30 in a deferred call: a
+     cube made before the import could not be undone after it («There are no more commands to
+     undo»). Nothing that imports a file can be undone, Maya's own File > Import included. A
+     press that wraps an import in an undo chunk therefore half-undoes: the chunk left held only
+     what followed, and a Ctrl+Z moved the dropped Orc D back to the origin. Everything after the
+     import runs unrecorded now (`character._unrecorded`: `undoInfo -stateWithoutFlush`, the
+     previous state put back). Gate 10: a Ctrl+Z after a drop changes nothing.
+116. **A scripted `iconTextRadioButton -e -select` is not a click.** It ran the segment's
+     `onCommand` in one hub build (the grid and the optionVar followed) and not in the next
+     (the segment moved, the grid kept its kind); a Qt `click()` on the button ran it every
+     time. A verify switches a segment by clicking its Qt button (`pick_kind`). Also from this
+     run: a skeleton added beside rigs alone kept its plain `root` and the rename note still
+     named `Manny_Rig:FKXAnkle_L`. With no plain top joint among the others nothing collided,
+     and `rename_note` says nothing now.
