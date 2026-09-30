@@ -19,8 +19,9 @@ Measured on this construction:
 - by default (`chrome=True`, the animator's call the same day: the channel
   list and the tools are the Graph Editor) the WHOLE panel lies on the
   viewport - menu bar, toolbar, channel list, curve area - and the glass
-  shows the chrome from `host.grab()` of the bands around the curve area
-  (`geometry.chrome_bands`), the curve area keyed;
+  shows the chrome - cut band by band around the curve area
+  (`geometry.chrome_bands`) out of DWM's copy of the host window
+  (`winstyle.capture`) - and the curve area keyed;
 - without it the menu bar goes with `menuBarVisible=False`, the toolbar is
   the panel's one frameLayout (the parent of its `QadskFrameLayoutFrame`)
   unmanaged, the channel list the QSplitter's other side sized 0, handle
@@ -146,6 +147,7 @@ class Ghost(object):
         layout.setSpacing(0)
         self.host, self.layout = host, layout
         self._canvas = None
+        self._canvas_pointer = None
         host.setGeometry(*[int(v) for v in rect])
         # Invisible before it is ever shown: no frame of a grey Graph
         # Editor flashes over the viewport.
@@ -197,21 +199,30 @@ class Ghost(object):
         return (canvas[0] - corner.x(), canvas[1] - corner.y())
 
     def chrome_pieces(self):
-        """The chrome as [(QImage, x, y), ...] in host coordinates: the host
-        grabbed band by band around the curve area (Qt widgets render into
-        a grab whatever the window's opacity)."""
+        """The chrome as [(QImage, x, y), ...] in host coordinates, cut
+        band by band around the curve area out of ONE capture of the host
+        window from DWM (`winstyle.capture`) - never `QWidget.grab()`, which
+        re-renders Maya's widgets (it crashed Maya once, re-rendering the
+        channel list right after the panel was re-parented). [] when the
+        capture fails."""
         if not self.chrome:
             return []
         canvas = self.canvas_rect()
         if canvas is None:
             return []
+        width, height = self.host.width(), self.host.height()
+        data = winstyle.capture(self.hwnd(), width, height)
+        if data is None:
+            return []
+        whole = QtGui.QImage(data, width, height, width * 4,
+                             QtGui.QImage.Format_RGB32).copy()
         x, y = self.canvas_offset()
         pieces = []
-        for band in geometry.chrome_bands((self.host.width(),
-                                           self.host.height()),
+        for band in geometry.chrome_bands((width, height),
                                           (x, y, canvas[2], canvas[3])):
-            pixmap = self.host.grab(QtCore.QRect(*band))
-            pieces.append((pixmap.toImage(), band[0], band[1]))
+            piece = whole.copy(QtCore.QRect(*band)).convertToFormat(
+                QtGui.QImage.Format_ARGB32)
+            pieces.append((piece, band[0], band[1]))
         return pieces
 
     def _splitter(self):
@@ -290,27 +301,35 @@ class Ghost(object):
     # ------------------------------------------------------------ the canvas
 
     def canvas(self):
-        """The curve area as a QOpenGLWindow, or None."""
-        if self._canvas is not None:
-            try:
-                self._canvas.objectName()
-                return self._canvas
-            except RuntimeError:
-                self._canvas = None
+        """The curve area as a QOpenGLWindow, or None - looked up among the
+        LIVE windows every time. A cached wrapper is never asked anything
+        first: Maya can delete the canvas and make another (re-parenting a
+        panel does), and a method call on a wrapper of a deleted object
+        shiboken was never told about reads freed memory - it does not
+        raise, it crashes."""
         wanted = self.panel + "GraphEdImpl"
         for window in QtGui.QGuiApplication.allWindows():
             try:
                 if window.objectName() != wanted or \
                         window.metaObject().className() != CANVAS_CLASS:
                     continue
-                pointer = shiboken6.getCppPointer(window)[0]
+                pointer = int(shiboken6.getCppPointer(window)[0])
             except RuntimeError:
                 continue
-            shiboken6.invalidate(window)
-            self._canvas = shiboken6.wrapInstance(int(pointer),
-                                                  QtOpenGL.QOpenGLWindow)
+            if self._canvas is not None and self._canvas_pointer == pointer:
+                return self._canvas
+            if not isinstance(window, QtOpenGL.QOpenGLWindow):
+                shiboken6.invalidate(window)
+                window = shiboken6.wrapInstance(pointer,
+                                                QtOpenGL.QOpenGLWindow)
+            self._canvas, self._canvas_pointer = window, pointer
             return self._canvas
+        self._canvas, self._canvas_pointer = None, None
         return None
+
+    def canvas_pointer(self):
+        """The live canvas's C++ address, or None."""
+        return self._canvas_pointer if self.canvas() is not None else None
 
     def canvas_rect(self):
         port = _widget(self.panel + "GraphEd")
@@ -327,7 +346,7 @@ class Ghost(object):
                 continue
         return None
 
-    def grab(self):
+    def canvas_frame(self):
         canvas = self.canvas()
         return canvas.grabFramebuffer() if canvas is not None else None
 
@@ -400,7 +419,7 @@ class Ghost(object):
         return True
 
     def destroy(self):
-        self._canvas = None
+        self._canvas, self._canvas_pointer = None, None
         try:
             if self.borrowed:
                 self.give_back()

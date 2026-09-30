@@ -39,6 +39,18 @@ class OnThisMachine(unittest.TestCase):
         with winstyle.gl_kept():
             pass
 
+    def test_a_capture_of_nothing_is_none(self):
+        self.assertIsNone(winstyle.capture(0, 0, 0))
+
+    def test_a_capture_of_the_desktop_has_the_size_asked(self):
+        """The desktop window (GetDesktopWindow) always exists; the bytes
+        come back as width x height x 4, whatever they show."""
+        import ctypes
+        desktop = ctypes.windll.user32.GetDesktopWindow()
+        data = winstyle.capture(desktop, 8, 5)
+        if data is not None:                       # a locked session: None
+            self.assertEqual(len(data), 8 * 5 * 4)
+
 
 class Purity(unittest.TestCase):
 

@@ -83,6 +83,83 @@ def _opengl32():
     return gl
 
 
+def _gdi32():
+    if "gdi32" in _LIBS:
+        return _LIBS["gdi32"]
+    try:
+        gdi = ctypes.WinDLL("gdi32")
+        from ctypes import wintypes as wt
+    except (AttributeError, OSError, ImportError):
+        _LIBS["gdi32"] = None
+        return None
+    gdi.CreateCompatibleDC.argtypes = [wt.HDC]
+    gdi.CreateCompatibleDC.restype = wt.HDC
+    gdi.CreateDIBSection.argtypes = [wt.HDC, ctypes.c_void_p, wt.UINT,
+                                     ctypes.POINTER(ctypes.c_void_p),
+                                     wt.HANDLE, wt.DWORD]
+    gdi.CreateDIBSection.restype = wt.HBITMAP
+    gdi.SelectObject.argtypes = [wt.HDC, wt.HGDIOBJ]
+    gdi.SelectObject.restype = wt.HGDIOBJ
+    gdi.DeleteObject.argtypes = [wt.HGDIOBJ]
+    gdi.DeleteDC.argtypes = [wt.HDC]
+    _LIBS["gdi32"] = gdi
+    return gdi
+
+
+PW_RENDERFULLCONTENT = 0x00000002
+
+
+def capture(hwnd, width, height):
+    """The window's own pixels as B G R x bytes (top row first), or None.
+
+    From DWM's copy of the window (`PrintWindow` with PW_RENDERFULLCONTENT):
+    nothing of the application's paint code runs, where `QWidget.grab()`
+    re-renders every widget - and re-rendering Maya's channel list right
+    after its panel was re-parented crashed Maya (measured 2026-09-30, an
+    access violation in SharedUI/ufe reached through shiboken). The fourth
+    byte is not an alpha: read the bytes as RGB32.
+    """
+    user32, gdi = _user32(), _gdi32()
+    if user32 is None or gdi is None or width <= 0 or height <= 0:
+        return None
+    from ctypes import wintypes as wt
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wt.DWORD), ("biWidth", ctypes.c_long),
+                    ("biHeight", ctypes.c_long), ("biPlanes", wt.WORD),
+                    ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
+                    ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", ctypes.c_long),
+                    ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", wt.DWORD),
+                    ("biClrImportant", wt.DWORD)]
+
+    user32.GetDC.argtypes = [wt.HWND]
+    user32.GetDC.restype = wt.HDC
+    user32.ReleaseDC.argtypes = [wt.HWND, wt.HDC]
+    user32.PrintWindow.argtypes = [wt.HWND, wt.HDC, wt.UINT]
+    user32.PrintWindow.restype = wt.BOOL
+    header = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), int(width),
+                              -int(height), 1, 32, 0, 0, 0, 0, 0, 0)
+    screen = user32.GetDC(None)
+    dc = gdi.CreateCompatibleDC(screen)
+    bits = ctypes.c_void_p()
+    bitmap = gdi.CreateDIBSection(dc, ctypes.byref(header), 0,
+                                  ctypes.byref(bits), None, 0)
+    if not bitmap:
+        gdi.DeleteDC(dc)
+        user32.ReleaseDC(None, screen)
+        return None
+    old = gdi.SelectObject(dc, bitmap)
+    try:
+        if not user32.PrintWindow(_hwnd(hwnd), dc, PW_RENDERFULLCONTENT):
+            return None
+        return ctypes.string_at(bits, int(width) * int(height) * 4)
+    finally:
+        gdi.SelectObject(dc, old)
+        gdi.DeleteObject(bitmap)
+        gdi.DeleteDC(dc)
+        user32.ReleaseDC(None, screen)
+
+
 def available():
     return _user32() is not None
 

@@ -40,6 +40,9 @@ FOLLOW_MS = 100
 ALT_MS = 30
 MIN_UPDATE_S = 0.015
 MIN_CHROME_S = 0.03
+# The chrome is first captured this long after switching on: the borrowed
+# panel is still being rebuilt by Maya in its new place just after.
+CHROME_SETTLE_S = 0.5
 MOST_TONES = 3      # background tones learnt over a session of frames
 TONE_SPREAD = 24    # levels a later tone may stand from the first
 # The whole Graph Editor on the viewport - menus, toolbar, channel list -
@@ -84,6 +87,8 @@ class _State(object):
         self.frames = 0
         self.cost = 0.0
         self.closing = False
+        self.canvas_pointer = None      # the connected canvas's address
+        self.chrome_after = 0.0         # no chrome capture before this
         self.watch = None               # the chrome's event filter
         self.watched = set()            # C++ addresses it is installed on
         self.grabbing = False
@@ -161,6 +166,7 @@ def enable():
         if not _POOL:
             _POOL.append(keying.make_pool())
         _connect_canvas()
+        _STATE.chrome_after = time.perf_counter() + CHROME_SETTLE_S
         _watch_chrome()
         _on_chrome_paint()
         _start_timers()
@@ -179,10 +185,15 @@ def disable():
     try:
         _stop_timers()
         _kill_jobs()
-        canvas = _STATE.canvas
-        if canvas is not None:
+        # Only from the canvas still alive and still the one connected: a
+        # deleted sender has let go by itself, and asking a wrapper of a
+        # deleted object anything reads freed memory.
+        ghost_ = _STATE.ghost
+        live = ghost_.canvas() if ghost_ is not None else None
+        if live is not None and _STATE.canvas_pointer is not None and \
+                ghost_.canvas_pointer() == _STATE.canvas_pointer:
             try:
-                canvas.frameSwapped.disconnect(_on_swap)
+                live.frameSwapped.disconnect(_on_swap)
             except (RuntimeError, TypeError):
                 pass
         if _STATE.watch is not None:
@@ -211,19 +222,8 @@ def _connect_canvas():
         return
     canvas.frameSwapped.connect(_on_swap)
     _STATE.canvas = canvas
+    _STATE.canvas_pointer = _STATE.ghost.canvas_pointer()
     _on_swap()
-
-
-def _same_object(first, second):
-    """Whether two wrappers hold the same live Qt object."""
-    if first is None or second is None:
-        return False
-    try:
-        import shiboken6
-        return (shiboken6.getCppPointer(first)[0]
-                == shiboken6.getCppPointer(second)[0])
-    except (RuntimeError, TypeError):
-        return False
 
 
 def _on_swap():
@@ -264,7 +264,7 @@ def _update():
         import numpy as np
         from maya_graphoverlay import keying, winstyle
         with winstyle.gl_kept():
-            image = _STATE.ghost.grab()
+            image = _STATE.ghost.canvas_frame()
         if image is None or image.isNull():
             return
         width, height = image.width(), image.height()
@@ -339,8 +339,9 @@ def _on_chrome_paint():
         return
     _STATE.chrome_pending = True
     from PySide6 import QtCore
-    delay = geometry.due_in(time.perf_counter(), _STATE.chrome_last,
-                            MIN_CHROME_S)
+    now = time.perf_counter()
+    delay = max(geometry.due_in(now, _STATE.chrome_last, MIN_CHROME_S),
+                _STATE.chrome_after - now)
     QtCore.QTimer.singleShot(int(round(delay * 1000)), _update_chrome)
 
 
@@ -418,8 +419,9 @@ def _follow_once():
         ghost_.open_channel_list()          # once, when laid out
         glass_.keep_click_through()
     ghost_.keep_invisible()
-    # Re-parenting a panel can recreate its canvas window: follow the new one.
-    if not _same_object(ghost_.canvas(), _STATE.canvas):
+    # Re-parenting a panel can recreate its canvas window: follow the new
+    # one, compared by address - never by asking the old wrapper.
+    if ghost_.canvas_pointer() != _STATE.canvas_pointer:
         _connect_canvas()
     _STATE.ticks += 1
     if _STATE.ticks % REWATCH_TICKS == 0:

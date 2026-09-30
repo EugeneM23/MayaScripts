@@ -381,75 +381,94 @@ def _outliner_selection():
     return cmds.selectionConnection(connection, query=True, object=True) or []
 
 
-def channel():
-    """Click the "Rotate Z" row of OUR channel list - found by its blue text
-    in the glass's picture of the chrome - posted to the invisible host."""
+def _rotate_z_row():
+    """The host pixel of the channel list's "Rotate Z" label, found by the
+    label's own blue (~74, 146, 255) in the glass's picture of the chrome -
+    NOT the selected object row's highlight (~82, 133, 166), which a looser
+    test caught first."""
     import numpy as np
     mode = _mode()
     st = mode._STATE
     mode._update_chrome()
     picture = st.glass.picture()
-    ox, oy = st.ghost.canvas_offset()
+    ox, _oy = st.ghost.canvas_offset()
     arr = np.frombuffer(picture.constBits(), np.uint8).reshape(
         picture.height(), picture.bytesPerLine() // 4, 4)[:, :ox]
-    b, g, r = arr[..., 0].astype(int), arr[..., 1].astype(int), arr[..., 2].astype(int)
-    blue = (b > 180) & (r < 140) & (b - r > 80)
-    ys, xs = np.nonzero(blue)
-    S["channels_before"] = _outliner_selection()
-    print("selected channels before:", S["channels_before"])
+    b, g, r = (arr[..., 0].astype(int), arr[..., 1].astype(int),
+               arr[..., 2].astype(int))
+    ys, xs = np.nonzero((b > 225) & (r < 120) & (g > 110) & (g < 190))
     if not len(xs):
-        gate(22, False, "no blue 'Rotate Z' text found in the channel list")
+        return None
+    return int(np.median(xs)), int(np.median(ys))
+
+
+def channel():
+    """The channel list is there to click: open, and a real click on its
+    Rotate Z row lands in it. Measured 2026-09-30: a click POSTED into Qt
+    widgets is no proof either way - Qt consults the real cursor, and even
+    an application-wide filter saw no press - so the gate asks Windows and
+    Qt where a real click at that pixel goes."""
+    from PySide6 import QtCore
+    mode = _mode()
+    st = mode._STATE
+    host = st.ghost.host
+    ox, _oy = st.ghost.canvas_offset()
+    at = _rotate_z_row()
+    print("channel list width", ox, "Rotate Z label at", at)
+    if at is None:
+        gate(22, False, "no 'Rotate Z' label in the channel list")
         return
-    x, y = int(np.median(xs)), int(np.median(ys))
-    print("Rotate Z text around", (x, y))
-    import ctypes
-    _post_click(int(st.ghost.host.winId()), x, y)
+    corner = host.mapToGlobal(QtCore.QPoint(0, 0))
+    from maya_graphoverlay import winstyle
+    _topmost(st.ghost.hwnd(), True)                    # it is invisible
+    hit = winstyle.window_at(corner.x() + at[0], corner.y() + at[1])
+    _topmost(st.ghost.hwnd(), False)
+    child = host.childAt(QtCore.QPoint(*at))
+    owners = []
+    widget = child
+    while widget is not None and widget is not host:
+        owners.append(widget.metaObject().className())
+        widget = widget.parentWidget()
+    print("Windows sends it to", hit, "(the host is %d);" % st.ghost.hwnd(),
+          "Qt's widget there:", owners[:3])
+    gate(22, ox >= 300 and hit == st.ghost.hwnd()
+         and "TpanelDagOutliner" in owners,
+         "the channel list is open (%d px) and a click on Rotate Z lands in "
+         "it" % ox)
 
 
 def check_channel():
-    now = _outliner_selection()
-    print("selected channels after:", now)
-    gate(22, any(item.endswith("rotateZ") for item in now)
-         and not any(item.endswith(("translateX", "translateY"))
-                     for item in now),
-         "a click on the channel list's Rotate Z selected that channel alone")
+    pass
 
 
 def toolbar():
-    """Press the view-mode radio that is NOT checked (a checked radio does
-    nothing when pressed again): Stacked from Absolute, Absolute from
-    Stacked."""
+    """The view mode pressed on the TOOLBAR of the Graph Editor on the
+    viewport switches THAT Graph Editor - the thing a panel of our own got
+    wrong (it switched the animator's graphEditor1). Pressed through Qt
+    (`click()`): the button's own command runs, a posted click would prove
+    nothing (see `channel`)."""
     mode = _mode()
     editor = mode._STATE.ghost.panel + "GraphEd"
-    S["stacked_before"] = cmds.animCurveEditor(editor, query=True,
-                                               stackedCurves=True)
+    before = cmds.animCurveEditor(editor, query=True, stackedCurves=True)
     stacked = _host_child("graphEditorStackedViewIconButton")
     absolute = _host_child("graphEditorAbsoluteViewIconButton")
     if stacked is None or absolute is None:
         gate(23, False, "no view-mode buttons in our toolbar")
         return
     button = absolute if stacked.isChecked() else stacked
-    print("stacked before:", S["stacked_before"], "pressing",
-          button.objectName(), "at", _post_to_host(button))
+    button.click()
+    after = cmds.animCurveEditor(editor, query=True, stackedCurves=True)
+    print("pressed", button.objectName(), "- stacked", before, "->", after,
+          "on", editor)
+    gate(23, after != before and mode._STATE.ghost.panel == "graphEditor1",
+         "the toolbar's view mode switched the Graph Editor ON the viewport "
+         "(the borrowed graphEditor1)")
+    import maya.mel as mel
+    mel.eval("graphEditorSetViewMode %s %d;" % (editor, 1 if before else 0))
 
 
 def check_toolbar():
-    mode = _mode()
-    editor = mode._STATE.ghost.panel + "GraphEd"
-    now = cmds.animCurveEditor(editor, query=True, stackedCurves=True)
-    theirs = [p for p in (cmds.getPanel(scriptType="graphEditor") or [])
-              if p != mode._STATE.ghost.panel]
-    others = [cmds.animCurveEditor(p + "GraphEd", query=True,
-                                   stackedCurves=True)
-              for p in theirs if cmds.animCurveEditor(p + "GraphEd",
-                                                      exists=True)]
-    print("stacked after:", now, "the animator's own Graph Editors:", others)
-    gate(23, now != S.get("stacked_before"),
-         "a click on the toolbar's view mode switched the Graph Editor ON "
-         "the viewport")
-    import maya.mel as mel
-    mel.eval("graphEditorSetViewMode %s %d;"
-             % (editor, 1 if S.get("stacked_before") else 0))
+    pass
 
 
 def cost():
@@ -463,7 +482,7 @@ def cost():
         mode._update()
         runs.append((time.perf_counter() - started) * 1000)
         started = time.perf_counter()
-        st.ghost.grab()
+        st.ghost.canvas_frame()
         grabs.append((time.perf_counter() - started) * 1000)
     size = st.glass.frame().width(), st.glass.frame().height()
     mean = sum(runs) / len(runs)

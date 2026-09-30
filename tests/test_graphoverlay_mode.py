@@ -107,9 +107,37 @@ class TheChrome(unittest.TestCase):
         animator's Graph Editor (measured 2026-09-30)."""
         self.assertTrue(mode.BORROW)
 
-    def test_two_wrappers_of_nothing_are_not_the_same_object(self):
-        self.assertFalse(mode._same_object(None, None))
-        self.assertFalse(mode._same_object(object(), None))
+    def test_the_chrome_waits_for_the_borrowed_panel_to_settle(self):
+        """Maya rebuilds a re-parented panel just after; the first capture
+        waits (the crash of 2026-09-30 came right after a switch-on)."""
+        self.assertGreaterEqual(mode.CHROME_SETTLE_S, 0.3)
+        self.assertTrue(hasattr(mode._STATE, "chrome_after"))
+        self.assertTrue(hasattr(mode._STATE, "canvas_pointer"))
+
+
+class NoGrabOfMayaWidgets(unittest.TestCase):
+    """`QWidget.grab()` re-renders Maya's own widgets from Python; right
+    after the panel was re-parented that crashed Maya (an access violation
+    in SharedUI/ufe reached through shiboken, 2026-09-30). The chrome comes
+    from DWM's copy of the window instead."""
+
+    def test_no_grab_call_is_left_in_the_package(self):
+        import ast
+        import os
+        import maya_graphoverlay
+        folder = os.path.dirname(maya_graphoverlay.__file__)
+        calls = []
+        for name in os.listdir(folder):
+            if not name.endswith(".py"):
+                continue
+            with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                tree = ast.parse(handle.read())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and \
+                        isinstance(node.func, ast.Attribute) and \
+                        node.func.attr == "grab":
+                    calls.append((name, node.lineno))
+        self.assertEqual(calls, [])
 
     def test_a_chrome_repaint_with_the_mode_off_does_nothing(self):
         mode._on_chrome_paint()
