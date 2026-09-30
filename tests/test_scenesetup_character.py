@@ -520,3 +520,91 @@ class TexturedAdd(unittest.TestCase):
         text = character.add_character(catalog.character_by_key("Manny_Rig"), (0.8, 0.25, 0.22))
         self.assertEqual(self.calls, [("paint",)])
         self.assertIn(" - red", text)
+
+
+class Placed(unittest.TestCase):
+    """2026-09-30: a portrait dropped on the floor - the rig's Main, or the
+    skeleton's root, moved by (x, 0, z) in world space; one undo chunk."""
+
+    class Cmds(object):
+        def __init__(self):
+            self.log = []
+
+        def undoInfo(self, **kwargs):
+            self.log.append(("undo", "open" if kwargs.get("openChunk") else "close"))
+
+        def ls(self, *args, **kwargs):
+            if args and args[0] == "Manny_Rig:Main":
+                return ["|Manny_Rig:Group|Manny_Rig:Main"]
+            return []
+
+        def objExists(self, name):
+            return False
+
+        def delete(self, *args):
+            pass
+
+        def move(self, *args, **kwargs):
+            self.log.append(("move", args, kwargs))
+
+    def setUp(self):
+        import tempfile
+        from maya_overrig import builder
+        from maya_scenesetup import colour
+        handle, self.file = tempfile.mkstemp(suffix=".ma")
+        os.close(handle)
+        self.cmds = self.Cmds()
+        self.roots = [[], ["|Armature|root"]]
+        self.saved = [(character, "cmds", character.cmds),
+                      (character, "import_asset", character.import_asset),
+                      (character, "connect", character.connect),
+                      (character, "select_rig", character.select_rig),
+                      (character, "existing_namespaces", character.existing_namespaces),
+                      (catalog, "character_file", catalog.character_file),
+                      (builder, "character_roots", builder.character_roots),
+                      (colour, "paint_nodes", colour.paint_nodes)]
+        character.cmds = self.cmds
+        character.import_asset = lambda path, namespace=None: []
+        character.connect = lambda root: False
+        character.select_rig = lambda namespace: True
+        character.existing_namespaces = lambda: []
+        catalog.character_file = lambda entry: self.file
+        builder.character_roots = lambda: self.roots.pop(0)
+        colour.paint_nodes = lambda *a: "phong1"
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+        os.remove(self.file)
+
+    def moves(self):
+        return [e for e in self.cmds.log if e[0] == "move"]
+
+    def test_the_placement_keeps_the_files_height(self):
+        self.assertEqual(character.placement((120.0, 3.0, -35.0)), (120.0, 0.0, -35.0))
+
+    def test_a_rig_moves_its_main(self):
+        text = character.add_character(catalog.character_by_key("Manny_Rig"),
+                                       (0.8, 0.25, 0.22), at=(120.0, 0.0, -35.0))
+        self.assertEqual(self.moves(), [("move", (120.0, 0.0, -35.0,
+                                                  "|Manny_Rig:Group|Manny_Rig:Main"),
+                                         {"relative": True, "worldSpace": True})])
+        self.assertIn(" - at (120, -35)", text)
+
+    def test_a_skeleton_moves_its_root_never_the_armature(self):
+        character.add_character(catalog.character_by_key("Creep"), (0.8, 0.25, 0.22),
+                                at=(10.0, 0.0, 20.0))
+        self.assertEqual(self.moves()[0][1][3], "|Armature|root")
+
+    def test_no_point_moves_nothing(self):
+        text = character.add_character(catalog.character_by_key("Manny_Rig"), (0.8, 0.25, 0.22))
+        self.assertEqual(self.moves(), [])
+        self.assertNotIn(" - at (", text)
+
+    def test_one_undo_chunk_around_the_whole_press(self):
+        character.add_character(catalog.character_by_key("Manny_Rig"), (0.8, 0.25, 0.22),
+                                at=(1.0, 0.0, 2.0))
+        chunks = [e[1] for e in self.cmds.log if e[0] == "undo"]
+        self.assertEqual(chunks, ["open", "close"])
+        self.assertEqual(self.cmds.log[0], ("undo", "open"))
+        self.assertEqual(self.cmds.log[-1], ("undo", "close"))

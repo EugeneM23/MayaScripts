@@ -84,3 +84,38 @@ class Floor(unittest.TestCase):
                          "floor · Manny_Rig1 · weapon_l")
         self.assertEqual(dt.hand_text("Manny_Rig", "L"),
                          "Manny_Rig · left hand")
+
+
+class FloorAt(unittest.TestCase):
+    """2026-09-30, a character dragged into the scene: the floor under the
+    cursor, or why not."""
+
+    class View(object):
+        def __init__(self, near, far):
+            self.near, self.far = near, far
+
+        def to_port(self, local):
+            return local
+
+        def ray(self, port):
+            return self.near, self.far
+
+    def setUp(self):
+        self.saved = dt.Viewport.__dict__["at"]
+
+    def tearDown(self):
+        dt.Viewport.at = self.saved
+
+    def test_the_ray_meets_the_floor(self):
+        view = self.View((0.0, 100.0, 50.0), (10.0, 0.0, 40.0))
+        dt.Viewport.at = classmethod(lambda cls, gx, gy: (view, (5, 5)))
+        self.assertEqual(dt.floor_at(1, 2), dict(kind="floor", point=(10.0, 0.0, 40.0)))
+
+    def test_off_every_viewport(self):
+        dt.Viewport.at = classmethod(lambda cls, gx, gy: (None, None))
+        self.assertEqual(dt.floor_at(1, 2), dict(kind="none", text=dt.NO_VIEWPORT))
+
+    def test_looking_up_is_no_floor(self):
+        view = self.View((0.0, 100.0, 50.0), (0.0, 200.0, 40.0))
+        dt.Viewport.at = classmethod(lambda cls, gx, gy: (view, (5, 5)))
+        self.assertEqual(dt.floor_at(1, 2), dict(kind="none", text=dt.NO_FLOOR))

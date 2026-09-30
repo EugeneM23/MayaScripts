@@ -157,17 +157,22 @@ def malware_nodes(names):
 
 
 def added_message(joints, meshes, removed, note="", connected=False,
-                  label=None, colour_name="", namespace="", selected=False):
+                  label=None, colour_name="", namespace="", selected=False,
+                  placed=None):
     """What the press says. `label` names WHICH skeleton arrived, now that
     the dropdown offers more than one, `colour_name` which colour it is
     wearing -- the animator picked the press by colour from then on -- and
     `namespace` which namespace a RIG landed in, since 2026-09-08 the name
-    every message about it uses."""
+    every message about it uses. `placed` is the floor point a dropped
+    portrait stood it on (2026-09-30)."""
     message = "{0} added{1} - {2} joints, {3} meshes".format(
         label or LABEL, (" as " + namespace) if namespace else "", joints,
         meshes)
     if colour_name:
         message += " - " + colour_name
+    if placed is not None:
+        message += " - at ({0}, {1})".format(int(round(placed[0])),
+                                             int(round(placed[2])))
     if note:
         message += " - " + note
     if connected:
@@ -455,7 +460,39 @@ def rig_namespace(entry):
     return entry.key or RIG_NAMESPACE_BASE
 
 
-def add_character(entry=None, rgb=None):
+def placement(at):
+    """The world offset a drop at floor point `at` asks for: (x, 0, z). The
+    move is relative, so the feet keep the height the file gives them. Pure."""
+    return (float(at[0]), 0.0, float(at[2]))
+
+
+def place(entry, namespace, root, at):
+    """Stand the new character at floor point `at` (2026-09-30, a portrait
+    dragged into a viewport): a rig's `Main` -- the whole rig's control, root
+    motion; its skeleton's root rides it by constraint -- else the skeleton's
+    `root`, moved by `placement(at)` in world space. Never a Null above the
+    root: the Creep skeleton's `Armature` must stay at the origin, or the
+    export no longer reads Cascadeur's layout (fbxlayout.in_layout). No turn:
+    a character faces +Z as its file does (the animator's pick). The node
+    moved, or None."""
+    if at is None:
+        return None
+    node = None
+    if catalog.is_rig(entry):
+        import maya_rigs
+        found = cmds.ls(maya_rigs.node(namespace, maya_rigs.MAIN),
+                        long=True) or []
+        node = found[0] if len(found) == 1 else None
+    else:
+        node = root
+    if not node:
+        return None
+    x, y, z = placement(at)
+    cmds.move(x, y, z, node, relative=True, worldSpace=True)
+    return node
+
+
+def add_character(entry=None, rgb=None, at=None):
     """Import a character, colour it, sweep it, connect it, and say so.
 
     `entry` is a `catalog.Character`; None means the dropdown's default,
@@ -464,13 +501,19 @@ def add_character(entry=None, rgb=None):
     being there.
 
     `rgb` is the colour the character arrives wearing; None means the next
-    free palette colour, which is what the button passes -- two characters
-    can then never arrive identical even when nobody touches the swatch.
+    free palette colour, which is what the Characters card passes since the
+    colour left it (2026-09-30) -- two characters never arrive identical, and
+    the Colour section repaints the selection.
     A `textured` row ignores it and arrives in its own images.
     The meshes are taken from the import's OWN nodes, which is exact and
     needs no searching (and `import_asset` has already re-resolved them
     from their UUIDs, because the flatten invalidates every long path below
     the wrapper -- trap 16).
+
+    `at` is a floor point (2026-09-30, a portrait dropped into a viewport):
+    the character stands there (`place`). The whole press is ONE undo chunk
+    -- the import, the colour, the sweep, the move, the selection -- so one
+    Ctrl+Z takes the character out whole.
     """
     entry = entry or catalog.default_character()
 
@@ -480,6 +523,15 @@ def add_character(entry=None, rgb=None):
     if not os.path.isfile(path):
         return NO_FILE.format(path)
 
+    cmds.undoInfo(openChunk=True, chunkName="Add Character")
+    try:
+        return _add(entry, path, rgb, at, builder)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+
+def _add(entry, path, rgb, at, builder):
+    """The body of `add_character`, inside its undo chunk."""
     textured = getattr(entry, "textured", False)
     if rgb is None and not textured:
         rgb = colour.free_colour().rgb
@@ -494,20 +546,15 @@ def add_character(entry=None, rgb=None):
 
     # A textured row (2026-09-28, the Orc D) keeps the materials it ships
     # with: its images pointed at the installed copy, the viewport's Textures
-    # on. Everything else gets a fresh palette colour -- in its own undo
-    # chunk: creating the material and assigning it are two commands, and half
-    # of that undone is a mesh with no shader.
+    # on. Everything else gets a fresh palette colour (the press's one undo
+    # chunk covers it: half of a paint undone is a mesh with no shader).
     switched, missing = [], []
     if textured:
         _count, missing = colour.relink_images(new, catalog.asset_path)
         switched = colour.show_textures()
         painted = None
     else:
-        cmds.undoInfo(openChunk=True)
-        try:
-            painted = colour.paint_nodes(new, rgb, entry.key)
-        finally:
-            cmds.undoInfo(closeChunk=True)
+        painted = colour.paint_nodes(new, rgb, entry.key)
 
     # Format-blind on purpose: an FBX cannot carry a script node, but the
     # sweep costs nothing and the `.ma` path genuinely needs it.
@@ -520,6 +567,7 @@ def add_character(entry=None, rgb=None):
     root = new_root(before_roots, builder.character_roots())
     note = "" if namespace else rename_note(
         root, before_roots + ([root] if root else []))
+    placed = at if place(entry, namespace, root, at) else None
     connected = connect(root)
     selected = select_rig(namespace) if namespace else False
 
@@ -529,4 +577,5 @@ def add_character(entry=None, rgb=None):
                if textured or painted else "")
     return added_message(joints, meshes, removed, note, connected,
                          label=entry.label, colour_name=wearing,
-                         namespace=namespace, selected=selected)
+                         namespace=namespace, selected=selected,
+                         placed=placed)

@@ -27,6 +27,8 @@ Figure = namedtuple("Figure", "key segments hands depth")
 HEIGHT_SHARE = 0.08
 DOT = "·"
 SIDE_LABEL = {"R": "right hand", "L": "left hand"}
+NO_VIEWPORT = "no target - drop onto a viewport"
+NO_FLOOR = "no floor under the cursor"
 
 
 # ------------------------------------------------------------------- pure
@@ -220,7 +222,7 @@ def target(gx, gy, snap, scale=1.0, freed=None):
     from maya_scenesetup import equip
     view, local = Viewport.at(gx, gy)
     if view is None:
-        return dict(kind="none", text="no target - drop onto a viewport")
+        return dict(kind="none", text=NO_VIEWPORT)
     port = view.to_port(local)
     figures = []
     for ch in snap:
@@ -237,7 +239,7 @@ def target(gx, gy, snap, scale=1.0, freed=None):
     near, far = view.ray(port)
     hit = floor_hit(near, far)
     if hit is None:
-        return dict(kind="none", text="no floor under the cursor")
+        return dict(kind="none", text=NO_FLOOR)
     key = owner(hit, dict((c["key"], c["root"]) for c in snap))
     if key is None:
         return dict(kind="none", text="no character in the scene")
@@ -249,3 +251,17 @@ def target(gx, gy, snap, scale=1.0, freed=None):
     return dict(kind="floor", root=key, side=side, point=hit,
                 heading=view.heading(),
                 text=floor_text(ch["label"], catalog.side_bone("weapon_r", side)))
+
+
+def floor_at(gx, gy):
+    """The floor (Y = 0) under a global cursor position, in front of the
+    camera: dict(kind="floor", point) or dict(kind="none", text). Where a
+    character dragged out of the Characters grid stands (2026-09-30)."""
+    view, local = Viewport.at(gx, gy)
+    if view is None:
+        return dict(kind="none", text=NO_VIEWPORT)
+    near, far = view.ray(view.to_port(local))
+    hit = floor_hit(near, far)
+    if hit is None:
+        return dict(kind="none", text=NO_FLOOR)
+    return dict(kind="floor", point=hit)
