@@ -6,8 +6,10 @@ phase, because the Qt event loop has to turn between them (the follow
 timer aligns the ghost, `frameSwapped` keys the glass; trap 68). The
 runner defines PHASE and calls `main(PHASE)`:
 
-    setup  placed  check_time  frame_view  click  check_click  channel
-    check_channel  toolbar  check_toolbar  alt  cost
+    setup  placed  check_time  frame_view  click  check_click  channel  toolbar
+    alt  cost  look  hub  leave  gone  - then the stress: cycle_on/cycle_off
+    (x6)  check_cycles  take_back  check_take_back  scene_new
+    check_scene_new;  full_look for the picture
     look  hub  leave  gone
 
 State between phases lives in `sys._skeldar_verify_go`. Maya being the
@@ -167,6 +169,13 @@ def setup():
     if _mode().is_on():                       # one state per session
         print("already on - off first:", _mode().disable())
     from maya_graphoverlay import ghost
+    if not cmds.scriptedPanel(ghost.BORROWED, exists=True):
+        # A fresh Maya makes graphEditor1 when the Graph Editor first opens;
+        # opened here, the borrow is proved against a real window to go
+        # back to.
+        import maya.mel as mel
+        mel.eval("GraphEditor")
+        _pump()
     S["ge_home"] = ghost.home_of(ghost.BORROWED)
     S["ge_stacked"] = cmds.animCurveEditor(ghost.BORROWED + "GraphEd",
                                            query=True, stackedCurves=True)
@@ -574,13 +583,122 @@ def gone():
         print("the hub was closed before the run - closed again")
 
 
+
+
+# ------------------------------------------------------------ the stress
+# The crash of 2026-09-30 came on a switch-on right after a switch-off. Six
+# of them, a send apart, the time and the selection moving meanwhile; then
+# Maya taking its Graph Editor back; then a new scene. Each ends the mode
+# cleanly or the gate says why.
+
+def cycle_on():
+    import maya_graphoverlay
+    S["cycles"] = S.get("cycles", 0) + 1
+    cmds.select("probeCube")
+    cmds.currentTime(1 + (S["cycles"] * 3) % 24)
+    print("cycle", S["cycles"], maya_graphoverlay.toggle().splitlines()[0])
+
+
+def cycle_off():
+    import maya_graphoverlay
+    from maya_graphoverlay import ghost
+    cmds.select(clear=True)
+    print("cycle", S.get("cycles"), maya_graphoverlay.toggle().splitlines()[0],
+          "- graphEditor1 in", ghost.home_of(ghost.BORROWED))
+    S.setdefault("cycle_homes", []).append(ghost.home_of(ghost.BORROWED))
+
+
+def check_cycles():
+    from maya_graphoverlay import ghost
+    homes = S.get("cycle_homes", [])
+    gate(24, len(homes) >= 6 and all(h == S.get("ge_home") for h in homes)
+         and not _mode().is_on() and not ghost.in_host(ghost.BORROWED),
+         "%d switch-on/off cycles, Maya alive, graphEditor1 home each time"
+         % len(homes))
+
+
+def take_back():
+    """Open the Graph Editor in its own window while the mode is on: Maya
+    re-parents graphEditor1 out of our host; the mode must end by itself."""
+    import maya_graphoverlay
+    import maya.mel as mel
+    cmds.select("probeCube")
+    print(maya_graphoverlay.toggle().splitlines()[0])
+    mel.eval("GraphEditor")
+    print("Graph Editor opened in its own window")
+
+
+def check_take_back():
+    from maya_graphoverlay import ghost
+    from PySide6 import QtWidgets
+    names = [w.objectName() for w in QtWidgets.QApplication.topLevelWidgets()]
+    home = ghost.home_of(ghost.BORROWED)
+    print("mode on:", _mode().is_on(), "graphEditor1 in", home,
+          "status:", cmds.text(_mode().STATUS, query=True, label=True)
+          if cmds.control(_mode().STATUS, exists=True) else "-")
+    gate(25, not _mode().is_on() and home is not None
+         and not ghost.in_host(ghost.BORROWED) and ghost.HOST not in names,
+         "the Graph Editor opened in its own window ends the mode; the panel "
+         "is Maya's again (%s)" % home)
+    if cmds.workspaceControl("graphEditor1Window", exists=True):
+        cmds.workspaceControl("graphEditor1Window", edit=True, close=True)
+
+
+def scene_new():
+    import maya_graphoverlay
+    cmds.select("probeCube")
+    print(maya_graphoverlay.toggle().splitlines()[0])
+    cmds.file(new=True, force=True)
+    print("new scene")
+
+
+def check_scene_new():
+    from maya_graphoverlay import ghost
+    from PySide6 import QtWidgets
+    names = [w.objectName() for w in QtWidgets.QApplication.topLevelWidgets()]
+    gate(26, not _mode().is_on() and not ghost.in_host(ghost.BORROWED)
+         and ghost.HOST not in names,
+         "a new scene ends the mode and gives the panel back")
+    summary()
+
+
+
+def full_look():
+    """The whole glass - menus, toolbar, channel list, the see-through curve
+    area - over a playblast of the whole viewport: the picture of the mode."""
+    from PySide6 import QtGui
+    mode = _mode()
+    st = mode._STATE
+    st.pending = False
+    mode._update()
+    mode._update_chrome()
+    picture = st.glass.picture()
+    path = os.path.join(OUT_DIR, "viewport_whole")
+    cmds.playblast(frame=[cmds.currentTime(query=True)], format="image",
+                   compression="png", completeFilename=path + ".png",
+                   viewer=False, showOrnaments=False, percent=100,
+                   widthHeight=(picture.width(), picture.height()),
+                   offScreen=True, forceOverwrite=True, clearCache=True)
+    back = QtGui.QImage(path + ".png").convertToFormat(
+        QtGui.QImage.Format_ARGB32_Premultiplied)
+    painter = QtGui.QPainter(back)
+    painter.drawImage(0, 0, picture)
+    painter.end()
+    back.save(os.path.join(OUT_DIR, "graph_overlay_whole.png"))
+    print("saved", os.path.join(OUT_DIR, "graph_overlay_whole.png"),
+          back.width(), back.height())
+
 PHASES = {"setup": setup, "placed": placed, "check_time": check_time,
           "frame_view": frame_view, "channel": channel,
           "check_channel": check_channel, "toolbar": toolbar,
           "check_toolbar": check_toolbar,
           "click": click, "check_click": check_click, "alt": alt,
           "cost": cost, "look": look, "hub": hub, "leave": leave,
-          "gone": gone, "time": lambda: None}
+          "gone": gone, "time": lambda: None,
+          "cycle_on": cycle_on, "cycle_off": cycle_off,
+          "check_cycles": check_cycles, "take_back": take_back,
+          "check_take_back": check_take_back, "scene_new": scene_new,
+          "check_scene_new": check_scene_new, "full_look": full_look}
 
 
 def main(phase):

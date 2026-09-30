@@ -6467,6 +6467,55 @@ untouched. 2806 unit tests. The scene was put back to an empty untitled one.
 114. **A `WindowFromPoint` gate sees every program's windows.** Gate 12 read the canvas of the
      animator's other Maya's floating Graph Editor lying over the point; the rerun, with it moved, passed.
 
+
+**…the whole Graph Editor, and Maya's own** (the same evening, after using it: «я не могу выделить
+отдельно каналы для редактирования кривых и нет остальных инструментов»). The mode now lays the WHOLE
+Graph Editor on the viewport — menus, toolbar, channel list — with only the curve area see-through:
+- the glass shows the chrome opaque, cut band by band around the curve area (`geometry.chrome_bands`)
+  out of one **DWM copy of the host window** (`winstyle.capture`: `PrintWindow`,
+  `PW_RENDERFULLCONTENT`, read as RGB32), re-taken when a chrome widget repaints (an event filter on the
+  host's widgets, silent while capturing, ≥ 30 ms apart, first capture 0.5 s after switching on);
+- the panel is **Maya's own `graphEditor1`, borrowed** (`ghost.BORROWED`) and given back where it lived
+  — its dock, its window, or unparented — with its channel list's sizes: **55 of Maya's runtime
+  commands name `graphEditor1GraphEd` outright** (the view modes, Copy/Paste/Delete keys, infinity,
+  frame all/selected, bake, simplify, smoothness), and the toolbar, menus and hotkeys reach them — in a
+  panel of our own the Stacked View button switched the animator's Graph Editor. While the mode is on
+  their own Graph Editor window is empty; opening it takes the panel back and ends the mode (Maya
+  re-parents it), a new scene ends it too;
+- the channel list is opened at max(320, its own minimum 310) for the first two seconds (the borrowed
+  panel shut it once more itself while laying out), then left to the animator.
+Proof: `verify_graphoverlay.py` **26/26 in a disposable Maya** (`MAYA_NO_HOME=1`, scratch
+`MAYA_APP_DIR`, port 7003 — the animator's choice after the crash below): the whole Graph Editor on the
+viewport, the chrome opaque, a click on the channel list's Rotate Z landing in the list, the toolbar's
+view mode switching the Graph Editor ON the viewport, alt, **8.4 ms a frame at 1334×969**, six
+switch-on/off cycles, the Graph Editor window taking the panel back, a new scene — each ending cleanly.
+The installed copy was brought to the fixed build by copying the three package files (no port was open;
+`diff -rq` against a `git archive` equal).
+
+134. **`QWidget.grab()` of Maya's widgets from Python crashed Maya.** Right after switching on over a
+     just re-parented `graphEditor1` — an access violation in `SharedUI.dll` with `ufe_7` and
+     `shiboken6` on the stack (the minidump parsed by hand: no debugger here). A grab re-renders every
+     widget, Maya's channel list mid-rebuild included. Take pixels from DWM (`PrintWindow`,
+     `PW_RENDERFULLCONTENT`): no Maya paint code runs. A test now fails on any `.grab(` call in the
+     package.
+135. **A wrapper of a Maya-owned object Maya has deleted is not "already deleted".** shiboken was never
+     told, so a method call reads freed memory and crashes instead of raising. Look live objects up
+     every time (`QGuiApplication.allWindows()`), compare by `getCppPointer` address, and disconnect a
+     signal only from the live object that is still the one connected.
+136. **Maya's Graph Editor commands are hard-wired to `graphEditor1`** — 55 runtime commands. A second
+     graph editor panel's toolbar, menus and hotkeys act on the first; borrow `graphEditor1` rather than
+     make another.
+137. **`QSplitter` collapses a side set below its `minimumSizeHint`** — the Graph Editor's channel list
+     (310 px) set to 260 came back 0. Set at least the minimum, after the layout.
+138. **A click POSTED into Qt widgets proves nothing about them.** Qt takes the real cursor into
+     account: even an application-wide filter saw no press for a `WM_LBUTTONDOWN` posted to the host,
+     and the channel list selected nothing; Maya's curve canvas takes the press at the posted pixel but
+     drags with the real cursor (60 → 80.46). Prove routing with `WindowFromPoint` + `childAt`, commands
+     with `QAbstractButton.click()`, and leave the rest to a real click.
+139. **A session state kept on `sys` outlives its class.** Made by the first build, its `reset()` knew
+     neither `keys` nor the chrome fields: the tones and a dead event filter survived a switch-off. Reset
+     by THIS module's field list (`mode.reset_state`), at every switch-on too.
+
 ## The Characters card: a portrait grid, a character dragged into the scene (2026-09-30)
 
 The animator: «Все что касается покраски вынесем из меню, будем красить в меню с красками.

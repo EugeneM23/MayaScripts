@@ -191,3 +191,14 @@ and were closed twice. Five things the run changed, each measured:
 Numbers on the animator's viewport (1526×1044): one frame grabbed, keyed and
 shown in **8.5–9.3 ms**, the grab alone 3.7 ms; the canvas on the viewport
 pixel for pixel; no redraw at rest.
+
+## Addendum 2 — the whole Graph Editor, Maya's own (the same evening)
+
+The animator, having used it: «я не могу выделить отдельно каналы для редактирования кривых и нет
+остальных инструментов». The spec's "menus and toolbar are not shown" is withdrawn: the whole Graph
+Editor lies on the viewport — menus, toolbar, channel list — and only the curve area is see-through.
+The glass shows the chrome opaque from a DWM copy of the host window (`PrintWindow`, never
+`QWidget.grab()`, which crashed Maya re-rendering the channel list), and the panel is Maya's own
+`graphEditor1`, borrowed and given back, because 55 of Maya's runtime commands name it outright. The
+channel list opens at its own minimum. Proof: the verify's 26 gates, six on/off cycles among them, in a
+disposable Maya. CLAUDE.md traps 134-139 hold the details.
