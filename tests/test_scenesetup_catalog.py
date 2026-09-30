@@ -655,3 +655,20 @@ class Models(unittest.TestCase):
         self.assertTrue(catalog.portrait_path("Creep").endswith(
             "assets/character_portraits/Creep.png"))
         self.assertNotIn("\\", catalog.portrait_path("Creep"))
+
+
+class Portraits(unittest.TestCase):
+    """Every model ships its portrait: a 256 px square PNG with alpha
+    (docs/superpowers/plans/make_character_portraits.py renders them)."""
+
+    def test_every_model_has_its_portrait(self):
+        for model in catalog.MODELS:
+            path = catalog.portrait_path(model.key)
+            self.assertTrue(os.path.isfile(path), path)
+            with open(path, "rb") as handle:
+                head = handle.read(32)
+            self.assertEqual(head[:8], b"\x89PNG\r\n\x1a\n", path)
+            width = int.from_bytes(head[16:20], "big")
+            height = int.from_bytes(head[20:24], "big")
+            self.assertEqual((width, height), (256, 256), path)
+            self.assertEqual(head[25], 6, "RGBA expected: " + path)
