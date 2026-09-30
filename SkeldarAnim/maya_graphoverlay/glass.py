@@ -32,6 +32,8 @@ class Glass(QtWidgets.QWidget):
         self.setAutoFillBackground(False)
         self._image = None
         self._buffer = None
+        self._offset = (0, 0)
+        self._chrome = []
         self.paint_count = 0
 
     def place(self, rect):
@@ -42,17 +44,47 @@ class Glass(QtWidgets.QWidget):
             self.show()
         winstyle.set_click_through(int(self.winId()), True)
 
-    def set_frame(self, bgra):
-        """Show `bgra`: (h, w, 4) uint8, B G R A, straight alpha. The array
-        is held - the image reads it in place."""
+    def set_frame(self, bgra, offset=(0, 0)):
+        """Show `bgra` - the keyed curve area: (h, w, 4) uint8, B G R A,
+        straight alpha - with its top-left at `offset`. The array is held:
+        the image reads it in place."""
         height, width = bgra.shape[:2]
         self._buffer = bgra
+        self._offset = (int(offset[0]), int(offset[1]))
         self._image = QtGui.QImage(bgra.data, width, height, width * 4,
                                    QtGui.QImage.Format_ARGB32)
         self.update()
 
+    def set_chrome(self, pieces):
+        """The Graph Editor's own chrome as [(image, x, y), ...] - menu bar,
+        toolbar, channel list - drawn opaque, as Maya draws them."""
+        self._chrome = list(pieces)
+        self.update()
+
     def frame(self):
         return self._image
+
+    def offset(self):
+        return self._offset
+
+    def picture(self):
+        """Everything the glass shows, as one ARGB32 image - for the proof."""
+        image = QtGui.QImage(max(1, self.width()), max(1, self.height()),
+                             QtGui.QImage.Format_ARGB32)
+        image.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(image)
+        try:
+            self._paint(painter)
+        finally:
+            painter.end()
+        return image
+
+    def _paint(self, painter):
+        painter.setCompositionMode(QtGui.QPainter.CompositionMode_Source)
+        for piece, x, y in self._chrome:
+            painter.drawImage(int(x), int(y), piece)
+        if self._image is not None:
+            painter.drawImage(self._offset[0], self._offset[1], self._image)
 
     def keep_click_through(self):
         """Set WS_EX_TRANSPARENT again if it went; True when it had to."""
@@ -64,12 +96,11 @@ class Glass(QtWidgets.QWidget):
 
     def paintEvent(self, event):
         self.paint_count += 1
-        if self._image is None:
+        if self._image is None and not self._chrome:
             return
         painter = QtGui.QPainter(self)
         try:
-            painter.setCompositionMode(QtGui.QPainter.CompositionMode_Source)
-            painter.drawImage(0, 0, self._image)
+            self._paint(painter)
         finally:
             painter.end()
 
@@ -78,6 +109,7 @@ class Glass(QtWidgets.QWidget):
             self.hide()
             self._image = None
             self._buffer = None
+            self._chrome = []
             self.deleteLater()
         except RuntimeError:
             pass

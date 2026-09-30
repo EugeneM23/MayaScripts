@@ -26,6 +26,23 @@ def host_rect(target, host, canvas):
             target[3] + (host[3] - canvas[3]))
 
 
+def chrome_bands(host_size, canvas):
+    """The host's rectangles outside its curve area, in host coordinates:
+    top, bottom, left, right, the empty ones left out.
+
+    `canvas` is (x, y, width, height) inside the host. What lies there is
+    the Graph Editor's own chrome - menu bar, toolbar, channel list,
+    borders - which the glass shows opaque, as Maya draws it.
+    """
+    width, height = host_size
+    x, y, w, h = canvas
+    bands = [(0, 0, width, y),
+             (0, y + h, width, height - (y + h)),
+             (0, y, x, h),
+             (x + w, y, width - (x + w), h)]
+    return [band for band in bands if band[2] > 0 and band[3] > 0]
+
+
 def let_through(alt_down, maya_active, placed):
     """Whether the ghost lets the mouse through to the viewport.
 

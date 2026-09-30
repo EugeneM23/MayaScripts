@@ -81,6 +81,28 @@ class LearnTones(unittest.TestCase):
         self.assertEqual(len(mode._STATE.keys), mode.MOST_TONES)
 
 
+class TheChrome(unittest.TestCase):
+    """The whole Graph Editor, its curve area alone see-through
+    (2026-09-30: «я не могу выделить отдельно каналы ... и нет остальных
+    инструментов»)."""
+
+    def setUp(self):
+        mode._STATE.reset()
+
+    def test_the_menus_toolbar_and_channel_list_are_on_by_default(self):
+        self.assertTrue(mode.CHROME)
+
+    def test_a_chrome_repaint_with_the_mode_off_does_nothing(self):
+        mode._on_chrome_paint()
+        self.assertFalse(mode._STATE.chrome_pending)
+        self.assertEqual(mode._watch_chrome(), 0)
+
+    def test_the_state_carries_the_chrome_fields(self):
+        for name in ("watch", "watched", "grabbing", "chrome_pending",
+                     "chrome_last", "chrome_grabs", "ticks"):
+            self.assertTrue(hasattr(mode._STATE, name), name)
+
+
 class TheHint(unittest.TestCase):
 
     def test_it_names_the_camera_and_the_key(self):

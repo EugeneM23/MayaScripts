@@ -39,7 +39,14 @@ BUTTON = "skeldarGraphOverlayButton"
 FOLLOW_MS = 100
 ALT_MS = 30
 MIN_UPDATE_S = 0.015
+MIN_CHROME_S = 0.03
 MOST_TONES = 3      # background tones learnt over a session of frames
+# The whole Graph Editor on the viewport - menus, toolbar, channel list -
+# with only the curve area see-through (2026-09-30, the animator: «я не могу
+# выделить отдельно каналы для редактирования кривых и нет остальных
+# инструментов»). False is the first build: the curve area alone.
+CHROME = True
+REWATCH_TICKS = 10  # follow ticks between looks for new chrome widgets
 
 HINT = "alt+mouse: camera  |  F / A: frame the graph  |  alt+c: leave"
 PANEL_HINT = "The Graph Editor over the viewport, see-through (alt+c)"
@@ -72,6 +79,13 @@ class _State(object):
         self.frames = 0
         self.cost = 0.0
         self.closing = False
+        self.watch = None               # the chrome's event filter
+        self.watched = set()            # C++ addresses it is installed on
+        self.grabbing = False
+        self.chrome_pending = False
+        self.chrome_last = None
+        self.chrome_grabs = 0
+        self.ticks = 0
 
 
 SESSION_STATE = "_skeldar_graphoverlay_state"
@@ -122,7 +136,7 @@ def enable():
     parent = viewport.maya_main_window()
     try:
         _STATE.model_panel = panel
-        _STATE.ghost = ghost.Ghost(parent, rect)
+        _STATE.ghost = ghost.Ghost(parent, rect, chrome=CHROME)
         _STATE.glass = glass.Glass(parent)
         _STATE.glass.place(rect)
         _STATE.rect, _STATE.placed = rect, True
@@ -130,6 +144,8 @@ def enable():
         if not _POOL:
             _POOL.append(keying.make_pool())
         _connect_canvas()
+        _watch_chrome()
+        _on_chrome_paint()
         _start_timers()
         _install_jobs()
     except Exception:
@@ -151,6 +167,11 @@ def disable():
             try:
                 canvas.frameSwapped.disconnect(_on_swap)
             except (RuntimeError, TypeError):
+                pass
+        if _STATE.watch is not None:
+            try:
+                _STATE.watch.deleteLater()      # Qt drops it from every widget
+            except RuntimeError:
                 pass
         if _STATE.glass is not None:
             _STATE.glass.close_glass()
@@ -212,14 +233,87 @@ def _update():
         pixels = np.frombuffer(image.constBits(), np.uint8).reshape(
             height, image.bytesPerLine() // 4, 4)[:, :width]
         learn_tones(keying.backgrounds(pixels))
-        _STATE.glass.set_frame(keying.key_out(
-            pixels, _STATE.keys, _STATE.table, _POOL[0] if _POOL else None))
+        _STATE.glass.set_frame(
+            keying.key_out(pixels, _STATE.keys, _STATE.table,
+                           _POOL[0] if _POOL else None),
+            offset=_STATE.ghost.canvas_offset())
     except Exception:                                         # noqa: BLE001
         traceback.print_exc()
         return
     _STATE.last = time.perf_counter()
     _STATE.frames += 1
     _STATE.cost = _STATE.last - started
+
+
+# --------------------------------------------------------------- the chrome
+
+def _make_watch():
+    """The event filter on the chrome's widgets: a repaint there means the
+    menus, the toolbar or the channel list changed, so the glass takes a new
+    picture of them. Silent while the grab itself repaints them."""
+    from PySide6 import QtCore
+
+    class ChromeWatch(QtCore.QObject):
+
+        def eventFilter(self, watched, event):
+            try:
+                if event.type() == QtCore.QEvent.Paint and \
+                        not _STATE.grabbing:
+                    _on_chrome_paint()
+            except Exception:                                 # noqa: BLE001
+                pass
+            return False
+
+    return ChromeWatch()
+
+
+def _watch_chrome():
+    """Put the filter on every chrome widget it is not on yet."""
+    if not is_on() or not _STATE.ghost.chrome:
+        return 0
+    import shiboken6
+    if _STATE.watch is None:
+        _STATE.watch = _make_watch()
+    added = 0
+    for widget in _STATE.ghost.chrome_widgets():
+        try:
+            address = int(shiboken6.getCppPointer(widget)[0])
+        except RuntimeError:
+            continue
+        if address in _STATE.watched:
+            continue
+        widget.installEventFilter(_STATE.watch)
+        _STATE.watched.add(address)
+        added += 1
+    return added
+
+
+def _on_chrome_paint():
+    """The chrome repainted: a new picture of it, now or when it is due."""
+    if not is_on() or _STATE.chrome_pending or not _STATE.ghost.chrome:
+        return
+    _STATE.chrome_pending = True
+    from PySide6 import QtCore
+    delay = geometry.due_in(time.perf_counter(), _STATE.chrome_last,
+                            MIN_CHROME_S)
+    QtCore.QTimer.singleShot(int(round(delay * 1000)), _update_chrome)
+
+
+def _update_chrome():
+    _STATE.chrome_pending = False
+    if not is_on() or _STATE.closing:
+        return
+    _STATE.grabbing = True
+    try:
+        pieces = _STATE.ghost.chrome_pieces()
+    except Exception:                                         # noqa: BLE001
+        traceback.print_exc()
+        return
+    finally:
+        _STATE.grabbing = False
+    _STATE.glass.set_chrome(pieces)
+    _STATE.chrome_last = time.perf_counter()
+    _STATE.chrome_grabs += 1
 
 
 # ---------------------------------------------------------------- following
@@ -273,10 +367,14 @@ def _follow_once():
             glass_.place(rect)
         if not ghost_.aligned(rect):
             ghost_.place(rect)
+            _on_chrome_paint()
         glass_.keep_click_through()
     ghost_.keep_invisible()
     if _STATE.canvas is None:
         _connect_canvas()
+    _STATE.ticks += 1
+    if _STATE.ticks % REWATCH_TICKS == 0:
+        _watch_chrome()
     _poll_alt()
 
 

@@ -21,6 +21,26 @@ class HostRect(unittest.TestCase):
         self.assertEqual(geometry.host_rect(canvas, host, canvas), host)
 
 
+class ChromeBands(unittest.TestCase):
+    """The Graph Editor's own chrome - menus, toolbar, channel list - is
+    everything of the host outside its curve area (2026-09-30, the
+    animator: «я не могу выделить отдельно каналы... и нет остальных
+    инструментов»)."""
+
+    def test_the_four_bands_around_the_canvas(self):
+        self.assertEqual(geometry.chrome_bands((1526, 1044),
+                                               (320, 70, 1200, 970)),
+                         [(0, 0, 1526, 70), (0, 1040, 1526, 4),
+                          (0, 70, 320, 970), (1520, 70, 6, 970)])
+
+    def test_empty_bands_are_left_out(self):
+        self.assertEqual(geometry.chrome_bands((100, 50), (0, 20, 100, 30)),
+                         [(0, 0, 100, 20)])
+
+    def test_a_canvas_filling_the_host_leaves_no_chrome(self):
+        self.assertEqual(geometry.chrome_bands((100, 50), (0, 0, 100, 50)), [])
+
+
 class Usable(unittest.TestCase):
 
     def test_a_rectangle_with_area(self):

@@ -7,12 +7,17 @@ graphEditor1 - their Graph Editor stays where they docked it. Measured
 
 - the curve area is `TanimCurveCanvas`, a QOpenGLWindow named
   `<panel>GraphEdImpl` inside a QWindowContainer - a native child HWND;
-- the menu bar goes with `menuBarVisible=False`, the toolbar is the panel's
-  one frameLayout (the parent of its `QadskFrameLayoutFrame`) unmanaged,
-  the channel list the QSplitter's other side sized 0, handle width 0;
-- then the canvas sits (5, 3) into the host with 8x6 of border, and the
-  host placed by `geometry.host_rect` puts it on the viewport pixel for
-  pixel.
+- by default (`chrome=True`, the animator's call the same day: the channel
+  list and the tools are the Graph Editor) the WHOLE panel lies on the
+  viewport - menu bar, toolbar, channel list, curve area - and the glass
+  shows the chrome from `host.grab()` of the bands around the curve area
+  (`geometry.chrome_bands`), the curve area keyed;
+- without it the menu bar goes with `menuBarVisible=False`, the toolbar is
+  the panel's one frameLayout (the parent of its `QadskFrameLayoutFrame`)
+  unmanaged, the channel list the QSplitter's other side sized 0, handle
+  width 0; then the canvas sits (5, 3) into the host with 8x6 of border,
+  and the host placed by `geometry.host_rect` puts it on the viewport
+  pixel for pixel.
 
 PySide hands the canvas back as a QPaintDeviceWindow; the cached wrapper is
 invalidated and the pointer wrapped as the QOpenGLWindow it is, which is
@@ -78,8 +83,14 @@ def delete_leftovers():
 class Ghost(object):
     """The panel, its host, and the canvas wrapper, held together."""
 
-    def __init__(self, parent, rect):
+    def __init__(self, parent, rect, chrome=True):
+        """`chrome`: the whole Graph Editor on `rect` - menu bar, toolbar,
+        channel list and the curve area (2026-09-30, the animator: «я не
+        могу выделить отдельно каналы для редактирования кривых и нет
+        остальных инструментов»). False: the curve area alone on `rect`,
+        everything else hidden - the first build's shape."""
         delete_leftovers()
+        self.chrome = bool(chrome)
         host = QtWidgets.QWidget(parent, QtCore.Qt.Tool
                                  | QtCore.Qt.FramelessWindowHint)
         host.setObjectName(HOST)
@@ -104,9 +115,52 @@ class Ghost(object):
             cmds.setParent(previous)
         except Exception:                                     # noqa: BLE001
             pass
-        self.hide_chrome()
+        if not self.chrome:
+            self.hide_chrome()
 
     # ------------------------------------------------------------ the chrome
+
+    def chrome_widgets(self):
+        """Every widget of the host but the curve area's container - the
+        ones whose repaints mean the chrome changed."""
+        try:
+            widgets = self.host.findChildren(QtWidgets.QWidget)
+        except RuntimeError:
+            return []
+        found = []
+        for widget in widgets:
+            try:
+                if widget.metaObject().className() != CONTAINER_CLASS:
+                    found.append(widget)
+            except RuntimeError:
+                continue
+        return found
+
+    def canvas_offset(self):
+        """The curve area's top-left inside the host, (0, 0) when unknown."""
+        canvas = self.canvas_rect()
+        if canvas is None:
+            return (0, 0)
+        corner = self.host.mapToGlobal(QtCore.QPoint(0, 0))
+        return (canvas[0] - corner.x(), canvas[1] - corner.y())
+
+    def chrome_pieces(self):
+        """The chrome as [(QImage, x, y), ...] in host coordinates: the host
+        grabbed band by band around the curve area (Qt widgets render into
+        a grab whatever the window's opacity)."""
+        if not self.chrome:
+            return []
+        canvas = self.canvas_rect()
+        if canvas is None:
+            return []
+        x, y = self.canvas_offset()
+        pieces = []
+        for band in geometry.chrome_bands((self.host.width(),
+                                           self.host.height()),
+                                          (x, y, canvas[2], canvas[3])):
+            pixmap = self.host.grab(QtCore.QRect(*band))
+            pieces.append((pixmap.toImage(), band[0], band[1]))
+        return pieces
 
     def hide_chrome(self):
         """Menu bar, toolbar and channel list out; idempotent."""
@@ -203,8 +257,13 @@ class Ghost(object):
         return (g.x(), g.y(), g.width(), g.height())
 
     def place(self, target):
-        """Move the host so its canvas lands on `target` (it converges in the
-        next layout pass when the size changed)."""
+        """With the chrome: the host on `target`. Without it: the host moved
+        so its canvas lands on `target` (it converges in the next layout
+        pass when the size changed)."""
+        if self.chrome:
+            if self.host_rect() != tuple(target):
+                self.host.setGeometry(*[int(v) for v in target])
+            return
         self.hide_chrome()
         canvas = self.canvas_rect()
         if canvas is None:
@@ -215,6 +274,8 @@ class Ghost(object):
             self.host.setGeometry(*wanted)
 
     def aligned(self, target):
+        if self.chrome:
+            return self.host_rect() == tuple(target)
         return self.canvas_rect() == tuple(target)
 
     def alive(self):

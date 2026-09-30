@@ -6,7 +6,8 @@ phase, because the Qt event loop has to turn between them (the follow
 timer aligns the ghost, `frameSwapped` keys the glass; trap 68). The
 runner defines PHASE and calls `main(PHASE)`:
 
-    setup  placed  check_time  frame_view  click  check_click  alt  cost
+    setup  placed  check_time  frame_view  click  check_click  channel
+    check_channel  toolbar  check_toolbar  alt  cost
     look  hub  leave  gone
 
 State between phases lives in `sys._skeldar_verify_go`. Maya being the
@@ -181,7 +182,13 @@ def placed():
     gate(1, winstyle.layered_alpha(ghost.hwnd()) == 1,
          "the ghost's layered alpha is 1 (%s)"
          % winstyle.layered_alpha(ghost.hwnd()))
-    gate(2, ghost.canvas_rect() == vp, "its canvas lies on the viewport")
+    canvas = ghost.canvas_rect()
+    inside = (canvas is not None and canvas[0] >= vp[0] and canvas[1] >= vp[1]
+              and canvas[0] + canvas[2] <= vp[0] + vp[2]
+              and canvas[1] + canvas[3] <= vp[1] + vp[3])
+    gate(2, ghost.host_rect() == vp and inside,
+         "the whole Graph Editor lies on the viewport, its curve area "
+         "inside (%s)" % (canvas,))
     gate(3, (glass.x(), glass.y(), glass.width(), glass.height()) == vp,
          "the glass lies on it too")
     gate(4, winstyle.is_click_through(int(glass.winId())),
@@ -190,7 +197,7 @@ def placed():
          % (st.frames, st.keys))
     image = glass.frame()
     import numpy as np
-    ok = image is not None and (image.width(), image.height()) == vp[2:]
+    ok = image is not None and (image.width(), image.height()) == canvas[2:]
     if ok:
         arr = np.frombuffer(image.constBits(), np.uint8).reshape(
             image.height(), image.bytesPerLine() // 4, 4)
@@ -201,6 +208,21 @@ def placed():
                                                                solid))
         image.save(os.path.join(OUT_DIR, "glass_placed.png"))
     gate(6, ok, "the glass shows the graph with its background out")
+    from maya_graphoverlay import geometry
+    picture = glass.picture()
+    picture.save(os.path.join(OUT_DIR, "glass_picture.png"))
+    parr = np.frombuffer(picture.constBits(), np.uint8).reshape(
+        picture.height(), picture.bytesPerLine() // 4, 4)[..., 3]
+    ox, oy = ghost.canvas_offset()
+    bands = geometry.chrome_bands((picture.width(), picture.height()),
+                                  (ox, oy, canvas[2], canvas[3]))
+    solid = [float((parr[y:y + h, x:x + w] == 255).mean())
+             for x, y, w, h in bands]
+    print("chrome bands", bands, "opaque", ["%.3f" % s for s in solid],
+          "grabs", st.chrome_grabs, "watched", len(st.watched))
+    gate(21, bands and min(solid) > 0.99 and st.chrome_grabs >= 1,
+         "the menus, the toolbar and the channel list stand opaque on the "
+         "glass")
     S["frames"] = st.frames
     S["marker"] = _marker(image) if image is not None else None
     print("marker at frame 1:", S["marker"])
@@ -322,6 +344,102 @@ def alt():
     gate(12, hit == canvas_hwnd, "a click there reaches the graph (%s)" % hit)
 
 
+def _host_child(name):
+    """A widget of OUR Graph Editor by object name (the animator's own
+    graphEditor1 carries the same toolbar names)."""
+    from PySide6 import QtWidgets
+    host = _mode()._STATE.ghost.host
+    for widget in host.findChildren(QtWidgets.QWidget):
+        try:
+            if widget.objectName() == name and widget.isVisible():
+                return widget
+        except RuntimeError:
+            continue
+    return None
+
+
+def _post_to_host(widget, x=None, y=None):
+    from PySide6 import QtCore
+    host = _mode()._STATE.ghost.host
+    local = QtCore.QPoint(widget.width() // 2 if x is None else x,
+                          widget.height() // 2 if y is None else y)
+    at = widget.mapTo(host, local)
+    _post_click(int(host.winId()), at.x(), at.y())
+    return (at.x(), at.y())
+
+
+def _outliner_selection():
+    mode = _mode()
+    outliner = mode._STATE.ghost.panel + "OutlineEd"
+    connection = cmds.outlinerEditor(outliner, query=True,
+                                     selectionConnection=True)
+    return cmds.selectionConnection(connection, query=True, object=True) or []
+
+
+def channel():
+    """Click the "Rotate Z" row of OUR channel list - found by its blue text
+    in the glass's picture of the chrome - posted to the invisible host."""
+    import numpy as np
+    mode = _mode()
+    st = mode._STATE
+    mode._update_chrome()
+    picture = st.glass.picture()
+    ox, oy = st.ghost.canvas_offset()
+    arr = np.frombuffer(picture.constBits(), np.uint8).reshape(
+        picture.height(), picture.bytesPerLine() // 4, 4)[:, :ox]
+    b, g, r = arr[..., 0].astype(int), arr[..., 1].astype(int), arr[..., 2].astype(int)
+    blue = (b > 180) & (r < 140) & (b - r > 80)
+    ys, xs = np.nonzero(blue)
+    S["channels_before"] = _outliner_selection()
+    print("selected channels before:", S["channels_before"])
+    if not len(xs):
+        gate(22, False, "no blue 'Rotate Z' text found in the channel list")
+        return
+    x, y = int(np.median(xs)), int(np.median(ys))
+    print("Rotate Z text around", (x, y))
+    import ctypes
+    _post_click(int(st.ghost.host.winId()), x, y)
+
+
+def check_channel():
+    now = _outliner_selection()
+    print("selected channels after:", now)
+    gate(22, any(item.endswith("rotateZ") for item in now)
+         and not any(item.endswith(("translateX", "translateY"))
+                     for item in now),
+         "a click on the channel list's Rotate Z selected that channel alone")
+
+
+def toolbar():
+    mode = _mode()
+    editor = mode._STATE.ghost.panel + "GraphEd"
+    S["stacked_before"] = cmds.animCurveEditor(editor, query=True,
+                                               stackedCurves=True)
+    button = _host_child("graphEditorStackedViewIconButton")
+    if button is None:
+        gate(23, False, "no Stacked View button in our toolbar")
+        return
+    print("stacked before:", S["stacked_before"], "button at",
+          _post_to_host(button))
+
+
+def check_toolbar():
+    mode = _mode()
+    editor = mode._STATE.ghost.panel + "GraphEd"
+    now = cmds.animCurveEditor(editor, query=True, stackedCurves=True)
+    theirs = [p for p in (cmds.getPanel(scriptType="graphEditor") or [])
+              if p != mode._STATE.ghost.panel]
+    others = [cmds.animCurveEditor(p + "GraphEd", query=True,
+                                   stackedCurves=True)
+              for p in theirs if cmds.animCurveEditor(p + "GraphEd",
+                                                      exists=True)]
+    print("stacked after:", now, "the animator's own Graph Editors:", others)
+    gate(23, now != S.get("stacked_before"),
+         "a click on the toolbar's Stacked View switched OUR Graph Editor")
+    cmds.animCurveEditor(editor, edit=True,
+                         stackedCurves=bool(S.get("stacked_before")))
+
+
 def cost():
     """At the viewport's own size - never a window moved to make it bigger."""
     mode = _mode()
@@ -417,7 +535,9 @@ def gone():
 
 
 PHASES = {"setup": setup, "placed": placed, "check_time": check_time,
-          "frame_view": frame_view,
+          "frame_view": frame_view, "channel": channel,
+          "check_channel": check_channel, "toolbar": toolbar,
+          "check_toolbar": check_toolbar,
           "click": click, "check_click": check_click, "alt": alt,
           "cost": cost, "look": look, "hub": hub, "leave": leave,
           "gone": gone, "time": lambda: None}
