@@ -294,9 +294,9 @@ def _send_work(record, path):
         archive = _zip(path, record["name"])
         size = os.path.getsize(archive)
         if size > records.MAX_ZIP:
-            raise net.ShareError("the zip is {0}, over litterbox's 1 GB"
+            raise net.ShareError("the zip is {0}, over the hosts' 1 GB"
                                  .format(records.size_text(size)))
-        url = net.upload(archive, progress=lambda done, total: _progress(
+        url = net.upload_any(archive, progress=lambda done, total: _progress(
             rid, done, total))
         ready = records.with_state(record, "ready", url=url, zip=size)
         net.publish(records.encode(ready))
@@ -564,6 +564,23 @@ def _clean(nodes, every_script):
     return (" - " + "; ".join(notes)) if notes else ""
 
 
+SCENE_CONFIG = "sceneConfigurationScriptNode"
+
+
+def _restore_playback():
+    """The opened scene's ranges, read out of its sceneConfigurationScriptNode
+    and applied -- that node is what sets them, and it did not run (the open
+    runs no script node). Parsed, never evaluated. True when applied."""
+    if not cmds.objExists(SCENE_CONFIG):
+        return False
+    values = records.playback_from_script(
+        cmds.scriptNode(SCENE_CONFIG, query=True, beforeScript=True) or "")
+    if not values:
+        return False
+    cmds.playbackOptions(**values)
+    return True
+
+
 def _import_fbx(path, record, verb):
     from maya_uebridge import animimport
     from maya_uebridge import records as bridge_records
@@ -589,6 +606,7 @@ def open_entry(rid):
     if record["kind"] == "scene":
         cmds.file(path, open=True, force=True, executeScriptNodes=False,
                   ignoreVersion=True, prompt=False)
+        _restore_playback()
         note = _clean(cmds.ls(type=["script", "file"]) or [], False)
         return _status("Opened {0} from {1}{2}".format(
             record["name"], record.get("from") or "someone", note))

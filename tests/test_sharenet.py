@@ -19,6 +19,7 @@ import urllib.parse
 import maya_sharenet as net
 
 LITTER = "https://litter.catbox.moe/abc123.zip"
+TEMPSH = "https://temp.sh/AbCdE/share.zip"
 
 
 class _Server(http.server.ThreadingHTTPServer):
@@ -38,6 +39,9 @@ class _Server(http.server.ThreadingHTTPServer):
         self.cond = threading.Condition()
         self.closing = False
         self.close_after = None
+        self.tempsh_reply = TEMPSH
+        self.tempsh_status = 200
+        self.downloads = []
 
     @property
     def base(self):
@@ -80,6 +84,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._multipart(body)
             self._answer(self.server.status, self.server.reply.encode())
             return
+        if path == "/upload":
+            self._multipart(body)
+            self._answer(self.server.tempsh_status,
+                         self.server.tempsh_reply.encode())
+            return
+        if path.startswith("/file/"):
+            self._serve(path, "POST")
+            return
         mid = self.server.post_message(path.strip("/"), body.decode("utf-8"))
         self._answer(200, json.dumps({"id": mid, "event": "message"}).encode())
 
@@ -99,6 +111,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             else:
                 self.server.fields[name] = content.decode()
 
+    def _serve(self, path, method):
+        self.server.downloads.append(method)
+        data = self.server.files.get(path[len("/file/"):])
+        if data is None:
+            self._answer(404, b"not found")
+        else:
+            self._answer(200, data)
+
     def _line(self, event):
         self.wfile.write((json.dumps(event) + "\n").encode())
         self.wfile.flush()
@@ -106,11 +126,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         split = urllib.parse.urlsplit(self.path)
         if split.path.startswith("/file/"):
-            data = self.server.files.get(split.path[len("/file/"):])
-            if data is None:
-                self._answer(404, b"not found")
-            else:
-                self._answer(200, data)
+            self._serve(split.path, "GET")
             return
         if not split.path.endswith("/json"):
             self._answer(404, b"")
@@ -219,6 +235,60 @@ class Upload(_WithServer):
         self.assertIn("boundary=", body.content_type)
 
 
+class TempSh(_WithServer):
+
+    def test_sends_the_file_field(self):
+        path = self._file()
+        url = net.upload_tempsh(path, url=self.server.base + "/upload")
+        self.assertEqual(url, TEMPSH)
+        self.assertEqual(self.server.fields, {})
+        with open(path, "rb") as handle:
+            self.assertEqual(self.server.upload, handle.read())
+
+    def test_a_reply_that_is_no_address(self):
+        self.server.tempsh_reply = "<html>busy</html>"
+        with self.assertRaises(net.ShareError) as caught:
+            net.upload_tempsh(self._file(1000),
+                              url=self.server.base + "/upload")
+        self.assertIn("temp.sh", str(caught.exception))
+
+
+class UploadAny(_WithServer):
+
+    def setUp(self):
+        _WithServer.setUp(self)
+        self.saved = (net.TEMPSH_URL, net.UPLOAD_URL)
+
+    def tearDown(self):
+        net.TEMPSH_URL, net.UPLOAD_URL = self.saved
+        _WithServer.tearDown(self)
+
+    def test_temp_sh_first(self):
+        net.TEMPSH_URL = self.server.base + "/upload"
+        net.UPLOAD_URL = "http://127.0.0.1:1/api.php"
+        self.assertEqual(net.upload_any(self._file(1000)), TEMPSH)
+
+    def test_litterbox_when_temp_sh_fails(self):
+        net.TEMPSH_URL = "http://127.0.0.1:1/upload"
+        net.UPLOAD_URL = self.server.base + "/api.php"
+        self.assertEqual(net.upload_any(self._file(1000)), LITTER)
+
+    def test_both_failing_names_both(self):
+        net.TEMPSH_URL = "http://127.0.0.1:1/upload"
+        net.UPLOAD_URL = "http://127.0.0.1:1/api.php"
+        with self.assertRaises(net.ShareError) as caught:
+            net.upload_any(self._file(1000))
+        self.assertIn("temp.sh", str(caught.exception))
+        self.assertIn("litterbox", str(caught.exception))
+
+    def test_a_cancel_does_not_fall_back(self):
+        net.TEMPSH_URL = self.server.base + "/upload"
+        net.UPLOAD_URL = self.server.base + "/api.php"
+        with self.assertRaises(net.Cancelled):
+            net.upload_any(self._file(), progress=lambda d, t: False)
+        self.assertIsNone(self.server.fields.get("reqtype"))
+
+
 class Publish(_WithServer):
 
     def test_the_body_arrives_and_the_id_comes_back(self):
@@ -246,6 +316,19 @@ class Download(_WithServer):
             self.assertEqual(handle.read(), data)
         self.assertFalse(os.path.exists(path + ".part"))
         self.assertEqual(calls[-1], (len(data), len(data)))
+
+    def test_temp_sh_is_fetched_with_a_post(self):
+        self.server.files["x.zip"] = b"payload"
+        saved = net.TEMPSH_HOST
+        net.TEMPSH_HOST = "127.0.0.1"
+        try:
+            path = os.path.join(self.dir, "got.zip")
+            net.download(self.server.base + "/file/x.zip", path)
+        finally:
+            net.TEMPSH_HOST = saved
+        self.assertEqual(self.server.downloads, ["POST"])
+        with open(path, "rb") as handle:
+            self.assertEqual(handle.read(), b"payload")
 
     def test_404_is_expired_and_leaves_nothing(self):
         path = os.path.join(self.dir, "got.zip")

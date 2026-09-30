@@ -34,6 +34,14 @@ class _Cmds(FakeUiCmds):
         self.comment = ""
         self.dialog = None
         self.messages = []
+        self.playback = None
+        self.config = "playbackOptions -min 5 -max 45 -ast 0 -aet 50 "
+
+    def objExists(self, name):
+        return name == "sceneConfigurationScriptNode"
+
+    def scriptNode(self, name, **kwargs):
+        return self.config if kwargs.get("beforeScript") else None
 
     def internalVar(self, **kwargs):
         return self.app_dir + "/"
@@ -60,6 +68,9 @@ class _Cmds(FakeUiCmds):
         return None
 
     def playbackOptions(self, **kwargs):
+        if not (kwargs.get("query") or kwargs.get("q")):
+            self.playback = kwargs
+            return None
         if kwargs.get("minTime"):
             return 0.0
         if kwargs.get("maxTime"):
@@ -115,7 +126,7 @@ class _Net(object):
         self.published.append(records.parse(text))
         return "m{0}".format(len(self.published))
 
-    def upload(self, path, progress=None, url=None, keep="72h"):
+    def upload_any(self, path, progress=None):
         if self.fail is not None:
             raise self.fail
         with open(path, "rb") as handle:
@@ -376,6 +387,9 @@ class Actions(_Base):
         self.assertIs(opens[0]["executeScriptNodes"], False)
         self.assertIs(opens[0]["prompt"], False)
         self.assertEqual(cleaned, [False])
+        self.assertEqual(self.fake.playback, {
+            "minTime": 5.0, "maxTime": 45.0, "animationStartTime": 0.0,
+            "animationEndTime": 50.0})
 
 
 class Listening(_Base):

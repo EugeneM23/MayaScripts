@@ -3,9 +3,10 @@
 The animator's ask (2026-09-30): «Shared Temp хранилище в котором сможем
 обмениваться сценами ... а еще и fbx файлов», then «Один человек нажал
 кнопочку у второго через 2 секунды появился файлик в списке ... Ключи
-никакие не нужны». Everyone works remotely. So a file goes to
-litterbox.catbox.moe and a RECORD of it goes to an ntfy.sh channel every
-colleague's Maya listens to (`maya_sharenet`); `maya_share` is the section.
+никакие не нужны». Everyone works remotely. So a file goes to temp.sh
+(litterbox.catbox.moe when temp.sh fails) and a RECORD of it goes to an
+ntfy.sh channel every colleague's Maya listens to (`maya_sharenet`);
+`maya_share` is the section.
 
 This module is the record: what a sent one holds, what a received one may
 hold, how two records of one file combine, how a row reads, where a file
@@ -14,7 +15,7 @@ is always passed in, so every rule is a plain test.
 
 Nothing on the channel is authenticated (the topic is in a public
 repository), so `parse` is strict: anything that is not one of our records,
-and a `url` that is not litterbox's, is dropped.
+and a `url` on any other host than the two file hosts, is dropped.
 
 Spec: docs/superpowers/specs/2026-09-30-shared-files-design.md
 """
@@ -31,12 +32,15 @@ VERSION = 1
 STATES = ("sending", "ready", "failed")
 KINDS = {".ma": "scene", ".mb": "scene", ".fbx": "fbx"}
 SCENE_TYPES = {".ma": "mayaAscii", ".mb": "mayaBinary"}
-HOSTS = ("litter.catbox.moe",)
+#  Where a file may be: temp.sh first, litterbox when temp.sh fails
+#  (2026-09-30: litterbox fell to 0.15 MB/s in the afternoon, temp.sh held
+#  1.2 MB/s; see maya_sharenet).
+HOSTS = ("temp.sh", "litter.catbox.moe")
 
-LIFETIME = 72 * 3600         # litterbox's longest keep: the file is gone after
+LIFETIME = 72 * 3600         # both hosts keep 3 days: the file is gone after
 SENDING_TIMEOUT = 2 * 3600   # a "sending" never finished: the sender's Maya died
 NEWS_WITHIN = 10 * 60        # an arrival older than this is history, not news
-MAX_ZIP = 1024 ** 3          # litterbox takes up to 1 GB
+MAX_ZIP = 1024 ** 3          # litterbox takes up to 1 GB (temp.sh 4 GB)
 HISTORY_VERSION = 1
 
 #  The list is fixed-width: name, sender, state, size, time, comment.
@@ -106,7 +110,7 @@ def encode(record):
 
 
 def allowed_url(url):
-    """True for an https address on litterbox's download host."""
+    """True for an https address on one of the file hosts."""
     if not isinstance(url, str):
         return False
     try:
@@ -178,7 +182,7 @@ def is_mine(record, machine):
 
 
 def expired(record, now):
-    """The file is past litterbox's keep."""
+    """The file is past the hosts' keep."""
     return now - record["sent"] > LIFETIME
 
 
@@ -277,6 +281,37 @@ def details_text(record, mine, status, now):
     parts.append(status + (": Open, Import or Save to..."
                            if status in ("ready", "sent") else ""))
     return " - ".join(parts)
+
+
+#  The four ranges a scene's sceneConfigurationScriptNode sets, by any of
+#  their MEL spellings.
+_PLAYBACK_FLAGS = {"min": "minTime", "minTime": "minTime",
+                   "max": "maxTime", "maxTime": "maxTime",
+                   "ast": "animationStartTime",
+                   "animationStartTime": "animationStartTime",
+                   "aet": "animationEndTime",
+                   "animationEndTime": "animationEndTime"}
+_NUMBER = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def playback_from_script(text):
+    """The playback and animation ranges in a sceneConfigurationScriptNode's
+    MEL («playbackOptions -min 5 -max 45 -ast 0 -aet 50 »), as keyword
+    arguments for `cmds.playbackOptions`, or {}. Parsed, never evaluated:
+    a shared scene is opened with its script nodes OFF (measured 2026-09-30:
+    the ranges then stay at the new scene's defaults), and this node is the
+    only thing that carries them."""
+    for statement in (text or "").split(";"):
+        words = statement.split()
+        if not words or words[0] != "playbackOptions":
+            continue
+        values = {}
+        for flag, value in zip(words[1::2], words[2::2]):
+            name = _PLAYBACK_FLAGS.get(flag.lstrip("-"))
+            if name and _NUMBER.match(value):
+                values[name] = float(value)
+        return values
+    return {}
 
 
 def inbox_folder(record):

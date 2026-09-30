@@ -1,18 +1,25 @@
 """maya_sharenet - the Shared section's network. Stdlib only, no `maya`.
 
-A file goes to litterbox.catbox.moe (anonymous, up to 1 GB, kept 72 hours);
-a record of it goes to an ntfy.sh channel, and every colleague's Maya holds
-that channel open on a `Subscriber` thread. No keys and no accounts for
-anybody -- the animator's condition (2026-09-30: «Ключи никакие не нужны»).
+A file goes to temp.sh (anonymous, up to 4 GB, kept 3 days), or to
+litterbox.catbox.moe (1 GB, 72 hours) when temp.sh fails; a record of it
+goes to an ntfy.sh channel, and every colleague's Maya holds that channel
+open on a `Subscriber` thread. No keys and no accounts for anybody -- the
+animator's condition (2026-09-30: «Ключи никакие не нужны»).
 
-Measured from the animator's machine on 2026-09-30, before choosing:
+Measured from the animator's machine on 2026-09-30:
 
 - ntfy.sh: a publish reached a second process's open stream in 1.08 s; a
   message stays in the channel 12 hours (its `expires`);
-- litterbox: 1.3-3.3 MB/s up and down (8 MB: 2.6-5.8 s up, 2.5-13.7 s down),
-  against 4 MB/s from GitHub's release assets;
-- filebin.net answered its download with an HTML page, 0x0.st and ntfy's own
-  attachments aborted the connection, tmpfiles.org keeps files an hour.
+- litterbox, the morning: 1.3-3.3 MB/s up and down (8 MB: 2.6-5.8 s up);
+  the afternoon: 5 MB up in 33-64 s (0.15 MB/s), while the same uplink sent
+  5 MB to temp.sh in 4.2 s and to filebin in 3.4 s. Hence temp.sh first;
+- temp.sh: `curl -F file=@...` up (its own page's example), and the file
+  comes back to a POST -- what its download page's button sends; a GET
+  answers that page (3 KB of HTML);
+- filebin.net serves the file only to a client calling itself curl (an
+  HTML warning page otherwise) -- not used: we do not pretend to be curl;
+  0x0.st and ntfy's own attachments aborted the connection; tmpfiles.org
+  keeps files an hour.
 
 `topic` and `base` default to the module constants AT CALL TIME, so a verify
 run points the whole module at a test channel by setting `TOPIC`.
@@ -31,6 +38,8 @@ import uuid
 
 import maya_sharerecords as records
 
+TEMPSH_URL = "https://temp.sh/upload"
+TEMPSH_HOST = "temp.sh"
 UPLOAD_URL = "https://litterbox.catbox.moe/resources/internals/api.php"
 KEEP = "72h"                    # litterbox's longest: 1h, 12h, 24h or 72h
 NTFY = "https://ntfy.sh"
@@ -143,12 +152,11 @@ class MultipartBody(object):
             self._file = None
 
 
-def upload(path, progress=None, url=None, keep=KEEP):
-    """`path` onto litterbox; its address. ShareError otherwise."""
-    body = MultipartBody(path, [("reqtype", "fileupload"), ("time", keep)],
-                         "fileToUpload", UPLOAD_NAME, progress)
+def _post_file(host, url, fields, file_field, path, progress):
+    """A multipart upload; the address the host answers with."""
+    body = MultipartBody(path, fields, file_field, UPLOAD_NAME, progress)
     request = urllib.request.Request(
-        url or UPLOAD_URL, data=body, method="POST",
+        url, data=body, method="POST",
         headers={"User-Agent": USER_AGENT, "Content-Type": body.content_type,
                  "Content-Length": str(body.length)})
     try:
@@ -157,16 +165,45 @@ def upload(path, progress=None, url=None, keep=KEEP):
     except Cancelled:
         raise
     except urllib.error.HTTPError as exc:
-        raise ShareError("litterbox answered {0} {1}".format(exc.code,
-                                                             exc.reason))
+        raise ShareError("{0} answered {1} {2}".format(host, exc.code,
+                                                       exc.reason))
     except (urllib.error.URLError, socket.timeout, OSError) as exc:
-        raise ShareError("could not reach litterbox: " + _reason(exc))
+        raise ShareError("could not reach {0}: {1}".format(host, _reason(exc)))
     finally:
         body.close()
     if not records.allowed_url(text):
-        raise ShareError("litterbox answered {0!r}, not a file address".format(
-            text[:120]))
+        raise ShareError("{0} answered {1!r}, not a file address".format(
+            host, text[:120]))
     return text
+
+
+def upload(path, progress=None, url=None, keep=KEEP):
+    """`path` onto litterbox; its address. ShareError otherwise."""
+    return _post_file("litterbox", url or UPLOAD_URL,
+                      [("reqtype", "fileupload"), ("time", keep)],
+                      "fileToUpload", path, progress)
+
+
+def upload_tempsh(path, progress=None, url=None):
+    """`path` onto temp.sh; its address. ShareError otherwise."""
+    return _post_file(TEMPSH_HOST, url or TEMPSH_URL, [], "file", path,
+                      progress)
+
+
+def upload_any(path, progress=None):
+    """temp.sh, else litterbox: the address of whichever took the file.
+    A cancel is not a failure to fall back from."""
+    try:
+        return upload_tempsh(path, progress)
+    except Cancelled:
+        raise
+    except ShareError as first:
+        try:
+            return upload(path, progress)
+        except Cancelled:
+            raise
+        except ShareError as second:
+            raise ShareError("{0}; {1}".format(first, second))
 
 
 def publish(text, topic=None, base=None):
@@ -202,7 +239,15 @@ def download(url, path, progress=None):
     only whole); the bytes. Expired on 404, Cancelled, ShareError."""
     part = path + ".part"
     done = 0
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    host = urllib.parse.urlsplit(url).hostname
+    if host == TEMPSH_HOST:
+        #  temp.sh answers a GET with its download page; the file comes back
+        #  to the POST that page's button sends.
+        request = urllib.request.Request(url, data=b"", method="POST",
+                                         headers={"User-Agent": USER_AGENT})
+    else:
+        request = urllib.request.Request(url,
+                                         headers={"User-Agent": USER_AGENT})
     try:
         with _open(request) as response, open(part, "wb") as out:
             total = int(response.headers.get("Content-Length") or 0)
@@ -220,9 +265,9 @@ def download(url, path, progress=None):
     except urllib.error.HTTPError as exc:
         _remove(part)
         if exc.code == 404:
-            raise Expired("the file is gone from litterbox (72 hours)")
-        raise ShareError("litterbox answered {0} {1}".format(exc.code,
-                                                             exc.reason))
+            raise Expired("the file is gone from {0} (3 days)".format(host))
+        raise ShareError("{0} answered {1} {2}".format(host, exc.code,
+                                                       exc.reason))
     except (urllib.error.URLError, socket.timeout, OSError) as exc:
         _remove(part)
         raise ShareError("the download failed: " + _reason(exc))

@@ -126,6 +126,7 @@ class ParseRefuses(unittest.TestCase):
 
     def test_allowed_url(self):
         self.assertTrue(records.allowed_url(URL))
+        self.assertTrue(records.allowed_url("https://temp.sh/AbCdE/share.zip"))
         self.assertFalse(records.allowed_url(None))
         self.assertFalse(records.allowed_url("https://litter.catbox.moe.evil.com/a"))
 
@@ -234,6 +235,21 @@ class Labels(unittest.TestCase):
                                        True, "sending 40%", NOW)
         self.assertIn("from you", waiting)
         self.assertTrue(waiting.endswith("sending 40%"))
+
+    def test_playback_from_script(self):
+        self.assertEqual(
+            records.playback_from_script(
+                "playbackOptions -min 5 -max 45 -ast 0 -aet 50 "),
+            {"minTime": 5.0, "maxTime": 45.0, "animationStartTime": 0.0,
+             "animationEndTime": 50.0})
+        self.assertEqual(
+            records.playback_from_script(
+                'print "x"; playbackOptions -minTime -10.5 -by 1 -max 20;'),
+            {"minTime": -10.5, "maxTime": 20.0})
+        self.assertEqual(records.playback_from_script(
+            "playbackOptions -min `system(\"evil\")` -max 3"), {"maxTime": 3.0})
+        self.assertEqual(records.playback_from_script("python(\"x\")"), {})
+        self.assertEqual(records.playback_from_script(None), {})
 
     def test_inbox_folder(self):
         folder = records.inbox_folder(_record(**{"from": "Олег K/../x"}))
