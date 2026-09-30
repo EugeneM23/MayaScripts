@@ -258,6 +258,27 @@ def row_text(record, mine, status, now):
     return (line + " " + comment).rstrip() if comment else line.rstrip()
 
 
+def details_text(record, mine, status, now):
+    """The status line for a picked row: everything the row has no room for,
+    and what to press."""
+    who = "you" if mine else (record.get("from") or "someone")
+    parts = ["{0} from {1}, {2}, {3}".format(
+        record["name"], who, when_text(record["sent"], now),
+        size_text(record["bytes"]))]
+    if record.get("fps") or record.get("range"):
+        scene = []
+        if record.get("fps"):
+            scene.append("{0:g} fps".format(record["fps"]))
+        if record.get("range"):
+            scene.append("{0:g}-{1:g}".format(*record["range"]))
+        parts.append(" ".join(scene))
+    if record.get("comment"):
+        parts.append(" ".join(record["comment"].split()))
+    parts.append(status + (": Open, Import or Save to..."
+                           if status in ("ready", "sent") else ""))
+    return " - ".join(parts)
+
+
 def inbox_folder(record):
     """The folder a file lands in under SkeldarShare/: when, who, which."""
     who = _SAFE.sub("_", record.get("from") or "").strip("_") or "someone"

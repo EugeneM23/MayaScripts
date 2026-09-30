@@ -224,6 +224,17 @@ class Labels(unittest.TestCase):
         row = records.row_text(_ready(comment=""), False, "ready", NOW)
         self.assertEqual(row, row.rstrip())
 
+    def test_details_text(self):
+        text = records.details_text(_ready(), False, "ready", NOW)
+        self.assertTrue(text.startswith("Orc_attack.ma from Eugene, "))
+        self.assertIn("30 fps 0-60", text)
+        self.assertIn("attack v2", text)
+        self.assertTrue(text.endswith("ready: Open, Import or Save to..."))
+        waiting = records.details_text(_ready(comment="", fps=None),
+                                       True, "sending 40%", NOW)
+        self.assertIn("from you", waiting)
+        self.assertTrue(waiting.endswith("sending 40%"))
+
     def test_inbox_folder(self):
         folder = records.inbox_folder(_record(**{"from": "Олег K/../x"}))
         self.assertIn("Олег_K_x", folder)
