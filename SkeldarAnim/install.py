@@ -50,6 +50,8 @@ _PAYLOAD = (
     "maya_hubqt.py",            # its Qt widgets
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory window
+    "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)
+    "maya_chargrid.py",         # the Characters portrait grid
     "icons",
     "assets",
     "overrig",
