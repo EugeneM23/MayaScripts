@@ -69,10 +69,12 @@ class AimRefusals(unittest.TestCase):
         is not there fails at the worst moment, so the rows went the same
         day. Camera Setup came BACK on 2026-09-18 as the retarget's own
         camera step by hand, on camera_root."""
-        for name in ("connect_arms", "disconnect_arms", "add_aim"):
+        for name in ("connect_arms", "disconnect_arms", "add_aim",
+                     "recolour_character"):
             self.assertFalse(hasattr(window, name), name)
         for name in ("add_character", "add_weapon", "remove_weapon",
-                     "recolour_character", "recolour_weapon", "camera_setup"):
+                     "recolour_weapon", "camera_setup", "place_character",
+                     "select_model"):
             self.assertTrue(callable(getattr(window, name)), name)
 
 
@@ -401,8 +403,9 @@ class ColourSwatches(unittest.TestCase):
         message = window.recoloured_message("root", (0.11, 0.93, 0.44))
         self.assertIn("custom", message)
 
-    def test_both_recolour_buttons_exist(self):
-        self.assertTrue(callable(window.recolour_character))
+    def test_only_the_weapon_recolours_here(self):
+        """2026-09-30: the character's colour is the Colour section's."""
+        self.assertFalse(hasattr(window, "recolour_character"))
         self.assertTrue(callable(window.recolour_weapon))
 
     def test_the_changeCommand_callbacks_are_gone(self):
@@ -413,10 +416,9 @@ class ColourSwatches(unittest.TestCase):
         self.assertFalse(hasattr(window, "character_colour_changed"))
         self.assertFalse(hasattr(window, "weapon_colour_changed"))
 
-    def test_the_two_swatches_are_different_controls(self):
-        """One layout, two rows: sharing a name would make the weapon's
-        swatch edit the character's."""
-        self.assertNotEqual(window._CHARACTER_COLOUR, window._WEAPON_COLOUR)
+    def test_the_character_swatch_is_gone(self):
+        self.assertFalse(hasattr(window, "_CHARACTER_COLOUR"))
+        self.assertFalse(hasattr(window, "_CHARACTER_DOT"))
 
 
 class NextAddColour(unittest.TestCase):
@@ -453,9 +455,9 @@ class NextAddColour(unittest.TestCase):
 
     def test_advancing_writes_the_next_free_colour(self):
         window.colouring = self.FakeColouring(free=(0.9, 0.5, 0.18))
-        window._advance_swatch(window._CHARACTER_COLOUR)
+        window._advance_swatch(window._WEAPON_COLOUR)
         self.assertEqual(self.written,
-                         [(window._CHARACTER_COLOUR, (0.9, 0.5, 0.18))])
+                         [(window._WEAPON_COLOUR, (0.9, 0.5, 0.18))])
 
     def test_refresh_is_not_what_fills_it(self):
         """The guard against the one bug this design can have: a `refresh`
@@ -473,32 +475,83 @@ class NextAddColour(unittest.TestCase):
         self.assertNotIn("_advance_swatch(", body)
 
 
-class TexturedAddKeepsTheSwatch(unittest.TestCase):
-    """A textured character used no colour (2026-09-28, the Orc D), so the swatch is not moved on:
-    the colour the animator picked is still the next coloured Add's -- Weapons > Add's rule for
-    Spear 03."""
+class AddCharacterPress(unittest.TestCase):
+    """2026-09-30: the colour left the Characters card - Add passes none (the
+    next free colour), and a model without the chosen kind is refused by name."""
 
     def setUp(self):
         self.saved = [(window, n, getattr(window, n)) for n in
-                      ("chosen_character", "_swatch", "refresh", "_advance_swatch", "_status")]
+                      ("chosen_character", "remembered_choice", "refresh", "_status")]
         self.saved.append((window.character, "add_character", window.character.add_character))
-        self.advanced = []
-        window._swatch = lambda control: (0.1, 0.2, 0.3)
+        self.lines, self.added = [], []
         window.refresh = lambda: None
-        window._advance_swatch = lambda control: self.advanced.append(control)
-        window._status = lambda message, control=None: None
-        window.character.add_character = lambda entry, rgb: "added"
+        window._status = lambda message, control=None: self.lines.append(message)
+        window.character.add_character = lambda entry, rgb=None, at=None: (
+            self.added.append((entry.key, rgb, at)) or "added")
 
     def tearDown(self):
         for owner, name, value in self.saved:
             setattr(owner, name, value)
 
-    def test_the_textured_orc_leaves_the_swatch(self):
-        window.chosen_character = lambda: catalog.character_by_key("Orc_D_Rig")
+    def test_add_passes_no_colour(self):
+        window.chosen_character = lambda: catalog.character_by_key("Creep_Rig")
         window.add_character()
-        self.assertEqual(self.advanced, [])
+        self.assertEqual(self.added, [("Creep_Rig", None, None)])
+        self.assertEqual(self.lines[-1], "added")
 
-    def test_a_coloured_character_still_advances_it(self):
-        window.chosen_character = lambda: catalog.character_by_key("Manny_Rig")
+    def test_an_absent_pair_is_refused(self):
+        window.chosen_character = lambda: None
+        window.remembered_choice = lambda: ("Orc_D", "skeleton")
         window.add_character()
-        self.assertEqual(self.advanced, [window._CHARACTER_COLOUR])
+        self.assertEqual(self.added, [])
+        self.assertIn("Orc D has no skeleton", self.lines[-1])
+
+    def test_a_drop_places_at_the_point(self):
+        text = window.place_character("Manny", "rig", (1.0, 0.0, 2.0))
+        self.assertEqual(self.added, [("Manny_Rig", None, (1.0, 0.0, 2.0))])
+        self.assertEqual(text, "added")
+
+    def test_a_drop_of_an_absent_pair_places_nothing(self):
+        text = window.place_character("UE4_Mannequin", "rig", (1.0, 0.0, 2.0))
+        self.assertEqual(self.added, [])
+        self.assertIn("UE4 Mannequin has no rig", text)
+
+
+class Choice(unittest.TestCase):
+    """What the card opens on: the two optionVars, else the old dropdown's
+    label, else the default rig."""
+
+    def test_the_two_optionvars_win(self):
+        self.assertEqual(window.choice_from("Creep", "skeleton", "Manny [rig]"),
+                         ("Creep", "skeleton"))
+
+    def test_the_old_label_is_the_fallback(self):
+        self.assertEqual(window.choice_from("", "", "UE4 Mannequin [skeleton]"),
+                         ("UE4_Mannequin", "skeleton"))
+
+    def test_nothing_is_the_default_rig(self):
+        self.assertEqual(window.choice_from(None, None, ""), ("Manny", "rig"))
+
+    def test_a_stale_model_falls_back(self):
+        self.assertEqual(window.choice_from("Sevarog", "rig", ""), ("Manny", "rig"))
+
+    def test_chosen_character_reads_the_choice_without_the_dropdown(self):
+        fake = FakeUiCmds(menu_exists=False, stored={
+            window._MODEL_OPTIONVAR: "Orc_D", window._KIND_OPTIONVAR: "skeleton"})
+        real, window.cmds = window.cmds, fake
+        try:
+            self.assertIsNone(window.chosen_character())
+            fake.stored[window._KIND_OPTIONVAR] = "rig"
+            self.assertEqual(window.chosen_character().key, "Orc_D_Rig")
+        finally:
+            window.cmds = real
+
+    def test_selecting_a_model_remembers_it_and_says_what_add_brings(self):
+        fake = FakeUiCmds(menu_exists=False)
+        real, window.cmds = window.cmds, fake
+        try:
+            window.select_model("Creep")
+            self.assertEqual(fake.stored[window._MODEL_OPTIONVAR], "Creep")
+            self.assertIn("Creep [rig]", fake.status[-1])
+        finally:
+            window.cmds = real

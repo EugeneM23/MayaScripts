@@ -35,14 +35,18 @@ class SceneSetup(unittest.TestCase):
 
     def setUp(self):
         self.saved = (scenesetup.cmds, scenesetup.refresh,
-                      scenesetup._advance_swatch, scenesetup._bound_root)
+                      scenesetup._advance_swatch, scenesetup._bound_root,
+                      scenesetup._attach_grid)
         self.fake = FakeUiCmds()
         scenesetup.cmds = self.fake
         #  The scene reads after the build are the module's own and not
-        #  under test here.
+        #  under test here; the portrait grid is Qt's (test_chargrid).
         scenesetup.refresh = lambda: None
         scenesetup._advance_swatch = lambda name: None
         scenesetup._bound_root = lambda: None
+        self.attached = []
+        scenesetup._attach_grid = lambda model, kind: (
+            self.attached.append((model, kind)) or True)
         maya_hubstyle.take_marks()
         scenesetup.build_characters_panel()
         self.after_characters = list(self.fake.children)
@@ -53,16 +57,59 @@ class SceneSetup(unittest.TestCase):
 
     def tearDown(self):
         (scenesetup.cmds, scenesetup.refresh, scenesetup._advance_swatch,
-         scenesetup._bound_root) = self.saved
+         scenesetup._bound_root, scenesetup._attach_grid) = self.saved
 
     def test_no_window_and_stretching_columns(self):
         self.assertEqual(self.fake.windows, {})
         self.assertTrue(self.fake.column.get("adjustableColumn"))
 
     def test_characters_holds_the_character_controls_and_its_own_line(self):
-        for name in (scenesetup._BOUND, scenesetup._CHARACTER,
-                     scenesetup._CHARACTER_COLOUR, scenesetup._CHARACTER_STATUS):
+        for name in (scenesetup._BOUND, scenesetup._CHARACTER_STATUS):
             self.assertIn(name, self.after_characters, name)
+        #  the portraits' placeholder, a columnLayout, and the grid laid over it
+        self.assertIn(("columnLayout", (scenesetup._PORTRAITS,),
+                       {"adjustableColumn": True}), self.fake.calls)
+        self.assertEqual(len(self.attached), 1)
+        self.assertNotIn(scenesetup._CHARACTER, self.after_characters)
+
+    def test_no_colour_control_in_characters(self):
+        """2026-09-30: «все что касается покраски вынесем из меню» - the
+        Colour section paints; the Weapons card keeps its row."""
+        weapons_start = [i for i, c in enumerate(self.fake.calls)
+                         if c[0] == "optionMenu" and c[1] == (scenesetup._MENU,)][0]
+        before = self.fake.calls[:weapons_start]
+        self.assertFalse([c for c in before if c[0] == "colorSliderGrp"])
+        dots = [c for c in before if c[0] == "button" and c[1]
+                and str(c[1][0]).startswith("mayaSceneSetupCharDot")]
+        self.assertEqual(dots, [])
+        self.assertFalse(hasattr(scenesetup, "_CHARACTER_COLOUR"))
+        self.assertFalse(hasattr(scenesetup, "recolour_character"))
+
+    def test_the_kind_switch_is_two_segments(self):
+        self.assertIn(("iconTextRadioCollection", (scenesetup._KIND,), {}),
+                      self.fake.calls)
+        segments = [c for c in self.fake.calls if c[0] == "iconTextRadioButton"
+                    and c[1] and c[1][0].startswith(scenesetup._KIND)]
+        self.assertEqual([c[1][0] for c in segments],
+                         [scenesetup.kind_segment("rig"),
+                          scenesetup.kind_segment("skeleton")])
+        self.assertEqual([c[2]["label"] for c in segments], ["Rig", "Skeleton"])
+        marks = self._marks()
+        for call in segments:
+            self.assertEqual(marks[call[1][0]].role, "segment")
+        self.assertIn("segments", [m.role for m in self.marks if m.layout])
+
+    def test_the_dropdown_stands_only_without_the_grid(self):
+        fake = FakeUiCmds()
+        scenesetup.cmds = fake
+        scenesetup._attach_grid = lambda model, kind: False
+        scenesetup.build_characters_panel()
+        menus = [c for c in fake.calls if c[0] == "optionMenu"
+                 and c[1] == (scenesetup._CHARACTER,)
+                 and not (c[2].get("edit") or c[2].get("exists")
+                          or c[2].get("query"))]
+        self.assertEqual(len(menus), 1)
+        self.assertNotIn("label", menus[0][2])
 
     def test_characters_has_a_camera_setup_button(self):
         """2026-09-18: the retarget's camera step, by hand, on camera_root."""
@@ -112,15 +159,10 @@ class SceneSetup(unittest.TestCase):
     def test_the_character_line_is_the_card_s_subtitle(self):
         self.assertEqual(self._marks()[scenesetup._BOUND].role, "subtitle")
 
-    def test_the_character_dropdown_needs_no_label(self):
-        menus = [c for c in self.fake.calls if c[0] == "optionMenu"
-                 and c[1] == (scenesetup._CHARACTER,) and not c[2].get("edit")]
-        self.assertNotIn("label", menus[0][2])
-
-    def test_eight_palette_dots_per_colour_row(self):
+    def test_eight_palette_dots_on_the_weapons_row(self):
         from maya_scenesetup import colour as colouring
         marks = self._marks()
-        for pattern in (scenesetup._CHARACTER_DOT, scenesetup._WEAPON_DOT):
+        for pattern in (scenesetup._WEAPON_DOT,):
             for index, entry in enumerate(colouring.PALETTE):
                 mark = marks[pattern.format(index)]
                 self.assertEqual(mark.role, "swatch")
@@ -138,7 +180,7 @@ class SceneSetup(unittest.TestCase):
 
     def test_the_swatches_show_only_the_swatch_in_the_skin(self):
         marks = self._marks()
-        for name in (scenesetup._CHARACTER_COLOUR, scenesetup._WEAPON_COLOUR):
+        for name in (scenesetup._WEAPON_COLOUR,):
             self.assertEqual(marks[name].role, "swatchonly")
 
     def test_one_primary_action_per_section(self):
@@ -151,10 +193,10 @@ class SceneSetup(unittest.TestCase):
                      if role == "primary"]
         self.assertEqual(sorted(primaries), ["Add", "Add Character"])
 
-    def test_recolour_is_a_brush_tool_on_both(self):
+    def test_recolour_is_a_brush_tool_on_weapons_only(self):
         tools = [m for m in self.marks if m.role == "tool"
                  and m.icon == "brush"]
-        self.assertEqual(len(tools), 2)
+        self.assertEqual(len(tools), 1)
 
     def test_add_and_remove_share_a_row(self):
         index = self._created_index()

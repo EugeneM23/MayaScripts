@@ -121,7 +121,7 @@ elif PHASE == 1:
          order)
 
     # ---- 8: every card's named controls live in its body
-    homes = {"characters": (ss._CHARACTER, ss._CHARACTER_STATUS),
+    homes = {"characters": (ss._PORTRAITS, ss._CHARACTER_STATUS),
              "weapons": (ss._MENU, ss._STATUS, ss._ROTATE),
              "connections": (cx.STATUS, cx.HEADER),
              "uebridge": (ue._LIST, ue._STATUS),

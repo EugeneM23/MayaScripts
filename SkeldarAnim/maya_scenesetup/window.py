@@ -16,6 +16,12 @@ list, for any file the table knows nothing about. It resolves in ONE place
 (`_entry`), so Add, Remove and the offset fields all follow it without a
 line of their own, and the path itself is remembered too.
 
+The Characters card is a grid of portraits since 2026-09-30 (the animator:
+«переделаем наше меню на сетку с портретами»; `maya_chargrid`): a
+[Rig | Skeleton] switch, one portrait per model, Add Character, Camera Setup.
+Its colour row went to the Colour section the same day («все что касается
+покраски вынесем из меню, будем красить в меню с красками»).
+
 Since 2026-09-07 the character is the one the SELECTION names -- any control
 of the AdvancedSkeleton rig, or a joint -- then the rig, then the sole
 skeleton (`skeleton.current_root`); the picker's Connect is off the shelf.
@@ -27,6 +33,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_charlook as charlook
 import maya_hubstyle as hubstyle
 import maya_rigs
 from maya_overrig import aimrig
@@ -50,11 +57,13 @@ _STATUS = "mayaSceneSetupStatus"                    # the Weapons line
 _CHARACTER_STATUS = "mayaSceneSetupCharacterStatus"  # the Characters line
 _BOUND = "mayaSceneSetupBound"
 _CUSTOM = "mayaSceneSetupCustomFbx"
+# The dropdown of every character row: only where the portrait grid cannot
+# stand (no Qt) since 2026-09-30.
 _CHARACTER = "mayaSceneSetupCharacter"
-_CHARACTER_COLOUR = "mayaSceneSetupCharacterColour"
+_PORTRAITS = "mayaSceneSetupPortraits"          # the grid is laid over it
+_KIND = "mayaSceneSetupCharacterKind"           # the [Rig | Skeleton] segments
 _WEAPON_COLOUR = "mayaSceneSetupWeaponColour"
-_CHARACTER_DOT = "mayaSceneSetupCharDot{0}"     # the palette dots (2026-09-28)
-_WEAPON_DOT = "mayaSceneSetupWeaponDot{0}"
+_WEAPON_DOT = "mayaSceneSetupWeaponDot{0}"      # the palette dots (2026-09-28)
 _BROWSE = "mayaSceneSetupBrowseFbx"
 # Which hand the Weapons presses act on (2026-09-29, two weapons per
 # character): a segment row under the weapon list, remembered.
@@ -74,7 +83,10 @@ SIDE_LABEL = {"R": "right hand", "L": "left hand"}
 _OPTIONVAR = "mayaSceneSetup_offset_{0}"
 _LEGACY_OPTIONVAR = "mayaWeapons_offset_{0}"
 _CUSTOM_OPTIONVAR = "mayaSceneSetup_custom_fbx"
-_CHARACTER_OPTIONVAR = "mayaSceneSetup_character"
+_CHARACTER_OPTIONVAR = "mayaSceneSetup_character"     # the old dropdown's label
+_MODEL_OPTIONVAR = "mayaSceneSetup_characterModel"  # the portrait picked
+_KIND_OPTIONVAR = "mayaSceneSetup_characterKind"    # rig or skeleton
+KIND_LABEL = {"rig": "Rig", "skeleton": "Skeleton"}
 
 NO_CHARACTER = ("no character - select any control or joint of it (with one "
                 "rig in the scene nothing needs selecting)")
@@ -439,19 +451,92 @@ def custom_changed():
     refresh()
 
 
-def chosen_character():
-    """The catalog entry the dropdown names, or the default. Never None.
+def kind_segment(kind):
+    """The [Rig | Skeleton] row's segment for `kind`."""
+    return "{0}_{1}".format(_KIND, kind)
 
-    A remembered label that the table no longer carries falls back rather
-    than raising: a scene file outlives a rename of a row.
+
+def choice_from(model, kind, label):
+    """(model, kind) the card opens on: the stored pair, else the row the old
+    dropdown remembered (its label), else the default rig. Pure. A stored
+    model the catalog no longer carries falls back rather than raising: a
+    preference outlives a rename of a row."""
+    fallback = catalog.character_by_label(label or "") or catalog.default_rig()
+    if catalog.model_by_key(model or "") is None:
+        model = fallback.model
+    if kind not in catalog.KINDS:
+        kind = fallback.kind
+    return model, kind
+
+
+def _stored(name):
+    if cmds.optionVar(exists=name):
+        return cmds.optionVar(query=name) or ""
+    return ""
+
+
+def remembered_choice():
+    """The (model, kind) picked last, from the optionVars."""
+    return choice_from(_stored(_MODEL_OPTIONVAR), _stored(_KIND_OPTIONVAR),
+                       remembered_character())
+
+
+def chosen_character():
+    """The catalog row Add Character imports.
+
+    From the old dropdown where it stands (the grid could not be built: no
+    Qt) -- its label, or the default rig (2026-09-07, «Add character теперь
+    должен добавлять наш адванцед скелетон риг»). Otherwise the chosen model
+    in the chosen kind, which is None when the model has no such row (Orc D
+    has no skeleton, the UE4 Mannequin no rig): Add refuses it by name.
     """
-    label = ""
     if cmds.optionMenu(_CHARACTER, exists=True):
         label = cmds.optionMenu(_CHARACTER, query=True, value=True) or ""
-    # The fallback is the RIG (2026-09-07, «Add character теперь должен
-    # добавлять наш адванцед скелетон риг»): the row the dropdown opens on.
-    return (catalog.character_by_label(label)
-            or catalog.default_rig())
+        return catalog.character_by_label(label) or catalog.default_rig()
+    model, kind = remembered_choice()
+    return catalog.character_for(model, kind)
+
+
+def _absent_choice():
+    model, kind = remembered_choice()
+    return charlook.absent_text(catalog.model_by_key(model).label, kind)
+
+
+def say_character(text):
+    """The Characters card's line (the grid writes through it too)."""
+    _status(text, _CHARACTER_STATUS)
+
+
+def _say_choice():
+    entry = chosen_character()
+    say_character(charlook.import_text(entry.label) if entry
+                  else _absent_choice())
+
+
+def select_model(model):
+    """A portrait clicked: remember it, say what Add will import."""
+    cmds.optionVar(stringValue=(_MODEL_OPTIONVAR, model))
+    _say_choice()
+
+
+def _grid():
+    """The portrait grid standing in the card, or None."""
+    try:
+        import maya_chargrid
+        return maya_chargrid.live(_PORTRAITS)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def kind_changed(kind):
+    """A Rig / Skeleton segment's onCommand: remember it, dim the grid."""
+    def go(*_args):
+        cmds.optionVar(stringValue=(_KIND_OPTIONVAR, kind))
+        grid = _grid()
+        if grid is not None:
+            grid.set_kind(kind)
+        _run(_say_choice, _CHARACTER_STATUS)
+    return go
 
 
 def remembered_character():
@@ -470,27 +555,46 @@ def character_changed():
 
 
 def add_character():
-    """Import the chosen character into the scene, then catch the UI up.
+    """Import the chosen character at the origin, then catch the UI up.
 
     The status is written LAST: `refresh` ends by writing its own line, and
     the outcome of the press must be what stays on screen. The refresh is
     what flips the header to the new character -- a lone skeleton binds
     through `skeleton.current_root` with no press of anything.
 
-    The colour comes from the SWATCH (2026-09-03, the animator's ruling:
-    «цвет будем задавать перед созданием персонажа или оружия в сцене»), and
-    the swatch is advanced to the next free colour afterwards -- so choosing
-    is optional and two presses in a row still never collide. The advance
-    comes after `refresh`, which does not touch the swatches at all.
+    No colour is passed since 2026-09-30 («все что касается покраски
+    вынесем из меню, будем красить в меню с красками»): the character
+    arrives in the next free palette colour, so two presses in a row never
+    collide, and the Colour section repaints the selection -- Add leaves the
+    new rig's Main selected. A model without a row of the chosen kind is
+    refused by name, nothing imported.
     """
     entry = chosen_character()
-    message = character.add_character(entry, _swatch(_CHARACTER_COLOUR))
+    if entry is None:
+        say_character(_absent_choice())
+        return
+    message = character.add_character(entry)
     refresh()
-    if not getattr(entry, "textured", False):
-        # A textured row (2026-09-28, the Orc D) used no colour, so the one
-        # picked is still the next coloured Add's -- Weapons > Add's rule.
-        _advance_swatch(_CHARACTER_COLOUR)
-    _status(message, _CHARACTER_STATUS)
+    say_character(message)
+
+
+def place_character(model, kind, point):
+    """A portrait dropped on the floor (2026-09-30, «зажать на портрете и
+    перетащить его в сцену»): the character added standing at `point`.
+    Returns what the line says -- the grid shows it too."""
+    entry = catalog.character_for(model, kind)
+    if entry is None:
+        found = catalog.model_by_key(model)
+        text = charlook.absent_text(found.label if found else model, kind)
+        say_character(text)
+        return text
+    message = character.add_character(entry, at=point)
+    try:
+        refresh()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+    say_character(message)
+    return message
 
 
 def camera_span(bone):
@@ -523,32 +627,6 @@ def camera_setup():
                 _CHARACTER_STATUS)
         return
     _status(camera.setup(bone, start, end), _CHARACTER_STATUS)
-
-
-def recolour_character():
-    """Put the swatch's colour on the connected character.
-
-    The CONNECTED one, not the last added: the rig, the bridge and this
-    window have all been scoped to the connected character since
-    2026-09-01, and a colour picking a different one would be the only
-    thing here that did.
-
-    Its own button rather than the swatch's changeCommand, so that dialling
-    a colour for the NEXT character cannot repaint the current one on the
-    way past.
-    """
-    root = _bound_root()
-    shapes = colouring.character_meshes(root)
-    rgb = _swatch(_CHARACTER_COLOUR)
-    if not shapes:
-        _status(NO_COLOUR_TARGET, _CHARACTER_STATUS)
-        return
-    cmds.undoInfo(openChunk=True)
-    try:
-        colouring.paint(shapes, rgb, root.split("|")[-1])
-    finally:
-        cmds.undoInfo(closeChunk=True)
-    _status(recoloured_message(root, rgb), _CHARACTER_STATUS)
 
 
 def recolour_weapon():
@@ -784,18 +862,38 @@ def _colour_row(slider, dot_name, annotation, recolour, recolour_note,
     cmds.setParent("..")
 
 
-def build_characters_panel():
-    """The Characters section: which character, the colour, Add Character.
+def _kind_row(kind):
+    """`[Rig | Skeleton]`: which kind a portrait brings (2026-09-30). Segments
+    like the Hand row; the choice is remembered."""
+    segments = cmds.rowLayout(numberOfColumns=2,
+                              columnAttach=[(1, "both", 1), (2, "both", 1)])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(_KIND)
+    for each in catalog.KINDS:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            kind_segment(each), style="textOnly", label=KIND_LABEL[each],
+            height=22, select=each == kind,
+            annotation=("The portraits bring the AdvancedSkeleton rig - what "
+                        "the UE Bridge retargets onto" if each == "rig" else
+                        "The portraits bring the bare skeleton"),
+            onCommand=kind_changed(each)), "segment")
+    cmds.setParent("..")
 
-    2026-09-28 (the skin): the character line is the card's subtitle, the
-    dropdown needs no label under a card called Characters, the palette is
-    eight dots, and Add Character is the section's one primary action.
-    """
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", hubstyle.pick(0, 8)))
 
-    hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
+def _attach_grid(model, kind):
+    """The portrait grid laid over the placeholder; False where it cannot
+    stand (no Qt) - the card then shows the old dropdown."""
+    try:
+        import maya_chargrid
+        return maya_chargrid.attach(_PORTRAITS, kind=kind,
+                                    selected=model) is not None
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+        return False
 
+
+def _character_dropdown():
+    """Every character row in one dropdown: the card without Qt."""
     cmds.optionMenu(_CHARACTER,
                     annotation="What Add Character puts into the scene. "
                                "The [rig] rows are AdvancedSkeleton rigs - "
@@ -805,22 +903,41 @@ def build_characters_panel():
                                                       _CHARACTER_STATUS))
     for label in catalog.character_labels():
         cmds.menuItem(label=label)
+    # A label the table no longer carries is simply not selected, so the
+    # menu stays on the rig -- the default anyone who never opens it gets.
+    remembered = remembered_character()
+    if remembered and remembered in catalog.character_labels():
+        cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
 
-    _colour_row(_CHARACTER_COLOUR, _CHARACTER_DOT,
-                "The colour the next Add Character will bring. It is "
-                "refilled with the next unused colour after every press, so "
-                "two characters never arrive the same even if you never "
-                "touch it.",
-                recolour_character,
-                "Recolour: put this colour on the character that is "
-                "CONNECTED now, instead of on the next one added.",
-                _CHARACTER_STATUS)
+
+def build_characters_panel():
+    """The Characters section: which character, the portraits, Add Character.
+
+    2026-09-30 («сетка с портретами, как меню выбора героев в Mortal Kombat
+    или Dota 2»): a [Rig | Skeleton] switch over one square portrait per
+    model (`maya_chargrid`, laid over the `_PORTRAITS` placeholder); a click
+    picks, Add Character imports, a portrait dragged into a viewport adds
+    the character where it lands. No colour here: the Colour section paints.
+    The character line is the card's subtitle (2026-09-28).
+    """
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+
+    hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
+
+    model, kind = remembered_choice()
+    _kind_row(kind)
+    cmds.columnLayout(_PORTRAITS, adjustableColumn=True)
+    cmds.setParent("..")
+    if not _attach_grid(model, kind):
+        _character_dropdown()
 
     hubstyle.mark(cmds.button(
         label="Add Character", height=32,
-        annotation="Import the chosen rig or skeleton into this scene -- no "
-                   "manual open. As many as you like, each rig in its own "
-                   "namespace.",
+        annotation="Import the picked rig or skeleton into this scene, at "
+                   "the origin -- or drag its portrait into a viewport to "
+                   "stand it where it lands. As many as you like, each rig "
+                   "in its own namespace; the Colour section repaints it.",
         command=lambda *_args: _run(add_character, _CHARACTER_STATUS)),
         "primary", "plus")
     hubstyle.mark(cmds.button(
@@ -835,17 +952,8 @@ def build_characters_panel():
                             wordWrap=True, height=36), "status")
 
     cmds.setParent("..")
-    # The remembered skeleton, restored before anything reads the menu. A
-    # label the table no longer carries is simply not selected, so the menu
-    # stays on Manny -- the default anyone who never opens the list gets.
-    remembered = remembered_character()
-    if remembered and remembered in catalog.character_labels():
-        cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
     _run(_bound_root, _CHARACTER_STATUS)
-    # The swatch opens on the colour the next Add would bring, read from
-    # THIS scene. A remembered optionVar would be wrong here -- a colour
-    # saved yesterday may be worn by somebody in the file opened today.
-    _run(lambda: _advance_swatch(_CHARACTER_COLOUR), _CHARACTER_STATUS)
+    _run(_say_choice, _CHARACTER_STATUS)
     return column
 
 
