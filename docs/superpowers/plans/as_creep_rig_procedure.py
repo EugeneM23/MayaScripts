@@ -53,6 +53,10 @@ HEAD_MESH = "faceShape"
 RETARGET_ATTR = "skeldarRetarget"
 RETARGET_MODE = "rotation"
 LAYER = "Creep_Skeleton"            # renamed from Hanter_Skeleton by tidy()
+# Main's circle at Manny_Rig's size (the animator, 2026-09-30: «размер главного контрола у всех ригов такой
+# же как и у menny»).  AdvancedSkeleton draws it 7.76 cm across whatever the character's height, lost inside
+# the feet; Manny's is 40.52 -- the same circle 5.22x.
+MAIN_RADIUS = 40.523612701541616
 
 ROWS = [("Root", "pelvis"), ("Spine1", "spine_01"), ("Spine2", "spine_02"), ("Spine3", "spine_03"), ("Spine4", "spine_04"),
         ("Spine5", "spine_05"), ("Scapula", "clavicle"), ("Shoulder", "upperarm"), ("Elbow", "lowerarm"), ("Wrist", "hand"),
@@ -743,6 +747,19 @@ def weapon_bones():
     return b["weapon_r"], b["weapon_l"]
 
 
+def main_size():
+    """Main's circle at Manny's size (`MAIN_RADIUS`): its CVs scaled in Main's own space about the origin,
+    so only the drawing changes -- no transform, no pivot, nothing that drives anything.  Returns the
+    factor (1.0 once it is Manny's: a second run changes nothing)."""
+    shape = cmds.listRelatives("Main", shapes=True, type="nurbsCurve", fullPath=True)[0]
+    cvs = cmds.getAttr(shape + ".cv[*]")
+    factor = MAIN_RADIUS / max(math.hypot(x, z) for x, _y, z in cvs)
+    if abs(factor - 1.0) > 1e-12:
+        for i, (x, y, z) in enumerate(cvs):
+            cmds.xform("%s.cv[%d]" % (shape, i), objectSpace=True, translation=(x * factor, y * factor, z * factor))
+    return factor
+
+
 def mark():
     """The retarget reads this: the Creep's rig takes rotations only."""
     if not cmds.attributeQuery(RETARGET_ATTR, node="Group", exists=True):
@@ -768,6 +785,7 @@ def run():
         sdk = finger_sdk_axes()
         print("// IK foot controls level (AS's frame): worst %.5f deg" % as_frames(LEVEL_CONTROLS))
         mark()
+        print("// Main drawn at Manny's size (x%.4f)" % main_size())
         drift = max(max(abs(a - c) for a, c in zip(m, cmds.getAttr(j + ".worldMatrix[0]"))) for j, m in rest.items())
         tidy()                                          # re-parents the root: the paths above are stale after it
         print("// the sword out as a catalog weapon: %s" % (export_sword(SWORD_FBX),))

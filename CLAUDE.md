@@ -6842,3 +6842,28 @@ a modified scene an Open scene would have replaced.
      window, nothing written to its prefs but `Maya.env`, no userSetup run — two other Mayas running
      beside it. Cause not found. Before blaming a verify, look at the new process's working set: a Maya
      that loads climbs past ~900 MB within a minute; a flat 277 MB never gets there.
+
+## Main at Manny's size on every rig (2026-09-30)
+
+The animator: «Давай сделаем размер главного контрола у всех ригов такой же как и у menny сейчас он ну
+них меньше значительно». Spec `docs/superpowers/specs/2026-09-30-main-control-size-design.md`. Measured:
+`Main` is an identity transform in every rig, its `MainShape` a periodic cubic circle on the floor wired to
+nothing but `MotionSystem.v`; **Manny's radius 40.5236 cm, the Creep's and the Orc's 7.7574** — the same
+curve 5.223893× smaller, AdvancedSkeleton's default drawing that the Creep procedure's build keeps (Manny
+was built through AS's own UI), lost inside the feet. The feet stand where Manny's do on all three, so the
+circle is the same ABSOLUTE size.
+
+- **The shipped files, as text**: `docs/superpowers/plans/make_main_control_size.py` (stdlib) replaces the
+  11 CV lines of MainShape's `.cc` with Manny's in `Creep_Rig.ma`, `Orc_D_Rig.ma` and
+  `sources/orc/Orc_Rig.ma` (what the Orc D is built from) — the curve's header must already be Manny's, the
+  file checked to differ in those lines only; idempotent. Safe to run after any rig asset rebuild.
+- **The build**: `as_creep_rig_procedure.main_size()` scales Main's CVs in its own space to `MAIN_RADIUS`
+  after `mark()` (in `run()`, `rebuild_creep_rig.py`, `rebuild_orc_rig.py`), so a rebuilt Creep or Orc
+  comes out right.
+- `tests/test_scenesetup_catalog.MainControlSize` pins every rig row's Main, and the Orc source's, to
+  Manny's CVs. **A new rig row must pass it**: run the script or the procedure step.
+
+Proof: `verify_main_control_size.py` **9/9 standalone** (the old Creep's 7.757 as the control, `main_size`
+×5.223893 then ×1.0, three rigs added side by side each 40.523613 cm in world, flat, only the drawing
+changed, Main still carrying the root). 2994 unit tests. A rig already in a scene keeps its small circle:
+re-add it.

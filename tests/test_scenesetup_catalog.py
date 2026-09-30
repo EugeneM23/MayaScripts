@@ -763,3 +763,61 @@ class Portraits(unittest.TestCase):
             height = int.from_bytes(head[20:24], "big")
             self.assertEqual((width, height), (256, 256), path)
             self.assertEqual(head[25], 6, "RGBA expected: " + path)
+
+
+def _main_curve(path):
+    """MainShape's `.cc` in a rig's .ma, read as text: (degree, spans, form, cvs).
+
+    Stops at the block, so the 50 MB Manny is read only as far as its Main."""
+    tokens = None
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        inside = False
+        for line in handle:
+            if not inside:
+                inside = line.startswith('createNode nurbsCurve -n "MainShape" -p "Main";')
+                continue
+            if tokens is None:
+                if line.startswith("createNode"):
+                    break
+                if line.strip().startswith('setAttr ".cc" -type "nurbsCurve"'):
+                    tokens = []
+                continue
+            tokens.extend(line.replace(";", " ; ").split())
+            if ";" in tokens:
+                break
+    if not tokens:
+        return None
+    values = tokens[:tokens.index(";")]
+    degree, spans, form, _rational, dim = int(values[0]), int(values[1]), int(values[2]), values[3], int(values[4])
+    knots = int(values[5])
+    count = int(values[6 + knots])
+    flat = [float(v) for v in values[7 + knots:]]
+    cvs = [tuple(flat[i * dim:i * dim + 3]) for i in range(count)]
+    return degree, spans, form, cvs
+
+
+class MainControlSize(unittest.TestCase):
+    """Every rig's Main is Manny's circle (2026-09-30, the animator: «Давай сделаем
+    размер главного контрола у всех ригов такой же как и у menny»). The Creep's and
+    the Orc's were AdvancedSkeleton's default, 7.76 cm -- 5.22x smaller, lost inside
+    the feet (make_main_control_size.py, the procedure's `main_size`)."""
+
+    def test_manny_s_main_is_the_reference_circle(self):
+        degree, spans, form, cvs = _main_curve(catalog.character_file(catalog.default_rig()))
+        self.assertEqual((degree, spans, form, len(cvs)), (3, 8, 2, 11))
+        radius = max((x * x + z * z) ** 0.5 for x, _y, z in cvs)
+        self.assertAlmostEqual(radius, 40.523612701541616, places=9)
+        self.assertLess(max(abs(y) for _x, y, _z in cvs), 1e-9)
+
+    def test_every_rig_s_main_is_manny_s(self):
+        reference = _main_curve(catalog.character_file(catalog.default_rig()))
+        files = [catalog.character_file(e) for e in catalog.CHARACTERS if catalog.is_rig(e)]
+        files.append(ORC_SOURCE)          # what the Orc D is built from
+        self.assertGreaterEqual(len(files), 4)
+        for path in files:
+            curve = _main_curve(path)
+            self.assertIsNotNone(curve, path)
+            self.assertEqual(curve[:3], reference[:3], path)
+            self.assertEqual(len(curve[3]), len(reference[3]), path)
+            worst = max(abs(a - b) for cv, ref in zip(curve[3], reference[3]) for a, b in zip(cv, ref))
+            self.assertLess(worst, 1e-9, "%s: Main %.4f cm off Manny's" % (path, worst))
