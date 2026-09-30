@@ -65,6 +65,12 @@ class Boundaries(unittest.TestCase):
         self.assertIn("attach.attach(entry, hand, bone, rotate, translate)",
                       source)
 
+    def test_the_inventory_remembers_no_grip(self):
+        """2026-09-30: the inventory dials nothing, so it stores nothing - a
+        stored copy of the left hand's mirror froze it (the next rig got
+        Manny's numbers, not its own sockets'); the fields remember."""
+        self.assertNotIn("grips.remember(", self._source())
+
     def test_the_floor_goes_through_floor_drop(self):
         self.assertIn("floor.drop(entry, bone, point, heading)", self._source())
 

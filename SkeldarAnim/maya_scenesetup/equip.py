@@ -172,10 +172,12 @@ def to_hand(root, side, entry):
         attach.detach(hand, bone)
         # the grip AFTER the old weapon is off: a bone that followed a weapon
         # on the floor stands on its own track only now (the mirror of the
-        # right grip is read from the sockets)
+        # right grip is read from the sockets). Nothing is remembered: the
+        # inventory dials nothing, and a stored copy of the mirror would stop
+        # the left hand following the right grip and each rig's own sockets
+        # (2026-09-30 - the next rig got Manny's numbers).
         rotate, translate = grips.for_hand(entry, side, root)
         _weapon, note = attach.attach(entry, hand, bone, rotate, translate)
-        grips.remember(entry.key, side, rotate, translate)
     finally:
         cmds.undoInfo(closeChunk=True)
     if getattr(entry, "texture", ""):
