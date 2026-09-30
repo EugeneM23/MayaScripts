@@ -416,16 +416,21 @@ def check_channel():
 
 
 def toolbar():
+    """Press the view-mode radio that is NOT checked (a checked radio does
+    nothing when pressed again): Stacked from Absolute, Absolute from
+    Stacked."""
     mode = _mode()
     editor = mode._STATE.ghost.panel + "GraphEd"
     S["stacked_before"] = cmds.animCurveEditor(editor, query=True,
                                                stackedCurves=True)
-    button = _host_child("graphEditorStackedViewIconButton")
-    if button is None:
-        gate(23, False, "no Stacked View button in our toolbar")
+    stacked = _host_child("graphEditorStackedViewIconButton")
+    absolute = _host_child("graphEditorAbsoluteViewIconButton")
+    if stacked is None or absolute is None:
+        gate(23, False, "no view-mode buttons in our toolbar")
         return
-    print("stacked before:", S["stacked_before"], "button at",
-          _post_to_host(button))
+    button = absolute if stacked.isChecked() else stacked
+    print("stacked before:", S["stacked_before"], "pressing",
+          button.objectName(), "at", _post_to_host(button))
 
 
 def check_toolbar():
@@ -440,9 +445,11 @@ def check_toolbar():
                                                       exists=True)]
     print("stacked after:", now, "the animator's own Graph Editors:", others)
     gate(23, now != S.get("stacked_before"),
-         "a click on the toolbar's Stacked View switched OUR Graph Editor")
-    cmds.animCurveEditor(editor, edit=True,
-                         stackedCurves=bool(S.get("stacked_before")))
+         "a click on the toolbar's view mode switched the Graph Editor ON "
+         "the viewport")
+    import maya.mel as mel
+    mel.eval("graphEditorSetViewMode %s %d;"
+             % (editor, 1 if S.get("stacked_before") else 0))
 
 
 def cost():
