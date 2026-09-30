@@ -48,6 +48,11 @@ NICE = {"tx": "Translate X", "ty": "Translate Y", "tz": "Translate Z",
 PALETTE = maya_hubstyle.TOKENS
 RADIUS = {"card": 8, "well": 6, "item": 4}      # the hub stylesheet's corners
 
+# The right button's rows (the grid's Sort since 2026-09-29, Open scene on a
+# weapon since 2026-09-30).
+OPEN_SCENE = "Open scene"
+SORT = "Sort the inventory"
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 

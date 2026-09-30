@@ -113,6 +113,15 @@ def tag_text(kind):
     return "no " + kind
 
 
+OPEN_SCENE = "Open scene"
+
+
+def open_absent_text(kind):
+    """The right button's row on a dimmed portrait, disabled: why it cannot
+    open a file (2026-09-30)."""
+    return "{0} ({1})".format(OPEN_SCENE, tag_text(kind))
+
+
 def dragged(start, now, threshold):
     """Whether a held press has travelled far enough to be a drag (Qt's own
     measure: the manhattan length)."""

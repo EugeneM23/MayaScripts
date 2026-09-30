@@ -39,8 +39,9 @@ def _quietly(command):
         return None
 
 
-def import_nodes(path):
-    """Import `path` and return every node that arrived, as long names."""
+def _guarded(read):
+    """Run `read()` with the import mode set to MODE, and put back whatever
+    mode was there -- the animator is working in that session."""
     ensure_plugin()
 
     previous = _quietly("FBXImportMode -q")
@@ -50,8 +51,23 @@ def import_nodes(path):
     # rule is worth stating where an import happens.
     _quietly("FBXImportSetMayaFrameRate -v false")
     try:
-        return cmds.file(path, i=True, type="FBX", returnNewNodes=True,
-                         ignoreVersion=True) or []
+        return read()
     finally:
         if previous:
             _quietly("FBXImportMode -v {0}".format(previous))
+
+
+def import_nodes(path):
+    """Import `path` and return every node that arrived, as long names."""
+    return _guarded(lambda: cmds.file(path, i=True, type="FBX",
+                                      returnNewNodes=True,
+                                      ignoreVersion=True) or [])
+
+
+def open_file(path):
+    """Open `path` AS the scene (2026-09-30, Open scene on a weapon's icon).
+    An open reads the file through the same importer, so it takes the same
+    guard: under `exmerge` it would open an empty scene (the batch export
+    tool's 8 KB files, 2026-09-02)."""
+    return _guarded(lambda: cmds.file(path, open=True, force=True, type="FBX",
+                                      ignoreVersion=True, prompt=False))

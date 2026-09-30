@@ -168,5 +168,41 @@ class ImportNodes(unittest.TestCase):
         self.assertEqual(self.mel.mode, "add")
 
 
+class OpenFile(unittest.TestCase):
+    """Open scene on a weapon's icon (2026-09-30): an FBX opened AS the scene
+    reads through the same importer, so it takes the same guard."""
+
+    def setUp(self):
+        self.real = (fbximport.cmds, fbximport.mel)
+        self.mel = FakeMel("exmerge")
+        self.cmds = FakeCmds(self.mel)
+        fbximport.mel = self.mel
+        fbximport.cmds = self.cmds
+
+    def tearDown(self):
+        fbximport.cmds, fbximport.mel = self.real
+
+    def test_it_opens_in_add_mode_and_puts_the_mode_back(self):
+        fbximport.open_file("C:/x/thing.fbx")
+        self.assertEqual(self.cmds.mode_during_import, "add")
+        self.assertEqual(self.mel.mode, "exmerge")
+
+    def test_it_is_an_open_that_asks_nothing(self):
+        fbximport.open_file("C:/x/thing.fbx")
+        kwargs = self.cmds.file_kwargs
+        self.assertTrue(kwargs.get("open"))
+        self.assertTrue(kwargs.get("force"))
+        self.assertFalse(kwargs.get("prompt"))
+        self.assertEqual(kwargs.get("type"), "FBX")
+        self.assertNotIn("i", kwargs)
+
+    def test_the_mode_is_put_back_when_the_open_blows_up(self):
+        self.cmds = FakeCmds(self.mel, boom=True)
+        fbximport.cmds = self.cmds
+        with self.assertRaises(RuntimeError):
+            fbximport.open_file("C:/x/thing.fbx")
+        self.assertEqual(self.mel.mode, "exmerge")
+
+
 if __name__ == "__main__":
     unittest.main()

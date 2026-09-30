@@ -16,7 +16,10 @@ without that kind is dimmed and cannot be picked or dragged.
   portrait on the cursor (maya_hubqt's ghost, the inventory's) with a caption
   naming the floor point; released over a viewport, the character is added
   standing where the camera ray meets the floor. Esc or the right button
-  cancels; a release back on the hub does nothing.
+  cancels; a release back on the hub does nothing;
+- the RIGHT BUTTON on a portrait offers Open scene (2026-09-30, «при нажатии
+  правой клавишей по иконке рига ... Open scene»): the model's file in the
+  kind the switch shows, opened as the scene (`maya_scenesetup.opener`).
 
 The mouse is ours for the whole drag: the press grabs it, so the moves and
 the release keep coming here over the viewport, which never sees them.
@@ -94,6 +97,10 @@ class Scene(object):
     def place(self, model, kind, point):
         from maya_scenesetup import window
         return window.place_character(model, kind, point)
+
+    def open_scene(self, model, kind):
+        from maya_scenesetup import window
+        return window.open_character_scene(model, kind)
 
     def say(self, text):
         try:
@@ -235,6 +242,21 @@ def _classes():
                 text = _last_line(traceback.format_exc())
             return self._say(text)
 
+        # ------------------------------------------------------- menu
+
+        def context_actions(self, model):
+            """What the right button offers over `model` (2026-09-30, «при
+            нажатии правой клавишей по иконке рига ... Open scene»): the file
+            of the kind the switch shows, opened as the scene; a dimmed
+            portrait's row is shown disabled. [] off every portrait."""
+            if not model:
+                return []
+            if not self.available(model):
+                return [(look.open_absent_text(self.kind), None)]
+            kind = self.kind
+            return [(look.OPEN_SCENE, lambda: self._act(
+                lambda: self.scene.open_scene(model, kind)))]
+
         # -------------------------------------------------------- drop
 
         def drop_at(self, gx, gy, model=None):
@@ -327,9 +349,15 @@ def _classes():
                     self._end()
                     self._say("cancelled")
                 return
+            local = self._local(event)
+            if event.button() == Qt.RightButton:
+                self._press = None
+                actions = self.context_actions(
+                    self.model_at(local.x(), local.y()))
+                maya_hubqt.run_menu(self, self._global(event), actions)
+                return
             if event.button() != Qt.LeftButton:
                 return
-            local = self._local(event)
             model = self.model_at(local.x(), local.y())
             if model and self.select(model):
                 point = self._global(event)

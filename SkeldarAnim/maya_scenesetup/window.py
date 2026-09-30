@@ -611,6 +611,43 @@ def place_character(model, kind, point):
     return message
 
 
+def open_character_scene(model, kind):
+    """Open scene on a portrait (2026-09-30, «при нажатии правой клавишей по
+    иконке рига ... Open scene ... открывался соответствующий файл»): the
+    model's file in `kind` - the rig or the skeleton the switch shows - opened
+    as the scene. Returns what the line says."""
+    from maya_scenesetup import opener
+    entry = catalog.character_for(model, kind)
+    if entry is None:
+        found = catalog.model_by_key(model)
+        text = charlook.absent_text(found.label if found else model, kind)
+        say_character(text)
+        return text
+    text = opener.open_asset(catalog.character_file(entry), entry.label)
+    try:
+        refresh()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+    say_character(text)
+    return text
+
+
+def open_weapon_scene(key):
+    """Open scene on a weapon in the inventory: its catalog file opened as
+    the scene. Returns what the line says."""
+    from maya_scenesetup import opener
+    entry = catalog.by_key(key)
+    if entry is None:
+        return ""
+    text = opener.open_asset(entry.path, entry.label)
+    try:
+        refresh()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+    _status(text)
+    return text
+
+
 def camera_span(bone):
     """Playback range and the bone's own keys, whole frames."""
     keys = cmds.keyframe(bone, query=True, timeChange=True) or []

@@ -358,6 +358,48 @@ class AddCharacterPress(unittest.TestCase):
         self.assertIn("UE4 Mannequin has no rig", text)
 
 
+class OpenScene(unittest.TestCase):
+    """2026-09-30: Open scene on a portrait or a weapon - the catalog's file
+    handed to the opener, its answer on the card's line."""
+
+    def setUp(self):
+        from maya_scenesetup import opener
+        self.opener = opener
+        self.saved = [(window, n, getattr(window, n)) for n in ("refresh", "_status")]
+        self.saved.append((opener, "open_asset", opener.open_asset))
+        self.lines, self.opened = [], []
+        window.refresh = lambda: None
+        window._status = lambda message, control=None: self.lines.append(
+            (message, control))
+        opener.open_asset = lambda path, label: (
+            self.opened.append((path, label)) or "opened " + label)
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+
+    def test_a_portrait_opens_the_file_of_the_shown_kind(self):
+        text = window.open_character_scene("Creep", "skeleton")
+        entry = catalog.character_for("Creep", "skeleton")
+        self.assertEqual(self.opened, [(catalog.character_file(entry), "Creep [skeleton]")])
+        self.assertEqual(text, "opened Creep [skeleton]")
+        self.assertEqual(self.lines[-1], (text, window._CHARACTER_STATUS))
+
+    def test_an_absent_pair_opens_nothing(self):
+        text = window.open_character_scene("Orc_D", "skeleton")
+        self.assertEqual(self.opened, [])
+        self.assertIn("Orc D has no skeleton", text)
+
+    def test_a_weapon_opens_its_catalog_file(self):
+        text = window.open_weapon_scene("Spear_03")
+        self.assertEqual(self.opened, [(catalog.by_key("Spear_03").path, "Spear 03")])
+        self.assertEqual(self.lines[-1][0], text)
+
+    def test_an_unknown_weapon_opens_nothing(self):
+        self.assertEqual(window.open_weapon_scene("Nope"), "")
+        self.assertEqual(self.opened, [])
+
+
 class Choice(unittest.TestCase):
     """What the card opens on: the two optionVars, else the old dropdown's
     label, else the default rig."""

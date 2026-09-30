@@ -562,3 +562,30 @@ class Ghost(unittest.TestCase):
 
     def test_one_class_for_every_drag(self):
         self.assertIs(hubqt.ghost_class(), hubqt.ghost_class())
+
+
+class Menu(unittest.TestCase):
+    """2026-09-30: the right button's menu the inventory and the Characters
+    grid share (Open scene)."""
+
+    def setUp(self):
+        self.app = _app()
+        self.parent = QtWidgets.QWidget()
+        self.addCleanup(self.parent.deleteLater)
+
+    def test_rows_in_order_a_separator_and_a_disabled_row(self):
+        go = lambda: "went"                                  # noqa: E731
+        menu, rows = hubqt.build_menu(self.parent, [("Open scene", go), None,
+                                                    ("Open scene (no rig)", None)])
+        self.addCleanup(menu.deleteLater)
+        actions = menu.actions()
+        self.assertEqual([a.text() for a in actions],
+                         ["Open scene", "", "Open scene (no rig)"])
+        self.assertTrue(actions[1].isSeparator())
+        self.assertEqual([a.isEnabled() for a in (actions[0], actions[2])],
+                         [True, False])
+        self.assertEqual([action for _row, action in rows], [go, None])
+        self.assertIs(rows[0][0], actions[0])
+
+    def test_no_rows_shows_no_menu(self):
+        self.assertIsNone(hubqt.run_menu(self.parent, QtCore.QPoint(0, 0), []))

@@ -98,6 +98,10 @@ class FakeScene(object):
         self.log.append(("move", root, side, target[0]))
         return "moved"
 
+    def open_scene(self, key):
+        self.log.append(("open_scene", key))
+        return "opened " + key
+
     def watch(self, callback):
         self.watched.append(callback)
         return ["job"]
@@ -362,6 +366,45 @@ class Picking(PanelCase):
         hx, hy, hw, _hh = self.rects["hand_R"]
         edge = image.pixelColor(int(hx + hw // 2), int(hy))
         self.assertEqual(edge.name(), maya_hubstyle.TOKENS["accent"])
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class RightButton(PanelCase):
+    """2026-09-30: Open scene on a weapon's icon, Sort on the grid."""
+
+    def labels(self, what):
+        return [a[0] if a else None for a in self.panel.context_actions(what)]
+
+    def test_on_a_weapon_in_the_grid_open_scene_then_sort(self):
+        self.assertEqual(self.labels(("item", "Dagger_01")),
+                         ["Open scene", None, "Sort the inventory"])
+        self.panel.context_actions(("item", "Dagger_01"))[0][1]()
+        self.assertEqual(self.scene.log[-1], ("open_scene", "Dagger_01"))
+        self.assertEqual(self.panel.status_text, "opened Dagger_01")
+
+    def test_on_the_empty_grid_only_sort(self):
+        self.assertEqual(self.labels(("grid",)), ["Sort the inventory"])
+
+    def test_on_a_hand_holding_a_weapon_its_file(self):
+        self.assertEqual(self.labels(("slot", "R")), ["Open scene"])
+        self.panel.context_actions(("slot", "R"))[0][1]()
+        self.assertEqual(self.scene.log[-1], ("open_scene", "LongSword_02"))
+
+    def test_on_an_empty_hand_nothing(self):
+        self.assertEqual(self.panel.context_actions(("slot", "L")), [])
+        self.assertEqual(self.panel.context_actions(None), [])
+
+    def test_a_right_press_on_a_weapon_runs_the_menu_and_picks_nothing(self):
+        shown = []
+        saved = maya_hubqt.run_menu
+        maya_hubqt.run_menu = lambda parent, point, actions: shown.append(
+            [a[0] if a else None for a in actions])
+        self.addCleanup(setattr, maya_hubqt, "run_menu", saved)
+        self.mouse("press", self.item_point("Spear_03"),
+                   button=QT.QtCore.Qt.RightButton)
+        self.assertEqual(shown, [["Open scene", None, "Sort the inventory"]])
+        self.assertEqual(self.scene.log, [])
+        self.assertIsNone(self.panel._press)
 
 
 @unittest.skipIf(QT is None, "no Qt")

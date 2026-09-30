@@ -825,6 +825,41 @@ def ghost_class():
     return _CLASSES["ghost"]
 
 
+def build_menu(parent, actions):
+    """A right-button menu over `parent`: `actions` is a list of (label,
+    callable), a None callable showing the row disabled (its label says why),
+    and None for a separator. Returns (menu, [(QAction, callable)]). The hub's
+    stylesheet reaches it through `parent` (its QMenu rules). The Weapons
+    inventory's and the Characters grid's since 2026-09-30 (Open scene)."""
+    menu = qt().QtWidgets.QMenu(parent)
+    rows = []
+    for item in actions:
+        if item is None:
+            menu.addSeparator()
+            continue
+        label, action = item
+        row = menu.addAction(label)
+        row.setEnabled(action is not None)
+        rows.append((row, action))
+    return menu, rows
+
+
+def run_menu(parent, point, actions):
+    """`build_menu` shown at the global `point`; the picked row's callable is
+    run and what it returns handed back (None when nothing was picked)."""
+    if not actions:
+        return None
+    menu, rows = build_menu(parent, actions)
+    try:
+        picked = menu.exec(point)
+    finally:
+        menu.deleteLater()
+    for row, action in rows:
+        if picked is row and action is not None:
+            return action()
+    return None
+
+
 def _spread(row, scale=1.0):
     """The segments of a Maya rowLayout share its width equally.
 

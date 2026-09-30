@@ -44,6 +44,10 @@ class FakeScene(object):
         self.log.append(("place", model, kind, point))
         return "placed"
 
+    def open_scene(self, model, kind):
+        self.log.append(("open_scene", model, kind))
+        return "opened"
+
     def say(self, text):
         self.log.append(("say", text))
 
@@ -179,6 +183,36 @@ class Grid(unittest.TestCase):
         self._mouse(E.MouseMove, start + QT.QtCore.QPoint(40, 0), N, L)
         self._mouse(E.MouseButtonPress, start + QT.QtCore.QPoint(40, 0), R, L | R)
         self.assertIsNone(self.grid._drag)
+
+    def test_the_right_button_offers_open_scene_for_the_shown_kind(self):
+        actions = self.grid.context_actions("Creep")
+        self.assertEqual([label for label, _fn in actions], ["Open scene"])
+        actions[0][1]()
+        self.assertEqual(self.acts("open_scene"), [("open_scene", "Creep", "rig")])
+        self.assertEqual(self.grid.status_text, "opened")
+        self.grid.set_kind("skeleton")
+        self.grid.context_actions("Manny")[0][1]()
+        self.assertEqual(self.acts("open_scene")[-1], ("open_scene", "Manny", "skeleton"))
+
+    def test_a_dimmed_portrait_shows_open_scene_disabled(self):
+        self.assertEqual(self.grid.context_actions("UE4_Mannequin"),
+                         [("Open scene (no rig)", None)])
+
+    def test_off_every_portrait_there_is_no_menu(self):
+        self.assertEqual(self.grid.context_actions(None), [])
+
+    def test_a_right_press_runs_the_menu_and_picks_nothing(self):
+        shown = []
+        saved = maya_hubqt.run_menu
+        maya_hubqt.run_menu = lambda parent, point, actions: shown.append(
+            (parent, [label for label, _fn in actions]))
+        self.addCleanup(setattr, maya_hubqt, "run_menu", saved)
+        E, R = QT.QtCore.QEvent, QT.QtCore.Qt.RightButton
+        start = self.centre(1)
+        self._mouse(E.MouseButtonPress, start, R, R)
+        self.assertEqual(shown, [(self.grid, ["Open scene"])])
+        self.assertEqual(self.acts("select"), [])
+        self.assertIsNone(self.grid._press)
 
     def test_the_ghost_is_the_shared_one(self):
         self.assertIs(cg._classes()["Ghost"], maya_hubqt.ghost_class())

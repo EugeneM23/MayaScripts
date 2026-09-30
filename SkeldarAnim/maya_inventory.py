@@ -21,6 +21,8 @@ the classic one:
   X/Y/Z, a value typed and Enter applies that hand's six (Esc puts back);
 - the GRID - the catalog, every weapon always there, each sized in cells by
   its model's length, rearranged by hand, Sort on the right button;
+- the RIGHT BUTTON on a weapon - in the grid or in a hand card - offers Open
+  scene: its catalog file opened as the scene (2026-09-30, `opener`);
 - a CLICK picks a weapon, or a hand (the card's Add / Remove act on them);
   a DRAG - press, move past Qt's start distance, release - carries the icon
   with a caption naming the target: onto a hand card, back to the grid, onto
@@ -142,6 +144,10 @@ class Scene(object):
     def move(self, root, side, target):
         from maya_scenesetup import equip
         return equip.move(root, side, target)
+
+    def open_scene(self, key):
+        from maya_scenesetup import window
+        return window.open_weapon_scene(key)
 
     def watch(self, callback):
         """A scriptJob per event, calling `callback` - the hands follow the
@@ -535,11 +541,28 @@ def _classes():
             self.scene.remember_layout(self.placements)
             return self._say("inventory sorted")
 
-        def _grid_menu(self, point):
-            menu = QtWidgets.QMenu(self)
-            action = menu.addAction("Sort the inventory")
-            if menu.exec(point) is action:
-                self.sort()
+        def context_actions(self, what):
+            """What the right button offers over `what` (a `_hit` answer):
+            over a weapon - in the grid, or held / on the floor in a hand
+            card - Open scene, its catalog file opened as the scene
+            (2026-09-30, «по иконке ... оружия ... Open scene»); anywhere on
+            the grid, Sort. [] elsewhere."""
+            key = None
+            if what and what[0] == "item":
+                key = what[1]
+            elif what and what[0] == "slot":
+                held = self.holding.get(what[1])
+                if held and held.key and catalog.by_key(held.key):
+                    key = held.key
+            actions = []
+            if key:
+                actions.append((look.OPEN_SCENE, lambda: self._act(
+                    lambda: self.scene.open_scene(key))))
+            if what and what[0] in ("grid", "item"):
+                if actions:
+                    actions.append(None)
+                actions.append((look.SORT, self.sort))
+            return actions
 
         def _hit(self, x, y):
             rects = self.rects()
@@ -711,8 +734,10 @@ def _classes():
                 return
             local = self._local(event)
             what = self._hit(local.x(), local.y())
-            if event.button() == Qt.RightButton and what and what[0] in ("grid", "item"):
-                self._grid_menu(self._global(event))
+            if event.button() == Qt.RightButton:
+                self._press = None
+                maya_hubqt.run_menu(self, self._global(event),
+                                    self.context_actions(what))
                 return
             if event.button() != Qt.LeftButton or not what:
                 return
