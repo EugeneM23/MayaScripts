@@ -32,8 +32,10 @@ Weapon = collections.namedtuple("Weapon",
 # `textured` (2026-09-28, the Orc D) marks a row that arrives in its OWN
 # materials -- Unreal's textures, shipped under assets/ and named relatively in
 # the asset -- rather than in a palette colour (colour.relink_images).
-Character = collections.namedtuple("Character", "key label file kind textured",
-                                   defaults=(False,))
+# `model` (2026-09-30, the portrait grid) groups the rows by what they look
+# like: one portrait per model, the kind chosen by a [Rig | Skeleton] switch.
+Character = collections.namedtuple("Character", "key label file kind textured model",
+                                   defaults=(False, ""))
 
 _LEGAL = frozenset(string.ascii_letters + string.digits + "_")
 
@@ -49,7 +51,7 @@ CHARACTERS = [
     # namespace since 2026-09-08 (`Manny_Rig`, `Manny_Rig1`, ...): the
     # retarget addresses a rig by name (`Main`, `ControlSet`, `FKWrist_R`),
     # and the namespace is what keeps those names one node each.
-    Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", "rig"),
+    Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", "rig", model="Manny"),
     # The Creep creature's AdvancedSkeleton rig (2026-09-24): Manny's 90 UE bone
     # names on a creature's proportions, bound in the UE A-pose, the bones rigid
     # (orientation-only constraints), the meshes in the rig's own Geometry group,
@@ -58,7 +60,7 @@ CHARACTERS = [
     # 2026-09-28 the skeleton in the layout of the Creep's own FBX -- `root`
     # under a Null `Armature` turned -90 X («как в файле, единообразно», «и риг
     # крипа тоже»; make_creep_armature_layout.py).
-    Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig"),
+    Character("Creep_Rig", "Creep [rig]", "Creep_Rig.ma", "rig", model="Creep"),
     # The Orc Marauder D (2026-09-28, «еще один вариант орка ... SK_Orc_Marauder_D ... материал с
     # текстурами»): the Orc rig -- the Unreal asset's AdvancedSkeleton rig on Manny's bone names
     # with its own proportions (neck 1.39x, upper arm 1.07x), Manny's four helper bones, the
@@ -68,23 +70,70 @@ CHARACTERS = [
     # material maths baked in (assets/Orc_D/, the animator's pick: «2048, JPG»). Built by
     # make_orc_d_rig_asset.py from sources/orc/Orc_Rig.ma -- the untextured «Orc [rig]», which left
     # the plugin the same day («орка без текстур уберем из плагина он больше не нужен»).
-    Character("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig", textured=True),
+    Character("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig", textured=True,
+              model="Orc_D"),
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
-              "skeleton"),
+              "skeleton", model="Manny"),
     # The Creep without its rig (2026-09-24, «не только риг хантера, а и чистый
     # скелет»): the same 90 bones in the same bind, skinned -- built from
     # Creep_Rig.ma by make_creep_skeleton_asset.py, nothing of AdvancedSkeleton
     # left in it. Since 2026-09-28 laid out as the Creep's own FBX
     # (Animations/Rigs/Characters/Creep_Skeleton.fbx): `root` under a Null
     # `Armature`, the five meshes at the top beside it.
-    Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "skeleton"),
+    Character("Creep", "Creep [skeleton]", "Creep_Skeleton.ma", "skeleton",
+              model="Creep"),
     # 68 joints, exported once from /Game/SwordAnimsetPro/UE4_Mannequin/
     # Mesh/SK_Mannequin in the animator's own project: spine_01..03, no
     # metacarpals, no neck_02, one twist per segment. The pack animations
     # (Longsword/SwordAnimsetPro, ~1200 clips) all run on it.
     Character("UE4_Mannequin", "UE4 Mannequin [skeleton]",
-              "UE4_Mannequin.fbx", "skeleton"),
+              "UE4_Mannequin.fbx", "skeleton", model="UE4_Mannequin"),
 ]
+
+
+# The portrait grid (2026-09-30, «сетка с портретами»): one portrait per MODEL,
+# in this order, the kind chosen by a [Rig | Skeleton] switch above it. A row
+# is (model, kind): Orc D has no skeleton, the UE4 Mannequin no rig.
+Model = collections.namedtuple("Model", "key label")
+MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"),
+          Model("Orc_D", "Orc D"), Model("UE4_Mannequin", "UE4 Mannequin")]
+KINDS = ("rig", "skeleton")
+
+
+def model_by_key(key):
+    for model in MODELS:
+        if model.key == key:
+            return model
+    return None
+
+
+def model_of(entry):
+    """The Model a character row shows, or None."""
+    return model_by_key(getattr(entry, "model", "") or "")
+
+
+def character_for(model, kind):
+    """The row of `model` in `kind`, or None when the model has no such row."""
+    for entry in CHARACTERS:
+        if entry.model == model and entry.kind == kind:
+            return entry
+    return None
+
+
+def kinds_of(model):
+    """The kinds `model` ships in, in KINDS order."""
+    return tuple(kind for kind in KINDS if character_for(model, kind))
+
+
+def default_model():
+    """The model the grid opens on: the default rig's."""
+    return default_rig().model
+
+
+def portrait_path(model):
+    """The model's square portrait (256 px PNG with alpha), under assets/.
+    Rendered once by docs/superpowers/plans/make_character_portraits.py."""
+    return asset_path("character_portraits/{0}.png".format(model))
 
 
 def character_labels():

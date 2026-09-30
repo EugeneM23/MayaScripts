@@ -610,3 +610,48 @@ class OrcD(unittest.TestCase):
         self.assertEqual((skins, blends), (2, 1))
         self.assertEqual(sorted(set(images)), sorted("Orc_D/" + m for m in self.MAPS))
         self.assertEqual(files, len(images))
+
+
+class Models(unittest.TestCase):
+    """2026-09-30, the portrait grid: one portrait per MODEL, the kind a switch.
+    A catalog row is (model, kind)."""
+
+    def test_the_models_in_grid_order(self):
+        self.assertEqual([m.key for m in catalog.MODELS],
+                         ["Manny", "Creep", "Orc_D", "UE4_Mannequin"])
+        self.assertEqual(catalog.model_by_key("Orc_D").label, "Orc D")
+        self.assertIsNone(catalog.model_by_key("Sevarog"))
+
+    def test_every_row_names_a_model_and_every_model_has_a_row(self):
+        keys = set(m.key for m in catalog.MODELS)
+        for entry in catalog.CHARACTERS:
+            self.assertIn(entry.model, keys, entry.key)
+        for model in catalog.MODELS:
+            self.assertTrue(catalog.kinds_of(model.key), model.key)
+
+    def test_a_model_and_a_kind_name_at_most_one_row(self):
+        pairs = [(e.model, e.kind) for e in catalog.CHARACTERS]
+        self.assertEqual(len(pairs), len(set(pairs)))
+
+    def test_the_pairs(self):
+        want = {("Manny", "rig"): "Manny_Rig", ("Manny", "skeleton"): "Manny",
+                ("Creep", "rig"): "Creep_Rig", ("Creep", "skeleton"): "Creep",
+                ("Orc_D", "rig"): "Orc_D_Rig",
+                ("UE4_Mannequin", "skeleton"): "UE4_Mannequin"}
+        for (model, kind), key in want.items():
+            self.assertEqual(catalog.character_for(model, kind).key, key)
+        self.assertIsNone(catalog.character_for("Orc_D", "skeleton"))
+        self.assertIsNone(catalog.character_for("UE4_Mannequin", "rig"))
+        self.assertEqual(catalog.kinds_of("Orc_D"), ("rig",))
+        self.assertEqual(catalog.kinds_of("UE4_Mannequin"), ("skeleton",))
+        self.assertEqual(catalog.kinds_of("Manny"), ("rig", "skeleton"))
+
+    def test_the_default_is_the_default_rigs_model(self):
+        self.assertEqual(catalog.default_model(), "Manny")
+        self.assertIs(catalog.model_of(catalog.default_rig()),
+                      catalog.model_by_key("Manny"))
+
+    def test_the_portrait_path(self):
+        self.assertTrue(catalog.portrait_path("Creep").endswith(
+            "assets/character_portraits/Creep.png"))
+        self.assertNotIn("\\", catalog.portrait_path("Creep"))
