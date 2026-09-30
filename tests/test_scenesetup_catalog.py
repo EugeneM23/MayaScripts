@@ -565,8 +565,10 @@ class OrcD(unittest.TestCase):
         self.assertTrue(entry.textured)
         self.assertTrue(catalog.is_rig(entry))
 
-    def test_only_the_orc_d_is_textured(self):
-        self.assertEqual([c.key for c in catalog.CHARACTERS if c.textured], ["Orc_D_Rig"])
+    def test_the_textured_rows_are_the_orc_d_and_both_mannys(self):
+        """The Orc D since 2026-09-28, both Manny rows since 2026-09-30."""
+        self.assertEqual([c.key for c in catalog.CHARACTERS if c.textured],
+                         ["Manny_Rig", "Orc_D_Rig", "Manny"])
 
     def test_textured_defaults_to_false(self):
         self.assertFalse(catalog.Character("X", "X", "X.ma", "rig").textured)
@@ -610,6 +612,52 @@ class OrcD(unittest.TestCase):
         self.assertEqual((skins, blends), (2, 1))
         self.assertEqual(sorted(set(images)), sorted("Orc_D/" + m for m in self.MAPS))
         self.assertEqual(files, len(images))
+
+
+class MannyTextured(unittest.TestCase):
+    """2026-09-30: «Давай для нашего мени рига и скелета найдем текстуры и добавим их в проект точно
+    так же как и для орка». Unreal's UE5 mannequin textures (the Orc Marauder pack's demo copy --
+    our meshes' UVs exactly), the base colour as M_Mannequin computes it (the D map itself, the chest
+    logo baked into the torso), the bevel normal, at 2048 JPG; both shipped .ma dressed in place by
+    make_manny_textured_assets.py, two materials by Unreal's two slots."""
+
+    MAPS = ("Manny_HeadLegs_Color.jpg", "Manny_HeadLegs_Normal.jpg",
+            "Manny_Torso_Color.jpg", "Manny_Torso_Normal.jpg")
+
+    def test_both_manny_rows_are_textured(self):
+        for key in ("Manny_Rig", "Manny"):
+            self.assertTrue(catalog.character_by_key(key).textured, key)
+
+    def test_the_maps_ship_in_assets(self):
+        for name in self.MAPS:
+            self.assertTrue(os.path.isfile(catalog.asset_path("Manny/" + name)), name)
+
+    def test_the_shipped_mannys_name_their_images_relatively(self):
+        """Each asset's four file nodes carry `skeldarAssetImage` and store that same relative
+        path; nothing of the dead MI_Manny networks (D:/dev/..., /Users/Shared/...) is left."""
+        banned = ("createNode script", "vaccine", "breed_gene", "C:/", "c:/", "D:/", "d:/",
+                  "/Users/Shared", "Unreal Projects", "scratchpad", "ueManny:", "MI_Manny",
+                  "T_Manny_0", "skeldarColour", "EnvSamplerTex")
+        for key in ("Manny_Rig", "Manny"):
+            path = catalog.character_file(catalog.character_by_key(key))
+            images, stored, files, materials = [], [], 0, []
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    for word in banned:
+                        self.assertNotIn(word, line, key)
+                    files += line.startswith("createNode file ")
+                    if line.startswith("createNode phong "):
+                        materials.append(line.split('"')[1])
+                    if '".skeldarAssetImage"' in line:
+                        images.append(line.split('"')[-2])
+                    if line.startswith('\tsetAttr ".ftn" -type "string"'):
+                        stored.append(line.split('"')[-2])
+            want = sorted("Manny/" + m for m in self.MAPS)
+            self.assertEqual(sorted(images), want, key)
+            self.assertEqual(sorted(stored), want, key)
+            self.assertEqual(files, 4, key)
+            self.assertEqual(sorted(materials), ["skeldarTexture_Manny_HeadLegs",
+                                                 "skeldarTexture_Manny_Torso"], key)
 
 
 class Models(unittest.TestCase):

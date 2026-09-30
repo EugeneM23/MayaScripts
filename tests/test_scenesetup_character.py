@@ -525,8 +525,19 @@ class TexturedAdd(unittest.TestCase):
         self.assertIn(" - textured (viewport textures on)", text)
         self.assertNotIn(" - red", text)
 
+    def test_both_mannys_are_not_painted_and_their_images_are_relinked(self):
+        """Textured since 2026-09-30, the rig and the skeleton alike."""
+        for key in ("Manny_Rig", "Manny"):
+            del self.calls[:]
+            text = character.add_character(catalog.character_by_key(key), (0.8, 0.25, 0.22))
+            self.assertNotIn(("paint",), self.calls, key)
+            self.assertIn(("show",), self.calls, key)
+            self.assertIn(" - textured (viewport textures on)", text, key)
+            self.assertNotIn(" - red", text, key)
+
     def test_an_untextured_rig_is_still_painted_and_nothing_relinked(self):
-        text = character.add_character(catalog.character_by_key("Manny_Rig"), (0.8, 0.25, 0.22))
+        """The Creep (the Manny until 2026-09-30, when it was textured too)."""
+        text = character.add_character(catalog.character_by_key("Creep_Rig"), (0.8, 0.25, 0.22))
         self.assertEqual(self.calls, [("paint",)])
         self.assertIn(" - red", text)
 
@@ -573,7 +584,9 @@ class Placed(unittest.TestCase):
                       (character, "existing_namespaces", character.existing_namespaces),
                       (catalog, "character_file", catalog.character_file),
                       (builder, "character_roots", builder.character_roots),
-                      (colour, "paint_nodes", colour.paint_nodes)]
+                      (colour, "paint_nodes", colour.paint_nodes),
+                      (colour, "relink_images", colour.relink_images),
+                      (colour, "show_textures", colour.show_textures)]
         character.cmds = self.cmds
         character.import_asset = lambda path, namespace=None: []
         character.connect = lambda root: False
@@ -582,6 +595,9 @@ class Placed(unittest.TestCase):
         catalog.character_file = lambda entry: self.file
         builder.character_roots = lambda: self.roots.pop(0)
         colour.paint_nodes = lambda *a: "phong1"
+        # the Manny rig is a textured row since 2026-09-30: its dressing is TexturedAdd's business
+        colour.relink_images = lambda nodes, resolve: (0, [])
+        colour.show_textures = lambda: []
 
     def tearDown(self):
         for owner, name, value in self.saved:

@@ -50,8 +50,14 @@ CHARACTERS = [
     # `Group`, the meshes at world level. Each one arrives in its OWN
     # namespace since 2026-09-08 (`Manny_Rig`, `Manny_Rig1`, ...): the
     # retarget addresses a rig by name (`Main`, `ControlSet`, `FKWrist_R`),
-    # and the namespace is what keeps those names one node each.
-    Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", "rig", model="Manny"),
+    # and the namespace is what keeps those names one node each. Textured
+    # since 2026-09-30 («для нашего мени рига и скелета найдем текстуры ...
+    # точно так же как и для орка»): Unreal's own UE5 mannequin maps (the Orc
+    # Marauder pack's demo copy, our UVs exactly) at 2048, two materials by
+    # Unreal's two slots, the chest logo baked in (assets/Manny/;
+    # make_manny_textured_assets.py dressed the .ma in place).
+    Character("Manny_Rig", "Manny [rig]", "Manny_Rig.ma", "rig", textured=True,
+              model="Manny"),
     # The Creep creature's AdvancedSkeleton rig (2026-09-24): Manny's 90 UE bone
     # names on a creature's proportions, bound in the UE A-pose, the bones rigid
     # (orientation-only constraints), the meshes in the rig's own Geometry group,
@@ -72,8 +78,9 @@ CHARACTERS = [
     # the plugin the same day («орка без текстур уберем из плагина он больше не нужен»).
     Character("Orc_D_Rig", "Orc D [rig]", "Orc_D_Rig.ma", "rig", textured=True,
               model="Orc_D"),
+    # The same two meshes in the same maps as the rig (2026-09-30).
     Character("Manny", "Manny UE5 [skeleton]", "Manny_Skeleton.ma",
-              "skeleton", model="Manny"),
+              "skeleton", textured=True, model="Manny"),
     # The Creep without its rig (2026-09-24, «не только риг хантера, а и чистый
     # скелет»): the same 90 bones in the same bind, skinned -- built from
     # Creep_Rig.ma by make_creep_skeleton_asset.py, nothing of AdvancedSkeleton

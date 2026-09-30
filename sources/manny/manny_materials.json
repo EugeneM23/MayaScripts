@@ -1,0 +1,178 @@
+{
+ "master": {
+  "blend_mode": "<BlendMode.BLEND_MASKED: 1>",
+  "path": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/M_Mannequin",
+  "shading_model": "<MaterialShadingModel.MSM_CLEAR_COAT: 4>",
+  "two_sided": false
+ },
+ "materials": {
+  "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/Instances/Manny/MI_Manny_01": {
+   "parent": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/M_Mannequin",
+   "scalars": {
+    "BaseColorFallOff": 0.0,
+    "ChromaticCurve": 0.0,
+    "EnergeConservation": 1.0,
+    "LogoLayer0_Brightness": 5.0,
+    "LogoLayer1_Brightness": 5.0,
+    "LogoLayer2_Brightness": 5.0,
+    "LogoPosOffset_X": 0.0,
+    "LogoPosOffset_Y": 0.0,
+    "LogoSize": 1.0,
+    "MetalPaintMetallic": 1.0,
+    "Metal_Brightness": 1.0,
+    "Metal_Desaturation": 0.0,
+    "Plastic_Brightness": 1.0,
+    "Plastic_Desaturation": 0.0
+   },
+   "switches": {
+    "UseLogo": false
+   },
+   "textures": {
+    "AnisoAOPaintMaskTex": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_01_ASAOPMASK_MSK",
+    "BNormal": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_01_BN",
+    "Base Texture": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_01_D",
+    "CCCCRTex": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_01_CCRCCPlastic_MSK",
+    "LogoTexture": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Shared/T_UE_Logo_M",
+    "MSR_tex": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_01_MSR_MSK",
+    "Normal": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_01_N",
+    "Tangent": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_01_Tan"
+   },
+   "vectors": {
+    "LogoLayer0_Color": [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "LogoLayer1_Color": [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "LogoLayer2_Color": [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "Tint": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   }
+  },
+  "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/Instances/Manny/MI_Manny_02": {
+   "parent": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/Instances/Manny/MI_Manny_01",
+   "scalars": {
+    "BaseColorFallOff": 0.0,
+    "ChromaticCurve": 0.0,
+    "EnergeConservation": 1.0,
+    "LogoLayer0_Brightness": 16.0,
+    "LogoLayer1_Brightness": 64.0,
+    "LogoLayer2_Brightness": 256.0,
+    "LogoPosOffset_X": -0.2409999966621399,
+    "LogoPosOffset_Y": 0.2590000033378601,
+    "LogoSize": 0.07599999755620956,
+    "MetalPaintMetallic": 1.0,
+    "Metal_Brightness": 1.0,
+    "Metal_Desaturation": 0.0,
+    "Plastic_Brightness": 1.0,
+    "Plastic_Desaturation": 0.0
+   },
+   "switches": {
+    "UseLogo": true
+   },
+   "textures": {
+    "AnisoAOPaintMaskTex": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_02_ASAOPMASK_MSK",
+    "BNormal": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_02_BN",
+    "Base Texture": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_02_D",
+    "CCCCRTex": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_02_CCRCCPlastic_MSK",
+    "LogoTexture": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Shared/T_UE_Logo_M",
+    "MSR_tex": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_02_MSR_MSK",
+    "Normal": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_02_N",
+    "Tangent": "/Game/Orc_Marauder/Demo/Characters/Mannequins/Textures/Manny/T_Manny_02_Tan"
+   },
+   "vectors": {
+    "LogoLayer0_Color": [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "LogoLayer1_Color": [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "LogoLayer2_Color": [
+     0.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "Tint": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ]
+   }
+  }
+ },
+ "slots": [
+  [
+   "M_HeadLegs",
+   "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/Instances/Manny/MI_Manny_01"
+  ],
+  [
+   "M_Torso",
+   "/Game/Orc_Marauder/Demo/Characters/Mannequins/Materials/Instances/Manny/MI_Manny_02"
+  ]
+ ],
+ "textures": {
+  "T_Manny_01_BN": {
+   "flip_green": false,
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": false
+  },
+  "T_Manny_01_D": {
+   "flip_green": false,
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": true
+  },
+  "T_Manny_02_BN": {
+   "flip_green": false,
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": false
+  },
+  "T_Manny_02_D": {
+   "flip_green": false,
+   "size": [
+    4096,
+    4096
+   ],
+   "srgb": true
+  },
+  "T_UE_Logo_M": {
+   "flip_green": false,
+   "size": [
+    1024,
+    1024
+   ],
+   "srgb": false
+  }
+ }
+}
