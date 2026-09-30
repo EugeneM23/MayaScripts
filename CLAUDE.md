@@ -6427,3 +6427,77 @@ where a character appears.
      run: a skeleton added beside rigs alone kept its plain `root` and the rename note still
      named `Manny_Rig:FKXAnkle_L`. With no plain top joint among the others nothing collided,
      and `rename_note` says nothing now.
+
+## The Weapons card IS the inventory: hands with a Channel Box, the grid, Add / Remove (2026-09-30)
+
+The animator: «Давай сделаем с меню Weapon тоже самое что сделали с персонажами. Все что касается
+покраски оружия вынесем в покраску. А сам выбор оружия превратим в наш инвентарь ... не в отдельном
+окне а как часть нашего меню. Возможность задавать офсеты давай добавим возле окошек правой и левой
+руки оружия. Возможность добавлять кастомное оружие по указанию пути давай пока уберем совсем.» Asked:
+the hand slots stay side by side as in the window, «слева от окошка столбик с параметрами так как в
+стандартном интерфейсе маи в channel box»; Add / Remove «как в Characters». Spec
+`docs/superpowers/specs/2026-09-30-weapons-card-inventory-design.md`, plan beside it. Proof
+`verify_weapons_card.py` **10/10 live in a disposable Maya** (port 7005, scratch `MAYA_APP_DIR`,
+`MAYA_NO_HOME=1`): card 3, hands 6, classic 1. 2825 unit tests. The installed copy refreshed from a
+`git archive` of `77b5689` (only the six changed files differed from what was installed); the open hub
+of the 7001 Maya rebuilt from it. **"The weapon inventory" section above describes a floating window:
+that window is gone, it is this card.**
+
+**The card**: the subtitle `mayaSceneSetupWeaponsBound` (the character, written by `_bound_root` with
+the Characters one), the inventory (`maya_inventory.InventoryPanel`, laid over the `cmds` placeholder
+`mayaSceneSetupInventory` by the Characters grid's `attach` + `Keeper`, so it stands in the skinned hub
+and the classic one), Add (primary) + Remove Weapon (danger) in one row, the line `mayaSceneSetupStatus`.
+- **Gone**, a gone-test for each: the weapon dropdown; the FBX field and folder button (`chosen_entry`,
+  `custom_changed`, `browse_fbx`, `mayaSceneSetup_custom_fbx`); the Hand row; the two grip
+  `floatFieldGrp`s (`offsets_changed`); the colour row (dots, swatch, Recolour, `recolour_weapon`); the
+  Inventory button; the floating window (`InventoryWindow`, `make_window`, its position optionVar).
+  `catalog.entry_for_path` stays: `equip.entry_of` still names the file of a weapon an older scene added
+  from one, so the inventory can move it between hands.
+- **A weapon arrives in the next free colour**; the Colour section repaints a selected weapon (gate 9:
+  the dagger blue, Manny's body as it was).
+- **Picked**: the weapon clicked last in the grid (`mayaSceneSetup_weapon`, a key; the first catalog row
+  when unset or stale) and the hand card clicked last (`mayaSceneSetup_hand`) - `window.chosen_weapon`,
+  `side`, `picked`, `select_weapon`, `select_hand`. **Add** is `equip.to_hand(root, side(),
+  chosen_weapon())` after the card's own refusals (the character, the bone, its parent, the legacy
+  OverRig link, an aim); **Remove** is `equip.take_off`. The hotkey rows `scene.weapon` /
+  `scene.remove_weapon` press the same functions and read the optionVars. Without Qt the placeholder
+  gets a weapon dropdown and the Hand segments (`_weapon_fallback`), no grip fields.
+
+**The panel** - `maya_invlook.panel(width)` is the whole layout, logical px from the card's width:
+- two hand cards side by side (the right hand on the viewer's left), each its name, a **Channel Box
+  column** (`CHANNELS` = tx ty tz rx ry rz, shown `Translate X` ... `Rotate Z` - the Channel Box's own
+  order, translate first) and the well right of it; the grid under them, its cell `(width - 8) / 10`
+  clamped to 24..40, centred;
+- twelve `ChannelField` QLineEdits (object `skeldarChannel`, property `skChannel` = `"R_tx"` ...),
+  styled by an ID-selector sheet set on the panel (it outranks the hub's own `QLineEdit` rule),
+  right-aligned; a value reads `look.channel_text` (three decimals, zeros dropped, never `-0`). **Enter,
+  or leaving the field, applies that hand's six** (`window.set_hand_grip`: remembered per weapon and
+  hand; a clean held weapon re-gripped live, the bone still - gate 6: 30° typed, the bone moved 2e-14);
+  **Esc** puts back what was shown; a hand that follows another weapon, no character or no bone:
+  read-only. A refresh never rewrites the field being typed in;
+- what a column shows (`window.hand_grips`): a clean held weapon - measured, in the socket standard;
+  an animated or a floor one - remembered; an empty hand - the grip the PICKED weapon would take there,
+  the left one the right's mirror (gate 5 read Manny's 6.621 / -0.978 / 1.706 / 1.379 / -1.576 /
+  -179.508);
+- **a click picks** (an item: `card_active` and a 2 px accent outline, the Characters grid's selected
+  tile; a hand card: the same, its name bold); **a drag starts past `startDragDistance`** (the window
+  started one on the press, which left no click); the drop table is the window's, unchanged;
+- the nice names while a value still fits beside them (`look.split_row` with the font's own widths),
+  the Channel Box's short names (`tx` ... `rz`) below that.
+
+117. **The card is much narrower than the dock.** A floating hub whose scroll viewport is 510 physical
+     px (the animator's 360 px dock, measured 2026-09-28) gives the Weapons card 275-317 logical px, and
+     at the hub's 16 px UI font `Translate X` (75 px) beside `-179.51` (54 px + padding) did not fit a
+     129 px column - every run fell to the short names. The channel font is 9.5 logical (14 px: 66 and
+     49 px), the well 1.2 cells (at least 32), the name-value gap 3: the nice names with 66-92 px value
+     fields. Two harness facts: `workspaceControl -e -resizeWidth` on a floating hub did not stick (it
+     read 922 px again one send later) - size the hub's window until its viewport is 510; and offscreen
+     Qt has no font family (the fallback draws wide), so the unit test sets the font size itself.
+118. **A refresh a scriptJob queues can run in the MIDDLE of an import.** The FBX import changes the
+     selection and Maya turns Qt's event loop while it imports, so the panel's queued `SelectionChanged`
+     refresh ran half way through Add: the left column read zeros under a mirrored grip, and nothing
+     read the scene again after (gate 5 failed once). Add and Remove refresh the panel when they finish
+     (`window._refresh_inventory`); anything else that changes the hands has to as well. The same run
+     had the animator using the disposable Maya between sends (trap 85 again: its optionVars and undo
+     queue showed an Orc D picked, Spear 01 dropped into a hand, the hub resized): the clean sequence
+     card -> hands -> photo is what the 10/10 stands on.
