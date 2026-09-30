@@ -113,6 +113,24 @@ def unframing(frame_rotate, rotate_order=0):
     return tuple(math.degrees(v) for v in (euler.x, euler.y, euler.z))
 
 
+def socket_frame(frame=(0.0, 0.0, 0.0)):
+    """A catalog row's frame as the weapon node carries it: R(frame) .
+    R(SOCKET_TURN), an XYZ euler in degrees. Pure.
+
+    The row's frame turns the model in its own axes first (the Creep Sword's
+    45 about its blade); the socket turn then takes the model's axes (blade
+    +Y) into a UE weapon bone's (grip line +Z) - catalog.SOCKET_TURN,
+    2026-09-30.
+    """
+    from maya_scenesetup import catalog     # stdlib-only: no cycle
+    product = (om.MMatrix(matrix_of(frame, (0.0, 0.0, 0.0)))
+               * om.MMatrix(matrix_of(catalog.SOCKET_TURN, (0.0, 0.0, 0.0))))
+    euler = (om.MTransformationMatrix(product).rotation(asQuaternion=False)
+             .reorder(om.MEulerRotation.kXYZ))
+    return tuple(round(math.degrees(v), 9) + 0.0
+                 for v in (euler.x, euler.y, euler.z))
+
+
 def grip_between(child16, parent16):
     """The bone-relative grip that takes `parent16` to `child16`. Pure.
 

@@ -202,6 +202,15 @@ WEAPONS = [
            (0.0, 45.0, 0.0)),
 ]
 
+# 2026-09-30, «по умолчанию все виды оружия вставлялись в руку правильно без
+# офсетов»: every rig's weapon bone is UE's weapon_r (measured: the grip line
+# pinky -> index along its +Z, the palm normal along -Y, on Manny and the Orc D;
+# the Creep's were turned to match), while every row above lies in its model's
+# own axes (blade +Y, width X, thickness Z). This quarter turn takes the one
+# into the other; a row's `frame` is the model's OWN extra turn before it (the
+# Creep Sword's 45 about its blade). bonedrive.socket_frame composes the two.
+SOCKET_TURN = (90.0, 0.0, 0.0)
+
 
 def labels():
     """Dropdown labels, in table order."""

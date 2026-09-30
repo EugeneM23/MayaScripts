@@ -127,6 +127,8 @@ def for_hand(entry, side, root):
     pair = sockets(root, entry.bone) if root else None
     if not pair:
         return ZERO
+    # the frame the node will carry - the socket turn composed in (2026-09-30)
     return bonedrive.mirror_grip(right[0], right[1],
-                                 getattr(entry, "frame", (0.0, 0.0, 0.0)),
+                                 bonedrive.socket_frame(
+                                     getattr(entry, "frame", (0.0, 0.0, 0.0))),
                                  pair[0], pair[1])

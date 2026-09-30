@@ -213,6 +213,8 @@ class FakeBonedrive(object):
     def snap(self, node, target):
         self.log.append(("snap", node, target))
 
+    socket_frame = staticmethod(bonedrive.socket_frame)
+
     def store_frame(self, weapon, rotate):
         self.log.append(("frame", weapon, tuple(rotate)))
 
@@ -465,18 +467,21 @@ class AttachFlow(SpaceSwap, unittest.TestCase):
         self.assertEqual(note, "")
 
     def test_the_entrys_frame_goes_on_the_node(self):
-        """The catalog's frame (the Creep Sword's 45) is written on the
-        marked node; an entry written without the column is the identity."""
+        """The catalog's frame composed with the socket turn (2026-09-30: the
+        model's axes into a UE weapon bone's) is written on the marked node;
+        an entry written without the column takes the turn alone."""
         fake = self._wire(frames=0)
         attach.attach(self.Entry(), HAND, BONE)
-        self.assertIn(("frame", SPACE + "|sword", (0.0, 0.0, 0.0)), fake.log)
+        self.assertIn(("frame", SPACE + "|sword", (90.0, 0.0, 0.0)), fake.log)
 
     def test_a_framed_entry_writes_its_frame(self):
+        """The Creep Sword's 45 about its own blade, then the socket turn."""
         class Framed(self.Entry):
             frame = (0.0, 45.0, 0.0)
         fake = self._wire(frames=0)
         attach.attach(Framed(), HAND, BONE)
-        self.assertIn(("frame", SPACE + "|sword", (0.0, 45.0, 0.0)), fake.log)
+        self.assertIn(("frame", SPACE + "|sword",
+                       bonedrive.socket_frame((0.0, 45.0, 0.0))), fake.log)
 
     def test_the_weapon_is_never_parented_into_the_skeleton(self):
         """2026-09-24, «не нарушали иерархию нашего скелета»: the mesh goes into

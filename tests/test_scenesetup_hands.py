@@ -187,8 +187,9 @@ class GripMemory(unittest.TestCase):
             lambda *a: seen.append(a) or ((0, 0, 180), (-1, 0, 0)))
         self.assertEqual(grips.for_hand(Entry(), "L", "|root"),
                          ((0, 0, 180), (-1, 0, 0)))
+        # the node's frame, not the row's: the socket turn composed in
         self.assertEqual(seen, [((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
-                                 (0.0, 0.0, 0.0), "SR", "SL")])
+                                 (90.0, 0.0, 0.0), "SR", "SL")])
 
     def test_the_right_hand_never_mirrors(self):
         grips.cmds = FakeVars()

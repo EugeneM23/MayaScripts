@@ -351,5 +351,8 @@ def import_weapon(entry, parent=None, rgb=None):
             rgb = colouring.free_colour().rgb
         colouring.paint_nodes([weapon], rgb, entry.key)
 
-    bonedrive.store_frame(weapon, getattr(entry, "frame", (0.0, 0.0, 0.0)))
+    # the row's own frame, then the socket turn into a UE weapon bone
+    # (2026-09-30): zero grip is the weapon in the fist on every rig
+    bonedrive.store_frame(weapon, bonedrive.socket_frame(
+        getattr(entry, "frame", (0.0, 0.0, 0.0))))
     return weapon, note

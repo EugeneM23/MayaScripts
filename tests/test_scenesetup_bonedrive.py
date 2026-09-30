@@ -143,6 +143,34 @@ class ComposedGrip(unittest.TestCase):
         self.assertLess(worst, 1e-9)
 
 
+class SocketFrame(unittest.TestCase):
+    """2026-09-30: every rig's weapon bone is UE's (grip line +Z, palm -Y),
+    every model lies along +Y - one quarter turn between them."""
+
+    def _m(self, rotate):
+        return om.MMatrix(bonedrive.matrix_of(rotate, (0.0, 0.0, 0.0)))
+
+    def test_the_turn(self):
+        from maya_scenesetup import catalog
+        self.assertEqual(catalog.SOCKET_TURN, (90.0, 0.0, 0.0))
+
+    def test_an_unframed_model_takes_the_turn_alone(self):
+        self.assertEqual(bonedrive.socket_frame((0.0, 0.0, 0.0)), (90.0, 0.0, 0.0))
+        self.assertEqual(bonedrive.socket_frame(), (90.0, 0.0, 0.0))
+
+    def test_the_blade_goes_along_the_bones_z_and_the_thickness_along_minus_y(self):
+        m = self._m(bonedrive.socket_frame())
+        self.assertAlmostEqual((om.MVector(0, 1, 0) * m - om.MVector(0, 0, 1)).length(), 0.0, 9)
+        self.assertAlmostEqual((om.MVector(0, 0, 1) * m - om.MVector(0, -1, 0)).length(), 0.0, 9)
+
+    def test_a_models_own_frame_turns_first(self):
+        """The Creep Sword's 45 about its own blade, then the socket turn."""
+        from maya_scenesetup import catalog
+        want = self._m((0.0, 45.0, 0.0)) * self._m(catalog.SOCKET_TURN)
+        got = self._m(bonedrive.socket_frame((0.0, 45.0, 0.0)))
+        self.assertLess(max(abs(a - b) for a, b in zip(want, got)), 1e-9)
+
+
 class FakeCmds(object):
     """Records the calls whose ORDER is the design.
 
