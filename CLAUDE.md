@@ -6046,6 +6046,78 @@ keyable, untouched by the retarget). A scene with an Orc D added before this has
     fell to 44–1515 pixels, all on the vest's torn edge. `hardwareRenderingGlobals.
     transparencyAlgorithm` is the animator's scene setting, not ours to change on an Add.
 
+## Manny in Unreal's own textures, the rig and the skeleton (2026-09-30)
+
+The animator: «Давай для нашего мени рига и скелета найдем текстуры и добавим их в проект точно так же как и
+для орка». Spec `docs/superpowers/specs/2026-09-30-manny-textured-design.md`, plan beside it. Both Manny rows,
+«Manny [rig]» and «Manny UE5 [skeleton]», are `textured=True` since: the Orc D's road end to end (the plugin's
+code did not change, only the catalog flags, the assets and the scripts that make them).
+
+**Measured first** (MyProject2 open, Remote Execution on):
+- the editor holds TWO Mannys: the Third Person template's (`/Game/Characters/Mannequins/`, textures 1024²,
+  its mesh's UVs 0.017 off ours) and the Orc Marauder pack's demo copy
+  (`/Game/Orc_Marauder/Demo/Characters/Mannequins/`, 4096²). **Our `Skin_3p` IS the demo `SKM_Manny_Simple`
+  index for index** (every UV to 7.5e-9, points to 0.073 cm), and `Hands_1P` (arms, shoulders, hands, 72–162 cm)
+  is a cut of it (all 21570 vertices on Unreal's to 0.0001 cm, position and UV). Both shipped files had lost
+  Unreal's per-face split (one material on every face) and still carried dead `MI_Manny_*` networks naming
+  `D:/dev/temp/...` and `/Users/Shared/Epic Games/...`;
+- the demo `M_Mannequin`, read off its graph as T3D (an `AssetExportTask` of a Material or MaterialFunction to
+  `.t3d` writes every expression, its properties and links — the way through the NamedReroutes whose
+  `declaration` the Python API will not read): Masked with no opacity mask (opaque), ClearCoat. The base
+  colour is a metal/plastic lerp chain over `D` with desaturations, brightnesses, a Tint and
+  `ML_BaseColorFallOff`; **at both instances' values every lerp collapses and the colour is `D` itself**. The
+  `Normal` pin reads `_N` (the clear coat's, nearly flat); the bevels are `_BN` on
+  `ClearCoatNormalCustomOutput` (the base layer). The torso's emissive is `MF_logo3layers`: `T_UE_Logo_M`
+  at `ScaleUVsByCenter(uv + (−0.241, 0.259), 0.076)` (= `(uv − 0.5)/S + 0.5`, read off the engine function),
+  three parallax/blur layers, layer 0 `(0, 1, 1) × 16`.
+
+**The pipeline** (all re-runnable, docs/superpowers/plans/):
+- `export_manny_from_unreal.py` (uelink) → `sources/manny/`: the demo `SKM_Manny_Simple.fbx` (LOD0 — which face
+  wears `M_HeadLegs` / `M_Torso`), `textures/T_Manny_0{1,2}_{D,BN}.png` + `T_UE_Logo_M.png` from SOURCE data,
+  `manny_materials.json`;
+- `make_manny_textures.py` → `SkeldarAnim/assets/Manny/Manny_{HeadLegs,Torso}_{Color,Normal}.jpg`, 2048 q95,
+  3.9 MB: colour = `D` shrunk in linear (the script re-checks the collapse's parameters and refuses
+  otherwise); the torso gets the logo's layer 0 **saturated into the colour** (the animator's pick, «Запечь
+  лого в цвет»: `lerp(D, cyan, saturate(16 · logo · sphereMask))`, supersampled 4×4 in its box — one sample a
+  texel drew the saturated edge in steps), no glow, no parallax; normals = `BN`, renormalised, green flipped;
+- `make_manny_textured_assets.py` dresses `assets/Manny_Rig.ma` and `Manny_Skeleton.ma` IN PLACE (mayapy, one
+  process per asset): Unreal's slot per face (`Skin_3p` by its vertex-id triples, all 92178, **38166 /
+  54012** as Unreal's; `Hands_1P` by position+UV-matched vertices, all 40258 faces by their ids, 8402 /
+  31856), two materials `skeldarTexture_Manny_HeadLegs` / `_Torso` (the one shader wearing `colour.LOOK`,
+  `TEXTURE_MARKER`, colour sRGB, normal Raw through a bump2d in tangent space, `ASSET_IMAGE` "Manny/…"), all
+  unused shading deleted (36 nodes in the rig, 57 in the skeleton — AdvancedSkeleton's unassigned lamberts
+  there too), the UV set left `DiffuseUV`. **And it proves nothing else changed**: the header must be the same
+  bar the name/date/UUID/requires, and every body line `git diff` reports must be shading, the meshes' face
+  groups (groupId/groupParts, `.iog`, the input now through a groupParts), the shading lists' counts, the
+  scene singletons' fresh uuids, the external-content table, or two measured resave noises (`.ndt 0` on a
+  mesh, a constraint's cached `.lr` in the last digits) — rig and skeleton: **0** lines otherwise.
+- the portraits: Manny's rendered again textured; **the Orc D's shipped portrait was half-loaded too** (grey
+  shoulder pads and belt) and was rendered again — trap 120.
+
+Proof: `verify_manny_textured.py` **12/12** standalone (the slot face by face: at 1364 faces our colour against Unreal's `D` for the face's own slot mean 0.028, median 0.008, against the other slot's 0.34; the logo agreeing with the pattern Unreal's maths draws from `T_UE_Logo_M` at 925 of 960 decided samples, Unreal's `D` cyan at none; the normals `BN` to a median 1.62°; the skins as far off their bind as before, 0.0719 at the left calf — Manny's own); `verify_rig_pipeline.py` **30/30** (its gate 24 compared the sword with the bone itself, stale since the socket turn — it now asks `bonedrive._seat_of`), `verify_many_rigs.py` **32/32**,
+`verify_add_character.py` **31/31** in the disposable Maya (its gate 21 still expected the label «UE4 Mannequin»; it reads the catalog's now), `verify_one_shader.py` **4/4**, `verify_orc_d_rig_asset.py` **22/22** (its palette control
+rig is a Creep now — the Manny arrives textured); a disposable Maya (port 7005, scratch `MAYA_APP_DIR`) showed
+it white with its dark inserts and the cyan chest logo; 2829 unit tests; the installed copy refreshed. A Manny
+added before this still wears its palette colour: re-add it. The Colour section still repaints a Manny (the
+textures give way to a colour, the next Add is textured again).
+
+119. **A file node given a relative path that resolves FROM THE PROCESS'S WORKING DIRECTORY stores it
+     absolute.** The Manny build run from `SkeldarAnim/assets/` got `C:/!!!Work/.../assets/Manny/...` back for
+     `Manny/...` (the banned-word check caught it); run from the repo root it stayed relative — and the Orc D's
+     build never saw it, its scene being in `sources/`. A build that writes relative texture paths works from an
+     empty folder (`os.chdir(tempfile.mkdtemp())`) and asserts `fileTextureName == ASSET_IMAGE` before saving.
+120. **Viewport 2.0 loads textures only while Maya is IDLE.** The portrait's "six draws half a second apart"
+     blasted the textured Manny near black; a `time.sleep` between blasts let two blasts agree on a half-loaded
+     torso. Between blasts run `maya.utils.processIdleEvents()` + `QApplication.processEvents()`, and wait for
+     two identical blasts after at least three. The Orc D's portrait had shipped half-loaded the same way.
+121. **mayaUsd makes a `UsdDefaultRenderSettings` on every file open and renames the file's own out of its way**,
+     so every open-and-resave adds one: `Creep_Rig.ma` carries ten, `Orc_D_Rig.ma` three. The Manny build deletes
+     the one the open made (by the UUIDs the file's text names) and gives the file's their names back.
+122. **The second file opened in one mayapy session comes back with `shapeEditorManager1` /
+     `poseInterpolatorManager1`** (the scene's own were already there). One asset per process.
+123. **`difflib.SequenceMatcher` on a 1.2-million-line `.ma` ran over half an hour**; `git diff --no-index -U0`
+     answers in seconds.
+
 ## The weapon inventory: two hands, the floor, a Diablo window (2026-09-29)
 
 The animator: «Возможно ли сделать во вкладке Weapon кнопку которая будет инвентарь похожий на
