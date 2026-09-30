@@ -70,11 +70,12 @@ class AimRefusals(unittest.TestCase):
         day. Camera Setup came BACK on 2026-09-18 as the retarget's own
         camera step by hand, on camera_root."""
         for name in ("connect_arms", "disconnect_arms", "add_aim",
-                     "recolour_character"):
+                     "recolour_character", "recolour_weapon"):
             self.assertFalse(hasattr(window, name), name)
         for name in ("add_character", "add_weapon", "remove_weapon",
-                     "recolour_weapon", "camera_setup", "place_character",
-                     "select_model"):
+                     "camera_setup", "place_character", "select_model",
+                     "select_weapon", "select_hand", "set_hand_grip",
+                     "hand_grips"):
             self.assertTrue(callable(getattr(window, name)), name)
 
 
@@ -145,9 +146,6 @@ class RemoveWeapon(unittest.TestCase):
     def test_remove_is_refused_while_linked(self):
         self.assertIn("disconnect", window.LINKED_NO_REMOVE.lower())
 
-    def test_removed_names_the_weapon(self):
-        self.assertIn(SWORD.label, window.removed_message(SWORD))
-
     def test_a_parentless_bone_is_named(self):
         message = window.missing_parent_message("weapon_r")
         self.assertIn("weapon_r", message)
@@ -182,28 +180,6 @@ class Messages(unittest.TestCase):
     def test_missing_file_names_the_path(self):
         self.assertIn("C:/x/y.fbx", window.missing_file_message("C:/x/y.fbx"))
 
-    def test_added_names_the_weapon_and_the_bone(self):
-        message = window.added_message(SWORD, "|SKM_Manny|root|weapon_r")
-        self.assertIn(SWORD.label, message)
-        self.assertIn("weapon_r", message)
-        self.assertNotIn("|", message)
-
-    def test_a_coloured_weapon_names_its_colour(self):
-        self.assertEqual(window.appearance(SWORD, (0.80, 0.25, 0.22), []),
-                         "red")
-
-    def test_a_textured_weapon_says_textured_not_a_colour(self):
-        """2026-09-28, Spear 03: no swatch colour went on it."""
-        spear = catalog.by_key("Spear_03")
-        self.assertEqual(window.appearance(spear, (0.80, 0.25, 0.22), []),
-                         "textured")
-
-    def test_viewport_textures_turned_on_are_said(self):
-        spear = catalog.by_key("Spear_03")
-        text = window.appearance(spear, (0.80, 0.25, 0.22), ["modelPanel4"])
-        self.assertIn("textured", text)
-        self.assertIn("viewport textures on", text)
-
     def test_bound_names_the_character(self):
         self.assertIn("root", window.bound_message("|SKM_Manny|root"))
 
@@ -232,46 +208,6 @@ class LinkedMessages(unittest.TestCase):
         message = window.linked_message(SWORD)
         self.assertIn(SWORD.label, message)
         self.assertIn("arms", message.lower())
-
-
-class ChosenEntry(unittest.TestCase):
-    """The FBX field wins over the dropdown when it holds a path."""
-
-    def test_an_empty_field_leaves_the_dropdown_alone(self):
-        self.assertIs(window.chosen_entry("", SWORD), SWORD)
-
-    def test_none_leaves_the_dropdown_alone(self):
-        self.assertIs(window.chosen_entry(None, SWORD), SWORD)
-
-    def test_whitespace_is_empty(self):
-        """A stray space must not redirect Add at a file called " "."""
-        self.assertIs(window.chosen_entry("   ", SWORD), SWORD)
-
-    def test_a_path_wins_over_the_dropdown(self):
-        got = window.chosen_entry("D:/props/Axe_01.fbx", SWORD)
-        self.assertEqual(got.path, "D:/props/Axe_01.fbx")
-        self.assertEqual(got.key, "Axe_01")
-
-    def test_the_bone_comes_from_the_dropdown(self):
-        got = window.chosen_entry("D:/props/Axe_01.fbx", SWORD)
-        self.assertEqual(got.bone, SWORD.bone)
-
-    def test_the_scale_is_never_the_dropdowns(self):
-        got = window.chosen_entry("D:/props/Axe_01.fbx", SWORD)
-        self.assertEqual(got.scale, 1.0)
-
-    def test_the_path_is_stripped(self):
-        got = window.chosen_entry("  D:/props/Axe_01.fbx  ", SWORD)
-        self.assertEqual(got.path, "D:/props/Axe_01.fbx")
-
-    def test_quotes_pasted_from_the_explorer_are_dropped(self):
-        """Windows Explorer copies a path wrapped in double quotes."""
-        got = window.chosen_entry('"D:/props/Axe_01.fbx"', SWORD)
-        self.assertEqual(got.path, "D:/props/Axe_01.fbx")
-
-    def test_the_key_is_legal_as_a_node_name(self):
-        got = window.chosen_entry("D:/props/2 Handed Axe.fbx", SWORD)
-        self.assertEqual(got.key, "_2_Handed_Axe")
 
 
 class FakeUiCmds(object):
@@ -380,101 +316,6 @@ class CharacterDropdown(unittest.TestCase):
         self.assertEqual(window.remembered_character(), "UE4 Mannequin")
 
 
-class ColourSwatches(unittest.TestCase):
-    """What the two swatches mean. The widgets themselves need a live Maya;
-    what is testable is the policy in front of them."""
-
-    def test_the_refusal_is_its_own_message(self):
-        """A swatch moved with nothing connected is not "nothing attached" --
-        it is previewing the next Add, and saying so is the difference
-        between a dead control and one that is waiting."""
-        self.assertNotEqual(window.NO_COLOUR_TARGET, window.NOT_ATTACHED)
-        self.assertIn("next Add", window.NO_COLOUR_TARGET)
-
-    def test_recoloured_names_the_colour_and_the_leaf(self):
-        from maya_scenesetup import colour
-        message = window.recoloured_message("|group|root",
-                                            colour.PALETTE[0].rgb)
-        self.assertIn("root", message)
-        self.assertNotIn("|", message)
-        self.assertIn("red", message)
-
-    def test_a_hand_dialled_colour_is_still_reported(self):
-        message = window.recoloured_message("root", (0.11, 0.93, 0.44))
-        self.assertIn("custom", message)
-
-    def test_only_the_weapon_recolours_here(self):
-        """2026-09-30: the character's colour is the Colour section's."""
-        self.assertFalse(hasattr(window, "recolour_character"))
-        self.assertTrue(callable(window.recolour_weapon))
-
-    def test_the_changeCommand_callbacks_are_gone(self):
-        """The swatch used to repaint on change; the animator reversed it
-        («цвет будем задавать перед созданием персонажа или оружия в
-        сцене») and a Recolour button took over. Leaving the old names
-        around is how a caller keeps reaching the retired behaviour."""
-        self.assertFalse(hasattr(window, "character_colour_changed"))
-        self.assertFalse(hasattr(window, "weapon_colour_changed"))
-
-    def test_the_character_swatch_is_gone(self):
-        self.assertFalse(hasattr(window, "_CHARACTER_COLOUR"))
-        self.assertFalse(hasattr(window, "_CHARACTER_DOT"))
-
-
-class NextAddColour(unittest.TestCase):
-    """The swatch means ONE thing: the colour the next Add will bring.
-
-    It is filled on open and advanced after every press, and `refresh`
-    never touches it -- a refresh fires on every dropdown change and at the
-    front of every press, so writing to it there would throw away the
-    colour the animator had just picked.
-    """
-
-    class FakeColouring(object):
-        def __init__(self, free=(0.1, 0.2, 0.3)):
-            self._free = free
-            self.painted = []
-
-        def free_colour(self):
-            class _Entry(object):
-                pass
-            entry = _Entry()
-            entry.rgb = self._free
-            return entry
-
-    def setUp(self):
-        self.real_colouring = window.colouring
-        self.real_set = window._set_swatch
-        self.written = []
-        window._set_swatch = lambda control, rgb: self.written.append(
-            (control, tuple(rgb)))
-
-    def tearDown(self):
-        window.colouring = self.real_colouring
-        window._set_swatch = self.real_set
-
-    def test_advancing_writes_the_next_free_colour(self):
-        window.colouring = self.FakeColouring(free=(0.9, 0.5, 0.18))
-        window._advance_swatch(window._WEAPON_COLOUR)
-        self.assertEqual(self.written,
-                         [(window._WEAPON_COLOUR, (0.9, 0.5, 0.18))])
-
-    def test_refresh_is_not_what_fills_it(self):
-        """The guard against the one bug this design can have: a `refresh`
-        overwriting a colour the animator chose a second earlier.
-
-        Comments are stripped before the check -- `refresh` says out loud
-        that it leaves the swatches alone, and naming the functions it does
-        not call must not be what fails this.
-        """
-        import inspect
-        code = [line.split("#")[0]
-                for line in inspect.getsource(window.refresh).splitlines()]
-        body = chr(10).join(code)
-        self.assertNotIn("_set_swatch(", body)
-        self.assertNotIn("_advance_swatch(", body)
-
-
 class AddCharacterPress(unittest.TestCase):
     """2026-09-30: the colour left the Characters card - Add passes none (the
     next free colour), and a model without the chosen kind is refused by name."""
@@ -555,3 +396,261 @@ class Choice(unittest.TestCase):
             self.assertIn("Creep [rig]", fake.status[-1])
         finally:
             window.cmds = real
+
+
+class Gone(unittest.TestCase):
+    """2026-09-30: the Weapons card IS the inventory. The colour went to the
+    Colour section, the custom FBX «пока уберем совсем», the dropdown and
+    the Hand row to the grid and the hand cards, the grip rows to the
+    Channel Box columns, the Inventory button with the floating window."""
+
+    def test_the_retired_names_are_gone(self):
+        for name in ("chosen_entry", "custom_changed", "browse_fbx",
+                     "_remembered_path", "_CUSTOM", "_CUSTOM_OPTIONVAR",
+                     "_BROWSE", "_MENU", "_ROTATE", "_TRANSLATE", "_fields",
+                     "_set_fields", "offsets_changed", "_WEAPON_COLOUR",
+                     "_WEAPON_DOT", "recolour_weapon", "_colour_row",
+                     "pick_dot", "_swatch", "_set_swatch", "_advance_swatch",
+                     "NO_COLOUR_TARGET", "recoloured_message", "appearance",
+                     "open_inventory", "_hand_row", "_entry",
+                     "added_message", "removed_message", "_rides",
+                     "character_colour_changed", "weapon_colour_changed",
+                     "_CHARACTER_COLOUR", "_CHARACTER_DOT"):
+            self.assertFalse(hasattr(window, name), name)
+
+
+class Picked(unittest.TestCase):
+    """Which weapon and which hand the card has picked: two optionVars."""
+
+    def setUp(self):
+        self.fake = FakeUiCmds(menu_exists=False)
+        self.real, window.cmds = window.cmds, self.fake
+        self.saved = [(window.skeleton, "current_root",
+                       window.skeleton.current_root)]
+        window.skeleton.current_root = lambda: None
+
+    def tearDown(self):
+        window.cmds = self.real
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+
+    def test_nothing_picked_is_the_first_row_and_the_right_hand(self):
+        self.assertIs(window.chosen_weapon(), catalog.WEAPONS[0])
+        self.assertEqual(window.side(), "R")
+        self.assertEqual(window.picked(), (catalog.WEAPONS[0].key, "R"))
+
+    def test_a_stale_key_falls_back(self):
+        self.fake.stored[window._WEAPON_OPTIONVAR] = "Excalibur"
+        self.fake.stored[window._HAND_OPTIONVAR] = "X"
+        self.assertIs(window.chosen_weapon(), catalog.WEAPONS[0])
+        self.assertEqual(window.side(), "R")
+
+    def test_picking_a_weapon_remembers_it_and_says_what_add_does(self):
+        text = window.select_weapon("Spear_03")
+        self.assertEqual(self.fake.stored[window._WEAPON_OPTIONVAR], "Spear_03")
+        self.assertIs(window.chosen_weapon(), catalog.by_key("Spear_03"))
+        self.assertIn("Spear 03", text)
+        self.assertIn("right hand", text)
+        self.assertEqual(self.fake.status[-1], text)
+
+    def test_an_unknown_weapon_changes_nothing(self):
+        self.assertEqual(window.select_weapon("Excalibur"), "")
+        self.assertNotIn(window._WEAPON_OPTIONVAR, self.fake.stored)
+
+    def test_picking_a_hand_remembers_it(self):
+        text = window.select_hand("L")
+        self.assertEqual(window.side(), "L")
+        self.assertIn("left hand", text)
+        self.assertIn("free", text)
+        self.assertEqual(window.select_hand("Q"), "")
+        self.assertEqual(window.side(), "L")
+
+    def test_the_hand_line_names_what_it_holds(self):
+        text = window.hand_pick_text("R", "Dagger 01", "Long Sword 02")
+        self.assertIn("Long Sword 02", text)
+        self.assertIn("Dagger 01", text)
+        self.assertIn("Remove", text)
+
+
+class FakeEquip(object):
+    """Records what Add and Remove ask of `equip`; occupant/bones on demand."""
+
+    def __init__(self):
+        self.calls = []
+        self.held = {}
+        self.bone_of = {"R": ("|root|hand_r", "|root|hand_r|weapon_r"),
+                        "L": ("|root|hand_l", "|root|hand_l|weapon_l")}
+
+    def to_hand(self, root, key, entry):
+        self.calls.append(("to_hand", root, key, entry.key))
+        return "into"
+
+    def take_off(self, root, key):
+        self.calls.append(("take_off", root, key))
+        return "off"
+
+    def bones(self, root, key):
+        return self.bone_of[key]
+
+    def occupant(self, root, key):
+        return self.held.get(key, (None, None))
+
+
+class AddRemovePress(unittest.TestCase):
+    """Add and Remove go through `equip` - the inventory's own path - with the
+    picked weapon and hand, after the refusals only the card knows."""
+
+    def setUp(self):
+        self.fake = FakeUiCmds(menu_exists=False, stored={
+            window._WEAPON_OPTIONVAR: "Dagger_01", window._HAND_OPTIONVAR: "L"})
+        self.equip = FakeEquip()
+        self.saved = [(window, n, getattr(window, n)) for n in
+                      ("cmds", "equip", "_locate", "_status")]
+        self.saved.append((window.linking, "linked_weapon",
+                           window.linking.linked_weapon))
+        self.lines = []
+        window.cmds = self.fake
+        window.equip = self.equip
+        window._status = lambda message, control=None: self.lines.append(message)
+        window.linking.linked_weapon = lambda: None
+        self.located = ("|root", "|root|hand_l", "|root|hand_l|weapon_l", None,
+                        False)
+        window._locate = lambda entry, key=None: self.located
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+
+    def test_add_puts_the_picked_weapon_into_the_picked_hand(self):
+        window.add_weapon()
+        self.assertEqual(self.equip.calls, [("to_hand", "|root", "L", "Dagger_01")])
+        self.assertEqual(self.lines[-1], "into")
+
+    def test_remove_takes_the_picked_hand_off(self):
+        window.remove_weapon()
+        self.assertEqual(self.equip.calls, [("take_off", "|root", "L")])
+        self.assertEqual(self.lines[-1], "off")
+
+    def test_a_refusal_calls_nothing(self):
+        window._locate = lambda entry, key=None: None
+        window.add_weapon()
+        window.remove_weapon()
+        self.assertEqual(self.equip.calls, [])
+
+    def test_the_legacy_link_is_refused_by_name(self):
+        window.linking.linked_weapon = lambda: "|LongSwordMesh"
+        window.add_weapon()
+        window.remove_weapon()
+        self.assertEqual(self.equip.calls, [])
+        self.assertEqual(self.lines, [window.LINKED_NO_ADD,
+                                      window.LINKED_NO_REMOVE])
+
+
+class HandGrip(unittest.TestCase):
+    """What a hand's column shows and what an edit of it does."""
+
+    class FakeGrips(object):
+        def __init__(self):
+            self.remembered = []
+
+        def for_hand(self, entry, key, root):
+            return ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)) if key == "R" else \
+                ((7.0, 8.0, 9.0), (0.5, 0.5, 0.5))
+
+        def remember(self, weapon_key, key, rotate, translate):
+            self.remembered.append((weapon_key, key, tuple(rotate),
+                                    tuple(translate)))
+
+        def standard(self, rotate, translate, frame, entry):
+            return rotate, translate
+
+        def on_node(self, rotate, translate, frame, entry):
+            return rotate, translate
+
+    class FakeDrive(object):
+        def __init__(self):
+            self.regrips = []
+            self.held = True
+
+        def is_held(self, weapon):
+            return self.held
+
+        def measured_grip(self, weapon, bone):
+            return (0.0, 90.0, 0.0), (1.0, 0.0, 0.0)
+
+        def frame_of(self, weapon):
+            return (0.0, 0.0, 0.0)
+
+        def regrip(self, weapon, bone, rotate, translate):
+            self.regrips.append((weapon, bone, rotate, translate))
+
+    def setUp(self):
+        self.fake = FakeUiCmds(menu_exists=False, stored={
+            window._WEAPON_OPTIONVAR: "Spear_03"})
+        self.equip = FakeEquip()
+        self.grips = self.FakeGrips()
+        self.drive = self.FakeDrive()
+        self.saved = [(window, n, getattr(window, n)) for n in
+                      ("cmds", "equip", "grips", "bonedrive", "_status",
+                       "_held_entry", "_follows")]
+        self.saved += [(window.skeleton, "current_root",
+                        window.skeleton.current_root),
+                       (window.attach, "is_animated", window.attach.is_animated)]
+        self.lines = []
+        window.cmds = self.fake
+        window.equip = self.equip
+        window.grips = self.grips
+        window.bonedrive = self.drive
+        window._status = lambda message, control=None: self.lines.append(message)
+        window._held_entry = lambda weapon, entry: catalog.by_key("LongSword_02")
+        window._follows = lambda root, key: None
+        window.skeleton.current_root = lambda: "|root"
+        self.animated = False
+        window.attach.is_animated = lambda weapon: self.animated
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+
+    def test_empty_hands_show_the_picked_weapons_grips_editable(self):
+        grips = window.hand_grips("|root")
+        self.assertEqual(grips["R"], ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0), True))
+        self.assertEqual(grips["L"], ((7.0, 8.0, 9.0), (0.5, 0.5, 0.5), True))
+
+    def test_a_held_clean_weapon_shows_its_measured_grip(self):
+        self.equip.held["R"] = ("|sword", "hand")
+        self.assertEqual(window.hand_grips("|root")["R"],
+                         ((0.0, 90.0, 0.0), (1.0, 0.0, 0.0), True))
+
+    def test_a_following_hand_or_no_character_is_read_only(self):
+        window._follows = lambda root, key: "|sword" if key == "L" else None
+        self.assertFalse(window.hand_grips("|root")["L"][2])
+        self.assertTrue(window.hand_grips("|root")["R"][2])
+        self.assertFalse(window.hand_grips(None)["R"][2])
+
+    def test_an_edit_of_a_held_weapon_regrips_it_and_remembers_its_grip(self):
+        self.equip.held["R"] = ("|sword", "hand")
+        window.set_hand_grip("R", (0.0, 45.0, 0.0), (1.0, 2.0, 3.0))
+        self.assertEqual(self.grips.remembered,
+                         [("LongSword_02", "R", (0.0, 45.0, 0.0), (1.0, 2.0, 3.0))])
+        self.assertEqual(self.drive.regrips,
+                         [("|sword", "|root|hand_r|weapon_r", (0.0, 45.0, 0.0),
+                           (1.0, 2.0, 3.0))])
+        self.assertIn("Long Sword 02", self.lines[-1])
+
+    def test_an_edit_of_an_empty_hand_remembers_the_picked_weapons(self):
+        text = window.set_hand_grip("L", (1.0, 1.0, 1.0), (0.0, 0.0, 0.0))
+        self.assertEqual(self.grips.remembered,
+                         [("Spear_03", "L", (1.0, 1.0, 1.0), (0.0, 0.0, 0.0))])
+        self.assertEqual(self.drive.regrips, [])
+        self.assertIn("next Add", text)
+
+    def test_an_animated_or_floor_weapon_is_remembered_not_moved(self):
+        self.equip.held["R"] = ("|sword", "hand")
+        self.animated = True
+        self.assertEqual(window.set_hand_grip("R", (0, 0, 0), (0, 0, 0)),
+                         window.LINKED_NO_OFFSETS)
+        self.equip.held["R"] = ("|sword", "floor")
+        self.assertIn("floor", window.set_hand_grip("R", (0, 0, 0), (0, 0, 0)))
+        self.assertEqual(self.drive.regrips, [])
+        self.assertEqual(len(self.grips.remembered), 2)

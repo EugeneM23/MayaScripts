@@ -16,10 +16,12 @@ meshes are found. This module is a panel over that and holds none of it. A
 second copy of "which colour is free" would answer differently from Scene
 Setup's swatch within a week.
 
-**It recolours the selection; Scene Setup's swatch is the colour of the
-NEXT Add.** One meaning per control, which was the animator's own ruling on
-2026-09-03 after trying it the other way round -- so these two do not
-overlap and neither needs to know about the other.
+**It recolours the selection; an Add brings the next free colour.** One
+meaning per control, which was the animator's own ruling on 2026-09-03 after
+trying it the other way round. Since 2026-09-30 it is the only place colour
+is chosen: the Characters and the Weapons cards lost their swatches («все
+что касается покраски оружия вынесем в покраску»), and a selected sword
+means that sword (`target_for`), so a weapon is recoloured here too.
 
 The target follows the convention the rest of the toolset already uses
 (`animimport.choose_target_root`, `skeleton.choose_root`): the selection

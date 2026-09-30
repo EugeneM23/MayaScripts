@@ -35,18 +35,20 @@ class SceneSetup(unittest.TestCase):
 
     def setUp(self):
         self.saved = (scenesetup.cmds, scenesetup.refresh,
-                      scenesetup._advance_swatch, scenesetup._bound_root,
+                      scenesetup._attach_inventory, scenesetup._bound_root,
                       scenesetup._attach_grid)
         self.fake = FakeUiCmds()
         scenesetup.cmds = self.fake
         #  The scene reads after the build are the module's own and not
-        #  under test here; the portrait grid is Qt's (test_chargrid).
+        #  under test here; the portrait grid and the inventory are Qt's
+        #  (test_chargrid, test_inventory).
         scenesetup.refresh = lambda: None
-        scenesetup._advance_swatch = lambda name: None
         scenesetup._bound_root = lambda: None
-        self.attached = []
+        self.attached, self.inventories = [], []
         scenesetup._attach_grid = lambda model, kind: (
             self.attached.append((model, kind)) or True)
+        scenesetup._attach_inventory = lambda: (
+            self.inventories.append(True) or True)
         maya_hubstyle.take_marks()
         scenesetup.build_characters_panel()
         self.after_characters = list(self.fake.children)
@@ -56,7 +58,7 @@ class SceneSetup(unittest.TestCase):
                          if n.startswith("button")]
 
     def tearDown(self):
-        (scenesetup.cmds, scenesetup.refresh, scenesetup._advance_swatch,
+        (scenesetup.cmds, scenesetup.refresh, scenesetup._attach_inventory,
          scenesetup._bound_root, scenesetup._attach_grid) = self.saved
 
     def test_no_window_and_stretching_columns(self):
@@ -72,18 +74,21 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(len(self.attached), 1)
         self.assertNotIn(scenesetup._CHARACTER, self.after_characters)
 
-    def test_no_colour_control_in_characters(self):
+    def test_no_colour_control_in_either_card(self):
         """2026-09-30: «все что касается покраски вынесем из меню» - the
-        Colour section paints; the Weapons card keeps its row."""
-        weapons_start = [i for i, c in enumerate(self.fake.calls)
-                         if c[0] == "optionMenu" and c[1] == (scenesetup._MENU,)][0]
-        before = self.fake.calls[:weapons_start]
-        self.assertFalse([c for c in before if c[0] == "colorSliderGrp"])
-        dots = [c for c in before if c[0] == "button" and c[1]
-                and str(c[1][0]).startswith("mayaSceneSetupCharDot")]
+        Colour section paints, characters the same morning, weapons the
+        same evening («все что касается покраски оружия вынесем в
+        покраску»)."""
+        self.assertFalse([c for c in self.fake.calls
+                          if c[0] == "colorSliderGrp"])
+        dots = [c for c in self.fake.calls if c[0] == "button" and c[1]
+                and "Dot" in str(c[1][0])]
         self.assertEqual(dots, [])
+        self.assertFalse([m for m in self.marks if m.role in (
+            "swatch", "swatchonly") or m.icon == "brush"])
         self.assertFalse(hasattr(scenesetup, "_CHARACTER_COLOUR"))
         self.assertFalse(hasattr(scenesetup, "recolour_character"))
+        self.assertFalse(hasattr(scenesetup, "recolour_weapon"))
 
     def test_the_kind_switch_is_two_segments(self):
         self.assertIn(("iconTextRadioCollection", (scenesetup._KIND,), {}),
@@ -116,16 +121,52 @@ class SceneSetup(unittest.TestCase):
         labels = [c[2].get("label") for c in self.fake.calls if c[0] == "button"]
         self.assertIn("Camera Setup", labels)
         self.assertLess(labels.index("Add Character"), labels.index("Camera Setup"))
-        for name in (scenesetup._MENU, scenesetup._STATUS, scenesetup._ROTATE):
+        for name in (scenesetup._WEAPONS_BOUND, scenesetup._STATUS):
             self.assertNotIn(name, self.after_characters, name)
 
-    def test_weapons_holds_the_weapon_controls_and_its_own_line(self):
+    def _weapons_calls(self):
+        start = [i for i, c in enumerate(self.fake.calls) if c[0] == "text"
+                 and c[1] == (scenesetup._WEAPONS_BOUND,)][0]
+        return self.fake.calls[start:]
+
+    def test_weapons_is_the_inventory_add_remove_and_its_line(self):
+        """2026-09-30: «сам выбор оружия превратим в наш инвентарь ... как
+        часть нашего меню»; the inventory is laid over the placeholder."""
         weapons = self.fake.children[len(self.after_characters):]
-        for name in (scenesetup._MENU, scenesetup._CUSTOM, scenesetup._ROTATE,
-                     scenesetup._TRANSLATE, scenesetup._WEAPON_COLOUR,
-                     scenesetup._STATUS):
+        for name in (scenesetup._WEAPONS_BOUND, scenesetup._STATUS):
             self.assertIn(name, weapons, name)
+        self.assertIn(("columnLayout", (scenesetup._INVENTORY,),
+                       {"adjustableColumn": True}), self._weapons_calls())
+        self.assertEqual(self.inventories, [True])
         self.assertNotIn(scenesetup._CHARACTER, weapons)
+
+    def test_no_dropdown_fbx_hand_row_grip_rows_or_inventory_button(self):
+        calls = self._weapons_calls()
+        for kind in ("optionMenu", "textFieldGrp", "floatFieldGrp",
+                     "colorSliderGrp", "iconTextRadioButton",
+                     "iconTextRadioCollection"):
+            self.assertFalse([c for c in calls if c[0] == kind], kind)
+        labels = [c[2].get("label") for c in calls if c[0] == "button"]
+        self.assertEqual(labels, ["Add", "Remove Weapon"])
+
+    def test_the_weapons_subtitle_names_the_character(self):
+        self.assertEqual(self._marks()[scenesetup._WEAPONS_BOUND].role,
+                         "subtitle")
+
+    def test_without_qt_a_dropdown_and_the_hand_row_stand_in(self):
+        fake = FakeUiCmds()
+        scenesetup.cmds = fake
+        scenesetup._attach_inventory = lambda: False
+        scenesetup.build_weapons_panel()
+        menus = [c for c in fake.calls if c[0] == "optionMenu"
+                 and c[1] == (scenesetup._WEAPON_MENU,)
+                 and not (c[2].get("edit") or c[2].get("query"))]
+        self.assertEqual(len(menus), 1)
+        segments = [c[1][0] for c in fake.calls
+                    if c[0] == "iconTextRadioButton" and c[1]]
+        self.assertEqual(segments, [scenesetup.hand_segment("R"),
+                                    scenesetup.hand_segment("L")])
+        self.assertFalse([c for c in fake.calls if c[0] == "floatFieldGrp"])
 
     def test_the_two_status_lines_are_different_controls(self):
         self.assertNotEqual(scenesetup._STATUS, scenesetup._CHARACTER_STATUS)
@@ -159,30 +200,6 @@ class SceneSetup(unittest.TestCase):
     def test_the_character_line_is_the_card_s_subtitle(self):
         self.assertEqual(self._marks()[scenesetup._BOUND].role, "subtitle")
 
-    def test_eight_palette_dots_on_the_weapons_row(self):
-        from maya_scenesetup import colour as colouring
-        marks = self._marks()
-        for pattern in (scenesetup._WEAPON_DOT,):
-            for index, entry in enumerate(colouring.PALETTE):
-                mark = marks[pattern.format(index)]
-                self.assertEqual(mark.role, "swatch")
-                self.assertEqual(mark.colour, maya_hubstyle.hex_of(entry.rgb))
-
-    def test_a_dot_sets_its_swatch(self):
-        from maya_scenesetup import colour as colouring
-        dot = [c for c in self.fake.calls if c[0] == "button"
-               and c[1] == (scenesetup._WEAPON_DOT.format(2),)][0]
-        dot[2]["command"]()
-        edits = [c for c in self.fake.calls if c[0] == "colorSliderGrp"
-                 and c[1] == (scenesetup._WEAPON_COLOUR,) and c[2].get("edit")]
-        self.assertEqual(tuple(edits[-1][2]["rgbValue"]),
-                         tuple(colouring.PALETTE[2].rgb))
-
-    def test_the_swatches_show_only_the_swatch_in_the_skin(self):
-        marks = self._marks()
-        for name in (scenesetup._WEAPON_COLOUR,):
-            self.assertEqual(marks[name].role, "swatchonly")
-
     def test_one_primary_action_per_section(self):
         roles = self._button_roles()
         self.assertEqual(roles["Add Character"], ("primary", "plus"))
@@ -192,11 +209,6 @@ class SceneSetup(unittest.TestCase):
         primaries = [label for label, (role, _i) in roles.items()
                      if role == "primary"]
         self.assertEqual(sorted(primaries), ["Add", "Add Character"])
-
-    def test_recolour_is_a_brush_tool_on_weapons_only(self):
-        tools = [m for m in self.marks if m.role == "tool"
-                 and m.icon == "brush"]
-        self.assertEqual(len(tools), 1)
 
     def test_add_and_remove_share_a_row(self):
         index = self._created_index()
@@ -212,24 +224,6 @@ class SceneSetup(unittest.TestCase):
         marks = self._marks()
         for name in (scenesetup._STATUS, scenesetup._CHARACTER_STATUS):
             self.assertEqual(marks[name].role, "status")
-
-    def test_the_folder_button_fills_the_fbx_field(self):
-        self.assertEqual(self._marks()[scenesetup._BROWSE].icon, "folder")
-        saved = scenesetup.custom_changed
-        changed = []
-        scenesetup.custom_changed = lambda: changed.append(True)
-        try:
-            self.fake.fileDialog2 = lambda **kw: ["C:/weapons/Axe.fbx"]
-            self.assertEqual(scenesetup.browse_fbx(), "C:/weapons/Axe.fbx")
-            edits = [c for c in self.fake.calls if c[0] == "textFieldGrp"
-                     and c[2].get("edit")]
-            self.assertEqual(edits[-1][2]["text"], "C:/weapons/Axe.fbx")
-            self.assertEqual(changed, [True])
-            self.fake.fileDialog2 = lambda **kw: None
-            self.assertIsNone(scenesetup.browse_fbx())
-            self.assertEqual(changed, [True])
-        finally:
-            scenesetup.custom_changed = saved
 
     def _created_index(self):
         return dict((c[2].get("label"), i) for i, c in

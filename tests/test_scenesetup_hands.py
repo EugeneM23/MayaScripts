@@ -333,41 +333,49 @@ class HandRow(unittest.TestCase):
         self.window = window
         self.fake = HandCmds()
         real = (window.cmds, window.refresh, window.skeleton.resolve_bone,
-                window._bound_root)
+                window._bound_root, window.select_hand)
         window.cmds = self.fake
         self.addCleanup(self._restore, real)
 
     def _restore(self, real):
         (self.window.cmds, self.window.refresh,
-         self.window.skeleton.resolve_bone, self.window._bound_root) = real
+         self.window.skeleton.resolve_bone, self.window._bound_root,
+         self.window.select_hand) = real
 
-    def test_the_segments_are_right_and_left(self):
-        self.window._hand_row()
+    def _fallback(self):
+        """The Hand segments stand only where the inventory cannot (no Qt)
+        since 2026-09-30; the hand card clicked last is the hand otherwise."""
+        self.window.select_hand = self.picked.append
+        self.window._weapon_fallback()
+
+    def test_the_fallback_segments_are_right_and_left(self):
+        self.picked = []
+        self._fallback()
         labels = [c[2]["label"] for c in self.fake.calls
                   if c[0] == "iconTextRadioButton"]
         self.assertEqual(labels, ["Right", "Left"])
 
     def test_the_right_hand_is_the_default(self):
-        self.window._hand_row()
         self.assertEqual(self.window.side(), "R")
 
-    def test_a_remembered_left_hand_opens_on_left(self):
+    def test_a_remembered_left_hand_is_the_hand(self):
         self.fake.optionvars[self.window._HAND_OPTIONVAR] = "L"
-        self.window._hand_row()
         self.assertEqual(self.window.side(), "L")
+        self.picked = []
+        self._fallback()
+        selected = [c[1][0] for c in self.fake.calls
+                    if c[0] == "iconTextRadioButton" and c[2].get("select")]
+        self.assertEqual(selected, [self.window.hand_segment("L")])
 
-    def test_picking_a_hand_remembers_it_and_refreshes(self):
-        self.window._hand_row()
-        refreshed = []
-        self.window.refresh = lambda: refreshed.append(1)
-        self.fake.selected[self.window._HAND] = self.window.hand_segment("L")
+    def test_a_fallback_segment_picks_its_hand(self):
+        self.picked = []
+        self._fallback()
         self.fake.on[self.window.hand_segment("L")]()
-        self.assertEqual(self.fake.optionvars[self.window._HAND_OPTIONVAR], "L")
-        self.assertEqual(refreshed, [1])
+        self.assertEqual(self.picked, ["L"])
 
     def test_the_left_hand_asks_for_weapon_l(self):
         asked = []
-        self.fake.selected[self.window._HAND] = self.window.hand_segment("L")
+        self.fake.optionvars[self.window._HAND_OPTIONVAR] = "L"
         self.window.skeleton.resolve_bone = (
             lambda root, name: asked.append(name))
         self.window._bound_root = lambda: "|root"
@@ -387,15 +395,17 @@ class HandRow(unittest.TestCase):
         self.assertIn("left hand follows the Long Sword 02", text)
         self.assertIn("Connections", text)
 
-    def test_the_panel_builds_the_hand_row(self):
+    def test_the_panel_builds_the_fallback_only_without_qt(self):
         import inspect
-        self.assertIn("_hand_row()",
-                      inspect.getsource(self.window.build_weapons_panel))
+        source = inspect.getsource(self.window.build_weapons_panel)
+        self.assertIn("if not _attach_inventory():", source)
+        self.assertIn("_weapon_fallback()", source)
+        self.assertFalse(hasattr(self.window, "_hand_row"))
 
-    def test_the_fields_and_the_dial_go_through_the_standard(self):
-        """2026-09-30: refresh shows grips.standard of the measured grip, and
-        offsets_changed regrips with grips.on_node - an older weapon node
+    def test_the_columns_and_an_edit_go_through_the_standard(self):
+        """2026-09-30: a hand's column shows grips.standard of the measured
+        grip, and an edit regrips with grips.on_node - an older weapon node
         keeps its own frame and still reads and dials in the standard."""
         import inspect
-        self.assertIn("grips.standard(", inspect.getsource(self.window.refresh))
-        self.assertIn("grips.on_node(", inspect.getsource(self.window.offsets_changed))
+        self.assertIn("grips.standard(", inspect.getsource(self.window._hand_grip))
+        self.assertIn("grips.on_node(", inspect.getsource(self.window.set_hand_grip))

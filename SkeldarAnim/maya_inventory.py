@@ -1,34 +1,39 @@
-"""The weapon inventory: a window whose weapons go onto the character.
+"""The weapon inventory: the Weapons card, whose weapons go onto the character.
 
 2026-09-29, the animator: «кнопка которая будет инвентарь похожий на
 инвентарь как в игре diablo, чтобы я оружие переносил из этого инвентаря
 прямо на персонажа и оно как вставлялось в руку или выпадало на пол». The
 grid and the drag are the game's; the look is the hub's own since 2026-09-30
-(«дизайн инвентаря все же не в стиле диабло а в стиле нашего интерфейса»):
-the charcoal panel, rounded cards, the orange accent on the drop target.
+(«дизайн инвентаря все же не в стиле диабло а в стиле нашего интерфейса»).
 
-A frameless tool window over Maya, opened by Weapons > Inventory or the
-hotkey row `window.inventory`:
+And since the same evening it is no window: it IS the Weapons card («когда я
+открываю вкладку weapon то у меня вместо того что сейчас открывается наш
+сетчатый инвентарь с оружием, но не в отдельном окне а как часть нашего
+меню»). A Qt panel laid over the card's `cmds` placeholder (the Characters
+grid's `attach` + `Keeper`), so the same panel stands in the skinned hub and
+the classic one:
 
-- the GRID is the catalog - every weapon always there, taken as often as
-  wanted, by any character, each sized in cells by its model's length;
-- two hand SLOTS show the current character's hands (the selection, else the
-  only rig, else the only skeleton): a weapon in the hand, one on the floor
-  following its bone (dimmed), a hand riding a weapon (its name);
-- a DRAG - press on an item, move, release: the icon follows the cursor with
-  a caption naming the target, Esc or the right button cancels. Released on a
-  slot, the weapon goes into that hand; on the grid, a slot's weapon comes
-  off; outside the window, onto the hand under the cursor in the viewport or,
-  missing every character, onto the floor under it (`droptarget`).
+- two HAND cards side by side (the right hand on the viewer's left), each a
+  WELL showing what the hand holds - held, on the floor (dimmed), or a hand
+  riding another weapon - and, left of it, the hand's GRIP as a column laid
+  out like Maya's Channel Box («слева от окошка столбик с параметрами так
+  как в стандартном интерфейсе маи в channel box»): Translate X/Y/Z, Rotate
+  X/Y/Z, a value typed and Enter applies that hand's six (Esc puts back);
+- the GRID - the catalog, every weapon always there, each sized in cells by
+  its model's length, rearranged by hand, Sort on the right button;
+- a CLICK picks a weapon, or a hand (the card's Add / Remove act on them);
+  a DRAG - press, move past Qt's start distance, release - carries the icon
+  with a caption naming the target: onto a hand card, back to the grid, onto
+  the hand under the cursor in a viewport, or the floor under it.
 
-The mouse is ours for the whole drag: a press captures it on Windows, so the
-moves and the release keep coming here over the viewport, which never sees
-them, and Maya's own drop handling never enters. Everything the window does
-to the scene goes through `Scene`, which the tests replace; everything it
-looks like is `maya_invlook`'s. Qt is imported lazily (`maya_hubqt.qt()`),
-the classes are built on first use.
+The mouse is ours for the whole drag: a press captures it, so the moves and
+the release keep coming here over the viewport, which never sees them.
+Everything the panel does to the scene goes through `Scene`, which the tests
+replace; everything it looks like is `maya_invlook`'s. Qt is imported lazily
+(`maya_hubqt.qt()`), the classes are built on first use.
 
-Spec: docs/superpowers/specs/2026-09-29-weapon-inventory-design.md
+Specs: docs/superpowers/specs/2026-09-29-weapon-inventory-design.md,
+docs/superpowers/specs/2026-09-30-weapons-card-inventory-design.md
 """
 
 import os
@@ -36,15 +41,20 @@ import traceback
 
 import maya_invlook as look
 
-OBJECT_NAME = "skeldarInventory"
+PLACEHOLDER = "mayaSceneSetupInventory"         # window._INVENTORY
+OBJECT_NAME = "skeldarInventoryPanel"
+FIELD_NAME = "skeldarChannel"
 GHOST_NAME = "skeldarInventoryGhost"
-POSITION_OPTIONVAR = "skeldarInventoryGeometry"
+WINDOW_NAME = "skeldarInventory"                # the floating window, before
 LAYOUT_OPTIONVAR = "skeldarInventoryLayout"     # the grid as the animator left it
 THROTTLE_MS = 33
-HINT = "Drag a weapon onto a hand in the viewport, or onto the floor"
 SLOT_LABEL = {"R": "Right hand", "L": "Left hand"}
-WEAPONS_STATUS = "mayaSceneSetupStatus"      # the Weapons section's line
 EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
+CHANNEL_PX = 10.5          # the channel names' and values' font, logical px
+VALUE_SAMPLE = "-179.51"   # the value a field must have room for
+
+#  The panels standing, by the placeholder they are laid over.
+_PANELS = {}
 
 
 def _last_line(error_text):
@@ -52,10 +62,26 @@ def _last_line(error_text):
     return lines[-1] if lines else "failed"
 
 
+def hand_values(grip):
+    """A hand's (rotate, translate) as {channel: value} in CHANNELS order."""
+    rotate, translate = grip[0], grip[1]
+    values = list(translate) + list(rotate)
+    return dict(zip(look.CHANNELS, [float(v) for v in values]))
+
+
+def grip_of(values):
+    """{channel: value} back to (rotate, translate)."""
+    return (tuple(values[c] for c in ("rx", "ry", "rz")),
+            tuple(values[c] for c in ("tx", "ty", "tz")))
+
+
 # ------------------------------------------------------------------ scene
 
 class Scene(object):
-    """The real scene: what the window asks and what it does to it."""
+    """The real scene: what the panel asks and what it does to it."""
+
+    def __init__(self, placeholder=PLACEHOLDER):
+        self.placeholder = placeholder
 
     def scale(self):
         import maya.cmds as cmds
@@ -66,16 +92,32 @@ class Scene(object):
             return 1.0
 
     def current(self):
-        from maya_scenesetup import skeleton
-        return skeleton.current_root()
-
-    def label(self, root):
-        from maya_scenesetup import equip
-        return equip.character_name(root)
+        from maya_scenesetup import window
+        return window.current_character()
 
     def holdings(self, root):
         from maya_scenesetup import equip
         return equip.holdings(root)
+
+    def grips(self, root):
+        from maya_scenesetup import window
+        return window.hand_grips(root)
+
+    def picked(self):
+        from maya_scenesetup import window
+        return window.picked()
+
+    def select_weapon(self, key):
+        from maya_scenesetup import window
+        return window.select_weapon(key)
+
+    def select_hand(self, side):
+        from maya_scenesetup import window
+        return window.select_hand(side)
+
+    def set_grip(self, side, rotate, translate):
+        from maya_scenesetup import window
+        return window.set_hand_grip(side, rotate, translate)
 
     def snapshot(self):
         from maya_scenesetup import droptarget
@@ -102,10 +144,18 @@ class Scene(object):
         return equip.move(root, side, target)
 
     def watch(self, callback):
-        """A scriptJob per event, calling `callback` - the doll follows the
-        selection, undo and a new scene."""
+        """A scriptJob per event, calling `callback` - the hands follow the
+        selection, undo and a new scene. Parented to the placeholder, so Maya
+        kills them with the card."""
         import maya.cmds as cmds
-        return [cmds.scriptJob(event=[event, callback]) for event in EVENTS]
+        jobs = []
+        for event in EVENTS:
+            try:
+                jobs.append(cmds.scriptJob(event=[event, callback],
+                                           parent=self.placeholder))
+            except Exception:                                # noqa: BLE001
+                jobs.append(cmds.scriptJob(event=[event, callback]))
+        return jobs
 
     def unwatch(self, jobs):
         import maya.cmds as cmds
@@ -116,28 +166,13 @@ class Scene(object):
             except Exception:                                # noqa: BLE001
                 pass
 
-    def echo(self, text):
-        """The Weapons section's status line says it too, when it is built."""
-        import maya.cmds as cmds
+    def say(self, text):
+        """The Weapons card's line."""
         try:
-            if cmds.control(WEAPONS_STATUS, exists=True):
-                cmds.text(WEAPONS_STATUS, edit=True, label=text)
+            from maya_scenesetup import window
+            window.say_weapon(text)
         except Exception:                                    # noqa: BLE001
             pass
-
-    def remembered_position(self):
-        import maya.cmds as cmds
-        if not cmds.optionVar(exists=POSITION_OPTIONVAR):
-            return None
-        try:
-            x, y = [int(v) for v in cmds.optionVar(query=POSITION_OPTIONVAR).split()]
-            return x, y
-        except Exception:                                    # noqa: BLE001
-            return None
-
-    def remember_position(self, x, y):
-        import maya.cmds as cmds
-        cmds.optionVar(stringValue=(POSITION_OPTIONVAR, "%d %d" % (x, y)))
 
     def remembered_layout(self):
         """The grid as it was left ({key: [col, row]}), {} when never moved."""
@@ -201,26 +236,80 @@ def _classes():
                             inner.y() + (inner.height() - size.height()) // 2,
                             size.width(), size.height())
 
-    #  The drag ghost is the hub's own since 2026-09-30, shared with the
-    #  Characters portrait grid (maya_hubqt.ghost_class).
+    #  The drag ghost is the hub's own, shared with the Characters grid.
     Ghost = maya_hubqt.ghost_class()
 
-    class InventoryWindow(QtWidgets.QWidget):
-        """The inventory. `scene` is `Scene()` in Maya, a fake in the tests."""
+    def field_sheet(k):
+        """The channel fields as the Channel Box draws its values: a dark
+        box, the text right-aligned, the accent outline while typed in; an
+        ID selector, so it outranks the hub's own QLineEdit rule."""
+        t = look.PALETTE
+        r, b = max(1, int(3 * k)), max(1, int(k))
+        pad = max(1, int(3 * k))
+        return (
+            "QLineEdit#{n} {{ background: {field}; border: {b}px solid {field};"
+            " border-radius: {r}px; padding: 0px {pad}px; color: {text};"
+            " selection-background-color: {sel}; }}\n"
+            "QLineEdit#{n}:focus {{ border: {b}px solid {accent}; }}\n"
+            "QLineEdit#{n}[readOnly=\"true\"] {{ background: transparent;"
+            " border: {b}px solid transparent; color: {faint}; }}\n").format(
+                n=FIELD_NAME, field=t["field"], text=t["text"],
+                sel=t["accent_tint"], accent=t["accent"], faint=t["faint"],
+                r=r, b=b, pad=pad)
 
-        def __init__(self, scene, parent=None, remember=True):
-            QtWidgets.QWidget.__init__(self, parent,
-                                       Qt.Tool | Qt.FramelessWindowHint)
+    class Keeper(QtCore.QObject):
+        """Keeps the panel over its placeholder, the placeholder as tall as
+        the panel needs for its width (the width is Maya's layout's)."""
+
+        def __init__(self, panel, parent=None):
+            QtCore.QObject.__init__(self, parent)
+            self._panel = panel
+
+        def eventFilter(self, obj, event):                   # noqa: N802
+            if event.type() == QtCore.QEvent.Resize:
+                try:
+                    self._panel.fit(obj)
+                except Exception:                            # noqa: BLE001
+                    pass
+            return False
+
+    class ChannelField(QtWidgets.QLineEdit):
+        """One value of a hand's grip. Enter or leaving the field applies the
+        hand's six; Esc puts back what was shown."""
+
+        def __init__(self, panel, side, channel):
+            QtWidgets.QLineEdit.__init__(self, panel)
+            self.setObjectName(FIELD_NAME)
+            self.setProperty("skChannel", "%s_%s" % (side, channel))
+            self.side, self.channel = side, channel
+            self.shown = "0"
+            self.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.setText(self.shown)
+            self.editingFinished.connect(lambda: panel._commit(side))
+
+        def show_value(self, value, editable=True):
+            self.shown = look.channel_text(value)
+            self.setText(self.shown)
+            self.setReadOnly(not editable)
+            self.setToolTip(self.shown)
+            maya_hubqt.repolish(self)
+
+        def keyPressEvent(self, event):                      # noqa: N802
+            if event.key() == Qt.Key_Escape:
+                self.setText(self.shown)
+                self.clearFocus()
+                return
+            QtWidgets.QLineEdit.keyPressEvent(self, event)
+
+    class InventoryPanel(QtWidgets.QWidget):
+        """The card's inventory. `scene` is `Scene()` in Maya, a fake in the
+        tests."""
+
+        def __init__(self, scene, parent=None):
+            QtWidgets.QWidget.__init__(self, parent)
             self.setObjectName(OBJECT_NAME)
-            self.setWindowTitle("Inventory")
-            # the panel's rounded corners: nothing painted outside them
-            self.setAttribute(Qt.WA_TranslucentBackground)
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
-            self.cell = look.CELL * self.k
-            self.rects = look.scaled(look.layout(), self.k)
-            _x, _y, width, height = self.rects["window"]
-            self.setFixedSize(width, height)
             stored = look.load_cells()
             self.cells = dict((e.key, stored.get(e.key, (1, 3)))
                               for e in catalog.WEAPONS)
@@ -237,62 +326,132 @@ def _classes():
                 path = look.icon_path(entry.key)
                 if os.path.isfile(path):
                     self.pixmaps[entry.key] = QtGui.QPixmap(path)
-            self.status_text = HINT
-            self.root, self.name, self.holding = None, "", {}
+            self.status_text = ""
+            self.root, self.holding, self.grips = None, {}, {}
+            self.picked_key, self.picked_side = None, "R"
+            self.short = {"R": False, "L": False}
+            self.field_font = font(CHANNEL_PX * self.k)
+            self.setStyleSheet(field_sheet(self.k))
+            self.fields = {}
+            for side in ("R", "L"):
+                for channel in look.CHANNELS:
+                    field = ChannelField(self, side, channel)
+                    field.setFont(self.field_font)
+                    self.fields[(side, channel)] = field
             self._drag = None
-            self._moving = None
+            self._press = None
             self._hover = None
             self._clock = QtCore.QElapsedTimer()
             self._clock.start()
-            self._remember = remember
             self.setMouseTracking(True)
-            self.setFocusPolicy(Qt.StrongFocus)
+            self.setFocusPolicy(Qt.ClickFocus)
+            self.label_w = {"R": 0, "L": 0}
             self._jobs = scene.watch(self._queue_refresh)
             jobs, watcher = self._jobs, scene
             self.destroyed.connect(lambda *_a: watcher.unwatch(jobs))
-            if remember:
-                spot = scene.remembered_position()
-                if spot and QtGui.QGuiApplication.screenAt(QtCore.QPoint(*spot)):
-                    self.move(*spot)
+            self._place_fields()
             self.refresh()
 
-        # ---------------------------------------------------------- state
+        # ------------------------------------------------------- layout
 
-        def refresh(self):
+        def rects(self, width=None):
+            width = self.width() if width is None else width
+            return look.scaled(look.panel(width / self.k), self.k)
+
+        def height_for(self, width):
+            return self.rects(width)["panel"][3]
+
+        def fit(self, host):
+            """Over the whole of `host`, and `host` as tall as the panel."""
+            self.setGeometry(host.rect())
+            want = self.height_for(host.width())
+            if host.height() != want:
+                host.setFixedHeight(want)
+                self.setGeometry(host.rect())
+            self._place_fields()          # a hidden widget gets no resize event
+
+        def sizeHint(self):                                  # noqa: N802
+            width = max(1, self.width())
+            return QtCore.QSize(width, self.height_for(width))
+
+        def resizeEvent(self, event):                        # noqa: N802
+            self._place_fields()
+            QtWidgets.QWidget.resizeEvent(self, event)
+
+        def _split(self, column_w):
+            metrics = QtGui.QFontMetrics(self.field_font)
+            nice = max(metrics.horizontalAdvance(look.NICE[c])
+                       for c in look.CHANNELS)
+            short = max(metrics.horizontalAdvance(c) for c in look.CHANNELS)
+            value_min = metrics.horizontalAdvance(VALUE_SAMPLE) + int(8 * self.k)
+            return look.split_row(column_w, nice, short, value_min,
+                                  int(round(look.ROW_GAP * self.k)))
+
+        def _place_fields(self):
+            rects = self.rects()
+            gap = int(round(look.ROW_GAP * self.k))
+            inset = max(1, int(round(self.k)))
+            self.label_w = {}
+            for side in ("R", "L"):
+                short, label_w, value_w = self._split(rects["column_" + side][2])
+                self.short[side], self.label_w[side] = short, label_w
+                for channel in look.CHANNELS:
+                    x, y, _w, h = rects["row_%s_%s" % (side, channel)]
+                    self.fields[(side, channel)].setGeometry(
+                        x + label_w + gap, y + inset, max(0, value_w),
+                        max(0, h - 2 * inset))
+
+        def field(self, side, channel):
+            return self.fields[(side, channel)]
+
+        # -------------------------------------------------------- state
+
+        def refresh(self, force=None):
+            """Re-read the scene; a field being typed in keeps its text
+            (unless `force` names its hand - just applied)."""
             try:
                 self.root = self.scene.current()
                 self.holding = self.scene.holdings(self.root) if self.root else {}
-                self.name = (self.scene.label(self.root) if self.root else
-                             "no character - select one (or keep one rig)")
+                self.grips = self.scene.grips(self.root)
+                self.picked_key, self.picked_side = self.scene.picked()
             except Exception:                                # noqa: BLE001
                 self.holding = {}
-                self.status_text = _last_line(traceback.format_exc())
+                self._say(_last_line(traceback.format_exc()))
+            for side in ("R", "L"):
+                grip = self.grips.get(side)
+                if not grip:
+                    continue
+                values = hand_values(grip)
+                editable = bool(grip[2]) if len(grip) > 2 else True
+                for channel in look.CHANNELS:
+                    field = self.fields[(side, channel)]
+                    if field.hasFocus() and side != force:
+                        continue
+                    field.show_value(values[channel], editable)
             self.update()
 
         def _queue_refresh(self, *_args):
             try:
-                QtCore.QTimer.singleShot(0, self.refresh)
+                if q.shiboken.isValid(self):
+                    QtCore.QTimer.singleShot(0, self.refresh)
             except Exception:                                # noqa: BLE001
                 pass
 
         def _say(self, text):
             self.status_text = text or ""
-            self.scene.echo(self.status_text)
+            self.scene.say(self.status_text)
             self.update()
             return self.status_text
 
-        def _act(self, action):
+        def _act(self, action, force=None):
             try:
                 text = action()
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 text = _last_line(traceback.format_exc())
             self._say(text)
-            self.refresh()
+            self.refresh(force)
             return text
-
-        def _entry(self, key):
-            return catalog.by_key(key)
 
         def _items(self):
             return [(e.key, self.cells[e.key]) for e in catalog.WEAPONS]
@@ -301,15 +460,56 @@ def _classes():
             entry = catalog.by_key(key)
             return entry.label if entry else key
 
+        # ----------------------------------------------------- picking
+
+        def pick_item(self, key):
+            """A weapon clicked in the grid: the card's picked weapon."""
+            if key not in self.placements:
+                return self.status_text
+            self.picked_key = key
+            text = self._act(lambda: self.scene.select_weapon(key))
+            return text
+
+        def pick_hand(self, side):
+            """A hand card clicked: the card's picked hand."""
+            if side not in ("R", "L"):
+                return self.status_text
+            self.picked_side = side
+            return self._act(lambda: self.scene.select_hand(side))
+
+        # ------------------------------------------------------ channels
+
+        def _commit(self, side):
+            """A hand's field left or Entered: its six values applied when
+            they are numbers and differ from what was shown."""
+            typed, shown = {}, {}
+            for channel in look.CHANNELS:
+                field = self.fields[(side, channel)]
+                typed[channel] = look.parse_channel(field.text())
+                shown[channel] = look.parse_channel(field.shown)
+            if any(v is None for v in typed.values()):
+                for channel in look.CHANNELS:
+                    field = self.fields[(side, channel)]
+                    field.setText(field.shown)
+                return self.status_text
+            if all(abs(typed[c] - (shown[c] or 0.0)) < 1e-9
+                   for c in look.CHANNELS):
+                return self.status_text
+            rotate, translate = grip_of(typed)
+            return self._act(lambda: self.scene.set_grip(side, rotate, translate),
+                             force=side)
+
         # ------------------------------------------------ the grid by hand
 
         def grid_plan(self, x, y, key, grab):
             """(kind, placements, other, spot) for `key` released at local
             (x, y), pressed `grab` cells into itself - the grab point stays
             under the cursor (`look.plan_move`: move, swap, same or None)."""
-            gx, gy = self.rects["grid"][:2]
-            spot = (int((x - gx) // self.cell) - grab[0],
-                    int((y - gy) // self.cell) - grab[1])
+            rects = self.rects()
+            cell = rects["cell"]
+            gx, gy = rects["grid"][:2]
+            spot = (int((x - gx) // cell) - grab[0],
+                    int((y - gy) // cell) - grab[1])
             size = self.cells.get(key, (1, 3))
             spot = look.clamp(spot, size)
             kind, placed, other = look.plan_move(self.placements, self.cells,
@@ -341,10 +541,14 @@ def _classes():
             if menu.exec(point) is action:
                 self.sort()
 
+        def _hit(self, x, y):
+            rects = self.rects()
+            return look.hit(rects, self.placements, self.cells, x, y,
+                            rects["cell"])
+
         def source_at(self, x, y):
             """What a press at local (x, y) would drag, or None."""
-            what = look.hit(self.rects, self.placements, self.cells, x, y,
-                            self.cell)
+            what = self._hit(x, y)
             if what and what[0] == "item":
                 return ("grid", what[1])
             if what and what[0] == "slot":
@@ -370,11 +574,10 @@ def _classes():
             if grab is None:
                 grab = (self._drag or {}).get("grab") or (0, 0)
             key = self._key_of(source)
-            entry = self._entry(key) if kind == "grid" else None
+            entry = catalog.by_key(key) if kind == "grid" else None
             local = self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy)))
             if self.rect().contains(local):
-                what = look.hit(self.rects, self.placements, self.cells,
-                                local.x(), local.y(), self.cell)
+                what = self._hit(local.x(), local.y())
                 if what and what[0] == "slot":
                     side = what[1]
                     if kind == "grid":
@@ -424,9 +627,13 @@ def _classes():
                 snap = []
                 self._say(_last_line(traceback.format_exc()))
             self._drag = dict(source=source, ghost=ghost, snap=snap, grab=grab)
+            self._press = None
             ghost.follow(point)
             ghost.show()
-            self.grabKeyboard()
+            try:
+                self.grabKeyboard()
+            except Exception:                                # noqa: BLE001
+                pass
             self._caption(point, force=True)
 
         def _end(self):
@@ -435,6 +642,7 @@ def _classes():
                 ghost.hide()
                 ghost.deleteLater()
             self._drag = None
+            self._press = None
             self.preview = None
             try:
                 self.releaseKeyboard()
@@ -449,8 +657,7 @@ def _classes():
             source = drag["source"]
             local = self.mapFromGlobal(point)
             if self.rect().contains(local):
-                what = look.hit(self.rects, self.placements, self.cells,
-                                local.x(), local.y(), self.cell)
+                what = self._hit(local.x(), local.y())
                 self.preview = None
                 if what and what[0] == "slot":
                     same = source == ("slot", what[1])
@@ -489,67 +696,62 @@ def _classes():
         # --------------------------------------------------------- mouse
 
         def _local(self, event):
-            point = event.position().toPoint() if hasattr(event, "position") \
-                else event.pos()
-            return point
+            return (event.position().toPoint() if hasattr(event, "position")
+                    else event.pos())
 
         def _global(self, event):
             return (event.globalPosition().toPoint()
                     if hasattr(event, "globalPosition") else event.globalPos())
 
-        def mousePressEvent(self, event):
+        def mousePressEvent(self, event):                    # noqa: N802
             if self._drag:
                 if event.button() == Qt.RightButton:
                     self._end()
                     self._say("cancelled")
                 return
             local = self._local(event)
-            what = look.hit(self.rects, self.placements, self.cells,
-                            local.x(), local.y(), self.cell)
+            what = self._hit(local.x(), local.y())
             if event.button() == Qt.RightButton and what and what[0] in ("grid", "item"):
                 self._grid_menu(self._global(event))
                 return
-            if event.button() != Qt.LeftButton:
+            if event.button() != Qt.LeftButton or not what:
                 return
-            if what == ("close",):
-                self.close()
-                return
-            source = self.source_at(local.x(), local.y())
-            if source:
-                grab = (0, 0)
-                if source[0] == "grid":
-                    ix, iy = look.item_rect(self.rects, self.placements[source[1]],
-                                            self.cells[source[1]], self.cell)[:2]
-                    grab = (int((local.x() - ix) // self.cell),
-                            int((local.y() - iy) // self.cell))
-                self._start(source, self._global(event), grab)
-                return
-            if what in (("title",), None):
-                self._moving = self._global(event) - self.frameGeometry().topLeft()
-
-        def mouseMoveEvent(self, event):
+            self.setFocus()                  # a field being typed in commits
             point = self._global(event)
-            if self._moving is not None:
-                self.move(point - self._moving)
-                return
+            if what[0] == "item":
+                self.pick_item(what[1])
+                rects = self.rects()
+                ix, iy = look.item_rect(rects, self.placements[what[1]],
+                                        self.cells[what[1]], rects["cell"])[:2]
+                grab = (int((local.x() - ix) // rects["cell"]),
+                        int((local.y() - iy) // rects["cell"]))
+                self._press = (("grid", what[1]), (point.x(), point.y()), grab)
+            elif what[0] == "slot":
+                self.pick_hand(what[1])
+                source = self.source_at(local.x(), local.y())
+                if source:
+                    self._press = (source, (point.x(), point.y()), (0, 0))
+
+        def mouseMoveEvent(self, event):                     # noqa: N802
+            point = self._global(event)
             if self._drag:
                 self._drag["ghost"].follow(point)
                 self._caption(point)
                 return
+            if self._press and event.buttons() & Qt.LeftButton:
+                source, start, grab = self._press
+                moved = abs(point.x() - start[0]) + abs(point.y() - start[1])
+                if moved >= QtWidgets.QApplication.startDragDistance():
+                    self._start(source, point, grab)
+                return
             local = self._local(event)
-            what = look.hit(self.rects, self.placements, self.cells,
-                            local.x(), local.y(), self.cell)
-            hover = what if what and what[0] in ("item", "slot", "close") else None
+            what = self._hit(local.x(), local.y())
+            hover = what if what and what[0] in ("item", "slot") else None
             if hover != self._hover:
                 self._hover = hover
                 self.update()
 
-        def mouseReleaseEvent(self, event):
-            if self._moving is not None:
-                self._moving = None
-                if self._remember:
-                    self.scene.remember_position(self.x(), self.y())
-                return
+        def mouseReleaseEvent(self, event):                  # noqa: N802
             if self._drag and event.button() == Qt.LeftButton:
                 point = self._global(event)
                 source = self._drag["source"]
@@ -557,136 +759,107 @@ def _classes():
                     self.drop_at(point.x(), point.y(), source)
                 finally:
                     self._end()
+                return
+            self._press = None
 
-        def leaveEvent(self, _event):
-            if self._hover is not None:
+        def leaveEvent(self, _event):                        # noqa: N802
+            if self._hover is not None and not self._drag:
                 self._hover = None
                 self.update()
 
-        def keyPressEvent(self, event):
-            if event.key() == Qt.Key_Escape:
-                if self._drag:
-                    self._end()
-                    self._say("cancelled")
-                else:
-                    self.close()
+        def keyPressEvent(self, event):                      # noqa: N802
+            if event.key() == Qt.Key_Escape and self._drag:
+                self._end()
+                self._say("cancelled")
                 return
             QtWidgets.QWidget.keyPressEvent(self, event)
 
-        def closeEvent(self, event):
-            self._end()
-            self.scene.unwatch(self._jobs)
-            self._jobs = []
-            QtWidgets.QWidget.closeEvent(self, event)
-
         # --------------------------------------------------------- paint
 
-        def _card(self, p, r, lit=None):
-            """A hub card: `card`, rounded; lit "target" is the hub's active
-            card (`card_active`, a 2 px accent outline), "refused" a danger
-            outline."""
-            box = rect_of(r)
-            fill = "card_active" if lit == "target" else "card"
-            edge = {"target": "accent", "refused": "danger"}.get(lit)
+        def _card(self, p, box, lit=None):
+            """A hub card: `card`, rounded; lit "target" / "picked" is the
+            hub's active card (`card_active`, a 2 px accent outline), "hover"
+            the active fill alone, "refused" a danger outline."""
+            fill = "card_active" if lit in ("target", "picked", "hover") else "card"
+            edge = {"target": "accent", "picked": "accent",
+                    "refused": "danger"}.get(lit)
             rounded(p, box, look.RADIUS["card"] * self.k, fill, edge,
                     max(1.0, 2 * self.k) if edge else 1.0)
             return box
 
-        def _well(self, p, box):
-            """A field-coloured well inside a card, rounded."""
-            rounded(p, box, look.RADIUS["well"] * self.k, "field")
-            return box
+        def _hand_lit(self, side, dragging):
+            if dragging:
+                return "refused" if dragging == ("slot", side) else "target"
+            if side == self.picked_side:
+                return "picked"
+            if self._hover == ("slot", side):
+                return "hover"
+            return None
 
-        def _icon(self, size):
-            """The hub's backpack icon in `muted`, cached per size."""
-            cached = getattr(self, "_icon_cache", None)
-            if cached is None or cached.width() != size:
-                try:
-                    import maya_hubqt
-                    cached = maya_hubqt.pixmap("backpack", look.PALETTE["muted"], size)
-                except Exception:                            # noqa: BLE001
-                    cached = QtGui.QPixmap(size, size)
-                    cached.fill(Qt.transparent)
-                self._icon_cache = cached
-            return cached
+        def _paint_hand(self, p, rects, side, dragging):
+            k = self.k
+            self._card(p, rect_of(rects["hand_" + side]),
+                       self._hand_lit(side, dragging))
+            p.setFont(font(11 * k, bold=side == self.picked_side))
+            p.setPen(colour("text" if side == self.picked_side else "muted"))
+            p.drawText(rect_of(rects["name_" + side]), Qt.AlignLeft | Qt.AlignVCenter,
+                       SLOT_LABEL[side])
 
-        def paintEvent(self, _event):
+            grip = self.grips.get(side)
+            editable = bool(grip[2]) if grip and len(grip) > 2 else True
+            names = look.channel_names(self.short.get(side, False))
+            label_w = self.label_w.get(side, 0)
+            p.setFont(self.field_font)
+            p.setPen(colour("muted" if editable else "faint"))
+            for channel in look.CHANNELS:
+                x, y, _w, h = rects["row_%s_%s" % (side, channel)]
+                p.drawText(QtCore.QRect(x, y, label_w, h),
+                           Qt.AlignRight | Qt.AlignVCenter, names[channel])
+
+            well = rect_of(rects["well_" + side])
+            rounded(p, well, look.RADIUS["well"] * k, "field")
+            held = self.holding.get(side)
+            if held and held.where in ("hand", "floor") and held.key in self.pixmaps \
+                    and dragging != ("slot", side):
+                pix = self.pixmaps[held.key]
+                p.setOpacity(1.0 if held.where == "hand" else 0.45)
+                p.drawPixmap(fitted(pix, well, int(4 * k)), pix)
+                p.setOpacity(1.0)
+                if held.where == "floor":
+                    tag = QtCore.QRect(well.left() + int(2 * k), well.top() + int(4 * k),
+                                       well.width() - int(4 * k), int(18 * k))
+                    rounded(p, tag, look.RADIUS["item"] * k, "status")
+                    p.setFont(font(9.5 * k))
+                    p.setPen(colour("status_text"))
+                    p.drawText(tag, Qt.AlignCenter, "floor")
+            elif held and held.weapon and dragging != ("slot", side):
+                p.setFont(font(10 * k))
+                p.setPen(colour("muted"))
+                text = ("follows\n" if held.where == "follows" else "") + held.label
+                p.drawText(well.adjusted(int(2 * k), 0, -int(2 * k), 0),
+                           Qt.AlignCenter | Qt.TextWordWrap, text)
+
+        def paintEvent(self, _event):                        # noqa: N802
             k = self.k
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
-            whole = self.rect()
-            rounded(p, whole, look.RADIUS["card"] * k, "panel", "line", max(1.0, k))
-
-            # the title: the hub's icon and bold text, left, like a card title
-            title = rect_of(self.rects["title"])
-            icon = int(18 * k)
-            p.drawPixmap(title.left(), title.center().y() - icon // 2, self._icon(icon))
-            p.setFont(font(15 * k, bold=True))
-            p.setPen(colour("text"))
-            p.drawText(title.adjusted(icon + int(8 * k), 0, 0, 0),
-                       Qt.AlignLeft | Qt.AlignVCenter, "Inventory")
-
-            close = rect_of(self.rects["close"])
-            lit_close = self._hover == ("close",)
-            if lit_close:
-                rounded(p, close, look.RADIUS["item"] * k, "hover")
-            p.setPen(QtGui.QPen(colour("text" if lit_close else "muted"), max(1.2, 1.6 * k)))
-            d = int(8 * k)
-            p.drawLine(close.left() + d, close.top() + d, close.right() - d, close.bottom() - d)
-            p.drawLine(close.right() - d, close.top() + d, close.left() + d, close.bottom() - d)
-
-            p.setFont(font(11.5 * k))
-            p.setPen(colour("muted"))
-            p.drawText(rect_of(self.rects["name"]), Qt.AlignLeft | Qt.AlignVCenter, self.name)
-
+            rects = self.rects()
+            cell = rects["cell"]
             dragging = self._drag["source"] if self._drag else None
-            label_h = int(20 * k)
-            pad = int(6 * k)
             for side in ("R", "L"):
-                lit = None
-                if dragging:
-                    lit = "refused" if dragging == ("slot", side) else "target"
-                elif self._hover == ("slot", side):
-                    lit = "target"
-                box = self._card(p, self.rects["slot_" + side], lit)
-                p.setFont(font(11 * k))
-                p.setPen(colour("muted"))
-                p.drawText(QtCore.QRect(box.left() + pad, box.top(), box.width() - 2 * pad,
-                                        label_h), Qt.AlignLeft | Qt.AlignVCenter,
-                           SLOT_LABEL[side])
-                inner = self._well(p, box.adjusted(pad, label_h, -pad, -pad))
-                held = self.holding.get(side)
-                if held and held.where in ("hand", "floor") and held.key in self.pixmaps \
-                        and dragging != ("slot", side):
-                    pix = self.pixmaps[held.key]
-                    p.setOpacity(1.0 if held.where == "hand" else 0.45)
-                    p.drawPixmap(fitted(pix, inner, int(4 * k)), pix)
-                    p.setOpacity(1.0)
-                    if held.where == "floor":
-                        tag = QtCore.QRect(inner.left() + int(4 * k), inner.top() + int(4 * k),
-                                           inner.width() - int(8 * k), int(18 * k))
-                        rounded(p, tag, look.RADIUS["item"] * k, "status")
-                        p.setFont(font(10.5 * k))
-                        p.setPen(colour("status_text"))
-                        p.drawText(tag, Qt.AlignCenter, "on the floor")
-                elif held and held.weapon and dragging != ("slot", side):
-                    p.setFont(font(11 * k))
-                    p.setPen(colour("muted"))
-                    text = ("follows\n" if held.where == "follows" else "") + held.label
-                    p.drawText(inner, Qt.AlignCenter | Qt.TextWordWrap, text)
+                self._paint_hand(p, rects, side, dragging)
 
-            grid_rect = rect_of(self.rects["grid"])
-            self._card(p, (grid_rect.x() - pad, grid_rect.y() - pad,
-                           grid_rect.width() + 2 * pad, grid_rect.height() + 2 * pad),
+            self._card(p, rect_of(rects["gridcard"]),
                        "target" if dragging and dragging[0] == "slot" else None)
-            grid = self._well(p, grid_rect)
+            grid = rect_of(rects["grid"])
+            rounded(p, grid, look.RADIUS["well"] * k, "field")
             p.setPen(QtGui.QPen(colour("line", 90), 1))
             for col in range(1, look.COLS):
-                x = grid.left() + int(col * self.cell)
+                x = grid.left() + col * cell
                 p.drawLine(x, grid.top() + 2, x, grid.bottom() - 2)
             for row in range(1, look.ROWS):
-                y = grid.top() + int(row * self.cell)
+                y = grid.top() + row * cell
                 p.drawLine(grid.left() + 2, y, grid.right() - 2, y)
             if self.preview:
                 # where the dragged item would land: the hub's ok it fits (or
@@ -694,16 +867,20 @@ def _classes():
                 cells, fits = self.preview
                 for col, row in cells:
                     if 0 <= col < look.COLS and 0 <= row < look.ROWS:
-                        cell = QtCore.QRect(grid.left() + int(col * self.cell) + 1,
-                                            grid.top() + int(row * self.cell) + 1,
-                                            int(self.cell) - 2, int(self.cell) - 2)
-                        rounded(p, cell, look.RADIUS["item"] * k,
+                        box = QtCore.QRect(grid.left() + col * cell + 1,
+                                           grid.top() + row * cell + 1,
+                                           cell - 2, cell - 2)
+                        rounded(p, box, look.RADIUS["item"] * k,
                                 "ok_tint" if fits else "danger_tint",
                                 "ok" if fits else "danger")
             for key, spot in self.placements.items():
-                item = rect_of(look.item_rect(self.rects, spot, self.cells[key], self.cell))
-                if self._hover == ("item", key) or dragging == ("grid", key):
-                    rounded(p, item.adjusted(1, 1, -1, -1), look.RADIUS["item"] * k, "hover")
+                item = rect_of(look.item_rect(rects, spot, self.cells[key], cell))
+                if key == self.picked_key and dragging != ("grid", key):
+                    rounded(p, item.adjusted(1, 1, -1, -1), look.RADIUS["item"] * k,
+                            "card_active", "accent", max(1.5, 2 * k))
+                elif self._hover == ("item", key) or dragging == ("grid", key):
+                    rounded(p, item.adjusted(1, 1, -1, -1), look.RADIUS["item"] * k,
+                            "hover")
                 pix = self.pixmaps.get(key)
                 if pix is not None:
                     p.setOpacity(0.4 if dragging == ("grid", key) else 1.0)
@@ -713,58 +890,36 @@ def _classes():
                     p.setFont(font(10 * k))
                     p.setPen(colour("muted"))
                     p.drawText(item, Qt.AlignCenter | Qt.TextWordWrap, key)
-
-            # the status: the hub's message line
-            status = rect_of(self.rects["status"])
-            rounded(p, status, look.RADIUS["well"] * k, "status")
-            p.setFont(font(11.5 * k))
-            p.setPen(colour("status_text"))
-            p.drawText(status.adjusted(int(10 * k), 0, -int(10 * k), 0),
-                       Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, self.status_text)
             p.end()
 
-    _CLASSES.update(Ghost=Ghost, InventoryWindow=InventoryWindow, qt=q)
+    _CLASSES.update(Ghost=Ghost, Keeper=Keeper, ChannelField=ChannelField,
+                    InventoryPanel=InventoryPanel, qt=q)
     return _CLASSES
 
 
 # ----------------------------------------------------------------- open
 
-def make_window(scene, parent=None, remember=False):
-    """The window over `scene` - the tests' seam."""
-    return _classes()["InventoryWindow"](scene, parent, remember)
+def make_panel(scene, parent=None):
+    """A panel over `scene` - the tests' seam."""
+    return _classes()["InventoryPanel"](scene, parent)
 
 
-def _maya_window():
-    try:
-        import maya.OpenMayaUI as omui
-        q = _classes()["qt"]
-        pointer = omui.MQtUtil.mainWindow()
-        return q.shiboken.wrapInstance(int(pointer), q.QtWidgets.QWidget) \
-            if pointer else None
-    except Exception:                                        # noqa: BLE001
-        return None
-
-
-def _ours():
-    """Every inventory window and ghost alive - an older build's too, found
-    by name (a module purged by an update keeps its widgets; trap 102)."""
-    q = _classes()["qt"]
+def _windows():
+    """An older build's floating inventory windows and ghosts, found by name
+    (a module purged by an update keeps its widgets; trap 102)."""
+    import maya_hubqt
+    q = maya_hubqt.qt()
+    if q is None:
+        return []
     app = q.QtWidgets.QApplication.instance()
     return [w for w in (app.topLevelWidgets() if app else [])
-            if w.objectName() in (OBJECT_NAME, GHOST_NAME)]
+            if w.objectName() in (WINDOW_NAME, GHOST_NAME)]
 
 
-def live():
-    """The open inventory of THIS module, or None."""
-    cls = _classes()["InventoryWindow"]
-    for widget in _ours():
-        if isinstance(widget, cls) and widget.isVisible():
-            return widget
-    return None
-
-
-def close_all():
-    for widget in _ours():
+def close_windows():
+    """Close the floating inventory an older build left open - it is the
+    Weapons card now."""
+    for widget in _windows():
         try:
             widget.close()
             widget.deleteLater()
@@ -772,14 +927,47 @@ def close_all():
             pass
 
 
+def attach(placeholder=PLACEHOLDER, scene=None):
+    """Lay a panel over the `cmds` layout `placeholder`, or None where it
+    cannot stand (no Qt, no such layout). Maya's layouts place their own
+    children, so the panel is laid OVER the placeholder (the hub's `_spread`
+    pattern) and the placeholder is given the panel's height for its width
+    on every resize."""
+    import maya_hubqt
+    if maya_hubqt.qt() is None:
+        return None
+    host = maya_hubqt.find(placeholder, layout=True)
+    if host is None:
+        return None
+    close_windows()
+    classes = _classes()
+    panel = classes["InventoryPanel"](scene or Scene(placeholder), host)
+    panel._host = host                   # the wrapper lives as long as the panel
+    panel._keeper = classes["Keeper"](panel, panel)
+    host.installEventFilter(panel._keeper)
+    panel.fit(host)
+    panel.show()
+    _PANELS[placeholder] = panel
+    return panel
+
+
+def live(placeholder=PLACEHOLDER):
+    """The panel standing over `placeholder`, or None."""
+    panel = _PANELS.get(placeholder)
+    if panel is None:
+        return None
+    try:
+        q = _classes()["qt"]
+        if q.shiboken.isValid(panel):
+            return panel
+    except Exception:                                        # noqa: BLE001
+        pass
+    _PANELS.pop(placeholder, None)
+    return None
+
+
 def show():
-    """Open the inventory (or bring the open one up), over Maya."""
-    window = live()
-    if window is None:
-        close_all()
-        window = make_window(Scene(), parent=_maya_window(), remember=True)
-    window.show()
-    window.raise_()
-    window.activateWindow()
-    window.refresh()
-    return window
+    """Open the hub on the Weapons card - the inventory lives there."""
+    close_windows()
+    import maya_hub
+    return maya_hub.show("weapons")

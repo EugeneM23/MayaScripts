@@ -1,5 +1,6 @@
 """The weapon inventory's look as data: the hub's colours, the cells, where
-each weapon sits, what a point in the window is.
+each weapon sits, where the hands and their channels stand, what a point in
+the panel is.
 
 Built 2026-09-29 in Diablo's bronze (the animator's «инвентарь похожий на
 инвентарь как в игре diablo»); restyled 2026-09-30 in the hub's own look
@@ -9,7 +10,15 @@ the hub's colours - charcoal, rounded cards, one orange accent. Stdlib only,
 like maya_hubstyle: the window paints what this module says, and every
 decision here is tested without Qt.
 
-Everything is in LOGICAL px; the window multiplies by the display scale
+Since 2026-09-30 the inventory IS the Weapons card («вместо того что
+сейчас открывается наш сетчатый инвентарь с оружием, но не в отдельном окне
+а как часть нашего меню»): `panel(width)` lays the two hands side by side,
+each a column of its grip laid out like Maya's Channel Box LEFT of its well
+(«слева от окошка столбик с параметрами так как в стандартном интерфейсе
+маи в channel box»), and the grid under them, its cell following the card's
+width. The window's own layout (title, close, name, status) is gone.
+
+Everything is in LOGICAL px; the panel multiplies by the display scale
 (trap 98 - Qt pixels are physical here).
 """
 
@@ -18,15 +27,23 @@ import os
 
 import maya_hubstyle
 
-CELL = 40                 # one inventory cell
+CELL = 40                 # one inventory cell at most (the window's)
+MIN_CELL = 24             # ... and at least, in a narrow dock
 COLS, ROWS = 10, 5        # the grid: the catalog, every row always there
-SLOT = (2, 4)             # a hand slot, in cells
-MARGIN = 14
-TITLE_H = 34
-NAME_H = 18
-STATUS_H = 34
-GAP = 12
 ICON_PX = 80              # an icon's pixels per cell (twice CELL, for 150 %)
+
+PAD = 4                   # inside a card
+GAP = 8                   # between the hands and the grid
+HAND_GAP = 6              # between the two hands
+HAND_MAX = 230            # a hand card's width at most (a wide classic hub)
+NAME_H = 20               # "Right hand" over a card
+ROW_H = 19                # one channel row
+ROW_GAP = 4               # between a row's name and its value
+
+# The grip as Maya's Channel Box shows a transform: translate, then rotate.
+CHANNELS = ("tx", "ty", "tz", "rx", "ry", "rz")
+NICE = {"tx": "Translate X", "ty": "Translate Y", "tz": "Translate Z",
+        "rx": "Rotate X", "ry": "Rotate Y", "rz": "Rotate Z"}
 
 PALETTE = maya_hubstyle.TOKENS
 RADIUS = {"card": 8, "well": 6, "item": 4}      # the hub stylesheet's corners
@@ -186,35 +203,85 @@ def read_record(text):
     return data if isinstance(data, dict) else {}
 
 
-def layout():
-    """{name: (x, y, w, h)} in logical px: window, title, close, name, the
-    two hand slots (the right hand on the viewer's LEFT, as the character
-    faces you - the picker's convention), grid, status."""
-    grid_w, grid_h = COLS * CELL, ROWS * CELL
-    width = grid_w + 2 * MARGIN
-    slot_w, slot_h = SLOT[0] * CELL, SLOT[1] * CELL
-    y = MARGIN
-    rects = {"title": (MARGIN, y, grid_w, TITLE_H),
-             "close": (MARGIN + grid_w - 24, y + 5, 24, 24)}
-    y += TITLE_H
-    rects["name"] = (MARGIN, y, grid_w, NAME_H)
-    y += NAME_H + GAP // 2
-    middle = MARGIN + grid_w // 2
-    rects["slot_R"] = (middle - CELL - slot_w, y, slot_w, slot_h)
-    rects["slot_L"] = (middle + CELL, y, slot_w, slot_h)
-    y += slot_h + GAP
-    rects["grid"] = (MARGIN, y, grid_w, grid_h)
-    y += grid_h + GAP            # the grid's card stands 6 px out of it (2026-09-30)
-    rects["status"] = (MARGIN, y, grid_w, STATUS_H)
-    y += STATUS_H + MARGIN
-    rects["window"] = (0, 0, width, y)
+# ---------------------------------------------------------------- channels
+
+def channel_names(short):
+    """{channel: the name its row shows}: the Channel Box's nice names, or its
+    SHORT ones (tx ... rz) - its own option for a narrow box."""
+    return dict((c, c if short else NICE[c]) for c in CHANNELS)
+
+
+def channel_text(value):
+    """A value as the Channel Box shows it: three decimals at most, trailing
+    zeros dropped, never "-0". Pure."""
+    text = ("%.3f" % float(value)).rstrip("0").rstrip(".")
+    return "0" if text in ("-0", "", "-") else text
+
+
+def parse_channel(text):
+    """A typed value as a float (a comma is a decimal point too), or None."""
+    try:
+        return float((text or "").strip().replace(",", "."))
+    except ValueError:
+        return None
+
+
+def split_row(width, nice_w, short_w, value_min, gap=ROW_GAP):
+    """(short, name width, value width) for a channel row `width` wide: the
+    nice names while a value of at least `value_min` still fits beside them,
+    the short ones otherwise. Pure - the widths come from the font."""
+    if width - nice_w - gap >= value_min:
+        return False, nice_w, width - nice_w - gap
+    return True, short_w, max(0, width - short_w - gap)
+
+
+# ------------------------------------------------------------------- panel
+
+def panel(width):
+    """{name: (x, y, w, h)} in logical px for a card `width` wide, plus
+    "cell" (an int): the two hand cards side by side - the right hand on the
+    viewer's LEFT, as the character faces you (the picker's convention) -
+    each with its name on top, its channel column (a row per CHANNELS) and,
+    right of it, its well; under them the grid's card and the grid, ten
+    cells of the width between MIN_CELL and CELL, centred. Pure."""
+    width = int(width)
+    cell = int(max(MIN_CELL, min(CELL, (width - 2 * PAD) // COLS)))
+    well_w = int(max(36, min(56, round(1.3 * cell))))
+    hand_w = int(max(0, min(HAND_MAX, (width - HAND_GAP) // 2)))
+    left = max(0, (width - (2 * hand_w + HAND_GAP)) // 2)
+    body_h = len(CHANNELS) * ROW_H
+    hand_h = NAME_H + body_h + PAD
+    rects = {"cell": cell}
+    for side, x in (("R", left), ("L", left + hand_w + HAND_GAP)):
+        rects["hand_" + side] = (x, 0, hand_w, hand_h)
+        rects["name_" + side] = (x + PAD + 2, 0, max(0, hand_w - 2 * PAD - 2),
+                                 NAME_H)
+        well_x = x + hand_w - PAD - well_w
+        rects["well_" + side] = (well_x, NAME_H, well_w, body_h)
+        col_x = x + PAD
+        col_w = max(0, well_x - ROW_GAP - col_x)
+        rects["column_" + side] = (col_x, NAME_H, col_w, body_h)
+        for index, channel in enumerate(CHANNELS):
+            rects["row_%s_%s" % (side, channel)] = (
+                col_x, NAME_H + index * ROW_H, col_w, ROW_H)
+    grid_w, grid_h = COLS * cell, ROWS * cell
+    gx = max(PAD, (width - grid_w) // 2)
+    y = hand_h + GAP
+    rects["gridcard"] = (gx - PAD, y, grid_w + 2 * PAD, grid_h + 2 * PAD)
+    rects["grid"] = (gx, y + PAD, grid_w, grid_h)
+    rects["panel"] = (0, 0, width, y + grid_h + 2 * PAD)
     return rects
 
 
 def scaled(rects, scale):
-    """The same rects in physical px."""
-    return dict((name, tuple(int(round(v * scale)) for v in rect))
-                for name, rect in rects.items())
+    """The same rects in physical px (the "cell" too)."""
+    out = {}
+    for name, rect in rects.items():
+        if isinstance(rect, (int, float)):
+            out[name] = int(round(rect * scale))
+        else:
+            out[name] = tuple(int(round(v * scale)) for v in rect)
+    return out
 
 
 def inside(rect, x, y):
@@ -231,18 +298,14 @@ def item_rect(rects, placement, cells, cell=CELL):
 
 
 def hit(rects, placements, cells, x, y, cell=CELL):
-    """What the point is: ("close",), ("slot", side), ("item", key),
-    ("grid",), ("title",) or None. Pure."""
-    if inside(rects["close"], x, y):
-        return ("close",)
+    """What the point is: ("slot", side) anywhere on a hand's card,
+    ("item", key), ("grid",), or None. Pure."""
     for side in ("R", "L"):
-        if inside(rects["slot_" + side], x, y):
+        if inside(rects["hand_" + side], x, y):
             return ("slot", side)
     if inside(rects["grid"], x, y):
         for key, spot in placements.items():
             if inside(item_rect(rects, spot, cells.get(key, (1, 3)), cell), x, y):
                 return ("item", key)
         return ("grid",)
-    if inside(rects["title"], x, y):
-        return ("title",)
     return None

@@ -1,5 +1,6 @@
-"""The inventory's look as data (2026-09-29): cells, packing, layout, hits,
-and every catalog weapon having its icon.
+"""The inventory's look as data (2026-09-29): cells, packing, the card
+panel's layout (2026-09-30), the channel text, hits, and every catalog
+weapon having its icon.
 
 Spec: docs/superpowers/specs/2026-09-29-weapon-inventory-design.md
 """
@@ -44,70 +45,152 @@ class Pack(unittest.TestCase):
         self.assertEqual(set(look.pack(items)), set(e.key for e in catalog.WEAPONS))
 
 
-class Layout(unittest.TestCase):
+def _apart(a, b):
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay
 
-    def setUp(self):
-        self.rects = look.layout()
 
-    def test_everything_inside_the_window(self):
-        wx, wy, ww, wh = self.rects["window"]
-        for name, (x, y, w, h) in self.rects.items():
-            self.assertTrue(x >= wx and y >= wy and x + w <= wx + ww
-                            and y + h <= wy + wh, name)
+def _inside(inner, outer):
+    ix, iy, iw, ih = inner
+    ox, oy, ow, oh = outer
+    return ix >= ox and iy >= oy and ix + iw <= ox + ow and iy + ih <= oy + oh
 
-    def test_nothing_overlaps(self):
-        names = ("title", "name", "slot_R", "slot_L", "grid", "status")
-        for i, a in enumerate(names):
-            for b in names[i + 1:]:
-                ax, ay, aw, ah = self.rects[a]
-                bx, by, bw, bh = self.rects[b]
-                apart = (ax + aw <= bx or bx + bw <= ax
-                         or ay + ah <= by or by + bh <= ay)
-                self.assertTrue(apart, (a, b))
 
-    def test_the_grid_is_ten_by_five_cells(self):
-        _x, _y, w, h = self.rects["grid"]
-        self.assertEqual((w, h), (look.COLS * look.CELL, look.ROWS * look.CELL))
+class Panel(unittest.TestCase):
+    """2026-09-30: the inventory is the Weapons card - two hands, each a
+    Channel Box column left of its well, the grid under them, all from the
+    card's width («слева от окошка столбик с параметрами так как в
+    стандартном интерфейсе маи в channel box»)."""
 
-    def test_the_slots_are_two_by_four_cells(self):
+    WIDTHS = (250, 320, 360, 500)
+
+    def test_the_hands_stand_side_by_side_the_right_one_on_the_left(self):
+        for width in self.WIDTHS:
+            r = look.panel(width)
+            self.assertLess(r["hand_R"][0], r["hand_L"][0], width)
+            self.assertEqual(r["hand_R"][1:], r["hand_L"][1:], width)
+            self.assertTrue(_apart(r["hand_R"], r["hand_L"]), width)
+
+    def test_each_column_stands_left_of_its_well_inside_its_card(self):
+        for width in self.WIDTHS:
+            r = look.panel(width)
+            for side in ("R", "L"):
+                col, well = r["column_" + side], r["well_" + side]
+                self.assertLess(col[0] + col[2], well[0], (width, side))
+                for name in ("name_", "column_", "well_"):
+                    self.assertTrue(_inside(r[name + side], r["hand_" + side]),
+                                    (width, name + side))
+                self.assertGreaterEqual(well[2], 36)
+
+    def test_six_rows_in_channel_box_order_top_to_bottom(self):
+        self.assertEqual(look.CHANNELS, ("tx", "ty", "tz", "rx", "ry", "rz"))
+        r = look.panel(320)
         for side in ("R", "L"):
-            self.assertEqual(self.rects["slot_" + side][2:],
-                             (2 * look.CELL, 4 * look.CELL))
+            tops = [r["row_%s_%s" % (side, ch)][1] for ch in look.CHANNELS]
+            self.assertEqual(tops, sorted(tops))
+            for ch in look.CHANNELS:
+                self.assertTrue(_inside(r["row_%s_%s" % (side, ch)],
+                                        r["column_" + side]), ch)
+            self.assertEqual(r["row_%s_rz" % side][1] + r["row_%s_rz" % side][3],
+                             r["column_" + side][1] + r["column_" + side][3])
 
-    def test_the_right_hand_slot_is_on_the_viewers_left(self):
-        self.assertLess(self.rects["slot_R"][0], self.rects["slot_L"][0])
+    def test_the_grid_is_ten_cells_of_the_width_clamped(self):
+        for width in self.WIDTHS:
+            r = look.panel(width)
+            cell = r["cell"]
+            self.assertTrue(look.MIN_CELL <= cell <= look.CELL, width)
+            self.assertEqual(r["grid"][2:], (look.COLS * cell, look.ROWS * cell))
+            self.assertTrue(_inside(r["grid"], r["gridcard"]), width)
+            self.assertLessEqual(r["gridcard"][0] + r["gridcard"][2], max(
+                width, r["gridcard"][2]), width)
+        self.assertEqual(look.panel(500)["cell"], look.CELL)
+        self.assertLess(look.panel(320)["cell"], look.CELL)
 
-    def test_it_fits_a_small_screen_at_150_percent(self):
-        _x, _y, w, h = look.scaled(self.rects, 1.5)["window"]
-        self.assertLess(w, 1000)
-        self.assertLess(h, 1100)
+    def test_a_wide_card_centres_the_grid(self):
+        r = look.panel(500)
+        left = r["grid"][0]
+        right = 500 - (r["grid"][0] + r["grid"][2])
+        self.assertLessEqual(abs(left - right), 1)
+
+    def test_the_grid_is_under_both_hands_and_ends_the_panel(self):
+        for width in self.WIDTHS:
+            r = look.panel(width)
+            for side in ("R", "L"):
+                self.assertGreaterEqual(r["gridcard"][1],
+                                        r["hand_" + side][1] + r["hand_" + side][3])
+            self.assertEqual(r["panel"][3], r["gridcard"][1] + r["gridcard"][3])
+            self.assertEqual(r["panel"][2], width)
+
+    def test_scaled_keeps_the_cell_an_int(self):
+        r = look.scaled(look.panel(320), 1.5)
+        self.assertIsInstance(r["cell"], int)
+        self.assertEqual(r["cell"], int(round(look.panel(320)["cell"] * 1.5)))
+        self.assertEqual(len(r["grid"]), 4)
+
+    def test_the_window_layout_is_gone(self):
+        for name in ("layout", "SLOT", "TITLE_H", "STATUS_H", "MARGIN"):
+            self.assertFalse(hasattr(look, name), name)
+
+
+class Channels(unittest.TestCase):
+
+    def test_the_channel_box_text(self):
+        for value, text in ((0, "0"), (-0.0, "0"), (90, "90"), (1.38, "1.38"),
+                            (-179.5134, "-179.513"), (1e-7, "0"),
+                            (-1e-7, "0"), (12.5, "12.5")):
+            self.assertEqual(look.channel_text(value), text, value)
+
+    def test_parse(self):
+        self.assertEqual(look.parse_channel("1,5"), 1.5)
+        self.assertEqual(look.parse_channel(" -2 "), -2.0)
+        self.assertIsNone(look.parse_channel("x"))
+        self.assertIsNone(look.parse_channel(""))
+        self.assertIsNone(look.parse_channel(None))
+
+    def test_the_names_nice_and_short(self):
+        self.assertEqual(look.channel_names(False)["tx"], "Translate X")
+        self.assertEqual(look.channel_names(False)["rz"], "Rotate Z")
+        self.assertEqual(look.channel_names(True),
+                         dict((c, c) for c in look.CHANNELS))
+
+    def test_a_row_takes_the_nice_names_where_they_fit(self):
+        self.assertEqual(look.split_row(100, 55, 14, 40), (False, 55, 41))
+        self.assertEqual(look.split_row(80, 55, 14, 40), (True, 14, 62))
+        self.assertEqual(look.split_row(10, 55, 14, 40), (True, 14, 0))
 
 
 class Hits(unittest.TestCase):
 
     def setUp(self):
-        self.rects = look.layout()
+        self.rects = look.panel(320)
+        self.cell = self.rects["cell"]
         self.placements = {"LongSword_02": (0, 0), "Dagger_01": (1, 0)}
         self.cells = {"LongSword_02": (1, 4), "Dagger_01": (1, 2)}
 
     def at(self, name, dx=3, dy=3):
         x, y = self.rects[name][:2]
-        return look.hit(self.rects, self.placements, self.cells, x + dx, y + dy)
+        return look.hit(self.rects, self.placements, self.cells, x + dx,
+                        y + dy, self.cell)
 
     def test_an_item_its_cells_and_the_grid_between(self):
+        c = self.cell
         self.assertEqual(self.at("grid"), ("item", "LongSword_02"))
-        self.assertEqual(self.at("grid", 3, 3 * look.CELL + 5),
-                         ("item", "LongSword_02"))
-        self.assertEqual(self.at("grid", look.CELL + 3, 3), ("item", "Dagger_01"))
-        self.assertEqual(self.at("grid", look.CELL + 3, 2 * look.CELL + 3),
-                         ("grid",))
+        self.assertEqual(self.at("grid", 3, 3 * c + 5), ("item", "LongSword_02"))
+        self.assertEqual(self.at("grid", c + 3, 3), ("item", "Dagger_01"))
+        self.assertEqual(self.at("grid", c + 3, 2 * c + 3), ("grid",))
 
-    def test_slots_close_title_nothing(self):
-        self.assertEqual(self.at("slot_L"), ("slot", "L"))
-        self.assertEqual(self.at("slot_R"), ("slot", "R"))
-        self.assertEqual(self.at("close"), ("close",))
-        self.assertEqual(self.at("title"), ("title",))
-        self.assertIsNone(look.hit(self.rects, self.placements, self.cells, -5, -5))
+    def test_a_hand_card_is_its_slot_all_over(self):
+        for side in ("R", "L"):
+            for part in ("hand_", "column_", "well_", "name_"):
+                self.assertEqual(self.at(part + side), ("slot", side), part)
+
+    def test_the_gaps_are_nothing(self):
+        hx, _hy, hw, hh = self.rects["hand_R"]
+        self.assertIsNone(look.hit(self.rects, self.placements, self.cells,
+                                   hx + hw + 1, 5, self.cell))
+        self.assertIsNone(look.hit(self.rects, self.placements, self.cells,
+                                   -5, -5, self.cell))
 
 
 class Look(unittest.TestCase):

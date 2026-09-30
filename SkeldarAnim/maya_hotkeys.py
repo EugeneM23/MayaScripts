@@ -812,8 +812,8 @@ _OURS = (
      "Open the Connections section: hands on the weapon and off it",
      partial(_show, "maya_scenesetup.connections", "show_window")),
     ("window.inventory", "Windows", "Weapon inventory",
-     "Open the weapon inventory: drag a weapon onto a hand in the viewport, "
-     "or onto the floor",
+     "Open the Weapons card - the inventory: drag a weapon onto a hand in "
+     "the viewport, or onto the floor",
      partial(_show, "maya_inventory", "show")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
