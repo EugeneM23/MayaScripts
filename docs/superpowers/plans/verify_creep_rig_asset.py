@@ -100,10 +100,12 @@ painted = [m for m in cmds.ls("Creep_Rig:Creep_*", type="mesh") if not cmds.getA
 colours = set()
 for m in painted:
     for sg in cmds.listConnections(m, type="shadingEngine") or []:
+        # textured since 2026-09-30 (verify_creep_textured.py): the materials our textured marker names
         colours.update(x for x in cmds.ls(cmds.listConnections(sg + ".surfaceShader", s=True, d=False) or [], materials=True)
-                       if cmds.attributeQuery("skeldarColour", node=x, exists=True))
-gate(7, {"Creep_Rig:Creep_Body", "Creep_Rig:Creep_Face"} <= set(geo) and "Creep_Rig:Creep_Props" not in geo and len(painted) == 5 and colours,
-     "Geometry %s; %d meshes painted with %s" % ([g.split(":")[-1] for g in geo], len(painted), sorted(colours)))
+                       if cmds.attributeQuery("skeldarTexture", node=x, exists=True))
+gate(7, {"Creep_Rig:Creep_Body", "Creep_Rig:Creep_Face"} <= set(geo) and "Creep_Rig:Creep_Props" not in geo and len(painted) == 5
+     and len(colours) == 3,
+     "Geometry %s; %d meshes textured with %s" % ([g.split(":")[-1] for g in geo], len(painted), sorted(colours)))
 
 # the retarget, onto the FIRST Creep
 before = set(cmds.ls(type="joint", long=True))

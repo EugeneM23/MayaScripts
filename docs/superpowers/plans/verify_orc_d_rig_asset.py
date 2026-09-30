@@ -8,7 +8,7 @@ the FBX Unreal wrote (sources/orc/SK_Orc_Marauder_D.fbx, imported into a `ref` n
 
 - each orc in its own namespace, marked rotation-only, at its bind, controls at default, no script
   node; the Orc D arriving TEXTURED -- its three materials the one shader, every file node on an
-  image in the installed assets/Orc_D/, the palette untouched by it (the Creep still painted);
+  image in the installed assets/Orc_D/, the palette untouched by it (the Creep textured too since 2026-09-30);
 - the texture the file node samples IS the shipped image's pixels, the right way up;
 - D's mesh: Unreal's minus the Skirt_Proxy, vertex for vertex where the FBX has it, its UVs and
   normals the FBX's, its 56 targets the FBX's, and -- the one that matters -- under a real pose
@@ -123,8 +123,8 @@ for t in texts:
     print("   ", t.splitlines()[0])
 rigs = dict((r.namespace, r) for r in maya_rigs.rigs())
 gate(2, set(rigs) == {"Orc_D_Rig", "Orc_D_Rig1", "Creep_Rig"} and all(" - textured" in t for t in texts[:2])
-     and " - red" in texts[2] and free_before == free_after_d == "red",
-     "three rigs %s; the two D messages say textured, the Creep red; the palette's next free colour %s -> %s after the D adds"
+     and " - textured" in texts[2] and free_before == free_after_d == "red",
+     "three rigs %s; the three messages say textured (the Creep too, since 2026-09-30); the palette's next free colour %s -> %s after the D adds"
      % (sorted(rigs), free_before, free_after_d))
 d, d2, f = rigs.get("Orc_D_Rig"), rigs.get("Orc_D_Rig1"), rigs.get("Creep_Rig")
 D, D2, F = bones(d.skeleton_root), bones(d2.skeleton_root), bones(f.skeleton_root)

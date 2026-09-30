@@ -75,9 +75,10 @@ painted = [m for m in cmds.ls("Creep_*", type="mesh") if not cmds.getAttr(m + ".
 colours = set()
 for m in painted:
     for sg in cmds.listConnections(m, type="shadingEngine") or []:
+        # textured since 2026-09-30 (verify_creep_textured.py): the materials our textured marker names
         colours.update(x for x in cmds.ls(cmds.listConnections(sg + ".surfaceShader", s=True, d=False) or [], materials=True)
-                       if cmds.attributeQuery("skeldarColour", node=x, exists=True))
-gate(6, len(painted) == 5 and colours, "%d meshes painted with %s" % (len(painted), sorted(colours)))
+                       if cmds.attributeQuery("skeldarTexture", node=x, exists=True))
+gate(6, len(painted) == 5 and len(colours) == 3, "%d meshes textured with %s" % (len(painted), sorted(colours)))
 # beside the rig
 rig_text = character.add_character(catalog.character_by_key("Creep_Rig"))
 rigs = maya_rigs.rigs()

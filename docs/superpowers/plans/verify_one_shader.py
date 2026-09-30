@@ -119,24 +119,31 @@ text = open(path, encoding="utf-8", errors="replace").read()
 import re
 # an Objects block, `\tMaterial: <id>, "Material::<name>", "" {` -- not LayerElementMaterial
 blocks = re.split(r'\n\tMaterial: \d+, "Material::', text)[1:]
-props = blocks[0][:3000] if blocks else ""
+# the Creep is textured since 2026-09-30: one material per texture set (three), each the one shader
+worn_by = set(m for s in cmds.listRelatives(orc_meshes, shapes=True, fullPath=True, noIntermediate=True) or []
+              for sg in cmds.listConnections(s, type="shadingEngine") or []
+              for m in cmds.ls(cmds.listConnections(sg + ".surfaceShader") or [], materials=True))
 
 
-def prop(name):
+def prop(props, name):
     import re
     m = re.search(r'P: "%s",[^\n]*?,([-0-9.e, ]+)\n' % name, props)
     return [float(x) for x in m.group(1).split(",") if x.strip()] if m else None
 
 
-shading = 'ShadingModel: "phong"' in props
-got = dict((k, prop(k)) for k in ("DiffuseColor", "DiffuseFactor", "SpecularColor", "ShininessExponent", "Shininess",
-                                  "ReflectionFactor"))
-# FBX leaves a property at its default out of the file: DiffuseFactor 1, ShininessExponent 20
-spec = [round(v, 6) for v in got["SpecularColor"] or []]
-ok = (len(blocks) == 1 and shading and (got["DiffuseFactor"] in (None, [1.0])) and spec == [0.2, 0.2, 0.2]
-      and (got["ShininessExponent"] or [20.0]) == [20.0] and got["Shininess"] == [20.0]
-      and got["ReflectionFactor"] in (None, [0.0]))
-gate(3, ok, "the Creep's meshes exported by hand: %d material(s), phong %s, %s" % (len(blocks), shading, got))
+ok, got = len(blocks) == len(worn_by) and bool(blocks), None
+for block in blocks:
+    props = block[:3000]
+    shading = 'ShadingModel: "phong"' in props
+    got = dict((k, prop(props, k)) for k in ("DiffuseColor", "DiffuseFactor", "SpecularColor", "ShininessExponent",
+                                             "Shininess", "ReflectionFactor"))
+    # FBX leaves a property at its default out of the file: DiffuseFactor 1, ShininessExponent 20
+    spec = [round(v, 6) for v in got["SpecularColor"] or []]
+    ok = ok and (shading and (got["DiffuseFactor"] in (None, [1.0])) and spec == [0.2, 0.2, 0.2]
+                 and (got["ShininessExponent"] or [20.0]) == [20.0] and got["Shininess"] == [20.0]
+                 and got["ReflectionFactor"] in (None, [0.0]))
+gate(3, ok, "the Creep's meshes exported by hand: %d material(s) for the %d they wear, every one phong with the "
+     "look, the last %s" % (len(blocks), len(worn_by), got))
 
 anim = OUT + "/creep_anim.fbx"
 cmds.select(clear=True)
