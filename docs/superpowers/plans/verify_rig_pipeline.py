@@ -224,8 +224,10 @@ def main():
     errors2 = compare(reference, frames, bones, ("weapon_r", "hand_r", "camera_bone"), 0.05)
     gate(23, errors2["weapon_r"] is not None and errors2["weapon_r"] < 0.05,
          "weapon_r on the reference again, through the sword", "worst %s" % _fmt(errors2["weapon_r"]))
-    sword_err = max(worst(world(weapon), world(bone)) for _ in at_frames(frames, lambda: None))
-    gate(24, sword_err < 0.05, "the sword rides weapon_r at the zero grip", "worst %.6f" % sword_err)
+    # at the zero grip the sword stands in its FRAME on the bone (since 2026-09-30, one socket for every
+    # rig: bonedrive.socket_frame, a quarter turn from a model's axes into a UE weapon bone's), not on it
+    sword_err = max(worst(world(weapon), bonedrive._seat_of(weapon, bone)) for _ in at_frames(frames, lambda: None))
+    gate(24, sword_err < 0.05, "the sword rides weapon_r at the zero grip, in its frame", "worst %.6f" % sword_err)
     cams = camera.our_cameras()
     cam_bone = bones.get("camera_root")
     gate(25, len(cams) == 1 and cam_bone and camera.our_constraints(cam_bone)

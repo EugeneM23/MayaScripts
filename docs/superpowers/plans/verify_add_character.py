@@ -229,7 +229,7 @@ else:
     hierarchy = skeleton.scene_map(root) if root else {}
 
     gate("21 it arrives even from the bridge's exmerge mode",
-         message.startswith("UE4 Mannequin added") and len(fresh) == 1,
+         message.startswith(UE4.label + " added") and len(fresh) == 1,
          "mode was {0!r} | {1}".format(hostile, message))
     # The root's own leaf name is NOT asserted to be `root`. Flat means the
     # skeleton root sits at world level, where Maya will not allow a second
