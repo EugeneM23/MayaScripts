@@ -50,7 +50,7 @@ LAYOUT_OPTIONVAR = "skeldarInventoryLayout"     # the grid as the animator left 
 THROTTLE_MS = 33
 SLOT_LABEL = {"R": "Right hand", "L": "Left hand"}
 EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
-CHANNEL_PX = 10.5          # the channel names' and values' font, logical px
+CHANNEL_PX = 9.5           # the channel names' and values' font, logical px
 VALUE_SAMPLE = "-179.51"   # the value a field must have room for
 
 #  The panels standing, by the placeholder they are laid over.
@@ -383,7 +383,7 @@ def _classes():
             nice = max(metrics.horizontalAdvance(look.NICE[c])
                        for c in look.CHANNELS)
             short = max(metrics.horizontalAdvance(c) for c in look.CHANNELS)
-            value_min = metrics.horizontalAdvance(VALUE_SAMPLE) + int(8 * self.k)
+            value_min = metrics.horizontalAdvance(VALUE_SAMPLE) + int(6 * self.k)
             return look.split_row(column_w, nice, short, value_min,
                                   int(round(look.ROW_GAP * self.k)))
 

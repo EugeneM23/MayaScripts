@@ -38,7 +38,7 @@ HAND_GAP = 6              # between the two hands
 HAND_MAX = 230            # a hand card's width at most (a wide classic hub)
 NAME_H = 20               # "Right hand" over a card
 ROW_H = 19                # one channel row
-ROW_GAP = 4               # between a row's name and its value
+ROW_GAP = 3               # between a row's name and its value
 
 # The grip as Maya's Channel Box shows a transform: translate, then rotate.
 CHANNELS = ("tx", "ty", "tz", "rx", "ry", "rz")
@@ -246,7 +246,7 @@ def panel(width):
     cells of the width between MIN_CELL and CELL, centred. Pure."""
     width = int(width)
     cell = int(max(MIN_CELL, min(CELL, (width - 2 * PAD) // COLS)))
-    well_w = int(max(36, min(56, round(1.3 * cell))))
+    well_w = int(max(32, min(56, round(1.2 * cell))))
     hand_w = int(max(0, min(HAND_MAX, (width - HAND_GAP) // 2)))
     left = max(0, (width - (2 * hand_w + HAND_GAP)) // 2)
     body_h = len(CHANNELS) * ROW_H

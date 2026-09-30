@@ -81,7 +81,7 @@ class Panel(unittest.TestCase):
                 for name in ("name_", "column_", "well_"):
                     self.assertTrue(_inside(r[name + side], r["hand_" + side]),
                                     (width, name + side))
-                self.assertGreaterEqual(well[2], 36)
+                self.assertGreaterEqual(well[2], 32)
 
     def test_six_rows_in_channel_box_order_top_to_bottom(self):
         self.assertEqual(look.CHANNELS, ("tx", "ty", "tz", "rx", "ry", "rz"))
@@ -155,8 +155,8 @@ class Channels(unittest.TestCase):
                          dict((c, c) for c in look.CHANNELS))
 
     def test_a_row_takes_the_nice_names_where_they_fit(self):
-        self.assertEqual(look.split_row(100, 55, 14, 40), (False, 55, 41))
-        self.assertEqual(look.split_row(80, 55, 14, 40), (True, 14, 62))
+        self.assertEqual(look.split_row(100, 55, 14, 40), (False, 55, 42))
+        self.assertEqual(look.split_row(80, 55, 14, 40), (True, 14, 63))
         self.assertEqual(look.split_row(10, 55, 14, 40), (True, 14, 0))
 
 

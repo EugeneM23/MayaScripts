@@ -526,6 +526,24 @@ class AddRemovePress(unittest.TestCase):
         self.assertEqual(self.equip.calls, [("to_hand", "|root", "L", "Dagger_01")])
         self.assertEqual(self.lines[-1], "into")
 
+    def test_add_and_remove_refresh_the_inventory_after(self):
+        """Measured live: a refresh the import's selection change queued ran
+        midway and left the column showing a half-attached grip."""
+        refreshed = []
+
+        class Panel(object):
+            def refresh(self):
+                refreshed.append(list(self_equip.calls))
+        self_equip = self.equip
+        saved = window._inventory
+        window._inventory = lambda: Panel()
+        try:
+            window.add_weapon()
+            window.remove_weapon()
+        finally:
+            window._inventory = saved
+        self.assertEqual([len(calls) for calls in refreshed], [1, 2])
+
     def test_remove_takes_the_picked_hand_off(self):
         window.remove_weapon()
         self.assertEqual(self.equip.calls, [("take_off", "|root", "L")])

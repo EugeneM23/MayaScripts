@@ -424,6 +424,16 @@ def _inventory():
         return None
 
 
+def _refresh_inventory():
+    """The inventory re-read after a press changed the hands. Its scriptJobs
+    are not enough: an import changes the selection MIDWAY, and the refresh
+    they queue can run then and show a half-attached weapon's grip (measured
+    live 2026-09-30, the left column read zeros under a mirrored grip)."""
+    panel = _inventory()
+    if panel is not None:
+        panel.refresh()
+
+
 # --------------------------------------------------------------- callbacks
 
 def _run(action, status=_STATUS):
@@ -668,7 +678,9 @@ def add_weapon():
     if front is None:
         return
     root, _weapon = front
-    _status(equip.to_hand(root, key, chosen_weapon()))
+    text = equip.to_hand(root, key, chosen_weapon())
+    _refresh_inventory()
+    _status(text)
 
 
 def remove_weapon():
@@ -684,7 +696,9 @@ def remove_weapon():
     if front is None:
         return
     root, _weapon = front
-    _status(equip.take_off(root, key))
+    text = equip.take_off(root, key)
+    _refresh_inventory()
+    _status(text)
 
 
 # Connect Arms To Weapon, Disconnect Arms, Add Aim and Camera Setup left
