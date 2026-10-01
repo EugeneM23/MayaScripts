@@ -61,7 +61,25 @@ def character_roots():
     delegates to it and stays the name every caller already uses.
     """
     return naming.find_skeleton_roots(
-        exclude_under=overrig.set_members(overrig.KNOT_SET))
+        exclude_under=list(overrig.set_members(overrig.KNOT_SET) or []) + armor_groups())
+
+
+# maya_scenesetup.armor.GROUP_MARKER, spelled here so this package imports nothing of
+# Scene Setup's (a test pins the two equal).
+ARMOR_GROUP_MARKER = "mayaArmorSpaces"
+
+
+def armor_groups():
+    """Every ArmorSpaces group (at world level, or under a rig's top group). A skeletal armor
+    piece (2026-10-01, the Tech Limb's shield) hangs its joints there, and its Root has no joint
+    parent -- without this it would count as one more character in the scene."""
+    found = []
+    for top in cmds.ls(assemblies=True, long=True) or []:
+        for node in [top] + (cmds.listRelatives(top, children=True, type="transform",
+                                                fullPath=True) or []):
+            if cmds.attributeQuery(ARMOR_GROUP_MARKER, node=node, exists=True):
+                found.append(node)
+    return found
 
 
 def sole_character():

@@ -38,10 +38,14 @@ RIM = QColor("#050302")
 
 
 def triangles(entry):
-    """Every triangle of the row's meshes, in the file's (= its bone's) space."""
+    """Every triangle of the row's meshes as they stand (a skeletal piece deformed in its pose),
+    in the file's (= its bone's) space."""
     cmds.file(new=True, force=True)
-    mel.eval("FBXResetImport; FBXImportMode -v add;")
-    cmds.file(entry.path, i=True, type="FBX", ignoreVersion=True)
+    if entry.path.lower().endswith(".fbx"):
+        mel.eval("FBXResetImport; FBXImportMode -v add;")
+        cmds.file(entry.path, i=True, type="FBX", ignoreVersion=True)
+    else:
+        cmds.file(entry.path, i=True, type="mayaAscii", ignoreVersion=True)
     out = []
     for mesh in cmds.ls(type="mesh", noIntermediate=True, long=True) or []:
         fn = om.MFnMesh(om.MSelectionList().add(mesh).getDagPath(0))

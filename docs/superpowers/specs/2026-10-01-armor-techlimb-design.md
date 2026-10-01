@@ -152,3 +152,48 @@ QPainter, flat-shaded triangles in the hub's steel tone), 256 px with alpha.
   - the other two characters unmoved.
 - The card in a disposable GUI Maya: the tile clicked, Equip and Unequip pressed through Qt, a
   playblast of the plate on the forearm.
+
+## Addendum (the same evening): the SKELETAL shield, in Block Idle
+
+The animator, on the first build: «Щит в сцене одевается совсем не так как в игре ... мне казалось что в игре
+у нас есть скелет для щита а сейчас мы прокидываем только геометрию». Measured, and the root cause: the plate
+came from the production `BP_Techlimb` (`SM_Shield_Test`, centred on the elbow at the BP's offset). The shield the
+animator knows is the SKELETAL one.
+
+**What the skeletal shield is**:
+- `SKM_Techlimb_Shield`, its source `atone-art/Prototype/Meshes/Export/Techlimb_Shield.fbx`, 407 vertices.
+- The skeleton `SK_Techlimb_Shield`:
+  - `Root` (reference: local roll 90, the FBX import's turn);
+  - `Main` under it, carrying socket `EnergySieldSocked`;
+  - 36 `joint_on_vertex_NNN` rim joints under `Main`.
+- `BP_Techlimb_TestStartingRoster` (spawned by `DA_EquipmentItem_TechlimbTestStartingRoster`, equip socket
+  `lowerarm_l` too) puts it at IDENTITY on the actor root. `ABP_Shield` plays `AS_Techlimb_Shield_Block_In_1P` →
+  `_Block_Idle_1P` → `_Block_Out_1P` from the character's blocking state.
+- The three Block clips `force_root_lock` to the REF pose, so in the game `Root` stands on `lowerarm_l` whatever
+  its track holds: (17, 34, 138), a world position from the animator's scene. Only `Main` and the rim come from
+  the clip.
+- In Block Idle, `Main` is at (19.33, −7.84, 2.38) under `Root`, rotation (P 10.46, Y −172.45, R 78.68): about
+  21 cm down the forearm. Block_In opens the rim from `Main`'s centre; Block_Out folds it back.
+- The animator's own scenes agree. `Animations/Rigs/Weapons/Shield_rig.ma` is the shield rig (the same
+  skeleton). In `TechnoLimb/New/LongSword_technoLimb_Block_1P_03.ma` the shield's `Root` is constrained onto
+  `lowerarm_l` (translation 0.000 at every sampled frame).
+
+**Decided** (asked): the skeletal shield replaces the plate; it arrives in **Block Idle**. Exporting the shield's
+own clip, «делай как лучше», comes as the next step once Equip is right.
+
+**Changes**:
+- `export_techlimb_shield_from_unreal.py` exports `SKM_Techlimb_Shield` (skeleton, skin) and writes
+  `techlimb_shield_ue.json`:
+  - every bone's reference pose, local and component;
+  - the Block Idle clip's local transforms at t = 0;
+  - the game's Idle component pose: `Root` at its reference, the rest from the clip — the root lock.
+- `make_techlimb_shield_asset.py` builds `assets/Armor/Tech_Limb_Shield.ma`. A group stands for `lowerarm_l`'s
+  space: the shield's joints are posed in it as the game poses them, mapped through the measured axis maps
+  (Unreal component space = the bone's space → Maya `lowerarm_l` axes, the import's own conversion measured from
+  the bones). The skinned mesh stays bound where it was imported, its transform not inheriting, so it follows the
+  joints only.
+- `armor.equip` takes a piece with joints as a group of ours: the joints and the mesh in it; the mesh's
+  transform keeps `inheritsTransform` off, so the skin is not applied twice. The catalog row keeps its key and
+  slot; its file is the `.ma`. The plate's asset and scripts stay as the record (the row no longer reads them).
+- The proof is against Unreal: every shield joint at Block Idle where the game puts it on Manny's `lowerarm_l`;
+  the mesh at the reference pose on Unreal's FBX; Equip, retarget, export, Unequip as before.

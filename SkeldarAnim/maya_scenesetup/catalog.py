@@ -287,14 +287,17 @@ Armor = collections.namedtuple("Armor", "key label path bone slot texture",
                                defaults=("",))
 
 ARMOR = [
-    # Atone's Tech Limb (2026-10-01): the plate BP_Techlimb always shows on
-    # the left forearm (SM_Shield_Test, the animator's pick over the two
-    # skeletal shields), on DA_Techlimb's equip socket `lowerarm_l` -- no
-    # socket of that name on the Manny meshes, so the game snaps it onto the
-    # bone -- at the BP's offset and scale 1.176, baked into the points by
-    # docs/superpowers/plans/make_techlimb_asset.py (to 6e-6 cm of where
-    # Unreal puts it on the reference pose).
-    Armor("Tech_Limb", "Tech Limb", _asset_path("Armor/Tech_Limb.fbx"),
+    # Atone's Tech Limb (2026-10-01): the SKELETAL shield the game animates
+    # (SKM_Techlimb_Shield on SK_Techlimb_Shield: Root, Main, 36 rim joints;
+    # the evening's ask: «в игре у нас есть скелет для щита»), on the
+    # techlimb's equip socket `lowerarm_l` -- no socket of that name on the
+    # Manny meshes, so the game snaps the actor onto the bone, the shield at
+    # identity on it -- in the game's Block Idle (the clips force root lock:
+    # Root on the bone, Main 21 cm down the forearm), posed by
+    # docs/superpowers/plans/make_techlimb_shield_asset.py in a group standing
+    # for the bone's space. The morning's static plate (Tech_Limb.fbx) is
+    # retired.
+    Armor("Tech_Limb", "Tech Limb", _asset_path("Armor/Tech_Limb_Shield.ma"),
           "lowerarm_l", "left_forearm"),
 ]
 

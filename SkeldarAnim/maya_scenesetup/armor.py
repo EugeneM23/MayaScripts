@@ -16,6 +16,15 @@ never taken for an armor space and the other way round.
 
 Found by attribute and connection, never by name: a piece carries `mayaArmor` (its row's key) and
 `mayaArmorSlot`; a character's pieces are the ones whose space follows a bone of its skeleton.
+
+A piece may carry a SKELETON of its own (the evening of 2026-10-01, the Tech Limb's shield: «в игре у
+нас есть скелет для щита»): its `.ma` holds one group standing for the bone's space, the piece's joints
+posed in it and its skinned mesh not inheriting (the skin alone moves it). It is imported into a
+namespace of its own (`Tech_Limb`, `Tech_Limb1`, ...) -- the shield's `Root` would otherwise collide
+with the next one's, and a namespaced root is never taken for a character by the UE bridge -- and the
+whole group is the piece. Its joints have no joint parent, so `maya_overrig.active.character_roots`
+leaves everything under an ArmorSpaces group out of the skeletons in the scene. Unequip removes the
+namespace with whatever of the piece is left in it (its skin, its bind pose, its own material).
 """
 
 import maya.cmds as cmds
@@ -28,6 +37,7 @@ from maya_scenesetup import weaponspace
 
 MARKER = "mayaArmor"              # the row's key, on the piece
 SLOT = "mayaArmorSlot"            # the slot it occupies
+NAMESPACE = "mayaArmorNamespace"  # the namespace a skeletal piece was imported into
 SPACE_MARKER = "mayaArmorSpace"   # the space (the bone's UUID, for the record)
 GROUP_MARKER = "mayaArmorSpaces"
 GROUP_NAME = "ArmorSpaces"
@@ -145,18 +155,49 @@ def worn(root):
 
 def _take_off(node):
     space = (cmds.listRelatives(node, parent=True, fullPath=True) or [None])[0]
+    namespace = cmds.getAttr(node + "." + NAMESPACE) if _has(node, NAMESPACE) else ""
     cmds.delete(node)
     if space:
         weaponspace.prune_marked(space, SPACE_MARKER, GROUP_MARKER)
+    if namespace and cmds.namespace(exists=":" + namespace):
+        cmds.namespace(removeNamespace=":" + namespace, deleteNamespaceContent=True)
 
 
-def _hang(roots, entry, bone):
-    """What the import brought, as the piece in `bone`'s armor space: one mesh and that mesh IS
-    the piece (whatever wrapped it deleted), several kept in a group of ours. Marked, seated at
-    identity -- the model's points already stand at its place in the bone's axes."""
-    meshes = attach.mesh_transforms(roots)
+def has_skeleton(roots):
+    """Whether what an import brought holds joints (a skeletal piece)."""
+    for root in roots:
+        if cmds.objectType(root) == "joint" or cmds.listRelatives(
+                root, allDescendents=True, type="joint", fullPath=True):
+            return True
+    return False
+
+
+def _import(entry):
+    """(the transforms the import brought at world level, the namespace). An FBX through the
+    FBX mode guard (trap 33), plain names; a `.ma`/`.mb` into a namespace of its own."""
+    if entry.path.lower().endswith(".fbx"):
+        return attach.import_model(entry.path), ""
+    from maya_scenesetup import character
+    namespace = character.free_namespace(entry.key, character.existing_namespaces())
+    new = cmds.file(entry.path, i=True, type=character.scene_type(entry.path),
+                    returnNewNodes=True, ignoreVersion=True, namespace=namespace) or []
+    return attach.outermost(cmds.ls(new, long=True, type="transform") or []), namespace
+
+
+def _hang(roots, entry, bone, namespace=""):
+    """What the import brought, as the piece in `bone`'s armor space. A skeletal piece is its one
+    group (the bone's space, its joints posed in it); else one mesh IS the piece (whatever wrapped it
+    deleted), several kept in a group of ours. Marked, seated at identity -- the model already stands
+    at its place in the bone's axes."""
     space = weaponspace.ensure_marked_space(bone, SPACE_MARKER, GROUP_MARKER, GROUP_NAME, SUFFIX)
-    if len(meshes) == 1:
+    meshes = [] if has_skeleton(roots) else attach.mesh_transforms(roots)
+    if has_skeleton(roots):
+        if len(roots) != 1:
+            cmds.delete(roots)
+            raise RuntimeError("{0}: a skeletal piece is one group, the file brought {1}"
+                               .format(entry.path, len(roots)))
+        piece = cmds.ls(cmds.parent(roots[0], space)[0], long=True)[0]
+    elif len(meshes) == 1:
         piece = cmds.ls(cmds.parent(meshes[0], space)[0], long=True)[0]
         leftovers = [path for path in cmds.ls(roots, long=True) or []
                      if cmds.objExists(path) and path != piece]
@@ -170,6 +211,9 @@ def _hang(roots, entry, bone):
     cmds.setAttr(piece + "." + MARKER, entry.key, type="string")
     cmds.addAttr(piece, longName=SLOT, dataType="string")
     cmds.setAttr(piece + "." + SLOT, entry.slot, type="string")
+    if namespace:
+        cmds.addAttr(piece, longName=NAMESPACE, dataType="string")
+        cmds.setAttr(piece + "." + NAMESPACE, namespace, type="string")
     attach.seat(piece, 1.0)
     return piece
 
@@ -199,12 +243,12 @@ def equip(root, entry, rgb=None):
     texture = getattr(entry, "texture", "")
     if not texture and rgb is None:
         rgb = colouring.free_colour().rgb
-    roots = attach.import_model(entry.path)
+    roots, namespace = _import(entry)
     if not roots:
         raise RuntimeError("nothing came out of " + entry.path)
     from maya_scenesetup import character
     with character._unrecorded():
-        piece = _hang(roots, entry, bone)
+        piece = _hang(roots, entry, bone, namespace)
         if texture:
             colouring.paint_texture_nodes([piece], texture, entry.key)
             name = "its texture"

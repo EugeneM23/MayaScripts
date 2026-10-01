@@ -897,7 +897,7 @@ class ArmorTable(unittest.TestCase):
         for row in catalog.ARMOR:
             self.assertTrue(os.path.isfile(row.path), row.path)
             self.assertEqual(catalog.missing(row), "", row.key)
-            self.assertTrue(row.path.endswith(".fbx"), row.path)
+            self.assertTrue(row.path.endswith((".fbx", ".ma")), row.path)
 
     def test_the_model_lives_in_the_plugin(self):
         assets = os.path.join(os.path.dirname(os.path.dirname(

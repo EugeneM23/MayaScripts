@@ -126,3 +126,22 @@ class SelectionNamesTheCharacter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArmorJointsAreNoCharacter(unittest.TestCase):
+    """A skeletal piece's Root has no joint parent: the character-root query leaves every
+    ArmorSpaces group out, by the same marker Scene Setup writes."""
+
+    def test_the_marker_is_one(self):
+        from maya_overrig import active
+        self.assertEqual(active.ARMOR_GROUP_MARKER, armor.GROUP_MARKER)
+
+    def test_the_query_excludes_the_groups(self):
+        with open(os.path.join(PLUGIN, "maya_overrig", "active.py"), encoding="utf-8") as handle:
+            self.assertIn("+ armor_groups()", handle.read())
+
+    def test_a_skeletal_piece_records_its_namespace(self):
+        self.assertEqual(armor.NAMESPACE, "mayaArmorNamespace")
+        with open(os.path.join(PLUGIN, "maya_scenesetup", "armor.py"), encoding="utf-8") as handle:
+            source = handle.read()
+        self.assertIn("deleteNamespaceContent=True", source)
