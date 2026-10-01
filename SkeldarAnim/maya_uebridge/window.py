@@ -1,6 +1,16 @@
-"""The window: browse the editor's animations, search, import one onto the rig.
+"""The bridge's rows: browse the editor's animations, search, import onto a character.
 
 Pure `maya.cmds` - a scroll list and a text field need no Qt.
+
+Since 2026-10-01 the rows are part of the Characters card, under the
+portraits («UE bridge и character эти две вкладки имеют общий функционал ...
+их нужно объеденить в одно окно»): `build_rows` builds them into the card's
+column, they write the card's one status line, and the press's mode is the
+card's [Rig | Skeleton] times the Import row's [Onto selected | New]
+(`mode_for`) - the bridge's own Rig / New rig / Skeleton said the kind a
+second time. Skeleton x Onto selected is new: the clip onto a skeleton
+already in the scene (`skeletonimport.import_onto_existing`).
+Spec: docs/superpowers/specs/2026-10-01-characters-and-bridge-one-card-design.md
 
 One window since 2026-09-07 (the animator: «сделаем одно окно для всех
 действий, а не так как сейчас импорт и экспорт отдельно» and «уберем весь
@@ -42,11 +52,16 @@ from maya_uebridge import records
 from maya_uebridge import uelink
 from maya_uebridge import uescripts
 
-HUB_SECTION = "uebridge"        # our section of the SkeldarAnim hub
+#  2026-10-01 («UE bridge и character ... их нужно объеденить в одно окно»):
+#  the bridge's rows live in the Characters card, under the portraits, and
+#  write the card's one status line - `maya_scenesetup.window._CHARACTER_STATUS`,
+#  spelled here so this package imports nothing of Scene Setup's at load (a
+#  test pins the two equal).
+HUB_SECTION = "characters"      # the card of the SkeldarAnim hub we live in
 LIST_HEIGHT = 300               # the animation list, inside the hub's column
 _LIST = "ueAnimBridgeList"
 _SEARCH = "ueAnimBridgeSearch"
-_STATUS = "ueAnimBridgeStatus"
+_STATUS = "mayaSceneSetupCharacterStatus"
 _HEADER = "ueAnimBridgeHeader"
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
@@ -268,7 +283,7 @@ def refresh():
     _STATE["content_dir"] = payload.get("content_dir", "")
     save_cache(found, _STATE["project"], chosen, _STATE["content_dir"])
 
-    _header("connected")
+    _header(editor_line(True))
     # _repopulate writes the count itself, honouring whatever is in the search
     # box - overwriting it here would report the unfiltered total over a
     # filtered list.
@@ -279,58 +294,86 @@ def refresh():
             cmds.text(_STATUS, query=True, label=True), extra))
 
 
-MODES = ("rig", "new_rig", "skeleton")     # the segments, in order
+#  The press's internal modes: the Characters card's kind times the target.
+MODES = ("rig", "new_rig", "skeleton", "onto_skeleton")
+KINDS = ("rig", "skeleton")                 # the Characters card's switch
+TARGETS = ("onto", "new")                   # the Import row's two segments
 
-#  (mode, the segment's label, its tooltip) -- the three import targets.
-MODE_SEGMENTS = (
-    ("rig", "Rig",
-     "Retarget onto the rig: the SELECTED AdvancedSkeleton rig (any control "
-     "or bone), else the only one - added if the scene has none (the rig "
-     "active in Characters, else Manny); a rig already there keeps its "
-     "place and facing; the clip is "
-     "imported, retargeted and baked onto it (weapon and camera bones "
-     "carried, the camera set up), and the clip's skeleton is deleted."),
-    ("new_rig", "New rig",
-     "Onto a NEW rig: another rig - the one active in Characters, else Manny "
-     "- is added first and takes the clip; many rigs in one scene."),
-    ("skeleton", "Skeleton",
-     "As a new skeleton: the clip arrives as its own namespaced skeleton and "
-     "nothing else happens."),
+#  (target, the segment's label, its tooltip) -- since 2026-10-01 the card's
+#  [Rig | Skeleton] says WHAT a press makes, these two say WHERE it goes
+#  («Слить»: the bridge's old Rig / New rig / Skeleton said the kind twice).
+TARGET_SEGMENTS = (
+    ("onto", "Onto selected",
+     "Onto the selected character: with Rig picked in Characters the "
+     "SELECTED AdvancedSkeleton rig (any control, bone or mesh), else the "
+     "only one - a rig of the picked portrait is added when the scene has "
+     "none; with Skeleton picked the selected skeleton (a bone, its mesh, "
+     "its weapon), else the only one - the portrait's skeleton is added when "
+     "none stands. A character already there keeps its place and facing; "
+     "the clip is imported, put on it and baked (a rig: weapon and camera "
+     "bones carried, the camera set up), and the clip's skeleton is "
+     "deleted. Several picked: the first goes."),
+    ("new", "New",
+     "A NEW character of the picked portrait - its rig or its skeleton, as "
+     "Characters says - takes the clip; several picked stand in a square "
+     "about the scene's zero, one per animation."),
 )
 
 
-def mode_for(selected):
-    """The radio's 1-based row -> the import target. Pure; an unknown or
-    missing row means the default, the whole pipeline onto the rig."""
-    if selected in (2, 3):
-        return MODES[selected - 1]
-    return MODES[0]
+def mode_for(kind, target):
+    """The press's mode for the Characters card's `kind` and the Import
+    row's `target`. Pure; anything unknown means the default, the whole
+    pipeline onto the rig.
+
+        rig      x onto -> "rig"            the selected rig (or one added)
+        rig      x new  -> "new_rig"        a new rig of the portrait
+        skeleton x new  -> "skeleton"       a new skeleton of the portrait
+        skeleton x onto -> "onto_skeleton"  the selected skeleton (or one added)
+    """
+    if kind == "skeleton":
+        return "skeleton" if target == "new" else "onto_skeleton"
+    return "new_rig" if target == "new" else "rig"
+
+
+def target_button(target):
+    """The Import row's segment of `target` ("onto" / "new")."""
+    return "{0}_{1}".format(_MODE, target)
+
+
+def import_target():
+    """"onto" or "new", from the Import row's segments; "onto" when they are
+    not built (a headless session) or nothing is lit."""
+    if not cmds.iconTextRadioCollection(_MODE, exists=True):
+        return TARGETS[0]
+    chosen = (cmds.iconTextRadioCollection(_MODE, query=True, select=True)
+              or "").split("|")[-1]
+    for target in TARGETS:
+        if chosen == target_button(target):
+            return target
+    return TARGETS[0]
+
+
+def import_kind():
+    """"rig" or "skeleton": what the Characters card's [Rig | Skeleton] says
+    (its memory - the card need not be open), "rig" without Scene Setup."""
+    try:
+        from maya_scenesetup import window as scene_window
+        entry = scene_window.chosen_character()
+        kind = entry.kind if entry is not None else scene_window.remembered_choice()[1]
+    except Exception:                                        # noqa: BLE001
+        return KINDS[0]
+    return kind if kind in KINDS else KINDS[0]
 
 
 def import_mode():
-    """"rig" (the selected rig, else the only one, added if none), "new_rig"
-    (add another rig and retarget onto it) or "skeleton" (the clip as its own
-    namespaced skeleton and nothing more)."""
-    if not cmds.iconTextRadioCollection(_MODE, exists=True):
-        return MODES[0]
-    chosen = (cmds.iconTextRadioCollection(_MODE, query=True, select=True)
-              or "").split("|")[-1]
-    for index, mode in enumerate(MODES):
-        if chosen == mode_button(mode):
-            return mode_for(index + 1)
-    return MODES[0]
-
-
-def mode_button(mode):
-    """The segment of import mode `mode` (2026-09-28: segments in place of
-    the vertical radios, short labels, the long text as the tooltip)."""
-    return "{0}_{1}".format(_MODE, mode)
+    """The press's mode: `mode_for(import_kind(), import_target())`."""
+    return mode_for(import_kind(), import_target())
 
 
 def retarget_selected():
-    """True when IMPORT means the whole pipeline (the default, onto the rig
-    or onto a new one); False for "as a new skeleton"."""
-    return import_mode() != "skeleton"
+    """True when IMPORT retargets onto a rig (the selected one or a new
+    one); False when it puts the clip on a skeleton."""
+    return import_mode() in ("rig", "new_rig")
 
 
 def _export_from_editor(record):
@@ -357,6 +400,11 @@ def import_selected():
     случае мы работаем с конкретным ригом») and says so; New rig and
     Skeleton lay every one out in a square on world X and Z, symmetric about
     the scene's zero (`lineimport`).
+
+    Since the merge into the Characters card the mode is the card's kind
+    times the Import row's target (`mode_for`); Skeleton x Onto selected
+    puts the clip on the selected skeleton (`skeletonimport`), keeping its
+    place - else the only one, else a new one where the clip is.
     """
     chosen = _selected_records()
     if not chosen:
@@ -364,13 +412,18 @@ def import_selected():
         return
 
     mode = import_mode()
-    if len(chosen) > 1 and mode != "rig":
+    if len(chosen) > 1 and mode in ("new_rig", "skeleton"):
         from maya_uebridge import lineimport   # lazy: keeps the import graph flat
         _status(lineimport.run(chosen, _export_from_editor, mode,
                                set_timeline=_timeline()))
         return
     record = chosen[0]
     note = ""
+    if mode == "onto_skeleton":
+        from maya_uebridge import skeletonimport
+        _status(_onto_existing(record, None,
+                               skeletonimport.first_only([r.name for r in chosen])))
+        return
     if len(chosen) > 1:
         from maya_uebridge import lineimport
         note = lineimport.first_only([r.name for r in chosen])
@@ -436,8 +489,22 @@ def import_dropped(record, aim):
     kind = aim.get("kind")
     chosen = ([record] if hasattr(record, "name")
               else [r for r in (record or []) if r is not None])
-    if not chosen or kind not in ("rig", "new_rig", "skeleton"):
+    if not chosen or kind not in ("rig", "new_rig", "skeleton", "onto_skeleton"):
         text = aim.get("text") or "no target"
+        _status(text)
+        return text
+    if kind == "onto_skeleton":
+        # A skeleton under the cursor with Skeleton picked in Characters (the
+        # merge, 2026-10-01): it takes the first, keeping its place. Found
+        # again by UUID - it can have been deleted while the drag went on.
+        from maya_uebridge import skeletonimport
+        root = (cmds.ls(aim.get("uuid") or "", long=True) or [None])[0]
+        if root is None:
+            text = "the skeleton {0} is gone - nothing imported".format(
+                aim.get("label") or "")
+        else:
+            text = _onto_existing(chosen[0], root, skeletonimport.first_only(
+                [r.name for r in chosen]))
         _status(text)
         return text
     if kind in ("new_rig", "skeleton") and len(chosen) > 1:
@@ -489,6 +556,29 @@ def _onto_skeleton(record, point=None):
     exported, fps = _export_from_editor(record)
     return skeletonimport.import_onto_skeleton(
         exported, record.name, clip_fps=fps, set_timeline=_timeline(), at=point)
+
+
+def _onto_existing(record, root=None, note=""):
+    """One clip onto a skeleton already in the scene (Skeleton x Onto
+    selected, or a drop on it): `root`, else the one the selection names,
+    else the only one - and with none standing, a new skeleton of the
+    Characters card where the clip is (`_onto_skeleton`). Every refusal
+    comes before the editor is asked. Returns the status line, `note` (the
+    "only the first" of several) ahead of it."""
+    from maya_uebridge import skeletonimport   # lazy: keeps the import graph flat
+    if root is None:
+        root, refusal = skeletonimport.target_skeleton()
+        if refusal:
+            return refusal
+        if root is None:
+            return _with_note(_onto_skeleton(record), note)
+    refusal = skeletonimport.onto_refusal(root)
+    if refusal:
+        return refusal
+    exported, fps = _export_from_editor(record)
+    return _with_note(skeletonimport.import_onto_existing(
+        exported, record.name, root, clip_fps=fps, set_timeline=_timeline()),
+        note)
 
 
 def import_line(name, info):
@@ -546,31 +636,49 @@ def export_fbx_selected():
 # ---------------------------------------------------------------- window
 
 def is_open():
-    """True while our section is built in the hub (read by maya_hotkeys)."""
+    """True while the card we live in is built in the hub (read by
+    maya_hotkeys): its status line is ours too."""
     return bool(cmds.control(_STATUS, exists=True))
 
 
 def show_window():
-    """Open the SkeldarAnim hub on the UE Bridge section (see `maya_hub`)."""
+    """Open the SkeldarAnim hub on the Characters card, where the bridge
+    lives since 2026-10-01 (see `maya_hub`)."""
     import maya_hub
     return maya_hub.show(HUB_SECTION)
 
 
-def build_panel():
-    """The bridge's controls, built into whatever layout is current.
+def editor_line(connected, cached=0):
+    """The line above the editor dropdown: which state the bridge is in and,
+    on open, what the cache holds. Pure."""
+    if connected:
+        return "Unreal: connected"
+    if cached:
+        return ("Unreal: not connected - {0} animations from the last "
+                "refresh, press Refresh for the live list".format(cached))
+    return ("Unreal: not connected - press Refresh to read the animations "
+            "from the open editor")
+
+
+def build_rows():
+    """The bridge's rows, built into whatever layout is current - since
+    2026-10-01 the Characters card's column, under the portraits («UE bridge
+    и character ... объеденить в одно окно»). Returns nothing; the card owns
+    the status line the rows write (`_STATUS`).
 
     Rows in a column, not a formLayout: measured in the hub 2026-09-17, a
     formLayout inside an adjustable column reported a 1128 px minimum
     width whatever its children were told, and the whole panel grew a
     horizontal scrollbar with the buttons pushed off the right edge.
-    2026-09-28 (the skin): the import mode is three short segments (the
-    long explanation is their tooltip), Import the section's one primary
-    action, the two exports a row under it, the connection line the card's
-    subtitle.
+    2026-09-28 (the skin): the target is short segments (the long
+    explanation is their tooltip), Import the card's one primary action,
+    the two exports a row under it. The editor line is the card's CONTEXT
+    now - the character line is its subtitle.
     """
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", hubstyle.pick(0, 6)))
-
+    #  two lines tall: a wrapped label keeps the one-line height it was
+    #  given and clips the rest (measured in the hub, 2026-09-17).
+    hubstyle.mark(cmds.text(_HEADER, label=editor_line(False), align="left",
+                            wordWrap=True, height=36), "context")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "left", 4)])
     cmds.optionMenu(
@@ -584,8 +692,6 @@ def build_panel():
         command=lambda *_: _run(refresh, busy="asking the editor...")),
         "tool", "refresh")
     cmds.setParent("..")
-    hubstyle.mark(cmds.text(_HEADER, label="not connected", align="left",
-                            wordWrap=True), "subtitle")
 
     cmds.textField(_SEARCH, placeholderText="search name or folder",
                    textChangedCommand=lambda *_: _run(_repopulate))
@@ -593,38 +699,40 @@ def build_panel():
     cmds.textScrollList(
         _LIST, allowMultiSelection=True, font="fixedWidthFont",
         height=LIST_HEIGHT,
-        annotation="Double-click imports the way the mode says. Drag a row "
-                   "into a viewport: onto a rig it retargets there and the "
-                   "rig keeps its place, onto empty floor a new rig (the one "
-                   "active in Characters, else Manny) takes it and stands "
-                   "where you pointed. Ctrl/Shift pick several: Rig and a "
-                   "drop on a rig take the first; New rig, Skeleton and a "
+        annotation="Double-click imports the way Characters and the Import "
+                   "row say. Drag a row into a viewport: with Rig picked in "
+                   "Characters, onto a rig it retargets there and the rig "
+                   "keeps its place, onto empty floor a new rig of the picked "
+                   "portrait stands where you pointed; with Skeleton picked, "
+                   "onto a skeleton it goes on that skeleton (a rig is "
+                   "ignored), onto empty floor a new skeleton. Ctrl/Shift "
+                   "pick several: onto a character the first goes; New and a "
                    "drop on the floor lay them all out in a square - about "
                    "the scene's zero for the button, about the point for a "
-                   "drop. With Skeleton picked a drag places skeletons on "
-                   "the floor (a rig under the cursor is ignored).",
+                   "drop.",
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
                    columnAttach=[(1, "left", 0), (2, "both", 4)])
     cmds.text(label="Import", align="left")
-    segments = cmds.rowLayout(numberOfColumns=len(MODES),
+    segments = cmds.rowLayout(numberOfColumns=len(TARGETS),
                               columnAttach=[(i + 1, "both", 1)
-                                            for i in range(len(MODES))])
+                                            for i in range(len(TARGETS))])
     hubstyle.mark(segments, "segments", layout=True)
     cmds.iconTextRadioCollection(_MODE)
-    for mode, label, note in MODE_SEGMENTS:
+    for target, label, note in TARGET_SEGMENTS:
         hubstyle.mark(cmds.iconTextRadioButton(
-            mode_button(mode), style="textOnly", label=label, height=22,
-            select=mode == MODES[0], annotation=note), "segment")
+            target_button(target), style="textOnly", label=label, height=22,
+            select=target == TARGETS[0], annotation=note), "segment")
     cmds.setParent("..")
     cmds.setParent("..")
     cmds.checkBox(_TIMELINE, label="set timeline to clip range", value=True)
 
     hubstyle.mark(cmds.button(
         label="Import", height=32,
-        annotation="Import the selected animation the way the mode says",
+        annotation="Import the selected animation(s) from Unreal onto the "
+                   "character Characters and the Import row say",
         command=lambda *_: _run(import_selected,
                                 busy="exporting from the editor...")),
         "primary", "download")
@@ -648,10 +756,7 @@ def build_panel():
                                 busy="writing the uasset...")),
         "secondary")
     cmds.setParent("..")
-    #  two lines tall: a wrapped label keeps the one-line height it was
-    #  given and clips the rest (measured in the hub, 2026-09-17).
-    hubstyle.mark(cmds.text(_STATUS, label="", align="left", wordWrap=True,
-                            height=36), "status")
+
     cached, project, choice, content_dir = load_cache()
     _STATE["records"] = cached
     _STATE["project"] = project
@@ -662,17 +767,11 @@ def build_panel():
     # take a second to appear even with no editor about.
     if choice or project:
         fill_project_menu([choice or _project_label(project)])
-    _header("not connected")
-    shown = _repopulate()
-    if cached:
-        _status("{0} animations from the last refresh - press Refresh for the "
-                "live list".format(len(shown)))
-    else:
-        _status("press Refresh to read the animations from the open editor")
+    # Quiet: the card's line says the portrait's choice on open; the cache is
+    # the editor line's to say.
+    _repopulate(quiet=True)
+    _header(editor_line(False, len(cached)))
     _attach_drag()
-
-    cmds.setParent("..")
-    return column
 
 
 def _attach_drag():

@@ -7228,6 +7228,70 @@ works): the Shift road is the same code as Ctrl's.
      0.0000 against Manny on all six clips, 0.24 against other bodies. And a disposable Maya the animator
      minimized has no viewport to drop on: `Viewport.at` answers nothing (verify `_drag_rows` restores it).
 
+## Characters and the UE Bridge: one card (2026-10-01)
+
+The animator: «UE bridge и character эти две вкладки имеют общий функционал они добавляют персонажей в
+сцену и они зависят дргу от друга. Я думаю их нужно объеденить в одно окно давай попробуем». Asked (three
+mockups): **A** — who on top, what below; **the two switches merged**; **«Characters» the first card, the
+Scene group above Animation**; **Skeleton + Onto selected = onto the selected skeleton**. Then «Делай все
+до самого конца». Spec `docs/superpowers/specs/2026-10-01-characters-and-bridge-one-card-design.md`.
+
+- **The hub**: the `uebridge` section is gone; `characters` is the first row of `maya_hub.SECTIONS`, so the
+  groups read Scene (Characters, Weapons, Connections, Shared, Armor), Animation (Retarget, Graph Overlay,
+  Center of Mass), Look, Settings. `maya_hub.ALIASES = {"uebridge": "characters"}`: `section`, `show`,
+  `focus`, `expand` and `scroll_to` resolve it, so `maya_uebridge.show_window()` (its `HUB_SECTION` is
+  `"characters"`), the hotkey row `window.uebridge` and the flagged shelf button land on the card. The
+  `skeldarAnimHub_collapsed_uebridge` memory is left unread.
+- **The card** (`maya_scenesetup.window.build_characters_panel`), top down: the subtitle (the character),
+  `[Rig | Skeleton]`, the portraits, Add Character (**secondary** now) + Delete, Camera Setup, then
+  `maya_uebridge.window.build_rows()` (was `build_panel`; no column of its own) — the editor line
+  `ueAnimBridgeHeader` (role **context**, two lines tall: «Unreal: not connected - 619 animations from the
+  last refresh, press Refresh for the live list», `editor_line`), the editor dropdown + Refresh, search, the
+  list, `Import [Onto selected | New]`, the timeline box, **Import** (the card's one primary), the two
+  exports — and **one status line**, `mayaSceneSetupCharacterStatus`. The bridge's `_STATUS` IS that name
+  (a test pins the two equal); its old `ueAnimBridgeStatus` is gone. On open the line says the portrait's
+  choice (`_repopulate(quiet=True)`). A bridge that fails to build is a line of text, the rest of the card
+  stands (`_bridge_rows`).
+- **The modes**: `import_mode() = mode_for(import_kind(), import_target())` (pure table): the kind is the
+  card's memory (`chosen_character().kind`, else `remembered_choice()[1]`), the target the segments
+  `ueAnimBridgeMode_onto` / `_new` (not remembered, Onto selected lit on each build). Rig x Onto → `rig`,
+  Rig x New → `new_rig`, Skeleton x New → `skeleton` — the three old modes, unchanged inside — and
+  **Skeleton x Onto → `onto_skeleton`**, new. `MODE_SEGMENTS` and `mode_button` are gone.
+- **Onto a skeleton in the scene** (`skeletonimport`): `bare_roots` (character roots no rig owns);
+  `selection_names` (a joint → its topmost joint, a mesh → its skin's influences, a transform → the
+  skeleton under it, a weapon / armor piece → the bone its space follows, a rig node → that rig);
+  `choose_skeleton` (pure): one named; several → refused; a rig named and no skeleton → «Manny_Rig is a rig
+  - pick Rig in Characters, or select a skeleton»; nothing named → the only one, none → a new skeleton
+  where the clip is (the `skeleton` road), several → refused, named («Manny UE5 [skeleton] (root)»,
+  `skeleton_label`, from Delete's import record). `onto_refusal`: a bone under a constraint that is not our
+  weapon's (a camera on camera_root) refuses before the editor is asked. The press: its place read first
+  (`skeleton_place`: the root on the current frame and `rigimport.facing` — the flatter of +Z and −Y, so a
+  UE root under −90 X and Main both read 0 as their files stand), the clip imported, our weapon links
+  unlinked, the clip wrapped and turned/moved (`rigimport.move_wrapper`, `place_moves(..., facing_of)`),
+  `transfer` (which now cuts the time curves on the bones it drives first, or the constraint splices a
+  pairBlend over a previous take), the links relinked, the clip's skeleton deleted. Bones the clip has
+  nothing for keep what they had and are named. Several picked: the first (`skeletonimport.first_only`).
+- **The drag** reads the KIND at its start (`listdrag.Scene._read_kind` → `window.import_kind`): Rig as
+  before; Skeleton snapshots the bare skeletons (`droptarget.skeleton_snapshot`) and a skeleton under the
+  cursor is kind `onto_skeleton` («A_Jump · onto Manny UE5 [skeleton] (root)», found again by UUID at the
+  drop), else empty floor a new skeleton as before; a rig under the cursor is still ignored.
+
+Proof: `docs/superpowers/plans/verify_characters_card.py` — **13/13 in a disposable Maya** (port 7047,
+scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`, minimized, killed after; the editor's export replaced by UE clips
+on disk): the first card Characters, `show("uebridge")` opening and lighting it; the controls top down by
+their Qt positions, one status line; the content's minimum **504 ≤ 510** at the animator's dock; Import the
+one primary; both modules writing the one line; the four modes clicked through Qt; Rig x Onto onto a Manny
+rig moved to (−150, 80) and turned 45° — kept in place and facing; Skeleton x New exact (1.2e-13 cm);
+**Skeleton x Onto with the skeleton's MESH selected**, the skeleton at (100, −50) turned 90° with a Long
+Sword in its right hand — every bone, weapon_r included, on the clip moved by one rigid floor move to
+2.7e-4 cm / 2.4e-4°, its root at the first frame on (100, −50) facing 90, «kept in place at (100, -50) |
+weapon re-linked on weapon_r», the sword riding weapon_r at one grip over the take (5.6e-7); the two
+refusals with the editor never asked; a real press–drag–release onto a skeleton's pelvis (the ghost
+naming it) and that skeleton playing the clip in its place (7e-14 cm). Picture:
+`docs/superpowers/plans/characters_card.png`. 3506 unit tests. `verify_uebridge_many.py`,
+`verify_uebridge_drag.py` and `verify_hub_skin.py` still click `window.mode_button` / read
+`skin.cards["uebridge"]`: history, written for the bridge's own card.
+
 ## Center of Mass: a live point, a fast trail, the CoM tool (2026-10-01)
 
 The animator: «у нас должна быть какая-то точка к которой мы можем сделать motion trail … моушен треил

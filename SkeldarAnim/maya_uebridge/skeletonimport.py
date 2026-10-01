@@ -36,6 +36,9 @@ HELPERS = "ik_"           # helper bones a body of its own leaves at rest
 UE4_SPINE = {"spine_01": "spine_02", "spine_02": "spine_04", "spine_03": "spine_05"}
 NO_FILE = "no skeleton file - {0} is missing from assets/"
 SHOWN = 6                 # bone names a status line lists
+CHANNELS = ("translateX", "translateY", "translateZ",
+            "rotateX", "rotateY", "rotateZ")
+TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTU", "animCurveTT")
 
 
 # ------------------------------------------------------------------ pure
@@ -101,6 +104,51 @@ def drive_for(name, is_root, twin):
     return "orient"
 
 
+def choose_skeleton(named, rig_labels, bare, labels=None):
+    """(root, refusal) for the Skeleton x Onto selected press (2026-10-01).
+    Pure.
+
+    `named` are the bare skeleton roots the selection names (repeats
+    allowed), `rig_labels` the rigs it names, `bare` every bare skeleton in
+    the scene, `labels` {root: what a message calls it}. One named: it.
+    Several named: refused. A rig named and no skeleton: refused - the kind
+    says skeletons. Nothing named: the only skeleton; none at all: (None, "")
+    - a new skeleton is added; several: refused, named."""
+    labels = labels or {}
+
+    def name(root):
+        return labels.get(root) or root.split("|")[-1]
+
+    picked = list(dict.fromkeys(r for r in named or [] if r))
+    if len(picked) == 1:
+        return picked[0], ""
+    if picked:
+        return None, "{0} skeletons selected ({1}) - select one".format(
+            len(picked), ", ".join(name(r) for r in picked))
+    rigs = list(dict.fromkeys(rig_labels or []))
+    if rigs:
+        return None, ("{0} is a rig - pick Rig in Characters, or select a "
+                      "skeleton".format(", ".join(rigs)))
+    bare = list(bare or [])
+    if len(bare) == 1:
+        return bare[0], ""
+    if not bare:
+        return None, ""
+    return None, ("{0} skeletons in the scene ({1}) - select any bone or mesh "
+                  "of the one you mean".format(
+                      len(bare), ", ".join(name(r) for r in bare)))
+
+
+def first_only(names):
+    """The note when Onto selected (or a drop on a skeleton) was given
+    several: the skeleton takes the first. Pure; "" for one."""
+    names = list(names or [])
+    if len(names) < 2:
+        return ""
+    return "only {0}: a skeleton takes one animation ({1} more picked)".format(
+        names[0], len(names) - 1)
+
+
 def _names(names):
     names = list(names)
     shown = ", ".join(names[:SHOWN])
@@ -115,8 +163,9 @@ def result_line(name, label, top, result, info):
     span = ""
     if (info or {}).get("start") is not None:
         span = ", frames {0:g}-{1:g}".format(info["start"], info["end"])
-    parts = ["{0} onto {1} {2}: {3} bones {4}{5}".format(
-        name, label, top, result.get("moved", 0), how, span)]
+    who = " ".join(part for part in (label, top) if part)
+    parts = ["{0} onto {1}: {2} bones {3}{4}".format(
+        name, who, result.get("moved", 0), how, span)]
     if result.get("missing"):
         parts.append("not in the clip: " + _names(result["missing"]))
     if result.get("skipped"):
@@ -154,6 +203,184 @@ def _joints(root):
                                         type="joint", fullPath=True) or [])
 
 
+# -------------------------------------------- onto a skeleton in the scene
+
+def bare_roots():
+    """The skeletons in the scene that are no rig's: every character root
+    (OverRig's and the armor spaces' joints already left out) that is
+    neither under a rig's group nor the game skeleton a rig drives."""
+    import maya_rigs
+    from maya_overrig import builder
+    rigs = maya_rigs.rigs()
+    out = []
+    for root in builder.character_roots():
+        if any(rig.skeleton_root == root for rig in rigs):
+            continue
+        if any(rig.group and maya_rigs.under(root, rig.group) for rig in rigs):
+            continue
+        out.append(root)
+    return out
+
+
+def skeleton_label(root):
+    """What a message calls a skeleton: the catalog row its Add recorded and
+    its root («Manny UE5 [skeleton] (root)»), else its root."""
+    leaf_name = root.split("|")[-1]
+    try:
+        from maya_scenesetup import deletion
+        label = deletion.recorded(root)[1]
+    except Exception:                                        # noqa: BLE001
+        label = ""
+    return "{0} ({1})".format(label, leaf_name) if label else leaf_name
+
+
+def _top_joint(path):
+    """The topmost joint above (and including) the joint `path`."""
+    top, node = None, path
+    while node and cmds.objExists(node) and cmds.objectType(node) == "joint":
+        top = (cmds.ls(node, long=True) or [node])[0]
+        parent = cmds.listRelatives(node, parent=True, fullPath=True)
+        node = parent[0] if parent else None
+    return top
+
+
+def _skin_root(path):
+    """The skeleton a mesh (its transform or its shape) is skinned to, as
+    the topmost joint of its first influence, or None."""
+    shapes = [path] if cmds.objectType(path) == "mesh" else (
+        cmds.listRelatives(path, shapes=True, type="mesh", fullPath=True) or [])
+    for shape in shapes:
+        for skin in cmds.ls(cmds.listHistory(shape) or [], type="skinCluster") or []:
+            for joint in cmds.skinCluster(skin, query=True, influence=True) or []:
+                return _top_joint(joint)
+    return None
+
+
+def selection_names(selection, bare, rigs):
+    """(the bare roots the selection names, the rigs it names): a joint by
+    its topmost joint, a mesh by the skeleton it is skinned to, a transform
+    by the skeleton under it (the Creep's Armature), a weapon or armor piece
+    by the bone its space follows; a rig's node by that rig."""
+    import maya_rigs
+    from maya_scenesetup import armor, weaponspace
+    named, rig_labels = [], []
+    for path in selection or []:
+        if not cmds.objExists(path):
+            continue
+        path = weaponspace.hand_for(path) or armor.bone_for(path) or path
+        rig = maya_rigs.rig_of(path, rigs)
+        if rig is not None:
+            rig_labels.append(maya_rigs.label(rig))
+            continue
+        if cmds.objectType(path) == "joint":
+            root = _top_joint(path)
+        else:
+            root = _skin_root(path) or next(
+                (r for r in bare if maya_rigs.under(r, path)), None)
+        if root in bare:
+            named.append(root)
+    return named, rig_labels
+
+
+def target_skeleton():
+    """(root, refusal): the skeleton Skeleton x Onto selected puts the clip
+    on - `choose_skeleton` over the scene. (None, "") means none stands:
+    the press adds the Characters card's skeleton."""
+    import maya_rigs
+    rigs = maya_rigs.rigs()
+    bare = bare_roots()
+    named, rig_labels = selection_names(
+        cmds.ls(selection=True, long=True) or [], bare, rigs)
+    labels = dict((root, skeleton_label(root)) for root in bare)
+    return choose_skeleton(named, rig_labels, bare, labels)
+
+
+def _links(root):
+    """[(bone, weapon)] our weapon tool drives on the skeleton; [] without it."""
+    try:
+        from maya_scenesetup import bonedrive
+    except ImportError:
+        return []
+    return bonedrive.find_links(_joints(root))
+
+
+def onto_refusal(root):
+    """The refusal before the editor is asked, or "": a bone of the skeleton
+    under a constraint that is not our weapon's (a camera on camera_root, a
+    rig of somebody's) - the transfer would fight it."""
+    from maya_uebridge import animimport
+    joints = _joints(root)
+    foreign = animimport.foreign_constrained(
+        animimport.constrained_joints(joints), [bone for bone, _w in _links(root)])
+    if not foreign:
+        return ""
+    return ("{0}: {1} bone(s) under a constraint that is not ours (e.g. {2}) - "
+            "remove it first (a camera: press Camera Setup again)".format(
+                skeleton_label(root), len(foreign),
+                ", ".join(leaf(j) for j in foreign[:3])))
+
+
+def skeleton_place(root):
+    """Where the skeleton stands now: its root on the current frame, as
+    {"point", "yaw", "kept"}. Read before anything moves."""
+    matrix = cmds.xform(root, query=True, worldSpace=True, matrix=True)
+    return {"point": (matrix[12], matrix[13], matrix[14]),
+            "yaw": rigimport.facing(matrix), "kept": True}
+
+
+def onto_existing(root, namespace, info, source, name, place):
+    """(line, failure): the imported clip transferred onto the skeleton
+    `root` already in the scene, which keeps `place` - the clip wrapped,
+    turned about its root's first frame and moved there, as a rig keeps its
+    place. Our weapon links are released around it and relinked after (the
+    old merge's rule). A clip with no bone in common keeps its skeleton and
+    is the failure."""
+    from maya_scenesetup import bonedrive
+    start, end = info.get("start"), info.get("end")
+    if start is None:
+        return "", "{0} carries no keys - nothing to transfer".format(name)
+    links = _links(root)
+    for bone, _weapon in links:
+        bonedrive.unlink(bone)
+    relinked = []
+    try:
+        shift, source = rigimport._wrap(source, namespace)
+        clip_start = cmds.getAttr(source + ".worldMatrix[0]", time=start)
+        placed = rigimport.move_wrapper(shift, place, clip_start,
+                                        rigimport.facing)
+        result = transfer(source, root, start, end)
+    finally:
+        for bone, weapon in links:
+            if cmds.objExists(weapon) and cmds.objExists(bone):
+                bonedrive.relink(weapon, bone)
+                relinked.append(leaf(bone))
+    label = skeleton_label(root)
+    if not result["moved"]:
+        return "", "no bone of {0} matches {1} - its skeleton is kept as {2}".format(
+            name, label, namespace)
+    cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    line = result_line(name, label, "", result, info)
+    parts = [line, placed]
+    if relinked:
+        parts.append("weapon re-linked on " + ", ".join(relinked))
+    return "  |  ".join(parts), ""
+
+
+def import_onto_existing(fbx_path, name, root, clip_fps=None, set_timeline=True):
+    """One clip onto the skeleton `root` already in the scene (Skeleton x
+    Onto selected, or a drop on it). Its place is read before the import.
+    Returns the status line."""
+    root_uuid = cmds.ls(root, uuid=True)[0]
+    place = skeleton_place(root)
+    namespace, info, source = rigimport.import_source(fbx_path, name, clip_fps,
+                                                      set_timeline)
+    if source is None:
+        return rigimport.NO_JOINT.format(name, namespace)
+    root = cmds.ls(root_uuid, long=True)[0]
+    line, failure = onto_existing(root, namespace, info, source, name, place)
+    return failure or line
+
+
 def _length(path, frame=None):
     if frame is None:
         value = cmds.getAttr(path + ".translate")[0]
@@ -180,6 +407,21 @@ def new_skeleton(entry):
     return root, note
 
 
+def _cut_time_keys(node):
+    """Delete the time curves on `node`'s translate and rotate channels (never
+    a driven key's); how many went."""
+    curves = set()
+    for attr in CHANNELS:
+        for curve in (cmds.listConnections(node + "." + attr, source=True,
+                                           destination=False,
+                                           type="animCurve") or []):
+            if cmds.nodeType(curve) in TIME_CURVES:
+                curves.add(curve)
+    if curves:
+        cmds.delete(sorted(curves))
+    return len(curves)
+
+
 def transfer(source_root, target_root, start, end):
     """The clip under `source_root` onto the skeleton under `target_root`,
     baked over start..end: dict(twin, moved, skipped, missing)."""
@@ -200,6 +442,10 @@ def transfer(source_root, target_root, start, end):
         if mode is None:
             skipped.append(name)
             continue
+        # A skeleton already in the scene may carry a take: its keys go first,
+        # or the constraint splices a pairBlend in (trap 37's mechanism) - the
+        # bake below writes the new take. A fresh skeleton has none.
+        _cut_time_keys(dst)
         if mode == "parent":
             constraints += cmds.parentConstraint(src, dst, maintainOffset=False)
         else:
@@ -211,8 +457,7 @@ def transfer(source_root, target_root, start, end):
         cmds.bakeResults(driven, time=(start, end), simulation=True,
                          sampleBy=1, disableImplicitControl=True,
                          preserveOutsideKeys=False, sparseAnimCurveBake=False,
-                         attribute=["translateX", "translateY", "translateZ",
-                                    "rotateX", "rotateY", "rotateZ"])
+                         attribute=list(CHANNELS))
     existing = [c for c in constraints if cmds.objExists(c)]
     if existing:
         cmds.delete(existing)

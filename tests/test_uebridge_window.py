@@ -167,12 +167,10 @@ class NoPerforce(unittest.TestCase):
                      "_vcs_target", "checkout_selected", "ueBridgeVcs"):
             self.assertNotIn(name, src, name)
 
-    def test_the_three_buttons_and_two_modes(self):
+    def test_the_three_buttons_and_two_targets(self):
         src = self._source()
         for label in ('label="Export FBX..."', 'label="Export to uasset"',
-                      'label="Import"', '"Rig"', '"New rig"',
-                      '"Skeleton"', 'Retarget onto the rig', 'Onto a NEW rig',
-                      'As a new skeleton'):
+                      'label="Import"', '"Onto selected"', '"New"'):
             self.assertIn(label, src, label)
         self.assertTrue(callable(window.export_fbx_selected))
         self.assertTrue(callable(window.export_uasset_selected))
@@ -180,24 +178,68 @@ class NoPerforce(unittest.TestCase):
 
     def test_the_default_mode_is_the_retarget(self):
         """Without the widget (a headless session) IMPORT means the whole
-        pipeline -- the row the radio opens on."""
-        real = window.cmds
+        pipeline -- the target the segments open on, and the kind Rig."""
+        real, kind = window.cmds, window.import_kind
         window.cmds = types.SimpleNamespace(
             iconTextRadioCollection=lambda *a, **k: False)
+        window.import_kind = lambda: "rig"
         try:
+            self.assertEqual(window.import_target(), "onto")
             self.assertTrue(window.retarget_selected())
             self.assertEqual(window.import_mode(), "rig")
         finally:
+            window.cmds, window.import_kind = real, kind
+
+    def test_the_kind_times_the_target(self):
+        """2026-10-01, «Слить»: the Characters card's [Rig | Skeleton] says
+        what, the Import row's [Onto selected | New] says where."""
+        self.assertEqual(window.MODES, ("rig", "new_rig", "skeleton", "onto_skeleton"))
+        self.assertEqual(window.TARGETS, ("onto", "new"))
+        self.assertEqual(window.mode_for("rig", "onto"), "rig")
+        self.assertEqual(window.mode_for("rig", "new"), "new_rig")
+        self.assertEqual(window.mode_for("skeleton", "new"), "skeleton")
+        self.assertEqual(window.mode_for("skeleton", "onto"), "onto_skeleton")
+        self.assertEqual(window.mode_for(None, None), "rig")
+        self.assertEqual(window.mode_for("rig", "nonsense"), "rig")
+
+    def test_the_target_is_read_off_the_lit_segment(self):
+        real = window.cmds
+        lit = {"value": "hubBody|row|" + window.target_button("new")}
+        window.cmds = types.SimpleNamespace(
+            iconTextRadioCollection=lambda name, exists=False, query=False,
+            select=False: True if exists else lit["value"])
+        try:
+            self.assertEqual(window.import_target(), "new")
+            lit["value"] = ""
+            self.assertEqual(window.import_target(), "onto")
+        finally:
             window.cmds = real
 
-    def test_the_three_rows_are_the_three_targets(self):
-        """2026-09-08: «onto a NEW rig» is how many rigs arrive through
-        import; the skeleton row is the only one that is not a retarget."""
-        self.assertEqual(window.MODES, ("rig", "new_rig", "skeleton"))
-        self.assertEqual([window.mode_for(i) for i in (1, 2, 3)],
-                         ["rig", "new_rig", "skeleton"])
-        self.assertEqual(window.mode_for(0), "rig")
-        self.assertEqual(window.mode_for(None), "rig")
+    def test_the_kind_is_the_characters_card_s(self):
+        from maya_scenesetup import catalog
+        from maya_scenesetup import window as scene_window
+        saved = scene_window.chosen_character, scene_window.remembered_choice
+        try:
+            scene_window.chosen_character = lambda: catalog.default_character()
+            self.assertEqual(window.import_kind(), "skeleton")
+            scene_window.chosen_character = lambda: catalog.default_rig()
+            self.assertEqual(window.import_kind(), "rig")
+            #  a model without the kind (Orc D has no skeleton): the kind kept
+            scene_window.chosen_character = lambda: None
+            scene_window.remembered_choice = lambda: ("Orc_D", "skeleton")
+            self.assertEqual(window.import_kind(), "skeleton")
+        finally:
+            scene_window.chosen_character, scene_window.remembered_choice = saved
+
+    def test_retarget_selected_means_a_rig(self):
+        saved = window.import_mode
+        try:
+            for mode, wanted in (("rig", True), ("new_rig", True),
+                                 ("skeleton", False), ("onto_skeleton", False)):
+                window.import_mode = lambda m=mode: m
+                self.assertEqual(window.retarget_selected(), wanted, mode)
+        finally:
+            window.import_mode = saved
 
     def test_the_legacy_checkouts_popup_is_still_closed_on_open(self):
         self.assertIn("ueBridgeCheckouts", window.LEGACY_WINDOWS)
@@ -278,7 +320,7 @@ class ImportDropped(unittest.TestCase):
 
     def test_the_list_is_given_its_drag(self):
         import inspect
-        source = inspect.getsource(window.build_panel)
+        source = inspect.getsource(window.build_rows)
         self.assertIn("_attach_drag()", source)
         self.assertIn("listdrag.attach(_LIST", inspect.getsource(window._attach_drag))
 
@@ -451,6 +493,112 @@ class SeveralAnimations(unittest.TestCase):
     def test_export_to_uasset_refuses_several(self):
         window.export_uasset_selected()
         self.assertEqual(self.statuses, ["pick one animation to overwrite - 2 are picked"])
+
+
+class OntoASkeleton(unittest.TestCase):
+    """2026-10-01, the merge: Skeleton picked in Characters x Onto selected
+    puts the clip on a skeleton already in the scene - the selected one,
+    else the only one, else a new one; a drop on a skeleton does it too.
+    The editor and skeletonimport are faked."""
+
+    def setUp(self):
+        from maya_uebridge import skeletonimport
+        self.sk = skeletonimport
+        self.calls, self.statuses = [], []
+        self.picked = [1]
+        self.recs = [records.AnimRecord(n, "/Game/" + n, "", 0, 0.0, 30.0)
+                     for n in ("A_Jump", "A_Walk")]
+        self.uuids = {"UUID-ROOT1": "|root1"}
+        self.target = ("|root1", "")
+        self.refusal = ""
+        saved = dict(cmds=window.cmds, export=window._export_from_editor,
+                     status=window._status, mode=window.import_mode,
+                     filtered=window._STATE.get("filtered"),
+                     sk=(skeletonimport.target_skeleton, skeletonimport.onto_refusal,
+                         skeletonimport.import_onto_existing, skeletonimport.precheck,
+                         skeletonimport.import_onto_skeleton))
+
+        def restore():
+            window.cmds = saved["cmds"]
+            window._export_from_editor = saved["export"]
+            window._status = saved["status"]
+            window.import_mode = saved["mode"]
+            window._STATE["filtered"] = saved["filtered"]
+            (skeletonimport.target_skeleton, skeletonimport.onto_refusal,
+             skeletonimport.import_onto_existing, skeletonimport.precheck,
+             skeletonimport.import_onto_skeleton) = saved["sk"]
+        self.addCleanup(restore)
+        window._STATE["filtered"] = list(self.recs)
+        window.cmds = types.SimpleNamespace(
+            checkBox=lambda name, exists=False, query=False, value=False: False,
+            textScrollList=lambda name, query=False, selectIndexedItem=False: list(self.picked),
+            ls=lambda uuid, long=False: [self.uuids[uuid]] if uuid in self.uuids else [])
+        window.import_mode = lambda: "onto_skeleton"
+        window._export_from_editor = lambda record: (
+            self.calls.append(("export", record.name)) or ("C:/t/%s.fbx" % record.name, 30.0))
+        window._status = self.statuses.append
+        skeletonimport.target_skeleton = lambda: self.target
+        skeletonimport.onto_refusal = lambda root: (
+            self.calls.append(("check", root)) or self.refusal)
+        skeletonimport.import_onto_existing = (
+            lambda fbx, name, root, clip_fps=None, set_timeline=True: (
+                self.calls.append(("onto", fbx, name, root, clip_fps, set_timeline))
+                or "%s onto %s" % (name, root)))
+        skeletonimport.precheck = lambda entry=None: ""
+        skeletonimport.import_onto_skeleton = (
+            lambda fbx, name, clip_fps=None, set_timeline=True, at=None, entry=None: (
+                self.calls.append(("new", fbx, name, at)) or "%s onto a new skeleton" % name))
+
+    def test_onto_the_selected_skeleton(self):
+        window.import_selected()
+        self.assertEqual(self.calls, [
+            ("check", "|root1"), ("export", "A_Jump"),
+            ("onto", "C:/t/A_Jump.fbx", "A_Jump", "|root1", 30.0, True)])
+        self.assertEqual(self.statuses, ["A_Jump onto |root1"])
+
+    def test_several_picked_the_first_goes_and_the_note_leads(self):
+        self.picked = [1, 2]
+        window.import_selected()
+        self.assertEqual([c[0] for c in self.calls], ["check", "export", "onto"])
+        self.assertEqual(self.statuses, [
+            "only A_Jump: a skeleton takes one animation (1 more picked)  |  "
+            "A_Jump onto |root1"])
+
+    def test_a_refusal_comes_before_the_editor(self):
+        self.target = (None, "2 skeletons in the scene (root, root1) - select any "
+                             "bone or mesh of the one you mean")
+        window.import_selected()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.statuses, [self.target[1]])
+
+    def test_a_constrained_skeleton_refuses_before_the_editor(self):
+        self.refusal = "root1: 1 bone(s) under a constraint that is not ours"
+        window.import_selected()
+        self.assertEqual(self.calls, [("check", "|root1")])
+        self.assertEqual(self.statuses, [self.refusal])
+
+    def test_no_skeleton_in_the_scene_adds_one_where_the_clip_is(self):
+        self.target = (None, "")
+        window.import_selected()
+        self.assertEqual(self.calls, [("export", "A_Jump"),
+                                      ("new", "C:/t/A_Jump.fbx", "A_Jump", None)])
+        self.assertEqual(self.statuses, ["A_Jump onto a new skeleton"])
+
+    def test_a_drop_on_a_skeleton_goes_onto_it(self):
+        text = window.import_dropped(self.recs, dict(
+            kind="onto_skeleton", root="|root1", uuid="UUID-ROOT1", label="root1",
+            text="onto root1"))
+        self.assertEqual(self.calls, [
+            ("check", "|root1"), ("export", "A_Jump"),
+            ("onto", "C:/t/A_Jump.fbx", "A_Jump", "|root1", 30.0, True)])
+        self.assertEqual(text, "only A_Jump: a skeleton takes one animation "
+                               "(1 more picked)  |  A_Jump onto |root1")
+
+    def test_a_skeleton_gone_during_the_drag_imports_nothing(self):
+        text = window.import_dropped(self.recs[0], dict(
+            kind="onto_skeleton", uuid="GONE", label="root1"))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(text, "the skeleton root1 is gone - nothing imported")
 
 
 class ProjectLabel(unittest.TestCase):

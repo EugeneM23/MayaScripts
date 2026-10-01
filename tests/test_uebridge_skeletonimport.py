@@ -196,5 +196,82 @@ class Onto(unittest.TestCase):
         self.assertNotIn("delete_ns", [c[0] for c in self.calls])
 
 
+class ChooseSkeleton(unittest.TestCase):
+    """2026-10-01, the merge: Skeleton x Onto selected - which skeleton."""
+
+    BARE = ["|root", "|Armature|root"]
+    LABELS = {"|root": "Manny UE5 [skeleton] (root)",
+              "|Armature|root": "Creep [skeleton] (root)"}
+
+    def choose(self, named, rigs=(), bare=None):
+        return si.choose_skeleton(
+            named, list(rigs), self.BARE if bare is None else bare, self.LABELS)
+
+    def test_the_one_the_selection_names(self):
+        self.assertEqual(self.choose(["|Armature|root", "|Armature|root"]),
+                         ("|Armature|root", ""))
+
+    def test_two_named_is_no_answer(self):
+        root, refusal = self.choose(["|root", "|Armature|root"])
+        self.assertIsNone(root)
+        self.assertEqual(refusal, "2 skeletons selected (Manny UE5 [skeleton] (root), "
+                                  "Creep [skeleton] (root)) - select one")
+
+    def test_a_rig_named_says_pick_rig(self):
+        root, refusal = self.choose([], ["Manny_Rig"])
+        self.assertIsNone(root)
+        self.assertEqual(refusal, "Manny_Rig is a rig - pick Rig in Characters, or "
+                                  "select a skeleton")
+
+    def test_a_skeleton_named_beside_a_rig_wins(self):
+        self.assertEqual(self.choose(["|root"], ["Manny_Rig"]), ("|root", ""))
+
+    def test_nothing_named_the_only_one(self):
+        self.assertEqual(self.choose([], bare=["|root"]), ("|root", ""))
+
+    def test_nothing_named_none_standing_adds_one(self):
+        self.assertEqual(self.choose([], bare=[]), (None, ""))
+
+    def test_nothing_named_several_standing_names_them(self):
+        root, refusal = self.choose([])
+        self.assertIsNone(root)
+        self.assertIn("2 skeletons in the scene (Manny UE5 [skeleton] (root), "
+                      "Creep [skeleton] (root))", refusal)
+
+    def test_the_first_only_note(self):
+        self.assertEqual(si.first_only(["A"]), "")
+        self.assertEqual(si.first_only(["A", "B", "C"]),
+                         "only A: a skeleton takes one animation (2 more picked)")
+
+
+class Facing(unittest.TestCase):
+    """The yaw a skeleton's root faces: its -Y under the -90 X turn."""
+
+    @staticmethod
+    def matrix(yaw, ue_root):
+        import math
+        c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+        if ue_root:      # Rx(-90) then Ry(yaw), row vectors
+            x, y, z = (c, 0.0, -s), (-s, 0.0, -c), (0.0, 1.0, 0.0)
+        else:            # Ry(yaw)
+            x, y, z = (c, 0.0, -s), (0.0, 1.0, 0.0), (s, 0.0, c)
+        return list(x) + [0.0] + list(y) + [0.0] + list(z) + [0.0, 1.0, 2.0, 3.0, 1.0]
+
+    def test_a_ue_root_and_main_read_alike(self):
+        from maya_uebridge import rigimport
+        for yaw in (0.0, 30.0, 90.0, -120.0, 179.0):
+            self.assertAlmostEqual(rigimport.facing(self.matrix(yaw, True)), yaw, 6)
+            self.assertAlmostEqual(rigimport.facing(self.matrix(yaw, False)), yaw, 6)
+            self.assertAlmostEqual(rigimport.heading(self.matrix(yaw, False)), yaw, 6)
+
+    def test_place_moves_turns_by_the_facing_it_is_given(self):
+        from maya_uebridge import rigimport
+        pivot, turn, move = rigimport.place_moves(
+            (100.0, 0.0, -50.0), 90.0, self.matrix(30.0, True), rigimport.facing)
+        self.assertEqual(pivot, (1.0, 2.0, 3.0))
+        self.assertAlmostEqual(turn, 60.0, 6)
+        self.assertEqual(move, (99.0, 0.0, -53.0))
+
+
 if __name__ == "__main__":
     unittest.main()

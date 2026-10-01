@@ -21,8 +21,10 @@ Several rows the same day («выделить массив анимаций ... 
 (`carried_rows`), and the list keeps them picked; onto a rig the first goes,
 onto the floor every one gets a new rig, in a square on the world's axes
 about the point (`window.import_dropped` -> `lineimport`). The ghost says
-which. With the Skeleton mode picked (read when the drag starts) a release
-over a viewport places skeletons on the floor point instead, rigs ignored
+which. With Skeleton picked in Characters (read when the drag starts; the
+UE Bridge's Skeleton mode before the two cards merged, 2026-10-01) a release
+on a skeleton puts the clip on it, keeping its place, and anywhere else over
+a viewport places skeletons on the floor point, rigs ignored
 (`droptarget.skeleton_target`).
 
 Maya's textScrollList IS a QListWidget: an event filter on it and its
@@ -46,7 +48,7 @@ THROTTLE_MS = 33        # the caption is re-read at most this often
 DOT = "·"
 OFF_HUB = "release off the hub to import"
 CANCELLED = "cancelled"
-DROPS = ("rig", "new_rig", "skeleton")      # the aims a release acts on
+DROPS = ("rig", "new_rig", "skeleton", "onto_skeleton")   # the aims a release acts on
 
 #  The drags standing, by the list they are attached to.
 _DRAGS = {}
@@ -61,12 +63,14 @@ def _last_line(error_text):
 def caption(names, aim):
     """(text, good): what the ghost says over `aim` for the clip(s) `names`
     (one name or a list). Several onto a rig: the first goes, and says so;
-    several onto the floor: a square of new rigs. Pure."""
+    several onto the floor: a square of new rigs. A skeleton under the cursor
+    (kind "onto_skeleton", Skeleton picked in Characters) reads as a rig
+    does. Pure."""
     names = [names] if isinstance(names, str) else list(names or [])
     aim = aim or {}
     kind = aim.get("kind")
     first = names[0] if names else ""
-    if kind == "rig":
+    if kind in ("rig", "onto_skeleton"):
         text = "%s %s %s" % (first, DOT, aim.get("text", ""))
         if len(names) > 1:
             text += " %s first of %d" % (DOT, len(names))
@@ -136,33 +140,38 @@ class Scene(object):
         except Exception:                                    # noqa: BLE001
             return 1.0
 
-    def _read_mode(self):
+    def _read_kind(self):
+        """The Characters card's [Rig | Skeleton]: what a drop makes (since
+        the merge, 2026-10-01; the Skeleton mode before it)."""
         try:
             from maya_uebridge import window
-            return window.import_mode()
+            return window.import_kind()
         except Exception:                                    # noqa: BLE001
             return "rig"
 
     def snapshot(self):
-        """What a drag needs, read once when it starts: the import mode
-        (the Skeleton mode places skeletons, 2026-10-01), the rig a floor
-        drop adds, every rig's bones."""
+        """What a drag needs, read once when it starts: the kind (Skeleton
+        puts the clip on skeletons, 2026-10-01), the character a floor drop
+        adds, and the bones of every rig - or, for Skeleton, of every bare
+        skeleton."""
         from maya_scenesetup import droptarget
         from maya_uebridge import rigimport, skeletonimport
-        self._mode = self._read_mode()
+        self._kind = self._read_kind()
         self._new_label = rigimport.new_rig_entry().label
         self._skeleton_label = skeletonimport.skeleton_entry().label
+        if self._kind == "skeleton":
+            return droptarget.skeleton_snapshot()
         return droptarget.rig_snapshot()
 
     def target(self, gx, gy, snap):
         from maya_scenesetup import droptarget
-        mode = getattr(self, "_mode", None) or self._read_mode()
-        if mode == "skeleton":
+        kind = getattr(self, "_kind", None) or self._read_kind()
+        if kind == "skeleton":
             label = getattr(self, "_skeleton_label", None)
             if label is None:
                 from maya_uebridge import skeletonimport
                 label = self._skeleton_label = skeletonimport.skeleton_entry().label
-            return droptarget.skeleton_target(gx, gy, label)
+            return droptarget.skeleton_target(gx, gy, label, snap, self.scale())
         label = getattr(self, "_new_label", None)
         if label is None:
             from maya_uebridge import rigimport

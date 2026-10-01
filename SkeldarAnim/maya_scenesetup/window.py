@@ -840,6 +840,23 @@ def _character_dropdown():
         cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
 
 
+def _bridge_rows():
+    """The UE Bridge's rows in the card (2026-10-01). A failure is a line of
+    text in their place and the rest of the card still builds - the hub's
+    own rule for a section whose builder raises."""
+    parent = cmds.setParent(query=True)
+    try:
+        from maya_uebridge import window as bridge
+        bridge.build_rows()
+    except Exception as error:                               # noqa: BLE001
+        traceback.print_exc()
+        if parent:
+            cmds.setParent(parent)
+        cmds.text(label="UE Bridge failed: {0}: {1}".format(
+            type(error).__name__, error), align="left", wordWrap=True,
+            height=36)
+
+
 def build_characters_panel():
     """The Characters section: which character, the portraits, Add Character.
 
@@ -849,6 +866,13 @@ def build_characters_panel():
     picks, Add Character imports, a portrait dragged into a viewport adds
     the character where it lands. No colour here: the Colour section paints.
     The character line is the card's subtitle (2026-09-28).
+
+    2026-10-01 («UE bridge и character ... их нужно объеденить в одно
+    окно»): the UE Bridge's rows follow, under Camera Setup
+    (`maya_uebridge.window.build_rows`) - the animation list, Import
+    [Onto selected | New], the exports - and the card has ONE status line,
+    which the bridge writes too. The [Rig | Skeleton] above says what Import
+    makes as well as what Add does; Import is the card's one primary.
     """
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", hubstyle.pick(0, 8)))
@@ -871,7 +895,7 @@ def build_characters_panel():
                    "stand it where it lands. As many as you like, each rig "
                    "in its own namespace; the Colour section repaints it.",
         command=lambda *_args: _run(add_character, _CHARACTER_STATUS)),
-        "primary", "plus")
+        "secondary", "plus")
     hubstyle.mark(cmds.button(
         label="Delete", height=32, width=hubstyle.pick(96, 80),
         annotation="Delete the characters the selection belongs to - select "
@@ -890,6 +914,7 @@ def build_characters_panel():
                    "second press bakes the bone back and removes the camera.",
         command=lambda *_args: _run(camera_setup, _CHARACTER_STATUS)),
         "secondary", "camera")
+    _bridge_rows()
     hubstyle.mark(cmds.text(_CHARACTER_STATUS, label="", align="left",
                             wordWrap=True, height=36), "status")
 

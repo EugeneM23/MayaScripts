@@ -372,6 +372,49 @@ class DragSeveral(unittest.TestCase):
         self.assertEqual(self.drops(), [("drop", ["A_Walk", "A_Run"], "rig")])
 
 
+class OntoASkeleton(unittest.TestCase):
+    """2026-10-01, the merge: the drag reads the Characters card's kind."""
+
+    def test_the_caption_reads_as_a_rig_s(self):
+        aim = dict(kind="onto_skeleton", text="onto Manny UE5 [skeleton] (root1)")
+        self.assertEqual(listdrag.caption("A_Jump", aim),
+                         ("A_Jump · onto Manny UE5 [skeleton] (root1)", True))
+        self.assertEqual(listdrag.caption(["A_Jump", "A_Walk"], aim)[0],
+                         "A_Jump · onto Manny UE5 [skeleton] (root1) · first of 2")
+        self.assertIn("onto_skeleton", listdrag.DROPS)
+
+    def test_the_scene_snapshots_skeletons_for_the_skeleton_kind(self):
+        import sys
+        import types
+        from maya_scenesetup import droptarget
+        from maya_uebridge import rigimport, skeletonimport, window
+        saved = (window.import_kind, droptarget.rig_snapshot,
+                 droptarget.skeleton_snapshot, droptarget.skeleton_target,
+                 rigimport.new_rig_entry, skeletonimport.skeleton_entry)
+        try:
+            entry = types.SimpleNamespace(label="Manny UE5 [skeleton]")
+            rigimport.new_rig_entry = lambda: types.SimpleNamespace(label="Manny [rig]")
+            skeletonimport.skeleton_entry = lambda: entry
+            droptarget.rig_snapshot = lambda: ["rigs"]
+            droptarget.skeleton_snapshot = lambda: ["skeletons"]
+            asked = []
+            droptarget.skeleton_target = lambda gx, gy, label, snap, scale: (
+                asked.append((label, snap, scale)) or {"kind": "skeleton"})
+            scene = listdrag.Scene()
+            scene.scale = lambda: 1.5
+            window.import_kind = lambda: "skeleton"
+            self.assertEqual(scene.snapshot(), ["skeletons"])
+            scene.target(1, 2, ["skeletons"])
+            self.assertEqual(asked, [("Manny UE5 [skeleton]", ["skeletons"], 1.5)])
+            window.import_kind = lambda: "rig"
+            self.assertEqual(scene.snapshot(), ["rigs"])
+        finally:
+            (window.import_kind, droptarget.rig_snapshot,
+             droptarget.skeleton_snapshot, droptarget.skeleton_target,
+             rigimport.new_rig_entry, skeletonimport.skeleton_entry) = saved
+        del sys
+
+
 class Boundary(unittest.TestCase):
 
     def test_the_module_imports_no_qt_or_maya_at_import(self):

@@ -232,6 +232,26 @@ class ClipTarget(unittest.TestCase):
         dt.Viewport.at = classmethod(lambda cls, gx, gy: (None, None))
         self.assertEqual(dt.skeleton_target(1, 2), dict(kind="none", text=dt.NO_VIEWPORT))
 
+    def _skeletons(self):
+        return [dict(key="|root1", uuid="U1", label="Manny UE5 [skeleton] (root1)",
+                     root=(100.0, 0.0, 50.0),
+                     points={"r": (100.0, 0.0, 50.0), "h": (100.0, 100.0, 50.0)},
+                     segments=[("r", "h")])]
+
+    def test_on_a_skeleton_with_skeleton_picked_onto_it(self):
+        """2026-10-01, the merge: Skeleton picked in Characters - a bare
+        skeleton under the cursor takes the clip, as a rig does for Rig."""
+        self.at((104.0, 60.0))
+        self.assertEqual(dt.skeleton_target(1, 2, "Creep [skeleton]", self._skeletons()),
+                         dict(kind="onto_skeleton", root="|root1", uuid="U1",
+                              label="Manny UE5 [skeleton] (root1)",
+                              text="onto Manny UE5 [skeleton] (root1)"))
+
+    def test_beside_every_skeleton_a_new_one_on_the_floor(self):
+        self.at((200.0, 60.0))
+        aim = dt.skeleton_target(1, 2, "Creep [skeleton]", self._skeletons())
+        self.assertEqual((aim["kind"], aim["point"]), ("skeleton", (200.0, 0.0, -60.0)))
+
     def test_an_empty_scene_is_a_new_rig(self):
         self.at((200.0, 60.0))
         self.assertEqual(dt.clip_target(1, 2, [])["kind"], "new_rig")

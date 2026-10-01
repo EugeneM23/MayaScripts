@@ -143,15 +143,31 @@ def heading(matrix):
     return math.degrees(math.atan2(matrix[8], matrix[10]))
 
 
-def place_moves(point, yaw, start_matrix):
+def facing(matrix):
+    """The yaw in degrees a node or a skeleton's root faces on the floor, from
+    its flat row-major world matrix. Pure.
+
+    Main faces its +Z; a UE root stands under the -90 X turn (its own
+    jointOrient, or the Creep's Armature), so its +Z points up and the way it
+    faces is its -Y. Whichever of the two lies flatter on the floor is the
+    one read, so both answer 0 standing as their files have them."""
+    z = (matrix[8], matrix[9], matrix[10])
+    if math.hypot(z[0], z[2]) >= abs(z[1]):
+        return math.degrees(math.atan2(z[0], z[2]))
+    return math.degrees(math.atan2(-matrix[4], -matrix[6]))
+
+
+def place_moves(point, yaw, start_matrix, facing_of=heading):
     """(pivot, turn, move) that stand a node - at the clip's first frame at
     `start_matrix` - on the floor `point` facing `yaw` (None: keep its own
     facing): turn the clip `turn` degrees about world Y around `pivot` (the
-    node's start), then move it horizontally by `move`. Pure."""
+    node's start), then move it horizontally by `move`. `facing_of` reads
+    the yaw of `start_matrix` (`heading` for a rig's Main, `facing` for a
+    skeleton's root). Pure."""
     pivot = (start_matrix[12], start_matrix[13], start_matrix[14])
     turn = 0.0
     if yaw is not None:
-        turn = (yaw - heading(start_matrix) + 180.0) % 360.0 - 180.0
+        turn = (yaw - facing_of(start_matrix) + 180.0) % 360.0 - 180.0
     return pivot, turn, shift_for(point, pivot)
 
 
@@ -213,8 +229,15 @@ def _place(group, rig, place, start):
     if start is not None:
         cmds.currentTime(start, update=True)
     matrix = cmds.xform(rig.main, query=True, worldSpace=True, matrix=True)
+    return move_wrapper(group, place, matrix)
+
+
+def move_wrapper(group, place, start_matrix, facing_of=heading):
+    """Turn the clip's wrapper about the node standing at `start_matrix` (at
+    the clip's first frame) onto `place`'s yaw, move it onto its point, and
+    say where it stands."""
     pivot, turn, (dx, dy, dz) = place_moves(place["point"], place.get("yaw"),
-                                            matrix)
+                                            start_matrix, facing_of)
     if abs(turn) > 1e-6:
         cmds.xform(group, worldSpace=True, pivots=pivot)
         cmds.setAttr(group + ".rotateY", turn)

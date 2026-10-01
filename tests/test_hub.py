@@ -80,21 +80,31 @@ class TheTable(unittest.TestCase):
         was (the same evening), so Animation is the first group. Weapons
         still follows Characters (its refresh writes the Characters
         header). The Graph Overlay joined Animation on 2026-09-30, Shared joined Scene the
-        same day, the Center of Mass Animation on 2026-10-01, Armor Scene the same day."""
+        same day, the Center of Mass Animation on 2026-10-01, Armor Scene the same day.
+        And the same evening the UE Bridge became part of Characters, the
+        first card - the Scene group above Animation («Characters самой
+        первой, Scene выше»)."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["UE Bridge", "Retarget", "Graph Overlay",
-                          "Center of Mass", "Characters", "Weapons", "Connections", "Shared",
-                          "Armor",
+                         ["Characters", "Weapons", "Connections", "Shared",
+                          "Armor", "Retarget", "Graph Overlay",
+                          "Center of Mass",
                           "Studio", "Colour", "Hotkeys", "Update"])
+
+    def test_the_ue_bridge_is_an_alias_of_characters(self):
+        """2026-10-01: no section of its own; its key opens the card it
+        lives in - the hotkey row, a flagged shelf button, an older verify."""
+        self.assertNotIn("uebridge", [s.key for s in hub.SECTIONS])
+        self.assertEqual(hub.ALIASES, {"uebridge": "characters"})
+        self.assertIs(hub.section("uebridge"), hub.section("characters"))
 
     def test_the_groups_and_their_icons(self):
         import maya_hubicons
         groups = [(s.key, s.group) for s in hub.SECTIONS]
         self.assertEqual(groups, [
-            ("uebridge", "animation"), ("retarget", "animation"),
-            ("graphoverlay", "animation"), ("com", "animation"),
             ("characters", "scene"), ("weapons", "scene"),
             ("connections", "scene"), ("shared", "scene"), ("armor", "scene"),
+            ("retarget", "animation"),
+            ("graphoverlay", "animation"), ("com", "animation"),
             ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
             ("update", "settings")])
@@ -113,13 +123,12 @@ class TheTable(unittest.TestCase):
         """Hotkeys is the header's keyboard; Update is a card again
         (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
-                         ["uebridge", "retarget", "graphoverlay", "com",
-                          "characters", "weapons", "connections", "shared", "armor",
+                         ["characters", "weapons", "connections", "shared", "armor",
+                          "retarget", "graphoverlay", "com",
                           "studio", "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
-            "uebridge": ("maya_uebridge.window", "build_panel"),
             "characters": ("maya_scenesetup.window", "build_characters_panel"),
             "weapons": ("maya_scenesetup.window", "build_weapons_panel"),
             "armor": ("maya_scenesetup.armorpanel", "build_panel"),
@@ -218,9 +227,9 @@ class Build(FakeToolsMixin, unittest.TestCase):
             self.assertFalse(self.fake.frames[sec.frame]["collapse"])
 
     def test_a_remembered_collapse_is_restored(self):
-        self.fake.optionvars[hub.OPTIONVAR.format("uebridge")] = 1
+        self.fake.optionvars[hub.OPTIONVAR.format("characters")] = 1
         hub.build()
-        self.assertTrue(self.fake.frames["skeldarHubFrameUebridge"]["collapse"])
+        self.assertTrue(self.fake.frames["skeldarHubFrameCharacters"]["collapse"])
         self.assertFalse(self.fake.frames["skeldarHubFrameColour"]["collapse"])
 
     def test_collapsing_and_expanding_write_the_memory(self):
@@ -260,7 +269,7 @@ class BuildWithABrokenTool(FakeToolsMixin, unittest.TestCase):
         """Weapons shares Characters' module and must still build."""
         hub.build()
         self.assertEqual(self.built("characters"), 0)
-        for key in ("uebridge", "weapons", "connections", "retarget",
+        for key in ("weapons", "connections", "retarget",
                     "hotkeys", "studio", "colour"):
             self.assertEqual(self.built(key), 1, key)
 
@@ -351,6 +360,14 @@ class Show(FakeToolsMixin, unittest.TestCase):
                                      hub.ROW_SPACING)
         self.assertEqual(scrolls[0][0], "up")
         self.assertEqual(scrolls[1], ("down", expected))
+
+    def test_the_ue_bridge_key_opens_the_characters_card(self):
+        self.fake.optionvars[hub.OPTIONVAR.format("characters")] = 1
+        hub.build()
+        hub.show("uebridge")
+        self.assertFalse(self.fake.frames["skeldarHubFrameCharacters"]["collapse"])
+        self.assertEqual(self.fake.optionvars[hub.OPTIONVAR.format("characters")], 0)
+        self.assertNotIn(hub.OPTIONVAR.format("uebridge"), self.fake.optionvars)
 
     def test_an_unknown_key_is_an_error(self):
         with self.assertRaises(KeyError):
@@ -495,10 +512,10 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
     def test_cards_under_group_labels_and_no_frames(self):
         hub.build()
         self.assertEqual(hub._SKIN.order, [
-            ("group", "animation"), ("card", "uebridge"), ("card", "retarget"),
-            ("card", "graphoverlay"), ("card", "com"),
             ("group", "scene"), ("card", "characters"), ("card", "weapons"),
-            ("card", "connections"), ("card", "shared"), ("card", "armor"), ("group", "look"),
+            ("card", "connections"), ("card", "shared"), ("card", "armor"),
+            ("group", "animation"), ("card", "retarget"),
+            ("card", "graphoverlay"), ("card", "com"), ("group", "look"),
             ("card", "studio"), ("card", "colour"), ("group", "settings"),
             ("card", "update")])
         self.assertEqual(self.fake.frames, {})
@@ -731,6 +748,16 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.fake.run_deferred()
         self.assertEqual(hub.scroll_to("studio"), 42)
         self.assertEqual(hub._SKIN.active, "studio")       # and lit
+
+    def test_the_ue_bridge_key_opens_and_lights_the_characters_card(self):
+        self.fake.optionvars[hub.OPTIONVAR.format("characters")] = 1
+        hub.build()
+        hub.show("uebridge")
+        self.assertFalse(hub._SKIN.cards["characters"].collapsed())
+        self.assertEqual(hub._SKIN.active, "characters")
+        hub.focus("uebridge")
+        self.assertEqual(hub._SKIN.active, "characters")
+        self.assertTrue(hub._SKIN.cards["studio"].collapsed())
 
     def test_expanding_a_header_section_is_quiet(self):
         """maya_hotkeys.show_window still asks for its key; in the skin the

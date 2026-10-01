@@ -39,8 +39,18 @@ class SceneSetup(unittest.TestCase):
         self.saved = (scenesetup.cmds, scenesetup.refresh,
                       scenesetup._attach_inventory, scenesetup._bound_root,
                       scenesetup._attach_grid)
+        self.saved_bridge = (uebridge.cmds, uebridge.load_cache,
+                             uebridge._repopulate, uebridge.fill_project_menu,
+                             uebridge._attach_drag)
         self.fake = FakeUiCmds()
         scenesetup.cmds = self.fake
+        #  the UE Bridge's rows are part of the Characters card (2026-10-01):
+        #  one fake records both modules, in the order the card builds them
+        uebridge.cmds = self.fake
+        uebridge.load_cache = lambda: ([], "", "", "")
+        uebridge._repopulate = lambda quiet=False: []
+        uebridge.fill_project_menu = lambda labels: None
+        uebridge._attach_drag = lambda: None
         #  The scene reads after the build are the module's own and not
         #  under test here; the portrait grid and the inventory are Qt's
         #  (test_chargrid, test_inventory).
@@ -62,6 +72,8 @@ class SceneSetup(unittest.TestCase):
     def tearDown(self):
         (scenesetup.cmds, scenesetup.refresh, scenesetup._attach_inventory,
          scenesetup._bound_root, scenesetup._attach_grid) = self.saved
+        (uebridge.cmds, uebridge.load_cache, uebridge._repopulate,
+         uebridge.fill_project_menu, uebridge._attach_drag) = self.saved_bridge
 
     def test_no_window_and_stretching_columns(self):
         self.assertEqual(self.fake.windows, {})
@@ -204,13 +216,63 @@ class SceneSetup(unittest.TestCase):
 
     def test_one_primary_action_per_section(self):
         roles = self._button_roles()
-        self.assertEqual(roles["Add Character"], ("primary", "plus"))
+        #  2026-10-01: the UE Bridge in the card - Import is its one primary,
+        #  Add Character an ordinary button beside Delete
+        self.assertEqual(roles["Add Character"], ("secondary", "plus"))
+        self.assertEqual(roles["Import"], ("primary", "download"))
         self.assertEqual(roles["Camera Setup"], ("secondary", "camera"))
         self.assertEqual(roles["Add"], ("primary", "plus"))
         self.assertEqual(roles["Remove Weapon"], ("danger", "trash"))
         primaries = [label for label, (role, _i) in roles.items()
                      if role == "primary"]
-        self.assertEqual(sorted(primaries), ["Add", "Add Character"])
+        self.assertEqual(sorted(primaries), ["Add", "Import"])
+
+    def test_the_bridge_rows_follow_camera_setup_and_the_card_has_one_line(self):
+        """2026-10-01 («UE bridge и character ... объеденить в одно окно»):
+        who on top, the animations under them, one status line last."""
+        index = self._created_index()
+        lists = [i for i, c in enumerate(self.fake.calls)
+                 if c[0] == "textScrollList" and c[1] == (uebridge._LIST,)
+                 and not c[2].get("edit") and not c[2].get("query")]
+        line = [i for i, c in enumerate(self.fake.calls) if c[0] == "text"
+                and c[1] == (scenesetup._CHARACTER_STATUS,) and not c[2].get("edit")]
+        self.assertEqual(len(lists), 1)
+        self.assertEqual(len(line), 1)
+        self.assertLess(index["Camera Setup"], lists[0])
+        self.assertLess(lists[0], index["Import"])
+        self.assertLess(index["Import"], line[0])
+        for name in (uebridge._LIST, uebridge._SEARCH, uebridge._HEADER,
+                     uebridge._TIMELINE, uebridge._PROJECT):
+            self.assertIn(name, self.after_characters, name)
+        statuses = [m.name for m in self.marks if m.role == "status"]
+        self.assertEqual(statuses, [scenesetup._CHARACTER_STATUS, scenesetup._STATUS])
+
+    def test_the_bridge_writes_the_card_s_line(self):
+        self.assertEqual(uebridge._STATUS, scenesetup._CHARACTER_STATUS)
+        self.assertEqual(uebridge.HUB_SECTION, scenesetup.HUB_SECTION)
+
+    def test_the_editor_line_is_context_the_character_line_the_subtitle(self):
+        marks = self._marks()
+        self.assertEqual(marks[uebridge._HEADER].role, "context")
+        subtitles = [m.name for m in self.marks if m.role == "subtitle"]
+        self.assertEqual(subtitles, [scenesetup._BOUND, scenesetup._WEAPONS_BOUND])
+
+    def test_a_broken_bridge_leaves_the_rest_of_the_card(self):
+        fake = FakeUiCmds()
+        scenesetup.cmds = fake
+        saved = uebridge.build_rows
+
+        def boom():
+            raise RuntimeError("no editor module")
+        uebridge.build_rows = boom
+        try:
+            scenesetup.build_characters_panel()
+        finally:
+            uebridge.build_rows = saved
+        texts = [c[2].get("label", "") for c in fake.calls if c[0] == "text"]
+        self.assertTrue(any("UE Bridge failed" in t and "no editor module" in t
+                            for t in texts))
+        self.assertIn(scenesetup._CHARACTER_STATUS, fake.children)
 
     def test_add_and_remove_share_a_row(self):
         index = self._created_index()
@@ -375,25 +437,39 @@ class Armor(unittest.TestCase):
 
 
 class UeBridge(unittest.TestCase):
+    """The bridge's rows (2026-10-01: built into the Characters card)."""
 
     def setUp(self):
         self.saved = (uebridge.cmds, uebridge.load_cache,
-                      uebridge._repopulate, uebridge.fill_project_menu)
+                      uebridge._repopulate, uebridge.fill_project_menu,
+                      uebridge._attach_drag)
         self.fake = FakeUiCmds()
         uebridge.cmds = self.fake
         uebridge.load_cache = lambda: ([], "", "", "")
-        uebridge._repopulate = lambda: []
+        self.quiet = []
+        uebridge._repopulate = lambda quiet=False: self.quiet.append(quiet) or []
         uebridge.fill_project_menu = lambda labels: None
+        uebridge._attach_drag = lambda: None
+        self.headers = []
+        self.saved_header = uebridge._header
+        uebridge._header = self.headers.append
         maya_hubstyle.take_marks()
-        self.form = uebridge.build_panel()
+        uebridge.build_rows()
         self.marks = maya_hubstyle.take_marks()
 
     def tearDown(self):
         (uebridge.cmds, uebridge.load_cache, uebridge._repopulate,
-         uebridge.fill_project_menu) = self.saved
+         uebridge.fill_project_menu, uebridge._attach_drag) = self.saved
+        uebridge._header = self.saved_header
 
-    def test_no_window(self):
+    def test_no_window_and_no_column_of_its_own(self):
         self.assertEqual(self.fake.windows, {})
+        self.assertFalse([c for c in self.fake.calls if c[0] == "columnLayout"])
+
+    def test_not_a_section_any_more(self):
+        self.assertFalse(hasattr(uebridge, "build_panel"))
+        self.assertFalse(hasattr(uebridge, "MODE_SEGMENTS"))
+        self.assertFalse(hasattr(uebridge, "mode_button"))
 
     def test_rows_not_a_form_and_the_list_has_a_height(self):
         """Measured 2026-09-17: a formLayout inside the hub's column
@@ -405,20 +481,20 @@ class UeBridge(unittest.TestCase):
                  and not c[2].get("edit") and not c[2].get("query")]
         self.assertEqual(lists[0][2].get("height"), uebridge.LIST_HEIGHT)
         self.assertGreaterEqual(uebridge.LIST_HEIGHT, 200)
+        self.assertTrue(lists[0][2].get("allowMultiSelection"))
 
-    def test_the_import_mode_is_three_short_segments(self):
-        """2026-09-28: the vertical radios (three long labels in a row
-        wanted 670 px) became Rig / New rig / Skeleton, the long text the
-        tooltip."""
+    def test_the_import_target_is_two_short_segments(self):
+        """2026-10-01, «Слить»: the card's [Rig | Skeleton] says what, these
+        two say where - Onto selected (lit on every build) and New."""
         self.assertFalse([c for c in self.fake.calls
                           if c[0] == "radioButtonGrp"])
         segments = [c for c in self.fake.calls if c[0] == "iconTextRadioButton"
                     and not c[2].get("edit")]
         self.assertEqual([c[2]["label"] for c in segments],
-                         ["Rig", "New rig", "Skeleton"])
+                         ["Onto selected", "New"])
         self.assertEqual([c[1][0] for c in segments],
-                         [uebridge.mode_button(m) for m in uebridge.MODES])
-        self.assertTrue(segments[0][2]["select"])
+                         [uebridge.target_button(t) for t in uebridge.TARGETS])
+        self.assertEqual([c[2]["select"] for c in segments], [True, False])
         for call in segments:
             self.assertGreater(len(call[2]["annotation"]), 40)
         marks = dict((m.name, m) for m in self.marks)
@@ -434,28 +510,40 @@ class UeBridge(unittest.TestCase):
         self.assertIn("Export FBX...", labels)
         self.assertIn("Export to uasset", labels)
 
-    def test_the_connection_line_is_the_card_s_subtitle(self):
+    def test_the_editor_line_is_context_and_the_rows_build_no_status(self):
         marks = dict((m.name, m) for m in self.marks)
-        self.assertEqual(marks[uebridge._HEADER].role, "subtitle")
-        self.assertEqual(marks[uebridge._STATUS].role, "status")
+        self.assertEqual(marks[uebridge._HEADER].role, "context")
+        self.assertFalse([m for m in self.marks if m.role in ("subtitle", "status")])
+        self.assertNotIn(uebridge._STATUS, self.fake.children)
+        header = [c for c in self.fake.calls if c[0] == "text"
+                  and c[1] == (uebridge._HEADER,) and not c[2].get("edit")]
+        self.assertTrue(header[0][2].get("wordWrap"))
+        self.assertEqual(header[0][2].get("height"), 36)
 
-    def test_the_status_line_wraps(self):
-        texts = [c for c in self.fake.calls
-                 if c[0] == "text" and c[1] == (uebridge._STATUS,)]
-        self.assertTrue(texts[0][2].get("wordWrap"))
+    def test_the_cache_is_the_editor_line_s_to_say_on_open(self):
+        self.assertEqual(self.quiet, [True])
+        self.assertEqual(self.headers, [uebridge.editor_line(False, 0)])
+
+    def test_the_editor_line(self):
+        self.assertEqual(uebridge.editor_line(True), "Unreal: connected")
+        self.assertIn("619 animations from the last refresh",
+                      uebridge.editor_line(False, 619))
+        self.assertIn("press Refresh to read", uebridge.editor_line(False, 0))
 
     def test_the_named_controls_exist(self):
-        for name in (uebridge._LIST, uebridge._SEARCH, uebridge._STATUS,
+        for name in (uebridge._LIST, uebridge._SEARCH,
                      uebridge._HEADER, uebridge._TIMELINE, uebridge._PROJECT):
             self.assertIn(name, self.fake.children, name)
-        #  the mode is a collection of segments now (2026-09-28)
         self.assertIn(("iconTextRadioCollection", (uebridge._MODE,), {}),
                       self.fake.calls)
+        #  open while the card's line stands
+        self.assertFalse(uebridge.is_open())
+        self.fake.children.append(uebridge._STATUS)
         self.assertTrue(uebridge.is_open())
 
-    def test_show_window_opens_the_hub_on_its_section(self):
+    def test_show_window_opens_the_characters_card(self):
         result, asked = _hub_asked(uebridge.show_window)
-        self.assertEqual((result, asked), ("hub", ["uebridge"]))
+        self.assertEqual((result, asked), ("hub", ["characters"]))
 
     def test_the_standalone_window_is_legacy_now(self):
         self.assertFalse(hasattr(uebridge, "WINDOW"))

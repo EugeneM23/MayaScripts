@@ -77,21 +77,12 @@ Section = collections.namedtuple("Section",
 # Characters header. UE Bridge on top, where it always was (2026-09-28,
 # the evening: «UE bridge давай передвинем наверх как он и был») - and a
 # group stays together, so Animation is the first group.
+#
+#  2026-10-01 («UE bridge и character ... их нужно объеденить в одно окно»):
+#  the UE Bridge is part of the Characters card, and that card is the first
+#  - the Scene group above Animation now (asked: «Characters самой первой,
+#  Scene выше»). Weapons still follows Characters.
 SECTIONS = (
-    Section("uebridge", "UE Bridge", "maya_uebridge.window",
-            "build_panel", "skeldarHubFrameUebridge",
-            "animation", "transfer-in"),
-    Section("retarget", "Retarget", "maya_rig_retarget",
-            "build_panel", "skeldarHubFrameRetarget",
-            "animation", "arrows-exchange"),
-    #  2026-09-30: Maya's own Graph Editor over the viewport, see-through.
-    Section("graphoverlay", "Graph Overlay", "maya_graphoverlay.mode",
-            "build_panel", "skeldarHubFrameGraphOverlay",
-            "animation", "chart-line"),
-    #  2026-10-01: the centre of mass - a live point, its trail, the CoM tool.
-    Section("com", "Center of Mass", "maya_com.panel",
-            "build_panel", "skeldarHubFrameCom",
-            "animation", "target"),
     Section("characters", "Characters", "maya_scenesetup.window",
             "build_characters_panel", "skeldarHubFrameCharacters",
             "scene", "user"),
@@ -111,6 +102,17 @@ SECTIONS = (
     Section("armor", "Armor", "maya_scenesetup.armorpanel",
             "build_panel", "skeldarHubFrameArmor",
             "scene", "shield"),
+    Section("retarget", "Retarget", "maya_rig_retarget",
+            "build_panel", "skeldarHubFrameRetarget",
+            "animation", "arrows-exchange"),
+    #  2026-09-30: Maya's own Graph Editor over the viewport, see-through.
+    Section("graphoverlay", "Graph Overlay", "maya_graphoverlay.mode",
+            "build_panel", "skeldarHubFrameGraphOverlay",
+            "animation", "chart-line"),
+    #  2026-10-01: the centre of mass - a live point, its trail, the CoM tool.
+    Section("com", "Center of Mass", "maya_com.panel",
+            "build_panel", "skeldarHubFrameCom",
+            "animation", "target"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),
@@ -134,12 +136,17 @@ HEADER_ONLY = ("hotkeys",)
 
 _BY_KEY = dict((s.key, s) for s in SECTIONS)
 
+#  Keys of sections that became part of another: `show("uebridge")` (the
+#  hotkey row, a flagged shelf button, an older uiScript or verify run)
+#  opens the card the section lives in now.
+ALIASES = {"uebridge": "characters"}
+
 
 # ------------------------------------------------------------------- pure
 
 def section(key):
-    """The Section for `key`, or None."""
-    return _BY_KEY.get(key)
+    """The Section for `key` (or for the card an alias names), or None."""
+    return _BY_KEY.get(ALIASES.get(key, key))
 
 
 def card_sections():
@@ -558,6 +565,7 @@ def focus(key):
     closed (2026-09-28: «при нажатии на верхнюю панель с разделами все другие
     панели должны закрыться и открыться только нужная»), remembered so, lit,
     scrolled to. Outside the skin it is `expand`."""
+    key = ALIASES.get(key, key)
     if not is_skinned():
         return expand(key)
     if key not in _SKIN.cards:
@@ -572,6 +580,7 @@ def focus(key):
 def expand(key):
     """Un-collapse section `key`, remember it open, scroll it into view. In
     the skin a header section (Hotkeys) has no card: nothing to do."""
+    key = ALIASES.get(key, key)
     sec = section(key)
     if sec is None:
         raise KeyError("no section '{0}'".format(key))
@@ -598,6 +607,7 @@ def scroll_to(key, animate=False):
     """Scroll so section `key` starts at the top -- in the skin gliding when
     `animate` (the animator's move; maya_hubqt.Skin.scroll_to). Best effort:
     a control that is not there any more just skips it."""
+    key = ALIASES.get(key, key)
     sec = section(key)
     try:
         if is_skinned():

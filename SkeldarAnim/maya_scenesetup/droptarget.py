@@ -361,18 +361,55 @@ def clip_target(gx, gy, snap, scale=1.0, new_label="Manny [rig]"):
     return dict(kind="rig", rig=key, label=label, text=rig_text(label))
 
 
-def skeleton_target(gx, gy, label="Manny UE5 [skeleton]"):
-    """Where an animation released at the global point stands in the UE
-    Bridge's Skeleton mode (2026-10-01, «если у нас выбран скелет то будем
-    располагать в сцене скелеты»): kind "skeleton" over a viewport - a rig
+def skeleton_text(label):
+    return "onto %s" % label
+
+
+def skeleton_snapshot():
+    """Every bare skeleton - no rig's - read once, in world space, for one
+    drag of an animation with Skeleton picked in Characters (2026-10-01, the
+    merge): dict(key=<root path>, uuid, label, points, segments, root)."""
+    import maya.cmds as cmds
+    from maya_uebridge import skeletonimport
+    out = []
+    for root in skeletonimport.bare_roots():
+        joints = [root] + (cmds.listRelatives(root, allDescendents=True,
+                                              type="joint", fullPath=True) or [])
+        points, segments = _bones(joints)
+        out.append(dict(key=root, uuid=(cmds.ls(root, uuid=True) or [""])[0],
+                        label=skeletonimport.skeleton_label(root),
+                        points=points, segments=segments, root=points[root]))
+    return out
+
+
+def skeleton_target(gx, gy, label="Manny UE5 [skeleton]", snap=None,
+                    scale=1.0):
+    """Where an animation released at the global point goes with Skeleton
+    picked (2026-10-01, «если у нас выбран скелет то будем располагать в
+    сцене скелеты»): kind "onto_skeleton" (root, uuid, label) when a bare
+    skeleton of `snap` is under the cursor - the Weapons rule, as a rig is
+    found for the Rig kind; else kind "skeleton" over a viewport - a rig
     under the cursor is ignored - with the floor point the camera ray meets
     as "point" (None looking above the horizon: where the clip is) and the
-    skeleton row's `label` (the Characters card's skeleton, addendum 3),
+    skeleton row's `label` (the Characters card's skeleton, addendum 3);
     and "none" off every viewport; with the caption as "text"."""
     view, local = Viewport.at(gx, gy)
     if view is None:
         return dict(kind="none", text=NO_VIEWPORT)
-    near, far = view.ray(view.to_port(local))
+    port = view.to_port(local)
+    if snap:
+        figures = []
+        for ch in snap:
+            pts = dict((j, view.project(p)) for j, p in ch["points"].items())
+            figures.append(Figure(ch["key"],
+                                  [(pts[a], pts[b]) for a, b in ch["segments"]],
+                                  {}, view.depth(ch["root"])))
+        key = figure_under(port, figures, 16.0 * scale * view.sx)
+        if key is not None:
+            ch = next(c for c in snap if c["key"] == key)
+            return dict(kind="onto_skeleton", root=key, uuid=ch.get("uuid", ""),
+                        label=ch["label"], text=skeleton_text(ch["label"]))
+    near, far = view.ray(port)
     hit = floor_hit(near, far)
     return dict(kind="skeleton", point=hit, label=label,
                 text=new_rig_text(label, hit))
