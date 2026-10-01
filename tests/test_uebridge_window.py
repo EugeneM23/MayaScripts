@@ -283,6 +283,125 @@ class ImportDropped(unittest.TestCase):
         self.assertIn("listdrag.attach(_LIST", inspect.getsource(window._attach_drag))
 
 
+class SeveralAnimations(unittest.TestCase):
+    """2026-10-01: several picked - the Rig mode (or a drop on a rig) takes the
+    first, New rig / Skeleton (or a floor drop) lay them all out in a line."""
+
+    Rig = collections.namedtuple("Rig", "namespace")
+
+    def setUp(self):
+        from maya_uebridge import lineimport, rigimport
+        self.calls = []
+        self.statuses = []
+        self.picked = [1, 3]
+        self.mode = "new_rig"
+        #  the list's own order (parse_payload would sort them by name)
+        self.recs = [records.AnimRecord(n, "/Game/" + n, "", 0, 0.0, 30.0)
+                     for n in ("A_Jump", "A_Walk", "A_Run")]
+        saved = dict(cmds=window.cmds, export=window._export_from_editor,
+                     status=window._status, mode=window.import_mode,
+                     filtered=window._STATE.get("filtered"),
+                     press=rigimport.import_and_retarget, run=lineimport.run,
+                     maya_rigs=sys.modules.get("maya_rigs"))
+
+        def restore():
+            window.cmds = saved["cmds"]
+            window._export_from_editor = saved["export"]
+            window._status = saved["status"]
+            window.import_mode = saved["mode"]
+            window._STATE["filtered"] = saved["filtered"]
+            rigimport.import_and_retarget = saved["press"]
+            lineimport.run = saved["run"]
+            if saved["maya_rigs"] is not None:
+                sys.modules["maya_rigs"] = saved["maya_rigs"]
+            else:
+                sys.modules.pop("maya_rigs", None)
+        self.addCleanup(restore)
+        window._STATE["filtered"] = list(self.recs)
+        window.cmds = types.SimpleNamespace(
+            checkBox=lambda name, exists=False, query=False, value=False: False,
+            textScrollList=lambda name, query=False, selectIndexedItem=False: list(self.picked))
+        window.import_mode = lambda: self.mode
+        window._export_from_editor = lambda record: (
+            self.calls.append(("export", record.name)) or ("C:/t/%s.fbx" % record.name, 30.0))
+        window._status = self.statuses.append
+
+        def press(fbx, name, clip_fps=None, set_timeline=True, target="rig", rig=None,
+                  at=None):
+            self.calls.append(("press", name, target, rig.namespace if rig else None, at))
+            return "%s retargeted" % name
+        rigimport.import_and_retarget = press
+
+        def run(chosen, export, target, centre=(0.0, 0.0, 0.0), axis=(1.0, 0.0, 0.0),
+                set_timeline=True, step=250.0):
+            self.calls.append(("line", [r.name for r in chosen], target, tuple(centre),
+                               tuple(axis), set_timeline, export is window._export_from_editor))
+            return "laid out"
+        lineimport.run = run
+        rigs = {"Manny_Rig1": self.Rig("Manny_Rig1")}
+        sys.modules["maya_rigs"] = types.SimpleNamespace(
+            find=lambda namespace: rigs.get(namespace), rigs=lambda: list(rigs.values()),
+            current_rig=lambda: (rigs["Manny_Rig1"], ""))
+
+    def test_the_picked_rows_in_list_order(self):
+        self.picked = [3, 1]
+        self.assertEqual([r.name for r in window._selected_records()], ["A_Jump", "A_Run"])
+        self.assertEqual(window._selected_record().name, "A_Jump")
+
+    def test_new_rig_lays_them_all_out_about_the_origin_along_x(self):
+        window.import_selected()
+        self.assertEqual(self.calls, [("line", ["A_Jump", "A_Run"], "new_rig",
+                                       (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), True, True)])
+        self.assertEqual(self.statuses, ["laid out"])
+
+    def test_skeleton_lays_them_all_out_too(self):
+        self.mode = "skeleton"
+        window.import_selected()
+        self.assertEqual(self.calls[0][:3], ("line", ["A_Jump", "A_Run"], "skeleton"))
+
+    def test_rig_takes_the_first_and_says_so(self):
+        self.mode = "rig"
+        window.import_selected()
+        self.assertEqual(self.calls, [("export", "A_Jump"),
+                                      ("press", "A_Jump", "rig", None, None)])
+        self.assertEqual(self.statuses, [
+            "A_Jump retargeted  |  only A_Jump: a rig takes one animation (1 more picked)"])
+
+    def test_one_picked_is_the_press_it_always_was(self):
+        self.picked = [2]
+        window.import_selected()
+        self.assertEqual(self.calls, [("export", "A_Walk"),
+                                      ("press", "A_Walk", "new_rig", None, None)])
+        self.assertEqual(self.statuses, ["A_Walk retargeted"])
+
+    def test_a_drop_of_several_on_a_rig_takes_the_first(self):
+        text = window.import_dropped(self.recs, dict(
+            kind="rig", rig="Manny_Rig1", label="Manny_Rig1", text="retarget onto Manny_Rig1"))
+        self.assertEqual(self.calls, [("export", "A_Jump"),
+                                      ("press", "A_Jump", "rig", "Manny_Rig1", None)])
+        self.assertEqual(text, "A_Jump retargeted  |  only A_Jump: a rig takes one "
+                               "animation (2 more picked)")
+
+    def test_a_floor_drop_of_several_lays_them_out_about_the_point_across_the_screen(self):
+        window.import_dropped(self.recs, dict(kind="new_rig", point=(120.0, 0.0, -36.0),
+                                              axis=(0.0, 0.0, -1.0), label="Manny [rig]"))
+        self.assertEqual(self.calls, [("line", ["A_Jump", "A_Walk", "A_Run"], "new_rig",
+                                       (120.0, 0.0, -36.0), (0.0, 0.0, -1.0), True, True)])
+
+    def test_a_floor_drop_that_saw_no_floor_centres_on_the_origin(self):
+        window.import_dropped(self.recs, dict(kind="new_rig", point=None,
+                                              axis=(0.0, 0.0, 1.0)))
+        self.assertEqual(self.calls[0][3:5], ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
+
+    def test_a_drop_of_one_in_a_list_is_the_old_drop(self):
+        window.import_dropped(self.recs[:1], dict(kind="new_rig", point=(5.0, 0.0, 6.0)))
+        self.assertEqual(self.calls[-1], ("press", "A_Jump", "new_rig", None, (5.0, 0.0, 6.0)))
+
+    def test_export_to_uasset_refuses_several(self):
+        window.export_uasset_selected()
+        self.assertEqual(self.statuses, ["pick one animation to overwrite - 2 are picked"])
+
+
 class ProjectLabel(unittest.TestCase):
 
     def test_shows_the_project_name_not_the_path(self):

@@ -11,7 +11,9 @@ the Checkout button and the version-control row are gone from the window;
 
 Since 2026-10-01 a row also DRAGS into a viewport (`listdrag`, Qt, attached
 lazily): onto a rig it is Import with the Rig mode onto THAT rig, onto empty
-floor Import with New rig (`import_dropped`).
+floor Import with New rig (`import_dropped`). And the list takes SEVERAL
+rows the same day: the Rig mode and a drop on a rig take the first; New
+rig, Skeleton and a floor drop lay them all out in a line (`lineimport`).
 
 IMPORT in the default mode is the whole pipeline (`rigimport`): the
 AdvancedSkeleton rig added if the scene has none, the clip imported as its
@@ -212,14 +214,22 @@ def _repopulate(quiet=False):
     return shown
 
 
-def _selected_record():
+def _selected_records():
+    """Every picked row's record, in list order (2026-10-01: the list takes a
+    multiple selection)."""
     indices = cmds.textScrollList(_LIST, query=True, selectIndexedItem=True) or []
-    if not indices:
-        return None
-    index = indices[0] - 1
-    if 0 <= index < len(_STATE["filtered"]):
-        return _STATE["filtered"][index]
-    return None
+    shown = _STATE["filtered"]
+    return [shown[i - 1] for i in sorted(indices) if 0 < i <= len(shown)]
+
+
+def _selected_record():
+    """The first picked record, or None."""
+    chosen = _selected_records()
+    return chosen[0] if chosen else None
+
+
+def _with_note(text, note):
+    return "{0}  |  {1}".format(text, note) if note else text
 
 
 # ---------------------------------------------------------------- actions
@@ -339,13 +349,29 @@ def import_selected():
     skeleton, retarget, bake, delete the source. "onto a NEW rig" adds
     another rig first. Otherwise: the clip as a new namespaced skeleton, and
     nothing more.
+
+    Several picked (2026-10-01): the Rig mode takes the first («в этом
+    случае мы работаем с конкретным ригом») and says so; New rig and
+    Skeleton lay every one out in a line along world X, symmetric about the
+    scene's zero (`lineimport`).
     """
-    record = _selected_record()
-    if record is None:
+    chosen = _selected_records()
+    if not chosen:
         _status("select an animation first")
         return
 
     mode = import_mode()
+    if len(chosen) > 1 and mode != "rig":
+        from maya_uebridge import lineimport   # lazy: keeps the import graph flat
+        _status(lineimport.run(chosen, _export_from_editor, mode,
+                               set_timeline=_timeline()))
+        return
+    record = chosen[0]
+    note = ""
+    if len(chosen) > 1:
+        from maya_uebridge import lineimport
+        note = lineimport.first_only([r.name for r in chosen])
+
     if mode != "skeleton":
         # Which rig is decided BEFORE the round trip to the editor: two rigs
         # and nothing selected is a refusal, and it should cost nothing.
@@ -361,9 +387,9 @@ def import_selected():
 
     if mode != "skeleton":
         from maya_uebridge import rigimport   # lazy: keeps the import graph flat
-        _status(rigimport.import_and_retarget(
+        _status(_with_note(rigimport.import_and_retarget(
             exported, record.name, clip_fps=fps, set_timeline=set_timeline,
-            target=mode))
+            target=mode), note))
         return
 
     namespace = records.namespace_for(record.name,
@@ -401,13 +427,33 @@ def import_dropped(record, aim):
     matter here; the timeline checkbox does. The rig is found again after
     nothing but the drop: it can have been deleted while the editor
     exported. Returns the status line.
+
+    `record` may be a list (2026-10-01, a drag of several picked rows): onto
+    a rig the first goes and the rest are named; onto the floor every one
+    gets a new rig, in a line across the screen (the aim's "axis") centred
+    on the point (`lineimport`) - on the origin when no floor was seen.
     """
     aim = aim or {}
     kind = aim.get("kind")
-    if record is None or kind not in ("rig", "new_rig"):
+    chosen = ([record] if hasattr(record, "name")
+              else [r for r in (record or []) if r is not None])
+    if not chosen or kind not in ("rig", "new_rig"):
         text = aim.get("text") or "no target"
         _status(text)
         return text
+    if kind == "new_rig" and len(chosen) > 1:
+        from maya_uebridge import lineimport   # lazy: keeps the import graph flat
+        text = lineimport.run(chosen, _export_from_editor, "new_rig",
+                              centre=aim.get("point") or (0.0, 0.0, 0.0),
+                              axis=aim.get("axis") or (1.0, 0.0, 0.0),
+                              set_timeline=_timeline())
+        _status(text)
+        return text
+    record = chosen[0]
+    note = ""
+    if len(chosen) > 1:
+        from maya_uebridge import lineimport
+        note = lineimport.first_only([r.name for r in chosen])
     rig = None
     if kind == "rig":
         import maya_rigs
@@ -419,10 +465,10 @@ def import_dropped(record, aim):
             return text
     exported, fps = _export_from_editor(record)
     from maya_uebridge import rigimport   # lazy: keeps the import graph flat
-    text = rigimport.import_and_retarget(
+    text = _with_note(rigimport.import_and_retarget(
         exported, record.name, clip_fps=fps, set_timeline=_timeline(),
         target=kind, rig=rig,
-        at=aim.get("point") if kind == "new_rig" else None)
+        at=aim.get("point") if kind == "new_rig" else None), note)
     _status(text)
     return text
 
@@ -452,9 +498,13 @@ def export_uasset_selected():
     inside `uassetexport`, which also owns the confirm dialog -- this is only
     the UI state it needs.
     """
+    chosen = _selected_records()
+    if len(chosen) > 1:
+        return _status("pick one animation to overwrite - {0} are picked"
+                       .format(len(chosen)))
     from maya_uebridge import uassetexport   # lazy: keeps the import graph flat
     return _status(uassetexport.export_to_uasset(
-        _selected_record(), _STATE.get("content_dir") or "",
+        chosen[0] if chosen else None, _STATE.get("content_dir") or "",
         project_choice(), temp_folder()))
 
 
@@ -523,13 +573,17 @@ def build_panel():
                    textChangedCommand=lambda *_: _run(_repopulate))
 
     cmds.textScrollList(
-        _LIST, allowMultiSelection=False, font="fixedWidthFont",
+        _LIST, allowMultiSelection=True, font="fixedWidthFont",
         height=LIST_HEIGHT,
         annotation="Double-click imports the way the mode says. Drag a row "
                    "into a viewport: onto a rig it retargets there and the "
                    "rig keeps its place, onto empty floor a new rig (the one "
                    "active in Characters, else Manny) takes it and stands "
-                   "where you pointed.",
+                   "where you pointed. Ctrl/Shift pick several: Rig and a "
+                   "drop on a rig take the first; New rig, Skeleton and a "
+                   "drop on the floor lay them all out in a line - about the "
+                   "scene's zero for the button, through the point across "
+                   "the screen for a drop.",
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 
