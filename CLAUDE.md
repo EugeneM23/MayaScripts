@@ -7206,3 +7206,61 @@ their queries faked) — the animator's hands are the proof of that.
      refills in background threads after every graph change and takes the cores (the same scene read 15
      and then 11 ms). A cost measured there needs the cache off, the best of several runs, and the
      precise A/B belongs in mayapy.
+
+## The hub's interface sounds: a tick on every button (2026-10-01)
+
+The animator: «Давай добавим звуковое сопровождение для нашего интерфейса. Давай для теста сделаем приятный
+звук когда срабатывает выделение какого-то эллемента ... я вожу мышкой по кнопочкам нашего меню и вот тут
+давай сделаем приятный и простой звук наводки на кнопочку». Asked: **every button of the hub** (not only the
+action buttons, not the grid tiles), **one sound, chosen by me**, the ⋮ menu only switching it. Spec
+`docs/superpowers/specs/2026-10-01-hub-hover-sound-design.md`, plan beside it.
+
+**Measured first**: Maya 2027 ships `PySide6.QtMultimedia` (backend `plugins/multimedia/windowsmediaplugin.dll`);
+a `QSoundEffect` on a WAV is `Ready` in 21 ms in mayapy (the pool of three: 0.44 s, hence the preload). The
+hub's clickable widgets, read off the animator's open hub: Maya's `cmds.button` is a `QPushButton`, the
+segments `QmayaIconTextRadioButton` / `QmayaIconTextCheckBox` (`QPushButton`s), `checkBox` `QmayaCheckBox`
+(a `QCheckBox`), the strip and header `QToolButton`s — every one a **`QAbstractButton`**; dropdowns
+`QmayaOptionMenu` → `QComboBox`; card headers our `CardHead`.
+
+- **`SkeldarAnim/maya_hubsound.py`** (stdlib at import, a payload row): `synth(Tone)` / `wav_bytes` (pure) —
+  the "glass tick": E6 1318.51 Hz + its octave at 0.2, decays 16 / 7 ms, a 1.5 ms raised-cosine attack, 80 ms
+  with a 15 ms cosine fade to exactly 0, peak 0.178 (−15 dBFS), 48 kHz 16-bit mono; shipped as
+  **`assets/sounds/hover.wav`** (7.7 KB), written by `docs/superpowers/plans/make_hub_sounds.py`, a test pins
+  the file to the synthesis (1 LSB of slack). `play(name)` never raises: off (optionVar
+  **`skeldarAnimHub_sounds`**, **default OFF** since the same afternoon — «Отключи воспроизведение звуков
+  по умолчанию»; the first push, 969dadd, shipped it ON), a missing file or no backend answers False; a pool of **3
+  `QSoundEffect`s used in turn** (a play on a playing effect restarts it, and the cut tail clicks), else
+  `winsound` async; **no new sound within 35 ms** (a sweep enters a button every 15-30 ms). Players and the
+  throttle on `sys._skeldar_hubsound` (trap 111), one per file (path, size, mtime — an update's new file gets
+  a new player).
+- **`maya_hubqt.sounding(widget, root)`**: a `QAbstractButton`, `QComboBox` or `CardHead`, enabled, under the
+  root — the type asked first, since every Enter in Maya passes the skin's application-wide watcher.
+  `Skin._hover_from` calls back **`"hover"`**; ⋮ gains a checkable **Interface sounds** row (callback
+  `"sounds"`, `Skin.sounds_action`, `paint_sounds`). `maya_hubqt` imports no audio (a test reads its source).
+- **`maya_hub`**: `"hover"` → `maya_hubsound.play("hover")`, `"sounds"` → `set_sounds(on)` (remembered, the
+  row painted; turning it on plays the tick once); `_dress_sounds` at the end of `_dress_header` paints the
+  row and, only while the sounds are on, preloads (off, no audio is opened at all). The classic hub is
+  silent.
+
+Proof: `docs/superpowers/plans/verify_hub_sound.py` **17/17 in a disposable Maya** (port 7021, scratch
+`MAYA_APP_DIR`, `MAYA_NO_HOME=1`, minimized, killed after; the 898c18c build from a `git archive`): Qt Enter
+events sent to the REAL widgets — a Maya button, a segment, a checkbox, a dropdown, a card header, a strip
+jump each play once (the effect playing 1-13 ms after the call); a label, a field and a card frame stay silent;
+three Enters 10 / 60 ms apart play / throttle / play; the menu row off writes 0 and silences, on writes 1 and
+ticks once; left as found. 3250 unit tests. **The first live run, in the animator's Maya on 7001, crashed
+that Maya** — trap 148. The disposable hub's floating window sat under the animator's real cursor and Qt
+delivered genuine Enters to its card headers mid-run (the throttle ate one): the gates count only the plays
+made inside each synthetic send. Not built: a click sound, sounds on grid tiles / list rows, a volume.
+
+148. **A verify that held widget wrappers across `processEvents()` killed the animator's Maya** (2026-10-01
+     11:55:48, `MayaCrashLog261001.1155.dmp`): an access violation reading `0x8` in `Qt6Core` called straight
+     from PySide's `QtCore.pyd` — a `QCoreApplication.sendEvent` to a deleted widget. Another session had
+     installed its build into that same Maya 40 s before (`install.install` → purge → deferred
+     `rebuild_open_hub`), and the verify collected the hub's widgets with one `findChildren` and pumped events
+     for two seconds before using them. A wrapper of a Maya-owned widget that is deleted is not "already
+     deleted" (trap 135), so the next call reads freed memory. Two rules: a verify finds every widget AGAIN
+     by name, in the hub standing right then, before each use (`verify_hub_sound.find`), and **before sending
+     anything to the animator's Maya, ask the other sessions (ListAgents / SendMessage) whether one of them is
+     installing or running there** — the port serves whoever connects, and an install rebuilds the hub under
+     whatever is running. Maya left `Manny_Rig[Recovered-MY PC.2026-10-01-11.55].ma` (54 MB, complete) in
+     `%TEMP%`: the untitled scene at the crash, named after the last file it imported.
