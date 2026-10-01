@@ -293,6 +293,8 @@ def _callbacks():
         "classic": lambda: set_classic(True),
         "jump": focus,
         "toggled": remember,
+        "hover": _hover_sound,
+        "sounds": set_sounds,
     }
 
 
@@ -312,6 +314,19 @@ def _dress_header(skin):
     try:
         import maya_hotkeys
         skin.paint_hotkeys(maya_hotkeys.is_active())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+    _dress_sounds(skin)
+
+
+def _dress_sounds(skin):
+    """The menu's Interface sounds row = the switch; the hover sound loaded
+    now, so the first hover is not the one waiting for the file (0.44 s for
+    the pool's three effects, measured 2026-10-01)."""
+    try:
+        import maya_hubsound
+        skin.paint_sounds(maya_hubsound.enabled())
+        maya_hubsound.preload("hover")
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -454,6 +469,21 @@ def chip_state(state):
     if is_skinned():
         _SKIN.set_state(state)
     return state
+
+
+def _hover_sound():
+    """The mouse entered a button of the skin (maya_hubqt.sounding)."""
+    import maya_hubsound
+    return maya_hubsound.play("hover")
+
+
+def set_sounds(on):
+    """The menu's Interface sounds: switched, remembered, the row painted."""
+    import maya_hubsound
+    on = maya_hubsound.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_sounds(on)
+    return on
 
 
 def _press_hotkey_editor():

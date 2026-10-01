@@ -389,6 +389,7 @@ class FakeSkin(object):
         self.order = []
         self.said = []
         self.painted = []
+        self.sounds = None
         self.sheet = None
         self._alive = True
 
@@ -414,6 +415,9 @@ class FakeSkin(object):
 
     def paint_hotkeys(self, active):
         self.painted.append(active)
+
+    def paint_sounds(self, on):
+        self.sounds = on
 
     def set_version(self, text, tooltip, state=None):
         pass
@@ -544,6 +548,52 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         hub._SKIN.cards["colour"].set_collapsed(True)
         callbacks["jump"]("colour")
         self.assertFalse(hub._SKIN.cards["colour"].collapsed())
+
+    def _fake_sound(self):
+        """maya_hubsound on the fake cmds, its player recording the file."""
+        import maya_hubsound as hubsound
+        saved = (hubsound._cmds, hubsound.make_player)
+        played = []
+
+        class Player(object):
+            def __init__(self, path):
+                self.path = path
+
+            def play(self):
+                played.append(self.path)
+
+        hubsound._cmds = lambda: self.fake
+        hubsound.make_player = Player
+        hubsound.reset()
+
+        def restore():
+            hubsound._cmds, hubsound.make_player = saved
+            hubsound.reset()
+        self.addCleanup(restore)
+        return hubsound, played
+
+    def test_the_callbacks_play_and_switch_the_sounds(self):
+        """2026-10-01: «приятный и простой звук наводки на кнопочку», and
+        the menu's Interface sounds."""
+        hubsound, played = self._fake_sound()
+        hub.build()
+        callbacks = hub._SKIN.callbacks
+        self.assertTrue(callbacks["hover"]())
+        self.assertEqual(played, [hubsound.sound_path("hover")])
+        self.assertFalse(callbacks["sounds"](False))
+        self.assertEqual(self.fake.optionvars[hubsound.OPTIONVAR], 0)
+        self.assertIs(hub._SKIN.sounds, False)
+        self.assertFalse(callbacks["hover"]())
+        self.assertEqual(len(played), 1)
+
+    def test_the_skin_shows_the_switch_and_loads_the_sound(self):
+        hubsound, played = self._fake_sound()
+        self.fake.optionvars[hubsound.OPTIONVAR] = 0
+        skin = FakeSkin(None)
+        hub._dress_sounds(skin)
+        self.assertIs(skin.sounds, False)
+        self.assertIn("hover", hubsound._state()["players"])   # preloaded
+        self.assertEqual(played, [])
 
     def test_a_jump_opens_that_card_only(self):
         """2026-09-28: «при нажатии на верхнюю панель с разделами все другие

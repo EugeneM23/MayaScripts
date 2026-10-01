@@ -40,6 +40,8 @@ class SeamsMixin(object):
             "classic": lambda: self.calls.append("classic"),
             "jump": lambda key: self.calls.append(("jump", key)),
             "toggled": lambda key, c: self.calls.append(("toggled", key, c)),
+            "hover": lambda: self.calls.append("hover"),
+            "sounds": lambda on: self.calls.append(("sounds", on)),
         }
         self.skin = hubqt.Skin(self.host_layout, scale=1.0,
                                callbacks=callbacks)
@@ -106,14 +108,29 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.skin.version.click()
         self.assertEqual(self.calls, ["hotkeys", "version"])
 
-    def test_the_menu_offers_check_update_hotkey_editor_classic(self):
+    def test_the_menu_offers_check_update_hotkey_editor_sounds_classic(self):
         actions = [a for a in self.skin.menu.actions() if not a.isSeparator()]
         self.assertEqual([a.text() for a in actions],
-                         ["Check update", "Hotkey Editor...", "Classic look"])
+                         ["Check update", "Hotkey Editor...",
+                          "Interface sounds", "Classic look"])
+        self.skin.paint_sounds(True)
         for action in actions:
             action.trigger()
         self.assertEqual(self.calls,
-                         ["check_update", "hotkey_editor", "classic"])
+                         ["check_update", "hotkey_editor", ("sounds", False),
+                          "classic"])
+
+    def test_the_sounds_row_is_a_checkbox_painted_without_a_call(self):
+        """2026-10-01: «звук наводки на кнопочку», switched in the menu."""
+        action = self.skin.sounds_action
+        self.assertTrue(action.isCheckable())
+        self.skin.paint_sounds(True)
+        self.assertTrue(action.isChecked())
+        self.skin.paint_sounds(False)
+        self.assertFalse(action.isChecked())
+        self.assertEqual(self.calls, [])
+        action.trigger()
+        self.assertEqual(self.calls, [("sounds", True)])
 
     def test_every_object_of_ours_has_a_name(self):
         """They are parts of the cmds paths of everything inside."""
@@ -370,6 +387,73 @@ class ActiveCard(SeamsMixin, unittest.TestCase):
         sheet = style.stylesheet()
         self.assertIn('[skActive="true"]', sheet)
         self.assertIn(style.TOKENS["card_active"], sheet)
+
+
+class HoverSound(SeamsMixin, unittest.TestCase):
+    """2026-10-01: «я вожу мышкой по кнопочкам нашего меню и вот тут давай
+    сделаем приятный и простой звук наводки» - every button of the hub
+    (QAbstractButton: Maya's buttons, checkboxes and segments, our strip and
+    header), its dropdowns and the card headers; nothing else."""
+
+    def setUp(self):
+        SeamsMixin.setUp(self)
+        self.card = self.skin.add_card("colour", "Colour", "palette",
+                                       "#c89be8", "#3a2a4a")
+        body = self.card.body
+        self.button = QtWidgets.QPushButton("Add", body)
+        self.segment = QtWidgets.QPushButton("Rig", body)
+        self.segment.setCheckable(True)
+        self.check = QtWidgets.QCheckBox("Timeline", body)
+        self.combo = QtWidgets.QComboBox(body)
+        self.label = QtWidgets.QLabel("status", body)
+        self.field = QtWidgets.QLineEdit(body)
+        self.jump = self.skin.add_jump("colour", "Colour", "palette",
+                                       "#c89be8")
+
+    def _enter(self, widget):
+        from PySide6 import QtCore as C, QtGui as G
+        self.calls[:] = []
+        QtWidgets.QApplication.sendEvent(
+            widget, G.QEnterEvent(C.QPointF(1, 1), C.QPointF(1, 1),
+                                  C.QPointF(1, 1)))
+        return self.calls.count("hover")
+
+    def test_every_kind_of_button_sounds_once(self):
+        for widget in (self.button, self.segment, self.check, self.jump,
+                       self.skin.hotkeys, self.skin.version,
+                       self.skin.menu_button):
+            self.assertEqual(self._enter(widget), 1, widget)
+
+    def test_a_dropdown_and_a_card_header_sound(self):
+        self.assertEqual(self._enter(self.combo), 1)
+        self.assertEqual(self._enter(self.card.header), 1)
+
+    def test_what_is_not_clickable_is_silent(self):
+        for widget in (self.label, self.field, self.card.body,
+                       self.card.frame, self.skin.header, self.skin.content,
+                       self.card.chevron):
+            self.assertEqual(self._enter(widget), 0, widget.objectName())
+
+    def test_a_disabled_button_is_silent(self):
+        self.button.setEnabled(False)
+        self.assertEqual(self._enter(self.button), 0)
+
+    def test_a_button_outside_the_hub_is_silent(self):
+        outside = QtWidgets.QPushButton("Maya's own")
+        self.assertEqual(self._enter(outside), 0)
+        self.assertFalse(hubqt.sounding(outside, self.skin.root))
+        self.assertFalse(hubqt.sounding(None, self.skin.root))
+
+    def test_the_hover_still_lights_the_card(self):
+        self._enter(self.button)
+        self.assertEqual(self.skin.active, "colour")
+
+    def test_the_layer_knows_no_audio(self):
+        """maya_hubqt calls back; maya_hub plays (maya_hubsound)."""
+        with open(hubqt.__file__, encoding="utf-8") as f:
+            source = f.read()
+        self.assertNotIn("hubsound", source)
+        self.assertNotIn("QtMultimedia", source)
 
 
 class ApplyMarks(SeamsMixin, unittest.TestCase):

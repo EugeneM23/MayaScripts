@@ -48,7 +48,8 @@ _PAYLOAD = (
     "maya_hubstyle.py",         # the hub's skin (2026-09-28): the look as data
     "maya_hubicons.py",         # its Tabler icons
     "maya_hubqt.py",            # its Qt widgets
-    "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
+    "maya_hubsound.py",         # its interface sounds (2026-10-01)
+    "maya_invlook.py",         # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)
     "maya_chargrid.py",         # the Characters portrait grid

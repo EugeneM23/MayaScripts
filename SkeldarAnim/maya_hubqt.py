@@ -255,6 +255,23 @@ def _head_class():
     return _CLASSES["head"]
 
 
+def sounding(widget, root):
+    """Whether the mouse entering `widget` plays the hover sound (2026-10-01,
+    «звук наводки на кнопочку»): a button (QAbstractButton -- Maya's
+    buttons, checkboxes and segments, measured on the live hub, and our
+    strip and header), a dropdown or a card's header, enabled, under
+    `root`. The type is asked first: every Enter in Maya comes through
+    here."""
+    q = qt()
+    w = q.QtWidgets
+    if not isinstance(widget, (w.QAbstractButton, w.QComboBox,
+                               _head_class())):
+        return False
+    if not widget.isEnabled():
+        return False
+    return widget is root or root.isAncestorOf(widget)
+
+
 def _watcher_class():
     """An application-wide event filter: a press or a focus change anywhere
     is handed to `on_press(widget)`, the mouse entering a widget to
@@ -515,12 +532,21 @@ class Skin(object):
         self.menu.setObjectName("skeldarHubMenuPopup")
         for text, key in (("Check update", "check_update"),
                           ("Hotkey Editor...", "hotkey_editor"),
+                          ("Interface sounds", "sounds"),
                           (None, None),
                           ("Classic look", "classic")):
             if text is None:
                 self.menu.addSeparator()
                 continue
             action = self.menu.addAction(text)
+            if key == "sounds":
+                #  a switch (2026-10-01, the hover sound): `triggered` carries
+                #  the new state and is not emitted by paint_sounds
+                action.setCheckable(True)
+                action.triggered.connect(
+                    lambda checked=False: self._call("sounds", bool(checked)))
+                self.sounds_action = action
+                continue
             action.triggered.connect(lambda *_a, k=key: self._call(k))
         self.menu_button.setMenu(self.menu)
         self.menu_button.setPopupMode(w.QToolButton.InstantPopup)
@@ -612,6 +638,10 @@ class Skin(object):
         self.hotkeys.setToolTip("Hotkey map: " + ("ON" if active else "OFF")
                                 + " - press to switch")
 
+    def paint_sounds(self, on):
+        """The menu's Interface sounds row shows `on` (no callback)."""
+        self.sounds_action.setChecked(bool(on))
+
     def set_active(self, key):
         """Card `key` is the one worked in (None: none): pinned and lit."""
         self._fallback.stop()
@@ -661,13 +691,16 @@ class Skin(object):
     def _hover_from(self, widget):
         """The mouse entered `widget`: its card lit at once; off every card,
         the resting light after FALLBACK_MS -- entering another card first
-        cancels it, so a gap between cards lights nothing in between."""
+        cancels it, so a gap between cards lights nothing in between. A
+        clickable control of ours calls back "hover" (the sound)."""
         key = self.card_of(widget)
         if key is not None:
             self._fallback.stop()
             self._light(key)
         elif self.active != self.resting():
             self._fallback.start()
+        if sounding(widget, self.root):
+            self._call("hover")
 
     def _left_from(self, widget):
         """The mouse left the hub (to another window, where no Enter of
