@@ -7322,3 +7322,36 @@ a67f5f8): the open hub rebuilt from the installed copy, the folder equal to the 
      hub a 127 px viewport (content minimum 305): four of the first gates failed on a layout nobody uses.
      Float it first (`workspaceControl -e -floating true`), then size the floating window until the scroll
      viewport reads the dock's 510.
+
+## The hub's card light: a glow that fades, a flash when chosen (2026-10-01)
+
+The animator, after the slides: «Теперь давай сделаем красивый глоу и анимацию подсветки при выделении
+карточки или наведении на раздел. Сделай все сам я отойду на часик.» Every choice was taken alone; spec
+`docs/superpowers/specs/2026-10-01-hub-card-light-design.md`.
+
+- **Each card's frame is a `CardFrame`** (`maya_hubqt._frame_class`, still `QFrame[skCard]` to the
+  stylesheet, which draws the plain face) holding `level` and `flash` (0..1); its `paintEvent` adds
+  `paint_light`: the face `card_active` at `level`, an INNER glow — the accent at `GLOW["alpha"]` 0.28 at the
+  ring falling off as (1 − depth)² over 10 logical px, drawn as rings ONE PHYSICAL PIXEL wide
+  (`maya_hubstyle.glow_rings`; 1.5 px rings showed as bands at 150 %) — and the 2 px ring `card_edge`.
+  The stylesheet's `[skActive="true"]` rule is gone (it switched the look at once); the property is still
+  set on the lit card, with no repolish.
+- **It fades**: `Card.set_lit(on, animate)` — in `LIGHT_IN_MS` 140 (ease-out), out `LIGHT_OUT_MS` 260
+  (smoothstep), from wherever it stands (`light_ms` takes its share). `Skin._light` cross-fades the old card
+  and the new one; who is lit is the 2026-09-28 rule, unchanged.
+- **A card newly chosen flashes** (`Card.pulse`, `FLASH_MS` 480, `flash_at`: up over the first 18 %, then a
+  long fall): the ring toward `accent_text`, the glow brighter and 60 % deeper. `Skin.set_active` pulses
+  only when the pinned card CHANGES — a press inside the card already chosen would flash on every click.
+- **Interface animations off**: the light switches at once, no flash.
+- **No outer halo**: the cards stand against the scroll area's left edge, so a halo would be cut on one
+  side, and making room narrows every card (the Weapons card is tuned to the 360 px dock, trap 117); a
+  `QGraphicsDropShadowEffect` would render the whole card offscreen on every repaint inside it.
+- Measured first: a full repaint of a card costs 1.5 ms median, 3.0 p95 (UE Bridge, 881 px with its list),
+  0.5 for Retarget, ~0 scrolled out of view — so the whole card repaints each tick and the face fades too.
+
+Proof: `docs/superpowers/plans/verify_hub_light.py` **6/6 in a disposable Maya** (port 7016, the repo's
+hub floated to the dock's 510 px): a hover fades a card up monotonically, another cross-fades the two,
+a press on another card flashes it to 1.00 and back while a press inside it does not, a quick sweep across
+the cards keeps the loop's p99 turn at 6.5 ms, the screen's pixels the lit ring (224, 122, 54) = card_edge
+and face (56, 58, 65) = card_active, a dark ring the plain card; off = instant. `verify_hub_motion.py` 12/12
+again on the new frame. 3284 unit tests.
