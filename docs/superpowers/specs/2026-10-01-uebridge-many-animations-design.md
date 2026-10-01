@@ -115,3 +115,24 @@ replaced by UE clips on disk): three clips by the button with New rig standing a
 their slots, Main to 1e-3; a strafe-like sideways clip widening its gap; Skeleton mode the same; Rig mode
 taking the first only; a real press–drag–release of a multiple selection onto empty floor laying three
 rigs across the screen about the point, and onto a rig taking the first only; the list's selection kept.
+
+## Addendum, the same day: a square, on the world's axes
+
+The animator, after the push: «Давай будем всегда располагать наши анимации в квадратной формации в не
+зависимости от угла камеры». The line is gone, and so is the drag's camera axis:
+
+- **A square formation on world X and Z, whatever the camera**: `cols = ceil(√N)`, `rows = ceil(N / cols)`
+  (2 → 2 × 1, 3 and 4 → 2 × 2, 5 and 6 → 3 × 2, 7–9 → 3 × 3). Clip i stands in column `i % cols`, row
+  `i // cols`: **row 0 in front** (+Z, toward the front camera), each row **left to right along +X**, the last
+  row partly filled from the left - the columns stay aligned.
+- **Centred** on the origin (the button) or the floor point (a drop; the origin when no floor was seen):
+  first and last column, first and last row, equidistant from the centre.
+- **The step is per band**: a column's band is the union of its clips' sideways reach along X, a row's along
+  the row axis (−Z, front to back); neighbouring bands keep `STEP` between them (`lineup.offsets` on the bands).
+  So every two clips in different columns stay a whole step apart in X and every two in one column a whole step
+  apart in Z - no two root paths ever come within a step, and still clips stand on an even grid.
+- `lineup`: `grid_shape(count)`, `band(extents)`, `square_offsets(x_extents, z_extents, step)`,
+  `square_slots(centre, x_extents, z_extents, step)`, `COLUMNS = (1, 0, 0)`, `ROWS = (0, 0, −1)`;
+  `floor_axis`/`slots` and `droptarget`'s `axis`/`on_floor` go (nothing reads a camera axis any more).
+- Wording: «3 animations onto 3 new rigs in a 2 x 2 square about (0, 0): …», the ghost «3 animations · 3 new
+  Manny [rig] in a square · floor (120, -36)».
