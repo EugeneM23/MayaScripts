@@ -14,7 +14,11 @@ character standing nearest to that point owns the weapon. Bones, not meshes:
 every character has them, a bare skeleton included, and a drag must not pay
 for a ray against 70 000 skinned vertices on every move.
 
-The choice is pure (`choose`, `floor_hit`, `owner`); the scene half imports
+2026-10-01, an animation dragged out of the UE Bridge list: the same rule on
+RIGS (`rig_snapshot`, `figure_under`, `clip_target`) - the rig whose game
+skeleton is under the cursor takes the clip, beside every rig a new one does.
+
+The choice is pure (`choose`, `figure_under`, `floor_hit`, `owner`); the scene half imports
 Maya and Qt inside its functions, so the pure half is tested with neither.
 """
 

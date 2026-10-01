@@ -7002,3 +7002,53 @@ the roll, which AS hands to the twist joints, 0.23° on the bone; only the curve
 A rig in a scene keeps its small drawings: re-add it. In a second scene the verify's Manny arrived as
 `Manny_Rig1`: mayaUsd's `UsdDefaultRenderSettings` lands in the first rig's namespace and keeps it alive
 across a new scene — find a rig by its namespace, never by the name you expect.
+
+## UE Bridge: an animation dragged out of the list into the viewport (2026-10-01)
+
+The animator: «я зажимаю клавишу мышки и ташу анимацию из списка во вьюпорт и подобно с нашим оружием если я
+попадаю в какой-то риг то анимация должна перекинутся на него какбуд-то мы нажали import с опцией rig если мы не
+нашли ничего то тогда нам нужно сделать new rig». Asked: a new rig stands **where the clip is** («Где клип» — the
+retarget puts `Main` on the clip's root, so a drop point could only be honoured by shifting the clip into the
+exported root bone), and it is **Manny** («Manny, как New rig»). Spec
+`docs/superpowers/specs/2026-10-01-uebridge-drag-to-viewport-design.md`, plan beside it.
+
+- **Press a row, move past Qt's start distance**: the hub's shared ghost (Tabler's `run` icon, new in
+  `maya_hubicons`) rides the cursor, its caption «A_Jump · retarget onto Manny_Rig1» over a rig, «A_Jump · a new
+  Manny [rig]» over a viewport with no rig, muted «release off the hub to import» / «no target - drop onto a
+  viewport» elsewhere. **Release** on a rig = Import with the Rig mode onto THAT rig; on a viewport with no rig =
+  Import with New rig; on the hub or off every viewport = nothing. Esc / the right button cancel. The mode
+  segments and the selection do not change a drop; the timeline checkbox does; a double click still imports
+  through the mode.
+- **Which rig** (`droptarget.rig_snapshot` + `figure_under` in `clip_target`): every rig's game skeleton (a rig
+  driving none: the joints under its group) read once per drag, projected per move, the Weapons rule —
+  max(16 px, 8 % of its projected height), a tie to the rig nearer the camera. Bare skeletons are not targets.
+  `choose` (the weapons) now runs on `figure_under`'s `_closest`.
+- **`maya_uebridge/listdrag.py`** (Qt lazily; the window stays `cmds`): an event filter on the textScrollList's
+  `QListWidget` and its viewport. The press passes through (Maya selects the row) and is remembered with its
+  record (`indexAt` row → `window._STATE["filtered"]`); every MOVE while that button is held is eaten (no
+  drag-select to another row, no autoscroll); at the drag's start a synthetic release at the press point,
+  `sendEvent`ed past the filter, ends the click for the list — its selection stays, Qt's implicit grab stays
+  (the moves keep coming over the viewport). The real `Scene.drop` defers the import one idle
+  (`maya.utils.executeDeferred`, through `window._run`) so the ghost is gone before the editor's round trip.
+- **`window.import_dropped(record, aim)`**: the rig found again by namespace after nothing but the drop (it can
+  be deleted while the editor exports — said, nothing imported), the editor's export,
+  **`rigimport.import_and_retarget(..., rig=)`** — an explicit rig takes the clip with `target="rig"` and the
+  selection is not asked; `"new_rig"` ignores it.
+- **`maya_hubqt.on_hub(gx, gy)`** (over `maya_hubstyle.over_hub(names)`) answers "is this point on the hub" for
+  the Characters grid and the list alike; `maya_charlook.over_hub` is gone.
+
+Proof: `docs/superpowers/plans/verify_uebridge_drag.py` **8/8 in a disposable Maya** (port 7015, scratch
+`MAYA_APP_DIR`, `MAYA_NO_HOME=1`; the editor's export replaced by the UE clips on disk, so no Unreal): two
+Manny rigs at x = ±90, `clip_target` over each projected pelvis names that rig, beside them `new_rig`, on the
+time slider `none`, the list counts as the hub; a press-drag-release sent through Qt to Maya's real list,
+released on the SECOND rig while the FIRST was selected and the mode read Skeleton — the second rig's `hand_r`
+travels 17.056 cm under LongSword_Attack_Right_Heavy_1P, the source namespace deleted, the first rig drifts
+0.0; `drop_at` on empty floor adds `Manny_Rig2` playing ShortSword_Walk_1P (15 controls keyed), the first two
+0.0. A second run's gate 8 counted an extra rig: the animator was dragging clips in that Maya themselves (its
+status line: LongSword dropped onto their own Manny_Rig, take cleared, retargeted) — trap 85 again, and the
+real mouse half working in their hands. 3090 unit tests. Not run: a drop with a live Unreal editor exporting.
+
+141. **A verify that dodges a floating hub by parking it in ONE corner can park it over the very point it
+     dodges.** The hub went to the top-left, the floor point projected to the left, and `drop_at` correctly
+     did nothing (a release on the hub) — read as a failed drop. Try the corners until no aimed point is on
+     the hub (`keep_hub_off`), and re-project after the move.
