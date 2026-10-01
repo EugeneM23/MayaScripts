@@ -9,6 +9,12 @@ import math
 #  frames walked in one slice at most, whatever the measured cost says
 MAX_BATCH = 24
 
+#  ... and at least, while a frame is this cheap: every slice pays the walk
+#  back to the current frame, and one frame a slice spends half of it there
+#  (measured 2026-10-01: 17 frames in 17 slices, 0.9 s, three rigs).
+MIN_BATCH = 2
+CHEAP_MS = 20.0
+
 
 def trail_range(mode, playback, current, around, animation):
     """(start, end) whole frames of a trail.
@@ -48,6 +54,8 @@ def budget(per_frame_ms, slice_ms, return_ms):
     if per_frame_ms <= 0:
         return MAX_BATCH
     n = int((slice_ms - return_ms) // per_frame_ms)
+    if per_frame_ms <= CHEAP_MS:
+        n = max(n, MIN_BATCH)
     return max(1, min(MAX_BATCH, n))
 
 

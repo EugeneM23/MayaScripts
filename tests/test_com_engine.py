@@ -96,8 +96,8 @@ class Tick(unittest.TestCase):
 
     def test_the_nearest_frames_first_within_the_budget(self):
         n = engine.tick(self.sc)
-        self.assertEqual(n, 4)                  # (25 - 5) // 5
-        self.assertEqual(self.sc.walked, [[10, 9, 11, 8]])
+        self.assertEqual(n, 7)                  # (40 - 5) // 5
+        self.assertEqual(self.sc.walked, [[10, 9, 11, 8, 12, 7, 13]])
         self.assertEqual(len(self.sc.writes), 1)
         self.assertEqual(self.tr.points[9], (9.0, 4.0, 0.0, 0.0))
 

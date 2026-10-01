@@ -33,8 +33,11 @@ HANDLE_SHARE = 0.03              # the handle's radius, of the character's heigh
 
 HANDLE_COLOUR = (1.0, 0.72, 0.15)
 FLOOR_COLOUR = (0.55, 0.62, 0.70)
-TRAIL_COLOUR = (1.0, 0.72, 0.15)
-FLOOR_TRAIL_COLOUR = (0.45, 0.52, 0.60)
+#  (past, future): the trail's draw mode is Maya's Past / Future, the frames
+#  behind the current one in the first colour, ahead in the second
+TRAIL_COLOUR = ((1.0, 0.62, 0.10), (1.0, 0.86, 0.50))
+FLOOR_TRAIL_COLOUR = ((0.45, 0.52, 0.60), (0.68, 0.74, 0.82))
+BEAD_COLOUR = (1.0, 1.0, 1.0)
 
 Character = collections.namedtuple("Character", "root rig namespace label")
 
@@ -211,9 +214,18 @@ def build_model(char, step=VOXEL, report=None):
         intersectors.append(mi)
     best = [None] * len(centres)
     best_d = np.full(len(centres), np.inf)
-    for mesh_i, mi in enumerate(intersectors):
-        points = meshes[mesh_i][1]
+    #  A mesh whose box is farther than the best hit so far cannot hold a
+    #  closer point: the Creep's five meshes cost 15.6 s without this.
+    boxes = [(m[1].min(axis=0), m[1].max(axis=0)) for m in meshes]
+    box_d = np.stack([((np.maximum(np.maximum(blo - centres, centres - bhi), 0.0)) ** 2)
+                      .sum(axis=1) for blo, bhi in boxes], axis=1)
+    order = np.argsort(box_d, axis=1)
+    for rank in range(len(meshes)):
         for i, q in enumerate(centres):
+            mesh_i = int(order[i, rank])
+            if box_d[i, mesh_i] >= best_d[i]:
+                continue
+            mi = intersectors[mesh_i]
             hit = mi.getClosestPoint(om.MPoint(q[0], q[1], q[2]))
             p = hit.point
             #  the intersector answers in the mesh's object space
@@ -322,11 +334,15 @@ def _trail(namespace, parent, leaf, colour, part):
     cmds.setAttr(xform + ".inheritsTransform", 0)
     shape = cmds.createNode("motionTrailShape", name=name_in(namespace, leaf + "Shape"),
                             parent=xform)
-    cmds.setAttr(shape + ".trailColor", *colour)
+    past, future = colour
+    cmds.setAttr(shape + ".trailDrawMode", 2)          # Past / Future
+    cmds.setAttr(shape + ".trailColor", *past)
+    cmds.setAttr(shape + ".extraTrailColor", *future)
+    cmds.setAttr(shape + ".beadColor", *BEAD_COLOUR)
     cmds.setAttr(shape + ".trailThickness", 2)
     cmds.setAttr(shape + ".showFrameMarkers", 1)
     cmds.setAttr(shape + ".frameMarkerSize", 4)
-    cmds.setAttr(shape + ".frameMarkerColor", *colour)
+    cmds.setAttr(shape + ".frameMarkerColor", *past)
     cmds.setAttr(shape + ".xrayDraw", 1)
     cmds.setAttr(shape + ".increment", 1)
     _tag(xform, part)

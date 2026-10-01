@@ -25,7 +25,7 @@ import time
 
 from maya_com import frames
 
-SLICE_MS = 25.0
+SLICE_MS = 40.0
 IDLE_MS = 0                     # the next slice, when work remains
 WAIT_MS = 120                   # retry while the mouse is down / playing
 LIVE_MS = 15                    # a tweak's live point
@@ -327,6 +327,8 @@ def _tick(sc, st):
         tr = st["tracks"][uuid]
         sc.write(groups[uuid], tr.span, tr.points)
         tr.written = True
+    if touched:
+        st["stats"]["last_write"] = time.time()
     if pending():
         arm(WAIT_MS if (sc.mouse_down() or sc.playing()) else IDLE_MS)
     return walked
@@ -443,13 +445,20 @@ def _on_range(*_):
 
 
 def _on_time(*_):
+    """A tweaked frame's point goes back to the keyed pose once the time has
+    really moved. The engine's own walk ends on the frame it started from and
+    fires this too - that frame keeps its live point (measured: without the
+    check the trail drew the keyed pose under a standing tweak)."""
     st = state()
-    #  a tweaked frame's point goes back to the keyed pose once the time moves
     if st["live_frames"]:
+        try:
+            current = int(round(scene().current()))
+        except Exception:
+            current = None
+        gone = {f for f in st["live_frames"] if f != current}
         for tr in st["tracks"].values():
-            tr.dirty |= {f for f in st["live_frames"]
-                         if tr.span[0] <= f <= tr.span[1]}
-        st["live_frames"] = set()
+            tr.dirty |= {f for f in gone if tr.span[0] <= f <= tr.span[1]}
+        st["live_frames"] -= gone
     arm(IDLE_MS)
 
 

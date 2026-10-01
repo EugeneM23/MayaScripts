@@ -47,6 +47,8 @@ class Order(unittest.TestCase):
     def test_budget(self):
         self.assertEqual(frames.budget(5.0, 25.0, 5.0), 4)
         self.assertEqual(frames.budget(40.0, 25.0, 5.0), 1)
+        #  a cheap frame: two at least, or the walk back eats half the slice
+        self.assertEqual(frames.budget(15.0, 40.0, 15.0), 2)
         self.assertEqual(frames.budget(0.0, 25.0, 5.0), frames.MAX_BATCH)
 
 

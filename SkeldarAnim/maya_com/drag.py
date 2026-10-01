@@ -101,9 +101,9 @@ def plan(char, drivers=None):
     cache = _state()["plans"]
     if key in cache:
         return cache[key]
-    recording = cmds.undoInfo(query=True, state=True)
-    if recording:
-        cmds.undoInfo(stateWithoutFlush=False)
+    #  The probes are set and put back inside the caller's undo chunk: they
+    #  net to nothing, and turning the undo queue off and on in the middle of
+    #  a chunk broke it (measured: one Ctrl+Z left the drag half applied).
     start = {d: _vec(d + ".translate") for d in drivers}
     base = {d: _world_pos(d) for d in drivers}
     result = {}
@@ -131,8 +131,6 @@ def plan(char, drivers=None):
     finally:
         for d in drivers:
             cmds.setAttr(d + ".translate", *start[d])
-        if recording:
-            cmds.undoInfo(stateWithoutFlush=True)
     if len(cache) > 64:
         cache.clear()
     cache[key] = result
@@ -175,15 +173,15 @@ def move(group, d, autokey=None):
     """Move the CoM of `group` by world vector `d` (the scripted drag).
     Returns a status line."""
     char = network._character_for(network.root_of(group))
-    a = plan(char)
-    if not a:
-        return "%s: nothing to move the CoM with" % char.label
-    start = {drv: _vec(drv + ".translate") for drv in a}
-    targets = dragmath.apply(a, start, d)
     if autokey is None:
         autokey = cmds.autoKeyframe(query=True, state=True)
     cmds.undoInfo(openChunk=True, chunkName="skeldarComMove")
     try:
+        a = plan(char)
+        if not a:
+            return "%s: nothing to move the CoM with" % char.label
+        start = {drv: _vec(drv + ".translate") for drv in a}
+        targets = dragmath.apply(a, start, d)
         _write(targets)
         moved, keyed = _key(start, targets, autokey)
     finally:
@@ -217,9 +215,11 @@ def _view():
 
 
 def _ray(x, y):
+    """The mouse's ray in world. API 2.0's viewToWorld FILLS the point and
+    vector it is handed (it takes four arguments, measured)."""
     import maya.api.OpenMaya as om
-    view = _view()
-    near, direction = view.viewToWorld(int(x), int(y))
+    near, direction = om.MPoint(), om.MVector()
+    _view().viewToWorld(int(x), int(y), near, direction)
     return (near.x, near.y, near.z), (direction.x, direction.y, direction.z)
 
 
