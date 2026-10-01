@@ -33,10 +33,18 @@ before the connect, which measures it unmoved, and the group is moved after
 the connect, so the bake carries the move into the controls, the helper
 bones and the camera. The exported root bone carries it too.
 
+The same evening, «если я перетащил анимацию в риг который на сцене сейчас ...
+позиция меняется на позицию из анимационного файла ... я хочу чтобы риг
+остался на своем месте»: a rig ALREADY in the scene keeps its place - where
+its Main stands on the current frame, read before the reset zeroes it, and
+its heading - by the same wrapper, turned about Main's start and moved onto
+that place. A drop on a rig and the Import button (Rig mode) alike.
+
 Design: docs/superpowers/specs/2026-09-07-advancedskeleton-pipeline-design.md,
 docs/superpowers/specs/2026-09-08-many-rigs-design.md
 """
 
+import math
 import os
 
 import maya.cmds as cmds
@@ -45,7 +53,7 @@ from maya_uebridge import animimport
 from maya_uebridge import records
 
 NO_RIG_FILE = "no rig file - {0} is missing from assets/"
-SHIFT_NODE = "skeldarDropShift"   # the clip's wrapper, moved onto a floor point
+SHIFT_NODE = "skeldarDropShift"   # the clip's wrapper, moved onto the rig's place
 CONNECTED = ("the rig is still connected to a source (MoCapConstraints "
              "stands) - press Retarget, or disconnect, first")
 POSED = ("the rig is posed - AdvancedSkeleton: Go To BuildPose, then import "
@@ -121,6 +129,24 @@ def shift_for(at, root_at_start):
     return (at[0] - root_at_start[0], 0.0, at[2] - root_at_start[2])
 
 
+def heading(matrix):
+    """The yaw in degrees of a node's +Z axis on the floor, from its flat
+    row-major world matrix (Maya's xform -q -ws -m). Pure."""
+    return math.degrees(math.atan2(matrix[8], matrix[10]))
+
+
+def place_moves(point, yaw, start_matrix):
+    """(pivot, turn, move) that stand a node - at the clip's first frame at
+    `start_matrix` - on the floor `point` facing `yaw` (None: keep its own
+    facing): turn the clip `turn` degrees about world Y around `pivot` (the
+    node's start), then move it horizontally by `move`. Pure."""
+    pivot = (start_matrix[12], start_matrix[13], start_matrix[14])
+    turn = 0.0
+    if yaw is not None:
+        turn = (yaw - heading(start_matrix) + 180.0) % 360.0 - 180.0
+    return pivot, turn, shift_for(point, pivot)
+
+
 def fresh_rig(before, after):
     """The one rig `after` holds that `before` did not, by namespace, or None. Pure."""
     taken = set(rig.namespace for rig in before or [])
@@ -163,15 +189,32 @@ def _wrap(source, namespace):
     return group, cmds.ls(uuid, long=True)[0]
 
 
-def _place(group, source, at, start):
-    """Move the clip's wrapper so its root, at the clip's first frame, stands
-    on the floor point `at`. Its own keys are never touched."""
-    matrix = (cmds.getAttr(source + ".worldMatrix[0]", time=start)
-              if start is not None else cmds.getAttr(source + ".worldMatrix[0]"))
-    dx, dy, dz = shift_for(at, (matrix[12], matrix[13], matrix[14]))
+def rig_place(rig):
+    """Where the rig stands now: its Main on the current frame, as
+    {"point", "yaw"}. Read BEFORE `reset_build_pose` zeroes it."""
+    matrix = cmds.xform(rig.main, query=True, worldSpace=True, matrix=True)
+    return {"point": (matrix[12], matrix[13], matrix[14]),
+            "yaw": heading(matrix), "kept": True}
+
+
+def _place(group, rig, place, start):
+    """Turn and move the clip's wrapper so the rig's Main, at the clip's first
+    frame, stands on `place` (and faces its yaw, when it has one). Measured on
+    Main after the connect - with a real time change, a constraint chain does
+    not answer getAttr(time=) (trap 69). The clip's keys are never touched."""
+    if start is not None:
+        cmds.currentTime(start, update=True)
+    matrix = cmds.xform(rig.main, query=True, worldSpace=True, matrix=True)
+    pivot, turn, (dx, dy, dz) = place_moves(place["point"], place.get("yaw"),
+                                            matrix)
+    if abs(turn) > 1e-6:
+        cmds.xform(group, worldSpace=True, pivots=pivot)
+        cmds.setAttr(group + ".rotateY", turn)
     cmds.move(dx, dy, dz, group, relative=True, worldSpace=True)
-    return "standing at floor ({0}, {1})".format(int(round(at[0])),
-                                                 int(round(at[2])))
+    x, z = int(round(place["point"][0])), int(round(place["point"][2]))
+    if place.get("kept"):
+        return "kept in place at ({0}, {1})".format(x, z)
+    return "standing at floor ({0}, {1})".format(x, z)
 
 
 def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
@@ -182,7 +225,8 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
     the rig that takes the clip with `target="rig"`, whatever is selected;
     None asks the selection as the Import button does. "new_rig" ignores it.
     A rig ADDED is `new_rig_entry()`'s; `at` (a floor point) stands an added
-    rig there, and is ignored for a rig already in the scene.
+    rig there. A rig already in the scene keeps its place and heading, and
+    `at` is ignored for it.
 
     Refusals happen first and touch nothing. After the import, a connect
     refusal leaves the imported skeleton in the scene and says so -- the
@@ -216,6 +260,11 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
 
     notes = []
     deleted = ""
+    place = None
+    if not add_rig:
+        place = rig_place(rig)
+    elif at is not None:
+        place = {"point": tuple(at), "yaw": None}
     cmds.undoInfo(openChunk=True, chunkName="UE anim import + retarget")
     try:
         if add_rig:
@@ -259,15 +308,21 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
                 "{0} imported into {1} but holds no joint - nothing to "
                 "retarget".format(name, namespace)])
 
+        # The wrapper goes on BEFORE the connect: the holder remembers the
+        # clip's root by PATH (trap 16), so the root must not be re-parented
+        # after it. The connect measures the clip unmoved; the wrapper moves
+        # after it, and the bake carries the move.
         shift = None
-        if add_rig and at is not None:
+        if place is not None:
             shift, source = _wrap(source, namespace)
         connect_text = maya_rig_retarget.connect(source_root=source, rig=rig)
         if not cmds.objExists(mod.holder_of(rig)):
+            if shift:
+                cmds.ungroup(shift)
             return "  |  ".join(notes + [
                 "{0} imported as {1}; retarget refused: {2}".format(
                     name, namespace, _first_line(connect_text))])
-        placed = (_place(shift, source, at, info.get("start"))
+        placed = (_place(shift, rig, place, info.get("start"))
                   if shift else "")
 
         bake_text = maya_rig_retarget.bake(rig=rig)

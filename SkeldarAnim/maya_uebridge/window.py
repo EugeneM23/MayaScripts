@@ -273,7 +273,8 @@ MODE_SEGMENTS = (
     ("rig", "Rig",
      "Retarget onto the rig: the SELECTED AdvancedSkeleton rig (any control "
      "or bone), else the only one - added if the scene has none (the rig "
-     "active in Characters, else Manny); the clip is "
+     "active in Characters, else Manny); a rig already there keeps its "
+     "place and facing; the clip is "
      "imported, retargeted and baked onto it (weapon and camera bones "
      "carried, the camera set up), and the clip's skeleton is deleted."),
     ("new_rig", "New rig",
@@ -525,9 +526,10 @@ def build_panel():
         _LIST, allowMultiSelection=False, font="fixedWidthFont",
         height=LIST_HEIGHT,
         annotation="Double-click imports the way the mode says. Drag a row "
-                   "into a viewport: onto a rig it retargets there, onto "
-                   "empty floor a new rig (the one active in Characters, "
-                   "else Manny) takes it and stands where you pointed.",
+                   "into a viewport: onto a rig it retargets there and the "
+                   "rig keeps its place, onto empty floor a new rig (the one "
+                   "active in Characters, else Manny) takes it and stands "
+                   "where you pointed.",
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 

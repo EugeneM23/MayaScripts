@@ -7095,7 +7095,14 @@ exported root bone), and it is **Manny** («Manny, как New rig»). **Both rev
   the clip unmoved, then the group moves by `shift_for(at, root at the clip's first frame)`, horizontal
   only, and the bake carries it into the controls, helper bones and camera. Measured: `maya_asretarget`'s
   twin offsets are taken from the rig's OWN bones, its constraints are world-space, so the move reaches
-  everything 1:1. The exported root bone carries the move. A drop onto a rig moves nothing.
+  everything 1:1. The exported root bone carries the move. The rig's `Main` is what lands on the point
+  (the Creep's root bone stands 2.4 cm ahead of it), as a portrait dropped from Characters stands.
+- **A rig dropped ON keeps its place and facing** (the same evening: «я хочу чтобы риг остался на своем
+  месте» — it used to jump to the clip's root): `rig_place` reads `Main` on the current frame BEFORE
+  `reset_build_pose` zeroes it; after the connect the wrapper turns about `Main`'s start by `place_moves`'
+  turn (`heading` = +Z on the floor, the short way round) and moves onto the place. The Import button's
+  Rig mode does the same. Gate 12: turned 60° at x = 90 → `Main` at frame 0 on (90, 0) facing 60.0000°,
+  root and `hand_r` on the rigidly moved clip to 8.5e-6 cm.
 
 Proof: `docs/superpowers/plans/verify_uebridge_drag.py` **8/8 in a disposable Maya** (port 7015, scratch
 `MAYA_APP_DIR`, `MAYA_NO_HOME=1`; the editor's export replaced by the UE clips on disk, so no Unreal): two

@@ -14,10 +14,12 @@ clips verify_many_rigs.py retargets). Each send sets PHASE first:
                         selected and the mode reads Skeleton (the drop queues its
                         import one idle later, as a real release does)
     PHASE = "measure1"  gate 6: the second rig plays the clip, the source is
-                        gone, the first rig never moved
+                        gone, the first rig never moved; gate 12: the second
+                        rig - turned 60 deg before the drop - kept its place
+                        and its facing, and plays the clip rigidly moved there
     PHASE = "floor"     gate 7: with Creep [rig] active in Characters, drop_at
                         on empty floor queues a new rig - a Creep - on that point
-    PHASE = "measure2"  gate 8: after every bake the Creep's root stands on the
+    PHASE = "measure2"  gate 8: after every bake the Creep's Main stands on the
                         floor point at the clip's first frame, its root track is
                         the clip's moved by that much, the camera sits on its
                         camera_root, the first two rigs are as they were
@@ -212,6 +214,11 @@ def phase_drag():
     d = drag()
     a, b = WORLD["a"], WORLD["b"]
     WORLD["a_track"] = track(a + ":hand_r")
+    # «я хочу чтобы риг остался на своем месте»: B stands at x = 90, turned
+    cmds.setAttr(b + ":Main.rotateY", 60.0)
+    settle()
+    m = cmds.xform(b + ":Main", query=True, worldSpace=True, matrix=True)
+    WORLD["b_place"] = (m[12], m[13], m[14], math.degrees(math.atan2(m[8], m[10])))
     click_mode("skeleton")
     cmds.select(a + ":Main", replace=True)
     target = to_global(pelvis(b))
@@ -264,6 +271,46 @@ def phase_measure1():
          "b hand_r travels %.3f | a drift %.2e | left %s | '%s'" % (
              moved, a_drift, left, said[:160]))
     WORLD["b_track"] = b_track
+    _kept_place(b)
+
+
+def _kept_place(b):
+    """Gate 12: B kept its place and facing; it plays the clip rigidly moved
+    there - root and hand_r on every sampled frame against the same clip
+    imported as a plain skeleton, through the one transform that takes the
+    clip's root at its first frame onto B's."""
+    import maya.api.OpenMaya as om
+    from maya_uebridge import animimport
+    if cmds.namespace(exists="verifyClip"):
+        cmds.namespace(removeNamespace="verifyClip", deleteNamespaceContent=True)
+    animimport.import_clip(CLIPS["LongSword_Attack_Right_Heavy_1P"], "verifyClip",
+                           set_timeline=False, clip_fps=30.0, merge=False)
+
+    def wm(node):
+        return om.MMatrix(cmds.xform(node, query=True, worldSpace=True, matrix=True))
+
+    cmds.currentTime(0, update=True)
+    main = cmds.xform(b + ":Main", query=True, worldSpace=True, matrix=True)
+    facing = math.degrees(math.atan2(main[8], main[10]))
+    move = wm("verifyClip:root").inverse() * wm(b + ":root")
+    worst = 0.0
+    for frame in range(0, 61, 6):
+        cmds.currentTime(frame, update=True)
+        for bone in ("root", "hand_r"):
+            want = om.MPoint(cmds.xform("verifyClip:" + bone, query=True, worldSpace=True,
+                                        translation=True)) * move
+            got = cmds.xform(b + ":" + bone, query=True, worldSpace=True, translation=True)
+            worst = max(worst, dist((want.x, want.y, want.z), got))
+    cmds.namespace(removeNamespace="verifyClip", deleteNamespaceContent=True)
+    place = WORLD["b_place"]
+    turn = (facing - place[3] + 180.0) % 360.0 - 180.0
+    gate(12, "the rig dropped on kept its place (x = 90) and its 60 deg facing, and plays "
+             "the clip rigidly moved there",
+         abs(main[12] - place[0]) < 1e-3 and abs(main[14] - place[2]) < 1e-3
+         and abs(turn) < 1e-3 and worst < 0.01,
+         "Main at frame 0 (%.4f, %.4f) facing %.4f vs place (%.4f, %.4f) facing %.4f | "
+         "root and hand_r off the moved clip by %.2e cm" % (
+             main[12], main[14], facing, place[0], place[2], place[3], worst))
 
 
 def choose_character(model, kind):
@@ -342,7 +389,9 @@ def _measure_floor(number, prefix, last):
         shift = off[0]
         worst = max(dist(o, shift) for o in off)
         cmds.currentTime(first, update=True)
-        at_start = world_t(ns + ":root")
+        # the RIG stands on the point: its Main, as a portrait dropped from
+        # Characters does (the Creep's root bone stands 2.4 cm ahead of Main)
+        at_start = world_t(ns + ":Main")
     drift = max(max(dist(p, q) for p, q in zip(WORLD[k + "_track"], track(WORLD[k] + ":hand_r")))
                 for k in ("a", "b"))
     if ns:
@@ -357,7 +406,7 @@ def _measure_floor(number, prefix, last):
          and (has_camera or prefix == "Creep_Rig")
          and cam < 1e-3 and drift < 1e-9 and ("retargeted onto %s" % ns) in said
          and "standing at floor" in said,
-         "%s root at frame %d %s vs floor %s | shift %s, track off it by %.2e | "
+         "%s Main at frame %d %s vs floor %s | root shift %s, track off it by %.2e | "
          "camera %s | others drift %.2e | '...%s'" % (
              ns, first, [round(v, 4) for v in at_start] if ns else None,
              [round(v, 4) for v in point], [round(v, 4) for v in shift] if ns else None,

@@ -7,9 +7,18 @@ testable here is every decision the press makes before and after touching
 the scene: the refusals, which node is the source's root, and the wording.
 """
 
+import math
 import sys
 import types
 import unittest
+
+
+def yaw_matrix(degrees, position):
+    """A node turned `degrees` about world Y, standing at `position`: the flat
+    row-major 16 list Maya's xform -q -ws -m answers."""
+    a = math.radians(degrees)
+    c, s = math.cos(a), math.sin(a)
+    return [c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0] + list(position) + [1.0]
 
 
 def _install_fake_maya():
@@ -141,6 +150,32 @@ class RigEntry(unittest.TestCase):
         self.assertIs(rigimport.rig_entry_for(None, manny), manny)
 
 
+class Place(unittest.TestCase):
+    """2026-10-01: «я хочу чтобы риг остался на своем месте» - the rig's Main
+    at the clip's first frame onto where it stood, turned as it was."""
+
+    def test_the_heading_is_the_z_axis_on_the_floor(self):
+        self.assertAlmostEqual(rigimport.heading(yaw_matrix(60.0, (0, 0, 0))), 60.0)
+        self.assertAlmostEqual(rigimport.heading(yaw_matrix(-135.0, (0, 0, 0))), -135.0)
+
+    def test_turn_about_mains_start_then_move_it_onto_the_place(self):
+        pivot, turn, move = rigimport.place_moves(
+            (90.0, 0.0, -40.0), 60.0, yaw_matrix(10.0, (5.0, 92.0, 20.0)))
+        self.assertEqual(pivot, (5.0, 92.0, 20.0))
+        self.assertAlmostEqual(turn, 50.0)
+        self.assertEqual(move, (85.0, 0.0, -60.0))
+
+    def test_the_short_way_round(self):
+        self.assertAlmostEqual(rigimport.place_moves(
+            (0, 0, 0), 170.0, yaw_matrix(-170.0, (0, 0, 0)))[1], -20.0)
+
+    def test_no_heading_no_turn(self):
+        """A floor point: the clip keeps its own facing."""
+        self.assertEqual(rigimport.place_moves(
+            (100.0, 0.0, -50.0), None, yaw_matrix(30.0, (5.0, 92.0, 20.0))),
+            ((5.0, 92.0, 20.0), 0.0, (95.0, 0.0, -70.0)))
+
+
 class Shift(unittest.TestCase):
 
     def test_the_root_at_the_first_frame_onto_the_floor_point(self):
@@ -155,6 +190,7 @@ class FakeRig(object):
     def __init__(self, namespace):
         self.namespace = namespace
         self.skeleton_root = "|%s:root" % namespace if namespace else "|root"
+        self.main = "|%s:Group|%s:Main" % (namespace, namespace)
 
     def __eq__(self, other):
         return isinstance(other, FakeRig) and other.namespace == self.namespace
@@ -206,6 +242,7 @@ class ThePress(unittest.TestCase):
             rig_module=lambda rig=None: (self.mod, ""),
             connect=lambda source_root=None, rig=None: (
                 self.calls.append(("connect", source_root, rig.namespace)) or
+                setattr(self, "connected", True) or
                 self.holder.add(self.mod.holder_of(rig)) or "retarget connected: 74"),
             bake=lambda rig=None: self.calls.append(("bake", rig.namespace)) or
             self.holder.discard(self.mod.holder_of(rig)) or "baked 20",
@@ -227,15 +264,26 @@ class ThePress(unittest.TestCase):
         self.maya_rigs = types.SimpleNamespace(
             Rig=FakeRig, rigs=lambda: list(self.rigs), current_rig=current_rig,
             label=lambda rig: rig.namespace or "Group")
-        self.root_at = (5.0, 92.0, 20.0)
+        self.main_place = yaw_matrix(0.0, (0.0, 0.0, 0.0))   # where the rig stands
+        self.main_start = yaw_matrix(0.0, (5.0, 92.0, 20.0))  # where the clip puts Main
+
+        def xform(node, query=False, worldSpace=False, matrix=False, pivots=None):
+            if pivots is not None:
+                self.calls.append(("pivot", node, tuple(pivots)))
+                return None
+            return list(self.main_start if self.connected else self.main_place)
+
+        self.connected = False
         fake_cmds = types.SimpleNamespace(
+            xform=xform,
+            currentTime=lambda *a, **k: 0.0,
+            setAttr=lambda plug, value: self.calls.append(("rotate", plug, round(value, 9))),
+            ungroup=lambda node: self.calls.append(("ungroup", node)),
             ls=lambda node, uuid=False, long=False: (
                 ["UUID-" + node] if uuid else [self.paths.get(node, node)]),
             group=lambda node, name=None: self.calls.append(("group", node, name)) or (
                 self.paths.update({"UUID-" + node: "|%s|%s" % (name, node.lstrip("|"))})
                 or name),
-            getAttr=lambda plug, time=None: (
-                [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] + list(self.root_at) + [1]),
             move=lambda x, y, z, node, relative=False, worldSpace=False: self.calls.append(
                 ("move", (x, y, z), node, relative, worldSpace)),
             objExists=lambda name: name in self.holder,
@@ -282,9 +330,10 @@ class ThePress(unittest.TestCase):
     def test_with_a_rig_standing_the_press_resets_imports_connects_bakes_deletes(self):
         self._one_rig_current()
         text = rigimport.import_and_retarget("C:/t/A_Jump.fbx", "A_Jump")
-        self.assertEqual(self._steps(), ["reset", "import", "connect", "bake", "delete_ns"])
+        self.assertEqual(self._steps(), ["reset", "import", "group", "connect", "move",
+                                         "bake", "delete_ns"])
         self.assertEqual([c for c in self.calls if c[0] == "connect"][0][1:],
-                         ("|A_Jump:root", "Manny_Rig"))
+                         ("|A_Jump:%s|A_Jump:root" % rigimport.SHIFT_NODE, "Manny_Rig"))
         self.assertIn("previous take cleared (12 curves), rig at build pose", text)
         self.assertIn("A_Jump retargeted onto Manny_Rig, frames 0-45", text)
         self.assertIn("source skeleton A_Jump deleted", text)
@@ -371,11 +420,29 @@ class ThePress(unittest.TestCase):
                          [("move", (95.0, 0.0, -70.0), "A:" + rigimport.SHIFT_NODE, True, True)])
         self.assertIn("standing at floor (100, -50)", text)
 
-    def test_a_floor_point_does_not_move_a_standing_rig(self):
+    def test_a_standing_rig_keeps_its_place_and_its_turn(self):
+        """2026-10-01, «я хочу чтобы риг остался на своем месте»: read where
+        Main stands BEFORE the reset zeroes it, then after the connect turn the
+        clip about Main's start and move it there - a drop and the Import
+        button alike; a floor point given with a standing rig changes nothing."""
         self._one_rig_current()
-        rigimport.import_and_retarget("C:/t/A.fbx", "A", at=(100.0, 0.0, -50.0))
-        self.assertNotIn("group", self._steps())
-        self.assertNotIn("move", self._steps())
+        self.main_place = yaw_matrix(60.0, (90.0, 0.0, -40.0))
+        self.main_start = yaw_matrix(10.0, (5.0, 92.0, 20.0))
+        text = rigimport.import_and_retarget("C:/t/A.fbx", "A", at=(300.0, 0.0, 300.0))
+        self.assertEqual(self._steps(), ["reset", "import", "group", "connect", "pivot",
+                                         "rotate", "move", "bake", "delete_ns"])
+        group = "A:" + rigimport.SHIFT_NODE
+        self.assertIn(("pivot", group, (5.0, 92.0, 20.0)), self.calls)
+        self.assertIn(("rotate", group + ".rotateY", 50.0), self.calls)
+        move = [c for c in self.calls if c[0] == "move"][0]
+        self.assertEqual((move[1], move[2]), ((85.0, 0.0, -60.0), group))
+        self.assertIn("kept in place at (90, -40)", text)
+
+    def test_an_unturned_rig_gets_no_turn(self):
+        self._one_rig_current()
+        rigimport.import_and_retarget("C:/t/A.fbx", "A")
+        self.assertNotIn("rotate", self._steps())
+        self.assertNotIn("pivot", self._steps())
 
     def test_an_unknown_target_is_refused(self):
         self.assertIn("unknown import target", rigimport.import_and_retarget("C:/t/A.fbx", "A", target="x"))
@@ -402,7 +469,7 @@ class ThePress(unittest.TestCase):
         self.rr.connect = lambda source_root=None, rig=None: (
             self.calls.append(("connect", source_root, rig.namespace)) or "no bone of A matches")
         text = rigimport.import_and_retarget("C:/t/A.fbx", "A")
-        self.assertEqual(self._steps(), ["reset", "import", "connect"])
+        self.assertEqual(self._steps(), ["reset", "import", "group", "connect", "ungroup"])
         self.assertIn("retarget refused: no bone of A matches", text)
         self.assertIn("imported as A", text)
 

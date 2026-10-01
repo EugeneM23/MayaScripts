@@ -127,3 +127,28 @@ Manny, on Orc D [rig] / Creep [rig] that rig; with Creep [rig] active a floor dr
 root at frame 0 stands on the point to 0.0 and walks the clip's own track moved by exactly that much
 (0.0 against the same clip imported as a plain skeleton); with Manny [rig] active the same on another
 point with the camera on its camera_root to 7e-14; the rigs already standing drift 0.0.
+
+## Addendum 2, the same evening: a rig dropped on keeps its place
+
+The animator: «Если я перетащил анимацию в риг который на сцене сейчас она перекидывается на риг и позиция
+меняется на позицию из анимационного файла тоесть анимация падает в ноль а я хочу чтобы риг остался на своем
+месте». Until then a clip onto a standing rig replaced its take and its PLACE: `reset_build_pose` zeroed
+`Main`, the retarget put `Main` on the clip's root.
+
+- **A rig already in the scene keeps its place and its facing**: `rigimport.rig_place(rig)` reads `Main`'s
+  world matrix on the current frame BEFORE the reset (`point`, and `yaw` = the heading of its +Z axis on the
+  floor, `heading`). The clip's wrapper (the floor drop's `skeldarDropShift`) goes on before the connect as
+  before; after it `_place` measures `Main` at the clip's first frame (a real time change — trap 69), turns
+  the wrapper about that point by `place_moves`' turn (the short way round) and moves it onto the place. A drop
+  on a rig and the Import button (Rig mode) alike — one meaning. A rig never moved stands at the origin facing
+  +Z and so does the clip's start: nothing changes for it.
+- **The floor drop now stands the rig's `Main` on the point** (was: the clip's root bone), the way a portrait
+  dropped from Characters stands. For Manny the two coincide; the Creep's root bone stands 2.4 cm ahead of its
+  `Main`.
+- A connect refusal ungroups the wrapper, so the clip's skeleton is left as it arrived.
+
+Proof: `verify_uebridge_drag.py` **12/12** in a fresh disposable Maya: gate 12 — the second rig, standing at
+x = 90 and turned 60° before the drop, has `Main` at frame 0 on (90, 0) facing 60.0000°, and its root and
+`hand_r` follow the clip — imported again as a plain skeleton and carried by the one transform that takes its
+root at frame 0 onto the rig's — to 8.5e-6 cm on every sampled frame; gates 8 and 11 now measure `Main` on the
+floor point (0.0).
