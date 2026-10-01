@@ -122,6 +122,13 @@ def rig_text(label):
     return "retarget onto %s" % label
 
 
+def skeleton_text(point=None):
+    if point is None:
+        return "a skeleton"
+    return "a skeleton %s floor (%d, %d)" % (DOT, int(round(point[0])),
+                                            int(round(point[2])))
+
+
 def new_rig_text(label, point=None):
     if point is None:
         return "a new %s" % label
@@ -359,3 +366,18 @@ def clip_target(gx, gy, snap, scale=1.0, new_label="Manny [rig]"):
                     text=new_rig_text(new_label, hit))
     label = next(ch["label"] for ch in snap if ch["key"] == key)
     return dict(kind="rig", rig=key, label=label, text=rig_text(label))
+
+
+def skeleton_target(gx, gy):
+    """Where an animation released at the global point stands in the UE
+    Bridge's Skeleton mode (2026-10-01, «если у нас выбран скелет то будем
+    располагать в сцене скелеты»): kind "skeleton" over a viewport - a rig
+    under the cursor is ignored - with the floor point the camera ray meets
+    as "point" (None looking above the horizon: where the clip is), and
+    "none" off every viewport; with the caption as "text"."""
+    view, local = Viewport.at(gx, gy)
+    if view is None:
+        return dict(kind="none", text=NO_VIEWPORT)
+    near, far = view.ray(view.to_port(local))
+    hit = floor_hit(near, far)
+    return dict(kind="skeleton", point=hit, text=skeleton_text(hit))

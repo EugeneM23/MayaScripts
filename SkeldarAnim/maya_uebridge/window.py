@@ -426,8 +426,8 @@ def import_dropped(record, aim):
     Characters card (Manny when that is no rig), standing on the floor point
     the drop aimed at after every bake («риг с анимацией оставался в том
     месте куда мы указали после всех перезапеканий»), or where the clip is
-    when the cursor saw no floor. The import-mode segments do not
-    matter here; the timeline checkbox does. The rig is found again after
+    when the cursor saw no floor. Of the import-mode segments only Skeleton
+    changes a drop (below); the timeline checkbox applies. The rig is found again after
     nothing but the drop: it can have been deleted while the editor
     exported. Returns the status line.
 
@@ -436,20 +436,30 @@ def import_dropped(record, aim):
     gets a new rig, in a square on the world's axes centred on the point
     (`lineimport`) - on the origin when no floor was seen - whatever the
     camera.
+
+    And the Skeleton mode reaches the drag the same day («если у нас выбран
+    скелет то будем располагать в сцене скелеты»): `aim` kind "skeleton"
+    (`droptarget.skeleton_target`, a rig under the cursor ignored) - one
+    clip as its own skeleton, its root at its first frame on the floor
+    point, several in the square about it.
     """
     aim = aim or {}
     kind = aim.get("kind")
     chosen = ([record] if hasattr(record, "name")
               else [r for r in (record or []) if r is not None])
-    if not chosen or kind not in ("rig", "new_rig"):
+    if not chosen or kind not in ("rig", "new_rig", "skeleton"):
         text = aim.get("text") or "no target"
         _status(text)
         return text
-    if kind == "new_rig" and len(chosen) > 1:
+    if kind in ("new_rig", "skeleton") and len(chosen) > 1:
         from maya_uebridge import lineimport   # lazy: keeps the import graph flat
-        text = lineimport.run(chosen, _export_from_editor, "new_rig",
+        text = lineimport.run(chosen, _export_from_editor, kind,
                               centre=aim.get("point") or (0.0, 0.0, 0.0),
                               set_timeline=_timeline())
+        _status(text)
+        return text
+    if kind == "skeleton":
+        text = _drop_skeleton(chosen[0], aim.get("point"))
         _status(text)
         return text
     record = chosen[0]
@@ -473,6 +483,22 @@ def import_dropped(record, aim):
         target=kind, rig=rig,
         at=aim.get("point") if kind == "new_rig" else None), note)
     _status(text)
+    return text
+
+
+def _drop_skeleton(record, point):
+    """One clip dropped in the Skeleton mode: its own namespaced skeleton,
+    the root at its first frame on the floor `point` (None: where the clip
+    is) - moved by a wrapper, its keys untouched. Returns the status line."""
+    from maya_uebridge import rigimport   # lazy: keeps the import graph flat
+    exported, fps = _export_from_editor(record)
+    namespace, info, source = rigimport.import_source(
+        exported, record.name, clip_fps=fps, set_timeline=_timeline())
+    text = import_line(record.name, info)
+    if point is not None and source is not None:
+        rigimport.stand_skeleton(namespace, source, point, info.get("start"))
+        text = "{0}  |  standing at floor ({1}, {2})".format(
+            text, int(round(point[0])), int(round(point[2])))
     return text
 
 
@@ -586,7 +612,8 @@ def build_panel():
                    "drop on a rig take the first; New rig, Skeleton and a "
                    "drop on the floor lay them all out in a square - about "
                    "the scene's zero for the button, about the point for a "
-                   "drop.",
+                   "drop. With Skeleton picked a drag places skeletons on "
+                   "the floor (a rig under the cursor is ignored).",
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 

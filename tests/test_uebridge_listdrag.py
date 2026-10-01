@@ -74,6 +74,17 @@ class Caption(unittest.TestCase):
         self.assertEqual(listdrag.caption(["A", "B", "C"], aim),
                          ("3 animations · 3 new Manny [rig] in a square", True))
 
+    def test_skeletons_one_and_several(self):
+        aim = dict(kind="skeleton", point=(120.4, 0.0, -35.6),
+                   text="a skeleton · floor (120, -36)")
+        self.assertEqual(listdrag.caption(["A_Jump"], aim),
+                         ("A_Jump · a skeleton · floor (120, -36)", True))
+        self.assertEqual(listdrag.caption(["A_Jump", "A_Walk", "A_Run"], aim),
+                         ("3 animations · 3 skeletons in a square · floor (120, -36)", True))
+        self.assertEqual(listdrag.caption(["A", "B"], dict(kind="skeleton", point=None,
+                                                          text="a skeleton")),
+                         ("2 animations · 2 skeletons in a square", True))
+
     def test_one_in_a_list_reads_as_one(self):
         self.assertEqual(listdrag.caption(["A_Jump"], dict(kind="rig", text="retarget onto X")),
                          ("A_Jump · retarget onto X", True))
@@ -204,6 +215,11 @@ class Drag(unittest.TestCase):
         self.drag.drop_at(10, 10, self.records[2])
         self.assertEqual(self.acts("snapshot"), [("snapshot",)])
         self.assertEqual(self.acts("drop"), [("drop", "A_Run", "new_rig")])
+
+    def test_a_skeleton_aim_drops(self):
+        self.scene.aim = dict(kind="skeleton", point=(1.0, 0.0, 2.0), text="a skeleton")
+        self.drag.drop_at(10, 10, self.records[1:])
+        self.assertEqual(self.acts("drop"), [("drop", ["A_Walk", "A_Run"], "skeleton")])
 
     def test_a_drop_that_raises_says_so(self):
         def boom(record, aim):

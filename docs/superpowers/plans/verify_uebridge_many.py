@@ -30,6 +30,16 @@ export is replaced by FBX clips on disk. Each send sets PHASE first:
     PHASE = "drag_rig"      gate 10: the three dragged onto the middle rig
     PHASE = "measure_rig"   gate 11: that rig took the first clip only, the
                             other two never moved
+    PHASE = "drag_skel"     gate 12: the Skeleton mode picked, the three dragged
+                            onto a rig's pelvis: the ghost names a square of
+                            skeletons on the floor point under the cursor
+    PHASE = "measure_skel"  gate 13: three skeletons on that square, each root
+                            playing its own keys moved; the rig untouched, no
+                            rig added
+    PHASE = "drag_skel1"    gate 14: one clip (the thrust, which starts off its
+                            origin) dragged onto the floor in the Skeleton mode
+    PHASE = "measure_skel1" gate 15: its root at its first frame on the point,
+                            the clip's own track moved there
 
 Spec: docs/superpowers/specs/2026-10-01-uebridge-many-animations-design.md
 """
@@ -368,15 +378,15 @@ def phase_button_rig():
          "'%s'" % said[:300])
 
 
-def _drag_rows(press_row, target_world, number, text, want_caption):
-    """A real press - drag - release through Qt on the list, the three rows
-    picked, the press on the picked row `press_row` (0-based)."""
+def _drag_rows(press_row, target_world, number, text, want_caption, rows=(1, 2, 3)):
+    """A real press - drag - release through Qt on the list, `rows` picked
+    (1-based), the press on the picked row `press_row` (0-based)."""
     import maya_hubqt
     from maya_uebridge import window
     q = maya_hubqt.qt()
     QtCore, QtGui = q.QtCore, q.QtGui
     E = QtCore.QEvent
-    picked = pick_rows([1, 2, 3])
+    picked = pick_rows(list(rows))
     target = to_global(target_world)
     print("   ", keep_hub_off([target]))
     target = QtCore.QPoint(*to_global(target_world))
@@ -401,9 +411,10 @@ def _drag_rows(press_row, target_world, number, text, want_caption):
     aim = d.scene.target(target.x(), target.y(), d._drag["snap"]) if d._drag else {}
     mouse(E.MouseButtonRelease, global_point=target, buttons=QtCore.Qt.NoButton)
     after = sorted(cmds.textScrollList(window._LIST, query=True, selectIndexedItem=True) or [])
+    want = [ORDER[r - 1] for r in rows]
     gate(number, text,
-         picked == [1, 2, 3] and carried == ORDER and d.dragging() is None
-         and want_caption(caption) and after == [1, 2, 3],
+         picked == list(rows) and carried == want and d.dragging() is None
+         and want_caption(caption) and after == list(rows),
          "carried %s | caption '%s' | said '%s' | list kept %s" % (
              carried, caption, d.status_text, after))
     return aim
@@ -414,6 +425,7 @@ def phase_drag_floor():
     choose_manny()
     cmds.viewPlace("persp", eye=(900.0, 320.0, 0.0), lookAt=(0.0, 90.0, 0.0))
     settle()
+    click_mode("new_rig")          # the mode reaches the drag: Skeleton places skeletons
     WORLD["before_floor"] = list(rigs())
     point = (0.0, 0.0, 0.0)
     aim = _drag_rows(1, point, 8, "three picked dragged onto empty floor, the press on the "
@@ -446,6 +458,7 @@ def phase_drag_rig():
             track.append(world_t(ns + ":hand_r"))
         WORLD["other_tracks"][ns] = track
     cmds.currentTime(0, update=True)
+    click_mode("rig")
     settle()
     WORLD["rigs_before"] = sorted(rigs())
     _drag_rows(2, world_t(middle + ":pelvis"), 10,
@@ -473,8 +486,96 @@ def phase_measure_rig():
          "others drift %.2e | '%s'" % (drift, said[:300]))
 
 
+def _skeletons_on(centre, names):
+    """Worst distance of each clip's root, over its frames, from its own
+    track moved onto its slot of the square about `centre` (one clip: the
+    centre itself)."""
+    from maya_uebridge import lineup
+    x = [lineup.side_extent(WORLD["tracks"][n], lineup.COLUMNS) for n in names]
+    z = [lineup.side_extent(WORLD["tracks"][n], lineup.ROWS) for n in names]
+    slots = lineup.square_slots(centre, x, z, STEP)
+    worst, found = 0.0, []
+    for name, slot in zip(names, slots):
+        root = (cmds.ls(name + ":root", long=True) or [None])[0]
+        found.append(root)
+        if root is None:
+            continue
+        track = WORLD["tracks"][name]
+        move = (slot[0] - track[0][0], 0.0, slot[2] - track[0][2])
+        for frame, point in enumerate(track):
+            cmds.currentTime(WORLD["starts"][name] + frame, update=True)
+            want = (point[0] + move[0], point[1], point[2] + move[2])
+            worst = max(worst, dist(world_t(root), want))
+    return worst, found
+
+
+def phase_drag_skel():
+    from maya_scenesetup import catalog, character
+    cmds.file(new=True, force=True)
+    choose_manny()
+    character.add_character(catalog.default_rig())
+    WORLD["skel_rig"] = list(rigs())
+    ns = WORLD["skel_rig"][0]
+    cmds.viewPlace("persp", eye=(0.0, 260.0, 720.0), lookAt=(0.0, 90.0, 0.0))
+    settle()
+    WORLD["skel_rig_at"] = [world_t(ns + ":Main"), world_t(ns + ":hand_r")]
+    WORLD["skel_rig_keys"] = len(cmds.ls(ns + ":*", type="animCurveTA") or [])
+    click_mode("skeleton")
+    aim = _drag_rows(0, world_t(ns + ":pelvis"), 12,
+                     "Skeleton picked, three dragged onto a rig: the ghost names a square of "
+                     "three skeletons on the floor point under the cursor",
+                     lambda c: c.startswith("3 animations · 3 skeletons in a square · floor"))
+    WORLD["skel_floor"] = aim.get("point")
+    print("    aim: %s" % (aim,))
+
+
+def phase_measure_skel():
+    said = status()
+    print("    status: %s" % said)
+    ns = WORLD["skel_rig"][0]
+    worst, found = _skeletons_on(WORLD["skel_floor"], ORDER)
+    still = max(dist(a, b) for a, b in zip(
+        WORLD["skel_rig_at"], [world_t(ns + ":Main"), world_t(ns + ":hand_r")]))
+    keys = len(cmds.ls(ns + ":*", type="animCurveTA") or [])
+    gate(13, "three skeletons on the square about the floor point, each root playing its "
+             "own keys moved; the rig under the cursor untouched, no rig added",
+         all(found) and worst < 1e-3 and sorted(rigs()) == WORLD["skel_rig"]
+         and still < 1e-9 and keys == WORLD["skel_rig_keys"]
+         and "3 animations as skeletons in a 2 x 2 square" in said,
+         "roots %s | off the moved clip %.2e | rig moved %.2e, its rotate curves %d -> %d | '%s'" % (
+             found, worst, still, WORLD["skel_rig_keys"], keys, said[:200]))
+
+
+def phase_drag_skel1():
+    cmds.file(new=True, force=True)
+    cmds.viewPlace("persp", eye=(0.0, 260.0, 720.0), lookAt=(0.0, 90.0, 0.0))
+    settle()
+    thrust = "ShortSword_Attack_Thrust_3P"
+    row = ORDER.index(thrust) + 1
+    aim = _drag_rows(row - 1, (100.0, 0.0, -50.0), 14,
+                     "Skeleton picked, one clip dragged onto the floor: the ghost names a "
+                     "skeleton on the floor point",
+                     lambda c: c.startswith("%s · a skeleton · floor" % thrust), rows=(row,))
+    WORLD["skel1_floor"] = aim.get("point")
+
+
+def phase_measure_skel1():
+    said = status()
+    print("    status: %s" % said)
+    thrust = "ShortSword_Attack_Thrust_3P"
+    point = WORLD["skel1_floor"]
+    worst, found = _skeletons_on(point, [thrust])
+    gate(15, "its root at its first frame on the floor point, the clip's own track moved "
+             "there; no rig",
+         all(found) and worst < 1e-3 and not rigs() and "standing at floor" in said,
+         "root %s | off the moved clip %.2e | point %s | '%s'" % (
+             found, worst, [round(v, 3) for v in point or []], said[:200]))
+
+
 {"setup": phase_setup, "button_new": phase_button_new, "button_skel": phase_button_skel,
  "button_rig": phase_button_rig, "drag_floor": phase_drag_floor,
  "measure_floor": phase_measure_floor, "drag_rig": phase_drag_rig,
- "measure_rig": phase_measure_rig}[PHASE]()
+ "measure_rig": phase_measure_rig, "drag_skel": phase_drag_skel,
+ "measure_skel": phase_measure_skel, "drag_skel1": phase_drag_skel1,
+ "measure_skel1": phase_measure_skel1}[PHASE]()
 print("%s: %s" % (PHASE, "FAILURES %s" % FAILED if FAILED else "all gates passed"))

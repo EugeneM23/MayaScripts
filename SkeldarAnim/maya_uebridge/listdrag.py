@@ -21,7 +21,9 @@ Several rows the same day («выделить массив анимаций ... 
 (`carried_rows`), and the list keeps them picked; onto a rig the first goes,
 onto the floor every one gets a new rig, in a square on the world's axes
 about the point (`window.import_dropped` -> `lineimport`). The ghost says
-which.
+which. With the Skeleton mode picked (read when the drag starts) a release
+over a viewport places skeletons on the floor point instead, rigs ignored
+(`droptarget.skeleton_target`).
 
 Maya's textScrollList IS a QListWidget: an event filter on it and its
 viewport does the whole thing, so the window stays plain `cmds`. The press
@@ -44,6 +46,7 @@ THROTTLE_MS = 33        # the caption is re-read at most this often
 DOT = "·"
 OFF_HUB = "release off the hub to import"
 CANCELLED = "cancelled"
+DROPS = ("rig", "new_rig", "skeleton")      # the aims a release acts on
 
 #  The drags standing, by the list they are attached to.
 _DRAGS = {}
@@ -72,6 +75,16 @@ def caption(names, aim):
         if len(names) > 1:
             text = "%d animations %s %d new %s in a square" % (
                 len(names), DOT, len(names), aim.get("label") or "rig")
+            point = aim.get("point")
+            if point is not None:
+                text += " %s floor (%d, %d)" % (DOT, int(round(point[0])),
+                                                int(round(point[2])))
+            return text, True
+        return "%s %s %s" % (first, DOT, aim.get("text", "")), True
+    if kind == "skeleton":
+        if len(names) > 1:
+            text = "%d animations %s %d skeletons in a square" % (
+                len(names), DOT, len(names))
             point = aim.get("point")
             if point is not None:
                 text += " %s floor (%d, %d)" % (DOT, int(round(point[0])),
@@ -123,14 +136,28 @@ class Scene(object):
         except Exception:                                    # noqa: BLE001
             return 1.0
 
+    def _read_mode(self):
+        try:
+            from maya_uebridge import window
+            return window.import_mode()
+        except Exception:                                    # noqa: BLE001
+            return "rig"
+
     def snapshot(self):
+        """What a drag needs, read once when it starts: the import mode
+        (the Skeleton mode places skeletons, 2026-10-01), the rig a floor
+        drop adds, every rig's bones."""
         from maya_scenesetup import droptarget
         from maya_uebridge import rigimport
+        self._mode = self._read_mode()
         self._new_label = rigimport.new_rig_entry().label
         return droptarget.rig_snapshot()
 
     def target(self, gx, gy, snap):
         from maya_scenesetup import droptarget
+        mode = getattr(self, "_mode", None) or self._read_mode()
+        if mode == "skeleton":
+            return droptarget.skeleton_target(gx, gy)
         label = getattr(self, "_new_label", None)
         if label is None:
             from maya_uebridge import rigimport
@@ -305,7 +332,7 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 return self._say(_last_line(traceback.format_exc()))
-            if aim.get("kind") in ("rig", "new_rig"):
+            if aim.get("kind") in DROPS:
                 return self._act(lambda: self.scene.drop(records, aim))
             return self._say(aim.get("text") or "no target")
 

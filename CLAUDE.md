@@ -7175,8 +7175,15 @@ camera's right); after the push, «всегда располагать наши 
   selection is put back to what is carried after the synthetic release (cmds sees it: gate 8). The ghost:
   «A_Jump · retarget onto Manny_Rig1 · first of 3», «3 animations · 3 new Manny [rig] in a square · floor (2, 1)».
   `drop_at(gx, gy, records)` and `window.import_dropped(records, aim)` take a record or a list.
+- **The Skeleton mode reaches the drag** (the animator, after the square: «групповое перетягивание работает только
+  с ригом даже если выбран skeleton»; the mode is read when the drag starts, `listdrag.Scene.snapshot`): over a
+  viewport the clips arrive as skeletons on the floor point under the cursor - **a rig under the cursor is
+  ignored**, nothing retargeted (`droptarget.skeleton_target`) - one with its root at its first frame on the
+  point (`window._drop_skeleton`: `rigimport.import_source` + `stand_skeleton`), several in the square about it.
+  The ghost: «A_Jump · a skeleton · floor (100, -50)», «3 animations · 3 skeletons in a square · floor (0, -416)».
+  Rig and New rig drags are unchanged.
 
-Proof: `docs/superpowers/plans/verify_uebridge_many.py` **11/11 in a disposable Maya** (port 7023, scratch
+Proof: `docs/superpowers/plans/verify_uebridge_many.py` **15/15 in a disposable Maya** (port 7023, scratch
 `MAYA_APP_DIR`, `MAYA_NO_HOME=1`, minimized, killed after; the editor's export replaced by
 LongSword_Attack_Right_Heavy_1P, ShortSword_Attack_Thrust_3P - 248.7 cm of root travel forward, 23 cm sideways -
 and ShortSword_Walk_1P on disk), run again whole for the square: the button with New rig - three Mannys on a 2 × 2
@@ -7185,8 +7192,13 @@ about the origin, Main at each clip's first frame on its slot to 0.0 (columns ±
 250.0, the timeline 0–61; Skeleton - each root playing its own keys moved onto its slot, 0.0 off; Rig - the first
 only, the note first; a real press–drag–release of the three picked rows onto the floor with the camera looking
 along X: all three carried, the list kept them picked, the same square on the world's axes about the point (0.0
-off, clearance 250.0); the three dropped on a rig - the first only, the other two rigs 0.0 drift. The slots were
-held against each clip's root walked frame by frame with `currentTime` on a plain import. 3352 unit tests. A
+off, clearance 250.0); the three dropped on a rig - the first only, the other two rigs 0.0 drift; with Skeleton
+picked, the three dragged onto a rig's pelvis - three skeletons on the square about the floor point behind it,
+each root its own keys moved to 0.0, the rig untouched (0.0, no curve added), no rig added - and the thrust alone
+dragged onto the floor - its root at its first frame on the point, 0.0 off (gates 12-15, **15/15** in all). A
+verify phase that drags must pick its mode itself: a Skeleton mode left by the phase before made gate 8's drop
+skeletons, correctly. The slots were
+held against each clip's root walked frame by frame with `currentTime` on a plain import. 3360 unit tests. A
 Shift range cannot be tested offscreen (Qt ignores a sent Shift for a range on a bare QListWidget - measured; Ctrl
 works): the Shift road is the same code as Ctrl's.
 
