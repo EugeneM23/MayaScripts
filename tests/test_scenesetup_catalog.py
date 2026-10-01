@@ -935,3 +935,15 @@ class ArmorTable(unittest.TestCase):
     def test_the_icon_path(self):
         self.assertTrue(catalog.armor_icon_path("Tech_Limb").endswith(
             "/assets/armor_icons/Tech_Limb.png"))
+
+
+class ArmorIcons(unittest.TestCase):
+    """One tile icon per ARMOR row (make_armor_icons.py): a new row needs its
+    icon, or the card shows the fallback glyph."""
+
+    def test_every_row_has_its_icon(self):
+        for row in catalog.ARMOR:
+            path = catalog.armor_icon_path(row.key)
+            self.assertTrue(os.path.isfile(path), path)
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(8), b"\x89PNG\r\n\x1a\n")

@@ -18,7 +18,7 @@ _WANTED = ("user", "sword", "hand-grab", "transfer-in", "arrows-exchange",
            "bulb", "palette", "keyboard", "dots-vertical", "chevron-down",
            "chevron-right", "plus", "camera", "trash", "folder", "brush",
            "download", "upload", "refresh", "check", "x", "link", "unlink",
-           "arrow-back-up")
+           "arrow-back-up", "shield")
 
 
 class TheSet(unittest.TestCase):
