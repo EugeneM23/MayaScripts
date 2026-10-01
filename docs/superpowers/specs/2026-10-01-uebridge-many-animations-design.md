@@ -153,3 +153,31 @@ The animator: «Сейчас групповое перетягивание ра�
 - `window.import_dropped` takes kind "skeleton": one is `rigimport.import_source` + `stand_skeleton` (the
   timeline checkbox applies), several `lineimport.run`.
 - Rig and New rig drags are unchanged: a rig under the cursor takes the first, the floor a square of new rigs.
+
+## Addendum 3: Skeleton means the Characters card's skeleton, with its geometry
+
+The animator: «Давай сделаем что бы скелет вставлялся с геометрией» - then, before anything was built, «давай
+будем использовать скелет который активен в вкладке character». Asked: the clip goes **by bone names, respecting
+proportions**; a rig active in Characters means **that model's skeleton**.
+
+- **Which skeleton** (`skeletonimport.skeleton_entry_for`, pure): the Characters card's active row when it is a
+  skeleton; else that model's skeleton (Manny [rig] → Manny UE5 [skeleton], Creep [rig] → Creep [skeleton]);
+  else (Orc D has none) Manny UE5 [skeleton]. The Skeleton mode - button or drag, one or several - adds that
+  skeleton (`character.add_character`, its geometry and textures or palette colour as Add Character gives them)
+  and the clip's own skeleton is deleted after the transfer, as the rig modes do.
+- **The transfer** (`skeletonimport.transfer`): target bones paired with the clip's by leaf name (the roots
+  paired whatever their names - a second Manny's root is `Manny_Skeleton_root`); for a UE4-schema target under
+  a UE5 clip the spine follows `maya_retarget`'s map (spine_01 ← spine_02, spine_02 ← spine_04, spine_03 ←
+  spine_05). **A twin** - measured: ≥ 90 % of the shared bones longer than 1 cm within 1 % of the clip's
+  length (Manny UE5 99 %, Creep 35 %, UE4 Mannequin 2 %) - takes every bone's world matrix
+  (`parentConstraint`, no offset): exact. **Otherwise** every bone takes the clip bone's world orientation
+  (`orientConstraint`, no offset; the bone keeps its own length, the mesh does not stretch), root and pelvis
+  their position too, and the `ik_*` helpers stay at rest (their layout is the skeleton's own: the Creep's
+  `ik_hand_gun` stands at zero with `ik_hand_r` 110 cm under it). Baked over the clip's range
+  (`bakeResults -simulation`), the constraints deleted. Bones with no partner are named.
+- **Placement** is the clip's: its root wrapped (`skeldarDropShift`) and moved onto the slot / the floor point
+  before the transfer, so the bake carries the move into the skeleton's root; a single clip with no point stands
+  where the clip is. The new skeleton itself is never moved (the Creep's `Armature` stays Cascadeur's layout).
+- The ghost: «A_Jump · a new Manny UE5 [skeleton] · floor (100, -50)», «3 animations · 3 new Manny UE5 [skeleton]
+  in a square · floor (…)». The status: «A_Jump onto Manny UE5 [skeleton] root1: 89 bones exact, frames 0-61 |
+  standing at floor (100, -50) | not in the clip: head, neck_01, neck_02».
