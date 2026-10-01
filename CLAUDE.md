@@ -7054,8 +7054,11 @@ The animator: «я зажимаю клавишу мышки и ташу аним
 попадаю в какой-то риг то анимация должна перекинутся на него какбуд-то мы нажали import с опцией rig если мы не
 нашли ничего то тогда нам нужно сделать new rig». Asked: a new rig stands **where the clip is** («Где клип» — the
 retarget puts `Main` on the clip's root, so a drop point could only be honoured by shifting the clip into the
-exported root bone), and it is **Manny** («Manny, как New rig»). Spec
-`docs/superpowers/specs/2026-10-01-uebridge-drag-to-viewport-design.md`, plan beside it.
+exported root bone), and it is **Manny** («Manny, как New rig»). **Both reversed the same day**
+(«анимация закидывалась ... на тот который активен во вкладке characters но если в персанажах нет
+активного рига то тогда берем базовый маникен ... если мы указываем на пол ... риг с анимацией оставался в
+том месте куда мы указали после все перезапеканий»): see the last two bullets. Spec
+`docs/superpowers/specs/2026-10-01-uebridge-drag-to-viewport-design.md` (its addendum), plan beside it.
 
 - **Press a row, move past Qt's start distance**: the hub's shared ghost (Tabler's `run` icon, new in
   `maya_hubicons`) rides the cursor, its caption «A_Jump · retarget onto Manny_Rig1» over a rig, «A_Jump · a new
@@ -7081,6 +7084,18 @@ exported root bone), and it is **Manny** («Manny, как New rig»). Spec
   selection is not asked; `"new_rig"` ignores it.
 - **`maya_hubqt.on_hub(gx, gy)`** (over `maya_hubstyle.over_hub(names)`) answers "is this point on the hub" for
   the Characters grid and the list alike; `maya_charlook.over_hub` is gone.
+- **A rig the bridge ADDS is the Characters card's active row when it is a rig** (`rigimport.new_rig_entry` →
+  `rig_entry_for(window.chosen_character(), default_rig())`, from the card's memory, so the card need not be
+  open), Manny for a skeleton or a model with no rig — for a floor drop, Import with New rig and Import with
+  Rig in a scene with none alike. The caption names it («A_Jump · a new Creep [rig] · floor (120, -36)»).
+- **A floor drop leaves the new rig on the point after every bake**: `clip_target` gives the floor point
+  (None above the horizon: the rig stands where the clip is); `import_and_retarget(at=)` wraps the clip's
+  root in a group of its namespace (`skeldarDropShift`) BEFORE the connect — the holder remembers the root
+  by PATH (`asrtSourceRoot`), so the root must not be re-parented after it (trap 16) — the connect measures
+  the clip unmoved, then the group moves by `shift_for(at, root at the clip's first frame)`, horizontal
+  only, and the bake carries it into the controls, helper bones and camera. Measured: `maya_asretarget`'s
+  twin offsets are taken from the rig's OWN bones, its constraints are world-space, so the move reaches
+  everything 1:1. The exported root bone carries the move. A drop onto a rig moves nothing.
 
 Proof: `docs/superpowers/plans/verify_uebridge_drag.py` **8/8 in a disposable Maya** (port 7015, scratch
 `MAYA_APP_DIR`, `MAYA_NO_HOME=1`; the editor's export replaced by the UE clips on disk, so no Unreal): two
@@ -7092,6 +7107,15 @@ travels 17.056 cm under LongSword_Attack_Right_Heavy_1P, the source namespace de
 0.0. A second run's gate 8 counted an extra rig: the animator was dragging clips in that Maya themselves (its
 status line: LongSword dropped onto their own Manny_Rig, take cleared, retargeted) — trap 85 again, and the
 real mouse half working in their hands. 3090 unit tests. Not run: a drop with a live Unreal editor exporting.
+
+The reversal's proof, the same script's gates 9-11 in a fresh disposable Maya: Characters on Creep
+[skeleton] or the UE4 Mannequin adds Manny, on Orc D / Creep [rig] that rig; with Creep [rig] active a floor
+drop adds a Creep whose root at frame 0 stands on the point to 0.0 and walks ShortSword_Walk_1P's own root
+track moved by exactly that much (0.0, against the clip imported as a plain skeleton); with Manny [rig] active
+LongSword on another point, the same, the camera on its `camera_root` to 7e-14; the rigs already standing
+0.0. The Creep carries no camera bones (only weapon_r / weapon_l travel), so its camera is not asked about.
+In a second full run gate 8's status-line clause failed: the animator was in that Maya again and added an
+Orc D, so a later import had overwritten the line; its geometry passed the same. 3191 unit tests.
 
 141. **A verify that dodges a floating hub by parking it in ONE corner can park it over the very point it
      dodges.** The hub went to the top-left, the floor point projected to the left, and `drop_at` correctly
