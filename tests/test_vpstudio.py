@@ -319,8 +319,8 @@ class TestLooks(unittest.TestCase):
     so a third one is a row in the table rather than a branch in the
     code."""
 
-    def test_two_looks_studio_first(self):
-        self.assertEqual(vp.LOOK_ORDER, ("Studio", "Outdoor"))
+    def test_three_looks_studio_first(self):
+        self.assertEqual(vp.LOOK_ORDER, ("Studio", "Outdoor", "Soft Studio"))
 
     def test_studio_is_the_default(self):
         """Anyone who never opens the list gets what they had before."""
@@ -335,8 +335,10 @@ class TestLooks(unittest.TestCase):
         for name in vp.LOOK_ORDER:
             look = vp.look_of(name)
             for part in ("lights", "floor", "backdrop", "shadow_filter",
-                         "bloom"):
+                         "bloom", "spot", "fog", "dmap_scale"):
                 self.assertIn(part, look, "%s / %s" % (name, part))
+            self.assertIn(look["floor"]["kind"], ("plane", "cyclorama"),
+                          name)
 
     def test_every_look_has_exactly_one_shadow_caster(self):
         for name in vp.LOOK_ORDER:
@@ -516,6 +518,254 @@ class TestFloorPlan(unittest.TestCase):
         plan = vp.floor_plan(frame)
         self.assertAlmostEqual(plan["position"][0], frame["centre"][0])
         self.assertAlmostEqual(plan["position"][2], frame["centre"][2])
+
+
+SOFT = "Soft Studio"
+
+
+def soft_spec(look, name):
+    return [s for s in vp.lights_of(look) if s.name == name][0]
+
+
+class TestSoftStudio(unittest.TestCase):
+    """2026-10-01: «свет будет распределен в 3 раза более широким пятном
+    ... спереди теплый свет сзади холодный»."""
+
+    def plan(self, look=SOFT, **extra):
+        options = {"look": look}
+        options.update(extra)
+        return {e["name"][len("VPStudio_"):]: e
+                for e in vp.light_plan(vp.subject_frame(BOX), 0.0, options)}
+
+    def test_six_lights(self):
+        self.assertEqual(vp.light_names(SOFT),
+                         ("key", "fill", "rim", "kicker", "bounce",
+                          "ambient"))
+
+    def test_studio_is_still_the_default(self):
+        self.assertEqual(vp.LOOK_ORDER[0], "Studio")
+        self.assertEqual(vp.DEFAULTS["look"], "Studio")
+
+    def pool_ratio(self, soft, studio):
+        half = lambda e: math.radians(e["cone"] / 2.0)
+        return math.tan(half(soft)) / math.tan(half(studio))
+
+    def test_the_key_s_pool_is_three_times_the_studio_s(self):
+        """At the same distance the cone's half-width on the subject is
+        `tan(half)`, so three times the pool is three times the tangent."""
+        soft, studio = self.plan()["key"], self.plan("Studio")["key"]
+        self.assertAlmostEqual(
+            math.dist(soft["position"], vp.subject_frame(BOX)["centre"]),
+            math.dist(studio["position"], vp.subject_frame(BOX)["centre"]),
+            places=6)
+        self.assertAlmostEqual(self.pool_ratio(soft, studio), 3.0, places=6)
+
+    def test_both_back_lights_spread_three_times_the_studio_rim(self):
+        studio = self.plan("Studio")["rim"]
+        for name in ("rim", "kicker"):
+            self.assertAlmostEqual(
+                self.pool_ratio(self.plan()[name], studio), 3.0, places=6,
+                msg=name)
+
+    def test_the_falloff_widens_with_the_cone(self):
+        """Maya weighs a spot by cos(angle)^dropoff. Studio's dropoff on a
+        126-degree cone would end the pool at Studio's size: at its edge
+        the wide cone must be at least as bright, relative to its centre,
+        as Studio's is at its own edge."""
+        soft, studio = self.plan()["key"], self.plan("Studio")["key"]
+        edge = lambda e: math.cos(math.radians(e["cone"] / 2.0)) \
+            ** e["dropoff"]
+        self.assertGreaterEqual(edge(soft), edge(studio))
+        self.assertLess(soft["dropoff"], studio["dropoff"])
+        self.assertGreater(soft["penumbra"], studio["penumbra"])
+
+    def test_no_spot_opens_past_a_half_sphere(self):
+        """A positive penumbra adds to the cone on both sides."""
+        for name in vp.LOOK_ORDER:
+            for entry in vp.light_plan(vp.subject_frame(BOX), 0.0,
+                                       {"look": name}):
+                if entry["kind"] == "spot":
+                    self.assertLessEqual(
+                        entry["cone"] + 2.0 * entry["penumbra"], 170.0,
+                        "%s %s" % (name, entry["name"]))
+
+    def test_studio_and_outdoor_keep_their_spots(self):
+        for look in ("Studio", "Outdoor"):
+            for entry in vp.light_plan(vp.subject_frame(BOX), 0.0,
+                                       {"look": look}):
+                if entry["kind"] == "spot":
+                    self.assertEqual(entry["penumbra"], 14.0)
+                    self.assertEqual(entry["dropoff"], 6.0)
+        self.assertEqual(soft_spec("Studio", "key").cover, 1.7)
+        self.assertEqual(soft_spec("Studio", "rim").cover, 1.5)
+
+    def test_warm_in_front(self):
+        for name in ("key", "fill", "bounce"):
+            spec = soft_spec(SOFT, name)
+            self.assertGreater(spec.colour[0], spec.colour[2], name)
+            self.assertGreater(math.cos(math.radians(spec.azimuth)), 0.0,
+                               name)
+
+    def test_cold_behind(self):
+        for name in ("rim", "kicker"):
+            spec = soft_spec(SOFT, name)
+            self.assertGreater(spec.colour[2], spec.colour[0], name)
+            self.assertLess(math.cos(math.radians(spec.azimuth)), 0.0, name)
+
+    def test_the_back_lights_stand_on_either_side(self):
+        rim, kicker = soft_spec(SOFT, "rim"), soft_spec(SOFT, "kicker")
+        self.assertLess(math.sin(math.radians(rim.azimuth))
+                        * math.sin(math.radians(kicker.azimuth)), 0.0)
+
+    def test_only_the_key_casts(self):
+        casting = [n for n, e in self.plan().items() if e["shadow"]]
+        self.assertEqual(casting, ["key"])
+
+    def test_the_wide_cone_gets_a_bigger_shadow_map(self):
+        """A 126-degree cone spreads its depth map three times as thin."""
+        self.assertEqual(self.plan(quality="Good")["key"]["dmap"], 4096)
+        self.assertEqual(self.plan(quality="Fast")["key"]["dmap"], 2048)
+        self.assertEqual(self.plan(quality="Beauty")["key"]["dmap"], 4096)
+        self.assertEqual(self.plan("Studio", quality="Good")["key"]["dmap"],
+                         2048)
+
+    def test_a_softer_shadow(self):
+        self.assertGreater(vp.look_of(SOFT)["shadow_filter"],
+                           vp.look_of("Studio")["shadow_filter"])
+
+    def test_the_backdrop_behind_it_is_warm(self):
+        back = vp.backdrop_settings({"look": SOFT})
+        for stop in ("background", "backgroundTop", "backgroundBottom"):
+            self.assertGreater(back[stop][0], back[stop][2], stop)
+        for i in range(3):
+            self.assertGreater(back["background"][i],
+                               back["backgroundBottom"][i])
+            self.assertLess(back["background"][i], back["backgroundTop"][i])
+
+    def test_the_haze_is_warm_and_the_studio_s_is_not(self):
+        frame = vp.subject_frame(BOX)
+        soft = vp.render_settings(frame, {"look": SOFT})
+        studio = vp.render_settings(frame, {"look": "Studio"})
+        self.assertGreater(soft["hwFogColorR"], soft["hwFogColorB"])
+        self.assertEqual((studio["hwFogColorR"], studio["hwFogColorG"],
+                          studio["hwFogColorB"]), (0.09, 0.10, 0.12))
+
+    def test_the_backdrop_check_is_not_called_dark_any_more(self):
+        labels = {key: label for key, label, _note in vp.CHECKS}
+        self.assertEqual(labels["backdrop"], "Backdrop")
+
+
+class TestCyclorama(unittest.TestCase):
+    """The photo-studio sweep behind Soft Studio: the floor curving up into
+    a wall, so there is no corner and no horizon behind the subject."""
+
+    def frame(self, box=BOX):
+        return vp.subject_frame(box)
+
+    def profile(self):
+        return vp.cyclorama_profile(self.frame()["radius"])
+
+    def test_only_the_soft_look_has_one(self):
+        frame = self.frame()
+        self.assertIsNone(vp.cyclorama_plan(frame, 0.0, {"look": "Studio"}))
+        self.assertIsNone(vp.cyclorama_plan(frame, 0.0, {"look": "Outdoor"}))
+        self.assertIsNotNone(vp.cyclorama_plan(frame, 0.0, {"look": SOFT}))
+
+    def test_the_floor_runs_out_toward_the_camera(self):
+        r = self.frame()["radius"]
+        z, y = self.profile()[0]
+        self.assertAlmostEqual(z, vp.CYC_FRONT * r)
+        self.assertAlmostEqual(y, 0.0)
+        self.assertGreaterEqual(vp.CYC_FRONT, 10.0)
+
+    def test_it_ends_in_a_tall_upright_wall(self):
+        r = self.frame()["radius"]
+        profile = self.profile()
+        (z1, y1), (z0, y0) = profile[-1], profile[-2]
+        self.assertAlmostEqual(z1, -vp.CYC_WALL * r)
+        self.assertAlmostEqual(z0, -vp.CYC_WALL * r)
+        self.assertAlmostEqual(y1, vp.CYC_TOP * r)
+        self.assertGreater(y1, self.frame()["height"] * 2.0)
+
+    def test_the_cove_is_a_quarter_circle(self):
+        r = self.frame()["radius"]
+        centre = (-vp.CYC_COVE_START * r, vp.CYC_COVE_RADIUS * r)
+        cove = self.profile()[1:-1]
+        self.assertEqual(len(cove), vp.CYC_COVE_SEGMENTS + 1)
+        for z, y in cove:
+            self.assertAlmostEqual(math.hypot(z - centre[0], y - centre[1]),
+                                   vp.CYC_COVE_RADIUS * r, places=6)
+        self.assertAlmostEqual(vp.CYC_WALL,
+                               vp.CYC_COVE_START + vp.CYC_COVE_RADIUS)
+
+    def test_it_only_ever_runs_back_and_up(self):
+        profile = self.profile()
+        for (z0, y0), (z1, y1) in zip(profile, profile[1:]):
+            self.assertLessEqual(z1, z0 + 1e-9)
+            self.assertGreaterEqual(y1, y0 - 1e-9)
+            self.assertGreater(math.hypot(z1 - z0, y1 - y0), 1e-6)
+
+    def test_every_face_looks_at_the_subject(self):
+        """The plane is bent from +Y facing: going back along the profile
+        the normal (x, y, z) is (0, -dz, dy), and it must face the
+        subject. Pairs below are (z, y)."""
+        frame = self.frame()
+        profile = self.profile()
+        target = (0.0, frame["height"] / 2.0)
+        for (z0, y0), (z1, y1) in zip(profile, profile[1:]):
+            normal = (y1 - y0, -(z1 - z0))
+            mid = ((z0 + z1) / 2.0, (y0 + y1) / 2.0)
+            to_subject = (target[0] - mid[0], target[1] - mid[1])
+            self.assertGreater(normal[0] * to_subject[0]
+                               + normal[1] * to_subject[1], 0.0)
+
+    def test_no_light_can_end_up_behind_the_paper(self):
+        """The Rotate dial can turn any light straight back, so the cove
+        must start further back than any light reaches."""
+        for spec in vp.lights_of(SOFT):
+            reach = spec.distance * math.cos(math.radians(spec.elevation))
+            self.assertLess(reach, vp.CYC_COVE_START, spec.name)
+
+    def test_it_stands_under_the_subject_turned_to_the_camera(self):
+        frame = self.frame((100.0, 0.0, -50.0, 200.0, 180.0, 50.0))
+        plan = vp.cyclorama_plan(frame, 37.0, {"look": SOFT})
+        floor = vp.floor_plan(frame, {"look": SOFT})
+        self.assertAlmostEqual(plan["position"][0], frame["centre"][0])
+        self.assertAlmostEqual(plan["position"][2], frame["centre"][2])
+        self.assertAlmostEqual(plan["position"][1], floor["position"][1])
+        self.assertAlmostEqual(plan["rotate_y"], 37.0)
+
+    def test_it_is_wide_enough(self):
+        frame = self.frame()
+        plan = vp.cyclorama_plan(frame, 0.0, {"look": SOFT})
+        self.assertGreaterEqual(plan["width"], 24.0 * frame["radius"])
+
+    def test_it_is_a_warm_matte_paper(self):
+        plan = vp.cyclorama_plan(self.frame(), 0.0, {"look": SOFT})
+        red, green, blue = plan["colour"]
+        self.assertGreater(red, green)
+        self.assertGreater(green, blue)
+        self.assertLess(max(plan["specular"]), 0.05)
+        self.assertEqual(plan["name"], "VPStudio_cyclorama")
+
+    def test_vertices_land_on_the_profile_by_where_they_start(self):
+        """Never by index: a polyPlane's rows are found by their own
+        starting z, front (+z) first, and each side by its x."""
+        profile = [(10.0, 0.0), (0.0, 0.0), (-1.0, 1.0), (-1.0, 5.0)]
+        starts = []
+        for row, z in enumerate((1.5, 0.5, -0.5, -1.5)):
+            starts += [(-2.0, 0.0, z), (2.0, 0.0, z)]
+        shuffled = starts[3:] + starts[:3]
+        targets = vp.cyclorama_targets(shuffled, profile, 7.0)
+        by_start = dict(zip(shuffled, targets))
+        self.assertEqual(by_start[(-2.0, 0.0, 1.5)], (-7.0, 0.0, 10.0))
+        self.assertEqual(by_start[(2.0, 0.0, -1.5)], (7.0, 5.0, -1.0))
+        self.assertEqual(by_start[(2.0, 0.0, -0.5)], (7.0, 1.0, -1.0))
+
+    def test_a_plane_with_the_wrong_row_count_is_refused(self):
+        with self.assertRaises(ValueError):
+            vp.cyclorama_targets([(-1.0, 0.0, 0.0), (1.0, 0.0, 0.0)],
+                                 [(0.0, 0.0), (1.0, 0.0)], 1.0)
 
 
 class TestRenderSettings(unittest.TestCase):
@@ -976,6 +1226,90 @@ class TestAutoKeyIsPutBack(FakeSceneTest):
         except RuntimeError:
             pass
         self.assertTrue(self.fake.autokey)
+
+
+class LightFake(object):
+    """Just enough of `maya.cmds` to watch `_make_light` dress a light."""
+
+    def __init__(self):
+        self.set = {}
+
+    def _light(self, kind):
+        return "|%sLight1|%sLightShape1" % (kind, kind)
+
+    def spotLight(self):
+        return self._light("spot")
+
+    def directionalLight(self):
+        return self._light("directional")
+
+    def ambientLight(self):
+        return self._light("ambient")
+
+    def listRelatives(self, node, parent=False, shapes=False, **_kw):
+        if parent:
+            return [node.rsplit("|", 1)[0]]
+        return [node + "|" + node.rsplit("|", 1)[-1] + "Shape"]
+
+    def parent(self, node, _parent):
+        return [node]
+
+    def rename(self, _node, name):
+        return name
+
+    def ls(self, node, long=False):
+        return ["|VPStudio|" + node.lstrip("|")]
+
+    def objExists(self, _plug):
+        return True
+
+    def setAttr(self, plug, *values, **_kw):
+        self.set[plug.rsplit(".", 1)[-1]] = values[0] if len(values) == 1 \
+            else values
+
+    def xform(self, *_args, **_kw):
+        pass
+
+
+class TestOnlyTheShadowCasterCasts(unittest.TestCase):
+    """2026-10-01, the Soft Studio picture: every light of the rig threw a
+    shadow -- up the wall from the bounce, sideways from the fill, toward
+    the camera from the rims. Maya's light commands make a light with
+    RAY-TRACED shadows on, Viewport 2.0 draws those, and the tool only
+    ever turned DEPTH-MAP shadows off. Studio's streak to the right was the
+    same bug."""
+
+    def setUp(self):
+        self.real = vp.cmds
+        self.fake = LightFake()
+        vp.cmds = self.fake
+
+    def tearDown(self):
+        vp.cmds = self.real
+
+    def dress(self, look, name):
+        entry = [e for e in vp.light_plan(vp.subject_frame(BOX), 0.0,
+                                          {"look": look})
+                 if e["name"] == "VPStudio_" + name][0]
+        self.fake.set = {}
+        vp._make_light(entry, "|VPStudio|VPStudio_lights")
+        return self.fake.set
+
+    def test_no_light_keeps_ray_traced_shadows(self):
+        for look in vp.LOOK_ORDER:
+            for name in vp.light_names(look):
+                self.assertEqual(self.dress(look, name).get(
+                    "useRayTraceShadows"), 0, "%s %s" % (look, name))
+
+    def test_the_caster_casts_a_depth_map_and_the_rest_nothing(self):
+        for look in vp.LOOK_ORDER:
+            for spec in vp.lights_of(look):
+                dressed = self.dress(look, spec.name)
+                if spec.kind == "ambient":
+                    continue
+                self.assertEqual(dressed.get("useDepthMapShadows"),
+                                 1 if spec.shadow else 0,
+                                 "%s %s" % (look, spec.name))
 
 
 # ---------------------------------------------------------------------------

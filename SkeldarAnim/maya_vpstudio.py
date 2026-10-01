@@ -1,8 +1,9 @@
 """
 Viewport Studio -- one press for a juicy real-time picture in Viewport 2.0.
 
-A LOOK picked from a dropdown -- **Studio** (three-point on a dark stage)
-or **Outdoor** (a hard sun under an open sky) -- with depth-map shadows,
+A LOOK picked from a dropdown -- **Studio** (three-point on a dark stage),
+**Outdoor** (a hard sun under an open sky) or **Soft Studio** (wide warm
+light in front, cold behind, on a warm cyclorama) -- with depth-map shadows,
 screen-space ambient occlusion, anti-aliasing, motion blur, a floor to
 catch the shadow, and the right thing behind it. Everything Viewport 2.0
 can do at playback speed and nothing that needs a renderer -- there is no
@@ -183,15 +184,62 @@ OUTDOOR_LIGHTS = (
               (0.86, 0.78, 0.62), False, False, 0.0),
 )
 
+#  Soft Studio (2026-10-01, «свет будет распределен в 3 раза более широким
+#  пятном ... спереди теплый свет сзади холодный»): Studio's three points
+#  opened up and split by temperature.
+#
+#  "Three times wider" is the POOL on the subject. `cover` is a cone's
+#  half-width in radii at the light's distance, so Studio's key 1.7 and rim
+#  1.5 become 5.1 and 4.5 here, at the same distances -- tan(half) is then
+#  exactly three times Studio's (126 degrees for the key against 66). The
+#  look's `spot` softness widens the falloff with it (see LOOKS).
+#
+#  Warm in front, cold behind: the key, fill and bounce all face the
+#  camera's side; two cold back lights stand behind on either side, the
+#  rim high and the kicker low, so the silhouette is edged in blue against
+#  the warm paper. Six lights, inside the eight Viewport 2.0 is allowed.
+#
+#  The back lights outshine the key on purpose, and the fill is low: at
+#  Studio-like strengths (rim 1.25, kicker 0.75, fill 0.40) the warm front
+#  flooded the edges and nothing read cold -- judged on playblasts of a
+#  textured Manny, 2026-10-01. They cool the floor around the subject to a
+#  pale neutral; the wall, facing away from them, stays warm. (Light
+#  linking them off the paper was tried: Viewport 2.0 then dropped the rim
+#  from the character as well.)
+SOFT_LIGHTS = (
+    LightSpec("key", "spot", 35.0, 30.0, 2.6, 1.25,
+              (1.00, 0.84, 0.64), True, True, 5.1),
+    LightSpec("fill", "directional", -55.0, 12.0, 2.9, 0.28,
+              (1.00, 0.88, 0.74), False, False, 0.0),
+    LightSpec("rim", "spot", 160.0, 38.0, 2.8, 2.60,
+              (0.50, 0.68, 1.00), False, True, 4.5),
+    LightSpec("kicker", "spot", -150.0, 22.0, 2.8, 1.70,
+              (0.55, 0.72, 1.00), False, True, 4.5),
+    LightSpec("bounce", "directional", -20.0, -18.0, 2.2, 0.14,
+              (0.95, 0.80, 0.66), False, False, 0.0),
+    LightSpec("ambient", "ambient", 0.0, 70.0, 3.0, 0.10,
+              (0.74, 0.71, 0.70), False, False, 0.0),
+)
+
 #  A LOOK is a bundle, not a light table. Outdoors also means a sky behind
 #  the subject rather than a dark wall, pale ground rather than a black
 #  studio floor, a sharper shadow (the sun is a small source) and more
 #  bloom (a sunny day blows out). Anything that reads differently between
 #  the two belongs here, so a third look is a row rather than a branch.
+#
+#  `spot` is how a spot's light falls off across its cone (Maya weighs it
+#  by cos(angle)^dropoff, and the penumbra softens the edge), `fog` the
+#  haze's colour, `dmap_scale` how many times the quality's shadow map the
+#  shadow caster gets, and the floor's `kind` whether the shadow catcher is
+#  a plane or the cyclorama.
+STUDIO_SPOT = {"penumbra": 14.0, "dropoff": 6.0}
+STUDIO_FOG = (0.09, 0.10, 0.12)
+
 LOOKS = collections.OrderedDict((
     ("Studio", {
         "lights": STUDIO_LIGHTS,
-        "floor": {"colour": (0.30, 0.31, 0.34),
+        "floor": {"kind": "plane",
+                  "colour": (0.30, 0.31, 0.34),
                   "specular": (0.045, 0.045, 0.05),
                   "eccentricity": 0.42, "roll_off": 0.55},
         "backdrop": {"top": (0.150, 0.163, 0.180),
@@ -199,10 +247,14 @@ LOOKS = collections.OrderedDict((
                      "flat": (0.078, 0.084, 0.094)},
         "shadow_filter": 4,
         "bloom": 0.22,
+        "spot": STUDIO_SPOT,
+        "fog": STUDIO_FOG,
+        "dmap_scale": 1,
     }),
     ("Outdoor", {
         "lights": OUTDOOR_LIGHTS,
-        "floor": {"colour": (0.40, 0.39, 0.36),
+        "floor": {"kind": "plane",
+                  "colour": (0.40, 0.39, 0.36),
                   "specular": (0.030, 0.030, 0.030),
                   "eccentricity": 0.60, "roll_off": 0.35},
         "backdrop": {"top": (0.26, 0.42, 0.70),
@@ -210,8 +262,35 @@ LOOKS = collections.OrderedDict((
                      "flat": (0.40, 0.52, 0.68)},
         "shadow_filter": 2,
         "bloom": 0.30,
+        "spot": STUDIO_SPOT,
+        "fog": STUDIO_FOG,
+        "dmap_scale": 1,
+    }),
+    #  The wide cones need a wide falloff: at Studio's dropoff of 6 a
+    #  126-degree cone is dark past 40 degrees and the pool ends at Studio's
+    #  size. 1.3 keeps the wide pool's edge as bright, relative to its
+    #  centre, as Studio's own edge (cos 63^1.3 = 0.36 against cos 33^6 =
+    #  0.34). The same wide cone spreads its depth map three times as thin,
+    #  hence twice the map and a softer filter -- a soft look anyway.
+    ("Soft Studio", {
+        "lights": SOFT_LIGHTS,
+        "floor": {"kind": "cyclorama",
+                  "colour": (0.62, 0.47, 0.36),
+                  "specular": (0.020, 0.020, 0.020),
+                  "eccentricity": 0.60, "roll_off": 0.30},
+        "backdrop": {"top": (0.30, 0.22, 0.17),
+                     "bottom": (0.13, 0.09, 0.07),
+                     "flat": (0.21, 0.15, 0.12)},
+        "shadow_filter": 6,
+        "bloom": 0.20,
+        "spot": {"penumbra": 20.0, "dropoff": 1.3},
+        "fog": (0.30, 0.23, 0.18),
+        "dmap_scale": 2,
     }),
 ))
+
+#  The biggest shadow map a look's `dmap_scale` may ask for: Beauty's own.
+MAX_DMAP = 4096
 
 LOOK_ORDER = tuple(LOOKS)
 
@@ -372,13 +451,13 @@ def light_plan(frame, azimuth, options):
             "colour": spec.colour,
             "specular": spec.specular,
             "shadow": bool(spec.shadow and options["shadows"]),
-            "dmap": quality["dmap"],
+            "dmap": min(MAX_DMAP, int(quality["dmap"] * look["dmap_scale"])),
             "filter": look["shadow_filter"],
         }
         if spec.kind == "spot":
             entry["cone"] = cone_angle(radius, distance, spec.cover)
-            entry["penumbra"] = 14.0
-            entry["dropoff"] = 6.0
+            entry["penumbra"] = float(look["spot"]["penumbra"])
+            entry["dropoff"] = float(look["spot"]["dropoff"])
         elif spec.shadow:
             #  A shadow-casting DIRECTIONAL light (the sun) has no cone to
             #  bound its depth map, and auto-focus fits it to the whole
@@ -419,6 +498,87 @@ def floor_plan(frame, options=None):
             "specular": surface["specular"],
             "eccentricity": surface["eccentricity"],
             "roll_off": surface["roll_off"]}
+
+
+#  The cyclorama -- a photo studio's paper sweep: the floor curving up into
+#  a wall behind the subject, with no corner and no horizon to read. Its
+#  profile is in subject RADII in its own frame, +Z toward the camera and
+#  the wall at -Z, across +-CYC_HALF_WIDTH in X.
+#
+#  The cove starts further back than any light of the look reaches (the
+#  furthest, the kicker, stands 2.6 radii out), and the Rotate dial can
+#  turn any light straight back -- so no light ever ends up behind the
+#  paper. A test pins it against the light table.
+CYC_FRONT = 12.0          # the floor runs this far toward the camera
+CYC_COVE_START = 3.0      # where the floor starts to curve up, behind
+CYC_COVE_RADIUS = 1.5
+CYC_WALL = CYC_COVE_START + CYC_COVE_RADIUS
+CYC_TOP = 8.0             # the wall's top above the floor
+CYC_HALF_WIDTH = 12.0
+CYC_COVE_SEGMENTS = 16
+
+
+def cyclorama_profile(radius):
+    """[(z, y), ...] from the front edge back through the cove to the top.
+
+    The front edge, the cove's 17 points (its first is where the flat floor
+    ends, its last where the wall starts) and the wall's top.
+    """
+    r = float(radius)
+    start = CYC_COVE_START * r
+    bend = CYC_COVE_RADIUS * r
+    points = [(CYC_FRONT * r, 0.0)]
+    for i in range(CYC_COVE_SEGMENTS + 1):
+        t = 0.5 * math.pi * i / CYC_COVE_SEGMENTS
+        points.append((-start - bend * math.sin(t), bend - bend * math.cos(t)))
+    points.append((-CYC_WALL * r, CYC_TOP * r))
+    return points
+
+
+def cyclorama_plan(frame, azimuth, options=None):
+    """The sweep as data, or None for a look whose floor is a plane.
+
+    It stands where the floor would (under the subject, a hair below the
+    feet) and is turned to the CAMERA's heading at the press, so the wall is
+    behind the subject as the animator sees it. It hangs under our group,
+    not under the light pivot: the Rotate dial turns the lights and leaves
+    the paper behind the subject.
+    """
+    options = merged_options(options)
+    surface = look_of(options["look"])["floor"]
+    if surface.get("kind") != "cyclorama":
+        return None
+    floor = floor_plan(frame, options)
+    radius = frame["radius"]
+    return {"name": "{0}_{1}".format(GROUP, "cyclorama"),
+            "position": floor["position"],
+            "rotate_y": float(azimuth),
+            "width": 2.0 * CYC_HALF_WIDTH * radius,
+            "profile": cyclorama_profile(radius),
+            "colour": surface["colour"],
+            "specular": surface["specular"],
+            "eccentricity": surface["eccentricity"],
+            "roll_off": surface["roll_off"]}
+
+
+def cyclorama_targets(starts, profile, half_width):
+    """Where each vertex of a flat 1 x N polyPlane goes on the profile.
+
+    Matched by the vertex's own STARTING position, never by its index: the
+    rows are the distinct starting z values, front (+z) first, and a vertex
+    keeps the side of its starting x. A plane whose row count is not the
+    profile's is refused rather than bent into something else.
+    """
+    rows = sorted({round(s[2], 6) for s in starts}, reverse=True)
+    if len(rows) != len(profile):
+        raise ValueError("a plane of %d rows for a profile of %d points"
+                         % (len(rows), len(profile)))
+    row_of = {z: i for i, z in enumerate(rows)}
+    targets = []
+    for x, _y, z in starts:
+        pz, py = profile[row_of[round(z, 6)]]
+        targets.append((half_width if x > 0 else -half_width, py, pz))
+    return targets
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +648,8 @@ def render_settings(frame, options=None):
         ("hwFogDensity", 0.18),
         ("hwFogStart", frame["centre"][2] - radius),
         ("hwFogEnd", frame["centre"][2] + 6.0 * radius),
-        ("hwFogColorR", 0.09), ("hwFogColorG", 0.10), ("hwFogColorB", 0.12),
+        ("hwFogColorR", look["fog"][0]), ("hwFogColorG", look["fog"][1]),
+        ("hwFogColorB", look["fog"][2]),
         ("hwFogAlpha", 1.0),
 
         ("transparencyAlgorithm", int(quality["transparency"])),
@@ -933,6 +1094,13 @@ def _make_light(entry, parent):
         plug = shape + "." + attr
         if cmds.objExists(plug):
             cmds.setAttr(plug, int(bool(value)))
+    #  Ray-traced shadows OFF on every light, the caster included -- its
+    #  shadow is the depth map. Maya's light commands make a light with them
+    #  ON and Viewport 2.0 draws them, so until 2026-10-01 every light of
+    #  the rig threw a shadow of its own (Studio's streak to the right was
+    #  the fill's, measured by switching the lights off one by one).
+    if cmds.objExists(shape + ".useRayTraceShadows"):
+        cmds.setAttr(shape + ".useRayTraceShadows", 0)
     if kind == "ambient":
         cmds.setAttr(shape + ".ambientShade", 0.45)
     if kind == "spot":
@@ -972,7 +1140,44 @@ def _make_floor(plan):
     floor = cmds.rename(floor, plan["name"])
     floor = cmds.ls(floor, long=True)[0]
     cmds.xform(floor, worldSpace=True, translation=plan["position"])
+    shader, group = _dress_catcher(floor, plan)
+    return floor, shader, group
 
+
+def _make_cyclorama(plan):
+    """The paper sweep: a flat 1 x N plane bent onto the profile.
+
+    `polyPlane` and vertex moves rather than an OpenMaya `MFnMesh.create`,
+    because the press is one undo chunk and an API-created mesh is not in
+    Maya's undo queue. Each vertex is moved by where it STARTS
+    (`cyclorama_targets`); a fresh polyPlane's edges are hard (measured
+    2026-10-01), so they are softened for the cove to shade as one surface.
+    The plane faces +Y and its rows run from +Z to -Z, so bent up at the
+    back it faces the subject.
+    """
+    profile = plan["profile"]
+    sweep = cmds.polyPlane(width=1.0, height=1.0, subdivisionsX=1,
+                           subdivisionsY=len(profile) - 1, createUVs=2,
+                           constructionHistory=False)[0]
+    sweep = cmds.rename(sweep, plan["name"])
+    sweep = cmds.ls(sweep, long=True)[0]
+    count = cmds.polyEvaluate(sweep, vertex=True)
+    vertices = ["{0}.vtx[{1}]".format(sweep, i) for i in range(count)]
+    starts = [tuple(cmds.xform(v, query=True, objectSpace=True,
+                               translation=True)) for v in vertices]
+    targets = cyclorama_targets(starts, profile, plan["width"] / 2.0)
+    for vertex, target in zip(vertices, targets):
+        cmds.xform(vertex, objectSpace=True, translation=target)
+    cmds.polySoftEdge(sweep, angle=180, constructionHistory=False)
+    cmds.xform(sweep, worldSpace=True, translation=plan["position"],
+               rotation=(0.0, plan["rotate_y"], 0.0))
+    shader, group = _dress_catcher(sweep, plan)
+    return sweep, shader, group
+
+
+def _dress_catcher(node, plan):
+    """The blinn, the shadow flags and the reference display -- what the
+    floor and the cyclorama share."""
     shader = cmds.shadingNode("blinn", asShader=True, name=SHADER)
     cmds.setAttr(shader + ".color", *plan["colour"], type="double3")
     cmds.setAttr(shader + ".specularColor", *plan["specular"],
@@ -983,9 +1188,9 @@ def _make_floor(plan):
                       name=shader + "SG")
     cmds.connectAttr(shader + ".outColor", group + ".surfaceShader",
                      force=True)
-    cmds.sets(floor, edit=True, forceElement=group)
+    cmds.sets(node, edit=True, forceElement=group)
 
-    shape = cmds.listRelatives(floor, shapes=True, fullPath=True)[0]
+    shape = cmds.listRelatives(node, shapes=True, fullPath=True)[0]
     #  It catches shadows and casts none: a ground plane in its own
     #  shadow map is how a floor ends up striped with acne.
     for attr, value in (("castsShadows", 0), ("receiveShadows", 1),
@@ -995,9 +1200,9 @@ def _make_floor(plan):
             cmds.setAttr(plug, value)
     #  Reference display: it stays out of the way of a marquee select and
     #  is still there in the outliner when the animator wants it.
-    cmds.setAttr(floor + ".overrideEnabled", 1)
-    cmds.setAttr(floor + ".overrideDisplayType", 2)
-    return floor, shader, group
+    cmds.setAttr(node + ".overrideEnabled", 1)
+    cmds.setAttr(node + ".overrideDisplayType", 2)
+    return shader, group
 
 
 def delete_rig(rig=None):
@@ -1082,10 +1287,18 @@ def _setup(options):
             index[spec.name] = _uuid(transform)
         cmds.setAttr(pivot + ".rotateY", float(options["rotate"]))
 
-        floor = None
+        #  The shadow catcher: Soft Studio's cyclorama or everybody else's
+        #  flat floor -- under the GROUP either way, never the light pivot.
+        catcher = None
         if options["floor"]:
-            plan = floor_plan(frame, options)
-            floor, shader, shading = _make_floor(plan)
+            sweep = cyclorama_plan(frame, azimuth, options)
+            if sweep:
+                floor, shader, shading = _make_cyclorama(sweep)
+                catcher = "cyclorama"
+            else:
+                floor, shader, shading = _make_floor(
+                    floor_plan(frame, options))
+                catcher = "floor"
             floor = cmds.parent(floor, group)[0]
             floor = cmds.ls(floor, long=True)[0]
             made += [floor, shader, shading]
@@ -1164,7 +1377,7 @@ def _setup(options):
     short = len(wanted) - wrote
     return ("%s on - %d lights%s, %s quality, subject %.0f cm%s"
             % (options["look"], len(lights_of(options["look"])),
-               ", floor" if options["floor"] else "",
+               ", " + catcher if catcher else "",
                options["quality"], frame["height"],
                "" if not short else " (%d setting(s) unavailable)" % short))
 
@@ -1268,7 +1481,7 @@ CHECKS = (
     ("fog", "Atmosphere", "depth haze behind the subject"),
     ("dof", "Depth of field", "focused where the subject is now"),
     ("clean", "Clean view", "hide joints, curves and locators"),
-    ("backdrop", "Dark backdrop", "a neutral gradient behind it all"),
+    ("backdrop", "Backdrop", "the look's own colour behind it all"),
 )
 
 CONTROL = {"look": "vpStudioLook",
