@@ -382,6 +382,13 @@ class Card(object):
 
         self.header = _named(_head_class()(self.toggle),
                              "skeldarHubCardHead_" + key, "cardhead")
+        #  Exactly its own height, never more or less: while a body slides
+        #  the card's column was laid out a moment before the card got its
+        #  new height, the difference went to the header, and the title and
+        #  chevron, centred in it, shook (the animator saw it, 2026-10-01;
+        #  measured: the header 33 -> 34, 36 ... 350 px shutting, 17 opening).
+        self.header.setSizePolicy(w.QSizePolicy.Preferred,
+                                  w.QSizePolicy.Fixed)
         row = w.QHBoxLayout(self.header)
         row.setObjectName("skeldarHubCardHeadLayout_" + key)
         row.setContentsMargins(0, 0, 0, 0)
@@ -512,9 +519,22 @@ class Card(object):
         target = self._lay_out_full() if self._opening else 0
         self._shown = int(round(hubmotion.lerp(self._from_height, target, k)))
         self.body.setMaximumHeight(self._shown)
+        self._lay_out_now()
         end = hubmotion.CHEVRON_OPEN if self._opening else 0.0
         self._angle = hubmotion.lerp(self._from_angle, end, k)
         self._paint_chevron(self._angle)
+
+    def _lay_out_now(self):
+        """The card and the column holding it laid out NOW, before anything
+        is painted: left to Qt's posted LayoutRequests, the card's own column
+        ran first, on the card's old height, and the card's edge lagged the
+        body a frame behind."""
+        layout = self.frame.layout()
+        if layout is not None:
+            layout.activate()
+        parent = self.frame.parentWidget()
+        if parent is not None and parent.layout() is not None:
+            parent.layout().activate()
 
     def _finished(self):
         self._stop()

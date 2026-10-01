@@ -88,6 +88,12 @@ logical 205); the glide 260 ms; the chevron rides the body's progress.
   body's top margin above it) while the body shows less. The full height itself may move a few px mid-
   slide: when the hub's scroll bar comes, the Characters grid reflows to the narrower width (3 px live).
   The same happens without the animation, at once.
+- **The header is `Fixed` vertically, and every tick lays the card and the column out at once**
+  (`Card._lay_out_now`). The animator, clicking headers in the disposable Maya: «название заголовка
+  "дрожит" во время анимации». Measured: shutting, the header read 33 → 34, 36 … 350 px and back; opening,
+  17 for a turn — left to Qt's posted LayoutRequests the card's own column ran first, on the card's OLD
+  height, and the difference went to the header (Preferred), where the title and the chevron are centred.
+  After: 33 on every turn of every card, the title's place unchanged to the pixel.
 - A disposable Maya's hub opens DOCKED; the first runs shrank the main window by mistake (a 127 px
   viewport). The verify floats it and sizes it to the animator's dock (viewport 510 physical).
 

@@ -787,6 +787,28 @@ class CardMotion(SeamsMixin, unittest.TestCase):
         self.assertEqual(self.card._angle, 0.0)
         self.assertNotEqual(image(), mid)
 
+    def test_the_header_keeps_its_height_while_sliding(self):
+        """2026-10-01, the animator: «название заголовка "дрожит" во время
+        анимации» - the header took the card's lag and its title, centred,
+        shook. It is Fixed now, and the card is laid out every tick."""
+        header = self.card.header
+        self.assertEqual(header.sizePolicy().verticalPolicy(),
+                         QtWidgets.QSizePolicy.Fixed)
+        hint = header.sizeHint().height()
+        for _ in range(2):                                 # shut, then open
+            self.card.toggle()
+            anim = self.card._anim
+            for fraction in (0.1, 0.3, 0.5, 0.7, 0.9):
+                #  read at the tick itself, before Qt's queue runs: what is
+                #  painted next must already be laid out
+                anim.setCurrentTime(int(anim.duration() * fraction))
+                now = (header.height(), self.card.frame.height())
+                self._settle()
+                later = (header.height(), self.card.frame.height())
+                self.assertEqual(now, later, fraction)
+                self.assertEqual(now[0], hint, fraction)
+            self._at(1.0)
+
     def test_the_gap_under_the_header_is_unchanged(self):
         """The column's spacing moved into the body's top margin, so it
         opens and shuts with the body; where the content sits is the same."""

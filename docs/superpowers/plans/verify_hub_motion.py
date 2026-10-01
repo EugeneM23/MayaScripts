@@ -108,6 +108,7 @@ print("viewport", skin.scroll.viewport().width(), "cards", len(skin.cards))
 
 # --------------------------------------------------------------- 1 per card
 rows = []
+steady = {}         # key -> the header heights seen while it slid
 for key, card in skin.cards.items():
     heights, kids = [], []
     PHASE[0] = key
@@ -116,6 +117,7 @@ for key, card in skin.cards.items():
     def rec(card=card, child=child, heights=heights, kids=kids):
         if card.sliding():
             heights.append(card._shown)
+            steady.setdefault(card.key, set()).add(card.header.height())
             if child is not None and card._laid:
                 kids.append((child.height(), card._laid[1], card._shown))
 
@@ -143,6 +145,7 @@ for key, card in skin.cards.items():
     def rec2(card=card, down=down):
         if card.sliding():
             down.append(card._shown)
+            steady.setdefault(card.key, set()).add(card.header.height())
 
     PHASE[0] = key + " shut"
     card.toggle()                                          # shut
@@ -163,6 +166,10 @@ gate(2, "the body's children are clipped, never squeezed, on the way",
      all(r[2] for r in rows), [r[0] for r in rows if not r[2]])
 gate(3, "every card slides shut monotonically and ends hidden, uncapped",
      all(r[3] for r in rows), [r[0] for r in rows if not r[3]])
+shaking = dict((k, sorted(v)) for k, v in steady.items()
+               if v != {skin.cards[k].header.sizeHint().height()})
+gate("3b", "the header keeps its height, the title does not shake "
+     "(the animator saw it shake, 2026-10-01)", not shaking, shaking)
 sliding = sorted(c[0] for c in COST if c[3])
 p99 = sliding[int(len(sliding) * 0.99)] if sliding else 0.0
 worst = sorted(COST, key=lambda c: c[0] + c[1])[-3:]
