@@ -111,7 +111,7 @@ piece of armor or clothing is a row. `armor_by_key`, `armor_icon_path(key)`
 
 ## The Armor card
 
-A hub section **Armor** in the Scene group, after Weapons, icon `shield` (Tabler, added to
+A hub section **Armor**, the Scene group's last card (Connections stays beside Weapons and Shared beside Connections, both pinned), icon `shield` (Tabler, added to
 `maya_hubicons`). Its module is `maya_scenesetup/armorpanel.py` (builder `build_panel`).
 
 - the subtitle (the character, as the other two cards write it);

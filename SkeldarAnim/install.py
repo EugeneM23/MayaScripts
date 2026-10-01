@@ -54,6 +54,7 @@ _PAYLOAD = (
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)
     "maya_chargrid.py",         # the Characters portrait grid
+    "maya_armorgrid.py",        # the Armor card's tiles (2026-10-01)
     "icons",
     "assets",
     "overrig",

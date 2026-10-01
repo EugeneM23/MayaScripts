@@ -80,10 +80,11 @@ class TheTable(unittest.TestCase):
         was (the same evening), so Animation is the first group. Weapons
         still follows Characters (its refresh writes the Characters
         header). The Graph Overlay joined Animation on 2026-09-30, Shared joined Scene the
-        same day, the Center of Mass Animation on 2026-10-01."""
+        same day, the Center of Mass Animation on 2026-10-01, Armor Scene the same day."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["UE Bridge", "Retarget", "Graph Overlay",
                           "Center of Mass", "Characters", "Weapons", "Connections", "Shared",
+                          "Armor",
                           "Studio", "Colour", "Hotkeys", "Update"])
 
     def test_the_groups_and_their_icons(self):
@@ -93,7 +94,7 @@ class TheTable(unittest.TestCase):
             ("uebridge", "animation"), ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
             ("characters", "scene"), ("weapons", "scene"),
-            ("connections", "scene"), ("shared", "scene"),
+            ("connections", "scene"), ("shared", "scene"), ("armor", "scene"),
             ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
             ("update", "settings")])
@@ -113,7 +114,7 @@ class TheTable(unittest.TestCase):
         (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["uebridge", "retarget", "graphoverlay", "com",
-                          "characters", "weapons", "connections", "shared",
+                          "characters", "weapons", "connections", "shared", "armor",
                           "studio", "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
@@ -121,6 +122,7 @@ class TheTable(unittest.TestCase):
             "uebridge": ("maya_uebridge.window", "build_panel"),
             "characters": ("maya_scenesetup.window", "build_characters_panel"),
             "weapons": ("maya_scenesetup.window", "build_weapons_panel"),
+            "armor": ("maya_scenesetup.armorpanel", "build_panel"),
             "connections": ("maya_scenesetup.connections", "build_panel"),
             "shared": ("maya_share", "build_panel"),
             "retarget": ("maya_rig_retarget", "build_panel"),
@@ -345,7 +347,7 @@ class Show(FakeToolsMixin, unittest.TestCase):
         scrolls = [c[2]["scrollByPixel"] for c in self.fake.calls
                    if c[0] == "scrollLayout" and "scrollByPixel" in c[2]]
         index = [s.key for s in hub.SECTIONS].index("studio")
-        expected = hub.scroll_offset([self.fake.control_height] * 8, index,
+        expected = hub.scroll_offset([self.fake.control_height] * len(hub.SECTIONS), index,
                                      hub.ROW_SPACING)
         self.assertEqual(scrolls[0][0], "up")
         self.assertEqual(scrolls[1], ("down", expected))
@@ -496,7 +498,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("group", "animation"), ("card", "uebridge"), ("card", "retarget"),
             ("card", "graphoverlay"), ("card", "com"),
             ("group", "scene"), ("card", "characters"), ("card", "weapons"),
-            ("card", "connections"), ("card", "shared"), ("group", "look"),
+            ("card", "connections"), ("card", "shared"), ("card", "armor"), ("group", "look"),
             ("card", "studio"), ("card", "colour"), ("group", "settings"),
             ("card", "update")])
         self.assertEqual(self.fake.frames, {})

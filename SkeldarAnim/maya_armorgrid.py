@@ -157,13 +157,15 @@ def _classes():
             self.scene.select(key)
             return True
 
-        def refresh(self):
-            """The worn pills re-read from the scene."""
-            try:
-                self.worn = set(self.scene.worn() or ())
-            except Exception:                                # noqa: BLE001
-                traceback.print_exc()
-                self.worn = set()
+        def refresh(self, worn=None):
+            """The worn pills: `worn` when the caller has read it, else asked of the scene."""
+            if worn is None:
+                try:
+                    worn = self.scene.worn()
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+                    worn = ()
+            self.worn = set(worn or ())
             self.update()
 
         def _act(self, action):

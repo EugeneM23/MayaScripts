@@ -105,6 +105,12 @@ SECTIONS = (
     Section("shared", "Shared", "maya_share",
             "build_panel", "skeldarHubFrameShared",
             "scene", "send"),
+    #  2026-10-01: armor and clothing on the character, the Tech Limb first --
+    #  the Scene group's last card: Connections stays beside Weapons and
+    #  Shared beside Connections (both placements are pinned by their tests).
+    Section("armor", "Armor", "maya_scenesetup.armorpanel",
+            "build_panel", "skeldarHubFrameArmor",
+            "scene", "shield"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

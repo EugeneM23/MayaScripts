@@ -12,6 +12,8 @@ import maya_hub
 import maya_hotkeys
 import maya_hubstyle
 import maya_rig_retarget as rr
+from maya_scenesetup import armorpanel
+from maya_scenesetup import catalog
 from maya_scenesetup import window as scenesetup
 from maya_uebridge import window as uebridge
 
@@ -252,6 +254,102 @@ class SceneSetup(unittest.TestCase):
         self.assertFalse(hasattr(scenesetup, "build_panel"))
         self.assertIn("mayaSceneSetupWindow", maya_hub.LEGACY_WINDOWS)
         self.assertIn("mayaWeaponsWindow", maya_hub.LEGACY_WINDOWS)
+
+
+class Armor(unittest.TestCase):
+    """The Armor card (2026-10-01): the character, the tiles, Equip / Unequip, the line."""
+
+    def setUp(self):
+        self.saved = (armorpanel.cmds, armorpanel._attach_tiles, armorpanel.refresh,
+                      armorpanel._bound_root, armorpanel.armor.equip, armorpanel.armor.unequip)
+        self.fake = FakeUiCmds()
+        armorpanel.cmds = self.fake
+        armorpanel.refresh = lambda *a: None
+        self.tiles = []
+        armorpanel._attach_tiles = lambda: self.tiles.append(True) or True
+        maya_hubstyle.take_marks()
+        armorpanel.build_panel()
+        self.marks = dict((m.name, m) for m in maya_hubstyle.take_marks())
+
+    def tearDown(self):
+        (armorpanel.cmds, armorpanel._attach_tiles, armorpanel.refresh,
+         armorpanel._bound_root, armorpanel.armor.equip, armorpanel.armor.unequip) = self.saved
+
+    def _buttons(self):
+        return [c[2] for c in self.fake.calls if c[0] == "button" and not c[2].get("edit")]
+
+    def test_no_window_the_named_controls(self):
+        self.assertEqual(self.fake.windows, {})
+        for name in (armorpanel._BOUND, armorpanel._STATUS):
+            self.assertIn(name, self.fake.children)
+        self.assertTrue(any(c[0] == "columnLayout" and c[1] == (armorpanel._TILES,)
+                            for c in self.fake.calls))
+
+    def test_the_tiles_are_laid_over_the_placeholder_and_no_dropdown(self):
+        self.assertEqual(self.tiles, [True])
+        self.assertFalse(any(c[0] == "optionMenu" for c in self.fake.calls))
+
+    def test_without_qt_a_dropdown_of_the_rows(self):
+        fake = FakeUiCmds()
+        armorpanel.cmds = fake
+        armorpanel._attach_tiles = lambda: False
+        armorpanel.build_panel()
+        self.assertTrue(any(c[0] == "optionMenu" and c[1] == (armorpanel._MENU,)
+                            for c in fake.calls))
+        items = [c[2].get("label") for c in fake.calls if c[0] == "menuItem"]
+        self.assertEqual(items, catalog.armor_labels())
+
+    def test_equip_is_the_one_primary_and_unequip_the_danger(self):
+        labels = [b.get("label") for b in self._buttons()]
+        self.assertEqual(labels, ["Equip", "Unequip"])
+        roles = sorted((m.role, m.icon) for m in self.marks.values() if m.role in ("primary", "danger"))
+        self.assertEqual(roles, [("danger", "trash"), ("primary", "shield")])
+
+    def test_the_subtitle_and_the_line_are_marked(self):
+        self.assertEqual(self.marks[armorpanel._BOUND].role, "subtitle")
+        self.assertEqual(self.marks[armorpanel._STATUS].role, "status")
+
+    def test_the_pills_follow_the_selection_through_a_job_the_line_owns(self):
+        jobs = [c for c in self.fake.calls if c[0] == "scriptJob"]
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0][2]["event"][0], "SelectionChanged")
+        self.assertEqual(jobs[0][2]["parent"], armorpanel._STATUS)
+
+    def test_equip_and_unequip_report_on_the_line(self):
+        armorpanel._bound_root = lambda: "|Manny_Rig:root"
+        seen = []
+        armorpanel.armor.equip = lambda root, entry: seen.append(("on", root, entry.key)) or "put on"
+        armorpanel.armor.unequip = lambda root, key: seen.append(("off", root, key)) or "taken off"
+        armorpanel.equip_armor()
+        armorpanel.unequip_armor()
+        self.assertEqual(seen, [("on", "|Manny_Rig:root", "Tech_Limb"),
+                                ("off", "|Manny_Rig:root", "Tech_Limb")])
+        lines = [c[2].get("label") for c in self.fake.calls
+                 if c[0] == "text" and c[1] == (armorpanel._STATUS,) and c[2].get("edit")]
+        self.assertEqual(lines[-2:], ["put on", "taken off"])
+
+    def test_no_character_says_so_and_touches_nothing(self):
+        armorpanel._bound_root = lambda: None
+        armorpanel.armor.equip = lambda *a: self.fail("equipped with no character")
+        armorpanel.equip_armor()
+        lines = [c[2].get("label") for c in self.fake.calls
+                 if c[0] == "text" and c[1] == (armorpanel._STATUS,) and c[2].get("edit")]
+        self.assertEqual(lines[-1], armorpanel.NO_CHARACTER)
+
+    def test_the_pick_is_remembered(self):
+        armorpanel.select_armor("Tech_Limb")
+        self.assertEqual(self.fake.optionvars[armorpanel._OPTIONVAR], "Tech_Limb")
+        self.assertEqual(armorpanel.chosen_armor().key, "Tech_Limb")
+        armorpanel.select_armor("not_a_row")
+        self.assertEqual(self.fake.optionvars[armorpanel._OPTIONVAR], "Tech_Limb")
+
+    def test_is_open_follows_the_line(self):
+        self.fake.children.append(armorpanel._STATUS)
+        self.assertTrue(armorpanel.is_open())
+
+    def test_show_window_opens_the_hub_on_its_section(self):
+        result, asked = _hub_asked(armorpanel.show_window)
+        self.assertEqual((result, asked), ("hub", ["armor"]))
 
 
 class UeBridge(unittest.TestCase):
