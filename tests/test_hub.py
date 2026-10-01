@@ -576,6 +576,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         """2026-10-01: «приятный и простой звук наводки на кнопочку», and
         the menu's Interface sounds."""
         hubsound, played = self._fake_sound()
+        self.fake.optionvars[hubsound.OPTIONVAR] = 1         # switched on
         hub.build()
         callbacks = hub._SKIN.callbacks
         self.assertTrue(callbacks["hover"]())
@@ -587,11 +588,18 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(len(played), 1)
 
     def test_the_skin_shows_the_switch_and_loads_the_sound(self):
+        """Off by default (2026-10-01: «Отключи воспроизведение звуков по
+        умолчанию»): the row unchecked and no audio opened; switched on, the
+        row checked and the sound loaded before the first hover."""
         hubsound, played = self._fake_sound()
-        self.fake.optionvars[hubsound.OPTIONVAR] = 0
         skin = FakeSkin(None)
         hub._dress_sounds(skin)
         self.assertIs(skin.sounds, False)
+        self.assertNotIn("hover", hubsound._state()["players"])
+        self.fake.optionvars[hubsound.OPTIONVAR] = 1
+        hubsound.reset()
+        hub._dress_sounds(skin)
+        self.assertIs(skin.sounds, True)
         self.assertIn("hover", hubsound._state()["players"])   # preloaded
         self.assertEqual(played, [])
 

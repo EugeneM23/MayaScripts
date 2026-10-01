@@ -320,13 +320,16 @@ def _dress_header(skin):
 
 
 def _dress_sounds(skin):
-    """The menu's Interface sounds row = the switch; the hover sound loaded
-    now, so the first hover is not the one waiting for the file (0.44 s for
-    the pool's three effects, measured 2026-10-01)."""
+    """The menu's Interface sounds row = the switch (off by default); while
+    it is on, the hover sound loaded now, so the first hover is not the one
+    waiting for the file (0.44 s for the pool's three effects, measured
+    2026-10-01). Off, no audio is opened at all."""
     try:
         import maya_hubsound
-        skin.paint_sounds(maya_hubsound.enabled())
-        maya_hubsound.preload("hover")
+        on = maya_hubsound.enabled()
+        skin.paint_sounds(on)
+        if on:
+            maya_hubsound.preload("hover")
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 

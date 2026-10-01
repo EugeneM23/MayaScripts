@@ -5,7 +5,8 @@
 нашего меню и вот тут давай сделаем приятный и простой звук наводки».
 One sound for now, `hover`: the mouse entering a button, a dropdown or a
 card header of the skinned hub (`maya_hubqt.sounding`), switched in the
-hub's menu (⋮ → Interface sounds), on by default.
+hub's menu (⋮ → Interface sounds), off by default («Отключи воспроизведение
+звуков по умолчанию», the same day).
 
     synth / wav_bytes   the sound as numbers, then as a WAV (pure)
     write               the shipped file, assets/sounds/<name>.wav
@@ -137,10 +138,12 @@ def _cmds():
 
 
 def enabled():
-    """Whether the interface sounds are on (the menu row). On by default."""
+    """Whether the interface sounds are on (the menu row). OFF by default
+    (2026-10-01, the same day: «Отключи воспроизведение звуков по
+    умолчанию»)."""
     global _ENABLED
     if _ENABLED is None:
-        _ENABLED = True
+        _ENABLED = False
         cmds = _cmds()
         try:
             if cmds is not None and cmds.optionVar(exists=OPTIONVAR):

@@ -159,14 +159,25 @@ class WavFile(unittest.TestCase):
 
 class Switch(SoundMixin, unittest.TestCase):
 
-    def test_on_by_default(self):
+    def test_off_by_default(self):
+        """2026-10-01, the animator: «Отключи воспроизведение звуков по
+        умолчанию» - ⋮ → Interface sounds turns them on."""
+        self.assertFalse(sound.enabled())
+        self.assertFalse(sound.play("hover", now=1.0))
+        self.assertEqual(FakePlayer.made, [])
+
+    def test_on_is_remembered(self):
+        self.assertTrue(sound.set_enabled(True))
+        self.assertEqual(self.cmds.optionvars[sound.OPTIONVAR], 1)
+        sound.reset()                          # a fresh module reads it back
         self.assertTrue(sound.enabled())
 
     def test_off_is_remembered(self):
+        sound.set_enabled(True)
         self.assertFalse(sound.set_enabled(False))
         self.assertEqual(self.cmds.optionvars[sound.OPTIONVAR], 0)
         self.assertFalse(sound.enabled())
-        sound.reset()                          # a fresh module reads it back
+        sound.reset()
         self.assertFalse(sound.enabled())
 
     def test_turning_it_on_plays_it_once(self):
@@ -177,15 +188,21 @@ class Switch(SoundMixin, unittest.TestCase):
         self.assertEqual(self.cmds.optionvars[sound.OPTIONVAR], 1)
         self.assertEqual(sum(p.plays for p in FakePlayer.made), 1)
 
-    def test_without_maya_it_is_on_and_says_nothing(self):
+    def test_without_maya_it_is_off_and_says_nothing(self):
         sound._cmds = lambda: None
         sound.reset()
-        self.assertTrue(sound.enabled())
-        self.assertFalse(sound.set_enabled(False))
         self.assertFalse(sound.enabled())
+        sound.make_player = FakePlayer
+        self.assertTrue(sound.set_enabled(True))
+        self.assertTrue(sound.enabled())
 
 
 class Play(SoundMixin, unittest.TestCase):
+    """With the sounds switched on (⋮ → Interface sounds)."""
+
+    def setUp(self):
+        SoundMixin.setUp(self)
+        self.cmds.optionvars[sound.OPTIONVAR] = 1
 
     def test_it_plays_the_shipped_file(self):
         self.assertTrue(sound.play("hover", now=10.0))

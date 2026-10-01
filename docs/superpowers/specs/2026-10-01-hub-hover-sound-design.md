@@ -28,9 +28,10 @@ Asked, and answered:
   card's header — plays the **hover** sound, if it is enabled. A disabled control is silent; so is
   everything outside the hub's root. Only an Enter counts: moving inside a button, or onto a label
   inside a card header, plays nothing more.
-- **⋮ → Interface sounds**, a checkable row, on by default, remembered in the optionVar
+- **⋮ → Interface sounds**, a checkable row, **off by default** (the animator, the same day after
+  the build: «Отключи воспроизведение звуков по умолчанию»), remembered in the optionVar
   `skeldarAnimHub_sounds`. Turning it on plays the sound once, so the animator hears what they
-  turned on.
+  turned on. While it is off no audio is opened at all (the skin preloads the sound only when on).
 - The classic hub (frameLayouts, no Qt skin) is silent.
 
 ## The sound
