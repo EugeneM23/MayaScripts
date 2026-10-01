@@ -365,11 +365,13 @@ class FakeCard(object):
     def __init__(self, key, collapsed):
         self.key = key
         self._collapsed = collapsed
+        self.animated = []                  # what set_collapsed was asked
 
     def body_path(self):
         return "body|" + self.key
 
-    def set_collapsed(self, value):
+    def set_collapsed(self, value, animate=False):
+        self.animated.append((value, animate))
         self._collapsed = value
 
     def collapsed(self):
@@ -390,6 +392,8 @@ class FakeSkin(object):
         self.said = []
         self.painted = []
         self.sounds = None
+        self.animations = None
+        self.scrolled = []
         self.sheet = None
         self._alive = True
 
@@ -419,13 +423,17 @@ class FakeSkin(object):
     def paint_sounds(self, on):
         self.sounds = on
 
+    def paint_animations(self, on):
+        self.animations = on
+
     def set_version(self, text, tooltip, state=None):
         pass
 
     def set_state(self, state):
         self.state = state
 
-    def scroll_to(self, key):
+    def scroll_to(self, key, animate=False):
+        self.scrolled.append((key, animate))
         return 42 if key in self.cards else None
 
     def set_active(self, key):
@@ -615,6 +623,40 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
                 int(key != "studio"), key)
         self.assertEqual(hub._SKIN.active, "studio")
         self.fake.run_deferred()                            # and scrolled
+
+    def test_a_jump_slides_the_cards_and_glides(self):
+        """2026-10-01: «открывать закрывать с какими-то анимациями» - every
+        card a jump changes is asked to slide, the scroll to glide."""
+        hub.build()
+        hub._SKIN.callbacks["jump"]("studio")
+        for key, card in hub._SKIN.cards.items():
+            if card.animated:
+                self.assertEqual(card.animated[-1],
+                                 (key != "studio", True), key)
+        self.assertEqual(hub._SKIN.cards["studio"].animated[-1],
+                         (False, True))
+        self.fake.run_deferred()
+        self.assertEqual(hub._SKIN.scrolled, [("studio", True)])
+
+    def test_a_scroll_by_code_does_not_glide(self):
+        hub.build()
+        hub.scroll_to("studio")
+        self.assertEqual(hub._SKIN.scrolled, [("studio", False)])
+
+    def test_the_menu_row_switches_the_animations(self):
+        import maya_hubmotion
+        saved = maya_hubmotion._cmds
+        maya_hubmotion._cmds = lambda: self.fake
+        self.addCleanup(setattr, maya_hubmotion, "_cmds", saved)
+        hub.build()
+        self.assertFalse(hub._SKIN.callbacks["animations"](False))
+        self.assertEqual(self.fake.optionvars[maya_hubmotion.OPTIONVAR], 0)
+        self.assertIs(hub._SKIN.animations, False)
+        skin = FakeSkin(None)
+        hub._dress_animations(skin)                    # read back at a build
+        self.assertIs(skin.animations, False)
+        self.assertTrue(hub.set_animations(True))
+        self.assertIs(hub._SKIN.animations, True)
 
     def test_a_header_click_still_opens_one_card_alone(self):
         """Only the strip closes the others; a card's own header toggles

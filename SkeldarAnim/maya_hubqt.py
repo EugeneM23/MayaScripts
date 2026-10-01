@@ -185,6 +185,14 @@ def pixmap(name, colour, size):
     return image
 
 
+def _valid(obj):
+    """`obj`'s C++ object still stands (a hub rebuilt mid-glide deletes it)."""
+    try:
+        return bool(qt().shiboken.isValid(obj))
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def rotated(image, angle):
     """`image` turned `angle` degrees clockwise about its centre, the same
     size (a card's chevron while the body slides)."""
@@ -616,6 +624,12 @@ class Skin(object):
         self.scroll.setWidget(self.content)
         self.scroll.viewport().setObjectName(hubstyle.VIEWPORT)
         top.addWidget(self.scroll, 1)
+        #  the animator's own scroll wins over a glide: the wheel and the
+        #  bar's arrows/page clicks trigger an action, a drag presses the
+        #  slider (our own setValue does neither)
+        bar = self.scroll.verticalScrollBar()
+        bar.actionTriggered.connect(self._stop_glide)
+        bar.sliderPressed.connect(self._stop_glide)
 
         #  The lit card (2026-09-28, «активное окно подсвечивалось немного
         #  другим цветом»; then «когда я наводил мышкой на какой-то раздел у
@@ -692,19 +706,21 @@ class Skin(object):
         for text, key in (("Check update", "check_update"),
                           ("Hotkey Editor...", "hotkey_editor"),
                           ("Interface sounds", "sounds"),
+                          ("Interface animations", "animations"),
                           (None, None),
                           ("Classic look", "classic")):
             if text is None:
                 self.menu.addSeparator()
                 continue
             action = self.menu.addAction(text)
-            if key == "sounds":
-                #  a switch (2026-10-01, the hover sound): `triggered` carries
-                #  the new state and is not emitted by paint_sounds
+            if key in ("sounds", "animations"):
+                #  a switch (2026-10-01, the hover sound, the card motion):
+                #  `triggered` carries the new state and is not emitted by
+                #  paint_sounds / paint_animations
                 action.setCheckable(True)
                 action.triggered.connect(
-                    lambda checked=False: self._call("sounds", bool(checked)))
-                self.sounds_action = action
+                    lambda checked=False, k=key: self._call(k, bool(checked)))
+                setattr(self, key + "_action", action)
                 continue
             action.triggered.connect(lambda *_a, k=key: self._call(k))
         self.menu_button.setMenu(self.menu)
@@ -802,6 +818,14 @@ class Skin(object):
         """The menu's Interface sounds row shows `on` (no callback)."""
         self.sounds_action.setChecked(bool(on))
 
+    def paint_animations(self, on):
+        """The cards slide and a jump glides (`on`) or everything is
+        instant; the menu's row shows it (no callback)."""
+        self.animations = bool(on)
+        self.animations_action.setChecked(self.animations)
+        if not self.animations:
+            self._stop_glide()
+
     def set_active(self, key):
         """Card `key` is the one worked in (None: none): pinned and lit."""
         self._fallback.stop()
@@ -868,13 +892,61 @@ class Skin(object):
         if widget is self.root and self.active != self.resting():
             self._fallback.start()
 
-    def scroll_to(self, key):
+    def scroll_to(self, key, animate=False):
+        """Card `key` to the top of the scroll (as far as the bar goes): at
+        once, or GLIDING when `animate` (the animator's move), the switch
+        and the screen allow it (2026-10-01). The glide aims at the card's
+        LIVE place, so cards still sliding shut above it move it and the
+        glide follows; SCROLL_MS outlasts every slide, so its last stretch
+        aims at a card that has settled. Answers the card's offset now."""
         card = self.cards.get(key)
         if card is None:
             return None
+        self._stop_glide()
         offset = card.frame.y()
-        self.scroll.verticalScrollBar().setValue(offset)
+        bar = self.scroll.verticalScrollBar()
+        if not (animate and self.animations and self.root.isVisible()):
+            bar.setValue(offset)
+            return offset
+        q = qt()
+        start = bar.value()
+        glide = q.QtCore.QVariantAnimation(self.root)
+        glide.setObjectName("skeldarHubGlide")
+        glide.setStartValue(0.0)
+        glide.setEndValue(1.0)
+        glide.setDuration(hubmotion.SCROLL_MS)
+        glide.valueChanged.connect(
+            lambda value: self._glide_tick(card, start, value))
+        glide.finished.connect(lambda: self._glide_done(card))
+        self._glide = glide
+        glide.start()
         return offset
+
+    def _glide_tick(self, card, start, value):
+        if not _valid(card.frame):
+            self._stop_glide()
+            return
+        target = card.frame.y()
+        self.scroll.verticalScrollBar().setValue(int(round(
+            hubmotion.lerp(start, target, hubmotion.ease(value)))))
+
+    def _glide_done(self, card):
+        self._stop_glide()
+        if _valid(card.frame):
+            self.scroll.verticalScrollBar().setValue(card.frame.y())
+
+    def _stop_glide(self, *_args):
+        """No glide any more: the animator's own scroll (the wheel, the
+        bar), another jump, the switch off, the end."""
+        glide, self._glide = self._glide, None
+        if glide is not None:
+            try:
+                glide.valueChanged.disconnect()
+                glide.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            glide.stop()
+            glide.deleteLater()
 
     def alive(self):
         q = qt()

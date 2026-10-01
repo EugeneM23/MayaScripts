@@ -42,6 +42,7 @@ class SeamsMixin(object):
             "toggled": lambda key, c: self.calls.append(("toggled", key, c)),
             "hover": lambda: self.calls.append("hover"),
             "sounds": lambda on: self.calls.append(("sounds", on)),
+            "animations": lambda on: self.calls.append(("animations", on)),
         }
         self.skin = hubqt.Skin(self.host_layout, scale=1.0,
                                callbacks=callbacks)
@@ -112,13 +113,15 @@ class TheShell(SeamsMixin, unittest.TestCase):
         actions = [a for a in self.skin.menu.actions() if not a.isSeparator()]
         self.assertEqual([a.text() for a in actions],
                          ["Check update", "Hotkey Editor...",
-                          "Interface sounds", "Classic look"])
+                          "Interface sounds", "Interface animations",
+                          "Classic look"])
         self.skin.paint_sounds(True)
+        self.skin.paint_animations(True)
         for action in actions:
             action.trigger()
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
-                          "classic"])
+                          ("animations", False), "classic"])
 
     def test_the_sounds_row_is_a_checkbox_painted_without_a_call(self):
         """2026-10-01: «звук наводки на кнопочку», switched in the menu."""
@@ -806,3 +809,77 @@ class Rotated(unittest.TestCase):
         diff = max(abs(a.pixelColor(x, y).alpha() - b.pixelColor(x, y).alpha())
                    for x in range(14) for y in range(14))
         self.assertLess(diff, 90)
+
+
+class Glide(SeamsMixin, unittest.TestCase):
+    """2026-10-01: a jump glides the scroll to its card."""
+
+    def setUp(self):
+        super(Glide, self).setUp()
+        for key in ("a", "b", "c", "d"):
+            card = self.skin.add_card(key, key.upper(), "user", "#f0a26b",
+                                      "#4a3322")
+            filler = QtWidgets.QWidget()
+            filler.setFixedHeight(300)
+            card.body_layout.addWidget(filler)
+        self.host.resize(400, 500)
+        self.host.show()
+        self._settle()
+        self.bar = self.skin.scroll.verticalScrollBar()
+
+    def _settle(self):
+        for _ in range(6):
+            self.app.processEvents()
+
+    def _to_end(self):
+        glide = self.skin._glide
+        glide.setCurrentTime(glide.duration())
+        self._settle()
+
+    def test_it_glides_onto_the_card(self):
+        target = self.skin.cards["c"].frame.y()
+        self.assertEqual(self.skin.scroll_to("c", animate=True), target)
+        self.assertIsNotNone(self.skin._glide)
+        self.assertEqual(self.skin._glide.objectName(), "skeldarHubGlide")
+        self.assertEqual(self.bar.value(), 0)
+        glide = self.skin._glide
+        glide.setCurrentTime(glide.duration() // 2)
+        self._settle()
+        self.assertGreater(self.bar.value(), 0)
+        self.assertLess(self.bar.value(), target)
+        self._to_end()
+        self.assertIsNone(self.skin._glide)
+        self.assertEqual(self.bar.value(), min(target, self.bar.maximum()))
+
+    def test_the_animator_s_own_scroll_stops_it(self):
+        self.skin.scroll_to("d", animate=True)
+        self.bar.triggerAction(QtWidgets.QAbstractSlider.SliderSingleStepAdd)
+        self.assertIsNone(self.skin._glide)
+
+    def test_without_animate_or_switched_off_it_jumps(self):
+        self.skin.scroll_to("c")
+        self.assertIsNone(self.skin._glide)
+        self.assertEqual(self.bar.value(),
+                         min(self.skin.cards["c"].frame.y(),
+                             self.bar.maximum()))
+        self.bar.setValue(0)
+        self.skin.animations = False
+        self.skin.scroll_to("c", animate=True)
+        self.assertIsNone(self.skin._glide)
+        self.assertGreater(self.bar.value(), 0)
+
+
+class AnimationsRow(SeamsMixin, unittest.TestCase):
+
+    def test_a_checkbox_painted_without_a_call(self):
+        action = self.skin.animations_action
+        self.assertTrue(action.isCheckable())
+        self.skin.paint_animations(False)
+        self.assertFalse(action.isChecked())
+        self.assertFalse(self.skin.animations)
+        self.skin.paint_animations(True)
+        self.assertTrue(action.isChecked())
+        self.assertTrue(self.skin.animations)
+        self.assertEqual(self.calls, [])
+        action.trigger()
+        self.assertEqual(self.calls, [("animations", False)])

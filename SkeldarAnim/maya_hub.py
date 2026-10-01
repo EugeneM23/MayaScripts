@@ -295,6 +295,7 @@ def _callbacks():
         "toggled": remember,
         "hover": _hover_sound,
         "sounds": set_sounds,
+        "animations": set_animations,
     }
 
 
@@ -317,6 +318,7 @@ def _dress_header(skin):
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
     _dress_sounds(skin)
+    _dress_animations(skin)
 
 
 def _dress_sounds(skin):
@@ -330,6 +332,17 @@ def _dress_sounds(skin):
         skin.paint_sounds(on)
         if on:
             maya_hubsound.preload("hover")
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def _dress_animations(skin):
+    """The menu's Interface animations row = the switch (2026-10-01: the
+    cards slide, a jump glides; maya_hubmotion's optionVar, on by
+    default)."""
+    try:
+        import maya_hubmotion
+        skin.paint_animations(maya_hubmotion.enabled())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -489,6 +502,16 @@ def set_sounds(on):
     return on
 
 
+def set_animations(on):
+    """The menu's Interface animations: switched, remembered, the skin
+    told (off = every card and every jump instant, as before)."""
+    import maya_hubmotion
+    on = maya_hubmotion.set_enabled(on)
+    if is_skinned():
+        _SKIN.paint_animations(on)
+    return on
+
+
 def _press_hotkey_editor():
     import maya_hotkeys
     return maya_hotkeys._maya_mel("HotkeyPreferencesWindow")
@@ -535,7 +558,7 @@ def focus(key):
         return None
     for other, card in _SKIN.cards.items():
         if other != key:
-            card.set_collapsed(True)
+            card.set_collapsed(True, animate=True)
             remember(other, True)
     return expand(key)
 
@@ -550,10 +573,11 @@ def expand(key):
         card = _SKIN.cards.get(key)
         if card is None:
             return None
-        card.set_collapsed(False)
+        card.set_collapsed(False, animate=True)
         _SKIN.set_active(key)
         remember(key, False)
-        cmds.evalDeferred(lambda: scroll_to(key), lowestPriority=True)
+        cmds.evalDeferred(lambda: scroll_to(key, animate=True),
+                          lowestPriority=True)
         return card
     if cmds.frameLayout(sec.frame, exists=True):
         cmds.frameLayout(sec.frame, edit=True, collapse=False)
@@ -564,13 +588,14 @@ def expand(key):
     return sec.frame
 
 
-def scroll_to(key):
-    """Scroll so section `key` starts at the top. Best effort: a control
-    that is not there any more just skips it."""
+def scroll_to(key, animate=False):
+    """Scroll so section `key` starts at the top -- in the skin gliding when
+    `animate` (the animator's move; maya_hubqt.Skin.scroll_to). Best effort:
+    a control that is not there any more just skips it."""
     sec = section(key)
     try:
         if is_skinned():
-            return _SKIN.scroll_to(key)
+            return _SKIN.scroll_to(key, animate=animate)
         if not cmds.scrollLayout(SCROLL, exists=True):
             return None
         frames = [s.frame for s in SECTIONS]
