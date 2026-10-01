@@ -7271,3 +7271,51 @@ made inside each synthetic send. Not built: a click sound, sounds on grid tiles 
      installing or running there** — the port serves whoever connects, and an install rebuilds the hub under
      whatever is running. Maya left `Manny_Rig[Recovered-MY PC.2026-10-01-11.55].ma` (54 MB, complete) in
      `%TEMP%`: the untitled scene at the crash, named after the last file it imported.
+
+## The hub's cards slide, a jump glides (2026-10-01)
+
+The animator: «А элементы нашего интерфейса возможно открывать закрывать с какими-то анимациями, просто для
+красоты и приятности?»; of three scopes offered they chose the cards and the scroll (not the light, the
+message line, the grids). Spec `docs/superpowers/specs/2026-10-01-hub-card-motion-design.md` (read its
+addendum), plan beside it.
+
+- **A card's body slides** open and shut, ease-out cubic, `maya_hubmotion.duration` (140 + 0.12 a logical
+  px, kept within 160..260 ms), the chevron turning with it (`maya_hubqt.rotated`). How: the body's own
+  layout is DISABLED for the slide and laid out once at its full height (`Card._lay_out_full`, re-read every
+  tick), and the body's `maximumHeight` is capped tick by tick — so a short body CLIPS its children; a plain
+  height animation of a laid-out widget squeezes them to their minimums. At the end the idle card is what it
+  was before (cap off, layout enabled). The gap under the header moved into the body's top margin.
+- **A jump glides**: `Skin.scroll_to(key, animate=True)` waits for the OTHER cards to finish sliding
+  (`_glide_when_settled`, at most `GLIDE_WAIT_S` 0.6 s), then eases over `SCROLL_MS` 240 toward
+  `min(card.frame.y(), bar.maximum())`, both read live; the wheel or the bar (`actionTriggered`,
+  `sliderPressed`) stops it.
+- **Only the animator's moves animate**: `Card.toggle`, `maya_hub.focus` / `expand` (the strip, `show(key)`,
+  the update chip) pass `animate=True`; `set_collapsed(c)` from code is instant, as is a card off screen.
+- **⋮ → Interface animations** beside Interface sounds (`maya_hubmotion.OPTIONVAR`
+  `skeldarAnimHub_animations`, ON by default; `maya_hub.set_animations`). The classic hub is untouched.
+- Measured before building (a disposable Maya, the repo's hub): a HIDDEN body's size hint is wrong (Weapons
+  537 against 657 settled, Characters 763 against 420) — shown at `maximumHeight 0` it is right; a step
+  costs 2.5 ms (3.6 with ten cards closing at once).
+
+Proof: `docs/superpowers/plans/verify_hub_motion.py` — **11/11 in a disposable Maya** (port 7016, scratch
+`MAYA_APP_DIR`, the repo's hub FLOATED and sized to the animator's dock, viewport 510): every card opened and
+shut through real time (the send turns the event loop itself), monotonic onto its settled height, its content
+at full height every turn and clipped, the header steady; p99 turn 5.0 ms; a slide turned back mid-way; a
+jump to Studio with three cards open above — they shut, Studio opens, the glide monotonic onto it; switched
+off, instant. 3264 unit tests. The animator watched and clicked in that Maya meanwhile (one run's UE Bridge
+was shut mid-slide and the hub resized under the gates — trap 100 again), and saw what no gate measured: the
+title shaking (trap 149). **The installed copy was not refreshed**: 7001 was down after the 11:55 crash.
+
+149. **A widget's own layout runs on its OLD size, and a Preferred child takes the difference.** Capping a
+     card's body every tick posts LayoutRequests; the card's column ran first, on the height the outer column
+     had given the card a moment earlier, so while shutting the HEADER grew (33 → 34, 36 … 350 px and back)
+     and while opening it shrank to 17 — its title and chevron, centred in it, shook («название заголовка
+     "дрожит"»). Every gate passed: they measured the body. A part that must not move gets a `Fixed` policy on
+     that axis, and an animation lays its widget AND the column holding it out at once each tick
+     (`layout().activate()` on both — `Card._lay_out_now`). Offscreen tests never see the interleaving: read
+     the layout right after the tick, before `processEvents`, and require it equal to the settled one.
+150. **`host_widget(CONTROL).window()` is MAYA'S MAIN WINDOW while the hub is docked** — and a disposable
+     Maya's hub opens docked. A probe that "sized the hub's window" shrank MayaWindow to 560 px and left the
+     hub a 127 px viewport (content minimum 305): four of the first gates failed on a layout nobody uses.
+     Float it first (`workspaceControl -e -floating true`), then size the floating window until the scroll
+     viewport reads the dock's 510.
