@@ -49,6 +49,7 @@ _PAYLOAD = (
     "maya_hubicons.py",         # its Tabler icons
     "maya_hubqt.py",            # its Qt widgets
     "maya_hubsound.py",         # its interface sounds (2026-10-01)
+    "maya_hubmotion.py",        # how its cards move (2026-10-01)
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)
