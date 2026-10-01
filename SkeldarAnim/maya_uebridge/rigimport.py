@@ -40,8 +40,16 @@ its Main stands on the current frame, read before the reset zeroes it, and
 its heading - by the same wrapper, turned about Main's start and moved onto
 that place. A drop on a rig and the Import button (Rig mode) alike.
 
+2026-10-01, several animations at once (`lineimport`): the press is four
+pieces a batch reuses in its own order - `plan_press` (which rig, the
+refusals), `ready_rig` (a rig added, or the standing one reset),
+`import_source` (the clip as its own skeleton), `retarget_imported`
+(connect, place, bake, delete) - and `stand_skeleton` stands a skeleton of
+several on its slot. `import_and_retarget` composes them as before.
+
 Design: docs/superpowers/specs/2026-09-07-advancedskeleton-pipeline-design.md,
-docs/superpowers/specs/2026-09-08-many-rigs-design.md
+docs/superpowers/specs/2026-09-08-many-rigs-design.md,
+docs/superpowers/specs/2026-10-01-uebridge-many-animations-design.md
 """
 
 import math
@@ -217,6 +225,148 @@ def _place(group, rig, place, start):
     return "standing at floor ({0}, {1})".format(x, z)
 
 
+def root_at(source, frame=None):
+    """Where the clip's root stands at `frame` (now, with None): a bare
+    skeleton driven by its own curves, read in a time context - no
+    constraint, so trap 69 does not apply, and no rig is evaluated."""
+    if frame is None:
+        return tuple(cmds.xform(source, query=True, worldSpace=True,
+                                translation=True))
+    matrix = cmds.getAttr(source + ".worldMatrix[0]", time=frame)
+    return (matrix[12], matrix[13], matrix[14])
+
+
+def stand_skeleton(namespace, source, point, start=None):
+    """A clip's skeleton, its root at its first frame, onto the floor `point`
+    (horizontally): the root wrapped in a group of its namespace and the
+    group moved - its keys are never touched. Returns (dx, dz)."""
+    at_start = root_at(source, start)
+    shift, _root = _wrap(source, namespace)
+    dx, dy, dz = shift_for(point, at_start)
+    cmds.move(dx, dy, dz, shift, relative=True, worldSpace=True)
+    return (dx, dz)
+
+
+NO_JOINT = "{0} imported into {1} but holds no joint - nothing to retarget"
+
+
+def plan_press(target, rig=None):
+    """(plan, refusal): which rig a press acts on, before anything is touched.
+
+    The plan is a dict - `rig` (None when one is to be added), `mod` (its
+    retarget module), `add`, `entry` (the catalog row a rig is added from).
+    `rig` names the rig for target "rig" (a drop on it); None asks the
+    selection, else the only rig, else adds one. "new_rig" always adds."""
+    import maya_rig_retarget
+    import maya_rigs
+
+    if target not in TARGETS:
+        return None, "unknown import target {0!r}".format(target)
+    all_rigs = maya_rigs.rigs()
+    if target == "new_rig":
+        rig = None
+    if target == "rig" and rig is None and all_rigs:
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            return None, refusal
+    add_rig = rig is None
+    mod, module_refusal = (maya_rig_retarget.rig_module(rig) if rig
+                           else (None, ""))
+    if rig is not None and mod is None:
+        return None, module_refusal
+    holder = bool(mod is not None and cmds.objExists(mod.holder_of(rig)))
+    entry = new_rig_entry() if add_rig else None
+    file_ok = _rig_file_ok(entry)
+    refusal = precheck(not add_rig, holder, False, file_ok,
+                       "" if file_ok else _rig_file_name(entry))
+    if refusal:
+        return None, refusal
+    return dict(rig=rig, mod=mod, add=add_rig, entry=entry), ""
+
+
+def ready_rig(plan):
+    """(rig, mod, notes, failure): the rig the clip goes onto, ready for the
+    connect - a rig ADDED from `plan["entry"]` (every call adds one), or the
+    planned rig with its previous take cleared."""
+    import maya_rig_retarget
+    import maya_rigs
+    from maya_scenesetup import character
+
+    notes = []
+    if plan["add"]:
+        before = maya_rigs.rigs()
+        notes.append(character.add_character(plan["entry"]))
+        rig = fresh_rig(before, maya_rigs.rigs())
+        if rig is None:
+            return None, None, notes, "the added rig was not found in the scene"
+        mod, module_refusal = maya_rig_retarget.rig_module(rig)
+        if mod is None:
+            return None, None, notes, module_refusal
+        return rig, mod, notes, ""
+    rig, mod = plan["rig"], plan["mod"]
+    # A clip import REPLACES the take, as the old merge did (trap 27: the
+    # target's animation is cleared first): the previous bake's keys go and
+    # the controls return to the build pose. A baked rig passes
+    # `posed_controls` -- a keyed channel is not settable and is skipped --
+    # while standing in the take's pose, and a connect made there would
+    # measure the pole offsets against that pose. What is still posed
+    # afterwards is a channel nothing here may touch, and that IS a refusal.
+    curves, zeroed = mod.reset_build_pose(rig)
+    if curves or zeroed:
+        notes.append("previous take cleared ({0} curves), rig at "
+                     "build pose".format(curves))
+    posed = mod.posed_controls(rig=rig)
+    if posed:
+        return rig, mod, notes, "{0}: {1}".format(
+            POSED, ", ".join(sorted(posed)[:6]))
+    return rig, mod, notes, ""
+
+
+def import_source(fbx_path, name, clip_fps=None, set_timeline=True):
+    """(namespace, info, source): the clip as its own namespaced skeleton and
+    its topmost joint (None when it brought none)."""
+    namespace = records.namespace_for(name, animimport.existing_namespaces())
+    info = animimport.import_clip(fbx_path, namespace,
+                                  set_timeline=set_timeline,
+                                  clip_fps=clip_fps, merge=False)
+    nodes = cmds.namespaceInfo(namespace, listOnlyDependencyNodes=True,
+                               recurse=True, dagPath=True) or []
+    source = source_root_in(nodes, lambda path: cmds.objectType(path) == "joint")
+    return namespace, info, source
+
+
+def retarget_imported(rig, mod, namespace, info, source, name, place=None):
+    """(line, failure): the imported clip connected onto `rig`, moved onto
+    `place` (a dict with "point" and "yaw"; None leaves it where it is),
+    baked, and its skeleton deleted. A connect refusal leaves the skeleton
+    as it arrived and is the failure."""
+    import maya_rig_retarget
+    import maya_rigs
+
+    # The wrapper goes on BEFORE the connect: the holder remembers the
+    # clip's root by PATH (trap 16), so the root must not be re-parented
+    # after it. The connect measures the clip unmoved; the wrapper moves
+    # after it, and the bake carries the move.
+    shift = None
+    if place is not None:
+        shift, source = _wrap(source, namespace)
+    connect_text = maya_rig_retarget.connect(source_root=source, rig=rig)
+    if not cmds.objExists(mod.holder_of(rig)):
+        if shift:
+            cmds.ungroup(shift)
+        return "", "{0} imported as {1}; retarget refused: {2}".format(
+            name, namespace, _first_line(connect_text))
+    placed = _place(shift, rig, place, info.get("start")) if shift else ""
+
+    bake_text = maya_rig_retarget.bake(rig=rig)
+    cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    line = result_line(name, info, connect_text, bake_text, namespace,
+                       maya_rigs.label(rig))
+    if placed:
+        line = "{0}  |  {1}".format(line, placed)
+    return line, ""
+
+
 def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
                         target="rig", rig=None, at=None):
     """The press. Returns the status line.
@@ -232,108 +382,28 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
     refusal leaves the imported skeleton in the scene and says so -- the
     animator can fix what it names and press Retarget by hand.
     """
-    import maya_rig_retarget
-    import maya_rigs
-    from maya_scenesetup import catalog, character
-
-    if target not in TARGETS:
-        return "unknown import target {0!r}".format(target)
-    all_rigs = maya_rigs.rigs()
-    if target == "new_rig":
-        rig = None
-    if target == "rig" and rig is None and all_rigs:
-        rig, refusal = maya_rigs.current_rig()
-        if rig is None:
-            return refusal
-    add_rig = rig is None
-    mod, module_refusal = (maya_rig_retarget.rig_module(rig) if rig
-                           else (None, ""))
-    if rig is not None and mod is None:
-        return module_refusal
-    holder = bool(mod is not None and cmds.objExists(mod.holder_of(rig)))
-    entry = new_rig_entry() if add_rig else None
-    file_ok = _rig_file_ok(entry)
-    refusal = precheck(not add_rig, holder, False, file_ok,
-                       "" if file_ok else _rig_file_name(entry))
+    plan, refusal = plan_press(target, rig)
     if refusal:
         return refusal
 
-    notes = []
-    deleted = ""
     place = None
-    if not add_rig:
-        place = rig_place(rig)
+    if not plan["add"]:
+        place = rig_place(plan["rig"])
     elif at is not None:
         place = {"point": tuple(at), "yaw": None}
     cmds.undoInfo(openChunk=True, chunkName="UE anim import + retarget")
     try:
-        if add_rig:
-            notes.append(character.add_character(entry))
-            rig = fresh_rig(all_rigs, maya_rigs.rigs())
-            if rig is None:
-                return "  |  ".join(notes + [
-                    "the added rig was not found in the scene"])
-            mod, module_refusal = maya_rig_retarget.rig_module(rig)
-            if mod is None:
-                return "  |  ".join(notes + [module_refusal])
-        else:
-            # A clip import REPLACES the take, as the old merge did (trap
-            # 27: the target's animation is cleared first): the previous
-            # bake's keys go and the controls return to the build pose. A
-            # baked rig passes `posed_controls` -- a keyed channel is not
-            # settable and is skipped -- while standing in the take's pose,
-            # and a connect made there would measure the pole offsets
-            # against that pose. What is still posed afterwards is a
-            # channel nothing here may touch, and that IS a refusal.
-            curves, zeroed = mod.reset_build_pose(rig)
-            if curves or zeroed:
-                notes.append("previous take cleared ({0} curves), rig at "
-                             "build pose".format(curves))
-            posed = mod.posed_controls(rig=rig)
-            if posed:
-                return "  |  ".join(notes + [
-                    "{0}: {1}".format(POSED, ", ".join(sorted(posed)[:6]))])
-
-        namespace = records.namespace_for(name,
-                                          animimport.existing_namespaces())
-        info = animimport.import_clip(fbx_path, namespace,
-                                      set_timeline=set_timeline,
-                                      clip_fps=clip_fps, merge=False)
-        nodes = cmds.namespaceInfo(namespace, listOnlyDependencyNodes=True,
-                                   recurse=True, dagPath=True) or []
-        source = source_root_in(
-            nodes, lambda path: cmds.objectType(path) == "joint")
+        rig, mod, notes, failure = ready_rig(plan)
+        if failure:
+            return "  |  ".join(notes + [failure])
+        namespace, info, source = import_source(fbx_path, name, clip_fps,
+                                                set_timeline)
         if source is None:
-            return "  |  ".join(notes + [
-                "{0} imported into {1} but holds no joint - nothing to "
-                "retarget".format(name, namespace)])
-
-        # The wrapper goes on BEFORE the connect: the holder remembers the
-        # clip's root by PATH (trap 16), so the root must not be re-parented
-        # after it. The connect measures the clip unmoved; the wrapper moves
-        # after it, and the bake carries the move.
-        shift = None
-        if place is not None:
-            shift, source = _wrap(source, namespace)
-        connect_text = maya_rig_retarget.connect(source_root=source, rig=rig)
-        if not cmds.objExists(mod.holder_of(rig)):
-            if shift:
-                cmds.ungroup(shift)
-            return "  |  ".join(notes + [
-                "{0} imported as {1}; retarget refused: {2}".format(
-                    name, namespace, _first_line(connect_text))])
-        placed = (_place(shift, rig, place, info.get("start"))
-                  if shift else "")
-
-        bake_text = maya_rig_retarget.bake(rig=rig)
-        cmds.namespace(removeNamespace=namespace,
-                       deleteNamespaceContent=True)
-        deleted = namespace
+            return "  |  ".join(notes + [NO_JOINT.format(name, namespace)])
+        line, failure = retarget_imported(rig, mod, namespace, info, source,
+                                          name, place)
     finally:
         cmds.undoInfo(closeChunk=True)
-
-    line = result_line(name, info, connect_text, bake_text, deleted,
-                       maya_rigs.label(rig))
-    if placed:
-        line = "{0}  |  {1}".format(line, placed)
+    if failure:
+        return "  |  ".join(notes + [failure])
     return "  |  ".join(notes + [line]) if notes else line

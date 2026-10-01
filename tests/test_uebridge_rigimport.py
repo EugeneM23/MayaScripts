@@ -479,6 +479,63 @@ class ThePress(unittest.TestCase):
         undo = [c[1] for c in self.calls if c[0] == "undo"]
         self.assertEqual(undo, [("chunkName", "openChunk"), ("closeChunk",)])
 
+    # ---- 2026-10-01: the pieces a press of several animations reuses
+
+    def test_plan_press_refuses_a_missing_rig_file_before_anything(self):
+        rigimport._rig_file_ok = lambda entry=None: False
+        real_name = rigimport._rig_file_name
+        rigimport._rig_file_name = lambda entry: "Manny_Rig.ma"
+        self.addCleanup(setattr, rigimport, "_rig_file_name", real_name)
+        plan, refusal = rigimport.plan_press("new_rig")
+        self.assertIsNone(plan)
+        self.assertIn("missing from assets", refusal)
+        self.assertEqual(self.calls, [])
+
+    def test_plan_press_for_a_new_rig_adds_the_active_characters_rig(self):
+        plan, refusal = rigimport.plan_press("new_rig", rig=self.rigs[0])
+        self.assertEqual(refusal, "")
+        self.assertTrue(plan["add"])
+        self.assertIsNone(plan["rig"])
+        self.assertEqual(plan["entry"].key, "Manny_Rig")
+
+    def test_ready_rig_adds_a_rig_on_every_call(self):
+        plan, _ = rigimport.plan_press("new_rig")
+        first = rigimport.ready_rig(plan)
+        second = rigimport.ready_rig(plan)
+        self.assertEqual((first[0].namespace, second[0].namespace), ("Manny_Rig1", "Manny_Rig2"))
+        self.assertEqual((first[3], second[3]), ("", ""))
+        self.assertEqual(self._steps(), ["add", "add"])
+
+    def test_import_source_names_the_topmost_joint(self):
+        namespace, info, source = rigimport.import_source("C:/t/A.fbx", "A", 30.0, False)
+        self.assertEqual((namespace, source, info["end"]), ("A", "|A:root", 45.0))
+
+    def test_retarget_imported_on_a_slot(self):
+        plan, _ = rigimport.plan_press("new_rig")
+        rig, mod, notes, _failure = rigimport.ready_rig(plan)
+        namespace, info, source = rigimport.import_source("C:/t/A.fbx", "A")
+        line, failure = rigimport.retarget_imported(
+            rig, mod, namespace, info, source, "A", {"point": (-250.0, 0.0, 0.0), "yaw": None})
+        self.assertEqual(failure, "")
+        self.assertEqual(self._steps(), ["add", "import", "group", "connect", "move", "bake",
+                                         "delete_ns"])
+        self.assertIn("retargeted onto Manny_Rig1", line)
+        self.assertIn("standing at floor (-250, 0)", line)
+
+    def test_stand_skeleton_moves_its_wrapper_onto_the_point(self):
+        """A skeleton of several in a line: the root, at the clip's first
+        frame, onto its slot, horizontally - by a wrapper, keys untouched."""
+        rigimport.cmds.getAttr = lambda plug, time=None: (
+            self.calls.append(("read", plug, time)) or
+            [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4.0, 90.0, -12.0, 1])
+        moved = rigimport.stand_skeleton("A", "|A:root", (250.0, 0.0, 0.0), 3.0)
+        self.assertEqual(moved, (246.0, 12.0))
+        self.assertIn(("read", "|A:root.worldMatrix[0]", 3.0), self.calls)
+        self.assertEqual([c for c in self.calls if c[0] == "group"],
+                         [("group", "|A:root", "A:" + rigimport.SHIFT_NODE)])
+        self.assertEqual([c for c in self.calls if c[0] == "move"],
+                         [("move", (246.0, 0.0, 12.0), "A:" + rigimport.SHIFT_NODE, True, True)])
+
 
 if __name__ == "__main__":
     unittest.main()
