@@ -11,22 +11,22 @@ export is replaced by FBX clips on disk. Each send sets PHASE first:
                             press's own time-context read is held against
     PHASE = "button_new"    gates 3-5: three picked, New rig, Import - three
                             rigs, Main at each clip's first frame on its slot
-                            along world X about the origin, the root paths a
-                            whole step apart, the timeline the union, no clip
-                            skeleton left
+                            of a 2 x 2 square about the origin (row 0 in
+                            front, left to right), no two root paths within
+                            a step, the timeline the union, no clip skeleton
+                            left
     PHASE = "button_skel"   gate 6: Skeleton mode - three skeletons on the
-                            same line, each playing its own keys moved
+                            same square, each playing its own keys moved
     PHASE = "button_rig"    gate 7: Rig mode, one rig selected - the first
                             clip only, and the status says so
     PHASE = "drag_floor"    gate 8: a real press-drag-release of the three
                             picked rows onto empty floor, the camera looking
-                            along X (the line runs along -Z, across the
-                            screen); the ghost names the line, the list keeps
-                            the three picked
-    PHASE = "measure_floor" gate 9: three rigs on slots through the floor
-                            point along the camera's right - the thrust's
-                            2.5 m of forward travel is sideways to this line,
-                            so its gap is widened by exactly that
+                            along X; the ghost names the square, the list
+                            keeps the three picked
+    PHASE = "measure_floor" gate 9: three rigs on the same 2 x 2 square, on the
+                            world's axes about the floor point whatever the
+                            camera - the thrust's 2.5 m of forward travel
+                            widening its row
     PHASE = "drag_rig"      gate 10: the three dragged onto the middle rig
     PHASE = "measure_rig"   gate 11: that rig took the first clip only, the
                             other two never moved
@@ -56,7 +56,6 @@ CLIPS = {"LongSword_Attack_Right_Heavy_1P": EXPORT + "LongSword_Attack_Right_Hea
 ORDER = sorted(CLIPS)               # the list's order
 FIRST = ORDER[0]
 STEP = 250.0
-X = (1.0, 0.0, 0.0)
 
 
 def gate(number, text, ok, detail=""):
@@ -71,10 +70,6 @@ def world_t(node):
 
 def dist(a, b):
     return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(3)))
-
-
-def dot(a, b):
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 
 def settle():
@@ -161,10 +156,13 @@ def keep_hub_off(points):
     return "the hub covers a point wherever it stands"
 
 
-def expected_slots(centre, axis):
+def expected_slots(centre):
+    """The square's slots about `centre`, from the clips' own root tracks
+    walked frame by frame on a plain import (setup)."""
     from maya_uebridge import lineup
-    extents = [lineup.side_extent(WORLD["tracks"][name], axis) for name in ORDER]
-    return lineup.slots(centre, axis, lineup.offsets(extents, STEP)), extents
+    x = [lineup.side_extent(WORLD["tracks"][name], lineup.COLUMNS) for name in ORDER]
+    z = [lineup.side_extent(WORLD["tracks"][name], lineup.ROWS) for name in ORDER]
+    return lineup.square_slots(centre, x, z, STEP), (x, z)
 
 
 def owners(said):
@@ -177,23 +175,40 @@ def owners(said):
     return out
 
 
-def path_along(node, axis, last):
-    along = []
+def path_of(node, last):
+    """((x lo, x hi), (z lo, z hi)) of the node's world path over 0..last."""
+    xs, zs = [], []
     for frame in range(0, last + 1):
         cmds.currentTime(frame, update=True)
-        along.append(dot(world_t(node), axis))
-    return min(along), max(along)
+        point = world_t(node)
+        xs.append(point[0])
+        zs.append(point[2])
+    return (min(xs), max(xs)), (min(zs), max(zs))
 
 
-def check_line(number, text, said, centre, axis, before):
-    """The new rigs: Main at frame 0 on its slot; the root paths a whole step
-    apart along the axis; every rig animated."""
-    slots, extents = expected_slots(centre, axis)
+def clearance(paths):
+    """The least gap between two rigs' root paths: along X for rigs in two
+    columns, along Z for two in one column."""
+    from maya_uebridge import lineup
+    columns, _rows = lineup.grid_shape(len(paths))
+    gaps = []
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            axis = 0 if i % columns != j % columns else 1
+            a, b = paths[i][axis], paths[j][axis]
+            gaps.append(max(b[0] - a[1], a[0] - b[1]))
+    return min(gaps) if gaps else None
+
+
+def check_line(number, text, said, centre, before):
+    """The new rigs: Main at frame 0 on its slot of the square; no two root
+    paths within a step; every rig animated."""
+    slots, extents = expected_slots(centre)
     own = owners(said)
     new = sorted(set(rigs()) - set(before))
-    worst, gaps, moving, detail = 0.0, [], [], []
+    worst, moving, detail = 0.0, [], []
     ok = len(new) == 3 and len(own) == 3 and all(ns in new for ns in own.values())
-    edges = []
+    paths = []
     if ok:
         for name, slot in zip(ORDER, slots):
             ns = own[name]
@@ -202,7 +217,7 @@ def check_line(number, text, said, centre, axis, before):
             off = math.hypot(main[0] - slot[0], main[2] - slot[2])
             worst = max(worst, off)
             last = int(WORLD["ends"][name])
-            edges.append(path_along(ns + ":root", axis, last))
+            paths.append(path_of(ns + ":root", last))
             hand = []
             for frame in range(0, last + 1, 3):
                 cmds.currentTime(frame, update=True)
@@ -210,14 +225,16 @@ def check_line(number, text, said, centre, axis, before):
             moving.append(max(dist(hand[0], p) for p in hand))
             detail.append("%s %s Main (%.3f, %.3f) slot (%.3f, %.3f)" % (
                 ns, name[:14], main[0], main[2], slot[0], slot[2]))
-        gaps = [edges[i + 1][0] - edges[i][1] for i in range(2)]
+    least = clearance(paths) if ok else None
     gate(number, text,
-         ok and worst < 1e-3 and all(g > STEP - 0.05 for g in gaps)
+         ok and worst < 1e-3 and least is not None and least > STEP - 0.05
          and all(m > 0.5 for m in moving) and not clip_namespaces(),
-         "%s | Main off its slot %.2e | path gaps %s | hand_r travels %s | left %s | "
-         "extents %s" % ("; ".join(detail), worst, [round(g, 3) for g in gaps],
-                         [round(m, 2) for m in moving], clip_namespaces(),
-                         [tuple(round(v, 2) for v in e) for e in extents]))
+         "%s | Main off its slot %.2e | least clearance between root paths %s | "
+         "hand_r travels %s | left %s | reach x %s z %s" % (
+             "; ".join(detail), worst, None if least is None else round(least, 3),
+             [round(m, 2) for m in moving], clip_namespaces(),
+             [tuple(round(v, 2) for v in e) for e in extents[0]],
+             [tuple(round(v, 2) for v in e) for e in extents[1]]))
     return own
 
 
@@ -282,8 +299,9 @@ def phase_button_new():
     window._run(window.import_selected)
     said = status()
     print("    status: %s" % said)
-    own = check_line(3, "New rig, three picked: three rigs on their slots along X about the "
-                        "origin, the paths a step apart", said, (0.0, 0.0, 0.0), X, before)
+    own = check_line(3, "New rig, three picked: three rigs on their slots of a 2 x 2 square "
+                        "about the origin, no two paths within a step", said,
+                     (0.0, 0.0, 0.0), before)
     span = (cmds.playbackOptions(query=True, minTime=True),
             cmds.playbackOptions(query=True, maxTime=True))
     want = (min(WORLD["starts"].values()), max(WORLD["ends"].values()))
@@ -291,7 +309,7 @@ def phase_button_new():
          picked == [1, 2, 3] and abs(span[0] - want[0]) < 1e-6 and abs(span[1] - want[1]) < 1e-6,
          "%s vs %s" % (span, want))
     gate(5, "the status names each rig with its clip and the widened gap",
-         "3 animations onto 3 new rigs in a line about (0, 0)" in said and len(own) == 3
+         "3 animations onto 3 new rigs in a 2 x 2 square about (0, 0)" in said and len(own) == 3
          and "widened beside ShortSword_Attack_Thrust_3P" in said, said[:300])
 
 
@@ -303,7 +321,7 @@ def phase_button_skel():
     window._run(window.import_selected)
     said = status()
     print("    status: %s" % said)
-    slots, _extents = expected_slots((0.0, 0.0, 0.0), X)
+    slots, _extents = expected_slots((0.0, 0.0, 0.0))
     worst, found = 0.0, []
     for name, slot in zip(ORDER, slots):
         root = (cmds.ls(name + ":root", long=True) or [None])[0]
@@ -317,10 +335,10 @@ def phase_button_skel():
             want = (point[0] + move[0], point[1], point[2] + move[2])
             worst = max(worst, dist(world_t(root), want))
     gate(6, "Skeleton, three picked: three skeletons, each root playing its own keys moved "
-            "onto its slot along X about the origin",
+            "onto its slot of the square about the origin",
          all(found) and worst < 1e-3 and not rigs()
          and all("skeldarDropShift" in r for r in found)
-         and "3 animations as skeletons in a line about (0, 0)" in said,
+         and "3 animations as skeletons in a 2 x 2 square about (0, 0)" in said,
          "roots %s | off the moved clip %.2e | '%s'" % (found, worst, said[:200]))
 
 
@@ -399,26 +417,20 @@ def phase_drag_floor():
     WORLD["before_floor"] = list(rigs())
     point = (0.0, 0.0, 0.0)
     aim = _drag_rows(1, point, 8, "three picked dragged onto empty floor, the press on the "
-                                  "second: all three carried, the ghost names a line of "
+                                  "second: all three carried, the ghost names a square of "
                                   "three new rigs, the list keeps them picked",
-                     lambda c: c.startswith("3 animations · 3 new Manny [rig] in a line · floor"))
+                     lambda c: c.startswith("3 animations · 3 new Manny [rig] in a square · floor"))
     WORLD["floor"] = aim.get("point")
-    WORLD["axis"] = aim.get("axis")
     print("    aim: %s" % (aim,))
 
 
 def phase_measure_floor():
-    from maya_uebridge import lineup
     said = status()
     print("    status: %s" % said)
-    axis = lineup.floor_axis(WORLD["axis"])
-    own = check_line(9, "the drop of three: three rigs through the floor point along the "
-                        "camera's right (-Z here), the thrust's forward travel widening "
-                        "its gap", said, WORLD["floor"], axis, WORLD["before_floor"])
+    own = check_line(9, "the drop of three, the camera looking along X: the same 2 x 2 square "
+                        "on the world's axes about the floor point, no two paths within a "
+                        "step", said, WORLD["floor"], WORLD["before_floor"])
     WORLD["floor_owners"] = own
-    _slots, extents = expected_slots(WORLD["floor"], axis)
-    print("    axis %s, extents along it %s" % (
-        [round(v, 4) for v in axis], [tuple(round(v, 2) for v in e) for e in extents]))
 
 
 def phase_drag_rig():

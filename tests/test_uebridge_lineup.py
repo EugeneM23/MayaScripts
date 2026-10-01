@@ -65,35 +65,80 @@ class Offsets(unittest.TestCase):
         self.assertEqual(lineup.offsets([]), [])
 
 
-class FloorAxis(unittest.TestCase):
+class GridShape(unittest.TestCase):
+    """2026-10-01, «всегда ... в квадратной формации»: as square as it gets."""
 
-    def test_the_vertical_part_goes(self):
-        self.assertEqual(lineup.floor_axis((0.0, 5.0, 2.0)), (0.0, 0.0, 1.0))
-
-    def test_normalised(self):
-        axis = lineup.floor_axis((3.0, 0.0, 4.0))
-        self.assertAlmostEqual(axis[0], 0.6)
-        self.assertAlmostEqual(axis[2], 0.8)
-        self.assertEqual(axis[1], 0.0)
-
-    def test_straight_up_falls_back_to_world_x(self):
-        self.assertEqual(lineup.floor_axis((0.0, 1.0, 0.0)), (1.0, 0.0, 0.0))
-        self.assertEqual(lineup.floor_axis(None), (1.0, 0.0, 0.0))
+    def test_columns_then_rows(self):
+        self.assertEqual([lineup.grid_shape(n) for n in range(1, 11)],
+                         [(1, 1), (2, 1), (2, 2), (2, 2), (3, 2), (3, 2), (3, 3), (3, 3),
+                          (3, 3), (4, 3)])
+        self.assertEqual(lineup.grid_shape(0), (0, 0))
 
 
-class Slots(unittest.TestCase):
+class Band(unittest.TestCase):
 
-    def test_along_the_axis_about_the_centre(self):
-        got = lineup.slots((100.0, 3.0, -50.0), (0.0, 0.0, 1.0), [-250.0, 0.0, 250.0])
-        self.assertEqual(got, [(100.0, 3.0, -300.0), (100.0, 3.0, -50.0), (100.0, 3.0, 200.0)])
+    def test_the_union_of_the_reaches(self):
+        self.assertEqual(lineup.band([(-3.0, 1.0), (0.0, 9.0), (-1.0, 0.0)]), (-3.0, 9.0))
+        self.assertEqual(lineup.band([]), (0.0, 0.0))
 
 
-class Widened(unittest.TestCase):
+class Square(unittest.TestCase):
 
-    def test_only_the_ones_that_wander(self):
-        names = ["A_Idle", "A_Strafe", "A_Sway"]
-        extents = [(0.0, 0.0), (-2.0, 40.0), (-0.5, 0.9)]
-        self.assertEqual(lineup.widened(names, extents), ["A_Strafe"])
+    def still(self, count):
+        return [(0.0, 0.0)] * count
+
+    def test_four_still_clips_stand_on_a_square_about_the_centre(self):
+        got = lineup.square_offsets(self.still(4), self.still(4))
+        self.assertEqual(got, [(-125.0, -125.0), (125.0, -125.0),
+                               (-125.0, 125.0), (125.0, 125.0)])
+
+    def test_row_zero_is_in_front_and_rows_go_left_to_right(self):
+        slots = lineup.square_slots((0.0, 0.0, 0.0), self.still(3), self.still(3))
+        self.assertEqual(slots, [(-125.0, 0.0, 125.0), (125.0, 0.0, 125.0),
+                                 (-125.0, 0.0, -125.0)])
+
+    def test_about_a_point(self):
+        slots = lineup.square_slots((100.0, 2.0, -40.0), self.still(2), self.still(2))
+        self.assertEqual(slots, [(-25.0, 2.0, -40.0), (225.0, 2.0, -40.0)])
+
+    def test_one_clip_stands_on_the_centre(self):
+        self.assertEqual(lineup.square_slots((7.0, 0.0, 8.0), [(-5.0, 9.0)], [(0.0, 3.0)]),
+                         [(7.0, 0.0, 8.0)])
+
+    def test_a_wanderer_widens_its_column_and_its_row(self):
+        """Clip 1 (row 0, column 1) wanders 30 to the left along X and 200 back
+        along the row axis: its column's band and its row's band grow, and
+        every other clip moves with its band - the grid stays a grid."""
+        x = [(0.0, 0.0), (-30.0, 0.0), (0.0, 0.0), (0.0, 0.0)]
+        z = [(0.0, 0.0), (0.0, 200.0), (0.0, 0.0), (0.0, 0.0)]
+        got = lineup.square_offsets(x, z)
+        self.assertAlmostEqual(got[1][0] - got[0][0], 250.0 + 30.0)
+        self.assertAlmostEqual(got[3][0] - got[2][0], 250.0 + 30.0)
+        self.assertAlmostEqual(got[2][1] - got[0][1], 250.0 + 200.0)
+        self.assertAlmostEqual(got[0][0], got[2][0])            # columns aligned
+        self.assertAlmostEqual(got[0][1], got[1][1])            # rows aligned
+
+    def test_no_two_paths_come_within_a_step(self):
+        x = [(-5.0, 40.0), (-60.0, 10.0), (0.0, 0.0), (-3.0, 3.0), (0.0, 80.0)]
+        z = [(0.0, 120.0), (-20.0, 0.0), (0.0, 249.0), (-7.0, 7.0), (0.0, 0.0)]
+        offs = lineup.square_offsets(x, z, step=250.0)
+        cols, _rows = lineup.grid_shape(5)
+        for i in range(5):
+            for j in range(i + 1, 5):
+                if i % cols != j % cols:
+                    a, b = (i, j) if offs[i][0] < offs[j][0] else (j, i)
+                    gap = (offs[b][0] + x[b][0]) - (offs[a][0] + x[a][1])
+                else:
+                    a, b = (i, j) if offs[i][1] < offs[j][1] else (j, i)
+                    gap = (offs[b][1] + z[b][0]) - (offs[a][1] + z[a][1])
+                self.assertGreaterEqual(gap, 250.0 - 1e-9, (i, j))
+
+    def test_the_row_axis_is_minus_z(self):
+        self.assertEqual(lineup.ROWS, (0.0, 0.0, -1.0))
+        self.assertEqual(lineup.COLUMNS, (1.0, 0.0, 0.0))
+
+    def test_none(self):
+        self.assertEqual(lineup.square_offsets([], []), [])
 
 
 class SampleFrames(unittest.TestCase):

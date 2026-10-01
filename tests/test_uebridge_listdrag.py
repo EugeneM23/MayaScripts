@@ -65,14 +65,14 @@ class Caption(unittest.TestCase):
                                           dict(kind="rig", text="retarget onto X")),
                          ("A_Jump · retarget onto X · first of 3", True))
 
-    def test_several_onto_the_floor_are_a_line_of_new_rigs(self):
+    def test_several_onto_the_floor_are_a_square_of_new_rigs(self):
         aim = dict(kind="new_rig", label="Creep [rig]", point=(120.4, 0.0, -35.6),
                    text="a new Creep [rig] · floor (120, -36)")
         self.assertEqual(listdrag.caption(["A_Jump", "A_Walk"], aim),
-                         ("2 animations · 2 new Creep [rig] in a line · floor (120, -36)", True))
+                         ("2 animations · 2 new Creep [rig] in a square · floor (120, -36)", True))
         aim = dict(kind="new_rig", label="Manny [rig]", point=None, text="a new Manny [rig]")
         self.assertEqual(listdrag.caption(["A", "B", "C"], aim),
-                         ("3 animations · 3 new Manny [rig] in a line", True))
+                         ("3 animations · 3 new Manny [rig] in a square", True))
 
     def test_one_in_a_list_reads_as_one(self):
         self.assertEqual(listdrag.caption(["A_Jump"], dict(kind="rig", text="retarget onto X")),

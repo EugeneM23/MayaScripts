@@ -332,26 +332,15 @@ def rig_snapshot():
     return out
 
 
-def on_floor(direction):
-    """A horizontal unit vector from `direction`; world X when it has no
-    horizontal part. Pure."""
-    x, z = float(direction[0]), float(direction[2])
-    length = math.hypot(x, z)
-    if length < 1e-6:
-        return (1.0, 0.0, 0.0)
-    return (x / length, 0.0, z / length)
-
-
 def clip_target(gx, gy, snap, scale=1.0, new_label="Manny [rig]"):
     """Where an animation released at the global point goes: kind "rig"
     (rig = its namespace, label) when a rig of `snap` is under the cursor in
     a viewport (the Weapons rule: its nearest bone on screen within
     max(16 px, 8 % of its height)), "new_rig" over a viewport with no rig
     under the cursor - with the floor point the camera ray meets as "point"
-    (None looking above the horizon), where the new rig is to stand, the
-    rig's `label`, and the camera's right on the floor as "axis" (the line
-    several animations stand in, 2026-10-01) - and "none" off every
-    viewport; with the caption as "text"."""
+    (None looking above the horizon), where the new rig is to stand, and
+    the rig's `label` - and "none" off every viewport; with the caption as
+    "text"."""
     view, local = Viewport.at(gx, gy)
     if view is None:
         return dict(kind="none", text=NO_VIEWPORT)
@@ -367,7 +356,6 @@ def clip_target(gx, gy, snap, scale=1.0, new_label="Manny [rig]"):
         near, far = view.ray(port)
         hit = floor_hit(near, far)
         return dict(kind="new_rig", point=hit, label=new_label,
-                    axis=on_floor(view.heading()),
                     text=new_rig_text(new_label, hit))
     label = next(ch["label"] for ch in snap if ch["key"] == key)
     return dict(kind="rig", rig=key, label=label, text=rig_text(label))

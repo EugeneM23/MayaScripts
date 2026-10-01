@@ -19,8 +19,9 @@
 Several rows the same day («выделить массив анимаций ... перетягивание в
 сцену рукой»): a press on a picked row carries every picked row
 (`carried_rows`), and the list keeps them picked; onto a rig the first goes,
-onto the floor every one gets a new rig in a line across the screen
-(`window.import_dropped` -> `lineimport`). The ghost says which.
+onto the floor every one gets a new rig, in a square on the world's axes
+about the point (`window.import_dropped` -> `lineimport`). The ghost says
+which.
 
 Maya's textScrollList IS a QListWidget: an event filter on it and its
 viewport does the whole thing, so the window stays plain `cmds`. The press
@@ -57,7 +58,7 @@ def _last_line(error_text):
 def caption(names, aim):
     """(text, good): what the ghost says over `aim` for the clip(s) `names`
     (one name or a list). Several onto a rig: the first goes, and says so;
-    several onto the floor: a line of new rigs. Pure."""
+    several onto the floor: a square of new rigs. Pure."""
     names = [names] if isinstance(names, str) else list(names or [])
     aim = aim or {}
     kind = aim.get("kind")
@@ -69,7 +70,7 @@ def caption(names, aim):
         return text, True
     if kind == "new_rig":
         if len(names) > 1:
-            text = "%d animations %s %d new %s in a line" % (
+            text = "%d animations %s %d new %s in a square" % (
                 len(names), DOT, len(names), aim.get("label") or "rig")
             point = aim.get("point")
             if point is not None:

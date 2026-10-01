@@ -171,10 +171,6 @@ class ClipTarget(unittest.TestCase):
             # straight down onto the floor under the port point
             return (port[0], 500.0, -port[1]), (port[0], 400.0, -port[1])
 
-        def heading(self):
-            # the camera's right, tilted: only its floor part is the line's axis
-            return (0.0, 0.5, -2.0)
-
     def setUp(self):
         self.saved = dt.Viewport.__dict__["at"]
         self.addCleanup(setattr, dt.Viewport, "at", self.saved)
@@ -205,7 +201,6 @@ class ClipTarget(unittest.TestCase):
         self.at((200.0, 60.0))
         self.assertEqual(dt.clip_target(1, 2, self.snap, new_label="Creep [rig]"),
                          dict(kind="new_rig", point=(200.0, 0.0, -60.0), label="Creep [rig]",
-                              axis=(0.0, 0.0, -1.0),
                               text="a new Creep [rig] · floor (200, -60)"))
 
     def test_no_floor_under_the_cursor_a_new_rig_where_the_clip_is(self):
@@ -214,13 +209,7 @@ class ClipTarget(unittest.TestCase):
         dt.Viewport.at = classmethod(lambda cls, gx, gy: (view, (200.0, 60.0)))
         self.assertEqual(dt.clip_target(1, 2, self.snap, new_label="Manny [rig]"),
                          dict(kind="new_rig", point=None, label="Manny [rig]",
-                              axis=(0.0, 0.0, -1.0), text="a new Manny [rig]"))
-
-    def test_the_line_runs_along_the_cameras_right_on_the_floor(self):
-        """2026-10-01: several animations dropped on the floor stand across
-        the screen; a camera looking straight down still has a right."""
-        self.assertEqual(dt.on_floor((3.0, 9.0, 4.0)), (0.6, 0.0, 0.8))
-        self.assertEqual(dt.on_floor((0.0, 1.0, 0.0)), (1.0, 0.0, 0.0))
+                              text="a new Manny [rig]"))
 
     def test_an_empty_scene_is_a_new_rig(self):
         self.at((200.0, 60.0))

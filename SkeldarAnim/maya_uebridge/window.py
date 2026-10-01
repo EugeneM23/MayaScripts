@@ -13,7 +13,8 @@ Since 2026-10-01 a row also DRAGS into a viewport (`listdrag`, Qt, attached
 lazily): onto a rig it is Import with the Rig mode onto THAT rig, onto empty
 floor Import with New rig (`import_dropped`). And the list takes SEVERAL
 rows the same day: the Rig mode and a drop on a rig take the first; New
-rig, Skeleton and a floor drop lay them all out in a line (`lineimport`).
+rig, Skeleton and a floor drop lay them all out in a square on the world's
+axes (`lineimport`).
 
 IMPORT in the default mode is the whole pipeline (`rigimport`): the
 AdvancedSkeleton rig added if the scene has none, the clip imported as its
@@ -354,8 +355,8 @@ def import_selected():
 
     Several picked (2026-10-01): the Rig mode takes the first («в этом
     случае мы работаем с конкретным ригом») and says so; New rig and
-    Skeleton lay every one out in a line along world X, symmetric about the
-    scene's zero (`lineimport`).
+    Skeleton lay every one out in a square on world X and Z, symmetric about
+    the scene's zero (`lineimport`).
     """
     chosen = _selected_records()
     if not chosen:
@@ -432,8 +433,9 @@ def import_dropped(record, aim):
 
     `record` may be a list (2026-10-01, a drag of several picked rows): onto
     a rig the first goes and the rest are named; onto the floor every one
-    gets a new rig, in a line across the screen (the aim's "axis") centred
-    on the point (`lineimport`) - on the origin when no floor was seen.
+    gets a new rig, in a square on the world's axes centred on the point
+    (`lineimport`) - on the origin when no floor was seen - whatever the
+    camera.
     """
     aim = aim or {}
     kind = aim.get("kind")
@@ -447,7 +449,6 @@ def import_dropped(record, aim):
         from maya_uebridge import lineimport   # lazy: keeps the import graph flat
         text = lineimport.run(chosen, _export_from_editor, "new_rig",
                               centre=aim.get("point") or (0.0, 0.0, 0.0),
-                              axis=aim.get("axis") or (1.0, 0.0, 0.0),
                               set_timeline=_timeline())
         _status(text)
         return text
@@ -583,9 +584,9 @@ def build_panel():
                    "active in Characters, else Manny) takes it and stands "
                    "where you pointed. Ctrl/Shift pick several: Rig and a "
                    "drop on a rig take the first; New rig, Skeleton and a "
-                   "drop on the floor lay them all out in a line - about the "
-                   "scene's zero for the button, through the point across "
-                   "the screen for a drop.",
+                   "drop on the floor lay them all out in a square - about "
+                   "the scene's zero for the button, about the point for a "
+                   "drop.",
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 

@@ -1,12 +1,16 @@
-"""Several animations in a line: where each clip's rig stands. Pure, stdlib only.
+"""Several animations in a square: where each clip's rig stands. Pure, stdlib only.
 
 2026-10-01, the animator: «если мы нажали add new rig или перетянули в пустое
 место на сцене то давай мы создадим все наши анимации в линию с некоторым
 шагом что бы они не пересекались» - about the scene's zero for the button,
 about the pointed point for a drag. Asked, the step is 2.5 m WIDENED where a
-clip's root travels sideways: the gap to a neighbour grows by exactly how far
-each of the two wanders toward the other, so their root paths stay a whole
-step apart and still clips stand evenly.
+clip's root travels: the gap to a neighbour grows by exactly how far each of
+the two wanders toward the other, so their root paths stay a whole step apart
+and still clips stand evenly. The same evening, «всегда располагать наши
+анимации в квадратной формации в не зависимости от угла камеры»: a square on
+the world's axes - `grid_shape` columns along +X, rows from the front (+Z)
+back, each column's and each row's band (the union of its clips' reach) a
+whole step from the next.
 
 A slot is where the rig's Main (a skeleton's root) stands at its clip's first
 frame; a track is the clip's root positions over its frames.
@@ -48,28 +52,56 @@ def offsets(extents, step=STEP):
     return [value - middle for value in out]
 
 
-def floor_axis(direction):
-    """A horizontal unit vector from `direction` (the camera's right); world X
-    when it has no horizontal part."""
-    if not direction:
-        return (1.0, 0.0, 0.0)
-    x, z = float(direction[0]), float(direction[2])
-    length = math.hypot(x, z)
-    if length < 1e-6:
-        return (1.0, 0.0, 0.0)
-    return (x / length, 0.0, z / length)
+COLUMNS = (1.0, 0.0, 0.0)     # a row runs left to right along world X
+ROWS = (0.0, 0.0, -1.0)       # the rows go from the front (+Z) back
 
 
-def slots(centre, axis, offs):
-    """The world points `offs` along `axis` from `centre` (its height kept)."""
-    return [(centre[0] + axis[0] * o, centre[1], centre[2] + axis[2] * o)
-            for o in offs]
+def grid_shape(count):
+    """(columns, rows) of the squarest grid holding `count` clips."""
+    if count < 1:
+        return (0, 0)
+    columns = int(math.ceil(math.sqrt(count)))
+    return (columns, int(math.ceil(count / float(columns))))
 
 
-def widened(names, extents, wander=WANDER):
-    """The clips whose root leaves its start sideways by more than `wander`."""
-    return [name for name, (lo, hi) in zip(names, extents)
-            if lo < -wander or hi > wander]
+def band(extents):
+    """The union of several (lo, hi) reaches."""
+    if not extents:
+        return (0.0, 0.0)
+    return (min(lo for lo, _hi in extents), max(hi for _lo, hi in extents))
+
+
+def square_offsets(x_extents, z_extents, step=STEP):
+    """(along COLUMNS, along ROWS) for each clip in a square: clip i in column
+    i % columns, row i // columns; `x_extents` are the clips' reach along
+    COLUMNS, `z_extents` along ROWS. Each column (row) is a band - the union
+    of its clips' reach - a whole step from the next, the square centred."""
+    count = len(x_extents)
+    columns, rows = grid_shape(count)
+    if not count:
+        return []
+    cells = [(i % columns, i // columns) for i in range(count)]
+    column_off = offsets([band([x_extents[i] for i, (c, _r) in enumerate(cells)
+                                if c == column]) for column in range(columns)], step)
+    row_off = offsets([band([z_extents[i] for i, (_c, r) in enumerate(cells)
+                             if r == row]) for row in range(rows)], step)
+    return [(column_off[c], row_off[r]) for c, r in cells]
+
+
+def square_slots(centre, x_extents, z_extents, step=STEP):
+    """The world points of `square_offsets` about `centre` (its height kept)."""
+    return [(centre[0] + COLUMNS[0] * xo + ROWS[0] * zo, centre[1],
+             centre[2] + COLUMNS[2] * xo + ROWS[2] * zo)
+            for xo, zo in square_offsets(x_extents, z_extents, step)]
+
+
+def widened(names, *extent_lists, **kwargs):
+    """The clips whose root leaves its start by more than `wander` along any
+    of the axes the `extent_lists` were measured on."""
+    wander = kwargs.get("wander", WANDER)
+    return [name for index, name in enumerate(names)
+            if any(lists[index][0] < -wander or lists[index][1] > wander
+                   for lists in extent_lists)]
 
 
 def sample_frames(start, end, samples=SAMPLES):

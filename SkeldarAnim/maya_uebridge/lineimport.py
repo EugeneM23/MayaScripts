@@ -1,13 +1,14 @@
-"""Several animations at once, laid out in a line.
+"""Several animations at once, laid out in a square.
 
 2026-10-01, the animator: «Если мы нажали add new rig или перетянули в
 пустое место на сцене то давай мы создадим все наши анимации в линию с
 некоторым шагом что бы они не пересекались. В случае с кнопкой пусть
 анимации будут выставляться симметрично относительно нуля сцены а в случае
 с перетягиванием пускай относительно точки в которую мы указали.» Asked:
-the step is 2.5 m widened by each clip's sideways root travel (`lineup`), a
-drag's line runs across the screen, and the Skeleton mode lays its
-skeletons out in the same line.
+the step is 2.5 m widened by each clip's root travel (`lineup`), and the
+Skeleton mode lays its skeletons out the same way. The same evening, «всегда
+располагать наши анимации в квадратной формации в не зависимости от угла
+камеры»: a square on world X and Z (`lineup.square_slots`), no camera axis.
 
 One press, in this order:
 
@@ -17,7 +18,7 @@ One press, in this order:
 3. every clip imported as its own namespaced skeleton;
 4. each clip's root track measured over its own range (`rigimport.root_at`,
    a time-context read of a bare skeleton - a frame walk would evaluate
-   every rig in the scene per frame), the line laid out, the timeline set
+   every rig in the scene per frame), the square laid out, the timeline set
    once to the union of the clips' ranges - before any bake;
 5. each clip in turn: a new rig added and the clip retargeted onto it
    standing on its slot (`rigimport.retarget_imported`), or the skeleton
@@ -58,12 +59,15 @@ def _plural(count, word):
 
 
 def summary(target, done, total, centre, widened, failures,
-            step=lineup.STEP, cancelled=False):
+            step=lineup.STEP, cancelled=False, shape=None):
     """The status line after the press. Pure.
 
-    `done` is [(label, clip name)] in line order - the rig's label onto which
-    the clip went, or the skeleton's namespace; `failures` [(clip, reason)]."""
+    `done` is [(label, clip name)] in the square's order - the rig's label
+    onto which the clip went, or the skeleton's namespace; `failures`
+    [(clip, reason)]; `shape` the square's (columns, rows)."""
     where = "about ({0}, {1})".format(int(round(centre[0])), int(round(centre[2])))
+    square = ("a {0} x {1} square".format(shape[0], shape[1]) if shape
+              else "a square")
     parts = []
     if not done:
         parts.append("no animation laid out")
@@ -73,10 +77,10 @@ def summary(target, done, total, centre, widened, failures,
         if target == "new_rig":
             rigs = (_plural(len(done), "new rig") if len(done) == total
                     else "new rigs")
-            head = "{0} onto {1} in a line {2}".format(count, rigs, where)
+            head = "{0} onto {1} in {2} {3}".format(count, rigs, square, where)
             names = ", ".join("{0} {1}".format(label, name) for label, name in done)
         else:
-            head = "{0} as skeletons in a line {1}".format(count, where)
+            head = "{0} as skeletons in {1} {2}".format(count, square, where)
             names = ", ".join(label for label, _name in done)
         parts.append("{0}: {1}".format(head, names))
         if len(done) > 1:
@@ -189,13 +193,14 @@ def _onto_new_rig(plan, clip, point):
 
 
 def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
-        axis=(1.0, 0.0, 0.0), set_timeline=True, step=lineup.STEP):
+        set_timeline=True, step=lineup.STEP):
     """The press for several animations. Returns the status line.
 
     `export(record)` answers (fbx path, fps) - the window's round trip to the
     editor. `target` is "new_rig" (a new rig per clip, retargeted) or
-    "skeleton" (each clip its own skeleton). The line runs along `axis` on
-    the floor about `centre`, in the order given."""
+    "skeleton" (each clip its own skeleton). The square stands on world X
+    and Z about `centre`, filled in the order given: row 0 in front (+Z),
+    each row left to right (+X) - whatever the camera."""
     record_list = list(record_list or [])
     if target not in TARGETS:
         return "unknown import target {0!r}".format(target)
@@ -206,10 +211,10 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
         plan, refusal = rigimport.plan_press("new_rig")
         if refusal:
             return refusal
-    axis = lineup.floor_axis(axis)
     centre = tuple(centre or (0.0, 0.0, 0.0))
     total = len(record_list)
     failures, done, widened, imported = [], [], [], []
+    shape = None
     cancelled = False
     progress = _Progress(3 * total)
     try:
@@ -252,12 +257,14 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                            cancelled=True)
 
         if imported:
-            extents = [lineup.side_extent(
-                track_of(clip["source"], clip["info"].get("start"),
-                         clip["info"].get("end")), axis) for clip in imported]
-            points = lineup.slots(centre, axis, lineup.offsets(extents, step))
+            tracks = [track_of(clip["source"], clip["info"].get("start"),
+                               clip["info"].get("end")) for clip in imported]
+            x_reach = [lineup.side_extent(t, lineup.COLUMNS) for t in tracks]
+            z_reach = [lineup.side_extent(t, lineup.ROWS) for t in tracks]
+            points = lineup.square_slots(centre, x_reach, z_reach, step)
+            shape = lineup.grid_shape(len(imported))
             widened = lineup.widened([clip["name"] for clip in imported],
-                                     extents)
+                                     x_reach, z_reach)
             span = span_of([clip["info"] for clip in imported])
             if set_timeline and span:
                 cmds.playbackOptions(minTime=span[0], maxTime=span[1],
@@ -272,7 +279,7 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                     break
                 progress.step("{0}: {1}".format(
                     clip["name"], "retarget onto a new rig"
-                    if target == "new_rig" else "into the line"))
+                    if target == "new_rig" else "into the square"))
                 try:
                     if target == "new_rig":
                         label, failure = _onto_new_rig(plan, clip, point)
@@ -291,6 +298,6 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
     finally:
         progress.close()
     text = summary(target, done, total, centre, widened, failures, step,
-                   cancelled)
+                   cancelled, shape)
     print("[uebridge] {0}".format(text))
     return text

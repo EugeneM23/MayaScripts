@@ -332,10 +332,10 @@ class SeveralAnimations(unittest.TestCase):
             return "%s retargeted" % name
         rigimport.import_and_retarget = press
 
-        def run(chosen, export, target, centre=(0.0, 0.0, 0.0), axis=(1.0, 0.0, 0.0),
-                set_timeline=True, step=250.0):
+        def run(chosen, export, target, centre=(0.0, 0.0, 0.0), set_timeline=True,
+                step=250.0):
             self.calls.append(("line", [r.name for r in chosen], target, tuple(centre),
-                               tuple(axis), set_timeline, export is window._export_from_editor))
+                               set_timeline, export is window._export_from_editor))
             return "laid out"
         lineimport.run = run
         rigs = {"Manny_Rig1": self.Rig("Manny_Rig1")}
@@ -348,10 +348,10 @@ class SeveralAnimations(unittest.TestCase):
         self.assertEqual([r.name for r in window._selected_records()], ["A_Jump", "A_Run"])
         self.assertEqual(window._selected_record().name, "A_Jump")
 
-    def test_new_rig_lays_them_all_out_about_the_origin_along_x(self):
+    def test_new_rig_lays_them_all_out_about_the_origin(self):
         window.import_selected()
         self.assertEqual(self.calls, [("line", ["A_Jump", "A_Run"], "new_rig",
-                                       (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), True, True)])
+                                       (0.0, 0.0, 0.0), True, True)])
         self.assertEqual(self.statuses, ["laid out"])
 
     def test_skeleton_lays_them_all_out_too(self):
@@ -382,16 +382,15 @@ class SeveralAnimations(unittest.TestCase):
         self.assertEqual(text, "only A_Jump: a rig takes one animation (2 more picked)"
                                "  |  A_Jump retargeted")
 
-    def test_a_floor_drop_of_several_lays_them_out_about_the_point_across_the_screen(self):
+    def test_a_floor_drop_of_several_lays_them_out_about_the_point(self):
         window.import_dropped(self.recs, dict(kind="new_rig", point=(120.0, 0.0, -36.0),
-                                              axis=(0.0, 0.0, -1.0), label="Manny [rig]"))
+                                              label="Manny [rig]"))
         self.assertEqual(self.calls, [("line", ["A_Jump", "A_Walk", "A_Run"], "new_rig",
-                                       (120.0, 0.0, -36.0), (0.0, 0.0, -1.0), True, True)])
+                                       (120.0, 0.0, -36.0), True, True)])
 
     def test_a_floor_drop_that_saw_no_floor_centres_on_the_origin(self):
-        window.import_dropped(self.recs, dict(kind="new_rig", point=None,
-                                              axis=(0.0, 0.0, 1.0)))
-        self.assertEqual(self.calls[0][3:5], ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
+        window.import_dropped(self.recs, dict(kind="new_rig", point=None))
+        self.assertEqual(self.calls[0][3], (0.0, 0.0, 0.0))
 
     def test_a_drop_of_one_in_a_list_is_the_old_drop(self):
         window.import_dropped(self.recs[:1], dict(kind="new_rig", point=(5.0, 0.0, 6.0)))

@@ -147,27 +147,32 @@ class Press(unittest.TestCase):
         self.assertEqual(kinds[4:7], ["import", "import", "import"])
         self.assertTrue(all(c[2] is False for c in self.calls if c[0] == "import"))
 
-    def test_new_rigs_stand_on_the_line_in_list_order(self):
+    def test_new_rigs_stand_in_a_square_in_list_order(self):
+        """2026-10-01, «всегда ... в квадратной формации в не зависимости от
+        угла камеры»: three clips on a 2 x 2 square on the world's axes."""
         text = lineimport.run(self.records, self.export, "new_rig")
-        extents = [lineup.side_extent(TRACKS[n], (1.0, 0.0, 0.0)) for n in "ABC"]
-        points = lineup.slots((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), lineup.offsets(extents))
+        x = [lineup.side_extent(TRACKS[n], lineup.COLUMNS) for n in "ABC"]
+        z = [lineup.side_extent(TRACKS[n], lineup.ROWS) for n in "ABC"]
+        points = lineup.square_slots((0.0, 0.0, 0.0), x, z)
         got = [c for c in self.calls if c[0] == "retarget"]
         self.assertEqual([(c[1], c[2]) for c in got],
                          [("A", "Manny_Rig1"), ("B", "Manny_Rig2"), ("C", "Manny_Rig3")])
         self.assertEqual([c[3] for c in got], points)
         self.assertEqual([c[4] for c in got], [None, None, None])
-        self.assertAlmostEqual(points[1][0] - points[0][0], 250.0)          # A is still
-        self.assertAlmostEqual(points[2][0] - points[1][0], 250.0 + 30.0)   # B wanders right
-        self.assertIn("3 animations onto 3 new rigs in a line about (0, 0)", text)
+        self.assertAlmostEqual(points[1][0] - points[0][0], 250.0)          # B reaches right
+        self.assertGreater(points[0][2], points[2][2])                      # row 0 in front
+        self.assertAlmostEqual(points[0][0], points[2][0])                  # columns aligned
+        self.assertIn("3 animations onto 3 new rigs in a 2 x 2 square about (0, 0)", text)
         self.assertIn("Manny_Rig1 A, Manny_Rig2 B, Manny_Rig3 C", text)
         self.assertIn("widened beside B", text)
 
-    def test_about_a_point_along_an_axis(self):
-        lineimport.run(self.records, self.export, "new_rig", centre=(100.0, 0.0, -40.0),
-                       axis=(0.0, 3.0, 2.0))
+    def test_about_a_point_whatever_the_camera(self):
+        lineimport.run(self.records, self.export, "new_rig", centre=(100.0, 0.0, -40.0))
         points = [c[3] for c in self.calls if c[0] == "retarget"]
-        self.assertEqual([p[0] for p in points], [100.0, 100.0, 100.0])
-        self.assertAlmostEqual(points[0][2] + points[2][2], 2 * -40.0)
+        here = lineup.square_slots((0.0, 0.0, 0.0),
+                                   [lineup.side_extent(TRACKS[n], lineup.COLUMNS) for n in "ABC"],
+                                   [lineup.side_extent(TRACKS[n], lineup.ROWS) for n in "ABC"])
+        self.assertEqual(points, [(p[0] + 100.0, p[1], p[2] - 40.0) for p in here])
 
     def test_the_timeline_is_the_union_set_once_before_the_first_retarget(self):
         lineimport.run(self.records, self.export, "new_rig")
@@ -190,8 +195,9 @@ class Press(unittest.TestCase):
         stood = [c for c in self.calls if c[0] == "stand"]
         self.assertEqual([c[1] for c in stood], ["A", "B", "C"])
         self.assertEqual([c[3] for c in stood], [0.0, 0.0, 0.0])
-        self.assertAlmostEqual(stood[0][2][0] + stood[2][2][0], 0.0)
-        self.assertIn("3 animations as skeletons in a line about (0, 0): A, B, C", text)
+        self.assertAlmostEqual(stood[0][2][0] + stood[1][2][0], 0.0)
+        self.assertAlmostEqual(stood[0][2][2] + stood[2][2][2], 0.0)
+        self.assertIn("3 animations as skeletons in a 2 x 2 square about (0, 0): A, B, C", text)
 
     def test_a_clip_the_editor_cannot_export_is_named_and_left_out(self):
         self.broken = "B"
@@ -244,8 +250,9 @@ class Words(unittest.TestCase):
                          "only A_Jump: a rig takes one animation (2 more picked)")
 
     def test_one_animation_reads_in_the_singular(self):
-        text = lineimport.summary("new_rig", [("Manny_Rig1", "A")], 1, (0.0, 0.0, 0.0), [], [])
-        self.assertTrue(text.startswith("1 animation onto 1 new rig in a line about (0, 0)"))
+        text = lineimport.summary("new_rig", [("Manny_Rig1", "A")], 1, (0.0, 0.0, 0.0), [], [],
+                                  shape=(1, 1))
+        self.assertTrue(text.startswith("1 animation onto 1 new rig in a 1 x 1 square about (0, 0)"))
 
     def test_the_centre_is_rounded(self):
         text = lineimport.summary("skeleton", [("A", "A"), ("B", "B")], 2,
