@@ -7433,3 +7433,97 @@ a press on another card flashes it to 1.00 and back while a press inside it does
 the cards keeps the loop's p99 turn at 6.5 ms, the screen's pixels the lit ring (224, 122, 54) = card_edge
 and face (56, 58, 65) = card_active, a dark ring the plain card; off = instant. `verify_hub_motion.py` 12/12
 again on the new frame. 3284 unit tests.
+
+## Armor: the Tech Limb out of Atone, a card that equips it (2026-10-01)
+
+The animator, with the Atone editor open: «достанем technolimb сам его fbx и добавим его ... в наши ассеты с
+возможностью одеть ... не будем добавлять его в панель с оружием а сделаем для него отдельную панель Armor в
+которой пока будет только техно лимб но позже мы добавим еще разные варианты одежды и брони ... не нужно делать
+сетчатый инвентарь а просто будем выделять предмет нажимать кнопочку equip и он будет добавляться к нашему
+персонажу в заранее указанное место». Asked: the item is **the plate only**, and the card shows **icon tiles**.
+Spec `docs/superpowers/specs/2026-10-01-armor-techlimb-design.md`, plan beside it.
+
+**What the Tech Limb is in Atone** (measured over Remote Execution, project `Atone`):
+- `DA_Techlimb.equip_socket` = `lowerarm_l`. `UEquipmentComponent::AttachActorToSocket` snaps the actor
+  (`SnapToTargetNotIncludingScale`) to that socket, and neither `SKM_Manny_Simple_3p` nor `_1p` has a socket of
+  that name, so it lands on the bone.
+- `BP_Techlimb`'s visible parts:
+  - **`SM_Shield_Test`**: the plate, a shield frame, a ring with a boss and three studs. Its source is
+    `S3.obj` on the Desktop. 1526 render vertices, at (0.079, −0.550, 0.328) / (P 1.187, Y 89.817,
+    R 84.316) / scale 1.17647. It wears `M_TechLimb_Test`, a constant grey.
+  - `SKM_Techlimb_Shield_Energy`, shown only while blocking. Not taken.
+  - Niagara.
+
+  The C++ root `Mesh` holds nothing; every form's `Mesh` is null.
+
+**The asset: the game's placement baked into the points.**
+- `export_techlimb_from_unreal.py` (uelink) writes `sources/armor/`:
+  - the FBX;
+  - `techlimb_ue.json`: the vertices in mesh, bone and component space, computed by Unreal itself
+    (`MathLibrary.transform_location`, `AnimPoseExtensions.get_ref_bone_pose(..., WORLD)`,
+    `ProceduralMeshLibrary.get_section_from_static_mesh`, components read through `SubobjectDataSubsystem`).
+- `make_techlimb_asset.py` measures the maps (`ue_maya_axes.py`, numpy):
+  - Unreal component space → Maya is (x, z, y), over 82 deforming bones to 0.073 cm (Manny's own calf);
+  - Unreal's `lowerarm_l` axes → Maya's are diag(1, −1, 1);
+  - the imported FBX's points are a signed permutation of Unreal's mesh space, to 2e-6 cm.
+- It writes `assets/Armor/Tech_Limb.fbx` (`TechLimbMesh`, 48.7 KB) with the points in Manny's `lowerarm_l`
+  axes. The similarity was fitted at scale 1.176471 and frozen, so the normals turn with the points. Read back:
+  identity, on Unreal's place to 6e-6 cm.
+- Equipped, the plate stands at identity in its space and its channels read 0 where the game puts it: the
+  weapons' «без офсетов» rule.
+
+**In the scene**:
+- `maya_scenesetup/armor.py`. A piece hangs in an **armor space** (`lowerarm_l_armorSpace`, marked
+  `mayaArmorSpace`): a transform parent-constrained to the bone with no offset, in an `ArmorSpaces` group under
+  the rig's group (at world level beside a bare skeleton). It is never in the skeleton, so the export stays bones
+  only and a retarget moves it with the bone.
+- `weaponspace`'s machinery is generic over its markers since: `marked_space_of`, `ensure_marked_space`,
+  `prune_marked`, `owner_for`, `bone_of`. The weapon API kept its names, and neither kind finds the other's space.
+- A piece carries `mayaArmor` (its row's key) and `mayaArmorSlot`. `slot_plan` (pure): an Equip takes off what
+  its slot holds, and the same piece again is replaced.
+- It wears the next free palette colour (the Colour card repaints it; a textured row would wear its image).
+  What follows the import runs unrecorded (trap 115).
+- A selected piece names its character (`skeleton.current_root` → `armor.bone_for`).
+
+**The catalog**: `catalog.Armor(key, label, path, bone, slot, texture)` and `ARMOR`, one row:
+`Tech_Limb` on `lowerarm_l`, slot `left_forearm`. A future piece of armor or clothing is a row, plus its icon
+(`make_armor_icons.py` → `assets/armor_icons/<key>.png`; a test pins one per row). Its points must already be in
+its bone's axes at its place.
+
+**The Armor card**:
+- `maya_scenesetup/armorpanel.py`, the Scene group's last card. Connections and Shared are each pinned right
+  after their neighbour by their own tests.
+- It holds the subtitle, the tiles, **Equip** (primary, `shield`) + **Unequip** (danger), and the line.
+- The tiles are `maya_armorgrid.py` (Qt, a payload row), laid over the `mayaSceneSetupArmorTiles` placeholder
+  with the portraits' Keeper:
+  - a click picks (`mayaSceneSetup_armor`);
+  - a worn row carries a green «equipped» pill;
+  - the right button offers Open scene;
+  - no drag.
+- Without Qt, a dropdown stands in.
+- The pills follow the selection through a `SelectionChanged` scriptJob parented to the line. One refresh
+  resolves the character once.
+- The hotkey row is `window.armor`.
+
+**Proof**:
+- `verify_armor.py` **14/14 standalone**:
+  - on Manny, every plate vertex where Unreal puts it to 1.1e-4 cm (the map re-derived from the rig's own bones);
+  - channels 0, the space in `Manny_Rig:Group|ArmorSpaces`;
+  - the Creep and the Orc D at identity on their own `lowerarm_l`;
+  - a second Equip replacing;
+  - LongSword_Attack_Right_Heavy_3P retargeted through the button: the piece on the bone to 4e-6 over 208 cm;
+  - the export 93 joints, 0 meshes;
+  - a bare skeleton's space at world level;
+  - Unequip leaving nothing;
+  - the others unmoved.
+- A disposable GUI Maya (port 7031, the plugin from a `git archive` of HEAD): the tile clicked, then Equip and
+  Unequip pressed through Qt (the pill on and off, nothing left, a second Unequip «does not wear»). Pictures:
+  `docs/superpowers/plans/armor_card.png`, `armor_techlimb_on_manny.png`.
+- 3434 unit tests.
+
+152. **Atone's `SK_Mannequin_proto` and our Manny agree on every deforming bone and NOT on the helpers**:
+     `weapon_r` 5.7 cm, `camera_root` 4.0, `weapon_l` 2.4, `camera_bone` 1.0 apart. A UE↔Maya axis fit over
+     every shared bone read a 5.7 cm residual and looked like a wrong axis map. Fit over the deforming bones.
+153. **A hub card's place can be pinned by ANOTHER feature's test**: `test_scenesetup_connections` pins
+     Connections right after Weapons, `test_share` Shared right after Connections. A new card inserted between
+     them fails both; the Scene group's end is free.
