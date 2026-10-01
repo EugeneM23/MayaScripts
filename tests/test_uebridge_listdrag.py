@@ -43,9 +43,10 @@ class FakeScene(object):
     def over_hub(self, gx, gy):
         return False
 
-    def drop(self, record, aim):
-        self.log.append(("drop", record.name, aim["kind"]))
-        return "exporting %s from the editor..." % record.name
+    def drop(self, records, aim):
+        names = [r.name for r in records]
+        self.log.append(("drop", names[0] if len(names) == 1 else names, aim["kind"]))
+        return "exporting %s from the editor..." % ", ".join(names)
 
     def say(self, text):
         self.log.append(("say", text))
@@ -58,6 +59,24 @@ class Caption(unittest.TestCase):
                          ("A_Jump · retarget onto X", True))
         self.assertEqual(listdrag.caption("A_Jump", dict(kind="new_rig", text="a new Manny [rig]")),
                          ("A_Jump · a new Manny [rig]", True))
+
+    def test_several_onto_a_rig_name_the_first(self):
+        self.assertEqual(listdrag.caption(["A_Jump", "A_Walk", "A_Run"],
+                                          dict(kind="rig", text="retarget onto X")),
+                         ("A_Jump · retarget onto X · first of 3", True))
+
+    def test_several_onto_the_floor_are_a_line_of_new_rigs(self):
+        aim = dict(kind="new_rig", label="Creep [rig]", point=(120.4, 0.0, -35.6),
+                   text="a new Creep [rig] · floor (120, -36)")
+        self.assertEqual(listdrag.caption(["A_Jump", "A_Walk"], aim),
+                         ("2 animations · 2 new Creep [rig] in a line · floor (120, -36)", True))
+        aim = dict(kind="new_rig", label="Manny [rig]", point=None, text="a new Manny [rig]")
+        self.assertEqual(listdrag.caption(["A", "B", "C"], aim),
+                         ("3 animations · 3 new Manny [rig] in a line", True))
+
+    def test_one_in_a_list_reads_as_one(self):
+        self.assertEqual(listdrag.caption(["A_Jump"], dict(kind="rig", text="retarget onto X")),
+                         ("A_Jump · retarget onto X", True))
 
     def test_nothing_says_why_muted(self):
         self.assertEqual(listdrag.caption("A_Jump", dict(kind="none", text="no target - drop")),
@@ -216,6 +235,124 @@ class Drag(unittest.TestCase):
         self.assertEqual(len(self.acts("drop")), 1)
         self.assertIsNone(self.drag.dragging())
         self.assertIsNot(again, self.drag)
+
+
+class CarriedRows(unittest.TestCase):
+    """Which rows a drag carries: the pressed row with the others picked
+    before the press (Explorer's rule), else what the press left picked."""
+
+    def test_a_plain_press_on_a_picked_row_carries_every_picked_row(self):
+        self.assertEqual(listdrag.carried_rows(2, [0, 2, 4], [2], True), [0, 2, 4])
+
+    def test_a_press_on_an_unpicked_row_carries_it_alone(self):
+        self.assertEqual(listdrag.carried_rows(1, [0, 2], [1], True), [1])
+
+    def test_a_modified_press_carries_what_it_left_picked(self):
+        self.assertEqual(listdrag.carried_rows(4, [0], [0, 1, 2, 3, 4], False), [0, 1, 2, 3, 4])
+
+    def test_a_ctrl_press_that_unpicked_the_row_carries_the_row(self):
+        self.assertEqual(listdrag.carried_rows(2, [0, 2], [0], False), [2])
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class DragSeveral(unittest.TestCase):
+    """2026-10-01: a list taking several rows (Maya's multi-select
+    textScrollList is a QListWidget in ExtendedSelection)."""
+
+    def setUp(self):
+        self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
+        W = QT.QtWidgets
+        self.list = W.QListWidget()
+        self.list.setSelectionMode(W.QAbstractItemView.ExtendedSelection)
+        self.list.addItems(["A_Jump", "A_Walk", "A_Run", "A_Idle"])
+        self.list.resize(300, 200)
+        self.list.move(3000, 3000)
+        self.list.show()
+        self.addCleanup(self.list.deleteLater)
+        self.records = [Rec(n, "/Game/" + n) for n in ("A_Jump", "A_Walk", "A_Run", "A_Idle")]
+        self.scene = FakeScene()
+        self.drag = listdrag.attach_widget(self.list, lambda: list(self.records), self.scene)
+        self.E = QT.QtCore.QEvent
+        self.L, self.N = QT.QtCore.Qt.LeftButton, QT.QtCore.Qt.NoButton
+
+    def row(self, index):
+        return self.list.visualItemRect(self.list.item(index)).center()
+
+    def mouse(self, kind, local, button, buttons, modifiers=None):
+        port = self.list.viewport()
+        g = port.mapToGlobal(local)
+        event = QT.QtGui.QMouseEvent(kind, QT.QtCore.QPointF(local), QT.QtCore.QPointF(g),
+                                     button, buttons,
+                                     modifiers or QT.QtCore.Qt.NoModifier)
+        QT.QtWidgets.QApplication.sendEvent(port, event)
+
+    def click(self, index, modifiers=None):
+        self.mouse(self.E.MouseButtonPress, self.row(index), self.L, self.L, modifiers)
+        self.mouse(self.E.MouseButtonRelease, self.row(index), self.L, self.N, modifiers)
+
+    def drag_from(self, index, modifiers=None):
+        start = self.row(index)
+        self.mouse(self.E.MouseButtonPress, start, self.L, self.L, modifiers)
+        self.mouse(self.E.MouseMove, start + QT.QtCore.QPoint(30, 0), self.N, self.L, modifiers)
+        carried = [r.name for r in self.drag.carried()]
+        far = start + QT.QtCore.QPoint(-900, 500)
+        self.mouse(self.E.MouseMove, far, self.N, self.L)
+        self.mouse(self.E.MouseButtonRelease, far, self.L, self.N)
+        return carried
+
+    def selected(self):
+        return sorted(self.list.row(item) for item in self.list.selectedItems())
+
+    def drops(self):
+        return [e for e in self.scene.log if e[0] == "drop"]
+
+    def test_two_picked_and_the_press_on_one_carries_both_and_both_stay_picked(self):
+        ctrl = QT.QtCore.Qt.ControlModifier
+        self.click(0)
+        self.click(2, ctrl)
+        self.assertEqual(self.selected(), [0, 2])
+        carried = self.drag_from(2)
+        self.assertEqual(carried, ["A_Jump", "A_Run"])
+        self.assertEqual(self.drops(), [("drop", ["A_Jump", "A_Run"], "rig")])
+        self.assertEqual(self.drag.dragging(), None)
+        self.assertEqual(self.selected(), [0, 2])
+
+    def test_a_press_on_an_unpicked_row_carries_it_alone(self):
+        ctrl = QT.QtCore.Qt.ControlModifier
+        self.click(0)
+        self.click(2, ctrl)
+        carried = self.drag_from(1)
+        self.assertEqual(carried, ["A_Walk"])
+        self.assertEqual(self.drops(), [("drop", "A_Walk", "rig")])
+        self.assertEqual(self.selected(), [1])
+
+    def test_a_ctrl_press_that_adds_a_row_carries_it_with_the_rest(self):
+        """A modified press carries what it left picked. (Ctrl, not Shift:
+        offscreen Qt ignores a sent Shift for a range - measured on a bare
+        QListWidget, no filter of ours - and Shift goes the same road.)"""
+        ctrl = QT.QtCore.Qt.ControlModifier
+        self.click(0)
+        self.click(2, ctrl)
+        carried = self.drag_from(3, ctrl)
+        self.assertEqual(carried, ["A_Jump", "A_Run", "A_Idle"])
+        self.assertEqual(self.selected(), [0, 2, 3])
+
+    def test_the_ghost_names_them(self):
+        ctrl = QT.QtCore.Qt.ControlModifier
+        self.click(1)
+        self.click(3, ctrl)
+        start = self.row(3)
+        self.mouse(self.E.MouseButtonPress, start, self.L, self.L)
+        self.mouse(self.E.MouseMove, start + QT.QtCore.QPoint(30, 0), self.N, self.L)
+        far = self.list.viewport().mapToGlobal(start + QT.QtCore.QPoint(-900, 500))
+        self.drag.caption_at(far, force=True)
+        self.assertEqual(self.drag.ghost().text,
+                         "A_Walk · retarget onto Manny_Rig1 · first of 2")
+        self.mouse(self.E.MouseButtonRelease, start + QT.QtCore.QPoint(-900, 500), self.L, self.N)
+
+    def test_drop_at_takes_a_list(self):
+        self.drag.drop_at(10, 10, self.records[1:3])
+        self.assertEqual(self.drops(), [("drop", ["A_Walk", "A_Run"], "rig")])
 
 
 class Boundary(unittest.TestCase):

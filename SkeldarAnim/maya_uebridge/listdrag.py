@@ -16,6 +16,12 @@
   after every bake (both the animator's, the same day); elsewhere, or back
   on the hub: nothing. Esc or the right button cancels.
 
+Several rows the same day («выделить массив анимаций ... перетягивание в
+сцену рукой»): a press on a picked row carries every picked row
+(`carried_rows`), and the list keeps them picked; onto a rig the first goes,
+onto the floor every one gets a new rig in a line across the screen
+(`window.import_dropped` -> `lineimport`). The ghost says which.
+
 Maya's textScrollList IS a QListWidget: an event filter on it and its
 viewport does the whole thing, so the window stays plain `cmds`. The press
 passes through (Maya selects the row as it always did) and is remembered with
@@ -48,11 +54,53 @@ def _last_line(error_text):
     return lines[-1] if lines else "failed"
 
 
-def caption(name, aim):
-    """(text, good): what the ghost says over `aim`. Pure."""
-    if (aim or {}).get("kind") in ("rig", "new_rig"):
-        return "%s %s %s" % (name, DOT, aim.get("text", "")), True
-    return (aim or {}).get("text") or "no target", False
+def caption(names, aim):
+    """(text, good): what the ghost says over `aim` for the clip(s) `names`
+    (one name or a list). Several onto a rig: the first goes, and says so;
+    several onto the floor: a line of new rigs. Pure."""
+    names = [names] if isinstance(names, str) else list(names or [])
+    aim = aim or {}
+    kind = aim.get("kind")
+    first = names[0] if names else ""
+    if kind == "rig":
+        text = "%s %s %s" % (first, DOT, aim.get("text", ""))
+        if len(names) > 1:
+            text += " %s first of %d" % (DOT, len(names))
+        return text, True
+    if kind == "new_rig":
+        if len(names) > 1:
+            text = "%d animations %s %d new %s in a line" % (
+                len(names), DOT, len(names), aim.get("label") or "rig")
+            point = aim.get("point")
+            if point is not None:
+                text += " %s floor (%d, %d)" % (DOT, int(round(point[0])),
+                                                int(round(point[2])))
+            return text, True
+        return "%s %s %s" % (first, DOT, aim.get("text", "")), True
+    return aim.get("text") or "no target", False
+
+
+def carried_rows(pressed, before, after, plain):
+    """The rows a drag started on row `pressed` carries, in list order. Pure.
+
+    A plain press (no Ctrl/Shift) on a row that was picked before it carries
+    every row picked before it - Explorer's rule; Qt's ExtendedSelection
+    would collapse the selection to the pressed row on the click's release.
+    Otherwise what the press left picked, when it holds the pressed row;
+    otherwise the pressed row alone."""
+    if plain and pressed in (before or []):
+        return sorted(set(before))
+    if pressed in (after or []):
+        return sorted(set(after))
+    return [pressed]
+
+
+def _as_list(records):
+    if records is None:
+        return []
+    if hasattr(records, "name"):
+        return [records]
+    return [r for r in records if r is not None]
 
 
 def dragged(start, now, threshold):
@@ -92,19 +140,21 @@ class Scene(object):
         import maya_hubqt
         return maya_hubqt.on_hub(gx, gy)
 
-    def drop(self, record, aim):
-        """The import, one idle later: the ghost is gone and the mouse free
-        before the editor's round trip blocks Maya for seconds. A failure
-        reaches the status line (`window._run`)."""
+    def drop(self, records, aim):
+        """The import of `records` (every carried clip), one idle later: the
+        ghost is gone and the mouse free before the editor's round trip
+        blocks Maya for seconds. A failure reaches the status line
+        (`window._run`)."""
         import maya.utils
         from maya_uebridge import window
+        records = list(records)
 
         def run():
-            window._run(lambda: window.import_dropped(record, aim),
+            window._run(lambda: window.import_dropped(records, aim),
                         busy="exporting from the editor...")
 
         maya.utils.executeDeferred(run)
-        return "%s %s %s..." % (record.name, DOT, aim.get("text", ""))
+        return caption([r.name for r in records], aim)[0] + "..."
 
     def say(self, text):
         try:
@@ -167,8 +217,12 @@ def _classes():
         # ---------------------------------------------------------- state
 
         def dragging(self):
-            """The record being carried, or None."""
-            return self._drag["record"] if self._drag else None
+            """The (first) record being carried, or None."""
+            return self._drag["records"][0] if self._drag else None
+
+        def carried(self):
+            """Every record being carried, in list order ([] with no drag)."""
+            return list(self._drag["records"]) if self._drag else []
 
         def ghost(self):
             return self._drag["ghost"] if self._drag else None
@@ -194,16 +248,39 @@ def _classes():
                 text = _last_line(traceback.format_exc())
             return self._say(text)
 
-        def _record_at(self, local):
+        def _records(self):
+            try:
+                return list(self.records_of() or [])
+            except Exception:                                # noqa: BLE001
+                return []
+
+        def _row_at(self, local):
+            """(row, record) under the list-local point, or (None, None)."""
             index = self.list.indexAt(local)
             if not index.isValid():
-                return None
-            try:
-                records = list(self.records_of() or [])
-            except Exception:                                # noqa: BLE001
-                return None
+                return None, None
+            records = self._records()
             row = index.row()
-            return records[row] if 0 <= row < len(records) else None
+            if 0 <= row < len(records):
+                return row, records[row]
+            return None, None
+
+        def _picked_rows(self):
+            try:
+                return sorted(set(index.row() for index in
+                                  self.list.selectionModel().selectedIndexes()))
+            except Exception:                                # noqa: BLE001
+                return []
+
+        def _pick_rows(self, rows):
+            """The list's selection set to exactly `rows`."""
+            model = self.list.model()
+            selection = QtCore.QItemSelection()
+            for row in rows:
+                index = model.index(row, 0)
+                selection.select(index, index)
+            self.list.selectionModel().select(
+                selection, QtCore.QItemSelectionModel.ClearAndSelect)
 
         def _on_list(self, gx, gy):
             local = self.list.mapFromGlobal(QtCore.QPoint(int(gx), int(gy)))
@@ -211,11 +288,12 @@ def _classes():
 
         # ----------------------------------------------------------- drop
 
-        def drop_at(self, gx, gy, record=None):
-            """The release of a drag of `record` at the global point. Public,
-            so a verify can drive it without a mouse."""
-            record = record or self.dragging()
-            if record is None:
+        def drop_at(self, gx, gy, records=None):
+            """The release of a drag of `records` (one record or a list; the
+            carried ones when None) at the global point. Public, so a verify
+            can drive it without a mouse."""
+            records = _as_list(records) or self.carried()
+            if not records:
                 return self.status_text
             if self._on_list(gx, gy) or self.scene.over_hub(gx, gy):
                 return self.status_text          # back on the hub: nothing
@@ -227,7 +305,7 @@ def _classes():
                 traceback.print_exc()
                 return self._say(_last_line(traceback.format_exc()))
             if aim.get("kind") in ("rig", "new_rig"):
-                return self._act(lambda: self.scene.drop(record, aim))
+                return self._act(lambda: self.scene.drop(records, aim))
             return self._say(aim.get("text") or "no target")
 
         def _snapshot(self):
@@ -239,21 +317,36 @@ def _classes():
 
         # ----------------------------------------------------------- drag
 
-        def _start(self, record, point):
+        def _start(self, point):
             press = self._press
-            # The click ends for the list where it began: its selection stays
-            # on the pressed row and its state returns to none. Sent past
-            # this filter, never through Qt's window, so the implicit grab
-            # stays and the moves keep coming here.
+            # What travels: the pressed row with the rows picked before the
+            # press, else what the press left picked (`carried_rows`), read
+            # before the release below - which, on a picked row, collapses
+            # Qt's ExtendedSelection to that row.
+            rows = carried_rows(press["row"], press["before"],
+                                self._picked_rows(), press["plain"])
+            records = self._records()
+            carried = [records[r] for r in rows if 0 <= r < len(records)]
+            if press["record"] not in carried:
+                rows, carried = [press["row"]], [press["record"]]
+            # The click ends for the list where it began: its state returns
+            # to none. Sent past this filter, never through Qt's window, so
+            # the implicit grab stays and the moves keep coming here.
             self._synthetic = True
             try:
                 release = QtGui.QMouseEvent(
                     E.MouseButtonRelease, QtCore.QPointF(press["local"]),
                     QtCore.QPointF(press["global"]), Qt.LeftButton,
-                    Qt.NoButton, Qt.NoModifier)
+                    Qt.NoButton, press["modifiers"])
                 QtWidgets.QApplication.sendEvent(self.port, release)
             finally:
                 self._synthetic = False
+            # ...and the list keeps every row it carries picked.
+            if self._picked_rows() != sorted(rows):
+                try:
+                    self._pick_rows(rows)
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
             import maya_hubqt
             size = int(GHOST * self.k)
             try:
@@ -263,7 +356,7 @@ def _classes():
                 pixmap = QtGui.QPixmap()
             ghost = Ghost(pixmap, size, size, self.k, anchor=(0.5, 0.5),
                           name=GHOST_NAME, backdrop="field")
-            self._drag = dict(record=record, ghost=ghost,
+            self._drag = dict(records=carried, ghost=ghost,
                               snap=self._snapshot())
             ghost.follow(point)
             ghost.show()
@@ -302,7 +395,7 @@ def _classes():
             except Exception:                                # noqa: BLE001
                 aim = dict(kind="none",
                            text=_last_line(traceback.format_exc()))
-            text, good = caption(drag["record"].name, aim)
+            text, good = caption([r.name for r in drag["records"]], aim)
             drag["ghost"].set_caption(text, good)
 
         def _cancel(self):
@@ -340,11 +433,17 @@ def _classes():
                 self._press = None
                 if event.button() == Qt.LeftButton:
                     local = local_of(event)
-                    record = self._record_at(local)
+                    row, record = self._row_at(local)
                     if record is not None:
                         point = global_of(event)
-                        self._press = {"record": record, "local": local,
-                                       "global": point,
+                        modifiers = event.modifiers()
+                        plain = not (modifiers & (Qt.ControlModifier
+                                                  | Qt.ShiftModifier))
+                        # the rows picked BEFORE Qt handles this press
+                        self._press = {"record": record, "row": row,
+                                       "before": self._picked_rows(),
+                                       "plain": plain, "modifiers": modifiers,
+                                       "local": local, "global": point,
                                        "start": (point.x(), point.y())}
                 return False
             if kind == E.MouseMove:
@@ -356,16 +455,16 @@ def _classes():
                 if self._press and event.buttons() & Qt.LeftButton:
                     if dragged(self._press["start"], (point.x(), point.y()),
                                QtWidgets.QApplication.startDragDistance()):
-                        self._start(self._press["record"], point)
+                        self._start(point)
                     return True
                 return False
             if kind == E.MouseButtonRelease:
                 if self._drag:
                     if event.button() == Qt.LeftButton:
                         point = global_of(event)
-                        record = self._drag["record"]
+                        records = self.carried()
                         try:
-                            self.drop_at(point.x(), point.y(), record)
+                            self.drop_at(point.x(), point.y(), records)
                         finally:
                             self._end()
                     return True
