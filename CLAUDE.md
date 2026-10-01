@@ -7304,7 +7304,8 @@ at full height every turn and clipped, the header steady; p99 turn 5.0 ms; a sli
 jump to Studio with three cards open above — they shut, Studio opens, the glide monotonic onto it; switched
 off, instant. 3264 unit tests. The animator watched and clicked in that Maya meanwhile (one run's UE Bridge
 was shut mid-slide and the hub resized under the gates — trap 100 again), and saw what no gate measured: the
-title shaking (trap 149). **The installed copy was not refreshed**: 7001 was down after the 11:55 crash.
+title shaking (trap 149). Installed in the animator's Maya (7001, reopened) from a `git archive` of 7f8880e (payload
+a67f5f8): the open hub rebuilt from the installed copy, the folder equal to the snapshot; pushed, release a67f5f8.
 
 149. **A widget's own layout runs on its OLD size, and a Preferred child takes the difference.** Capping a
      card's body every tick posts LayoutRequests; the card's column ran first, on the height the outer column
