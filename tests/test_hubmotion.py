@@ -126,3 +126,36 @@ class Purity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Light(unittest.TestCase):
+    """2026-10-01: the card light fades in fast, out slowly, and flashes."""
+
+    def test_in_quicker_than_out(self):
+        self.assertEqual((motion.LIGHT_IN_MS, motion.LIGHT_OUT_MS), (140, 260))
+        self.assertEqual(motion.FLASH_MS, 480)
+
+    def test_smooth_is_an_ease_in_out(self):
+        self.assertEqual(motion.smooth(0.0), 0.0)
+        self.assertEqual(motion.smooth(1.0), 1.0)
+        self.assertAlmostEqual(motion.smooth(0.5), 0.5)
+        self.assertLess(motion.smooth(0.2), 0.2)
+        self.assertGreater(motion.smooth(0.8), 0.8)
+        self.assertEqual(motion.smooth(2.0), 1.0)
+
+    def test_the_flash_rises_fast_and_falls_slowly(self):
+        self.assertEqual(motion.flash_at(0.0), 0.0)
+        self.assertAlmostEqual(motion.flash_at(motion.FLASH_RISE), 1.0)
+        self.assertEqual(motion.flash_at(1.0), 0.0)
+        rise = [motion.flash_at(i * motion.FLASH_RISE / 10) for i in range(11)]
+        fall = [motion.flash_at(motion.FLASH_RISE + i * (1 - motion.FLASH_RISE)
+                                / 10) for i in range(11)]
+        self.assertEqual(rise, sorted(rise))
+        self.assertEqual(fall, sorted(fall, reverse=True))
+        self.assertLess(motion.FLASH_RISE, 0.3)
+
+    def test_a_partial_fade_takes_its_share(self):
+        self.assertEqual(motion.light_ms(True, 0.0, 1.0), 140)
+        self.assertEqual(motion.light_ms(False, 1.0, 0.0), 260)
+        self.assertEqual(motion.light_ms(False, 0.5, 0.0), 130)
+        self.assertGreaterEqual(motion.light_ms(True, 0.99, 1.0), 40)

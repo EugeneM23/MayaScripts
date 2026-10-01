@@ -165,6 +165,51 @@ def tool_width(classic):
     return pick(30, classic)
 
 
+# --------------------------------------------------------------- the light
+
+#  The lit card (2026-10-01, «красивый глоу и анимацию подсветки»): its face
+#  card_active and its 2 px ring card_edge as before (the stylesheet switched
+#  them at once; the card paints them now, fading -- maya_hubqt.paint_light),
+#  plus an INNER glow `width` logical px deep inward from the ring, the accent
+#  at `alpha` at the edge falling off as (1 - depth)^2. A flash (the card just
+#  chosen) adds `flash_alpha`, falling off linearly, and deepens the glow by
+#  `flash_widen`. Drawn as rings ONE PHYSICAL PIXEL wide: wider ones showed
+#  as bands (photographed live at 150 %).
+GLOW = {
+    "width": 10.0,
+    "alpha": 0.28,
+    "flash_alpha": 0.30,
+    "flash_widen": 0.6,
+}
+
+
+def glow_rings(level, flash, scale=1.0):
+    """The inner glow at `level` (0..1) and `flash` (0..1) at the display's
+    `scale`: [(inset, width, alpha)] in logical px from the inside of the
+    ring, outermost first, each one physical px wide."""
+    scale = float(scale or 1.0)
+    depth = GLOW["width"] * (1.0 + GLOW["flash_widen"] * flash)
+    steps = max(1, int(round(depth * scale)))
+    width = 1.0 / scale
+    rings = []
+    for i in range(steps):
+        fall = 1.0 - i / float(steps)
+        alpha = (level * GLOW["alpha"] * fall * fall
+                 + flash * GLOW["flash_alpha"] * fall)
+        rings.append((i * width, width, min(1.0, alpha)))
+    return rings
+
+
+def mix(a, b, k):
+    """Colour `k` (clamped 0..1) of the way from "#rrggbb" `a` to `b`."""
+    k = min(1.0, max(0.0, float(k)))
+    parts = []
+    for i in (1, 3, 5):
+        x, y = int(a[i:i + 2], 16), int(b[i:i + 2], 16)
+        parts.append(int(round(x + (y - x) * k)))
+    return "#{0:02x}{1:02x}{2:02x}".format(*parts)
+
+
 # -------------------------------------------------------------------- pure
 
 def hex_of(rgb):
@@ -196,8 +241,6 @@ _SHEET = """
 QScrollArea#{SCROLL} {{ background: {panel}; border: none; }}
 QFrame[skCard="true"] {{ background: {card}; border-radius: {r8}px;
     border: {p2}px solid {card}; }}
-QFrame[skCard="true"][skActive="true"] {{ background: {card_active};
-    border: {p2}px solid {card_edge}; }}
 
 QPushButton {{ background: transparent; border: {b1}px solid {line};
     border-radius: {r6}px; padding: {p3}px {p8}px; color: {text2}; }}

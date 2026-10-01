@@ -17,6 +17,8 @@ tests share one set of numbers.
                     sliding (maya_hubqt.Skin._glide_when_settled)
     enabled()       the menu's Interface animations, an optionVar, on by
                     default
+    LIGHT_IN_MS ... the card light: fading in, out, flashing (smooth,
+                    light_ms, flash_at)
 
 Spec: docs/superpowers/specs/2026-10-01-hub-card-motion-design.md
 """
@@ -37,6 +39,17 @@ OPEN_FACTOR = 1.5
 #  the chevron's turn when open: "chevron-right" turned a quarter clockwise
 #  is "chevron-down"
 CHEVRON_OPEN = 90.0
+
+#  The card light (2026-10-01, «красивый глоу и анимацию подсветки»): lighting
+#  up answers the mouse quickly (ease-out), going dark leaves a soft trail
+#  (ease-in-out); a card just chosen flashes - a fast rise over the first
+#  FLASH_RISE of FLASH_MS, then a long fall.
+LIGHT_IN_MS = 140
+LIGHT_OUT_MS = 260
+FLASH_MS = 480
+FLASH_RISE = 0.18
+#  a fade turned back near its end still takes a moment
+LIGHT_MIN_MS = 40
 
 
 def _cmds():
@@ -86,3 +99,27 @@ def duration(distance, scale=1.0, opening=False):
 def lerp(start, end, k):
     """`k` of the way from `start` to `end`."""
     return start + (end - start) * k
+
+
+def smooth(t):
+    """Ease-in-out (smoothstep) of `t` (clamped to 0..1): the light going
+    dark."""
+    t = min(1.0, max(0.0, float(t)))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def light_ms(on, start, target):
+    """Milliseconds for the light to go from `start` to `target` (0..1):
+    LIGHT_IN_MS / LIGHT_OUT_MS for the whole way, its share for part of it
+    (a fade turned back mid-way), never under LIGHT_MIN_MS."""
+    whole = LIGHT_IN_MS if on else LIGHT_OUT_MS
+    return max(LIGHT_MIN_MS, int(round(whole * abs(target - start))))
+
+
+def flash_at(t):
+    """The flash at `t` (0..1) of FLASH_MS: up to 1 over FLASH_RISE (eased
+    out), then back to 0 (eased out) - 0 at both ends."""
+    t = min(1.0, max(0.0, float(t)))
+    if t < FLASH_RISE:
+        return ease(t / FLASH_RISE)
+    return 1.0 - ease((t - FLASH_RISE) / (1.0 - FLASH_RISE))

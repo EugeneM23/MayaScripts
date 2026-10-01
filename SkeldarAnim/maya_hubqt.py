@@ -307,6 +307,75 @@ def sounding(widget, root):
     return widget is root or root.isAncestorOf(widget)
 
 
+def _frame_class():
+    """A card's QFrame (still `QFrame[skCard]` to the stylesheet, which draws
+    its plain face) painting its own LIGHT over that face: `level` 0..1 and
+    `flash` 0..1, animated by its Card (2026-10-01, «красивый глоу и анимацию
+    подсветки»). A full repaint of a card costs 1.5 ms (UE Bridge, measured),
+    so the whole light - the face's tint too - can fade."""
+    if "frame" not in _CLASSES:
+        q = qt()
+
+        class CardFrame(q.QtWidgets.QFrame):
+
+            def __init__(self, scale=1.0, parent=None):
+                super(CardFrame, self).__init__(parent)
+                self.scale = scale
+                self.level = 0.0
+                self.flash = 0.0
+
+            def paintEvent(self, event):                   # noqa: N802
+                super(CardFrame, self).paintEvent(event)
+                if self.level > 0.002 or self.flash > 0.002:
+                    paint_light(self, self.level, self.flash, self.scale)
+
+        _CLASSES["frame"] = CardFrame
+    return _CLASSES["frame"]
+
+
+def paint_light(widget, level, flash, scale):
+    """The card light on `widget`: the face card_active at `level`, the inner
+    glow (`maya_hubstyle.glow_rings`), the 2 px ring card_edge at `level` -
+    brighter toward accent_text, and fully drawn, while it `flash`es."""
+    q = qt()
+    QtCore, QtGui = q.QtCore, q.QtGui
+    tokens = hubstyle.TOKENS
+    edge = float(hubstyle.px(2, scale))
+    radius = float(hubstyle.px(8, scale))
+    outer = QtCore.QRectF(widget.rect())
+    painter = QtGui.QPainter(widget)
+    try:
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtCore.Qt.NoPen)
+        face = QtGui.QColor(tokens["card_active"])
+        face.setAlphaF(min(1.0, level))
+        painter.setBrush(face)
+        inner = outer.adjusted(edge, edge, -edge, -edge)
+        painter.drawRoundedRect(inner, max(0.0, radius - edge),
+                                max(0.0, radius - edge))
+        painter.setBrush(QtCore.Qt.NoBrush)
+        glow = QtGui.QColor(tokens["accent"])
+        for inset, width, alpha in hubstyle.glow_rings(level, flash, scale):
+            if alpha <= 0.0:
+                continue
+            d = edge + (inset + width / 2.0) * scale
+            w = width * scale
+            glow.setAlphaF(alpha)
+            painter.setPen(QtGui.QPen(glow, w))
+            painter.drawRoundedRect(outer.adjusted(d, d, -d, -d),
+                                    max(0.0, radius - d),
+                                    max(0.0, radius - d))
+        ring = QtGui.QColor(hubstyle.mix(tokens["card_edge"],
+                                         tokens["accent_text"], flash))
+        ring.setAlphaF(min(1.0, max(level, flash)))
+        painter.setPen(QtGui.QPen(ring, edge))
+        half = edge / 2.0
+        painter.drawRoundedRect(outer.adjusted(half, half, -half, -half),
+                                radius - half, radius - half)
+    finally:
+        painter.end()
+
+
 def _watcher_class():
     """An application-wide event filter: a press or a focus change anywhere
     is handed to `on_press(widget)`, the mouse entering a widget to
@@ -370,7 +439,9 @@ class Card(object):
         self._from_angle = 0.0
         s = lambda n: hubstyle.px(n, scale)             # noqa: E731
 
-        self.frame = _named(w.QFrame(), "skeldarHubCard_" + key)
+        self._light_anim = None
+        self._flash_anim = None
+        self.frame = _named(_frame_class()(scale), "skeldarHubCard_" + key)
         self.frame.setProperty("skCard", True)
         column = w.QVBoxLayout(self.frame)
         column.setObjectName("skeldarHubCardLayout_" + key)
@@ -576,6 +647,79 @@ class Card(object):
         if self._chevron_base is None:
             self._chevron_base = pixmap("chevron-right", colour, size)
         self.chevron.setPixmap(rotated(self._chevron_base, angle))
+
+    # --------------------------------------------------------------- light
+
+    def set_lit(self, on, animate=False):
+        """The card's light up (`on`) or down: fading from wherever it stands
+        when `animate` and the card is on screen, else at once."""
+        target = 1.0 if on else 0.0
+        self._stop_anim("_light_anim")
+        frame = self.frame
+        start = frame.level
+        if not animate or not frame.isVisible() or start == target:
+            frame.level = target
+            frame.update()
+            return
+        q = qt()
+        shape = hubmotion.ease if on else hubmotion.smooth
+        anim = q.QtCore.QVariantAnimation(frame)
+        anim.setObjectName("skeldarHubCardLight_" + self.key)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(hubmotion.light_ms(on, start, target))
+
+        def tick(value):
+            frame.level = hubmotion.lerp(start, target, shape(value))
+            frame.update()
+        anim.valueChanged.connect(tick)
+        anim.finished.connect(lambda: self._done_anim("_light_anim", "level",
+                                                      target))
+        self._light_anim = anim
+        anim.start()
+
+    def pulse(self, animate=False):
+        """A flash: the ring brightens and the glow widens for FLASH_MS (the
+        card just chosen). Nothing when not `animate` or off screen."""
+        self._stop_anim("_flash_anim")
+        frame = self.frame
+        if not animate or not frame.isVisible():
+            frame.flash = 0.0
+            frame.update()
+            return
+        q = qt()
+        anim = q.QtCore.QVariantAnimation(frame)
+        anim.setObjectName("skeldarHubCardFlash_" + self.key)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(hubmotion.FLASH_MS)
+
+        def tick(value):
+            frame.flash = hubmotion.flash_at(value)
+            frame.update()
+        anim.valueChanged.connect(tick)
+        anim.finished.connect(lambda: self._done_anim("_flash_anim", "flash",
+                                                      0.0))
+        self._flash_anim = anim
+        anim.start()
+
+    def _done_anim(self, slot, attr, value):
+        self._stop_anim(slot)
+        if _valid(self.frame):
+            setattr(self.frame, attr, value)
+            self.frame.update()
+
+    def _stop_anim(self, slot):
+        anim = getattr(self, slot)
+        setattr(self, slot, None)
+        if anim is not None:
+            try:
+                anim.valueChanged.disconnect()
+                anim.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            anim.stop()
+            anim.deleteLater()
 
     def add_subtitle(self, widget):
         """Move a builder's line into the header, one line, never widening."""
@@ -861,10 +1005,16 @@ class Skin(object):
             self._stop_glide()
 
     def set_active(self, key):
-        """Card `key` is the one worked in (None: none): pinned and lit."""
+        """Card `key` is the one worked in (None: none): pinned and lit -
+        and, when that is a CHANGE, flashed (2026-10-01); a press inside the
+        card already chosen does not flash again."""
         self._fallback.stop()
-        self.pinned = key if key in self.cards else None
+        key = key if key in self.cards else None
+        changed = key is not None and key != self.pinned
+        self.pinned = key
         self._light(self.pinned)
+        if changed:
+            self.cards[key].pulse(animate=self.animations)
 
     def resting(self):
         """What is lit with the mouse off every card: the pinned card if it
@@ -878,7 +1028,9 @@ class Skin(object):
         self._light(self.resting())
 
     def _light(self, key):
-        """Light card `key` (None: none), the previous one back to plain."""
+        """Light card `key` (None: none), the previous one back to plain:
+        cross-fading when the switch allows it (the card paints its light,
+        CardFrame; `skActive` says at once which card is lit)."""
         key = key if key in self.cards else None
         if key == self.active:
             return
@@ -886,7 +1038,7 @@ class Skin(object):
             card = self.cards.get(other) if other else None
             if card is not None:
                 card.frame.setProperty("skActive", other == key)
-                repolish(card.frame)
+                card.set_lit(other == key, animate=self.animations)
         self.active = key
 
     def card_of(self, widget):

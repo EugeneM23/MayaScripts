@@ -386,10 +386,11 @@ class ActiveCard(SeamsMixin, unittest.TestCase):
         outside = QtWidgets.QLineEdit()
         self.assertIsNone(self.skin.card_of(outside))
 
-    def test_the_stylesheet_lights_it(self):
-        sheet = style.stylesheet()
-        self.assertIn('[skActive="true"]', sheet)
-        self.assertIn(style.TOKENS["card_active"], sheet)
+    def test_the_card_paints_its_light_not_the_sheet(self):
+        """2026-10-01: the stylesheet switched the light at once; the card
+        paints it now, fading (CardLight below)."""
+        self.assertNotIn('[skActive="true"]', style.stylesheet())
+        self.assertTrue(hasattr(self.a.frame, "level"))
 
 
 class HoverSound(SeamsMixin, unittest.TestCase):
@@ -961,3 +962,114 @@ class AnimationsRow(SeamsMixin, unittest.TestCase):
         self.assertEqual(self.calls, [])
         action.trigger()
         self.assertEqual(self.calls, [("animations", False)])
+
+
+class CardLight(SeamsMixin, unittest.TestCase):
+    """2026-10-01: «красивый глоу и анимацию подсветки при выделении карточки
+    или наведении на раздел» - the light fades, a chosen card flashes."""
+
+    def setUp(self):
+        super(CardLight, self).setUp()
+        for key in ("a", "b"):
+            card = self.skin.add_card(key, key.upper(), "user", "#f0a26b",
+                                      "#4a3322")
+            filler = QtWidgets.QWidget()
+            filler.setFixedHeight(120)
+            card.body_layout.addWidget(filler)
+        self.a, self.b = self.skin.cards["a"], self.skin.cards["b"]
+        self.skin.finish(style.stylesheet())
+        self.host.resize(400, 700)
+        self.host.show()
+        self._settle()
+
+    def _settle(self):
+        for _ in range(6):
+            self.app.processEvents()
+
+    def _end(self, anim):
+        anim.setCurrentTime(anim.duration())
+        self._settle()
+
+    def test_a_hover_fades_the_new_card_up_and_the_old_down(self):
+        import maya_hubmotion as motion
+        self.skin._light("a")
+        self.assertTrue(self.a.frame.property("skActive"))      # at once
+        anim = self.a._light_anim
+        self.assertEqual(anim.objectName(), "skeldarHubCardLight_a")
+        self.assertEqual(anim.duration(), motion.LIGHT_IN_MS)
+        anim.setCurrentTime(anim.duration() // 2)
+        self.assertGreater(self.a.frame.level, 0.0)
+        self.assertLess(self.a.frame.level, 1.0)
+        self._end(anim)
+        self.assertEqual(self.a.frame.level, 1.0)
+        self.assertIsNone(self.a._light_anim)
+        self.skin._light("b")
+        self.assertFalse(self.a.frame.property("skActive"))
+        self.assertEqual(self.a._light_anim.duration(), motion.LIGHT_OUT_MS)
+        self._end(self.a._light_anim)
+        self._end(self.b._light_anim)
+        self.assertEqual((self.a.frame.level, self.b.frame.level), (0.0, 1.0))
+
+    def test_turned_back_mid_way_it_goes_on_from_where_it_stands(self):
+        self.skin._light("a")
+        self.a._light_anim.setCurrentTime(self.a._light_anim.duration() // 2)
+        mid = self.a.frame.level
+        self.skin._light(None)
+        self.assertAlmostEqual(self.a.frame.level, mid)
+        self.assertLess(self.a._light_anim.duration(), 260)
+        self._end(self.a._light_anim)
+        self.assertEqual(self.a.frame.level, 0.0)
+
+    def test_a_new_pick_flashes_the_same_pick_does_not(self):
+        self.skin.set_active("a")
+        flash = self.a._flash_anim
+        self.assertIsNotNone(flash)
+        flash.setCurrentTime(int(flash.duration() * 0.18))
+        self.assertAlmostEqual(self.a.frame.flash, 1.0, places=2)
+        self._end(flash)
+        self.assertEqual(self.a.frame.flash, 0.0)
+        self.skin.set_active("a")                     # a click inside it
+        self.assertIsNone(self.a._flash_anim)
+        self.skin.set_active("b")
+        self.assertIsNotNone(self.b._flash_anim)
+
+    def test_switched_off_the_light_switches_and_never_flashes(self):
+        self.skin.animations = False
+        self.skin.set_active("a")
+        self.assertEqual(self.a.frame.level, 1.0)
+        self.assertIsNone(self.a._light_anim)
+        self.assertIsNone(self.a._flash_anim)
+        self.skin._light("b")
+        self.assertEqual((self.a.frame.level, self.b.frame.level), (0.0, 1.0))
+
+    def _pixel(self, frame, x, y):
+        image = frame.grab().toImage()
+        colour = image.pixelColor(x, y)
+        return colour.red(), colour.green(), colour.blue()
+
+    def _near(self, rgb, hex_colour, tolerance=3):
+        want = tuple(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+        return all(abs(a - b) <= tolerance for a, b in zip(rgb, want))
+
+    def test_the_painted_light(self):
+        """Lit: the ring is card_edge and the face card_active (the look of
+        2026-09-28); dark: both the plain card."""
+        frame = self.a.frame
+        x, ring_y = frame.width() // 2, 1
+        face = (frame.width() // 2, frame.height() - 40)
+        self.assertTrue(self._near(self._pixel(frame, x, ring_y),
+                                   style.TOKENS["card"]))
+        self.assertTrue(self._near(self._pixel(frame, *face),
+                                   style.TOKENS["card"]))
+        self.skin.animations = False
+        self.skin._light("a")
+        self._settle()
+        ring = self._pixel(frame, x, ring_y)
+        self.assertTrue(self._near(ring, style.TOKENS["card_edge"], 12), ring)
+        self.assertTrue(self._near(self._pixel(frame, *face),
+                                   style.TOKENS["card_active"]))
+        #  the inner glow: warmer just inside the ring than in the face
+        inside = self._pixel(frame, x, 4)
+        middle = self._pixel(frame, *face)
+        self.assertGreater((inside[0] - inside[2]) - (middle[0] - middle[2]),
+                           15, (inside, middle))

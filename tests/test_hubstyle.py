@@ -188,3 +188,56 @@ class StdlibOnly(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Glow(unittest.TestCase):
+    """2026-10-01: the lit card's inner glow, as data."""
+
+    def test_dark_is_nothing(self):
+        self.assertTrue(all(a == 0.0 for _i, _w, a in style.glow_rings(0, 0)))
+
+    def test_strongest_at_the_edge_fading_inward(self):
+        rings = style.glow_rings(1.0, 0.0)
+        self.assertEqual(len(rings), int(style.GLOW["width"]))
+        alphas = [a for _i, _w, a in rings]
+        self.assertEqual(alphas, sorted(alphas, reverse=True))
+        self.assertAlmostEqual(alphas[0], style.GLOW["alpha"])
+        insets = [i for i, _w, _a in rings]
+        self.assertEqual(insets, sorted(insets))
+        self.assertEqual(insets[0], 0.0)
+
+    def test_a_flash_brightens_and_widens(self):
+        lit = style.glow_rings(1.0, 0.0)
+        flash = style.glow_rings(1.0, 1.0)
+        self.assertGreater(flash[0][2], lit[0][2])
+        self.assertGreater(flash[-1][0] + flash[-1][1],
+                           lit[-1][0] + lit[-1][1])
+        self.assertTrue(all(a <= 1.0 for _i, _w, a in flash))
+
+    def test_half_lit_is_half_the_light(self):
+        full = style.glow_rings(1.0, 0.0)
+        half = style.glow_rings(0.5, 0.0)
+        self.assertAlmostEqual(half[0][2], full[0][2] / 2)
+
+    def test_mix(self):
+        self.assertEqual(style.mix("#000000", "#ffffff", 0.0), "#000000")
+        self.assertEqual(style.mix("#000000", "#ffffff", 1.0), "#ffffff")
+        self.assertEqual(style.mix("#000000", "#ffffff", 0.5), "#808080")
+        self.assertEqual(style.mix("#e07a36", "#f0a26b", -1), "#e07a36")
+
+    def test_the_sheet_no_longer_switches_the_light(self):
+        """The card paints it, fading; a stylesheet switch was instant."""
+        sheet = style.stylesheet()
+        self.assertNotIn('[skActive="true"]', sheet)
+        self.assertIn('QFrame[skCard="true"]', sheet)
+
+
+class GlowPixels(unittest.TestCase):
+
+    def test_one_physical_pixel_a_ring(self):
+        """Wider rings showed as bands (photographed live at 150 %)."""
+        rings = style.glow_rings(1.0, 0.0, 1.5)
+        self.assertEqual(len(rings), 15)
+        self.assertTrue(all(abs(w * 1.5 - 1.0) < 1e-9 for _i, w, _a in rings))
+        insets = [i * 1.5 for i, _w, _a in rings]
+        self.assertEqual([round(x, 6) for x in insets], list(range(15)))
