@@ -94,6 +94,7 @@ class Payload(unittest.TestCase):
 
     def test_the_graph_overlay_ships(self):
         self.assertIn("maya_graphoverlay", install.payload())
+        self.assertIn("maya_com", install.payload())
 
     def test_the_viewport_studio_ships(self):
         self.assertIn("maya_vpstudio.py", install.payload())

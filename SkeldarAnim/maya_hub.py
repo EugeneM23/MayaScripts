@@ -88,6 +88,10 @@ SECTIONS = (
     Section("graphoverlay", "Graph Overlay", "maya_graphoverlay.mode",
             "build_panel", "skeldarHubFrameGraphOverlay",
             "animation", "chart-line"),
+    #  2026-10-01: the centre of mass - a live point, its trail, the CoM tool.
+    Section("com", "Center of Mass", "maya_com.panel",
+            "build_panel", "skeldarHubFrameCom",
+            "animation", "target"),
     Section("characters", "Characters", "maya_scenesetup.window",
             "build_characters_panel", "skeldarHubFrameCharacters",
             "scene", "user"),

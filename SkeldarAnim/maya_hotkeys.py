@@ -819,6 +819,10 @@ _OURS = (
      "Open the Shared section: send the scene or an FBX to everybody, open "
      "what they sent",
      partial(_show, "maya_share", "show_window")),
+    ("window.com", "Windows", "Center of Mass",
+     "Open the Center of Mass section: the CoM point, its trail, the CoM "
+     "tool",
+     partial(_show, "maya_com.panel", "show_window")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",
