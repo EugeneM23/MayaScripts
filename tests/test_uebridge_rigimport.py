@@ -42,8 +42,10 @@ class Precheck(unittest.TestCase):
 
     def test_no_rig_and_no_rig_file_is_refused_by_the_file(self):
         text = rigimport.precheck(False, False, False, False)
-        self.assertEqual(text, rigimport.NO_RIG_FILE)
+        self.assertEqual(text, rigimport.NO_RIG_FILE.format("Manny_Rig.ma"))
         self.assertIn("Manny_Rig.ma", text)
+        self.assertIn("Creep_Rig.ma", rigimport.precheck(False, False, False, False,
+                                                         "Creep_Rig.ma"))
 
     def test_no_rig_but_a_rig_file_goes_ahead(self):
         self.assertEqual(rigimport.precheck(False, False, False, True), "")
@@ -123,6 +125,32 @@ class ResultLine(unittest.TestCase):
                       rigimport.result_line("A", {}, "c", "b", ""))
 
 
+class RigEntry(unittest.TestCase):
+    """2026-10-01: a rig the bridge adds is the one active in Characters, and
+    Manny when that is no rig."""
+
+    def test_the_active_rig_row(self):
+        creep = types.SimpleNamespace(key="Creep_Rig", kind="rig")
+        manny = types.SimpleNamespace(key="Manny_Rig", kind="rig")
+        self.assertIs(rigimport.rig_entry_for(creep, manny), creep)
+
+    def test_a_skeleton_or_nothing_is_manny(self):
+        manny = types.SimpleNamespace(key="Manny_Rig", kind="rig")
+        skeleton = types.SimpleNamespace(key="Creep_Skeleton", kind="skeleton")
+        self.assertIs(rigimport.rig_entry_for(skeleton, manny), manny)
+        self.assertIs(rigimport.rig_entry_for(None, manny), manny)
+
+
+class Shift(unittest.TestCase):
+
+    def test_the_root_at_the_first_frame_onto_the_floor_point(self):
+        self.assertEqual(rigimport.shift_for((100.0, 0.0, -50.0), (5.0, 92.0, 20.0)),
+                         (95.0, 0.0, -70.0))
+
+    def test_the_height_is_never_moved(self):
+        self.assertEqual(rigimport.shift_for((0.0, 40.0, 0.0), (0.0, 0.0, 0.0))[1], 0.0)
+
+
 class FakeRig(object):
     def __init__(self, namespace):
         self.namespace = namespace
@@ -158,12 +186,15 @@ class ThePress(unittest.TestCase):
         self.real_file_ok = rigimport._rig_file_ok
         self.real_import = rigimport.animimport.import_clip
         self.real_namespaces = rigimport.animimport.existing_namespaces
-        rigimport._rig_file_ok = lambda: True
+        rigimport._rig_file_ok = lambda entry=None: True
+        self.real_entry = rigimport.new_rig_entry
+        rigimport.new_rig_entry = lambda: types.SimpleNamespace(key="Manny_Rig", label="Manny [rig]")
         rigimport.animimport.existing_namespaces = lambda: []
         rigimport.animimport.import_clip = lambda *a, **k: (
             self.calls.append(("import", a[1])) or
             {"start": 0.0, "end": 45.0, "joints": 93})
         self.holder = set()
+        self.paths = {}
         self.rigs = [FakeRig("Manny_Rig")]
         self.current = [None, ""]     # what current_rig() answers when asked
         self.mod = types.SimpleNamespace(
@@ -196,7 +227,17 @@ class ThePress(unittest.TestCase):
         self.maya_rigs = types.SimpleNamespace(
             Rig=FakeRig, rigs=lambda: list(self.rigs), current_rig=current_rig,
             label=lambda rig: rig.namespace or "Group")
+        self.root_at = (5.0, 92.0, 20.0)
         fake_cmds = types.SimpleNamespace(
+            ls=lambda node, uuid=False, long=False: (
+                ["UUID-" + node] if uuid else [self.paths.get(node, node)]),
+            group=lambda node, name=None: self.calls.append(("group", node, name)) or (
+                self.paths.update({"UUID-" + node: "|%s|%s" % (name, node.lstrip("|"))})
+                or name),
+            getAttr=lambda plug, time=None: (
+                [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0] + list(self.root_at) + [1]),
+            move=lambda x, y, z, node, relative=False, worldSpace=False: self.calls.append(
+                ("move", (x, y, z), node, relative, worldSpace)),
             objExists=lambda name: name in self.holder,
             undoInfo=lambda **k: self.calls.append(("undo", tuple(sorted(k)))),
             namespaceInfo=lambda ns, **k: ["|%s:root" % ns, "|%s:root|%s:pelvis" % (ns, ns)],
@@ -223,6 +264,7 @@ class ThePress(unittest.TestCase):
     def tearDown(self):
         rigimport.cmds = self.real_cmds
         rigimport._rig_file_ok = self.real_file_ok
+        rigimport.new_rig_entry = self.real_entry
         rigimport.animimport.import_clip = self.real_import
         rigimport.animimport.existing_namespaces = self.real_namespaces
         for name in self.touched:
@@ -306,6 +348,34 @@ class ThePress(unittest.TestCase):
         self.assertEqual(self._steps(), ["add", "import", "connect", "bake", "delete_ns"])
         self.assertNotIn("reset", self._steps())
         self.assertIn("retargeted onto Manny_Rig1", text)
+
+    def test_a_new_rig_is_the_active_characters_rig(self):
+        rigimport.new_rig_entry = lambda: types.SimpleNamespace(key="Creep_Rig", label="Creep [rig]")
+        rigimport.import_and_retarget("C:/t/A.fbx", "A", target="new_rig")
+        self.assertEqual([c for c in self.calls if c[0] == "add"], [("add", "Creep_Rig")])
+
+    def test_a_floor_point_moves_the_clip_after_the_connect(self):
+        """2026-10-01, «если мы указываем на пол ... риг с анимацией оставался в
+        том месте куда мы указали после всех перезапеканий»: the clip's root at
+        its first frame onto the point, horizontally, between connect and bake
+        - the connect measures the clip unmoved, the bake carries the move."""
+        text = rigimport.import_and_retarget("C:/t/A.fbx", "A", target="new_rig",
+                                             at=(100.0, 0.0, -50.0))
+        self.assertEqual(self._steps(), ["add", "import", "group", "connect", "move",
+                                         "bake", "delete_ns"])
+        self.assertEqual([c for c in self.calls if c[0] == "group"],
+                         [("group", "|A:root", "A:" + rigimport.SHIFT_NODE)])
+        self.assertEqual([c for c in self.calls if c[0] == "connect"][0][1],
+                         "|A:%s|A:root" % rigimport.SHIFT_NODE)
+        self.assertEqual([c for c in self.calls if c[0] == "move"],
+                         [("move", (95.0, 0.0, -70.0), "A:" + rigimport.SHIFT_NODE, True, True)])
+        self.assertIn("standing at floor (100, -50)", text)
+
+    def test_a_floor_point_does_not_move_a_standing_rig(self):
+        self._one_rig_current()
+        rigimport.import_and_retarget("C:/t/A.fbx", "A", at=(100.0, 0.0, -50.0))
+        self.assertNotIn("group", self._steps())
+        self.assertNotIn("move", self._steps())
 
     def test_an_unknown_target_is_refused(self):
         self.assertIn("unknown import target", rigimport.import_and_retarget("C:/t/A.fbx", "A", target="x"))

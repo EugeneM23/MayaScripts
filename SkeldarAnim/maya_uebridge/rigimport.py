@@ -21,6 +21,18 @@ refusals that stop the press BEFORE anything is imported.
 Two rigs and nothing selected is a refusal that names them, before anything
 is exported or imported.
 
+2026-10-01, an animation dragged out of the list (`listdrag`): `rig=` names
+the rig the clip was dropped on; a rig ADDED is the one active in the
+Characters card (`new_rig_entry`: its picked row when that is a rig, else
+Manny - «на тот который активен во вкладке characters но если в персонажах
+нет активного рига то тогда берем базовый маникен»); and `at=` - the floor
+point a drop beside every rig aimed at - leaves the new rig standing there
+after every bake («риг с анимацией оставался в том месте куда мы указали
+после всех перезапеканий»): the clip is wrapped in a group of its namespace
+before the connect, which measures it unmoved, and the group is moved after
+the connect, so the bake carries the move into the controls, the helper
+bones and the camera. The exported root bone carries it too.
+
 Design: docs/superpowers/specs/2026-09-07-advancedskeleton-pipeline-design.md,
 docs/superpowers/specs/2026-09-08-many-rigs-design.md
 """
@@ -32,8 +44,8 @@ import maya.cmds as cmds
 from maya_uebridge import animimport
 from maya_uebridge import records
 
-NO_RIG_FILE = ("no rig file - Manny_Rig.ma is missing from assets/ and the "
-               "legacy path")
+NO_RIG_FILE = "no rig file - {0} is missing from assets/"
+SHIFT_NODE = "skeldarDropShift"   # the clip's wrapper, moved onto a floor point
 CONNECTED = ("the rig is still connected to a source (MoCapConstraints "
              "stands) - press Retarget, or disconnect, first")
 POSED = ("the rig is posed - AdvancedSkeleton: Go To BuildPose, then import "
@@ -43,7 +55,8 @@ TARGETS = ("rig", "new_rig")
 
 # ------------------------------------------------------------------ policy
 
-def precheck(rig_present, holder_present, posed, rig_file_ok):
+def precheck(rig_present, holder_present, posed, rig_file_ok,
+             rig_file="Manny_Rig.ma"):
     """The refusal, or "" when the press may go ahead. Pure.
 
     A missing rig FILE matters only when there is no rig to use; a posed
@@ -53,7 +66,7 @@ def precheck(rig_present, holder_present, posed, rig_file_ok):
     could not touch.
     """
     if not rig_present and not rig_file_ok:
-        return NO_RIG_FILE
+        return NO_RIG_FILE.format(rig_file)
     if holder_present:
         return CONNECTED
     if rig_present and posed:
@@ -94,6 +107,20 @@ def _first_line(text):
     return lines[0] if lines else ""
 
 
+def rig_entry_for(chosen, default):
+    """The rig a press adds: `chosen` (the Characters card's active row) when
+    it is a rig, else `default` (Manny). Pure."""
+    if chosen is not None and getattr(chosen, "kind", "") == "rig":
+        return chosen
+    return default
+
+
+def shift_for(at, root_at_start):
+    """(dx, 0, dz) that stands the clip's root, at its first frame, on the
+    floor point `at`: horizontal only, the clip keeps its own height. Pure."""
+    return (at[0] - root_at_start[0], 0.0, at[2] - root_at_start[2])
+
+
 def fresh_rig(before, after):
     """The one rig `after` holds that `before` did not, by namespace, or None. Pure."""
     taken = set(rig.namespace for rig in before or [])
@@ -103,19 +130,59 @@ def fresh_rig(before, after):
 
 # ------------------------------------------------------------------ action
 
-def _rig_file_ok():
+def new_rig_entry():
+    """The catalog row of the rig a press adds: the Characters card's active
+    row when it is a rig (read from its memory, so the card need not be
+    open), else Manny."""
     from maya_scenesetup import catalog
-    path = catalog.character_file(catalog.default_rig())
+    try:
+        from maya_scenesetup import window as scene_window
+        chosen = scene_window.chosen_character()
+    except Exception:                                        # noqa: BLE001
+        chosen = None
+    return rig_entry_for(chosen, catalog.default_rig())
+
+
+def _rig_file_ok(entry=None):
+    from maya_scenesetup import catalog
+    path = catalog.character_file(entry or catalog.default_rig())
     return bool(path) and os.path.isfile(path)
 
 
+def _rig_file_name(entry):
+    from maya_scenesetup import catalog
+    path = catalog.character_file(entry or catalog.default_rig()) or ""
+    return os.path.basename(path) or "the rig file"
+
+
+def _wrap(source, namespace):
+    """The clip's root inside a group of its namespace (it dies with the
+    namespace), standing where it stood: (group, the root's new path)."""
+    uuid = cmds.ls(source, uuid=True)[0]
+    group = cmds.group(source, name="{0}:{1}".format(namespace, SHIFT_NODE))
+    return group, cmds.ls(uuid, long=True)[0]
+
+
+def _place(group, source, at, start):
+    """Move the clip's wrapper so its root, at the clip's first frame, stands
+    on the floor point `at`. Its own keys are never touched."""
+    matrix = (cmds.getAttr(source + ".worldMatrix[0]", time=start)
+              if start is not None else cmds.getAttr(source + ".worldMatrix[0]"))
+    dx, dy, dz = shift_for(at, (matrix[12], matrix[13], matrix[14]))
+    cmds.move(dx, dy, dz, group, relative=True, worldSpace=True)
+    return "standing at floor ({0}, {1})".format(int(round(at[0])),
+                                                 int(round(at[2])))
+
+
 def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
-                        target="rig", rig=None):
+                        target="rig", rig=None, at=None):
     """The press. Returns the status line.
 
     `rig` (2026-10-01, an animation dragged onto a rig in the viewport) is
     the rig that takes the clip with `target="rig"`, whatever is selected;
     None asks the selection as the Import button does. "new_rig" ignores it.
+    A rig ADDED is `new_rig_entry()`'s; `at` (a floor point) stands an added
+    rig there, and is ignored for a rig already in the scene.
 
     Refusals happen first and touch nothing. After the import, a connect
     refusal leaves the imported skeleton in the scene and says so -- the
@@ -140,7 +207,10 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
     if rig is not None and mod is None:
         return module_refusal
     holder = bool(mod is not None and cmds.objExists(mod.holder_of(rig)))
-    refusal = precheck(not add_rig, holder, False, _rig_file_ok())
+    entry = new_rig_entry() if add_rig else None
+    file_ok = _rig_file_ok(entry)
+    refusal = precheck(not add_rig, holder, False, file_ok,
+                       "" if file_ok else _rig_file_name(entry))
     if refusal:
         return refusal
 
@@ -149,7 +219,7 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
     cmds.undoInfo(openChunk=True, chunkName="UE anim import + retarget")
     try:
         if add_rig:
-            notes.append(character.add_character(catalog.default_rig()))
+            notes.append(character.add_character(entry))
             rig = fresh_rig(all_rigs, maya_rigs.rigs())
             if rig is None:
                 return "  |  ".join(notes + [
@@ -189,11 +259,16 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
                 "{0} imported into {1} but holds no joint - nothing to "
                 "retarget".format(name, namespace)])
 
+        shift = None
+        if add_rig and at is not None:
+            shift, source = _wrap(source, namespace)
         connect_text = maya_rig_retarget.connect(source_root=source, rig=rig)
         if not cmds.objExists(mod.holder_of(rig)):
             return "  |  ".join(notes + [
                 "{0} imported as {1}; retarget refused: {2}".format(
                     name, namespace, _first_line(connect_text))])
+        placed = (_place(shift, source, at, info.get("start"))
+                  if shift else "")
 
         bake_text = maya_rig_retarget.bake(rig=rig)
         cmds.namespace(removeNamespace=namespace,
@@ -204,4 +279,6 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
 
     line = result_line(name, info, connect_text, bake_text, deleted,
                        maya_rigs.label(rig))
+    if placed:
+        line = "{0}  |  {1}".format(line, placed)
     return "  |  ".join(notes + [line]) if notes else line

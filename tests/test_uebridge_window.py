@@ -237,9 +237,10 @@ class ImportDropped(unittest.TestCase):
             self.calls.append(("export", record.name)) or ("C:/t/%s.fbx" % record.name, 30.0))
         window._status = self.statuses.append
 
-        def press(fbx, name, clip_fps=None, set_timeline=True, target="rig", rig=None):
+        def press(fbx, name, clip_fps=None, set_timeline=True, target="rig", rig=None,
+                  at=None):
             self.calls.append(("press", fbx, name, clip_fps, set_timeline, target,
-                               rig.namespace if rig else None))
+                               rig.namespace if rig else None, at))
             return "%s retargeted" % name
         rigimport.import_and_retarget = press
         sys.modules["maya_rigs"] = types.SimpleNamespace(
@@ -252,13 +253,18 @@ class ImportDropped(unittest.TestCase):
             kind="rig", rig="Manny_Rig1", label="Manny_Rig1", text="retarget onto Manny_Rig1"))
         self.assertEqual(self.calls, [
             ("export", "A_Jump"),
-            ("press", "C:/t/A_Jump.fbx", "A_Jump", 30.0, False, "rig", "Manny_Rig1")])
+            ("press", "C:/t/A_Jump.fbx", "A_Jump", 30.0, False, "rig", "Manny_Rig1", None)])
         self.assertEqual(text, "A_Jump retargeted")
         self.assertEqual(self.statuses, ["A_Jump retargeted"])
 
-    def test_beside_every_rig_onto_a_new_rig(self):
+    def test_beside_every_rig_onto_a_new_rig_at_the_floor_point(self):
+        window.import_dropped(self.record, dict(kind="new_rig", point=(100.0, 0.0, -50.0),
+                                                text="a new Manny [rig]"))
+        self.assertEqual(self.calls[-1][5:], ("new_rig", None, (100.0, 0.0, -50.0)))
+
+    def test_no_floor_point_a_new_rig_where_the_clip_is(self):
         window.import_dropped(self.record, dict(kind="new_rig", text="a new Manny [rig]"))
-        self.assertEqual(self.calls[-1][5:], ("new_rig", None))
+        self.assertEqual(self.calls[-1][5:], ("new_rig", None, None))
 
     def test_a_rig_gone_during_the_drag_imports_nothing(self):
         window.import_dropped(self.record, dict(kind="rig", rig="Gone", label="Gone"))

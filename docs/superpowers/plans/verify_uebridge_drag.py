@@ -15,9 +15,18 @@ clips verify_many_rigs.py retargets). Each send sets PHASE first:
                         import one idle later, as a real release does)
     PHASE = "measure1"  gate 6: the second rig plays the clip, the source is
                         gone, the first rig never moved
-    PHASE = "floor"     gate 7: drop_at on empty floor queues a new rig
-    PHASE = "measure2"  gate 8: a third rig plays the second clip; the first two
-                        are as they were
+    PHASE = "floor"     gate 7: with Creep [rig] active in Characters, drop_at
+                        on empty floor queues a new rig - a Creep - on that point
+    PHASE = "measure2"  gate 8: after every bake the Creep's root stands on the
+                        floor point at the clip's first frame, its root track is
+                        the clip's moved by that much, the camera sits on its
+                        camera_root, the first two rigs are as they were
+    PHASE = "entry"     gate 9: Characters on a skeleton (or nothing) adds Manny,
+                        on a rig adds that rig
+    PHASE = "floor2"    gate 10: Manny [rig] active, a clip carrying the camera
+                        bones dropped on another floor point
+    PHASE = "measure3"  gate 11: that Manny on its point, its camera (set up on
+                        camera_root by the bake) with it
 
 Spec: docs/superpowers/specs/2026-10-01-uebridge-drag-to-viewport-design.md
 """
@@ -42,6 +51,7 @@ CLIPS = {"LongSword_Attack_Right_Heavy_1P":
          "C:/!!!Work/Animations/Export/ShortSword_Walk_1P.fbx"}
 A_AT, B_AT = (-90.0, 0.0, 0.0), (90.0, 0.0, 0.0)
 FLOOR = (-260.0, 0.0, 60.0)
+FLOOR2 = (230.0, 0.0, 150.0)
 FRAMES = (0, 10, 20, 30)
 
 
@@ -256,50 +266,118 @@ def phase_measure1():
     WORLD["b_track"] = b_track
 
 
-def phase_floor():
-    from maya_scenesetup import catalog, droptarget
+def choose_character(model, kind):
+    """What the Characters card remembers: its portrait and its switch."""
+    cmds.optionVar(stringValue=("mayaSceneSetup_characterModel", model))
+    cmds.optionVar(stringValue=("mayaSceneSetup_characterKind", kind))
+
+
+def _floor_drop(number, model, label, where, clip):
     from maya_uebridge import listdrag, window
-    floor = to_global(FLOOR)
+    choose_character(model, "rig")
+    floor = to_global(where)
     print("   ", keep_hub_off([floor]))
-    floor = to_global(FLOOR)
-    aim = droptarget.clip_target(floor[0], floor[1], droptarget.rig_snapshot(),
-                                 listdrag.Scene().scale(), catalog.default_rig().label)
-    record = [r for r in window._STATE["filtered"] if r.name == "ShortSword_Walk_1P"][0]
+    floor = to_global(where)
+    scene = listdrag.Scene()
+    aim = scene.target(floor[0], floor[1], scene.snapshot())
+    record = [r for r in window._STATE["filtered"] if r.name == clip][0]
     WORLD["a_track"] = track(WORLD["a"] + ":hand_r")
     WORLD["b_track"] = track(WORLD["b"] + ":hand_r")
+    WORLD["floor"] = aim.get("point")
+    WORLD["clip"] = clip
+    WORLD["rigs_before"] = sorted(rigs())
     said = drag().drop_at(floor[0], floor[1], record)
-    gate(7, "drop_at on empty floor aims at a new rig and queues it",
-         aim.get("kind") == "new_rig" and "a new Manny [rig]" in said,
+    gate(number, "%s active: drop_at on empty floor aims at a new one on the floor "
+                 "point and queues it" % label,
+         aim.get("kind") == "new_rig" and aim.get("point") is not None
+         and dist(aim["point"], where) < 3.0 and ("a new %s" % label) in said,
          "%s | '%s'" % (aim, said))
 
 
+def phase_floor():
+    _floor_drop(7, "Creep", "Creep [rig]", FLOOR, "ShortSword_Walk_1P")
+
+
+def phase_floor2():
+    _floor_drop(10, "Manny", "Manny [rig]", FLOOR2, "LongSword_Attack_Right_Heavy_1P")
+
+
 def phase_measure2():
-    from maya_uebridge import window
+    _measure_floor(8, "Creep_Rig", 18)
+
+
+def phase_measure3():
+    _measure_floor(11, "Manny_Rig", 60)
+
+
+def _measure_floor(number, prefix, last):
+    from maya_uebridge import animimport, window
     a, b = WORLD["a"], WORLD["b"]
     said = cmds.text(window._STATUS, query=True, label=True)
     now = rigs()
-    new = sorted(set(now) - set([a, b]))
-    c_moved, keyed = 0.0, 0
-    if len(new) == 1:
-        # a 1P walk swings the hand less than a centimetre: sample inside
-        # the clip's own 0-18 and count the keys the bake left on controls
-        points = []
-        for frame in range(0, 19, 2):
+    new = sorted(set(now) - set(WORLD["rigs_before"]))
+    ns = new[0] if len(new) == 1 else None
+    point = WORLD["floor"]
+    # the same clip as a plain skeleton: where its root walks unmoved
+    if cmds.namespace(exists="verifyClip"):
+        cmds.namespace(removeNamespace="verifyClip", deleteNamespaceContent=True)
+    animimport.import_clip(CLIPS[WORLD["clip"]], "verifyClip",
+                           set_timeline=False, clip_fps=30.0, merge=False)
+    clip_root = [p for p in cmds.ls("verifyClip:root", long=True) or []][0]
+    frames = list(range(0, last + 1, 3))
+    first = frames[0]
+    off, worst, cam = [], 0.0, 0.0
+    # the Creep carries no camera bones (only weapon_r / weapon_l travel), so
+    # its camera is asked about only where the rig has camera_root
+    has_camera = bool(ns) and cmds.objExists(ns + ":camera_root")
+    if ns:
+        for frame in frames:
             cmds.currentTime(frame, update=True)
-            points.append(world_t(new[0] + ":hand_r"))
-        c_moved = max(dist(p, q) for p in points for q in points)
-        controls = cmds.sets(now[new[0]].control_set, query=True) or []
-        keyed = sum(1 for c in controls
-                    if cmds.keyframe(c, query=True, keyframeCount=True))
+            ours = world_t(ns + ":root")
+            theirs = world_t(clip_root)
+            off.append([ours[i] - theirs[i] for i in range(3)])
+            if has_camera:
+                cam = max(cam, dist(world_t(ns + ":SceneSetup_camera"),
+                                    world_t(ns + ":camera_root")))
+        shift = off[0]
+        worst = max(dist(o, shift) for o in off)
+        cmds.currentTime(first, update=True)
+        at_start = world_t(ns + ":root")
     drift = max(max(dist(p, q) for p, q in zip(WORLD[k + "_track"], track(WORLD[k] + ":hand_r")))
                 for k in ("a", "b"))
-    gate(8, "a third rig plays the second clip, the first two as they were",
-         len(new) == 1 and ("retargeted onto %s" % new[0]) in said and c_moved > 0.1
-         and keyed > 0 and drift < 1e-9,
-         "new %s hand_r travels %.3f, %d controls keyed | others drift %.2e | '%s'" % (
-             new, c_moved, keyed, drift, said[:160]))
+    if ns:
+        WORLD["c"] = WORLD.get("c") or ns
+    cmds.namespace(removeNamespace="verifyClip", deleteNamespaceContent=True)
+    on_point = (ns is not None and abs(at_start[0] - point[0]) < 1e-3
+                and abs(at_start[2] - point[2]) < 1e-3 and abs(shift[1]) < 1e-3)
+    gate(number, "the new rig stands on the floor point after every bake, its root "
+                 "walks the clip's track moved by that much, the camera on its "
+                 "camera_root, the rigs before it unmoved",
+         bool(ns) and ns.startswith(prefix) and on_point and worst < 1e-2
+         and (has_camera or prefix == "Creep_Rig")
+         and cam < 1e-3 and drift < 1e-9 and ("retargeted onto %s" % ns) in said
+         and "standing at floor" in said,
+         "%s root at frame %d %s vs floor %s | shift %s, track off it by %.2e | "
+         "camera %s | others drift %.2e | '...%s'" % (
+             ns, first, [round(v, 4) for v in at_start] if ns else None,
+             [round(v, 4) for v in point], [round(v, 4) for v in shift] if ns else None,
+             worst, ("%.2e" % cam) if has_camera else "none (no camera_root)",
+             drift, said[-120:]))
+
+
+def phase_entry():
+    from maya_uebridge import rigimport
+    seen = []
+    for model, kind in (("Creep", "skeleton"), ("Orc_D", "rig"), ("UE4_Mannequin", "rig"),
+                        ("Creep", "rig")):
+        choose_character(model, kind)
+        seen.append(rigimport.new_rig_entry().key)
+    gate(9, "Characters on a skeleton or a model with no rig adds Manny, on a rig "
+            "adds that rig",
+         seen == ["Manny_Rig", "Orc_D_Rig", "Manny_Rig", "Creep_Rig"], seen)
 
 
 {"setup": phase_setup, "drag": phase_drag, "measure1": phase_measure1,
- "floor": phase_floor, "measure2": phase_measure2}[PHASE]()
+ "floor": phase_floor, "measure2": phase_measure2, "entry": phase_entry,
+ "floor2": phase_floor2, "measure3": phase_measure3}[PHASE]()
 print("%s: %s" % (PHASE, "FAILURES %s" % FAILED if FAILED else "all gates passed"))

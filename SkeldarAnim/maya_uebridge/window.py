@@ -272,12 +272,13 @@ MODES = ("rig", "new_rig", "skeleton")     # the segments, in order
 MODE_SEGMENTS = (
     ("rig", "Rig",
      "Retarget onto the rig: the SELECTED AdvancedSkeleton rig (any control "
-     "or bone), else the only one - added if the scene has none; the clip is "
+     "or bone), else the only one - added if the scene has none (the rig "
+     "active in Characters, else Manny); the clip is "
      "imported, retargeted and baked onto it (weapon and camera bones "
      "carried, the camera set up), and the clip's skeleton is deleted."),
     ("new_rig", "New rig",
-     "Onto a NEW rig: another rig is added first and takes the clip - many "
-     "rigs in one scene."),
+     "Onto a NEW rig: another rig - the one active in Characters, else Manny "
+     "- is added first and takes the clip; many rigs in one scene."),
     ("skeleton", "Skeleton",
      "As a new skeleton: the clip arrives as its own namespaced skeleton and "
      "nothing else happens."),
@@ -391,8 +392,11 @@ def import_dropped(record, aim):
 
     `aim` is `droptarget.clip_target`'s answer at the release: "rig" (the
     rig under the cursor, by namespace) takes the clip as Import with the Rig
-    mode would, whatever is selected; "new_rig" adds a Manny rig, which
-    stands where the clip is, as New rig. The import-mode segments do not
+    mode would, whatever is selected; "new_rig" adds the rig active in the
+    Characters card (Manny when that is no rig), standing on the floor point
+    the drop aimed at after every bake («риг с анимацией оставался в том
+    месте куда мы указали после всех перезапеканий»), or where the clip is
+    when the cursor saw no floor. The import-mode segments do not
     matter here; the timeline checkbox does. The rig is found again after
     nothing but the drop: it can have been deleted while the editor
     exported. Returns the status line.
@@ -416,7 +420,8 @@ def import_dropped(record, aim):
     from maya_uebridge import rigimport   # lazy: keeps the import graph flat
     text = rigimport.import_and_retarget(
         exported, record.name, clip_fps=fps, set_timeline=_timeline(),
-        target=kind, rig=rig)
+        target=kind, rig=rig,
+        at=aim.get("point") if kind == "new_rig" else None)
     _status(text)
     return text
 
@@ -521,7 +526,8 @@ def build_panel():
         height=LIST_HEIGHT,
         annotation="Double-click imports the way the mode says. Drag a row "
                    "into a viewport: onto a rig it retargets there, onto "
-                   "empty floor it makes a new Manny rig.",
+                   "empty floor a new rig (the one active in Characters, "
+                   "else Manny) takes it and stands where you pointed.",
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 

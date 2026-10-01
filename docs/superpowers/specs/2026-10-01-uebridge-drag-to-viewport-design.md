@@ -97,3 +97,33 @@ nothing.
   with an FBX standing in for the editor's export (`window._export_from_editor` replaced for the
   run — no editor is needed) retargets onto the rig under the point and leaves the other unmoved, and
   a drop on the empty floor adds a third rig.
+
+## Addendum, the same day: the active rig, and the drop point kept
+
+The animator, after using it: «Давай сделаем так что бы у нас анимация закидывалась не на риг по
+умолчанию а на тот который активен во вкладке characters но если в персанажах нет активного рига то
+тогда берем базовый маникен. Второе изменение хотелось бы что бы если мы указываем на пол при переносе
+анимации то наш риг с анимацией оставался в том месте куда мы указали после все перезапеканий». Both
+answers above are reversed:
+
+- **A rig the bridge adds is the Characters card's active row when that row is a rig**
+  (`rigimport.new_rig_entry` → `rig_entry_for(window.chosen_character(), catalog.default_rig())`), read
+  from the card's memory so the card need not be open; a skeleton picked, or a model with no rig
+  (the UE4 Mannequin), gives Manny. It applies wherever the bridge adds a rig — a floor drop, Import
+  with New rig, Import with Rig in a scene with none — one meaning. The drop's caption names it
+  («A_Jump · a new Creep [rig] · floor (120, -36)»), read when the drag starts.
+- **A floor drop leaves the new rig standing on the point after every bake.** `clip_target` returns
+  the floor point the camera ray meets (`point`; None looking above the horizon, and then the rig
+  stands where the clip is). `import_and_retarget(..., at=point)`: after the import the clip's root is
+  wrapped in a group of its namespace (`skeldarDropShift`, it dies with the namespace) standing where
+  it stood; the connect measures the clip unmoved — the holder remembers the root's path, which no
+  longer changes; then the group moves by `shift_for(at, root at the clip's first frame)` (horizontal
+  only), so the bake carries the move into the controls, the helper bones and the camera set up on
+  `camera_root`. A drop onto a rig never moves anything. **The exported root bone carries the move**:
+  that is what "stays where I pointed" means once the rig is baked.
+
+Proof: `verify_uebridge_drag.py` gates 9-11 — Characters on Creep [skeleton] / the UE4 Mannequin gives
+Manny, on Orc D [rig] / Creep [rig] that rig; with Creep [rig] active a floor drop adds a Creep whose
+root at frame 0 stands on the point to 0.0 and walks the clip's own track moved by exactly that much
+(0.0 against the same clip imported as a plain skeleton); with Manny [rig] active the same on another
+point with the camera on its camera_root to 7e-14; the rigs already standing drift 0.0.

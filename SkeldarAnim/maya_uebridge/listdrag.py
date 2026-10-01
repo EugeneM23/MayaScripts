@@ -8,12 +8,13 @@
 - press a row and move past Qt's start distance: the hub's shared ghost rides
   the cursor with a caption naming the target - «A_Jump · retarget onto
   Manny_Rig1» over a rig (`droptarget.clip_target`: the rig whose game
-  skeleton is under the cursor), «A_Jump · a new Manny [rig]» over a viewport
-  with no rig, muted text anywhere else;
+  skeleton is under the cursor), «A_Jump · a new Creep [rig] · floor (120,
+  -36)» over a viewport with no rig, muted text anywhere else;
 - release over a rig: the clip goes onto THAT rig as Import with the Rig mode
-  would; over a viewport with no rig: onto a new Manny rig, as New rig (it
-  stands where the clip is - the animator's pick); elsewhere, or back on the
-  hub: nothing. Esc or the right button cancels.
+  would; over a viewport with no rig: onto a new rig - the one active in the
+  Characters card, Manny when that is no rig - standing on the floor point
+  after every bake (both the animator's, the same day); elsewhere, or back
+  on the hub: nothing. Esc or the right button cancels.
 
 Maya's textScrollList IS a QListWidget: an event filter on it and its
 viewport does the whole thing, so the window stays plain `cmds`. The press
@@ -75,13 +76,17 @@ class Scene(object):
 
     def snapshot(self):
         from maya_scenesetup import droptarget
+        from maya_uebridge import rigimport
+        self._new_label = rigimport.new_rig_entry().label
         return droptarget.rig_snapshot()
 
     def target(self, gx, gy, snap):
-        from maya_scenesetup import catalog
         from maya_scenesetup import droptarget
-        return droptarget.clip_target(gx, gy, snap, self.scale(),
-                                      catalog.default_rig().label)
+        label = getattr(self, "_new_label", None)
+        if label is None:
+            from maya_uebridge import rigimport
+            label = self._new_label = rigimport.new_rig_entry().label
+        return droptarget.clip_target(gx, gy, snap, self.scale(), label)
 
     def over_hub(self, gx, gy):
         import maya_hubqt

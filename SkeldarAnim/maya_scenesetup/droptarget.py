@@ -122,8 +122,11 @@ def rig_text(label):
     return "retarget onto %s" % label
 
 
-def new_rig_text(label):
-    return "a new %s" % label
+def new_rig_text(label, point=None):
+    if point is None:
+        return "a new %s" % label
+    return "a new %s %s floor (%d, %d)" % (label, DOT, int(round(point[0])),
+                                         int(round(point[2])))
 
 
 # ------------------------------------------------------------------ scene
@@ -334,8 +337,9 @@ def clip_target(gx, gy, snap, scale=1.0, new_label="Manny [rig]"):
     (rig = its namespace, label) when a rig of `snap` is under the cursor in
     a viewport (the Weapons rule: its nearest bone on screen within
     max(16 px, 8 % of its height)), "new_rig" over a viewport with no rig
-    under the cursor, "none" off every viewport; with the caption as
-    "text"."""
+    under the cursor - with the floor point the camera ray meets as "point"
+    (None looking above the horizon), where the new rig is to stand - and
+    "none" off every viewport; with the caption as "text"."""
     view, local = Viewport.at(gx, gy)
     if view is None:
         return dict(kind="none", text=NO_VIEWPORT)
@@ -348,6 +352,8 @@ def clip_target(gx, gy, snap, scale=1.0, new_label="Manny [rig]"):
                               {}, view.depth(ch["root"])))
     key = figure_under(port, figures, 16.0 * scale * view.sx)
     if key is None:
-        return dict(kind="new_rig", text=new_rig_text(new_label))
+        near, far = view.ray(port)
+        hit = floor_hit(near, far)
+        return dict(kind="new_rig", point=hit, text=new_rig_text(new_label, hit))
     label = next(ch["label"] for ch in snap if ch["key"] == key)
     return dict(kind="rig", rig=key, label=label, text=rig_text(label))

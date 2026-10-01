@@ -147,6 +147,8 @@ class FigureUnder(unittest.TestCase):
     def test_the_captions(self):
         self.assertEqual(dt.rig_text("Manny_Rig1"), "retarget onto Manny_Rig1")
         self.assertEqual(dt.new_rig_text("Manny [rig]"), "a new Manny [rig]")
+        self.assertEqual(dt.new_rig_text("Creep [rig]", (120.4, 0.0, -35.6)),
+                         "a new Creep [rig] · floor (120, -36)")
 
 
 class ClipTarget(unittest.TestCase):
@@ -164,6 +166,10 @@ class ClipTarget(unittest.TestCase):
 
         def depth(self, world):
             return world[2]
+
+        def ray(self, port):
+            # straight down onto the floor under the port point
+            return (port[0], 500.0, -port[1]), (port[0], 400.0, -port[1])
 
     def setUp(self):
         self.saved = dt.Viewport.__dict__["at"]
@@ -190,10 +196,19 @@ class ClipTarget(unittest.TestCase):
         aim = dt.clip_target(1, 2, self.snap)
         self.assertEqual((aim["kind"], aim["rig"], aim["label"]), ("rig", "", "Group"))
 
-    def test_beside_every_rig_a_new_rig(self):
+    def test_beside_every_rig_a_new_rig_on_the_floor_point(self):
+        """2026-10-01: the new rig stands where the floor was pointed at."""
         self.at((200.0, 60.0))
+        self.assertEqual(dt.clip_target(1, 2, self.snap, new_label="Creep [rig]"),
+                         dict(kind="new_rig", point=(200.0, 0.0, -60.0),
+                              text="a new Creep [rig] · floor (200, -60)"))
+
+    def test_no_floor_under_the_cursor_a_new_rig_where_the_clip_is(self):
+        view = self.View()
+        view.ray = lambda port: ((0.0, 10.0, 0.0), (0.0, 20.0, 5.0))
+        dt.Viewport.at = classmethod(lambda cls, gx, gy: (view, (200.0, 60.0)))
         self.assertEqual(dt.clip_target(1, 2, self.snap, new_label="Manny [rig]"),
-                         dict(kind="new_rig", text="a new Manny [rig]"))
+                         dict(kind="new_rig", point=None, text="a new Manny [rig]"))
 
     def test_an_empty_scene_is_a_new_rig(self):
         self.at((200.0, 60.0))
