@@ -365,7 +365,7 @@ class SeveralAnimations(unittest.TestCase):
         self.assertEqual(self.calls, [("export", "A_Jump"),
                                       ("press", "A_Jump", "rig", None, None)])
         self.assertEqual(self.statuses, [
-            "A_Jump retargeted  |  only A_Jump: a rig takes one animation (1 more picked)"])
+            "only A_Jump: a rig takes one animation (1 more picked)  |  A_Jump retargeted"])
 
     def test_one_picked_is_the_press_it_always_was(self):
         self.picked = [2]
@@ -379,8 +379,8 @@ class SeveralAnimations(unittest.TestCase):
             kind="rig", rig="Manny_Rig1", label="Manny_Rig1", text="retarget onto Manny_Rig1"))
         self.assertEqual(self.calls, [("export", "A_Jump"),
                                       ("press", "A_Jump", "rig", "Manny_Rig1", None)])
-        self.assertEqual(text, "A_Jump retargeted  |  only A_Jump: a rig takes one "
-                               "animation (2 more picked)")
+        self.assertEqual(text, "only A_Jump: a rig takes one animation (2 more picked)"
+                               "  |  A_Jump retargeted")
 
     def test_a_floor_drop_of_several_lays_them_out_about_the_point_across_the_screen(self):
         window.import_dropped(self.recs, dict(kind="new_rig", point=(120.0, 0.0, -36.0),

@@ -7129,6 +7129,65 @@ Orc D, so a later import had overwritten the line; its geometry passed the same.
      did nothing (a release on the hub) — read as a failed drop. Try the corners until no aimed point is on
      the hub (`keep_hub_off`), and re-project after the move.
 
+## UE Bridge: several animations at once, a line of rigs (2026-10-01)
+
+The animator: «Давай добавим возможность выделить массив анимаций и выполнить действие над массивом анимаций
+как по кнопке так и перетягивание в сцену рукой. Если мы выбрали массив анимаций и нажали import to rig или
+перетянули в уже созданный риг на сцене то пускай загружается только первая анимация ... Если мы нажали add
+new rig или перетянули в пустое место на сцене то давай мы создадим все наши анимации в линию с некоторым шагом
+что бы они не пересекались. В случае с кнопкой ... симметрично относительно нуля сцены а в случае с
+перетягиванием ... относительно точки в которую мы указали». Asked: **the step is 2.5 m widened by sideways root
+travel**, **a drag's line runs across the screen** (the camera's right on the floor), **Skeleton mode lays its
+skeletons out in the same line**. Spec `docs/superpowers/specs/2026-10-01-uebridge-many-animations-design.md`,
+plan beside it.
+
+- **The list takes a multiple selection** (`allowMultiSelection=True`; Maya's list is Qt's ExtendedSelection,
+  measured). "The first" is the topmost picked row in list order (`window._selected_records`).
+- **One animation behaves exactly as before**, both roads. Several: **Rig** (button, or a drop on a rig) takes the
+  first and the status LEADS with «only A_Jump: a rig takes one animation (2 more picked)» — at the end it was
+  clipped by the two-line status box (seen live); **New rig / Skeleton** (button) lay them all out along world X
+  symmetric about the origin; **a floor drop** of several lays them out through the drop point along the
+  camera's right (the aim's `axis`, `droptarget.on_floor(view.heading())`), about the origin when no floor was
+  seen. **Export to uasset** refuses several.
+- **The line** (`maya_uebridge/lineup.py`, stdlib, pure): `side_extent` (a clip's root track relative to its first
+  frame, along the axis), `offsets` (slot i+1 stands `step + hi_i - lo_(i+1)` past slot i, first and last
+  equidistant from the centre - so root PATHS stay a whole step apart), `slots`, `widened`, `sample_frames`. A
+  rig's slot is where its **Main** stands at its clip's first frame (the floor drop's rule, `rigimport._place`,
+  facing kept); a skeleton's is where its root stands.
+- **The press** (`maya_uebridge/lineimport.run(records, export, target, centre, axis, set_timeline)`): refusals
+  (the rig file), EVERY clip out of the editor before anything enters the scene (one it cannot export is named
+  and left out), every clip imported as its own skeleton, each root track read through `getAttr(worldMatrix[0],
+  time=)` (`rigimport.root_at` - a bare skeleton on its curves, no constraint; a frame walk would evaluate every
+  rig in the scene per frame), laid out, the timeline set ONCE to the union before any bake, then each clip: a
+  rig added and retargeted standing on its slot, or the skeleton's root wrapped (`skeldarDropShift`) and moved.
+  A cancellable progress window; a cancel keeps what is done and deletes the clip skeletons of the rest.
+- `rigimport.import_and_retarget` is now four pieces the batch reuses - `plan_press`, `ready_rig`,
+  `import_source`, `retarget_imported` - plus `root_at` / `stand_skeleton`; the one-animation press composes
+  them in the old order (its press tests unchanged and green).
+- **The drag carries several** (`listdrag.carried_rows`, pure): a plain press on a row picked before it carries
+  every picked row (Explorer's rule), else what the press left picked, else the pressed row; the list's
+  selection is put back to what is carried after the synthetic release (cmds sees it: gate 8). The ghost:
+  «A_Jump · retarget onto Manny_Rig1 · first of 3», «3 animations · 3 new Manny [rig] in a line · floor (2, 1)».
+  `drop_at(gx, gy, records)` and `window.import_dropped(records, aim)` take a record or a list.
+
+Proof: `docs/superpowers/plans/verify_uebridge_many.py` **11/11 in a disposable Maya** (port 7023, scratch
+`MAYA_APP_DIR`, `MAYA_NO_HOME=1`, minimized, killed after; the editor's export replaced by
+LongSword_Attack_Right_Heavy_1P, ShortSword_Attack_Thrust_3P - 248.7 cm of root travel forward, 23 cm sideways -
+and ShortSword_Walk_1P on disk): the button with New rig - three Mannys, Main at each clip's first frame on its
+slot to 0.0 (−261.4, 4.2, 261.4), the root paths exactly 250.0 apart along X, the timeline 0–61; Skeleton - each
+root playing its own keys moved onto its slot, 0.0 off; Rig - the first only, the note; a real press–drag–release
+of the three picked rows onto the floor with the camera looking along X (the line along −Z): all three carried,
+the list kept them picked, three rigs on their slots through the point, the thrust's forward travel widening
+its gap to 498.7 (clearance exactly 250.0); the three dropped on the middle rig - the first only, the other two
+rigs 0.0 drift. The slots were held against each clip's root walked frame by frame with `currentTime` on a plain
+import. 3348 unit tests. A Shift range cannot be tested offscreen (Qt ignores a sent Shift for a range on a bare
+QListWidget - measured; Ctrl works): the Shift road is the same code as Ctrl's.
+
+151. **`importlib.reload` of a module re-runs its module-level state**: reloading `maya_uebridge.window` in a live
+     Maya to pick up a fix emptied `_STATE`, and the list still showed three rows while Import answered «select
+     an animation first». A reload in a verify run must put the state back (`_STATE["records"]` + `_repopulate`)
+     - or purge and rebuild the panel; the closures over the module see the new, empty dict.
+
 ## Center of Mass: a live point, a fast trail, the CoM tool (2026-10-01)
 
 The animator: «у нас должна быть какая-то точка к которой мы можем сделать motion trail … моушен треил

@@ -229,7 +229,9 @@ def _selected_record():
 
 
 def _with_note(text, note):
-    return "{0}  |  {1}".format(text, note) if note else text
+    """`note` ahead of `text`: the status shows two lines of a long line, and
+    "only the first went" is what must not be clipped (measured live)."""
+    return "{0}  |  {1}".format(note, text) if note else text
 
 
 # ---------------------------------------------------------------- actions
