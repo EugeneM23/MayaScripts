@@ -64,6 +64,7 @@ TOKENS = {
 
 #  The objectNames the stylesheet scopes by (hubqt names its widgets so).
 ROOT = "skeldarAnimHubRoot"
+HUB_CONTROL = "skeldarAnimHub"          # maya_hub.CONTROL, the workspaceControl
 CONTENT = "skeldarHubContent"
 VIEWPORT = "skeldarHubViewport"
 SCROLL = "skeldarHubScrollArea"
@@ -173,6 +174,13 @@ def hex_of(rgb):
         value = min(1.0, max(0.0, float(value)))
         parts.append("%02x" % int(round(value * 255)))
     return "#" + "".join(parts)
+
+
+def over_hub(names, control=HUB_CONTROL):
+    """Whether a point whose widget ancestry carries `names` (objectNames,
+    innermost first) lies on the hub itself: a drag released there does
+    nothing (maya_hubqt.on_hub)."""
+    return any(name in (ROOT, control) for name in names or ())
 
 
 def px(value, scale):

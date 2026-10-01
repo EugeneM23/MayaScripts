@@ -4,6 +4,7 @@ The widgets need a Maya session; what is testable here is the cache, which is
 where a mistake would quietly hand the user a wrong list.
 """
 
+import collections
 import sys
 import types
 import unittest
@@ -200,6 +201,80 @@ class NoPerforce(unittest.TestCase):
 
     def test_the_legacy_checkouts_popup_is_still_closed_on_open(self):
         self.assertIn("ueBridgeCheckouts", window.LEGACY_WINDOWS)
+
+
+class ImportDropped(unittest.TestCase):
+    """2026-10-01: an animation dragged out of the list and released over a
+    viewport - onto the rig under the cursor, else onto a new rig. The editor,
+    the scene and rigimport are faked."""
+
+    Rig = collections.namedtuple("Rig", "namespace")
+
+    def setUp(self):
+        from maya_uebridge import rigimport
+        self.rigimport = rigimport
+        self.calls = []
+        self.statuses = []
+        self.rigs = {"Manny_Rig1": self.Rig("Manny_Rig1")}
+        saved = dict(cmds=window.cmds, export=window._export_from_editor,
+                     status=window._status, press=rigimport.import_and_retarget,
+                     maya_rigs=sys.modules.get("maya_rigs"))
+
+        def restore():
+            window.cmds = saved["cmds"]
+            window._export_from_editor = saved["export"]
+            window._status = saved["status"]
+            rigimport.import_and_retarget = saved["press"]
+            if saved["maya_rigs"] is not None:
+                sys.modules["maya_rigs"] = saved["maya_rigs"]
+            else:
+                sys.modules.pop("maya_rigs", None)
+        self.addCleanup(restore)
+        window.cmds = types.SimpleNamespace(
+            checkBox=lambda name, exists=False, query=False, value=False: (
+                True if exists else False))
+        window._export_from_editor = lambda record: (
+            self.calls.append(("export", record.name)) or ("C:/t/%s.fbx" % record.name, 30.0))
+        window._status = self.statuses.append
+
+        def press(fbx, name, clip_fps=None, set_timeline=True, target="rig", rig=None):
+            self.calls.append(("press", fbx, name, clip_fps, set_timeline, target,
+                               rig.namespace if rig else None))
+            return "%s retargeted" % name
+        rigimport.import_and_retarget = press
+        sys.modules["maya_rigs"] = types.SimpleNamespace(
+            find=lambda namespace: self.rigs.get(namespace))
+        self.record = records.parse_payload({"assets": [
+            {"name": "A_Jump", "package": "/Game/A_Jump", "fps": 30.0}]})[0]
+
+    def test_onto_the_rig_under_the_cursor(self):
+        text = window.import_dropped(self.record, dict(
+            kind="rig", rig="Manny_Rig1", label="Manny_Rig1", text="retarget onto Manny_Rig1"))
+        self.assertEqual(self.calls, [
+            ("export", "A_Jump"),
+            ("press", "C:/t/A_Jump.fbx", "A_Jump", 30.0, False, "rig", "Manny_Rig1")])
+        self.assertEqual(text, "A_Jump retargeted")
+        self.assertEqual(self.statuses, ["A_Jump retargeted"])
+
+    def test_beside_every_rig_onto_a_new_rig(self):
+        window.import_dropped(self.record, dict(kind="new_rig", text="a new Manny [rig]"))
+        self.assertEqual(self.calls[-1][5:], ("new_rig", None))
+
+    def test_a_rig_gone_during_the_drag_imports_nothing(self):
+        window.import_dropped(self.record, dict(kind="rig", rig="Gone", label="Gone"))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.statuses, ["the rig Gone is gone - nothing imported"])
+
+    def test_no_target_imports_nothing_and_says_why(self):
+        window.import_dropped(self.record, dict(kind="none", text="no floor"))
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.statuses, ["no floor"])
+
+    def test_the_list_is_given_its_drag(self):
+        import inspect
+        source = inspect.getsource(window.build_panel)
+        self.assertIn("_attach_drag()", source)
+        self.assertIn("listdrag.attach(_LIST", inspect.getsource(window._attach_drag))
 
 
 class ProjectLabel(unittest.TestCase):

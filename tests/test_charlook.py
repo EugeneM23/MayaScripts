@@ -104,9 +104,11 @@ class Drag(unittest.TestCase):
         self.assertTrue(look.dragged((10, 10), (13, 11), 4))
 
     def test_over_the_hub(self):
-        self.assertTrue(look.over_hub(["", "skeldarAnimHubRoot", "MayaWindow"]))
-        self.assertTrue(look.over_hub(["skeldarAnimHub"]))
-        self.assertFalse(look.over_hub(["modelPanel4", "MayaWindow"]))
+        """maya_hubstyle's since 2026-10-01 (the UE Bridge list drags too)."""
+        import maya_hubstyle
+        self.assertTrue(maya_hubstyle.over_hub(["", "skeldarAnimHubRoot", "MayaWindow"]))
+        self.assertTrue(maya_hubstyle.over_hub(["skeldarAnimHub"]))
+        self.assertFalse(maya_hubstyle.over_hub(["modelPanel4", "MayaWindow"]))
 
 
 class Boundary(unittest.TestCase):

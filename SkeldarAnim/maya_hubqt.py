@@ -105,6 +105,28 @@ def find(name, layout=False):
     return widget
 
 
+def on_hub(gx, gy, control="skeldarAnimHub"):
+    """Whether the global point lies on the hub: the widget under it descends
+    from the hub's root or control, or it falls inside the visible control.
+    A drag released there does nothing (the Characters grid's since
+    2026-09-30, the UE Bridge list's since 2026-10-01)."""
+    q = qt()
+    point = q.QtCore.QPoint(int(gx), int(gy))
+    names = []
+    widget = q.QtWidgets.QApplication.widgetAt(point)
+    while widget is not None:
+        names.append(widget.objectName())
+        widget = widget.parentWidget()
+    if hubstyle.over_hub(names, control):
+        return True
+    try:
+        host = find(control)
+    except Exception:                                        # noqa: BLE001
+        host = None
+    return bool(host is not None and host.isVisible()
+                and host.rect().contains(host.mapFromGlobal(point)))
+
+
 def path_of(obj):
     """The Maya path of a Qt object of ours: what `cmds.setParent` takes."""
     import maya.OpenMayaUI as omui

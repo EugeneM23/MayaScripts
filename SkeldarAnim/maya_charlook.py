@@ -27,8 +27,6 @@ THROTTLE_MS = 33        # the drag's caption is re-read at most this often
 DOT = "·"
 
 PALETTE = maya_hubstyle.TOKENS
-#  A release over any of these is a release back on the hub: nothing happens.
-HUB_NAMES = (maya_hubstyle.ROOT, "skeldarAnimHub")
 
 
 def grid(width, count, scale=1.0):
@@ -126,9 +124,3 @@ def dragged(start, now, threshold):
     """Whether a held press has travelled far enough to be a drag (Qt's own
     measure: the manhattan length)."""
     return abs(now[0] - start[0]) + abs(now[1] - start[1]) >= threshold
-
-
-def over_hub(names):
-    """Whether a point whose widget ancestry carries `names` (objectNames,
-    innermost first) lies on the hub itself."""
-    return any(name in HUB_NAMES for name in names or ())

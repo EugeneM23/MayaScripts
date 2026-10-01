@@ -119,3 +119,87 @@ class FloorAt(unittest.TestCase):
         view = self.View((0.0, 100.0, 50.0), (0.0, 200.0, 40.0))
         dt.Viewport.at = classmethod(lambda cls, gx, gy: (view, (5, 5)))
         self.assertEqual(dt.floor_at(1, 2), dict(kind="none", text=dt.NO_FLOOR))
+
+
+class FigureUnder(unittest.TestCase):
+    """2026-10-01, an animation dragged out of the UE Bridge: which rig is
+    under the cursor - the Weapons rule without the hands."""
+
+    def test_on_a_figure_its_key(self):
+        f = dt.Figure("Manny_Rig", [((100.0, 0.0), (100.0, 100.0))], {}, 10.0)
+        self.assertEqual(dt.figure_under((108.0, 50.0), [f], 16), "Manny_Rig")
+
+    def test_off_every_figure_none(self):
+        f = dt.Figure("Manny_Rig", [((100.0, 0.0), (100.0, 100.0))], {}, 10.0)
+        self.assertIsNone(dt.figure_under((200.0, 50.0), [f], 16))
+        self.assertIsNone(dt.figure_under((0.0, 0.0), [], 16))
+
+    def test_the_nearest_wins_a_tie_the_nearer_camera(self):
+        a = dt.Figure("A", [((100.0, 0.0), (100.0, 100.0))], {}, 500.0)
+        b = dt.Figure("B", [((110.0, 0.0), (110.0, 100.0))], {}, 900.0)
+        self.assertEqual(dt.figure_under((108.0, 50.0), [a, b], 16), "B")
+        c = dt.Figure("C", [((100.0, 0.0), (100.0, 100.0))], {}, 200.0)
+        self.assertEqual(dt.figure_under((100.0, 50.0), [a, c], 16), "C")
+
+    def test_a_figure_without_bones_is_no_target(self):
+        self.assertIsNone(dt.figure_under((0.0, 0.0), [dt.Figure("A", [], {}, 1.0)], 16))
+
+    def test_the_captions(self):
+        self.assertEqual(dt.rig_text("Manny_Rig1"), "retarget onto Manny_Rig1")
+        self.assertEqual(dt.new_rig_text("Manny [rig]"), "a new Manny [rig]")
+
+
+class ClipTarget(unittest.TestCase):
+    """The rig under the cursor, else a new rig, over a viewport; nothing off
+    every viewport. The view is faked: identity projection, depth by x."""
+
+    class View(object):
+        sx = 1.0
+
+        def to_port(self, local):
+            return local
+
+        def project(self, world):
+            return world[0], world[1]
+
+        def depth(self, world):
+            return world[2]
+
+    def setUp(self):
+        self.saved = dt.Viewport.__dict__["at"]
+        self.addCleanup(setattr, dt.Viewport, "at", self.saved)
+        self.snap = [dict(key="Manny_Rig", label="Manny_Rig", root=(100.0, 0.0, 50.0),
+                          points={"r": (100.0, 0.0, 50.0), "h": (100.0, 100.0, 50.0)},
+                          segments=[("r", "h")]),
+                     dict(key="", label="Group", root=(300.0, 0.0, 50.0),
+                          points={"r": (300.0, 0.0, 50.0), "h": (300.0, 100.0, 50.0)},
+                          segments=[("r", "h")])]
+
+    def at(self, local):
+        view = self.View()
+        dt.Viewport.at = classmethod(lambda cls, gx, gy: (view, local))
+
+    def test_on_a_rig_its_namespace(self):
+        self.at((104.0, 60.0))
+        self.assertEqual(dt.clip_target(1, 2, self.snap),
+                         dict(kind="rig", rig="Manny_Rig", label="Manny_Rig",
+                              text="retarget onto Manny_Rig"))
+
+    def test_the_root_namespace_rig_too(self):
+        self.at((300.0, 20.0))
+        aim = dt.clip_target(1, 2, self.snap)
+        self.assertEqual((aim["kind"], aim["rig"], aim["label"]), ("rig", "", "Group"))
+
+    def test_beside_every_rig_a_new_rig(self):
+        self.at((200.0, 60.0))
+        self.assertEqual(dt.clip_target(1, 2, self.snap, new_label="Manny [rig]"),
+                         dict(kind="new_rig", text="a new Manny [rig]"))
+
+    def test_an_empty_scene_is_a_new_rig(self):
+        self.at((200.0, 60.0))
+        self.assertEqual(dt.clip_target(1, 2, [])["kind"], "new_rig")
+
+    def test_off_every_viewport_nothing(self):
+        dt.Viewport.at = classmethod(lambda cls, gx, gy: (None, None))
+        self.assertEqual(dt.clip_target(1, 2, self.snap),
+                         dict(kind="none", text=dt.NO_VIEWPORT))

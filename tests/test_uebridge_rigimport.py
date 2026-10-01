@@ -288,6 +288,25 @@ class ThePress(unittest.TestCase):
         self.assertEqual([c for c in self.calls if c[0] == "connect"][0][2], "Manny_Rig1")
         self.assertIn("retargeted onto Manny_Rig1", text)
 
+    def test_a_dropped_on_rig_takes_the_clip_and_the_selection_is_not_asked(self):
+        """2026-10-01, an animation dragged onto a rig in the viewport: that
+        rig, whatever is selected (two rigs, nothing chosen, would refuse)."""
+        second = FakeRig("Manny_Rig1")
+        self.rigs.append(second)
+        self.current = [None, "2 rigs in the scene - select"]
+        text = rigimport.import_and_retarget("C:/t/A.fbx", "A", rig=second)
+        self.assertNotIn(("which",), self.calls)
+        self.assertEqual([c for c in self.calls if c[0] == "reset"], [("reset", "Manny_Rig1")])
+        self.assertEqual([c for c in self.calls if c[0] == "connect"][0][2], "Manny_Rig1")
+        self.assertIn("retargeted onto Manny_Rig1", text)
+
+    def test_a_new_rig_ignores_a_given_rig(self):
+        text = rigimport.import_and_retarget("C:/t/A.fbx", "A", target="new_rig",
+                                             rig=self.rigs[0])
+        self.assertEqual(self._steps(), ["add", "import", "connect", "bake", "delete_ns"])
+        self.assertNotIn("reset", self._steps())
+        self.assertIn("retargeted onto Manny_Rig1", text)
+
     def test_an_unknown_target_is_refused(self):
         self.assertIn("unknown import target", rigimport.import_and_retarget("C:/t/A.fbx", "A", target="x"))
         self.assertEqual(self.calls, [])

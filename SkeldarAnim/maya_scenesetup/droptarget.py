@@ -50,11 +50,13 @@ def _height(segments):
     return (max(ys) - min(ys)) if ys else 0.0
 
 
-def choose(point, figures, radius_min):
-    """("hand", key, side) for the figure under `point`, else None. Pure."""
+def _closest(point, figures, radius_min):
+    """The figure under `point`: the nearest whose nearest bone on screen is
+    within max(radius_min, 8 % of its projected height), a tie to the one
+    nearer the camera; None. Pure."""
     best = None
     for fig in figures:
-        if not fig.segments or not any(fig.hands.values()):
+        if not fig.segments:
             continue
         radius = max(radius_min, HEIGHT_SHARE * _height(fig.segments))
         near = min(seg_distance(point, a, b) for a, b in fig.segments)
@@ -63,9 +65,22 @@ def choose(point, figures, radius_min):
         score = (near / radius, fig.depth)
         if best is None or score < best[0]:
             best = (score, fig)
-    if best is None:
+    return best[1] if best else None
+
+
+def figure_under(point, figures, radius_min):
+    """The key of the figure under `point`, or None (2026-10-01: the rig an
+    animation dragged out of the UE Bridge lands on). Pure."""
+    fig = _closest(point, figures, radius_min)
+    return fig.key if fig is not None else None
+
+
+def choose(point, figures, radius_min):
+    """("hand", key, side) for the figure under `point`, else None. Pure."""
+    fig = _closest(point, [f for f in figures if any(f.hands.values())],
+                   radius_min)
+    if fig is None:
         return None
-    fig = best[1]
     side = min((s for s in ("R", "L") if fig.hands.get(s)),
                key=lambda s: math.hypot(point[0] - fig.hands[s][0],
                                         point[1] - fig.hands[s][1]))
@@ -99,6 +114,14 @@ def floor_text(label, bone):
     return "floor %s %s %s %s" % (DOT, label, DOT, bone)
 
 
+def rig_text(label):
+    return "retarget onto %s" % label
+
+
+def new_rig_text(label):
+    return "a new %s" % label
+
+
 # ------------------------------------------------------------------ scene
 
 def characters():
@@ -116,6 +139,22 @@ def characters():
     return [(root, equip.character_name(root)) for root in roots]
 
 
+def _bones(joints):
+    """({joint: world point}, [(parent, child)]) of `joints`: their bones as
+    parent->child segments between joints of the list."""
+    import maya.cmds as cmds
+    points = dict((j, tuple(cmds.xform(j, query=True, worldSpace=True,
+                                       translation=True)))
+                  for j in joints)
+    segments = []
+    for joint in joints:
+        parent = (cmds.listRelatives(joint, parent=True, fullPath=True)
+                  or [None])[0]
+        if parent in points:
+            segments.append((parent, joint))
+    return points, segments
+
+
 def snapshot():
     """Every character read once, in world space, for one drag."""
     import maya.cmds as cmds
@@ -125,15 +164,7 @@ def snapshot():
     for root, label in characters():
         joints = [root] + (cmds.listRelatives(root, allDescendents=True,
                                               type="joint", fullPath=True) or [])
-        points = dict((j, tuple(cmds.xform(j, query=True, worldSpace=True,
-                                           translation=True)))
-                      for j in joints)
-        segments = []
-        for joint in joints:
-            parent = (cmds.listRelatives(joint, parent=True, fullPath=True)
-                      or [None])[0]
-            if parent in points:
-                segments.append((parent, joint))
+        points, segments = _bones(joints)
         hands, taken = {}, {}
         for side in catalog.SIDES:
             hand, _bone = equip.bones(root, side)
@@ -265,3 +296,54 @@ def floor_at(gx, gy):
     if hit is None:
         return dict(kind="none", text=NO_FLOOR)
     return dict(kind="floor", point=hit)
+
+
+def rig_snapshot():
+    """Every rig read once, in world space, for one drag of an animation out
+    of the UE Bridge (2026-10-01): dict(key=<namespace>, label, points,
+    segments, root) per rig - its game skeleton's bones, or, for a rig that
+    drives none, the joints under its group. Bare skeletons are not rigs."""
+    import maya.cmds as cmds
+    import maya_rigs
+    out = []
+    for rig in maya_rigs.rigs():
+        top = rig.skeleton_root or rig.group
+        if not top or not cmds.objExists(top):
+            continue
+        joints = cmds.listRelatives(top, allDescendents=True, type="joint",
+                                    fullPath=True) or []
+        if cmds.objectType(top) == "joint":
+            joints = [top] + joints
+        if not joints:
+            continue
+        points, segments = _bones(joints)
+        root = (points.get(rig.skeleton_root)
+                or tuple(cmds.xform(rig.main, query=True, worldSpace=True,
+                                    translation=True)))
+        out.append(dict(key=rig.namespace, label=maya_rigs.label(rig),
+                        points=points, segments=segments, root=root))
+    return out
+
+
+def clip_target(gx, gy, snap, scale=1.0, new_label="Manny [rig]"):
+    """Where an animation released at the global point goes: kind "rig"
+    (rig = its namespace, label) when a rig of `snap` is under the cursor in
+    a viewport (the Weapons rule: its nearest bone on screen within
+    max(16 px, 8 % of its height)), "new_rig" over a viewport with no rig
+    under the cursor, "none" off every viewport; with the caption as
+    "text"."""
+    view, local = Viewport.at(gx, gy)
+    if view is None:
+        return dict(kind="none", text=NO_VIEWPORT)
+    port = view.to_port(local)
+    figures = []
+    for ch in snap:
+        pts = dict((j, view.project(p)) for j, p in ch["points"].items())
+        figures.append(Figure(ch["key"],
+                              [(pts[a], pts[b]) for a, b in ch["segments"]],
+                              {}, view.depth(ch["root"])))
+    key = figure_under(port, figures, 16.0 * scale * view.sx)
+    if key is None:
+        return dict(kind="new_rig", text=new_rig_text(new_label))
+    label = next(ch["label"] for ch in snap if ch["key"] == key)
+    return dict(kind="rig", rig=key, label=label, text=rig_text(label))

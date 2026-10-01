@@ -71,24 +71,9 @@ class Scene(object):
         return droptarget.floor_at(gx, gy)
 
     def over_hub(self, gx, gy):
-        """Whether the global point lies on the hub: the widget under it
-        descends from the hub, or it falls inside the hub's control."""
+        """Whether the global point lies on the hub (maya_hubqt.on_hub)."""
         import maya_hubqt
-        q = maya_hubqt.qt()
-        point = q.QtCore.QPoint(int(gx), int(gy))
-        names = []
-        widget = q.QtWidgets.QApplication.widgetAt(point)
-        while widget is not None:
-            names.append(widget.objectName())
-            widget = widget.parentWidget()
-        if look.over_hub(names):
-            return True
-        try:
-            host = maya_hubqt.find(HUB_CONTROL)
-        except Exception:                                    # noqa: BLE001
-            host = None
-        return bool(host is not None and host.isVisible()
-                    and host.rect().contains(host.mapFromGlobal(point)))
+        return maya_hubqt.on_hub(gx, gy, HUB_CONTROL)
 
     def select(self, model):
         from maya_scenesetup import window

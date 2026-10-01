@@ -9,6 +9,10 @@ and three buttons -- Export FBX..., Export to uasset, IMPORT. The Export tab,
 the Checkout button and the version-control row are gone from the window;
 `vcs.py` and `checkouts.py` stay as modules and this file imports neither.
 
+Since 2026-10-01 a row also DRAGS into a viewport (`listdrag`, Qt, attached
+lazily): onto a rig it is Import with the Rig mode onto THAT rig, onto empty
+floor Import with New rig (`import_dropped`).
+
 IMPORT in the default mode is the whole pipeline (`rigimport`): the
 AdvancedSkeleton rig added if the scene has none, the clip imported as its
 own skeleton, the retarget connected and baked -- weapon and camera bones
@@ -351,7 +355,7 @@ def import_selected():
                 return
 
     exported, fps = _export_from_editor(record)
-    set_timeline = cmds.checkBox(_TIMELINE, query=True, value=True)
+    set_timeline = _timeline()
 
     if mode != "skeleton":
         from maya_uebridge import rigimport   # lazy: keeps the import graph flat
@@ -370,6 +374,51 @@ def import_selected():
     finally:
         cmds.undoInfo(closeChunk=True)
     _status(import_line(record.name, info))
+
+
+def _timeline():
+    """The «set timeline to clip range» checkbox; on when it is not built."""
+    if not cmds.checkBox(_TIMELINE, exists=True):
+        return True
+    return bool(cmds.checkBox(_TIMELINE, query=True, value=True))
+
+
+def import_dropped(record, aim):
+    """An animation dragged out of the list and released over a viewport
+    (2026-10-01, `listdrag`; «если я попадаю в какой-то риг то анимация
+    должна перекинутся на него какбуд-то мы нажали import с опцией rig если
+    мы не нашли ничего то тогда нам нужно сделать new rig»).
+
+    `aim` is `droptarget.clip_target`'s answer at the release: "rig" (the
+    rig under the cursor, by namespace) takes the clip as Import with the Rig
+    mode would, whatever is selected; "new_rig" adds a Manny rig, which
+    stands where the clip is, as New rig. The import-mode segments do not
+    matter here; the timeline checkbox does. The rig is found again after
+    nothing but the drop: it can have been deleted while the editor
+    exported. Returns the status line.
+    """
+    aim = aim or {}
+    kind = aim.get("kind")
+    if record is None or kind not in ("rig", "new_rig"):
+        text = aim.get("text") or "no target"
+        _status(text)
+        return text
+    rig = None
+    if kind == "rig":
+        import maya_rigs
+        rig = maya_rigs.find(aim.get("rig") or "")
+        if rig is None:
+            text = "the rig {0} is gone - nothing imported".format(
+                aim.get("label") or aim.get("rig") or "")
+            _status(text)
+            return text
+    exported, fps = _export_from_editor(record)
+    from maya_uebridge import rigimport   # lazy: keeps the import graph flat
+    text = rigimport.import_and_retarget(
+        exported, record.name, clip_fps=fps, set_timeline=_timeline(),
+        target=kind, rig=rig)
+    _status(text)
+    return text
 
 
 def import_line(name, info):
@@ -470,6 +519,9 @@ def build_panel():
     cmds.textScrollList(
         _LIST, allowMultiSelection=False, font="fixedWidthFont",
         height=LIST_HEIGHT,
+        annotation="Double-click imports the way the mode says. Drag a row "
+                   "into a viewport: onto a rig it retargets there, onto "
+                   "empty floor it makes a new Manny rig.",
         doubleClickCommand=lambda *_: _run(import_selected,
                                            busy="exporting from the editor..."))
 
@@ -536,6 +588,17 @@ def build_panel():
                 "live list".format(len(shown)))
     else:
         _status("press Refresh to read the animations from the open editor")
+    _attach_drag()
 
     cmds.setParent("..")
     return column
+
+
+def _attach_drag():
+    """The list's rows drag into a viewport (`listdrag`, 2026-10-01) where Qt
+    stands; without it the list is the list it always was."""
+    try:
+        from maya_uebridge import listdrag   # lazy: Qt stays out of cmds
+        listdrag.attach(_LIST, lambda: list(_STATE["filtered"]))
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())

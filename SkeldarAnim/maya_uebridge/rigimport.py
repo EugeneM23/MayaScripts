@@ -110,8 +110,12 @@ def _rig_file_ok():
 
 
 def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
-                        target="rig"):
+                        target="rig", rig=None):
     """The press. Returns the status line.
+
+    `rig` (2026-10-01, an animation dragged onto a rig in the viewport) is
+    the rig that takes the clip with `target="rig"`, whatever is selected;
+    None asks the selection as the Import button does. "new_rig" ignores it.
 
     Refusals happen first and touch nothing. After the import, a connect
     refusal leaves the imported skeleton in the scene and says so -- the
@@ -124,8 +128,9 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
     if target not in TARGETS:
         return "unknown import target {0!r}".format(target)
     all_rigs = maya_rigs.rigs()
-    rig = None
-    if target == "rig" and all_rigs:
+    if target == "new_rig":
+        rig = None
+    if target == "rig" and rig is None and all_rigs:
         rig, refusal = maya_rigs.current_rig()
         if rig is None:
             return refusal
