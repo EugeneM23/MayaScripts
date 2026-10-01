@@ -36,7 +36,7 @@ OLD_HOMES = ("Downloads/Spear_03", "Downloads/Halberd_A",
 # What sources/ holds in git.
 TRACKED = ("weapons/Spear_03.fbx", "weapons/Halberd_A.tga", "weapons/Dagger.fbx",
            "orc/SK_Orc_Marauder_F.FBX", "creep/creep_T-pose_draft.fbx",
-           "manny/Manny_rig_02.ma")
+           "manny/Manny_rig_02.ma", "armor/SM_Shield_Test.fbx", "armor/techlimb_ue.json")
 
 
 def _inside(path, folder):
