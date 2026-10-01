@@ -5,9 +5,10 @@
 equips it): its own MAYA_APP_DIR, MAYA_NO_HOME=1, its own port. Each send sets PHASE first:
 
     PHASE = "card"   gates 1-4: Inventory right after Animation Setup, no Armor card,
-                     show("armor") opening and lighting it; the four headings; the Inventory card
-                     top down (Weapon, the hands and tiles, Equip / Unequip, Armor, its tiles,
-                     Equip / Unequip, ONE status line); the content within the animator's dock;
+                     show("armor") opening and lighting it on its Armor TAB; the Animation Setup
+                     headings; the tabs («две под вкладки», the same evening): the [Weapon |
+                     Armor] segments clicked through Qt, one column shown at a time, the line
+                     following the tab, ONE status line; the content within the animator's dock;
                      the weapon panel's tiles - every catalog row, no grid left
     PHASE = "drops"  gates 5-7: a weapon tile dropped (drop_at, the panel's own release) onto a
                      Manny rig's right hand in the viewport, then Spear 01 onto the floor, then
@@ -15,7 +16,7 @@ equips it): its own MAYA_APP_DIR, MAYA_NO_HOME=1, its own port. Each send sets P
                      bone following it), taken off; the «equipped» pills following
     PHASE = "armor_drag" gate 8: the Tech Limb tile pressed, dragged and released through Qt on
                      the rig's spine - worn, the caption naming the rig
-    PHASE = "photo"  the Inventory card photographed
+    PHASE = "photo"  the Inventory card photographed on each tab
 
 Spec: docs/superpowers/specs/2026-10-01-inventory-card-design.md
 """
@@ -124,6 +125,18 @@ def bone(root, name):
     return None
 
 
+def click_tab(tab):
+    """A tab's segment clicked the animator's way: the Qt button (trap 116)."""
+    import maya_hubqt
+    from maya_scenesetup import window as scene
+    q = maya_hubqt.qt()
+    widget = maya_hubqt.find(scene.tab_segment(tab))
+    button = q.shiboken.wrapInstance(int(q.shiboken.getCppPointer(widget)[0]),
+                                     q.QtWidgets.QAbstractButton)
+    button.click()
+    settle()
+
+
 def holdings(root):
     from maya_scenesetup import equip
     return dict((side, (h.where, h.key)) for side, h in equip.holdings(root).items())
@@ -137,8 +150,10 @@ def phase_card():
     from maya_scenesetup import armorpanel
     from maya_scenesetup import window as scene
     from maya_uebridge import window as bridge
+    from maya_scenesetup import catalog, character
     cmds.file(new=True, force=True)
-    maya_hub.show("armor")
+    character.add_character(catalog.default_rig())      # a character for the lines
+    armorpanel.show_window()                            # the hotkey row's road: the Armor tab
     settle()
     skin = maya_hub._SKIN
     column = skin.column
@@ -148,7 +163,8 @@ def phase_card():
         name = widget.objectName() if widget is not None else ""
         if name.startswith("skeldarHubCard_"):
             cards.append(name.split("_", 1)[1])
-    gate(1, "Inventory right after Animation Setup, no Armor card; show('armor') opened and lit it",
+    gate(1, "Inventory right after Animation Setup, no Armor card; armorpanel.show_window "
+            "opened and lit it",
          cards[:3] == ["characters", "weapons", "connections"] and "armor" not in skin.cards
          and maya_hub.section("weapons").label == "Inventory"
          and not skin.cards["weapons"].collapsed() and skin.active == "weapons",
@@ -168,40 +184,45 @@ def phase_card():
     settle()
 
     heads = {}
-    for name in (scene._CHARACTERS_HEADING, bridge._HEADING, scene._WEAPON_HEADING,
-                 armorpanel._HEADING):
+    for name in (scene._CHARACTERS_HEADING, bridge._HEADING):
         widget = maya_hubqt.find(name)
         heads[name] = (widget.property("text") if widget is not None else None,
                        widget.property("skRole") if widget is not None else None)
-    gate(2, "the four headings, each a heading: Characters, UE Connect, Weapon, Armor",
-         [v[0] for v in heads.values()] == ["Characters", "UE Connect", "Weapon", "Armor"]
+    gate(2, "Animation Setup's headings: Characters, UE Connect",
+         [v[0] for v in heads.values()] == ["Characters", "UE Connect"]
          and all(v[1] == "heading" for v in heads.values()), "%s" % heads)
 
     frame = card("weapons")
-
-    def y_of(name, layout=False):
-        widget = maya_hubqt.find(name, layout)
-        return None if widget is None else widget.mapTo(frame, q.QtCore.QPoint(0, 0)).y()
-
-    buttons = [(b.text(), b.mapTo(frame, q.QtCore.QPoint(0, 0)).y(), b.property("skRole"))
-               for b in frame.findChildren(q.QtWidgets.QPushButton) if b.text()]
-    buttons.sort(key=lambda b: b[1])
-    ys = [y_of(scene._WEAPON_HEADING), y_of(scene._INVENTORY, True),
-          y_of(armorpanel._HEADING), y_of(armorpanel._TILES, True), y_of(scene._STATUS)]
+    weapon_col = maya_hubqt.find(scene._TAB_COLUMN["weapon"], True)
+    armor_col = maya_hubqt.find(scene._TAB_COLUMN["armor"], True)
+    shown_on_open = (weapon_col.isVisible(), armor_col.isVisible())
+    said_armor = status()
+    click_tab("weapon")
+    weapon_state = (weapon_col.isVisible(), armor_col.isVisible(), frame.height(),
+                    scene.remembered_tab(), status())
+    click_tab("armor")
+    armor_state = (weapon_col.isVisible(), armor_col.isVisible(), frame.height(),
+                   scene.remembered_tab(), status())
+    click_tab("weapon")
+    back = (weapon_col.isVisible(), armor_col.isVisible())
+    visible = [(b.text(), b.property("skRole")) for b in frame.findChildren(q.QtWidgets.QPushButton)
+               if b.text() and b.isVisible()]
     lines = [w.objectName() for w in frame.findChildren(q.QtWidgets.QWidget)
              if w.objectName() in (scene._STATUS, "mayaSceneSetupArmorStatus")]
-    labels = [b[0] for b in buttons]
-    ordered = None not in ys and ys == sorted(ys)
-    between = (labels == ["Equip", "Unequip", "Equip", "Unequip"]
-               and ys[1] < buttons[0][1] < ys[2] < ys[3] < buttons[2][1] < ys[4])
     content = skin.content.minimumSizeHint().width()
-    gate(3, "the Inventory top down: Weapon, the panel, Equip / Unequip, Armor, its tiles, "
-            "Equip / Unequip, one line; the two Equips orange; within the dock",
-         ordered and between and lines == [scene._STATUS]
-         and [b[2] for b in buttons] == ["primary", "danger", "primary", "danger"]
+    gate(3, "the tabs: opened by show('armor') on Armor; clicking Weapon / Armor shows one "
+            "column at a time, remembered, the line following the tab; one line; within the dock",
+         shown_on_open == (False, True) and "Tech Limb" in said_armor
+         and weapon_state[:2] == (True, False) and weapon_state[3] == "weapon"
+         and armor_state[:2] == (False, True) and armor_state[3] == "armor"
+         and "Tech Limb" in armor_state[4] and "Tech Limb" not in weapon_state[4]
+         and back == (True, False) and lines == [scene._STATUS]
+         and [v for v in visible if v[0] in ("Equip", "Unequip")]
+         == [("Equip", "primary"), ("Unequip", "danger")]
          and content <= scroll.viewport().width(),
-         "y %s | buttons %s | lines %s | content %d <= %d" % (
-             ys, buttons, lines, content, scroll.viewport().width()))
+         "open %s | weapon %s | armor %s | back %s | buttons %s | content %d <= %d" % (
+             shown_on_open, weapon_state, armor_state, back, visible, content,
+             scroll.viewport().width()))
 
     p = panel()
     from maya_scenesetup import catalog
@@ -227,6 +248,7 @@ def phase_drops():
     show_maya()
     maya_hub.focus("weapons")
     settle()
+    click_tab("weapon")
     p = panel()
     p.refresh()
     hand = to_global(world_t(bone(root, "hand_r")))
@@ -269,6 +291,7 @@ def phase_armor_drag():
     E = QtCore.QEvent
     root = WORLD["root"]
     show_maya()
+    click_tab("armor")
     grid = tiles()
     spine = to_global(world_t(bone(root, "spine_03")))
     print("   ", keep_hub_off([spine]))
@@ -302,10 +325,14 @@ def phase_photo():
     import maya_hub
     maya_hub.focus("weapons")
     settle()
-    frame = card("weapons")
-    path = os.path.join(SHOTS, "inventory_card.png")
-    frame.grab().save(path)
-    print("saved", path, frame.size())
+    for tab, name in (("weapon", "inventory_card.png"), ("armor", "inventory_card_armor.png")):
+        click_tab(tab)
+        settle()
+        frame = card("weapons")
+        path = os.path.join(SHOTS, name)
+        frame.grab().save(path)
+        print("saved", path, frame.size())
+    click_tab("weapon")
 
 
 {"card": phase_card, "drops": phase_drops, "armor_drag": phase_armor_drag,

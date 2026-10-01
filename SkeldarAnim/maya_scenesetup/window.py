@@ -57,7 +57,13 @@ _CHARACTER_STATUS = "mayaSceneSetupCharacterStatus"  # the Characters line
 _BOUND = "mayaSceneSetupBound"
 #  The sections' titles inside the cards (2026-10-01, «Пусть все будет консистентно»).
 _CHARACTERS_HEADING = "mayaSceneSetupCharactersHeading"
-_WEAPON_HEADING = "mayaSceneSetupWeaponHeading"
+#  The Inventory card's two tabs (2026-10-01, the evening: «в ней два раздела
+#  между которыми мы переключаемся нажимая на название раздела Weapon или
+#  Armor ... две под вкладки»): the segments, a column per tab, the memory.
+_INVENTORY_TABS = "mayaSceneSetupInventoryTabs"
+_TAB_COLUMN = {"weapon": "mayaSceneSetupWeaponTab", "armor": "mayaSceneSetupArmorTab"}
+_TAB_OPTIONVAR = "mayaSceneSetup_inventoryTab"
+TABS = (("weapon", "Weapon"), ("armor", "Armor"))
 _WEAPONS_BOUND = "mayaSceneSetupWeaponsBound"   # the Weapons card's subtitle
 # The dropdown of every character row: only where the portrait grid cannot
 # stand (no Qt) since 2026-09-30.
@@ -451,12 +457,15 @@ def _run(action, status=_STATUS):
 
 def refresh():
     """Re-read the scene: the character, the inventory, and the picked hand's
-    state on the Weapons line."""
+    state on the Inventory's line - while its Weapon tab is the one shown
+    (2026-10-01: the Armor tab's line is the armor's)."""
     entry = chosen_weapon()
     root, hand, bone, weapon, linked = _attached(entry)
     panel = _inventory()
     if panel is not None:
         panel.refresh()
+    if remembered_tab() != "weapon":
+        return
     if weapon:
         own = _held_entry(weapon, entry)
         if linked:
@@ -790,9 +799,80 @@ def show_window():
 
 
 def show_weapons():
-    """Open the SkeldarAnim hub on the Weapons section."""
+    """Open the SkeldarAnim hub on the Inventory card, its Weapon tab."""
     import maya_hub
+    show_tab("weapon")
     return maya_hub.show(HUB_WEAPONS)
+
+
+# ------------------------------------------------- the Inventory's tabs
+
+def tab_segment(tab):
+    """The [Weapon | Armor] row's segment of `tab`."""
+    return "{0}_{1}".format(_INVENTORY_TABS, tab)
+
+
+def remembered_tab():
+    """The tab shown last ("weapon" or "armor"), "weapon" when none."""
+    tab = _stored(_TAB_OPTIONVAR)
+    return tab if tab in _TAB_COLUMN else TABS[0][0]
+
+
+_TAB_BUSY = [False]
+
+
+def show_tab(tab):
+    """Show the Inventory's tab `tab` and hide the other: its column managed,
+    its segment lit, remembered, and the line saying that tab's pick. A
+    panel shown again is fitted to its placeholder (a hidden widget gets no
+    resize event). Safe before the card is built - it only remembers."""
+    if tab not in _TAB_COLUMN or _TAB_BUSY[0]:
+        return
+    _TAB_BUSY[0] = True
+    try:
+        cmds.optionVar(stringValue=(_TAB_OPTIONVAR, tab))
+        if not cmds.columnLayout(_TAB_COLUMN[tab], exists=True):
+            return
+        for each, column in _TAB_COLUMN.items():
+            cmds.columnLayout(column, edit=True, manage=each == tab)
+        segment = tab_segment(tab)
+        if cmds.iconTextRadioButton(segment, exists=True):
+            cmds.iconTextRadioButton(segment, edit=True, select=True)
+        if tab == "weapon":
+            panel = _inventory()
+            if panel is not None:
+                host = getattr(panel, "_host", None)
+                if host is not None:
+                    panel.fit(host)
+            refresh()
+        else:
+            from maya_scenesetup import armorpanel
+            armorpanel.show()
+    finally:
+        _TAB_BUSY[0] = False
+
+
+def tab_changed(tab):
+    """A tab segment's onCommand."""
+    def go(*_args):
+        _run(lambda: show_tab(tab))
+    return go
+
+
+def _tab_row(tab):
+    segments = cmds.rowLayout(numberOfColumns=len(TABS),
+                              columnAttach=[(i + 1, "both", 1)
+                                            for i in range(len(TABS))])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(_INVENTORY_TABS)
+    for each, label in TABS:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            tab_segment(each), style="textOnly", label=label, height=24,
+            select=each == tab,
+            annotation=("The weapons: the two hands with their grips, the tiles"
+                        if each == "weapon" else "The armor: the pieces' tiles"),
+            onCommand=tab_changed(each)), "segment")
+    cmds.setParent("..")
 
 
 def _kind_row(kind):
@@ -1029,17 +1109,23 @@ def build_weapons_panel():
 
     2026-10-01, the evening («объеденим вкладки weapon и армор в одну
     inventory ... Пусть все будет конссистентно»): the card is Inventory -
-    «Weapon» and «Armor» headings, the weapons TILES (the cell grid gone),
-    Equip / Unequip in both sections (Add / Remove Weapon before), the Armor
-    rows (`armorpanel.build_rows`) under the weapons, and ONE status line
-    both write.
+    the weapons TILES (the cell grid gone), Equip / Unequip in both sections
+    (Add / Remove Weapon before), the Armor rows (`armorpanel.build_rows`),
+    and ONE status line both write. Minutes later the two sections are TABS
+    («переключаемся нажимая на название раздела Weapon или Armor»): a
+    [Weapon | Armor] row, a column per tab, one shown (`show_tab`), the last
+    one remembered.
     """
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", hubstyle.pick(0, 8)))
 
     hubstyle.mark(cmds.text(_WEAPONS_BOUND, label="", align="left"),
                   "subtitle")
-    heading(_WEAPON_HEADING, "Weapon")
+    tab = remembered_tab()
+    _tab_row(tab)
+
+    cmds.columnLayout(_TAB_COLUMN["weapon"], adjustableColumn=True, rowSpacing=6,
+                      manage=tab == "weapon")
     cmds.columnLayout(_INVENTORY, adjustableColumn=True)
     cmds.setParent("..")
     if not _attach_inventory():
@@ -1063,8 +1149,12 @@ def build_weapons_panel():
                    "Deleting the sword by hand instead loses that animation.",
         command=lambda *_args: _run(remove_weapon)), "danger", "trash")
     cmds.setParent("..")
+    cmds.setParent("..")                     # the Weapon tab
 
+    cmds.columnLayout(_TAB_COLUMN["armor"], adjustableColumn=True, rowSpacing=6,
+                      manage=tab == "armor")
     _armor_rows()
+    cmds.setParent("..")                     # the Armor tab
 
     #  wordWrap: a long refusal must not widen the hub's whole column;
     #  two lines tall, or the wrapped second line is clipped (hub, 2026-09-17).
@@ -1074,4 +1164,6 @@ def build_weapons_panel():
     cmds.setParent("..")
     _watch_armor()
     _run(refresh)
+    if tab == "armor":
+        _run(lambda: show_tab("armor"))
     return column

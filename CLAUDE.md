@@ -7349,6 +7349,18 @@ rig's spine (worn, the caption naming the rig). `verify_characters_card.py` card
 headings. Pictures `inventory_card.png`, `characters_card.png`. 3504 unit tests.
 `verify_inventory_live.py` and `verify_weapons_card.py` drove the cell grid: history.
 
+**…two tabs, not two stacked sections** (minutes later, after using it: «у нас есть вкладка inventory и
+в ней два раздела между которыми мы переключаемся нажимая на название раздела Weapon Или Armor как бы в
+разделе две под вкладки»; spec addendum). The card opens with a **[Weapon | Armor]** segment row
+(`mayaSceneSetupInventoryTabs`); each tab is a column (`mayaSceneSetupWeaponTab` / `_ArmorTab`), one
+managed at a time (`window.show_tab`: the column, the segment, the memory `mayaSceneSetup_inventoryTab`,
+the shown panel fitted to its placeholder again, that tab's pick on the line); the «Weapon» / «Armor»
+headings are gone, the segments name the sections (Animation Setup keeps its headings: it was asked
+stacked). `window.refresh` writes the weapon line only on the Weapon tab. `armorpanel.show_window` opens
+the Armor tab, `window.show_weapons` the Weapon tab. `verify_inventory_card.py` **8/8** again, the tabs
+clicked through Qt (one column visible at a time, the card 757 / 460 px tall, the line following the
+tab); pictures `inventory_card.png`, `inventory_card_armor.png`; 3507 unit tests.
+
 ## Center of Mass: a live point, a fast trail, the CoM tool (2026-10-01)
 
 The animator: «у нас должна быть какая-то точка к которой мы можем сделать motion trail … моушен треил

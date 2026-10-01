@@ -69,3 +69,20 @@ after Animation Setup, no Armor card, `show("armor")` opening it; the four headi
 down and one status line; the tiles (no grid, no Sort); a weapon tile dropped through `drop_at` onto a
 rig's hand and onto the floor; a hand card dropped on the tiles taking it off; an armor tile dragged
 through Qt onto the rig, worn; a picture.
+
+## Addendum — two tabs, not two stacked sections (minutes later)
+
+The animator, after using it: «сейчас у нас два раздела в одной вкладке, я хотел немного не так. У нас
+есть вкладка inventory и в ней два раздела между которыми мы переключаемся нажимая на название раздела
+Weapon Или Armor как бы в разделе две под вкладки».
+
+- The Inventory card opens with a **[Weapon | Armor]** row of segments (`mayaSceneSetupInventoryTabs`,
+  the hub's own switch, as [Rig | Skeleton]); each tab is a column (`mayaSceneSetupWeaponTab` /
+  `mayaSceneSetupArmorTab`), one managed at a time (`window.show_tab`), the last one remembered
+  (`mayaSceneSetup_inventoryTab`). The «Weapon» / «Armor» headings are gone - the segments name the
+  sections. Animation Setup keeps its two headings: it was asked stacked (mockup A).
+- Showing a tab fits its Qt panel to its placeholder again (a hidden widget gets no resize event) and
+  writes that tab's pick on the card's one line; `window.refresh` writes the weapon line only while the
+  Weapon tab is shown, so a Characters press does not paint a weapon message over the Armor tab.
+- `armorpanel.show_window` (the `window.armor` hotkey row) opens the Inventory on its Armor tab,
+  `window.show_weapons` on its Weapon tab; `show("armor")` (the alias) just opens the card.

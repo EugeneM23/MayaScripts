@@ -40,7 +40,6 @@ HUB_SECTION = "weapons"                   # the Inventory card we live in (its k
 #  spelled here so this module imports no window (a test pins them equal).
 _STATUS = "mayaSceneSetupStatus"
 _BOUND = "mayaSceneSetupWeaponsBound"
-_HEADING = "mayaSceneSetupArmorHeading"   # «Armor», the section's title
 _TILES = "mayaSceneSetupArmorTiles"      # the tiles are laid over it
 _MENU = "mayaSceneSetupArmorMenu"        # the rows, where the tiles cannot stand
 _OPTIONVAR = "mayaSceneSetup_armor"      # the row picked
@@ -201,8 +200,10 @@ def is_open():
 
 
 def show_window():
-    """Open the SkeldarAnim hub on the Inventory card, where Armor lives."""
+    """Open the SkeldarAnim hub on the Inventory card, its Armor tab."""
     import maya_hub
+    from maya_scenesetup import window
+    window.show_tab("armor")
     return maya_hub.show(HUB_SECTION)
 
 
@@ -232,12 +233,10 @@ def _dropdown():
 
 
 def build_rows():
-    """The Armor section's rows, into whatever layout is current - the
-    Inventory card's column, under its Weapon section: the «Armor» heading,
-    the tiles (a dropdown where they cannot stand), Equip / Unequip. The card
-    builds the status line after them; then `watch`."""
-    hubstyle.mark(cmds.text(_HEADING, label="Armor", align="left",
-                            font="boldLabelFont"), "heading")
+    """The Armor tab's rows, into whatever layout is current - the Inventory
+    card's Armor column: the tiles (a dropdown where they cannot stand),
+    Equip / Unequip. The tab's segment names it; the card builds the status
+    line after them; then `watch`."""
     cmds.columnLayout(_TILES, adjustableColumn=True)
     cmds.setParent("..")
     if not _attach_tiles():
@@ -257,6 +256,17 @@ def build_rows():
         annotation="Take the picked piece off the character",
         command=lambda *_args: _run(unequip_armor)), "danger", "trash")
     cmds.setParent("..")
+
+
+def show():
+    """The Armor tab just shown: the tiles fitted to their placeholder (a
+    hidden widget gets no resize event) and the line saying the pick."""
+    tiles = _tiles()
+    if tiles is not None:
+        host = getattr(tiles, "_host", None)
+        if host is not None:
+            tiles.fit(host)
+    refresh()
 
 
 def watch():

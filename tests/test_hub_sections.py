@@ -161,7 +161,8 @@ class SceneSetup(unittest.TestCase):
         self.assertNotIn(scenesetup._CHARACTER, weapons)
 
     def test_no_dropdown_fbx_hand_row_grip_rows_or_inventory_button(self):
-        calls = self._weapons_calls()
+        calls = [c for c in self._weapons_calls()
+                 if not (c[1] and str(c[1][0]).startswith(scenesetup._INVENTORY_TABS))]
         for kind in ("optionMenu", "textFieldGrp", "floatFieldGrp",
                      "colorSliderGrp", "iconTextRadioButton",
                      "iconTextRadioCollection"):
@@ -184,7 +185,8 @@ class SceneSetup(unittest.TestCase):
                  and not (c[2].get("edit") or c[2].get("query"))]
         self.assertEqual(len(menus), 1)
         segments = [c[1][0] for c in fake.calls
-                    if c[0] == "iconTextRadioButton" and c[1]]
+                    if c[0] == "iconTextRadioButton" and c[1]
+                    and not c[1][0].startswith(scenesetup._INVENTORY_TABS)]
         self.assertEqual(segments, [scenesetup.hand_segment("R"),
                                     scenesetup.hand_segment("L")])
         self.assertFalse([c for c in fake.calls if c[0] == "floatFieldGrp"])
@@ -360,15 +362,83 @@ class SceneSetup(unittest.TestCase):
 
     def test_the_sections_have_headings(self):
         """2026-10-01: «Пусть все будет консистентно» - Characters and UE
-        Connect in Animation Setup, Weapon and Armor in Inventory."""
+        Connect in Animation Setup; Inventory's sections are its TABS."""
         heads = [(c[1][0], c[2]["label"]) for c in self.fake.calls
                  if c[0] == "text" and c[1] and not c[2].get("edit")
                  and self._marks().get(c[1][0]) is not None
                  and self._marks()[c[1][0]].role == "heading"]
         self.assertEqual(heads, [(scenesetup._CHARACTERS_HEADING, "Characters"),
-                                 (uebridge._HEADING, "UE Connect"),
-                                 (scenesetup._WEAPON_HEADING, "Weapon"),
-                                 (armorpanel._HEADING, "Armor")])
+                                 (uebridge._HEADING, "UE Connect")])
+
+    def test_the_inventory_is_two_tabs_one_shown(self):
+        """2026-10-01, the evening: «переключаемся нажимая на название
+        раздела Weapon или Armor ... две под вкладки» - a [Weapon | Armor]
+        row of segments, a column per tab, the Weapon tab shown first."""
+        calls = self._weapons_calls()
+        self.assertIn(("iconTextRadioCollection", (scenesetup._INVENTORY_TABS,), {}), calls)
+        segments = [c for c in calls if c[0] == "iconTextRadioButton" and c[1]
+                    and c[1][0].startswith(scenesetup._INVENTORY_TABS)]
+        self.assertEqual([(c[1][0], c[2]["label"], c[2]["select"]) for c in segments],
+                         [(scenesetup.tab_segment("weapon"), "Weapon", True),
+                          (scenesetup.tab_segment("armor"), "Armor", False)])
+        marks = self._marks()
+        for call in segments:
+            self.assertEqual(marks[call[1][0]].role, "segment")
+        columns = dict((c[1][0], c[2]) for c in calls if c[0] == "columnLayout"
+                       and c[1] and c[1][0] in scenesetup._TAB_COLUMN.values())
+        self.assertEqual(columns[scenesetup._TAB_COLUMN["weapon"]]["manage"], True)
+        self.assertEqual(columns[scenesetup._TAB_COLUMN["armor"]]["manage"], False)
+        # the weapon panel and its buttons in the Weapon column, the tiles in the
+        # Armor column, the line after both
+        order = [c[1][0] for c in calls if c[0] in ("columnLayout", "text") and c[1]
+                 and not c[2].get("edit")]
+        want = [scenesetup._TAB_COLUMN["weapon"], scenesetup._INVENTORY,
+                scenesetup._TAB_COLUMN["armor"], armorpanel._TILES, scenesetup._STATUS]
+        self.assertEqual([n for n in order if n in want], want)
+
+    def test_show_tab_switches_the_columns_and_remembers(self):
+        real = self.fake.columnLayout
+
+        def column(*args, **kwargs):
+            if kwargs.get("exists"):
+                return args[0] in scenesetup._TAB_COLUMN.values()
+            return real(*args, **kwargs)
+        self.fake.columnLayout = column
+        shown = []
+        saved = armorpanel.show
+        armorpanel.show = lambda: shown.append("armor")
+        try:
+            scenesetup.show_tab("armor")
+        finally:
+            armorpanel.show = saved
+        self.assertEqual(self.fake.optionvars[scenesetup._TAB_OPTIONVAR], "armor")
+        manages = [(c[1][0], c[2]["manage"]) for c in self.fake.calls
+                   if c[0] == "columnLayout" and c[2].get("edit")]
+        self.assertEqual(sorted(manages[-2:]), sorted([
+            (scenesetup._TAB_COLUMN["weapon"], False), (scenesetup._TAB_COLUMN["armor"], True)]))
+        self.assertEqual(shown, ["armor"])
+        self.assertEqual(scenesetup.remembered_tab(), "armor")
+        scenesetup.show_tab("nonsense")
+        self.assertEqual(scenesetup.remembered_tab(), "armor")
+
+    def test_the_weapon_line_is_left_alone_on_the_armor_tab(self):
+        written = []
+        saved = (scenesetup._status, scenesetup._attached, scenesetup._inventory)
+        scenesetup._status = lambda message, control=None: written.append(message)
+        scenesetup._attached = lambda entry, key=None: (None, None, None, None, False)
+        scenesetup._inventory = lambda: None
+        try:
+            self.fake.optionvars[scenesetup._TAB_OPTIONVAR] = "armor"
+            saved_refresh = scenesetup.refresh
+            scenesetup.refresh = self.saved[1]          # the real one
+            scenesetup.refresh()
+            self.assertEqual(written, [])
+            self.fake.optionvars[scenesetup._TAB_OPTIONVAR] = "weapon"
+            scenesetup.refresh()
+            self.assertEqual(written, [scenesetup.NO_CHARACTER])
+        finally:
+            scenesetup.refresh = saved_refresh
+            (scenesetup._status, scenesetup._attached, scenesetup._inventory) = saved
 
     def test_the_inventory_card_has_one_line_and_the_armor_rows_under_the_weapons(self):
         calls = self._weapons_calls()
@@ -439,13 +509,13 @@ class Armor(unittest.TestCase):
     def _buttons(self):
         return [c[2] for c in self.fake.calls if c[0] == "button" and not c[2].get("edit")]
 
-    def test_no_window_no_column_the_heading_and_the_tiles(self):
+    def test_no_window_no_column_no_heading_the_tiles(self):
+        """The Armor tab's segment names the section (2026-10-01)."""
         self.assertEqual(self.fake.windows, {})
         self.assertFalse([c for c in self.fake.calls if c[0] == "columnLayout"
                           and c[1] != (armorpanel._TILES,)])
-        self.assertEqual(self.marks[armorpanel._HEADING].role, "heading")
-        self.assertTrue(any(c[0] == "text" and c[1] == (armorpanel._HEADING,)
-                            and c[2]["label"] == "Armor" for c in self.fake.calls))
+        self.assertFalse([m for m in self.marks.values() if m.role == "heading"])
+        self.assertFalse(hasattr(armorpanel, "_HEADING"))
         self.assertTrue(any(c[0] == "columnLayout" and c[1] == (armorpanel._TILES,)
                             for c in self.fake.calls))
 
@@ -537,9 +607,16 @@ class Armor(unittest.TestCase):
         self.fake.children.append(armorpanel._STATUS)
         self.assertTrue(armorpanel.is_open())
 
-    def test_show_window_opens_the_inventory(self):
-        result, asked = _hub_asked(armorpanel.show_window)
+    def test_show_window_opens_the_inventory_on_its_armor_tab(self):
+        fake = FakeUiCmds()
+        saved = scenesetup.cmds
+        scenesetup.cmds = fake
+        try:
+            result, asked = _hub_asked(armorpanel.show_window)
+        finally:
+            scenesetup.cmds = saved
         self.assertEqual((result, asked), ("hub", ["weapons"]))
+        self.assertEqual(fake.optionvars[scenesetup._TAB_OPTIONVAR], "armor")
 
 
 class UeBridge(unittest.TestCase):
