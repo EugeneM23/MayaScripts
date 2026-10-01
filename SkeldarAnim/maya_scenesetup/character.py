@@ -596,6 +596,16 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
     note = "" if namespace else rename_note(
         root, before_roots + ([root] if root else []))
     placed = at if place(entry, namespace, root, at) else None
+    if root and not namespace:
+        # What this import brought, for Characters > Delete (2026-10-01): a skeleton's asset can
+        # carry nodes connected to nothing of it (Manny's: the dead half of a rig, a camera1),
+        # and only this list knows them. A rig has its namespace.
+        # Best effort: the character is what the press is for, and it has arrived.
+        try:
+            from maya_scenesetup import deletion
+            deletion.record_import(root, new, entry.label)
+        except Exception as exc:                                 # noqa: BLE001
+            print("Add Character: no record for Delete ({0})".format(exc))
     connected = connect(root)
     selected = select_rig(namespace) if namespace else False
 

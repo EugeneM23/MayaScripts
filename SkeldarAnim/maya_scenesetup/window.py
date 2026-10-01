@@ -20,7 +20,8 @@ The Characters card is a grid of portraits since 2026-09-30 (the animator:
 «переделаем наше меню на сетку с портретами»; `maya_chargrid`): a
 [Rig | Skeleton] switch, one portrait per model, Add Character, Camera Setup.
 Its colour row went to the Colour section the same day («все что касается
-покраски вынесем из меню, будем красить в меню с красками»).
+покраски вынесем из меню, будем красить в меню с красками»). Delete beside
+Add since 2026-10-01: the characters the selection names, whole (`deletion`).
 
 Since 2026-09-07 the character is the one the SELECTION names -- any control
 of the AdvancedSkeleton rig, or a joint -- then the rig, then the sole
@@ -592,6 +593,21 @@ def add_character():
     say_character(message)
 
 
+def delete_characters(confirm=None):
+    """Delete (2026-10-01, «выделяю любую часть персонажа ... нажимаю эту
+    кнопку и у меня удаляется из сцены все что связано с этим персонажем»):
+    the characters the selection names, whole, after a confirm - `deletion`.
+    `confirm` stands in for the dialog (a verify run). Returns the line."""
+    from maya_scenesetup import deletion
+    message = deletion.delete_selected(confirm=confirm)
+    try:
+        refresh()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+    say_character(message)
+    return message
+
+
 def place_character(model, kind, point):
     """A portrait dropped on the floor (2026-09-30, «зажать на портрете и
     перетащить его в сцену»): the character added standing at `point`.
@@ -846,6 +862,8 @@ def build_characters_panel():
     if not _attach_grid(model, kind):
         _character_dropdown()
 
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 4)])
     hubstyle.mark(cmds.button(
         label="Add Character", height=32,
         annotation="Import the picked rig or skeleton into this scene, at "
@@ -854,6 +872,16 @@ def build_characters_panel():
                    "in its own namespace; the Colour section repaints it.",
         command=lambda *_args: _run(add_character, _CHARACTER_STATUS)),
         "primary", "plus")
+    hubstyle.mark(cmds.button(
+        label="Delete", height=32, width=hubstyle.pick(96, 80),
+        annotation="Delete the characters the selection belongs to - select "
+                   "any part of each: a control, a bone, a mesh, its weapon - "
+                   "with everything of theirs: weapons, armor, camera, centre "
+                   "of mass, materials, layers. Asks first; Ctrl+Z brings "
+                   "them back.",
+        command=lambda *_args: _run(delete_characters, _CHARACTER_STATUS)),
+        "danger", "trash")
+    cmds.setParent("..")
     hubstyle.mark(cmds.button(
         label="Camera Setup", height=26,
         annotation="A camera on the character's camera_root, the bone's "

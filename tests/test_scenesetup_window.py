@@ -358,6 +358,32 @@ class AddCharacterPress(unittest.TestCase):
         self.assertIn("UE4 Mannequin has no rig", text)
 
 
+class DeletePress(unittest.TestCase):
+    """2026-10-01: Characters > Delete writes what `deletion` answers on the
+    card's line, after the refresh, and hands the confirm through."""
+
+    def setUp(self):
+        from maya_scenesetup import deletion
+        self.deletion = deletion
+        self.saved = [(window, n, getattr(window, n)) for n in ("refresh", "_status")]
+        self.saved.append((deletion, "delete_selected", deletion.delete_selected))
+        self.lines, self.calls = [], []
+        window.refresh = lambda: self.calls.append("refresh")
+        window._status = lambda message, control=None: self.lines.append((message, control))
+        deletion.delete_selected = lambda selection=None, confirm=None: (
+            self.calls.append(("delete", confirm)) or "Deleted it")
+
+    def tearDown(self):
+        for owner, name, value in self.saved:
+            setattr(owner, name, value)
+
+    def test_the_line_is_the_deletions_and_comes_last(self):
+        answer = lambda text: True                               # noqa: E731
+        self.assertEqual(window.delete_characters(confirm=answer), "Deleted it")
+        self.assertEqual(self.calls, [("delete", answer), "refresh"])
+        self.assertEqual(self.lines[-1], ("Deleted it", window._CHARACTER_STATUS))
+
+
 class OpenScene(unittest.TestCase):
     """2026-09-30: Open scene on a portrait or a weapon - the catalog's file
     handed to the opener, its answer on the card's line."""

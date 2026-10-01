@@ -7572,3 +7572,86 @@ stand at its place in its bone's axes.
      plate; the animator knew the skeletal shield the game animates (a test BP, its clips, their own rig in
      `Rigs/Weapons`). Before asking which of several assets is "the thing", trace what plays in the game (the
      anim BP, the clips, root lock) and what the animators' own scenes use.
+
+## Characters > Delete: a character out of the scene, whole (2026-10-01)
+
+The animator: «Давай в разделе character сделаем кнопку удаления. Суть такая - я выделяю любую часть
+персонажа рига или скелета не важно какую нажимаю эту кнопку и у меня удаляется из сцены все что связано с
+этим персонажем. Также если я выделил несколько разных персонажей кнопка должна удалить все их части».
+Asked: **a confirm dialog first**. Spec `docs/superpowers/specs/2026-10-01-delete-character-design.md`.
+Module `SkeldarAnim/maya_scenesetup/deletion.py`; the Characters card's **Delete** (danger, trash) stands in
+Add Character's row (`window.delete_characters`).
+
+**Which characters**: every one a selected node belongs to — under one of its PARTS or in its namespace
+(`deletion.owners`, pure). A rig's parts are every top-level node of its namespace (measured: besides
+`Group` and the game skeleton, `Manny_Rig:SKM_Manny_Simple` and `Manny_Rig:materialXStack1`); a
+root-namespace rig's, its group and skeleton. A skeleton's are its root. Both get the meshes skinned to
+their joints, the weapon/armor spaces at world level following their bones, our weapons and cameras that
+DRIVE their bones (a weapon on the floor, a camera on `camera_root`) and the CoM group linked to the root.
+Parts are raised over plain transforms they empty (the Creep's `Armature`, `SKM_Manny_Simple`). So a
+control, a bone, a mesh, a weapon in the hand or on the floor, an armor piece, the CoM handle, the camera
+and the `Armature` all name the character; a shared `WeaponSpaces` group names nobody. Nothing selected,
+or nothing of a character's, is refused: a destructive button never falls back to "the only one".
+
+**What goes** (`plan`, read-only, then `execute` in one undo chunk):
+- the CORE: the parts raised over the union (an emptied `WeaponSpaces` goes), everything below them, the
+  rig's namespace whole, a skeleton's namespace when it holds nothing else (a clip imported as its own
+  skeleton), a skeletal armor piece's namespace;
+- the DG GARBAGE: components of the connection graph outside the core with the scene's HUBS cut out
+  (`HUB_TYPES`, default, locked and referenced nodes); one goes when it holds no DAG node and touches the
+  core — materials worn only by it, skinClusters, bind poses, curves, layers and sets of only its members,
+  our palette recolours. A component holding any DAG node stays whole, so an unknown hub can only make
+  it KEEP, never delete another's node. Measured before: a plain delete of the DAG left 292 nodes after
+  Manny's skeleton, 28 after the Creep's, 9 after the UE4 Mannequin;
+- what the Add RECORDED: `character._after_import` writes, for a skeleton (a rig has its namespace), a
+  `network` node `<root>_skeldarImport` fed by `root.message` (`skeldarImportNodes`: the import's UUIDs,
+  hubs left out; `skeldarImportLabel`: the catalog row), and `attach.import_weapon` puts
+  `skeldarImportNodes` on the weapon itself. Needed because Manny's skeleton asset carries the dead half of
+  an AS rig (275 DG nodes, `AllSet`, `BodyControls`), a `camera1` and a `materialXStack1`, and the palette
+  unassigns an FBX's own materials (the UE4 Mannequin's, every weapon's): connected to nothing of the
+  character. A recorded DAG node with nothing foreign below it joins the core; a component touching
+  nothing goes only when every node in it was recorded. A skeleton added before this has no record:
+  its recorded-only junk stays;
+- on the way, inside the chunk: an object of somebody else's riding a proxy inside it (BakeAcross) is
+  released (`connections.release_across`); a rig left standing whose MoCap holder's source goes is
+  disconnected (`maya_rig_retarget.disconnect`, the take not baked — the confirm says so); the CoM engine
+  forgets the groups; the core's locked nodes are unlocked; then the DAG tops, the DG left, the emptied
+  namespaces (deepest first), the orphaned hand proxies.
+
+The confirm names the characters and what of theirs goes («Manny_Rig1 (rig) - 1 weapon, 1 armor piece,
+camera, centre of mass»), the rig to be disconnected, and the animator's objects constrained to them;
+batch skips it. A skeleton reads «Creep [skeleton] (root)» (its record's label), «root1 (skeleton)»
+without one. A referenced character is refused by name.
+
+Proof: `docs/superpowers/plans/verify_delete_character.py` — **82/82 in mayapy standalone**:
+- every catalog row added alone and deleted through a part of it (a rig control, a mesh): the scene's
+  UUIDs exactly what they were but Maya's singleton copies (trap 121/122), the namespace gone, Ctrl+Z
+  bringing every node back, redo taking them again — 2699 / 2616 / 2628 nodes for the rigs in ~2 s, 410 /
+  139 / 83 for the skeletons in 0.1–0.2 s;
+- a full kit, three characters in one press (a rig with sword, Tech Limb, camera, CoM, keys, a palette
+  recolour, a layer of its controls; a Manny skeleton with a dagger in hand, a spear on the floor, a camera
+  and a CoM; a clip skeleton rig B was retargeted from): 18 parts each naming their character, the confirm
+  saying all of it, 4389 nodes gone in 3 s, every node that stood before still standing, nothing of the
+  three left but the cubes' own new nodes, rig B disconnected, the Creep (whose sword shares the world
+  `WeaponSpaces` group) untouched, the BakeAcross rider baked, shown and keyed, Ctrl+Z all back;
+- refusals, Cancel, and a mixed selection deleting the character and keeping the cube.
+And in a disposable GUI Maya (port 7041, scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`, killed after): the
+hub's Delete clicked through Qt with a rig control and a Creep mesh selected, Maya's real confirm read and
+answered by clicking its Delete (`delete_character_confirm.png`, the card `delete_character_card.png`),
+both gone, the line «Deleted Manny_Rig (rig), ... - 2849 nodes», one Ctrl+Z bringing both back. 3473 unit
+tests. Not built: a hotkey row.
+
+156. **`lightLinker1` is not a default node, and it links every shading group of the scene.**
+     `ls -defaultNodes` leaves it out; a connection-graph walk around one character's material reached
+     every other character's shading groups through it and, from those, their meshes — so "delete what
+     only this character uses" found nothing (the same with the IK solvers, which every ikHandle meets,
+     and `renderPartition`). Cut the scene's registries out by TYPE before walking.
+157. **Maya deletes a constraint whose last target is deleted**, and the constrained object keeps the pose
+     it stood in. A cube parent-constrained to a character's hand lost its constraint with the character
+     and stood still (measured to the matrix): there is no "constraint left without a target" to clean up.
+158. **The first import into an empty scene makes the scene's own managers INSIDE its namespace**
+     (`Manny_Rig:shapeEditorManager`, `Manny_Rig:poseInterpolatorManager`), Maya will not delete them, and
+     they keep the namespace alive after everything else in it is gone. `namespace -removeNamespace
+     -mergeNamespaceWithRoot` moves them out and removes it. And mayaUsd's LOCKED `UsdDefaultSettings`
+     copies an asset carries into a rig's namespace make `-deleteNamespaceContent` fail outright
+     («is locked, can not remove it»): unlock first.

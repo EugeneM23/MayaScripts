@@ -222,6 +222,28 @@ class SceneSetup(unittest.TestCase):
                    if c[0] == "setParent"]
         self.assertEqual(between, [])
 
+    def test_characters_has_delete_beside_add_character(self):
+        """2026-10-01: «кнопку удаления» - a danger button in Add Character's
+        row, pressing `delete_characters` onto the card's own line."""
+        index = self._created_index()
+        add, delete = index["Add Character"], index["Delete"]
+        rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"]
+        row = max(i for i in rows if i < add)
+        self.assertLess(row, delete)
+        between = [c for c in self.fake.calls[add:delete] if c[0] == "setParent"]
+        self.assertEqual(between, [])
+        self.assertLess(delete, index["Camera Setup"])
+        self.assertEqual(self._button_roles()["Delete"], ("danger", "trash"))
+        pressed = []
+        saved = (scenesetup.delete_characters, scenesetup._run)
+        try:
+            scenesetup.delete_characters = lambda: pressed.append(True)
+            scenesetup._run = lambda action, status=None: (action(), pressed.append(status))
+            self.fake.calls[delete][2]["command"]()
+        finally:
+            scenesetup.delete_characters, scenesetup._run = saved
+        self.assertEqual(pressed, [True, scenesetup._CHARACTER_STATUS])
+
     def test_the_status_lines_are_marked(self):
         marks = self._marks()
         for name in (scenesetup._STATUS, scenesetup._CHARACTER_STATUS):

@@ -52,6 +52,10 @@ MARKER = bonedrive.MARKER
 # FBX has no catalog row to find it by.
 SOURCE = "mayaWeaponSource"
 
+# The nodes the last `import_model` brought (2026-10-01): the weapon records them for
+# Characters > Delete -- its FBX materials the palette unassigns are connected to nothing of it.
+_LAST_IMPORT = []
+
 # Everything that can hold an offset between a node and its parent. Zeroing
 # translate and rotate is not enough: a pivot sits at the centre of the
 # geometry, and parenting compensates for it in rotatePivotTranslate -- so the
@@ -178,6 +182,7 @@ def import_model(path):
     mannequin, and a fix for a silent failure must not exist twice.
     """
     new = fbximport.import_nodes(path)
+    _LAST_IMPORT[:] = cmds.ls(new or [], uuid=True) or []   # by UUID: the weapon is re-parented
     return outermost(cmds.ls(new, long=True, type="transform") or [])
 
 
@@ -306,9 +311,11 @@ def import_weapon(entry, parent=None, rgb=None):
     its key and its source file, seated, dressed (its colour, or its image)
     and its own frame stored. The caller holds the undo chunk and autoKey.
     """
+    del _LAST_IMPORT[:]
     roots = import_model(entry.path)
     if not roots:
         raise RuntimeError("nothing came out of " + entry.path)
+    brought = list(_LAST_IMPORT)
 
     meshes = mesh_transforms(roots)
     note = ""
@@ -355,4 +362,7 @@ def import_weapon(entry, parent=None, rgb=None):
     # (2026-09-30): zero grip is the weapon in the fist on every rig
     bonedrive.store_frame(weapon, bonedrive.socket_frame(
         getattr(entry, "frame", (0.0, 0.0, 0.0))))
+    if brought:
+        from maya_scenesetup import deletion
+        deletion.record_on(weapon, brought)
     return weapon, note
