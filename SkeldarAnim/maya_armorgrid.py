@@ -8,7 +8,9 @@ Characters portraits. One square icon per `catalog.ARMOR` row with its name unde
 - a row the current character wears carries an «equipped» pill;
 - the RIGHT BUTTON offers Open scene: the row's model opened as the scene (`opener`), as the
   portraits and the weapons do;
-- no drag: Equip puts a piece in its one predetermined place.
+- a DRAG (since the evening, the Inventory card: «Броню тоже можно перетаскивать на персонажа -
+  да, как оружие») carries the icon; released on a character in a viewport the piece goes on him,
+  in its one predetermined place (`armorpanel.equip_on`); anywhere else nothing.
 
 The tiles live in a `cmds` card exactly as the portraits do: the builder makes an empty
 columnLayout and `attach` lays the grid over it, the placeholder kept as tall as the grid needs
@@ -25,6 +27,8 @@ import traceback
 import maya_charlook as look
 
 OBJECT_NAME = "skeldarArmorGrid"
+GHOST_NAME = "skeldarArmorGhost"
+OFF_HUB = "release off the hub to equip"
 WORN_TEXT = "equipped"
 OPEN_SCENE = look.OPEN_SCENE
 
@@ -61,6 +65,23 @@ class Scene(object):
         from maya_scenesetup import armorpanel
         return armorpanel.worn_keys()
 
+    def snapshot(self):
+        """Every character's bones, read once for one drag."""
+        from maya_scenesetup import droptarget
+        return droptarget.snapshot()
+
+    def target(self, gx, gy, snap):
+        from maya_scenesetup import droptarget
+        return droptarget.character_target(gx, gy, snap, self.scale())
+
+    def over_hub(self, gx, gy):
+        import maya_hubqt
+        return maya_hubqt.on_hub(gx, gy)
+
+    def equip_on(self, root, key):
+        from maya_scenesetup import armorpanel
+        return armorpanel.equip_on(root, key)
+
     def say(self, text):
         try:
             from maya_scenesetup import armorpanel
@@ -85,6 +106,7 @@ def _classes():
     q = maya_hubqt.qt()
     QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
     Qt = QtCore.Qt
+    Ghost = maya_hubqt.ghost_class()     # the hub's own, the portraits' too
 
     def colour(name):
         return QtGui.QColor(look.PALETTE[name])
@@ -114,6 +136,10 @@ def _classes():
                 if os.path.isfile(path):
                     self.pixmaps[row.key] = QtGui.QPixmap(path)
             self._hover = None
+            self._press = None
+            self._drag = None
+            self._clock = QtCore.QElapsedTimer()
+            self._clock.start()
             self.setMouseTracking(True)
             self.setCursor(Qt.PointingHandCursor)
             self.refresh()
@@ -185,6 +211,86 @@ def _classes():
                 return []
             return [(OPEN_SCENE, lambda: self._act(lambda: self.scene.open_scene(key)))]
 
+        def _label(self, key):
+            row = catalog.armor_by_key(key)
+            return row.label if row else key
+
+        def drop_at(self, gx, gy, key=None):
+            """The release of a drag of `key` at the global point: on a
+            character in a viewport, the piece on him; anywhere else nothing.
+            Public, so a verify can drive it without a mouse."""
+            key = key or (self._drag or {}).get("key")
+            if not key:
+                return self.status_text
+            local = self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy)))
+            if self.rect().contains(local) or self.scene.over_hub(gx, gy):
+                return self.status_text          # back on the hub: nothing
+            snap = self._drag["snap"] if self._drag else self.scene.snapshot()
+            aim = self.scene.target(gx, gy, snap)
+            if aim.get("kind") == "character":
+                root = aim["root"]
+                return self._act(lambda: self.scene.equip_on(root, key))
+            self.status_text = aim.get("text") or "no target"
+            self.scene.say(self.status_text)
+            return self.status_text
+
+        # -------------------------------------------------------- drag
+
+        def _start(self, key, point):
+            size = int(look.GHOST * self.k)
+            ghost = Ghost(self.pixmaps.get(key) or QtGui.QPixmap(), size, size, self.k,
+                          anchor=(0.5, 0.5), name=GHOST_NAME, backdrop="field")
+            try:
+                snap = self.scene.snapshot()
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
+                snap = []
+            self._drag = dict(key=key, ghost=ghost, snap=snap)
+            self._press = None
+            ghost.follow(point)
+            ghost.show()
+            try:
+                self.grabKeyboard()
+            except Exception:                                # noqa: BLE001
+                pass
+            self._caption(point, force=True)
+            self.update()
+
+        def _end(self):
+            if self._drag:
+                ghost = self._drag["ghost"]
+                ghost.hide()
+                ghost.deleteLater()
+            self._drag = None
+            self._press = None
+            try:
+                self.releaseKeyboard()
+            except Exception:                                # noqa: BLE001
+                pass
+            self.update()
+
+        def _caption(self, point, force=False):
+            drag = self._drag
+            if not drag:
+                return
+            if not force and self._clock.elapsed() < look.THROTTLE_MS:
+                return
+            self._clock.restart()
+            gx, gy = point.x(), point.y()
+            try:
+                if (self.rect().contains(self.mapFromGlobal(point))
+                        or self.scene.over_hub(gx, gy)):
+                    drag["ghost"].set_caption(OFF_HUB, False)
+                    return
+                aim = self.scene.target(gx, gy, drag["snap"])
+            except Exception:                                # noqa: BLE001
+                aim = dict(kind="none", text=_last_line(traceback.format_exc()))
+            if aim.get("kind") == "character":
+                drag["ghost"].set_caption("%s %s %s" % (
+                    self._label(drag["key"]), look.DOT, aim.get("text", "")), True)
+            else:
+                drag["ghost"].set_caption(aim.get("text", ""), False)
+
         # ------------------------------------------------------- mouse
 
         def _local(self, event):
@@ -195,23 +301,59 @@ def _classes():
                     else event.globalPos())
 
         def mousePressEvent(self, event):                    # noqa: N802
+            if self._drag:
+                if event.button() == Qt.RightButton:
+                    self._end()
+                    self.scene.say("cancelled")
+                return
             local = self._local(event)
             key = self.key_at(local.x(), local.y())
             if event.button() == Qt.RightButton:
+                self._press = None
                 maya_hubqt.run_menu(self, self._global(event), self.context_actions(key))
                 return
-            if event.button() == Qt.LeftButton and key:
-                self.select(key)
+            if event.button() == Qt.LeftButton and key and self.select(key):
+                point = self._global(event)
+                self._press = (key, (point.x(), point.y()))
 
         def mouseMoveEvent(self, event):                     # noqa: N802
+            point = self._global(event)
+            if self._drag:
+                self._drag["ghost"].follow(point)
+                self._caption(point)
+                return
+            if self._press and event.buttons() & Qt.LeftButton:
+                key, start = self._press
+                if look.dragged(start, (point.x(), point.y()),
+                                QtWidgets.QApplication.startDragDistance()):
+                    self._start(key, point)
+                return
             local = self._local(event)
             hover = self.key_at(local.x(), local.y())
             if hover != self._hover:
                 self._hover = hover
                 self.update()
 
+        def mouseReleaseEvent(self, event):                  # noqa: N802
+            if self._drag and event.button() == Qt.LeftButton:
+                point = self._global(event)
+                key = self._drag["key"]
+                try:
+                    self.drop_at(point.x(), point.y(), key)
+                finally:
+                    self._end()
+                return
+            self._press = None
+
+        def keyPressEvent(self, event):                      # noqa: N802
+            if event.key() == Qt.Key_Escape and self._drag:
+                self._end()
+                self.scene.say("cancelled")
+                return
+            QtWidgets.QWidget.keyPressEvent(self, event)
+
         def leaveEvent(self, _event):                        # noqa: N802
-            if self._hover is not None:
+            if self._hover is not None and not self._drag:
                 self._hover = None
                 self.update()
 

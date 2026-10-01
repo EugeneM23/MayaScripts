@@ -88,9 +88,12 @@ SECTIONS = (
     Section("characters", "Animation Setup", "maya_scenesetup.window",
             "build_characters_panel", "skeldarHubFrameCharacters",
             "scene", "user"),
-    Section("weapons", "Weapons", "maya_scenesetup.window",
+    #  2026-10-01, the evening («объеденим вкладки weapon и армор в одну
+    #  inventory»): Weapons and Armor are one card, Inventory - its key stays
+    #  "weapons" (the collapse memory, every opener), "armor" an alias.
+    Section("weapons", "Inventory", "maya_scenesetup.window",
             "build_weapons_panel", "skeldarHubFrameWeapons",
-            "scene", "sword"),
+            "scene", "backpack"),
     Section("connections", "Connections", "maya_scenesetup.connections",
             "build_panel", "skeldarHubFrameConnections",
             "scene", "hand-grab"),
@@ -98,12 +101,6 @@ SECTIONS = (
     Section("shared", "Shared", "maya_share",
             "build_panel", "skeldarHubFrameShared",
             "scene", "send"),
-    #  2026-10-01: armor and clothing on the character, the Tech Limb first --
-    #  the Scene group's last card: Connections stays beside Weapons and
-    #  Shared beside Connections (both placements are pinned by their tests).
-    Section("armor", "Armor", "maya_scenesetup.armorpanel",
-            "build_panel", "skeldarHubFrameArmor",
-            "scene", "shield"),
     Section("retarget", "Retarget", "maya_rig_retarget",
             "build_panel", "skeldarHubFrameRetarget",
             "animation", "arrows-exchange"),
@@ -141,7 +138,7 @@ _BY_KEY = dict((s.key, s) for s in SECTIONS)
 #  Keys of sections that became part of another: `show("uebridge")` (the
 #  hotkey row, a flagged shelf button, an older uiScript or verify run)
 #  opens the card the section lives in now.
-ALIASES = {"uebridge": "characters"}
+ALIASES = {"uebridge": "characters", "armor": "weapons"}
 
 
 # ------------------------------------------------------------------- pure

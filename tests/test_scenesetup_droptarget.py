@@ -252,6 +252,21 @@ class ClipTarget(unittest.TestCase):
         aim = dt.skeleton_target(1, 2, "Creep [skeleton]", self._skeletons())
         self.assertEqual((aim["kind"], aim["point"]), ("skeleton", (200.0, 0.0, -60.0)))
 
+    def test_an_armor_tile_on_a_character_is_that_character(self):
+        """2026-10-01: an armor tile goes on the character under the cursor."""
+        self.at((104.0, 60.0))
+        self.assertEqual(dt.character_target(1, 2, self.snap),
+                         dict(kind="character", root="Manny_Rig", label="Manny_Rig",
+                              text="onto Manny_Rig"))
+
+    def test_an_armor_tile_on_the_floor_is_nothing(self):
+        self.at((200.0, 60.0))
+        self.assertEqual(dt.character_target(1, 2, self.snap),
+                         dict(kind="none", text=dt.NO_CHARACTER))
+        dt.Viewport.at = classmethod(lambda cls, gx, gy: (None, None))
+        self.assertEqual(dt.character_target(1, 2, self.snap),
+                         dict(kind="none", text=dt.NO_VIEWPORT))
+
     def test_an_empty_scene_is_a_new_rig(self):
         self.at((200.0, 60.0))
         self.assertEqual(dt.clip_target(1, 2, [])["kind"], "new_rig")

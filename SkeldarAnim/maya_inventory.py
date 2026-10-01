@@ -19,14 +19,19 @@ the classic one:
   out like Maya's Channel Box («слева от окошка столбик с параметрами так
   как в стандартном интерфейсе маи в channel box»): Translate X/Y/Z, Rotate
   X/Y/Z, a value typed and Enter applies that hand's six (Esc puts back);
-- the GRID - the catalog, every weapon always there, each sized in cells by
-  its model's length, rearranged by hand, Sort on the right button;
-- the RIGHT BUTTON on a weapon - in the grid or in a hand card - offers Open
-  scene: its catalog file opened as the scene (2026-09-30, `opener`);
-- a CLICK picks a weapon, or a hand (the card's Add / Remove act on them);
-  a DRAG - press, move past Qt's start distance, release - carries the icon
-  with a caption naming the target: onto a hand card, back to the grid, onto
-  the hand under the cursor in a viewport, or the floor under it.
+- the TILES - the catalog, every weapon always there, one square each
+  (the portraits' and the armor's geometry, `maya_charlook`), the icon laid
+  across it, the name under it, an «equipped» pill on what the character
+  holds (2026-10-01, the evening: «уберем функционал сетчатого инвентаря ...
+  перемещать по сетке не нужно. Пусть все будет конссистентно» - the cell
+  grid, its rearranging, Sort and the remembered layout are gone);
+- the RIGHT BUTTON on a weapon - a tile or a hand card - offers Open scene:
+  its catalog file opened as the scene (2026-09-30, `opener`);
+- a CLICK picks a weapon, or a hand (the card's Equip / Unequip act on
+  them); a DRAG - press, move past Qt's start distance, release - carries
+  the icon with a caption naming the target: onto a hand card, back to the
+  tiles (a hand's weapon taken off), onto the hand under the cursor in a
+  viewport, or the floor under it.
 
 The mouse is ours for the whole drag: a press captures it, so the moves and
 the release keep coming here over the viewport, which never sees them.
@@ -35,12 +40,14 @@ replace; everything it looks like is `maya_invlook`'s. Qt is imported lazily
 (`maya_hubqt.qt()`), the classes are built on first use.
 
 Specs: docs/superpowers/specs/2026-09-29-weapon-inventory-design.md,
-docs/superpowers/specs/2026-09-30-weapons-card-inventory-design.md
+docs/superpowers/specs/2026-09-30-weapons-card-inventory-design.md,
+docs/superpowers/specs/2026-10-01-inventory-card-design.md
 """
 
 import os
 import traceback
 
+import maya_charlook as charlook
 import maya_invlook as look
 
 PLACEHOLDER = "mayaSceneSetupInventory"         # window._INVENTORY
@@ -48,7 +55,6 @@ OBJECT_NAME = "skeldarInventoryPanel"
 FIELD_NAME = "skeldarChannel"
 GHOST_NAME = "skeldarInventoryGhost"
 WINDOW_NAME = "skeldarInventory"                # the floating window, before
-LAYOUT_OPTIONVAR = "skeldarInventoryLayout"     # the grid as the animator left it
 THROTTLE_MS = 33
 SLOT_LABEL = {"R": "Right hand", "L": "Left hand"}
 EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
@@ -180,16 +186,6 @@ class Scene(object):
         except Exception:                                    # noqa: BLE001
             pass
 
-    def remembered_layout(self):
-        """The grid as it was left ({key: [col, row]}), {} when never moved."""
-        import maya.cmds as cmds
-        if not cmds.optionVar(exists=LAYOUT_OPTIONVAR):
-            return {}
-        return look.read_record(cmds.optionVar(query=LAYOUT_OPTIONVAR))
-
-    def remember_layout(self, placements):
-        import maya.cmds as cmds
-        cmds.optionVar(stringValue=(LAYOUT_OPTIONVAR, look.layout_record(placements)))
 
 
 # -------------------------------------------------------------------- Qt
@@ -316,22 +312,18 @@ def _classes():
             self.setObjectName(OBJECT_NAME)
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
-            stored = look.load_cells()
-            self.cells = dict((e.key, stored.get(e.key, (1, 3)))
-                              for e in catalog.WEAPONS)
-            # the grid as the animator left it (2026-09-29), new rows in the
-            # free cells, a broken record never losing an item
-            try:
-                record = scene.remembered_layout()
-            except Exception:                                # noqa: BLE001
-                record = {}
-            self.placements = look.arrange(self._items(), record)
-            self.preview = None
-            self.pixmaps = {}
+            self.keys = [e.key for e in catalog.WEAPONS]
+            self.pixmaps, self.turned = {}, {}
             for entry in catalog.WEAPONS:
                 path = look.icon_path(entry.key)
                 if os.path.isfile(path):
-                    self.pixmaps[entry.key] = QtGui.QPixmap(path)
+                    pixmap = QtGui.QPixmap(path)
+                    self.pixmaps[entry.key] = pixmap
+                    # laid across its square tile: an upright 1 x 4 sword
+                    # would be a quarter of the tile wide
+                    self.turned[entry.key] = pixmap.transformed(
+                        QtGui.QTransform().rotate(look.TURN),
+                        Qt.SmoothTransformation)
             self.status_text = ""
             self.root, self.holding, self.grips = None, {}, {}
             self.picked_key, self.picked_side = None, "R"
@@ -362,7 +354,7 @@ def _classes():
 
         def rects(self, width=None):
             width = self.width() if width is None else width
-            return look.scaled(look.panel(width / self.k), self.k)
+            return look.scaled(look.panel(width / self.k, len(self.keys)), self.k)
 
         def height_for(self, width):
             return self.rects(width)["panel"][3]
@@ -459,9 +451,6 @@ def _classes():
             self.refresh(force)
             return text
 
-        def _items(self):
-            return [(e.key, self.cells[e.key]) for e in catalog.WEAPONS]
-
         def _label(self, key):
             entry = catalog.by_key(key)
             return entry.label if entry else key
@@ -469,8 +458,8 @@ def _classes():
         # ----------------------------------------------------- picking
 
         def pick_item(self, key):
-            """A weapon clicked in the grid: the card's picked weapon."""
-            if key not in self.placements:
+            """A weapon's tile clicked: the card's picked weapon."""
+            if key not in self.keys:
                 return self.status_text
             self.picked_key = key
             text = self._act(lambda: self.scene.select_weapon(key))
@@ -505,50 +494,13 @@ def _classes():
             return self._act(lambda: self.scene.set_grip(side, rotate, translate),
                              force=side)
 
-        # ------------------------------------------------ the grid by hand
-
-        def grid_plan(self, x, y, key, grab):
-            """(kind, placements, other, spot) for `key` released at local
-            (x, y), pressed `grab` cells into itself - the grab point stays
-            under the cursor (`look.plan_move`: move, swap, same or None)."""
-            rects = self.rects()
-            cell = rects["cell"]
-            gx, gy = rects["grid"][:2]
-            spot = (int((x - gx) // cell) - grab[0],
-                    int((y - gy) // cell) - grab[1])
-            size = self.cells.get(key, (1, 3))
-            spot = look.clamp(spot, size)
-            kind, placed, other = look.plan_move(self.placements, self.cells,
-                                                 key, spot)
-            return kind, placed, other, spot
-
-        def _rearrange(self, key, x, y, grab):
-            kind, placed, other, _spot = self.grid_plan(x, y, key, grab)
-            if kind == "same":
-                return self.status_text
-            if kind is None:
-                return self._say("no room there for the %s" % self._label(key))
-            self.placements = placed
-            self.scene.remember_layout(placed)
-            if kind == "swap":
-                return self._say("%s and %s swapped" % (self._label(key),
-                                                        self._label(other)))
-            return self._say("%s moved" % self._label(key))
-
-        def sort(self):
-            """The catalog packed again in its order, and remembered."""
-            self.placements = look.pack(self._items())
-            self.scene.remember_layout(self.placements)
-            return self._say("inventory sorted")
-
         def context_actions(self, what):
             """What the right button offers over `what` (a `_hit` answer):
-            over a weapon - in the grid, or held / on the floor in a hand
-            card - Open scene, its catalog file opened as the scene
-            (2026-09-30, «по иконке ... оружия ... Open scene»); anywhere on
-            the grid, Sort. [] elsewhere."""
+            over a weapon - a tile, or held / on the floor in a hand card -
+            Open scene, its catalog file opened as the scene (2026-09-30,
+            «по иконке ... оружия ... Open scene»). [] elsewhere."""
             key = None
-            if what and what[0] == "item":
+            if what and what[0] == "tile":
                 key = what[1]
             elif what and what[0] == "slot":
                 held = self.holding.get(what[1])
@@ -558,22 +510,22 @@ def _classes():
             if key:
                 actions.append((look.OPEN_SCENE, lambda: self._act(
                     lambda: self.scene.open_scene(key))))
-            if what and what[0] in ("grid", "item"):
-                if actions:
-                    actions.append(None)
-                actions.append((look.SORT, self.sort))
             return actions
 
         def _hit(self, x, y):
-            rects = self.rects()
-            return look.hit(rects, self.placements, self.cells, x, y,
-                            rects["cell"])
+            return look.hit(self.rects(), self.keys, x, y, self.k)
+
+        def tile_of(self, key):
+            """The physical rect of `key`'s square, or None."""
+            if key not in self.keys:
+                return None
+            return self.rects()["tiles"][self.keys.index(key)]
 
         def source_at(self, x, y):
             """What a press at local (x, y) would drag, or None."""
             what = self._hit(x, y)
-            if what and what[0] == "item":
-                return ("grid", what[1])
+            if what and what[0] == "tile":
+                return ("tile", what[1])
             if what and what[0] == "slot":
                 held = self.holding.get(what[1])
                 if held and held.where in ("hand", "floor") and held.weapon:
@@ -581,44 +533,39 @@ def _classes():
             return None
 
         def _key_of(self, source):
-            if source[0] == "grid":
+            if source[0] == "tile":
                 return source[1]
             held = self.holding.get(source[1])
             return held.key if held else ""
 
         # ----------------------------------------------------------- drop
 
-        def drop_at(self, gx, gy, source, grab=None):
-            """The release of a drag from `source` at the global point: the
-            spec's table. Public, so a verify can drive it without a mouse.
-            `grab` is where a grid item was pressed, in its own cells (the
-            drag's when a drag is on)."""
+        def drop_at(self, gx, gy, source):
+            """The release of a drag from `source` (("tile", key) or ("slot",
+            side)) at the global point: the spec's table. Public, so a verify
+            can drive it without a mouse."""
             kind, arg = source
-            if grab is None:
-                grab = (self._drag or {}).get("grab") or (0, 0)
             key = self._key_of(source)
-            entry = catalog.by_key(key) if kind == "grid" else None
+            entry = catalog.by_key(key) if kind == "tile" else None
             local = self.mapFromGlobal(QtCore.QPoint(int(gx), int(gy)))
             if self.rect().contains(local):
                 what = self._hit(local.x(), local.y())
                 if what and what[0] == "slot":
                     side = what[1]
-                    if kind == "grid":
+                    if kind == "tile":
                         return self._act(lambda: self.scene.to_hand(self.root, side, entry))
                     if side != arg:
                         return self._act(lambda: self.scene.move(
                             self.root, arg, ("hand", self.root, side)))
                     return self.status_text
-                if what and what[0] in ("grid", "item") and kind == "slot":
+                if what and what[0] in ("tiles", "tile") and kind == "slot":
                     return self._act(lambda: self.scene.take_off(self.root, arg))
-                if what and what[0] in ("grid", "item") and kind == "grid":
-                    return self._rearrange(arg, local.x(), local.y(), grab)
-                return self.status_text
+                return self.status_text        # a tile among the tiles: nothing
             snap = self._drag["snap"] if self._drag else self.scene.snapshot()
             freed = (self.root, arg) if kind == "slot" else None
             aim = self.scene.target(gx, gy, snap, freed)
             if aim.get("kind") == "hand":
-                if kind == "grid":
+                if kind == "tile":
                     return self._act(lambda: self.scene.to_hand(
                         aim["root"], aim["side"], entry))
                 if aim["root"] == self.root and aim["side"] == arg:
@@ -626,7 +573,7 @@ def _classes():
                 return self._act(lambda: self.scene.move(
                     self.root, arg, ("hand", aim["root"], aim["side"])))
             if aim.get("kind") == "floor":
-                if kind == "grid":
+                if kind == "tile":
                     return self._act(lambda: self.scene.to_floor(
                         aim["root"], entry, aim["point"], aim["heading"],
                         aim.get("side")))
@@ -637,19 +584,18 @@ def _classes():
 
         # ---------------------------------------------------------- drag
 
-        def _start(self, source, point, grab=(0, 0)):
+        def _start(self, source, point):
             key = self._key_of(source)
-            pixmap = self.pixmaps.get(key) or QtGui.QPixmap()
-            cells = self.cells.get(key, (1, 3))
-            ghost = Ghost(pixmap, int(cells[0] * look.CELL * self.k),
-                          int(cells[1] * look.CELL * self.k), self.k,
-                          anchor=(0.5, 0.25), name=GHOST_NAME)
+            pixmap = self.turned.get(key) or QtGui.QPixmap()
+            size = int(look.GHOST * self.k)
+            ghost = Ghost(pixmap, size, size, self.k, anchor=(0.5, 0.5),
+                          name=GHOST_NAME, backdrop="field")
             try:
                 snap = self.scene.snapshot()
             except Exception:                                # noqa: BLE001
                 snap = []
                 self._say(_last_line(traceback.format_exc()))
-            self._drag = dict(source=source, ghost=ghost, snap=snap, grab=grab)
+            self._drag = dict(source=source, ghost=ghost, snap=snap)
             self._press = None
             ghost.follow(point)
             ghost.show()
@@ -666,7 +612,6 @@ def _classes():
                 ghost.deleteLater()
             self._drag = None
             self._press = None
-            self.preview = None
             try:
                 self.releaseKeyboard()
             except Exception:                                # noqa: BLE001
@@ -681,30 +626,15 @@ def _classes():
             local = self.mapFromGlobal(point)
             if self.rect().contains(local):
                 what = self._hit(local.x(), local.y())
-                self.preview = None
                 if what and what[0] == "slot":
                     same = source == ("slot", what[1])
                     drag["ghost"].set_caption(SLOT_LABEL[what[1]], not same)
-                elif what and what[0] in ("grid", "item") and source[0] == "slot":
+                elif what and what[0] in ("tiles", "tile") and source[0] == "slot":
                     drag["ghost"].set_caption("back to the inventory", True)
-                elif what and what[0] in ("grid", "item") and source[0] == "grid":
-                    kind, _placed, other, spot = self.grid_plan(
-                        local.x(), local.y(), source[1], drag["grab"])
-                    size = self.cells.get(source[1], (1, 3))
-                    fits = kind in ("move", "swap")
-                    if kind != "same":
-                        self.preview = (look.footprint(spot, size), fits)
-                    caption = {"move": "move here", "same": "",
-                               "swap": "swap with %s" % self._label(other)}
-                    drag["ghost"].set_caption(caption.get(kind, "no room"), fits
-                                              or kind == "same")
                 else:
                     drag["ghost"].set_caption("", True)
                 self.update()
                 return
-            if self.preview is not None:
-                self.preview = None
-                self.update()
             if not force and self._clock.elapsed() < THROTTLE_MS:
                 return
             self._clock.restart()
@@ -743,19 +673,14 @@ def _classes():
                 return
             self.setFocus()                  # a field being typed in commits
             point = self._global(event)
-            if what[0] == "item":
+            if what[0] == "tile":
                 self.pick_item(what[1])
-                rects = self.rects()
-                ix, iy = look.item_rect(rects, self.placements[what[1]],
-                                        self.cells[what[1]], rects["cell"])[:2]
-                grab = (int((local.x() - ix) // rects["cell"]),
-                        int((local.y() - iy) // rects["cell"]))
-                self._press = (("grid", what[1]), (point.x(), point.y()), grab)
+                self._press = (("tile", what[1]), (point.x(), point.y()))
             elif what[0] == "slot":
                 self.pick_hand(what[1])
                 source = self.source_at(local.x(), local.y())
                 if source:
-                    self._press = (source, (point.x(), point.y()), (0, 0))
+                    self._press = (source, (point.x(), point.y()))
 
         def mouseMoveEvent(self, event):                     # noqa: N802
             point = self._global(event)
@@ -764,14 +689,14 @@ def _classes():
                 self._caption(point)
                 return
             if self._press and event.buttons() & Qt.LeftButton:
-                source, start, grab = self._press
+                source, start = self._press
                 moved = abs(point.x() - start[0]) + abs(point.y() - start[1])
                 if moved >= QtWidgets.QApplication.startDragDistance():
-                    self._start(source, point, grab)
+                    self._start(source, point)
                 return
             local = self._local(event)
             what = self._hit(local.x(), local.y())
-            hover = what if what and what[0] in ("item", "slot") else None
+            hover = what if what and what[0] in ("tile", "slot") else None
             if hover != self._hover:
                 self._hover = hover
                 self.update()
@@ -864,57 +789,70 @@ def _classes():
                 p.drawText(well.adjusted(int(2 * k), 0, -int(2 * k), 0),
                            Qt.AlignCenter | Qt.TextWordWrap, text)
 
+        def _paint_tile(self, p, key, rect, dragging, worn, radius):
+            """A weapon's tile as Armor's and the portraits': the square, the
+            icon laid across it, the pick lit, an «equipped» pill, the name."""
+            k = self.k
+            chosen = key == self.picked_key and dragging != ("tile", key)
+            lit = (self._hover == ("tile", key) or dragging == ("tile", key)) \
+                and not chosen
+            box = QtCore.QRectF(*rect)
+            shape = QtGui.QPainterPath()
+            shape.addRoundedRect(box, radius, radius)
+            p.fillPath(shape, colour("card_active" if chosen else
+                                     ("hover" if lit else "field")))
+            pixmap = self.turned.get(key)
+            if pixmap is not None and not pixmap.isNull():
+                p.setOpacity(0.4 if dragging == ("tile", key) else 1.0)
+                p.drawPixmap(fitted(pixmap, box.toRect(), int(4 * k)), pixmap)
+                p.setOpacity(1.0)
+            else:
+                p.setFont(font(10 * k))
+                p.setPen(colour("muted"))
+                p.drawText(box, Qt.AlignCenter | Qt.TextWordWrap, key)
+            width = max(1.5, 2 * k) if chosen else max(1.0, k)
+            edge = "accent" if chosen else ("text2" if lit else "line")
+            p.setPen(QtGui.QPen(colour(edge), width))
+            p.setBrush(Qt.NoBrush)
+            half = width / 2.0
+            p.drawRoundedRect(box.adjusted(half, half, -half, -half), radius, radius)
+            if worn:
+                pad = int(4 * k)
+                tag = QtCore.QRectF(box.left() + pad, box.bottom() - pad - int(16 * k),
+                                    box.width() - 2 * pad, int(16 * k))
+                p.setPen(Qt.NoPen)
+                p.setBrush(colour("ok_tint"))
+                p.drawRoundedRect(tag, 4 * k, 4 * k)
+                p.setFont(font(10.5 * k, bold=True))
+                p.setPen(colour("ok"))
+                p.drawText(tag, Qt.AlignCenter, look.WORN_TEXT)
+            nx, ny, nw, nh = charlook.name_rect(rect, k)
+            name_font = font(11.5 * k, bold=chosen)
+            p.setFont(name_font)
+            p.setPen(colour("text" if chosen else "text2"))
+            text = QtGui.QFontMetrics(name_font).elidedText(
+                self._label(key), Qt.ElideRight, int(nw))
+            p.drawText(QtCore.QRect(int(nx), int(ny), int(nw), int(nh)),
+                       Qt.AlignHCenter | Qt.AlignVCenter, text)
+
         def paintEvent(self, _event):                        # noqa: N802
             k = self.k
             p = QtGui.QPainter(self)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
             rects = self.rects()
-            cell = rects["cell"]
             dragging = self._drag["source"] if self._drag else None
             for side in ("R", "L"):
                 self._paint_hand(p, rects, side, dragging)
 
-            self._card(p, rect_of(rects["gridcard"]),
-                       "target" if dragging and dragging[0] == "slot" else None)
-            grid = rect_of(rects["grid"])
-            rounded(p, grid, look.RADIUS["well"] * k, "field")
-            p.setPen(QtGui.QPen(colour("line", 90), 1))
-            for col in range(1, look.COLS):
-                x = grid.left() + col * cell
-                p.drawLine(x, grid.top() + 2, x, grid.bottom() - 2)
-            for row in range(1, look.ROWS):
-                y = grid.top() + row * cell
-                p.drawLine(grid.left() + 2, y, grid.right() - 2, y)
-            if self.preview:
-                # where the dragged item would land: the hub's ok it fits (or
-                # swaps), danger no room (2026-09-29)
-                cells, fits = self.preview
-                for col, row in cells:
-                    if 0 <= col < look.COLS and 0 <= row < look.ROWS:
-                        box = QtCore.QRect(grid.left() + col * cell + 1,
-                                           grid.top() + row * cell + 1,
-                                           cell - 2, cell - 2)
-                        rounded(p, box, look.RADIUS["item"] * k,
-                                "ok_tint" if fits else "danger_tint",
-                                "ok" if fits else "danger")
-            for key, spot in self.placements.items():
-                item = rect_of(look.item_rect(rects, spot, self.cells[key], cell))
-                if key == self.picked_key and dragging != ("grid", key):
-                    rounded(p, item.adjusted(1, 1, -1, -1), look.RADIUS["item"] * k,
-                            "card_active", "accent", max(1.5, 2 * k))
-                elif self._hover == ("item", key) or dragging == ("grid", key):
-                    rounded(p, item.adjusted(1, 1, -1, -1), look.RADIUS["item"] * k,
-                            "hover")
-                pix = self.pixmaps.get(key)
-                if pix is not None:
-                    p.setOpacity(0.4 if dragging == ("grid", key) else 1.0)
-                    p.drawPixmap(fitted(pix, item, int(2 * k)), pix)
-                    p.setOpacity(1.0)
-                else:
-                    p.setFont(font(10 * k))
-                    p.setPen(colour("muted"))
-                    p.drawText(item, Qt.AlignCenter | Qt.TextWordWrap, key)
+            if dragging and dragging[0] == "slot":
+                # a hand's weapon over the tiles goes back to the inventory
+                self._card(p, rect_of(rects["tilesarea"]).adjusted(
+                    -int(2 * k), -int(2 * k), int(2 * k), int(2 * k)), "target")
+            worn = look.worn(self.holding)
+            radius = look.RADIUS["well"] * k
+            for key, rect in zip(self.keys, rects["tiles"]):
+                self._paint_tile(p, key, rect, dragging, key in worn, radius)
             p.end()
 
     _CLASSES.update(Ghost=Ghost, Keeper=Keeper, ChannelField=ChannelField,

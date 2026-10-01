@@ -1,12 +1,15 @@
 """The weapon inventory, offscreen: since 2026-09-30 the Weapons card itself
-(«не в отдельном окне а как часть нашего меню»). It builds and paints ink,
-the grid holds the catalog, the hand cards show the hands and their grips as
-Channel Box columns, a click picks, a drag drops where the spec's table says
-- on a fake scene, so no Maya scene is touched. The viewport half is
-verify_weapons_card.py's.
+(«не в отдельном окне а как часть нашего меню»), since 2026-10-01 the Weapon
+section of the Inventory card, its cell grid replaced by TILES («уберем
+функционал сетчатого инвентаря ... перемещать по сетке не нужно»). It builds
+and paints ink, the tiles hold the catalog, the hand cards show the hands
+and their grips as Channel Box columns, a click picks, a drag drops where
+the spec's table says - on a fake scene, so no Maya scene is touched. The
+viewport half is verify_inventory_card.py's.
 
 Specs: docs/superpowers/specs/2026-09-29-weapon-inventory-design.md,
-docs/superpowers/specs/2026-09-30-weapons-card-inventory-design.md
+docs/superpowers/specs/2026-09-30-weapons-card-inventory-design.md,
+docs/superpowers/specs/2026-10-01-inventory-card-design.md
 """
 
 import os
@@ -112,15 +115,6 @@ class FakeScene(object):
     def say(self, text):
         self.said.append(text)
 
-    layout_in = {}
-    layout_out = None
-
-    def remembered_layout(self):
-        return dict(self.layout_in)
-
-    def remember_layout(self, placements):
-        self.layout_out = dict(placements)
-
 
 class PanelCase(unittest.TestCase):
 
@@ -134,19 +128,12 @@ class PanelCase(unittest.TestCase):
         self.panel.show()                       # its resize events delivered
         self.addCleanup(self.panel.deleteLater)
         self.rects = self.panel.rects()
-        self.cell = self.rects["cell"]
         self.scene.log = []
 
     def global_of(self, name, dx=5, dy=5):
         x, y = self.rects[name][:2]
         point = self.panel.mapToGlobal(QT.QtCore.QPoint(int(x) + dx, int(y) + dy))
         return point.x(), point.y()
-
-    def at_cell(self, col, row, dx=5, dy=5):
-        gx, gy = self.rects["grid"][:2]
-        p = self.panel.mapToGlobal(QT.QtCore.QPoint(
-            int(gx + col * self.cell + dx), int(gy + row * self.cell + dy)))
-        return p.x(), p.y()
 
     def image(self):
         image = QT.QtGui.QImage(self.panel.size(), QT.QtGui.QImage.Format_ARGB32)
@@ -170,10 +157,13 @@ class PanelCase(unittest.TestCase):
          "move": self.panel.mouseMoveEvent,
          "release": self.panel.mouseReleaseEvent}[kind](event)
 
-    def item_point(self, key, dx=3, dy=3):
-        x, y = look.item_rect(self.rects, self.panel.placements[key],
-                              self.panel.cells[key], self.cell)[:2]
+    def tile_point(self, key, dx=5, dy=5):
+        x, y = self.panel.tile_of(key)[:2]
         return x + dx, y + dy
+
+    def tile_global(self, key, dx=5, dy=5):
+        point = self.panel.mapToGlobal(QT.QtCore.QPoint(*self.tile_point(key, dx, dy)))
+        return point.x(), point.y()
 
 
 @unittest.skipIf(QT is None, "no Qt")
@@ -186,13 +176,14 @@ class Panel(PanelCase):
                     if image.pixelColor(x, y).alpha() > 0)
         self.assertGreater(inked, 100)
 
-    def test_the_grid_holds_every_catalog_row(self):
-        self.assertEqual(set(self.panel.placements),
-                         set(e.key for e in catalog.WEAPONS))
+    def test_the_tiles_hold_every_catalog_row_in_catalog_order(self):
+        self.assertEqual(self.panel.keys, [e.key for e in catalog.WEAPONS])
+        self.assertEqual(len(self.rects["tiles"]), len(catalog.WEAPONS))
 
     def test_its_height_follows_the_width_and_it_is_named(self):
-        self.assertEqual(self.panel.height(), look.panel(WIDTH)["panel"][3])
-        self.assertGreater(self.panel.height_for(500), self.panel.height_for(250))
+        self.assertEqual(self.panel.height(),
+                         look.panel(WIDTH, len(catalog.WEAPONS))["panel"][3])
+        self.assertGreater(self.panel.height_for(250), self.panel.height_for(500))  # tiles wrap
         self.assertEqual(self.panel.objectName(), inv.OBJECT_NAME)
 
     def test_it_watches_the_scene_and_stops(self):
@@ -311,11 +302,11 @@ class Channels(PanelCase):
 
 @unittest.skipIf(QT is None, "no Qt")
 class Picking(PanelCase):
-    """A click picks (the card's Add / Remove act on it), a drag past the
+    """A click picks (the card's Equip / Unequip act on it), a drag past the
     start distance carries."""
 
-    def test_a_click_on_an_item_picks_it_and_drops_nothing(self):
-        point = self.item_point("Spear_03")
+    def test_a_click_on_a_tile_picks_it_and_drops_nothing(self):
+        point = self.tile_point("Spear_03")
         self.mouse("press", point)
         self.mouse("release", point)
         self.assertEqual(self.scene.log, [("select_weapon", "Spear_03")])
@@ -330,7 +321,7 @@ class Picking(PanelCase):
         self.assertEqual(self.panel.picked_side, "L")
 
     def test_a_press_moved_past_the_distance_drags(self):
-        start = self.item_point("Dagger_01")
+        start = self.tile_point("Dagger_01")
         self.mouse("press", start)
         self.assertIsNone(self.panel._drag)
         far = (start[0] + 50, start[1] + 400)
@@ -342,7 +333,7 @@ class Picking(PanelCase):
         self.assertEqual(self.scene.log[-1], ("to_hand", ROOT, "L", "Dagger_01"))
 
     def test_the_right_button_cancels_a_drag(self):
-        start = self.item_point("Dagger_01")
+        start = self.tile_point("Dagger_01")
         self.mouse("press", start)
         self.mouse("move", (start[0] + 50, start[1] + 50),
                    button=QT.QtCore.Qt.NoButton, buttons=QT.QtCore.Qt.LeftButton)
@@ -354,15 +345,18 @@ class Picking(PanelCase):
         self.assertIsNone(self.panel.source_at(*self.rects["well_L"][:2]))
         x, y = self.rects["well_R"][:2]
         self.assertEqual(self.panel.source_at(x + 5, y + 5), ("slot", "R"))
-        self.assertEqual(self.panel.source_at(*self.item_point("Dagger_01")),
-                         ("grid", "Dagger_01"))
+        self.assertEqual(self.panel.source_at(*self.tile_point("Dagger_01")),
+                         ("tile", "Dagger_01"))
 
-    def test_the_picked_item_and_hand_are_lit(self):
+    def test_the_picked_tile_and_hand_are_lit(self):
         import maya_hubstyle
         image = self.image()
-        x, y = self.item_point("Dagger_01", dx=4, dy=self.cell)
-        self.assertEqual(image.pixelColor(int(x), int(y)).name(),
-                         maya_hubstyle.TOKENS["card_active"])
+        x, y, w, _h = self.panel.tile_of("Dagger_01")
+        self.assertEqual(image.pixelColor(int(x + w // 2), int(y + 1)).name(),
+                         maya_hubstyle.TOKENS["accent"])
+        other = self.panel.tile_of("Spear_01")
+        self.assertEqual(image.pixelColor(int(other[0] + 6), int(other[1] + 6)).name(),
+                         maya_hubstyle.TOKENS["field"])
         hx, hy, hw, _hh = self.rects["hand_R"]
         edge = image.pixelColor(int(hx + hw // 2), int(hy))
         self.assertEqual(edge.name(), maya_hubstyle.TOKENS["accent"])
@@ -370,20 +364,20 @@ class Picking(PanelCase):
 
 @unittest.skipIf(QT is None, "no Qt")
 class RightButton(PanelCase):
-    """2026-09-30: Open scene on a weapon's icon, Sort on the grid."""
+    """2026-09-30: Open scene on a weapon's icon (the Sort of the grid went
+    with the grid, 2026-10-01)."""
 
     def labels(self, what):
         return [a[0] if a else None for a in self.panel.context_actions(what)]
 
-    def test_on_a_weapon_in_the_grid_open_scene_then_sort(self):
-        self.assertEqual(self.labels(("item", "Dagger_01")),
-                         ["Open scene", None, "Sort the inventory"])
-        self.panel.context_actions(("item", "Dagger_01"))[0][1]()
+    def test_on_a_weapon_s_tile_open_scene(self):
+        self.assertEqual(self.labels(("tile", "Dagger_01")), ["Open scene"])
+        self.panel.context_actions(("tile", "Dagger_01"))[0][1]()
         self.assertEqual(self.scene.log[-1], ("open_scene", "Dagger_01"))
         self.assertEqual(self.panel.status_text, "opened Dagger_01")
 
-    def test_on_the_empty_grid_only_sort(self):
-        self.assertEqual(self.labels(("grid",)), ["Sort the inventory"])
+    def test_between_the_tiles_nothing(self):
+        self.assertEqual(self.labels(("tiles",)), [])
 
     def test_on_a_hand_holding_a_weapon_its_file(self):
         self.assertEqual(self.labels(("slot", "R")), ["Open scene"])
@@ -400,34 +394,39 @@ class RightButton(PanelCase):
         maya_hubqt.run_menu = lambda parent, point, actions: shown.append(
             [a[0] if a else None for a in actions])
         self.addCleanup(setattr, maya_hubqt, "run_menu", saved)
-        self.mouse("press", self.item_point("Spear_03"),
+        self.mouse("press", self.tile_point("Spear_03"),
                    button=QT.QtCore.Qt.RightButton)
-        self.assertEqual(shown, [["Open scene", None, "Sort the inventory"]])
+        self.assertEqual(shown, [["Open scene"]])
         self.assertEqual(self.scene.log, [])
         self.assertIsNone(self.panel._press)
 
 
 @unittest.skipIf(QT is None, "no Qt")
 class Drops(PanelCase):
-    """The window's drop table, unchanged in the card."""
+    """The window's drop table, the grid's tiles in its place (2026-10-01)."""
 
-    def test_grid_onto_a_hand_in_the_viewport(self):
-        self.panel.drop_at(500, 500, ("grid", "Dagger_01"))
+    def test_a_tile_onto_a_hand_in_the_viewport(self):
+        self.panel.drop_at(500, 500, ("tile", "Dagger_01"))
         self.assertEqual(self.scene.log[-1], ("to_hand", ROOT, "L", "Dagger_01"))
 
-    def test_grid_onto_the_floor(self):
+    def test_a_tile_onto_the_floor(self):
         self.scene.aim = dict(kind="floor", root="|root", side="L",
                               point=(1, 0, 2), heading=(1, 0, 0), text="floor")
-        self.panel.drop_at(500, 500, ("grid", "Spear_01"))
+        self.panel.drop_at(500, 500, ("tile", "Spear_01"))
         self.assertEqual(self.scene.log[-1], ("to_floor", "|root", "Spear_01", "L"))
 
-    def test_grid_onto_a_hand_card(self):
-        self.panel.drop_at(*self.global_of("well_L"), source=("grid", "Dagger_01"))
+    def test_a_tile_onto_a_hand_card(self):
+        self.panel.drop_at(*self.global_of("well_L"), source=("tile", "Dagger_01"))
         self.assertEqual(self.scene.log, [("to_hand", ROOT, "L", "Dagger_01")])
 
-    def test_slot_onto_the_grid_takes_it_off(self):
-        self.panel.drop_at(*self.global_of("grid"), source=("slot", "R"))
+    def test_a_slot_onto_the_tiles_takes_it_off(self):
+        self.panel.drop_at(*self.tile_global("Spear_03"), source=("slot", "R"))
         self.assertEqual(self.scene.log, [("take_off", ROOT, "R")])
+
+    def test_a_tile_onto_the_tiles_does_nothing(self):
+        """2026-10-01, «перемещать по сетке не нужно»."""
+        self.panel.drop_at(*self.tile_global("Spear_03"), source=("tile", "Dagger_01"))
+        self.assertEqual(self.scene.log, [])
 
     def test_slot_onto_the_other_slot_moves_it(self):
         self.panel.drop_at(*self.global_of("hand_L"), source=("slot", "R"))
@@ -444,12 +443,12 @@ class Drops(PanelCase):
 
     def test_no_target_does_nothing_and_says_why(self):
         self.scene.aim = dict(kind="none", text="no floor under the cursor")
-        self.panel.drop_at(500, 500, ("grid", "Spear_01"))
+        self.panel.drop_at(500, 500, ("tile", "Spear_01"))
         self.assertEqual([e for e in self.scene.log if e[0] != "target"], [])
         self.assertIn("no floor", self.panel.status_text)
 
     def test_the_card_line_takes_the_answer(self):
-        self.panel.drop_at(500, 500, ("grid", "Dagger_01"))
+        self.panel.drop_at(500, 500, ("tile", "Dagger_01"))
         self.assertEqual(self.panel.status_text, "into")
         self.assertEqual(self.scene.said[-1], "into")
 
@@ -457,65 +456,48 @@ class Drops(PanelCase):
         def boom(*a):
             raise RuntimeError("the scene said no")
         self.scene.to_hand = boom
-        self.panel.drop_at(500, 500, ("grid", "Dagger_01"))
+        self.panel.drop_at(500, 500, ("tile", "Dagger_01"))
         self.assertIn("the scene said no", self.panel.status_text)
 
 
 @unittest.skipIf(QT is None, "no Qt")
-class Rearranged(PanelCase):
-    """2026-09-29, «можно было перетаскивать по инвентарю»: a grid item
-    dropped in the grid moves, swaps with the one it lands on when that one
-    fits back, or stays; the layout is remembered and a Sort packs it again.
-    Nothing in the scene is touched."""
+class Tiles(PanelCase):
+    """2026-10-01, «Пусть все будет конссистентно»: Armor's tiles - the icon
+    laid across the square, an «equipped» pill on what the character holds,
+    the name under it - and no grid left to rearrange."""
 
-    def scene_actions(self):
-        return [e for e in self.scene.log if e[0] != "target"]
+    def test_the_grid_and_its_rearranging_are_gone(self):
+        for name in ("placements", "cells", "preview"):
+            self.assertFalse(hasattr(self.panel, name), name)
+        for name in ("grid_plan", "_rearrange", "sort"):
+            self.assertFalse(hasattr(self.panel, name), name)
+        self.assertFalse(hasattr(inv, "LAYOUT_OPTIONVAR"))
+        self.assertFalse(hasattr(inv.Scene, "remembered_layout"))
+        self.assertFalse(hasattr(inv.Scene, "remember_layout"))
 
-    def test_a_grid_drop_moves_the_item_and_remembers(self):
-        self.panel.drop_at(*self.at_cell(6, 1), source=("grid", "Dagger_01"), grab=(0, 0))
-        self.assertEqual(self.panel.placements["Dagger_01"], (6, 1))
-        self.assertEqual(self.scene.layout_out["Dagger_01"], (6, 1))
-        self.assertEqual(self.scene_actions(), [])
-        self.assertIn("moved", self.panel.status_text)
+    def test_the_icons_are_turned_to_lie_across_the_tiles(self):
+        for key, pixmap in self.panel.pixmaps.items():
+            turned = self.panel.turned[key]
+            self.assertGreater(turned.width(), pixmap.width(), key)
 
-    def test_the_grab_point_stays_under_the_cursor(self):
-        self.panel.drop_at(*self.at_cell(6, 3), source=("grid", "LongSword_02"),
-                           grab=(0, 2))
-        self.assertEqual(self.panel.placements["LongSword_02"], (6, 1))
-
-    def test_onto_another_item_that_fits_back_they_swap(self):
-        self.panel.drop_at(*self.at_cell(1, 0), source=("grid", "LongSword_02"),
-                           grab=(0, 0))
-        self.assertEqual((self.panel.placements["LongSword_02"],
-                          self.panel.placements["Spear_01"]), ((1, 0), (0, 0)))
-        self.assertIn("swapped", self.panel.status_text)
-
-    def test_no_room_leaves_the_grid_as_it_was(self):
-        before = dict(self.panel.placements)
-        self.panel.drop_at(*self.at_cell(0, 0), source=("grid", "Dagger_01"), grab=(0, 0))
-        self.assertEqual(self.panel.placements, before)
-        self.assertIsNone(self.scene.layout_out)
-        self.assertIn("no room", self.panel.status_text)
-
-    def test_sort_packs_the_catalog_again_and_remembers(self):
-        self.panel.drop_at(*self.at_cell(6, 1), source=("grid", "Dagger_01"), grab=(0, 0))
-        self.panel.sort()
-        self.assertEqual(self.panel.placements["Dagger_01"], (3, 0))
-        self.assertEqual(self.scene.layout_out["Dagger_01"], (3, 0))
-
-    def test_a_remembered_layout_opens_as_it_was_left(self):
-        self.scene.layout_in = {"Dagger_01": [9, 3]}
-        panel = inv.make_panel(self.scene)
-        self.addCleanup(panel.deleteLater)
-        self.assertEqual(panel.placements["Dagger_01"], (9, 3))
-
-    def test_the_preview_paints(self):
-        self.panel.preview = (look.footprint((6, 1), (1, 2)), True)
+    def test_a_held_weapon_wears_the_equipped_pill(self):
+        import maya_hubstyle
         image = self.image()
-        gx, gy = self.rects["grid"][:2]
-        lit = image.pixelColor(int(gx + 6 * self.cell + self.cell // 2),
-                               int(gy + 1 * self.cell + self.cell // 2))
-        self.assertGreater(lit.green(), lit.red())
+        x, y, w, h = self.panel.tile_of("LongSword_02")      # in the right hand
+        pill = image.pixelColor(int(x + 8), int(y + h - 8))
+        self.assertEqual(pill.name(), maya_hubstyle.TOKENS["ok_tint"])
+        x, y, w, h = self.panel.tile_of("Spear_01")          # nobody holds it
+        self.assertNotEqual(image.pixelColor(int(x + 8), int(y + h - 8)).name(),
+                            maya_hubstyle.TOKENS["ok_tint"])
+
+    def test_a_hand_dragged_over_the_tiles_says_back_to_the_inventory(self):
+        start = self.rects["well_R"][:2]
+        self.panel._start(("slot", "R"), self.panel.mapToGlobal(
+            QT.QtCore.QPoint(start[0] + 5, start[1] + 5)))
+        self.addCleanup(self.panel._end)
+        point = QT.QtCore.QPoint(*self.tile_global("Spear_03"))
+        self.panel._caption(point, force=True)
+        self.assertEqual(self.panel._drag["ghost"].text, "back to the inventory")
 
 
 @unittest.skipIf(QT is None, "no Qt")
@@ -537,7 +519,7 @@ class Attached(unittest.TestCase):
         self.assertEqual(host.height(), panel.height_for(360))
         self.assertEqual(panel.geometry(), host.rect())
 
-    def test_show_opens_the_hub_on_weapons(self):
+    def test_show_opens_the_hub_on_the_inventory(self):
         import maya_hub
         asked = []
         saved = maya_hub.show

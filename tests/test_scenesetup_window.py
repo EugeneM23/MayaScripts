@@ -537,7 +537,7 @@ class Picked(unittest.TestCase):
         text = window.hand_pick_text("R", "Dagger 01", "Long Sword 02")
         self.assertIn("Long Sword 02", text)
         self.assertIn("Dagger 01", text)
-        self.assertIn("Remove", text)
+        self.assertIn("Unequip", text)
 
 
 class FakeEquip(object):
@@ -729,7 +729,7 @@ class HandGrip(unittest.TestCase):
         self.assertEqual(self.grips.remembered,
                          [("Spear_03", "L", (1.0, 1.0, 1.0), (0.0, 0.0, 0.0))])
         self.assertEqual(self.drive.regrips, [])
-        self.assertIn("next Add", text)
+        self.assertIn("next Equip", text)
 
     def test_an_animated_or_floor_weapon_is_remembered_not_moved(self):
         self.equip.held["R"] = ("|sword", "hand")

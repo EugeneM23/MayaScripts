@@ -1,4 +1,12 @@
-"""The Armor card of the hub: pick a piece, press Equip.
+"""The Armor section of the hub's Inventory card: pick a piece, press Equip.
+
+Since 2026-10-01, the evening («объеденим вкладки weapon и армор в одну inventory. Пускай в ней
+будет два раздела weapon и армор ... Пусть все будет конссистентно»), not a card of its own: the
+rows (`build_rows` - the «Armor» heading, the tiles, Equip + Unequip) stand under the Weapon
+section of the Inventory card, write that card's one status line (`_STATUS`) and its subtitle
+(`_BOUND`), and `watch` hangs the pills' SelectionChanged job on that line. A tile also DRAGS onto a
+character in a viewport (`maya_armorgrid`, `equip_on`). Spec:
+docs/superpowers/specs/2026-10-01-inventory-card-design.md
 
 2026-10-01, the animator: «не будем добавлять его в панель с оружием а сделаем для него отдельную
 панель Armor в которой пока будет только техно лимб но позже мы добавим еще разные варианты одежды
@@ -27,9 +35,12 @@ from maya_scenesetup import armor
 from maya_scenesetup import catalog
 from maya_scenesetup import skeleton
 
-HUB_SECTION = "armor"
-_STATUS = "mayaSceneSetupArmorStatus"
-_BOUND = "mayaSceneSetupArmorBound"      # the card's subtitle
+HUB_SECTION = "weapons"                   # the Inventory card we live in (its key)
+#  The Inventory card's line and subtitle - `window._STATUS` / `window._WEAPONS_BOUND`,
+#  spelled here so this module imports no window (a test pins them equal).
+_STATUS = "mayaSceneSetupStatus"
+_BOUND = "mayaSceneSetupWeaponsBound"
+_HEADING = "mayaSceneSetupArmorHeading"   # «Armor», the section's title
 _TILES = "mayaSceneSetupArmorTiles"      # the tiles are laid over it
 _MENU = "mayaSceneSetupArmorMenu"        # the rows, where the tiles cannot stand
 _OPTIONVAR = "mayaSceneSetup_armor"      # the row picked
@@ -61,7 +72,10 @@ def chosen_armor():
 # ------------------------------------------------------------------- scene
 
 def _status(message):
-    cmds.text(_STATUS, edit=True, label=message)
+    try:
+        cmds.text(_STATUS, edit=True, label=message)
+    except RuntimeError:
+        pass                               # the card is not built
 
 
 def say(text):
@@ -103,14 +117,17 @@ def _say_pick(root, worn):
             else NO_CHARACTER)
 
 
-def refresh(*_args):
-    """Re-read the scene once: the character, the pills, the line."""
+def refresh(*_args, **kwargs):
+    """Re-read the scene once: the character, the pills, and - unless
+    `say=False` (the selection job: the line is the card's last press's) -
+    the line."""
     root = _bound_root()
     worn = set(armor.worn(root)) if root else set()
     tiles = _tiles()
     if tiles is not None:
         tiles.refresh(worn)
-    _say_pick(root, worn)
+    if kwargs.get("say", True):
+        _say_pick(root, worn)
 
 
 def select_armor(key):
@@ -146,6 +163,18 @@ def equip_armor():
     _after(armor.equip(root, chosen_armor()))
 
 
+def equip_on(root, key):
+    """The row `key` onto the character `root` - a tile dropped on him in a
+    viewport (2026-10-01). Returns the line."""
+    entry = catalog.armor_by_key(key)
+    if entry is None or not root:
+        return NO_CHARACTER if entry is not None else ""
+    cmds.optionVar(stringValue=(_OPTIONVAR, key))
+    text = armor.equip(root, entry)
+    _after(text)
+    return text
+
+
 def unequip_armor():
     """The picked row off the current character."""
     root = _bound_root()
@@ -172,7 +201,7 @@ def is_open():
 
 
 def show_window():
-    """Open the SkeldarAnim hub on the Armor card."""
+    """Open the SkeldarAnim hub on the Inventory card, where Armor lives."""
     import maya_hub
     return maya_hub.show(HUB_SECTION)
 
@@ -202,11 +231,13 @@ def _dropdown():
     cmds.optionMenu(_MENU, edit=True, value=chosen_armor().label)
 
 
-def build_panel():
-    """The Armor section: the character, the tiles, Equip / Unequip, the line."""
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
-                               columnOffset=("both", hubstyle.pick(0, 8)))
-    hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
+def build_rows():
+    """The Armor section's rows, into whatever layout is current - the
+    Inventory card's column, under its Weapon section: the «Armor» heading,
+    the tiles (a dropdown where they cannot stand), Equip / Unequip. The card
+    builds the status line after them; then `watch`."""
+    hubstyle.mark(cmds.text(_HEADING, label="Armor", align="left",
+                            font="boldLabelFont"), "heading")
     cmds.columnLayout(_TILES, adjustableColumn=True)
     cmds.setParent("..")
     if not _attach_tiles():
@@ -218,7 +249,8 @@ def build_panel():
         label="Equip", height=32,
         annotation="Put the picked piece on the character, in its place: the bone it rides "
                    "(the Tech Limb: lowerarm_l, where Atone puts it), outside the skeleton, so "
-                   "an export stays bones only. Replaces what that slot held.",
+                   "an export stays bones only. Replaces what that slot held. Or drag the tile "
+                   "onto a character in a viewport.",
         command=lambda *_args: _run(equip_armor)), "primary", "shield")
     hubstyle.mark(cmds.button(
         label="Unequip", height=32, width=110,
@@ -226,13 +258,15 @@ def build_panel():
         command=lambda *_args: _run(unequip_armor)), "danger", "trash")
     cmds.setParent("..")
 
-    hubstyle.mark(cmds.text(_STATUS, label="", align="left", wordWrap=True, height=36),
-                  "status")
-    cmds.setParent("..")
-    #  The pills and the subtitle follow the selection; the job dies with the line.
-    cmds.scriptJob(event=["SelectionChanged", lambda: _quiet(refresh)], parent=_STATUS)
-    _run(refresh)
-    return column
+
+def watch():
+    """After the card's line exists: the pills and the subtitle follow the
+    selection through a job the line owns (it dies with the card); the line
+    itself is left to the presses."""
+    cmds.scriptJob(event=["SelectionChanged",
+                          lambda: _quiet(lambda: refresh(say=False))],
+                   parent=_STATUS)
+    _quiet(lambda: refresh(say=False))
 
 
 def _quiet(action):

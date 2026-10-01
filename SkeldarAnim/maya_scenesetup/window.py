@@ -55,6 +55,9 @@ HUB_WEAPONS = "weapons"       # the Weapons section (2026-09-17, «декомп�
 _STATUS = "mayaSceneSetupStatus"                    # the Weapons line
 _CHARACTER_STATUS = "mayaSceneSetupCharacterStatus"  # the Characters line
 _BOUND = "mayaSceneSetupBound"
+#  The sections' titles inside the cards (2026-10-01, «Пусть все будет консистентно»).
+_CHARACTERS_HEADING = "mayaSceneSetupCharactersHeading"
+_WEAPON_HEADING = "mayaSceneSetupWeaponHeading"
 _WEAPONS_BOUND = "mayaSceneSetupWeaponsBound"   # the Weapons card's subtitle
 # The dropdown of every character row: only where the portrait grid cannot
 # stand (no Qt) since 2026-09-30.
@@ -151,19 +154,19 @@ def hand_follows_message(key, label):
 
 
 def pick_text(label, key):
-    """What the line says when a weapon is picked in the grid. Pure."""
-    return "{0} - press Add to put it into the {1}, or drag it".format(
+    """What the line says when a weapon is picked in the tiles. Pure."""
+    return "{0} - press Equip to put it into the {1}, or drag it".format(
         label, SIDE_LABEL[key])
 
 
 def hand_pick_text(key, picked, held):
-    """What the line says when a hand is picked: what Add and Remove will do
-    there. `held` is the label of what that hand holds, "" when free. Pure."""
+    """What the line says when a hand is picked: what Equip and Unequip will
+    do there. `held` is the label of what that hand holds, "" when free. Pure."""
     if held:
-        return ("the {0} holds {1} - Add replaces it with {2}, Remove takes "
+        return ("the {0} holds {1} - Equip replaces it with {2}, Unequip takes "
                 "it off".format(SIDE_LABEL[key], held, picked))
-    return "the {0} is free - Add puts {1} into it".format(SIDE_LABEL[key],
-                                                           picked)
+    return "the {0} is free - Equip puts {1} into it".format(SIDE_LABEL[key],
+                                                             picked)
 
 
 def grip_note(label, key, where):
@@ -174,7 +177,7 @@ def grip_note(label, key, where):
                 .format(label, SIDE_LABEL[key]))
     if where == "animated":
         return LINKED_NO_OFFSETS
-    return ("{0}'s grip in the {1} remembered - the next Add brings it"
+    return ("{0}'s grip in the {1} remembered - the next Equip brings it"
             .format(label, SIDE_LABEL[key]))
 
 
@@ -840,6 +843,13 @@ def _character_dropdown():
         cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
 
 
+def heading(name, label):
+    """A section's title inside a card: «Characters» / «UE Connect» in
+    Animation Setup, «Weapon» / «Armor» in Inventory (2026-10-01)."""
+    return hubstyle.mark(cmds.text(name, label=label, align="left",
+                                   font="boldLabelFont"), "heading")
+
+
 def _bridge_rows():
     """The UE Bridge's rows in the card (2026-10-01). A failure is a line of
     text in their place and the rest of the card still builds - the hub's
@@ -880,6 +890,7 @@ def build_characters_panel():
                                columnOffset=("both", hubstyle.pick(0, 8)))
 
     hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
+    heading(_CHARACTERS_HEADING, "Characters")
 
     model, kind = remembered_choice()
     _kind_row(kind)
@@ -981,22 +992,54 @@ def _weapon_fallback():
     cmds.setParent("..")
 
 
+def _armor_rows():
+    """The Armor section's rows (2026-10-01, one Inventory card). A failure
+    is a line of text in their place, the rest of the card still builds."""
+    parent = cmds.setParent(query=True)
+    try:
+        from maya_scenesetup import armorpanel
+        armorpanel.build_rows()
+    except Exception as error:                               # noqa: BLE001
+        traceback.print_exc()
+        if parent:
+            cmds.setParent(parent)
+        cmds.text(label="Armor failed: {0}: {1}".format(
+            type(error).__name__, error), align="left", wordWrap=True,
+            height=36)
+
+
+def _watch_armor():
+    try:
+        from maya_scenesetup import armorpanel
+        armorpanel.watch()
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+
+
 def build_weapons_panel():
-    """The Weapons section: the inventory, Add / Remove, the line.
+    """The Inventory card: the Weapon section, the Armor section, one line.
 
     2026-09-30 («сам выбор оружия превратим в наш инвентарь ... не в
     отдельном окне а как часть нашего меню»): the two hands, each with its
-    grip as a Channel Box column, and the grid (`maya_inventory`, laid over
-    the `_INVENTORY` placeholder); a click picks a weapon or a hand, Add puts
-    the one into the other, a drag does it too - onto a hand in the viewport
-    or the floor. Built AFTER the Characters section (hub order); its
-    `refresh` writes both cards' subtitles.
+    grip as a Channel Box column, and the weapons (`maya_inventory`, laid
+    over the `_INVENTORY` placeholder); a click picks a weapon or a hand,
+    Equip puts the one into the other, a drag does it too - onto a hand in
+    the viewport or the floor. Built AFTER the Characters section (hub
+    order); its `refresh` writes both cards' subtitles.
+
+    2026-10-01, the evening («объеденим вкладки weapon и армор в одну
+    inventory ... Пусть все будет конссистентно»): the card is Inventory -
+    «Weapon» and «Armor» headings, the weapons TILES (the cell grid gone),
+    Equip / Unequip in both sections (Add / Remove Weapon before), the Armor
+    rows (`armorpanel.build_rows`) under the weapons, and ONE status line
+    both write.
     """
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", hubstyle.pick(0, 8)))
 
     hubstyle.mark(cmds.text(_WEAPONS_BOUND, label="", align="left"),
                   "subtitle")
+    heading(_WEAPON_HEADING, "Weapon")
     cmds.columnLayout(_INVENTORY, adjustableColumn=True)
     cmds.setParent("..")
     if not _attach_inventory():
@@ -1005,20 +1048,23 @@ def build_weapons_panel():
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "left", 4)])
     hubstyle.mark(cmds.button(
-        label="Add", height=32,
-        annotation="Put the weapon picked in the grid into the picked hand, "
+        label="Equip", height=32,
+        annotation="Put the weapon picked in the tiles into the picked hand, "
                    "at the grip that hand's column shows, move any "
                    "weapon-bone animation onto it and drive the bone from "
                    "the weapon. Replaces what that hand held, animation "
-                   "preserved.",
-        command=lambda *_args: _run(add_weapon)), "primary", "plus")
+                   "preserved. Or drag the tile onto a hand card, onto a "
+                   "character's hand in a viewport, or onto the floor.",
+        command=lambda *_args: _run(add_weapon)), "primary", "sword")
     hubstyle.mark(cmds.button(
-        label="Remove Weapon", height=32, width=130,
+        label="Unequip", height=32, width=110,
         annotation="Bake the picked hand's weapon-bone animation back from "
                    "its weapon, then delete the weapon and its constraint. "
                    "Deleting the sword by hand instead loses that animation.",
         command=lambda *_args: _run(remove_weapon)), "danger", "trash")
     cmds.setParent("..")
+
+    _armor_rows()
 
     #  wordWrap: a long refusal must not widen the hub's whole column;
     #  two lines tall, or the wrapped second line is clipped (hub, 2026-09-17).
@@ -1026,5 +1072,6 @@ def build_weapons_panel():
                             height=36), "status")
 
     cmds.setParent("..")
+    _watch_armor()
     _run(refresh)
     return column

@@ -679,7 +679,7 @@ class RunPressesThePanel(SeamCase):
         maya_hotkeys.run("scene.weapon")
         self.assertEqual(panel.shown, 1)
         self.assertEqual(panel.calls, [("show_weapons",)])
-        self.assertIn("Weapons", self.fake.messages[-1])
+        self.assertIn("Inventory", self.fake.messages[-1])
         panel = FakePanelModule()
         maya_hotkeys._scene_module = lambda: panel
         maya_hotkeys.run("scene.character")

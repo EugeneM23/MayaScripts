@@ -63,6 +63,7 @@ _LIST = "ueAnimBridgeList"
 _SEARCH = "ueAnimBridgeSearch"
 _STATUS = "mayaSceneSetupCharacterStatus"
 _HEADER = "ueAnimBridgeHeader"
+_HEADING = "ueAnimBridgeHeading"     # «UE Connect», the rows' title (2026-10-01)
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
 _MODE = "ueAnimBridgeMode"
@@ -652,12 +653,11 @@ def editor_line(connected, cached=0):
     """The line above the editor dropdown: which state the bridge is in and,
     on open, what the cache holds. Pure."""
     if connected:
-        return "Unreal: connected"
+        return "connected"
     if cached:
-        return ("Unreal: not connected - {0} animations from the last "
-                "refresh, press Refresh for the live list".format(cached))
-    return ("Unreal: not connected - press Refresh to read the animations "
-            "from the open editor")
+        return ("not connected - {0} animations from the last refresh, press "
+                "Refresh for the live list".format(cached))
+    return "not connected - press Refresh to read the animations from the open editor"
 
 
 def build_rows():
@@ -675,6 +675,10 @@ def build_rows():
     the two exports a row under it. The editor line is the card's CONTEXT
     now - the character line is its subtitle.
     """
+    #  the rows' title, as every section of a card has one (2026-10-01:
+    #  «Та часть где мы подключаемся к анрилу ее нужно озаглавить UE Connect»)
+    hubstyle.mark(cmds.text(_HEADING, label="UE Connect", align="left",
+                            font="boldLabelFont"), "heading")
     #  two lines tall: a wrapped label keeps the one-line height it was
     #  given and clips the rest (measured in the hub, 2026-09-17).
     hubstyle.mark(cmds.text(_HEADER, label=editor_line(False), align="left",

@@ -365,6 +365,34 @@ def skeleton_text(label):
     return "onto %s" % label
 
 
+NO_CHARACTER = "drop onto a character"
+
+
+def character_target(gx, gy, snap, scale=1.0):
+    """Where an armor tile released at the global point goes (2026-10-01,
+    «Броню тоже можно перетаскивать на персонажа»): kind "character" (root,
+    label) when a character of `snap` (`snapshot()`: every rig's game
+    skeleton and every bare skeleton) is under the cursor - the Weapons rule,
+    its nearest bone on screen within max(16 px, 8 % of its height); "none"
+    anywhere else, the floor too; with the caption as "text"."""
+    view, local = Viewport.at(gx, gy)
+    if view is None:
+        return dict(kind="none", text=NO_VIEWPORT)
+    port = view.to_port(local)
+    figures = []
+    for ch in snap or []:
+        pts = dict((j, view.project(p)) for j, p in ch["points"].items())
+        figures.append(Figure(ch["key"],
+                              [(pts[a], pts[b]) for a, b in ch["segments"]],
+                              {}, view.depth(ch["root"])))
+    key = figure_under(port, figures, 16.0 * scale * view.sx)
+    if key is None:
+        return dict(kind="none", text=NO_CHARACTER)
+    ch = next(c for c in snap if c["key"] == key)
+    return dict(kind="character", root=key, label=ch["label"],
+                text=skeleton_text(ch["label"]))
+
+
 def skeleton_snapshot():
     """Every bare skeleton - no rig's - read once, in world space, for one
     drag of an animation with Skeleton picked in Characters (2026-10-01, the

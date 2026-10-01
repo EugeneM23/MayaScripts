@@ -18,27 +18,38 @@ each a column of its grip laid out like Maya's Channel Box LEFT of its well
 маи в channel box»), and the grid under them, its cell following the card's
 width. The window's own layout (title, close, name, status) is gone.
 
+And since 2026-10-01, the evening («для wepon раздела уберем функционал
+сетчатого инвентаря ... перемещать по сетке не нужно. Пусть все будет
+конссистентно»), the grid is gone: under the hands stand TILES, the
+portraits' and the armor's own geometry (`maya_charlook.grid`) - one square
+per catalog row, its name under it. Nothing is rearranged, sorted or
+remembered any more.
+
 Everything is in LOGICAL px; the panel multiplies by the display scale
 (trap 98 - Qt pixels are physical here).
 """
 
-import json
 import os
 
+import maya_charlook
 import maya_hubstyle
 
-CELL = 40                 # one inventory cell at most (the window's)
-MIN_CELL = 24             # ... and at least, in a narrow dock
-COLS, ROWS = 10, 5        # the grid: the catalog, every row always there
-ICON_PX = 80              # an icon's pixels per cell (twice CELL, for 150 %)
+#  The hand cards' proportions follow the card's width as the grid's cell
+#  did (2026-09-30, tuned to the animator's 360 px dock, trap 117): a UNIT
+#  of a tenth of the width, between these.
+UNIT = 40
+MIN_UNIT = 24
+UNITS = 10
 
 PAD = 4                   # inside a card
-GAP = 8                   # between the hands and the grid
+GAP = 8                   # between the hands and the tiles
 HAND_GAP = 6              # between the two hands
 HAND_MAX = 230            # a hand card's width at most (a wide classic hub)
 NAME_H = 20               # "Right hand" over a card
 ROW_H = 19                # one channel row
 ROW_GAP = 3               # between a row's name and its value
+TURN = 45                 # degrees an icon is turned to lie across its tile
+GHOST = maya_charlook.GHOST
 
 # The grip as Maya's Channel Box shows a transform: translate, then rotate.
 CHANNELS = ("tx", "ty", "tz", "rx", "ry", "rz")
@@ -48,10 +59,9 @@ NICE = {"tx": "Translate X", "ty": "Translate Y", "tz": "Translate Z",
 PALETTE = maya_hubstyle.TOKENS
 RADIUS = {"card": 8, "well": 6, "item": 4}      # the hub stylesheet's corners
 
-# The right button's rows (the grid's Sort since 2026-09-29, Open scene on a
-# weapon since 2026-09-30).
+# The right button's row on a weapon (2026-09-30).
 OPEN_SCENE = "Open scene"
-SORT = "Sort the inventory"
+WORN_TEXT = "equipped"    # the pill on a weapon the character holds (Armor's)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -64,148 +74,6 @@ def icons_dir():
 
 def icon_path(key):
     return os.path.join(icons_dir(), key + ".png")
-
-
-def load_cells():
-    """{key: (w, h)} from the icons' JSON, {} without it."""
-    path = os.path.join(icons_dir(), "weapon_icons.json")
-    try:
-        with open(path) as handle:
-            data = json.load(handle)
-    except (IOError, OSError, ValueError):
-        return {}
-    return dict((key, tuple(value["cells"])) for key, value in data.items())
-
-
-def item_cells(length):
-    """A weapon's cells from its model's length in cm: one wide, 2..5 tall
-    (Dagger 2, Creep Sword 3, Long Sword 4, the spears 5)."""
-    height = int(round(2 + (float(length) - 45.0) / 55.0))
-    return (1, max(2, min(5, height)))
-
-
-# ------------------------------------------------------------------ grid
-
-def pack(items, cols=COLS, rows=ROWS, taken=None):
-    """{key: (col, row)} for [(key, (w, h))]: column by column, first fit,
-    in the given order, around the cells already `taken`; what fits nowhere
-    is left out. Pure."""
-    taken = set(taken or ())
-    placed = {}
-    for key, (w, h) in items:
-        spot = None
-        for col in range(cols - w + 1):
-            for row in range(rows - h + 1):
-                cells = set((col + i, row + j) for i in range(w)
-                            for j in range(h))
-                if not cells & taken:
-                    spot = (col, row, cells)
-                    break
-            if spot:
-                break
-        if spot:
-            placed[key] = (spot[0], spot[1])
-            taken |= spot[2]
-    return placed
-
-
-# --------------------------------------------------- rearranged by hand
-#
-# 2026-09-29, the animator: «можно было перетаскивать по инвентарю». An item
-# dropped in the grid moves into free cells (its own old cells count as free),
-# or SWAPS with the one item it lands on when that one fits where the first
-# came from - the animator's pick over refusing and over Diablo 2's
-# pick-up-the-other; anything else is "no room". The layout is remembered as
-# a record and read back through `arrange`, which never loses an item.
-
-def footprint(spot, size):
-    """The cells an item of `size` covers at `spot`. Pure."""
-    col, row = spot
-    return set((col + i, row + j) for i in range(size[0]) for j in range(size[1]))
-
-
-def clamp(spot, size, cols=COLS, rows=ROWS):
-    """`spot` moved just far enough for the item to lie inside the grid."""
-    return (max(0, min(cols - size[0], int(spot[0]))),
-            max(0, min(rows - size[1], int(spot[1]))))
-
-
-def _clear(placements, cells, cols, rows):
-    """True when every item lies inside the grid and none overlaps another."""
-    seen = set()
-    for key, spot in placements.items():
-        size = cells.get(key, (1, 3))
-        if (spot[0] < 0 or spot[1] < 0 or spot[0] + size[0] > cols
-                or spot[1] + size[1] > rows):
-            return False
-        mine = footprint(spot, size)
-        if mine & seen:
-            return False
-        seen |= mine
-    return True
-
-
-def plan_move(placements, cells, key, spot, cols=COLS, rows=ROWS):
-    """(kind, placements, other) for dropping `key` at `spot` (clamped into
-    the grid): kind "move", "swap" (with `other`), "same", or None - refused,
-    the placements as they were. Pure; the input is never changed."""
-    size = cells.get(key, (1, 3))
-    spot = clamp(spot, size, cols, rows)
-    if placements.get(key) == spot:
-        return ("same", dict(placements), None)
-    wanted = footprint(spot, size)
-    under = [other for other, where in placements.items()
-             if other != key and footprint(where, cells.get(other, (1, 3))) & wanted]
-    moved = dict(placements)
-    moved[key] = spot
-    if not under:
-        return ("move", moved, None)
-    if len(under) > 1:
-        return (None, dict(placements), None)
-    other = under[0]
-    moved[other] = placements[key]
-    if _clear(moved, cells, cols, rows):
-        return ("swap", moved, other)
-    return (None, dict(placements), other)
-
-
-def arrange(items, stored, cols=COLS, rows=ROWS):
-    """The placements for [(key, size)] from a remembered record: a stored
-    spot kept (in item order) while it lies in the grid and overlaps nothing
-    placed before it; everything else - a new catalog row, a stale or broken
-    record - packed into the free cells. Pure."""
-    placed, taken = {}, set()
-    for key, size in items:
-        try:
-            spot = (int(stored[key][0]), int(stored[key][1]))
-        except (KeyError, TypeError, ValueError, IndexError):
-            continue
-        if (spot[0] < 0 or spot[1] < 0 or spot[0] + size[0] > cols
-                or spot[1] + size[1] > rows):
-            continue
-        mine = footprint(spot, size)
-        if mine & taken:
-            continue
-        placed[key] = spot
-        taken |= mine
-    placed.update(pack([(k, s) for k, s in items if k not in placed],
-                       cols, rows, taken))
-    return placed
-
-
-def layout_record(placements):
-    """The placements as the JSON the window remembers."""
-    return json.dumps(dict((k, list(v)) for k, v in placements.items()),
-                      sort_keys=True)
-
-
-def read_record(text):
-    """A remembered record back as {key: [col, row]}; {} for anything else."""
-    try:
-        data = json.loads(text or "")
-    except (TypeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 # ---------------------------------------------------------------- channels
@@ -242,21 +110,21 @@ def split_row(width, nice_w, short_w, value_min, gap=ROW_GAP):
 
 # ------------------------------------------------------------------- panel
 
-def panel(width):
-    """{name: (x, y, w, h)} in logical px for a card `width` wide, plus
-    "cell" (an int): the two hand cards side by side - the right hand on the
+def panel(width, count):
+    """{name: rect} in logical px for a card `width` wide holding `count`
+    weapons: the two hand cards side by side - the right hand on the
     viewer's LEFT, as the character faces you (the picker's convention) -
     each with its name on top, its channel column (a row per CHANNELS) and,
-    right of it, its well; under them the grid's card and the grid, ten
-    cells of the width between MIN_CELL and CELL, centred. Pure."""
+    right of it, its well; under them "tiles", a list of the weapons'
+    squares (`maya_charlook.grid`), and "tilesarea" round them. Pure."""
     width = int(width)
-    cell = int(max(MIN_CELL, min(CELL, (width - 2 * PAD) // COLS)))
-    well_w = int(max(32, min(56, round(1.2 * cell))))
+    unit = int(max(MIN_UNIT, min(UNIT, (width - 2 * PAD) // UNITS)))
+    well_w = int(max(32, min(56, round(1.2 * unit))))
     hand_w = int(max(0, min(HAND_MAX, (width - HAND_GAP) // 2)))
     left = max(0, (width - (2 * hand_w + HAND_GAP)) // 2)
     body_h = len(CHANNELS) * ROW_H
     hand_h = NAME_H + body_h + PAD
-    rects = {"cell": cell}
+    rects = {}
     for side, x in (("R", left), ("L", left + hand_w + HAND_GAP)):
         rects["hand_" + side] = (x, 0, hand_w, hand_h)
         rects["name_" + side] = (x + PAD + 2, 0, max(0, hand_w - 2 * PAD - 2),
@@ -269,21 +137,20 @@ def panel(width):
         for index, channel in enumerate(CHANNELS):
             rects["row_%s_%s" % (side, channel)] = (
                 col_x, NAME_H + index * ROW_H, col_w, ROW_H)
-    grid_w, grid_h = COLS * cell, ROWS * cell
-    gx = max(PAD, (width - grid_w) // 2)
     y = hand_h + GAP
-    rects["gridcard"] = (gx - PAD, y, grid_w + 2 * PAD, grid_h + 2 * PAD)
-    rects["grid"] = (gx, y + PAD, grid_w, grid_h)
-    rects["panel"] = (0, 0, width, y + grid_h + 2 * PAD)
+    _cols, _cell, squares, height = maya_charlook.grid(width, count, 1.0)
+    rects["tiles"] = [(x, y + ty, w, h) for x, ty, w, h in squares]
+    rects["tilesarea"] = (0, y, width, height)
+    rects["panel"] = (0, 0, width, y + height)
     return rects
 
 
 def scaled(rects, scale):
-    """The same rects in physical px (the "cell" too)."""
+    """The same rects in physical px (the tiles' list too)."""
     out = {}
     for name, rect in rects.items():
-        if isinstance(rect, (int, float)):
-            out[name] = int(round(rect * scale))
+        if name == "tiles":
+            out[name] = [tuple(int(round(v * scale)) for v in r) for r in rect]
         else:
             out[name] = tuple(int(round(v * scale)) for v in rect)
     return out
@@ -294,23 +161,24 @@ def inside(rect, x, y):
     return rx <= x < rx + rw and ry <= y < ry + rh
 
 
-def item_rect(rects, placement, cells, cell=CELL):
-    """The rect an item at (col, row) of (w, h) cells covers in the grid."""
-    gx, gy = rects["grid"][:2]
-    col, row = placement
-    w, h = cells
-    return (gx + col * cell, gy + row * cell, w * cell, h * cell)
-
-
-def hit(rects, placements, cells, x, y, cell=CELL):
+def hit(rects, keys, x, y, scale=1.0):
     """What the point is: ("slot", side) anywhere on a hand's card,
-    ("item", key), ("grid",), or None. Pure."""
+    ("tile", key) on a weapon's tile or its name, ("tiles",) elsewhere among
+    the tiles, or None. Pure."""
     for side in ("R", "L"):
         if inside(rects["hand_" + side], x, y):
             return ("slot", side)
-    if inside(rects["grid"], x, y):
-        for key, spot in placements.items():
-            if inside(item_rect(rects, spot, cells.get(key, (1, 3)), cell), x, y):
-                return ("item", key)
-        return ("grid",)
+    index = maya_charlook.hit(rects["tiles"], x, y, scale)
+    if index is not None and index < len(keys):
+        return ("tile", keys[index])
+    if inside(rects["tilesarea"], x, y):
+        return ("tiles",)
     return None
+
+
+def worn(holding):
+    """The keys the character holds - in a hand or on the floor - the tiles'
+    «equipped» pills. `holding` is {side: equip.Holding}. Pure."""
+    return set(h.key for h in (holding or {}).values()
+               if h is not None and getattr(h, "where", "") in ("hand", "floor")
+               and getattr(h, "key", ""))

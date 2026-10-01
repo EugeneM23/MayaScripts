@@ -7302,6 +7302,53 @@ Animation»**, also `primary` — one orange button per half. The wording follow
 hotkey rows «Animation Setup» / «Import Character». `verify_characters_card.py` card + photo again in a
 disposable Maya (gate 4 now: the two primaries); 3507 unit tests.
 
+## One Inventory card: Weapon and Armor, tiles everywhere, headings everywhere (2026-10-01)
+
+The animator, the same evening: «Та часть где мы подключаемся к анрилу ее нужно озаглавить UE Connect
+пускай будет. Далее давай объеденим вкладки weapon и армор в одну inventory. Пускай в ней будет два
+раздела weapon и армор. Давай для wepon раздела уберем функционал сетчатого инвентаря, оружия одевать на
+персонажей и выкидывать в сцену драгом можно но перемещать по сетке не нужно. Пусть все будет
+конссистентно». Asked (a mockup): tiles + the hand cards; Equip / Unequip in both; armor drags too;
+headings everywhere — all four the recommendation. Spec
+`docs/superpowers/specs/2026-10-01-inventory-card-design.md`.
+
+- **Headings**: a hub role `heading` (`maya_hubstyle.ROLES`; bold, the primary text, a hairline under;
+  classic: `boldLabelFont`). Animation Setup: «Characters» (`mayaSceneSetupCharactersHeading`) and «UE
+  Connect» (`ueAnimBridgeHeading`, the editor line under it lost its «Unreal: » prefix); Inventory:
+  «Weapon» (`mayaSceneSetupWeaponHeading`) and «Armor» (`mayaSceneSetupArmorHeading`).
+  `scenesetup.window.heading(name, label)` makes one.
+- **The hub**: the `weapons` row is **Inventory**, icon `backpack`; the `armor` row is gone and
+  `ALIASES["armor"] = "weapons"` (`armorpanel.show_window`, the `window.armor` hotkey row). Key `weapons`
+  kept, as Animation Setup kept `characters`; Connections still follows it.
+- **The card** (`build_weapons_panel`): subtitle, Weapon, the weapon panel, **Equip** (primary, `sword`)
+  + **Unequip** (danger) — Add / Remove Weapon renamed, same functions, the line's wording with them —
+  then `armorpanel.build_rows()` (Armor, its tiles, Equip (primary, `shield`) + Unequip), **one status
+  line** `mayaSceneSetupStatus` (armor's `_STATUS` and `_BOUND` ARE the card's, pinned equal), then
+  `armorpanel.watch()` — the SelectionChanged job on that line refreshes the pills with `say=False`, the
+  line staying the last press's. `armorpanel.build_panel` is gone. Hotkey rows: «Inventory», «Equip
+  Weapon», «Unequip Weapon».
+- **The weapon panel** (`maya_inventory`, `maya_invlook`): the hand cards unchanged (their proportions
+  still follow a tenth of the width, `UNIT`), under them **tiles** — `maya_charlook.grid`, the portraits'
+  and the armor's geometry — the icon turned 45° (`TURN`; an upright 1 × 4 sword would be a quarter of the
+  tile wide), the name under it, the pick lit, an «equipped» pill on a weapon the character holds in a
+  hand or on the floor (`look.worn`). Drops: tile → hand card / a hand in the viewport / the floor as
+  before; hand card → the other card moved, → the tiles taken off; tile → tiles nothing. **Gone**: the
+  cell grid, rearranging, Sort, `skeldarInventoryLayout`, `pack` / `plan_move` / `arrange` / the record;
+  the ghost is the portraits' (square, `backdrop="field"`).
+- **The armor tiles drag** (`maya_armorgrid`): past Qt's start distance the hub's ghost; over a character
+  in a viewport (`droptarget.character_target` over `droptarget.snapshot()`, the Weapons rule) «Tech Limb ·
+  onto Manny_Rig», the release `armorpanel.equip_on(root, key)`; elsewhere «drop onto a character»,
+  nothing; on the hub nothing; Esc / the right button cancel.
+
+Proof: `docs/superpowers/plans/verify_inventory_card.py` **8/8 in a disposable Maya** (port 7047): the
+card right after Animation Setup, `show("armor")` lighting it; the four headings; the card top down with
+one line and the two orange Equips, content 504 ≤ 510; the tiles (no grid); `drop_at` of Long Sword onto
+the rig's projected right hand (into it, its pill), of Spear 01 onto the floor (weapon_l follows it), of
+the right hand card onto the tiles (taken off); a real press–drag–release of the Tech Limb tile onto the
+rig's spine (worn, the caption naming the rig). `verify_characters_card.py` card 5/5 again with the
+headings. Pictures `inventory_card.png`, `characters_card.png`. 3504 unit tests.
+`verify_inventory_live.py` and `verify_weapons_card.py` drove the cell grid: history.
+
 ## Center of Mass: a live point, a fast trail, the CoM tool (2026-10-01)
 
 The animator: «у нас должна быть какая-то точка к которой мы можем сделать motion trail … моушен треил

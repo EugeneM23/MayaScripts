@@ -41,6 +41,25 @@ class FakeScene(object):
     def say(self, text):
         self.log.append(("say", text))
 
+    #  the drag (2026-10-01): a character under the cursor, or not
+    aim = dict(kind="character", root="|Manny_Rig:root", label="Manny_Rig",
+               text="onto Manny_Rig")
+    hub = False
+
+    def snapshot(self):
+        return ["snap"]
+
+    def target(self, gx, gy, snap):
+        self.log.append(("target", snap))
+        return self.aim
+
+    def over_hub(self, gx, gy):
+        return self.hub
+
+    def equip_on(self, root, key):
+        self.log.append(("equip_on", root, key))
+        return "%s on %s" % (key, root)
+
 
 class Pure(unittest.TestCase):
 
@@ -136,6 +155,75 @@ class Grid(unittest.TestCase):
     def test_the_height_follows_the_width(self):
         self.assertEqual(self.grid.height_for(330), self.grid.sizeHint().height())
         self.assertGreater(self.grid.height_for(330), 0)
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class Drag(unittest.TestCase):
+    """2026-10-01, «Броню тоже можно перетаскивать на персонажа - да, как
+    оружие»: a press dragged past the start distance carries the icon; on a
+    character in a viewport the piece goes on him, anywhere else nothing."""
+
+    setUp = Grid.setUp
+    centre = Grid.centre
+    click = Grid.click
+
+    def mouse(self, kind, point, button=None, buttons=None):
+        Qt = QT.QtCore.Qt
+        button = Qt.LeftButton if button is None else button
+        buttons = button if buttons is None else buttons
+        types = {"press": QT.QtCore.QEvent.MouseButtonPress,
+                 "move": QT.QtCore.QEvent.MouseMove,
+                 "release": QT.QtCore.QEvent.MouseButtonRelease}
+        event = QT.QtGui.QMouseEvent(types[kind], QT.QtCore.QPointF(point),
+                                     QT.QtCore.QPointF(self.grid.mapToGlobal(point)),
+                                     button, buttons, Qt.NoModifier)
+        {"press": self.grid.mousePressEvent, "move": self.grid.mouseMoveEvent,
+         "release": self.grid.mouseReleaseEvent}[kind](event)
+
+    def test_a_drop_on_a_character_equips_it_there(self):
+        start = self.centre(0)
+        self.mouse("press", start)
+        self.assertIsNone(self.grid._drag)
+        far = start + QT.QtCore.QPoint(-2000, 40)
+        self.mouse("move", far, button=QT.QtCore.Qt.NoButton,
+                   buttons=QT.QtCore.Qt.LeftButton)
+        self.assertIsNotNone(self.grid._drag)
+        self.assertEqual(self.grid._drag["ghost"].text, "Tech Limb · onto Manny_Rig")
+        self.mouse("release", far)
+        self.assertIsNone(self.grid._drag)
+        self.assertIn(("equip_on", "|Manny_Rig:root", "Tech_Limb"), self.scene.log)
+
+    def test_off_every_character_nothing_and_the_line_says_why(self):
+        self.scene.aim = dict(kind="none", text="drop onto a character")
+        self.grid.drop_at(-2000, 40, "Tech_Limb")
+        self.assertFalse([e for e in self.scene.log if e[0] == "equip_on"])
+        self.assertIn(("say", "drop onto a character"), self.scene.log)
+
+    def test_back_on_the_hub_nothing(self):
+        self.scene.hub = True
+        self.grid.drop_at(-2000, 40, "Tech_Limb")
+        self.assertFalse([e for e in self.scene.log if e[0] in ("equip_on", "target")])
+
+    def test_a_click_is_no_drag(self):
+        self.click(self.centre(0))
+        self.assertIsNone(self.grid._drag)
+        self.assertFalse([e for e in self.scene.log if e[0] == "equip_on"])
+
+    def test_the_right_button_and_escape_cancel(self):
+        start = self.centre(0)
+        self.mouse("press", start)
+        self.mouse("move", start + QT.QtCore.QPoint(60, 60),
+                   button=QT.QtCore.Qt.NoButton, buttons=QT.QtCore.Qt.LeftButton)
+        self.mouse("press", start, button=QT.QtCore.Qt.RightButton)
+        self.assertIsNone(self.grid._drag)
+        self.assertIn(("say", "cancelled"), self.scene.log)
+        self.mouse("press", start)
+        self.mouse("move", start + QT.QtCore.QPoint(60, 60),
+                   button=QT.QtCore.Qt.NoButton, buttons=QT.QtCore.Qt.LeftButton)
+        self.grid.keyPressEvent(QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress,
+                                                   QT.QtCore.Qt.Key_Escape,
+                                                   QT.QtCore.Qt.NoModifier))
+        self.assertIsNone(self.grid._drag)
 
 
 if __name__ == "__main__":

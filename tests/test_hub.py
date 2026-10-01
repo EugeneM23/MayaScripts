@@ -86,8 +86,8 @@ class TheTable(unittest.TestCase):
         первой, Scene выше») - and was named Animation Setup («Раздел
         Character Заменим на Animationsetup»), its key still "characters"."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["Animation Setup", "Weapons", "Connections", "Shared",
-                          "Armor", "Retarget", "Graph Overlay",
+                         ["Animation Setup", "Inventory", "Connections", "Shared",
+                          "Retarget", "Graph Overlay",
                           "Center of Mass",
                           "Studio", "Colour", "Hotkeys", "Update"])
 
@@ -95,15 +95,24 @@ class TheTable(unittest.TestCase):
         """2026-10-01: no section of its own; its key opens the card it
         lives in - the hotkey row, a flagged shelf button, an older verify."""
         self.assertNotIn("uebridge", [s.key for s in hub.SECTIONS])
-        self.assertEqual(hub.ALIASES, {"uebridge": "characters"})
+        self.assertEqual(hub.ALIASES, {"uebridge": "characters", "armor": "weapons"})
         self.assertIs(hub.section("uebridge"), hub.section("characters"))
+
+    def test_armor_is_part_of_the_inventory(self):
+        """2026-10-01, the evening: «объеденим вкладки weapon и армор в одну
+        inventory» - the Weapons card is Inventory (key "weapons", the
+        backpack), Armor no card of its own and its key an alias."""
+        self.assertNotIn("armor", [s.key for s in hub.SECTIONS])
+        self.assertIs(hub.section("armor"), hub.section("weapons"))
+        self.assertEqual((hub.section("weapons").label, hub.section("weapons").icon),
+                         ("Inventory", "backpack"))
 
     def test_the_groups_and_their_icons(self):
         import maya_hubicons
         groups = [(s.key, s.group) for s in hub.SECTIONS]
         self.assertEqual(groups, [
             ("characters", "scene"), ("weapons", "scene"),
-            ("connections", "scene"), ("shared", "scene"), ("armor", "scene"),
+            ("connections", "scene"), ("shared", "scene"),
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
             ("studio", "look"),
@@ -124,7 +133,7 @@ class TheTable(unittest.TestCase):
         """Hotkeys is the header's keyboard; Update is a card again
         (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
-                         ["characters", "weapons", "connections", "shared", "armor",
+                         ["characters", "weapons", "connections", "shared",
                           "retarget", "graphoverlay", "com",
                           "studio", "colour", "update"])
 
@@ -132,7 +141,6 @@ class TheTable(unittest.TestCase):
         wanted = {
             "characters": ("maya_scenesetup.window", "build_characters_panel"),
             "weapons": ("maya_scenesetup.window", "build_weapons_panel"),
-            "armor": ("maya_scenesetup.armorpanel", "build_panel"),
             "connections": ("maya_scenesetup.connections", "build_panel"),
             "shared": ("maya_share", "build_panel"),
             "retarget": ("maya_rig_retarget", "build_panel"),
@@ -514,7 +522,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         hub.build()
         self.assertEqual(hub._SKIN.order, [
             ("group", "scene"), ("card", "characters"), ("card", "weapons"),
-            ("card", "connections"), ("card", "shared"), ("card", "armor"),
+            ("card", "connections"), ("card", "shared"),
             ("group", "animation"), ("card", "retarget"),
             ("card", "graphoverlay"), ("card", "com"), ("group", "look"),
             ("card", "studio"), ("card", "colour"), ("group", "settings"),

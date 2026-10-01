@@ -131,6 +131,16 @@ class Stylesheet(unittest.TestCase):
         self.assertNotRegex(sheet, r"(^|\}|,)\s*QLabel\s*\{[^}]*background")
         self.assertNotRegex(sheet, r"\] QWidget\s*\{")
 
+    def test_a_heading_is_a_bold_title_over_a_line(self):
+        """2026-10-01: a section's title inside a card («UE Connect»,
+        «Weapon», «Armor») - bold, the primary text, a hairline under it."""
+        self.assertIn("heading", style.ROLES)
+        rule = re.search(r'QLabel\[skRole="heading"\] \{([^}]*)\}',
+                         style.stylesheet()).group(1)
+        self.assertIn("font-weight: bold", rule)
+        self.assertIn(style.TOKENS["text"], rule)
+        self.assertIn("border-bottom", rule)
+
     def test_the_chip_hides_its_indicator(self):
         sheet = style.stylesheet()
         self.assertRegex(

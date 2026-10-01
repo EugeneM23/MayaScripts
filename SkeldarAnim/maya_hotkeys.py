@@ -169,7 +169,7 @@ def _scene(func, *args, **kwargs):
     if not module.is_open():
         if section == "weapons":
             module.show_weapons()
-            return _report("Weapons opened - press again")
+            return _report("Inventory opened - press again")
         module.show_window()
         return _report("Animation Setup opened - press again")
     return getattr(module, func)(*args)
@@ -744,8 +744,8 @@ _OURS = (
     ("window.scenesetup", "Windows", "Animation Setup",
      "Open the Animation Setup section: the rig or a skeleton, and the UE Bridge",
      partial(_show, "maya_scenesetup", "show_window")),
-    ("window.weapons", "Windows", "Weapons",
-     "Open the Weapons section: a weapon in the hand, the grip",
+    ("window.weapons", "Windows", "Inventory",
+     "Open the Inventory: a weapon in the hand, its grip, armor on the character",
      partial(_show, "maya_scenesetup", "show_weapons")),
     ("window.overshoot", "Windows", "Overshoot",
      "Open the Overshoot panel",
@@ -802,14 +802,14 @@ _OURS = (
     ("scene.character", "Scene Setup", "Import Character",
      "Import the chosen skeleton into this scene",
      partial(_scene, "add_character")),
-    ("scene.weapon", "Scene Setup", "Add Weapon",
+    ("scene.weapon", "Scene Setup", "Equip Weapon",
      "Import the chosen weapon and drive its bone from it",
      partial(_scene, "add_weapon", section="weapons")),
-    ("scene.remove_weapon", "Scene Setup", "Remove Weapon",
+    ("scene.remove_weapon", "Scene Setup", "Unequip Weapon",
      "Bake the bone back off the weapon and delete it",
      partial(_scene, "remove_weapon", section="weapons")),
     ("window.armor", "Windows", "Armor",
-     "Open the Armor section: put a piece of armor on the character",
+     "Open the Inventory on its Armor section: put a piece of armor on the character",
      partial(_show, "maya_scenesetup.armorpanel", "show_window")),
     ("window.connections", "Windows", "Connections",
      "Open the Connections section: hands on the weapon and off it",

@@ -104,6 +104,7 @@ ROLES = (
     "note",         # a one-line hint
     "context",      # a line of scene context inside the body
     "subtitle",     # a line the skin moves into the card's header
+    "heading",      # a section's title inside a card (2026-10-01: «UE Connect»)
     "swatch",       # a colour chip (see swatch())
     "swatchonly",   # a colorSliderGrp showing only its swatch
 )
@@ -299,6 +300,8 @@ QLabel[skRole="status"] {{ color: {status_text}; padding: {p2}px {p2}px; }}
 QLabel[skRole="note"] {{ color: {muted}; }}
 QLabel[skRole="context"] {{ color: {muted}; }}
 QLabel[skRole="subtitle"] {{ color: {muted}; font-size: {small}px; }}
+QLabel[skRole="heading"] {{ color: {text}; font-weight: bold;
+    padding: {p6}px 0px {p3}px 0px; border-bottom: {b1}px solid {line}; }}
 
 QScrollBar:vertical {{ background: transparent; width: {p8}px; margin: 0px; }}
 QScrollBar::handle:vertical {{ background: {line}; border-radius: {r4}px;

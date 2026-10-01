@@ -51,6 +51,11 @@ class SceneSetup(unittest.TestCase):
         uebridge._repopulate = lambda quiet=False: []
         uebridge.fill_project_menu = lambda labels: None
         uebridge._attach_drag = lambda: None
+        #  ... and the Armor section's rows are part of the Inventory card
+        self.saved_armor = (armorpanel.cmds, armorpanel._attach_tiles, armorpanel.refresh)
+        armorpanel.cmds = self.fake
+        armorpanel._attach_tiles = lambda: True
+        armorpanel.refresh = lambda *a, **k: None
         #  The scene reads after the build are the module's own and not
         #  under test here; the portrait grid and the inventory are Qt's
         #  (test_chargrid, test_inventory).
@@ -74,6 +79,7 @@ class SceneSetup(unittest.TestCase):
          scenesetup._bound_root, scenesetup._attach_grid) = self.saved
         (uebridge.cmds, uebridge.load_cache, uebridge._repopulate,
          uebridge.fill_project_menu, uebridge._attach_drag) = self.saved_bridge
+        armorpanel.cmds, armorpanel._attach_tiles, armorpanel.refresh = self.saved_armor
 
     def test_no_window_and_stretching_columns(self):
         self.assertEqual(self.fake.windows, {})
@@ -161,7 +167,8 @@ class SceneSetup(unittest.TestCase):
                      "iconTextRadioCollection"):
             self.assertFalse([c for c in calls if c[0] == kind], kind)
         labels = [c[2].get("label") for c in calls if c[0] == "button"]
-        self.assertEqual(labels, ["Add", "Remove Weapon"])
+        #  2026-10-01: Equip / Unequip in both sections of the Inventory card
+        self.assertEqual(labels, ["Equip", "Unequip", "Equip", "Unequip"])
 
     def test_the_weapons_subtitle_names_the_character(self):
         self.assertEqual(self._marks()[scenesetup._WEAPONS_BOUND].role,
@@ -223,11 +230,16 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(roles["Import Animation"], ("primary", "download"))
         self.assertNotIn("Add Character", roles)
         self.assertEqual(roles["Camera Setup"], ("secondary", "camera"))
-        self.assertEqual(roles["Add"], ("primary", "plus"))
-        self.assertEqual(roles["Remove Weapon"], ("danger", "trash"))
-        primaries = [label for label, (role, _i) in roles.items()
+        #  the Inventory card: Equip (orange) + Unequip in each section
+        inventory = [(label, role, icon) for label, role, icon, _i in self._buttons()
+                     if label in ("Equip", "Unequip")]
+        self.assertEqual(inventory, [("Equip", "primary", "sword"),
+                                     ("Unequip", "danger", "trash"),
+                                     ("Equip", "primary", "shield"),
+                                     ("Unequip", "danger", "trash")])
+        primaries = [label for label, role, _icon, _i in self._buttons()
                      if role == "primary"]
-        self.assertEqual(sorted(primaries), ["+ Import", "Add", "Import Animation"])
+        self.assertEqual(primaries, ["+ Import", "Import Animation", "Equip", "Equip"])
 
     def test_the_bridge_rows_follow_camera_setup_and_the_card_has_one_line(self):
         """2026-10-01 («UE bridge и character ... объеденить в одно окно»):
@@ -293,9 +305,9 @@ class SceneSetup(unittest.TestCase):
                             for t in texts))
         self.assertIn(scenesetup._CHARACTER_STATUS, fake.children)
 
-    def test_add_and_remove_share_a_row(self):
-        index = self._created_index()
-        add, remove = index["Add"], index["Remove Weapon"]
+    def test_equip_and_unequip_share_a_row(self):
+        found = [i for label, _r, _ic, i in self._buttons() if label in ("Equip", "Unequip")]
+        add, remove = found[0], found[1]
         rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"]
         row = max(i for i in rows if i < add)
         self.assertLess(row, remove)
@@ -331,6 +343,49 @@ class SceneSetup(unittest.TestCase):
         for name in (scenesetup._STATUS, scenesetup._CHARACTER_STATUS):
             self.assertEqual(marks[name].role, "status")
 
+    def _buttons(self):
+        """[(label, role, icon, call index)] of the marked buttons, in
+        creation order - two sections may share a label (Equip)."""
+        marks = self._marks()
+        unnamed = [n for n in self.fake.children if n.startswith("button")]
+        out = []
+        for index, call in enumerate(self.fake.calls):
+            if call[0] != "button" or call[2].get("edit"):
+                continue
+            name = call[1][0] if call[1] else unnamed.pop(0)
+            label = call[2].get("label")
+            if name in marks and label:
+                out.append((label, marks[name].role, marks[name].icon, index))
+        return out
+
+    def test_the_sections_have_headings(self):
+        """2026-10-01: «Пусть все будет консистентно» - Characters and UE
+        Connect in Animation Setup, Weapon and Armor in Inventory."""
+        heads = [(c[1][0], c[2]["label"]) for c in self.fake.calls
+                 if c[0] == "text" and c[1] and not c[2].get("edit")
+                 and self._marks().get(c[1][0]) is not None
+                 and self._marks()[c[1][0]].role == "heading"]
+        self.assertEqual(heads, [(scenesetup._CHARACTERS_HEADING, "Characters"),
+                                 (uebridge._HEADING, "UE Connect"),
+                                 (scenesetup._WEAPON_HEADING, "Weapon"),
+                                 (armorpanel._HEADING, "Armor")])
+
+    def test_the_inventory_card_has_one_line_and_the_armor_rows_under_the_weapons(self):
+        calls = self._weapons_calls()
+        lines = [c for c in calls if c[0] == "text" and c[1]
+                 and c[1][0] in (scenesetup._STATUS, "mayaSceneSetupArmorStatus")
+                 and not c[2].get("edit")]
+        self.assertEqual([c[1][0] for c in lines], [scenesetup._STATUS])
+        self.assertEqual(armorpanel._STATUS, scenesetup._STATUS)
+        self.assertEqual(armorpanel._BOUND, scenesetup._WEAPONS_BOUND)
+        order = [c[1][0] for c in calls if c[0] in ("text", "columnLayout") and c[1]
+                 and c[1][0] in (scenesetup._INVENTORY, armorpanel._TILES, scenesetup._STATUS)
+                 and not c[2].get("edit")]
+        self.assertEqual(order, [scenesetup._INVENTORY, armorpanel._TILES, scenesetup._STATUS])
+        jobs = [c for c in calls if c[0] == "scriptJob"]
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0][2]["parent"], scenesetup._STATUS)
+
     def _created_index(self):
         return dict((c[2].get("label"), i) for i, c in
                     enumerate(self.fake.calls) if c[0] == "button"
@@ -361,18 +416,20 @@ class SceneSetup(unittest.TestCase):
 
 
 class Armor(unittest.TestCase):
-    """The Armor card (2026-10-01): the character, the tiles, Equip / Unequip, the line."""
+    """The Armor section (2026-10-01): its rows in the Inventory card - the
+    heading, the tiles, Equip / Unequip - writing the card's one line."""
 
     def setUp(self):
         self.saved = (armorpanel.cmds, armorpanel._attach_tiles, armorpanel.refresh,
                       armorpanel._bound_root, armorpanel.armor.equip, armorpanel.armor.unequip)
         self.fake = FakeUiCmds()
         armorpanel.cmds = self.fake
-        armorpanel.refresh = lambda *a: None
+        self.refreshes = []
+        armorpanel.refresh = lambda *a, **k: self.refreshes.append(k.get("say", True))
         self.tiles = []
         armorpanel._attach_tiles = lambda: self.tiles.append(True) or True
         maya_hubstyle.take_marks()
-        armorpanel.build_panel()
+        armorpanel.build_rows()
         self.marks = dict((m.name, m) for m in maya_hubstyle.take_marks())
 
     def tearDown(self):
@@ -382,12 +439,22 @@ class Armor(unittest.TestCase):
     def _buttons(self):
         return [c[2] for c in self.fake.calls if c[0] == "button" and not c[2].get("edit")]
 
-    def test_no_window_the_named_controls(self):
+    def test_no_window_no_column_the_heading_and_the_tiles(self):
         self.assertEqual(self.fake.windows, {})
-        for name in (armorpanel._BOUND, armorpanel._STATUS):
-            self.assertIn(name, self.fake.children)
+        self.assertFalse([c for c in self.fake.calls if c[0] == "columnLayout"
+                          and c[1] != (armorpanel._TILES,)])
+        self.assertEqual(self.marks[armorpanel._HEADING].role, "heading")
+        self.assertTrue(any(c[0] == "text" and c[1] == (armorpanel._HEADING,)
+                            and c[2]["label"] == "Armor" for c in self.fake.calls))
         self.assertTrue(any(c[0] == "columnLayout" and c[1] == (armorpanel._TILES,)
                             for c in self.fake.calls))
+
+    def test_the_rows_build_no_subtitle_no_line_no_job(self):
+        """The card's: its subtitle, its one line, the job hung on it."""
+        self.assertFalse([m for m in self.marks.values() if m.role in ("subtitle", "status")])
+        self.assertNotIn(armorpanel._STATUS, self.fake.children)
+        self.assertFalse([c for c in self.fake.calls if c[0] == "scriptJob"])
+        self.assertFalse(hasattr(armorpanel, "build_panel"))
 
     def test_the_tiles_are_laid_over_the_placeholder_and_no_dropdown(self):
         self.assertEqual(self.tiles, [True])
@@ -397,29 +464,36 @@ class Armor(unittest.TestCase):
         fake = FakeUiCmds()
         armorpanel.cmds = fake
         armorpanel._attach_tiles = lambda: False
-        armorpanel.build_panel()
+        armorpanel.build_rows()
         self.assertTrue(any(c[0] == "optionMenu" and c[1] == (armorpanel._MENU,)
                             for c in fake.calls))
         items = [c[2].get("label") for c in fake.calls if c[0] == "menuItem"]
         self.assertEqual(items, catalog.armor_labels())
 
-    def test_equip_is_the_one_primary_and_unequip_the_danger(self):
+    def test_equip_is_the_primary_and_unequip_the_danger(self):
         labels = [b.get("label") for b in self._buttons()]
         self.assertEqual(labels, ["Equip", "Unequip"])
-        roles = sorted((m.role, m.icon) for m in self.marks.values() if m.role in ("primary", "danger"))
+        roles = sorted((m.role, m.icon) for m in self.marks.values()
+                       if m.role in ("primary", "danger"))
         self.assertEqual(roles, [("danger", "trash"), ("primary", "shield")])
 
-    def test_the_subtitle_and_the_line_are_marked(self):
-        self.assertEqual(self.marks[armorpanel._BOUND].role, "subtitle")
-        self.assertEqual(self.marks[armorpanel._STATUS].role, "status")
-
-    def test_the_pills_follow_the_selection_through_a_job_the_line_owns(self):
+    def test_watch_hangs_one_job_on_the_card_s_line_that_writes_no_line(self):
+        armorpanel.watch()
         jobs = [c for c in self.fake.calls if c[0] == "scriptJob"]
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0][2]["event"][0], "SelectionChanged")
         self.assertEqual(jobs[0][2]["parent"], armorpanel._STATUS)
+        jobs[0][2]["event"][1]()
+        self.assertEqual(self.refreshes, [False, False])     # watch's own, then the job's
+
+    def test_the_card_s_line_and_subtitle(self):
+        from maya_scenesetup import window as scene
+        self.assertEqual(armorpanel._STATUS, scene._STATUS)
+        self.assertEqual(armorpanel._BOUND, scene._WEAPONS_BOUND)
+        self.assertEqual(armorpanel.HUB_SECTION, "weapons")
 
     def test_equip_and_unequip_report_on_the_line(self):
+        armorpanel.refresh = lambda *a, **k: None
         armorpanel._bound_root = lambda: "|Manny_Rig:root"
         seen = []
         armorpanel.armor.equip = lambda root, entry: seen.append(("on", root, entry.key)) or "put on"
@@ -431,6 +505,17 @@ class Armor(unittest.TestCase):
         lines = [c[2].get("label") for c in self.fake.calls
                  if c[0] == "text" and c[1] == (armorpanel._STATUS,) and c[2].get("edit")]
         self.assertEqual(lines[-2:], ["put on", "taken off"])
+
+    def test_a_drop_on_a_character_equips_it_there(self):
+        armorpanel.refresh = lambda *a, **k: None
+        seen = []
+        armorpanel.armor.equip = lambda root, entry: seen.append((root, entry.key)) or "put on"
+        self.assertEqual(armorpanel.equip_on("|Creep_Rig:root", "Tech_Limb"), "put on")
+        self.assertEqual(seen, [("|Creep_Rig:root", "Tech_Limb")])
+        self.assertEqual(self.fake.optionvars[armorpanel._OPTIONVAR], "Tech_Limb")
+        self.assertEqual(armorpanel.equip_on("|Creep_Rig:root", "not_a_row"), "")
+        self.assertEqual(armorpanel.equip_on(None, "Tech_Limb"), armorpanel.NO_CHARACTER)
+        self.assertEqual(len(seen), 1)
 
     def test_no_character_says_so_and_touches_nothing(self):
         armorpanel._bound_root = lambda: None
@@ -448,12 +533,13 @@ class Armor(unittest.TestCase):
         self.assertEqual(self.fake.optionvars[armorpanel._OPTIONVAR], "Tech_Limb")
 
     def test_is_open_follows_the_line(self):
+        self.assertFalse(armorpanel.is_open())
         self.fake.children.append(armorpanel._STATUS)
         self.assertTrue(armorpanel.is_open())
 
-    def test_show_window_opens_the_hub_on_its_section(self):
+    def test_show_window_opens_the_inventory(self):
         result, asked = _hub_asked(armorpanel.show_window)
-        self.assertEqual((result, asked), ("hub", ["armor"]))
+        self.assertEqual((result, asked), ("hub", ["weapons"]))
 
 
 class UeBridge(unittest.TestCase):
@@ -546,9 +632,10 @@ class UeBridge(unittest.TestCase):
         self.assertEqual(self.headers, [uebridge.editor_line(False, 0)])
 
     def test_the_editor_line(self):
-        self.assertEqual(uebridge.editor_line(True), "Unreal: connected")
+        self.assertEqual(uebridge.editor_line(True), "connected")
         self.assertIn("619 animations from the last refresh",
                       uebridge.editor_line(False, 619))
+        self.assertNotIn("Unreal:", uebridge.editor_line(False, 619))   # the heading says it
         self.assertIn("press Refresh to read", uebridge.editor_line(False, 0))
 
     def test_the_named_controls_exist(self):
