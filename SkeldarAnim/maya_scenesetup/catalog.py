@@ -274,6 +274,56 @@ WEAPONS = [
 SOCKET_TURN = (90.0, 0.0, 0.0)
 
 
+# The armor table (2026-10-01, the Armor card: «отдельную панель Armor в
+# которой пока будет только техно лимб но позже мы добавим еще разные
+# варианты одежды и брони ... выделять предмет нажимать кнопочку equip и он
+# будет добавляться к нашему персонажу в заранее указанное место»). A row is
+# a rigid piece riding one bone: `bone` is where it is equipped, `slot` what
+# it occupies on a character -- Equip takes off whatever that slot held, so a
+# second plate for the same forearm is a row with the same slot. The model's
+# points are already in the bone's local axes at its place, so equipped it
+# stands at identity in its space (`armor.equip`) and its channels read 0.
+Armor = collections.namedtuple("Armor", "key label path bone slot texture",
+                               defaults=("",))
+
+ARMOR = [
+    # Atone's Tech Limb (2026-10-01): the plate BP_Techlimb always shows on
+    # the left forearm (SM_Shield_Test, the animator's pick over the two
+    # skeletal shields), on DA_Techlimb's equip socket `lowerarm_l` -- no
+    # socket of that name on the Manny meshes, so the game snaps it onto the
+    # bone -- at the BP's offset and scale 1.176, baked into the points by
+    # docs/superpowers/plans/make_techlimb_asset.py (to 6e-6 cm of where
+    # Unreal puts it on the reference pose).
+    Armor("Tech_Limb", "Tech Limb", _asset_path("Armor/Tech_Limb.fbx"),
+          "lowerarm_l", "left_forearm"),
+]
+
+
+def armor_labels():
+    """The armor rows' labels, in table order."""
+    return [entry.label for entry in ARMOR]
+
+
+def armor_by_key(key):
+    for entry in ARMOR:
+        if entry.key == key:
+            return entry
+    return None
+
+
+def armor_by_label(label):
+    for entry in ARMOR:
+        if entry.label == label:
+            return entry
+    return None
+
+
+def armor_icon_path(key):
+    """A row's square icon (256 px PNG with alpha), under assets/. Rendered by
+    docs/superpowers/plans/make_armor_icons.py."""
+    return asset_path("armor_icons/{0}.png".format(key))
+
+
 def labels():
     """Dropdown labels, in table order."""
     return [entry.label for entry in WEAPONS]

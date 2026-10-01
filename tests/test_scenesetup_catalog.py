@@ -881,3 +881,57 @@ class ClavicleShoulderSize(unittest.TestCase):
                                                                               "%s_%s" % (name, s)))
                      for s in ("L", "R")]
                 self.assertAlmostEqual(r[0], r[1], places=6, msg=(path, name))
+
+
+class ArmorTable(unittest.TestCase):
+    """The ARMOR table (2026-10-01, the Armor card): rigid pieces riding a bone,
+    the first Atone's Tech Limb plate on `lowerarm_l` -- DA_Techlimb's own equip
+    socket."""
+
+    def test_the_tech_limb_is_the_first_row(self):
+        row = catalog.ARMOR[0]
+        self.assertEqual((row.key, row.label, row.bone, row.slot),
+                         ("Tech_Limb", "Tech Limb", "lowerarm_l", "left_forearm"))
+
+    def test_every_row_ships_its_model(self):
+        for row in catalog.ARMOR:
+            self.assertTrue(os.path.isfile(row.path), row.path)
+            self.assertEqual(catalog.missing(row), "", row.key)
+            self.assertTrue(row.path.endswith(".fbx"), row.path)
+
+    def test_the_model_lives_in_the_plugin(self):
+        assets = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(catalog.__file__))), "assets").replace("\\", "/")
+        for row in catalog.ARMOR:
+            self.assertTrue(row.path.startswith(assets + "/"), row.path)
+
+    def test_keys_are_legal_node_names_and_unique(self):
+        keys = [row.key for row in catalog.ARMOR]
+        self.assertEqual(len(keys), len(set(keys)))
+        for key in keys:
+            self.assertEqual(catalog.node_key(key), key)
+
+    def test_every_row_has_a_bone_and_a_slot(self):
+        for row in catalog.ARMOR:
+            self.assertTrue(row.bone, row.key)
+            self.assertTrue(row.slot, row.key)
+
+    def test_untextured_by_default(self):
+        self.assertEqual(catalog.ARMOR[0].texture, "")
+
+    def test_lookups(self):
+        self.assertIs(catalog.armor_by_key("Tech_Limb"), catalog.ARMOR[0])
+        self.assertIs(catalog.armor_by_label("Tech Limb"), catalog.ARMOR[0])
+        self.assertIsNone(catalog.armor_by_key("nope"))
+        self.assertIsNone(catalog.armor_by_label("nope"))
+        self.assertEqual(catalog.armor_labels(), [r.label for r in catalog.ARMOR])
+
+    def test_an_armor_row_is_not_a_weapon(self):
+        keys = set(w.key for w in catalog.WEAPONS)
+        for row in catalog.ARMOR:
+            self.assertNotIn(row.key, keys)
+            self.assertIsNone(catalog.by_key(row.key))
+
+    def test_the_icon_path(self):
+        self.assertTrue(catalog.armor_icon_path("Tech_Limb").endswith(
+            "/assets/armor_icons/Tech_Limb.png"))
