@@ -673,3 +673,136 @@ class Menu(unittest.TestCase):
 
     def test_no_rows_shows_no_menu(self):
         self.assertIsNone(hubqt.run_menu(self.parent, QtCore.QPoint(0, 0), []))
+
+
+class CardMotion(SeamsMixin, unittest.TestCase):
+    """2026-10-01: «открывать закрывать с какими-то анимациями» - the body
+    slides, its children clipped, never squeezed."""
+
+    def setUp(self):
+        super(CardMotion, self).setUp()
+        self.card = self.skin.add_card("colour", "Colour", "palette",
+                                       "#c89be8", "#3a2a4a")
+        self.child = QtWidgets.QWidget()
+        self.child.setObjectName("motionChild")
+        self.child.setFixedHeight(120)
+        self.card.body_layout.addWidget(self.child)
+        self.host.resize(400, 800)
+        self.host.show()
+        self._settle()
+
+    def _settle(self):
+        for _ in range(6):
+            self.app.processEvents()
+
+    def _at(self, fraction):
+        anim = self.card._anim
+        anim.setCurrentTime(int(anim.duration() * fraction))
+        self._settle()
+
+    def test_a_click_slides_the_body_shut(self):
+        full = self.card.body.height()
+        self.card.toggle()
+        self.assertTrue(self.card.collapsed())
+        self.assertTrue(self.card.sliding())
+        self.assertEqual(self.card._anim.objectName(),
+                         "skeldarHubCardSlide_colour")
+        self.assertFalse(self.card.body.isHidden())
+        self._at(0.5)
+        self.assertLess(self.card.body.height(), full)
+        self.assertGreater(self.card.body.height(), 0)
+        self.assertEqual(self.child.height(), 120)          # clipped
+        self._at(1.0)
+        self.assertFalse(self.card.sliding())
+        self.assertTrue(self.card.body.isHidden())
+        self.assertEqual(self.card.body.maximumHeight(), 16777215)
+        self.assertTrue(self.card.body_layout.isEnabled())
+
+    def test_opening_slides_from_nothing_to_its_own_height(self):
+        self.card.set_collapsed(True)
+        self._settle()
+        self.card.set_collapsed(False, animate=True)
+        self.assertFalse(self.card.collapsed())
+        self.assertTrue(self.card.sliding())
+        self.assertFalse(self.card.body.isHidden())
+        self.assertEqual(self.card.body.maximumHeight(), 0)
+        natural = self.card.natural_height()
+        self._at(0.5)
+        self.assertGreater(self.card.body.height(), 0)
+        self.assertLess(self.card.body.height(), natural)
+        self.assertEqual(self.child.height(), 120)          # clipped
+        self.assertFalse(self.card.body_layout.isEnabled())
+        self._at(1.0)
+        self.assertFalse(self.card.sliding())
+        self.assertEqual(self.card.body.maximumHeight(), 16777215)
+        self.assertTrue(self.card.body_layout.isEnabled())
+        self.assertEqual(self.card.body.height(), natural)
+
+    def test_a_second_click_mid_way_turns_it_back(self):
+        self.card.toggle()
+        self._at(0.4)
+        self.card.toggle()
+        self.assertFalse(self.card.collapsed())
+        self.assertTrue(self.card.sliding())
+        self._at(1.0)
+        self.assertFalse(self.card.body.isHidden())
+        self.assertEqual(self.card.body.height(), self.card.natural_height())
+
+    def test_switched_off_it_is_instant(self):
+        self.skin.animations = False
+        self.card.toggle()
+        self.assertFalse(self.card.sliding())
+        self.assertTrue(self.card.body.isHidden())
+
+    def test_code_without_animate_is_instant(self):
+        self.card.set_collapsed(True)
+        self.assertFalse(self.card.sliding())
+        self.assertTrue(self.card.body.isHidden())
+
+    def test_a_card_off_screen_is_instant(self):
+        self.host.hide()
+        self.card.toggle()
+        self.assertFalse(self.card.sliding())
+        self.assertTrue(self.card.body.isHidden())
+
+    def test_set_collapsed_with_animate_does_not_call_back(self):
+        self.card.set_collapsed(True, animate=True)
+        self.assertEqual(self.calls, [])
+
+    def test_the_chevron_turns_with_the_body(self):
+        def image():
+            return self.card.chevron.pixmap().toImage()
+        down = image()
+        self.card.toggle()
+        self._at(0.5)
+        self.assertGreater(self.card._angle, 0.0)
+        self.assertLess(self.card._angle, 90.0)
+        mid = image()
+        self.assertEqual(mid.size(), down.size())
+        self.assertNotEqual(mid, down)
+        self._at(1.0)
+        self.assertEqual(self.card._angle, 0.0)
+        self.assertNotEqual(image(), mid)
+
+    def test_the_gap_under_the_header_is_unchanged(self):
+        """The column's spacing moved into the body's top margin, so it
+        opens and shuts with the body; where the content sits is the same."""
+        header = self.card.header
+        bottom = header.y() + header.height()
+        top = self.child.mapTo(self.card.frame, QtCore.QPoint(0, 0)).y()
+        self.assertEqual(top - bottom, style.px(6, 1.0))
+
+
+class Rotated(unittest.TestCase):
+
+    def test_same_size_turned(self):
+        _app()
+        pix = hubqt.pixmap("chevron-right", "#9a9ca3", 14)
+        turned = hubqt.rotated(pix, 90.0)
+        self.assertEqual(turned.size(), pix.size())
+        down = hubqt.pixmap("chevron-down", "#9a9ca3", 14).toImage()
+        #  a quarter turn of right is down, to the antialiasing
+        a, b = turned.toImage(), down
+        diff = max(abs(a.pixelColor(x, y).alpha() - b.pixelColor(x, y).alpha())
+                   for x in range(14) for y in range(14))
+        self.assertLess(diff, 90)

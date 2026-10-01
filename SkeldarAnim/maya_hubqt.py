@@ -31,9 +31,13 @@ Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
 import types
 
 import maya_hubicons as hubicons
+import maya_hubmotion as hubmotion
 import maya_hubstyle as hubstyle
 
 _QT = []
+
+#  Qt's largest widget size: a body's height cap taken off after a slide
+_NO_CAP = 16777215
 
 #  How long the mouse may be off every card before the light goes to the
 #  resting card (see Skin.resting): long enough to cross the gap between two
@@ -181,6 +185,24 @@ def pixmap(name, colour, size):
     return image
 
 
+def rotated(image, angle):
+    """`image` turned `angle` degrees clockwise about its centre, the same
+    size (a card's chevron while the body slides)."""
+    q = qt()
+    out = q.QtGui.QPixmap(image.size())
+    out.fill(q.QtCore.Qt.transparent)
+    painter = q.QtGui.QPainter(out)
+    painter.setRenderHint(q.QtGui.QPainter.Antialiasing)
+    painter.setRenderHint(q.QtGui.QPainter.SmoothPixmapTransform)
+    half_w, half_h = image.width() / 2.0, image.height() / 2.0
+    painter.translate(half_w, half_h)
+    painter.rotate(angle)
+    painter.translate(-half_w, -half_h)
+    painter.drawPixmap(0, 0, image)
+    painter.end()
+    return out
+
+
 def icon_file(name, colour, folder=None):
     """Icon `name` in `colour` written as an SVG file; its path, forward
     slashes (what a stylesheet's `url()` takes -- the dropdown arrow)."""
@@ -308,15 +330,31 @@ def _watcher_class():
 
 
 class Card(object):
-    """One section: header over body. `body_layout` is where a builder runs."""
+    """One section: header over body. `body_layout` is where a builder runs.
+
+    Since 2026-10-01 the body SLIDES open and shut on the animator's moves
+    («открывать закрывать с какими-то анимациями»): `set_collapsed(c,
+    animate=True)` caps the body's height tick by tick with the body's own
+    layout DISABLED for the length of it and laid out once at the full
+    height, so a short body clips its children instead of squeezing them to
+    their minimums. `motion` is the skin's switch (a callable); without it,
+    off screen, or with `animate` False the old instant show / hide."""
 
     def __init__(self, key, label, icon_name, colour, chip, scale,
-                 collapsed=False, on_toggle=None):
+                 collapsed=False, on_toggle=None, motion=None):
         q = qt()
         w = q.QtWidgets
         self.key = key
         self.scale = scale
         self._on_toggle = on_toggle
+        self._motion = motion
+        self._anim = None
+        self._angle = 0.0
+        self._chevron_base = None
+        self._laid = None
+        self._opening = False
+        self._from_height = self._shown = 0
+        self._from_angle = 0.0
         s = lambda n: hubstyle.px(n, scale)             # noqa: E731
 
         self.frame = _named(w.QFrame(), "skeldarHubCard_" + key)
@@ -324,7 +362,10 @@ class Card(object):
         column = w.QVBoxLayout(self.frame)
         column.setObjectName("skeldarHubCardLayout_" + key)
         column.setContentsMargins(s(8), s(7), s(8), s(8))
-        column.setSpacing(s(6))
+        #  The gap under the header is the BODY's top margin (it was this
+        #  column's spacing): it opens and shuts with the body instead of
+        #  appearing on the first frame of a slide and vanishing on the last.
+        column.setSpacing(0)
 
         self.header = _named(_head_class()(self.toggle),
                              "skeldarHubCardHead_" + key, "cardhead")
@@ -358,7 +399,7 @@ class Card(object):
         self.body = _named(w.QWidget(), "skeldarHubBody_" + key)
         self.body_layout = w.QVBoxLayout(self.body)
         self.body_layout.setObjectName("skeldarHubBodyLayout_" + key)
-        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setContentsMargins(0, s(6), 0, 0)
         self.body_layout.setSpacing(0)
         column.addWidget(self.header)
         column.addWidget(self.body)
@@ -371,22 +412,136 @@ class Card(object):
     def collapsed(self):
         return bool(self._collapsed)
 
-    def set_collapsed(self, collapsed):
-        """Show or hide the body. No callback: code opening a card remembers
-        through the hub; only the animator's click calls back (`toggle`)."""
+    def sliding(self):
+        """A slide is under way."""
+        return self._anim is not None
+
+    def set_collapsed(self, collapsed, animate=False):
+        """Show or hide the body -- sliding when `animate` (the animator's
+        move), the skin's switch and the screen allow it. `collapsed()`
+        answers the new state at once. No callback: code opening a card
+        remembers through the hub; only the animator's click calls back
+        (`toggle`)."""
         collapsed = bool(collapsed)
         if collapsed == self._collapsed:
             return
+        first = self._collapsed is None
         self._collapsed = collapsed
-        self.body.setVisible(not collapsed)
-        name = "chevron-right" if collapsed else "chevron-down"
-        self.chevron.setPixmap(pixmap(name, hubstyle.TOKENS["muted"],
-                                      hubstyle.px(14, self.scale)))
+        if (animate and not first and self._motion is not None
+                and self._motion() and self.frame.isVisible()):
+            self._slide(not collapsed)
+            return
+        self._stop()
+        self._settle()
 
     def toggle(self):
-        self.set_collapsed(not self._collapsed)
+        self.set_collapsed(not self._collapsed, animate=True)
         if self._on_toggle:
             self._on_toggle(self.key, self._collapsed)
+
+    # -------------------------------------------------------------- motion
+
+    def natural_height(self, width=None):
+        """The body's own height at the card's width (the header's: the two
+        share the card's column), laid out or not."""
+        layout = self.body_layout
+        width = self.header.width() if width is None else width
+        height = (layout.heightForWidth(width) if layout.hasHeightForWidth()
+                  else -1)
+        if height < 0:
+            height = layout.sizeHint().height()
+        return max(height, layout.minimumSize().height())
+
+    def _lay_out_full(self):
+        """The body's children laid out at its full height, whatever the
+        body's own (capped) height is: they slide into view, never squeezed.
+        Re-read every tick -- a grid inside settles a frame later (measured
+        2026-10-01: Characters 422 shown, 420 settled) -- so a slide ends on
+        the settled height."""
+        q = qt()
+        width = self.header.width()
+        full = self.natural_height(width)
+        if (width, full) != self._laid:
+            self.body_layout.setGeometry(q.QtCore.QRect(0, 0, width, full))
+            self._laid = (width, full)
+        return full
+
+    def _slide(self, opening):
+        q = qt()
+        if self.sliding():
+            start = self._shown                     # turned back mid-way
+        else:
+            start = self.body.height() if self.body.isVisible() else 0
+        self._stop()
+        if opening and not self.body.isVisible():
+            self.body.setMaximumHeight(0)
+            self.body.setVisible(True)
+            start = 0
+        self.body_layout.setEnabled(False)
+        self._laid = None
+        self._opening = opening
+        self._from_height = start
+        self._from_angle = self._angle
+        self._shown = start
+        target = self._lay_out_full() if opening else 0
+        anim = q.QtCore.QVariantAnimation(self.frame)
+        anim.setObjectName("skeldarHubCardSlide_" + self.key)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(hubmotion.duration(target - start, self.scale))
+        anim.valueChanged.connect(self._tick)
+        anim.finished.connect(self._finished)
+        self._anim = anim
+        anim.start()
+
+    def _tick(self, value):
+        k = hubmotion.ease(value)
+        target = self._lay_out_full() if self._opening else 0
+        self._shown = int(round(hubmotion.lerp(self._from_height, target, k)))
+        self.body.setMaximumHeight(self._shown)
+        end = hubmotion.CHEVRON_OPEN if self._opening else 0.0
+        self._angle = hubmotion.lerp(self._from_angle, end, k)
+        self._paint_chevron(self._angle)
+
+    def _finished(self):
+        self._stop()
+        self._settle()
+
+    def _stop(self):
+        anim, self._anim = self._anim, None
+        if anim is not None:
+            try:
+                anim.valueChanged.disconnect(self._tick)
+                anim.finished.disconnect(self._finished)
+            except (RuntimeError, TypeError):
+                pass
+            anim.stop()
+            anim.deleteLater()
+
+    def _settle(self):
+        """The idle card: the body shown or hidden, no height cap, its own
+        layout managing it again -- exactly what it was before the slides."""
+        self.body.setVisible(not self._collapsed)
+        self.body.setMaximumHeight(_NO_CAP)
+        if not self.body_layout.isEnabled():
+            self.body_layout.setEnabled(True)
+            self.body_layout.invalidate()
+            self.body_layout.activate()
+        self._angle = 0.0 if self._collapsed else hubmotion.CHEVRON_OPEN
+        self._paint_chevron(None)
+
+    def _paint_chevron(self, angle):
+        """The chevron at rest (None: the right / down icons themselves) or
+        turned `angle` degrees from right."""
+        size = hubstyle.px(14, self.scale)
+        colour = hubstyle.TOKENS["muted"]
+        if angle is None:
+            name = "chevron-right" if self._collapsed else "chevron-down"
+            self.chevron.setPixmap(pixmap(name, colour, size))
+            return
+        if self._chevron_base is None:
+            self._chevron_base = pixmap("chevron-right", colour, size)
+        self.chevron.setPixmap(rotated(self._chevron_base, angle))
 
     def add_subtitle(self, widget):
         """Move a builder's line into the header, one line, never widening."""
@@ -421,6 +576,10 @@ class Skin(object):
         self.cb = callbacks or {}
         self.cards = {}
         self.jumps = {}
+        #  ⋮ -> Interface animations (2026-10-01): the cards slide, a jump
+        #  glides (maya_hub sets it from maya_hubmotion's optionVar)
+        self.animations = True
+        self._glide = None
         s = self.px
 
         self.root = _named(w.QWidget(), hubstyle.ROOT)
@@ -593,7 +752,8 @@ class Skin(object):
     def add_card(self, key, label, icon_name, colour, chip, collapsed=False):
         card = Card(key, label, icon_name, colour, chip, self.scale,
                     collapsed=collapsed,
-                    on_toggle=lambda k, c: self._call("toggled", k, c))
+                    on_toggle=lambda k, c: self._call("toggled", k, c),
+                    motion=lambda: self.animations)
         self.column.insertWidget(self.column.count() - 1, card.frame)
         self.cards[key] = card
         return card
