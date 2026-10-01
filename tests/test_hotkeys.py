@@ -685,7 +685,7 @@ class RunPressesThePanel(SeamCase):
         maya_hotkeys.run("scene.character")
         self.assertEqual(panel.shown, 1)
         self.assertEqual(panel.calls, [])
-        self.assertIn("Characters", self.fake.messages[-1])
+        self.assertIn("Animation Setup", self.fake.messages[-1])
 
     def test_overshoot_passes_the_shape(self):
         panel = FakePanelModule()

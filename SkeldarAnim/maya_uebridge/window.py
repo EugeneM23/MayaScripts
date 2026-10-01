@@ -304,7 +304,7 @@ TARGETS = ("onto", "new")                   # the Import row's two segments
 #  («Слить»: the bridge's old Rig / New rig / Skeleton said the kind twice).
 TARGET_SEGMENTS = (
     ("onto", "Onto selected",
-     "Onto the selected character: with Rig picked in Characters the "
+     "Onto the selected character: with Rig picked in Animation Setup the "
      "SELECTED AdvancedSkeleton rig (any control, bone or mesh), else the "
      "only one - a rig of the picked portrait is added when the scene has "
      "none; with Skeleton picked the selected skeleton (a bone, its mesh, "
@@ -315,7 +315,7 @@ TARGET_SEGMENTS = (
      "deleted. Several picked: the first goes."),
     ("new", "New",
      "A NEW character of the picked portrait - its rig or its skeleton, as "
-     "Characters says - takes the clip; several picked stand in a square "
+     "Animation Setup says - takes the clip; several picked stand in a square "
      "about the scene's zero, one per animation."),
 )
 
@@ -699,9 +699,9 @@ def build_rows():
     cmds.textScrollList(
         _LIST, allowMultiSelection=True, font="fixedWidthFont",
         height=LIST_HEIGHT,
-        annotation="Double-click imports the way Characters and the Import "
+        annotation="Double-click imports the way Animation Setup and the Import "
                    "row say. Drag a row into a viewport: with Rig picked in "
-                   "Characters, onto a rig it retargets there and the rig "
+                   "Animation Setup, onto a rig it retargets there and the rig "
                    "keeps its place, onto empty floor a new rig of the picked "
                    "portrait stands where you pointed; with Skeleton picked, "
                    "onto a skeleton it goes on that skeleton (a rig is "
@@ -730,9 +730,9 @@ def build_rows():
     cmds.checkBox(_TIMELINE, label="set timeline to clip range", value=True)
 
     hubstyle.mark(cmds.button(
-        label="Import", height=32,
+        label="Import Animation", height=32,
         annotation="Import the selected animation(s) from Unreal onto the "
-                   "character Characters and the Import row say",
+                   "character Animation Setup and the Import row say",
         command=lambda *_: _run(import_selected,
                                 busy="exporting from the editor...")),
         "primary", "download")

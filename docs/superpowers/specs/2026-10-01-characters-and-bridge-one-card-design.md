@@ -120,3 +120,20 @@ the Characters subtitle). The collapse memory of `uebridge` is left unread.
   control by name; Rig × Onto / New and Skeleton × New as before; Skeleton × Onto onto a Manny UE5
   skeleton moved to (100, 0, −50) and turned 90°: it stays there facing 90°, every bone on the
   moved clip; a sword on its hand relinked; a drag onto that skeleton; a picture of the card.
+
+## Addendum — the card's name and its two Imports (the same evening)
+
+The animator, after the push: «Давай Раздел Character Заменим на Animationsetup. Add Character на
++ Import (Вернем кнопке оранжевый цвет).» Asked how to tell the two Imports apart: **«+ Import» on
+top, «Import Animation» below, both orange.**
+
+- The card's label is **Animation Setup**; its key stays `characters` (the collapse memory, the
+  `uebridge` alias, every `show_window`, the hotkey rows).
+- Add Character is **«+ Import»**, `primary` again: in the skin the label is «Import» and the plus is
+  its icon, the classic hub (no icons) spells «+ Import» (`hubstyle.pick`).
+- The bridge's Import is **«Import Animation»**, still `primary`: one orange button per half of the
+  card, the style's one-per-card rule bent at the animator's word.
+- Wording follows: the portrait line «Manny [rig] - press Import, or drag the portrait into a
+  viewport», the refusal «... is a rig - pick Rig in Animation Setup, or select a skeleton», the
+  tooltips, Delete's dialog title «Animation Setup - Delete», the hotkey rows «Animation Setup» and
+  «Import Character».

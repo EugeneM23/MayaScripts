@@ -273,9 +273,10 @@ def phase_card():
             groups.append(name.split("_", 1)[1])
         elif name.startswith("skeldarHubCard_"):
             cards.append(name.split("_", 1)[1])
-    gate(1, "the first card is Characters, the Scene group first; no UE Bridge card; "
-            "show('uebridge') opened and lit Characters",
+    gate(1, "the first card is Animation Setup (key characters), the Scene group first; "
+            "no UE Bridge card; show('uebridge') opened and lit it",
          cards[0] == "characters" and groups[0] == "scene" and "uebridge" not in skin.cards
+         and maya_hub.section("characters").label == "Animation Setup"
          and not skin.cards["characters"].collapsed() and skin.active == "characters",
          "cards %s | groups %s | active %s" % (cards[:4], groups, skin.active))
 
@@ -308,10 +309,11 @@ def phase_card():
             labels[button.text()] = button.mapTo(frame, q.QtCore.QPoint(0, 0)).y()
     body = [n for n in names[3:]]
     order_ok = (None not in ys and ys[0] < ys[1]
-                and labels.get("Add Character", 1e9) > ys[1]
+                and labels.get("Import", 1e9) > ys[1]
                 and labels.get("Camera Setup", 1e9) < ys[3]
                 and all(ys[i] <= ys[i + 1] for i in range(3, len(ys) - 1))
-                and ys[-2] < labels.get("Import", -1) < labels.get("Export FBX...", -1) < ys[-1])
+                and ys[-2] < labels.get("Import Animation", -1)
+                < labels.get("Export FBX...", -1) < ys[-1])
     #  the status lines in the card, by their names: the card's, and the
     #  bridge's own of before the merge (which must be gone)
     lines = [w.objectName() for w in frame.findChildren(q.QtWidgets.QWidget)
@@ -323,7 +325,7 @@ def phase_card():
          "y %s | buttons %s | status lines %s" % (
              dict(zip([n.split("|")[-1] for n in names], ys)),
              dict((k, v) for k, v in labels.items() if k in (
-                 "Add Character", "Delete", "Camera Setup", "Import", "Export FBX...",
+                 "Import", "Delete", "Camera Setup", "Import Animation", "Export FBX...",
                  "Export to uasset", "Onto selected", "New")), lines))
 
     content = skin.content
@@ -334,7 +336,8 @@ def phase_card():
 
     primaries = [b.text() for b in frame.findChildren(q.QtWidgets.QPushButton)
                  if b.property("skRole") == "primary"]
-    gate(4, "Import is the card's one primary", primaries == ["Import"], "%s" % primaries)
+    gate(4, "two primaries, one per half: + Import and Import Animation",
+         sorted(primaries) == ["Import", "Import Animation"], "%s" % primaries)
 
     window._status("from the bridge")
     first = status()
@@ -523,7 +526,7 @@ def phase_skel_refuse():
     gate(11, "refusals before the editor: two skeletons and nothing selected (both "
              "named), a rig selected with Skeleton picked",
          two.startswith("2 skeletons in the scene (") and "select any bone or mesh" in two
-         and rig == "%s is a rig - pick Rig in Characters, or select a skeleton" % ns
+         and rig == "%s is a rig - pick Rig in Animation Setup, or select a skeleton" % ns
          and WORLD["exported"] == [],
          "%r | %r | exported %s" % (two, rig, WORLD["exported"]))
 

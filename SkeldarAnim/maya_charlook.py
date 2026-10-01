@@ -102,7 +102,7 @@ def absent_text(model_label, kind):
 
 def import_text(label):
     """What the line says while a portrait is picked."""
-    return ("{0} - press Add Character, or drag the portrait into a "
+    return ("{0} - press Import, or drag the portrait into a "
             "viewport".format(label))
 
 

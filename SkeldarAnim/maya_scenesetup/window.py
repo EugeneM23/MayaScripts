@@ -565,7 +565,7 @@ def character_changed():
     """Remember the choice. Nothing else: the press is what imports."""
     entry = chosen_character()
     cmds.optionVar(stringValue=(_CHARACTER_OPTIONVAR, entry.label))
-    _status("Add Character will import: {0}".format(entry.label),
+    _status("Import will bring: {0}".format(entry.label),
             _CHARACTER_STATUS)
 
 
@@ -825,7 +825,7 @@ def _attach_grid(model, kind):
 def _character_dropdown():
     """Every character row in one dropdown: the card without Qt."""
     cmds.optionMenu(_CHARACTER,
-                    annotation="What Add Character puts into the scene. "
+                    annotation="What + Import puts into the scene. "
                                "The [rig] rows are AdvancedSkeleton rigs - "
                                "the characters the UE Bridge retargets onto; "
                                "the [skeleton] rows are bare skeletons.",
@@ -872,7 +872,9 @@ def build_characters_panel():
     (`maya_uebridge.window.build_rows`) - the animation list, Import
     [Onto selected | New], the exports - and the card has ONE status line,
     which the bridge writes too. The [Rig | Skeleton] above says what Import
-    makes as well as what Add does; Import is the card's one primary.
+    makes as well as what Add does. The same evening the card is called
+    Animation Setup, Add Character is «+ Import» and orange again, and the
+    bridge's Import is «Import Animation» - two primaries, one per half.
     """
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
                                columnOffset=("both", hubstyle.pick(0, 8)))
@@ -888,14 +890,16 @@ def build_characters_panel():
 
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "left", 4)])
+    #  «Add Character на + Import (Вернем кнопке оранжевый цвет)»: the card's
+    #  first primary again; the skin draws the plus, the classic hub spells it.
     hubstyle.mark(cmds.button(
-        label="Add Character", height=32,
+        label=hubstyle.pick("Import", "+ Import"), height=32,
         annotation="Import the picked rig or skeleton into this scene, at "
                    "the origin -- or drag its portrait into a viewport to "
                    "stand it where it lands. As many as you like, each rig "
                    "in its own namespace; the Colour section repaints it.",
         command=lambda *_args: _run(add_character, _CHARACTER_STATUS)),
-        "secondary", "plus")
+        "primary", "plus")
     hubstyle.mark(cmds.button(
         label="Delete", height=32, width=hubstyle.pick(96, 80),
         annotation="Delete the characters the selection belongs to - select "

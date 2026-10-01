@@ -171,7 +171,7 @@ def _scene(func, *args, **kwargs):
             module.show_weapons()
             return _report("Weapons opened - press again")
         module.show_window()
-        return _report("Characters opened - press again")
+        return _report("Animation Setup opened - press again")
     return getattr(module, func)(*args)
 
 
@@ -741,8 +741,8 @@ _OURS = (
     ("window.uebridge", "Windows", "UE Bridge",
      "Open the UE animation bridge",
      partial(_show, "maya_uebridge", "show_window")),
-    ("window.scenesetup", "Windows", "Characters",
-     "Open the Characters section: add the rig or a skeleton",
+    ("window.scenesetup", "Windows", "Animation Setup",
+     "Open the Animation Setup section: the rig or a skeleton, and the UE Bridge",
      partial(_show, "maya_scenesetup", "show_window")),
     ("window.weapons", "Windows", "Weapons",
      "Open the Weapons section: a weapon in the hand, the grip",
@@ -799,7 +799,7 @@ _OURS = (
      "Select every controller on the body map",
      partial(_picker, "select_group", "all")),
 
-    ("scene.character", "Scene Setup", "Add Character",
+    ("scene.character", "Scene Setup", "Import Character",
      "Import the chosen skeleton into this scene",
      partial(_scene, "add_character")),
     ("scene.weapon", "Scene Setup", "Add Weapon",

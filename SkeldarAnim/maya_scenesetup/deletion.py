@@ -799,7 +799,7 @@ def _confirm(text):
     if cmds.about(batch=True):
         return True
     answer = cmds.confirmDialog(
-        title="Characters - Delete", message=text, icon="warning",
+        title="Animation Setup - Delete", message=text, icon="warning",
         button=["Delete", "Cancel"], defaultButton="Cancel", cancelButton="Cancel",
         dismissString="Cancel")
     return answer == "Delete"

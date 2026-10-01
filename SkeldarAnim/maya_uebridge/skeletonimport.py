@@ -127,7 +127,7 @@ def choose_skeleton(named, rig_labels, bare, labels=None):
             len(picked), ", ".join(name(r) for r in picked))
     rigs = list(dict.fromkeys(rig_labels or []))
     if rigs:
-        return None, ("{0} is a rig - pick Rig in Characters, or select a "
+        return None, ("{0} is a rig - pick Rig in Animation Setup, or select a "
                       "skeleton".format(", ".join(rigs)))
     bare = list(bare or [])
     if len(bare) == 1:

@@ -81,9 +81,11 @@ Section = collections.namedtuple("Section",
 #  2026-10-01 («UE bridge и character ... их нужно объеденить в одно окно»):
 #  the UE Bridge is part of the Characters card, and that card is the first
 #  - the Scene group above Animation now (asked: «Characters самой первой,
-#  Scene выше»). Weapons still follows Characters.
+#  Scene выше»). Weapons still follows Characters. The same evening it is
+#  called Animation Setup («Раздел Character Заменим на Animationsetup»); its
+#  key stays "characters" - the collapse memory, the aliases, every opener.
 SECTIONS = (
-    Section("characters", "Characters", "maya_scenesetup.window",
+    Section("characters", "Animation Setup", "maya_scenesetup.window",
             "build_characters_panel", "skeldarHubFrameCharacters",
             "scene", "user"),
     Section("weapons", "Weapons", "maya_scenesetup.window",

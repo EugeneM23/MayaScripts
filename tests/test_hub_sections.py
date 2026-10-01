@@ -134,7 +134,7 @@ class SceneSetup(unittest.TestCase):
         """2026-09-18: the retarget's camera step, by hand, on camera_root."""
         labels = [c[2].get("label") for c in self.fake.calls if c[0] == "button"]
         self.assertIn("Camera Setup", labels)
-        self.assertLess(labels.index("Add Character"), labels.index("Camera Setup"))
+        self.assertLess(labels.index("+ Import"), labels.index("Camera Setup"))
         for name in (scenesetup._WEAPONS_BOUND, scenesetup._STATUS):
             self.assertNotIn(name, self.after_characters, name)
 
@@ -216,16 +216,18 @@ class SceneSetup(unittest.TestCase):
 
     def test_one_primary_action_per_section(self):
         roles = self._button_roles()
-        #  2026-10-01: the UE Bridge in the card - Import is its one primary,
-        #  Add Character an ordinary button beside Delete
-        self.assertEqual(roles["Add Character"], ("secondary", "plus"))
-        self.assertEqual(roles["Import"], ("primary", "download"))
+        #  2026-10-01: the UE Bridge in the card; the same evening «Add
+        #  Character на + Import (Вернем кнопке оранжевый цвет)» and the
+        #  bridge's Import is «Import Animation» - a primary for each half
+        self.assertEqual(roles["+ Import"], ("primary", "plus"))
+        self.assertEqual(roles["Import Animation"], ("primary", "download"))
+        self.assertNotIn("Add Character", roles)
         self.assertEqual(roles["Camera Setup"], ("secondary", "camera"))
         self.assertEqual(roles["Add"], ("primary", "plus"))
         self.assertEqual(roles["Remove Weapon"], ("danger", "trash"))
         primaries = [label for label, (role, _i) in roles.items()
                      if role == "primary"]
-        self.assertEqual(sorted(primaries), ["Add", "Import"])
+        self.assertEqual(sorted(primaries), ["+ Import", "Add", "Import Animation"])
 
     def test_the_bridge_rows_follow_camera_setup_and_the_card_has_one_line(self):
         """2026-10-01 («UE bridge и character ... объеденить в одно окно»):
@@ -239,13 +241,30 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(len(lists), 1)
         self.assertEqual(len(line), 1)
         self.assertLess(index["Camera Setup"], lists[0])
-        self.assertLess(lists[0], index["Import"])
-        self.assertLess(index["Import"], line[0])
+        self.assertLess(index["+ Import"], lists[0])
+        self.assertLess(lists[0], index["Import Animation"])
+        self.assertLess(index["Import Animation"], line[0])
         for name in (uebridge._LIST, uebridge._SEARCH, uebridge._HEADER,
                      uebridge._TIMELINE, uebridge._PROJECT):
             self.assertIn(name, self.after_characters, name)
         statuses = [m.name for m in self.marks if m.role == "status"]
         self.assertEqual(statuses, [scenesetup._CHARACTER_STATUS, scenesetup._STATUS])
+
+    def test_the_import_button_reads_plus_import(self):
+        """«Add Character на + Import»: the skin draws the plus icon beside
+        «Import», the classic hub (no icons) spells «+ Import»."""
+        fake = FakeUiCmds()
+        scenesetup.cmds = fake
+        maya_hubstyle.set_skinning(True)
+        try:
+            scenesetup.build_characters_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        labels = [c[2].get("label") for c in fake.calls
+                  if c[0] == "button" and not c[2].get("edit")]
+        self.assertIn("Import", labels)
+        self.assertNotIn("+ Import", labels)
+        self.assertNotIn("Add Character", labels)
 
     def test_the_bridge_writes_the_card_s_line(self):
         self.assertEqual(uebridge._STATUS, scenesetup._CHARACTER_STATUS)
@@ -285,10 +304,11 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(between, [])
 
     def test_characters_has_delete_beside_add_character(self):
-        """2026-10-01: «кнопку удаления» - a danger button in Add Character's
-        row, pressing `delete_characters` onto the card's own line."""
+        """2026-10-01: «кнопку удаления» - a danger button in the + Import
+        row (Add Character until that evening), pressing `delete_characters`
+        onto the card's own line."""
         index = self._created_index()
-        add, delete = index["Add Character"], index["Delete"]
+        add, delete = index["+ Import"], index["Delete"]
         rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"]
         row = max(i for i in rows if i < add)
         self.assertLess(row, delete)
@@ -506,7 +526,8 @@ class UeBridge(unittest.TestCase):
         self.assertEqual([m.icon for m in marks], ["download"])
         labels = [c[2]["label"] for c in self.fake.calls if c[0] == "button"
                   and not c[2].get("edit")]
-        self.assertIn("Import", labels)
+        self.assertIn("Import Animation", labels)
+        self.assertNotIn("Import", labels)
         self.assertIn("Export FBX...", labels)
         self.assertIn("Export to uasset", labels)
 

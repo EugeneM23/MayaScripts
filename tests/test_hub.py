@@ -83,9 +83,10 @@ class TheTable(unittest.TestCase):
         same day, the Center of Mass Animation on 2026-10-01, Armor Scene the same day.
         And the same evening the UE Bridge became part of Characters, the
         first card - the Scene group above Animation («Characters самой
-        первой, Scene выше»)."""
+        первой, Scene выше») - and was named Animation Setup («Раздел
+        Character Заменим на Animationsetup»), its key still "characters"."""
         self.assertEqual([s.label for s in hub.SECTIONS],
-                         ["Characters", "Weapons", "Connections", "Shared",
+                         ["Animation Setup", "Weapons", "Connections", "Shared",
                           "Armor", "Retarget", "Graph Overlay",
                           "Center of Mass",
                           "Studio", "Colour", "Hotkeys", "Update"])
@@ -277,7 +278,7 @@ class BuildWithABrokenTool(FakeToolsMixin, unittest.TestCase):
         hub.build()
         texts = [c[2].get("label", "") for c in self.fake.calls
                  if c[0] == "text"]
-        self.assertTrue(any("Characters could not be built" in t
+        self.assertTrue(any("Animation Setup could not be built" in t
                             and "boom" in t for t in texts))
 
 

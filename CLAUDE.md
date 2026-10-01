@@ -7292,6 +7292,16 @@ naming it) and that skeleton playing the clip in its place (7e-14 cm). Picture:
 `verify_uebridge_drag.py` and `verify_hub_skin.py` still click `window.mode_button` / read
 `skin.cards["uebridge"]`: history, written for the bridge's own card.
 
+**…called Animation Setup, with two orange Imports** (the same evening, after the push: «Давай Раздел
+Character Заменим на Animationsetup. Add Character на + Import (Вернем кнопке оранжевый цвет)»; asked:
+«+ Import» on top, «Import Animation» below, both orange). The label is **Animation Setup**, the key
+still `characters`; Add Character is **«+ Import»** and `primary` again (the skin's label «Import» with
+its plus icon, the classic hub spells «+ Import», `hubstyle.pick`); the bridge's button is **«Import
+Animation»**, also `primary` — one orange button per half. The wording followed: the portrait line
+«press Import», the refusal «pick Rig in Animation Setup», the tooltips, Delete's dialog title, the
+hotkey rows «Animation Setup» / «Import Character». `verify_characters_card.py` card + photo again in a
+disposable Maya (gate 4 now: the two primaries); 3507 unit tests.
+
 ## Center of Mass: a live point, a fast trail, the CoM tool (2026-10-01)
 
 The animator: «у нас должна быть какая-то точка к которой мы можем сделать motion trail … моушен треил

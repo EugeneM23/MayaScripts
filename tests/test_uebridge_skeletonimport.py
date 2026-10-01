@@ -220,7 +220,7 @@ class ChooseSkeleton(unittest.TestCase):
     def test_a_rig_named_says_pick_rig(self):
         root, refusal = self.choose([], ["Manny_Rig"])
         self.assertIsNone(root)
-        self.assertEqual(refusal, "Manny_Rig is a rig - pick Rig in Characters, or "
+        self.assertEqual(refusal, "Manny_Rig is a rig - pick Rig in Animation Setup, or "
                                   "select a skeleton")
 
     def test_a_skeleton_named_beside_a_rig_wins(self):

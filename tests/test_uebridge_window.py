@@ -170,7 +170,7 @@ class NoPerforce(unittest.TestCase):
     def test_the_three_buttons_and_two_targets(self):
         src = self._source()
         for label in ('label="Export FBX..."', 'label="Export to uasset"',
-                      'label="Import"', '"Onto selected"', '"New"'):
+                      'label="Import Animation"', '"Onto selected"', '"New"'):
             self.assertIn(label, src, label)
         self.assertTrue(callable(window.export_fbx_selected))
         self.assertTrue(callable(window.export_uasset_selected))
