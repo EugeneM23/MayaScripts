@@ -7280,15 +7280,17 @@ message line, the grids). Spec `docs/superpowers/specs/2026-10-01-hub-card-motio
 addendum), plan beside it.
 
 - **A card's body slides** open and shut, ease-out cubic, `maya_hubmotion.duration` (140 + 0.12 a logical
-  px, kept within 160..260 ms), the chevron turning with it (`maya_hubqt.rotated`). How: the body's own
+  px, kept within 160..260 ms; an OPENING 1.5 times that, 240..390 — the animator, the same evening:
+  «замедлим анимацию открытия вкладки примерно на 50%»), the chevron turning with it (`maya_hubqt.rotated`). How: the body's own
   layout is DISABLED for the slide and laid out once at its full height (`Card._lay_out_full`, re-read every
   tick), and the body's `maximumHeight` is capped tick by tick — so a short body CLIPS its children; a plain
   height animation of a laid-out widget squeezes them to their minimums. At the end the idle card is what it
   was before (cap off, layout enabled). The gap under the header moved into the body's top margin.
 - **A jump glides**: `Skin.scroll_to(key, animate=True)` waits for the OTHER cards to finish sliding
   (`_glide_when_settled`, at most `GLIDE_WAIT_S` 0.6 s), then eases over `SCROLL_MS` 240 toward
-  `min(card.frame.y(), bar.maximum())`, both read live; the wheel or the bar (`actionTriggered`,
-  `sliderPressed`) stops it.
+  `min(card.frame.y(), bar.maximum())`, both read live, for at least what is left of its card's opening,
+  and lands again one turn after it ends (the scroll area widens its range later, on its own LayoutRequest);
+  the wheel or the bar (`actionTriggered`, `sliderPressed`) stops it.
 - **Only the animator's moves animate**: `Card.toggle`, `maya_hub.focus` / `expand` (the strip, `show(key)`,
   the update chip) pass `animate=True`; `set_collapsed(c)` from code is instant, as is a card off screen.
 - **⋮ → Interface animations** beside Interface sounds (`maya_hubmotion.OPTIONVAR`

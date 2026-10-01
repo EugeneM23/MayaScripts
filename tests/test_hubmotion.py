@@ -53,6 +53,16 @@ class Ease(unittest.TestCase):
 
 class Duration(unittest.TestCase):
 
+    def test_opening_is_half_as_slow_again(self):
+        """2026-10-01, the animator: «замедлим анимацию открытия вкладки
+        примерно на 50%» - an opening takes 1.5 times a shutting."""
+        self.assertEqual(motion.OPEN_FACTOR, 1.5)
+        self.assertEqual(motion.duration(420, 1.5, opening=True), 260)
+        self.assertEqual(motion.duration(810, 1.5, opening=True), 307)
+        self.assertEqual(motion.duration(0, opening=True), 240)
+        self.assertEqual(motion.duration(10000, opening=True), 390)
+        self.assertEqual(motion.duration(420, 1.5), 174)     # shutting as was
+
     def test_by_the_logical_distance(self):
         #  measured 2026-10-01 at 150 %: Characters 420 physical, UE Bridge 810
         self.assertEqual(motion.duration(420, 1.5), 174)

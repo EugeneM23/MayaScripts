@@ -94,6 +94,12 @@ logical 205); the glide 260 ms; the chevron rides the body's progress.
   17 for a turn — left to Qt's posted LayoutRequests the card's own column ran first, on the card's OLD
   height, and the difference went to the header (Preferred), where the title and the chevron are centred.
   After: 33 on every turn of every card, the title's place unchanged to the pixel.
+- **An opening is 1.5 times slower than a shutting** (the same evening, the animator: «замедлим анимацию
+  открытия вкладки примерно на 50%»): `duration(..., opening=True)` × `OPEN_FACTOR` 1.5, 240..390 ms; a
+  shutting keeps 160..260. A glide now lasts at least what is left of its own card's opening (that opening
+  lengthens the range: a glide that ended first stopped short of a card near the bottom), and lands again one
+  turn after it ends — the scroll area widens its range on its own LayoutRequest, and a glide ending with
+  the opening was clamped by the old maximum (663 against 969 offscreen).
 - A disposable Maya's hub opens DOCKED; the first runs shrank the main window by mistake (a 127 px
   viewport). The verify floats it and sizes it to the animator's dock (viewport 510 physical).
 

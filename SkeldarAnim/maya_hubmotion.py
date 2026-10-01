@@ -11,7 +11,8 @@ tests share one set of numbers.
     ease(t)         cubic ease-out on the animation's linear 0..1: fast
                     start, soft landing
     duration(d)     a slide's milliseconds from its distance in LOGICAL px:
-                    140 + 0.12 per px, kept within 160..260
+                    140 + 0.12 per px, kept within 160..260; an opening
+                    1.5 times that (OPEN_FACTOR)
     SCROLL_MS       the glide; it starts once the other cards have finished
                     sliding (maya_hubqt.Skin._glide_when_settled)
     enabled()       the menu's Interface animations, an optionVar, on by
@@ -27,6 +28,11 @@ PER_PX_MS = 0.12
 MIN_MS = 160
 MAX_MS = 260
 SCROLL_MS = 240
+
+#  An opening takes this many times a shutting (the same evening, the
+#  animator: «замедлим анимацию открытия вкладки примерно на 50%»): 240..390
+#  ms against 160..260
+OPEN_FACTOR = 1.5
 
 #  the chevron's turn when open: "chevron-right" turned a quarter clockwise
 #  is "chevron-down"
@@ -66,11 +72,15 @@ def ease(t):
     return 1.0 - (1.0 - t) ** 3
 
 
-def duration(distance, scale=1.0):
+def duration(distance, scale=1.0, opening=False):
     """Milliseconds for a slide of `distance` PHYSICAL px at the display's
-    `scale` (a longer card takes a little longer, never a lot)."""
+    `scale` (a longer card takes a little longer, never a lot); an
+    `opening` OPEN_FACTOR times longer."""
     logical = abs(float(distance)) / float(scale or 1.0)
-    return int(round(min(MAX_MS, max(MIN_MS, BASE_MS + PER_PX_MS * logical))))
+    ms = min(MAX_MS, max(MIN_MS, BASE_MS + PER_PX_MS * logical))
+    if opening:
+        ms *= OPEN_FACTOR
+    return int(round(ms))
 
 
 def lerp(start, end, k):

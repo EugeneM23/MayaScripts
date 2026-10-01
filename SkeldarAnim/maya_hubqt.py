@@ -508,7 +508,8 @@ class Card(object):
         anim.setObjectName("skeldarHubCardSlide_" + self.key)
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
-        anim.setDuration(hubmotion.duration(target - start, self.scale))
+        anim.setDuration(hubmotion.duration(target - start, self.scale,
+                                            opening=opening))
         anim.valueChanged.connect(self._tick)
         anim.finished.connect(self._finished)
         self._anim = anim
@@ -969,7 +970,14 @@ class Skin(object):
         glide.setObjectName("skeldarHubGlide")
         glide.setStartValue(0.0)
         glide.setEndValue(1.0)
-        glide.setDuration(hubmotion.SCROLL_MS)
+        #  never over before the chosen card has finished opening: its own
+        #  opening (1.5 times slower than a shutting since the same evening)
+        #  lengthens the range, and a glide that ended first stopped short
+        #  of a card near the bottom
+        remaining = 0
+        if card.sliding():
+            remaining = card._anim.duration() - card._anim.currentTime()
+        glide.setDuration(max(hubmotion.SCROLL_MS, remaining))
         glide.valueChanged.connect(
             lambda value: self._glide_tick(card, start, value))
         glide.finished.connect(lambda: self._glide_done(card))
@@ -987,7 +995,20 @@ class Skin(object):
 
     def _glide_done(self, card):
         self._stop_glide()
-        if _valid(card.frame):
+        if not _valid(card.frame):
+            return
+        self._land(card)
+        #  The scroll area widens its range on a LayoutRequest of its own,
+        #  after this: a glide ending as its card finished opening was
+        #  clamped by the old maximum (663 against the card's 969 offscreen)
+        #  and stayed there. Land again once the range has caught up.
+        qt().QtCore.QTimer.singleShot(0, self.root, lambda: self._land(card))
+
+    def _land(self, card):
+        """The bar on the card, unless the card is gone or a new glide (or
+        the animator's own scroll, which stops one) took over."""
+        if self._glide is None and self._glide_card is None \
+                and _valid(card.frame):
             self.scroll.verticalScrollBar().setValue(card.frame.y())
 
     def _stop_glide(self, *_args):

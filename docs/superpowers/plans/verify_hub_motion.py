@@ -109,6 +109,7 @@ print("viewport", skin.scroll.viewport().width(), "cards", len(skin.cards))
 # --------------------------------------------------------------- 1 per card
 rows = []
 steady = {}         # key -> the header heights seen while it slid
+spans = {}          # key -> (opening ms, shutting ms) the slides were given
 for key, card in skin.cards.items():
     heights, kids = [], []
     PHASE[0] = key
@@ -123,7 +124,12 @@ for key, card in skin.cards.items():
 
     card.toggle()                                          # open
     started = card.sliding()
+    open_ms = card._anim.duration() if started else 0
     run(lambda card=card: not card.sliding(), record=rec)
+    #  the last tick and the end of the slide fall in one turn: the cap the
+    #  slide set last is what the animator saw before the card settled
+    if started:
+        heights.append(card._shown)
     settled = card.body.height()
     natural = card.natural_height()
     last = heights[-1] if heights else None
@@ -149,6 +155,7 @@ for key, card in skin.cards.items():
 
     PHASE[0] = key + " shut"
     card.toggle()                                          # shut
+    spans[key] = (open_ms, card._anim.duration() if card.sliding() else 0)
     run(lambda card=card: not card.sliding(), record=rec2)
     shut_ok = (len(down) >= 3 and monotonic(down, False)
                and card.body.isHidden() and card.body_layout.isEnabled()
@@ -170,6 +177,11 @@ shaking = dict((k, sorted(v)) for k, v in steady.items()
                if v != {skin.cards[k].header.sizeHint().height()})
 gate("3b", "the header keeps its height, the title does not shake "
      "(the animator saw it shake, 2026-10-01)", not shaking, shaking)
+slow = dict((k, v) for k, v in spans.items()
+            if not (v[1] and abs(v[0] / float(v[1]) - 1.5) < 0.02))
+gate("3c", "an opening takes 1.5 times a shutting (the animator, the same "
+     "evening: slower by about 50%)", not slow,
+     slow or dict(list(spans.items())[:3]))
 sliding = sorted(c[0] for c in COST if c[3])
 p99 = sliding[int(len(sliding) * 0.99)] if sliding else 0.0
 worst = sorted(COST, key=lambda c: c[0] + c[1])[-3:]

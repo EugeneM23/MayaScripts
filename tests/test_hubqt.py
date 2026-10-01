@@ -741,6 +741,20 @@ class CardMotion(SeamsMixin, unittest.TestCase):
         self.assertTrue(self.card.body_layout.isEnabled())
         self.assertEqual(self.card.body.height(), natural)
 
+    def test_opening_takes_longer_than_shutting(self):
+        import maya_hubmotion as motion
+        full = self.card.body.height()
+        self.card.toggle()                                  # shutting
+        self.assertEqual(self.card._anim.duration(),
+                         motion.duration(full, 1.0))
+        self._at(1.0)
+        self.card.toggle()                                  # opening
+        natural = self.card.natural_height()
+        self.assertEqual(self.card._anim.duration(),
+                         motion.duration(natural, 1.0, opening=True))
+        self.assertGreater(motion.duration(natural, 1.0, opening=True),
+                           motion.duration(full, 1.0))
+
     def test_a_second_click_mid_way_turns_it_back(self):
         self.card.toggle()
         self._at(0.4)
@@ -894,7 +908,26 @@ class Glide(SeamsMixin, unittest.TestCase):
 
     def test_the_wait_covers_every_slide(self):
         import maya_hubmotion as motion
-        self.assertGreater(hubqt.GLIDE_WAIT_S * 1000.0, motion.MAX_MS)
+        self.assertGreater(hubqt.GLIDE_WAIT_S * 1000.0,
+                           motion.MAX_MS * motion.OPEN_FACTOR)
+
+    def test_the_glide_lasts_while_its_card_still_opens(self):
+        """An opening (1.5 times slower since 2026-10-01) may outlast
+        SCROLL_MS; a glide that ended first stopped short of a card near
+        the bottom, whose own opening is what lengthens the range."""
+        import maya_hubmotion as motion
+        card = self.skin.cards["d"]
+        card.set_collapsed(True)
+        self._settle()
+        card.set_collapsed(False, animate=True)
+        remaining = card._anim.duration() - card._anim.currentTime()
+        self.assertGreater(remaining, motion.SCROLL_MS)
+        self.skin.scroll_to("d", animate=True)
+        self.assertGreaterEqual(self.skin._glide.duration(), remaining)
+        card._anim.setCurrentTime(card._anim.duration())
+        self._to_end()
+        self.assertEqual(self.bar.value(),
+                         min(card.frame.y(), self.bar.maximum()))
 
     def test_the_animator_s_own_scroll_stops_it(self):
         self.skin.scroll_to("d", animate=True)
