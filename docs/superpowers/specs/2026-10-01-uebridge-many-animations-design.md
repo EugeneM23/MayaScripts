@@ -136,3 +136,20 @@ The animator, after the push: «Давай будем всегда распол�
   `floor_axis`/`slots` and `droptarget`'s `axis`/`on_floor` go (nothing reads a camera axis any more).
 - Wording: «3 animations onto 3 new rigs in a 2 x 2 square about (0, 0): …», the ghost «3 animations · 3 new
   Manny [rig] in a square · floor (120, -36)».
+
+## Addendum 2: a drag in the Skeleton mode places skeletons
+
+The animator: «Сейчас групповое перетягивание работает только с ригом даже если выбран skeleton давай исправим.
+если у нас выбран скелет то будем располагать в сцене скелеты». Until then a drag ignored the mode segments.
+
+- **The Skeleton mode reaches the drag** (read when the drag starts): over a viewport the clip(s) arrive as
+  skeletons standing on the floor point under the cursor - **rigs under the cursor are ignored**, nothing is
+  retargeted - one with its root at its first frame on the point, several in the square about it
+  (`lineimport.run(..., "skeleton", centre=point)`). No floor under the cursor: one stands where the clip
+  is, several about the origin. Off every viewport, or back on the hub: nothing, as before.
+- `droptarget.skeleton_target(gx, gy)` → `dict(kind="skeleton", point, text)` / `dict(kind="none", text)`;
+  `listdrag.Scene` reads `window.import_mode()` at the snapshot and asks it in that mode; the ghost:
+  «A_Jump · a skeleton · floor (120, -36)», «3 animations · 3 skeletons in a square · floor (120, -36)».
+- `window.import_dropped` takes kind "skeleton": one is `rigimport.import_source` + `stand_skeleton` (the
+  timeline checkbox applies), several `lineimport.run`.
+- Rig and New rig drags are unchanged: a rig under the cursor takes the first, the floor a square of new rigs.
