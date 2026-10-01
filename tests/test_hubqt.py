@@ -851,6 +851,29 @@ class Glide(SeamsMixin, unittest.TestCase):
         self.assertIsNone(self.skin._glide)
         self.assertEqual(self.bar.value(), min(target, self.bar.maximum()))
 
+    def test_it_waits_for_the_other_cards_to_finish_sliding(self):
+        """Live 2026-10-01: aimed while cards shut above, it overshot the
+        shrinking range and was pulled back."""
+        above = self.skin.cards["a"]
+        above.toggle()                                      # sliding shut
+        self.skin.scroll_to("c", animate=True)
+        self.assertIsNone(self.skin._glide)
+        self.assertIs(self.skin._glide_card, self.skin.cards["c"])
+        self.assertTrue(self.skin._glide_wait.isActive())
+        above._anim.setCurrentTime(above._anim.duration())
+        self._settle()
+        self.skin._glide_when_settled()
+        self.assertIsNotNone(self.skin._glide)
+        self.assertIsNone(self.skin._glide_card)
+        self._to_end()
+        self.assertEqual(self.bar.value(),
+                         min(self.skin.cards["c"].frame.y(),
+                             self.bar.maximum()))
+
+    def test_the_wait_covers_every_slide(self):
+        import maya_hubmotion as motion
+        self.assertGreater(hubqt.GLIDE_WAIT_S * 1000.0, motion.MAX_MS)
+
     def test_the_animator_s_own_scroll_stops_it(self):
         self.skin.scroll_to("d", animate=True)
         self.bar.triggerAction(QtWidgets.QAbstractSlider.SliderSingleStepAdd)

@@ -77,6 +77,20 @@ logical 205); the glide 260 ms; the chevron rides the body's progress.
 | `maya_hubqt.py` | `Card` (`motion` callable, `set_collapsed(c, animate=False)`, `_slide`, `_tick`, `_settle`, `natural_height`, the rotated chevron), `Skin.animations`, `Skin.scroll_to(key, animate=False)`, the menu row, `Skin.paint_animations(on)` | Qt, `maya_hubmotion` |
 | `maya_hub.py` | `_callbacks()["animations"]`, `set_animations(on)`, `_dress_animations(skin)`, `focus`/`expand`/`scroll_to` passing `animate=True` | — |
 
+## Addendum: what the live run changed (the same day)
+
+- **The glide WAITS for the other cards** (`Skin._glide_when_settled`, at most `GLIDE_WAIT_S` 0.6 s),
+  then eases toward `min(card.frame.y(), bar.maximum())`, both read live. Aimed while three cards shut
+  above Studio, the first build's glide climbed toward Studio's place while the scroll's range shrank
+  under it and was pulled back by the clamp (it ended on the range's 207 after passing it): not monotonic.
+  A jump is now a fold, then a glide. With nothing left for it to outlast, `SCROLL_MS` is 240 (was 300).
+- **"Clipped, never squeezed" is measured as: every turn the content stands at its FULL height** (the
+  body's top margin above it) while the body shows less. The full height itself may move a few px mid-
+  slide: when the hub's scroll bar comes, the Characters grid reflows to the narrower width (3 px live).
+  The same happens without the animation, at once.
+- A disposable Maya's hub opens DOCKED; the first runs shrank the main window by mistake (a 127 px
+  viewport). The verify floats it and sizes it to the animator's dock (viewport 510 physical).
+
 ## Proof
 
 - Unit tests (offscreen Qt): the pure module; a slide driven to its end by the animation's own clock

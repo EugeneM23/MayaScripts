@@ -12,8 +12,8 @@ tests share one set of numbers.
                     start, soft landing
     duration(d)     a slide's milliseconds from its distance in LOGICAL px:
                     140 + 0.12 per px, kept within 160..260
-    SCROLL_MS       the glide, longer than any slide: its last stretch aims
-                    at a card that has finished moving
+    SCROLL_MS       the glide; it starts once the other cards have finished
+                    sliding (maya_hubqt.Skin._glide_when_settled)
     enabled()       the menu's Interface animations, an optionVar, on by
                     default
 
@@ -26,7 +26,7 @@ BASE_MS = 140
 PER_PX_MS = 0.12
 MIN_MS = 160
 MAX_MS = 260
-SCROLL_MS = 300
+SCROLL_MS = 240
 
 #  the chevron's turn when open: "chevron-right" turned a quarter clockwise
 #  is "chevron-down"

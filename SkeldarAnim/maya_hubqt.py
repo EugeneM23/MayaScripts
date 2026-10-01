@@ -28,6 +28,7 @@ exists, and its `setWordWrap` raises AttributeError (measured).
 Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
 """
 
+import time
 import types
 
 import maya_hubicons as hubicons
@@ -43,6 +44,10 @@ _NO_CAP = 16777215
 #  resting card (see Skin.resting): long enough to cross the gap between two
 #  cards without a flash, short enough to read as immediate.
 FALLBACK_MS = 150
+
+#  How long a jump's glide waits at most for the other cards to finish
+#  sliding (every slide is over within maya_hubmotion.MAX_MS)
+GLIDE_WAIT_S = 0.6
 
 
 def qt():
@@ -630,6 +635,14 @@ class Skin(object):
         bar = self.scroll.verticalScrollBar()
         bar.actionTriggered.connect(self._stop_glide)
         bar.sliderPressed.connect(self._stop_glide)
+        #  a jump waits for the OTHER cards to finish sliding before it glides
+        self._glide_card = None
+        self._glide_deadline = 0.0
+        self._glide_wait = q.QtCore.QTimer(self.root)
+        self._glide_wait.setObjectName("skeldarHubGlideWait")
+        self._glide_wait.setSingleShot(True)
+        self._glide_wait.setInterval(16)
+        self._glide_wait.timeout.connect(self._glide_when_settled)
 
         #  The lit card (2026-09-28, «активное окно подсвечивалось немного
         #  другим цветом»; then «когда я наводил мышкой на какой-то раздел у
@@ -895,10 +908,11 @@ class Skin(object):
     def scroll_to(self, key, animate=False):
         """Card `key` to the top of the scroll (as far as the bar goes): at
         once, or GLIDING when `animate` (the animator's move), the switch
-        and the screen allow it (2026-10-01). The glide aims at the card's
-        LIVE place, so cards still sliding shut above it move it and the
-        glide follows; SCROLL_MS outlasts every slide, so its last stretch
-        aims at a card that has settled. Answers the card's offset now."""
+        and the screen allow it (2026-10-01). A glide waits for the OTHER
+        cards to finish sliding (`_glide_when_settled`), then eases toward
+        the card's place as far as the bar reaches -- both read live, the
+        chosen card's own opening growing the reach. Answers the card's
+        offset now."""
         card = self.cards.get(key)
         if card is None:
             return None
@@ -908,8 +922,29 @@ class Skin(object):
         if not (animate and self.animations and self.root.isVisible()):
             bar.setValue(offset)
             return offset
+        self._glide_card = card
+        self._glide_deadline = time.monotonic() + GLIDE_WAIT_S
+        self._glide_when_settled()
+        return offset
+
+    def _glide_when_settled(self):
+        """Start the glide once no other card is sliding. Aimed while cards
+        shut above the chosen one, it climbed toward the card's place while
+        the scroll's range shrank under it and was pulled back by the clamp
+        (measured live 2026-10-01: a jump to Studio with three cards open
+        above ended on the range's 207 after passing it)."""
+        card = self._glide_card
+        if card is None or not _valid(card.frame):
+            self._glide_card = None
+            return
+        moving = [c for c in self.cards.values()
+                  if c is not card and c.sliding()]
+        if moving and time.monotonic() < self._glide_deadline:
+            self._glide_wait.start()
+            return
+        self._glide_card = None
         q = qt()
-        start = bar.value()
+        start = self.scroll.verticalScrollBar().value()
         glide = q.QtCore.QVariantAnimation(self.root)
         glide.setObjectName("skeldarHubGlide")
         glide.setStartValue(0.0)
@@ -920,14 +955,14 @@ class Skin(object):
         glide.finished.connect(lambda: self._glide_done(card))
         self._glide = glide
         glide.start()
-        return offset
 
     def _glide_tick(self, card, start, value):
         if not _valid(card.frame):
             self._stop_glide()
             return
-        target = card.frame.y()
-        self.scroll.verticalScrollBar().setValue(int(round(
+        bar = self.scroll.verticalScrollBar()
+        target = min(card.frame.y(), bar.maximum())
+        bar.setValue(int(round(
             hubmotion.lerp(start, target, hubmotion.ease(value)))))
 
     def _glide_done(self, card):
@@ -938,6 +973,9 @@ class Skin(object):
     def _stop_glide(self, *_args):
         """No glide any more: the animator's own scroll (the wheel, the
         bar), another jump, the switch off, the end."""
+        self._glide_card = None
+        if _valid(self._glide_wait):
+            self._glide_wait.stop()
         glide, self._glide = self._glide, None
         if glide is not None:
             try:

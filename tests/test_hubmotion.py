@@ -66,9 +66,11 @@ class Duration(unittest.TestCase):
     def test_the_direction_does_not_matter(self):
         self.assertEqual(motion.duration(-420, 1.5), 174)
 
-    def test_the_glide_outlasts_every_slide(self):
-        """Its last stretch then aims at a card that has settled."""
-        self.assertGreater(motion.SCROLL_MS, motion.MAX_MS)
+    def test_the_glide_is_as_long_as_a_slide(self):
+        """It starts once the other cards have finished sliding, so a jump
+        is a fold then a glide: neither may drag."""
+        self.assertEqual(motion.SCROLL_MS, 240)
+        self.assertLessEqual(motion.SCROLL_MS, motion.MAX_MS)
 
 
 class Switch(unittest.TestCase):
