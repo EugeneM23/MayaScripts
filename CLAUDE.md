@@ -7097,3 +7097,88 @@ real mouse half working in their hands. 3090 unit tests. Not run: a drop with a 
      dodges.** The hub went to the top-left, the floor point projected to the left, and `drop_at` correctly
      did nothing (a release on the hub) — read as a failed drop. Try the corners until no aimed point is on
      the hub (`keep_hub_off`), and re-project after the move.
+
+## Center of Mass: a live point, a fast trail, the CoM tool (2026-10-01)
+
+The animator: «у нас должна быть какая-то точка к которой мы можем сделать motion trail … моушен треил
+изменялся если мы изменяем положение нашего персонажа … передвигать сам центр массы и при этом наш риг в
+зависимости от карты весов тоже будет двигаться корректно … эта система должна быть производительной …
+если мы сделаем на констрейнах … моушен треил отрисуется с задержкой». Asked, and answered: the mass
+**from the mesh and the skin**; moving the CoM moves **every part** («пока так», pinning the feet comes
+later); the UE bone `center_of_mass` **left alone**; **our own tool**, not a manipulator plug-in. Spec
+`docs/superpowers/specs/2026-10-01-center-of-mass-design.md`, plan beside it. Package
+`SkeldarAnim/maya_com/` (payload row), hub section **Center of Mass** (Animation, icon `target`), hotkey
+row `window.com`.
+
+**Measured first, and it decided the design**: Maya's own Motion Trail on a CoM point costs **4.5 s per
+key edit** in a GUI Maya with Cached Playback filled — every trail frame goes through a DG time context
+(`getAttr -time` 41 ms, `MDGContext` 45 ms a frame for the whole body) — while the same frame through
+the parallel EM (`MAnimControl.setCurrentTime` under `refresh -suspend`) costs **5 ms**. The animator's
+fear was right but constraints are not the cause: the cost is evaluating the rig at every trail frame,
+whatever computes the point. Cached Playback cannot be read (`dbpeek -op cache -a data` is a 277 MB dump
+with no values); ghosting the point drew nothing. **`motionTrailShape` takes points we give it**
+(`points` pointArray, `startTime`, the draw attributes), so the trail looks like Maya's and is ours.
+
+- **The mass** (`massmodel.py`, numpy, pure): the union of the character's mesh shells, welded (Unreal's
+  are split along normal seams), each closed by fan caps over its border loops, ray parity per shell
+  along X/Y/Z with a majority vote, OR-ed — Manny's Skin_3p is 45 shells / 5142 border edges, the Creep
+  five overlapping meshes, the Orc D cloth over skin, so a surface integral would leak and double-count.
+  Voxels of 1.5 cm, each skinned by the closest surface point (`MMeshIntersector`; its
+  `barycentricCoords` (u, v) weight corners 0 and 1 of `getTriangles`' order, measured 1e-5), its rest
+  point through the blended skin matrix, so a joint gets a mass and a local centre and
+  **CoM = Σ m_j (c_j · M_j) / Σ m_j exactly for linear skinning**, from any pose. 1P meshes (a `1P`
+  token) are left out — Hands_1P would weigh the arms twice. Manny 83 L, the CoM at 0.585 of stature;
+  feet, hands, head, shanks on de Leva's table, the thigh light (8.9 % against 14.2) because Manny's skin
+  gives the buttocks to the pelvis — the partition is the skin's, as chosen. Weighing takes 1.2–2.2 s.
+- **The live point** (`network.py`): four `wtAddMatrix` over the skinned joints' worldMatrix with
+  weights m̂·c_x, m̂·c_y, m̂·c_z, m̂ — row-vector `c·M = c_x·row0 + c_y·row1 + c_z·row2 + row3` — four
+  `rowFromMatrix`, one `plusMinusAverage`: nine nodes, no constraint. Equal to the formula at a posed
+  frame to 6.5e-7. Group `ns:CenterOfMass` under the rig's top group (marked `skeldarCom`, the parts by
+  UUID in `skeldarComNodes`, the root by message), the handle `alwaysDrawOnTop`, a floor marker at the
+  root's height, two trail shapes (Past / Future in our colours; the default future colour is purple).
+  **Cost: none measurable** — `verify_com_cost.py`, mayapy A/B, best of seven walks ×3: 5.45 ms without,
+  5.41 with the network, 5.04 with the engine's callbacks too.
+- **The engine** (`engine.py`, `frames.py` pure): frames are marked DIRTY by a time curve edited (only the
+  frames whose sampled value changed, against a snapshot; through blend nodes a few hops), a static set
+  on a control or joint (all frames), the range moving (the new frames); a set on a curve-driven plug is
+  a tweak — the current frame's point is read live. Slices on a Qt single-shot timer, nearest the
+  current frame first, ≥ 2 frames a slice while a frame is cheap, never with a mouse button down or
+  during playback; unkeyed tweaks recorded before a walk and put back after it (MDGModifier). One walk
+  serves every character. State on `sys._skeldar_com` (trap 111). Measured live with three rigs (15 ms
+  a frame — the EM evaluates every rig at each step): a key edit → its 17 frames in 9 slices, the trail
+  redrawn **0.52 s** after the key, slices ≤ 57 ms; one rig: 17 frames in 0.12 s.
+- **The tool** (`drag.py`, `dragmath.py` pure): selecting a handle puts a `draggerContext` on (W/E/R
+  bounce back to it, selecting anything else restores the tool); LMB in the view plane, Shift the floor,
+  Ctrl vertical; a click without a drag selects. A press measures each world driver's local response by
+  finite differences (`plan`, cached by the follow blends and the drivers' parent rotations; 43–119 ms)
+  — `RootX_M`, IK legs/arms, poles (they follow blends of the others), IK spine; never `Main`; a bare
+  skeleton's pelvis and ik roots — and every part moves by the same d (the least mass-weighted
+  displacement putting the CoM there). Release keys channels that have curves (Maya's autoKey rule);
+  a channel without one is a static set, as Maya's Move does. `undoMode="all"`.
+
+Proof: `verify_com.py`, every phase green in a disposable Maya (Manny, Creep, Orc D, port 7013): the
+three trails equal to a plain walk to **0.0**; a key edit recomputing exactly the 17 changed frames, the
+other two rigs untouched to 0.0; an unkeyed pole recomputing all 61; a tweak surviving the engine with
+the trail's current point on it; the simulated drag putting the CoM 0.0099 cm off the cursor's ray,
+every weighed bone moved by d to 1.3e-7, Main still, RootX_M keyed, one undo putting it back; Remove
+leaving nothing; Cached Playback out of safe mode; playblasts of the trail and its floor shadow. 3182
+unit tests. **Not proven: a real mouse drag** (the context's own press/drag/release were driven with
+their queries faked) — the animator's hands are the proof of that.
+
+143. **Maya's Motion Trail evaluates each trail frame through a DG time context, and Cached Playback does
+     not help it**: 4.5 s per key edit for a whole-body point (41 ms a frame), 0.75 s for one hand, while
+     the EM does a frame in 5 ms. A trail of anything driven by a rig wants its points computed by an EM
+     time walk and handed to a `motionTrailShape`.
+144. **API 2.0 `M3dView.viewToWorld(x, y, MPoint, MVector)` FILLS its arguments** (two arguments raise
+     "takes exactly 4"), and `cacheEvaluator -q -safeModeTriggered` answers the STRING `'0'` — truthy.
+145. **Turning the undo queue off and on (`undoInfo -stateWithoutFlush`) inside an open chunk breaks the
+     chunk**: one Ctrl+Z left the drag half applied. Probes that net to nothing can stay recorded. And
+     `autoKeyframe -state` is itself undoable: a verify that switches autoKey off after a drag and then
+     undoes, undoes the switch.
+146. **A scripted time walk fires timeChanged afterwards even though it ends on the frame it started
+     from.** The engine marked the tweaked frame dirty and drew the keyed pose under a standing tweak;
+     anything reacting to a time change must compare with the frame it recorded.
+147. **A GUI Maya's per-frame time swings ±0.6 ms a rig from one run to the next** — Cached Playback
+     refills in background threads after every graph change and takes the cores (the same scene read 15
+     and then 11 ms). A cost measured there needs the cache off, the best of several runs, and the
+     precise A/B belongs in mayapy.
