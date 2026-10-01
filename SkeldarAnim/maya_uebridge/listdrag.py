@@ -83,8 +83,8 @@ def caption(names, aim):
         return "%s %s %s" % (first, DOT, aim.get("text", "")), True
     if kind == "skeleton":
         if len(names) > 1:
-            text = "%d animations %s %d skeletons in a square" % (
-                len(names), DOT, len(names))
+            text = "%d animations %s %d new %s in a square" % (
+                len(names), DOT, len(names), aim.get("label") or "skeleton")
             point = aim.get("point")
             if point is not None:
                 text += " %s floor (%d, %d)" % (DOT, int(round(point[0])),
@@ -148,16 +148,21 @@ class Scene(object):
         (the Skeleton mode places skeletons, 2026-10-01), the rig a floor
         drop adds, every rig's bones."""
         from maya_scenesetup import droptarget
-        from maya_uebridge import rigimport
+        from maya_uebridge import rigimport, skeletonimport
         self._mode = self._read_mode()
         self._new_label = rigimport.new_rig_entry().label
+        self._skeleton_label = skeletonimport.skeleton_entry().label
         return droptarget.rig_snapshot()
 
     def target(self, gx, gy, snap):
         from maya_scenesetup import droptarget
         mode = getattr(self, "_mode", None) or self._read_mode()
         if mode == "skeleton":
-            return droptarget.skeleton_target(gx, gy)
+            label = getattr(self, "_skeleton_label", None)
+            if label is None:
+                from maya_uebridge import skeletonimport
+                label = self._skeleton_label = skeletonimport.skeleton_entry().label
+            return droptarget.skeleton_target(gx, gy, label)
         label = getattr(self, "_new_label", None)
         if label is None:
             from maya_uebridge import rigimport

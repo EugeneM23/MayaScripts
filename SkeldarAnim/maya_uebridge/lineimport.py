@@ -37,6 +37,7 @@ import maya.cmds as cmds
 
 from maya_uebridge import lineup
 from maya_uebridge import rigimport
+from maya_uebridge import skeletonimport
 
 TARGETS = ("new_rig", "skeleton")
 NOTHING = "select an animation first"
@@ -59,12 +60,13 @@ def _plural(count, word):
 
 
 def summary(target, done, total, centre, widened, failures,
-            step=lineup.STEP, cancelled=False, shape=None):
+            step=lineup.STEP, cancelled=False, shape=None, label=None):
     """The status line after the press. Pure.
 
     `done` is [(label, clip name)] in the square's order - the rig's label
     onto which the clip went, or the skeleton's namespace; `failures`
-    [(clip, reason)]; `shape` the square's (columns, rows)."""
+    [(clip, reason)]; `shape` the square's (columns, rows); `label` the
+    skeleton row the Skeleton mode adds."""
     where = "about ({0}, {1})".format(int(round(centre[0])), int(round(centre[2])))
     square = ("a {0} x {1} square".format(shape[0], shape[1]) if shape
               else "a square")
@@ -79,9 +81,14 @@ def summary(target, done, total, centre, widened, failures,
                     else "new rigs")
             head = "{0} onto {1} in {2} {3}".format(count, rigs, square, where)
             names = ", ".join("{0} {1}".format(label, name) for label, name in done)
+        elif label:
+            what = ("{0} new {1}".format(len(done), label) if len(done) == total
+                    else "new {0}".format(label))
+            head = "{0} onto {1} in {2} {3}".format(count, what, square, where)
+            names = ", ".join("{0} {1}".format(top, name) for top, name in done)
         else:
             head = "{0} as skeletons in {1} {2}".format(count, square, where)
-            names = ", ".join(label for label, _name in done)
+            names = ", ".join(top for top, _name in done)
         parts.append("{0}: {1}".format(head, names))
         if len(done) > 1:
             gap = "step {0:g} m".format(step / 100.0)
@@ -206,9 +213,14 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
         return "unknown import target {0!r}".format(target)
     if not record_list:
         return NOTHING
-    plan = None
+    plan = entry = None
     if target == "new_rig":
         plan, refusal = rigimport.plan_press("new_rig")
+        if refusal:
+            return refusal
+    else:
+        entry = skeletonimport.skeleton_entry()
+        refusal = skeletonimport.precheck(entry)
         if refusal:
             return refusal
     centre = tuple(centre or (0.0, 0.0, 0.0))
@@ -279,15 +291,16 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                     break
                 progress.step("{0}: {1}".format(
                     clip["name"], "retarget onto a new rig"
-                    if target == "new_rig" else "into the square"))
+                    if target == "new_rig" else "onto a new skeleton"))
                 try:
                     if target == "new_rig":
                         label, failure = _onto_new_rig(plan, clip, point)
                     else:
-                        rigimport.stand_skeleton(clip["namespace"],
-                                                 clip["source"], point,
-                                                 clip["info"].get("start"))
-                        label, failure = clip["namespace"], ""
+                        line, failure, label = skeletonimport.onto_skeleton(
+                            entry, clip["namespace"], clip["info"],
+                            clip["source"], clip["name"], point)
+                        if line:
+                            print("[uebridge] {0}".format(line))
                 except Exception as error:                   # noqa: BLE001
                     traceback.print_exc()
                     label, failure = None, _short(error)
@@ -298,6 +311,6 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
     finally:
         progress.close()
     text = summary(target, done, total, centre, widened, failures, step,
-                   cancelled, shape)
+                   cancelled, shape, entry.label if entry else None)
     print("[uebridge] {0}".format(text))
     return text

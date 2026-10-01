@@ -375,36 +375,25 @@ def import_selected():
         from maya_uebridge import lineimport
         note = lineimport.first_only([r.name for r in chosen])
 
-    if mode != "skeleton":
-        # Which rig is decided BEFORE the round trip to the editor: two rigs
-        # and nothing selected is a refusal, and it should cost nothing.
-        import maya_rigs
-        if mode == "rig" and maya_rigs.rigs():
-            rig, refusal = maya_rigs.current_rig()
-            if rig is None:
-                _status(refusal)
-                return
-
-    exported, fps = _export_from_editor(record)
-    set_timeline = _timeline()
-
-    if mode != "skeleton":
-        from maya_uebridge import rigimport   # lazy: keeps the import graph flat
-        _status(_with_note(rigimport.import_and_retarget(
-            exported, record.name, clip_fps=fps, set_timeline=set_timeline,
-            target=mode), note))
+    if mode == "skeleton":
+        # 2026-10-01: the Characters card's skeleton, with its geometry
+        _status(_onto_skeleton(record))
         return
 
-    namespace = records.namespace_for(record.name,
-                                      animimport.existing_namespaces())
-    cmds.undoInfo(openChunk=True, chunkName="UE anim import")
-    try:
-        info = animimport.import_clip(exported, namespace,
-                                      set_timeline=set_timeline,
-                                      clip_fps=fps, merge=False)
-    finally:
-        cmds.undoInfo(closeChunk=True)
-    _status(import_line(record.name, info))
+    # Which rig is decided BEFORE the round trip to the editor: two rigs and
+    # nothing selected is a refusal, and it should cost nothing.
+    import maya_rigs
+    if mode == "rig" and maya_rigs.rigs():
+        rig, refusal = maya_rigs.current_rig()
+        if rig is None:
+            _status(refusal)
+            return
+
+    exported, fps = _export_from_editor(record)
+    from maya_uebridge import rigimport   # lazy: keeps the import graph flat
+    _status(_with_note(rigimport.import_and_retarget(
+        exported, record.name, clip_fps=fps, set_timeline=_timeline(),
+        target=mode), note))
 
 
 def _timeline():
@@ -459,7 +448,7 @@ def import_dropped(record, aim):
         _status(text)
         return text
     if kind == "skeleton":
-        text = _drop_skeleton(chosen[0], aim.get("point"))
+        text = _onto_skeleton(chosen[0], aim.get("point"))
         _status(text)
         return text
     record = chosen[0]
@@ -486,20 +475,20 @@ def import_dropped(record, aim):
     return text
 
 
-def _drop_skeleton(record, point):
-    """One clip dropped in the Skeleton mode: its own namespaced skeleton,
-    the root at its first frame on the floor `point` (None: where the clip
-    is) - moved by a wrapper, its keys untouched. Returns the status line."""
-    from maya_uebridge import rigimport   # lazy: keeps the import graph flat
+def _onto_skeleton(record, point=None):
+    """One clip in the Skeleton mode (2026-10-01, «использовать скелет
+    который активен в вкладке character»): the Characters card's skeleton
+    added, with its geometry, and the clip transferred onto it standing on
+    the floor `point` (None: where the clip is) - `skeletonimport`. The
+    skeleton file is checked before the editor is asked. Returns the status
+    line."""
+    from maya_uebridge import skeletonimport   # lazy: keeps the import graph flat
+    refusal = skeletonimport.precheck()
+    if refusal:
+        return refusal
     exported, fps = _export_from_editor(record)
-    namespace, info, source = rigimport.import_source(
-        exported, record.name, clip_fps=fps, set_timeline=_timeline())
-    text = import_line(record.name, info)
-    if point is not None and source is not None:
-        rigimport.stand_skeleton(namespace, source, point, info.get("start"))
-        text = "{0}  |  standing at floor ({1}, {2})".format(
-            text, int(round(point[0])), int(round(point[2])))
-    return text
+    return skeletonimport.import_onto_skeleton(
+        exported, record.name, clip_fps=fps, set_timeline=_timeline(), at=point)
 
 
 def import_line(name, info):

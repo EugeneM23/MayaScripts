@@ -401,40 +401,52 @@ class SeveralAnimations(unittest.TestCase):
         self.assertEqual(self.calls, [("line", ["A_Jump", "A_Walk", "A_Run"], "skeleton",
                                        (50.0, 0.0, 60.0), True, True)])
 
-    def test_a_skeleton_drop_of_one_stands_its_root_on_the_point(self):
-        from maya_uebridge import rigimport
-        saved = rigimport.import_source, rigimport.stand_skeleton
+    def _skeleton_press(self):
+        """skeletonimport faked: the Characters card's skeleton, the press."""
+        from maya_uebridge import skeletonimport
+        saved = skeletonimport.precheck, skeletonimport.import_onto_skeleton
 
         def restore():
-            rigimport.import_source, rigimport.stand_skeleton = saved
+            skeletonimport.precheck, skeletonimport.import_onto_skeleton = saved
         self.addCleanup(restore)
-        rigimport.import_source = lambda fbx, name, clip_fps=None, set_timeline=True: (
-            self.calls.append(("import", fbx, name, set_timeline)) or
-            (name, {"namespace": name, "joints": 93, "start": 0.0, "end": 30.0, "warning": ""},
-             "|%s:root" % name))
-        rigimport.stand_skeleton = lambda namespace, source, point, start=None: (
-            self.calls.append(("stand", namespace, source, point, start)) or (point[0], point[2]))
+        skeletonimport.precheck = lambda entry=None: self.refusal
+        skeletonimport.import_onto_skeleton = (
+            lambda fbx, name, clip_fps=None, set_timeline=True, at=None, entry=None: (
+                self.calls.append(("onto", fbx, name, set_timeline, at)) or
+                "%s onto the skeleton" % name))
+        self.refusal = ""
+
+    def test_a_skeleton_drop_of_one_goes_onto_the_characters_skeleton_on_the_point(self):
+        """2026-10-01, «использовать скелет который активен в вкладке
+        character»: the Skeleton mode's skeleton, with its geometry."""
+        self._skeleton_press()
         text = window.import_dropped(self.recs[:1], dict(kind="skeleton",
                                                          point=(50.0, 0.0, 60.0)))
-        self.assertEqual(self.calls, [
-            ("export", "A_Jump"), ("import", "C:/t/A_Jump.fbx", "A_Jump", True),
-            ("stand", "A_Jump", "|A_Jump:root", (50.0, 0.0, 60.0), 0.0)])
-        self.assertEqual(text, "A_Jump into A_Jump: 93 joints, frames 0-30  |  "
-                               "standing at floor (50, 60)")
+        self.assertEqual(self.calls, [("export", "A_Jump"),
+                                      ("onto", "C:/t/A_Jump.fbx", "A_Jump", True,
+                                       (50.0, 0.0, 60.0))])
+        self.assertEqual(text, "A_Jump onto the skeleton")
 
-    def test_a_skeleton_drop_with_no_floor_leaves_it_where_the_clip_is(self):
-        from maya_uebridge import rigimport
-        saved = rigimport.import_source, rigimport.stand_skeleton
+    def test_a_skeleton_drop_with_no_floor_stands_where_the_clip_is(self):
+        self._skeleton_press()
+        window.import_dropped(self.recs[0], dict(kind="skeleton", point=None))
+        self.assertEqual(self.calls[-1][-1], None)
 
-        def restore():
-            rigimport.import_source, rigimport.stand_skeleton = saved
-        self.addCleanup(restore)
-        rigimport.import_source = lambda fbx, name, clip_fps=None, set_timeline=True: (
-            name, {"namespace": name, "joints": 93, "start": 0.0, "end": 30.0}, "|%s:root" % name)
-        rigimport.stand_skeleton = lambda *a, **k: self.calls.append(("stand",))
+    def test_a_missing_skeleton_file_refuses_before_the_editor(self):
+        self._skeleton_press()
+        self.refusal = "no skeleton file - Creep_Skeleton.ma is missing from assets/"
         text = window.import_dropped(self.recs[0], dict(kind="skeleton", point=None))
-        self.assertNotIn(("stand",), self.calls)
-        self.assertEqual(text, "A_Jump into A_Jump: 93 joints, frames 0-30")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(text, self.refusal)
+
+    def test_the_skeleton_button_with_one_picked_goes_onto_the_characters_skeleton(self):
+        self._skeleton_press()
+        self.mode = "skeleton"
+        self.picked = [2]
+        window.import_selected()
+        self.assertEqual(self.calls, [("export", "A_Walk"),
+                                      ("onto", "C:/t/A_Walk.fbx", "A_Walk", True, None)])
+        self.assertEqual(self.statuses, ["A_Walk onto the skeleton"])
 
     def test_export_to_uasset_refuses_several(self):
         window.export_uasset_selected()

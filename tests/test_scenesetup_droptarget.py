@@ -215,16 +215,18 @@ class ClipTarget(unittest.TestCase):
         """2026-10-01, «если у нас выбран скелет то будем располагать в сцене
         скелеты»: over a rig too, the floor point under the cursor."""
         self.at((104.0, 60.0))                       # on the rig
-        self.assertEqual(dt.skeleton_target(1, 2),
+        self.assertEqual(dt.skeleton_target(1, 2, "Creep [skeleton]"),
                          dict(kind="skeleton", point=(104.0, 0.0, -60.0),
-                              text="a skeleton · floor (104, -60)"))
+                              label="Creep [skeleton]",
+                              text="a new Creep [skeleton] · floor (104, -60)"))
 
     def test_the_skeleton_mode_without_a_floor_stands_where_the_clip_is(self):
         view = self.View()
         view.ray = lambda port: ((0.0, 10.0, 0.0), (0.0, 20.0, 5.0))
         dt.Viewport.at = classmethod(lambda cls, gx, gy: (view, (200.0, 60.0)))
         self.assertEqual(dt.skeleton_target(1, 2),
-                         dict(kind="skeleton", point=None, text="a skeleton"))
+                         dict(kind="skeleton", point=None, label="Manny UE5 [skeleton]",
+                              text="a new Manny UE5 [skeleton]"))
 
     def test_the_skeleton_mode_off_every_viewport_nothing(self):
         dt.Viewport.at = classmethod(lambda cls, gx, gy: (None, None))

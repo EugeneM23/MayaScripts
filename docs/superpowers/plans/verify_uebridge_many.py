@@ -15,8 +15,9 @@ export is replaced by FBX clips on disk. Each send sets PHASE first:
                             front, left to right), no two root paths within
                             a step, the timeline the union, no clip skeleton
                             left
-    PHASE = "button_skel"   gate 6: Skeleton mode - three skeletons on the
-                            same square, each playing its own keys moved
+    PHASE = "button_skel"   gate 6: Skeleton mode, Characters on Manny UE5
+                            [skeleton] - three Manny skeletons with their
+                            meshes on the square, each its clip exactly
     PHASE = "button_rig"    gate 7: Rig mode, one rig selected - the first
                             clip only, and the status says so
     PHASE = "drag_floor"    gate 8: a real press-drag-release of the three
@@ -30,16 +31,19 @@ export is replaced by FBX clips on disk. Each send sets PHASE first:
     PHASE = "drag_rig"      gate 10: the three dragged onto the middle rig
     PHASE = "measure_rig"   gate 11: that rig took the first clip only, the
                             other two never moved
-    PHASE = "drag_skel"     gate 12: the Skeleton mode picked, the three dragged
-                            onto a rig's pelvis: the ghost names a square of
-                            skeletons on the floor point under the cursor
-    PHASE = "measure_skel"  gate 13: three skeletons on that square, each root
-                            playing its own keys moved; the rig untouched, no
-                            rig added
-    PHASE = "drag_skel1"    gate 14: one clip (the thrust, which starts off its
-                            origin) dragged onto the floor in the Skeleton mode
-    PHASE = "measure_skel1" gate 15: its root at its first frame on the point,
-                            the clip's own track moved there
+    PHASE = "drag_skel"     gate 12: the Skeleton mode, Characters on Creep [rig]
+                            (so the Creep's skeleton, another body), the three
+                            dragged onto a Manny rig's pelvis
+    PHASE = "measure_skel"  gate 13: three Creep skeletons with their meshes on
+                            the square about the floor point under the cursor:
+                            every bone turned as the clip's, its own lengths
+                            kept, the root on the clip's moved track; the rig
+                            untouched
+    PHASE = "drag_skel1"    gate 14: Characters on Manny UE5 [skeleton], the
+                            thrust alone (its root starts off the origin)
+                            dragged onto the floor
+    PHASE = "measure_skel1" gate 15: the Manny skeleton on the point, the whole
+                            clip exactly there, its mesh with it
 
 Spec: docs/superpowers/specs/2026-10-01-uebridge-many-animations-design.md
 """
@@ -48,7 +52,7 @@ import math
 import re
 import sys
 
-REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"
+REPO = globals().get("REPO", "C:/!!!Work/MayaScripts/SkeldarAnim")   # a snapshot may stand in
 if REPO in sys.path:
     sys.path.remove(REPO)
 sys.path.insert(0, REPO)
@@ -323,35 +327,6 @@ def phase_button_new():
          and "widened beside ShortSword_Attack_Thrust_3P" in said, said[:300])
 
 
-def phase_button_skel():
-    from maya_uebridge import window
-    cmds.file(new=True, force=True)
-    pick_rows([1, 2, 3])
-    click_mode("skeleton")
-    window._run(window.import_selected)
-    said = status()
-    print("    status: %s" % said)
-    slots, _extents = expected_slots((0.0, 0.0, 0.0))
-    worst, found = 0.0, []
-    for name, slot in zip(ORDER, slots):
-        root = (cmds.ls(name + ":root", long=True) or [None])[0]
-        found.append(root)
-        if root is None:
-            continue
-        track = WORLD["tracks"][name]
-        move = (slot[0] - track[0][0], 0.0, slot[2] - track[0][2])
-        for frame, point in enumerate(track):
-            cmds.currentTime(WORLD["starts"][name] + frame, update=True)
-            want = (point[0] + move[0], point[1], point[2] + move[2])
-            worst = max(worst, dist(world_t(root), want))
-    gate(6, "Skeleton, three picked: three skeletons, each root playing its own keys moved "
-            "onto its slot of the square about the origin",
-         all(found) and worst < 1e-3 and not rigs()
-         and all("skeldarDropShift" in r for r in found)
-         and "3 animations as skeletons in a 2 x 2 square about (0, 0)" in said,
-         "roots %s | off the moved clip %.2e | '%s'" % (found, worst, said[:200]))
-
-
 def phase_button_rig():
     from maya_scenesetup import catalog, character
     from maya_uebridge import window
@@ -386,6 +361,13 @@ def _drag_rows(press_row, target_world, number, text, want_caption, rows=(1, 2, 
     q = maya_hubqt.qt()
     QtCore, QtGui = q.QtCore, q.QtGui
     E = QtCore.QEvent
+    # The disposable Maya is a window on the animator's screen: a minimized
+    # one has no viewport to drop on (it read "no target" twice).
+    for top in q.QtWidgets.QApplication.topLevelWidgets():
+        if top.objectName() == "MayaWindow" and (top.isMinimized() or not top.isVisible()):
+            print("    MayaWindow was minimized - shown again")
+            top.showMaximized()
+            settle()
     picked = pick_rows(list(rows))
     target = to_global(target_world)
     print("   ", keep_hub_off([target]))
@@ -486,90 +468,219 @@ def phase_measure_rig():
          "others drift %.2e | '%s'" % (drift, said[:300]))
 
 
-def _skeletons_on(centre, names):
-    """Worst distance of each clip's root, over its frames, from its own
-    track moved onto its slot of the square about `centre` (one clip: the
-    centre itself)."""
-    from maya_uebridge import lineup
-    x = [lineup.side_extent(WORLD["tracks"][n], lineup.COLUMNS) for n in names]
-    z = [lineup.side_extent(WORLD["tracks"][n], lineup.ROWS) for n in names]
-    slots = lineup.square_slots(centre, x, z, STEP)
-    worst, found = 0.0, []
-    for name, slot in zip(names, slots):
-        root = (cmds.ls(name + ":root", long=True) or [None])[0]
-        found.append(root)
+def _skeleton_root(top):
+    """The root joint of a skeleton whose top node is `top` (the root
+    itself, or the Creep's Armature above it)."""
+    path = (cmds.ls(top, long=True) or [top])[0]
+    if cmds.objectType(path) == "joint":
+        return path
+    return (cmds.listRelatives(path, children=True, type="joint", fullPath=True) or [None])[0]
+
+
+def _bone(root, name):
+    for joint in [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                              fullPath=True) or []):
+        if joint.split("|")[-1].split(":")[-1] == name:
+            return joint
+    return None
+
+
+def _skinned(root):
+    """Meshes some skinCluster deforms with a joint of this skeleton."""
+    joints = set([root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                              fullPath=True) or []))
+    count = 0
+    for skin in cmds.ls(type="skinCluster") or []:
+        influences = set(cmds.ls(cmds.skinCluster(skin, query=True, influence=True) or [],
+                                 long=True) or [])
+        if influences & joints:
+            count += len(cmds.skinCluster(skin, query=True, geometry=True) or [])
+    return count
+
+
+def _rotation(node):
+    import maya.api.OpenMaya as om
+    m = om.MTransformationMatrix(om.MMatrix(
+        cmds.xform(node, query=True, worldSpace=True, matrix=True)))
+    return m.rotation(asQuaternion=True)
+
+
+def _angle(a, b):
+    dot_q = abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w)
+    return math.degrees(2.0 * math.acos(min(1.0, dot_q)))
+
+
+BONES = ("pelvis", "spine_03", "upperarm_l", "lowerarm_r", "hand_r", "thigh_l", "foot_r")
+
+
+def _against_clip(name, root, slot, twin, frames=None):
+    """Worst (position cm, orientation deg) of the skeleton under `root`
+    against the clip imported again plainly, moved by the one horizontal
+    shift that stands its root at the first frame on `slot`. A twin is
+    held whole (every BONE's position and turn); another body by turn,
+    with its root's position."""
+    from maya_uebridge import animimport
+    if cmds.namespace(exists="vmChk"):
+        cmds.namespace(removeNamespace="vmChk", deleteNamespaceContent=True)
+    animimport.import_clip(CLIPS[name], "vmChk", set_timeline=False, clip_fps=30.0,
+                           merge=False)
+    clip_root = cmds.ls("vmChk:root", long=True)[0]
+    track = WORLD["tracks"][name]
+    move = (slot[0] - track[0][0], 0.0, slot[2] - track[0][2])
+    worst_cm, worst_deg = 0.0, 0.0
+    last = int(WORLD["ends"][name])
+    for frame in (frames or range(0, last + 1, 4)):
+        cmds.currentTime(frame, update=True)
+        pairs = [("root", root, clip_root)] + [
+            (b, _bone(root, b), _bone(clip_root, b)) for b in BONES]
+        for bone, ours, theirs in pairs:
+            if ours is None or theirs is None:
+                continue
+            if twin or bone == "root":
+                p, q = world_t(theirs), world_t(ours)
+                worst_cm = max(worst_cm, dist((p[0] + move[0], p[1], p[2] + move[2]), q))
+            worst_deg = max(worst_deg, _angle(_rotation(ours), _rotation(theirs)))
+    cmds.namespace(removeNamespace="vmChk", deleteNamespaceContent=True)
+    return worst_cm, worst_deg
+
+
+def phase_button_skel():
+    """Gate 6: Characters on Manny UE5 [skeleton] - the twin - and the button
+    with three picked: three Manny skeletons with their meshes on the square,
+    each playing its clip exactly; the clips' own skeletons gone."""
+    from maya_uebridge import window
+    cmds.file(new=True, force=True)
+    choose_character("Manny", "skeleton")
+    pick_rows([1, 2, 3])
+    click_mode("skeleton")
+    window._run(window.import_selected)
+    said = status()
+    print("    status: %s" % said)
+    slots, _extents = expected_slots((0.0, 0.0, 0.0))
+    own = owners(said)
+    worst_cm, worst_deg, meshes = 0.0, 0.0, []
+    for name, slot in zip(ORDER, slots):
+        root = _skeleton_root(own[name]) if name in own else None
         if root is None:
             continue
-        track = WORLD["tracks"][name]
-        move = (slot[0] - track[0][0], 0.0, slot[2] - track[0][2])
-        for frame, point in enumerate(track):
-            cmds.currentTime(WORLD["starts"][name] + frame, update=True)
-            want = (point[0] + move[0], point[1], point[2] + move[2])
-            worst = max(worst, dist(world_t(root), want))
-    return worst, found
+        meshes.append(_skinned(root))
+        cm, deg = _against_clip(name, root, slot, True)
+        worst_cm, worst_deg = max(worst_cm, cm), max(worst_deg, deg)
+    gate(6, "Skeleton, Characters on Manny UE5 [skeleton], three picked: three Manny "
+            "skeletons with their meshes on the square, each its clip exactly",
+         len(own) == 3 and len(meshes) == 3 and all(m > 0 for m in meshes)
+         and worst_cm < 1e-3 and worst_deg < 1e-3 and not rigs() and not clip_namespaces()
+         and "3 animations onto 3 new Manny UE5 [skeleton] in a 2 x 2 square about (0, 0)"
+         in said,
+         "tops %s | skinned meshes %s | off the moved clip %.2e cm %.2e deg | left %s | '%s'" % (
+             own, meshes, worst_cm, worst_deg, clip_namespaces(), said[:220]))
+
+
+def choose_character(model, kind):
+    cmds.optionVar(stringValue=("mayaSceneSetup_characterModel", model))
+    cmds.optionVar(stringValue=("mayaSceneSetup_characterKind", kind))
 
 
 def phase_drag_skel():
+    """Gate 12: Characters on Creep [rig] - so the Creep's skeleton, another
+    body - the Skeleton mode, the three dragged onto a Manny rig."""
     from maya_scenesetup import catalog, character
     cmds.file(new=True, force=True)
-    choose_manny()
+    choose_character("Manny", "rig")
     character.add_character(catalog.default_rig())
     WORLD["skel_rig"] = list(rigs())
     ns = WORLD["skel_rig"][0]
+    choose_character("Creep", "rig")
     cmds.viewPlace("persp", eye=(0.0, 260.0, 720.0), lookAt=(0.0, 90.0, 0.0))
     settle()
     WORLD["skel_rig_at"] = [world_t(ns + ":Main"), world_t(ns + ":hand_r")]
     WORLD["skel_rig_keys"] = len(cmds.ls(ns + ":*", type="animCurveTA") or [])
     click_mode("skeleton")
     aim = _drag_rows(0, world_t(ns + ":pelvis"), 12,
-                     "Skeleton picked, three dragged onto a rig: the ghost names a square of "
-                     "three skeletons on the floor point under the cursor",
-                     lambda c: c.startswith("3 animations · 3 skeletons in a square · floor"))
+                     "Skeleton picked, Characters on Creep [rig], three dragged onto a rig: "
+                     "the ghost names a square of three new Creep skeletons on the floor "
+                     "point under the cursor",
+                     lambda c: c.startswith("3 animations · 3 new Creep [skeleton] in a square "
+                                            "· floor"))
     WORLD["skel_floor"] = aim.get("point")
     print("    aim: %s" % (aim,))
 
 
 def phase_measure_skel():
+    """Gate 13: three Creep skeletons with their meshes on the square about
+    the floor point; every bone turned as the clip's (its own lengths kept),
+    the root on the clip's moved track; the rig under the cursor untouched."""
     said = status()
     print("    status: %s" % said)
     ns = WORLD["skel_rig"][0]
-    worst, found = _skeletons_on(WORLD["skel_floor"], ORDER)
+    slots, _extents = expected_slots(WORLD["skel_floor"])
+    own = owners(said)
+    worst_cm, worst_deg, meshes, stretch = 0.0, 0.0, [], 0.0
+    for name, slot in zip(ORDER, slots):
+        root = _skeleton_root(own[name]) if name in own else None
+        if root is None:
+            continue
+        meshes.append(_skinned(root))
+        cm, deg = _against_clip(name, root, slot, False)
+        worst_cm, worst_deg = max(worst_cm, cm), max(worst_deg, deg)
+        arm = _bone(root, "lowerarm_l")
+        lengths = []
+        for frame in range(0, int(WORLD["ends"][name]) + 1, 6):
+            cmds.currentTime(frame, update=True)
+            lengths.append(math.sqrt(sum(v * v for v in cmds.getAttr(arm + ".translate")[0])))
+        stretch = max(stretch, max(lengths) - min(lengths))
     still = max(dist(a, b) for a, b in zip(
         WORLD["skel_rig_at"], [world_t(ns + ":Main"), world_t(ns + ":hand_r")]))
     keys = len(cmds.ls(ns + ":*", type="animCurveTA") or [])
-    gate(13, "three skeletons on the square about the floor point, each root playing its "
-             "own keys moved; the rig under the cursor untouched, no rig added",
-         all(found) and worst < 1e-3 and sorted(rigs()) == WORLD["skel_rig"]
-         and still < 1e-9 and keys == WORLD["skel_rig_keys"]
-         and "3 animations as skeletons in a 2 x 2 square" in said,
-         "roots %s | off the moved clip %.2e | rig moved %.2e, its rotate curves %d -> %d | '%s'" % (
-             found, worst, still, WORLD["skel_rig_keys"], keys, said[:200]))
+    gate(13, "three Creep skeletons with their meshes on the square about the floor point: "
+             "every bone turned as the clip's, its own lengths kept, the root on the clip's "
+             "moved track; the rig under the cursor untouched",
+         len(own) == 3 and all(m > 0 for m in meshes) and worst_cm < 1e-3
+         and worst_deg < 0.01 and stretch < 1e-6 and sorted(rigs()) == WORLD["skel_rig"]
+         and still < 1e-9 and keys == WORLD["skel_rig_keys"] and not clip_namespaces(),
+         "tops %s | skinned meshes %s | root off %.2e cm, bones off %.2e deg | lowerarm_l "
+         "stretch %.2e | rig moved %.2e, curves %d -> %d | '%s'" % (
+             own, meshes, worst_cm, worst_deg, stretch, still, WORLD["skel_rig_keys"], keys,
+             said[:220]))
 
 
 def phase_drag_skel1():
+    """Gate 14: Characters on Manny UE5 [skeleton], the thrust alone (its root
+    starts off the origin) dragged onto the floor."""
     cmds.file(new=True, force=True)
+    choose_character("Manny", "skeleton")
     cmds.viewPlace("persp", eye=(0.0, 260.0, 720.0), lookAt=(0.0, 90.0, 0.0))
     settle()
     thrust = "ShortSword_Attack_Thrust_3P"
     row = ORDER.index(thrust) + 1
     aim = _drag_rows(row - 1, (100.0, 0.0, -50.0), 14,
-                     "Skeleton picked, one clip dragged onto the floor: the ghost names a "
-                     "skeleton on the floor point",
-                     lambda c: c.startswith("%s · a skeleton · floor" % thrust), rows=(row,))
+                     "Skeleton picked, one clip dragged onto the floor: the ghost names a new "
+                     "Manny skeleton on the floor point",
+                     lambda c: c.startswith("%s · a new Manny UE5 [skeleton] · floor" % thrust),
+                     rows=(row,))
     WORLD["skel1_floor"] = aim.get("point")
 
 
 def phase_measure_skel1():
+    """Gate 15: the Manny skeleton's root at the clip's first frame on the
+    point, the whole clip exactly there, its mesh with it."""
     said = status()
     print("    status: %s" % said)
     thrust = "ShortSword_Attack_Thrust_3P"
+    found = re.search(r"onto Manny UE5 \[skeleton\] (\S+): ", said)
+    root = _skeleton_root(found.group(1)) if found else None
     point = WORLD["skel1_floor"]
-    worst, found = _skeletons_on(point, [thrust])
-    gate(15, "its root at its first frame on the floor point, the clip's own track moved "
-             "there; no rig",
-         all(found) and worst < 1e-3 and not rigs() and "standing at floor" in said,
-         "root %s | off the moved clip %.2e | point %s | '%s'" % (
-             found, worst, [round(v, 3) for v in point or []], said[:200]))
+    cm = deg = None
+    meshes = 0
+    if root:
+        meshes = _skinned(root)
+        cm, deg = _against_clip(thrust, root, point, True)
+    gate(15, "the Manny skeleton's root at the clip's first frame on the floor point, the "
+             "whole clip exactly there, its mesh with it",
+         root is not None and meshes > 0 and cm < 1e-3 and deg < 1e-3 and not rigs()
+         and "standing at floor" in said and "exact" in said and not clip_namespaces(),
+         "root %s | meshes %s | off %s cm %s deg | point %s | '%s'" % (
+             root, meshes, cm, deg, [round(v, 3) for v in point or []], said[:220]))
 
 
 {"setup": phase_setup, "button_new": phase_button_new, "button_skel": phase_button_skel,

@@ -7148,7 +7148,7 @@ camera's right); after the push, «всегда располагать наши 
   first and the status LEADS with «only A_Jump: a rig takes one animation (2 more picked)» — at the end it was
   clipped by the two-line status box (seen live); **New rig / Skeleton** (button) lay them all out in a square
   about the origin; **a floor drop** of several about the drop point (the origin when no floor was seen),
-  whatever the camera. **Export to uasset** refuses several.
+  whatever the camera. **Export to uasset** refuses several. (The Skeleton mode: the last two bullets.)
 - **The square** (`maya_uebridge/lineup.py`, stdlib, pure): `grid_shape(n)` = (ceil(√n) columns, rows) - 3 and 4
   are 2 × 2, 5 and 6 are 3 × 2; clip i in column `i % cols`, row `i // cols`; **row 0 in front (+Z), each row left
   to right (+X)** (`COLUMNS = (1, 0, 0)`, `ROWS = (0, 0, −1)`). `side_extent` is a clip's root reach relative to
@@ -7177,11 +7177,25 @@ camera's right); after the push, «всегда располагать наши 
   `drop_at(gx, gy, records)` and `window.import_dropped(records, aim)` take a record or a list.
 - **The Skeleton mode reaches the drag** (the animator, after the square: «групповое перетягивание работает только
   с ригом даже если выбран skeleton»; the mode is read when the drag starts, `listdrag.Scene.snapshot`): over a
-  viewport the clips arrive as skeletons on the floor point under the cursor - **a rig under the cursor is
+  viewport the clips go onto skeletons standing on the floor point under the cursor - **a rig under the cursor is
   ignored**, nothing retargeted (`droptarget.skeleton_target`) - one with its root at its first frame on the
-  point (`window._drop_skeleton`: `rigimport.import_source` + `stand_skeleton`), several in the square about it.
-  The ghost: «A_Jump · a skeleton · floor (100, -50)», «3 animations · 3 skeletons in a square · floor (0, -416)».
-  Rig and New rig drags are unchanged.
+  point, several in the square about it. Rig and New rig drags are unchanged.
+- **…and Skeleton means the Characters card's skeleton, with its geometry** («скелет вставлялся с геометрией» -
+  then «будем использовать скелет который активен в вкладке character»; asked: by bone names respecting
+  proportions, a rig there means that model's skeleton). `maya_uebridge/skeletonimport.py`: `skeleton_entry_for`
+  (the active row when a skeleton, else that model's skeleton, else Manny UE5 [skeleton]); every press of the
+  mode - button or drag, one or several - adds it (`character.add_character`: meshes, textures or a palette
+  colour), moves the CLIP onto the slot (its root wrapped, never the new skeleton - the Creep's `Armature` keeps
+  Cascadeur's layout), `transfer`s the clip onto it by leaf name and deletes the clip's skeleton. **Twin or not
+  is measured by the MEDIAN relative bone-length difference** (`is_twin`, ≤ 1 %): 0.0000 against Manny UE5 on six
+  UE clips, 0.2424 against the Creep, 0.2403 against the UE4 Mannequin - the share within 1 % (the first try) read
+  0.90 for a 3P clip against Manny, because 3P clips animate bone translations and scale (trap 152). A twin takes
+  every bone's world matrix (`parentConstraint`, no offset): exact; another body every bone's world orientation,
+  its own lengths kept, root and pelvis placed too, its `ik_*` helpers at rest (the Creep's `ik_hand_gun` stands at
+  zero with `ik_hand_r` 110 cm under it); a UE4 target takes `maya_retarget`'s spine map; baked
+  (`bakeResults -simulation`), the constraints deleted. The ghost: «A_Jump · a new Manny UE5 [skeleton] · floor
+  (100, -50)»; the status «ShortSword_Attack_Thrust_3P onto Manny UE5 [skeleton] root: 91 bones exact, frames 0-36
+  | not in the clip: camera_bone, camera_root | standing at floor (100, -50)».
 
 Proof: `docs/superpowers/plans/verify_uebridge_many.py` **15/15 in a disposable Maya** (port 7023, scratch
 `MAYA_APP_DIR`, `MAYA_NO_HOME=1`, minimized, killed after; the editor's export replaced by
@@ -7192,13 +7206,15 @@ about the origin, Main at each clip's first frame on its slot to 0.0 (columns ±
 250.0, the timeline 0–61; Skeleton - each root playing its own keys moved onto its slot, 0.0 off; Rig - the first
 only, the note first; a real press–drag–release of the three picked rows onto the floor with the camera looking
 along X: all three carried, the list kept them picked, the same square on the world's axes about the point (0.0
-off, clearance 250.0); the three dropped on a rig - the first only, the other two rigs 0.0 drift; with Skeleton
-picked, the three dragged onto a rig's pelvis - three skeletons on the square about the floor point behind it,
-each root its own keys moved to 0.0, the rig untouched (0.0, no curve added), no rig added - and the thrust alone
-dragged onto the floor - its root at its first frame on the point, 0.0 off (gates 12-15, **15/15** in all). A
+off, clearance 250.0); the three dropped on a rig - the first only, the other two rigs 0.0 drift. The Skeleton mode, rerun for the Characters skeleton (a snapshot of HEAD plus these files, a
+peer's half-built Armor card left out): the button with Manny UE5 [skeleton] active - three Manny skeletons, 2
+skinned meshes each, every sampled bone on the moved clip to 1.3e-13 cm and 2.4e-4°; Creep [rig] active, the three
+dragged onto a Manny rig's pelvis - three Creep skeletons, 5 meshes each, every bone turned as the clip's to
+2.1e-4°, the root on the moved track 0.0, `lowerarm_l` never stretched, the rig untouched; the thrust alone onto
+the floor with Manny's skeleton - exact on the point (gates 6, 12-15, **15/15** in all). A
 verify phase that drags must pick its mode itself: a Skeleton mode left by the phase before made gate 8's drop
 skeletons, correctly. The slots were
-held against each clip's root walked frame by frame with `currentTime` on a plain import. 3360 unit tests. A
+held against each clip's root walked frame by frame with `currentTime` on a plain import. The bridge's 619 unit tests green. A
 Shift range cannot be tested offscreen (Qt ignores a sent Shift for a range on a bare QListWidget - measured; Ctrl
 works): the Shift road is the same code as Ctrl's.
 
@@ -7206,6 +7222,11 @@ works): the Shift road is the same code as Ctrl's.
      Maya to pick up a fix emptied `_STATE`, and the list still showed three rows while Import answered «select
      an animation first». A reload in a verify run must put the state back (`_STATE["records"]` + `_repopulate`)
      - or purge and rebuild the panel; the closures over the module see the new, empty dict.
+152. **A UE 3P clip animates its bones' translations and scale**, so "the same skeleton?" asked as "what share of
+     the bones has the rest length at frame 0" reads 0.90 against the very skeleton it was made on (ShortSword
+     Attack Thrust 3P against Manny UE5; `spine_01` scales 1.0022) - on a 0.9 threshold. Ask the MEDIAN bone:
+     0.0000 against Manny on all six clips, 0.24 against other bodies. And a disposable Maya the animator
+     minimized has no viewport to drop on: `Viewport.at` answers nothing (verify `_drag_rows` restores it).
 
 ## Center of Mass: a live point, a fast trail, the CoM tool (2026-10-01)
 

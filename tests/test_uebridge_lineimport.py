@@ -36,7 +36,7 @@ def _install_fake_maya():
 
 _install_fake_maya()
 
-from maya_uebridge import lineimport, lineup, rigimport  # noqa: E402
+from maya_uebridge import lineimport, lineup, rigimport, skeletonimport  # noqa: E402
 
 Rec = collections.namedtuple("Rec", "name package")
 Rig = collections.namedtuple("Rig", "namespace")
@@ -111,6 +111,21 @@ class Press(unittest.TestCase):
         rigimport.retarget_imported = retarget_imported
         rigimport.stand_skeleton = stand_skeleton
         rigimport.root_at = root_at
+
+        saved_si = dict((name, getattr(skeletonimport, name)) for name in (
+            "precheck", "skeleton_entry", "onto_skeleton"))
+        self.addCleanup(lambda: [setattr(skeletonimport, k, v) for k, v in saved_si.items()])
+        self.skeleton_refusal = ""
+        skeletonimport.precheck = lambda entry=None: self.skeleton_refusal
+        skeletonimport.skeleton_entry = lambda: types.SimpleNamespace(
+            key="Manny", label="Manny UE5 [skeleton]")
+        tops = iter(["root", "root1", "root2", "root3"])
+
+        def onto_skeleton(entry, namespace, info, source, name, point=None):
+            self.calls.append(("onto", namespace, point, entry.label))
+            self.namespaces.discard(namespace)
+            return "%s onto %s" % (name, entry.label), "", next(tops)
+        skeletonimport.onto_skeleton = onto_skeleton
 
         def progress(*args, **kwargs):
             if kwargs.get("query"):
@@ -188,16 +203,25 @@ class Press(unittest.TestCase):
         lineimport.run(self.records, self.export, "new_rig", set_timeline=False)
         self.assertNotIn("timeline", self.kinds())
 
-    def test_skeletons_stand_on_the_line_and_no_rig_is_added(self):
+    def test_skeletons_are_the_characters_skeleton_on_the_square(self):
+        """2026-10-01, addendum 3: each clip onto a new Characters skeleton
+        standing on its slot; no rig is added."""
         text = lineimport.run(self.records, self.export, "skeleton")
         self.assertNotIn("plan", self.kinds())
         self.assertNotIn("add", self.kinds())
-        stood = [c for c in self.calls if c[0] == "stand"]
-        self.assertEqual([c[1] for c in stood], ["A", "B", "C"])
-        self.assertEqual([c[3] for c in stood], [0.0, 0.0, 0.0])
-        self.assertAlmostEqual(stood[0][2][0] + stood[1][2][0], 0.0)
-        self.assertAlmostEqual(stood[0][2][2] + stood[2][2][2], 0.0)
-        self.assertIn("3 animations as skeletons in a 2 x 2 square about (0, 0): A, B, C", text)
+        onto = [c for c in self.calls if c[0] == "onto"]
+        self.assertEqual([c[1] for c in onto], ["A", "B", "C"])
+        self.assertEqual(set(c[3] for c in onto), {"Manny UE5 [skeleton]"})
+        self.assertAlmostEqual(onto[0][2][0] + onto[1][2][0], 0.0)
+        self.assertAlmostEqual(onto[0][2][2] + onto[2][2][2], 0.0)
+        self.assertIn("3 animations onto 3 new Manny UE5 [skeleton] in a 2 x 2 square about "
+                      "(0, 0): root A, root1 B, root2 C", text)
+
+    def test_a_missing_skeleton_file_refuses_before_the_editor(self):
+        self.skeleton_refusal = "no skeleton file - Creep_Skeleton.ma is missing from assets/"
+        text = lineimport.run(self.records, self.export, "skeleton")
+        self.assertEqual(text, self.skeleton_refusal)
+        self.assertEqual(self.calls, [])
 
     def test_a_clip_the_editor_cannot_export_is_named_and_left_out(self):
         self.broken = "B"

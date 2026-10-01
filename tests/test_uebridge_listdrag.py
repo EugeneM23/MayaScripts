@@ -75,15 +75,16 @@ class Caption(unittest.TestCase):
                          ("3 animations · 3 new Manny [rig] in a square", True))
 
     def test_skeletons_one_and_several(self):
-        aim = dict(kind="skeleton", point=(120.4, 0.0, -35.6),
-                   text="a skeleton · floor (120, -36)")
+        aim = dict(kind="skeleton", point=(120.4, 0.0, -35.6), label="Creep [skeleton]",
+                   text="a new Creep [skeleton] · floor (120, -36)")
         self.assertEqual(listdrag.caption(["A_Jump"], aim),
-                         ("A_Jump · a skeleton · floor (120, -36)", True))
+                         ("A_Jump · a new Creep [skeleton] · floor (120, -36)", True))
         self.assertEqual(listdrag.caption(["A_Jump", "A_Walk", "A_Run"], aim),
-                         ("3 animations · 3 skeletons in a square · floor (120, -36)", True))
+                         ("3 animations · 3 new Creep [skeleton] in a square · floor (120, -36)",
+                          True))
         self.assertEqual(listdrag.caption(["A", "B"], dict(kind="skeleton", point=None,
-                                                          text="a skeleton")),
-                         ("2 animations · 2 skeletons in a square", True))
+                                                          text="a new Manny UE5 [skeleton]")),
+                         ("2 animations · 2 new skeleton in a square", True))
 
     def test_one_in_a_list_reads_as_one(self):
         self.assertEqual(listdrag.caption(["A_Jump"], dict(kind="rig", text="retarget onto X")),
