@@ -4456,6 +4456,51 @@ cost a live run each:
     old panel once unless the pref is removed first
     (`windowPref(name, remove=True)`).
 
+**Soft Studio, the third look, on a warm cyclorama** (2026-10-01, the animator: «еще одну схему
+студийного освещения где свет будет распределен в 3 раза более широким пятном ... приятные теплые цвета
+для подложки заднего фона (ее нужно сделать) ... спереди теплый свет сзади холодный»; asked: the backdrop is
+a real photo-studio **cyclorama**, and only the new look gets it). Spec
+`docs/superpowers/specs/2026-10-01-vpstudio-soft-studio-design.md` (read its addendum). `LOOKS["Soft Studio"]`,
+third in the dropdown, Studio still the default. A look now also carries `spot` (penumbra/dropoff), `fog` and
+`dmap_scale`, and its floor a `kind` (`plane` / `cyclorama`).
+- **Three times the pool**: `cover` 5.1 / 4.5 (Studio's 1.7 / 1.5) at Studio's distances, so `tan(half)` is
+  exactly 3× (key 126° against 66°, back lights 116°). The falloff widens with it: dropoff 1.3, penumbra 20,
+  because at Studio's dropoff of 6 a 126° cone is dark past 40°. The key gets twice the quality's map (max
+  4096) and filter 6.
+- **Warm in front, cold behind**: the key, fill and bounce are warm, on the camera's side; the cold rim (2.6) and
+  kicker (1.7) are behind on either side and outshine the key on purpose (at Studio-like strengths nothing read
+  cold). They cool the floor around the subject to a pale neutral; the wall faces away from them and stays warm.
+  Light-linking them off the paper was tried: Viewport 2.0 then dropped the rim from the character as well.
+- **The cyclorama** (`cyclorama_profile` / `cyclorama_plan` / `cyclorama_targets`, `_make_cyclorama`): in radii,
+  the floor from +12 r toward the camera, a quarter-circle cove (radius 1.5 r, 16 segments) from −3 r, a wall
+  at −4.5 r up to 8 r, ±12 r wide. It is turned to the camera's heading at the press and hangs under the GROUP,
+  not the light pivot, so the Rotate dial leaves it behind the subject. It starts behind every light's reach
+  (a test pins it). It is a `polyPlane` with each vertex moved by its own starting position (not OpenMaya: an
+  API mesh is not in the press's undo chunk) and its edges softened (a fresh polyPlane's are hard). Shared
+  dressing with the floor (`_dress_catcher`). A warm matte blinn (0.62, 0.47, 0.36), and a warm viewport
+  gradient and haze behind it. «Dark backdrop» is now «Backdrop».
+
+Proof: `docs/superpowers/plans/verify_vpstudio_soft.py` **34/34 in a disposable GUI Maya** (port 7017, scratch
+`MAYA_APP_DIR`, `MAYA_NO_HOME`) on a textured Manny:
+- the cones 125.97° / 116.22°, ×3.00000 on Studio's;
+- warm lights 176–212 cm toward the camera, cold 224–243 cm behind;
+- the wall 4.500 r behind from the camera; every one of its 18 faces facing the subject;
+- 17 interior edges, all soft;
+- Rotate moving the key 344 cm and the paper 0;
+- the paper warm in the picture;
+- 6.3 ms a frame (Studio 5.9);
+- Studio ⇄ Soft Studio leaving nothing behind, and Restore.
+
+3164 unit tests.
+
+142. **Maya's light commands make lights with RAY-TRACED shadows on, and Viewport 2.0 draws them.**
+     `cmds.spotLight()` / `directionalLight()` / `ambientLight()` answer `useRayTraceShadows` True, so
+     although the tool turned depth-map shadows off on everything but the key, **every light of every look threw a
+     shadow**: up the wall from the low bounce, sideways from the fill, toward the camera from the back lights.
+     It shipped like that since 2026-09-03: Studio's "streak to the right" was the fill's shadow. Found by
+     switching the lights off one at a time; it first read as a shadow-map wrap from the wide cone, which it was
+     not (a 126° spot shadows cleanly). `_make_light` sets `useRayTraceShadows 0` on every light.
+
 ## `maya_colour` — the palette on the shelf
 
 Shipped single-file tool (2026-09-03, `SkeldarAnim/maya_colour.py`, `cmds`
