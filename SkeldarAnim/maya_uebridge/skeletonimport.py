@@ -483,7 +483,12 @@ def transfer(source_root, target_root, start, end):
     target = dict((leaf(j), j) for j in targets)
     pairs = pair_bones(source, target)
     if not ue_covered(pairs):         # another convention: read it, not its names
-        return transfer_foreign(source_root, target_root, start, end)
+        foreign = transfer_foreign(source_root, target_root, start, end)
+        # the map refusing a clip that DOES share UE names with the target (an
+        # arms-only or upper-body UE clip, a missing hand) is no refusal: the leaf
+        # road drives the bones it has and names the rest, as it always did
+        if not (foreign.get("refusal") and pairs):
+            return foreign
     if not pairs:                     # nothing in common: touch nothing
         return dict(twin=False, moved=0, skipped=[], missing=sorted(target))
     lengths = [(_length(source[s], start), _length(target[t]))
@@ -691,15 +696,28 @@ def transfer_foreign(source_root, target_root, start, end):
         dict((name, dict((n, tuple(rest[ts[1]][12:15])) for n, ts in canon.items()))
              for name, rest in rests.items()), target_pos)
     source_rest = rests[choice or "jointOrient"]
-    # the size: the target's pelvis over the floor against the source's over its origin
+    # the size, read without the pose (`size_ratio`: the pelvis over the ankles in a
+    # rest that STANDS, else the legs' lengths) - the chosen rest may be a crouched
+    # first frame, whose pelvis height would scale the travel 20-60 % wrong
     above = cmds.listRelatives(source_root, parent=True, fullPath=True)
     origin = cmds.xform(above[0], query=True, worldSpace=True, translation=True) \
         if above else [0.0, 0.0, 0.0]
-    floor = target_rest[target_root][13]
-    scale = skelmap.scale_ratio(target_rest[canon["pelvis"][0]][13] - floor,
-                                source_rest[canon["pelvis"][1]][13] - origin[1])
+    scale, sized = skelmap.size_ratio(
+        target_pos, dict((name, dict((n, tuple(rest[ts[1]][12:15])) for n, ts in canon.items()))
+                         for name, rest in rests.items()))
     if abs(scale - 1.0) <= SCALE_TOLERANCE:
         scale = 1.0
+    # ... scaled about the floor under the root's FIRST frame, so a clip moved onto a
+    # drop point or a kept place (both read off the unscaled first frame) stays there
+    first = cmds.getAttr(source_root + ".worldMatrix[0]", time=start)
+    pivot = skelmap.scale_pivot((first[12], first[13], first[14]), origin)
+    # a floor-level root that never moves while the hips travel (MotionBuilder's
+    # Reference, CC's BoneRoot) is a placeholder: the root takes the hips' travel
+    mapping = skelmap.drop_static_root(
+        found.mapping, lambda path, frame: cmds.getAttr(path + ".worldMatrix[0]", time=frame),
+        skelmap.sample_frames(start, end),
+        skelmap.leg_length(dict((n, tuple(rests["jointOrient"][ts[1]][12:15]))
+                                for n, ts in canon.items())), [])
     align = _alignments(canon, target_rest, source_rest, parents, target_live)
     uuids = dict((p, cmds.ls(p, uuid=True)[0]) for p in source_paths)
     wrapper = None
@@ -709,6 +727,12 @@ def transfer_foreign(source_root, target_root, start, end):
                                   name=(namespace + ":" if namespace else "") + "skeldarUnitScale",
                                   parent=above[0] if above else None)
         cmds.parent(source_root, wrapper, relative=True)
+        local = pivot
+        if above:
+            import maya.api.OpenMaya as om
+            point = om.MPoint(*pivot) * om.MMatrix(_world(above[0])).inverse()
+            local = (point.x, point.y, point.z)
+        cmds.setAttr(wrapper + ".scalePivot", *local)
         cmds.setAttr(wrapper + ".scale", scale, scale, scale)
 
     def now(path):
@@ -725,8 +749,8 @@ def transfer_foreign(source_root, target_root, start, end):
                 constraints += cmds.pointConstraint(now(s), t, maintainOffset=False)
             driven.append(t)
         _cut_time_keys(target_root)
-        if "root" in found.mapping:
-            src_root = found.mapping["root"]
+        if "root" in mapping:
+            src_root = mapping["root"]
             constraints += cmds.orientConstraint(
                 now(src_root), target_root, offset=_offset_euler(
                     target_rest[target_root], source_rest[src_root], list(_identity()),
@@ -738,7 +762,9 @@ def transfer_foreign(source_root, target_root, start, end):
             skip = ground_axis(_world(parent[0]) if parent else None)
             constraints += cmds.pointConstraint(now(canon["pelvis"][1]), target_root,
                                                 maintainOffset=False, skip=[skip])
-            root_note = "root takes the hips' horizontal travel"
+            root_note = "root takes the hips' horizontal travel" + (
+                " (%s never moves)" % leaf(found.mapping["root"])
+                if "root" in found.mapping else "")
         driven.append(target_root)
         cmds.bakeResults(driven, time=(start, end), simulation=True, sampleBy=1,
                          disableImplicitControl=True, preserveOutsideKeys=False,
@@ -758,7 +784,66 @@ def transfer_foreign(source_root, target_root, start, end):
     missing = sorted(leaf(t) for name, t in ours.mapping.items()
                      if name != "root" and t not in paired)
     return dict(twin=False, moved=len(driven), skipped=[], missing=missing,
-                convention=found.convention, rest=choice, scale=scale, root=root_note)
+                convention=found.convention, rest=choice, scale=scale, root=root_note,
+                sized=sized)
+
+
+MIXAMO_CONVENTIONS = ("mixamo", "motionbuilder_hik")   # maya_asretarget's own MIXAMO road
+
+
+def scales_travel(leaf_names, convention, target):
+    """Pure: is a clip's root travel baked at another size than it was keyed at?
+    No for a clip with every UE limb by name (both roads drive it as a twin or by
+    name, unscaled) and for a Mixamo / HumanIK clip onto a new RIG (the rig road's
+    own MIXAMO schema, unscaled); yes for every other source - the generic road
+    scales it to our size (a metre file, a BVH, a body of another size)."""
+    import maya_skeletonmap as skelmap
+    if skelmap.covers_ue_core(leaf_names):
+        return False
+    if target == "new_rig" and convention in MIXAMO_CONVENTIONS:
+        return False
+    return True
+
+
+_REFERENCE = {}
+
+
+def reference_positions():
+    """{UE bone: world position} of Manny's bind (the shipped template). Every rig
+    and skeleton of ours stands on Manny's legs (the Creep's and the Orc's are
+    his to the millimetre), so his size stands for the one a clip is baked at."""
+    if not _REFERENCE:
+        import json
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "assets", "manny_skeleton_template.json")
+        with open(path) as handle:
+            joints = json.load(handle)["joints"]
+        _REFERENCE.update((j["name"], tuple(j["world_position"])) for j in joints)
+    return dict(_REFERENCE)
+
+
+def travel_scale(source_root, target):
+    """The factor a clip's root travel will be baked at onto `target` ("new_rig"
+    or "skeleton"), read before the clip is laid out - the square's spacing is
+    computed from the travel, and a CMU clip keyed at 0.45 of our size travels
+    2.2 times further baked than its keys say. 1.0 for a clip the retarget does
+    not scale (`scales_travel`) or whose size cannot be read; a size within
+    SCALE_TOLERANCE of ours is ours, as the transfer and the rig road have it."""
+    import maya_skeletonmap as skelmap
+    paths = _joints(source_root)
+    leaves = [leaf(p) for p in paths]
+    convention = skelmap.convention_of(paths)
+    if not scales_travel(leaves, convention, target):
+        return 1.0
+    found = skelmap.recognize(paths, dict(
+        (p, tuple(cmds.xform(p, query=True, worldSpace=True, translation=True))) for p in paths))
+    if found.refusal:
+        return 1.0
+    rests = _source_rests(paths)
+    scale, _how = skelmap.size_ratio(reference_positions(), dict(
+        (name, dict((o, tuple(rest[s][12:15])) for o, s in found.mapping.items() if s in rest))
+        for name, rest in rests.items()))
+    return 1.0 if abs(scale - 1.0) <= SCALE_TOLERANCE else scale
 
 
 def _identity():

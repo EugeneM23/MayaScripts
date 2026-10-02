@@ -854,6 +854,14 @@ def scaled_matrix(matrix, scale, origin):
     return m
 
 
+def _sample_frames(paths):
+    """Whole frames over the source's keys (at most 120), [] for an unkeyed one."""
+    if not (cmds.keyframe(paths, query=True, keyframeCount=True) or 0):
+        return []
+    return skelmap.sample_frames(cmds.findKeyframe(paths, which="first"),
+                                 cmds.findKeyframe(paths, which="last"))
+
+
 def mixamo_like(paths):
     """Is a source that scored as Mixamo really Mixamo / HumanIK? A CMU BVH or a
     Unity Mecanim skeleton shares `Hips` or `LeftArm` with it and nothing else."""
@@ -873,21 +881,29 @@ def generic_schema(source_root, rig_bones):
         return None, "%s: %s" % (leaf(source_root), result.refusal)
     ours = set(our_bone_map().values()) | set(["root"])
     mapping = dict((k, v) for k, v in result.mapping.items() if k in ours)
+    notes = list(result.notes)
+    frames = _sample_frames(paths)
+    candidates = rest_candidates(paths)
+    cand_pos = dict((name, dict((o, position(mats[s])) for o, s in mapping.items() if s in mats))
+                    for name, mats in candidates.items())
+    mapping = skelmap.drop_static_root(
+        mapping, lambda path, frame: cmds.getAttr(path + ".worldMatrix[0]", time=frame),
+        frames, skelmap.leg_length(cand_pos.get("jointOrient", {})), notes)
     rig_rest = rest_matrices(rig_bones, "live")
     rig_pos = dict((n, position(m)) for n, m in rig_rest.items())
-    candidates = rest_candidates(paths)
-    choice, scores = skelmap.choose_rest(
-        dict((name, dict((o, position(mats[s])) for o, s in mapping.items() if s in mats))
-             for name, mats in candidates.items()), rig_pos)
+    choice, scores = skelmap.choose_rest(cand_pos, rig_pos)
     rest = candidates[choice or "jointOrient"]
     above = cmds.listRelatives(source_root, parent=True, fullPath=True)
     origin = tuple(cmds.xform(above[0], query=True, worldSpace=True, translation=True)) \
         if above else (0.0, 0.0, 0.0)
-    rig_height = rig_pos["pelvis"][1] - (rig_pos["root"][1] if "root" in rig_pos else 0.0) \
-        if "pelvis" in rig_pos else 0.0
-    scale = skelmap.scale_ratio(rig_height, position(rest[mapping["pelvis"]])[1] - origin[1])
+    # the size without the pose (a crouched first frame read the pelvis 20-60 % low), scaled
+    # about the floor under the root's first frame, where a drop or a kept place puts it
+    scale, sized = skelmap.size_ratio(rig_pos, cand_pos)
     if abs(scale - 1.0) <= GENERIC_SCALE_TOL:
         scale = 1.0
+    first = cmds.getAttr(source_root + ".worldMatrix[0]", time=frames[0]) if frames \
+        else cmds.getAttr(source_root + ".worldMatrix[0]")
+    origin = skelmap.scale_pivot(position(first), origin)
     named = set(mapping)
     rows = [(a, u) for a, u in ROWS if u in named or u + "_l" in named or u + "_r" in named]
     schema = GenericSchema(name="generic:" + result.convention, rows=rows, sides=SIDES,
@@ -903,16 +919,17 @@ def generic_schema(source_root, rig_bones):
                     % (result.convention, len(mapping), result.confidence, choice,
                        (" (%s)" % ", ".join("%s %.0f deg" % kv for kv in sorted(scores.items())))
                        if len(scores) > 1 else "",
-                       ("; the source is %.4g times our size, its travel scaled by %.4f"
-                        % (1.0 / scale, scale)) if scale != 1.0 else "")] + list(result.notes)
+                       ("; the source is %.4g times our size (%s), its travel scaled by %.4f"
+                        % (1.0 / scale, sized, scale)) if scale != 1.0 else "")] + notes
     return schema, ""
 
 
 def _unit_sources(plan, rig):
     """{our name: a stand-in path} for a source whose size is not ours: per bone a
     transform under the holder at the bone's world ROTATION and its position scaled
-    by `schema.scale` about the source root's parent (the origin a drop shift or a
-    Z-up wrapper moves). The rest offsets were read from a rest scaled the same way,
+    by `schema.scale` about `schema.origin` - the floor under the root's first frame,
+    carried in the source root's parent's frame (the parent a drop shift or a Z-up
+    wrapper moves), so the first frame stands where a drop or a kept place put it. The rest offsets were read from a rest scaled the same way,
     so every position drive lands at our size; rotation drives see the bone
     unchanged. None of these constraints is registered: the vendor's Bake must not
     bake them, and they die with the holder."""
@@ -928,6 +945,12 @@ def _unit_sources(plan, rig):
     scaled = cmds.createNode("transform", name=_n(rig, UNIT_PREFIX + "scale"), parent=space,
                              skipSelect=True)
     cmds.setAttr(scaled + ".scale", schema.scale, schema.scale, schema.scale)
+    # about the same pivot the rest was scaled about (`skelmap.scale_pivot`: the floor
+    # under the root's first frame), in the space's own frame - the source's parent's
+    pivot = om.MPoint(*schema.origin)
+    if above:
+        pivot = pivot * om.MMatrix(cmds.getAttr(above[0] + ".worldMatrix[0]")).inverse()
+    cmds.setAttr(scaled + ".scalePivot", pivot.x, pivot.y, pivot.z)
     out = {}
     for ours, path in plan.bones.items():
         follow = cmds.createNode("transform", name=_n(rig, UNIT_PREFIX + "follow_" + ours),
@@ -1339,10 +1362,13 @@ def _plan(source_root=None, rig=None):
     if schema is None or (schema is MIXAMO and not mixamo_like(list(bones.values()))) \
             or (schema is UE5 and not skelmap.covers_ue_core(bones)):
         # neither UE5 nor Mixamo: any other convention, read by maya_skeletonmap
-        schema, refusal = generic_schema(source_root, rig_bones)
-        if schema is None:
+        generic, refusal = generic_schema(source_root, rig_bones)
+        if generic is not None:
+            schema, bones = generic, dict(generic.bones)
+        elif schema is None:
             return empty._replace(refusal=refusal)
-        bones = dict(schema.bones)
+        # else the map refused what scored as UE5 / Mixamo by name - an arms-only or
+        # upper-body UE clip: the old road drives the bones it has and names the rest
     rotation = rotation_mode(rig)
     controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
     drives, missing = drive_plan(controls, list(bones), schema, rotation=rotation)

@@ -642,6 +642,14 @@ def _rest_candidates(paths):
     return out
 
 
+def _sample_frames(paths):
+    """Whole frames over the source's keys (at most 120), [] for an unkeyed one."""
+    if not (cmds.keyframe(paths, query=True, keyframeCount=True) or 0):
+        return []
+    return skelmap.sample_frames(cmds.findKeyframe(paths, which="first"),
+                                 cmds.findKeyframe(paths, which="last"))
+
+
 def generic_schema(source_root, rig_rest):
     """(GenericSchema, refusal) for a source no row of SCHEMAS knows."""
     paths = _joint_paths(source_root)
@@ -655,9 +663,13 @@ def generic_schema(source_root, rig_rest):
     rig_pos = dict((ue, position(rig_rest[ours])) for ours, ue in ue_names_of_ours().items()
                    if ours in rig_rest)
     candidates = _rest_candidates(paths)
-    choice, scores = skelmap.choose_rest(
-        dict((name, dict((o, position(m[s])) for o, s in mapping.items() if s in m))
-             for name, m in candidates.items()), rig_pos)
+    cand_pos = dict((name, dict((o, position(m[s])) for o, s in mapping.items() if s in m))
+                    for name, m in candidates.items())
+    notes = list(result.notes)
+    mapping = skelmap.drop_static_root(
+        mapping, lambda path, frame: cmds.getAttr(path + ".worldMatrix[0]", time=frame),
+        _sample_frames(paths), skelmap.leg_length(cand_pos.get("jointOrient", {})), notes)
+    choice, scores = skelmap.choose_rest(cand_pos, rig_pos)
     rest = candidates[choice or "jointOrient"]
     named = set(mapping)
     rows = [(a, u) for a, u in UE5_ROWS if u in named or u + "_l" in named or u + "_r" in named]
@@ -667,8 +679,10 @@ def generic_schema(source_root, rig_rest):
     schema.rest_given = dict((o, list(rest[s])) for o, s in mapping.items())
     schema.parents = skelmap.canonical_parents(mapping, skelmap.parent_map(paths))
     schema.convention, schema.rest_choice = result.convention, choice
-    schema.notes = ["source read as %s (%d bones mapped, confidence %.2f); rest pose: %s"
-                    % (result.convention, len(mapping), result.confidence, choice)] + list(result.notes)
+    schema.size, sized = skelmap.size_ratio(rig_pos, cand_pos)
+    schema.notes = ["source read as %s (%d bones mapped, confidence %.2f); rest pose: %s; size %s"
+                    % (result.convention, len(mapping), result.confidence, choice,
+                       sized or "unread")] + notes
     del scores
     return schema, ""
 
@@ -935,11 +949,13 @@ def _plan(source_root=None, rig=None):
     if schema is None or (schema is MIXAMO and skelmap.convention_of(list(bones.values()))
                           not in MIXAMO_CONVENTIONS):
         # none of SCHEMAS: any other convention, read by maya_skeletonmap
-        schema, refusal = generic_schema(source_root, dict(
+        generic, refusal = generic_schema(source_root, dict(
             (name, cmds.getAttr(path + ".worldMatrix[0]")) for name, path in rig_bones.items()))
-        if schema is None:
+        if generic is not None:
+            schema, bones = generic, dict(generic.bones)
+        elif schema is None:
             return empty._replace(refusal=refusal)
-        bones = dict(schema.bones)
+        # else the map refused what scored as Mixamo by name: the old road, as before
     controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
     drives, missing = drive_plan(controls, list(bones), schema)
     drives = [d for d in drives
@@ -963,7 +979,9 @@ def _plan(source_root=None, rig=None):
     align = (alignments(triples, rig_rest, src_rest, parents_of(rig_bones),
                         getattr(schema, "parents", None) or parents_of(bones))
              if schema.align else dict((d.control, list(om.MMatrix())) for d in fk))
-    scale = scale_factor(rig_rest, src_rest, schema)
+    # a generic source's size is read pose-free (`skelmap.size_ratio`): its rest may be
+    # a crouched first frame, whose pelvis height would scale the travel wrong
+    scale = getattr(schema, "size", None) or scale_factor(rig_rest, src_rest, schema)
     notes = ["schema %s%s; the source stands %.4g times our size, so its travel is scaled by %.4f"
              % (schema.name, (", rest from %s" % schema.template) if schema.template else "",
                 1.0 / scale if scale else 0.0, scale)] + list(getattr(schema, "notes", []))

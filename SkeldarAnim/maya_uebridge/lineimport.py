@@ -38,6 +38,7 @@ import maya.cmds as cmds
 from maya_uebridge import lineup
 from maya_uebridge import rigimport
 from maya_uebridge import skeletonimport
+import maya_skeletonmap as skelmap
 
 TARGETS = ("new_rig", "skeleton")
 NOTHING = "select an animation first"
@@ -269,8 +270,11 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                            cancelled=True)
 
         if imported:
-            tracks = [track_of(clip["source"], clip["info"].get("start"),
-                               clip["info"].get("end")) for clip in imported]
+            # each track at the size the bake will carry it (a foreign clip is
+            # scaled to ours about its first frame - `skeletonimport.travel_scale`)
+            tracks = [skelmap.scaled_track(
+                track_of(clip["source"], clip["info"].get("start"), clip["info"].get("end")),
+                skeletonimport.travel_scale(clip["source"], target)) for clip in imported]
             x_reach = [lineup.side_extent(t, lineup.COLUMNS) for t in tracks]
             z_reach = [lineup.side_extent(t, lineup.ROWS) for t in tracks]
             points = lineup.square_slots(centre, x_reach, z_reach, step)

@@ -123,3 +123,34 @@ class TestRetargetModules(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE_MAYA, "needs maya.api for the uebridge module's imports")
+class TestTravelScaleRoad(unittest.TestCase):
+    """The fix pass, 2026-10-02: which clips the square must read at another size."""
+
+    def setUp(self):
+        from maya_uebridge import skeletonimport
+        self.si = skeletonimport
+
+    def leaves(self, convention):
+        rows, _e = fixtures.build(convention)
+        return [sm.leaf(n) for n, _p, _pos in rows]
+
+    def test_a_ue_clip_is_never_scaled(self):
+        for target in ("new_rig", "skeleton"):
+            self.assertFalse(self.si.scales_travel(self.leaves("ue5"), "ue5", target))
+            self.assertFalse(self.si.scales_travel(self.leaves("ue4"), "ue4", target))
+
+    def test_mixamo_onto_a_rig_takes_the_rigs_own_mixamo_road(self):
+        self.assertFalse(self.si.scales_travel(self.leaves("mixamo"), "mixamo", "new_rig"))
+        self.assertTrue(self.si.scales_travel(self.leaves("mixamo"), "mixamo", "skeleton"))
+
+    def test_any_other_convention_is(self):
+        for convention in ("cmu", "biped", "vrm", "rigify"):
+            self.assertTrue(self.si.scales_travel(self.leaves(convention), convention, "new_rig"))
+
+    def test_the_reference_is_mannys_bind(self):
+        ref = self.si.reference_positions()
+        self.assertAlmostEqual(sm.standing_height(ref), 87.5537, places=3)
+        self.assertAlmostEqual(sm.leg_length(ref), 85.5625, places=3)

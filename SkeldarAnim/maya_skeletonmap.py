@@ -966,3 +966,160 @@ def scale_ratio(rig_pelvis_height, source_pelvis_height):
     if source_pelvis_height is None or source_pelvis_height <= 1e-9:
         return 1.0
     return rig_pelvis_height / source_pelvis_height
+
+
+# ---------------------------------------------------------------- the size, pose-free
+# (the fix pass, 2026-10-02). The first build read the size as our pelvis height over
+# the source's in whichever rest `choose_rest` picked - and it picks the FIRST FRAME for
+# a source whose bind lives in its rotate channels (its jointOrient pose is a straight
+# line), so a clip starting in a crouch or a jump read its pelvis 20-60 % low and scaled
+# every position drive by the wrong factor.
+
+LEG_SEGMENTS = (("thigh", "calf"), ("calf", "foot"))
+STRAIGHT = 0.98        # a leg is straight when hip-to-ankle is 98 % of its two bones
+DOWN_DEG = 20.0        # ... and standing when it runs within 20 deg of the body's down
+
+
+def leg_length(positions):
+    """The mean over both sides of thigh->calf + calf->foot, from {our bone:
+    position}; None without a whole leg. Pose-free: bone lengths do not change
+    with the pose. Pure."""
+    legs = []
+    for side in ("l", "r"):
+        names = ["%s_%s" % (bone, side) for bone in ("thigh", "calf", "foot")]
+        if all(n in positions for n in names):
+            legs.append(_dist(positions[names[0]], positions[names[1]])
+                        + _dist(positions[names[1]], positions[names[2]]))
+    return sum(legs) / len(legs) if legs else None
+
+
+def standing_height(positions):
+    """The pelvis's height above the ankles along the body's own up, when this
+    pose STANDS: both legs straight and running down the body (within DOWN_DEG
+    of pelvis->head). None for a crouch, a kneel, a straight-line zero pose, or
+    without the parts. Read in the body's own frame, so a source lying under a
+    Z-up wrapper, or prone, stands as well as an upright one. Pure."""
+    frame = body_frame(positions)
+    if frame is None or "pelvis" not in positions:
+        return None
+    up = frame[1]
+    down = tuple(-c for c in up)
+    ankles = []
+    for side in ("l", "r"):
+        hip, knee, ankle = (positions.get("%s_%s" % (b, side)) for b in ("thigh", "calf", "foot"))
+        if None in (hip, knee, ankle):
+            continue
+        span = _dist(hip, ankle)
+        bones = _dist(hip, knee) + _dist(knee, ankle)
+        if bones <= 1e-9 or span < STRAIGHT * bones:
+            return None
+        if angle(_sub(ankle, hip), down) > DOWN_DEG:
+            return None
+        ankles.append(ankle)
+    if not ankles:
+        return None
+    mean = tuple(sum(a[i] for a in ankles) / len(ankles) for i in range(3))
+    height = _dot(_sub(positions["pelvis"], mean), up)
+    return height if height > 1e-9 else None
+
+
+SIZE_ORDER = ("bindPose", "jointOrient", "firstFrame")
+
+
+def size_ratio(ours, candidates, order=SIZE_ORDER):
+    """(ratio, how): our size over the source's. `ours` is {our bone: position}
+    at our rest, `candidates` {rest name: {our bone: position}} the source's.
+
+    The first candidate (in `order`) that STANDS gives our standing height over
+    its (`standing_height`: the pelvis over the ankles - a ratio that puts our
+    feet on the floor when the source's are); none standing, the leg lengths
+    (`leg_length`, pose-free: thigh + calf). (1.0, "") when neither can be read.
+    Pure."""
+    mine = standing_height(ours)
+    if mine:
+        for name in list(order) + sorted(set(candidates) - set(order)):
+            if name in candidates:
+                theirs = standing_height(candidates[name])
+                if theirs:
+                    return mine / theirs, "standing (%s)" % name
+    mine = leg_length(ours)
+    for name in list(order) + sorted(set(candidates) - set(order)):
+        if name in candidates:
+            theirs = leg_length(candidates[name])
+            if mine and theirs:
+                return mine / theirs, "legs (%s)" % name
+    return 1.0, ""
+
+
+def scale_pivot(first_root, origin):
+    """The point a source is scaled about: under its root's FIRST frame, on its
+    parent's floor (`origin`'s height). A floor drop and a kept place are both
+    computed from the unscaled first frame, so scaling about any other point
+    moved the clip (s - 1) * p0 off it (the review: a CMU clip starting 20 cm out
+    landed 25 cm off the cursor). Pure."""
+    return (first_root[0], origin[1], first_root[2])
+
+
+def scaled_track(track, scale):
+    """A root track scaled about its first point (`scale_pivot`'s rule): the
+    travel the bake will carry, for a layout computed before it. Pure."""
+    if not track or scale == 1.0:
+        return list(track)
+    first = track[0]
+    return [tuple(f + scale * (c - f) for c, f in zip(p, first)) for p in track]
+
+
+# ---------------------------------------------------------------- a root that never moves
+
+STILL = 1e-3           # of the body's size: a root moving less than this stands still
+TRAVEL = 0.05          # ... while the hips travel more than this
+
+
+def static_root(root_track, hips_track, size, still=STILL, travel=TRAVEL):
+    """Pure: is a floor-standing root bone a placeholder - its world matrix the
+    same on every sampled frame (`root_track`, 16 floats each) while the hips
+    travel on the ground (`hips_track`, positions) more than `travel` of `size`?
+    MotionBuilder's Reference and Character Creator's BoneRoot usually are: the
+    travel lives in the hips, and driving Main from the root lost it. An in-place
+    clip (the hips only sway) keeps its root."""
+    if not root_track or not hips_track or not size:
+        return False
+    first = root_track[0]
+    for m in root_track[1:]:
+        for i, (a, b) in enumerate(zip(m, first)):
+            tol = still * size if i in (12, 13, 14) else 1e-5
+            if abs(a - b) > tol:
+                return False
+    h0 = hips_track[0]
+    ground = max(math.hypot(p[0] - h0[0], p[2] - h0[2]) for p in hips_track)
+    return ground > travel * size
+
+
+def sample_frames(first, last, most=120):
+    """Whole frames from `first` to `last`, at most `most` of them, both ends
+    kept. Pure."""
+    if first is None or last is None:
+        return []
+    first, last = int(math.floor(first)), int(math.ceil(last))
+    count = last - first + 1
+    if count <= most:
+        return list(range(first, last + 1))
+    return sorted(set(int(round(first + (last - first) * i / float(most - 1)))
+                      for i in range(most)))
+
+
+def drop_static_root(mapping, sample, frames, size, notes):
+    """`mapping` without its root when `static_root` says it is a placeholder
+    (a note says so: Main then takes the hips' horizontal travel, as it does for
+    a source with no root at all); else `mapping` itself. `sample(path, frame)`
+    answers a world matrix. Pure but for `sample`."""
+    if "root" not in mapping or "pelvis" not in mapping or not frames:
+        return mapping
+    root, hips = mapping["root"], mapping["pelvis"]
+    roots = [list(sample(root, f)) for f in frames]
+    hips_track = [tuple(sample(hips, f))[12:15] for f in frames]
+    if not static_root(roots, hips_track, size):
+        return mapping
+    notes.append("%s never moves while the hips travel - no root bone, Main takes the "
+                 "hips' travel" % leaf(root))
+    return dict((k, v) for k, v in mapping.items() if k != "root")
