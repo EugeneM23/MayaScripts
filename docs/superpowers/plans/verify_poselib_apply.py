@@ -38,7 +38,9 @@ against the card, independently of the press's own measure.
             0.01 deg), translations halfway; `cancel` - every value back exactly, and one Ctrl+Z
             then takes back the animator's last step before the session (a cancel leaves no undo
             step); a session at 0.3 finished - keys at the frame on the mixed values, «at 30 %»,
-            one Ctrl+Z puts every channel and curve back.
+            one Ctrl+Z puts every channel and curve back; a session ended after the time moved
+            (and previewed on at the new frame) - nothing keyed, the free channels at their
+            start values, the keyed ones on their curves at the frame shown.
   partial   the left-hand card onto the Manny skeleton (through its root) and onto Creep_Rig
             (through a control): only the hand's channels change - the skeleton's hand and finger
             joints, the Creep's FK wrist and finger controls and its IK arm's end (both modes
@@ -54,21 +56,26 @@ against the card, independently of the press's own measure.
             rig's neck in-between turning it, until rigsolve held it (`held_bones`).
   objects   two cubes posed, an objects card, applied to renamed copies in a namespace (by name,
             the namespace ignored): their attributes equal the card's, the originals untouched;
-            by selection order onto two differently named boxes when the originals are gone.
+            the SELECTION decides - by order onto two differently named boxes WITH the originals
+            in the scene (they do not move); by name and the rest by order (a copy and a box);
+            nothing selected: the stored originals by their paths, the copies beside unmoved.
   select    Select objects: the hand card's controls on Manny_Rig (`rigsolve.controls_for`),
             the hand's joints on the Manny skeleton, with nothing selected the character in the
             card's own namespace; an objects card's objects.
-  layers    Manny_Rig keyed on the base: no layers -> plain keys on the base curves; an
-            additive layer `PoseL` selected -> keys only on PoseL (every base curve key for key
-            unchanged), the final pose on the card to 0.01 deg; an override layer the same; the
-            override layer locked -> refused, nothing changed.
+  layers    Manny_Rig keyed on the base: `plan_for` leaves no undo step; no layers -> plain keys
+            on the base curves; an additive layer `PoseL` selected -> keys only on PoseL (every
+            base curve key for key unchanged), the final pose on the card to 0.01 deg; an
+            override layer the same; the override layer locked -> refused, nothing changed; an
+            additive layer in quaternion accumulation -> refused, nothing changed.
   floor     a new scene, a locator selected: `drop_floor` of the Creep_Rig card at
             (150, 0, -60) - a Creep_Rig added with Main on the point (0.01 cm), its bones on the
             pose relative to the root (0.01 deg), the locator still the selection, one Ctrl+Z
             takes the pose keys and nothing else (the rig and its channels at Add's values);
-            `drop_floor` of the Mixamo card (no catalog row) - rebuilt bones only in
-            `pose_<name>`, its root on the point, every member on the card relative to the root
-            (0.01 deg), its rest still the card's once posed (the hidden bind cube).
+            `drop_floor` of a Mixamo card (no catalog row) whose rest root stands OFF the origin
+            (40, -25) - rebuilt bones only in `pose_<name>`, its root ON the point, every member
+            on the card relative to the root (0.01 deg), its rest still the card's once posed
+            (the hidden bind cube); one outliner group and layer over it, Delete's record
+            («<card name> [own skeleton]»), and Delete taking it whole and nothing else.
 
 Two harness facts this run paid for (mayapy 2027, measured): `currentTime` IS on Maya's undo
 queue (one undo after `currentTime 6` put the time back to 5) and so is `autoKeyframe -state`
@@ -111,7 +118,7 @@ import maya_asretarget  # noqa: E402
 import maya_rigs  # noqa: E402
 import maya_skeletonmap as skelmap  # noqa: E402
 import skeleton_conventions as fixtures  # noqa: E402
-from maya_scenesetup import catalog, character  # noqa: E402
+from maya_scenesetup import catalog, character, chargroup, deletion  # noqa: E402
 from maya_uebridge import skeletonimport  # noqa: E402
 
 from maya_poselib import apply as ap  # noqa: E402
@@ -126,6 +133,8 @@ RESULTS = []
 
 ROT = ("rotateX", "rotateY", "rotateZ")
 TR = ("translateX", "translateY", "translateZ")
+NATIVE_REST = (40.0, 0.0, -25.0)     # the floor's native card: its rest moved off the origin
+NATIVE_AT = (-100.0, 0.0, 50.0)      # ... and dropped here
 UNROLLED_LIMB = {"upperarm": "lowerarm", "lowerarm": "hand", "thigh": "calf", "calf": "foot"}
 HINGE = {"Elbow": ("Shoulder", "Wrist"), "Knee": ("Hip", "Ankle")}
 
@@ -166,6 +175,11 @@ def evaluate():
 
 def matrix_diff(a, b):
     return max(abs(x - y) for x, y in zip(a, b))
+
+
+def scene_uuids():
+    """Every node's UUID - `ls(uuid=True)` with no objects answers NAMES (trap 8)."""
+    return set(cmds.ls(cmds.ls() or [], uuid=True) or [])
 
 
 # ------------------------------------------------------------------ the characters
@@ -488,7 +502,16 @@ def setup():
     set_values(shipped)
     evaluate()
     mixamo_card()
-    gate("setup cards", all(CARDS.get(k) for k in ("full", "hand", "arm_r", "creep", "mixamo"))
+    # the floor's native card: a rest whose root stands OFF the origin, so «on the point» and
+    # «at rest + point» are 47 cm apart (the first build landed the second)
+    mixamo_card("mxo", NATIVE_REST, "mixamo_off", "SweepOff")
+    off_root = pm.position(CARDS["mixamo_off"]["bones"][pm.root_of(
+        CARDS["mixamo_off"]["bones"])]["rest"])
+    gate("setup the off-origin native card's rest root", abs(off_root.x - NATIVE_REST[0]) < 1e-6
+         and abs(off_root.z - NATIVE_REST[2]) < 1e-6,
+         "(%.3f, %.3f, %.3f)" % (off_root.x, off_root.y, off_root.z))
+    gate("setup cards", all(CARDS.get(k) for k in ("full", "hand", "arm_r", "creep", "mixamo",
+                                                   "mixamo_off"))
          and
          CARDS["full"]["character"]["key"] == "Manny_Rig" and
          CARDS["creep"]["character"]["key"] == "Creep_Rig",
@@ -750,6 +773,39 @@ def phase_blend():
          worst_v <= 1e-9 and not changed and not gone and not new,
          "max %.3g, curves %d changed %d gone %d new" % (worst_v, len(changed), len(gone),
                                                          len(new)))
+    # a session ended after the TIME moved: the free channels back at their start values, the
+    # keyed ones on their curves at the frame now shown (the first build set their start values
+    # - the OLD frame's - back, a stale value holding until the next time change)
+    a.reset()
+    cmds.currentTime(4)
+    values = pose_values(a, seed=1.0)
+    for plug in keyed_half(a, values):
+        cmds.setKeyframe(plug, time=8, value=values[plug] + 15.0)     # the curves MOVE at 4..6
+    evaluate()
+    blend = ap.Blend()
+    blend.start(CARDS["full"], selection=[a.rig.main])
+    current, final = {}, {}
+    for plan, _extra in blend.entries:
+        current.update(plan.current)
+        final.update(plan.values)
+    blend.set(0.5)
+    cmds.currentTime(6, update=True)                # the animator scrubbed
+    blend.set(0.7)                                  # ... and dragged on at the new frame
+    text = blend.finish()
+    free = [p for p in final if keys.input_of(p) == "free"]
+    keyed = [p for p in final if keys.input_of(p) == "curve"]
+
+    def on_curve(plug):
+        curve = cmds.listConnections(plug, source=True, destination=False, type="animCurve")[0]
+        return cmds.keyframe(curve, query=True, eval=True, time=(6, 6))[0]
+    free_off = max([abs(float(cmds.getAttr(p)) - current[p]) for p in free] or [0.0])
+    keyed_off = max([abs(float(cmds.getAttr(p)) - on_curve(p)) for p in keyed] or [-1.0])
+    moved = max([abs(on_curve(p) - current[p]) for p in keyed] or [0.0])
+    gate("blend ended after a time change: free channels back, keyed ones on the frame shown",
+         text == ap.TIME_MOVED and free and keyed and free_off <= 1e-9 and
+         0.0 <= keyed_off <= 1e-6 and moved > 1.0 and not blend.active(),
+         "free %d off %.3g, keyed %d off their curves at 6 %.3g (the curves moved %.1f since "
+         "the start); %s" % (len(free), free_off, len(keyed), keyed_off, moved, text))
     a.reset()
 
 
@@ -818,11 +874,11 @@ MIXAMO_POSE = {   # our bone: delta on the local rotate channels, degrees
 }
 
 
-def build_mixamo(ns="mx"):
+def build_mixamo(ns="mx", offset=None):
     """The Mixamo fixture as joints in `ns` (`mixamorig:` names inside it), oriented as Mixamo
-    orients (Y down the bone, `yzx`), the T-pose rest in jointOrient, bound to a cube at that
-    rest - a Mixamo character's bind is its skin's - then posed by MIXAMO_POSE. (top, {ours:
-    path})."""
+    orients (Y down the bone, `yzx`), the T-pose rest in jointOrient - moved by `offset` (x, y,
+    z) when given, so the rest's root stands off the origin - bound to a cube at that rest (a
+    Mixamo character's bind is its skin's), then posed by MIXAMO_POSE. (top, {ours: path})."""
     rows, expected = fixtures.build("mixamo")
     for full in (ns, ns + ":mixamorig"):
         if not cmds.namespace(exists=":" + full):
@@ -843,6 +899,8 @@ def build_mixamo(ns="mx"):
     top = path(rows[0][0])
     cmds.joint(top, edit=True, orientJoint="yzx", secondaryAxisOrient="yup", children=True,
                zeroScaleOrient=True)
+    if offset:
+        cmds.move(offset[0], offset[1], offset[2], top, relative=True, worldSpace=True)
     joints = [path(n) for n in made]
     cube = cmds.polyCube(name=ns + ":body", constructionHistory=False)[0]
     cmds.skinCluster(joints + [cube], toSelectedBones=True)
@@ -887,14 +945,15 @@ def pointing(data, ch):
     return rows, rootless
 
 
-def mixamo_card():
-    """The Mixamo skeleton built, carded and hidden (setup: the floor phase rebuilds its card)."""
-    top, _by_ours = build_mixamo()
+def mixamo_card(ns="mx", offset=None, key="mixamo", name="Sweep"):
+    """A Mixamo skeleton built (its rest moved by `offset`), carded as CARDS[key] and hidden
+    (setup: the floor phase rebuilds the off-origin card)."""
+    top, _by_ours = build_mixamo(ns, offset)
     data, note = capture.build_pose([top])
-    data["name"] = "Sweep"
-    CARDS["mixamo"] = data
+    data["name"] = name
+    CARDS[key] = data
     cmds.setAttr(top + ".visibility", False)
-    say("   mixamo card: %s; convention %s" % (note, data["character"]["convention"]))
+    say("   %s card: %s; convention %s" % (key, note, data["character"]["convention"]))
 
 
 def phase_mixamo():
@@ -973,24 +1032,60 @@ def phase_objects():
          ok and off and max(off) <= 1e-6, "max %.3g over %d attributes" % (max(off), len(off)))
     moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in originals.items())
     gate("objects the originals untouched", moved <= 1e-9, "%.3g" % moved)
-    # by order: neither the originals nor the copies in the scene (a copy would be found by its
-    # leaf name - the stored road comes first), two differently named boxes selected
-    cmds.delete(copies)
-    copies = []
-    cmds.rename(one, "gone_A")
-    cmds.rename(two, "gone_B")
+    # the SELECTION decides: two differently named boxes selected while the card's originals and
+    # the copies are all in the scene - the pose goes onto the boxes by order, nothing else moves
+    # (the first build sent it to the originals, found by path, and left the boxes alone)
     boxes = [_cube("boxOne", {}), _cube("boxTwo", {})]
+    others = values_of([n + "." + a for n in [one, two] + copies
+                        for a in data["objects"][0]["attrs"]])
     ok, text = ap.apply(data, selection=boxes)
     say("   objects by order: %s" % text)
     evaluate()
     off = [abs(float(cmds.getAttr(box + "." + attr)) - value)
            for box, record in zip(boxes, data["objects"])
            for attr, value in record["attrs"].items()]
-    gate("objects by selection order when nothing matches by name",
-         ok and max(off) <= 1e-6 and "selection order" in text, "max %.3g" % max(off))
-    cmds.delete(copies + boxes)
-    cmds.rename("gone_A", "poseCubeA")
-    cmds.rename("gone_B", "poseCubeB")
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in others.items())
+    gate("objects by selection order onto the selection, the originals in the scene",
+         ok and max(off) <= 1e-6 and "selection order" in text and moved <= 1e-9,
+         "max %.3g, the originals and copies moved %.3g" % (max(off), moved))
+    # by name and the rest by order: copy:poseCubeA and a third box selected
+    third = _cube("boxThree", {})
+    copy_a = [c for c in copies if scene.leaf(c) == "poseCubeA"][0]
+    for attr in ("translateX", "rotateY"):
+        cmds.setAttr(copy_a + "." + attr, 9.0)
+    others = values_of([n + "." + a for n in [one, two] + boxes
+                        for a in data["objects"][0]["attrs"]])
+    ok, text = ap.apply(data, selection=[third, copy_a])
+    say("   objects by name, then by order: %s" % text)
+    evaluate()
+    by = dict((record["name"], record) for record in data["objects"])
+    off = [abs(float(cmds.getAttr(node + "." + attr)) - value)
+           for node, name in ((copy_a, "poseCubeA"), (third, "poseCubeB"))
+           for attr, value in by[name]["attrs"].items()]
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in others.items())
+    gate("objects by name, the selection left over by order",
+         ok and max(off) <= 1e-6 and moved <= 1e-9 and "selection order" in text,
+         "max %.3g, the unselected moved %.3g" % (max(off), moved))
+    # nothing selected: the stored originals found in the scene (their exact paths), whatever
+    # copies of them stand beside
+    for node in (one, two):
+        for attr in ("translateX", "rotateX"):
+            cmds.setAttr(node + "." + attr, 9.0)
+    others = values_of([n + "." + a for n in copies + boxes + [third]
+                        for a in data["objects"][0]["attrs"]])
+    ok, text = ap.apply(data, selection=[])
+    say("   objects, nothing selected: %s" % text)
+    evaluate()
+    off = [abs(float(cmds.getAttr(node + "." + attr)) - value)
+           for node, record in zip((one, two), data["objects"])
+           for attr, value in record["attrs"].items()]
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in others.items())
+    gate("objects nothing selected: the stored originals, by their paths",
+         ok and max(off) <= 1e-6 and moved <= 1e-9,
+         "max %.3g, the copies and boxes moved %.3g" % (max(off), moved))
+    cmds.delete(copies + boxes + [third])
+    if cmds.namespace(exists=":copy"):
+        cmds.namespace(removeNamespace=":copy", mergeNamespaceWithRoot=True)
 
 
 def phase_select():
@@ -1051,7 +1146,16 @@ def phase_layers():
     gate("layers none in the scene", keys.active_layer() == (None, ""), "%s" % (
         keys.active_layer(),))
     cmds.currentTime(3)
+    # plan_for leaves no undo step: the animator's last step is the next Ctrl+Z (the first build
+    # left the rig solve's net-nothing chunk there)
+    marker = cmds.spaceLocator(name="planMarker")[0]
+    cmds.setAttr(marker + ".translateX", 1.0)
     plan = ap.plan_for(card, a.ref)
+    cmds.undo()
+    gate("layers plan_for leaves no undo step (one Ctrl+Z takes the step before it)",
+         plan.values and abs(cmds.getAttr(marker + ".translateX")) < 1e-12,
+         "%d values, marker tx %s" % (len(plan.values), cmds.getAttr(marker + ".translateX")))
+    cmds.delete(marker)
     ok, text = ap.apply(card, selection=[a.rig.main])
     say("   no layers: %s" % text)
     on_base = []
@@ -1114,7 +1218,24 @@ def phase_layers():
          "%s | curves %d/%d/%d, channels %.3g" % (text, len(changed), len(gone), len(new),
                                                   moved))
     cmds.animLayer("PoseO", edit=True, lock=False)
-    for name in ("PoseO", "PoseL"):
+    # an additive layer accumulating rotation as QUATERNIONS (`rotationAccumulationMode` 1 - no
+    # animLayer flag for it in Maya 2027, trap 41): refused, nothing changed
+    cmds.animLayer("PoseQ")
+    cmds.setAttr("PoseQ.rotationAccumulationMode", 1)
+    cmds.animLayer("PoseO", edit=True, selected=False, preferred=False)
+    cmds.animLayer("PoseQ", edit=True, selected=True, preferred=True)
+    picked = keys.active_layer()[0]
+    before = curve_state()
+    before_values = values_of(a.plugs)
+    ok, text = ap.apply(card, selection=[a.rig.main])
+    changed, gone, new = curves_same(before, curve_state())
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in before_values.items())
+    gate("layers quaternion additive PoseQ: refused, nothing changed",
+         picked is not None and picked.name == "PoseQ" and picked.quaternion and not ok and
+         "quaternions" in text and not changed and not gone and not new and moved <= 1e-9,
+         "%s | curves %d/%d/%d, channels %.3g" % (text, len(changed), len(gone), len(new),
+                                                  moved))
+    for name in ("PoseQ", "PoseO", "PoseL"):
         if cmds.objExists(name):
             cmds.delete(name)
     root = cmds.animLayer(query=True, root=True)
@@ -1171,12 +1292,14 @@ def phase_floor():
          cmds.objExists(keep) and cmds.ls(selection=True, long=True) == [keep],
          "%d curves before, %d after; rigs %d; channels at Add's values to %.3g" % (
              len(timed), len(left), len(rigs), max(off) if off else -1))
-    # a card with no catalog row: rebuilt bones only
-    card = CARDS.get("mixamo")
+    # a card with no catalog row: rebuilt bones only - the off-origin card (its rest root at
+    # NATIVE_REST), so «on the point» cannot pass as «at rest + point»
+    card = CARDS.get("mixamo_off")
     if card is None:
-        gate("floor native card", False, "no mixamo card (run the mixamo phase)")
+        gate("floor native card", False, "no off-origin mixamo card (setup)")
         return
-    ok, text = ap.drop_floor(card, (-100.0, 0.0, 50.0))
+    before_drop = scene_uuids()
+    ok, text = ap.drop_floor(card, NATIVE_AT)
     say("   floor native: %s" % text)
     bare = [r for r in skeletonimport.bare_roots() if maya_rigs.namespace_of(r).startswith(
         ap.NATIVE_PREFIX)]
@@ -1188,15 +1311,18 @@ def phase_floor():
     ns = maya_rigs.namespace_of(root)
     joints = cmds.ls(ns + ":*", type="joint", long=True) or []
     meshes = cmds.ls(ns + ":*", type="mesh", long=True, noIntermediate=True) or []
-    proxy = ns + ":" + ap.REST_PROXY
+    proxy = (cmds.ls(ns + ":" + ap.REST_PROXY, long=True) or [None])[0]
     gate("floor native: every bone of the card, one hidden bind cube",
-         len(joints) == len(card["bones"]) and len(meshes) == 1 and cmds.objExists(proxy) and
+         len(joints) == len(card["bones"]) and len(meshes) == 1 and proxy is not None and
          not cmds.getAttr(proxy + ".visibility"),
          "%d joints of %d, %d meshes" % (len(joints), len(card["bones"]), len(meshes)))
     rest_root = pm.position(card["bones"][pm.root_of(card["bones"])]["rest"])
     at_root = pm.position(W(root))
-    off = math.hypot(at_root.x - (-100.0 + rest_root.x), at_root.z - (50.0 + rest_root.z))
-    gate("floor native: its root on the point", off <= 0.01, "%.6f cm" % off)
+    off = math.hypot(at_root.x - NATIVE_AT[0], at_root.z - NATIVE_AT[2])
+    # the first build stood it at rest + point: 47.17 cm away with this card
+    gate("floor native: its root ON the point, whatever the card's rest", off <= 0.01,
+         "%.6f cm (root at %.3f, %.3f, %.3f; the card's rest root at %.1f, %.1f)" % (
+             off, at_root.x, at_root.y, at_root.z, rest_root.x, rest_root.z))
     ch = Char("native", root)
     members, _p, _b = target_members(card, ch)
     rows = rel_rows(card, ch, members)
@@ -1208,6 +1334,34 @@ def phase_floor():
                 for leaf in card["bones"] if leaf in bones)
     gate("floor native: posed, its rest is still the card's (the bind cube)", drift <= 1e-6,
          "%.3g" % drift)
+    # a character like every other: one group + layer, Delete's record, Delete takes it whole
+    group = chargroup.group_of(root)
+    layer = chargroup.layer_of(group)
+    tops = [t for t in cmds.ls(assemblies=True, long=True) or []
+            if maya_rigs.namespace_of(t) == ns]
+    under = group is not None and maya_rigs.under(root, group) and proxy is not None and \
+        maya_rigs.under((cmds.ls(ns + ":" + ap.REST_PROXY, long=True) or [""])[0], group)
+    marker = cmds.getAttr(group + "." + chargroup.MARKER) if group else None
+    gate("floor native: one outliner group and layer over its root and its bind cube",
+         group is not None and group.count("|") == 1 and under and layer is not None and
+         not tops and marker == card["name"] + " [own skeleton]",
+         "group %s (%s), layer %s, world-level parts %s" % (group, marker, layer, tops))
+    uuids, label = deletion.recorded(root)
+    made = scene_uuids() - before_drop
+    gate("floor native: Delete's record holds what the rebuild made, labelled as a native import",
+         label == card["name"] + " [own skeleton]" and uuids and
+         scene.skeleton_ref(root).label == label and
+         cmds.ls(root, uuid=True)[0] in uuids and cmds.ls(proxy, uuid=True)[0] in uuids,
+         "%d recorded of %d new nodes, label %r, ref label %r" % (
+             len(uuids), len(made), label, scene.skeleton_ref(root).label))
+    line = deletion.delete_selected([root], confirm=lambda question: True)
+    after = scene_uuids()
+    left = after - before_drop
+    lost = before_drop - after
+    gate("floor native: Delete takes it whole, nothing else",
+         not left and not lost and not cmds.namespace(exists=":" + ns),
+         "%s | %d left (%s), %d lost" % (line, len(left), ", ".join(sorted(
+             (cmds.ls(u) or [u])[0] for u in left)[:6]), len(lost)))
 
 
 def run():
