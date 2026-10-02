@@ -7788,3 +7788,531 @@ tests. Not built: a hotkey row.
      -mergeNamespaceWithRoot` moves them out and removes it. And mayaUsd's LOCKED `UsdDefaultSettings`
      copies an asset carries into a rig's namespace make `-deleteNamespaceContent` fail outright
      («is locked, can not remove it»): unlock first.
+
+## Four tasks in one day: sources, retargets, groups, labels (2026-10-02)
+
+The animator, leaving for two hours: «Выдам тебе большое задание которое тебе нужно сделать самостоятельно
+от начала и до конца ... пушить и делать сборку не нужно пока я не проверю». Four tasks:
+1. separate the connection block in Animation Setup, and connect to Unity and plain folders as well as
+   Unreal, reading as many formats as possible;
+2. two retargets (rotations only / squash & stretch), chosen automatically and asked when proportions
+   would break, for every common skeleton convention found on the internet;
+3. every part of a character in one outliner group, and one display layer per character;
+4. the animation's name under each character after a group import or a drag.
+
+Built as FIVE parallel branches (task 2 split: the conventions, the two versions), each in its own git
+worktree from `3606438`, each reviewed independently and fixed, then merged here by hand. The five sections
+below are the branches' own records. **Nothing was pushed, no build was made, the installed copy and the
+animator's Maya (port 7001) were not touched.**
+
+**What the merge itself decided** (the branches could not see each other):
+- **A label stands in its character's outliner group** (`cliplabel.home_for(kind, group, character)`: the
+  character group first, for rigs and skeletons alike, so the character's layer hides its label too; a
+  legacy character keeps the labels branch's homes). `deletion` takes both the group and the label.
+- **A foreign convention honours the stretch onto a skeleton too**: `skeletonimport.transfer_foreign(...,
+  mode)` adds a point constraint on every paired bone in `stretch` (the source already scaled to our size
+  by its wrapper); the conventions branch drove orientations only.
+- **The conventions branch's unit-size stand-ins (`_unit_sources`) run only when the stretch does not
+  scale the clip itself** (`plan.scaled`), so no drive is scaled twice.
+- **The bridge press onto a rig**: the clip is imported (with the sources branch's rollback of a failed
+  file import - namespaces and an added rig taken back, the scene time restored) BEFORE the question
+  (the stretch branch's order), and a rig that stood is reset only after the answer.
+
+Proof on the MERGED tree, every one standalone (mayapy, scratch `MAYA_APP_DIR` each, nine at once):
+- `verify_import_sources.py` **27/27** (gates 50-53 re-run after the verify learnt that a rig's bones stand
+  in its character group - trap 185 again);
+- `verify_skeleton_conventions.py` **122/122**; `verify_retarget_modes.py` **40/40** (phases a-h);
+- `verify_character_groups.py` **146/146**; `verify_clip_labels.py` **17/17** (gates 1, 4, 9 now ask for
+  the character group, the merge's home for a label);
+- `verify_rig_pipeline.py` **30/30**, `verify_many_rigs.py` **32/32**, `verify_delete_character.py`
+  **82/82**, `verify_weapon_space.py` **11/11**;
+- **3796 unit tests**, OK.
+
+**Not proven on the merged tree**: the GUI halves (the Connect block and the Retarget card's
+`[Auto | Rotations | Stretch]` segments photographed in the skinned hub, the stretch question dialog
+on screen, a real mouse drag) - the branches' own GUI runs were on their branches, and the stretch
+question was answered through `maya_retargetmode.set_asker` in every proof. Unity is read off the disk
+only (no live editor link). No real Max / Blender / Unity / BVH file exists on this machine: those
+conventions are proven on synthetic skeletons and on files the verifies wrote.
+
+## Connect: Unreal, Unity, a folder - and every format we can read (2026-10-02)
+
+The animator, away for two hours: «Во вкладке Animation setup раздел с подключением к unreal engine
+нужно визуально как-то отделить. Далее я бы хотел что бы у нас была возможность подключаться не только к
+анриал енжину а и к Unity, и просто к папке с FBX файлами.......хорошо бы было сделать максимальный
+обхват форматов которые мы можем прочитать и вытащить из них анимацию.» Every choice was taken alone;
+spec `docs/superpowers/specs/2026-10-02-connect-sources-and-formats-design.md`.
+
+**The block**: the connection rows are one column set into the Animation Setup card, `ueAnimBridgeInset`,
+hub role **`inset`** (tokens `inset` / `inset_line`; `maya_hubqt` sets `WA_StyledBackground` - a plain
+QWidget paints no stylesheet background - and pads it 8 px; the classic hub a `backgroundColor`). Top
+down: the heading **Connect** (was «UE Connect»), **[Unreal | Unity | Folder]** (`ueAnimBridgeSource_*`,
+remembered in `ueAnimBridgeSourceKind`), the source's line, the dropdown + Refresh, search, the list, the
+Import target, the timeline box, Import Animation, the two exports. The card's status line stays outside.
+
+- **Unreal** as before. **Unity**: Unity Hub's projects (`%APPDATA%/UnityHub/projects-v1.json`, one per
+  folder - it lists one twice by drive-letter case; «open» = `Library/EditorInstance.json`'s pid alive),
+  then browsed ones, then **Browse...**; Refresh scans `Assets`: a model's `.meta` `clipAnimations`
+  (name, takeName, firstFrame, lastFrame) one row each, else one per take; `.anim` one row, Humanoid /
+  compressed listed and marked. **Folder**: remembered folders (`ueAnimBridgeRecent_folder`) and
+  Browse...; Refresh scans recursively, skipping `Library`/`Temp`/`.git`. Scans run under a cancellable
+  progress window and are cached in the temp folder per source and place (`sources.cache_name`).
+- **One funnel**: `records.AnimRecord` gained `source, path, clip, fmt` (defaults = Unreal). Every road
+  calls `window._export_from_editor`; a file record answers a **clip reference** (`C:/a/p.fbx|take=2`,
+  `x.glb|anim=0`, `Bow.fbx|first=0&last=5&take_name=Take+001`), and `rigimport.import_source` sends a
+  plain FBX to `animimport.import_clip` as always, anything else to `formats.import_clip`, which leaves the
+  same shape (a namespaced keyed skeleton + info). Retarget, skeleton transfer, the square of several and
+  the drag needed nothing. Export to uasset is Unreal's only; a row that cannot import refuses on press.
+- **Formats** (`maya_uebridge/formats.py`, readers `bvh.py`, `gltf.py`, `unityfiles.py`, scan rules
+  `sources.py` - the last four stdlib): FBX takes (`FBXRead` + `FBXGetTakeName i`, positional; `FBXImport
+  -t i`), Collada and FBX through the FBX plugin, `.ma/.mb` imported with script nodes not run and
+  deleted, USD by `mayaUSDImport(readAnimData=True)`, BVH / glTF / Unity `.anim` by our parsers and one
+  builder (`formats.build`: `MFnAnimCurve.addKeys`, times in SECONDS, the scene's rate untouched and a
+  difference said). BVH's listed `Z X Y` is Maya's `yxz`; glTF rest TRS is the jointOrient, metres x100;
+  Unity is left-handed (`(-x, y, z)`, quaternion `(x, -y, -z, w)`) and a generic clip lands on the model
+  beside it (never above `Assets`) found by its bones' names in the file's bytes.
+
+- **Refused before the press** (the fix review): `formats.check(ref)` reads the file again for what
+  its import would refuse - a take not in it (or the default take would come in silently), a Unity clip
+  with no model and no positions, a glTF with no skeleton - and `window._export_from_editor` raises it,
+  so no road adds a rig first; what still fails inside an import is taken back
+  (`rigimport._undo_failed_import`: the clip's namespaces, the rig the press added). A file with one
+  moving take among several names its take. A whole-saved `.ma`'s locked `UsdDefaultSettings` is
+  unlocked and deleted (`formats.tidy_scene_import`). A Unity model comes in with NO take of its own
+  (`formats.import_model_rest`). Every file of the animator's is read from a COPY in the bridge's temp
+  folder (`sources.staged`): the plugin writes `<file>.fbm` beside what it reads.
+
+Proof: `docs/superpowers/plans/verify_import_sources.py` **27/27 standalone** - a UE 3P clip written as
+a two-take FBX, DAE, USD, `.ma`, BVH, GLB and two `.anim`, read back through the real funnel against
+every joint's world matrix with a frame-off control (34-175 cm): FBX takes 0.000000 cm, USD 0.000018,
+`.ma` 0.000000 (its script node never ran), BVH 0.000090, glTF 0.000033, Unity 0.000000, DAE 0.000527 at
+its own key times; the real `TwoHandGunFireStanding.anim` against Maya's own import of the model clip
+it is Unity's copy of - 36 of 37 bones within 0.6° / 0.05 cm on all 40 frames, the 37th a constant
+20.000° at every key (an edit on the copy), and only the X mirror landing (the others 0 of the bones where
+they differ); refusals before the press (no rig added) and after it (the added rig removed, 3.8 s); a
+whole-saved `.ma` retargeted with its namespace gone; no `.fbm` beside a source file; the Lugal project listed (1975 rows, 4-5 s); a BVH onto a new Manny rig,
+a GLB onto a new Manny UE5 skeleton, an FBX take + DAE + USD at once in a 2 x 2 square, every clip
+namespace gone. A disposable GUI Maya (port 7061): the card at the dock's 510 px viewport, content 504 /
+431, the Lugal project scanned in 3.9 s, a BVH imported from the folder onto a new rig in 4.8 s; pictures
+`connect_block_unreal.png`, `connect_block_unity.png`, `connect_block_folder.png`. 3564 unit tests.
+
+159. **`FBXImport -f file -t i` looks the take index up in the file the plugin READ LAST**, not in
+     `file`. After a scan had `FBXRead` other files, `-t 2` answered «FBXImport error: take not found»
+     on a file that has three takes. Read the file again (`FBXRead -f`) right before a take import. And
+     `FBXGetTakeName` takes the index positionally: `FBXGetTakeName -n 1` is «Use syntax».
+160. **Maya's Collada writer resamples onto 24 fps whatever the scene's rate**: a 30 fps clip came
+     back with keys 1.25 frames apart, exact at its own key times (0.0005 cm) and up to 165 cm off
+     between them (an euler flip a resample put between two keys). A DAE from Maya is lossy; judge a
+     reader of it at the file's own key times.
+161. **A verify's `write_glb` returned its loop variable**: `for key, path, kind in ...` inside a
+     function whose argument is `path` wrote the file as `./rotation` and returned "rotation" - the
+     verify then found no GLB. Never reuse an argument's name as a loop variable.
+162. **A model search that climbs folders left the sandbox**: a clip "alone" in `%TEMP%/.../alone`
+     climbed into `%TEMP%` and took another tool's `skeldar_inventory_export.fbx` as its model (it named
+     the bones). A search for a sibling file stops at the project's `Assets`, and outside a project looks
+     in its own folder only.
+163. **The scratchpad is shared between parallel agents**: another agent's `probe1.py` replaced this
+     one's between two runs, and another's commit message replaced a `msg1.txt`. Each agent works in a
+     folder of its own inside it, its files named for it.
+164. **A whole-saved `.ma` carries mayaUsd's `UsdDefaultSettings`, and it imports LOCKED into the
+     clip's namespace**: `namespace -rm -deleteNamespaceContent` then raises «is locked, can not remove
+     it» and the clip's whole scene stays behind (measured 2026-10-02, trap 158's family from the import
+     side). Unlock what an import of a scene brought, and delete its furniture, before the namespace goes.
+165. **`FBXResetImport` turns every `FBXProperty` back to its default**, so an option set before a
+     helper that resets (`animimport.import_clip` does) is lost silently: the model under a Unity clip
+     kept importing its 333-curve take with `Import|IncludeGrp|Animation` set false just before. Set it
+     AFTER the reset, and put it back in a finally - it is session-wide.
+166. **`FBXImport` extracts a file's embedded media into `<file>.fbm` beside the file** (a folder in a
+     Unity project's Assets, which Unity then imports); `FBXRead` does not. Read a file you do not own from
+     a copy.
+167. **A gate that writes its own input with the inverse of the conversion it tests cannot fail**, and
+     a mirror control that counts every bone cannot either: a bone turning about its local Z alone reads
+     the same under Unity's X and Y mirrors (41 % "landed" for the wrong one). Prove a conversion against
+     the other program's own output (Unity's copy of a model clip against Maya's import of that take),
+     and count a control only where the candidates differ.
+
+## Every common source convention onto our rigs and skeletons (2026-10-02)
+
+The animator: «прошелся по интернету нашел самые часто используемые иерархии костей для Unity,
+Mixamo, blender, motionbuilder, 3dmax Unrealengine и сделал ретаргеты для этих систем на наши
+риги и скелеты» (one of four tasks left for two hours, «сделать самостоятельно»). Spec:
+`docs/superpowers/specs/2026-10-02-skeleton-conventions-design.md` - its table lists every
+convention with its quirks and the sources read.
+
+**`SkeldarAnim/maya_skeletonmap.py`** (stdlib, pure; a payload row): `recognize(paths,
+positions)` answers {our UE5 name: source path} for Unreal, Mixamo, MotionBuilder HumanIK
+(`Character1_`), Unity Mecanim, VRM (`J_Bip_`), Blender Rigify (`DEF-`) and Auto-Rig Pro
+(`.x`), 3ds Max Biped (`Bip001`), Character Creator (`CC_Base_`), Daz Genesis, CMU BVH, Xsens
+and Synty. Names first (namespaces, prefixes, camel case, the side anywhere: `Left`, `l`,
+`_l`, `.L`, `_L_`), then the CHAIN: the hips where both legs and the spine meet (Biped hangs
+its thighs off `Spine`, CC splits `Hip` into `Pelvis` and `Waist`), an arm the path from the
+spine to a hand - so `Shoulder` is a clavicle in HumanIK and an upper arm in Synty by where it
+stands - the spine and neck distributed onto ours with both ends kept (`distribute`, Mixamo's
+3-onto-5 rule). Twist, roll, end, nub, IK, weapon and camera bones are never mapped. A root
+counts only at the floor (Biped's `Bip001` is the centre of mass: Main takes the hips' travel).
+Names failing, positions give a STRUCTURAL pass (lowest leaves the feet, the top the head,
+furthest leaves sideways the hands). It refuses by name: «generic: no Hips/pelvis found - not a
+humanoid this retarget knows». The rest pose is CHOSEN (`choose_rest`: the candidate - rotates
+at 0, the first frame, the bind - whose bones point most like the rig's, each in its own body
+frame); it sets only the roll, never where a bone points.
+
+**Wired in without touching UE5 or Mixamo**: `maya_asretarget` / `maya_pmretarget` keep their
+schemas; a source neither (or one only SCORING as Mixamo - CMU, Unity - or as UE5 by one shared
+name - ARP's `hand_r`, Daz's `pelvis`) becomes a `GenericSchema` re-keyed into UE names, never
+a twin, its rest chosen, beyond 2 % of our size driven through unregistered stand-ins
+(`_unit_sources`). If the map refuses a source that DID score (an arms-only UE clip), the old
+road runs. `skeletonimport.transfer`: a clip without the UE limbs by name goes to
+`transfer_foreign` - both skeletons read, paired through our names (chains distributed chain
+onto chain), each bone oriented through a rest-aligned offset, the pelvis placed, the root on
+the hips' ground travel (`ground_axis`: the Creep's root is under a -90 X Null), the source
+scaled for the bake; a map refusal with leaf pairs falls back to the leaf road. `Sweep
+Fall.fbx` now goes onto our skeletons too.
+
+**The size, without the pose** (`size_ratio`): the pelvis over the floor in the first
+candidate rest that STANDS on it (`stands`: legs straight and down an upright body, the ankles
+near its floor), else the leg lengths - never the pelvis of a crouched first frame. Over the
+FLOOR, not the ankles: Mixamo's hips stand 5 cm over its thighs, Manny's 2, and the ankle
+reading put Sweep Fall 4.4 % off. **Scaled about the floor under the root's first frame**
+(`scale_pivot`), so a drop, a kept place and the square (read off the unscaled first frame)
+hold; the square reads each clip's travel at its baked size (`travel_scale`). **A root that
+never moves while the hips travel** (HumanIK's Reference, CC's BoneRoot) is no root
+(`drop_static_root`).
+
+Proof: `verify_skeleton_conventions.py` **122/122 in mayapy standalone** - 13 synthetic
+conventions (each with its own joint axes, rest in jointOrient or in rotate, metres / BVH units,
+a Z-up Biped wrapper) plus Sweep Fall onto Manny_Rig, Creep_Rig, Orc_D_Rig (the Retarget
+button) and Manny UE5 / Creep skeletons: every mapped bone POINTS where the source's does -
+**0.0078 deg** Manny_Rig (0.16 at its neck in-between), **0.0002** Creep/Orc D, **0.0005** the
+skeletons - lengths unchanged (0.000000 cm; Manny's left leg its own 0.05 cm wander), travel
+scaled exactly (x100.94 metres, x2.2432 CMU, 0.0000 cm), refusals, the rest forced either way
+(directions 0.0000 / 0.0000, frames 95.8 deg apart), controls 70-149 deg; and, after an
+independent review, four variants (15 % longer legs x0.8888, a crouched first frame x1.041 by
+the legs and x1 on its bindPose, a static HumanIK Reference) with the expected size DERIVED
+from the fixture's constants, the UE4 Mannequin as a target, an arms-only UE clip on both
+roads, a CMU clip 20 cm off its origin dropped on a point (Main / root 0.0000 cm off; scaled
+about its origin, the control, 25.02 cm) and two in a square (250.00 cm apart; 219.79 at the
+keyed size). `verify_rig_pipeline.py` 30/30, `verify_many_rigs.py` 32/32,
+`verify_creep_rig_asset.py` 16/16 on the branch. 3576 unit tests. No real Max/Blender/Unity/
+BVH file exists here: synthetic only.
+
+168. **Maya has no `.` or `-` in a node name: an FBX import writes Rigify's `DEF-spine.003` as
+     `DEF_spine_003` and ARP's `root.x` as `root_x`.** A reader written for the source file's
+     spelling missed the scene's: Rigify's numbered spine read as six spine joints and no head,
+     and the structural fallback took over with 21 bones. Read both spellings.
+169. **One shared bone name made a foreign skeleton score as Unreal.** `detect_schema` takes
+     any hint: ARP's `hand_r`, Daz's `pelvis` -> the UE5 TWIN schema -> fingers 170 deg off and
+     70 cm of travel lost. Unreal is the UE limbs BY NAME (`covers_ue_core`).
+170. **…and not the head: a first-person UE clip carries none.** The first guard required it
+     and sent `LongSword_Attack_Right_Heavy_1P` (90 joints) down the generic road, which refused
+     it - `verify_rig_pipeline.py` 13 of 30 failed until the head left `UE_LIMBS`.
+171. **A skeleton can stand off its own bind** (Manny's, 0.07 cm at the left calf): directions
+     read off the `.bindPose` matrices came out 0.0989 deg wrong at EVERY frame. Read where a
+     bone points from where its children stand, in the bind frame.
+172. **A hand aimed past a mapped metacarpal at the middle finger depends on the metacarpal's
+     own turn**: 3.3 deg on Rigify/Daz sources. With metacarpals both sides, aim at the
+     metacarpal.
+173. **A rig carrying the last take reads as another size.** The verify read the rig road's
+     size with `_plan` before the button's `reset_build_pose` and got x100 for x100.94, x2.222
+     for x2.243: `rest_matrices(..., "live")` read the game skeleton in the previous clip's pose.
+     Every press resets first; anything that asks the plan must too.
+174. **"Where is the pelvis" is a pose question.** The first build sized a source by its pelvis
+     height in the chosen rest - a crouched first frame read it 20-60 % low. And the pelvis over
+     the ANKLES is a convention question: Mixamo's hips stand 5 cm over its thighs, Manny's 2,
+     4.4 % apart on the same height. Size by the pelvis over the floor in a pose that STANDS,
+     else by the leg bones.
+175. **A scale about the origin moves a clip that does not start there.** Drops and kept places
+     read the unscaled first frame; a CMU clip x2.24 starting 20 cm out landed 25.02 cm off the
+     cursor. Scale about the floor under the first frame.
+
+## Two retargets: rotations, or squash & stretch - and which one runs (2026-10-02)
+
+The animator: «у нас должно быть две версии ретаргета в первой где мы делаем ретаргет но
+гарантируем что кости не растягиваются ... Вторая версия где у нас учитывается растяжение костей.
+Наш скрипт должен определить какую ретаргет систему стоит использовать и если перенос анимации на
+риг или скелет будет ломать пропорции то необходимо спросить у пользователя согласен ли он на сквош
+и стрейч костей.» Away for two hours: every choice taken alone, in the spec
+`docs/superpowers/specs/2026-10-02-retarget-stretch-design.md`.
+
+**`SkeldarAnim/maya_retargetmode.py`** (stdlib at import, a payload row; its scene wrappers import
+`cmds` inside) holds the measurement, the rule, the question and the scaled followers; the retarget
+modules build their own drives.
+
+- **ROTATIONS**: every bone turns as the clip's and keeps the target's length; root and pelvis
+  placed; on a rotation-marked rig (the Creep, the Orc D) the IK ends and poles follow the rig's
+  own FK, on any other (Manny) they stay on the clip's hands and feet - the legacy plan with no FK
+  position (`drive_plan(keep_lengths=True)`): an AS IK limb has `stretchy` 0 on every shipped rig,
+  it bends and never stretches. **STRETCH**: every bone on the clip's joint,
+  the clip taken at OUR size (`s` = our legs over the clip's; a clip's rest is never visible, its
+  legs are) - the target's lengths become the clip's, its animated stretch included. **The twin's
+  stretch IS the old twin path**, unchanged to **0.0 cm** (a Manny retargeted with the new press
+  against one with the legacy call, every bone, every frame).
+- **The setting** `skeldarRetargetBones` = auto (default) | rotation | stretch, as `[Auto | Rotations
+  | Stretch]` segments in the **Retarget card** (only there: one setting for every press, and the
+  Animation Setup import rows were another session's that day). **Auto**: a twin (median paired
+  bone ≤ 1 %) - stretch, exact, never asked; the same proportions at another size (the scaled
+  median ≤ 1 %) - stretch; anything else - one `confirmDialog` («Heavy onto Creep_Rig: ... Squash &
+  stretch would change Creep_Rig's proportions: arms -17 %, spine +1 %, fingers -30 %.» - and «a
+  limb in IK keeps its own lengths, its end following the FK»; **Keep proportions** (default) /
+  **Squash & stretch** / **Cancel**); batch mode: rotations, said so. The status line always names
+  the version and why, and a stretch's names the limbs in IK («SQUASH & STRETCH - leg_l, leg_r in
+  IK keep their own lengths ...»). `set_asker` installs an answerer (the verify).
+- **Lengths by the retarget's own map**: each paired bone against its nearest PAIRED ancestor (a
+  3-joint Mixamo spine against our 5 compares chord with chord); root, pelvis and the helpers are
+  not lengths; regions by our bone's name. Ours from the skinCluster's `bindPreMatrix` (trap 176),
+  the clip's at its first frame.
+- **Scaled followers**: under the holder, a space riding the clip root's PARENT rigidly (the
+  bridge's wrapper is moved onto the rig's place after the connect: the move rides 1:1), a follow
+  point+orient-constrained to the joint, its channels connected into a node under a group scaled s
+  **about the clip root's first-frame floor point** (`scalePivot`, trap 180), a child cancelling
+  the body's whole world scale - at the joint times s, turned as it, scale 1. Transforms and
+  connections only.
+- `maya_asretarget.connect(bones=None|"rotation"|"stretch")` (None the legacy rule every older
+  caller keeps): stretch onto another body is `drive_plan(scaled=True)` - the rotation plan whose FK
+  controls (and Main, RootX_M) take position from the followers with the twin path's own offsets.
+  **The Creep's and the Orc D's game bones follow AS by orientation only** (trap 177): a stretch
+  press gives each such bone a point constraint from its AS joint (marked `skeldarStretchFollow`, no
+  offset - the joint stands on the bone, its own translate kept on it as `skeldarStretchRest`), a
+  rotations press takes them away and writes that translate back (trap 58's mechanism). The holder
+  remembers the version (`connected_mode`); the helper bones carry in world space only for the
+  twin. `maya_pmretarget.connect(bones=)`: stretch puts every FK control on the clip's joint in the
+  frame Main and the pelvis ride - pm's own scaled group, plus the pelvis's rest offset - so the body
+  is the clip's shape about its pelvis whatever moves the clip after the connect.
+- **Every press decides before anything changes**: the Retarget button before the reset; the
+  bridge onto a rig imports the clip FIRST, asks, then resets (Cancel removes the clip; an added rig
+  is deleted again); onto a skeleton (`onto_skeleton` / `onto_existing(decide=)`; Cancel deletes the
+  added skeleton and the clip); a batch (`lineimport._Versions`) measures every clip against the
+  first target it adds and asks ONCE, the worst named, by UUID (trap 178). «cancelled - nothing
+  changed» - and it is: every Cancel after an import puts the scene's time unit (with its keys),
+  ranges and frame back (`rigimport.time_state` / `restore_time`, trap 179). The skeleton transfer
+  runs on the twin verdict the press decided on (`Decision.twin`), never its own second opinion.
+
+Proof: `docs/superpowers/plans/verify_retarget_modes.py` **39 of 39 gates standalone** after the
+review's fix pass (phases a-h; numbers in the spec): Manny a twin, 0 questions, every bone on the
+clip's 0.072 cm (its left-leg fit), the legacy path to 0.0; Creep_Rig / Orc_D_Rig asked once each,
+Keep - lengths kept 5.9e-14 / 1.9e-5 cm, orientations 0.0013°; Squash AS THE RIG STANDS - every bone
+outside the IK legs on the clip's joint 0.0001 / 0.0002 cm, the IK legs' lengths kept (3.9e-10 /
+1.6e-6) with their ends 0.0002 cm off the clip's, the line naming them; the lengths changed by the
+measured -16.7 % / -4.9 %; Rotations on the same rig took the 62 follows away and wrote every
+translate back to 0.0; skeletons Manny exact 8.9e-4 cm unasked, Creep Keep 5.6e-14 / Squash
+7.2e-14; the Lugal rig opened read-only - Keep 6e-4 units, Squash 0.0007 units at x0.117 about its
+pelvis, and 0.0007 again with the clip moved 36 units and turned 25° AFTER the connect; a Mixamo
+clip onto Manny - Keep IS the legacy plan (a second Manny retargeted by the legacy call 0.0 cm,
+limbs in FK and in IK), Squash 0.064 cm; a batch of 3 asked once; Cancel - 0 nodes left, the rig's
+190 curves and 11590 keys untouched, and in a film scene with keys at 24/48 the unit, the keys, the
+ranges 5-40 / 0-50 and frame 7 all back; a clip under a group turned 30° and scaled 0.8 (x1.25),
+its root's keys moved (150, -80) off the group's origin: the stretched game root starts ON it to
+0.0000 cm, where the pre-fix code put it 33.78 cm away (the positive control: the pre-fix plugin
+fails d-squash 0.267 units, d-frame 31.99, h1 33.78);
+`verify_rig_pipeline.py` 30/30, `verify_many_rigs.py` 32/32, `verify_creep_rig_asset.py` 16/16 after
+the fix pass. 3580 unit tests.
+
+176. **A joint's own `.bindPose` attribute can be stale by centimetres**: on Manny_Rig's game
+      skeleton parent-child distances read from it differed from the bind by up to 3.5 cm, so a
+      rest length read there would call a twin "not a twin". The skinCluster's `bindPreMatrix` is
+      the bind the mesh uses (its inverse is the joint's world matrix at bind); read that.
+177. **A rotation-only rig's game bones ignore a control's translation.** The Creep's and the Orc
+      D's bones take ORIENTATION ONLY from their AS joints (lengths exact by design), so the first
+      squash & stretch put every FK control on the clip's joints and the exported skeleton did not
+      move: lengths 0.0 % against an asked -16.7 %, a fingertip 18.6 cm off. Every control gate
+      would have passed; only measuring the GAME bones caught it.
+179. **An FBX import changes the scene's time, and a Cancel has to change it back.** Measured in
+      mayapy: FBXImport of a 30 fps clip into a film scene (FBXImportSetMayaFrameRate off) switches
+      it to ntsc AND RESCALES the keys already there - a key at 24 lands on 30 - and puts the
+      playback and animation ranges on the clip's and the time on its first frame. `currentUnit
+      -time film -updateAnimation true` takes the keys back to 24; the ranges and the frame are
+      then set in the old unit's frames. A Cancel that only deleted the imported nodes left all four
+      changed, and every node-counting gate passed.
+180. **A body scaled about its space's ORIGIN stands (1 - s) of its start away from where the
+      bridge put it** - every place (`place_moves`, a drop point, a skeleton's own place) is
+      measured from the UNSCALED root at its first frame. Scale about the root's first-frame floor
+      point (`scalePivot`). Two verify lessons from proving it: the Creep's legs equal a UE clip's,
+      so s = 1.0000 and no pivot can show - scale the clip's group to make s 1.25; and `cmds.parent`
+      KEEPS the world position, so moving a group and then parenting the clip under it moves
+      nothing (the gate read a root at (0, 0) and could not fail) - parent first, then move.
+181. **Maya names a constraint in the ROOT namespace**: `pointConstraint` on `Creep_Rig:b` makes
+      `b_pointConstraint1`, so a gate filtering constraints by a namespace prefix on short names
+      finds nothing whatever happened - "no follow left" could not fail. Find our nodes by their
+      attribute under the rig's skeleton.
+178. **A batch that measures every clip when the first is placed reads the first clip at a stale
+      path**: `onto_skeleton` wraps the clip's root (re-parents it) before it asks, and the other
+      clips' recorded paths were fine while the first one's was `|Heavy:root` - «No object matches
+      name» three times, every clip failed. Keep clips by UUID across anything that re-parents
+      (trap 16 again).
+
+## One outliner group and one layer per character (2026-10-02)
+
+The animator: «Сейчас каждый персонаж в сцене создает кучу мусора если это не повредит нам то давай
+сделаем так чтобы все части которые относятся к одному персонажу ригу были в одной группе, важно что
+бы пользователь открыл аутлайнер и сразу все понял. Так же каждый риг должен иметь свою группу слой
+что бы его можно было включать и отключать в сцене.» Away for two hours; every choice taken alone.
+Spec `docs/superpowers/specs/2026-10-02-character-groups-design.md`.
+
+**Measured first** (`measure_character_tops.py`, standalone, the build before and after): a Manny rig
+left 4 world-level nodes (`Group`, `root`, `SKM_Manny_Simple`, `materialXStack1`), a Creep skeleton 6
+(`Armature` and five meshes), a Manny skeleton 4 (`root`, `SKM_Manny_Simple`, `camera1`,
+`materialXStack1`), and every extra on a bare skeleton one more (`WeaponSpaces`, `SpearMesh`,
+`ArmorSpaces`, `SceneSetup_camera`, `CenterOfMass` - the spaces SHARED by every skeleton). After: one
+node per character, and 0 for every extra.
+
+- **The group** (`maya_scenesetup/chargroup.py`): `<base>_Character` at world level - a rig's base its
+  namespace (`Manny_Rig1_Character`), a skeleton's its asset's file stem made free
+  (`Manny_Skeleton_Character`, `Manny_Skeleton1_Character`); marked `skeldarCharacterGroup` (the
+  catalog label) with a message link `skeldarCharacterRoot` from the root; found by the marker
+  (`maya_rigs.group_of`), never by name; **t/r/s locked at identity** (a folder - the rig moves by
+  `Main`, a skeleton by `root` - and an identity parent makes every `relative=True` re-parent exact).
+  Add Character makes it for every row and every road (`character.group_character`, in
+  `_after_import`'s unrecorded block): a rig's world-level nodes of its namespace, a skeleton's
+  world-level nodes of its import.
+- **One layer** `<base>_Layer`, the group its one member: V off hides the whole character, the assets'
+  own layers included (`MDagPath.isVisible`, gated).
+- **Parked in it** (`chargroup.park(node, owner)` - the one call for any future part;
+  `character.character_group(root_or_rig)` the public question): Camera Setup's camera, a floor
+  weapon, a weapon Connections lifts to world, a bare skeleton's CoM and its OWN `WeaponSpaces` /
+  `ArmorSpaces` (a rig's stay in its AS `Group`).
+- **`maya_rigs`**: `Rig.character` (default ""); `rig.group` is still AdvancedSkeleton's -
+  `top_below(Main, character groups)` - so every rule about it holds; `rig_of` answers for the group
+  and its loose parts. `top_of(rig.group)` was the identity and is `rig.group` now everywhere.
+- **Exports lift the character's top out of the group** (`chargroup.lifted`, around
+  `animexport._export_hierarchy`, both layouts, every road), because the exporter writes ancestors
+  (trap 182), all of it inside ONE closed undo chunk (`skeldarExportFbx`), so a Ctrl+Z after an
+  export is a net nothing (trap 186); the status line names the root as the outliner shows it, never
+  the lift's transient `root1` beside a world-level `root` (`_export_hierarchy(shown=)`).
+- **Who is it**: the group or a non-joint in a skeleton's group (a mesh, the camera, a floor weapon,
+  the CoM) names that skeleton - `skeleton._group_root` and `skeletonimport.selection_names` alike;
+  Delete takes the group and its layer, but a **stranger** in the group (the animator's own prop:
+  nothing of ours, not recorded, not in the namespace - `deletion.strangers`) names no character, is
+  moved out to world level and kept, and the confirm names it; a legacy character (no group) behaves
+  exactly as before.
+- **`chargroup.make` is all or nothing**: a failure moves the tops back to world by UUID, deletes the
+  layer and the group (never a group still holding a top), re-raises, and the Add line says «no
+  character group (...)».
+- **Plain names now**: a grouped second Manny skeleton is `|Manny_Skeleton1_Character|root` with plain
+  meshes (nothing collides at world level), so Export / Import with NOTHING selected and two plain
+  skeletons refuses where "the one named `root`" used to pick the first silently; a mesh, bone or the
+  group selected decides it.
+
+Proof: `verify_character_groups.py` **146/146 standalone** - A every row: one node + one layer,
+locked, linked, the grouping moving nothing (joints and sampled vertices **0.0 cm** against the same Add
+ungrouped), V off **75 / 83 / 79 / 4 / 5 / 1 visible shapes → 0** with the assets' own layers forced on;
+B four characters with their kits: nothing at world level but the four groups, the who-is-it questions
+answering from the group, the bridge onto / new rig / new skeleton / a square of two all grouped; C the
+exports in both layouts equal to the same character ungrouped (top node, joints, frame-20 matrices
+**0.0**), the scene put back exactly, the control without the lift writing `Manny_Skeleton_Character`
+into the file; D Delete (433 / 2723 nodes) + Ctrl+Z (the layer holding the group again) + redo; E a
+legacy character as before; F a portrait drop moved by exactly the point, the group at the origin. The
+existing verifies re-run on the branch: delete 82/82, rig pipeline 30/30, many rigs 32/32, weapon space
+11/11, inventory 14/14, armor 15/15, cascadeur layout 10/10, Creep rig 16/16, Orc D 22/22, one shader
+4/4, Creep skeleton 9/9, FK/IK 63/63, weapon socket 10/10; in a disposable GUI Maya (port 7064) Connections 40/40 and Add
+Character 31/31 - every first-run failure a world-level path literal in the verify, moved into the
+group. G a grouping that fails half way leaves a legacy character and says so; H a UE clip onto a turned, moved grouped rig equal to the ungrouped one (0.0 over 5 frames); I two Manny + two Creep skeletons (plain `root`s): recolour, export, Onto selected, the animator's prop kept by Delete. 3545 unit tests; the Outliner and Layer Editor photographed (`character_groups_outliner.png`).
+
+182. **The FBX exporter writes a selected node's ANCESTORS into the file.** Measured 2026-10-02:
+     `FBXExport -s` of the joints of `|CharGrp|root|pelvis` with `FBXExportIncludeChildren false` came
+     back as `|CharGrp|root|pelvis`. Anything that groups a skeleton must take its top out to world
+     for the length of an export (relative, by UUID, the name put back) - or every file carries the
+     group, and Cascadeur's layout reads "root stands under X" and goes out plain.
+183. **A node cannot take a namespace's name, and a namespace cannot be made over a node's - the
+     second silently.** `createNode -name :Manny_Rig` beside a namespace `Manny_Rig` answered
+     `Manny_Rig1`; `namespace -add Bar` beside a node `|Bar` raised nothing and `namespace -exists`
+     answered False. A group named exactly for its rig would have blocked the next rig's namespace.
+185. **A verify that names a character's nodes by world-level long path breaks the day the character
+     moves into a group** - `"|Manny_Rig:root"`, `"|Creep_Rig:Group|Creep_Rig:Geometry"`,
+     `"|Armature|root"`, «lies at world level»: 14 gates across 9 verifies failed on correct code here.
+     Ask `maya_rigs` / `character.character_group`, or use a partial path (`Manny_Rig:root`), and keep
+     the expectation as strict as it was.
+184. **Re-parenting the import's nodes invalidates the paths `returnNewNodes` gave** (trap 16 in
+     Add Character): the first grouped build said «added - 0 joints, 0 meshes». Resolve the import by
+     UUID across any re-parent.
+186. **A context manager that edits the scene and puts it back leaves its LAST step on the undo
+     queue.** `chargroup.lifted` re-parented the top to world and back around every export; both moves
+     were recorded, so the animator's first Ctrl+Z after Export FBX... undid the "back" and the
+     grouped root jumped to world level - the scene state after the export was exact, and no gate
+     pressed undo. Wrap a round trip in ONE closed undo chunk (a net no-op to undo), not in
+     `stateWithoutFlush` (trap 145 breaks an enclosing chunk), and gate it with `cmds.undo()` + a
+     control without the chunk.
+187. **Grouping characters ends the world-level name clash that a rule quietly relied on.** Every
+     second skeleton used to arrive renamed (`Manny_Skeleton_root`), so "the one named `root`" picked
+     the first plain one; grouped, every skeleton keeps a plain `root`, and an Export / Import with
+     nothing selected now refuses between them. Right by the bridge's own rule (never guess), but a
+     behaviour change: list every rule that reads a short name before removing what made names unique.
+
+## The animation's name under each character (2026-10-02)
+
+The animator: «при групповом импорте в сцену в том числе и при переноси мышкой драгом давай внизу под
+каждым скелетом или ригом персонажем будем писать имя анимации а то сейчас не понятно» - away for two
+hours, every choice taken alone. Spec `docs/superpowers/specs/2026-10-02-clip-labels-design.md`.
+
+- **One rule at the bottom of every road**: `rigimport.retarget_imported` (the Rig and New rig presses,
+  a drop on a rig or the floor, the batch square) and `skeletonimport.onto_skeleton` / `onto_existing`
+  (the Skeleton presses and drops) end in `_label`, a lazy seam onto
+  **`maya_scenesetup/cliplabel.py`** (`label_rig` / `label_skeleton`, never raising). `lineimport` and
+  `window` needed nothing. One label per character: a later clip REPLACES its text on the same node
+  (`plan`: create / keep / update) - and **a label names the take, so whatever clears the take clears
+  the label**: the rig reset in front of every bridge import (`rigimport.ready_rig`) deletes it, so no
+  refusal after the reset (still posed, no joint, a connect refused) leaves a stale name, and the press
+  writes a fresh one after its bake. **The Retarget button** (`maya_rig_retarget.run_retarget`) clears
+  at its reset too and relabels after the bake from its source (`clip_name_from`, pure: the outermost
+  namespace, else a top group that is not a joint or a generic wrapper, else the clip file the scene was
+  OPENED from) - or leaves the rig unlabelled when the source names nothing: never the old clip's name.
+- **What it is, measured against text curves (115 nodes, illegible at 16 m)**: an `annotationShape`,
+  `displayArrow` off - fixed screen size, centred on its point, facing the camera, drawn over every mesh,
+  in a playblast, hidden by Show > Dimensions. **Unselectable AND coloured** (trap 188): the transform in
+  reference display, the shape's own override back to normal with RGB. In the hub's **accent** - measured
+  behind the labels of a textured 2 x 2 square, no luminance beats ~2.3 against a grey background and
+  white bodies at once (muted 2.10, accent 2.14 the best worst case; near-white 4.91 over the floor,
+  1.35 over a body), and the orange's hue stands apart from every neutral.
+- **Where**: 50 cm ahead of the root on world +Z (`FRONT`, past Main's ring, 40.52) on the floor,
+  following the root in WORLD space through four DG nodes (`_follow`: the root's world X/Z, Y on the
+  floor, FRONT on world +Z, then the label's own `parentInverseMatrix`): exact (0.000000 cm over the
+  thrust's 248 cm) and still exact with the rig's group moved and turned (trap 189). Each node is linked
+  to the label by message (`skeldarClipLabelOf`); a label whose network is gone is mended on the next
+  import (`follows`).
+  A label hangs in its character's outliner group (the merge, below; `home_for` gives the group first),
+  else - a character added before the groups - under the rig's group in its namespace (`<ns>:clipLabel`)
+  or at world level beside a skeleton (`<root>_clipLabel`), linked by message (`skeldarClipLabelRoot`) and marked `skeldarClipLabel` (the
+  clip's name). **`home_for` is the one place that decides where** - the per-character group points it
+  there in one line. `deletion._clip_labels` takes it as a part; never under the skeleton, never in an
+  export (trap 76; gated by reading the FBX back, with the label exported on purpose as the control).
+  The root only FEEDS the label's network (its `worldMatrix` out), so the existing checks - a joint's
+  constraint CHILDREN, a root's incoming connections - see nothing new on it.
+- Viewport Studio's **Clean view hides the labels** with `dimensions` (by design: it is the beauty
+  picture); unticking it gives them back.
+
+Proof: `verify_clip_labels.py` **17/17 standalone** (batch onto rigs and skeletons, the reset taking
+the label, a single import relabelling, following to 0.000000 cm, the exports free of labels, Delete +
+Ctrl+Z, a Creep, the group moved and turned - the label 0.000000 against the old constraint's 32.139 cm
+-, a broken label mended, the Retarget button relabelling from its source's namespace and unlabelling
+for a nameless source); `verify_clip_labels_gui.py` all gates in a disposable Maya (each label's ink at
+its own character's feet by hiding one at a time, no overlap, a marquee takes no label, the colour
+table, drops onto the floor and onto a rig); pictures `clip_labels_square.png`, `_dark`,
+`clip_labels_drag.png`; 3558 unit tests.
+
+188. **An annotation in reference display draws BLACK whatever its colour** - an override on the
+      transform, on the shape, or a display layer's own colour - so "unselectable" read as "invisible on
+      a dark backdrop". The pick reads the PARENT's display type and the draw the SHAPE's override: the
+      transform in reference, the shape's override enabled at display type 0 with RGB on, is both
+      unselectable by a marquee and drawn in its colour. Template draws a dim grey.
+189. **A `pointConstraint`'s offset - and the constrained node's own skipped channel - live in its
+      PARENT space** (the memory note "pointConstraint offset is parent-space", met again). The first
+      build's label hung under the rig's group with `offset=(0, 0, 50)` and `skip="y"`: with the group
+      moved (37, 22, -15) and turned 40 deg it stood **32.139 cm** off its floor point, turned with the
+      group and lifted 22. A WORLD point for a node under a group that may move is computed in world and
+      brought in through the node's own `parentInverseMatrix` (decompose -> compose -> mult ->
+      decompose -> translate): 0.000000.
+190. **`cmds.annotate` refuses a bare transform** («Annotation command only works on shapes»), and when
+      given a shape it draws an arrow to it; `createNode("annotationShape", parent=t)` needs no target.
+191. **Work queued with `maya.utils.executeDeferred` does not run inside the same command-port send**,
+      not even through `maya.utils.processIdleEvents()`: a drop's import (`listdrag` defers it one idle)
+      happens after the send ends, and a gate in the same send reads the scene before it. Drop in one
+      send, measure in the next.
+192. **A disposable GUI Maya left MINIMIZED playblasts fine and measures wrong**: the same square read
+      label boxes overlapping each other, the contrast at 1.93 for 2.15 and a whole-view marquee picking
+      **0** nodes - the pick runs through the viewport's draw (trap 56) and a minimized window draws
+      nothing - while the picture itself was the same to the eye. `MayaWindow.showNormal()` (port 802 x
+      650) and every gate passed with the first run's numbers. Restore the window before a gate that
+      picks or diffs, and probe `M3dView.portWidth()` (trap 105's family).
+193. **A playblast diff's bounding box is stretched across the picture by a few stray changed pixels**
+      (a texture filtered a hair differently between two blasts, at JPG quality 100): one label's box
+      read as overlapping all three others. Trim the box to the 2nd..98th percentile of the changed
+      pixels. And hide one thing at a time rather than projecting points: no film-fit arithmetic to get
+      wrong.

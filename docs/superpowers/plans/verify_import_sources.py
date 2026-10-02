@@ -665,8 +665,10 @@ def phase_roads(rows=None):
     text = skeletonimport.import_onto_skeleton(sources.record_ref(r), r.name,
                                                set_timeline=True, entry=entry)
     new = sorted(namespaces() - before)
-    roots = [j for j in cmds.ls(type="joint", long=True) if j.count("|") == 1
-             and ":" not in j]
+    # a top joint: no joint above it (since 2026-10-02 a skeleton stands in its
+    # character's outliner group, so it is no longer at world level)
+    roots = [j for j in cmds.ls(type="joint", long=True) if ":" not in j.split("|")[-1]
+             and not cmds.listRelatives(j, parent=True, type="joint")]
     moved = max((_travel_joint(j.rsplit("|", 1)[0] + "|" + j.split("|")[1]
                                if False else j, "hand_r") for j in roots), default=0)
     gate(51, "glTF onto a new Manny UE5 skeleton: transferred, no clip namespace left",
@@ -746,9 +748,10 @@ def _fix_review_roads(namespaces):
 def _travel(rig, bone):
     import maya_rigs
     node = maya_rigs.node(rig, bone) if hasattr(maya_rigs, "node") else None
+    # the rig's game skeleton, wherever it stands (its character group since 2026-10-02)
+    top = rig.skeleton_root
     hits = [j for j in cmds.ls(type="joint", long=True)
-            if leaf(j) == bone and j.split("|")[1].startswith(rig.namespace + ":")
-            and "Group" not in j]
+            if leaf(j) == bone and top and (j == top or j.startswith(top + "|"))]
     return _travel_joint(hits[0], None) if hits else 0.0
 
 

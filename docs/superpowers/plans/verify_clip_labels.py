@@ -111,6 +111,15 @@ def labels_by_root():
     return out
 
 
+def home_of(owner):
+    """Where a character's label must stand: its outliner group (chargroup, the
+    2026-10-02 merge), else the rig's AS group, else world level ("")."""
+    from maya_scenesetup import chargroup
+    group = chargroup.group_of(owner)
+    if group:
+        return group
+    return getattr(owner, "group", "") or ""
+
 def under(path, top):
     return path == top or path.startswith(top + "|")
 
@@ -204,7 +213,8 @@ def main():
         clip_of_rig[rig.namespace] = cliplabel.clip_of(label)
         checks = dict(
             text=cliplabel.text_of(label) in ORDER,
-            group=under(label, rig.group),
+            # since the merge (2026-10-02) the label stands in the character's outliner group
+            group=under(label, home_of(rig)),
             namespace=label.split("|")[-1].startswith(rig.namespace + ":"),
             dressed=dressed(label),
             not_in_skeleton=not under(label, rig.skeleton_root))
@@ -269,12 +279,12 @@ def main():
             notes.append("%s: %d labels" % (root, len(found)))
             continue
         label = found[0]
-        if label.count("|") != 1 or not dressed(label) or cliplabel.text_of(label) not in ORDER:
+        if not under(label, home_of(root)) or not dressed(label)                 or cliplabel.text_of(label) not in ORDER:
             ok = False
             notes.append("%s: %s" % (root, label))
         error, _travel = follow_error(label, root, frames_of(root))
         worst = max(worst, error)
-    gate("4 batch Skeleton: one dressed label per skeleton at world level, following its root",
+    gate("4 batch Skeleton: one dressed label per skeleton in its character group, following its root",
          ok and worst < 0.01, notes or "worst %.6f cm" % worst)
 
     # ------------------------------------------------------------- 5: onto a skeleton standing
@@ -363,7 +373,7 @@ def main():
     error, travel = (follow_error(found[0], creep[0].skeleton_root,
                                   frames_of(creep[0].skeleton_root)) if found else (1e9, 0.0))
     gate("9 a Creep rig (its root under its Armature): labelled, following the root",
-         len(found) == 1 and travel > 100.0 and error < 0.01 and under(found[0], creep[0].group),
+         len(found) == 1 and travel > 100.0 and error < 0.01 and under(found[0], home_of(creep[0])),
          "%s %s, worst %.6f cm over %.1f cm" % (creep[0].namespace if creep else None,
                                                 [cliplabel.text_of(f) for f in found],
                                                 error, travel))
