@@ -898,7 +898,8 @@ def generic_schema(source_root, rig_bones):
         if above else (0.0, 0.0, 0.0)
     # the size without the pose (a crouched first frame read the pelvis 20-60 % low), scaled
     # about the floor under the root's first frame, where a drop or a kept place puts it
-    scale, sized = skelmap.size_ratio(rig_pos, cand_pos)
+    scale, sized = skelmap.size_ratio(rig_pos, cand_pos,
+                                      rig_pos["root"][1] if "root" in rig_pos else 0.0, origin[1])
     if abs(scale - 1.0) <= GENERIC_SCALE_TOL:
         scale = 1.0
     first = cmds.getAttr(source_root + ".worldMatrix[0]", time=frames[0]) if frames \

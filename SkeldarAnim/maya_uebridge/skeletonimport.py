@@ -549,7 +549,8 @@ def _rest_of_target(paths):
 
 def _source_rests(paths):
     """{name: {path: world matrix}}: rotates at 0 (the rest a BVH, a Mixamo or a
-    Max FBX keeps in jointOrient) and the clip's first frame."""
+    Max FBX keeps in jointOrient), the clip's first frame, and the bind pose
+    when a dagPose binds every joint."""
     import maya.api.OpenMaya as om
     import maya_skeletonmap as skelmap
     parents = skelmap.parent_map(paths)
@@ -579,6 +580,14 @@ def _source_rests(paths):
         first = cmds.findKeyframe(paths, which="first")
         out["firstFrame"] = dict((p, list(cmds.getAttr(p + ".worldMatrix[0]", time=first)))
                                  for p in paths)
+    # a skinned source's own bind, when a dagPose binds every joint - the one rest
+    # that needs no guessing (maya_asretarget.rest_candidates reads it the same way)
+    try:
+        bound = all(cmds.dagPose(p, query=True, bindPose=True) for p in paths)
+    except RuntimeError:
+        bound = False
+    if bound and all(cmds.attributeQuery("bindPose", node=p, exists=True) for p in paths):
+        out["bindPose"] = dict((p, list(cmds.getAttr(p + ".bindPose"))) for p in paths)
     return out
 
 
@@ -696,15 +705,16 @@ def transfer_foreign(source_root, target_root, start, end):
         dict((name, dict((n, tuple(rest[ts[1]][12:15])) for n, ts in canon.items()))
              for name, rest in rests.items()), target_pos)
     source_rest = rests[choice or "jointOrient"]
-    # the size, read without the pose (`size_ratio`: the pelvis over the ankles in a
-    # rest that STANDS, else the legs' lengths) - the chosen rest may be a crouched
-    # first frame, whose pelvis height would scale the travel 20-60 % wrong
+    # the size, read without the pose (`size_ratio`: the pelvis over the floor in a
+    # rest that STANDS on it, else the legs' lengths) - the chosen rest may be a
+    # crouched first frame, whose pelvis height would scale the travel 20-60 % wrong
     above = cmds.listRelatives(source_root, parent=True, fullPath=True)
     origin = cmds.xform(above[0], query=True, worldSpace=True, translation=True) \
         if above else [0.0, 0.0, 0.0]
     scale, sized = skelmap.size_ratio(
         target_pos, dict((name, dict((n, tuple(rest[ts[1]][12:15])) for n, ts in canon.items()))
-                         for name, rest in rests.items()))
+                         for name, rest in rests.items()),
+        target_rest[target_root][13], origin[1])
     if abs(scale - 1.0) <= SCALE_TOLERANCE:
         scale = 1.0
     # ... scaled about the floor under the root's FIRST frame, so a clip moved onto a
@@ -840,9 +850,11 @@ def travel_scale(source_root, target):
     if found.refusal:
         return 1.0
     rests = _source_rests(paths)
+    above = cmds.listRelatives(source_root, parent=True, fullPath=True)
+    floor = cmds.xform(above[0], query=True, worldSpace=True, translation=True)[1] if above else 0.0
     scale, _how = skelmap.size_ratio(reference_positions(), dict(
         (name, dict((o, tuple(rest[s][12:15])) for o, s in found.mapping.items() if s in rest))
-        for name, rest in rests.items()))
+        for name, rest in rests.items()), 0.0, floor)
     return 1.0 if abs(scale - 1.0) <= SCALE_TOLERANCE else scale
 
 

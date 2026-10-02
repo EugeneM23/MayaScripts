@@ -977,7 +977,9 @@ def scale_ratio(rig_pelvis_height, source_pelvis_height):
 
 LEG_SEGMENTS = (("thigh", "calf"), ("calf", "foot"))
 STRAIGHT = 0.98        # a leg is straight when hip-to-ankle is 98 % of its two bones
-DOWN_DEG = 20.0        # ... and standing when it runs within 20 deg of the body's down
+DOWN_DEG = 20.0        # ... standing when it runs within 20 deg of the body's down,
+UPRIGHT_DEG = 20.0     # ... the body within 20 deg of the world's up,
+ON_FLOOR = 0.25        # ... and the ankles within a quarter of a leg of its floor
 
 
 def leg_length(positions):
@@ -993,18 +995,21 @@ def leg_length(positions):
     return sum(legs) / len(legs) if legs else None
 
 
-def standing_height(positions):
-    """The pelvis's height above the ankles along the body's own up, when this
-    pose STANDS: both legs straight and running down the body (within DOWN_DEG
-    of pelvis->head). None for a crouch, a kneel, a straight-line zero pose, or
-    without the parts. Read in the body's own frame, so a source lying under a
-    Z-up wrapper, or prone, stands as well as an upright one. Pure."""
+def stands(positions, floor=0.0):
+    """Pure: does this pose STAND on its floor - both legs straight and running
+    down the body (DOWN_DEG of pelvis->head), the body upright (UPRIGHT_DEG of
+    world +Y), the ankles near `floor` (ON_FLOOR of a leg)? A crouch, a kneel, a
+    straight-line zero pose (a rotate-channel bind with its rotates zeroed), a
+    lying pose and a jump with straight legs do not."""
     frame = body_frame(positions)
-    if frame is None or "pelvis" not in positions:
-        return None
+    legs = leg_length(positions)
+    if frame is None or "pelvis" not in positions or not legs:
+        return False
     up = frame[1]
+    if angle(up, (0.0, 1.0, 0.0)) > UPRIGHT_DEG:
+        return False
     down = tuple(-c for c in up)
-    ankles = []
+    seen = 0
     for side in ("l", "r"):
         hip, knee, ankle = (positions.get("%s_%s" % (b, side)) for b in ("thigh", "calf", "foot"))
         if None in (hip, knee, ankle):
@@ -1012,38 +1017,50 @@ def standing_height(positions):
         span = _dist(hip, ankle)
         bones = _dist(hip, knee) + _dist(knee, ankle)
         if bones <= 1e-9 or span < STRAIGHT * bones:
-            return None
+            return False
         if angle(_sub(ankle, hip), down) > DOWN_DEG:
-            return None
-        ankles.append(ankle)
-    if not ankles:
+            return False
+        if abs(ankle[1] - floor) > ON_FLOOR * legs:
+            return False
+        seen += 1
+    return seen > 0
+
+
+def standing_height(positions, floor=0.0):
+    """The pelvis's height above `floor` (world Y) when the pose `stands` on it,
+    else None. Above the FLOOR, not the ankles: a skeleton's pelvis-to-thigh
+    offset and its ankle height differ by convention (Mixamo's hips stand 5 cm
+    over its thighs, Manny's 2; measured 2026-10-02), and the floor is where the
+    feet must land. Pure."""
+    if not stands(positions, floor):
         return None
-    mean = tuple(sum(a[i] for a in ankles) / len(ankles) for i in range(3))
-    height = _dot(_sub(positions["pelvis"], mean), up)
+    height = positions["pelvis"][1] - floor
     return height if height > 1e-9 else None
 
 
 SIZE_ORDER = ("bindPose", "jointOrient", "firstFrame")
 
 
-def size_ratio(ours, candidates, order=SIZE_ORDER):
+def size_ratio(ours, candidates, our_floor=0.0, their_floor=0.0, order=SIZE_ORDER):
     """(ratio, how): our size over the source's. `ours` is {our bone: position}
-    at our rest, `candidates` {rest name: {our bone: position}} the source's.
+    at our rest on `our_floor`, `candidates` {rest name: {our bone: position}}
+    the source's, whose floor is `their_floor` (its parent's origin).
 
     The first candidate (in `order`) that STANDS gives our standing height over
-    its (`standing_height`: the pelvis over the ankles - a ratio that puts our
-    feet on the floor when the source's are); none standing, the leg lengths
-    (`leg_length`, pose-free: thigh + calf). (1.0, "") when neither can be read.
-    Pure."""
-    mine = standing_height(ours)
+    its (the pelvis over the floor: a ratio that puts our feet on the floor when
+    the source's are); none standing - a crouched or jumping first frame with no
+    bind, a lying clip - the leg lengths (`leg_length`, pose-free: thigh +
+    calf). (1.0, "") when neither can be read. Pure."""
+    names = list(order) + sorted(set(candidates) - set(order))
+    mine = standing_height(ours, our_floor)
     if mine:
-        for name in list(order) + sorted(set(candidates) - set(order)):
+        for name in names:
             if name in candidates:
-                theirs = standing_height(candidates[name])
+                theirs = standing_height(candidates[name], their_floor)
                 if theirs:
                     return mine / theirs, "standing (%s)" % name
     mine = leg_length(ours)
-    for name in list(order) + sorted(set(candidates) - set(order)):
+    for name in names:
         if name in candidates:
             theirs = leg_length(candidates[name])
             if mine and theirs:

@@ -69,10 +69,12 @@ class TestLegLength(unittest.TestCase):
 
 class TestStandingHeight(unittest.TestCase):
 
-    def test_upright_rest(self):
+    def test_upright_rest_is_the_pelvis_over_the_floor(self):
         body = ours_of("mixamo")
-        self.assertAlmostEqual(sm.standing_height(body), fixtures.HIPS[1] - fixtures.ANKLE[1],
-                               places=1)
+        self.assertTrue(sm.stands(body))
+        self.assertAlmostEqual(sm.standing_height(body), fixtures.HIPS[1], places=6)
+        lifted = dict((k, (v[0], v[1] + 10.0, v[2])) for k, v in body.items())
+        self.assertAlmostEqual(sm.standing_height(lifted, floor=10.0), fixtures.HIPS[1], places=6)
 
     def test_a_crouch_is_no_standing_pose(self):
         self.assertIsNone(sm.standing_height(crouched(ours_of("mixamo"))))
@@ -87,10 +89,15 @@ class TestStandingHeight(unittest.TestCase):
                 line[bone + side] = (body["pelvis"][1], 0.0, p[1] - body["pelvis"][1])
         self.assertIsNone(sm.standing_height(line))
 
-    def test_lying_down_still_stands_in_its_own_frame(self):
+    def test_a_jump_with_straight_legs_is_no_standing_pose(self):
+        body = ours_of("mixamo")
+        jump = dict((k, (v[0], v[1] + 40.0, v[2])) for k, v in body.items())
+        self.assertIsNone(sm.standing_height(jump))          # the feet 49 cm off the floor
+
+    def test_lying_down_does_not_stand(self):
         body = ours_of("mixamo")
         prone = dict((k, (v[0], v[2], -v[1])) for k, v in body.items())   # turned 90 about X
-        self.assertAlmostEqual(sm.standing_height(prone), sm.standing_height(body), places=6)
+        self.assertIsNone(sm.standing_height(prone))
 
 
 class TestSizeRatio(unittest.TestCase):
@@ -109,6 +116,9 @@ class TestSizeRatio(unittest.TestCase):
         legs = sm.leg_length(ours) / sm.leg_length(theirs)
         self.assertAlmostEqual(ratio, legs, places=6)
         self.assertLess(abs(ratio / straight - 1.0), 0.05)
+        # the old reading - the crouched pelvis over the floor - was 0.32 off
+        old = ours["pelvis"][1] / crouched(theirs, drop=0.3)["pelvis"][1]
+        self.assertGreater(old / straight, 1.3)
 
     def test_a_true_rest_wins_over_a_crouched_frame(self):
         ours, theirs = ours_of("ue5"), ours_of("mixamo")
@@ -116,6 +126,12 @@ class TestSizeRatio(unittest.TestCase):
                                           "jointOrient": theirs})
         self.assertEqual(how, "standing (jointOrient)")
         self.assertAlmostEqual(ratio, sm.standing_height(ours) / sm.standing_height(theirs))
+
+    def test_the_floors_are_each_skeletons_own(self):
+        ours, theirs = ours_of("ue5"), ours_of("mixamo")
+        up = dict((k, (v[0], v[1] + 25.0, v[2])) for k, v in theirs.items())
+        ratio, _how = sm.size_ratio(ours, {"jointOrient": up}, 0.0, 25.0)
+        self.assertAlmostEqual(ratio, 1.0, places=6)
 
     def test_unusable(self):
         self.assertEqual(sm.size_ratio({}, {"jointOrient": {}}), (1.0, ""))

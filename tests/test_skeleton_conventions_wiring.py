@@ -152,5 +152,5 @@ class TestTravelScaleRoad(unittest.TestCase):
 
     def test_the_reference_is_mannys_bind(self):
         ref = self.si.reference_positions()
-        self.assertAlmostEqual(sm.standing_height(ref), 87.5537, places=3)
+        self.assertAlmostEqual(sm.standing_height(ref), 95.8968, places=3)
         self.assertAlmostEqual(sm.leg_length(ref), 85.5625, places=3)

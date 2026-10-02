@@ -679,7 +679,10 @@ def generic_schema(source_root, rig_rest):
     schema.rest_given = dict((o, list(rest[s])) for o, s in mapping.items())
     schema.parents = skelmap.canonical_parents(mapping, skelmap.parent_map(paths))
     schema.convention, schema.rest_choice = result.convention, choice
-    schema.size, sized = skelmap.size_ratio(rig_pos, cand_pos)
+    above = cmds.listRelatives(source_root, parent=True, fullPath=True)
+    floor = cmds.xform(above[0], query=True, worldSpace=True, translation=True)[1] if above else 0.0
+    schema.size, sized = skelmap.size_ratio(
+        rig_pos, cand_pos, rig_pos["root"][1] if "root" in rig_pos else 0.0, floor)
     schema.notes = ["source read as %s (%d bones mapped, confidence %.2f); rest pose: %s; size %s"
                     % (result.convention, len(mapping), result.confidence, choice,
                        sized or "unread")] + notes

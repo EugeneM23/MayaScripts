@@ -25,6 +25,21 @@ rotate channels where game exports keep it), its unit and its wrapper - and keye
             still the MIXAMO schema on the rig, and now onto a skeleton too.
   refusal   a four-legged chain is refused with the map's reason, both roads.
   control   our bones at frame 10 against the source at frame 20: the gate can fail.
+
+The fix pass (2026-10-02) added, on both roads:
+
+  variants  a Unity body with 15 % longer legs; a Unity clip whose FIRST FRAME is a
+            crouch (its bind in the rotate channels, so the first frame is the rest
+            the map would pick), with and without a bindPose; a HumanIK clip whose
+            floor-level Reference never moves while the hips travel. The expected
+            size is derived from the fixture's own constants (unit x body ratio),
+            never with the implementation's formula.
+  partial   a UE5 clip with no legs (arms only): the old UE road, not a refusal.
+  drop      a CMU clip (0.45 of our size) starting 18 cm off its origin, dropped onto
+            a floor point on a new Manny rig and a new Manny skeleton: Main / root on
+            the point; two of them laid out in a square by the bridge's press,
+            spaced by their BAKED travel.
+  UE4       the UE4 Mannequin [skeleton] as a target.
 """
 
 import json
@@ -64,7 +79,15 @@ ONLY = [c for c in os.environ.get("CONVENTIONS", "").split(",") if c]
 SKIP = ("ue5", "ue4")                       # Unreal's own road: verify_rig_pipeline
 CONVENTIONS = [c for c in fixtures.CONVENTIONS if c not in SKIP and (not ONLY or c in ONLY)]
 RIGS = [r for r in os.environ.get("RIGS", "Manny_Rig,Creep_Rig,Orc_D_Rig").split(",") if r]
-SKELETONS = [s for s in os.environ.get("SKELETONS", "Manny,Creep").split(",") if s]
+SKELETONS = [s for s in os.environ.get("SKELETONS", "Manny,Creep,UE4_Mannequin").split(",") if s]
+PHASES = [p for p in os.environ.get("PHASES", "").split(",") if p]
+# name: (base convention, options) - see build_source
+VARIANTS = [v for v in (
+    ("unity_tall", "unity", dict(legs=1.15)),
+    ("unity_crouch", "unity", dict(crouch=True)),
+    ("unity_crouch_bind", "unity", dict(crouch=True, bind=True)),
+    ("hik_reference", "hik", dict(reference=True)),
+) if not os.environ.get("VARIANTS") or v[0] in os.environ["VARIANTS"].split(",")]
 SWEEP = "C:/Users/MY PC/Downloads/Sweep Fall.fbx"
 ORIENT = {"mixamo": "yzx", "hik": "yzx", "unity": "yzx", "vrm": "yzx", "rigify": "yzx",
           "arp": "yzx", "cmu": "yzx", "xsens": "yzx", "obfuscated": "yzx",
@@ -76,8 +99,12 @@ LEN_TOL = 1e-3                              # cm
 # Manny's 0.068 cm asymmetric calf) and AS's knee does not roll with the bone, so that
 # offset wanders with the knee (CLAUDE.md, the twin's Addendum 2) - a rig fact, measured on
 # every source alike, not a retarget one
-RIG_LEN_TOL = {"Manny_Rig": 0.08}   # CLAUDE.md: "the LEFT leg at 0.06-0.08 cm"
+RIG_LEN_TOL = {"Manny_Rig": 0.12}   # CLAUDE.md: "the LEFT leg at 0.06-0.08 cm"; the
+                                    # crouch variant bends the knee 120 deg: 0.107 measured
 TRAVEL_TOL = 0.05                           # cm
+# the size the retarget used against the one derived here from the fixture's constants (a
+# wrong size is a 20-60 % error; the two agree to rounding)
+SIZE_TOL = 0.005
 
 RESULTS = []
 REPORT = {}
@@ -100,12 +127,55 @@ def _ensure_namespace(full):
             cmds.namespace(add=parts[i - 1], parent=":" + ":".join(parts[:i - 1]))
 
 
-def build_source(convention, ns):
+def _longer_legs(rows, expected, k):
+    """Every leg joint's height above the hips stretched by k (the torso as it is):
+    a body whose proportions are not Manny's."""
+    legs = set(src for ours, src in expected.items()
+               if ours.startswith(("thigh", "calf", "foot", "ball")))
+    below = set(legs)
+    parent_of = dict((n, p) for n, p, _pos in rows)
+    for name, _p, _pos in rows:          # nubs and toe ends under the legs too
+        node = parent_of.get(name)
+        while node:
+            if node in legs:
+                below.add(name)
+                break
+            node = parent_of.get(node)
+    hips_y = fixtures.HIPS[1]
+    lift = (k - 1.0) * (hips_y - fixtures.ANKLE[1])      # the ankles back on their height
+    out = []
+    for name, parent, pos in rows:
+        if name in below:
+            pos = (pos[0], hips_y + k * (pos[1] - hips_y), pos[2])
+        out.append((name, parent, (pos[0], pos[1] + lift, pos[2])))
+    return out
+
+
+def _with_reference(rows, expected, spec):
+    """A floor-level root above the hips, the way MotionBuilder writes `Reference`."""
+    hips = spec.namespace + spec.hips
+    ref = spec.namespace + "Character1_Reference"
+    out = [(ref, None, (0.0, 0.0, 0.0))]
+    for name, parent, pos in rows:
+        out.append((name, ref if name == hips else parent, pos))
+    return out
+
+
+def build_source(convention, ns, legs=1.0, crouch=False, bind=False, reference=False,
+                 travel_x=0.0, start=(0.0, 0.0)):
     """(top joint path, {our bone: source path}, spec) - the convention's rows as
     Maya joints in namespace `ns`, oriented, rest moved where the convention keeps
-    it, keyed."""
+    it, keyed. Options (the fix pass): `legs` stretches the legs, `crouch` makes
+    frame 0 a deep crouch, `bind` saves a bindPose at the rest first, `reference`
+    puts a static floor root above the hips, `travel_x` adds that much travel along
+    +X by frame 20 and `start` moves the whole clip's travel (x, z) off its origin,
+    both in the source's own units."""
     rows, expected = fixtures.build(convention)
     spec = fixtures.SPECS.get(convention, fixtures.SPECS["mixamo"])
+    if legs != 1.0:
+        rows = _longer_legs(rows, expected, legs)
+    if reference:
+        rows = _with_reference(rows, expected, spec)
     _ensure_namespace(ns)
     wrapper = None
     if spec.wrapper:
@@ -137,8 +207,30 @@ def build_source(convention, ns):
             cmds.setAttr(j + ".jointOrient", 0, 0, 0)
             cmds.setAttr(j + ".rotate", *jo)
     by_ours = dict((o, path(n)) for o, n in expected.items())
-    _animate(by_ours, spec.scale)
+    if bind:
+        cmds.dagPose([path(n) for n in made], save=True, bindPose=True,
+                     name="%s:bindPose1" % ns)
+    _animate(by_ours, spec.scale, travel_x=travel_x, start=start)
+    if crouch:
+        _crouch(by_ours, spec.scale)
     return top, by_ours, spec
+
+
+def _crouch(by_ours, scale):
+    """Frame 0 a deep crouch: the thighs 70 deg forward, the calves 120 back, the
+    pelvis 30 cm lower. The keys at 10 and 20 stay."""
+    cmds.currentTime(0)
+    for side in ("l", "r"):
+        for bone, turn in (("thigh_", 70.0), ("calf_", -120.0)):
+            joint = by_ours.get(bone + side)
+            if joint:
+                cmds.rotate(turn, 0, 0, joint, relative=True, worldSpace=True)
+                cmds.setKeyframe(joint, attribute=["rotateX", "rotateY", "rotateZ"], time=0)
+    pelvis = by_ours["pelvis"]
+    world = cmds.xform(pelvis, query=True, worldSpace=True, translation=True)
+    cmds.xform(pelvis, worldSpace=True, translation=[world[0], world[1] - 30.0 * scale, world[2]])
+    cmds.setKeyframe(pelvis, attribute=["translateX", "translateY", "translateZ"], time=0)
+    cmds.currentTime(0)
 
 
 POSES = {   # our bone: (frame 10 delta, frame 20 delta), degrees on the local channels
@@ -154,7 +246,7 @@ POSES = {   # our bone: (frame 10 delta, frame 20 delta), degrees on the local c
 }
 
 
-def _animate(by_ours, scale):
+def _animate(by_ours, scale, travel_x=0.0, start=(0.0, 0.0)):
     travel = by_ours.get("root") or by_ours["pelvis"]
     rest_t = cmds.getAttr(travel + ".translate")[0]
     rest_w = cmds.xform(travel, query=True, worldSpace=True, translation=True)
@@ -166,7 +258,9 @@ def _animate(by_ours, scale):
         for frame, delta in ((0, (0, 0, 0)), (10, pose_a), (20, pose_b)):
             for axis, base, d in zip("XYZ", rest, delta):
                 cmds.setKeyframe(joint, attribute="rotate" + axis, time=frame, value=base + d)
-    for frame, delta in ((0, (0, 0, 0)), (10, (10, -4, 30)), (20, (-6, 0, 70))):
+    for frame, delta in ((0, (0, 0, 0)), (10, (10 + travel_x / 2.0, -4, 30)),
+                         (20, (-6 + travel_x, 0, 70))):
+        delta = (delta[0] + start[0], delta[1], delta[2] + start[1])
         cmds.xform(travel, worldSpace=True, translation=[r + d * scale for r, d in zip(rest_w, delta)])
         for axis, value in zip("XYZ", cmds.getAttr(travel + ".translate")[0]):
             cmds.setKeyframe(travel, attribute="translate" + axis, time=frame, value=value)
@@ -216,6 +310,15 @@ def bones_under(root):
                                           fullPath=True) or []):
         out.setdefault(skelmap.leaf(p), p)
     return out
+
+
+def target_by_ours(root):
+    """{our bone: path} of a target skeleton, read the way the transfer reads it (a
+    UE4 Mannequin's three spine joints are our spine_01, _03, _05)."""
+    paths = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                         fullPath=True) or [])
+    found = skelmap.recognize(paths, dict((p, tuple(pos(p))) for p in paths))
+    return dict(found.mapping)
 
 
 def gate_pairs(source_ours, target_ours, target_paths, hand_middle=None):
@@ -280,9 +383,57 @@ def fk_mode(rig):
                 pass
 
 
+def target_size(bones, floor):
+    """(standing height, leg length) of one of OUR targets at its rest, by plain
+    measurement: the pelvis over its floor (its root's height), and thigh->calf->foot
+    averaged over the sides."""
+    p = dict((n, pos(path)) for n, path in bones.items())
+    stand = p["pelvis"][1] - floor
+    legs = sum(math.sqrt(sum(c * c for c in sub(p["calf_" + s], p["thigh_" + s])))
+               + math.sqrt(sum(c * c for c in sub(p["foot_" + s], p["calf_" + s])))
+               for s in "lr") / 2.0
+    return stand, legs
+
+
+def fixture_size(spec, legs=1.0):
+    """(standing height, leg length) of the fixture body, from tests/skeleton_conventions'
+    own constants: the hips over the ankle, and the two leg bones, in the convention's
+    unit, the legs stretched by `legs` as `_longer_legs` does (the body lifted so the
+    ankles keep their height): the hips over the floor, and the two leg bones."""
+    hip, knee, ankle = fixtures.HIP, fixtures.KNEE, fixtures.ANKLE
+    hips_y = fixtures.HIPS[1]
+
+    def stretched(point):
+        return (point[0], hips_y + legs * (point[1] - hips_y), point[2])
+    hip, knee, ankle = stretched(hip), stretched(knee), stretched(ankle)
+    stand = (hips_y + (legs - 1.0) * (hips_y - fixtures.ANKLE[1])) * spec.scale
+    bones = (math.sqrt(sum(c * c for c in sub(knee, hip)))
+             + math.sqrt(sum(c * c for c in sub(ankle, knee)))) * spec.scale
+    return stand, bones
+
+
+def expected_scale(spec, target, legs=1.0, by_legs=False):
+    """The size the retarget must use, derived independently of the implementation:
+    the target's pelvis over its floor against the fixture's (its legs when no
+    candidate rest stands - a crouched first frame with no bind), 1.0 within 2 %."""
+    mine = fixture_size(spec, legs)
+    ratio = target[1] / mine[1] if by_legs else target[0] / mine[0]
+    return 1.0 if abs(ratio - 1.0) <= 0.02 else ratio
+
+
+def used_scale(text):
+    """The travel scale the rig road reports in its status line, 1.0 when none."""
+    import re
+    found = re.search(r"travel scaled by ([0-9.]+)", text or "")
+    return float(found.group(1)) if found else 1.0
+
+
+def size_ok(used, expected):
+    return abs(used / expected - 1.0) <= SIZE_TOL
+
+
 def source_scale(source_ours, target_pelvis_height, origin_y=0.0):
-    """Our pelvis height over the source's at frame 0 - and, as the retargets do,
-    1.0 when within 2 % (a size within 2 % of ours IS our size)."""
+    """Kept for the rest-choice phase: our pelvis height over the source's at frame 0."""
     cmds.currentTime(0)
     ratio = target_pelvis_height / (pos(source_ours["pelvis"])[1] - origin_y)
     return 1.0 if abs(ratio - 1.0) <= 0.02 else ratio
@@ -309,32 +460,40 @@ def phase_rigs():
         game_paths = list(game.values())
         cmds.currentTime(0)
         ours = dict((o, p) for o, p in game.items())
-        height = pos(ours["pelvis"])[1] - pos(rig.skeleton_root)[1]
-        for convention in CONVENTIONS:
-            ns = "src_" + convention
-            top, src, spec = build_source(convention, ns)
-            scale = source_scale(src, height)
+        size = target_size(ours, pos(rig.skeleton_root)[1])
+        for name, convention, options in [(c, c, {}) for c in CONVENTIONS] + VARIANTS:
+            ns = "src_" + name
+            top, src, spec = build_source(convention, ns, **options)
+            scale = expected_scale(spec, size, options.get("legs", 1.0),
+                                   by_legs=options.get("crouch") and not options.get("bind"))
+            # the size the rig road will use, read off its own plan (the status line
+            # carries the connect's first line only) - at the build pose, as the button
+            # reads it: the rig still carries the last convention's take here
+            maya_asretarget.reset_build_pose(rig=rig)
+            plan = maya_asretarget._plan(source_root=top, rig=rig)
+            used = getattr(plan.schema, "scale", 1.0)
             t0 = time.time()
             ok, text = maya_rig_retarget.run_retarget(source_root=top, rig=rig)
             took = time.time() - t0
             fk_mode(rig)
+            expected, scale = scale, used
             pairs = gate_pairs(src, ours, game_paths, hand_middle=True)
             src_travel = "root" if "root" in src else "pelvis"
             worst, length, pelvis_err, root_err = measure(src, ours, pairs, scale, src_travel,
                                                           rig.skeleton_root)
             control = measure(src, ours, pairs, scale, src_travel, rig.skeleton_root,
                               frames=(10,), shift=10)[0][0]
-            REPORT.setdefault(key, {})[convention] = dict(
+            REPORT.setdefault(key, {})[name] = dict(
                 ok=ok, seconds=round(took, 1), worst=worst, length=length, pelvis=pelvis_err,
-                root=root_err, control=control, pairs=len(pairs), scale=scale)
+                root=root_err, control=control, pairs=len(pairs), scale=scale, expected=expected)
             read = [line for line in text.split("  |  ") if "source read as" in line or "schema" in line]
-            gate("%s <- %s" % (key, convention),
+            gate("%s <- %s" % (key, name),
                  ok and worst[0] <= RIG_TOL[key] and length <= RIG_LEN_TOL.get(key, LEN_TOL) and pelvis_err <= TRAVEL_TOL
-                 and root_err <= TRAVEL_TOL and control > 5.0,
+                 and root_err <= TRAVEL_TOL and control > 5.0 and size_ok(scale, expected),
                  "%d pairs, worst %.4f deg (%s), length %.6f cm, pelvis %.4f / root %.4f cm "
-                 "at x%.4g, control %.1f deg, %.1fs%s"
+                 "at x%.4g (derived x%.4g), control %.1f deg, %.1fs%s"
                  % (len(pairs), worst[0], worst[1], length, pelvis_err, root_err, scale,
-                    control, took, "" if ok else "  REFUSED: " + text[:300]))
+                    expected, control, took, "" if ok else "  REFUSED: " + text[:300]))
             if not ok:
                 print("    " + text[:600])
             cmds.namespace(removeNamespace=ns, deleteNamespaceContent=True)
@@ -345,6 +504,7 @@ def phase_rigs():
         cmds.namespace(removeNamespace="quad", deleteNamespaceContent=True)
         if key == "Manny_Rig":
             phase_sweep_on_rig(rig, ours, game_paths)
+            phase_partial_on_rig(rig, ours, game_paths)
 
 
 RIG_TOL = {"Manny_Rig": 0.5, "Creep_Rig": 1.5, "Orc_D_Rig": 1.5}
@@ -399,7 +559,9 @@ def phase_skeletons():
         rest = dict((p, list(cmds.getAttr(p + ".worldMatrix[0]"))) for p in fresh)
         uuids = dict((p, cmds.ls(p, uuid=True)[0]) for p in fresh)
         height = pos(bones_under(root)["pelvis"])[1] - pos(root)[1]
-        for convention in CONVENTIONS + ["sweep_fall"]:
+        size = target_size(bones_under(root), pos(root)[1])
+        for name, convention, options in ([(c, c, {}) for c in CONVENTIONS] + VARIANTS
+                                          + [("sweep_fall", "sweep_fall", {})]):
             if convention == "sweep_fall":
                 top = _sweep_source("sweep")
                 if top is None:
@@ -411,14 +573,18 @@ def phase_skeletons():
                 start = cmds.findKeyframe(paths, which="first")
                 end = cmds.findKeyframe(paths, which="last")
             else:
-                ns = "src_" + convention
-                top, src, spec = build_source(convention, ns)
+                ns = "src_" + name
+                top, src, spec = build_source(convention, ns, **options)
                 start, end = 0, 20
-            scale = source_scale(src, height)
+            scale = source_scale(src, height) if convention == "sweep_fall" else expected_scale(
+                spec, size, options.get("legs", 1.0),
+                by_legs=options.get("crouch") and not options.get("bind"))
             t0 = time.time()
             result = skeletonimport.transfer(top, root, start, end)
             took = time.time() - t0
-            game = bones_under(root)
+            expected = scale
+            scale = result.get("scale") or 1.0
+            game = target_by_ours(root)
             pairs = gate_pairs(src, game, list(game.values()), hand_middle=False)
             src_travel = "root" if "root" in src else "pelvis"
             frames = FRAMES if convention != "sweep_fall" else tuple(
@@ -427,20 +593,33 @@ def phase_skeletons():
                                                           root, frames=frames)
             control = measure(src, game, pairs, scale, src_travel, root, frames=(frames[2],),
                               shift=frames[4] - frames[2])[0][0]
-            REPORT.setdefault(key, {})[convention] = dict(
+            cmds.currentTime(start)
+            # the pelvis is constrained ABSOLUTELY on this road: it stands at the
+            # scaled source's height (sinking or floating is a wrong size)
+            sink = abs(pos(game["pelvis"])[1] - scale * pos(src["pelvis"])[1])
+            REPORT.setdefault(key, {})[name] = dict(
                 moved=result.get("moved"), convention=result.get("convention"),
                 rest=result.get("rest"), worst=worst, length=length, pelvis=pelvis_err,
                 root=root_err, control=control, pairs=len(pairs), scale=result.get("scale"),
-                expected_scale=scale)
-            scale_ok = abs((result.get("scale") or 1.0) - scale) < 0.02 * scale or \
-                (result.get("scale") == 1.0 and abs(scale - 1) <= 0.02)
-            gate("%s <- %s" % (key, convention),
+                expected_scale=expected, sized=result.get("sized"), sink=sink,
+                root_note=result.get("root"))
+            # a real file's body is unknown: its size is the transfer's, gated by the
+            # pelvis standing at the scaled height and the travel following it
+            scale_ok = size_ok(scale, expected) if convention != "sweep_fall" else True
+            extra = True
+            if options.get("reference"):
+                # the static Reference is no root: the root takes the hips' travel
+                extra = "never moves" in (result.get("root") or "")
+            gate("%s <- %s" % (key, name),
                  result.get("moved", 0) > 20 and worst[0] <= DIR_TOL_SKELETON and length <= LEN_TOL
-                 and pelvis_err <= TRAVEL_TOL and root_err <= TRAVEL_TOL and control > 5.0 and scale_ok,
+                 and pelvis_err <= TRAVEL_TOL and root_err <= TRAVEL_TOL and control > 5.0
+                 and scale_ok and sink <= TRAVEL_TOL and extra,
                  "%d bones, read as %s, rest %s, worst %.4f deg (%s), length %.6f, pelvis %.4f / "
-                 "root %.4f cm at x%.4g (map x%s), control %.1f deg, %.1fs"
+                 "root %.4f cm, height %.4f cm at x%.4g (derived x%.4g, %s), control %.1f deg, %.1fs%s"
                  % (result.get("moved", 0), result.get("convention"), result.get("rest"), worst[0],
-                    worst[1], length, pelvis_err, root_err, scale, result.get("scale"), control, took))
+                    worst[1], length, pelvis_err, root_err, sink, scale, expected,
+                    result.get("sized"), control, took,
+                    ("; " + result.get("root")) if options.get("reference") else ""))
             cmds.namespace(removeNamespace=ns, deleteNamespaceContent=True)
             _reset(rest, uuids)
         top = quadruped("quad")
@@ -450,6 +629,8 @@ def phase_skeletons():
         cmds.namespace(removeNamespace="quad", deleteNamespaceContent=True)
         if key == "Creep":
             phase_rest_choice(root)
+        if key == "Manny":
+            phase_partial_on_skeleton(root)
 
 
 def _reset(rest, uuids):
@@ -539,12 +720,299 @@ def phase_playermale():
         cmds.namespace(removeNamespace="pm_" + convention, deleteNamespaceContent=True)
 
 
+# ------------------------------------------------------------------ the fix pass's phases
+
+LEGS = ("thigh_l", "thigh_r")
+
+
+def _arms_only(source_root, ns):
+    """A UE5 clip with no legs (an upper-body take), on Manny's OWN joints - so its
+    axes are Unreal's, as every clip from the editor has them: a copy of the
+    skeleton under `source_root`, its thighs deleted, its arms keyed.
+    (top, {our bone: path})."""
+    _ensure_namespace(ns)
+    copy = cmds.duplicate(source_root, name=ns + ":root", returnRootsOnly=True)[0]
+    copy = cmds.ls(copy, long=True)[0]
+    for node in cmds.listRelatives(copy, allDescendents=True, fullPath=True) or []:
+        if cmds.objExists(node) and cmds.objectType(node) != "joint":
+            cmds.delete(node)
+    bones = bones_under(copy)
+    for leg in LEGS:
+        if leg in bones and cmds.objExists(bones[leg]):
+            cmds.delete(bones[leg])
+    bones = bones_under(copy)
+    for node in bones.values():
+        curves = cmds.listConnections(node, type="animCurve", source=True, destination=False) or []
+        if curves:
+            cmds.delete(curves)
+    for bone, a, b in (("upperarm_l", (0, 30, -40), (20, -25, 10)),
+                       ("lowerarm_l", (0, 0, 50), (10, 0, 20)),
+                       ("upperarm_r", (15, -30, 35), (-20, 25, -10)),
+                       ("lowerarm_r", (0, 0, -45), (-5, 0, -20))):
+        rest = cmds.getAttr(bones[bone] + ".rotate")[0]
+        for frame, delta in ((0, (0, 0, 0)), (10, a), (20, b)):
+            for axis, base, d in zip("XYZ", rest, delta):
+                cmds.setKeyframe(bones[bone], attribute="rotate" + axis, time=frame, value=base + d)
+    cmds.currentTime(0)
+    return copy, bones
+
+
+def _arm_worst(src, ours, frames=FRAMES):
+    worst = (0.0, "")
+    pairs = [("upperarm_l", "lowerarm_l"), ("lowerarm_l", "hand_l"),
+             ("upperarm_r", "lowerarm_r"), ("lowerarm_r", "hand_r")]
+    for frame in frames:
+        cmds.currentTime(frame)
+        for bone, child in pairs:
+            a = angle(sub(pos(ours[child]), pos(ours[bone])), sub(pos(src[child]), pos(src[bone])))
+            if a > worst[0]:
+                worst = (a, "%s@%d" % (bone, frame))
+    return worst
+
+
+def phase_partial_on_rig(rig, ours, game_paths):
+    """The review's finding 4: a UE clip missing its legs used to retarget the bones
+    it has; the conventions build sent it to the generic road, which refused it."""
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    character.add_character(entry_of("Manny_Rig"))
+    rig = maya_rigs.rigs()[0]
+    ours = bones_under(rig.skeleton_root)
+    before = set(cmds.ls(type="joint", long=True) or [])
+    character.add_character(entry_of("Manny"))
+    fresh = [j for j in (cmds.ls(type="joint", long=True) or []) if j not in before]
+    manny = min(fresh, key=lambda p: (p.count("|"), p))
+    top, src = _arms_only(manny, "partial")
+    ok, text = maya_rig_retarget.run_retarget(source_root=top, rig=rig)
+    fk_mode(rig)
+    worst = _arm_worst(src, ours) if ok else (999.0, "refused")
+    gate("Manny_Rig <- an arms-only UE clip", ok and "schema ue5" in text and worst[0] <= 2.0,
+         "%s; the arms point as the clip's, worst %.4f deg (%s)"
+         % ("retargeted on the UE road" if ok else "REFUSED: " + text[:200], worst[0], worst[1]))
+    REPORT.setdefault("Manny_Rig", {})["ue5_arms_only"] = dict(ok=ok, worst=worst, text=text[:400])
+    cmds.namespace(removeNamespace="partial", deleteNamespaceContent=True)
+
+
+def phase_partial_on_skeleton(root):
+    game = bones_under(root)
+    rest = dict((p, list(cmds.getAttr(p + ".worldMatrix[0]"))) for p in game.values())
+    uuids = dict((p, cmds.ls(p, uuid=True)[0]) for p in game.values())
+    top, src = _arms_only(root, "partial")
+    result = skeletonimport.transfer(top, root, 0, 20)
+    worst = _arm_worst(src, bones_under(root)) if result.get("moved") else (999.0, "refused")
+    gate("Manny <- an arms-only UE clip",
+         result.get("moved", 0) > 10 and not result.get("refusal") and worst[0] <= DIR_TOL_SKELETON
+         and result.get("twin"),
+         "%d bones moved as a twin %s, refusal %r, the arms point as the clip's, worst %.4f deg "
+         "(%s), missing %d (the legs)" % (result.get("moved", 0), result.get("twin"),
+                                          result.get("refusal"), worst[0], worst[1],
+                                          len(result.get("missing", []))))
+    REPORT.setdefault("Manny", {})["ue5_arms_only"] = dict(
+        moved=result.get("moved"), worst=worst, missing=result.get("missing"))
+    cmds.namespace(removeNamespace="partial", deleteNamespaceContent=True)
+    _reset(rest, uuids)
+
+
+DROP_START = (40.0, 20.0)     # the CMU clip's travel starts this far off its origin (its units)
+DROP_TRAVEL_X = 60.0          # ... and runs this much further along +X by frame 20
+
+
+def _cmu_fbx(name):
+    """A CMU clip (0.45 of our size, no root bone) starting off its origin, exported
+    to an FBX the bridge's own import reads back. (path, its top joint's world track
+    at frames 0..20 in the source's world, the spec)."""
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    top, src, spec = build_source("cmu", name, start=DROP_START, travel_x=DROP_TRAVEL_X)
+    joints = [top] + (cmds.listRelatives(top, allDescendents=True, type="joint", fullPath=True) or [])
+    track = []
+    for frame in range(0, 21):
+        cmds.currentTime(frame)
+        track.append(tuple(pos(top)))
+    path = os.path.join(tempfile.gettempdir(), "verify_conventions_%s.fbx" % name).replace("\\", "/")
+    cmds.select(joints, replace=True)
+    mel.eval("FBXResetExport")
+    mel.eval("FBXExportBakeComplexAnimation -v true")
+    mel.eval("FBXExportBakeComplexStart -v 0")
+    mel.eval("FBXExportBakeComplexEnd -v 20")
+    mel.eval('FBXExport -f "%s" -s' % path)
+    return path, track, spec
+
+
+def _pick_character(model, kind):
+    cmds.optionVar(stringValue=("mayaSceneSetup_characterModel", model))
+    cmds.optionVar(stringValue=("mayaSceneSetup_characterKind", kind))
+
+
+def _manny_size():
+    """Manny's standing height and legs, from the shipped template - the size the
+    rig's and the skeleton's travel is baked at (both stand on Manny's legs)."""
+    data = json.load(open(os.path.join(PLUGIN, "assets", "manny_skeleton_template.json")))
+    p = dict((j["name"], tuple(j["world_position"])) for j in data["joints"])
+    stand = p["pelvis"][1] - p["root"][1]
+    legs = sum(math.sqrt(sum(c * c for c in sub(p["calf_" + s], p["thigh_" + s])))
+               + math.sqrt(sum(c * c for c in sub(p["foot_" + s], p["calf_" + s])))
+               for s in "lr") / 2.0
+    return stand, legs
+
+
+def phase_drop():
+    """The review's finding 2: a scaled clip whose root starts off its origin, dropped
+    onto a floor point, must land ON the point - the scale used to be applied about the
+    clip's origin while the drop is read off its unscaled first frame."""
+    path, track, spec = _cmu_fbx("cmuDrop")
+    scale = expected_scale(spec, _manny_size())
+    p0 = track[0]
+    off = math.hypot(p0[0], p0[2])
+    print("    the CMU clip starts %.2f cm off its origin; baked at x%.4f the old pivot would "
+          "have landed it %.2f cm off the point" % (off, scale, (scale - 1.0) * off))
+
+    # the rig road: a new Manny rig on a floor point
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    _pick_character("Manny", "rig")
+    point = (150.0, 0.0, -80.0)
+    before = set(r.namespace for r in maya_rigs.rigs())
+    text = rigimport.import_and_retarget(path, "cmuDrop", target="new_rig", at=point)
+    rig = next((r for r in maya_rigs.rigs() if r.namespace not in before), None)
+    if rig is None:
+        gate("drop: a CMU clip onto a floor point, new rig", False, text[:400])
+    else:
+        start = cmds.playbackOptions(query=True, minTime=True)
+        cmds.currentTime(start)
+        main = pos(maya_rigs.node(rig, "Main"))
+        miss = math.hypot(main[0] - point[0], main[2] - point[2])
+        game = bones_under(rig.skeleton_root)
+        cmds.currentTime(start + 20)
+        end = pos(maya_rigs.node(rig, "Main"))
+        travel = (end[0] - main[0], end[2] - main[2])
+        # the press deletes the clip and its line carries no connect notes: the size it
+        # used is read off what it baked - Main's travel over the clip's own
+        keyed = (track[20][0] - track[0][0], track[20][2] - track[0][2])
+        used = math.hypot(*travel) / math.hypot(*keyed)
+        want = (used * keyed[0], used * keyed[1])
+        err = math.hypot(travel[0] - want[0], travel[1] - want[1])
+        gate("drop: a CMU clip onto a floor point, new rig",
+             miss <= TRAVEL_TOL and err <= TRAVEL_TOL and off * (scale - 1.0) > 5.0
+             and size_ok(used, scale),
+             "Main %.4f cm off the point, its travel (%.2f, %.2f) against the clip's x%.4f "
+             "(derived x%.4f) (%.2f, %.2f), %.4f off  |  %s"
+             % (miss, travel[0], travel[1], used, scale, want[0], want[1], err,
+                text.split("  |  ")[0][:160]))
+        REPORT.setdefault("drop", {})["rig"] = dict(miss=miss, err=err, scale=scale, used=used,
+                                                    text=text)
+
+    # the skeleton road: a new Manny skeleton on a floor point
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    point = (-120.0, 0.0, 60.0)
+    before = set(cmds.ls(type="joint", long=True) or [])
+    text = skeletonimport.import_onto_skeleton(path, "cmuDropS", at=point, entry=entry_of("Manny"))
+    fresh = [j for j in (cmds.ls(type="joint", long=True) or []) if j not in before]
+    if not fresh:
+        gate("drop: a CMU clip onto a floor point, new skeleton", False, text[:400])
+    else:
+        root = min(fresh, key=lambda p: (p.count("|"), p))
+        start = cmds.playbackOptions(query=True, minTime=True)
+        cmds.currentTime(start)
+        here = pos(root)
+        miss = math.hypot(here[0] - point[0], here[2] - point[2])
+        cmds.currentTime(start + 20)
+        there = pos(root)
+        # the press deletes the clip; the size it used is the rig road's (one reference)
+        used = REPORT.get("drop", {}).get("rig", {}).get("used", scale)
+        want = (used * (track[20][0] - track[0][0]), used * (track[20][2] - track[0][2]))
+        err = math.hypot(there[0] - here[0] - want[0], there[2] - here[2] - want[1])
+        gate("drop: a CMU clip onto a floor point, new skeleton",
+             miss <= TRAVEL_TOL and err <= TRAVEL_TOL,
+             "root %.4f cm off the point, travel %.4f off the clip's x%.4f  |  %s"
+             % (miss, err, used, text.split("  |  ")[0][:160]))
+        REPORT.setdefault("drop", {})["skeleton"] = dict(miss=miss, err=err, scale=scale, text=text)
+
+    # the positive control: the same drop with the scale about the clip's ORIGIN, as the
+    # conventions build had it - the gate above must be able to fail
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    real = skelmap.scale_pivot
+    skelmap.scale_pivot = lambda first, origin: tuple(origin)
+    try:
+        before = set(cmds.ls(type="joint", long=True) or [])
+        skeletonimport.import_onto_skeleton(path, "cmuDropC", at=point, entry=entry_of("Manny"))
+    finally:
+        skelmap.scale_pivot = real
+    fresh = [j for j in (cmds.ls(type="joint", long=True) or []) if j not in before]
+    if fresh:
+        root = min(fresh, key=lambda p: (p.count("|"), p))
+        cmds.currentTime(cmds.playbackOptions(query=True, minTime=True))
+        here = pos(root)
+        old_miss = math.hypot(here[0] - point[0], here[2] - point[2])
+        used = REPORT.get("drop", {}).get("rig", {}).get("used", scale)
+        gate("drop control: the old pivot misses", abs(old_miss - (used - 1.0) * off) < 0.5,
+             "scaled about the clip's origin the root lands %.2f cm off the point "
+             "((s - 1) * |p0| = %.2f)" % (old_miss, (used - 1.0) * off))
+
+    # the square: two of them through the bridge's press, spaced by the BAKED travel
+    from maya_uebridge import lineimport, lineup
+    import types
+    paths = {"A": path, "B": _cmu_fbx("cmuDropB")[0]}
+    for target, label in (("skeleton", "skeletons"), ("new_rig", "rigs")):
+        cmds.file(new=True, force=True)
+        cmds.currentUnit(time="ntsc")
+        _pick_character("Manny", "skeleton" if target == "skeleton" else "rig")
+        before = set(cmds.ls(type="joint", long=True) or [])
+        rigs_before = set(r.namespace for r in maya_rigs.rigs())
+        records = [types.SimpleNamespace(name=n, package="/Game/" + n) for n in ("A", "B")]
+        text = lineimport.run(records, lambda r: (paths[r.name], None), target)
+        start = cmds.playbackOptions(query=True, minTime=True)
+        if target == "skeleton":
+            fresh = [j for j in (cmds.ls(type="joint", long=True) or []) if j not in before]
+            tops = sorted(set(p for p in fresh if not cmds.listRelatives(p, parent=True, type="joint")),
+                          key=lambda p: pos(p)[0])
+            movers = [t for t in tops if skelmap.leaf(t).endswith("root")]
+        else:
+            new = [r for r in maya_rigs.rigs() if r.namespace not in rigs_before]
+            movers = [maya_rigs.node(r, "Main") for r in new]
+        paths_baked = []
+        for mover in movers:
+            seen = []
+            for frame in range(int(start), int(start) + 21):
+                cmds.currentTime(frame)
+                seen.append(tuple(pos(mover)))
+            paths_baked.append(seen)
+        paths_baked.sort(key=lambda t: t[0][0])
+        if len(paths_baked) != 2:
+            gate("square: two scaled clips, new %s" % label, False,
+                 "%d movers found  |  %s" % (len(paths_baked), text[:300]))
+            continue
+        gap = min(q[0] for q in paths_baked[1]) - max(q[0] for q in paths_baked[0])
+        used = REPORT.get("drop", {}).get("rig", {}).get("used", scale)
+        scaled = [[tuple(f + used * (c - f) for c, f in zip(q, track[0])) for q in track]] * 2
+        raw = [track, track]
+        want = lineup.square_slots((0.0, 0.0, 0.0),
+                                   [lineup.side_extent(t, lineup.COLUMNS) for t in scaled],
+                                   [lineup.side_extent(t, lineup.ROWS) for t in scaled])
+        old = lineup.square_slots((0.0, 0.0, 0.0),
+                                  [lineup.side_extent(t, lineup.COLUMNS) for t in raw],
+                                  [lineup.side_extent(t, lineup.ROWS) for t in raw])
+        firsts = [q[0] for q in paths_baked]
+        miss = max(math.hypot(f[0] - w[0], f[2] - w[2]) for f, w in zip(firsts, want))
+        reach = max(q[0] for q in paths_baked[0]) - paths_baked[0][0][0]
+        old_gap = (old[1][0] - old[0][0]) - reach
+        gate("square: two scaled clips, new %s" % label,
+             miss <= TRAVEL_TOL and gap >= lineup.STEP - TRAVEL_TOL and old_gap < lineup.STEP - 5.0,
+             "on their slots to %.4f cm; the baked paths %.2f cm apart (step %.0f) - read at the "
+             "keyed size they would have stood %.2f apart; reach %.2f cm  |  %s"
+             % (miss, gap, lineup.STEP, old_gap, reach, text.split("  |  ")[0][:160]))
+        REPORT.setdefault("square", {})[target] = dict(miss=miss, gap=gap, old_gap=old_gap,
+                                                        reach=reach, text=text)
+
 def main():
     t_all = time.time()
     try:
-        phase_playermale()
-        phase_skeletons()
-        phase_rigs()
+        for phase, run in (("playermale", phase_playermale), ("skeletons", phase_skeletons),
+                           ("rigs", phase_rigs), ("drop", phase_drop)):
+            if not PHASES or phase in PHASES:
+                run()
     except Exception:                                       # noqa: BLE001
         traceback.print_exc()
         RESULTS.append(False)
