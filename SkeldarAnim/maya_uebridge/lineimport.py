@@ -41,6 +41,7 @@ from maya_uebridge import skeletonimport
 
 TARGETS = ("new_rig", "skeleton")
 NOTHING = "select an animation first"
+CANCELLED = "cancelled - nothing changed"
 
 
 # ------------------------------------------------------------------ words
@@ -175,9 +176,54 @@ def _discard(namespace):
         traceback.print_exc()
 
 
-def _onto_new_rig(plan, clip, point):
+class _Versions(object):
+    """The retarget version for every clip of the batch, asked ONCE
+    (2026-10-02, `maya_retargetmode.choose_batch`): measured against the first
+    target the batch adds - every target of a batch is the same catalog row -
+    the worst clip named. Raises `maya_retargetmode.Cancelled` on Cancel."""
+
+    def __init__(self, clips):
+        self.clips = clips
+        self.decisions = None
+
+    def _decide(self, measures):
+        import maya_retargetmode
+        self.decisions = maya_retargetmode.choose_batch(measures)
+
+    def for_rig(self, index, rig, mod):
+        """The Decision for clip `index` onto a new rig; None for the legacy
+        retarget (a module that cannot measure)."""
+        if self.decisions is None:
+            probe = getattr(mod, "measure", None)
+            if probe is None:
+                return None
+            self._decide([probe(source_root=c["source"], rig=rig)[0] for c in self.clips])
+        return self.decisions[index]
+
+    def for_skeleton(self, index):
+        """A `decide` for `skeletonimport.onto_skeleton` of clip `index`."""
+        def decide(source, root, label, start):
+            if self.decisions is None:
+                self._decide([skeletonimport.measure(c["source"], root,
+                                                     c["info"].get("start"), label)
+                              for c in self.clips])
+            return self.decisions[index]
+        return decide
+
+    def reasons(self):
+        """The distinct reasons the batch's versions were taken for."""
+        out = []
+        for d in self.decisions or []:
+            if d is not None and d.reason and d.reason not in out:
+                out.append(d.reason)
+        return out
+
+
+def _onto_new_rig(plan, clip, point, versions=None, index=0):
     """(label, failure): a rig added, the clip retargeted onto it standing on
-    `point`, the clip's skeleton deleted. One undo chunk, as one press."""
+    `point`, the clip's skeleton deleted. One undo chunk, as one press.
+    `versions` (a `_Versions`) answers the retarget version; its Cancelled
+    deletes the rig just added and goes on up."""
     import maya_rigs
     cmds.undoInfo(openChunk=True, chunkName="UE anim import + retarget")
     try:
@@ -186,9 +232,19 @@ def _onto_new_rig(plan, clip, point):
             _discard(clip["namespace"])
             line = ""
         else:
+            decision = None
+            if versions is not None:
+                import maya_retargetmode
+                try:
+                    decision = versions.for_rig(index, rig, mod)
+                except maya_retargetmode.Cancelled:
+                    rigimport.discard_added(rig)
+                    raise
             line, failure = rigimport.retarget_imported(
                 rig, mod, clip["namespace"], clip["info"], clip["source"],
-                clip["name"], {"point": tuple(point), "yaw": None})
+                clip["name"], {"point": tuple(point), "yaw": None},
+                **({"bones": decision.mode} if decision is not None and decision.mode
+                   else {}))
     finally:
         cmds.undoInfo(closeChunk=True)
     for text in notes + [line]:
@@ -226,7 +282,7 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
     centre = tuple(centre or (0.0, 0.0, 0.0))
     total = len(record_list)
     failures, done, widened, imported = [], [], [], []
-    shape = None
+    shape = versions = None
     cancelled = False
     progress = _Progress(3 * total)
     try:
@@ -283,6 +339,8 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                                      animationStartTime=span[0],
                                      animationEndTime=span[1])
 
+            import maya_retargetmode
+            versions = _Versions(imported)
             for index, (clip, point) in enumerate(zip(imported, points)):
                 if progress.cancelled():
                     cancelled = True
@@ -294,13 +352,23 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                     if target == "new_rig" else "onto a new skeleton"))
                 try:
                     if target == "new_rig":
-                        label, failure = _onto_new_rig(plan, clip, point)
+                        label, failure = _onto_new_rig(plan, clip, point,
+                                                       versions, index)
                     else:
                         line, failure, label = skeletonimport.onto_skeleton(
                             entry, clip["namespace"], clip["info"],
-                            clip["source"], clip["name"], point)
+                            clip["source"], clip["name"], point,
+                            decide=versions.for_skeleton(index))
                         if line:
                             print("[uebridge] {0}".format(line))
+                except maya_retargetmode.Cancelled:
+                    # asked before the first clip went on: nothing is done yet,
+                    # and every clip skeleton imported for the batch goes
+                    for rest in imported:
+                        _discard(rest["namespace"])
+                    text = "{0} animations: {1}".format(len(imported), CANCELLED)
+                    print("[uebridge] {0}".format(text))
+                    return text
                 except Exception as error:                   # noqa: BLE001
                     traceback.print_exc()
                     label, failure = None, _short(error)
@@ -312,5 +380,8 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
         progress.close()
     text = summary(target, done, total, centre, widened, failures, step,
                    cancelled, shape, entry.label if entry else None)
+    reasons = versions.reasons() if versions is not None else []
+    if reasons:
+        text = "{0}  |  {1}".format(text, "; ".join(reasons))
     print("[uebridge] {0}".format(text))
     return text

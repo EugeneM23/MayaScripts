@@ -68,6 +68,7 @@ import os
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+import maya_retargetmode as retargetmode
 import maya_rigs
 
 # ------------------------------------------------------------------ our rig
@@ -814,11 +815,50 @@ def foreign_constraints(control, rig):
 
 
 Plan = collections.namedtuple(
-    "Plan", "root drives missing bones rig_bones refusal schema src_rest rig_rest align scale notes busy rig")
+    "Plan", "root drives missing bones rig_bones refusal schema src_rest rig_rest align scale notes busy rig "
+            "stretch")
+# stretch -- squash & stretch (2026-10-02, `maya_retargetmode`): every FK control also stands
+#            on the clip's joint at our size; False is the rotations this module always did
+Plan.__new__.__defaults__ = (False,)
+
+STRETCH_PREFIX = "pmrtStretch"
+MODE_ON_HOLDER = "skeldarRetargetBones"   # on the holder: which retarget stands
 
 
-def _plan(source_root=None, rig=None):
+def pairs_of(drives):
+    """Pure: {our bone: the clip's bone} for the drives that read a source bone."""
+    return dict((our_bone(d.control), d.source) for d in drives
+                if d.kind in ("fk", "pelvis", "main") and our_bone(d.control))
+
+
+def measure(source_root=None, rig=None):
+    """(Measure, refusal): the clip's bones against the rig's, read-only -- what the press
+    decides the retarget version from (2026-10-02)."""
+    plan = _plan(source_root, rig)
+    if plan.refusal:
+        return None, plan.refusal
+    start, end = retargetmode.key_span(list(plan.bones.values()))
+    return retargetmode.measure_scene(pairs_of(plan.drives), plan.rig_bones, plan.bones, start, end,
+                                      source=leaf(plan.root), target=maya_rigs.label(plan.rig),
+                                      extra=(OUR_ROOT, OUR_PELVIS)), ""
+
+
+def connected_mode(rig=None):
+    """Which retarget the standing holder was connected with ("rotation" / "stretch"), or None."""
+    rig, _ = _rig(rig)
+    if rig is None:
+        return None
+    holder = holder_of(rig)
+    if not cmds.objExists(holder) or not cmds.attributeQuery(MODE_ON_HOLDER, node=holder, exists=True):
+        return None
+    return cmds.getAttr(holder + "." + MODE_ON_HOLDER) or None
+
+
+def _plan(source_root=None, rig=None, bones_mode=None):
     """Everything connect() needs, computed without touching the scene."""
+    if bones_mode not in (None, retargetmode.ROTATION, retargetmode.STRETCH):
+        return Plan("", [], [], {}, {}, "unknown retarget version %r" % (bones_mode,), OWN, {}, {}, {},
+                    1.0, [], [], None)
     empty = Plan("", [], [], {}, {}, "", OWN, {}, {}, {}, 1.0, [], [], None)
     rig, refusal = _rig(rig)
     if rig is None:
@@ -882,8 +922,12 @@ def _plan(source_root=None, rig=None):
     if busy:
         notes.append("left alone, already constrained by something that is not the rig: "
                      + ", ".join("%s (%s)" % (c, ", ".join(t)) for c, t in busy))
+    stretch = bones_mode == retargetmode.STRETCH
+    if stretch:
+        notes.append("squash & stretch: every FK control also stands on the clip's joint at our size "
+                     "(x%.4g) -- the bones take the clip's lengths" % scale)
     return Plan(source_root, drives, missing, bones, rig_bones, "", schema, src_rest, rig_rest, align, scale,
-                notes, busy, rig)
+                notes, busy, rig, stretch)
 
 
 def _rotation_offset(drive, plan):
@@ -927,8 +971,13 @@ def report(source_root=None, rig=None):
     return "\n".join(line for line in lines if line)
 
 
-def connect(source_root=None, require_build_pose=True, rig=None):
-    """Make the rig follow the source skeleton, in AdvancedSkeleton's own shape."""
+def connect(source_root=None, require_build_pose=True, rig=None, bones=None):
+    """Make the rig follow the source skeleton, in AdvancedSkeleton's own shape.
+
+    bones -- the retarget version (2026-10-02): None or "rotation" is what this module always
+    did; "stretch" also puts every FK control on the clip's joint at our size (the same scale
+    the travel takes), so the bones take the clip's lengths.
+    """
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
@@ -936,7 +985,7 @@ def connect(source_root=None, require_build_pose=True, rig=None):
     if cmds.objExists(holder):
         return ("%s already exists - press \"Disconnect MoCap Skeleton\" in AdvancedSkeleton first, "
                 "or run disconnect()" % holder)
-    plan = _plan(source_root, rig)
+    plan = _plan(source_root, rig, bones)
     if plan.refusal:
         return plan.refusal
     posed = posed_controls(rig=rig)
@@ -963,6 +1012,14 @@ def connect(source_root=None, require_build_pose=True, rig=None):
     try:
         _holder(rig)
         _remember_source(plan.root, holder)
+        if bones:
+            if not cmds.attributeQuery(MODE_ON_HOLDER, node=holder, exists=True):
+                cmds.addAttr(holder, longName=MODE_ON_HOLDER, dataType="string")
+            cmds.setAttr(holder + "." + MODE_ON_HOLDER, bones, type="string")
+        space = scaled_group = None
+        if plan.stretch:
+            space, scaled_group, _made = retargetmode.scale_space(
+                plan.root, plan.scale, holder, _n(rig, STRETCH_PREFIX))
         for d in plan.drives:
             control = _n(rig, d.control)
             order = cmds.getAttr(control + ".rotateOrder")
@@ -973,6 +1030,11 @@ def connect(source_root=None, require_build_pose=True, rig=None):
                 else:
                     made.append(cmds.orientConstraint(target, control,
                                                       offset=euler_offset(rot[d.control], order))[0])
+                if plan.stretch:
+                    follower, _cons = retargetmode.scaled_follower(
+                        target, space, scaled_group, plan.scale,
+                        _n(rig, STRETCH_PREFIX + "_" + d.control))
+                    made.append(cmds.pointConstraint(follower, control)[0])
             elif d.kind in ("main", "pelvis"):
                 target = plan.bones[d.source]
                 made.append(cmds.orientConstraint(target, control, offset=euler_offset(rot[d.control], order))[0])

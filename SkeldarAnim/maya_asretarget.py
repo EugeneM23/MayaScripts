@@ -43,6 +43,7 @@ import math
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+import maya_retargetmode as retargetmode
 import maya_rigs
 
 # AdvancedSkeleton deform-joint base -> UE bone base.  The rig's own map
@@ -255,18 +256,24 @@ def candidates(schema=UE5):
     return out
 
 
-def drive_plan(controls, bones, schema=UE5, rotation=False):
+def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False):
     """Pure: what to constrain to what.
 
     controls -- control names that exist in this rig
     bones    -- leaf names that exist in the source skeleton
     rotation -- the rig takes rotations only (`rotation_mode`): FK controls by
                 rotation, IK ends and poles from the rig's own FKX joints
+    scaled   -- squash & stretch onto a body that is not the clip's twin
+                (2026-10-02): every FK control takes position as well, from the
+                clip's joint at our size (`maya_retargetmode.scaled_follower`);
+                the IK ends and poles still follow the rig's own FK, as with
+                `rotation`, which this implies
     Returns (drives, missing), missing being [(control, bone)] rows skipped
     because the source has no such bone.  A schema's own gaps -- Mixamo has no
     metacarpals, no second neck joint and three spine joints against our five --
     are not "missing": those rows simply are not in its table.
     """
+    rotation = rotation or scaled
     controls = set(controls)
     bones = set(bones)
     drives, missing = [], []
@@ -288,7 +295,7 @@ def drive_plan(controls, bones, schema=UE5, rotation=False):
     for as_base, src_base in schema.rows:
         for as_side, src_side in schema.sides:
             add("FK" + as_base + as_side, bone_name(src_base, src_side, schema),
-                schema.twin and not rotation, True)
+                (schema.twin and not rotation) or scaled, True)
     if rotation:
         for as_base, fkx, full in IK_FOLLOW:
             for side in ("_L", "_R"):
@@ -1118,7 +1125,16 @@ def _key_range(paths):
 
 Plan = collections.namedtuple(
     "Plan", "root drives missing warn bones rig_bones refusal schema "
-            "src_rest rig_rest align notes rig rotation")
+            "src_rest rig_rest align notes rig rotation scaled scale bones_mode")
+# scaled     -- squash & stretch onto a body that is not the clip's twin: every
+#               source drive rides a scaled follower (2026-10-02)
+# scale      -- our size over the clip's, for those followers
+# bones_mode -- what the holder remembers: "rotation", "stretch", "twin" (the
+#               stretch that IS the old twin path), "" for the legacy call
+Plan.__new__.__defaults__ = (False, 1.0, "")
+
+STRETCH_PREFIX = "asrtStretch"
+MODE_ON_HOLDER = "skeldarRetargetBones"   # on the holder: which retarget stands
 
 
 def _drive_offset(drive, plan):
@@ -1136,8 +1152,37 @@ def _drive_offset(drive, plan):
     return offset_local(reference, plan.src_rest[drive.bone])
 
 
-def _plan(source_root=None, rig=None):
-    """Everything connect() needs, computed without touching the scene."""
+def pairs_of(drives, rig_bones):
+    """Pure: {our bone: the clip's bone} for the drives that read a source bone."""
+    ours = our_bone_map()
+    return dict((ours[d.control], d.bone) for d in drives
+                if not d.own and ours.get(d.control) in rig_bones)
+
+
+def _measure(root, bones, rig_bones, drives, rig):
+    """The clip against the rig's game skeleton (`maya_retargetmode`)."""
+    start, end = retargetmode.key_span(list(bones.values()))
+    return retargetmode.measure_scene(pairs_of(drives, rig_bones), rig_bones, bones,
+                                      start, end, source=leaf(root),
+                                      target=maya_rigs.label(rig))
+
+
+def measure(source_root=None, rig=None):
+    """(Measure, refusal): the clip's bones against the rig's, read-only -- what
+    the press decides the retarget version from (2026-10-02)."""
+    plan = _plan(source_root, rig)
+    if plan.refusal:
+        return None, plan.refusal
+    return _measure(plan.root, plan.bones, plan.rig_bones, plan.drives, plan.rig), ""
+
+
+def _plan(source_root=None, rig=None, bones_mode=None):
+    """Everything connect() needs, computed without touching the scene.
+
+    bones_mode -- None: the legacy rule (the rig's rotation mark); "rotation":
+    every bone keeps its length; "stretch": the twin path when the clip IS our
+    twin (measured), else every source drive on the clip's joint at our size.
+    """
     empty = Plan("", [], [], "", {}, {}, "", UE5, {}, {}, {}, [], None, False)
     rig, refusal = _rig(rig)
     if rig is None:
@@ -1170,10 +1215,26 @@ def _plan(source_root=None, rig=None):
                     "found) - a third schema needs a row in SCHEMAS"
                     % (leaf(source_root),
                        ", ".join(sorted(set(h for s in SCHEMAS for h in s.hints)))))
-    rotation = rotation_mode(rig)
     controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
-    drives, missing = drive_plan(controls, list(bones), schema, rotation=rotation)
     ours = our_bone_map()
+    scaled, scale, remembered = False, 1.0, ""
+    if bones_mode is None:
+        rotation = rotation_mode(rig)
+    elif bones_mode == retargetmode.ROTATION:
+        rotation, remembered = True, retargetmode.ROTATION
+    elif bones_mode == retargetmode.STRETCH:
+        # measured, never assumed: the Creep has UE names (the UE5 schema says
+        # twin) and arms 26 % longer than a UE clip's
+        probe, _ = drive_plan(controls, list(bones), schema)
+        m = _measure(source_root, bones, rig_bones,
+                     [d for d in probe if ours.get(d.control) in rig_bones], rig)
+        exact = m.twin and schema.twin
+        rotation, scaled, scale = (False, False, 1.0) if exact else (True, True, m.scale)
+        remembered = "twin" if exact else retargetmode.STRETCH
+    else:
+        return empty._replace(refusal="unknown retarget version %r" % (bones_mode,))
+    drives, missing = drive_plan(controls, list(bones), schema, rotation=rotation,
+                                 scaled=scaled)
     drives = [d for d in drives if ours.get(d.control) in rig_bones]
     # an own drive needs the rig's FKX joints -- the whole limb, for a pole
     drives = [d for d in drives if not d.own or (
@@ -1204,11 +1265,20 @@ def _plan(source_root=None, rig=None):
     if tp:
         notes.append(tp)
     ratios = limb_ratios(rig_rest, src_rest, schema)
-    note = rotation_note(ratios) if rotation else proportion_note(ratios)
+    note = (stretch_note(scale) if scaled else
+            rotation_note(ratios) if rotation else proportion_note(ratios))
     if note:
         notes.append(note)
     return Plan(source_root, drives, missing, warn, bones, rig_bones, "",
-                schema, src_rest, rig_rest, align, notes, rig, rotation)
+                schema, src_rest, rig_rest, align, notes, rig, rotation,
+                scaled, scale, remembered)
+
+
+def stretch_note(scale):
+    """Pure: what the squash & stretch version means."""
+    return ("squash & stretch: every FK control stands on the clip's joint (the clip "
+            "taken at our size, x%.4g) -- the bones take the clip's lengths; IK ends and "
+            "poles follow the rig's own FK" % scale)
 
 
 def report(source_root=None, rig=None):
@@ -1249,12 +1319,38 @@ def report(source_root=None, rig=None):
     return "\n".join(line for line in lines if line)
 
 
-def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None):
+def connected_mode(rig=None):
+    """Which retarget the standing holder was connected with: "rotation",
+    "stretch", "twin", or None (nothing standing, or the legacy call)."""
+    rig, _ = _rig(rig)
+    if rig is None:
+        return None
+    holder = holder_of(rig)
+    if not cmds.objExists(holder) or not cmds.attributeQuery(MODE_ON_HOLDER, node=holder,
+                                                             exists=True):
+        return None
+    return cmds.getAttr(holder + "." + MODE_ON_HOLDER) or None
+
+
+def _remember_mode(value, holder):
+    if not value:
+        return
+    if not cmds.attributeQuery(MODE_ON_HOLDER, node=holder, exists=True):
+        cmds.addAttr(holder, longName=MODE_ON_HOLDER, dataType="string")
+    cmds.setAttr(holder + "." + MODE_ON_HOLDER, value, type="string")
+
+
+def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None,
+            bones=None):
     """Make the rig follow the source skeleton, in AdvancedSkeleton's own shape.
 
     exact_neck -- set FKNeck_M.bias so neck_01 takes its control's bend 1:1
     (default since 2026-09-05, the animator's ask being an exact neck); False
     leaves the rig's neck in-between as it is and only reports the cost.
+    bones -- the retarget version (2026-10-02, `maya_retargetmode`): "rotation"
+    keeps every bone's length; "stretch" lands every bone on the clip's joint;
+    None is the legacy rule (the rig's rotation mark), which every older caller
+    and verify keeps.
     """
     rig, refusal = _rig(rig)
     if rig is None:
@@ -1263,7 +1359,7 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
     if cmds.objExists(holder):
         return ("%s already exists - press \"Disconnect MoCap Skeleton\" in "
                 "AdvancedSkeleton first, or run disconnect()" % holder)
-    plan = _plan(source_root, rig)
+    plan = _plan(source_root, rig, bones)
     if plan.refusal:
         return plan.refusal
     posed = posed_controls(rig=rig)
@@ -1298,6 +1394,22 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
     try:
         _holder(rig)
         _remember_source(plan.root, holder)
+        _remember_mode(plan.bones_mode, holder)
+        followers = {}
+        if plan.scaled:
+            # squash & stretch onto another body: the source drives read the
+            # clip's joints at our size, in the clip's top space (the bridge's
+            # wrapper is moved onto the rig's place AFTER this; the move rides
+            # 1:1). Under the holder: they die with it on disconnect.
+            space, scaled_group, made_space = retargetmode.scale_space(
+                plan.root, plan.scale, holder, _n(rig, STRETCH_PREFIX))
+
+            def follower_of(bone):
+                if bone not in followers:
+                    followers[bone] = retargetmode.scaled_follower(
+                        plan.bones[bone], space, scaled_group, plan.scale,
+                        _n(rig, STRETCH_PREFIX + "_" + bone))[0]
+                return followers[bone]
         for drive in plan.drives:
             control = _n(rig, drive.control)
             order = cmds.getAttr(control + ".rotateOrder")
@@ -1317,7 +1429,10 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
                         _n(rig, drive.bone), control,
                         offset=euler_offset(rotation_only(own[drive.control]), order))[0])
                 continue
-            target = plan.bones[drive.bone]
+            # a scaled follower stands where the clip's joint stands at our
+            # size, turned as the joint: the twin's own drive, the offset read
+            # against our own bone, carries everything else unchanged
+            target = follower_of(drive.bone) if plan.scaled else plan.bones[drive.bone]
             local = offsets[drive.control]
             shifted = needs_offset(local, drive.translate)
             if drive.translate and drive.rotate:
@@ -1355,8 +1470,9 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
             # is what root motion MEANS for translation, and leave the facing in
             # the pelvis rather than inventing a yaw.  The pelvis is constrained
             # absolutely, so it absorbs whatever Main does - the pose is untouched.
-            made.append(cmds.pointConstraint(plan.bones[plan.schema.pelvis], rig.main,
-                                             skip=["y"])[0])
+            made.append(cmds.pointConstraint(
+                follower_of(plan.schema.pelvis) if plan.scaled
+                else plan.bones[plan.schema.pelvis], rig.main, skip=["y"])[0])
             ground = ("Main takes the source's horizontal travel (%s has no root "
                       "bone); the facing stays in the pelvis" % plan.schema.name)
         _register(made, holder)
@@ -1367,7 +1483,11 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
     lines = ["retarget connected: %d controls of %s driven from %s, schema %s%s "
              "(%d rest offsets on constraints, %d through a helper)"
              % (len(plan.drives), maya_rigs.label(rig), leaf(plan.root),
-                plan.schema.name, ", ROTATIONS ONLY" if plan.rotation else "", turned, helped)]
+                plan.schema.name,
+                ", SQUASH & STRETCH" if plan.scaled else
+                ", ROTATIONS ONLY" if plan.rotation else
+                ", STRETCH (twin, exact)" if plan.bones_mode == "twin" else "",
+                turned, helped)]
     for note in plan.notes:
         lines.append(note)
     if ground:
