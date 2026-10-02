@@ -1,0 +1,490 @@
+"""The Pose Library's Apply (2026-10-02): blend, the status line, which characters, objects,
+the native rebuild - and the order of a press against a fake scene.
+
+The animator: «Выделив наши объекты мы можем применить на них карточку ... достаточно выделить
+любую часть скелета или рига нажать apply ... Поза должна накладываться на текущий активный
+анимационный слой». The pure halves (`mix`, `summary`, `choose_targets`, `pair_objects`,
+`unpaired`, `target_members`, `rebuild_joints`, `shown_notes`) run on plain data; the press's
+frame (`apply`, `Blend`) runs on a fake `cmds` and fake `keys` / `_plan` rebound as module
+attributes (CLAUDE.md's rule) and restored in `tearDown`. The scene half is
+docs/superpowers/plans/verify_poselib_apply.py (mayapy standalone).
+"""
+
+import math
+import unittest
+from collections import OrderedDict
+
+import maya.api.OpenMaya as om
+
+from maya_poselib import apply as ap
+from maya_poselib import scene
+
+
+def quat(euler, order=0):
+    return om.MEulerRotation(*([math.radians(v) for v in euler] + [order])).asQuaternion()
+
+
+def qangle(a, b):
+    """Degrees between two quaternions, the short way."""
+    d = a.inverse() * b
+    v = math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z)
+    return math.degrees(2.0 * math.atan2(v, abs(d.w)))
+
+
+def rot(node, order=0):
+    return {node: (node + ".rotateX", node + ".rotateY", node + ".rotateZ", order)}
+
+
+def triple(values, node):
+    return tuple(values[node + "." + a] for a in ("rotateX", "rotateY", "rotateZ"))
+
+
+# ------------------------------------------------------------------ mix
+
+class Mix(unittest.TestCase):
+
+    def test_alpha_one_is_the_final_values_exactly(self):
+        current = {"a.rotateX": 10.0, "a.rotateY": 20.0, "a.rotateZ": 30.0, "a.translateX": 1.0}
+        final = {"a.rotateX": 11.123456789, "a.rotateY": -5.5, "a.rotateZ": 99.0,
+                 "a.translateX": 7.25}
+        self.assertEqual(ap.mix(current, final, 1.0, rot("a")), final)
+        self.assertEqual(ap.mix(current, final, 1.7, rot("a")), final)
+
+    def test_alpha_zero_is_the_current_values_exactly(self):
+        current = {"a.rotateX": 10.0, "a.rotateY": 20.0, "a.rotateZ": 30.0, "a.translateX": 1.0}
+        final = {"a.rotateX": 50.0, "a.rotateY": -5.5, "a.rotateZ": 99.0, "a.translateX": 7.25}
+        self.assertEqual(ap.mix(current, final, 0.0, rot("a")), current)
+        self.assertEqual(ap.mix(current, final, -0.3, rot("a")), current)
+
+    def test_translations_and_scalars_are_lerped(self):
+        got = ap.mix({"a.translateX": 2.0, "a.weight": 0.0}, {"a.translateX": 6.0,
+                                                               "a.weight": 10.0}, 0.25, {})
+        self.assertAlmostEqual(got["a.translateX"], 3.0, places=12)
+        self.assertAlmostEqual(got["a.weight"], 2.5, places=12)
+
+    def test_one_axis_turn_halfway(self):
+        got = ap.mix({"a.rotateX": 0.0, "a.rotateY": 0.0, "a.rotateZ": 0.0},
+                     {"a.rotateX": 90.0, "a.rotateY": 0.0, "a.rotateZ": 0.0}, 0.5, rot("a"))
+        for value, want in zip(triple(got, "a"), (45.0, 0.0, 0.0)):
+            self.assertAlmostEqual(value, want, places=9)
+
+    def test_a_rotation_goes_the_quaternion_way_in_every_rotate_order(self):
+        # the turn from current is `alpha` of the turn to final, and the rest of the way is
+        # the rest of it: a geodesic, which per-channel lerp of two eulers is not
+        for order in range(6):
+            c, f = (12.0, -40.0, 70.0), (-35.0, 25.0, 140.0)
+            current = dict(zip(("a.rotateX", "a.rotateY", "a.rotateZ"), c))
+            final = dict(zip(("a.rotateX", "a.rotateY", "a.rotateZ"), f))
+            for alpha in (0.2, 0.5, 0.9):
+                got = triple(ap.mix(current, final, alpha, rot("a", order)), "a")
+                q0, q1, q = quat(c, order), quat(f, order), quat(got, order)
+                whole = qangle(q0, q1)
+                self.assertAlmostEqual(qangle(q0, q), alpha * whole, places=7, msg=order)
+                self.assertAlmostEqual(qangle(q, q1), (1 - alpha) * whole, places=7, msg=order)
+
+    def test_the_short_way_and_the_euler_nearest_the_current_one(self):
+        # 170 -> -170 is 20 degrees through 180, not 340 the other way; written nearest 170
+        got = ap.mix({"a.rotateX": 170.0, "a.rotateY": 0.0, "a.rotateZ": 0.0},
+                     {"a.rotateX": -170.0, "a.rotateY": 0.0, "a.rotateZ": 0.0}, 0.5, rot("a"))
+        self.assertAlmostEqual(triple(got, "a")[0], 180.0, places=7)
+        # a wound channel stays wound: 730 -> 740 halfway is 735, not 15
+        got = ap.mix({"a.rotateX": 730.0, "a.rotateY": 0.0, "a.rotateZ": 0.0},
+                     {"a.rotateX": 740.0, "a.rotateY": 0.0, "a.rotateZ": 0.0}, 0.5, rot("a"))
+        self.assertAlmostEqual(triple(got, "a")[0], 735.0, places=7)
+
+    def test_a_rotate_channel_without_its_two_brothers_is_lerped(self):
+        got = ap.mix({"a.rotateX": 0.0}, {"a.rotateX": 90.0}, 0.5, rot("a"))
+        self.assertAlmostEqual(got["a.rotateX"], 45.0, places=12)
+
+    def test_a_plug_with_no_current_value_lands_on_its_final_one(self):
+        got = ap.mix({}, {"a.translateX": 4.0}, 0.5, {})
+        self.assertEqual(got, {"a.translateX": 4.0})
+
+    def test_the_answer_holds_the_final_plugs_in_their_order(self):
+        final = OrderedDict([("b.translateX", 1.0), ("a.rotateX", 1.0), ("a.rotateY", 1.0),
+                             ("a.rotateZ", 1.0), ("c.v", 1.0)])
+        current = dict((p, 0.0) for p in final)
+        self.assertEqual(list(ap.mix(current, final, 0.5, rot("a"))), list(final))
+
+
+# ------------------------------------------------------------------ the status line
+
+def result(**kw):
+    base = dict(name="Fist", target="Manny_Rig1", count=23, noun="controls", layer="AnimLayer1",
+                frame=12.0, worst=(0.003, 0.0), notes=[], alpha=1.0, mirror=False)
+    base.update(kw)
+    return ap.Result(**base)
+
+
+class Summary(unittest.TestCase):
+
+    def test_the_spec_line(self):
+        self.assertEqual(
+            ap.summary([result(notes=["the FK forearm twist is lost on arm_r (31 deg)"])]),
+            "Fist onto Manny_Rig1: 23 controls keyed on AnimLayer1 at frame 12 - worst 0.003 "
+            "deg | the FK forearm twist is lost on arm_r (31 deg)")
+
+    def test_no_layers_at_all_says_no_layer(self):
+        self.assertEqual(ap.summary([result(layer=None)]),
+                         "Fist onto Manny_Rig1: 23 controls keyed at frame 12 - worst 0.003 deg")
+
+    def test_several_targets_are_joined(self):
+        text = ap.summary([result(), result(target="Creep_Rig", count=1, worst=None,
+                                            notes=["no hand_l on Creep_Rig"])])
+        self.assertEqual(text, "Fist onto Manny_Rig1: 23 controls keyed on AnimLayer1 at frame "
+                               "12 - worst 0.003 deg | Fist onto Creep_Rig: 1 control keyed on "
+                               "AnimLayer1 at frame 12 | no hand_l on Creep_Rig")
+
+    def test_a_place_is_said_when_it_is_off(self):
+        self.assertIn("worst 0.012 deg / 0.03 cm", ap.summary([result(worst=(0.012, 0.03))]))
+        self.assertNotIn("cm", ap.summary([result(worst=(0.012, 0.0001))]))
+
+    def test_mirrored_and_blended(self):
+        text = ap.summary([result(mirror=True, alpha=0.5, worst=None, noun="joints",
+                                  frame=3.5)])
+        self.assertEqual(text, "Fist mirrored at 50 % onto Manny_Rig1: 23 joints keyed on "
+                               "AnimLayer1 at frame 3.5")
+
+    def test_nothing_keyed(self):
+        self.assertEqual(ap.summary([result(count=0, notes=["2 not keyed (locked): a, b"])]),
+                         "Fist onto Manny_Rig1: nothing keyed | 2 not keyed (locked): a, b")
+
+    def test_the_rigs_own_twist_bones_are_not_news(self):
+        driven = "16 member(s) are driven on a rig (twist and helper bones): a, b and 14 more"
+        kept = ["the FK forearm twist is lost on arm_r (an IK elbow is a hinge): 31 deg"]
+        self.assertEqual(ap.shown_notes([driven] + kept), kept)
+        self.assertEqual(ap.shown_notes(["no hand_l on Creep_Rig"]), ["no hand_l on Creep_Rig"])
+
+
+# ------------------------------------------------------------------ which characters
+
+def ref(name, kind="rig", label=None):
+    root = "|%s_Character|%s:root" % (name, name) if kind == "rig" else "|%s|root" % name
+    return scene.CharacterRef(kind, root, None, label or ("Manny [rig]" if kind == "rig" else
+                                                          "Manny UE5 [skeleton]"),
+                              None, None, name if kind == "rig" else "")
+
+
+class ChooseTargets(unittest.TestCase):
+
+    def test_the_selection_names_its_characters(self):
+        a, b = ref("Manny_Rig"), ref("Creep_Rig")
+        self.assertEqual(ap.choose_targets([a, b], True, [a, b, ref("Orc_D_Rig")]), ([a, b], ""))
+
+    def test_nothing_selected_the_only_character(self):
+        a = ref("Manny_Rig")
+        self.assertEqual(ap.choose_targets([], False, [a]), ([a], ""))
+
+    def test_nothing_selected_and_no_character(self):
+        self.assertEqual(ap.choose_targets([], False, []), ([], ap.NO_CHARACTER))
+
+    def test_nothing_selected_and_several_characters_names_them(self):
+        refs, refusal = ap.choose_targets([], False, [ref("Manny_Rig"), ref("Manny_Rig1"),
+                                                      ref("Manny", "skeleton")])
+        self.assertEqual(refs, [])
+        self.assertEqual(refusal, "3 characters in the scene (Manny_Rig, Manny_Rig1, Manny UE5 "
+                                  "[skeleton] (root)) - select any part of the one you mean")
+
+    def test_a_selection_of_no_character_is_refused_not_redirected(self):
+        self.assertEqual(ap.choose_targets([], True, [ref("Manny_Rig")]),
+                         ([], ap.NOT_A_CHARACTER))
+
+    def test_a_rig_is_named_by_its_namespace(self):
+        self.assertEqual(ap.target_label(ref("Manny_Rig1")), "Manny_Rig1")
+        self.assertEqual(ap.target_label(ref("Manny", "skeleton")), "Manny UE5 [skeleton] (root)")
+
+
+# ------------------------------------------------------------------ pairing members
+
+class Members(unittest.TestCase):
+
+    def test_the_target_members_in_skeleton_order(self):
+        bones = OrderedDict((k, {}) for k in ("root", "pelvis", "spine_01", "hand_l", "finger"))
+        pairs = {"root": "Root", "pelvis": "Hips", "hand_l": "LeftHand", "finger": "LeftFinger"}
+        self.assertEqual(ap.target_members(bones, pairs, ["LeftFinger", "Hips", "LeftHand"]),
+                         ["pelvis", "hand_l", "finger"])
+
+    def test_unpaired_members_are_named_twist_bones_aside(self):
+        pairs = {"hand_l": "hand_l"}
+        self.assertEqual(ap.unpaired(["hand_l", "index_01_l", "lowerarm_twist_02_l"], pairs),
+                         ["index_01_l"])
+
+    def test_a_bone_with_no_name_of_its_own_is_not_news(self):
+        # Mixamo's finger end joints and HeadTop_End: recognize names none of them, nothing can
+        # pair them - «no LeftHandIndex4 ... and 7 more» said nothing on every Mixamo card
+        source = {"Hips": {"canonical": "pelvis"}, "LeftHand": {"canonical": "hand_l"},
+                  "LeftHandIndex4": {"canonical": None}, "HeadTop_End": {"canonical": None},
+                  "LeftHandIndex1": {"canonical": "index_01_l"}}
+        pairs = {"pelvis": "Hips", "hand_l": "LeftHand"}
+        self.assertEqual(ap.unpaired(list(source), pairs, source), ["LeftHandIndex1"])
+        # a UE-named card: every leaf is its own name
+        ue = {"root": {}, "pelvis": {}, "spine_01": {}, "thigh_l": {}, "thigh_r": {},
+              "calf_l": {}, "calf_r": {}, "foot_l": {}, "foot_r": {}, "clavicle_l": {},
+              "clavicle_r": {}, "upperarm_l": {}, "upperarm_r": {}, "lowerarm_l": {},
+              "lowerarm_r": {}, "hand_l": {}, "hand_r": {}, "neck_02": {}}
+        for bone in ue.values():
+            bone["canonical"] = None
+        self.assertEqual(ap.unpaired(["neck_02", "hand_l"], {"hand_l": "hand_l"}, ue),
+                         ["neck_02"])
+
+    def test_the_unpaired_note(self):
+        self.assertEqual(ap.unpaired_note(["hand_l"], "Creep_Rig"), "no hand_l on Creep_Rig")
+        self.assertEqual(ap.unpaired_note(list("abcdef"), "X"), "no a, b, c, d and 2 more on X")
+        self.assertEqual(ap.unpaired_note([], "X"), "")
+
+
+# ------------------------------------------------------------------ objects
+
+def obj(name, path=None, **attrs):
+    return {"name": name, "path": path or "|" + name, "attrs": attrs}
+
+
+class PairObjects(unittest.TestCase):
+
+    def test_by_name_namespace_blind(self):
+        objects = [obj("pCube1", translateX=1.0), obj("pCube2", translateX=2.0)]
+        got, how = ap.pair_objects(objects, ["|copy:pCube2", "|grp|copy:pCube1"], {0: "|pCube1"})
+        self.assertEqual(how, "name")
+        self.assertEqual([(o["name"], p) for o, p in got],
+                         [("pCube1", "|grp|copy:pCube1"), ("pCube2", "|copy:pCube2")])
+
+    def test_else_the_stored_ones_found_in_the_scene(self):
+        objects = [obj("pCube1"), obj("pCube2")]
+        got, how = ap.pair_objects(objects, [], {0: "|pCube1", 1: None})
+        self.assertEqual((how, [(o["name"], p) for o, p in got]), ("stored",
+                                                                   [("pCube1", "|pCube1")]))
+
+    def test_else_by_selection_order_when_the_counts_match(self):
+        objects = [obj("pCube1"), obj("pCube2")]
+        got, how = ap.pair_objects(objects, ["|a", "|b"], {})
+        self.assertEqual((how, [(o["name"], p) for o, p in got]),
+                         ("order", [("pCube1", "|a"), ("pCube2", "|b")]))
+        self.assertEqual(ap.pair_objects(objects, ["|a"], {}), ([], ""))
+
+    def test_nothing_found(self):
+        self.assertEqual(ap.pair_objects([obj("x")], [], {}), ([], ""))
+
+
+# ------------------------------------------------------------------ the native rebuild
+
+def placed(euler, point, order=0):
+    tm = om.MTransformationMatrix(om.MEulerRotation(
+        *([math.radians(v) for v in euler] + [order])).asMatrix())
+    tm.setTranslation(om.MVector(*point), om.MSpace.kTransform)
+    return [float(v) for v in tm.asMatrix()]
+
+
+class RebuildJoints(unittest.TestCase):
+
+    def bones(self):
+        return OrderedDict([
+            ("hand", {"parent": "arm", "rest": placed((5, 60, -10), (40, 140, 3)),
+                      "rotateOrder": 4}),
+            ("Hips", {"parent": None, "rest": placed((0, 0, 0), (0, 100, 0)), "rotateOrder": 0}),
+            ("arm", {"parent": "Hips", "rest": placed((0, 0, 80), (20, 140, 0)),
+                     "rotateOrder": 5}),
+        ])
+
+    def test_parents_first_and_the_rests_rebuilt_exactly(self):
+        bones = self.bones()
+        joints = ap.rebuild_joints(bones)
+        self.assertEqual([j["name"] for j in joints], ["Hips", "arm", "hand"])
+        self.assertEqual([j["parent"] for j in joints], [None, 0, 1])
+        self.assertEqual([j["order"] for j in joints], ["xyz", "zyx", "yxz"])
+        worlds = []
+        for joint in joints:
+            tm = om.MTransformationMatrix(om.MQuaternion(*joint["q"]).asMatrix())
+            tm.setTranslation(om.MVector(*joint["t"]), om.MSpace.kTransform)
+            local = tm.asMatrix()
+            world = local if joint["parent"] is None else local * worlds[joint["parent"]]
+            worlds.append(world)
+            want = om.MMatrix(bones[joint["name"]]["rest"])
+            self.assertTrue(world.isEquivalent(want, 1e-9), joint["name"])
+
+    def test_a_joint_name_maya_cannot_take_is_made_legal(self):
+        joints = ap.rebuild_joints({"DEF-spine.003": {"parent": None,
+                                                      "rest": placed((0, 0, 0), (0, 0, 0))}})
+        self.assertEqual(joints[0]["name"], "DEF_spine_003")
+
+
+# ------------------------------------------------------------------ the press, against a fake scene
+
+class FakeCmds(object):
+    """The `cmds` calls a press makes, recorded in order."""
+
+    def __init__(self, log, frame=12.0):
+        self.log = log
+        self.frame = frame
+        self.auto = True
+        self.recording = True
+
+    def undoInfo(self, query=False, state=None, openChunk=False, closeChunk=False,
+                 chunkName=None, stateWithoutFlush=None, **kwargs):
+        if query:
+            return self.recording
+        if stateWithoutFlush is not None:
+            self.recording = bool(stateWithoutFlush)
+            self.log.append(("record", self.recording))
+        if openChunk:
+            self.log.append(("open", chunkName))
+        if closeChunk:
+            self.log.append(("close",))
+
+    def autoKeyframe(self, query=False, state=None):
+        if query:
+            return self.auto
+        self.auto = state
+        self.log.append(("autoKey", state))
+
+    def currentTime(self, value=None, query=False, update=None):
+        if query:
+            return self.frame
+        self.log.append(("time", value))
+
+    def ls(self, *args, **kwargs):
+        return []
+
+    def refresh(self, **kwargs):
+        self.log.append(("refresh",))
+
+    def getAttr(self, plug):
+        return 0
+
+
+class FakeKeys(object):
+
+    def __init__(self, log, layer=None, refusal=""):
+        self.log = log
+        self.layer = layer
+        self.refusal = refusal
+
+    def active_layer(self):
+        self.log.append(("layer",))
+        return self.layer, self.refusal
+
+    def quaternion_note(self, layer):
+        return ""
+
+    def current(self, plugs):
+        return dict((p, 0.0) for p in plugs)
+
+    def write(self, values, frame, layer):
+        self.log.append(("write", dict(values), frame))
+        return len(values), []
+
+    def preview(self, values):
+        self.log.append(("preview", dict(values)))
+
+
+class Press(unittest.TestCase):
+    """The frame of a press: refusals before anything, ONE undo chunk around the solve and the
+    keys (a Ctrl+Z after Apply is the whole press), autoKey off inside it and back; a Blend that
+    solves and previews UNRECORDED and keys in one chunk on finish, so a cancel leaves no undo
+    step at all and nothing stays open while the animator drags."""
+
+    def setUp(self):
+        self.log = []
+        self.saved = dict((name, getattr(ap, name)) for name in
+                          ("cmds", "keys", "_plan", "_targets", "_measure", "rotations_of"))
+        ap.cmds = FakeCmds(self.log)
+        ap.keys = FakeKeys(self.log)
+        self.target = ref("Manny_Rig1")
+        ap._targets = lambda selection: ([self.target], "")
+        ap._measure = lambda plan, extra: (0.001, 0.0, "hand_l")
+        ap.rotations_of = lambda values: {}
+
+        def plan(data, target, mirror=False):
+            self.log.append(("plan", self.log_recording()))
+            return (ap.Plan(target, OrderedDict([("Manny_Rig1:FKWrist_L.rotateX", 30.0)]),
+                            {"Manny_Rig1:FKWrist_L.rotateX": 10.0}, [], {}), None)
+        ap._plan = plan
+        self.card = {"kind": "character", "name": "Fist", "bones": {"root": {}},
+                     "members": ["hand_l"]}
+
+    def log_recording(self):
+        return ap.cmds.recording
+
+    def tearDown(self):
+        for name, value in self.saved.items():
+            setattr(ap, name, value)
+
+    def test_apply_is_one_chunk_around_the_solve_and_the_keys(self):
+        ok, text = ap.apply(self.card)
+        self.assertTrue(ok, text)
+        names = [entry[0] for entry in self.log]
+        self.assertEqual(names[:2], ["layer", "open"])
+        self.assertEqual(self.log[1], ("open", "skeldarPoseApply"))
+        self.assertLess(names.index("open"), names.index("plan"))
+        self.assertLess(names.index("plan"), names.index("write"))
+        self.assertLess(names.index("write"), names.index("close"))
+        self.assertEqual(names.count("open"), 1)
+        self.assertEqual(self.log[names.index("open") + 1], ("autoKey", False))
+        self.assertEqual(self.log[names.index("close") - 1], ("autoKey", True))
+        self.assertEqual(text, "Fist onto Manny_Rig1: 1 control keyed at frame 12 - worst "
+                               "0.001 deg")
+
+    def test_a_refused_layer_changes_nothing(self):
+        ap.keys = FakeKeys(self.log, refusal="the animation layer L is locked")
+        ok, text = ap.apply(self.card)
+        self.assertEqual((ok, text), (False, "the animation layer L is locked"))
+        self.assertEqual(self.log, [("layer",)])
+
+    def test_apply_at_half_keys_the_mix(self):
+        ok, _text = ap.apply(self.card, alpha=0.5)
+        written = [entry for entry in self.log if entry[0] == "write"][0]
+        self.assertAlmostEqual(written[1]["Manny_Rig1:FKWrist_L.rotateX"], 20.0, places=12)
+
+    def test_a_blend_previews_unrecorded_and_a_cancel_leaves_no_step(self):
+        blend = ap.Blend()
+        self.assertEqual(blend.start(self.card), "")
+        blend.set(0.5)
+        blend.cancel()
+        self.assertNotIn("open", [entry[0] for entry in self.log])
+        plans = [entry for entry in self.log if entry[0] == "plan"]
+        self.assertEqual(plans, [("plan", False)])           # solved with recording off
+        previews = [entry[1] for entry in self.log if entry[0] == "preview"]
+        self.assertEqual(previews, [{"Manny_Rig1:FKWrist_L.rotateX": 20.0},
+                                    {"Manny_Rig1:FKWrist_L.rotateX": 10.0}])
+        self.assertTrue(ap.cmds.recording)
+        self.assertTrue(ap.cmds.auto)
+        self.assertFalse(blend.active())
+
+    def test_a_blend_finish_keys_its_last_alpha_in_one_chunk(self):
+        blend = ap.Blend()
+        blend.start(self.card)
+        blend.set(0.25)
+        text = blend.finish()
+        names = [entry[0] for entry in self.log]
+        self.assertEqual(names.count("open"), 1)
+        opened = names.index("open")
+        # every value back, unrecorded, before the chunk: a Ctrl+Z then finds the static
+        # channels as they were before the session, not at the preview's value
+        last = max(i for i, entry in enumerate(self.log[:opened]) if entry[0] == "preview")
+        self.assertEqual(self.log[last][1], {"Manny_Rig1:FKWrist_L.rotateX": 10.0})
+        self.assertIn(("record", True), self.log[last:opened])
+        self.assertTrue(all(entry != ("record", False) for entry in self.log[opened:]))
+        written = [entry for entry in self.log if entry[0] == "write"]
+        self.assertEqual(len(written), 1)
+        self.assertAlmostEqual(written[0][1]["Manny_Rig1:FKWrist_L.rotateX"], 15.0, places=12)
+        self.assertLess(opened, names.index("write"))
+        self.assertLess(names.index("write"), names.index("close"))
+        self.assertIn("at 25 %", text)
+        self.assertFalse(blend.active())
+
+    def test_a_blend_at_zero_keys_nothing(self):
+        blend = ap.Blend()
+        blend.start(self.card)
+        text = blend.finish()
+        self.assertNotIn("write", [entry[0] for entry in self.log])
+        self.assertIn("nothing keyed", text)
+
+    def test_a_blend_refused_starts_nothing(self):
+        ap.keys = FakeKeys(self.log, refusal="the animation layer L is locked")
+        blend = ap.Blend()
+        self.assertEqual(blend.start(self.card), "the animation layer L is locked")
+        self.assertFalse(blend.active())
+        self.assertNotIn("plan", [entry[0] for entry in self.log])
+
+
+if __name__ == "__main__":
+    unittest.main()
