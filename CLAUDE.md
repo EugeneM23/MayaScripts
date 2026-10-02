@@ -8408,3 +8408,72 @@ the IK on the clip's bones: history. A rig with a take from before this has the 
      no toes and the foot carry silently did nothing - the ball 2.14 cm off while the line said the legs
      were carried. Look among the descendants, the shallowest FKX joint whose IKX twin is the IK ankle's
      child.
+
+## The Characters cards catch fire under the mouse (2026-10-02)
+
+The animator: «Хочу попробовать сделать крутые карточки выбора ригов и скелетов. Когда навожу мышкой на
+карточку то хочу что бы на заднем фоне в карточке загорался огонь летели искры и она немного увеличивалась
+в размере. попробуй сделать визуальный прототип но в плагин пока не вставляй». A standalone prototype came
+first (`docs/superpowers/plans/proto_fire_cards.py`: `mayapy proto_fire_cards.py` opens a window of the
+grid in the hub's colours, the same QPainter; `--frames DIR` renders a scripted hover offscreen and an HTML
+flipbook). The verdict: «У каждого персонажа свой цвет огня. А так все хорошо мне нравится давай делать
+фичу». Spec `docs/superpowers/specs/2026-10-02-character-card-fire-design.md`.
+
+- **What it draws**, on an available portrait under the mouse:
+  - **flames behind the character**: a heat field (80 x 90 cells) rising from the card's bottom edge,
+    shaped by a cooling map scrolling up with it, torn by the classic one-random-neighbour-below rule. The
+    HEAT is interpolated to the card's pixels and the palette applied after, so the edges stay crisp. It
+    is drawn additively under the portrait (the portraits carry alpha);
+  - **sparks**: 24 on catching, 30 on a click, 30 a second while it burns; a quarter in front of the
+    character; they fly on past the card;
+  - **the character backlit**: the silhouette 30 % darker, a rim on the inside of its edge, firelight
+    from below, all flickering with the field's heat;
+  - **the card grown 7 %** on a spring (a touch of overshoot), with an outer glow, a ring and a name in
+    the fire's colour.
+  The mouse off: the source dies, the flames finish rising and burn out (1.4 s measured), the card settles.
+- **A fire per character** - `maya_charfire.FIRES` by model key: Manny `ember` (the hub's orange), Creep
+  `spectral` blue, Orc D `toxic` green, UE4 Mannequin `arcane` violet. A model not in it has no fire and
+  the old hover: the Auto card (a peer's, the same day). A new character model wants a fire there (a test
+  pins every model with a catalog row to a palette of its own). The table is NOT in `catalog.py` on
+  purpose (the peer was rewriting `MODELS` the same hour).
+- **No fire**: on a dimmed portrait, during a drag (the drag puts it out), with ⋮ → Interface animations
+  off (`maya_hubmotion.enabled()`, asked through `maya_chargrid._animations`, a test seam).
+- **`SkeldarAnim/maya_charfire.py`** (numpy + stdlib; a subprocess test pins it; a payload row): the
+  palettes and their premultiplied B G R A LUT, `Fire` (`field(lut, w, h)`), `Sparks`, `CardFx` (hover ->
+  `power`, the grow spring, the flash, `active()`, `shown_grow()` never below rest), `lit_masks(alpha)`.
+  Fixed-step and seeded: 23 tests with no Qt.
+- **`maya_chargrid`** paints it. `fx` {model: CardFx} lives only while a card burns; a 16 ms
+  `fire_timer` runs only then. `_paint_cold` is the old tile, `_paint_hot` a burning one.
+  `hover_model(model)` is the hover's seam for a verify; `advance(dt)` the loop.
+- **The overlay.** The grid is clipped to its placeholder, so a grown card, its glow and its sparks would
+  be cut at every edge. A burning card is drawn by `FireOverlay` (`skeldarCharacterFire`), a
+  mouse-transparent child of the hub's SCROLLED CONTENT (the first ancestor whose parent is a scroll
+  area's viewport: the skin's `skeldarHubContent`, the classic hub's scrollLayout).
+  - It covers the grid widened by a fifth of a cell at the sides and bottom and three fifths above,
+    re-synced every tick: a card sliding above moves the grid and sends it no event.
+  - The grid skips the cards it draws (`overlaid`).
+  - While the grid is not whole inside every ancestor up to the content (a card sliding shut caps its
+    body), the grid draws its burning cards itself, clipped.
+  - The grid's `destroyed` deletes it; the content's death takes it too.
+
+Proof: `tests/test_charfire.py` 23; `tests/test_chargrid.py` 13 new (lights, not a dimmed one, not with
+the animations off, not the Auto card, moving on, burning out and the timer stopping, the Creep blue and
+the Orc green in the picture, a drag, a click burst, the overlay in a scroll area drawing it past the
+grid and the grid skipping it, a grid cut by its parent drawing itself, the overlay dying with the grid);
+3897 unit tests. `docs/superpowers/plans/verify_character_fire.py` **9/9 in a disposable GUI Maya** (port
+7037, scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`, minimized, killed after) on the repo's hub floated to the
+dock's 510 px, a real QMouseEvent on the grid:
+- the overlay at (0, 122, 510 x 376) around the grid's (16, 189, 475 x 287), drawing the Creep;
+- 405 blue samples in it, 0 in the grid; the Orc D 73 green;
+- the paints of a burning frame p95 **4.2 ms** (grid + overlay), a loop turn p99 9.2 ms;
+- cold 1.43 s after the mouse left, the timer stopped, the overlay hidden;
+- off with Interface animations off;
+- after `maya_hub.rebuild()`: 0 overlays left, the new grid burning again.
+Picture: the hub with Manny burning (DWM's copy of the window).
+
+198. **A Bash heredoc in this harness turns a double backslash into a single one** (2026-10-02, twice:
+     a patch script, and this very paragraph, both written with `<<'EOF'`, the quoted delimiter that should
+     keep the text literal). In the script a backslash + newline inside a `'''` string became a line
+     continuation and the replacement's text no longer matched the file (the assert caught it). Write
+     Python and anything with backslashes through the Write / Edit tools (trap 101 is PowerShell's
+     version).

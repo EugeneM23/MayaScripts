@@ -254,6 +254,190 @@ class Grid(unittest.TestCase):
         self.assertEqual(grid.geometry(), host.rect())
 
 
+@unittest.skipIf(QT is None, "no Qt")
+class FireOnHover(unittest.TestCase):
+    """2026-10-02: the cursor sets a portrait alight in its own fire
+    (docs/superpowers/specs/2026-10-02-character-card-fire-design.md)."""
+
+    def setUp(self):
+        import maya_charfire
+        self.cf = maya_charfire
+        self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
+        self.scene = FakeScene()
+        self.grid = cg.make_grid(self.scene, kind="rig", selected="Manny")
+        self.grid.resize(330, self.grid.height_for(330))
+        self.addCleanup(self.grid.deleteLater)
+        animations = cg._animations
+        self.addCleanup(lambda: setattr(cg, "_animations", animations))
+
+    def keys(self):
+        return [m.key for m in self.grid.models]
+
+    def burn(self, model, seconds=1.0):
+        self.grid.hover_model(model)
+        for _ in range(int(seconds * 60)):
+            self.grid.advance(1.0 / 60)
+
+    def render(self, widget):
+        image = QT.QtGui.QImage(widget.size(), QT.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        widget.render(image)
+        return image
+
+    def count(self, image, rect, test):
+        x0, y0, w, h = [int(v) for v in rect]
+        hits = 0
+        for x in range(max(0, x0), min(image.width(), x0 + w), 2):
+            for y in range(max(0, y0), min(image.height(), y0 + h), 2):
+                c = image.pixelColor(x, y)
+                if test(c.red(), c.green(), c.blue()):
+                    hits += 1
+        return hits
+
+    def box(self, model):
+        return self.grid.rects()[self.keys().index(model)]
+
+    def test_hovering_an_available_portrait_lights_it(self):
+        self.grid.hover_model("Creep")
+        self.assertIn("Creep", self.grid.fx)
+        self.assertTrue(self.grid.fx["Creep"].hover)
+        self.assertTrue(self.grid.fire_timer.isActive())
+
+    def test_a_dimmed_portrait_does_not_burn(self):
+        self.grid.hover_model("UE4_Mannequin")          # no rig: dimmed
+        self.assertEqual(self.grid.fx, {})
+
+    def test_no_fire_with_the_interface_animations_off(self):
+        cg._animations = lambda: False
+        self.grid.hover_model("Creep")
+        self.assertEqual(self.grid.fx, {})
+        self.assertEqual(self.grid._hover, "Creep")     # the old hover stands
+
+    def test_a_model_with_no_fire_keeps_the_old_hover(self):
+        self.assertEqual(self.cf.fire_of("Auto"), "")
+        if "Auto" in self.keys():
+            self.grid.hover_model("Auto")
+            self.assertEqual(self.grid.fx, {})
+
+    def test_moving_on_puts_the_first_out_and_lights_the_second(self):
+        self.burn("Creep", 0.3)
+        self.grid.hover_model("Orc_D")
+        self.assertFalse(self.grid.fx["Creep"].hover)
+        self.assertTrue(self.grid.fx["Orc_D"].hover)
+
+    def test_burnt_out_cards_are_dropped_and_the_timer_stops(self):
+        self.burn("Creep", 0.5)
+        self.grid.hover_model(None)
+        still = True
+        for _ in range(60 * 6):
+            still = self.grid.advance(1.0 / 60)
+        self.assertFalse(still)
+        self.assertEqual(self.grid.fx, {})
+        self.assertFalse(self.grid.fire_timer.isActive())
+
+    def test_a_burning_card_paints_its_own_fire(self):
+        blue = lambda r, g, b: b > r + 50 and b > 90                  # noqa: E731
+        green = lambda r, g, b: g > r + 50 and g > b + 30 and g > 90  # noqa: E731
+        cold = self.render(self.grid)
+        self.assertLess(self.count(cold, self.box("Creep"), blue), 5)
+        self.assertLess(self.count(cold, self.box("Orc_D"), green), 5)
+        self.burn("Creep")
+        hot = self.render(self.grid)
+        self.assertGreater(self.count(hot, self.box("Creep"), blue), 60)
+        self.grid.hover_model("Orc_D")
+        for _ in range(60):
+            self.grid.advance(1.0 / 60)
+        hot = self.render(self.grid)
+        # the Orc's shoulders fill the card: less fire shows, and it is green
+        self.assertGreater(self.count(hot, self.box("Orc_D"), green), 15)
+
+    def test_a_drag_puts_the_fire_out(self):
+        self.burn("Creep", 0.3)
+        self.grid._start("Creep", QT.QtCore.QPoint(10, 10))
+        self.addCleanup(self.grid._end)
+        self.assertFalse(any(fx.hover for fx in self.grid.fx.values()))
+        self.grid.hover_model("Orc_D")                  # nothing lights mid-drag
+        self.assertNotIn("Orc_D", self.grid.fx)
+
+    def test_a_click_bursts_sparks(self):
+        self.burn("Creep", 0.1)
+        before = len(self.grid.fx["Creep"].sparks.age)
+        self.assertTrue(self.grid.select("Creep"))
+        self.assertEqual(len(self.grid.fx["Creep"].sparks.age),
+                         before + self.cf.CLICK_SPARKS)
+
+    def test_without_a_scroll_area_the_grid_draws_its_fire_itself(self):
+        self.grid.show()
+        self.burn("Creep", 0.2)
+        self.assertIsNone(self.grid.overlay)
+        self.assertEqual(self.grid.overlaid, set())
+
+    def _in_a_hub(self, content_h=600):
+        area = QT.QtWidgets.QScrollArea()
+        self.addCleanup(area.deleteLater)
+        area.resize(420, 400)
+        content = QT.QtWidgets.QWidget()
+        content.resize(400, content_h)
+        area.setWidget(content)
+        host = QT.QtWidgets.QWidget(content)
+        host.setGeometry(30, 150, 330, 10)
+        grid = cg.make_grid(self.scene, parent=host, kind="rig", selected="Manny")
+        grid.fit(host)
+        area.show()
+        self.app.processEvents()
+        return area, content, host, grid
+
+    def test_in_a_hub_the_overlay_draws_the_burning_card_past_its_edges(self):
+        area, content, host, grid = self._in_a_hub()
+        grid.hover_model("Creep")
+        for _ in range(60):
+            grid.advance(1.0 / 60)
+        overlay = grid.overlay
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay.objectName(), cg.FIRE_NAME)
+        self.assertIs(overlay.parentWidget(), content)
+        self.assertTrue(overlay.testAttribute(
+            QT.QtCore.Qt.WA_TransparentForMouseEvents))
+        spot = QT.QtCore.QRect(grid.mapTo(content, QT.QtCore.QPoint(0, 0)),
+                               grid.size())
+        self.assertTrue(overlay.geometry().contains(spot))
+        self.assertGreater(overlay.geometry().top(), -1)
+        self.assertLess(overlay.geometry().top(), spot.top())   # room above
+        self.assertEqual(grid.overlaid, {"Creep"})
+        blue = lambda r, g, b: b > r + 50 and b > 90                  # noqa: E731
+        index = [m.key for m in grid.models].index("Creep")
+        x, y, w, h = grid.rects()[index]
+        # the overlay has it, the grid skips it
+        lifted = self.render(overlay)
+        o = overlay.origin
+        self.assertGreater(self.count(lifted, (x + o.x(), y + o.y(), w, h),
+                                      blue), 60)
+        self.assertLess(self.count(self.render(grid), (x, y, w, h), blue), 5)
+
+    def test_a_grid_cut_by_its_parent_draws_its_fire_itself(self):
+        area, content, host, grid = self._in_a_hub()
+        host.setFixedHeight(20)                          # a card sliding shut
+        host.resize(host.width(), 20)
+        self.app.processEvents()
+        grid.resize(grid.width(), grid.height_for(grid.width()))
+        grid.hover_model("Creep")
+        grid.advance(1.0 / 60)
+        self.assertEqual(grid.overlaid, set())
+
+    def test_the_overlay_goes_with_the_grid(self):
+        area, content, host, grid = self._in_a_hub()
+        grid.hover_model("Creep")
+        grid.advance(1.0 / 60)
+        overlay = grid.overlay
+        self.assertIsNotNone(overlay)
+        grid.deleteLater()
+        for _ in range(3):
+            self.app.processEvents()
+            QT.QtCore.QCoreApplication.sendPostedEvents(
+                None, QT.QtCore.QEvent.DeferredDelete)
+        self.assertFalse(QT.shiboken.isValid(overlay))
+
+
 class Skin(unittest.TestCase):
 
     def _source(self):
