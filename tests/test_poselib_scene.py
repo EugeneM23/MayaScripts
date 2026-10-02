@@ -269,7 +269,7 @@ class MembersOnARig(unittest.TestCase):
 
     def test_an_unknown_control_a_group_and_a_mesh_name_the_whole_body(self):
         body = scene.whole_body(manny())
-        self.assertEqual(self.members(("Manny_Rig1:HipSwinger_M", "transform")), body)
+        self.assertEqual(self.members(("Manny_Rig1:MyOwnControl_M", "transform")), body)
         self.assertEqual(self.members(("Manny_Rig1:Group", "transform")), body)
         self.assertEqual(self.members(("Manny_Rig1:SKM_Manny_Simple", "mesh")), body)
 
@@ -298,6 +298,101 @@ class MembersOnARig(unittest.TestCase):
 
     def test_the_root_joint_names_the_whole_body(self):
         self.assertEqual(self.members(("Manny_Rig1:root", "joint")), scene.whole_body(manny()))
+
+
+# The 187 members of the shipped rigs' ControlSet - the same names on Manny_Rig, Creep_Rig and
+# Orc_D_Rig (read 2026-10-02 in mayapy standalone, `cmds.sets(rig.control_set, q=True)`).
+CONTROL_SET = [
+    "FKAnkle_L", "FKAnkle_R", "FKElbow_L", "FKElbow_R", "FKExtraAnkle_L", "FKExtraAnkle_R",
+    "FKExtraElbow_L", "FKExtraElbow_R", "FKExtraHead_M", "FKExtraHip_L", "FKExtraHip_R",
+    "FKExtraIndexFinger0_L", "FKExtraIndexFinger0_R", "FKExtraIndexFinger1_L",
+    "FKExtraIndexFinger1_R", "FKExtraIndexFinger2_L", "FKExtraIndexFinger2_R",
+    "FKExtraIndexFinger3_L", "FKExtraIndexFinger3_R", "FKExtraKnee_L", "FKExtraKnee_R",
+    "FKExtraMiddleFinger0_L", "FKExtraMiddleFinger0_R", "FKExtraMiddleFinger1_L",
+    "FKExtraMiddleFinger1_R", "FKExtraMiddleFinger2_L", "FKExtraMiddleFinger2_R",
+    "FKExtraMiddleFinger3_L", "FKExtraMiddleFinger3_R", "FKExtraNeckPart1_M", "FKExtraNeck_M",
+    "FKExtraPinkyFinger0_L", "FKExtraPinkyFinger0_R", "FKExtraPinkyFinger1_L",
+    "FKExtraPinkyFinger1_R", "FKExtraPinkyFinger2_L", "FKExtraPinkyFinger2_R",
+    "FKExtraPinkyFinger3_L", "FKExtraPinkyFinger3_R", "FKExtraRingFinger0_L",
+    "FKExtraRingFinger0_R", "FKExtraRingFinger1_L", "FKExtraRingFinger1_R",
+    "FKExtraRingFinger2_L", "FKExtraRingFinger2_R", "FKExtraRingFinger3_L",
+    "FKExtraRingFinger3_R", "FKExtraRoot_M", "FKExtraScapula_L", "FKExtraScapula_R",
+    "FKExtraShoulder_L", "FKExtraShoulder_R", "FKExtraSpine1_M", "FKExtraSpine2_M",
+    "FKExtraSpine3_M", "FKExtraSpine4_M", "FKExtraSpine5_M", "FKExtraThumbFinger1_L",
+    "FKExtraThumbFinger1_R", "FKExtraThumbFinger2_L", "FKExtraThumbFinger2_R",
+    "FKExtraThumbFinger3_L", "FKExtraThumbFinger3_R", "FKExtraToes_L", "FKExtraToes_R",
+    "FKExtraWrist_L", "FKExtraWrist_R", "FKHead_M", "FKHip_L", "FKHip_R", "FKIKArm_L",
+    "FKIKArm_R", "FKIKLeg_L", "FKIKLeg_R", "FKIKSpine_M", "FKIndexFinger0_L", "FKIndexFinger0_R",
+    "FKIndexFinger1_L", "FKIndexFinger1_R", "FKIndexFinger2_L", "FKIndexFinger2_R",
+    "FKIndexFinger3_L", "FKIndexFinger3_R", "FKKnee_L", "FKKnee_R", "FKMiddleFinger0_L",
+    "FKMiddleFinger0_R", "FKMiddleFinger1_L", "FKMiddleFinger1_R", "FKMiddleFinger2_L",
+    "FKMiddleFinger2_R", "FKMiddleFinger3_L", "FKMiddleFinger3_R", "FKNeckPart1_M", "FKNeck_M",
+    "FKPinkyFinger0_L", "FKPinkyFinger0_R", "FKPinkyFinger1_L", "FKPinkyFinger1_R",
+    "FKPinkyFinger2_L", "FKPinkyFinger2_R", "FKPinkyFinger3_L", "FKPinkyFinger3_R",
+    "FKRingFinger0_L", "FKRingFinger0_R", "FKRingFinger1_L", "FKRingFinger1_R", "FKRingFinger2_L",
+    "FKRingFinger2_R", "FKRingFinger3_L", "FKRingFinger3_R", "FKRoot_M", "FKScapula_L",
+    "FKScapula_R", "FKShoulder_L", "FKShoulder_R", "FKSpine1_M", "FKSpine2_M", "FKSpine3_M",
+    "FKSpine4_M", "FKSpine5_M", "FKThumbFinger1_L", "FKThumbFinger1_R", "FKThumbFinger2_L",
+    "FKThumbFinger2_R", "FKThumbFinger3_L", "FKThumbFinger3_R", "FKToes_L", "FKToes_R",
+    "FKWrist_L", "FKWrist_R", "Fingers_L", "Fingers_R", "HipSwinger_M", "IKArm_L", "IKArm_R",
+    "IKExtraArm_L", "IKExtraArm_R", "IKExtraLeg_L", "IKExtraLeg_R", "IKExtraSpine1_M",
+    "IKExtraSpine2_M", "IKExtraSpine3_M", "IKExtraToes_L", "IKExtraToes_R", "IKLeg_L", "IKLeg_R",
+    "IKSpine1_M", "IKSpine2_M", "IKSpine3_M", "IKToes_L", "IKToes_R", "IKcvExtraSpine1_M",
+    "IKcvExtraSpine2_M", "IKcvExtraSpine3_M", "IKcvSpine1_M", "IKcvSpine2_M", "IKcvSpine3_M",
+    "IKhybridExtraSpine1_M", "IKhybridExtraSpine2_M", "IKhybridExtraSpine3_M", "IKhybridSpine1_M",
+    "IKhybridSpine2_M", "IKhybridSpine3_M", "Main", "PoleArm_L", "PoleArm_R", "PoleExtraArm_L",
+    "PoleExtraArm_R", "PoleExtraLeg_L", "PoleExtraLeg_R", "PoleLeg_L", "PoleLeg_R",
+    "RollExtraHeel_L", "RollExtraHeel_R", "RollExtraToesEnd_L", "RollExtraToesEnd_R",
+    "RollExtraToes_L", "RollExtraToes_R", "RollHeel_L", "RollHeel_R", "RollToesEnd_L",
+    "RollToesEnd_R", "RollToes_L", "RollToes_R", "RootExtraX_M", "RootX_M",
+]
+SPINE = ["spine_01", "spine_02", "spine_03", "spine_04", "spine_05"]
+
+
+class ShippedControlSet(unittest.TestCase):
+    """Every control the shipped rigs offer names what it moves. Measured 2026-10-02 (mayapy
+    standalone, each control nudged with every FK/IK blend at 0 and then at 10, the game bones'
+    local matrices compared): the foot-roll chain moves its IK leg and nothing else, the IK
+    spine's curve controls the spine bones, HipSwinger_M the pelvis and spine_01 - and only Main
+    moves the whole character. An Extra group names what its control names."""
+
+    def members(self, name):
+        return scene.members_from_selection(RIG, [("Manny_Rig1:" + name, "transform")], manny())
+
+    def test_the_fixture_is_the_shipped_set(self):
+        self.assertEqual(len(CONTROL_SET), 187)
+        self.assertEqual(len(set(CONTROL_SET)), 187)
+
+    def test_only_main_names_the_whole_body(self):
+        body = scene.whole_body(manny())
+        whole = [name for name in CONTROL_SET if self.members(name) == body]
+        self.assertEqual(whole, ["Main"])
+
+    def test_every_control_names_some_bone(self):
+        for name in CONTROL_SET:
+            self.assertTrue(self.members(name), name)
+
+    def test_the_foot_roll_chain_names_its_ik_leg(self):
+        right = sorted(b[:-1] + "r" for b in LEFT_LEG)
+        for stem in ("RollHeel", "RollToes", "RollToesEnd",
+                     "RollExtraHeel", "RollExtraToes", "RollExtraToesEnd"):
+            self.assertEqual(sorted(self.members(stem + "_L")), sorted(LEFT_LEG), stem)
+            self.assertEqual(sorted(self.members(stem + "_R")), right, stem)
+
+    def test_the_ik_spine_curve_controls_and_extra_groups_name_the_spine(self):
+        for index in (1, 2, 3):
+            for stem in ("IKcvSpine", "IKcvExtraSpine", "IKhybridExtraSpine",
+                         "IKhybridSpine", "IKExtraSpine", "IKSpine"):
+                name = "%s%d_M" % (stem, index)
+                self.assertEqual(self.members(name), SPINE, name)
+
+    def test_the_hip_swinger_names_the_pelvis_and_the_first_spine_bone(self):
+        self.assertEqual(self.members("HipSwinger_M"), ["pelvis", "spine_01"])
+
+    def test_the_hip_swinger_on_a_skeleton_with_no_spine_names_the_whole_body(self):
+        bones = dict((n, b) for n, b in manny().items() if not n.startswith(("pelvis", "spine")))
+        self.assertEqual(scene.members_from_selection(
+            RIG, [("Manny_Rig1:HipSwinger_M", "transform")], bones), scene.whole_body(bones))
 
 
 class MembersOnASkeleton(unittest.TestCase):

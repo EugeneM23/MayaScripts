@@ -26,11 +26,15 @@ chain alone); on a refusal a UE-named skeleton keeps its leaves as its names, an
 Which bones a selection MEANS (`members_from_selection`, pure, the spec's Save rules):
 
 - on a rig a CONTROL names its bones through `maya_asretarget.our_bone_map` (`FKWrist_L` ->
-  `hand_l`; an `FKExtra*` group what its control does); an IK end, a pole or an FK/IK switch the
-  whole LIMB (`IKArm_L` -> upperarm..hand with their twists, no clavicle); `IKToes_<side>` the
-  ball; `Fingers_<side>` the hand's fingers and metacarpals; the IK spine controls and the spine
-  switch the spine; `Main`, the rig's group, a mesh and any control the table does not know the
-  WHOLE BODY;
+  `hand_l`; every `*Extra*` group - FK, IK, Pole, RootX, IKhybrid, IKcv, Roll - what its control
+  does); an IK end, a pole, an FK/IK switch or the IK foot's roll chain (`RollHeel`,
+  `RollToes`, `RollToesEnd`) the whole LIMB (`IKArm_L` -> upperarm..hand with their twists, no
+  clavicle); `IKToes_<side>` the ball; `Fingers_<side>` the hand's fingers and metacarpals; the
+  IK spine controls, its curve's CV controls (`IKcvSpine*`) and the spine switch the spine;
+  `HipSwinger_M` the pelvis and spine_01; `Main`, the rig's group, a mesh and any control the
+  table does not know the WHOLE BODY. Each was measured on the shipped rigs (each of their 187
+  ControlSet members nudged with the limbs in FK and in IK, the game bones' local matrices
+  compared): only `Main` moves the whole character;
 - a game bone names itself; an AdvancedSkeleton joint (a deformation joint, its FKX/IKX twin, a
   twist `Part` joint) its game bone, by AS's own naming (`Wrist_L` -> `hand_l`);
 - on a skeleton a joint names itself; a mesh, the group and the root the whole body;
@@ -77,9 +81,23 @@ DUPLICATE = "%s carries %d bones named %s - the first is kept"
 _AS_SIDES = {"_L": "l", "_R": "r", "_M": ""}
 _ARM_SWITCHES = ("IKArm", "PoleArm", "FKIKArm")
 _LEG_SWITCHES = ("IKLeg", "PoleLeg", "FKIKLeg")
-_SPINE_SWITCHES = ("FKIKSpine", "IKSpine", "IKhybridSpine")
-# an AdvancedSkeleton "Extra" group above a control moves what the control moves
-_EXTRA = (("FKExtra", "FK"), ("IKExtra", "IK"), ("PoleExtra", "Pole"), ("RootExtraX", "RootX"))
+# the IK spine's controls, its curve's CV controls and the FK/IK switch: the spine (measured: an
+# IKcvSpine control moves the spine bones and nothing else - spine_01..05 on Manny_Rig,
+# spine_01..04 on Creep_Rig and Orc_D_Rig)
+_SPINE_SWITCHES = ("FKIKSpine", "IKSpine", "IKhybridSpine", "IKcvSpine")
+# the IK foot's roll chain (RollHeel, RollToes, RollToesEnd and the Roller groups above them)
+# moves the IK foot, so it names the whole leg as the IK end does (measured: each moves the
+# thigh, calf and foot with their twists - the ball too, but for RollToesEnd - nothing else)
+_LEG_ROLL = "Roll"
+# HipSwinger_M swings the hips under a still chest (measured, the spine in FK: the pelvis and
+# spine_01, nothing else) - part names, not bone paths, so it holds on every rig of ours
+_HIP_SWING = "HipSwinger"
+_HIP_SWING_PARTS = ("pelvis", "spine_01")
+# an AdvancedSkeleton "Extra" group above a control moves what the control moves (the first
+# prefix that matches is taken off; none of them starts another)
+_EXTRA = (("IKhybridExtra", "IKhybrid"), ("IKcvExtra", "IKcv"), ("RollExtra", "Roll"),
+          ("FKExtra", "FK"), ("IKExtra", "IK"), ("PoleExtra", "Pole"),
+          ("RootExtraX", "RootX"))
 _JOINT_PREFIXES = ("FKX", "IKX")
 _PART = re.compile(r"^(.+?)Part\d+$")
 _LIMB_WORDS = {
@@ -267,8 +285,15 @@ def _spine(bones):
     return [b for b in bones if region[b] == "Spine" and not posemath.is_helper(b)]
 
 
+def _parts(bones, wanted):
+    """The non-helper bones whose part name is one of `wanted`, in skeleton order."""
+    part = part_names(bones)
+    return [b for b in bones if part[b] in wanted and not posemath.is_helper(b)]
+
+
 def _control_bones(name, bones):
-    """The bones a rig control names, or `_WHOLE`."""
+    """The bones a rig control names, or `_WHOLE`. Of the shipped rigs' 187 ControlSet members
+    only `Main` names the whole body (`tests/test_poselib_scene.ShippedControlSet`)."""
     for extra, plain in _EXTRA:
         if name.startswith(extra):
             name = plain + name[len(extra):]
@@ -279,10 +304,12 @@ def _control_bones(name, bones):
     if side in ("l", "r"):
         if base in _ARM_SWITCHES:
             return limb_bones(bones, "arm", side)
-        if base in _LEG_SWITCHES:
+        if base in _LEG_SWITCHES or base.startswith(_LEG_ROLL):
             return limb_bones(bones, "leg", side)
         if base == "Fingers":
             return limb_bones(bones, "fingers", side)
+    if base == _HIP_SWING and side == "":
+        return _parts(bones, _HIP_SWING_PARTS) or _WHOLE
     if base.startswith(_SPINE_SWITCHES):
         return _spine(bones) or _WHOLE
     bone = _our_map().get(name)
