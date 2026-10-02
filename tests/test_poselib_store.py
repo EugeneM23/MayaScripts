@@ -115,9 +115,16 @@ class Cards(unittest.TestCase):
 
 
 class SearchSort(unittest.TestCase):
+    """The fixtures are built so that every rule has a card only it can decide: a search term that
+    only the folder (or only the label, or only the name) holds, and sorts whose three orders
+    all differ - so a key that is ignored, or compared case-sensitively, changes an answer."""
 
-    def card(self, name, folder="", label="Manny [rig]", created="2026-10-01T00:00:00"):
-        return store.Card("p/" + name, folder, name, created, "A", label, "character", 1, [], "")
+    def card(self, name, folder="", label="Manny [rig]", created="2026-10-01T00:00:00",
+             kind="character"):
+        return store.Card("p/" + name, folder, name, created, "A", label, kind, 1, [], "")
+
+    def names(self, found):
+        return [c.name for c in found]
 
     def test_every_term_narrows(self):
         cards = [self.card("Fist", "Hands"), self.card("Run", "Body"), self.card("Fist", "Body",
@@ -126,12 +133,69 @@ class SearchSort(unittest.TestCase):
         self.assertEqual(len(store.filter_cards(cards, "fist creep")), 1)
         self.assertEqual(len(store.filter_cards(cards, "")), 3)
 
-    def test_sorts(self):
-        a = self.card("b", created="2026-10-01T00:00:00")
-        b = self.card("A", created="2026-10-03T00:00:00", label="Creep [rig]")
-        self.assertEqual([c.name for c in store.sort_cards([a, b], "name")], ["A", "b"])
-        self.assertEqual([c.name for c in store.sort_cards([a, b], "newest")], ["A", "b"])
-        self.assertEqual([c.name for c in store.sort_cards([a, b], "character")], ["A", "b"])
+    def test_a_term_is_found_in_the_name_the_folder_or_the_label(self):
+        fist = self.card("Fist", "Hands", "Manny [rig]")
+        run = self.card("Run", "Body/Arms", "Creep [rig]")
+        cards = [fist, run]
+        # each term below is held by ONE field of ONE card and by no other field of either card
+        self.assertEqual(store.filter_cards(cards, "run"), [run])        # the name
+        self.assertEqual(store.filter_cards(cards, "hands"), [fist])     # the folder
+        self.assertEqual(store.filter_cards(cards, "body"), [run])       # the folder (a nested one)
+        self.assertEqual(store.filter_cards(cards, "arms"), [run])       # ... at any depth
+        self.assertEqual(store.filter_cards(cards, "creep"), [run])      # the label
+        self.assertEqual(store.filter_cards(cards, "manny"), [fist])     # the label
+        # terms from different fields of one card all have to hold
+        self.assertEqual(store.filter_cards(cards, "run body creep"), [run])
+        self.assertEqual(store.filter_cards(cards, "run hands"), [])
+        # no field holds it
+        self.assertEqual(store.filter_cards(cards, "pose"), [])
+
+    def test_search_ignores_case_and_extra_whitespace(self):
+        cards = [self.card("Fist", "Hands"), self.card("Run", "Body")]
+        self.assertEqual(self.names(store.filter_cards(cards, "  BODY  ")), ["Run"])
+        self.assertEqual(self.names(store.filter_cards(cards, "FIST\thands")), ["Fist"])
+        self.assertEqual(self.names(store.filter_cards(cards, "   ")), ["Fist", "Run"])
+
+    def test_a_term_does_not_span_two_fields(self):
+        # "Fist" + "Hands" must not read as the one word "fisthands": the fields are separate
+        cards = [self.card("Fist", "Hands")]
+        self.assertEqual(store.filter_cards(cards, "sthan"), [])
+        self.assertEqual(store.filter_cards(cards, "fist hands"), cards)
+
+    def test_the_three_sorts_give_three_different_orders(self):
+        a = self.card("a", label="Orc D [rig]", created="2026-10-02T09:00:00")
+        big_b = self.card("B", label="Creep [rig]", created="2026-10-03T09:00:00")
+        c = self.card("c", label="objects", created="2026-10-02T12:00:00", kind="objects")
+        big_d = self.card("D", label="Manny [rig]", created="2026-10-01T09:00:00")
+        cards = [a, big_b, c, big_d]
+        # name: by the lower-cased name, so "a" < "B" < "c" < "D" (a case-sensitive sort would
+        # put B and D first)
+        self.assertEqual(self.names(store.sort_cards(cards, "name")), ["a", "B", "c", "D"])
+        # newest: the latest `created` first - no relation to the names' order
+        self.assertEqual(self.names(store.sort_cards(cards, "newest")), ["B", "c", "a", "D"])
+        # character: by the label, lower-cased ("creep" < "manny" < "objects" < "orc d"; a
+        # case-sensitive sort would put "objects" last) - neither the name order nor the newest
+        self.assertEqual(self.names(store.sort_cards(cards, "character")), ["B", "D", "c", "a"])
+        # whatever order the cards come in, the answer is the same
+        for key in store.SORTS:
+            expected = self.names(store.sort_cards(cards, key))
+            self.assertEqual(self.names(store.sort_cards(list(reversed(cards)), key)), expected)
+
+    def test_cards_of_one_character_are_ordered_by_name(self):
+        # two Manny cards, handed over in the order the name must undo; "B" < "a" only if the
+        # name is compared case-sensitively
+        big_b = self.card("B", label="Manny [rig]")
+        a = self.card("a", label="Manny [rig]")
+        creep = self.card("z", label="Creep [rig]")
+        self.assertEqual(self.names(store.sort_cards([big_b, a, creep], "character")),
+                         ["z", "a", "B"])
+
+    def test_newest_cards_of_one_moment_are_ordered_by_name(self):
+        big_b, a = self.card("B"), self.card("a")           # one `created`
+        self.assertEqual(self.names(store.sort_cards([big_b, a], "newest")), ["a", "B"])
+        later = self.card("z", created="2026-10-02T00:00:00")
+        self.assertEqual(self.names(store.sort_cards([big_b, a, later], "newest")),
+                         ["z", "a", "B"])
 
 
 class Invariants(unittest.TestCase):
