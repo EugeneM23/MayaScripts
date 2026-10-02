@@ -84,3 +84,29 @@ hovered at once) showed three ways; the animator chose, asked:
   with Maya's own widgets: every kind of control glows when entered and goes dark when
   left, the glow image measured on screen (brighter round the letters, the letters
   unchanged), a draw's cost, a hub rebuild mid-fade, a picture.
+
+## Addendum - what the live run changed (2026-10-02, the same session)
+
+- **No glow on the card headers.** Minutes after the first build the animator: «Давай
+  уберем свечение из надписей заголовков разделов мы и так разделы подсвечивали раньше».
+  `glowing()` leaves `CardHead` out; the header still ticks and lights its card.
+- **A dark effect is DISABLED** (`setEnabled(False)`): every control hovered once keeps
+  its effect, and an enabled one makes Qt call our Python `draw` on every repaint of it -
+  a card sliding repaints them all. Disabled, Qt paints the control as if it had none
+  (verify gate 11: 16 dark effects on the Characters card, its grab 15.0 ms against
+  15.3 ms with none).
+- **The bloom is cropped to the ink and blurred at half resolution at 150 %**: 15 ms
+  for a 530 x 40 control over the whole picture (a stutter in the frame it lands in),
+  2.6 ms after; a test pins the half-resolution glow to the full one (alpha within
+  14/255, lit area within 15 %).
+- **While lit, the control's text is grayscale-antialiased, not ClearType**: drawn from
+  Qt's source pixmap (it has alpha) - 434 edge pixels of "Camera Setup" up to 52 levels
+  apart, measured. Qt offers no way round it inside an effect: `drawSource` after
+  `sourcePixmap` draws that very pixmap, and `sourcePixmap` after `drawSource` broke the
+  drawing (2800 pixels up to 145 levels dark). So the switch is put where it cannot be
+  seen: coming up, it lands with the hover style's own repaint; going dark (`rising`
+  False) the control is drawn directly - Qt renders it afresh once it has repainted
+  itself, which the hover style coming off does as the mouse leaves - with the lit
+  picture's glow over it where the control stands now. Gate 3 proves both: light only
+  round the control while lit; going dark nothing darker than the plain control
+  anywhere (least 0).

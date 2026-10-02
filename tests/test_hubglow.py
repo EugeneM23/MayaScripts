@@ -139,6 +139,21 @@ class Bloom(unittest.TestCase):
         self.assertGreater(int((large[..., 3] > 0).sum()),
                            int((small[..., 3] > 0).sum()))
 
+    def test_half_resolution_looks_like_the_full_one(self):
+        """At 150 % the blur runs at half resolution (speed): the glow it
+        gives stays close to the full-resolution one."""
+        saved = hg.STEP
+        try:
+            hg.STEP = 1
+            full = hg.bloom(self.arr, scale=1.5).astype(int)
+        finally:
+            hg.STEP = saved
+        half = hg.bloom(self.arr, scale=1.5).astype(int)
+        self.assertLessEqual(int(np.abs(full - half).max()), 14)
+        lit_full = int((full[..., 3] > 8).sum())
+        lit_half = int((half[..., 3] > 8).sum())
+        self.assertLess(abs(lit_full - lit_half), 0.15 * lit_full)
+
     def test_the_padding_is_the_radius(self):
         self.assertEqual(hg.pad(1.5), style.px(P["radius"], 1.5))
 
