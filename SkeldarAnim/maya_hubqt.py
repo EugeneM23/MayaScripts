@@ -30,6 +30,7 @@ Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
 
 import time
 import types
+import zlib
 
 import maya_hubicons as hubicons
 import maya_hubmotion as hubmotion
@@ -409,6 +410,273 @@ def _watcher_class():
 
         _CLASSES["watch"] = Watcher
     return _CLASSES["watch"]
+
+
+# ------------------------------------------------------------- hover glow
+
+#  The glow of a control under the mouse (2026-10-02, «все надпись немного
+#  подсвечивались легким свечением когда мы наводим на них мышкой»; the
+#  animator chose the glow in the text's own colour, on everything
+#  clickable). maya_hubglow is the arithmetic; here, the effect that draws it
+#  and the Glower that the skin's watcher drives.
+
+GLOW_TICK_MS = 16
+
+
+def glowing(widget, root):
+    """Whether `widget` glows under the mouse: a control that ticks on hover
+    (`sounding`), not a colour swatch (a dot has no ink), carrying no
+    graphics effect of somebody else's."""
+    if widget is None or not sounding(widget, root):
+        return False
+    if widget.property("skRole") == "swatch":
+        return False
+    effect = widget.graphicsEffect()
+    return effect is None or (isinstance(effect, _glow_class())
+                              and _valid(effect))
+
+
+def _glow_class():
+    """A QGraphicsEffect drawing a control's glow at `level` (0..1): its ink
+    bloomed in the ink's own colour (`mode` "ink"), or a warm rim inside the
+    edge ("rim", the orange primary button). The glow image is computed once
+    per picture of the control (`computed` counts the numpy runs) and drawn at
+    `level` opacity, so a fade only changes a number. Level 0 draws the
+    control as it is; a glow that fails marks the effect `broken`, which then
+    draws the control as it is for good."""
+    if "glow" not in _CLASSES:
+        q = qt()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+
+        class HoverGlow(QtWidgets.QGraphicsEffect):
+
+            def __init__(self, mode="ink", scale=1.0, parent=None):
+                super(HoverGlow, self).__init__(parent)
+                self.mode = mode
+                self.scale = scale
+                self.level = 0.0
+                self.broken = False
+                self.error = None
+                self.computed = 0
+                self._key = None
+                self._image = None
+
+            def boundingRectFor(self, rect):               # noqa: N802
+                if self.mode != "ink":
+                    return rect
+                import maya_hubglow as hubglow
+                reach = hubglow.pad(self.scale)
+                return rect.adjusted(-reach, -reach, reach, reach)
+
+            def draw(self, painter):
+                if self.level <= 0.002 or self.broken:
+                    self.drawSource(painter)
+                    return
+                offset = QtCore.QPoint()
+                padding = (QtWidgets.QGraphicsEffect.PadToEffectiveBoundingRect
+                           if self.mode == "ink"
+                           else QtWidgets.QGraphicsEffect.NoPad)
+                source = self.sourcePixmap(QtCore.Qt.DeviceCoordinates,
+                                           offset, padding)
+                if source.isNull():
+                    self.drawSource(painter)
+                    return
+                inner = self.sourceBoundingRect(QtCore.Qt.DeviceCoordinates)
+                painter.save()
+                try:
+                    painter.setWorldTransform(QtGui.QTransform())
+                    painter.drawPixmap(offset, source)
+                    image = self._glow(source, inner, offset)
+                    if image is not None:
+                        painter.setOpacity(min(1.0, self.level))
+                        painter.setCompositionMode(
+                            QtGui.QPainter.CompositionMode_Plus)
+                        painter.drawImage(offset, image)
+                finally:
+                    painter.restore()
+
+            def _glow(self, source, inner, offset):
+                try:
+                    image = source.toImage().convertToFormat(
+                        QtGui.QImage.Format_ARGB32_Premultiplied)
+                    w, h = image.width(), image.height()
+                    bpl = image.bytesPerLine()
+                    data = bytes(image.constBits())[:bpl * h]
+                    key = (w, h, self.mode, zlib.crc32(data))
+                    if key == self._key:
+                        return self._image
+                    import numpy as np
+                    import maya_hubglow as hubglow
+                    bgra = np.frombuffer(data, np.uint8).reshape(
+                        h, bpl // 4, 4)[:, :w]
+                    if self.mode == "rim":
+                        out = hubglow.rim(bgra, self.scale)
+                    else:
+                        #  the control's own rect inside the padded picture
+                        #  (sourceBoundingRect is a QRectF)
+                        top = max(0, int(round(inner.top())) - offset.y())
+                        left = max(0, int(round(inner.left())) - offset.x())
+                        box = (top, left,
+                               min(h, top + max(1, int(inner.height()))),
+                               min(w, left + max(1, int(inner.width()))))
+                        out = hubglow.bloom(bgra, self.scale, box)
+                    self.computed += 1
+                    glow = None
+                    if out is not None:
+                        glow = QtGui.QImage(
+                            out.tobytes(), w, h, w * 4,
+                            QtGui.QImage.Format_ARGB32_Premultiplied).copy()
+                    self._key, self._image = key, glow
+                    return glow
+                except Exception as exc:                     # noqa: BLE001
+                    #  kept for a verify to read: the glow goes quiet
+                    self.broken = True
+                    self.error = repr(exc)
+                    return None
+
+        _CLASSES["glow"] = HoverGlow
+    return _CLASSES["glow"]
+
+
+class Glower(object):
+    """The one control glowing under the mouse, fading in and out.
+
+    The skin's application-wide watcher hands it every Enter and Leave. It
+    never keeps a WIDGET: a wrapper of a Maya-owned widget that Maya deletes
+    reads freed memory (CLAUDE.md trap 135). It holds its EFFECTS instead -
+    ours, Python-made, so one whose control died answers `isValid` False and
+    raises on a call rather than crashing - found again through
+    `widget.graphicsEffect()` while the widget is in its own event. Every
+    effect is held: PySide deletes one whose wrapper is collected (measured
+    2026-10-02). An effect stays on its control once made; at level 0 it
+    draws the control as it is."""
+
+    def __init__(self, root, scale=1.0, motion=None):
+        q = qt()
+        self.root = root
+        self.scale = scale
+        self._motion = motion
+        self._clock = time.monotonic
+        self.effects = []
+        self.lit = None
+        self._fades = {}          # id(effect) -> [effect, start, end, t0, ms]
+        self._timer = q.QtCore.QTimer(root)
+        self._timer.setObjectName("skeldarHubGlowTimer")
+        self._timer.setInterval(GLOW_TICK_MS)
+        self._timer.timeout.connect(self.tick)
+
+    def _animated(self):
+        return bool(self._motion is None or self._motion())
+
+    def _target(self, widget):
+        """`widget` or its nearest ancestor that glows, inside the root."""
+        q = qt()
+        root = self.root
+        if not isinstance(widget, q.QtWidgets.QWidget):
+            return None
+        if widget is not root and not root.isAncestorOf(widget):
+            return None
+        node = widget
+        while node is not None and node is not root:
+            if glowing(node, root):
+                return node
+            node = node.parentWidget()
+        return None
+
+    def _effect_of(self, widget, create=False):
+        effect = widget.graphicsEffect()
+        cls = _glow_class()
+        if isinstance(effect, cls):
+            return effect if _valid(effect) else None
+        if effect is not None or not create:
+            return None
+        mode = "rim" if widget.property("skRole") == "primary" else "ink"
+        effect = cls(mode, self.scale)
+        widget.setGraphicsEffect(effect)
+        self.effects = [e for e in self.effects if _valid(e)]
+        self.effects.append(effect)
+        return effect
+
+    def enter(self, widget):
+        """The mouse entered `widget`: its glowing control fades up, any
+        other down; nothing glowing there, everything down."""
+        target = self._target(widget)
+        if target is None and self.lit is None:
+            return
+        effect = (self._effect_of(target, create=True)
+                  if target is not None else None)
+        if effect is self.lit:
+            return
+        if self.lit is not None:
+            self._fade(self.lit, 0.0)
+        self.lit = effect
+        if effect is not None:
+            self._fade(effect, 1.0)
+
+    def leave(self, widget):
+        """The mouse left `widget`: if it is the one glowing, it fades."""
+        q = qt()
+        if self.lit is None or not isinstance(widget, q.QtWidgets.QWidget):
+            return
+        if self._effect_of(widget) is self.lit:
+            self._fade(self.lit, 0.0)
+            self.lit = None
+
+    def _drop(self, effect):
+        self._fades.pop(id(effect), None)
+        if self.lit is effect:
+            self.lit = None
+        self.effects = [e for e in self.effects if e is not effect]
+
+    def _set(self, effect, level):
+        if not _valid(effect):
+            self._drop(effect)
+            return False
+        effect.level = level
+        effect.update()
+        return True
+
+    def _fade(self, effect, end):
+        if not _valid(effect):
+            self._drop(effect)
+            return
+        start = effect.level
+        if not self._animated() or start == end:
+            self._fades.pop(id(effect), None)
+            self._set(effect, end)
+            return
+        ms = hubmotion.glow_ms(end > start, start, end)
+        self._fades[id(effect)] = [effect, start, end, self._clock(), ms]
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def tick(self):
+        """One step of every fade under way; the timer stops when none is."""
+        now = self._clock()
+        for key, (effect, start, end, t0, ms) in list(self._fades.items()):
+            t = (now - t0) * 1000.0 / float(ms)
+            t = 1.0 if t >= 1.0 - 1e-6 else t
+            shape = hubmotion.ease if end > start else hubmotion.smooth
+            level = end if t >= 1.0 else hubmotion.lerp(start, end, shape(t))
+            if self._set(effect, level) and t >= 1.0:
+                self._fades.pop(key, None)
+        if not self._fades:
+            self._timer.stop()
+
+    def finish(self):
+        """Every fade at its end now (Interface animations switched off)."""
+        for effect, _start, end, _t0, _ms in list(self._fades.values()):
+            self._set(effect, end)
+        self._fades.clear()
+        self._timer.stop()
+
+    def stop(self):
+        """Nothing glows or moves, no effect is held (the skin is going)."""
+        if _valid(self._timer):
+            self._timer.stop()
+        self._fades.clear()
+        self.lit = None
+        self.effects = []
 
 
 class Card(object):
@@ -826,6 +1094,9 @@ class Skin(object):
         self._fallback.setSingleShot(True)
         self._fallback.setInterval(FALLBACK_MS)
         self._fallback.timeout.connect(self._fall_back)
+        #  the control under the mouse glows (2026-10-02); fading with the
+        #  menu's Interface animations
+        self.glow = Glower(self.root, scale, motion=lambda: self.animations)
         self._watcher = _watcher_class()(self._activate_from,
                                          self._hover_from, self._left_from,
                                          self.root)
@@ -1003,6 +1274,7 @@ class Skin(object):
         self.animations_action.setChecked(self.animations)
         if not self.animations:
             self._stop_glide()
+            self.glow.finish()
 
     def set_active(self, key):
         """Card `key` is the one worked in (None: none): pinned and lit -
@@ -1062,7 +1334,8 @@ class Skin(object):
         """The mouse entered `widget`: its card lit at once; off every card,
         the resting light after FALLBACK_MS -- entering another card first
         cancels it, so a gap between cards lights nothing in between. A
-        clickable control of ours calls back "hover" (the sound)."""
+        clickable control of ours calls back "hover" (the sound) and glows
+        (`glow`)."""
         key = self.card_of(widget)
         if key is not None:
             self._fallback.stop()
@@ -1071,10 +1344,13 @@ class Skin(object):
             self._fallback.start()
         if sounding(widget, self.root):
             self._call("hover")
+        self.glow.enter(widget)
 
     def _left_from(self, widget):
         """The mouse left the hub (to another window, where no Enter of
-        ours arrives): the resting light, after the same pause."""
+        ours arrives): the resting light, after the same pause. The control
+        it left stops glowing."""
+        self.glow.leave(widget)
         if widget is self.root and self.active != self.resting():
             self._fallback.start()
 
@@ -1189,6 +1465,7 @@ class Skin(object):
     def destroy(self):
         """Delete the root NOW (not deferred): a classic build right after
         must not meet the controls' names still standing."""
+        self.glow.stop()
         if not self.alive():
             return
         q = qt()

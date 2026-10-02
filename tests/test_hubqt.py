@@ -1073,3 +1073,284 @@ class CardLight(SeamsMixin, unittest.TestCase):
         middle = self._pixel(frame, *face)
         self.assertGreater((inside[0] - inside[2]) - (middle[0] - middle[2]),
                            15, (inside, middle))
+
+
+class HoverGlow(SeamsMixin, unittest.TestCase):
+    """2026-10-02: «все надпись немного подсвечивались легким свечением когда
+    мы наводим на них мышкой» - every clickable control of the hub glows in
+    its own ink's colour while the mouse is over it, fading in and out."""
+
+    def setUp(self):
+        SeamsMixin.setUp(self)
+        self.card = self.skin.add_card("colour", "Colour", "palette",
+                                       "#c89be8", "#3a2a4a")
+        body = self.card.body
+        layout = self.card.body_layout
+        self.button = QtWidgets.QPushButton("Add", body)
+        self.other = QtWidgets.QPushButton("Remove", body)
+        self.segment = QtWidgets.QPushButton("Rig", body)
+        self.segment.setCheckable(True)
+        self.check = QtWidgets.QCheckBox("Timeline", body)
+        self.combo = QtWidgets.QComboBox(body)
+        self.label = QtWidgets.QLabel("status", body)
+        self.field = QtWidgets.QLineEdit(body)
+        for widget in (self.button, self.other, self.segment, self.check,
+                       self.combo, self.label, self.field):
+            layout.addWidget(widget)
+        self.jump = self.skin.add_jump("colour", "Colour", "palette",
+                                       "#c89be8")
+        self.now = [100.0]
+        self.skin.glow._clock = lambda: self.now[0]
+
+    def _enter(self, widget):
+        from PySide6 import QtCore as C, QtGui as G
+        QtWidgets.QApplication.sendEvent(
+            widget, G.QEnterEvent(C.QPointF(1, 1), C.QPointF(1, 1),
+                                  C.QPointF(1, 1)))
+
+    def _leave(self, widget):
+        QtWidgets.QApplication.sendEvent(widget,
+                                         QtCore.QEvent(QtCore.QEvent.Leave))
+
+    def _at(self, ms):
+        self.now[0] = 100.0 + ms / 1000.0
+        self.skin.glow.tick()
+
+    def _effect(self, widget):
+        effect = widget.graphicsEffect()
+        return effect if isinstance(effect, hubqt._glow_class()) else None
+
+    # ---------------------------------------------------------------- what
+
+    def test_what_glows_is_what_is_clickable(self):
+        root = self.skin.root
+        for widget in (self.button, self.segment, self.check, self.combo,
+                       self.card.header, self.jump, self.skin.hotkeys,
+                       self.skin.version, self.skin.menu_button):
+            self.assertTrue(hubqt.glowing(widget, root), widget)
+        for widget in (self.label, self.field, self.card.body,
+                       self.card.frame, self.skin.header, None):
+            self.assertFalse(hubqt.glowing(widget, root), widget)
+
+    def test_not_disabled_not_a_swatch_not_a_foreign_effect(self):
+        root = self.skin.root
+        self.button.setEnabled(False)
+        self.assertFalse(hubqt.glowing(self.button, root))
+        self.other.setProperty("skRole", "swatch")
+        self.assertFalse(hubqt.glowing(self.other, root))
+        foreign = QtWidgets.QGraphicsOpacityEffect()
+        self.segment.setGraphicsEffect(foreign)
+        self.assertFalse(hubqt.glowing(self.segment, root))
+        self._enter(self.segment)
+        self.assertIs(self.segment.graphicsEffect(), foreign)
+        self.assertIsNone(self.skin.glow.lit)
+
+    def test_a_button_outside_the_hub_never(self):
+        outside = QtWidgets.QPushButton("Maya")
+        self._enter(outside)
+        self.assertIsNone(outside.graphicsEffect())
+        self.assertIsNone(self.skin.glow.lit)
+
+    # --------------------------------------------------------------- fades
+
+    def test_entering_fades_it_up(self):
+        import maya_hubmotion as motion
+        self._enter(self.button)
+        effect = self._effect(self.button)
+        self.assertIsNotNone(effect)
+        self.assertIs(self.skin.glow.lit, effect)
+        self.assertEqual(effect.mode, "ink")
+        self.assertEqual(effect.level, 0.0)
+        self._at(motion.GLOW_IN_MS / 2.0)
+        self.assertGreater(effect.level, 0.0)
+        self.assertLess(effect.level, 1.0)
+        self._at(motion.GLOW_IN_MS)
+        self.assertEqual(effect.level, 1.0)
+        self.assertFalse(self.skin.glow._timer.isActive())
+
+    def test_leaving_fades_it_down_and_keeps_the_effect(self):
+        import maya_hubmotion as motion
+        self._enter(self.button)
+        self._at(motion.GLOW_IN_MS)
+        effect = self._effect(self.button)
+        self.now[0] = 200.0
+        self._leave(self.button)
+        self.assertIsNone(self.skin.glow.lit)
+        self.now[0] = 200.0 + motion.GLOW_OUT_MS / 2000.0
+        self.skin.glow.tick()
+        self.assertGreater(effect.level, 0.0)
+        self.assertLess(effect.level, 1.0)
+        self.now[0] = 200.0 + motion.GLOW_OUT_MS / 1000.0
+        self.skin.glow.tick()
+        self.assertEqual(effect.level, 0.0)
+        self.assertIs(self._effect(self.button), effect)   # kept, dark
+
+    def test_one_at_a_time(self):
+        self._enter(self.button)
+        self._at(200)
+        first = self._effect(self.button)
+        self._enter(self.other)
+        second = self._effect(self.other)
+        self.assertIs(self.skin.glow.lit, second)
+        self._at(600)
+        self.assertEqual((first.level, second.level), (0.0, 1.0))
+
+    def test_a_child_of_the_card_header_keeps_the_header_lit(self):
+        self._enter(self.card.header)
+        lit = self.skin.glow.lit
+        self.assertIs(lit, self._effect(self.card.header))
+        title = self.card.header.findChild(QtWidgets.QLabel,
+                                           "skeldarHubCardTitle_colour")
+        self._enter(title)
+        self.assertIs(self.skin.glow.lit, lit)
+        self.assertIsNone(title.graphicsEffect())
+
+    def test_the_card_body_darkens_it(self):
+        self._enter(self.button)
+        self._enter(self.card.body)
+        self.assertIsNone(self.skin.glow.lit)
+
+    def test_switched_off_it_switches_at_once(self):
+        self.skin.paint_animations(False)
+        self._enter(self.button)
+        effect = self._effect(self.button)
+        self.assertEqual(effect.level, 1.0)
+        self.assertFalse(self.skin.glow._timer.isActive())
+        self._leave(self.button)
+        self.assertEqual(effect.level, 0.0)
+
+    def test_switching_off_finishes_a_fade(self):
+        self._enter(self.button)
+        self._at(20)
+        self.skin.paint_animations(False)
+        self.assertEqual(self._effect(self.button).level, 1.0)
+        self.assertFalse(self.skin.glow._timer.isActive())
+
+    def test_the_primary_button_lights_its_rim(self):
+        self.button.setProperty("skRole", "primary")
+        self._enter(self.button)
+        self.assertEqual(self._effect(self.button).mode, "rim")
+
+    def test_a_control_deleted_mid_fade_is_dropped(self):
+        import shiboken6
+        self._enter(self.button)
+        effect = self._effect(self.button)
+        shiboken6.delete(self.button)
+        self.assertFalse(shiboken6.isValid(effect))
+        self._at(50)                                       # no error
+        self.assertIsNone(self.skin.glow.lit)
+        self.assertNotIn(effect, self.skin.glow.effects)
+        self.assertFalse(self.skin.glow._timer.isActive())
+        self._enter(self.other)                            # still works
+        self.assertIsNotNone(self.skin.glow.lit)
+
+    def test_destroy_stops_it(self):
+        self._enter(self.button)
+        self.skin.destroy()
+        self.assertEqual(self.skin.glow.effects, [])
+        self.assertIsNone(self.skin.glow.lit)
+
+    def test_the_effects_are_held(self):
+        """PySide deletes an effect whose wrapper is collected (measured
+        2026-10-02): the glower holds every one it made."""
+        import gc
+        self._enter(self.button)
+        self._enter(self.other)
+        gc.collect()
+        self.assertIsNotNone(self._effect(self.button))
+        self.assertEqual(len(self.skin.glow.effects), 2)
+
+
+class HoverGlowPaint(unittest.TestCase):
+    """The effect's own picture: light added round a button's letters, the
+    letters and everything far from them left alone, the glow cached."""
+
+    def setUp(self):
+        self.app = _app()
+        self.host = QtWidgets.QWidget()
+        self.host.setStyleSheet(
+            "QWidget { background: #2a2c30; }"
+            "QPushButton { background: #34363b; color: #e4e4e6; border: none;"
+            " font-size: 14px; padding: 6px 14px; }")
+        layout = QtWidgets.QVBoxLayout(self.host)
+        layout.setContentsMargins(30, 30, 30, 30)
+        self.button = QtWidgets.QPushButton("Camera Setup")
+        layout.addWidget(self.button)
+        self.host.resize(260, 110)
+        self.host.show()
+        for _ in range(4):
+            self.app.processEvents()
+        self.effect = hubqt._glow_class()("ink", 1.0)
+        self.button.setGraphicsEffect(self.effect)
+
+    def tearDown(self):
+        self.host.deleteLater()
+
+    def _pixels(self, image):
+        import numpy as np
+        from PySide6 import QtGui
+        image = image.convertToFormat(QtGui.QImage.Format_RGB32)
+        w, h, bpl = image.width(), image.height(), image.bytesPerLine()
+        data = np.frombuffer(image.constBits(), np.uint8, count=bpl * h)
+        return data.reshape(h, bpl // 4, 4)[:, :w, :3].astype(int)
+
+    def _grab(self, level):
+        self.effect.level = level
+        self.effect.update()
+        return self._pixels(self.host.grab().toImage())
+
+    def test_light_round_the_letters_and_nothing_else(self):
+        import numpy as np
+        import maya_hubglow
+        dark = self._grab(0.0)
+        lit = self._grab(1.0)
+        diff = lit - dark
+        self.assertGreaterEqual(int(diff.min()), -1)        # only adds
+        self.assertGreater(int(diff.max()), 25)             # it glows
+        rect = self.button.geometry()
+        reach = maya_hubglow.pad(1.0) + 1
+        outside = np.ones(diff.shape[:2], bool)
+        outside[max(0, rect.top() - reach):rect.bottom() + reach + 1,
+                max(0, rect.left() - reach):rect.right() + reach + 1] = False
+        self.assertEqual(int(np.abs(diff[outside]).max()), 0)
+        #  the letters' cores stay the letters' colour
+        bright = dark.min(axis=2) > 200
+        self.assertTrue(bright.any())
+        self.assertLessEqual(int(np.abs(diff[bright]).max()), 25)
+
+    def test_the_glow_is_computed_once_per_picture(self):
+        self._grab(1.0)
+        self._grab(0.5)
+        self._grab(1.0)
+        self.assertEqual(self.effect.computed, 1)
+        self.button.setText("Camera Setup...")
+        self._grab(1.0)
+        self.assertEqual(self.effect.computed, 2)
+
+    def test_level_zero_draws_the_control_as_it_is(self):
+        import numpy as np
+        dark = self._grab(0.0)
+        self.button.setGraphicsEffect(None)
+        plain = self._pixels(self.host.grab().toImage())
+        self.assertEqual(int(np.abs(dark - plain).max()), 0)
+
+    def test_a_failing_glow_draws_the_plain_control_from_then_on(self):
+        import maya_hubglow
+        saved = maya_hubglow.bloom
+
+        def broken(*_a, **_k):
+            raise ValueError("no numpy today")
+        maya_hubglow.bloom = broken
+        try:
+            dark = self._grab(0.0)
+            lit = self._grab(1.0)
+        finally:
+            maya_hubglow.bloom = saved
+        self.assertTrue(self.effect.broken)
+        self.assertIn("no numpy today", self.effect.error)
+        self.assertEqual(int(abs(lit - dark).max()), 0)
+
+    def test_a_working_glow_is_not_broken(self):
+        self._grab(1.0)
+        self.assertFalse(self.effect.broken, self.effect.error)
+        self.assertEqual(self.effect.computed, 1)
