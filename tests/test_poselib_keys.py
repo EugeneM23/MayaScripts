@@ -10,7 +10,11 @@ The pure halves (`pick_layer`, `input_kind`, `quaternion_note`) are tested on pl
 halves run on a fake `cmds` rebound as the module attribute (CLAUDE.md's rule) and restored in
 `tearDown`. The real Maya behaviour they stand on was measured in mayapy: a constrained plug takes a
 `setAttr` WITHOUT an error (so `preview` must ask `writable`), a key refused by a layer returns 0,
-re-adding a plug to its layer is a no-op, `animLayer -q -children` lists bottom to top.
+re-adding a plug to its layer is a no-op, `animLayer -q -children` lists bottom to top. A
+connection into a channel's COMPOUND parent (`decomposeMatrix.outputRotate -> joint.rotate`) is
+invisible to `listConnections` on the leaf (None) while `getAttr(settable=True)` is False and
+`connectionInfo` names the source - and a double3 into an angle compound has a `unitConversion`
+in the path, which `connectionInfo` names instead of the real driver.
 """
 
 import unittest
@@ -136,15 +140,27 @@ class InputKind(unittest.TestCase):
 
 
 class PlugCmds(object):
-    """A fake cmds that knows which plugs are locked, what feeds them, and what they read."""
+    """A fake cmds that knows which plugs are locked, what feeds them, and what they read.
 
-    def __init__(self, locked=(), inputs=None, values=None, missing=()):
+    `inputs` is what `listConnections` sees: plug -> (node, type), a connection INTO the plug
+    itself. `compound` is what only `connectionInfo` sees: plug -> the source plug of a connection
+    into its COMPOUND parent ("dm1.outputRotate" -> joint.rotate), where Maya's `listConnections`
+    on the leaf answers None. `types` names the type of any node that is not in `inputs`; `behind`
+    is what feeds a node's `.input` (a unitConversion Maya put in the path).
+    """
+
+    def __init__(self, locked=(), inputs=None, values=None, missing=(), compound=None,
+                 types=None, behind=None):
         self.locked = set(locked)
         self.inputs = dict(inputs or {})          # plug -> (node, type)
+        self.compound = dict(compound or {})      # plug -> source plug (the parent's connection)
+        self.types = dict(types or {})            # node -> type
+        self.behind = dict(behind or {})          # node -> the node feeding its .input
         self.values = dict(values or {})
         self.missing = set(missing)
         self.sets = []
         self.listed = []
+        self.infos = []
 
     def getAttr(self, plug, **kw):
         if plug in self.missing:
@@ -155,10 +171,23 @@ class PlugCmds(object):
 
     def listConnections(self, plug, **kw):
         self.listed.append((plug, kw))
+        node = plug.split(".")[0]
+        if plug.endswith(".input") and node in self.behind:
+            return [self.behind[node]]
         entry = self.inputs.get(plug)
         return [entry[0]] if entry else None
 
+    def connectionInfo(self, plug, **kw):
+        self.infos.append((plug, kw))
+        if kw.get("isDestination"):
+            return plug in self.compound
+        if kw.get("sourceFromDestination"):
+            return self.compound.get(plug, "")
+        raise AssertionError(kw)
+
     def objectType(self, node):
+        if node in self.types:
+            return self.types[node]
         for found, kind in self.inputs.values():
             if found == node:
                 return kind
@@ -224,6 +253,76 @@ class Writable(Restoring):
         self.assertTrue(kw.get("source"))
         self.assertFalse(kw.get("destination"))
 
+    # -- a connection into the COMPOUND parent (decomposeMatrix.outputRotate -> joint.rotate):
+    # -- measured in mayapy 2027, listConnections on the leaf answers None, getAttr(settable) is
+    # -- False, and only connectionInfo knows - the silent "pose that did not land"
+
+    def test_a_plug_driven_through_its_compound_parent_is_driven(self):
+        keys.cmds = PlugCmds(compound={"j.rotateX": "dm1.outputRotate"},
+                             types={"dm1": "decomposeMatrix"})
+        self.assertEqual(keys.writable("j.rotateX"), (False, "driven by dm1"))
+
+    def test_translate_hookups_are_driven_too(self):
+        # plusMinusAverage.output3D, a motion path's position, decomposeMatrix.outputTranslate
+        keys.cmds = PlugCmds(compound={"j.translateY": "pma1.output3D"},
+                             types={"pma1": "plusMinusAverage"})
+        self.assertEqual(keys.writable("j.translateY"), (False, "driven by pma1"))
+
+    def test_the_compound_driver_is_read_with_connectioninfo(self):
+        fake = PlugCmds(compound={"j.rotateX": "dm1.outputRotate"},
+                        types={"dm1": "decomposeMatrix"})
+        keys.cmds = fake
+        keys.writable("j.rotateX")
+        self.assertIn(("j.rotateX", {"isDestination": True}), fake.infos)
+        self.assertIn(("j.rotateX", {"sourceFromDestination": True}), fake.infos)
+
+    def test_a_unit_conversion_in_a_compound_path_is_looked_through(self):
+        # a double3 into an angle compound: Maya puts unitConversion1 in between, and
+        # connectionInfo names IT; the animator wants the real driver
+        keys.cmds = PlugCmds(compound={"j.rotateX": "unitConversion1.output"},
+                             types={"unitConversion1": "unitConversion", "pma1": "plusMinusAverage"},
+                             behind={"unitConversion1": "pma1"})
+        self.assertEqual(keys.writable("j.rotateX"), (False, "driven by pma1"))
+
+    def test_a_unit_conversion_with_nothing_behind_it_is_still_driven(self):
+        keys.cmds = PlugCmds(compound={"j.rotateX": "unitConversion1.output"},
+                             types={"unitConversion1": "unitConversion"})
+        self.assertEqual(keys.writable("j.rotateX"), (False, "driven by unitConversion1"))
+
+    def test_a_compound_source_that_is_a_curve_or_a_layer_is_still_writable(self):
+        # the same classification as a leaf's own source: input_kind decides, not "connected"
+        for node, kind in (("crv", "animCurveTA"), ("lay", "animBlendNodeAdditiveRotation")):
+            keys.cmds = PlugCmds(compound={"j.rotateX": node + ".output"}, types={node: kind})
+            self.assertEqual(keys.writable("j.rotateX"), (True, ""), kind)
+
+    def test_locked_wins_over_a_compound_driver(self):
+        keys.cmds = PlugCmds(locked=["j.rotateX"], compound={"j.rotateX": "dm1.outputRotate"},
+                             types={"dm1": "decomposeMatrix"})
+        self.assertEqual(keys.writable("j.rotateX"), (False, "locked"))
+
+    def test_a_free_plug_with_no_compound_driver_is_still_writable(self):
+        fake = PlugCmds()
+        keys.cmds = fake
+        self.assertEqual(keys.writable("j.rotateX"), (True, ""))
+        self.assertEqual(fake.infos, [("j.rotateX", {"isDestination": True})])
+
+    def test_a_plug_with_its_own_connection_never_asks_connectioninfo(self):
+        # the common rig case (a keyed control) must not pay a second query
+        fake = PlugCmds(inputs={"a.tx": ("a_translateX", "animCurveTL"),
+                                "a.ty": ("c", "parentConstraint")},
+                        values={})
+        keys.cmds = fake
+        keys.writable("a.tx")
+        keys.writable("a.ty")
+        self.assertEqual(fake.infos, [])
+
+    def test_a_missing_plug_still_says_missing_when_connectioninfo_raises(self):
+        class Gone(PlugCmds):
+            def connectionInfo(self, plug, **kw):
+                raise RuntimeError("Error: line 0: No object matches name: " + plug)
+        keys.cmds = Gone()
+        self.assertEqual(keys.writable("gone.tx"), (False, "missing"))
+
 
 class CurrentAndPreview(Restoring):
 
@@ -245,6 +344,13 @@ class CurrentAndPreview(Restoring):
         keys.cmds = fake
         self.assertIsNone(keys.preview({"a.tx": 1.0, "a.ty": 2.0, "a.tz": 3.0}))
         self.assertEqual(fake.sets, [("a.tz", 3.0)])
+
+    def test_preview_skips_a_plug_driven_through_its_compound_parent(self):
+        # Maya's setAttr takes it without an error and the next evaluation overwrites it
+        fake = PlugCmds(compound={"a.rx": "dm1.outputRotate"}, types={"dm1": "decomposeMatrix"})
+        keys.cmds = fake
+        keys.preview({"a.rx": 5.0, "a.ty": 3.0})
+        self.assertEqual(fake.sets, [("a.ty", 3.0)])
 
     def test_preview_survives_a_setattr_that_raises(self):
         class Refusing(PlugCmds):
@@ -281,6 +387,9 @@ class FakeCmds(object):
 
     def listConnections(self, plug, **kw):
         return None
+
+    def connectionInfo(self, plug, **kw):
+        return False                       # no compound-parent connection in this fake
 
 
 class Write(Restoring):
@@ -349,6 +458,47 @@ class Write(Restoring):
         self.assertIn("locked", notes[0])
         self.assertNotIn("a.tx", notes[0])
         self.assertEqual([c[1] for c in fake.calls if c[0] == "key"], ["a.tx"])
+
+    def test_a_plug_driven_through_its_compound_parent_is_skipped_and_named(self):
+        # the animator's own object: decomposeMatrix.outputRotate -> joint.rotate. Maya takes a
+        # key on rotateX and the next evaluation overwrites it - the pose "did not land" with no
+        # word, unless write refuses it here (measured: write returned (2, []) before this)
+        class Compound(FakeCmds):
+            def connectionInfo(self, plug, **kw):
+                driven = {"jA.rotateX": "dm1.outputRotate",
+                          "jA.translateY": "dm1.outputTranslate"}
+                if kw.get("isDestination"):
+                    return plug in driven
+                return driven.get(plug, "")
+
+            def objectType(self, node):
+                assert node == "dm1", node
+                return "decomposeMatrix"
+        fake = Compound()
+        keys.cmds = fake
+        count, notes = keys.write({"jA.rotateX": 5.0, "jA.translateY": 3.0, "jA.scaleZ": 2.0},
+                                  2.0, None)
+        self.assertEqual(count, 1)
+        self.assertEqual([c[1] for c in fake.calls if c[0] == "key"], ["jA.scaleZ"])
+        self.assertEqual(len(notes), 1)                       # one decomposeMatrix, one line
+        self.assertIn("driven by dm1", notes[0])
+        self.assertIn("jA.rotateX", notes[0])
+        self.assertIn("jA.translateY", notes[0])
+        self.assertNotIn("jA.scaleZ", notes[0])
+
+    def test_a_compound_driven_plug_is_not_added_to_the_layer(self):
+        class Compound(FakeCmds):
+            def connectionInfo(self, plug, **kw):
+                return True if kw.get("isDestination") else "dm1.outputRotate"
+
+            def objectType(self, node):
+                return "decomposeMatrix"
+        fake = Compound()
+        keys.cmds = fake
+        count, notes = keys.write({"jA.rotateX": 5.0}, 2.0,
+                                  keys.Layer("AddL", False, True, False, False))
+        self.assertEqual((count, fake.calls), (0, []))
+        self.assertEqual(len(notes), 1)
 
     def test_skipped_plugs_are_grouped_by_reason(self):
         class Mixed(FakeCmds):

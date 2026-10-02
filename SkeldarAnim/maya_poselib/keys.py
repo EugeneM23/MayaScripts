@@ -26,7 +26,9 @@ mayapy, Maya 2027): a locked plug RAISES on `setAttr`, but a plug driven by a co
 reads as a pose which "did not land". A channel is writable when it is free, keyed by a time
 curve, or already inside an animation layer; a constraint, a pairBlend, an expression or a
 driven-key curve makes it "driven" and it is skipped and named, as the weapon link's
-constraint on `weapon_r` has to be.
+constraint on `weapon_r` has to be. "Driven" includes a connection into the channel's COMPOUND
+parent (`decomposeMatrix.outputRotate -> joint.rotate`, `plusMinusAverage.output3D ->
+translate`), which `listConnections` on the leaf does not see - `connectionInfo` does.
 
 `preview` is the live half (the Blend slider, a middle-drag across a card): plain `setAttr`,
 which works on layered and keyed channels and holds until the next time change; the last
@@ -133,11 +135,39 @@ def active_layer():
     return pick_layer(records)
 
 
+def _compound_feed(plug):
+    """[the node feeding `plug` through its COMPOUND parent], or [] - what `listConnections` misses.
+
+    `decomposeMatrix.outputRotate -> joint.rotate` (and `outputTranslate -> translate`,
+    `plusMinusAverage.output3D`, a motion path's position) connects the PARENT of the channel.
+    Measured in mayapy 2027: `listConnections(joint.rotateX)` answers None, `setAttr` takes the
+    value without an error and the next evaluation overwrites it (`getAttr(settable=True)` is
+    False) - the silent pose that "did not land" this module exists to refuse. `connectionInfo`
+    sees through the compound. A double3 into an angle compound has Maya put a `unitConversion`
+    in the path and `connectionInfo` names THAT; it is looked through, so the note names the real
+    driver. Free plugs answer [] after one cheap query, and a plug with a connection of its own
+    never gets here.
+    """
+    if not cmds.connectionInfo(plug, isDestination=True):
+        return []
+    source = cmds.connectionInfo(plug, sourceFromDestination=True)
+    if not source:
+        return []
+    node = source.split(".")[0]
+    if cmds.objectType(node) == "unitConversion":
+        behind = cmds.listConnections(node + ".input", source=True, destination=False,
+                                      skipConversionNodes=True)
+        if behind:
+            node = behind[0]
+    return [node]
+
+
 def writable(plug):
     """(True, "") when a value can be set and keyed on `plug`, else (False, why).
 
     locked -> "locked"; a missing plug -> "missing"; driven by a constraint or the like ->
-    "driven by <node>". A free plug, one keyed by a time curve and one inside an animation
+    "driven by <node>", whether the node feeds the plug itself or its compound parent
+    (`_compound_feed`). A free plug, one keyed by a time curve and one inside an animation
     layer are writable. Lock is asked first - a locked plug is locked whatever drives it.
     """
     try:
@@ -145,6 +175,8 @@ def writable(plug):
             return False, "locked"
         nodes = cmds.listConnections(plug, source=True, destination=False,
                                      skipConversionNodes=True) or []
+        if not nodes:
+            nodes = _compound_feed(plug)
     except (ValueError, RuntimeError):
         return False, "missing"
     if nodes and input_kind(cmds.objectType(nodes[0])) == "driven":
