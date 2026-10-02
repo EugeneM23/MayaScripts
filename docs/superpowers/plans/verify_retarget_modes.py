@@ -413,6 +413,67 @@ if "c" in PHASES:
                      "every bone on the clip's joint at x%.4f: %.2e cm (%s), %.2e deg (%s); lengths "
                      "moved up to %.2f cm" % ((m.scale,) + worst_pos + worst_rot + (worst_len[0],)))
 
+# ------------------------------------------------------------------- e
+MIXAMO = "C:/Users/MY PC/Downloads/Sweep Fall.fbx"
+if "e" in PHASES:
+    print("--- phase e: a Mixamo clip onto Manny_Rig, both versions (another size, aligned rests)")
+    if not os.path.isfile(MIXAMO):
+        print("SKIP phase e: %s is not on this disk" % MIXAMO)
+    else:
+        for answer in (rm.KEEP, rm.SQUASH):
+            cmds.file(new=True, force=True)
+            rig = add("Manny_Rig")
+            src = import_clip(MIXAMO, "mx")
+            first, last = clip_range(src)
+            cmds.playbackOptions(min=first, max=last, animationStartTime=first, animationEndTime=last)
+            samples = frames(first, last, 5)
+            m, _ = ar.measure(source_root=src, rig=rig)
+            plan = ar._plan(src, rig)
+            pairs = ar.pairs_of(plan.drives, plan.rig_bones)
+            print("    measured: median %.3f, scaled %.3f, s %.4f, %s" % (m.median, m.scaled_median,
+                                                                            m.scale, m.regions))
+            del ASKED[:]
+            ANSWER[0] = answer
+            ok, text = rr.run_retarget(source_root=src, rig=rig)
+            print("   ", text[:260])
+            game = plan.rig_bones
+            rest = bind_lengths(game)
+            parent = (cmds.listRelatives(src, parent=True, fullPath=True) or [None])[0]
+            blends = [maya_rigs.node(rig, "FKIK%s_%s.FKIKBlend" % (limb, side))
+                      for limb in ("Arm", "Leg") for side in ("L", "R")]
+            for b in [b for b in blends if cmds.objExists(b)]:
+                cmds.setAttr(b, 0)
+            worst_pos, worst_len = (0.0, ""), (0.0, "")
+            for f in samples:
+                cmds.currentTime(f, update=True)
+                pm_ = om.MMatrix(cmds.xform(parent, q=True, ws=True, m=True)) if parent else om.MMatrix()
+                for n, l in lengths_now(game).items():
+                    if n in rest and n not in ("pelvis",) and "twist" not in n and not n.startswith(SKIP_POS):
+                        d = abs(l - rest[n])
+                        if d > worst_len[0]:
+                            worst_len = (d, "%s@%g" % (n, f))
+                for ours, theirs in pairs.items():
+                    if ours in ("root",) or ours.startswith(SKIP_POS) or theirs not in plan.bones:
+                        continue
+                    p = om.MPoint(pos(plan.bones[theirs])) * pm_.inverse()
+                    expected = om.MPoint(p.x * m.scale, p.y * m.scale, p.z * m.scale) * pm_
+                    dd = (om.MVector(pos(game[ours])) - om.MVector(expected)).length()
+                    if dd > worst_pos[0]:
+                        worst_pos = (dd, "%s@%g" % (ours, f))
+            tag = "e-%s" % ("keep" if answer == rm.KEEP else "squash")
+            if answer == rm.KEEP:
+                # Manny's game bones follow AS by the vendor's -mo point constraints, and its
+                # left leg's fit stands 0.0637 cm off calf_l (CLAUDE.md, the twin work): that
+                # offset wanders with the knee's roll, so 0.1 cm is this rig's own floor
+                gate(tag, ok and len(ASKED) == 1 and worst_len[0] < 0.1,
+                     "a Mixamo clip (median %.2f off, x%.3f) asked once; rotations: lengths kept to "
+                     "%.2e cm (%s)" % (m.median, m.scale, worst_len[0], worst_len[1]))
+            else:
+                gate(tag, ok and len(ASKED) == 1 and worst_pos[0] < 0.1,
+                     "squash & stretch, limbs in FK: every paired bone on the clip's joint at x%.4f to "
+                     "%.4f cm (%s); lengths moved up to %.2f cm"
+                     % (m.scale, worst_pos[0], worst_pos[1], worst_len[0]))
+
 # ------------------------------------------------------------------- d
 LUGAL = "C:/Users/MY PC/Documents/maya/projects/default/scenes/Lugal_Rig_01_left_arm_fixed_20260906_0058.mb"
 if "d" in PHASES:
