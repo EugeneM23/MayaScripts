@@ -7588,6 +7588,78 @@ the cards keeps the loop's p99 turn at 6.5 ms, the screen's pixels the lit ring 
 and face (56, 58, 65) = card_active, a dark ring the plain card; off = instant. `verify_hub_motion.py` 12/12
 again on the new frame. 3284 unit tests.
 
+## The hub's controls glow under the mouse (2026-10-02)
+
+The animator: «Давай поработаем над красотой нашего интерфейса. Попробуй сделать так что бы все надпись
+немного подсвечивались легким свечением когда мы наводим на них мышкой. Сейчас у нас панели разделов
+выделяются подсветкой но все остальные эллементы нет». A prototype (the hub's stylesheet at 150 %, every
+control hovered at once, three looks) was shown; asked, they chose **the glow in the text's OWN colour**
+(over a warm accent glow for all) and **everything clickable** (over every text: a glow under the mouse
+says "this can be pressed"). Minutes after the first build: «уберем свечение из надписей заголовков
+разделов мы и так разделы подсвечивали раньше» — **card headers do not glow**. Spec
+`docs/superpowers/specs/2026-10-02-hub-hover-glow-design.md` (read its addendum), plan beside it.
+
+- **What glows** (`maya_hubqt.glowing`): what ticks on hover (`sounding`: Maya's buttons, segments,
+  checkboxes and chips, dropdowns, the strip's and the header's icons) minus card headers (their card
+  lights), swatches (a dot has no ink) and a widget carrying somebody else's graphics effect. One at a
+  time; the mouse onto a child of a lit control keeps it lit. Skin only (the classic hub as before).
+- **The look** (`maya_hubstyle.HOVER_GLOW`, the arithmetic `SkeldarAnim/maya_hubglow.py`, numpy + stdlib,
+  a payload row): the control's INK — luminance above its own face (the commonest inside its rect) by
+  `lo` 25, fully by 95: letters, icons, a checked box, never the border or the hover fill — blurred
+  `radius` 5 logical px (three box passes), × `gain` 2.2, taken off the ink itself, ADDED at `strength`
+  0.42 in the colour of the ink around it (white text white, Delete's pink pink, the orange box orange).
+  The orange primary button (dark letters on a lit face, no ink) gets a warm rim `#fff1e2` 0.38 inside
+  its edge, 6 px deep, like a card. Cropped to the ink and blurred at half resolution at 150 %: 15 ms →
+  2.6 ms for a wide control.
+- **The fade** (`maya_hubmotion.GLOW_IN_MS` 110 ease-out / `GLOW_OUT_MS` 220 smoothstep, `glow_ms`),
+  from where it stands; ⋮ → Interface animations off: at once.
+- **`HoverGlow`** (`_glow_class()`), a `QGraphicsEffect` with `level`, `mode` ("ink"/"rim"), `rising`:
+  coming up or lit it draws the control from Qt's source pixmap and the glow over it (computed once per
+  picture, crc32 of the pixmap's bytes — a fade only changes the opacity); going dark it draws the control
+  DIRECTLY with the lit picture's glow over it where the control stands now (trap 202). Dark, it is
+  DISABLED, so Qt paints the control as if it had none (trap 204). A failure marks it `broken` (and
+  `error`) and it draws the plain control for good.
+- **`Glower`** (`Skin.glow`) is fed every Enter / Leave by the skin's application-wide watcher
+  (`_hover_from` / `_left_from`), one 16 ms timer on the root ticks the fades. **It never keeps a widget**
+  (trap 135): it holds its EFFECTS (Python-made: one whose control died answers `isValid` False and
+  raises instead of crashing) and finds them again through `widget.graphicsEffect()` while the widget is
+  in its own event; an effect stays on its control once made. `Skin.destroy` stops it.
+
+Proof: `docs/superpowers/plans/verify_hub_glow.py` — **11/11 in a disposable GUI Maya** (port 7029,
+scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`) on the repo's hub floated to the animator's dock (viewport 510),
+real `QEnterEvent`s sent to Maya's own widgets: every kind lights to level 1 with its glow computed; up in
+126–154 ms, down in 223–247 ms, monotonic; light only round the control (outside its rect + reach: 0)
+and, going dark after the control repainted itself, nothing darker than the plain control anywhere; the
+primary's rim +85 at the edge, +0 in the middle; a heading, the search field, the status line, a card
+header (its card lit instead) and a disabled button dark; a sweep across 14 controls with every cache
+cleared p99 13–16 ms (the card light alone 10–12); 16 dark effects on the Characters card: its grab 15.0
+ms against 15.3 with none; a hub rebuilt mid-fade glows again. Picture `hub_glow.png`. The hub's root is
+made transparent for mouse events for the run (`deaf`): the animator's real cursor over that Maya
+produced 65 foreign Enter/Leave events in one gate and moved the glow under it (a spy counts them, 0 in
+the passing runs). `verify_hub_light.py` 6/6 again; `verify_hub_motion.py` fails its Weapons gate and
+dies on the gone `uebridge` card — identically on the build BEFORE this work (a snapshot of `a618123`),
+so history, not this. 4005 unit tests.
+
+201. **PySide deletes a QGraphicsEffect whose Python wrapper is collected**, even after
+     `widget.setGraphicsEffect(effect)`: a temporary `E()` left `graphicsEffect()` None after
+     `gc.collect()` and its `draw` was never called (measured 2026-10-02) — which reads like "effects do
+     not work on Maya's widgets". Hold every effect; when its widget dies, ours answers `isValid` False
+     and a call raises `RuntimeError` (no crash).
+202. **Text drawn from an effect's source pixmap loses ClearType** (the pixmap has alpha): 434 edge
+     pixels of "Camera Setup" up to 52 levels apart. Inside one `draw` there is no way round it:
+     `drawSource` after `sourcePixmap` draws that very cached pixmap, and `sourcePixmap` after
+     `drawSource` broke the drawing in Maya (2800 pixels up to 145 dark — not reproducible offscreen,
+     where every unit test passed). A font's `NoSubpixelAntialias` changed nothing in Maya's direct
+     rendering. What works: draw from the pixmap only while lit, directly while going dark — Qt renders
+     a control afresh once it repaints itself (the hover style coming off as the mouse leaves), so the
+     switch lands with a change the eye already sees.
+203. **`QGraphicsEffect.sourceBoundingRect()` is a QRectF**: a numpy slice built from it raised inside
+     the effect, a catch-all made the glow silently do nothing (`computed` 0, `broken` True, every gate
+     about the picture failing for "no light"). Keep the exception (`error`) where a verify can read it.
+204. **An enabled QGraphicsEffect costs a Python call on every repaint of its widget**, at level 0
+     too, and an effect stays on every control ever hovered — a sliding card repaints them all.
+     `setEnabled(False)` when dark: Qt then paints the widget as if it had none.
+
 ## Armor: the Tech Limb's shield out of Atone, a card that equips it (2026-10-01)
 
 The animator, with the Atone editor open: «достанем technolimb сам его fbx и добавим его ... в наши ассеты с
