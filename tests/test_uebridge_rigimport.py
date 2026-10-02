@@ -219,6 +219,12 @@ class ThePress(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.real_cmds = rigimport.cmds
+        real_label = rigimport._label        # the clip's name under the rig: tested apart
+        rigimport._label = lambda rig, name: None
+        self.addCleanup(lambda: setattr(rigimport, "_label", real_label))
+        real_unlabel = rigimport._unlabel
+        rigimport._unlabel = lambda rig: self.calls.append(("unlabel", rig.namespace)) or 0
+        self.addCleanup(lambda: setattr(rigimport, "_unlabel", real_unlabel))
         self.real_file_ok = rigimport._rig_file_ok
         self.real_import = rigimport.animimport.import_clip
         self.real_namespaces = rigimport.animimport.existing_namespaces
@@ -322,7 +328,7 @@ class ThePress(unittest.TestCase):
                 sys.modules.pop(name, None)
 
     def _steps(self):
-        return [c[0] for c in self.calls if c[0] not in ("undo", "which")]
+        return [c[0] for c in self.calls if c[0] not in ("undo", "which", "unlabel")]
 
     def _one_rig_current(self):
         self.current = [self.rigs[0], ""]
@@ -463,6 +469,22 @@ class ThePress(unittest.TestCase):
         self.assertIn(rigimport.POSED, text)
         self.assertIn("FKElbow_R, FKWrist_R", text)
         self.assertEqual(self._steps(), ["reset"])
+        # the take is gone, so its label went with it - a refusal leaves no lie
+        self.assertIn(("unlabel", "Manny_Rig"), self.calls)
+
+    def test_the_reset_takes_the_rigs_clip_label_with_the_take(self):
+        """2026-10-02: whatever clears the take clears the name; the press
+        writes the new one only after its bake."""
+        self._one_rig_current()
+        rigimport.import_and_retarget("C:/t/A.fbx", "A")
+        names = [c[0] for c in self.calls]
+        self.assertEqual(names[names.index("reset") + 1], "unlabel")
+
+    def test_a_connect_refusal_leaves_no_label_standing(self):
+        self._one_rig_current()
+        self.rr.connect = lambda source_root=None, rig=None: "no bone of A matches"
+        rigimport.import_and_retarget("C:/t/A.fbx", "A")
+        self.assertIn(("unlabel", "Manny_Rig"), self.calls)
 
     def test_a_connect_refusal_keeps_the_imported_skeleton(self):
         self._one_rig_current()

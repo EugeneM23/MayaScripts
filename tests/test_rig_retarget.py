@@ -87,6 +87,9 @@ class FakeModule(object):
         self.calls.append(("connect", source_root, rig.namespace))
         return "retarget connected: 74 controls of Group driven from clip\nmore lines"
 
+    def connected_source(self, rig=None):
+        return "|clip:root"
+
 
 class TestRunRetarget(unittest.TestCase):
     """The one button: reset, connect, bake -- or bake alone over a standing
@@ -98,19 +101,24 @@ class TestRunRetarget(unittest.TestCase):
         #  tests fake rr.cmds, so it answers "not connected" here
         rr.hands_connected = lambda rig: ""
         self.calls = []
+        self.label_seams = (rr._unlabel, rr._relabel)
+        rr._unlabel = lambda rig: self.calls.append(("unlabel", rig.namespace)) or 0
+        rr._relabel = lambda rig, source: self.calls.append(("relabel", source))
         self.mod = FakeModule(self.calls)
         rr.resolve = lambda rig=None: (LEGACY, self.mod, "")
         rr.bake = lambda rig=None: self.calls.append(("bake", rig.namespace)) or "maya_asretarget: baked 20"
 
     def tearDown(self):
         rr.resolve, rr.bake, rr.cmds, rr.hands_connected = self.saved
+        rr._unlabel, rr._relabel = self.label_seams
 
     def test_a_fresh_rig_is_reset_connected_and_baked(self):
         # holder: absent at the start, present after connect
         rr.cmds = FakeRunScene([False, True])
         ok, text = rr.run_retarget("|clip:root")
         self.assertTrue(ok)
-        self.assertEqual(self.calls, [("reset", ""), ("connect", "|clip:root", ""), ("bake", "")])
+        self.assertEqual(self.calls, [("reset", ""), ("unlabel", ""), ("connect", "|clip:root", ""),
+                                      ("bake", ""), ("relabel", "|clip:root")])
         self.assertIn("previous take cleared (12 curves)", text)
         self.assertIn("retarget connected: 74 controls", text)
         self.assertNotIn("more lines", text)
@@ -123,7 +131,7 @@ class TestRunRetarget(unittest.TestCase):
         rr.cmds = FakeRunScene([True])
         ok, text = rr.run_retarget()
         self.assertTrue(ok)
-        self.assertEqual(self.calls, [("bake", "")])
+        self.assertEqual(self.calls, [("bake", ""), ("relabel", "|clip:root")])
         self.assertIn("already connected", text)
 
     def test_a_rig_still_posed_after_the_reset_is_refused_by_name(self):
@@ -133,7 +141,7 @@ class TestRunRetarget(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn(rr.POSED, text)
         self.assertIn("FKElbow_R, FKWrist_R", text)
-        self.assertEqual(self.calls, [("reset", "")])
+        self.assertEqual(self.calls, [("reset", ""), ("unlabel", "")])
         self.assertTrue(rr.cmds.chunks[-1].get("closeChunk"))
 
     def test_a_connect_refusal_is_reported_and_nothing_is_baked(self):
@@ -143,6 +151,16 @@ class TestRunRetarget(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("retarget refused: nothing selected", text)
         self.assertEqual([c for c in self.calls if c[0] == "bake"], [])
+        # the reset took the take: the old clip's name went with it, no new one came
+        self.assertIn(("unlabel", ""), self.calls)
+        self.assertEqual([c for c in self.calls if c[0] == "relabel"], [])
+
+    def test_a_bake_that_leaves_the_holder_standing_writes_no_label(self):
+        # holder: absent, present after connect, STILL present after the bake
+        rr.cmds = FakeRunScene([False, True, True])
+        ok, _text = rr.run_retarget("|clip:root")
+        self.assertTrue(ok)
+        self.assertEqual([c for c in self.calls if c[0] == "relabel"], [])
 
     def test_no_rig_is_the_resolvers_refusal(self):
         rr.resolve = lambda rig=None: (None, None, "2 rigs in the scene (a, b) - select")

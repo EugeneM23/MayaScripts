@@ -69,6 +69,7 @@ RECORD_SUFFIX = "_skeldarImport"
 # connections' spelled here (a test pins them equal): importing those drags numpy / maya.mel in.
 COM_MARKER = "skeldarCom"
 COM_ROOT_LINK = "skeldarComRoot"
+LABEL_MARKER = "skeldarClipLabel"    # cliplabel.MARKER: the clip's name under a character
 HAND_LINK = "skeldarHandLink"        # connections.MARKER: on a rider's constraint, the proxy's UUID
 HOLDER = "MoCapConstraints"
 HOLDER_SOURCES = ("asrtSourceRoot", "pmrtSourceRoot")
@@ -433,14 +434,20 @@ def _spaces(joints):
     return out
 
 
-def _com_groups(root):
+def _com_groups(root, marker=COM_MARKER):
     out = []
     if root and cmds.objExists(root):
         for node in cmds.listConnections(root + ".message", source=False, destination=True) or []:
             path = (cmds.ls(node, long=True) or [None])[0]
-            if path and _marked(path, COM_MARKER) and path not in out:
+            if path and _marked(path, marker) and path not in out:
                 out.append(path)
     return out
+
+
+def _clip_labels(root):
+    """The clip's name under the character (2026-10-02, `cliplabel`): linked to the root by
+    message. A rig's lies under its group already; a bare skeleton's stands at world level."""
+    return _com_groups(root, LABEL_MARKER)
 
 
 def _recorded_tops(uuids):
@@ -498,7 +505,8 @@ def _rig_character(rig):
     joints = maya_rigs.rig_paths(rig)
     roots = [rig.skeleton_root] if rig.skeleton_root else []
     parts = tops + _skinned_meshes(roots) + _drivers(joints) + _spaces(joints) \
-        + sum((_com_groups(root) for root in roots), [])
+        + sum((_com_groups(root) for root in roots), []) \
+        + sum((_clip_labels(root) for root in roots), [])
     group = getattr(rig, "character", "") or ""
     return Character("rig", "{0} (rig)".format(maya_rigs.label(rig)), rig.namespace,
                      rig.skeleton_root or "", rig, _raise(parts),
@@ -510,7 +518,8 @@ def _skeleton_character(root):
     joints = _joints(root)
     group = _character_group(root)
     parts = group + [root] + _skinned_meshes([root]) + _drivers(joints) \
-        + _spaces(joints) + _com_groups(root) + _recorded_tops(uuids)
+        + _spaces(joints) + _com_groups(root) + _clip_labels(root) \
+        + _recorded_tops(uuids)
     leaf = root.split("|")[-1]
     shown = "{0} ({1})".format(label, leaf) if label else "{0} (skeleton)".format(leaf)
     return Character("skeleton", shown, "", root, None, _raise(parts),

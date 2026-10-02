@@ -335,6 +335,10 @@ def ready_rig(plan):
     # measure the pole offsets against that pose. What is still posed
     # afterwards is a channel nothing here may touch, and that IS a refusal.
     curves, zeroed = mod.reset_build_pose(rig)
+    # The take is gone, so its name goes too: a refusal from here on (still
+    # posed, no joint in the clip, a connect refused) must not leave the rig
+    # labelled with a clip it no longer plays (2026-10-02, cliplabel).
+    _unlabel(rig)
     if curves or zeroed:
         notes.append("previous take cleared ({0} curves), rig at "
                      "build pose".format(curves))
@@ -356,6 +360,26 @@ def import_source(fbx_path, name, clip_fps=None, set_timeline=True):
                                recurse=True, dagPath=True) or []
     source = source_root_in(nodes, lambda path: cmds.objectType(path) == "joint")
     return namespace, info, source
+
+
+def _label(rig, name):
+    """The clip's name written under the rig it went onto (2026-10-02,
+    `maya_scenesetup.cliplabel`; one label per rig, a later clip replaces its
+    text). Never fails the press: without the module nothing is written."""
+    try:
+        from maya_scenesetup import cliplabel
+    except ImportError:
+        return None
+    return cliplabel.label_rig(rig, name)
+
+
+def _unlabel(rig):
+    """The rig's label gone with its take (the reset above). Never fails."""
+    try:
+        from maya_scenesetup import cliplabel
+    except ImportError:
+        return 0
+    return cliplabel.clear_rig(rig)
 
 
 def retarget_imported(rig, mod, namespace, info, source, name, place=None):
@@ -383,6 +407,7 @@ def retarget_imported(rig, mod, namespace, info, source, name, place=None):
 
     bake_text = maya_rig_retarget.bake(rig=rig)
     cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    _label(rig, name)
     line = result_line(name, info, connect_text, bake_text, namespace,
                        maya_rigs.label(rig))
     if placed:

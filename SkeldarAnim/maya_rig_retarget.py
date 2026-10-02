@@ -326,6 +326,35 @@ def _first_line(text):
     return lines[0] if lines else ""
 
 
+def _source_of(mod, rig):
+    """The source root the module's holder remembers, or None."""
+    try:
+        return mod.connected_source(rig)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _unlabel(rig):
+    """The rig's clip label gone with its take (`maya_scenesetup.cliplabel`).
+    Never fails the press."""
+    try:
+        from maya_scenesetup import cliplabel
+    except ImportError:
+        return 0
+    return cliplabel.clear_rig(rig)
+
+
+def _relabel(rig, source):
+    """The rig labelled with the clip `source` gives (its namespace, its top
+    group, the clip file the scene was opened from), or unlabelled. Never
+    fails the press."""
+    try:
+        from maya_scenesetup import cliplabel
+    except ImportError:
+        return None
+    return cliplabel.relabel_rig(rig, source)
+
+
 def run_retarget(source_root=None, rig=None):
     """The whole retarget. Returns (ok, text).
 
@@ -354,6 +383,9 @@ def run_retarget(source_root=None, rig=None):
             notes.append("already connected - baking what stands")
         else:
             curves, zeroed = mod.reset_build_pose(rig)
+            # The take is gone; so is the name of the clip it was (2026-10-02,
+            # cliplabel) - a refusal below must not leave the label lying.
+            _unlabel(rig)
             if curves or zeroed:
                 notes.append("previous take cleared (%d curves), rig at build pose" % curves)
             posed = mod.posed_controls(rig=rig)
@@ -364,7 +396,12 @@ def run_retarget(source_root=None, rig=None):
             if not cmds.objExists(holder):
                 return False, "  |  ".join(notes + ["retarget refused: " + _first_line(connect_text)])
             notes.append(_first_line(connect_text))
+        source = _source_of(mod, rig)
         notes.append(bake(rig=rig))
+        if not cmds.objExists(holder):
+            # Baked: the rig plays the source's take now, so its label names
+            # that source - or goes, when the source gives no name.
+            _relabel(rig, source)
     finally:
         cmds.undoInfo(closeChunk=True)
     return True, "%s: %s" % (maya_rigs.label(rig), "  |  ".join(notes))

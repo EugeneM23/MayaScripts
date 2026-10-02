@@ -324,6 +324,17 @@ def onto_refusal(root):
                 ", ".join(leaf(j) for j in foreign[:3])))
 
 
+def _label(root, name):
+    """The clip's name written under the skeleton it went onto (2026-10-02,
+    `maya_scenesetup.cliplabel`; one label per skeleton, a later clip
+    replaces its text). Never fails the press."""
+    try:
+        from maya_scenesetup import cliplabel
+    except ImportError:
+        return None
+    return cliplabel.label_skeleton(root, name)
+
+
 def skeleton_place(root):
     """Where the skeleton stands now: its root on the current frame, as
     {"point", "yaw", "kept"}. Read before anything moves."""
@@ -363,6 +374,7 @@ def onto_existing(root, namespace, info, source, name, place):
         return "", "no bone of {0} matches {1} - its skeleton is kept as {2}".format(
             name, label, namespace)
     cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    _label(root, name)
     line = result_line(name, label, "", result, info)
     parts = [line, placed]
     if relinked:
@@ -504,6 +516,7 @@ def onto_skeleton(entry, namespace, info, source, name, point=None):
         return "", "no bone of {0} matches {1} - its skeleton is kept as {2}".format(
             name, entry.label, namespace), top
     cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    _label(root, name)
     line = result_line(name, entry.label, top, result, info)
     return ("{0}  |  {1}".format(line, placed) if placed else line), "", top
 
