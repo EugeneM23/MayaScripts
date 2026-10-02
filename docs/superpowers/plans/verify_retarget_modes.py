@@ -28,10 +28,11 @@ about WHEN the press asks as much as about what it builds.
      where the clip's root does, not (1 - s) of the way to the origin; and a bridge import
      onto a Creep standing turned at a place keeps it there.
 
-The fix pass (2026-10-02) also made b4 measure the stretch AS THE RIG STANDS (legs in
-IK keep their lengths and say so), b6 find the follows by their attribute and put the
-bones' translates back, e check that Rotations keep Manny's IK feet on the clip's, and
-d move the clip after the connect (one frame for the PlayerMale's body).
+The fix pass (2026-10-02) also made b4 measure the stretch AS THE RIG STANDS, b6 find the
+follows by their attribute and put the bones' translates back, and d move the clip after the
+connect (one frame for the PlayerMale's body). Since the IK follows the FK (the same day,
+`maya_ikmatch`): b4's IK limbs take the clip's lengths too and land on its joints, and e's
+Rotations on Manny have the IK where the FK is (the fix pass had it on the clip's footprints).
 """
 import math
 import os
@@ -407,14 +408,14 @@ if "b" in PHASES:
              "Auto asked once; Squash & stretch -> stretch")
         cmds.currentTime(first, update=True)
         limbs = ik_bones(squash)
-        out_pos, ik_len, ik_end = compare_as_it_stands(squash.skeleton_root, src, samples, m.scale, limbs)
-        named = all(limb in text for limb in limbs) and ("in IK keep" in text if limbs else True)
-        gate("b4-" + key, out_pos[0] < 0.05 and ik_len[0] < 1e-3 and ik_end[0] < 1.0 and named,
-             "stretch AS THE RIG STANDS: every bone outside the IK limbs (%s) on the clip's joint at "
-             "x%.4f to %.4f cm (%s); the IK limbs' bones keep their lengths to %.2e cm (%s), their ends "
-             "%.4f cm off the clip's (%s); the line names them: %s"
-             % (", ".join(sorted(limbs)) or "none", m.scale, out_pos[0], out_pos[1], ik_len[0], ik_len[1],
-                ik_end[0], ik_end[1], named))
+        # the IK limbs take the FK's lengths since 2026-10-02: every bone, in IK or not, on the
+        # clip's joint (the pole's nudge leaves an IK knee 0.05 cm off)
+        out_pos, _rot, _dir, _len = compare(squash.skeleton_root, src, samples, m.scale)
+        named = ("the IK limbs take the FK's shape" in text) if limbs else True
+        gate("b4-" + key, out_pos[0] < 0.06 and named,
+             "stretch AS THE RIG STANDS (%s in IK): every paired bone on the clip's joint at x%.4f to "
+             "%.4f cm (%s); the line says the IK took the FK's shape: %s"
+             % (", ".join(sorted(limbs)) or "no limb", m.scale, out_pos[0], out_pos[1], named))
         # the FK product: every limb shown in FK for the measurement (the rig's legs default to
         # IK, and an IK limb reaches with the rig's own lengths) and put back after
         blends = [maya_rigs.node(squash, "FKIK%s_%s.FKIKBlend" % (limb, side))
@@ -563,34 +564,26 @@ if "e" in PHASES:
                         worst_pos = (dd, "%s@%g" % (ours, f))
             tag = "e-%s" % ("keep" if answer == rm.KEEP else "squash")
             if answer == rm.KEEP:
-                # the legacy road kept (the fix pass): Rotations on a rig without the rotation
-                # mark IS the legacy plan for a foreign clip - FK by angle, the IK ends on the
-                # clip's hands and feet. A second Manny retargeted by the legacy call must stand
-                # where the first does, bone for bone, with the limbs in FK and in IK
-                cmds.currentTime(first, update=True)
-                ar.reset_build_pose(legacy)
-                print("   ", ar.connect(source_root=src, rig=legacy).splitlines()[0][:160])
-                print("   ", rr.bake(rig=legacy)[:120])
-                a, b = by_leaf(rig.skeleton_root), by_leaf(legacy.skeleton_root)
-                lblends = [maya_rigs.node(legacy, "FKIK%s_%s.FKIKBlend" % (limb, side))
-                           for limb in ("Arm", "Leg") for side in ("L", "R")]
-                same = (0.0, "")
+                # since 2026-10-02 the IK follows the FK in Rotations too: every bone of the
+                # rig with its limbs in IK where it stands with them in FK (the fix pass had the
+                # IK on the clip's hands and feet, 8 cm from the FK's)
+                a = by_leaf(rig.skeleton_root)
+                shown = {}
                 for value in (0, 10):
-                    for blend in [x for x in blends + lblends if cmds.objExists(x)]:
+                    for blend in [x for x in blends if cmds.objExists(x)]:
                         cmds.setAttr(blend, value)
                     for f in samples:
+                        cmds.currentTime(f + 0.5)
                         cmds.currentTime(f, update=True)
                         for n in a:
-                            if n in b:
-                                dd = (pos(a[n]) - pos(b[n])).length()
-                                if dd > same[0]:
-                                    same = (dd, "%s@%g blend %d" % (n, f, value))
-                for blend in [x for x in blends + lblends if cmds.objExists(x)]:
+                            shown[(value, f, n)] = pos(a[n])
+                for blend in [x for x in blends if cmds.objExists(x)]:
                     cmds.setAttr(blend, 0)
-                gate(tag + "-legacy", same[0] < 1e-5 and "ROTATIONS (every bone its own length" in text,
-                     "Rotations on Manny IS the legacy plan for a Mixamo clip: against a Manny retargeted "
-                     "by the legacy call, worst %.2e cm (%s), limbs in FK and in IK; the line says so"
-                     % same)
+                same = max(((shown[(10, f, n)] - shown[(0, f, n)]).length(), "%s@%g" % (n, f))
+                           for f in samples for n in a)
+                gate(tag + "-ik", same[0] < 0.06 and "ROTATIONS ONLY" in text,
+                     "Rotations on Manny: the IK where the FK is, worst %.4f cm (%s); the line says "
+                     "ROTATIONS ONLY" % same)
                 # Manny's game bones follow AS by the vendor's -mo point constraints, and its
                 # left leg's fit stands 0.0637 cm off calf_l (CLAUDE.md, the twin work): that
                 # offset wanders with the knee's roll, so 0.1 cm is this rig's own floor

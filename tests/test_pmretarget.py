@@ -564,10 +564,16 @@ class TestResetBuildPose(unittest.TestCase):
 
     def test_curves_go_driven_keys_stay_free_channels_zero(self):
         real, fake = pm.cmds, self.Fake()
+        real_match, restored = pm.ikmatch, []
         pm.cmds = fake
+        # the IK chains' shape goes back too (maya_ikmatch, 2026-10-02): its own tests
+        pm.ikmatch = type("Match", (), {"restore": staticmethod(
+            lambda rig: restored.append(rig) or 0)})
         try:
             self.assertEqual(pm.reset_build_pose(LEGACY), (1, 1))
         finally:
             pm.cmds = real
+            pm.ikmatch = real_match
         self.assertEqual(fake.deleted, ["FKWrist_R_rotateY"])
         self.assertEqual(fake.set, [("FKElbow_R.rx", 0.0)])
+        self.assertEqual(restored, [LEGACY])

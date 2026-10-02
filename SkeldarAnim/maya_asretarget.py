@@ -23,6 +23,13 @@ the IK ends and poles follow the rig's OWN FK joints (a rotation-only take gives
 hand no source position to stand on), and Main / RootX_M still carry the root motion
 and the hips. An unmarked rig is driven as before.
 
+**The IK follows the FK in every version** (2026-10-02, the animator: the IK animation must
+match the FK animation, a hard rule): the IK ends and poles ride the rig's
+own FKX joints whatever the source - a twin's poles riding the clip's upper bones had put the
+IK elbows 11-20 cm and the knees 10-18 cm off the FK on a UE clip - and after the bake, when
+the FK controls took position (a twin, squash & stretch), the IK chains take the FK chains'
+lengths, roots and feet (`maya_ikmatch.carry`).
+
 Design: docs/superpowers/specs/2026-09-04-as-retarget-design.md
         docs/superpowers/specs/2026-09-05-asretarget-mixamo-design.md
         docs/superpowers/specs/2026-09-24-creep-rig-rotation-retarget-design.md
@@ -43,6 +50,7 @@ import math
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+import maya_ikmatch as ikmatch
 import maya_retargetmode as retargetmode
 import maya_rigs
 import maya_skeletonmap as skelmap
@@ -262,26 +270,23 @@ def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False, keep_l
 
     controls -- control names that exist in this rig
     bones    -- leaf names that exist in the source skeleton
-    rotation -- the rig takes rotations only (`rotation_mode`): FK controls by
-                rotation, IK ends and poles from the rig's own FKX joints
+    rotation -- FK controls by rotation only: the rig's mark (`rotation_mode`),
+                or the Rotations version on any rig
     scaled   -- squash & stretch onto a body that is not the clip's twin
                 (2026-10-02): every FK control takes position as well, from the
-                clip's joint at our size (`maya_retargetmode.scaled_follower`);
-                the IK ends and poles still follow the rig's own FK, as with
-                `rotation`, which this implies
-    keep_lengths -- the Rotations version on a rig WITHOUT the rotation mark
-                (Manny; the fix pass of 2026-10-02): no FK control takes a
-                position, a twin's neither, while the IK ends and poles stay on
-                the clip's own hands and feet as the legacy plan has them - an
-                AS IK limb bends and never stretches (`stretchy` 0 on every
-                shipped rig, measured), so the feet stay on the clip's
-                footprints and no bone changes length
+                clip's joint at our size (`maya_retargetmode.scaled_follower`)
+    keep_lengths -- an older caller's name for `rotation`
+    The IK ends and poles follow the rig's OWN FKX joints in every case (2026-10-02,
+    the IK must match the FK): the IK hand and foot on
+    the FK's, the pole on the FK plane - never the clip's hands, feet and upper
+    bones, which put a twin's IK elbows 20 cm off its FK on a UE clip. After the
+    bake `maya_ikmatch` gives the IK chains the FK chains' lengths.
     Returns (drives, missing), missing being [(control, bone)] rows skipped
     because the source has no such bone.  A schema's own gaps -- Mixamo has no
     metacarpals, no second neck joint and three spine joints against our five --
     are not "missing": those rows simply are not in its table.
     """
-    rotation = rotation or scaled
+    rotation = rotation or keep_lengths
     controls = set(controls)
     bones = set(bones)
     drives, missing = [], []
@@ -303,25 +308,15 @@ def drive_plan(controls, bones, schema=UE5, rotation=False, scaled=False, keep_l
     for as_base, src_base in schema.rows:
         for as_side, src_side in schema.sides:
             add("FK" + as_base + as_side, bone_name(src_base, src_side, schema),
-                ((schema.twin and not rotation) or scaled) and not keep_lengths, True)
-    if rotation:
-        for as_base, fkx, full in IK_FOLLOW:
-            for side in ("_L", "_R"):
-                if as_base + side in controls:
-                    drives.append(Drive(as_base + side, fkx + side, full, True, True))
-        for as_base, fkx in POLE_FOLLOW:
-            for side in ("_L", "_R"):
-                if as_base + side in controls:
-                    drives.append(Drive(as_base + side, fkx + side, True, False, True))
-        return drives, missing
-    for as_base, src_base, translate in schema.ik_rows:
-        for as_side, src_side in schema.sides[1:]:
-            add(as_base + as_side, bone_name(src_base, src_side, schema),
-                translate, True)
-    for as_base, src_base in schema.pole_rows:
-        for as_side, src_side in schema.sides[1:]:
-            add(as_base + as_side, bone_name(src_base, src_side, schema),
-                True, False)
+                scaled or (schema.twin and not rotation), True)
+    for as_base, fkx, full in IK_FOLLOW:
+        for side in ("_L", "_R"):
+            if as_base + side in controls:
+                drives.append(Drive(as_base + side, fkx + side, full, True, True))
+    for as_base, fkx in POLE_FOLLOW:
+        for side in ("_L", "_R"):
+            if as_base + side in controls:
+                drives.append(Drive(as_base + side, fkx + side, True, False, True))
     return drives, missing
 
 
@@ -690,9 +685,8 @@ def proportion_note(ratios, tol=0.02):
         return ""
     parts = ", ".join("the rig's %s is %+.1f%% of the source's" % (limb, (r - 1.0) * 100.0)
                       for limb, r in sorted(off.items()))
-    return (parts + " - in FK the rig copies the source's ANGLES (its own "
-            "proportions kept), in IK the hand and foot land on the source's own "
-            "positions; both are driven, the FKIKBlend chooses")
+    return (parts + " - the rig copies the source's ANGLES (its own proportions kept); "
+            "IK ends and poles follow the rig's own FK, so FK and IK agree")
 
 
 def scale_warning(source_lengths, rig_lengths, tol=0.02):
@@ -1125,6 +1119,12 @@ def bake(disconnect=True, rig=None):
     curves = list(set(cmds.listConnections(keyed, type="animCurve", source=True, destination=False) or [])) if keyed else []
     baked = ("%g..%g" % (cmds.findKeyframe(curves, which="first"), cmds.findKeyframe(curves, which="last"))) if curves else "nothing"
     note = "baked %d controls over %s (%d curves; static channels dropped, as the vendor's Bake does)" % (len(keyed), baked, len(curves))
+    if fk_took_position(rig):
+        # the FK chains carry the clip's lengths and roots: the IK chains take them too
+        # (2026-10-02), or a limb switched to IK shows the rig's own
+        shape = ikmatch.carry(rig, span[0], span[1])
+        if shape:
+            note += "; " + shape
     if disconnect:
         note += "; " + globals()["disconnect"](rig)
     else:
@@ -1296,7 +1296,9 @@ def reset_build_pose(rig=None):
                 cmds.setAttr(plug, default)
                 touched = True
         zeroed += 1 if touched else 0
-    return len(curves), zeroed
+    # the IK chains' lengths, roots and feet a take gave them (`maya_ikmatch`)
+    reshaped = ikmatch.restore(rig) if rig else 0
+    return len(curves), zeroed + (1 if reshaped else 0)
 
 
 def posed_controls(tol=1e-3, rig=None):
@@ -1338,6 +1340,8 @@ Plan.__new__.__defaults__ = (False, 1.0, "")
 
 STRETCH_PREFIX = "asrtStretch"
 MODE_ON_HOLDER = "skeldarRetargetBones"   # on the holder: which retarget stands
+FK_POSITION_ATTR = "asrtFkPosition"       # on the holder: the FK controls took position too,
+                                          # so the bake gives the IK chains the FK's shape
 
 
 def _drive_offset(drive, plan):
@@ -1429,10 +1433,9 @@ def _plan(source_root=None, rig=None, bones_mode=None):
     if bones_mode is None:
         rotation = rotation_mode(rig)
     elif bones_mode == retargetmode.ROTATION:
-        # a rotation-marked rig (the Creep, the Orc D): its own rotation plan. Any
-        # other rig keeps the legacy plan's IK on the clip's hands and feet (Manny's
-        # legs stand on the clip's footprints) with no FK position - see keep_lengths
-        rotation, remembered = rotation_mode(rig), retargetmode.ROTATION
+        # every rig: FK by rotation, its own lengths, the IK on the FK (2026-10-02 - the
+        # fix pass's IK on the clip's footprints left Manny's IK where its FK is not)
+        rotation, remembered = True, retargetmode.ROTATION
     elif bones_mode == retargetmode.STRETCH:
         # measured, never assumed: the Creep has UE names (the UE5 schema says
         # twin) and arms 26 % longer than a UE clip's
@@ -1445,8 +1448,7 @@ def _plan(source_root=None, rig=None, bones_mode=None):
     else:
         return empty._replace(refusal="unknown retarget version %r" % (bones_mode,))
     drives, missing = drive_plan(controls, list(bones), schema, rotation=rotation,
-                                 scaled=scaled,
-                                 keep_lengths=remembered == retargetmode.ROTATION and not rotation)
+                                 scaled=scaled)
     drives = [d for d in drives if ours.get(d.control) in rig_bones]
     # an own drive needs the rig's FKX joints -- the whole limb, for a pole
     drives = [d for d in drives if not d.own or (
@@ -1479,8 +1481,7 @@ def _plan(source_root=None, rig=None, bones_mode=None):
         notes.append(tp)
     ratios = limb_ratios(rig_rest, src_rest, schema)
     note = (stretch_note(scale) if scaled else
-            rotation_note(ratios) if rotation else
-            keep_note(ratios) if remembered == retargetmode.ROTATION else proportion_note(ratios))
+            rotation_note(ratios) if rotation else proportion_note(ratios))
     if note:
         notes.append(note)
     return Plan(source_root, drives, missing, warn, bones, rig_bones, "",
@@ -1489,13 +1490,9 @@ def _plan(source_root=None, rig=None, bones_mode=None):
 
 
 def keep_note(ratios, tol=0.02):
-    """Pure: what the Rotations version means on a rig without the rotation mark."""
-    off = dict((limb, r) for limb, r in ratios.items() if abs(r - 1.0) > tol)
-    lengths = ("; the rig's " + ", ".join("%s is %+.1f%% of the source's" % (limb, (r - 1.0) * 100.0)
-                                          for limb, r in sorted(off.items()))) if off else ""
-    return ("rotations: every FK control takes the source bone's orientation and no position, "
-            "so every bone keeps its own length%s - the IK hands and feet stand on the source's "
-            "own (an IK limb bends, it does not stretch)" % lengths)
+    """Pure: what the Rotations version means on a rig without the rotation mark - the same
+    as on a marked one since 2026-10-02 (the IK follows the FK)."""
+    return rotation_note(ratios, tol)
 
 
 IK_LIMBS = (("Arm", "_L", "arm_l"), ("Arm", "_R", "arm_r"), ("Leg", "_L", "leg_l"), ("Leg", "_R", "leg_r"))
@@ -1505,16 +1502,6 @@ def ik_limbs(blends):
     """Pure: the limbs shown in IK, from {limb label: FKIKBlend value} (10 IK, 0 FK; a
     blend past half reads IK)."""
     return [limb for limb, value in sorted(blends.items()) if value is not None and value > 5.0]
-
-
-def stretch_ik_note(limbs):
-    """Pure: what a squash & stretch take cannot do for a limb in IK."""
-    if not limbs:
-        return ""
-    one = len(limbs) == 1
-    return ("%s in IK keep%s %s own lengths, %s end%s following the FK - switch %s to FK to see "
-            "the clip's" % (", ".join(limbs), "s" if one else "", "its" if one else "their",
-                            "its" if one else "their", "" if one else "s", "it" if one else "them"))
 
 
 def _ik_limbs(rig):
@@ -1530,7 +1517,8 @@ def stretch_note(scale):
     """Pure: what the squash & stretch version means."""
     return ("squash & stretch: every FK control stands on the clip's joint (the clip "
             "taken at our size, x%.4g) -- the bones take the clip's lengths; IK ends and "
-            "poles follow the rig's own FK" % scale)
+            "poles follow the rig's own FK, and the bake gives the IK limbs the FK's lengths"
+            % scale)
 
 
 def report(source_root=None, rig=None):
@@ -1552,7 +1540,7 @@ def report(source_root=None, rig=None):
                     len([d for d in source_drives if d.translate]),
                     len(offsets), ", ".join(offsets[:8]),
                     ("; %d IK ends and poles follow the rig's own FK"
-                     % len([d for d in plan.drives if d.own])) if plan.rotation else ""))
+                     % len([d for d in plan.drives if d.own])) if any(d.own for d in plan.drives) else ""))
     for note in plan.notes:
         lines.append(note)
     posed = posed_controls(rig=rig)
@@ -1687,6 +1675,21 @@ def connected_mode(rig=None):
     return cmds.getAttr(holder + "." + MODE_ON_HOLDER) or None
 
 
+def _remember_fk_position(value, holder):
+    if not cmds.attributeQuery(FK_POSITION_ATTR, node=holder, exists=True):
+        cmds.addAttr(holder, longName=FK_POSITION_ATTR, attributeType="bool")
+    cmds.setAttr(holder + "." + FK_POSITION_ATTR, bool(value))
+
+
+def fk_took_position(rig=None):
+    """Did the standing connect drive the FK controls in position (a twin, a stretch)?"""
+    rig, _ = _rig(rig)
+    holder = holder_of(rig) if rig else HOLDER
+    return bool(cmds.objExists(holder)
+                and cmds.attributeQuery(FK_POSITION_ATTR, node=holder, exists=True)
+                and cmds.getAttr(holder + "." + FK_POSITION_ATTR))
+
+
 def _remember_mode(value, holder):
     if not value:
         return
@@ -1750,6 +1753,8 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
         _holder(rig)
         _remember_source(plan.root, holder)
         _remember_mode(plan.bones_mode, holder)
+        _remember_fk_position(any(d.translate for d in plan.drives
+                                  if not d.own and d.control.startswith("FK")), holder)
         # a rotation-only rig's game bones follow their AS joints by orientation
         # alone: a stretch take needs their positions too, a rotations take does
         # not want them (exact lengths, no translation keys below the pelvis)
@@ -1853,16 +1858,12 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
         cmds.undoInfo(closeChunk=True)
         cmds.autoKeyframe(state=auto)
 
-    in_ik = _ik_limbs(rig) if plan.scaled else []
     lines = ["retarget connected: %d controls of %s driven from %s, schema %s%s "
              "(%d rest offsets on constraints, %d through a helper)"
              % (len(plan.drives), maya_rigs.label(rig), leaf(plan.root),
                 plan.schema.name,
-                (", SQUASH & STRETCH" + ("" if not in_ik else " - " + stretch_ik_note(in_ik)))
-                if plan.scaled else
+                ", SQUASH & STRETCH" if plan.scaled else
                 ", ROTATIONS ONLY" if plan.rotation else
-                ", ROTATIONS (every bone its own length, the IK hands and feet on the clip's)"
-                if plan.bones_mode == retargetmode.ROTATION else
                 ", STRETCH (twin, exact)" if plan.bones_mode == "twin" else "",
                 turned, helped)]
     for note in plan.notes:

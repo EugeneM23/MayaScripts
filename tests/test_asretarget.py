@@ -93,22 +93,24 @@ class TestDrivePlan(unittest.TestCase):
                          ("pelvis", True, True))
         self.assertNotIn("FKRoot_M", self.by_control)
 
-    def test_the_ik_ends_take_position_and_rotation(self):
-        self.assertEqual(self.by_control["IKLeg_R"].bone, "foot_r")
+    def test_the_ik_ends_follow_our_own_fk_in_position_and_rotation(self):
+        # 2026-10-02: the IK follows the FK in every version - a twin's IK on the clip's
+        # hands with its poles on the clip's upper bones stood 20 cm off its FK
+        self.assertEqual(self.by_control["IKLeg_R"].bone, "FKXAnkle_R")
         for name in ("IKArm_L", "IKLeg_L"):
             d = self.by_control[name]
-            self.assertEqual((d.translate, d.rotate), (True, True))
+            self.assertEqual((d.translate, d.rotate, d.own), (True, True, True))
 
-    def test_the_toe_control_takes_rotation_only(self):
+    def test_the_toe_control_takes_our_fk_toes_rotation_only(self):
         d = self.by_control["IKToes_L"]
-        self.assertEqual((d.bone, d.translate, d.rotate),
-                         ("ball_l", False, True))
+        self.assertEqual((d.bone, d.translate, d.rotate, d.own),
+                         ("FKXToes_L", False, True, True))
 
-    def test_the_poles_ride_the_upper_bone_by_position(self):
-        self.assertEqual(self.by_control["PoleLeg_L"].bone, "thigh_l")
-        self.assertEqual(self.by_control["PoleArm_R"].bone, "upperarm_r")
+    def test_the_poles_ride_our_own_fk_plane(self):
+        self.assertEqual(self.by_control["PoleLeg_L"].bone, "FKXKnee_L")
+        self.assertEqual(self.by_control["PoleArm_R"].bone, "FKXElbow_R")
         d = self.by_control["PoleLeg_R"]
-        self.assertEqual((d.translate, d.rotate), (True, False))
+        self.assertEqual((d.translate, d.rotate, d.own), (True, False, True))
 
     def test_the_twist_joints_are_never_driven(self):
         for d in self.drives:
@@ -247,12 +249,15 @@ class TestMixamoPlan(unittest.TestCase):
         self.assertNotIn("Main", self.by_control)
         self.assertEqual(self.by_control["RootX_M"].bone, "Hips")
 
-    def test_the_ik_ends_and_poles_follow_the_mixamo_names(self):
-        self.assertEqual(self.by_control["IKLeg_L"].bone, "LeftFoot")
-        self.assertEqual(self.by_control["IKArm_R"].bone, "RightHand")
-        self.assertEqual(self.by_control["IKToes_L"].bone, "LeftToeBase")
-        self.assertEqual(self.by_control["PoleLeg_R"].bone, "RightUpLeg")
-        self.assertEqual(self.by_control["PoleArm_L"].bone, "LeftArm")
+    def test_the_ik_ends_and_poles_follow_our_fk_not_the_mixamo_bones(self):
+        self.assertEqual(self.by_control["IKLeg_L"].bone, "FKXAnkle_L")
+        self.assertEqual(self.by_control["IKArm_R"].bone, "FKXWrist_R")
+        self.assertEqual(self.by_control["IKToes_L"].bone, "FKXToes_L")
+        self.assertEqual(self.by_control["PoleLeg_R"].bone, "FKXKnee_R")
+        self.assertEqual(self.by_control["PoleArm_L"].bone, "FKXElbow_L")
+        for d in self.drives:
+            if d.control.startswith(("IK", "Pole")):
+                self.assertTrue(d.own, d.control)
 
     def test_a_clip_without_fingers_loses_only_the_fingers(self):
         bones = [b for b in MIXAMO_BONES if "Hand" not in b or b.endswith("Hand")]
@@ -852,9 +857,19 @@ class TestResetBuildPose(unittest.TestCase):
         self.real = ar.cmds
         self.fake = FakeResetCmds()
         ar.cmds = self.fake
+        # the IK chains' shape goes back too (maya_ikmatch, 2026-10-02): its own tests
+        self.real_match = ar.ikmatch
+        self.restored = []
+        ar.ikmatch = type("Match", (), {"restore": staticmethod(
+            lambda rig: self.restored.append(rig) or 0)})
 
     def tearDown(self):
         ar.cmds = self.real
+        ar.ikmatch = self.real_match
+
+    def test_the_ik_chains_shape_is_restored_with_the_controls(self):
+        ar.reset_build_pose(LEGACY)
+        self.assertEqual(self.restored, [LEGACY])
 
     def test_time_curves_go_and_driven_keys_stay(self):
         curves, zeroed = ar.reset_build_pose(LEGACY)

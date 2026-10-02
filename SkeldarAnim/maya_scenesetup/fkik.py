@@ -38,9 +38,13 @@ FKX and its IKX joint stand in one frame (<= 3e-6 deg), and
   the pole from the source chain - on the shoulder-wrist line at the
   elbow's share, nudged NUDGE of the limb away from the pole side in the
   elbow's frame, aimed at the elbow, a limb out (`maya_pmretarget`'s pole).
-  The solve attributes (`swivel`, `antiPop`, `Lenght1/2`, the pole's
-  `followArm` and `lock`) at their defaults: reset over a whole take, a
-  refusal inside a range. The hand and the elbow's place are reproduced;
+  The IK chain takes the source chain's SHAPE (2026-10-02, `maya_ikmatch`: a
+  squash & stretch take gives the FK arm the clip's lengths, and «анимация IK
+  должна соответствовать анимации FK»): `Lenght1/2` from the source's two
+  segments, the chain's root joint `IKX<Shoulder>` onto the source's
+  shoulder. The solve attributes (`swivel`, `antiPop`, `stretchy`, the
+  pole's `followArm` and `lock`) at their defaults: reset over a whole take,
+  a refusal inside a range. The hand and the elbow's place are reproduced;
   **an FK elbow twisted about its own bone is not** - an IK elbow is a
   hinge in the plane, AS's own switch has the same limit, and a retargeted
   UE take carries the forearm's pronation there. It is measured and said.
@@ -60,6 +64,7 @@ from collections import namedtuple
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+import maya_ikmatch
 import maya_rigs
 
 FK, IK = "FK", "IK"
@@ -74,14 +79,15 @@ ALIGN = "AlignIKTo{0}_{1}"           # AlignIKToWrist_R
 TRANSLATE = ("translateX", "translateY", "translateZ")
 ROTATE = ("rotateX", "rotateY", "rotateZ")
 CHANNELS = TRANSLATE + ROTATE
-# what a matched IK needs at its default (AS resets every custom attribute)
-IK_SOLVE = ("swivel", "antiPop", "Lenght1", "Lenght2")
+# what a matched IK needs at its default (AS resets every custom attribute); the lengths
+# are not among them since 2026-10-02 - they are the source's (`maya_ikmatch`)
+IK_SOLVE = ("swivel", "antiPop", "stretchy")
+LENGHTS = maya_ikmatch.LENGHTS
 POLE_SOLVE = ("followArm", "lock")
 NUDGE = 0.002                        # of the limb's length (maya_pmretarget)
 CONSTANT = 1e-6
-TOLERANCE_CM = 0.05                  # "kept" below these, "moved" above: a retargeted
-                                     # FK arm has the SOURCE clip's lengths (0.036 cm off
-                                     # Manny's on a UE clip), an IK arm the rig's
+TOLERANCE_CM = 0.05                  # "kept" below these, "moved" above: the pole's
+                                     # nudge leaves an IK elbow 0.02-0.05 cm off
 TOLERANCE_DEG = 0.05
 
 ARM_LABEL = "Arm_{0}"
@@ -92,7 +98,9 @@ SOLVE_IN_RANGE = ("%s: %s not at the default - switch the whole take (no "
                   "highlight) to reset it, or zero it first")
 NO_POLE_SIDE = "%s: the IK pole stands on the arm's line - no bend plane to read"
 
-Limb = namedtuple("Limb", "side blend deform fk fkx ikx ik pole align")
+# root_parent -- what the IK chain's root joint stands in (IKXOffset<Shoulder>);
+# units       -- the IK segments' rest lengths behind Lenght1/2 (`maya_ikmatch.unit_of`)
+Limb = namedtuple("Limb", "side blend deform fk fkx ikx ik pole align root_parent units")
 
 
 # ------------------------------------------------------------------- pure
@@ -295,9 +303,14 @@ def limb(rig, side):
                 return None, MISSING % (label, leaf, maya_rigs.label(rig))
             nodes.append(path)
         found[key] = nodes
+    root_parent = _parent(found["ikx"][0])
+    if not root_parent:
+        return None, MISSING % (label, "the parent of " + found["ikx"][0].split("|")[-1],
+                                maya_rigs.label(rig))
+    units = tuple(maya_ikmatch.unit_of(found["ik"][0], attr) for attr in LENGHTS)
     return Limb(side, blend_node + "." + BLEND_ATTR, found["deform"], found["fk"],
                 found["fkx"], found["ikx"], found["ik"][0], found["pole"][0],
-                found["align"][0]), ""
+                found["align"][0], root_parent, units), ""
 
 
 def _inputs(plug):
@@ -333,17 +346,23 @@ def state(rig, side):
     return mode_of(blend_values(arm)) if arm else None
 
 
+def lenghts(arm):
+    """The Lenght attributes this rig's IK control has."""
+    return tuple(attr for attr, unit in zip(LENGHTS, arm.units) if unit)
+
+
 def targets(arm, mode):
     """(node, channels) the switch keys."""
     if mode == FK:
         return [(node, CHANNELS) for node in arm.fk]
-    return [(arm.ik, CHANNELS), (arm.pole, TRANSLATE)]
+    return [(arm.ik, CHANNELS + lenghts(arm)), (arm.pole, TRANSLATE),
+            (arm.ikx[0], TRANSLATE)]
 
 
 def whole_take(arm):
     """Playback range and the keys of every control involved, unsnapped."""
     keys = []
-    for node in arm.fk + [arm.ik, arm.pole, arm.blend.split(".")[0]]:
+    for node in arm.fk + [arm.ik, arm.pole, arm.ikx[0], arm.blend.split(".")[0]]:
         keys.extend(cmds.keyframe(node, query=True, timeChange=True) or [])
     start = cmds.playbackOptions(query=True, min=True)
     end = cmds.playbackOptions(query=True, max=True)
@@ -472,7 +491,7 @@ def _sample(arm, frames):
     nothing assumes they stand still), and the pole's side off the IK chain
     as it stands on the first frame."""
     s = dict((key, {}) for key in ("shown", "deform", "fk_parent", "chain",
-                                   "ik_parent", "pole_parent"))
+                                   "ik_parent", "pole_parent", "root_parent"))
     extras = [_parent(node) for node in arm.fk]
     ik_parent, pole_parent = _parent(arm.ik), _parent(arm.pole)
     for frame in frames:
@@ -490,6 +509,7 @@ def _sample(arm, frames):
                                       for i in (1, 2)]
         s["ik_parent"][frame] = _world(ik_parent)
         s["pole_parent"][frame] = _world(pole_parent)
+        s["root_parent"][frame] = _world(arm.root_parent)
     return s
 
 
@@ -520,10 +540,20 @@ def _to_ik(arm, frames, samples, span):
     order = cmds.getAttr(arm.ik + ".rotateOrder")
     seed = frames[0] - 1 if span[2] else frames[0]
     previous = _seed(arm.ik, ROTATE, seed)
-    values = dict(((arm.ik, ch), []) for ch in CHANNELS)
+    values = dict(((arm.ik, ch), []) for ch in CHANNELS + lenghts(arm))
     values.update(((arm.pole, ch), []) for ch in TRANSLATE)
+    values.update(((arm.ikx[0], ch), []) for ch in TRANSLATE)
     for frame in frames:
         d_s, d_e, d_w = samples["shown"][frame]
+        # the chain's shape: its root on the shown shoulder, its two segments the shown ones
+        root_parent = samples["root_parent"][frame]
+        for ch, v in zip(TRANSLATE, maya_ikmatch.local_point(position(d_s), root_parent)):
+            values[(arm.ikx[0], ch)].append(v)
+        scale = maya_ikmatch.scale_of(root_parent)
+        for attr, (a, b), unit in zip(LENGHTS, ((d_s, d_e), (d_e, d_w)), arm.units):
+            if unit:
+                values[(arm.ik, attr)].append(
+                    maya_ikmatch.lenght(position(a), position(b), unit, scale))
         local = (k * d_w) * samples["ik_parent"][frame].inverse()
         t, r = local_channels(local, order, previous)
         previous = r
@@ -563,6 +593,8 @@ def switch(arm, mode, span):
             values, text = _to_ik(arm, frames, samples, span)
             if values is None:
                 return text
+        if mode == IK:
+            maya_ikmatch.keep(arm.ikx[0])        # its rest, for the next retarget's reset
         for (node, channel), series in values.items():
             plug = node + "." + channel
             _write(plug, frames, series, span, cmds.getAttr(plug, lock=True))

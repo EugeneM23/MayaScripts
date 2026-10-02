@@ -18,19 +18,20 @@ BONES = [b + s for b in BONES for s in ("", "_l", "_r")]
 
 class KeepLengths(unittest.TestCase):
     """Rotations on Manny (no rotation mark): FK by angle, no position - a twin's neither -
-    and the IK ends and poles on the clip's own bones, as the legacy plan has them."""
+    and, since 2026-10-02, the IK ends and poles on our own FK like every other version
+    (the fix pass had them on the clip's hands and feet, somewhere the FK was not)."""
 
     def test_fk_takes_no_position_even_for_a_twin(self):
         drives, _ = ar.drive_plan(CONTROLS, BONES, ar.UE5, keep_lengths=True)
         fk = [d for d in drives if d.control.startswith("FK")]
         self.assertTrue(fk and all(d.rotate and not d.translate for d in fk))
 
-    def test_ik_ends_stay_on_the_clips_hands_and_feet(self):
+    def test_ik_ends_follow_our_fk_as_in_every_version(self):
         keep, _ = ar.drive_plan(CONTROLS, BONES, ar.UE5, keep_lengths=True)
-        legacy, _ = ar.drive_plan(CONTROLS, BONES, ar.UE5)
-        ik = lambda drives: [d for d in drives if not d.control.startswith("FK")]
-        self.assertEqual(ik(keep), ik(legacy))
-        self.assertFalse(any(d.own for d in keep))
+        rotation, _ = ar.drive_plan(CONTROLS, BONES, ar.UE5, rotation=True)
+        self.assertEqual(keep, rotation)
+        ik = [d for d in keep if d.control.startswith(("IK", "Pole"))]
+        self.assertTrue(ik and all(d.own and d.bone.startswith("FKX") for d in ik))
 
     def test_a_foreign_schema_is_exactly_the_legacy_plan(self):
         mixamo = ["Hips", "Spine", "Spine1", "Spine2", "LeftArm", "LeftForeArm", "LeftHand",
@@ -38,10 +39,10 @@ class KeepLengths(unittest.TestCase):
         self.assertEqual(ar.drive_plan(CONTROLS, mixamo, ar.MIXAMO, keep_lengths=True),
                          ar.drive_plan(CONTROLS, mixamo, ar.MIXAMO))
 
-    def test_the_note_says_the_feet_stay_on_the_clips(self):
+    def test_the_note_says_fk_and_ik_agree(self):
         text = ar.keep_note({"arm": 1.165, "leg": 0.974})
         self.assertIn("keeps its own length", text)
-        self.assertIn("IK hands and feet stand on the source's", text)
+        self.assertIn("FK and IK agree", text)
         self.assertIn("arm is +16.5%", text)
 
 
@@ -52,14 +53,17 @@ class StretchIk(unittest.TestCase):
                          ["leg_l", "leg_r"])
         self.assertEqual(pm.ik_limbs({"arm_l": 4.9, "leg_l": None}), [])
 
-    def test_the_note_names_them(self):
-        self.assertEqual(ar.stretch_ik_note([]), "")
-        self.assertIn("leg_l, leg_r in IK keep their own lengths", ar.stretch_ik_note(["leg_l", "leg_r"]))
-        self.assertIn("leg_l in IK keeps its own lengths", ar.stretch_ik_note(["leg_l"]))
+    def test_no_note_says_an_ik_limb_keeps_its_lengths_any_more(self):
+        # 2026-10-02: the bake gives the IK limbs the FK's lengths (maya_ikmatch)
+        self.assertFalse(hasattr(ar, "stretch_ik_note"))
+        for module in (ar, pm, rm):
+            with open(module.__file__.replace(".pyc", ".py"), encoding="utf-8") as handle:
+                self.assertNotIn("keep their own lengths", handle.read())
 
-    def test_the_question_says_it_before_the_answer(self):
+    def test_the_question_says_the_ik_takes_the_stretch_too(self):
         m = rm.measure([("upperarm_l", 28.0, 34.8), ("thigh_l", 45.0, 45.0)], None, "Clip", "Creep_Rig")
-        self.assertIn("a limb in IK keeps its own lengths", rm.question(m))
+        self.assertNotIn("keeps its own lengths", rm.question(m))
+        self.assertIn("in FK and in IK alike", rm.question(m))
 
 
 class PmOneFrame(unittest.TestCase):

@@ -68,6 +68,7 @@ import os
 import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
+import maya_ikmatch as ikmatch
 import maya_retargetmode as retargetmode
 import maya_rigs
 import maya_skeletonmap as skelmap
@@ -876,7 +877,9 @@ def reset_build_pose(rig=None):
                 cmds.setAttr(plug, default)
                 touched = True
         zeroed += 1 if touched else 0
-    return len(curves), zeroed
+    # the IK chains' lengths, roots and feet a squash & stretch take gave them (`maya_ikmatch`)
+    reshaped = ikmatch.restore(rig) if rig else 0
+    return len(curves), zeroed + (1 if reshaped else 0)
 
 
 def posed_controls(tol=1e-3, rig=None):
@@ -1209,14 +1212,11 @@ def connect(source_root=None, require_build_pose=True, rig=None, bones=None):
         cmds.autoKeyframe(state=auto)
 
     kinds = collections.Counter(d.kind for d in plan.drives)
-    in_ik = _ik_limbs(rig) if plan.stretch else []
     lines = ["retarget connected: %d controls of %s driven from %s -- %d FK by %s, %d IK ends and %d poles "
-             "following our own FK joints, %d constraints%s"
+             "following our own FK joints, %d constraints"
              % (len(plan.drives), maya_rigs.label(rig), leaf(plan.root), kinds["fk"],
                 "rotation and position (SQUASH & STRETCH)" if plan.stretch else "rotation",
-                kinds["ik"] + kinds["iktoes"], kinds["pole"], len(made),
-                (" - %s in IK keep their own lengths, their ends following the FK" % ", ".join(in_ik))
-                if in_ik else "")]
+                kinds["ik"] + kinds["iktoes"], kinds["pole"], len(made))]
     lines += plan.notes
     if plan.missing:
         lines.append("no source bone for: " + ", ".join(c for c, _ in plan.missing))
@@ -1293,6 +1293,11 @@ def bake(disconnect=True, rig=None):
     curves = list(set(cmds.listConnections(keyed, type="animCurve", source=True, destination=False) or [])) if keyed else []
     baked = ("%g..%g" % (cmds.findKeyframe(curves, which="first"), cmds.findKeyframe(curves, which="last"))) if curves else "nothing"
     note = "baked %d controls over %s (%d curves; static channels dropped, as the vendor's Bake does)" % (len(keyed), baked, len(curves))
+    if connected_mode(rig) == retargetmode.STRETCH:
+        # the FK chains carry the clip's lengths: the IK chains take them too (2026-10-02)
+        shape = ikmatch.carry(rig, span[0], span[1])
+        if shape:
+            note += "; " + shape
     if disconnect:
         note += "; " + disconnect_(rig)
     else:

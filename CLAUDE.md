@@ -8320,3 +8320,91 @@ table, drops onto the floor and onto a rig); pictures `clip_labels_square.png`, 
       read as overlapping all three others. Trim the box to the 2nd..98th percentile of the changed
       pixels. And hide one thing at a time rather than projecting points: no film-fit arithmetic to get
       wrong.
+
+## The IK limbs follow the FK limbs, stretch included (2026-10-02)
+
+The animator: «если мы перенесли анимацию с растяжением костей то кости при переключении контролов на
+IK не растянулись они остались прежнего размера. Это не верно анимация IK должна соответствовать
+анимации FK это обязательное условие». Spec `docs/superpowers/specs/2026-10-02-ik-follows-fk-design.md`.
+**This replaces what the sections above say about IK**: «a limb in IK keeps its own lengths», Manny's
+Rotations with «the IK hands and feet on the clip's», the twin's IK on the clip's hands with its poles
+on the clip's upper bones, and fkik's `Lenght1/2` reset.
+
+**Measured first** (the Retarget button in Squash & stretch, each limb's blend 0 against 10 on the
+game bones): the Creep's elbows **11.5 cm** off in IK (arms -17 %), the Orc D's shoulders **0.91**
+(its clavicle), elbows 3.4 and balls 0.55, Manny under Sweep Fall shoulders **4.1**, hips **3.0-3.2**
+and a foot **2.14 cm** longer in FK - and **Manny under a UE clip, the twin, elbows 11.4 / 20.0 and
+knees 9.6 / 17.8 cm off**: its IK poles rode the CLIP's upper bones, whose roll is not the elbow's
+plane. No gate had switched a blend; they all measured the rig as it stands (Manny's arms and legs
+in FK).
+
+**What an AdvancedSkeleton IK limb is** (its network and the vendor's `asAlignFKIK`):
+`IKX<mid>.tx = |input2X| * Lenght1` (the multiplyDivide on `IK<Limb>.Lenght1`'s output, negative on
+the left), `IKX<end>.tx` with `Lenght2`, with `stretchy` 0 (its stretch factor runs through an
+animCurveUU flat at the rest sum below it, so 1); the chain's root `IKX<start>` at `t = 0` under
+`IKXOffset<start>`, free, followed by nothing of the FK; the foot's `IKX<end>` aimed by an SC handle
+under `RollToes` at the ball, `IKXToes.t` the ball in the ankle, the toe control pivoting at the rest
+ball (`IKOffsetToes`). The vendor's own FK→IK switch sets `Lenght1/2` from the FK (with `stretchy` 10)
+and does not move the root.
+
+- **The IK ends and poles follow the rig's own FKX in every version** (`maya_asretarget.drive_plan`,
+  the legacy call included): `IK_FOLLOW` / `POLE_FOLLOW` - the rotation-only rigs' and the
+  PlayerMale's rule. The schema's `ik_rows` / `pole_rows` drive nothing any more; `keep_lengths` is
+  `rotation`; Rotations on any rig is the rotation plan (`ROTATIONS ONLY` on the line).
+- **`SkeldarAnim/maya_ikmatch.py`** (a payload row): `carry(rig, start, end)` after the bake, when the
+  FK took position (the holder's `asrtFkPosition`; pm: its stretch) - one walk reading each limb's FKX
+  chain and the frames the IK nodes hang in, then `IKX<start>.translate` (the FK start joint in
+  `IKXOffset<start>`), `Lenght1/2` (the FK segment over `|input2X|` times the chain's world scale) and
+  on a leg `IKXToes.translate` (the FK ball in the FK ankle) with the ankle's SC handle and
+  `IKOffsetToes` moved onto the FK ball (`moved_local`: the move as a vector, pivot-agnostic). A series
+  at rest writes nothing (`TOL_RATIO` 1e-5, `TOL_CM` 1e-4), a constant one a value, else keys; the bake
+  line names it («the IK limbs take the FK's shape: arm_r lengths x0.798/0.758, the shoulder moved
+  0.91 cm; leg_r ..., the ball moved 2.14 cm»). `restore(rig)` from both modules' `reset_build_pose`:
+  curves deleted, `Lenght` at its default, every moved translate at its own value, kept on the node the
+  first time it moved (`skeldarIkRest`). Limbs found by the FKIK node's start/middle/end joints; the
+  toes the nearest FKX joint BELOW the FK ankle (trap 197).
+- **The Connections FK / IK switch carries the same** (`fkik`, arms): to IK writes `Lenght1/2` and
+  `IKXShoulder.translate` from the SHOWN chain; `IK_SOLVE` is `swivel, antiPop, stretchy` (the lengths
+  left it).
+- The question, the connect lines and the notes lost «a limb in IK keeps its own lengths»;
+  `stretch_ik_note` is gone (a test pins it).
+
+Proof: `docs/superpowers/plans/verify_ik_follows_fk.py` **16/16 standalone**, every limb's game bones
+with the blend at 0 and at 10 over 13 frames - the control first (the carry switched off: elbows
+**13.99 cm**); the Creep **0.0501 cm**, 0.105 deg; the Orc D **0.0495** (shoulders 0.91 and balls 0.55
+carried); Manny under Mixamo **0.0551** (4.14 / 3.0-3.2 / 2.14 carried); the twin **0.0370**, its IK
+on our FK; Rotations after a stretch: every carried channel at rest to 1.8e-15, IK = FK 0.048; the
+Connections switch on a stretched arm 0.019 cm both ways and over a range; Manny Rotations under
+Mixamo 0.055 cm, no length touched. `verify_retarget_modes.py` all phases again (b4 now: every bone,
+the IK legs included, on the clip's joint, the Creep to 0.0005 cm; e: Rotations on Manny has the IK
+where the FK is, 0.053), `verify_rig_pipeline.py` 30/30, `verify_many_rigs.py` 32/32,
+`verify_creep_rig_asset.py` 16/16, `verify_orc_d_rig_asset.py` 22/22,
+`verify_skeleton_conventions.py` 122/122, `verify_fkik_switch.py` 63/63, `verify_weapon_space.py`
+11/11, `verify_character_groups.py` 146/146 (that mayapy then died in its shutdown, after the summary line), `verify_clip_labels.py` 17/17, `verify_import_sources.py` 27/27; 3822 unit tests. The 0.02-0.05 cm left is the pole rig's nudge, as before.
+
+**Still not IK = FK, and not this**: an IK knee or elbow is a hinge - a clip's calf or forearm rolled
+about its own bone is not an IK pose (the Creep under Heavy: the calf 30-55 deg, the forearm 33 deg
+about their own axes in IK against FK, every position and direction exact; the same in the rotation
+version before this work, and AdvancedSkeleton's own switch has the limit). The IK spine is driven by
+no version. The vendor's Switch FK/IK button re-derives the lengths (with `stretchy` 10) and leaves
+the root. `verify_asretarget.py` / `verify_asretarget_mixamo.py` (live, the legacy call) still gate
+the IK on the clip's bones: history. A rig with a take from before this has the old IK: retarget again.
+
+194. **AdvancedSkeleton's IK limb has its own lengths and nothing carries the FK's into them.** A take
+     that translates the FK controls (a twin's slides, any squash & stretch) moves the FK chain's root
+     and changes its segments; the IK chain keeps `Lenght1/2` 1 and its root on the rest offset, and the
+     IK end still on the FK wrist hides it - the hand is exact, the elbow 11 cm off. Every gate passed
+     because none of them switched the blend. Measure IK against FK by switching it.
+195. **A pole riding the source's upper bone is not on the limb's plane**: the bone's roll about its
+     own axis is free in a UE clip (the twist bones take it back), so Manny's twin IK - its poles on
+     `upperarm`/`thigh` with their rest offset - stood its elbows 20 cm and knees 18 cm off its FK on
+     `LongSword_Attack_Right_Heavy_3P`. The 2026-09-04 proof ran on a synthetic take that bent like a
+     hinge. The pole belongs on the plane the joints themselves make (`_pole_rig`).
+196. **`test_asretarget.py` reads the module's source with the default encoding (cp1252)**: a Cyrillic
+     quote in `maya_asretarget`'s docstring broke three tests with UnicodeDecodeError, a byte cp1252
+     has no character for (`«»` alone decode, as mojibake). That module stays ASCII.
+197. **The FKX toes joint is not the FKX ankle's child**: AdvancedSkeleton puts the toes' own FK
+     control between them (`FKXAnkle > FKOffsetToes > ... > FKToes > FKXToes`), so a children walk found
+     no toes and the foot carry silently did nothing - the ball 2.14 cm off while the line said the legs
+     were carried. Look among the descendants, the shallowest FKX joint whose IKX twin is the IK ankle's
+     child.

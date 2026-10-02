@@ -60,12 +60,12 @@ class TestRotationPlan(unittest.TestCase):
         self.assertIn("IKArm_L", by)
         self.assertIn(("FKWrist_L", "hand_l"), missing)
 
-    def test_the_twin_default_is_unchanged(self):
+    def test_the_twin_default_keeps_its_fk_position_and_its_ik_follows_our_fk(self):
         drives, _ = ar.drive_plan(CONTROLS, BONES)
         by = dict((d.control, d) for d in drives)
-        self.assertEqual(by["IKArm_L"][1:], ("hand_l", True, True, False))
+        self.assertEqual(by["IKArm_L"][1:], ("FKXWrist_L", True, True, True))
         self.assertTrue(by["FKShoulder_L"].translate)
-        self.assertFalse(any(d.own for d in drives))
+        self.assertTrue(all(d.own for d in drives if d.control.startswith(("IK", "Pole"))))
 
     def test_a_mixamo_source_gets_the_same_ik_rule(self):
         drives, _ = ar.drive_plan(CONTROLS, MIXAMO_BONES, ar.MIXAMO, rotation=True)

@@ -282,8 +282,7 @@ def question(m, others=0):
     lines.append("Keep proportions: the bones turn as the clip's and keep "
                  "their own lengths.")
     lines.append("Squash & stretch: every bone lands on the clip's joint, its "
-                 "length the clip's - a limb in IK keeps its own lengths, its end "
-                 "following the FK (switch it to FK to see the clip's).")
+                 "length the clip's - in FK and in IK alike.")
     return "\n".join(lines)
 
 
