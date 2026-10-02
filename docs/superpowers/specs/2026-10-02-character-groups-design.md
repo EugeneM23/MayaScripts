@@ -133,10 +133,46 @@ holding the group again.
   `tests/test_scenesetup_chargroup.py`: names, `free_base`, `child_on_path`, `group_base`,
   `world_tops`, the markers, the wiring of every parking road; `test_uebridge_export` now inspects
   `_export_hierarchy`, where the body moved).
-- `docs/superpowers/plans/verify_character_groups.py`, mayapy standalone - see the CLAUDE.md draft for
-  the numbers.
-- The existing standalone verifies re-run on this worktree (`run_on_worktree.py` in the scratchpad
-  swaps the main checkout's path for this worktree's): see the draft.
+- `docs/superpowers/plans/verify_character_groups.py`, mayapy standalone, **106/106** (phases A-F):
+  - A, every row alone: one new world-level node (its group) and one layer of ours holding it alone,
+    marked with the row, linked from its root, locked at identity, the line still counting what
+    arrived; a rig's `group` AdvancedSkeleton's below the character group, its skeleton outside the
+    rig group and inside the character group; **the grouping moved nothing** - every joint
+    (93 / 91 / 95 / 93 / 91 / 68) and every sampled vertex of every skinned mesh **0.0 cm** against the
+    same Add with the grouping switched off; **V off: 75 / 83 / 79 / 4 / 5 / 1 visible shapes → 0**,
+    and 0 still with the asset's own layers (`UE5_Skeleton`, `Creep_Skeleton`, `Orc_Skeleton`,
+    `BodyControls`, `DeformationJoints`) forced visible, back to all on V on;
+  - B, Manny rig + Creep rig + Manny skeleton + Creep skeleton each with a sword in the hand, a spear
+    on the floor, the Tech Limb, Camera Setup and a CoM: **nothing at world level but the four
+    groups**; every part inside its own character's group; a rig's weapon space in its AS `Group`, a
+    skeleton's `WeaponSpaces` its own in its group; the group selected names its character
+    (`current_root`, `rig_of`, `deletion.choose`, the Colour card), a skeleton's mesh names it,
+    Onto selected reads the group; the drop targets the four, no shield joint a character; the bridge:
+    a UE clip onto the grouped rig (`hand_r` 102.0 cm at frame 30), a new rig, a new skeleton and a
+    lineimport square of two each one group, nothing loose after;
+  - C, the exports (Manny rig, Manny skeleton, Creep skeleton x cascadeur / plain): the scene put back
+    exactly (paths, tops, joints), the file equal to the same character ungrouped - top node
+    (`Armature` / `root`), the joints (93 / 93 / 91), every joint's world matrix at frame 20 **0.0** -
+    and the control: `_export_hierarchy` without the lift writes `Manny_Skeleton_Character` into the
+    file;
+  - D, Delete of a Manny skeleton (433 nodes) and a Manny rig (2723 nodes) each with two weapons: the
+    group, the layer and everything gone, the Creep beside them untouched, Ctrl+Z bringing all of it
+    back with the layer holding the group again, redo;
+  - E, a legacy skeleton (the grouping off): its root and `WeaponSpaces` at world level as before, its
+    export `Armature` over `root`, Delete whole;
+  - F, a portrait drop (`add_character(at=)`) of a Manny rig and a Creep skeleton: moved by exactly the
+    point (0.0), the group at the origin, the Creep's `Armature` still in Cascadeur's layout.
+- The existing verifies re-run on this worktree (`run_on_worktree.py` in the session scratchpad swaps
+  the main checkout's path for this worktree's), standalone unless said: `verify_delete_character`
+  **82/82**, `verify_rig_pipeline` **30/30**, `verify_many_rigs` **32/32**, `verify_weapon_space`
+  **11/11**, `verify_inventory` **14/14**, `verify_armor` **15/15**, `verify_cascadeur_layout` **10/10**,
+  `verify_creep_rig_asset` **16/16**, `verify_orc_d_rig_asset` **22/22**, `verify_one_shader` **4/4**,
+  `verify_creep_skeleton_asset` **9/9**, `verify_fkik_switch` **63/63**, `verify_weapon_socket` **10/10**; in the disposable GUI Maya (port 7064):
+  `verify_connections` **40/40** (OverRig's live `parent_out`/`parent_in`: the lifted weapon parked in
+  the group, its world track intact), `verify_add_character` **31/31**. Every failure on the first runs
+  was a world-level PATH LITERAL in the verify (`"|Manny_Rig:root"`, `"|Creep_Rig:Group|..."`,
+  `"|Armature|root"`, "the spear lies at world level", "its space at world level", "not inside a
+  group") - each moved into the group, the gate kept as strict; none was a behaviour change.
 - GUI: `docs/superpowers/plans/character_groups_outliner.png` - a disposable Maya (port 7064, scratch
   `MAYA_APP_DIR`, `MAYA_NO_HOME`), Manny rig + Creep rig + Manny skeleton each holding a weapon: the
   Outliner's top level is the three groups (opened one level), the Layer Editor the three layers of
@@ -194,15 +230,20 @@ node per character, and 0 for every extra.
   (`skeleton._group_root`); Delete takes the group and its layer; a legacy character (no group)
   behaves exactly as before.
 
-Proof: `verify_character_groups.py` **N/N standalone** (fill: A per row one node + one layer, locked,
-linked, the grouping moving nothing - joints and sampled vertices 0.0 against the same Add ungrouped,
-V off visible shapes → 0 with the asset layers forced on; B four characters with their kits, 0 loose
-nodes, the who-is-it questions from the group, the bridge onto/new rig/new skeleton/square of two all
-grouped; C exports in both layouts for Manny rig / Manny skeleton / Creep skeleton equal to the same
-character ungrouped (top node, joints, frame-20 matrices 0.0), the scene put back exactly, the
-control without the lift writing `Manny_Skeleton_Character` into the file; D Delete + Ctrl+Z + redo;
-E legacy); the existing verifies re-run (fill); 3531 unit tests; the Outliner and Layer Editor
-photographed (`character_groups_outliner.png`).
+Proof: `verify_character_groups.py` **106/106 standalone** - A every row: one node + one layer,
+locked, linked, the grouping moving nothing (joints and sampled vertices **0.0 cm** against the same Add
+ungrouped), V off **75 / 83 / 79 / 4 / 5 / 1 visible shapes → 0** with the assets' own layers forced on;
+B four characters with their kits: nothing at world level but the four groups, the who-is-it questions
+answering from the group, the bridge onto / new rig / new skeleton / a square of two all grouped; C the
+exports in both layouts equal to the same character ungrouped (top node, joints, frame-20 matrices
+**0.0**), the scene put back exactly, the control without the lift writing `Manny_Skeleton_Character`
+into the file; D Delete (433 / 2723 nodes) + Ctrl+Z (the layer holding the group again) + redo; E a
+legacy character as before; F a portrait drop moved by exactly the point, the group at the origin. The
+existing verifies re-run on the branch: delete 82/82, rig pipeline 30/30, many rigs 32/32, weapon space
+11/11, inventory 14/14, armor 15/15, cascadeur layout 10/10, Creep rig 16/16, Orc D 22/22, one shader
+4/4, Creep skeleton 9/9, FK/IK 63/63, weapon socket 10/10; in a disposable GUI Maya (port 7064) Connections 40/40 and Add
+Character 31/31 - every first-run failure a world-level path literal in the verify, moved into the
+group. 3531 unit tests; the Outliner and Layer Editor photographed (`character_groups_outliner.png`).
 
 159?. **The FBX exporter writes a selected node's ANCESTORS into the file.** Measured 2026-10-02:
      `FBXExport -s` of the joints of `|CharGrp|root|pelvis` with `FBXExportIncludeChildren false` came
@@ -213,6 +254,11 @@ photographed (`character_groups_outliner.png`).
      second silently.** `createNode -name :Manny_Rig` beside a namespace `Manny_Rig` answered
      `Manny_Rig1`; `namespace -add Bar` beside a node `|Bar` raised nothing and `namespace -exists`
      answered False. A group named exactly for its rig would have blocked the next rig's namespace.
+162?. **A verify that names a character's nodes by world-level long path breaks the day the character
+     moves into a group** - `"|Manny_Rig:root"`, `"|Creep_Rig:Group|Creep_Rig:Geometry"`,
+     `"|Armature|root"`, «lies at world level»: 14 gates across 9 verifies failed on correct code here.
+     Ask `maya_rigs` / `character.character_group`, or use a partial path (`Manny_Rig:root`), and keep
+     the expectation as strict as it was.
 161?. **Re-parenting the import's nodes invalidates the paths `returnNewNodes` gave** (trap 16 in
      Add Character): the first grouped build said «added - 0 joints, 0 meshes». Resolve the import by
      UUID across any re-parent.

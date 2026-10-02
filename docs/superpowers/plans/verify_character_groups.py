@@ -480,9 +480,41 @@ def phase_e():
          and not (tops() - set(["|persp", "|top", "|front", "|side"])), line)
 
 
+def phase_f():
+    """A portrait dropped on the floor (`add_character(at=)`): the character stands on the point,
+    its group stays at the origin, the Creep's Armature too (Cascadeur's layout kept)."""
+    from maya_uebridge import fbxlayout
+    for key, point in (("Manny_Rig", (150.0, 0.0, -40.0)), ("Creep", (-90.0, 0.0, 60.0))):
+        entry = catalog.character_by_key(key)
+        found = []
+        for drop in (None, point):
+            cmds.file(new=True, force=True)
+            rigs_before = set(r.namespace for r in maya_rigs.rigs())
+            roots_before = set(builder.character_roots())
+            character.add_character(entry, at=drop)
+            if catalog.is_rig(entry):
+                rig = [r for r in maya_rigs.rigs() if r.namespace not in rigs_before][0]
+                node, root = rig.main, rig.skeleton_root
+            else:
+                node = root = new_root(roots_before)
+            found.append((node, root, cmds.xform(node, query=True, worldSpace=True,
+                                                 translation=True)))
+        node, root, at = found[1]
+        rest = found[0][2]
+        group = character.character_group(root)
+        layout = fbxlayout.root_in_layout(root)[0] if key == "Creep" else True
+        off = max(abs(at[0] - rest[0] - point[0]), abs(at[1] - rest[1]),
+                  abs(at[2] - rest[2] - point[2]))
+        gate("F %s dropped at %s: moved by exactly that (%.1e), its group at the origin%s"
+             % (entry.label, point[::2], off,
+                ", the Armature in Cascadeur's layout" if key == "Creep" else ""),
+             off < 1e-6 and bool(group) and worst(world(group), list(om.MMatrix())) < 1e-12
+             and layout)
+
+
 if __name__ == "__main__":
     for name, phase in (("A", phase_a), ("B", phase_b), ("C", phase_c), ("D", phase_d),
-                        ("E", phase_e)):
+                        ("E", phase_e), ("F", phase_f)):
         if os.environ.get("PHASES") and name not in os.environ["PHASES"]:
             continue
         print("=== phase", name)

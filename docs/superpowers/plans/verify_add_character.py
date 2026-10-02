@@ -249,14 +249,22 @@ else:
     # importer's axis-conversion wrapper is flattened away, so this press
     # leaves what Manny's does -- the skeleton and the mesh at world level,
     # side by side, and no group holding both.
+    # Since 2026-10-02 "world level" is the character's own outliner group (marked, ours): the
+    # importer's wrapper is still flattened away, the skeleton and the mesh side by side in it.
+    import maya_rigs
+
+    def _top_level(n):
+        return n.count("|") == 1 or (n.count("|") == 2 and maya_rigs.is_character_group(
+            "|" + n.lstrip("|").split("|")[0]))
+
     world_level = [n for n in (cmds.ls(new_uuids, long=True) or [])
-                   if n.count("|") == 1]
+                   if _top_level(n) and not maya_rigs.is_character_group(n)]
     wrappers = [n for n in world_level
                 if cmds.objectType(n) == "transform"
                 and not cmds.listRelatives(n, shapes=True)
                 and cmds.listRelatives(n, children=True, type="joint")]
     gate("22a the skeleton is at world level, not inside a group",
-         bool(root) and root.count("|") == 1 and not wrappers,
+         bool(root) and _top_level(root) and not wrappers,
          "{0} | wrappers: {1}".format(root, wrappers))
     gate("22b the mesh is its own world-level node, like Manny's",
          any(cmds.listRelatives(n, shapes=True, type="mesh")
