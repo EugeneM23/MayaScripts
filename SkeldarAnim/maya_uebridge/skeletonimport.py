@@ -91,16 +91,25 @@ def is_twin(lengths, tolerance=TWIN_TOLERANCE, shortest=SHORTEST):
     return diffs[len(diffs) // 2] <= tolerance
 
 
-def drive_for(name, is_root, twin):
+def drive_for(name, is_root, twin, mode=None):
     """How a target bone follows its clip bone: "parent" (the whole world
     matrix, a twin), "orient+point" (root and pelvis of another body),
-    "orient" (every other bone of it), or None (its ik_* helpers)."""
-    if twin:
+    "orient" (every other bone of it), "orient+scaled" (every bone of another
+    body under squash & stretch: turned as the clip's bone and standing on its
+    joint at our size), or None (its ik_* helpers).
+
+    `mode` is the retarget version (2026-10-02, `maya_retargetmode`): None the
+    legacy rule (a twin whole, another body by rotation); "rotation" never
+    whole, a twin too - every bone keeps its length; "stretch" whole for a
+    twin, scaled for another body."""
+    if twin and mode != "rotation":
         return "parent"
-    if is_root or name == "pelvis":
-        return "orient+point"
     if name.startswith(HELPERS):
         return None
+    if mode == "stretch":
+        return "orient+scaled"
+    if is_root or name == "pelvis":
+        return "orient+point"
     return "orient"
 
 
@@ -158,7 +167,9 @@ def _names(names):
 
 def result_line(name, label, top, result, info):
     """The status after a clip went onto a skeleton. Pure."""
-    how = ("exact" if result.get("twin")
+    mode = result.get("mode")
+    how = ("exact" if result.get("twin") and mode != "rotation"
+           else "squashed & stretched to the clip" if mode == "stretch"
            else "by rotation (its own proportions)")
     span = ""
     if (info or {}).get("start") is not None:
@@ -343,17 +354,29 @@ def skeleton_place(root):
             "yaw": rigimport.facing(matrix), "kept": True}
 
 
-def onto_existing(root, namespace, info, source, name, place):
+def onto_existing(root, namespace, info, source, name, place, decide=None):
     """(line, failure): the imported clip transferred onto the skeleton
     `root` already in the scene, which keeps `place` - the clip wrapped,
     turned about its root's first frame and moved there, as a rig keeps its
     place. Our weapon links are released around it and relinked after (the
     old merge's rule). A clip with no bone in common keeps its skeleton and
-    is the failure."""
+    is the failure.
+
+    `decide(source, root, label, start)` answers the retarget version first,
+    before anything moves (2026-10-02; None: the legacy transfer); its
+    Cancelled removes the clip's namespace and goes on up."""
+    import maya_retargetmode
     from maya_scenesetup import bonedrive
     start, end = info.get("start"), info.get("end")
     if start is None:
         return "", "{0} carries no keys - nothing to transfer".format(name)
+    decision = None
+    if decide is not None:
+        try:
+            decision = decide(source, root, skeleton_label(root), start)
+        except maya_retargetmode.Cancelled:
+            cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+            raise
     links = _links(root)
     for bone, _weapon in links:
         bonedrive.unlink(bone)
@@ -363,7 +386,7 @@ def onto_existing(root, namespace, info, source, name, place):
         clip_start = cmds.getAttr(source + ".worldMatrix[0]", time=start)
         placed = rigimport.move_wrapper(shift, place, clip_start,
                                         rigimport.facing)
-        result = transfer(source, root, start, end)
+        result = _transfer(source, root, start, end, decision)
     finally:
         for bone, weapon in links:
             if cmds.objExists(weapon) and cmds.objExists(bone):
@@ -379,7 +402,7 @@ def onto_existing(root, namespace, info, source, name, place):
     parts = [line, placed]
     if relinked:
         parts.append("weapon re-linked on " + ", ".join(relinked))
-    return "  |  ".join(parts), ""
+    return _with_reason("  |  ".join(parts), decision), ""
 
 
 def import_onto_existing(fbx_path, name, root, clip_fps=None, set_timeline=True):
@@ -388,12 +411,19 @@ def import_onto_existing(fbx_path, name, root, clip_fps=None, set_timeline=True)
     Returns the status line."""
     root_uuid = cmds.ls(root, uuid=True)[0]
     place = skeleton_place(root)
+    timing = rigimport.time_state()
     namespace, info, source = rigimport.import_source(fbx_path, name, clip_fps,
                                                       set_timeline)
     if source is None:
         return rigimport.NO_JOINT.format(name, namespace)
     root = cmds.ls(root_uuid, long=True)[0]
-    line, failure = onto_existing(root, namespace, info, source, name, place)
+    import maya_retargetmode
+    try:
+        line, failure = onto_existing(root, namespace, info, source, name, place,
+                                      decide=choose_for)
+    except maya_retargetmode.Cancelled:
+        rigimport.restore_time(timing)
+        return CANCELLED
     return failure or line
 
 
@@ -443,36 +473,75 @@ def _cut_time_keys(node):
     return len(curves)
 
 
-def transfer(source_root, target_root, start, end):
+STRETCH_TEMP = "skeldarStretch"    # the scaled followers' space, deleted after the bake
+
+
+def measure(source_root, target_root, start=None, label=""):
+    """The clip under `source_root` against the skeleton under `target_root`
+    (`maya_retargetmode.Measure`), paired as `transfer` pairs them."""
+    import maya_retargetmode
+    source = dict((leaf(j), j) for j in _joints(source_root))
+    target = dict((leaf(j), j) for j in _joints(target_root))
+    pairs = pair_bones(source, target)
+    end = None
+    if start is not None:
+        span = maya_retargetmode.key_span(list(source.values()))
+        end = span[1]
+    return maya_retargetmode.measure_scene(
+        pairs, target, source, start, end, source=maya_retargetmode.clip_name(source_root),
+        target=label or leaf(target_root))
+
+
+def transfer(source_root, target_root, start, end, mode=None, scale=None, twin=None):
     """The clip under `source_root` onto the skeleton under `target_root`,
-    baked over start..end: dict(twin, moved, skipped, missing)."""
+    baked over start..end: dict(twin, moved, skipped, missing, mode).
+
+    `mode` is the retarget version (`drive_for`); `scale` our size over the
+    clip's for the squash & stretch (measured when not given); `twin` the
+    verdict the press DECIDED on (`maya_retargetmode.Decision.twin`, the fix
+    pass of 2026-10-02) - given, it is the one this transfer runs, so the
+    version the status line names is the version that ran; None measures here
+    (`is_twin`, the legacy rule)."""
     source = dict((leaf(j), j) for j in _joints(source_root))
     targets = [j for j in _joints(target_root) if j != target_root]
     target = dict((leaf(j), j) for j in targets)
     pairs = pair_bones(source, target)
     if not pairs:                     # nothing in common: touch nothing
-        return dict(twin=False, moved=0, skipped=[], missing=sorted(target))
+        return dict(twin=False, moved=0, skipped=[], missing=sorted(target),
+                    mode=mode)
     lengths = [(_length(source[s], start), _length(target[t]))
                for t, s in pairs.items() if not t.startswith(HELPERS)]
-    twin = is_twin(lengths)
+    twin = is_twin(lengths) if twin is None else bool(twin)
     plan = [(target_root, source_root, leaf(target_root), True)]
     plan += [(target[t], source[s], t, False) for t, s in sorted(pairs.items())]
-    constraints, driven, skipped = [], [], []
+    constraints, driven, skipped, temp = [], [], [], []
+    space = scaled = None
+    if mode == "stretch" and not twin:
+        import maya_retargetmode
+        if scale is None:
+            scale = measure(source_root, target_root, start).scale
+        space, scaled, _made = maya_retargetmode.scale_space(
+            source_root, scale, None, STRETCH_TEMP)
+        temp.append(space)
     for dst, src, name, is_root in plan:
-        mode = drive_for(name, is_root, twin)
-        if mode is None:
+        how = drive_for(name, is_root, twin, mode)
+        if how is None:
             skipped.append(name)
             continue
         # A skeleton already in the scene may carry a take: its keys go first,
         # or the constraint splices a pairBlend in (trap 37's mechanism) - the
         # bake below writes the new take. A fresh skeleton has none.
         _cut_time_keys(dst)
-        if mode == "parent":
+        if how == "parent":
             constraints += cmds.parentConstraint(src, dst, maintainOffset=False)
         else:
             constraints += cmds.orientConstraint(src, dst, maintainOffset=False)
-            if mode == "orient+point":
+            if how == "orient+point":
                 constraints += cmds.pointConstraint(src, dst, maintainOffset=False)
+            elif how == "orient+scaled":
+                follower, _made = maya_retargetmode.scaled_follower(
+                    src, space, scaled, scale, "{0}_{1}".format(STRETCH_TEMP, name))
+                constraints += cmds.pointConstraint(follower, dst, maintainOffset=False)
         driven.append(dst)
     if driven:
         cmds.bakeResults(driven, time=(start, end), simulation=True,
@@ -482,18 +551,59 @@ def transfer(source_root, target_root, start, end):
     existing = [c for c in constraints if cmds.objExists(c)]
     if existing:
         cmds.delete(existing)
+    gone = [node for node in temp if cmds.objExists(node)]
+    if gone:
+        cmds.delete(gone)
     missing = sorted(name for name in target if name not in pairs
                      and not name.startswith(HELPERS))
     return dict(twin=twin, moved=len(driven), skipped=sorted(skipped),
-                missing=missing)
+                missing=missing, mode=mode)
 
 
-def onto_skeleton(entry, namespace, info, source, name, point=None):
+CANCELLED = "cancelled - nothing changed"
+
+
+def choose_for(source, root, label, start):
+    """The retarget version for the clip under `source` onto the skeleton
+    `root` (2026-10-02): the Retarget card's setting and the measured clip,
+    asked when the stretch would break the skeleton's proportions. Raises
+    `maya_retargetmode.Cancelled`."""
+    import maya_retargetmode
+    return maya_retargetmode.choose(measure(source, root, start, label))
+
+
+def discard_new(root):
+    """A skeleton this press added, deleted whole - Characters' own Delete,
+    unasked (a Cancel leaves the scene as it was)."""
+    from maya_scenesetup import deletion
+    return deletion.delete_selected([root], confirm=lambda _text: True)
+
+
+def _transfer(source, root, start, end, decision):
+    """`transfer` with the decided version (the legacy call without one)."""
+    if decision is not None and decision.mode:
+        return transfer(source, root, start, end, mode=decision.mode,
+                        twin=getattr(decision, "twin", None))
+    return transfer(source, root, start, end)
+
+
+def _with_reason(line, decision):
+    if decision is not None and decision.reason:
+        return "{0}  |  {1}".format(line, decision.reason)
+    return line
+
+
+def onto_skeleton(entry, namespace, info, source, name, point=None, decide=None):
     """(line, failure, top): `entry` added and the imported clip
     (`namespace`, its `source` root) transferred onto it, the clip standing
     on the floor `point` first (None: where it is), the clip's skeleton
     deleted; `top` names the new skeleton. A clip with no bone in common
-    keeps its skeleton and is the failure."""
+    keeps its skeleton and is the failure.
+
+    `decide(source, root, label, start)` answers the retarget version
+    (2026-10-02; None: the legacy transfer). Its Cancelled deletes the new
+    skeleton and the clip's namespace and goes on up."""
+    import maya_retargetmode
     root, note = new_skeleton(entry)
     if root is None:
         return "", note or "{0} did not arrive".format(entry.label), None
@@ -511,14 +621,23 @@ def onto_skeleton(entry, namespace, info, source, name, point=None):
     top = top_name(root)
     if start is None:
         return "", "{0} carries no keys - nothing to transfer".format(name), top
-    result = transfer(source, root, start, end)
+    decision = None
+    if decide is not None:
+        try:
+            decision = decide(source, root, entry.label, start)
+        except maya_retargetmode.Cancelled:
+            discard_new(root)
+            cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+            raise
+    result = _transfer(source, root, start, end, decision)
     if not result["moved"]:
         return "", "no bone of {0} matches {1} - its skeleton is kept as {2}".format(
             name, entry.label, namespace), top
     cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
     _label(root, name)
     line = result_line(name, entry.label, top, result, info)
-    return ("{0}  |  {1}".format(line, placed) if placed else line), "", top
+    line = "{0}  |  {1}".format(line, placed) if placed else line
+    return _with_reason(line, decision), "", top
 
 
 def import_onto_skeleton(fbx_path, name, clip_fps=None, set_timeline=True,
@@ -526,10 +645,17 @@ def import_onto_skeleton(fbx_path, name, clip_fps=None, set_timeline=True,
     """One clip in the Skeleton mode: imported, put onto a new Characters
     skeleton standing on `at` (None: where the clip is). Returns the
     status line."""
+    import maya_retargetmode
     entry = entry or skeleton_entry()
+    timing = rigimport.time_state()
     namespace, info, source = rigimport.import_source(fbx_path, name, clip_fps,
                                                       set_timeline)
     if source is None:
         return rigimport.NO_JOINT.format(name, namespace)
-    line, failure, _top = onto_skeleton(entry, namespace, info, source, name, at)
+    try:
+        line, failure, _top = onto_skeleton(entry, namespace, info, source, name, at,
+                                            decide=choose_for)
+    except maya_retargetmode.Cancelled:
+        rigimport.restore_time(timing)
+        return CANCELLED
     return failure or line

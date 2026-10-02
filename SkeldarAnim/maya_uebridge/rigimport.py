@@ -382,11 +382,73 @@ def _unlabel(rig):
     return cliplabel.clear_rig(rig)
 
 
-def retarget_imported(rig, mod, namespace, info, source, name, place=None):
+CANCELLED = "cancelled - nothing changed"
+
+
+# What an FBX import changes in the scene besides its nodes (the fix pass of
+# 2026-10-02, measured in mayapy): FBXImport of a 30 fps clip into a film scene
+# switches the scene to ntsc AND rescales the keys already there (a key at 24
+# lands on 30), puts the playback and animation ranges on the clip's and the
+# current time on its first frame - FBXImportSetMayaFrameRate off or not. A
+# Cancel has to put all of it back: `currentUnit -updateAnimation true` takes
+# the keys back to 24, then the ranges and the time, which are frames of the
+# old unit.
+TIME_RANGES = ("min", "max", "animationStartTime", "animationEndTime")
+
+
+def time_state():
+    """The scene's time unit, ranges and current time, for `restore_time`
+    (None where they cannot be read - a `cmds` without them, as the tests'
+    fakes are; a Cancel then restores nothing, which is what it did before)."""
+    try:
+        state = {"unit": cmds.currentUnit(query=True, time=True),
+                 "time": cmds.currentTime(query=True)}
+        for flag in TIME_RANGES:
+            state[flag] = cmds.playbackOptions(query=True, **{flag: True})
+    except Exception:                                        # noqa: BLE001
+        return None
+    return state
+
+
+def restore_time(state):
+    """Put back what `time_state` read: the unit first (the keys rescaled with
+    it), then the ranges and the frame, in the old unit's frames."""
+    if not state:
+        return
+    if cmds.currentUnit(query=True, time=True) != state["unit"]:
+        cmds.currentUnit(time=state["unit"], updateAnimation=True)
+    cmds.playbackOptions(**dict((flag, state[flag]) for flag in TIME_RANGES))
+    cmds.currentTime(state["time"], update=True)
+
+
+def decide_bones(rig, mod, source):
+    """The retarget version for this clip onto `rig` (2026-10-02,
+    `maya_retargetmode`): the Retarget card's setting and the measured clip,
+    asked when the stretch would break the rig's proportions. Returns the
+    Decision; raises `maya_retargetmode.Cancelled` on Cancel. A module that
+    cannot measure answers the legacy retarget (mode None)."""
+    import maya_rig_retarget
+    import maya_retargetmode
+    decide = getattr(maya_rig_retarget, "decide_for", None)
+    if decide is None:
+        return maya_retargetmode.Decision(None, False, "")
+    return decide(mod, rig, source)
+
+
+def discard_added(rig):
+    """A rig this press added, deleted whole (a Cancel leaves the scene as it
+    was): Characters' own Delete, unasked."""
+    from maya_scenesetup import deletion
+    return deletion.delete_selected([rig.main], confirm=lambda _text: True)
+
+
+def retarget_imported(rig, mod, namespace, info, source, name, place=None,
+                      bones=None):
     """(line, failure): the imported clip connected onto `rig`, moved onto
     `place` (a dict with "point" and "yaw"; None leaves it where it is),
     baked, and its skeleton deleted. A connect refusal leaves the skeleton
-    as it arrived and is the failure."""
+    as it arrived and is the failure. `bones` is the retarget version
+    ("rotation" / "stretch"; None the legacy rule)."""
     import maya_rig_retarget
     import maya_rigs
 
@@ -397,7 +459,8 @@ def retarget_imported(rig, mod, namespace, info, source, name, place=None):
     shift = None
     if place is not None:
         shift, source = _wrap(source, namespace)
-    connect_text = maya_rig_retarget.connect(source_root=source, rig=rig)
+    connect_text = maya_rig_retarget.connect(
+        source_root=source, rig=rig, **({"bones": bones} if bones else {}))
     if not cmds.objExists(mod.holder_of(rig)):
         if shift:
             cmds.ungroup(shift)
@@ -441,15 +504,42 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
         place = {"point": tuple(at), "yaw": None}
     cmds.undoInfo(openChunk=True, chunkName="UE anim import + retarget")
     try:
-        rig, mod, notes, failure = ready_rig(plan)
-        if failure:
-            return "  |  ".join(notes + [failure])
+        # Which retarget version is asked once the clip is in and BEFORE
+        # anything of the rig changes (2026-10-02): a rig in the scene is
+        # measured at its bind (`maya_retargetmode.rest_world`), so its take
+        # is reset only after the answer - a Cancel leaves it as it was. An
+        # added rig is added first (it is what the clip is measured against)
+        # and deleted again on Cancel.
+        import maya_retargetmode
+        notes = []
+        if plan["add"]:
+            rig, mod, notes, failure = ready_rig(plan)
+            if failure:
+                return "  |  ".join(notes + [failure])
+        else:
+            rig, mod = plan["rig"], plan["mod"]
+        timing = time_state()
         namespace, info, source = import_source(fbx_path, name, clip_fps,
                                                 set_timeline)
         if source is None:
             return "  |  ".join(notes + [NO_JOINT.format(name, namespace)])
+        try:
+            decision = decide_bones(rig, mod, source)
+        except maya_retargetmode.Cancelled:
+            cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+            if plan["add"]:
+                discard_added(rig)
+            restore_time(timing)
+            return CANCELLED
+        if not plan["add"]:
+            rig, mod, notes, failure = ready_rig(plan)
+            if failure:
+                cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+                return "  |  ".join(notes + [failure])
+        if decision.reason:
+            notes.append(decision.reason)
         line, failure = retarget_imported(rig, mod, namespace, info, source,
-                                          name, place)
+                                          name, place, bones=decision.mode)
     finally:
         cmds.undoInfo(closeChunk=True)
     if failure:

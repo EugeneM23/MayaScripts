@@ -175,9 +175,54 @@ def helper_space(mod, rig):
     A rotation-only rig keeps its own bone lengths -- the Creep's arms are 26%
     longer than a UE clip's -- so a weapon_r carried in WORLD space would stand where
     the SOURCE's hand is, off the rig's own. Carried relative to its parent it keeps
-    the clip's grip on the rig's hand (2026-09-24)."""
+    the clip's grip on the rig's hand (2026-09-24).
+
+    Since 2026-10-02 the standing connect says which version it is
+    (`connected_mode`): only the twin's exact stretch carries in world space; the
+    rotations and a stretch onto another body (taken at our size) carry relative to
+    the parent. A connect made without a version answers by the rig's mark, as before."""
+    standing = getattr(mod, "connected_mode", None)
+    mode = standing(rig) if standing is not None else None
+    if mode:
+        return "world" if mode == "twin" else "parent"
     probe = getattr(mod, "rotation_mode", None)
     return "parent" if probe is not None and probe(rig) else "world"
+
+
+# ------------------------------------------------------- which version
+#
+# 2026-10-02, «должно быть две версии ретаргета ... скрипт должен определить
+# какую ретаргет систему стоит использовать и если ... будет ломать пропорции
+# то необходимо спросить»: the press measures the clip against the rig
+# (`mod.measure`), and `maya_retargetmode` decides - and asks - before anything
+# in the scene changes.
+
+CANCELLED = "cancelled - nothing changed"
+
+
+def decide_for(mod, rig, source_root=None, bones=None, setting=None):
+    """The Decision for this clip onto this rig; raises
+    `maya_retargetmode.Cancelled` on Cancel.
+
+    `bones` forced by a caller wins; a module that cannot measure (or a clip it
+    refuses) answers the legacy retarget (mode None) and the connect then says
+    what is wrong."""
+    import maya_retargetmode as rm
+    if bones in (rm.ROTATION, rm.STRETCH):
+        return rm.Decision(bones, False, "%s - asked for" % (
+            "rotations" if bones == rm.ROTATION else "stretch"))
+    probe = getattr(mod, "measure", None)
+    if probe is None:
+        return rm.Decision(None, False, "")
+    m, refusal = probe(source_root=source_root, rig=rig)
+    if refusal or m is None:
+        return rm.Decision(None, False, "")
+    return rm.choose(m, setting)
+
+
+def connect_kwargs(decision):
+    """Pure: the connect's keyword for a Decision ({} for the legacy call)."""
+    return {"bones": decision.mode} if decision is not None and decision.mode else {}
 
 
 def _parent_space_driver(src, dst):
@@ -355,8 +400,12 @@ def _relabel(rig, source):
     return cliplabel.relabel_rig(rig, source)
 
 
-def run_retarget(source_root=None, rig=None):
+def run_retarget(source_root=None, rig=None, bones=None):
     """The whole retarget. Returns (ok, text).
+
+    Which version (2026-10-02): `bones` forced, else the Retarget card's
+    setting and the measured clip (`decide_for`) - asked BEFORE the reset, so
+    a Cancel leaves the rig and its take exactly as they were.
 
     Reset first: a rig that already carries a take passes `posed_controls`
     (a keyed channel is not settable and is skipped) while standing in the
@@ -377,9 +426,19 @@ def run_retarget(source_root=None, rig=None):
         return False, connected
     holder = mod.holder_of(rig)
     notes = []
+    decision = None
+    standing = cmds.objExists(holder)
+    if not standing:
+        import maya_retargetmode as rm
+        try:
+            decision = decide_for(mod, rig, source_root, bones)
+        except rm.Cancelled:
+            return False, "%s: %s" % (maya_rigs.label(rig), CANCELLED)
+        if decision.reason:
+            notes.append(decision.reason)
     cmds.undoInfo(openChunk=True, chunkName="Retarget")
     try:
-        if cmds.objExists(holder):
+        if standing:
             notes.append("already connected - baking what stands")
         else:
             curves, zeroed = mod.reset_build_pose(rig)
@@ -392,7 +451,8 @@ def run_retarget(source_root=None, rig=None):
             if posed:
                 return False, "  |  ".join(notes + [
                     "%s: %s" % (POSED, ", ".join(sorted(posed)[:6]))])
-            connect_text = mod.connect(source_root=source_root, rig=rig)
+            connect_text = mod.connect(source_root=source_root, rig=rig,
+                                       **connect_kwargs(decision))
             if not cmds.objExists(holder):
                 return False, "  |  ".join(notes + ["retarget refused: " + _first_line(connect_text)])
             notes.append(_first_line(connect_text))
@@ -475,6 +535,55 @@ def show_window():
     return maya_hub.show(HUB_SECTION)
 
 
+BONES = "skeldarRetargetBones"      # the version segments' collection
+BONES_NOTES = {
+    "auto": "The clip's twin is retargeted exactly, squash & stretch. Any other "
+            "body is asked: keep its proportions (rotations) or squash & "
+            "stretch to the clip.",
+    "rotation": "Rotations: every bone turns as the clip's and keeps its own "
+                "length - never asked.",
+    "stretch": "Squash & stretch: every bone lands on the clip's joint and "
+               "takes its length - never asked.",
+}
+
+
+def bones_button(value):
+    """The Bones segment of a setting ("auto" / "rotation" / "stretch")."""
+    return "{0}_{1}".format(BONES, value)
+
+
+def _set_bones(value):
+    import maya_retargetmode as rm
+    rm.set_setting(value)
+    _show("retarget version: %s" % rm.LABELS[value])
+
+
+def _bones_row():
+    """[Auto | Rotations | Stretch] - the retarget version (2026-10-02), the
+    setting every press reads (`maya_retargetmode.setting`), remembered in
+    its optionVar; built into the Retarget card only (the Animation Setup
+    card's import rows are another session's work this day, and the setting
+    is one for every press)."""
+    import maya_retargetmode as rm
+    current = rm.setting()
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 4)])
+    cmds.text(label="Bones", align="left",
+              annotation="Which retarget the presses run - Auto decides")
+    segments = cmds.rowLayout(numberOfColumns=len(rm.SETTINGS),
+                              columnAttach=[(i + 1, "both", 1)
+                                            for i in range(len(rm.SETTINGS))])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(BONES)
+    for value in rm.SETTINGS:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            bones_button(value), style="textOnly", label=rm.LABELS[value],
+            height=22, select=value == current, annotation=BONES_NOTES[value],
+            onCommand=lambda *_a, v=value: _set_bones(v)), "segment")
+    cmds.setParent("..")
+    cmds.setParent("..")
+
+
 def build_panel():
     """One instruction, one button, one status line - the shelf button's
     action with somewhere to report (2026-09-17, the hub)."""
@@ -483,6 +592,7 @@ def build_panel():
     #  One line since the skin (2026-09-28): the paragraph is the tooltip.
     hubstyle.mark(cmds.text(label=PANEL_HINT, align="left", wordWrap=True,
                             height=36), "note")
+    _bones_row()
     hubstyle.mark(cmds.button(label="Retarget", height=34,
                               backgroundColor=(0.45, 0.60, 0.70),
                               annotation=PANEL_NOTE, command=_press),

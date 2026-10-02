@@ -63,6 +63,7 @@ _PAYLOAD = (
     "maya_asretarget.py",
     "maya_pmretarget.py",
     "maya_rig_retarget.py",
+    "maya_retargetmode.py",     # rotations or squash & stretch, and the choice (2026-10-02)
     "maya_graphoverlay",        # the Graph Editor over the viewport (2026-09-30)
     "maya_com",                 # the centre of mass (2026-10-01)
     "maya_update.py",

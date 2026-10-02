@@ -121,7 +121,7 @@ class Press(unittest.TestCase):
             key="Manny", label="Manny UE5 [skeleton]")
         tops = iter(["root", "root1", "root2", "root3"])
 
-        def onto_skeleton(entry, namespace, info, source, name, point=None):
+        def onto_skeleton(entry, namespace, info, source, name, point=None, decide=None):
             self.calls.append(("onto", namespace, point, entry.label))
             self.namespaces.discard(namespace)
             return "%s onto %s" % (name, entry.label), "", next(tops)

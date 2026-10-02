@@ -336,7 +336,7 @@ class ThePress(unittest.TestCase):
     def test_with_a_rig_standing_the_press_resets_imports_connects_bakes_deletes(self):
         self._one_rig_current()
         text = rigimport.import_and_retarget("C:/t/A_Jump.fbx", "A_Jump")
-        self.assertEqual(self._steps(), ["reset", "import", "group", "connect", "move",
+        self.assertEqual(self._steps(), ["import", "reset", "group", "connect", "move",
                                          "bake", "delete_ns"])
         self.assertEqual([c for c in self.calls if c[0] == "connect"][0][1:],
                          ("|A_Jump:%s|A_Jump:root" % rigimport.SHIFT_NODE, "Manny_Rig"))
@@ -435,7 +435,7 @@ class ThePress(unittest.TestCase):
         self.main_place = yaw_matrix(60.0, (90.0, 0.0, -40.0))
         self.main_start = yaw_matrix(10.0, (5.0, 92.0, 20.0))
         text = rigimport.import_and_retarget("C:/t/A.fbx", "A", at=(300.0, 0.0, 300.0))
-        self.assertEqual(self._steps(), ["reset", "import", "group", "connect", "pivot",
+        self.assertEqual(self._steps(), ["import", "reset", "group", "connect", "pivot",
                                          "rotate", "move", "bake", "delete_ns"])
         group = "A:" + rigimport.SHIFT_NODE
         self.assertIn(("pivot", group, (5.0, 92.0, 20.0)), self.calls)
@@ -468,7 +468,9 @@ class ThePress(unittest.TestCase):
         text = rigimport.import_and_retarget("C:/t/A.fbx", "A")
         self.assertIn(rigimport.POSED, text)
         self.assertIn("FKElbow_R, FKWrist_R", text)
-        self.assertEqual(self._steps(), ["reset"])
+        # since 2026-10-02 the clip comes in first (the retarget version is
+        # asked before the rig's take is reset) and goes again on the refusal
+        self.assertEqual(self._steps(), ["import", "reset", "delete_ns"])
         # the take is gone, so its label went with it - a refusal leaves no lie
         self.assertIn(("unlabel", "Manny_Rig"), self.calls)
 
@@ -491,7 +493,7 @@ class ThePress(unittest.TestCase):
         self.rr.connect = lambda source_root=None, rig=None: (
             self.calls.append(("connect", source_root, rig.namespace)) or "no bone of A matches")
         text = rigimport.import_and_retarget("C:/t/A.fbx", "A")
-        self.assertEqual(self._steps(), ["reset", "import", "group", "connect", "ungroup"])
+        self.assertEqual(self._steps(), ["import", "reset", "group", "connect", "ungroup"])
         self.assertIn("retarget refused: no bone of A matches", text)
         self.assertIn("imported as A", text)
 
