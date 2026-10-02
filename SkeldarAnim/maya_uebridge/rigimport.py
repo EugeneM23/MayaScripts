@@ -347,11 +347,23 @@ def ready_rig(plan):
 
 def import_source(fbx_path, name, clip_fps=None, set_timeline=True):
     """(namespace, info, source): the clip as its own namespaced skeleton and
-    its topmost joint (None when it brought none)."""
+    its topmost joint (None when it brought none).
+
+    `fbx_path` is a clip REFERENCE since 2026-10-02 (`sources.ref`): a plain
+    FBX path goes to `animimport.import_clip` as it always did (the Unreal
+    road), a take of an FBX, a Unity clip or another format (BVH, glTF,
+    Collada, USD, a Maya scene, a Unity .anim) to `formats.import_clip`,
+    which leaves the scene in the same shape."""
     namespace = records.namespace_for(name, animimport.existing_namespaces())
-    info = animimport.import_clip(fbx_path, namespace,
-                                  set_timeline=set_timeline,
-                                  clip_fps=clip_fps, merge=False)
+    from maya_uebridge import sources
+    if sources.is_plain_fbx(fbx_path):
+        info = animimport.import_clip(fbx_path, namespace,
+                                      set_timeline=set_timeline,
+                                      clip_fps=clip_fps, merge=False)
+    else:
+        from maya_uebridge import formats  # lazy: only a file source needs it
+        info = formats.import_clip(fbx_path, namespace,
+                                   set_timeline=set_timeline, clip_fps=clip_fps)
     nodes = cmds.namespaceInfo(namespace, listOnlyDependencyNodes=True,
                                recurse=True, dagPath=True) or []
     source = source_root_in(nodes, lambda path: cmds.objectType(path) == "joint")

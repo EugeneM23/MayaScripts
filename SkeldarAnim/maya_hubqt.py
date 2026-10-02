@@ -1462,6 +1462,15 @@ def _apply_mark(mark, card, scale, size):
         widget.setProperty("skRole", "swatchonly")
         return True
     widget.setProperty("skRole", mark.role)
+    if mark.role == "inset":
+        #  A plain QWidget paints no stylesheet background unless asked to
+        #  (2026-10-02, the Connect block); its own layout gets the padding.
+        widget.setAttribute(q.QtCore.Qt.WA_StyledBackground, True)
+        layout = widget.layout()
+        if layout is not None:
+            pad = hubstyle.px(8, scale)
+            layout.setContentsMargins(pad, pad, pad, pad)
+        return True
     if mark.role == "segments":
         #  after the segment marks (they come later in the list): see
         #  apply_marks

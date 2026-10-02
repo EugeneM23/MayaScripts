@@ -610,5 +610,58 @@ class ProjectLabel(unittest.TestCase):
         self.assertEqual(window._project_label(""), "no project")
 
 
+class FileSources(unittest.TestCase):
+    """2026-10-02: Unity and Folder fill the same list; one step differs."""
+
+    def setUp(self):
+        from maya_uebridge import sources
+        self.sources = sources
+        self.file = sources.file_record("C:/f/run.bvh", "run", "", 10, fps=30.0)
+
+    def test_a_file_record_hands_the_funnel_its_reference(self):
+        saved = window.os.path.isfile
+        window.os.path.isfile = lambda p: True
+        self.addCleanup(setattr, window.os.path, "isfile", saved)
+        self.assertEqual(window._export_from_editor(self.file), ("C:/f/run.bvh", 30.0))
+        take = self.sources.file_record("C:/f/p.fbx", "p · jump",
+                                        self.sources.clip_text(take=2), 5)
+        self.assertEqual(window._export_from_editor(take)[0], "C:/f/p.fbx|take=2")
+
+    def test_an_unreal_record_still_asks_the_editor(self):
+        saved = window._export_unreal
+        window._export_unreal = lambda record: ("C:/t/x.fbx", 30.0)
+        self.addCleanup(setattr, window, "_export_unreal", saved)
+        rec = records.AnimRecord("A", "/Game/A", "", 3, 0.1, 30.0)
+        self.assertEqual(window._export_from_editor(rec), ("C:/t/x.fbx", 30.0))
+
+    def test_a_humanoid_row_refuses_before_anything_happens(self):
+        rec = self.sources.file_record("C:/u/w.anim", "Walk", note="humanoid")
+        self.assertIn("Humanoid", window.file_refusal(rec))
+        with self.assertRaises(window.uelink.UeBridgeError):
+            window._export_from_editor(rec)
+
+    def test_a_vanished_file_refuses(self):
+        rec = self.sources.file_record("C:/nowhere/gone.bvh", "gone")
+        self.assertIn("gone", window.file_refusal(rec))
+
+    def test_the_dropdown_lists_hub_projects_then_browsed_then_browse(self):
+        hub = [("Lugal", "C:/w/work", "2022.3", 9), ("Rokets", "C:/w/Rokets", "6000", 1)]
+        items = window.menu_items("unity", ["C:/w/work", "D:/other"], hub,
+                                  {window.os.path.normcase(window.os.path.normpath(
+                                      "C:/w/work"))})
+        self.assertEqual([v for _l, v in items],
+                         ["C:/w/work", "C:/w/Rokets", "D:/other", None])
+        self.assertIn("open", items[0][0])
+        self.assertEqual(items[-1][0], window.BROWSE)
+
+    def test_a_folder_dropdown_names_the_folder_and_its_path(self):
+        items = window.menu_items("folder", ["C:/clips/mocap"])
+        self.assertEqual(items[0], ("mocap  -  C:/clips/mocap", "C:/clips/mocap"))
+
+    def test_the_file_cache_keeps_every_field(self):
+        payload = window.file_cache_payload([self.file], "folder", "C:/f")
+        self.assertEqual(records.parse_payload(payload), [self.file])
+
+
 if __name__ == "__main__":
     unittest.main()

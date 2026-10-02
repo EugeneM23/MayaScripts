@@ -60,6 +60,10 @@ TOKENS = {
     "status_text": "#a9abb1",
     "ok": "#8fd19a",
     "ok_tint": "#223326",
+    #  a block set into a card (2026-10-02: Connect, the source of the
+    #  animations): a step darker than the card, a hairline round it
+    "inset": "#232529",
+    "inset_line": "#3a3c42",
 }
 
 #  The objectNames the stylesheet scopes by (hubqt names its widgets so).
@@ -105,6 +109,8 @@ ROLES = (
     "context",      # a line of scene context inside the body
     "subtitle",     # a line the skin moves into the card's header
     "heading",      # a section's title inside a card (2026-10-01: «UE Connect»)
+    "inset",        # a column set into the card as its own block (layout=True;
+                    # 2026-10-02: Connect «визуально как-то отделить»)
     "swatch",       # a colour chip (see swatch())
     "swatchonly",   # a colorSliderGrp showing only its swatch
 )
@@ -258,6 +264,8 @@ QPushButton[skRole="tool"] {{ background: {field}; border: none;
     padding: {p3}px; }}
 QPushButton[skRole="tool"]:hover {{ background: {hover}; }}
 QWidget[skRole="segments"] {{ background: {field}; border-radius: {r6}px; }}
+QWidget[skRole="inset"] {{ background: {inset}; border: {b1}px solid {inset_line};
+    border-radius: {r8}px; }}
 QPushButton[skRole="segment"] {{ background: transparent; border: none;
     border-radius: {r4}px; padding: {p2}px {p6}px; color: {muted}; }}
 QPushButton[skRole="segment"]:hover {{ color: {text}; }}

@@ -15,8 +15,15 @@ import collections
 import os
 import re
 
+#  2026-10-02 (sources: Unreal, a Unity project, a folder): a record also says
+#  which SOURCE it came from and, for a file, the file, the clip inside it and
+#  its format (`sources.file_record`). The six old fields keep their places and
+#  the new ones default to an Unreal asset, so every record made before and
+#  every positional constructor still means what it meant.
 AnimRecord = collections.namedtuple(
-    "AnimRecord", ["name", "package", "skeleton", "frames", "length", "fps"])
+    "AnimRecord", ["name", "package", "skeleton", "frames", "length", "fps",
+                   "source", "path", "clip", "fmt"],
+    defaults=("unreal", "", "", ""))
 
 _ILLEGAL = re.compile(r"[^A-Za-z0-9_]")
 
@@ -49,7 +56,11 @@ def parse_payload(payload):
             skeleton=entry.get("skeleton") or "",
             frames=_number(entry.get("frames"), int),
             length=_number(entry.get("length"), float),
-            fps=_number(entry.get("fps"), float)))
+            fps=_number(entry.get("fps"), float),
+            source=entry.get("source") or "unreal",
+            path=entry.get("path") or "",
+            clip=entry.get("clip") or "",
+            fmt=entry.get("fmt") or ""))
     out.sort(key=lambda r: r.name.lower())
     return out
 
@@ -121,9 +132,15 @@ def _tail(text, width):
 
 
 def format_row(record):
-    """One line for the scroll list: name, folder, and length if we know it."""
-    folder = record.package.rsplit("/", 1)[0]
+    """One line for the scroll list: name, folder, and length if we know it.
+
+    A file's row (2026-10-02) shows its own folder and, after the length, its
+    format and what stops it importing, if anything («humanoid»)."""
+    file_row = record.source != "unreal" and record.path
+    folder = (record.path if file_row else record.package).rsplit("/", 1)[0]
     frames = "{0} fr".format(record.frames) if record.frames is not None else ""
+    if file_row:
+        frames = "  ".join(t for t in (frames, record.fmt, record.skeleton) if t)
     return "{0:<{1}} {2:<{3}} {4}".format(
         _middle(record.name, NAME_WIDTH), NAME_WIDTH,
         _tail(folder, FOLDER_WIDTH), FOLDER_WIDTH,
