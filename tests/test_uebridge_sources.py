@@ -308,6 +308,15 @@ class Sources(unittest.TestCase):
         self.assertEqual([(r.name, r.clip) for r in many],
                          [("pack.fbx · Take 001", "take=1"), ("pack.fbx · jump", "take=2")])
 
+    def test_one_moving_take_among_several_names_its_take(self):
+        # a still default take beside the real one: a plain path would
+        # import the still one (the fix review, 2026-10-02)
+        rows = sources.take_rows("C:/a/run.fbx", [(1, "Take 001", 0.0, 0.0),
+                                                  (2, "Run", 0.0, 30.0)])
+        self.assertEqual([(r.name, r.clip, r.frames) for r in rows],
+                         [("run.fbx", "take=2", 31)])
+        self.assertFalse(sources.is_plain_fbx(rows[0].package))
+
     def test_a_unity_model_lists_its_meta_clips(self):
         rows = sources.unity_model_rows("C:/p/Assets/Bow.fbx",
                                         unityfiles.meta_clips(META), [])
@@ -353,6 +362,60 @@ class Sources(unittest.TestCase):
         a = sources.cache_name("folder", "C:/a")
         self.assertNotEqual(a, sources.cache_name("folder", "C:/b"))
         self.assertEqual(a, sources.cache_name("folder", "c:\\a"))
+
+
+class Refusals(unittest.TestCase):
+    """Every clip-level refusal of a file is decided before the press
+    touches the scene (the fix review, 2026-10-02)."""
+
+    TAKES = [(1, "Take 001", 0.0, 30.0), (2, "Run", 0.0, 20.0)]
+
+    def test_a_take_in_the_file_is_no_refusal(self):
+        self.assertEqual(sources.take_refusal("a.fbx", self.TAKES, {"take": "2"}), "")
+        self.assertEqual(sources.take_refusal("a.fbx", self.TAKES,
+                                              {"take_name": "run"}), "")
+        self.assertEqual(sources.take_refusal("a.fbx", [], {}), "")
+
+    def test_a_take_name_not_in_the_file_is_refused_by_name(self):
+        text = sources.take_refusal("Bow.fbx", self.TAKES,
+                                    {"take_name": "mixamo.com", "first": "0"})
+        self.assertIn("'mixamo.com' is not in the file", text)
+        self.assertIn("Take 001, Run", text)
+        self.assertIn("no take", sources.take_refusal("Bow.fbx", [],
+                                                      {"take_name": "x"}))
+
+    def test_a_take_number_not_in_the_file_is_refused(self):
+        self.assertIn("take 3 is not in the file",
+                      sources.take_refusal("a.fbx", self.TAKES, {"take": "3"}))
+
+    def test_find_take_exact_then_any_case(self):
+        takes = [(1, "run", 0, 1), (2, "Run", 0, 1)]
+        self.assertEqual(sources.find_take(takes, "Run"), 2)
+        self.assertEqual(sources.find_take(takes, "RUN"), 1)
+        self.assertIsNone(sources.find_take(takes, "walk"))
+
+    def test_an_anim_without_a_model_needs_every_position(self):
+        self.assertEqual(sources.anim_refusal("Fire", "generic", [], False), "")
+        self.assertEqual(sources.anim_refusal("Fire", "generic", ["a/b"], True), "")
+        text = sources.anim_refusal("Fire", "generic", ["Bip01/Bip01_Pelvis"], False)
+        self.assertIn("no position curve", text)
+        self.assertIn("Bip01/Bip01_Pelvis", text)
+
+    def test_humanoid_compressed_and_empty_clips_refuse(self):
+        self.assertIn("Humanoid", sources.anim_refusal("W", "humanoid", [], True))
+        self.assertIn("compressed", sources.anim_refusal("W", "compressed", [], True))
+        self.assertIn("no transform curves",
+                      sources.anim_refusal("W", "generic", [], True, has_curves=False))
+
+    def test_a_gltf_with_no_skeleton_or_no_such_clip_refuses(self):
+        empty = {"nodes": [{"name": "Cube"}]}
+        self.assertIn("no skeleton", sources.gltf_refusal("a.glb", empty, 0))
+        doc = {"nodes": [{"name": "root", "children": [1]}, {"name": "leaf"}],
+               "skins": [{"joints": [0, 1]}],
+               "animations": [{"channels": [], "samplers": []}]}
+        self.assertEqual(sources.gltf_refusal("a.glb", doc, 0), "")
+        self.assertIn("animation 2 is not in the file",
+                      sources.gltf_refusal("a.glb", doc, 2))
 
 
 class RecordModel(unittest.TestCase):

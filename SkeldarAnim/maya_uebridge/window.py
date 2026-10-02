@@ -90,7 +90,8 @@ LEGACY_WINDOWS = ("ueBridgeCheckouts", "ueAnimBridgeWindow")
 CACHE_NAME = "maya_uebridge_cache.json"
 
 _STATE = {"records": [], "filtered": [], "project": "", "choice": "",
-          "content_dir": "", "source": "unreal", "menu": [], "location": ""}
+          "content_dir": "", "source": None, "menu": [], "location": "",
+          "unreal_labels": []}
 
 
 # ---------------------------------------------------------------- cache
@@ -293,6 +294,7 @@ def _refresh_unreal():
     nodes = uelink.discover_nodes()
     labels = uelink.node_labels(nodes)
     fill_project_menu(labels)
+    _STATE["unreal_labels"] = list(labels)
     chosen = uelink.node_label(uelink.pick_node(nodes, project_choice()))
     if cmds.optionMenu(_PROJECT, query=True, numberOfItems=True):
         cmds.optionMenu(_PROJECT, edit=True, value=chosen)
@@ -326,7 +328,14 @@ def _refresh_unreal():
 
 def current_source():
     """"unreal", "unity" or "folder": the switch over the block."""
-    source = _STATE.get("source") or "unreal"
+    source = _STATE.get("source")
+    if source is None:
+        # not built yet (a hotkey row, another module): the switch's memory,
+        # or a refresh would ignore the remembered Folder / Unity (fix review)
+        try:
+            source = _var(SOURCE_VAR, "unreal")
+        except Exception:                                    # noqa: BLE001
+            source = "unreal"
     return source if source in ("unreal", "unity", "folder") else "unreal"
 
 
@@ -476,8 +485,15 @@ def _source_changed(source):
         cached, project, choice, content_dir = load_cache()
         _STATE.update(records=cached, project=project, choice=choice,
                       content_dir=content_dir)
-        _fill_menu([(choice or _project_label(project), None)]
-                   if (choice or project) else [])
+        # the editors the last Refresh found, not the cache's one label: a
+        # switch to Folder and back must not drop them (the fix review)
+        labels = list(_STATE.get("unreal_labels") or [])
+        label = choice or _project_label(project)
+        if label and (choice or project) and label not in labels:
+            labels.insert(0, label)
+        _fill_menu([(l, None) for l in labels])
+        if label and label in labels and cmds.optionMenu(_PROJECT, exists=True):
+            cmds.optionMenu(_PROJECT, edit=True, value=label)
         _repopulate(quiet=True)
         _header(editor_line(False, len(cached)))
         return
@@ -668,11 +684,21 @@ def _export_from_editor(record):
     exported by the editor into the temp folder, as since 2026-08-16."""
     if getattr(record, "source", "unreal") != "unreal":
         from maya_uebridge import sources
-        refusal = file_refusal(record)
+        ref = sources.record_ref(record)
+        refusal = file_refusal(record) or _clip_check(ref)
         if refusal:
             raise uelink.UeBridgeError(refusal)
-        return sources.record_ref(record), record.fps
+        return ref, record.fps
     return _export_unreal(record)
+
+
+def _clip_check(ref):
+    """The file read again for what its import would refuse - a take no
+    longer in it, a Unity clip with no model and no positions, a glTF with
+    no skeleton - BEFORE the press adds a rig (the fix review, 2026-10-02:
+    these used to raise inside the import, after a 9.5 s Manny was added)."""
+    from maya_uebridge import formats  # lazy: Maya's own readers
+    return formats.check(ref)
 
 
 def file_refusal(record):

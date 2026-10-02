@@ -157,7 +157,7 @@ def write_glb(joints, frames, fps, path):
                    tracks)
 
 
-def write_anim(joints, frames, fps, path, name):
+def write_anim(joints, frames, fps, path, name, positions=True):
     """A generic Unity AnimationClip of the skeleton, in Unity's units and
     handedness (metres, X mirrored), keys on every frame."""
     paths = {}
@@ -182,8 +182,8 @@ def write_anim(joints, frames, fps, path, name):
         lines += ["      m_PreInfinity: 2", "      m_PostInfinity: 2",
                   "      m_RotationOrder: 4", "    path: " + paths[j]]
     lines += ["  m_CompressedRotationCurves: []", "  m_EulerCurves: []",
-              "  m_PositionCurves:"]
-    for j in joints:
+              "  m_PositionCurves:" + ("" if positions else " []")]
+    for j in (joints if positions else []):
         lines += ["  - curve:", "      serializedVersion: 2", "      m_Curve:"]
         for k, (t, q) in enumerate(data[j]):
             lines += ["      - serializedVersion: 3", "        time: %r" % (k / fps),
@@ -312,6 +312,10 @@ def write_all(root, joints, frames, fps):
     write_anim(joints, frames, fps, SANDBOX + "/alone/Thrust_nomodel.anim",
                "Thrust_nomodel")
     made["anim_nomodel"] = SANDBOX + "/alone/Thrust_nomodel.anim"
+    # rotations only, and no model beside it: nothing to stand its bones on
+    write_anim(joints, frames, fps, SANDBOX + "/alone/Rotations_only.anim",
+               "Rotations_only", positions=False)
+    made["anim_rotonly"] = SANDBOX + "/alone/Rotations_only.anim"
     with open(CLIPS + "/unity/Humanoid_Walk.anim", "w") as handle:
         handle.write(HUMANOID_ANIM)
     return made, root, joints
@@ -390,55 +394,215 @@ def phase_formats():
         gate(number, "a Humanoid muscle clip is refused by name",
              "Humanoid" in str(error), str(error))
     number += 1
-    if os.path.isfile(UNITY_REAL):
-        try:
-            namespace, info, source = rigimport.import_source(UNITY_REAL, "recon",
-                                                              set_timeline=False)
-            keyed = [j for j in joints_of(source)
-                     if cmds.listConnections(j, type="animCurve")]
-            # the clip's bones that do not move should stand at the model's own
-            # rest: the handedness conversion either holds or turns them
-            text = open(UNITY_REAL).read()
-            curves = unityfiles.anim_curves(text)
-            static = []
-            for path, track in curves.items():
-                rows = track.get("r") or []
-                if len(rows) >= 2 and max(abs(a - b) for r in rows for a, b in
-                                          zip(r[1], rows[0][1])) < 1e-6:
-                    static.append(path.split("/")[-1])
-            # the model again, alone: a bone the clip holds still should stand
-            # at the model's own rest, if X-mirroring Unity back is right
-            model = formats.model_for(UNITY_REAL, sorted(set(
-                p.split("/")[-1] for p in curves if p)))
-            animimport.import_clip(model, "reconRest", set_timeline=False,
-                                   merge=False)
-            cmds.currentTime(0, update=True)
-            angles = []
-            for name in static:
-                a = [j for j in joints_of(source) if leaf(j) == name]
-                b = [j for j in cmds.ls("reconRest:*", type="joint", long=True)
-                     if leaf(j) == name]
-                if a and b:
-                    qa = local_rt(a[0], 0)[1]
-                    qb = local_rt(b[0], 0)[1]
-                    dot = abs(qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w)
-                    angles.append(math.degrees(2 * math.acos(min(1.0, dot))))
-            angles.sort()
-            median = angles[len(angles) // 2] if angles else 999
-            gate(number, "a real Unity generic clip on its model's skeleton, its "
-                 "still bones at the model's rest",
-                 len(keyed) > 20 and info.get("end", 0) > 10 and median < 1.0,
-                 "{0} bones keyed, frames {1}-{2}, {3}; {4} still bones, median "
-                 "{5:.4f} deg / worst {6:.4f} deg off the model's rest".format(
-                     len(keyed), info.get("start"), info.get("end"),
-                     info.get("warning"), len(angles), median,
-                     angles[-1] if angles else 999))
-        except Exception:
-            traceback.print_exc()
-            gate(number, "a real Unity generic clip", False,
-                 traceback.format_exc().splitlines()[-1])
+    # ---- the fix review (2026-10-02): what a press must refuse BEFORE it adds
+    # a rig is decided by formats.check, and the import says the same
+    two = made["fbx"]
+    bad = sources.ref(two, sources.clip_text(take_name="mixamo.com", first="0",
+                                             last="5"))
+    good = sources.ref(two, sources.clip_text(take_name="second", first="0",
+                                              last="5"))
+    said, raised = formats.check(bad), ""
+    try:
+        rigimport.import_source(bad, "badtake", set_timeline=False)
+    except RuntimeError as error:
+        raised = str(error)
+    gate(number, "a take the FBX does not hold is refused by name, by the check "
+         "and by the import; a take it holds is not",
+         "'mixamo.com' is not in the file" in said and "it holds" in said
+         and raised == said and formats.check(good) == "",
+         "check: {0!r}; import: {1!r}".format(said, raised))
     number += 1
+    said, raised = formats.check(made["anim_rotonly"]), ""
+    try:
+        rigimport.import_source(made["anim_rotonly"], "rotonly", set_timeline=False)
+    except RuntimeError as error:
+        raised = str(error)
+    gate(number, "a Unity clip with no model and no positions is refused by the "
+         "check and by the import; one with positions is not",
+         "no position curve" in said and raised == said
+         and formats.check(made["anim_nomodel"]) == "",
+         "check: {0!r}".format(said))
+    number += 1
+    number = _media_gate(number)
+    if os.path.isfile(UNITY_REAL):
+        number = _real_unity_gates(number)
     return made
+
+
+EMBEDDED = os.path.normpath(os.path.join(HERE, "..", "..", "..", "sources", "creep",
+                                         "creep_T-pose_draft.fbx"))
+
+
+def _media_gate(number):
+    """The FBX plugin extracts a file's embedded media into `<file>.fbm` BESIDE
+    the file it reads - in a Unity project that is a folder in Assets Unity then
+    imports (the fix review). A Folder/Unity file is read from a copy in the
+    bridge's temp folder; the positive control reads the original and must
+    make the folder."""
+    if not os.path.isfile(EMBEDDED):
+        gate(number, "embedded media stay out of the source folder", False,
+             "no " + EMBEDDED)
+        return number + 1
+    try:
+        folder = SANDBOX + "/media"
+        if os.path.isdir(folder):
+            shutil.rmtree(folder)
+        os.makedirs(folder)
+        here = folder + "/creep_T-pose_draft.fbx"
+        shutil.copyfile(EMBEDDED, here)
+        cmds.file(new=True, force=True)
+        rigimport.import_source(here, "media", set_timeline=False)
+        after_ours = sorted(os.listdir(folder))
+        control = SANDBOX + "/media_control"
+        if os.path.isdir(control):
+            shutil.rmtree(control)
+        os.makedirs(control)
+        shutil.copyfile(EMBEDDED, control + "/creep_T-pose_draft.fbx")
+        animimport.import_clip(control + "/creep_T-pose_draft.fbx", "mediaControl",
+                               set_timeline=False, merge=False)
+        after_control = sorted(os.listdir(control))
+        gate(number, "a file of the animator's is read from a copy: no .fbm beside "
+             "it (the plugin's own read of the original makes one)",
+             after_ours == ["creep_T-pose_draft.fbx"] and any(
+                 n.endswith(".fbm") for n in after_control),
+             "source folder after our import: {0}; after the plugin's own: {1}".format(
+                 after_ours, after_control))
+    except Exception:
+        traceback.print_exc()
+        gate(number, "embedded media stay out of the source folder", False,
+             traceback.format_exc().splitlines()[-1])
+    return number + 1
+
+
+UNITY_REAL_TAKE = "TwoHandGunIFirestanding"   # the model clip the .anim duplicates
+
+
+def _quat(node):
+    return om.MTransformationMatrix(om.MMatrix(cmds.getAttr(node + ".matrix"))).rotation(
+        asQuaternion=True)
+
+
+def _angle(qa, qb):
+    dot = abs(qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w)
+    return math.degrees(2 * math.acos(min(1.0, dot)))
+
+
+def _real_unity_gates(number):
+    """The handedness conversion against UNITY'S OWN data, not our writer's:
+    TwoHandGunFireStanding.anim is Unity's copy of the model clip
+    TwoHandGunIFirestanding (39 frames both), so the .anim road on the model and
+    the FBX take road through Maya's own importer must agree bone for bone. The
+    fix review: the old gate wrote its .anim with the inverse of the same
+    conversion (any error cancels) and passed on a MEDIAN."""
+    try:
+        text = open(UNITY_REAL).read()
+        curves = dict((p, t) for p, t in unityfiles.anim_curves(text).items() if p)
+        held = sorted(set(p.split("/")[-1] for p in curves))
+        model = formats.model_for(UNITY_REAL, held)
+        meta = open(model + ".meta").read()
+        clip = [c for c in unityfiles.meta_clips(meta) if c[0] == UNITY_REAL_TAKE][0]
+        take_ref = sources.record_ref(sources.unity_model_rows(model, [clip], [])[0])
+        cmds.file(new=True, force=True)
+        ns_take, info_take, _s = rigimport.import_source(take_ref, "uTake",
+                                                         set_timeline=False)
+        ns_anim, info_anim, _s = rigimport.import_source(UNITY_REAL, "uAnim",
+                                                         set_timeline=False)
+
+        def nodes(ns):
+            out = {}
+            for n in cmds.namespaceInfo(ns, listOnlyDependencyNodes=True,
+                                        recurse=True, dagPath=True) or []:
+                if cmds.objExists(n) and cmds.nodeType(n) in ("joint", "transform"):
+                    out.setdefault(leaf(n), n)
+            return out
+        a, b = nodes(ns_take), nodes(ns_anim)
+        common = [n for n in held if n in a and n in b]
+        frames = int(round(info_anim["end"] - info_anim["start"])) + 1
+        worst = dict((n, [0.0, 0.0, None, 0.0]) for n in common)  # ang, pos, min, max
+        for k in range(frames):
+            cmds.currentTime(info_take["start"] + k, update=True)
+            qa = dict((n, _quat(a[n])) for n in common)
+            ta = dict((n, cmds.getAttr(a[n] + ".translate")[0]) for n in common)
+            cmds.currentTime(info_anim["start"] + k, update=True)
+            for n in common:
+                ang = _angle(qa[n], _quat(b[n]))
+                tb = cmds.getAttr(b[n] + ".translate")[0]
+                pos = math.sqrt(sum((ta[n][i] - tb[i]) ** 2 for i in range(3)))
+                w = worst[n]
+                w[0], w[1] = max(w[0], ang), max(w[1], pos)
+                w[2] = ang if w[2] is None else min(w[2], ang)
+                w[3] = max(w[3], ang)
+        # 0.6 deg: Unity writes a model clip's copy through its keyframe
+        # reduction, whose default rotation error is 0.5 deg (one bone read
+        # 0.500 here), so a copy may stand that far off the take by design
+        inside = [n for n in common if worst[n][0] < 0.6 and worst[n][1] < 0.05]
+        outliers = [n for n in common if n not in inside]
+        constant = all(worst[n][3] - worst[n][2] < 2.0 for n in outliers)
+        gate(number, "a real Unity .anim (Unity's copy of a model clip) on its model "
+             "agrees with Maya's own import of that take, every bone, every frame",
+             len(common) == len(held) and len(inside) >= 0.95 * len(common),
+             "{0}/{1} bones within 0.6 deg and 0.05 cm over {2} frames (worst inside "
+             "{3:.3f} deg, {4:.4f} cm); outliers {5} - each a near-constant offset "
+             "({6}): an edit made in Unity on its copy".format(
+                 len(inside), len(common), frames,
+                 max([worst[n][0] for n in inside] or [0]),
+                 max([worst[n][1] for n in inside] or [0]),
+                 ["%s %.3f..%.3f deg" % (n, worst[n][2], worst[n][3]) for n in outliers],
+                 constant))
+        number += 1
+        # the positive control: the same frame read back through the three
+        # other mirrorings must NOT agree - so the gate above can fail
+        cmds.currentTime(info_take["start"], update=True)
+        conventions = {
+            "mirror X (ours)": lambda q: (q[0], -q[1], -q[2], q[3]),
+            "mirror Y": lambda q: (-q[0], q[1], -q[2], q[3]),
+            "mirror Z": lambda q: (-q[0], -q[1], q[2], q[3]),
+            "none": lambda q: q}
+        _times, samples = formats.unity_samples(curves, unityfiles.anim_summary(text))
+
+        def converted(conv, q):
+            q = conv(q)
+            norm = math.sqrt(sum(c * c for c in q)) or 1.0
+            return om.MQuaternion(*[c / norm for c in q])
+        firsts = dict((path.split("/")[-1], s["q"][0]) for path, s in samples.items()
+                      if s.get("q") and path.split("/")[-1] in a)
+        ours = conventions["mirror X (ours)"]
+        landed = sum(_angle(converted(ours, q), _quat(a[n])) < 0.6
+                     for n, q in firsts.items())
+        report = ["mirror X (ours) lands %d/%d" % (landed, len(firsts))]
+        others_ok = True
+        for label, conv in conventions.items():
+            if conv is ours:
+                continue
+            # only where the two mirrorings disagree can one be told from the
+            # other (a bone turning about its own Z alone reads alike in both)
+            differ = [n for n, q in firsts.items()
+                      if _angle(converted(conv, q), converted(ours, q)) > 1.0]
+            hits = sum(_angle(converted(conv, firsts[n]), _quat(a[n])) < 0.6
+                       for n in differ)
+            others_ok = others_ok and len(differ) >= 5 and hits <= 0.1 * len(differ)
+            report.append("%s lands %d of the %d bones where it differs" % (
+                label, hits, len(differ)))
+        gate(number, "the positive control: only Unity's X mirror lands the clip's "
+             "first frame on the take's", landed >= 0.9 * len(firsts) and others_ok,
+             "; ".join(report))
+        number += 1
+        # a bone the clip does not hold stands at the model's REST: the model
+        # came in with no take of its own (it carries one: 333 curves)
+        keyed = set(leaf(n) for n in b.values()
+                    if cmds.listConnections(n, type="animCurve"))
+        unheld = sorted(set(b) - set(held))
+        gate(number, "the model under a Unity clip brings no take of its own: only "
+             "the clip's bones are keyed",
+             keyed == set(common) and not (keyed & set(unheld)),
+             "{0} keyed, {1} not held by the clip and unkeyed: {2}".format(
+                 len(keyed), len(unheld), unheld[:4]))
+        number += 1
+    except Exception:
+        traceback.print_exc()
+        gate(number, "the real Unity clip", False, traceback.format_exc().splitlines()[-1])
+        number += 1
+    return number
 
 
 def phase_listing():
@@ -520,6 +684,63 @@ def phase_roads(rows=None):
          len(added) == 3 and all(t > 1.0 for t in travels)
          and not (namespaces() - before - set(rg.namespace for rg in added)),
          "{0} | hand_r travels {1}".format(text[:200], ["%.1f" % t for t in travels]))
+    _fix_review_roads(namespaces)
+
+
+def _fix_review_roads(namespaces):
+    """The fix review's roads (2026-10-02): a Maya scene the animator SAVED WHOLE
+    (mayaUsd's locked settings node inside it), and a clip that fails - before
+    the press by the check, and inside it after a rig was added."""
+    import maya_rigs
+    from maya_uebridge import window
+    full = SANDBOX + "/full/take_full.ma"
+    if not os.path.isdir(os.path.dirname(full)):
+        os.makedirs(os.path.dirname(full))
+    cmds.file(new=True, force=True)
+    mel.eval("FBXResetImport")
+    mel.eval("FBXImportMode -v add")
+    mel.eval('FBXImport -f "{0}"'.format(CLIP))
+    cmds.file(rename=full)
+    cmds.file(save=True, type="mayaAscii", force=True)
+    locked_inside = "createNode UsdDefaultSettings" in open(full).read()
+    cmds.file(new=True, force=True)
+    before = namespaces()
+    text = rigimport.import_and_retarget(full, "take_full", set_timeline=True,
+                                         target="new_rig")
+    rigs = maya_rigs.rigs()
+    rig = rigs[-1] if rigs else None
+    moved = _travel(rig, "hand_r") if rig else 0
+    left = sorted(namespaces() - before - set([rig.namespace if rig else ""]))
+    gate(53, "a .ma saved whole (a locked UsdDefaultSettings inside) onto a NEW "
+         "rig: retargeted, the clip's namespace gone with all of it",
+         locked_inside and rig is not None and moved > 1.0 and not left,
+         "file carries the locked node: {0}; {1} | hand_r travels {2:.2f} cm; "
+         "namespaces left {3}".format(locked_inside, text[:140], moved, left))
+    # before the press: the check refuses, nothing is added or imported
+    cmds.file(new=True, force=True)
+    alone = SANDBOX + "/alone/Rotations_only.anim"
+    record = sources.file_record(alone, "Rotations_only", source="folder")
+    before = namespaces()
+    try:
+        window._export_from_editor(record)
+        refused = ""
+    except Exception as error:      # noqa: BLE001
+        refused = str(error)
+    gate(54, "a clip the check refuses is refused at the export step, before the "
+         "press: no rig added, nothing imported",
+         "no position curve" in refused and not maya_rigs.rigs()
+         and namespaces() == before, refused)
+    # inside the press, after the add: what the press made goes again
+    cmds.file(new=True, force=True)
+    before = namespaces()
+    t0 = time.time()
+    text = rigimport.import_and_retarget(alone, "Rotations_only", target="new_rig")
+    gate(55, "a clip failing INSIDE the import after the press added a rig: the "
+         "rig and the half-made clip namespace are taken back, the line says why",
+         "could not be imported" in text and not maya_rigs.rigs()
+         and namespaces() == before,
+         "{0} ({1:.1f} s); namespaces now {2}".format(text[:220], time.time() - t0,
+                                                     sorted(namespaces())))
 
 
 def _travel(rig, bone):

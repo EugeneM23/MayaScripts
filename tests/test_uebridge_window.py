@@ -618,14 +618,49 @@ class FileSources(unittest.TestCase):
         self.sources = sources
         self.file = sources.file_record("C:/f/run.bvh", "run", "", 10, fps=30.0)
 
-    def test_a_file_record_hands_the_funnel_its_reference(self):
-        saved = window.os.path.isfile
+    def _checked(self, answer):
+        """The file check stubbed: it reads the disk through Maya's readers."""
+        saved = window.os.path.isfile, window._clip_check
         window.os.path.isfile = lambda p: True
-        self.addCleanup(setattr, window.os.path, "isfile", saved)
+        checked = []
+        window._clip_check = lambda ref: checked.append(ref) or answer
+
+        def put_back():
+            window.os.path.isfile, window._clip_check = saved
+        self.addCleanup(put_back)
+        return checked
+
+    def test_a_file_record_hands_the_funnel_its_reference(self):
+        checked = self._checked("")
         self.assertEqual(window._export_from_editor(self.file), ("C:/f/run.bvh", 30.0))
+        self.assertEqual(checked, ["C:/f/run.bvh"])
         take = self.sources.file_record("C:/f/p.fbx", "p · jump",
                                         self.sources.clip_text(take=2), 5)
         self.assertEqual(window._export_from_editor(take)[0], "C:/f/p.fbx|take=2")
+
+    def test_what_the_file_check_refuses_is_refused_before_the_press(self):
+        """The fix review: a take no longer in the file, a Unity clip that
+        cannot stand - refused at the export step, before a rig is added."""
+        self._checked("p.fbx: take 'Run' is not in the file - it holds Take 001")
+        take = self.sources.file_record("C:/f/p.fbx", "p · Run",
+                                        self.sources.clip_text(take_name="Run"), 5)
+        with self.assertRaises(window.uelink.UeBridgeError) as caught:
+            window._export_from_editor(take)
+        self.assertIn("'Run' is not in the file", str(caught.exception))
+
+    def test_the_source_before_the_switch_is_built_is_the_remembered_one(self):
+        """The fix review: a refresh from a hotkey before the card is built
+        read 'unreal' over a remembered Folder."""
+        saved = window._STATE.get("source"), window._var
+        window._STATE["source"] = None
+        window._var = lambda name, default="": "folder" if name == window.SOURCE_VAR else default
+
+        def put_back():
+            window._STATE["source"], window._var = saved
+        self.addCleanup(put_back)
+        self.assertEqual(window.current_source(), "folder")
+        window._STATE["source"] = "unity"
+        self.assertEqual(window.current_source(), "unity")
 
     def test_an_unreal_record_still_asks_the_editor(self):
         saved = window._export_unreal

@@ -76,6 +76,60 @@ def is_plain_fbx(text):
     return not clip and fmt_of(path) in ("fbx", "")
 
 
+def bridge_temp():
+    """The bridge's temp folder (`window.temp_folder`'s): where an Unreal
+    export lands, and where a file source's FBX is copied before the plugin
+    reads it (`formats.staged`)."""
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "maya_uebridge")
+
+
+def under(path, folder):
+    """True when `path` lies inside `folder`. Pure."""
+    a = os.path.normcase(os.path.normpath(os.path.abspath(path or "")))
+    b = os.path.normcase(os.path.normpath(os.path.abspath(folder or "")))
+    return a == b or a.startswith(b.rstrip("\\/") + os.sep)
+
+
+def staged(path):
+    """`path` itself when it already lives in the bridge's temp folder (an
+    Unreal export), else a copy there, imported in its place.
+
+    The FBX plugin extracts a file's embedded media into a `<file>.fbm`
+    folder BESIDE the file it reads (CLAUDE.md, the Creep's Cascadeur FBX) -
+    which for a model in a Unity project is a folder in Assets that Unity
+    then imports: the bridge must never write into a project or a folder of
+    the animator's. The copy also has a plain ASCII name, so the MEL string
+    of `FBXRead`/`FBXImport` carries it whatever the original was called.
+    A copy is reused while the original's size and mtime are unchanged."""
+    import hashlib
+    import shutil
+    home = bridge_temp()
+    if under(path, home) or not os.path.isfile(path):
+        return path.replace("\\", "/")
+    stat = os.stat(path)
+    digest = hashlib.md5("{0}|{1}|{2}".format(
+        os.path.normcase(os.path.abspath(path)), stat.st_size,
+        int(stat.st_mtime)).encode("utf-8")).hexdigest()[:12]
+    folder = os.path.join(home, "staged", digest)
+    name = "".join(c if (c.isalnum() and ord(c) < 128) or c in "._-" else "_"
+                   for c in os.path.basename(path))
+    copy = os.path.join(folder, name)
+    if not os.path.isfile(copy) or os.path.getsize(copy) != stat.st_size:
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        shutil.copyfile(path, copy)
+    return copy.replace("\\", "/")
+
+
+def is_editor_export(text):
+    """True for the clip reference of an Unreal export: a whole FBX in the
+    bridge's temp folder. Only that one still goes to `animimport.
+    import_clip` straight; every file of the animator's goes through
+    `formats.import_clip`, which reads a COPY (`formats.staged`). Pure."""
+    return is_plain_fbx(text) and under(split_ref(text)[0], bridge_temp())
+
+
 def record_ref(record):
     """The reference a file record imports through."""
     return ref(record.path, record.clip)
@@ -123,15 +177,21 @@ def walk_files(top, extensions, walk=os.walk, skip=SKIP_DIRS):
 
 def take_rows(path, takes, source="folder", note=""):
     """Rows for a file of FBX takes `takes` [(index, name, start, end)]:
-    one row when it holds one take (named for the file), one row per take
-    otherwise (`stem · take`). A take that spans nothing is no animation.
-    Pure."""
+    one row when it holds one moving take (named for the file), one row per
+    take otherwise (`stem · take`). A take that spans nothing is no
+    animation. Pure.
+
+    The one-moving-take row names its take whenever the file holds more
+    than one: a plain path imports the file's DEFAULT take, and a file with
+    a still `Take 001` (a bind or base take, Maya's split-take exports) plus
+    one real take would bring the still one (the fix review, 2026-10-02)."""
     stem = os.path.basename(path)          # the file, extension and all
     moving = [t for t in takes if t[3] is not None and t[2] is not None
               and t[3] > t[2]]
     if len(moving) <= 1:
         span = moving[0] if moving else None
-        return [file_record(path, stem, "", frames_of(span[2], span[3]) if span
+        clip = clip_text(take=span[0]) if span and len(takes) > 1 else ""
+        return [file_record(path, stem, clip, frames_of(span[2], span[3]) if span
                             else None, source=source, note=note)]
     return [file_record(path, "{0} · {1}".format(stem, name),
                         clip_text(take=index), frames_of(start, end),
@@ -243,6 +303,87 @@ def _read_or_empty(read_text, path):
         return read_text(path) if os.path.isfile(path) else ""
     except (OSError, IOError):
         return ""
+
+
+# ------------------------------------------------------------------ refusals
+
+#  Every clip-level refusal of a file source is decided HERE, before the press
+#  touches the scene (the fix review of 2026-10-02: they used to be raised
+#  inside the import, after the press had already added a rig - 9.5 s of
+#  Manny and a half-made clip namespace left behind for a clip that could
+#  never import). Pure, over what the caller read off the disk.
+
+def find_take(takes, name):
+    """The 1-based index of the take called `name` (exact, then ignoring
+    case), or None. Pure."""
+    for index, take, _a, _b in takes:
+        if take == name:
+            return index
+    for index, take, _a, _b in takes:
+        if (take or "").lower() == (name or "").lower():
+            return index
+    return None
+
+
+def _take_names(takes):
+    names = [t[1] or "#{0}".format(t[0]) for t in takes]
+    return ", ".join(names[:6]) + (" ..." if len(names) > 6 else "")
+
+
+def take_refusal(filename, takes, clip):
+    """Why a take a row names is not in its FBX, "" when it is. `takes` is
+    the file's [(index, name, start, end)] as the reader sees it NOW (the
+    file may have been re-exported since the scan or the .meta was written:
+    the default take would then import silently in its place). Pure."""
+    if clip.get("take"):
+        try:
+            wanted = int(clip["take"])
+        except ValueError:
+            return "{0}: take {1!r} is no take number".format(filename, clip["take"])
+        if not any(t[0] == wanted for t in takes):
+            return "{0}: take {1} is not in the file - {2}".format(
+                filename, wanted, "it holds {0}".format(_take_names(takes))
+                if takes else "the FBX reader sees no take in it")
+        return ""
+    if clip.get("take_name"):
+        if find_take(takes, clip["take_name"]) is None:
+            return "{0}: take {1!r} is not in the file - {2}".format(
+                filename, clip["take_name"], "it holds {0}".format(
+                    _take_names(takes)) if takes
+                else "the FBX reader sees no take in it")
+    return ""
+
+
+def anim_refusal(name, kind, paths_without_position, has_model, has_curves=True):
+    """Why a Unity .anim cannot import, "" when it can. `kind` is
+    `unityfiles.anim_summary`'s; `paths_without_position` the animated paths
+    with no position curve (a clip with no model beside it stands its bones
+    on its own positions, so it needs every one). Pure."""
+    from maya_uebridge import unityfiles
+    if kind == "humanoid":
+        return "{0}: {1}".format(name, unityfiles.HUMANOID)
+    if kind == "compressed":
+        return "{0}: {1}".format(name, unityfiles.COMPRESSED)
+    if not has_curves:
+        return "{0}: no transform curves".format(name)
+    if not has_model and paths_without_position:
+        missing = sorted(paths_without_position)
+        return ("{0}: no model beside it carries its bones, and {1} have no "
+                "position curve to stand them on ({2})".format(
+                    name, len(missing), ", ".join(missing[:3])))
+    return ""
+
+
+def gltf_refusal(filename, doc, clip_index):
+    """Why a glTF clip cannot import, "" when it can. Pure."""
+    from maya_uebridge import gltf
+    if not gltf.skeleton_nodes(doc):
+        return "{0} holds no skeleton".format(filename)
+    count = len(doc.get("animations") or [])
+    if count and not 0 <= clip_index < count:
+        return "{0}: animation {1} is not in the file - it holds {2}".format(
+            filename, clip_index, count)
+    return ""
 
 
 # ------------------------------------------------------------------ menus

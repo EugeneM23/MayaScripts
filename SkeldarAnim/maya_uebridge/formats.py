@@ -78,13 +78,49 @@ def fbx_takes(path):
 def take_index(takes, name):
     """The 1-based index of the take called `name` (exact, then ignoring
     case), or None. Pure."""
-    for index, take, _a, _b in takes:
-        if take == name:
-            return index
-    for index, take, _a, _b in takes:
-        if take.lower() == (name or "").lower():
-            return index
-    return None
+    return sources.find_take(takes, name)
+
+
+# ------------------------------------------------------------------ before
+
+def check(ref):
+    """Why the clip `ref` names cannot import, "" when it can - read off the
+    disk, touching no scene, so a press refuses BEFORE it adds a rig (the
+    fix review, 2026-10-02: these used to raise inside the import, after a
+    9.5 s Manny had been added for a clip that could never come in)."""
+    path, clip = sources.split_ref(ref)
+    name = os.path.basename(path)
+    if not os.path.isfile(path):
+        return NO_FILE.format(path)
+    fmt = sources.fmt_of(path)
+    if not fmt:
+        return UNREADABLE.format(name, os.path.splitext(path)[1] or "?")
+    try:
+        if fmt == "fbx" and (clip.get("take") or clip.get("take_name")):
+            return sources.take_refusal(name, fbx_takes(sources.staged(path)), clip)
+        if fmt == "anim":
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+            summary = unityfiles.anim_summary(text)
+            curves = dict((p, t) for p, t in unityfiles.anim_curves(text).items()
+                          if p) if summary["kind"] == "generic" else {}
+            leaves = sorted(set(p.split("/")[-1] for p in curves))
+            has_model = bool(curves) and model_for(path, leaves) is not None
+            return sources.anim_refusal(
+                summary["name"] or name, summary["kind"],
+                [p for p, t in curves.items() if not t.get("t")], has_model,
+                has_curves=bool(curves) or summary["kind"] != "generic")
+        if fmt == "gltf":
+            doc, _buffers = gltf.load(path)
+            return sources.gltf_refusal(name, doc, int(clip.get("anim") or 0))
+        if fmt == "bvh":
+            with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                bvh.summary(handle.read())
+    except Exception as error:                               # noqa: BLE001
+        text = str(error).splitlines()[0][:80] if str(error) else \
+            type(error).__name__
+        return "{0}: unreadable ({1})".format(name, text)
+    return ""
 
 
 # ------------------------------------------------------------------ helpers
@@ -159,12 +195,22 @@ def import_clip(ref, namespace, set_timeline=True, clip_fps=None):
 
 
 def _import_fbx(path, clip, namespace, set_timeline, clip_fps):
+    #  a COPY in the bridge's temp folder, never the animator's file: the
+    #  plugin extracts embedded media beside what it reads (`sources.staged`)
+    name = os.path.basename(path)
+    path = sources.staged(path)
     take = clip.get("take")
     if take or clip.get("take_name"):
         # `FBXImport -t` looks the index up in the file the plugin READ LAST
         # (measured: after a scan had read other files, `-t 2` answered
-        # "take not found"), so the file is read again first.
+        # "take not found"), so the file is read again first. A take the
+        # file does not hold is refused by name: without `-t` the importer
+        # brings the DEFAULT take, and a .meta written before the file was
+        # re-exported would import another take in silence (fix review).
         takes = fbx_takes(path)
+        refusal = sources.take_refusal(name, takes, clip)
+        if refusal:
+            raise RuntimeError(refusal)
         if not take:
             take = take_index(takes, clip["take_name"])
     info = animimport.import_clip(path, namespace, set_timeline=False,
@@ -209,10 +255,76 @@ def _import_maya(path, namespace, set_timeline):
     scripts = [n for n in new if cmds.objExists(n) and cmds.nodeType(n) == "script"]
     if scripts:
         cmds.delete(scripts)
+    tidy_scene_import(new)
     start, end = _range_of(namespace)
     warning = ("{0} script node(s) in the file deleted, never run".format(
         len(scripts)) if scripts else "")
     return _info(namespace, start, end, None, warning, set_timeline)
+
+
+#  What a whole SCENE file brings besides its animation and can never be the
+#  clip: mayaUsd's settings node (written into every scene saved with the
+#  plugin loaded, and LOCKED - measured 2026-10-02: a .ma saved whole came back
+#  as `clipns:UsdDefaultRenderSettings`, locked, and `namespace -rm
+#  -deleteNamespaceContent` then raised «is locked, can not remove it» and left
+#  the clip's whole scene behind; trap 158's family).
+SCENE_FURNITURE = ("UsdDefaultSettings",)
+
+
+def tidy_scene_import(new):
+    """Unlock what a scene import locked and delete its scene furniture, so
+    the clip's namespace can be removed whole after the retarget. Returns the
+    number of nodes unlocked."""
+    unlocked = 0
+    for node in new:
+        if not cmds.objExists(node):
+            continue
+        try:
+            if cmds.lockNode(node, query=True, lock=True)[0]:
+                cmds.lockNode(node, lock=False)
+                unlocked += 1
+        except (RuntimeError, ValueError, IndexError):
+            continue
+    furniture = [n for n in new if cmds.objExists(n)
+                 and cmds.nodeType(n) in SCENE_FURNITURE]
+    for node in furniture:
+        try:
+            cmds.delete(node)
+        except (RuntimeError, ValueError):
+            pass
+    return unlocked
+
+
+def remove_namespace(namespace):
+    """Remove a clip's namespace with everything in it, unlocking first; the
+    managers Maya makes INSIDE a namespace on a scene's first import and will
+    not delete (trap 158) move to the root. True when it is gone."""
+    name = ":" + namespace.lstrip(":")
+    if not cmds.namespace(exists=name):
+        return True
+    cmds.namespace(setNamespace=":")
+    for node in cmds.namespaceInfo(name, listOnlyDependencyNodes=True,
+                                   recurse=True, dagPath=True) or []:
+        try:
+            if cmds.objExists(node) and cmds.lockNode(node, query=True,
+                                                      lock=True)[0]:
+                cmds.lockNode(node, lock=False)
+        except (RuntimeError, ValueError, IndexError):
+            pass
+    try:
+        cmds.namespace(removeNamespace=name, deleteNamespaceContent=True)
+    except RuntimeError:
+        left = cmds.namespaceInfo(name, listOnlyDependencyNodes=True,
+                                  recurse=True) or []
+        if left and all(cmds.nodeType(n) in MANAGERS for n in left
+                        if cmds.objExists(n)):
+            cmds.namespace(removeNamespace=name, mergeNamespaceWithRoot=True)
+    return not cmds.namespace(exists=name)
+
+
+#  Maya's own managers, made in the current namespace by a scene's first
+#  import and not deletable (trap 158).
+MANAGERS = ("shapeEditorManager", "poseInterpolatorManager")
 
 
 def _import_usd(path, namespace, set_timeline):
@@ -274,6 +386,30 @@ def _euler_from(q, jo_q, order, previous):
     return euler
 
 
+def _children(parent):
+    if parent:
+        return set(cmds.listRelatives(parent, children=True, fullPath=True) or [])
+    return set(cmds.ls(assemblies=True, long=True) or [])
+
+
+def _make_joint(name, parent, index=None):
+    """A joint called `name` under `parent` (a long path, or None), as its own
+    long path - found as the child that was not there before, never by name.
+    A glTF or BVH may name two joints alike under different parents
+    (Blender's end bones), and `ls(<short name>)` of the second answers both:
+    the old `ls(node, long=True)[0]` hung later children on the wrong joint
+    (the fix review; trap 28's family)."""
+    before = _children(parent)
+    kwargs = {"name": name}
+    if parent:
+        kwargs["parent"] = parent
+    made = cmds.createNode("joint", **kwargs)
+    new = sorted(_children(parent) - before)
+    if len(new) == 1:
+        return new[0]
+    return cmds.ls(made, long=True)[0]
+
+
 def build(namespace, joints, tracks, times, set_timeline=True, fps=None,
           warning=""):
     """Make `joints` under `namespace` and key them.
@@ -298,11 +434,7 @@ def build(namespace, joints, tracks, times, set_timeline=True, fps=None,
                 if not cmds.namespace(exists=":" + full):
                     cmds.namespace(addNamespace=":" + full)
             parent = paths[joint["parent"]] if joint.get("parent") is not None else None
-            kwargs = {"name": name}
-            if parent:
-                kwargs["parent"] = parent
-            node = cmds.createNode("joint", **kwargs)
-            path = cmds.ls(node, long=True)[0]
+            path = _make_joint(name, parent, len(paths))
             paths.append(path)
             order = joint.get("order") or "xyz"
             cmds.setAttr(path + ".rotateOrder", orders.index(order))
@@ -497,21 +629,55 @@ def _import_unity_anim(path, namespace, set_timeline):
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
         text = handle.read()
     summary = unityfiles.anim_summary(text)
-    if summary["kind"] == "humanoid":
-        raise RuntimeError("{0}: {1}".format(summary["name"], unityfiles.HUMANOID))
-    if summary["kind"] == "compressed":
-        raise RuntimeError("{0}: {1}".format(summary["name"], unityfiles.COMPRESSED))
-    curves = dict((p, t) for p, t in unityfiles.anim_curves(text).items() if p)
-    if not curves:
-        raise RuntimeError("{0}: no transform curves".format(summary["name"]))
-    times, samples = unity_samples(curves, summary)
+    usable = summary["kind"] not in ("humanoid", "compressed")
+    curves = dict((p, t) for p, t in unityfiles.anim_curves(text).items()
+                  if p) if usable else {}
     leaves = sorted(set(p.split("/")[-1] for p in curves))
-    model = model_for(path, leaves)
+    model = model_for(path, leaves) if curves else None
+    #  the same rule `check` applies before the press (sources.anim_refusal)
+    refusal = sources.anim_refusal(
+        summary["name"] or os.path.basename(path), summary["kind"],
+        [p for p, t in curves.items() if not t.get("t")], model is not None,
+        has_curves=bool(curves) or not usable)
+    if refusal:
+        raise RuntimeError(refusal)
+    times, samples = unity_samples(curves, summary)
     if model is None:
         return _unity_without_model(summary, samples, times, namespace,
                                     set_timeline)
     return _unity_on_model(summary, samples, times, model, namespace,
                            set_timeline)
+
+
+ANIMATION_PROPERTY = "Import|IncludeGrp|Animation"
+
+
+def import_model_rest(model, namespace):
+    """A Unity model file into `namespace` at its REST pose - the FBX's own
+    node transforms, which are what a Unity prefab stands in and what the
+    bones a generic clip does not key keep - with NO animation of its own.
+
+    The fix review, 2026-10-02: the model used to come in with its own take
+    (measured: mReconTroop.fbx carries 333 curves, a pose 260° off its rest on
+    some bones), and every bone the .anim does not hold played THAT take under
+    the clip. The plugin's own switch does it (`FBXProperty
+    Import|IncludeGrp|Animation -v false`: 0 curves, measured), set after the
+    reset `_apply_import_options` does and put back in a finally - it is a
+    session-wide setting. A copy is read (`sources.staged`)."""
+    animimport.ensure_fbx_plugin()
+    animimport._apply_import_options(False)
+    try:
+        previous = mel.eval('FBXProperty "{0}" -q'.format(ANIMATION_PROPERTY))
+    except Exception:                                        # noqa: BLE001
+        previous = 1
+    mel.eval('FBXProperty "{0}" -v false'.format(ANIMATION_PROPERTY))
+    _in_namespace(namespace)
+    try:
+        mel.eval(animimport.import_command(sources.staged(model)))
+    finally:
+        cmds.namespace(setNamespace=":")
+        mel.eval('FBXProperty "{0}" -v {1}'.format(
+            ANIMATION_PROPERTY, "true" if previous else "false"))
 
 
 def _unity_without_model(summary, samples, times, namespace, set_timeline):
@@ -547,7 +713,7 @@ def _unity_on_model(summary, samples, times, model, namespace, set_timeline):
     namespace, its bones keyed with the clip's local values in Maya's frame
     (rotate = RA⁻¹·Q·JO⁻¹, translate scaled by the measured units)."""
     import maya.api.OpenMaya as om
-    animimport.import_clip(model, namespace, set_timeline=False, merge=False)
+    import_model_rest(model, namespace)
     by_leaf = {}
     for joint in _joints(namespace) + [
             n for n in (cmds.namespaceInfo(namespace, listOnlyDependencyNodes=True,

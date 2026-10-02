@@ -357,7 +357,10 @@ def import_source(fbx_path, name, clip_fps=None, set_timeline=True):
     namespace = records.namespace_for(name, animimport.existing_namespaces())
     from maya_uebridge import sources
     if sources.is_plain_fbx(fbx_path):
-        info = animimport.import_clip(fbx_path, namespace,
+        #  an animator's own FBX (a Folder row) is read from a COPY: the
+        #  plugin writes embedded media beside the file it reads; an Unreal
+        #  export already lives in the bridge's temp folder and is read as is
+        info = animimport.import_clip(sources.staged(fbx_path), namespace,
                                       set_timeline=set_timeline,
                                       clip_fps=clip_fps, merge=False)
     else:
@@ -402,6 +405,32 @@ def retarget_imported(rig, mod, namespace, info, source, name, place=None):
     return line, ""
 
 
+IMPORT_FAILED = "{0} could not be imported: {1} - {2}"
+
+
+def _undo_failed_import(before, plan, rig):
+    """Take back what a press made before its import failed: every namespace
+    the import left (half a skeleton) and the rig the press ADDED. A rig
+    that was already standing keeps its place; its take was cleared by the
+    reset, as any import does. Returns what the status line says."""
+    from maya_uebridge import formats
+    gone = []
+    keep = set([rig.namespace]) if rig is not None and rig.namespace else set()
+    for namespace in sorted(set(animimport.existing_namespaces()) - before - keep):
+        if formats.remove_namespace(namespace):
+            gone.append(namespace)
+    if plan.get("add") and rig is not None:
+        try:
+            from maya_scenesetup import deletion
+            chars = [c for c in deletion.characters() if c.rig == rig]
+            if chars:
+                deletion.execute(deletion.plan(chars))
+                return "the rig it added and the clip were removed"
+        except Exception as error:                          # noqa: BLE001
+            return "the rig it added stays ({0})".format(_first_line(str(error)))
+    return "nothing of it was kept"
+
+
 def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
                         target="rig", rig=None, at=None):
     """The press. Returns the status line.
@@ -431,8 +460,18 @@ def import_and_retarget(fbx_path, name, clip_fps=None, set_timeline=True,
         rig, mod, notes, failure = ready_rig(plan)
         if failure:
             return "  |  ".join(notes + [failure])
-        namespace, info, source = import_source(fbx_path, name, clip_fps,
-                                                set_timeline)
+        before = set(animimport.existing_namespaces())
+        try:
+            namespace, info, source = import_source(fbx_path, name, clip_fps,
+                                                    set_timeline)
+        except Exception as error:                          # noqa: BLE001
+            # A file source's clip can fail INSIDE its import (a reader, a
+            # take, a USD stage), after the press already added a rig; what
+            # the press made is taken back, so a failure leaves the scene as
+            # it found it (the fix review, 2026-10-02).
+            undone = _undo_failed_import(before, plan, rig)
+            return "  |  ".join(notes + [IMPORT_FAILED.format(
+                name, _first_line(str(error)) or type(error).__name__, undone)])
         if source is None:
             return "  |  ".join(notes + [NO_JOINT.format(name, namespace)])
         line, failure = retarget_imported(rig, mod, namespace, info, source,
