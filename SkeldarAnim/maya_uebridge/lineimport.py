@@ -273,22 +273,101 @@ def _onto_new_rig(plan, clip, point, versions=None, index=0):
     return maya_rigs.label(rig), ""
 
 
+def auto_summary(done, total, centre, widened, failures, step=lineup.STEP,
+                 cancelled=False, shape=None):
+    """The status line after an Auto press of several (2026-10-02). Pure.
+
+    `done` is [(label, clip name)] in the square's order - the rig's label, the new skeleton's
+    top, or «own <base>» for a clip kept in its own skeleton."""
+    where = "about ({0}, {1})".format(int(round(centre[0])), int(round(centre[2])))
+    square = ("a {0} x {1} square".format(shape[0], shape[1]) if shape
+              else "a square")
+    parts = []
+    if not done:
+        parts.append("no animation laid out")
+    else:
+        count = (_plural(len(done), "animation") if len(done) == total
+                 else "{0} of {1} animations".format(len(done), total))
+        parts.append("{0} in {1} {2}: {3}".format(
+            count, square, where, ", ".join("{0} {1}".format(label, name)
+                                            for label, name in done)))
+        if len(done) > 1:
+            gap = "step {0:g} m".format(step / 100.0)
+            if widened:
+                gap += ", widened beside {0}".format(", ".join(widened))
+            parts.append(gap)
+    if failures:
+        parts.append("failed: " + "; ".join(
+            "{0} ({1})".format(name, reason) for name, reason in failures))
+    if cancelled:
+        parts.append("cancelled - the clips not yet done were discarded"
+                     if done or total else "cancelled")
+    return "  |  ".join(parts)
+
+
+def auto_order(clips):
+    """The order an Auto batch works in (2026-10-02): the clips matched to a row of ours first -
+    any question about a retarget version is asked before a clip is kept in its own skeleton,
+    so a Cancel finds nothing of that kind done - each keeping its own slot. Pure."""
+    matched = [i for i, clip in enumerate(clips) if clip.get("entry") is not None]
+    return matched + [i for i, clip in enumerate(clips) if clip.get("entry") is None]
+
+
+def _auto_one(clip, point, versions, groups, index):
+    """(label, failure) for one clip of an Auto batch: onto a new rig / skeleton of its matched
+    row, else kept in its own skeleton on `point`."""
+    from maya_uebridge import autoimport, nativeimport
+    entry = clip["entry"]
+    if entry is None:
+        line, failure, base = nativeimport.keep(clip["namespace"], clip["info"], clip["source"],
+                                                clip["name"], point, clip.get("why", ""))
+        if line:
+            print("[uebridge] {0}".format(line))
+        return ("own {0}".format(base) if not failure else None), failure
+    group = versions[entry.key]
+    position = groups[entry.key].index(index)
+    if entry.kind == "rig":
+        if not rigimport._rig_file_ok(entry):
+            _discard(clip["namespace"])
+            return None, rigimport.NO_RIG_FILE.format(rigimport._rig_file_name(entry))
+        plan = dict(rig=None, mod=None, add=True, entry=entry)
+        return _onto_new_rig(plan, clip, point, group, position)
+    refusal = skeletonimport.precheck(entry)
+    if refusal:
+        _discard(clip["namespace"])
+        return None, refusal
+    line, failure, label = autoimport.onto_new_skeleton(
+        entry, clip["namespace"], clip["info"], clip["source"], clip["name"], point,
+        decide=group.for_skeleton(position))
+    if line:
+        print("[uebridge] {0}".format(line))
+    return label, failure
+
+
 def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
-        set_timeline=True, step=lineup.STEP):
+        set_timeline=True, step=lineup.STEP, auto=False):
     """The press for several animations. Returns the status line.
 
     `export(record)` answers (fbx path, fps) - the window's round trip to the
     editor. `target` is "new_rig" (a new rig per clip, retargeted) or
     "skeleton" (each clip its own skeleton). The square stands on world X
     and Z about `centre`, filled in the order given: row 0 in front (+Z),
-    each row left to right (+X) - whatever the camera."""
+    each row left to right (+X) - whatever the camera.
+
+    `auto` (2026-10-02, the Auto card): `target` is only the KIND - each
+    clip is matched among our rows of it (`autoimport.match_clip`) and goes
+    onto a new rig / skeleton of its row, else stays in its own skeleton on
+    its slot (`nativeimport.keep`); the retarget version is asked at most once
+    per row, and the travel is not scaled (a twin keeps it, a native too)."""
     record_list = list(record_list or [])
     if target not in TARGETS:
         return "unknown import target {0!r}".format(target)
     if not record_list:
         return NOTHING
     plan = entry = None
-    if target == "new_rig":
+    if auto:
+        pass                              # each clip's row is checked once it is matched
+    elif target == "new_rig":
         plan, refusal = rigimport.plan_press("new_rig")
         if refusal:
             return refusal
@@ -302,6 +381,7 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
     failures, done, widened, imported = [], [], [], []
     shape = versions = None
     cancelled = False
+    reasons = []
     timing = rigimport.time_state()
     progress = _Progress(3 * total)
     try:
@@ -344,11 +424,23 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                            cancelled=True)
 
         if imported:
-            # each track at the size the bake will carry it (a foreign clip is
-            # scaled to ours about its first frame - `skeletonimport.travel_scale`)
-            tracks = [skelmap.scaled_track(
-                track_of(clip["source"], clip["info"].get("start"), clip["info"].get("end")),
-                skeletonimport.travel_scale(clip["source"], target)) for clip in imported]
+            if auto:
+                from maya_scenesetup import catalog
+                from maya_uebridge import autoimport, skeletonmatch
+                kind = "rig" if target == "new_rig" else "skeleton"
+                for clip in imported:
+                    found = autoimport.match_clip(clip["source"], clip["info"], kind)
+                    clip["entry"] = (catalog.character_by_key(found.key)
+                                     if found.key else None)
+                    clip["why"] = skeletonmatch.match_text(found, autoimport.label_of)
+                tracks = [track_of(clip["source"], clip["info"].get("start"),
+                                   clip["info"].get("end")) for clip in imported]
+            else:
+                # each track at the size the bake will carry it (a foreign clip is
+                # scaled to ours about its first frame - `skeletonimport.travel_scale`)
+                tracks = [skelmap.scaled_track(
+                    track_of(clip["source"], clip["info"].get("start"), clip["info"].get("end")),
+                    skeletonimport.travel_scale(clip["source"], target)) for clip in imported]
             x_reach = [lineup.side_extent(t, lineup.COLUMNS) for t in tracks]
             z_reach = [lineup.side_extent(t, lineup.ROWS) for t in tracks]
             points = lineup.square_slots(centre, x_reach, z_reach, step)
@@ -362,18 +454,36 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                                      animationEndTime=span[1])
 
             import maya_retargetmode
-            versions = _Versions(imported)
-            for index, (clip, point) in enumerate(zip(imported, points)):
+            if auto:
+                groups = {}
+                for index, clip in enumerate(imported):
+                    if clip["entry"] is not None:
+                        groups.setdefault(clip["entry"].key, []).append(index)
+                by_row = dict((key, _Versions([imported[i] for i in indices]))
+                              for key, indices in groups.items())
+                order = auto_order(imported)
+            else:
+                versions = _Versions(imported)
+                order = list(range(len(imported)))
+            finished = {}
+            for step_index, index in enumerate(order):
+                clip, point = imported[index], points[index]
                 if progress.cancelled():
                     cancelled = True
-                    for rest in imported[index:]:
-                        _discard(rest["namespace"])
+                    for rest in order[step_index:]:
+                        _discard(imported[rest]["namespace"])
                     break
-                progress.step("{0}: {1}".format(
-                    clip["name"], "retarget onto a new rig"
-                    if target == "new_rig" else "onto a new skeleton"))
+                if auto:
+                    what = ("its own skeleton" if clip["entry"] is None
+                            else "onto a new {0}".format(clip["entry"].label))
+                else:
+                    what = ("retarget onto a new rig" if target == "new_rig"
+                            else "onto a new skeleton")
+                progress.step("{0}: {1}".format(clip["name"], what))
                 try:
-                    if target == "new_rig":
+                    if auto:
+                        label, failure = _auto_one(clip, point, by_row, groups, index)
+                    elif target == "new_rig":
                         label, failure = _onto_new_rig(plan, clip, point,
                                                        versions, index)
                     else:
@@ -384,26 +494,37 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                         if line:
                             print("[uebridge] {0}".format(line))
                 except maya_retargetmode.Cancelled:
-                    # asked before the first clip went on: nothing is done yet,
-                    # and every clip skeleton imported for the batch goes
-                    for rest in imported:
-                        _discard(rest["namespace"])
-                    rigimport.restore_time(timing)
-                    text = "{0} animations: {1}".format(len(imported), CANCELLED)
-                    print("[uebridge] {0}".format(text))
-                    return text
+                    # asked before the clip went on: every clip skeleton not yet
+                    # done goes - before the first clip that is everything
+                    for rest in order[step_index:]:
+                        _discard(imported[rest]["namespace"])
+                    if not finished:
+                        rigimport.restore_time(timing)
+                        text = "{0} animations: {1}".format(len(imported), CANCELLED)
+                        print("[uebridge] {0}".format(text))
+                        return text
+                    cancelled = True
+                    break
                 except Exception as error:                   # noqa: BLE001
                     traceback.print_exc()
                     label, failure = None, _short(error)
                 if failure:
                     failures.append((clip["name"], failure))
                 else:
-                    done.append((label, clip["name"]))
+                    finished[index] = (label, clip["name"])
+            done = [finished[i] for i in sorted(finished)]
+            if auto:
+                for group in by_row.values():
+                    reasons.extend(r for r in group.reasons() if r not in reasons)
+            elif versions is not None:
+                reasons = versions.reasons()
     finally:
         progress.close()
-    text = summary(target, done, total, centre, widened, failures, step,
-                   cancelled, shape, entry.label if entry else None)
-    reasons = versions.reasons() if versions is not None else []
+    if auto:
+        text = auto_summary(done, total, centre, widened, failures, step, cancelled, shape)
+    else:
+        text = summary(target, done, total, centre, widened, failures, step,
+                       cancelled, shape, entry.label if entry else None)
     if reasons:
         text = "{0}  |  {1}".format(text, "; ".join(reasons))
     print("[uebridge] {0}".format(text))

@@ -299,7 +299,109 @@ class Press(unittest.TestCase):
         self.assertEqual(lineimport.run([], self.export, "new_rig"), "select an animation first")
 
 
+class AutoPress(Press):
+    """2026-10-02, the Auto card: each clip of the batch matched on its own - A and C are Manny's,
+    B is nobody's and is kept in its own skeleton on its slot."""
+
+    MATCHES = {"A": "Manny_Rig", "B": None, "C": "Manny_Rig"}
+
+    def setUp(self):
+        Press.setUp(self)
+        from maya_scenesetup import catalog
+        from maya_uebridge import autoimport, nativeimport, skeletonmatch
+        self.catalog = catalog
+        saved = [(autoimport, "match_clip", autoimport.match_clip),
+                 (autoimport, "onto_new_skeleton", autoimport.onto_new_skeleton),
+                 (nativeimport, "keep", nativeimport.keep),
+                 (rigimport, "_rig_file_ok", rigimport._rig_file_ok)]
+        self.addCleanup(lambda: [setattr(o, n, v) for o, n, v in saved])
+        self.matches = dict(self.MATCHES)
+
+        def match_clip(source, info, kind):
+            name = source.split(":")[0].lstrip("|")
+            self.calls.append(("match", name, kind))
+            key = self.matches[name] if kind == "rig" else (
+                {"Manny_Rig": "Manny"}.get(self.matches[name]))
+            best = skeletonmatch.Score(key or "Orc_D_Rig", 1.0 if key else 0.4, 78, 0.0)
+            return skeletonmatch.Match(key, best, [best])
+
+        def keep(namespace, info, source, name, point=None, why=""):
+            self.calls.append(("keep", name, point, why))
+            self.namespaces.discard(namespace)
+            return "%s kept" % name, "", "SK_" + name
+
+        def onto_new_skeleton(entry, namespace, info, source, name, at=None, decide=None):
+            self.calls.append(("onto", namespace, at, entry.label))
+            self.namespaces.discard(namespace)
+            return "%s onto %s" % (name, entry.label), "", "root"
+
+        autoimport.match_clip = match_clip
+        nativeimport.keep = keep
+        autoimport.onto_new_skeleton = onto_new_skeleton
+        rigimport._rig_file_ok = lambda entry=None: True
+
+    def test_each_clip_goes_its_own_way_on_its_own_slot(self):
+        text = lineimport.run(self.records, self.export, "new_rig", auto=True)
+        self.assertEqual([c[1:] for c in self.calls if c[0] == "match"],
+                         [("A", "rig"), ("B", "rig"), ("C", "rig")])
+        self.assertNotIn("plan", self.kinds())                  # no shared row is planned
+        x = [lineup.side_extent(TRACKS[n], lineup.COLUMNS) for n in "ABC"]
+        z = [lineup.side_extent(TRACKS[n], lineup.ROWS) for n in "ABC"]
+        points = lineup.square_slots((0.0, 0.0, 0.0), x, z)
+        got = [c for c in self.calls if c[0] == "retarget"]
+        self.assertEqual([(c[1], c[3]) for c in got], [("A", points[0]), ("C", points[2])])
+        kept = [c for c in self.calls if c[0] == "keep"]
+        self.assertEqual([(c[1], c[2]) for c in kept], [("B", points[1])])
+        self.assertIn("no skeleton of ours", kept[0][3])
+        self.assertIn("3 animations in a 2 x 2 square about (0, 0): "
+                      "Manny_Rig1 A, own SK_B B, Manny_Rig2 C", text)
+        self.assertEqual(self.namespaces, set())
+
+    def test_the_travel_is_never_scaled(self):
+        lineimport.run(self.records, self.export, "new_rig", auto=True)
+        self.assertNotIn("scale", [c[0] for c in self.calls])
+
+    def test_the_matched_go_before_the_kept(self):
+        """A question about a retarget version is asked before anything is kept as its own."""
+        lineimport.run(self.records, self.export, "new_rig", auto=True)
+        order = [c[1] for c in self.calls if c[0] in ("retarget", "keep")]
+        self.assertEqual(order, ["A", "C", "B"])
+
+    def test_the_skeleton_kind_puts_the_matched_on_our_skeleton(self):
+        text = lineimport.run(self.records, self.export, "skeleton", auto=True)
+        onto = [c for c in self.calls if c[0] == "onto"]
+        self.assertEqual([(c[1], c[3]) for c in onto],
+                         [("A", "Manny UE5 [skeleton]"), ("C", "Manny UE5 [skeleton]")])
+        self.assertEqual([c[1] for c in self.calls if c[0] == "keep"], ["B"])
+        self.assertIn("root A, own SK_B B, root C", text)
+
+    def test_nothing_matched_keeps_every_clip(self):
+        self.matches = {"A": None, "B": None, "C": None}
+        text = lineimport.run(self.records, self.export, "new_rig", auto=True)
+        self.assertEqual([c[1] for c in self.calls if c[0] == "keep"], ["A", "B", "C"])
+        self.assertNotIn("add", self.kinds())
+        self.assertIn("own SK_A A, own SK_B B, own SK_C C", text)
+
+    def test_a_missing_rig_file_fails_that_clip_only(self):
+        rigimport._rig_file_ok = lambda entry=None: False
+        text = lineimport.run(self.records, self.export, "new_rig", auto=True)
+        self.assertIn("own SK_B B", text)
+        self.assertIn("failed: A (no rig file", text)
+        self.assertEqual(self.namespaces, set())
+
+
 class Words(unittest.TestCase):
+
+    def test_the_auto_summary(self):
+        text = lineimport.auto_summary([("Manny_Rig1", "A"), ("own SK_B", "B")], 2,
+                                       (120.4, 0.0, -35.6), [], [("C", "x")], shape=(2, 1))
+        self.assertTrue(text.startswith(
+            "2 animations in a 2 x 1 square about (120, -36): Manny_Rig1 A, own SK_B B"))
+        self.assertIn("failed: C (x)", text)
+
+    def test_the_auto_order(self):
+        clips = [dict(entry=None), dict(entry="Manny"), dict(entry=None), dict(entry="Orc")]
+        self.assertEqual(lineimport.auto_order(clips), [1, 3, 0, 2])
 
     def test_first_only(self):
         self.assertEqual(lineimport.first_only(["A_Jump"]), "")

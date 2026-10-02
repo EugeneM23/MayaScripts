@@ -70,6 +70,15 @@ def caption(names, aim):
     aim = aim or {}
     kind = aim.get("kind")
     first = names[0] if names else ""
+    if aim.get("auto") and kind in ("new_rig", "skeleton"):
+        # the Auto card over the floor (2026-10-02): what lands is decided per clip
+        point = aim.get("point")
+        floor = ("" if point is None else " %s floor (%d, %d)" % (
+            DOT, int(round(point[0])), int(round(point[2]))))
+        if len(names) > 1:
+            return "%d animations %s %s %s in a square%s" % (
+                len(names), DOT, auto_what(aim.get("auto_kind"), True), DOT, floor), True
+        return "%s %s %s%s" % (first, DOT, auto_what(aim.get("auto_kind")), floor), True
     if kind in ("rig", "onto_skeleton"):
         text = "%s %s %s" % (first, DOT, aim.get("text", ""))
         if len(names) > 1:
@@ -96,6 +105,15 @@ def caption(names, aim):
             return text, True
         return "%s %s %s" % (first, DOT, aim.get("text", "")), True
     return aim.get("text") or "no target", False
+
+
+def auto_what(kind, several=False):
+    """What an Auto drop over the floor brings: «our rig if it matches, else its own» (2026-10-02).
+    Pure."""
+    kind = kind or "rig"
+    if several:
+        return "each onto our %s if it matches, else its own" % kind
+    return "our %s if it matches, else its own" % kind
 
 
 def carried_rows(pressed, before, after, plain):
@@ -149,6 +167,15 @@ class Scene(object):
         except Exception:                                    # noqa: BLE001
             return "rig"
 
+    def _read_auto(self):
+        """The Auto card's kind when it is picked, else None (2026-10-02): a floor drop then
+        matches each clip, read once at the drag's start like the kind."""
+        try:
+            from maya_uebridge import window
+            return window.auto_kind()
+        except Exception:                                    # noqa: BLE001
+            return None
+
     def snapshot(self):
         """What a drag needs, read once when it starts: the kind (Skeleton
         puts the clip on skeletons, 2026-10-01), the character a floor drop
@@ -157,6 +184,7 @@ class Scene(object):
         from maya_scenesetup import droptarget
         from maya_uebridge import rigimport, skeletonimport
         self._kind = self._read_kind()
+        self._auto = self._read_auto()
         self._new_label = rigimport.new_rig_entry().label
         self._skeleton_label = skeletonimport.skeleton_entry().label
         if self._kind == "skeleton":
@@ -171,12 +199,21 @@ class Scene(object):
             if label is None:
                 from maya_uebridge import skeletonimport
                 label = self._skeleton_label = skeletonimport.skeleton_entry().label
-            return droptarget.skeleton_target(gx, gy, label, snap, self.scale())
+            return self._marked(droptarget.skeleton_target(gx, gy, label, snap, self.scale()))
         label = getattr(self, "_new_label", None)
         if label is None:
             from maya_uebridge import rigimport
             label = self._new_label = rigimport.new_rig_entry().label
-        return droptarget.clip_target(gx, gy, snap, self.scale(), label)
+        return self._marked(droptarget.clip_target(gx, gy, snap, self.scale(), label))
+
+    def _marked(self, aim):
+        """An aim over the floor marked as the Auto card's when it is picked: the drop matches
+        each clip (`window.import_dropped`), the caption says so. A character under the cursor
+        stays what it is - the explicit target wins."""
+        auto = getattr(self, "_auto", None)
+        if auto and aim.get("kind") in ("new_rig", "skeleton"):
+            aim = dict(aim, auto=True, auto_kind=auto)
+        return aim
 
     def over_hub(self, gx, gy):
         import maya_hubqt

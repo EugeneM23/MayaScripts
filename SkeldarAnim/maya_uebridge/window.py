@@ -657,11 +657,21 @@ def import_kind():
     (its memory - the card need not be open), "rig" without Scene Setup."""
     try:
         from maya_scenesetup import window as scene_window
-        entry = scene_window.chosen_character()
-        kind = entry.kind if entry is not None else scene_window.remembered_choice()[1]
+        kind = scene_window.current_choice()[1]
     except Exception:                                        # noqa: BLE001
         return KINDS[0]
     return kind if kind in KINDS else KINDS[0]
+
+
+def auto_kind():
+    """The kind the Auto card brings when it is the card picked in Animation Setup (2026-10-02),
+    else None - every road asks this first; None without Scene Setup."""
+    try:
+        from maya_scenesetup import window as scene_window
+        kind = scene_window.auto_kind()
+    except Exception:                                        # noqa: BLE001
+        return None
+    return kind if kind in KINDS else None
 
 
 def import_mode():
@@ -675,13 +685,15 @@ def retarget_selected():
     return import_mode() in ("rig", "new_rig")
 
 
-def _export_from_editor(record):
+def _export_from_editor(record, mesh=False):
     """The clip out of its source: (clip reference, fps) for the import
     funnel (`rigimport.import_source`). Every road calls this one function
     - the button, the double click, the drag, the square of several - so a
     file source needs no road of its own (2026-10-02): its record already
     names its file and clip (`sources.record_ref`). An Unreal record is
-    exported by the editor into the temp folder, as since 2026-08-16."""
+    exported by the editor into the temp folder, as since 2026-08-16 - with
+    its mesh when `mesh` asks (the Auto card: a clip that is no character of
+    ours comes in its own skeleton). A file brings what it holds either way."""
     if getattr(record, "source", "unreal") != "unreal":
         from maya_uebridge import sources
         ref = sources.record_ref(record)
@@ -689,7 +701,12 @@ def _export_from_editor(record):
         if refusal:
             raise uelink.UeBridgeError(refusal)
         return ref, record.fps
-    return _export_unreal(record)
+    return _export_unreal(record, mesh)
+
+
+def _export_with_mesh(record):
+    """`_export_from_editor` asking Unreal for the clip's mesh too (the Auto card's export)."""
+    return _export_from_editor(record, mesh=True)
 
 
 def _clip_check(ref):
@@ -719,13 +736,15 @@ def file_refusal(record):
     return ""
 
 
-def _export_unreal(record):
-    """The clip out of the editor into the temp folder: (fbx path, fps)."""
+def _export_unreal(record, mesh=False):
+    """The clip out of the editor into the temp folder: (fbx path, fps) - bones
+    only, or with the clip's preview mesh skinned beside them (`mesh`)."""
     out = os.path.join(temp_folder(), "export.json")
     fbx = os.path.join(temp_folder(), "{0}.fbx".format(record.name))
     # Export from the same editor the list came from, or a second open project
     # would answer with an asset path it does not have.
-    payload = uelink.run_script(uescripts.export_script(out, record.package, fbx),
+    payload = uelink.run_script(uescripts.export_script(out, record.package, fbx,
+                                                        preview_mesh=mesh),
                                 out, project=project_choice())
     return payload.get("path") or fbx, payload.get("fps") or record.fps
 
@@ -752,6 +771,12 @@ def import_selected():
     chosen = _selected_records()
     if not chosen:
         _status("select an animation first")
+        return
+
+    auto = auto_kind()
+    if auto:
+        # 2026-10-02, the Auto card: ours if the clip's skeleton is ours, else its own
+        _status(_auto_press(chosen, auto))
         return
 
     mode = import_mode()
@@ -790,6 +815,46 @@ def import_selected():
     _status(_with_note(rigimport.import_and_retarget(
         exported, record.name, clip_fps=fps, set_timeline=_timeline(),
         target=mode), note))
+
+
+def _auto_press(chosen, kind):
+    """Import with the Auto card picked (2026-10-02, «если он найдет скелет который совпадает с
+    нашим то перенесем анимацию на наш риг или скелет, если ... совпадений нету то импортируем в
+    сцену родной риг или скелет»). Returns the status line.
+
+    Onto selected with a character of the kind selected: it takes the clip exactly as the Rig /
+    Skeleton press always did (the explicit target wins - asked). Otherwise, Onto selected with
+    nothing named or New: each clip is matched - our rig / skeleton of its row added and the clip
+    put on it, else the clip kept in its own skeleton (`autoimport`); several in a square about
+    the scene's zero (`lineimport`). Unreal is asked for the clip's mesh."""
+    from maya_uebridge import autoimport   # lazy: keeps the import graph flat
+    from maya_uebridge import lineimport
+    names = [r.name for r in chosen]
+    if import_target() == "onto":
+        if kind == "rig":
+            rig, refusal = autoimport.explicit_rig()
+            if refusal:
+                return refusal
+            if rig is not None:
+                exported, fps = _export_from_editor(chosen[0])
+                from maya_uebridge import rigimport
+                return _with_note(rigimport.import_and_retarget(
+                    exported, chosen[0].name, clip_fps=fps, set_timeline=_timeline(),
+                    target="rig", rig=rig), lineimport.first_only(names))
+        else:
+            root, refusal = autoimport.explicit_skeleton()
+            if refusal:
+                return refusal
+            if root is not None:
+                from maya_uebridge import skeletonimport
+                return _onto_existing(chosen[0], root, skeletonimport.first_only(names))
+    if len(chosen) > 1:
+        return lineimport.run(chosen, _export_with_mesh,
+                              "new_rig" if kind == "rig" else "skeleton",
+                              set_timeline=_timeline(), auto=True)
+    exported, fps = _export_with_mesh(chosen[0])
+    return autoimport.import_auto(exported, chosen[0].name, kind, clip_fps=fps,
+                                  set_timeline=_timeline())
 
 
 def _timeline():
@@ -834,6 +899,22 @@ def import_dropped(record, aim):
               else [r for r in (record or []) if r is not None])
     if not chosen or kind not in ("rig", "new_rig", "skeleton", "onto_skeleton"):
         text = aim.get("text") or "no target"
+        _status(text)
+        return text
+    if aim.get("auto") and kind in ("new_rig", "skeleton"):
+        # 2026-10-02, the Auto card over the floor: each clip ours if its skeleton is ours, else
+        # its own, standing on the point (several in the square about it)
+        from maya_uebridge import autoimport   # lazy: keeps the import graph flat
+        if len(chosen) > 1:
+            from maya_uebridge import lineimport
+            text = lineimport.run(chosen, _export_with_mesh, kind,
+                                  centre=aim.get("point") or (0.0, 0.0, 0.0),
+                                  set_timeline=_timeline(), auto=True)
+        else:
+            exported, fps = _export_with_mesh(chosen[0])
+            text = autoimport.import_auto(
+                exported, chosen[0].name, "rig" if kind == "new_rig" else "skeleton",
+                clip_fps=fps, set_timeline=_timeline(), at=aim.get("point"))
         _status(text)
         return text
     if kind == "onto_skeleton":

@@ -415,6 +415,58 @@ class OntoASkeleton(unittest.TestCase):
         del sys
 
 
+class AutoCard(unittest.TestCase):
+    """2026-10-02: with the Auto card picked a floor drop matches each clip - the caption says
+    so; a character under the cursor stays the explicit target."""
+
+    def test_the_caption_over_the_floor(self):
+        aim = {"kind": "new_rig", "point": (120.4, 0.0, -35.6), "label": "Manny [rig]",
+               "auto": True, "auto_kind": "rig"}
+        self.assertEqual(listdrag.caption("A_Jump", aim),
+                         ("A_Jump · our rig if it matches, else its own · floor (120, -36)", True))
+        self.assertEqual(listdrag.caption(["A", "B", "C"], dict(aim, auto_kind="skeleton"))[0],
+                         "3 animations · each onto our skeleton if it matches, else its own · "
+                         "in a square · floor (120, -36)")
+        self.assertEqual(listdrag.caption("A_Jump", dict(aim, point=None))[0],
+                         "A_Jump · our rig if it matches, else its own")
+
+    def test_only_a_floor_aim_is_marked(self):
+        scene = listdrag.Scene()
+        scene._auto = "rig"
+        self.assertTrue(scene._marked({"kind": "new_rig", "point": None})["auto"])
+        self.assertTrue(scene._marked({"kind": "skeleton", "point": None})["auto"])
+        self.assertNotIn("auto", scene._marked({"kind": "rig", "rig": "Manny_Rig"}))
+        self.assertNotIn("auto", scene._marked({"kind": "onto_skeleton", "root": "|root"}))
+        self.assertNotIn("auto", scene._marked({"kind": "none"}))
+        scene._auto = None
+        self.assertNotIn("auto", scene._marked({"kind": "new_rig", "point": None}))
+
+    def test_the_scene_reads_the_card_once_at_the_start(self):
+        import types
+        from maya_scenesetup import droptarget
+        from maya_uebridge import rigimport, skeletonimport, window
+        saved = (window.import_kind, window.auto_kind, droptarget.rig_snapshot,
+                 droptarget.clip_target, rigimport.new_rig_entry, skeletonimport.skeleton_entry)
+        try:
+            rigimport.new_rig_entry = lambda: types.SimpleNamespace(label="Manny [rig]")
+            skeletonimport.skeleton_entry = lambda: types.SimpleNamespace(label="Manny UE5")
+            droptarget.rig_snapshot = lambda: ["rigs"]
+            droptarget.clip_target = lambda gx, gy, snap, scale, label: {
+                "kind": "new_rig", "point": (1.0, 0.0, 2.0), "label": label}
+            window.import_kind = lambda: "rig"
+            window.auto_kind = lambda: "rig"
+            scene = listdrag.Scene()
+            scene.scale = lambda: 1.0
+            scene.snapshot()
+            window.auto_kind = lambda: None          # read once: a change mid-drag is not seen
+            aim = scene.target(1, 2, ["rigs"])
+            self.assertEqual((aim["auto"], aim["auto_kind"]), (True, "rig"))
+        finally:
+            (window.import_kind, window.auto_kind, droptarget.rig_snapshot,
+             droptarget.clip_target, rigimport.new_rig_entry,
+             skeletonimport.skeleton_entry) = saved
+
+
 class Boundary(unittest.TestCase):
 
     def test_the_module_imports_no_qt_or_maya_at_import(self):

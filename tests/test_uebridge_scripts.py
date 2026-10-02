@@ -99,6 +99,15 @@ class ExportContract(unittest.TestCase):
         self.assertIn("FbxExportOption", src)
         self.assertIn("export_preview_mesh", src)
 
+    def test_bones_only_unless_the_mesh_is_asked_for(self):
+        """2026-10-02: the Auto card asks for the clip's own mesh, every other road for bones."""
+        plain = uescripts.export_script("/tmp/o.json", "/Game/A", "/tmp/a.fbx")
+        self.assertIn('("export_preview_mesh", False)', plain)
+        mesh = uescripts.export_script("/tmp/o.json", "/Game/A", "/tmp/a.fbx",
+                                       preview_mesh=True)
+        self.assertIn('("export_preview_mesh", True)', mesh)
+        compile(mesh, "<export>", "exec")
+
     def test_confirms_the_file_actually_appeared(self):
         """run_asset_export_task returning True is not proof of a file on disk."""
         src = uescripts.export_script("/tmp/o.json", "/Game/A", "/tmp/a.fbx")

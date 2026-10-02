@@ -188,8 +188,12 @@ try:
         attempt(lambda: os.remove(_FBX))
 
     options = unreal.FbxExportOption()
+    # The Auto card (2026-10-02) asks for the clip's own mesh: the exporter
+    # writes its preview mesh (else its skeleton's, else FindCompatibleMesh),
+    # skinned, beside the skeleton - for a clip that turns out to be no
+    # character of ours and comes in its own skeleton.
     for name, value in (("ascii", False),
-                        ("export_preview_mesh", False),
+                        ("export_preview_mesh", %(preview_mesh)s),
                         ("export_morph_targets", False),
                         ("map_skeletal_motion_to_root", False),
                         ("level_of_detail", False),
@@ -358,11 +362,13 @@ try:
 '''
 
 
-def export_script(out_path, package, fbx_path):
-    """Source that exports one AnimSequence to `fbx_path`, bones only."""
+def export_script(out_path, package, fbx_path, preview_mesh=False):
+    """Source that exports one AnimSequence to `fbx_path`: bones only, or with
+    its preview mesh skinned beside them (`preview_mesh`, the Auto card)."""
     values = {"out_path": json.dumps(out_path),
               "package": json.dumps(package),
               "fbx_path": json.dumps(fbx_path),
+              "preview_mesh": "True" if preview_mesh else "False",
               "marker": json.dumps(MARKER)}
     return (_EXPORT_HEAD % values) + (_REPLY_TAIL % values)
 

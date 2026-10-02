@@ -11,6 +11,13 @@ import unittest
 
 
 def _install_fake_maya():
+    # the real package wins where it imports (trap 60: a fake `maya` installed beside an
+    # importable one shadows it, and Scene Setup needs maya.api)
+    try:
+        import maya.cmds  # noqa: F401
+        return
+    except ImportError:
+        pass
     if "maya.cmds" in sys.modules:
         return
     maya = types.ModuleType("maya")
@@ -216,20 +223,24 @@ class NoPerforce(unittest.TestCase):
             window.cmds = real
 
     def test_the_kind_is_the_characters_card_s(self):
-        from maya_scenesetup import catalog
         from maya_scenesetup import window as scene_window
-        saved = scene_window.chosen_character, scene_window.remembered_choice
+        saved = scene_window.current_choice
         try:
-            scene_window.chosen_character = lambda: catalog.default_character()
+            scene_window.current_choice = lambda: ("Manny", "skeleton")
             self.assertEqual(window.import_kind(), "skeleton")
-            scene_window.chosen_character = lambda: catalog.default_rig()
+            scene_window.current_choice = lambda: ("Manny", "rig")
             self.assertEqual(window.import_kind(), "rig")
             #  a model without the kind (Orc D has no skeleton): the kind kept
-            scene_window.chosen_character = lambda: None
-            scene_window.remembered_choice = lambda: ("Orc_D", "skeleton")
+            scene_window.current_choice = lambda: ("Orc_D", "skeleton")
             self.assertEqual(window.import_kind(), "skeleton")
+            #  the Auto card brings either kind (2026-10-02)
+            scene_window.current_choice = lambda: ("Auto", "skeleton")
+            self.assertEqual(window.import_kind(), "skeleton")
+            self.assertEqual(window.auto_kind(), "skeleton")
+            scene_window.current_choice = lambda: ("Creep", "rig")
+            self.assertIsNone(window.auto_kind())
         finally:
-            scene_window.chosen_character, scene_window.remembered_choice = saved
+            scene_window.current_choice = saved
 
     def test_retarget_selected_means_a_rig(self):
         saved = window.import_mode
@@ -601,6 +612,120 @@ class OntoASkeleton(unittest.TestCase):
         self.assertEqual(text, "the skeleton root1 is gone - nothing imported")
 
 
+class AutoCard(unittest.TestCase):
+    """2026-10-02: Import with the Auto card picked. The explicit target wins (Onto selected with a
+    character of the kind selected); otherwise each clip is matched (`autoimport`), Unreal asked
+    for the clip's mesh. Every scene step is faked."""
+
+    Rig = collections.namedtuple("Rig", "namespace")
+
+    def setUp(self):
+        from maya_uebridge import autoimport, lineimport, rigimport
+        self.calls, self.statuses = [], []
+        self.kind, self.target = "rig", "new"
+        self.explicit = (None, "")
+        self.picked = [2]
+        self.recs = [records.AnimRecord(n, "/Game/" + n, "", 0, 0.0, 30.0)
+                     for n in ("A_Jump", "A_Walk", "A_Run")]
+        saved = [(window, n, getattr(window, n)) for n in (
+            "cmds", "_export_unreal", "_status", "auto_kind", "import_target", "_onto_existing")]
+        saved += [(autoimport, n, getattr(autoimport, n)) for n in (
+            "explicit_rig", "explicit_skeleton", "import_auto")]
+        saved += [(rigimport, "import_and_retarget", rigimport.import_and_retarget),
+                  (lineimport, "run", lineimport.run)]
+        filtered = window._STATE.get("filtered")
+        self.addCleanup(lambda: [setattr(o, n, v) for o, n, v in saved])
+        self.addCleanup(window._STATE.__setitem__, "filtered", filtered)
+        window._STATE["filtered"] = list(self.recs)
+        window.cmds = types.SimpleNamespace(
+            checkBox=lambda name, exists=False, query=False, value=False: False,
+            textScrollList=lambda name, query=False, selectIndexedItem=False: list(self.picked))
+        window._status = self.statuses.append
+        window.auto_kind = lambda: self.kind
+        window.import_target = lambda: self.target
+        window._export_unreal = lambda record, mesh=False: (
+            self.calls.append(("export", record.name, mesh)) or ("C:/t/%s.fbx" % record.name, 30.0))
+        autoimport.explicit_rig = lambda: self.explicit
+        autoimport.explicit_skeleton = lambda: self.explicit
+        autoimport.import_auto = lambda fbx, name, kind, clip_fps=None, set_timeline=True, \
+            at=None: self.calls.append(("auto", fbx, name, kind, at)) or "auto " + name
+        rigimport.import_and_retarget = lambda fbx, name, clip_fps=None, set_timeline=True, \
+            target="rig", rig=None, at=None: (
+                self.calls.append(("press", name, target, rig.namespace if rig else None))
+                or "pressed " + name)
+        lineimport.run = lambda chosen, export, target, centre=(0.0, 0.0, 0.0), \
+            set_timeline=True, step=250.0, auto=False: (
+                self.calls.append(("line", [r.name for r in chosen], target, tuple(centre),
+                                   auto, export is window._export_with_mesh)) or "laid out")
+        window._onto_existing = lambda record, root=None, note="": (
+            self.calls.append(("onto", record.name, root, note)) or "onto " + record.name)
+
+    def test_new_matches_the_clip_and_asks_for_its_mesh(self):
+        window.import_selected()
+        self.assertEqual(self.calls, [("export", "A_Walk", True),
+                                      ("auto", "C:/t/A_Walk.fbx", "A_Walk", "rig", None)])
+        self.assertEqual(self.statuses, ["auto A_Walk"])
+
+    def test_onto_selected_with_nothing_named_matches_too(self):
+        self.target = "onto"
+        window.import_selected()
+        self.assertEqual([c[0] for c in self.calls], ["export", "auto"])
+
+    def test_a_selected_rig_takes_the_clip_as_the_rig_press_does(self):
+        self.target = "onto"
+        self.explicit = (self.Rig("Manny_Rig1"), "")
+        self.picked = [2, 3]
+        window.import_selected()
+        self.assertEqual(self.calls, [("export", "A_Walk", False),
+                                      ("press", "A_Walk", "rig", "Manny_Rig1")])
+        self.assertIn("only A_Walk", self.statuses[-1])
+
+    def test_two_selected_rigs_refuse_before_the_editor(self):
+        self.target = "onto"
+        self.explicit = (None, "two rigs selected (a, b) - select controls of one only")
+        window.import_selected()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.statuses, ["two rigs selected (a, b) - select controls of one only"])
+
+    def test_a_selected_skeleton_takes_the_clip_with_skeleton_picked(self):
+        self.kind, self.target = "skeleton", "onto"
+        self.explicit = ("|Manny_Skeleton_Character|root", "")
+        window.import_selected()
+        self.assertEqual(self.calls, [("onto", "A_Walk", "|Manny_Skeleton_Character|root", "")])
+
+    def test_several_go_to_the_square_each_matched(self):
+        self.picked = [1, 3]
+        self.kind = "skeleton"
+        window.import_selected()
+        self.assertEqual(self.calls, [("line", ["A_Jump", "A_Run"], "skeleton",
+                                       (0.0, 0.0, 0.0), True, True)])
+
+    def test_a_floor_drop_stands_the_clip_on_the_point(self):
+        aim = dict(kind="new_rig", point=(1.0, 0.0, 2.0), auto=True, auto_kind="rig")
+        window.import_dropped(self.recs[0], aim)
+        self.assertEqual(self.calls[-1], ("auto", "C:/t/A_Jump.fbx", "A_Jump", "rig",
+                                          (1.0, 0.0, 2.0)))
+        self.assertEqual(self.calls[0], ("export", "A_Jump", True))
+
+    def test_a_floor_drop_of_several_is_a_square_about_the_point(self):
+        aim = dict(kind="skeleton", point=(1.0, 0.0, 2.0), auto=True, auto_kind="skeleton")
+        window.import_dropped(self.recs[:2], aim)
+        self.assertEqual(self.calls, [("line", ["A_Jump", "A_Walk"], "skeleton",
+                                       (1.0, 0.0, 2.0), True, True)])
+
+    def test_a_drop_on_a_rig_stays_the_explicit_target(self):
+        import sys as _sys
+        saved = _sys.modules.get("maya_rigs")
+        self.addCleanup(lambda: _sys.modules.__setitem__("maya_rigs", saved)
+                        if saved is not None else _sys.modules.pop("maya_rigs", None))
+        _sys.modules["maya_rigs"] = types.SimpleNamespace(
+            find=lambda namespace: self.Rig(namespace))
+        window.import_dropped(self.recs[0], dict(kind="rig", rig="Manny_Rig1",
+                                                 label="Manny_Rig1"))
+        self.assertEqual(self.calls, [("export", "A_Jump", False),
+                                      ("press", "A_Jump", "rig", "Manny_Rig1")])
+
+
 class ProjectLabel(unittest.TestCase):
 
     def test_shows_the_project_name_not_the_path(self):
@@ -664,10 +789,15 @@ class FileSources(unittest.TestCase):
 
     def test_an_unreal_record_still_asks_the_editor(self):
         saved = window._export_unreal
-        window._export_unreal = lambda record: ("C:/t/x.fbx", 30.0)
+        asked = []
+        window._export_unreal = lambda record, mesh=False: (
+            asked.append(mesh) or ("C:/t/x.fbx", 30.0))
         self.addCleanup(setattr, window, "_export_unreal", saved)
         rec = records.AnimRecord("A", "/Game/A", "", 3, 0.1, 30.0)
         self.assertEqual(window._export_from_editor(rec), ("C:/t/x.fbx", 30.0))
+        # the Auto card asks for the clip's mesh too (2026-10-02)
+        self.assertEqual(window._export_with_mesh(rec), ("C:/t/x.fbx", 30.0))
+        self.assertEqual(asked, [False, True])
 
     def test_a_humanoid_row_refuses_before_anything_happens(self):
         rec = self.sources.file_record("C:/u/w.anim", "Walk", note="humanoid")
