@@ -42,12 +42,16 @@ def grid(width, count, cell, scale=1.0):
     A card is a square of `cell` (the slider's value, clamped to CELL_MIN..CELL_MAX) times
     `scale`, with a NAME_H strip under it; `rects` are the squares, `(x, y, w, h)`. As many
     columns as fit (n cards need n * cell + (n - 1) * GAP), never more than `count` and never
-    fewer than one. The row is SPREAD: the cards keep the size the slider says and the extra
-    width goes into the gaps between the columns, so the first card touches the left edge and
-    the last of a full row the right one. A single column is centred; a pane narrower than a
-    card shrinks the card rather than clip it; a width of 0 (not laid out yet) is one column
-    at the left. A short last row keeps the columns. `height` is every row with its name
-    strip plus the gaps between rows. Pure."""
+    fewer than one. The row is SPREAD over the columns that FIT: the cards keep the size the
+    slider says and the extra width goes into the gaps between those columns, so the first
+    card touches the left edge and the last card of a full row the right one. Because the
+    spread is over the columns that fit and not over the cards there are, a card's x is a
+    function of the width and its column alone: the cards already in the library do not move
+    when another is saved, and a short row (fewer cards than fit) simply stops where its
+    cards end, in the same places a full row would put them. A single column (only one fits)
+    is centred; a pane narrower than a card shrinks the card rather than clip it; a width of
+    0 (not laid out yet) is one column at the left. A short last row keeps the columns.
+    `height` is every row with its name strip plus the gaps between rows. Pure."""
     k = float(scale or 1.0)
     gap, name = _px(GAP, k), _px(NAME_H, k)
     width = int(round(width or 0))
@@ -64,8 +68,14 @@ def grid(width, count, cell, scale=1.0):
     rects = []
     for index in range(count):
         row, col = divmod(index, cols)
-        if cols > 1:
-            x = int(round(col * (width - side) / float(cols - 1)))
+        if fit > 1:
+            # Column c of the `fit` columns stands at c * (width - side) / (fit - 1), rounded
+            # half up, in integers so no float or half-to-even rounding is involved. The step
+            # between columns is at least side + gap (fit columns fit, so width - side >=
+            # (fit - 1) * (side + gap)) and floor(a + n) = floor(a) + n for a whole n, so
+            # neighbouring columns stay at least side + gap apart; the last column lands on
+            # width - side, the pane's right edge. A function of width and column only.
+            x = (2 * col * (width - side) + (fit - 1)) // (2 * (fit - 1))
         else:
             x = max(0, (width - side) // 2)
         rects.append((x, row * (side + name + gap), side, side))

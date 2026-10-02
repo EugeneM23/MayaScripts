@@ -59,13 +59,57 @@ class Grid(unittest.TestCase):
         _cols, rects, _height = look.grid(1000, 7, 112)
         self.assertEqual(set((r[2], r[3]) for r in rects), {(112, 112)})
 
-    def test_the_row_is_spread_to_fill_the_width(self):
-        _cols, rects, _height = look.grid(1000, 7, 112)
+    def test_a_full_row_is_spread_to_fill_the_width(self):
+        # 1022 px holds 8 columns of 112 with a step of exactly 130: equal gaps of 18
+        cols, rects, _height = look.grid(1022, 8, 112)
+        self.assertEqual(cols, 8)
         self.assertEqual(rects[0][0], 0)
-        self.assertEqual(rects[-1][0] + rects[-1][2], 1000)
+        self.assertEqual(rects[-1][0] + rects[-1][2], 1022)
         gaps = [b[0] - (a[0] + a[2]) for a, b in zip(rects, rects[1:])]
-        self.assertEqual(len(set(gaps)), 1, gaps)
-        self.assertGreater(gaps[0], look.GAP)
+        self.assertEqual(gaps, [18] * 7)
+
+    def test_a_full_row_ends_on_the_edge_at_every_width(self):
+        """Whatever the width, the last column of a row that fills the columns that fit touches
+        the right edge, and the gaps differ by at most one px (rounding)."""
+        for scale in (1.0, 1.25, 1.5):
+            for width in range(150, 1500):
+                fit = look.grid(width, 100, 112, scale)[0]
+                if fit < 2:
+                    continue
+                _cols, rects, _height = look.grid(width, fit, 112, scale)
+                self.assertEqual(rects[0][0], 0, (scale, width))
+                self.assertEqual(rects[-1][0] + rects[-1][2], width, (scale, width))
+                gaps = [b[0] - (a[0] + a[2]) for a, b in zip(rects, rects[1:])]
+                self.assertLessEqual(max(gaps) - min(gaps), 1, (scale, width, gaps))
+
+    def test_a_short_row_stands_where_a_full_row_would_put_it(self):
+        """The spread is over the columns that FIT, not over the cards there are: the reviewer's
+        case, 500 px holds 4 columns of 112 and the cards sit at the same x whether the library
+        holds one, two, three or four of them."""
+        for count in (1, 2, 3, 4):
+            _cols, rects, _height = look.grid(500, count, 112)
+            self.assertEqual([r[0] for r in rects], [0, 129, 259, 388][:count], count)
+        # 1000 px holds 8: three cards are not pushed to 0 / 444 / 888
+        self.assertEqual([r[0] for r in look.grid(1000, 3, 112)[1]], [0, 127, 254])
+
+    def test_a_card_does_not_move_when_another_is_added(self):
+        """Every Save adds a card; the ones already there must stay where they are, at every
+        width, card size and scale - and so must a card in a second row."""
+        for scale in (1.0, 1.5):
+            for cell in (72, 112, 200):
+                for width in (0, 90, 231, 240, 300, 500, 777, 1000, 1400):
+                    fit = look.grid(width, 1000, cell, scale)[0]
+                    big = look.grid(width, 3 * fit + 1, cell, scale)[1]
+                    for count in range(1, 3 * fit + 2):
+                        rects = look.grid(width, count, cell, scale)[1]
+                        label = (scale, cell, width, count)
+                        self.assertEqual([r[0] for r in rects], [r[0] for r in big[:count]],
+                                         label)
+                        self.assertEqual(rects, big[:count], label)
+
+    def test_one_card_in_a_wide_pane_stands_at_the_left_like_the_first_of_a_longer_row(self):
+        self.assertEqual(look.grid(1000, 1, 112)[1][0][0], 0)
+        self.assertEqual(look.grid(1000, 1, 112)[1][0], look.grid(1000, 30, 112)[1][0])
 
     def test_a_narrow_pane_wraps(self):
         # 300 // (112 + 8) = 2 columns, 7 cards -> 4 rows, the last one holding a single card
@@ -151,13 +195,18 @@ class Grid(unittest.TestCase):
                                 self.assertLessEqual(a[0] + a[2], width, label)
 
     def test_the_gap_between_columns_is_never_below_the_gap(self):
+        """Every pixel width (the rounding of the spread must never eat into the gap), full
+        rows and short ones, at three card sizes and scales."""
         for scale in (1.0, 1.5):
             gap = int(round(look.GAP * scale))
-            for width in range(150, 1500, 37):
-                _cols, rects, _height = look.grid(width, 12, 112, scale)
-                for a, b in zip(rects, rects[1:]):
-                    if b[1] == a[1]:
-                        self.assertGreaterEqual(b[0] - (a[0] + a[2]), gap, (scale, width))
+            for cell in (72, 112, 200):
+                for width in range(150, 1500):
+                    for count in (2, 3, 5, 12):
+                        _cols, rects, _height = look.grid(width, count, cell, scale)
+                        for a, b in zip(rects, rects[1:]):
+                            if b[1] == a[1]:
+                                self.assertGreaterEqual(b[0] - (a[0] + a[2]), gap,
+                                                        (scale, cell, width, count))
 
 
 class Strips(unittest.TestCase):
