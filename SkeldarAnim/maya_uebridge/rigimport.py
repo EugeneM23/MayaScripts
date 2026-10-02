@@ -358,6 +358,17 @@ def import_source(fbx_path, name, clip_fps=None, set_timeline=True):
     return namespace, info, source
 
 
+def _label(rig, name):
+    """The clip's name written under the rig it went onto (2026-10-02,
+    `maya_scenesetup.cliplabel`; one label per rig, a later clip replaces its
+    text). Never fails the press: without the module nothing is written."""
+    try:
+        from maya_scenesetup import cliplabel
+    except ImportError:
+        return None
+    return cliplabel.label_rig(rig, name)
+
+
 def retarget_imported(rig, mod, namespace, info, source, name, place=None):
     """(line, failure): the imported clip connected onto `rig`, moved onto
     `place` (a dict with "point" and "yaw"; None leaves it where it is),
@@ -383,6 +394,7 @@ def retarget_imported(rig, mod, namespace, info, source, name, place=None):
 
     bake_text = maya_rig_retarget.bake(rig=rig)
     cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
+    _label(rig, name)
     line = result_line(name, info, connect_text, bake_text, namespace,
                        maya_rigs.label(rig))
     if placed:

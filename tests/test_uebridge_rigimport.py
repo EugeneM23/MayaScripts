@@ -219,6 +219,9 @@ class ThePress(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.real_cmds = rigimport.cmds
+        real_label = rigimport._label        # the clip's name under the rig: tested apart
+        rigimport._label = lambda rig, name: None
+        self.addCleanup(lambda: setattr(rigimport, "_label", real_label))
         self.real_file_ok = rigimport._rig_file_ok
         self.real_import = rigimport.animimport.import_clip
         self.real_namespaces = rigimport.animimport.existing_namespaces

@@ -153,6 +153,9 @@ class Onto(unittest.TestCase):
             si.new_skeleton = saved["new"]
             si.transfer = saved["transfer"]
         self.addCleanup(restore)
+        real_label = si._label               # the clip's name under it: tested apart
+        si._label = lambda root, name: None
+        self.addCleanup(lambda: setattr(si, "_label", real_label))
         si.new_skeleton = lambda entry: (self.calls.append(("add", entry.key)) or
                                          ("|root1", "Manny UE5 [skeleton] added"))
         si.rigimport.root_at = lambda source, frame=None: (4.0, 90.0, -12.0)
