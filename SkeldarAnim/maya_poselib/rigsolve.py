@@ -14,11 +14,21 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
   `O_g = rigid(G) . rigid(D)^-1` (orient + point + scale on Manny; orientation only on the Creep
   and the Orc D, the pelvis position too). D follows the drive chain S - the FKX and IKX joints
   blended by `FKIK<Limb>_<side>.FKIKBlend` - standing in one frame with it at build pose
-  (<= 1e-5 deg) EXCEPT on the six unrolled bones: Shoulder, Elbow, Hip, Knee, whose constraint
-  offsetX the twist network drives (trap 126), and Neck / NeckPart1, whose in-between takes a
-  share of the head's twist. Those six are given in DRIVE form (`drive_matrices`: `G . D^-1 .
-  S`, the bone with the roll put back) - a card saved from a rig stores them so, and the
-  target's own `wanted` for them is in that form too.
+  (<= 1e-5 deg) EXCEPT on the four UNROLLED limb bones a side: Shoulder, Elbow, Hip, Knee, whose
+  constraint offsetX the twist network drives (trap 126) - the deformation joint never rolls,
+  the roll lives in the twist joints. Those four are given in DRIVE form (`drive_matrices`,
+  `drive_of`: the turn of `G . D^-1 . S`, the bone with the roll put back, at the game bone's
+  own place) - a card saved from a rig stores them so, a target read by `scene.skeleton`
+  stands in them, and `wanted` holds them so (a skeleton's bone, carrying its own roll, plays
+  its drive). The drive's PLACE is the bone's, not the chain's: Manny_Rig's game calf stands
+  0.064 cm off `Knee_L` (point-constrained with an offset), at build pose and posed.
+- The neck lands its BONES. `NeckPart1_M` turns with a share of the head's twist (measured:
+  `FKHead_M` rx 30 -> `NeckPart1_M` 15.0000, `FKXNeckPart1_M` 0.0000, `Neck_M` 0.0000, Manny_Rig
+  and Creep_Rig, `twistAmountDivideNeckPart1_M.input2` 0.5), but the neck's controls hold any
+  turn of their bones, so its targets are the bones themselves - in drive form a skeleton's
+  card put Manny_Rig's neck_02 12.7 deg off its pose (task 6b's verify). `SHARE_FROM` names the
+  share: NeckPart1's control is solved numerically on `NeckPart1_M` with the head re-solved
+  inside every probe.
 - An FK control's FKX joint is a DAG DESCENDANT of the control (`FKShoulder_L > ... >
   FKXShoulder_L`, through `CustomOrientReverse*`), so `L = rigid(FKX) . rigid(C)^-1` is constant
   and the control's world for its joint to stand on `S*` is `L^-1 . S*` - **except the neck**:
@@ -28,9 +38,10 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
   exactly 10.0000 at bias 0 and 20.0000 at bias 10, while `FKOffsetNeckPart1_M` (driven by
   `NeckPart1InbetweenDM_M`) takes the full 20 so the head chain keeps the whole turn; rotating
   `FKNeckPart1_M` moves `FKXNeck_M` by 0.000000. So `FKNeck_M` is solved NUMERICALLY (`_numeric`:
-  Newton on the world rotation of `FKXNeck_M`, the Jacobian by finite differences, a few
-  rounds) and everything below it analytically against its parent read afterwards. Any control
-  whose FKX joint is not below it takes the same road (`_analytic`).
+  Newton on the world rotation of `Neck_M`, which stands with `FKXNeck_M`, the Jacobian by
+  finite differences, a few rounds) and everything below it against its parent read
+  afterwards. Any control whose FKX joint is not below it takes the same road (`_analytic`),
+  and so does any whose deformation joint takes a share of another's twist (`SHARE_FROM`).
 - A control's parent space is not a constant piece of anything the solve knows: the finger
   metacarpals hang under `FKParentConstraintToWrist_*` (orient + point constrained to the
   DEFORMATION wrist - the IK wrist in IK), the hips under `FKParentConstraintToRoot_M`,
@@ -72,27 +83,33 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
 1. sample the rig once (after one evaluation at the current frame): every G, D, FKX, IKX,
    control, the constant pieces `O_g`, `L`, `K`, the toes' relation, `RootX . G_pelvis^-1`, the
    pole's side of the CURRENT IK chain (`fkik.pole_side`), the blends;
-2. the drive chain's target `S*[b] = O_g^-1 . wanted[g]` for every base `wanted` holds;
+2. the drive chain's target `S*[b] = O_g^-1 . wanted[g]` for every base `wanted` holds (for a
+   bone in its own form - every one but the four unrolled - the deformation joint's target);
 3. **RootX_M** from the pelvis (translate + rotate) when the pelvis is a member - first, every
    chain hangs below it;
 4. level by level down the game skeleton: each member's FK control onto `L^-1 . S*` against its
    parent read now (rotate channels only - lengths are the rig's); **at a limb's END level** (the
    hand, the foot) the limb's IK half, before anything below it reads the deformation wrist:
-   - the IK end onto `K . S*[end]` (translate + rotate) for any member of the limb's chain - from
-     `S*`, not from the FKX end after the FK solve, so a hand pose onto an IK arm whose FK half
-     stands elsewhere keeps the arm where it is shown;
+   - the IK end (translate + rotate) for any member of the limb's chain: with the WHOLE chain a
+     member, onto `AlignIKTo` as the FKX chain just solved now stands - the rig's own lengths,
+     so the IK shows exactly what the FK does (a target's place is only a model of them:
+     Manny_Rig's point-constrained calf wanders 0.06 cm from pose to pose, and an IK foot put on
+     the model stood that far off its FK foot); with part of it, onto `K . S*[end]`, so a hand
+     pose onto an IK arm whose FK half stands elsewhere keeps the arm where it is shown;
    - the leg's `roll` / `rock` at their defaults with it (the end is computed for them);
    - `IKToes` onto the ball's `S*` (rotate only: the relation, then `_numeric`);
-   - the pole on the plane of the limb's `S*` (`pole_point`, the side sampled before), and the
-     `swivel` at its default, only when the limb's UPPER or MIDDLE bone is a member: a hand alone
-     moves neither the elbow nor the plane, and keying the pole or zeroing an animated swivel
-     there would move the elbow;
+   - the pole on the plane of the limb's chain (`pole_point`, the side sampled before; the FKX
+     chain as it stands when the whole chain is a member, else `S*`), and the `swivel` at its
+     default, only when the limb's UPPER or MIDDLE bone is a member: a hand alone moves neither
+     the elbow nor the plane, and keying the pole or zeroing an animated swivel there would move
+     the elbow;
    - a limb whose `stretchy`, `antiPop`, pole `follow*` or `lock` is off its default
      (`fkik.off_default`) keeps its IK half unposed, named;
 5. measure every member against its target (`worst`: directions for the four unrolled limb
    bones - an IK elbow is a hinge and AdvancedSkeleton moves their roll into the twist joints -
-   full rotations for the rest, every position) and, off by more than 0.01 deg / 0.01 cm, solve
-   again from the new state, at most `PASSES` times; what is still off is named;
+   full rotations for the rest, the pelvis's position, the one place a solve sets) and, off by
+   more than 0.01 deg / 0.01 cm, solve again from the new state, at most `PASSES` times; what is
+   still off is named;
 6. read every value written (`values`, the FINAL channel values), put every temporary write back
    in reverse order, autoKey as it was.
 
@@ -117,6 +134,14 @@ angle is measured after the IK is set and said, as the Connections FK / IK switc
 **One cost, stated:** the sample starts with `currentTime(currentTime)` (`settle`), which
 re-evaluates the frame - an unkeyed tweak on a KEYED channel reverts to its curve, as any time
 change reverts it.
+
+Proof: docs/superpowers/plans/verify_poselib_solve.py, mayapy standalone, 107/107 (cards made
+by `capture.build_pose`, targets by `scene.skeleton` + `posemath.targets`, keys by
+`keys.write`, the bones measured against the card): every rig's full card back onto itself
+standing elsewhere 0.00014 deg / 0.00007 cm, its FK controls on the values that made the pose
+to 0.00008 deg; IK legs and arms on the pose 0.0025 deg / 0.0019 cm and the FK half showing the
+same 0.00004 deg; a skeleton's neck card at bias 0 and 10, the share at 0.5, 0.00003 deg; a hand
+card moving only the hand's controls, on its forearm's drive 0.000000 deg.
 
 Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Onto a rig").
 """
@@ -143,8 +168,12 @@ __all__ = ["Solution", "Base", "bases", "drive_matrices", "solve", "controls_for
 #          None; limb -- "arm" / "leg" / None
 Base = namedtuple("Base", "leaf base side fk fkx ikx deform limb")
 
-UNROLLED = ("Shoulder", "Elbow", "Hip", "Knee", "Neck", "NeckPart1")
+UNROLLED = ("Shoulder", "Elbow", "Hip", "Knee")
 DIRECTION_BASES = ("Shoulder", "Elbow", "Hip", "Knee")
+# a deformation joint that takes a share of another joint's twist: NeckPart1_M turns with half
+# the head's (measured: FKHead_M rx 30 -> NeckPart1_M 15.0000, FKXNeckPart1_M 0.0000, Neck_M
+# 0.0000, on Manny_Rig and Creep_Rig); its control is solved with that joint's re-solved inside
+SHARE_FROM = {"NeckPart1": "Head"}
 LIMB_OF = {"Shoulder": "arm", "Elbow": "arm", "Wrist": "arm",
            "Hip": "leg", "Knee": "leg", "Ankle": "leg", "Toes": "leg"}
 # the next joint down a limb: the child an unrolled bone points at
@@ -324,25 +353,41 @@ def solve_step(columns, error, damping=DAMPING):
 
 def worst(rows):
     """(worst degrees, worst cm, the worst row's leaf) over `rows` (leaf, actual, wanted,
-    direction): a row with a `direction` (the bone's child offset in its own frame) is judged by
-    where that offset points under the two rotations, the others by their whole rotation; every
-    row by its position. The worst row is the one furthest past the tolerances (`TOL_DEG`,
-    `TOL_CM`). Nothing measured: (0, 0, None). Pure."""
+    direction[, placed]): a row with a `direction` (the bone's child offset in its own frame) is
+    judged by where that offset points under the two rotations, the others by their whole
+    rotation; a row `placed` (the default) by its position too. The worst row is the one
+    furthest past the tolerances (`TOL_DEG`, `TOL_CM`). Nothing measured: (0, 0, None). Pure."""
     deg_worst = cm_worst = 0.0
     leaf_worst, score_worst = None, -1.0
-    for leaf, actual, wanted, direction in rows:
+    for row in rows:
+        leaf, actual, wanted, direction = row[:4]
+        placed = row[4] if len(row) > 4 else True
         actual, wanted = pm.matrix(actual), pm.matrix(wanted)
         if direction is not None:
             v = om.MVector(*direction)
             deg = pm.direction_angle(v * pm.rotation(actual), v * pm.rotation(wanted))
         else:
             deg = pm.angle(actual, wanted)
-        cm = (pm.position(actual) - pm.position(wanted)).length()
+        cm = (pm.position(actual) - pm.position(wanted)).length() if placed else 0.0
         deg_worst, cm_worst = max(deg_worst, deg), max(cm_worst, cm)
         score = max(deg / TOL_DEG, cm / TOL_CM)
         if score > score_worst:
             score_worst, leaf_worst = score, leaf
     return deg_worst, cm_worst, leaf_worst
+
+
+def drive_of(game, deform, chain):
+    """The drive of a game bone: `rigid(G) . rigid(D)^-1 . S` - the bone turned as the rig's
+    drive chain `S` holds it, its roll put back - standing at the game bone's own place. The
+    turn is the drive's whole point; the chain stands on the deformation joint, and a game bone
+    point-constrained with an offset stands apart from that (measured: Manny_Rig's game calf
+    0.064 cm off `Knee_L`, at build pose and posed; the Creep's and the Orc D's on theirs to
+    0.00006 cm), so a drive read whole put the bone's place on the joint - the place every card,
+    every target and the pelvis's measure read off the BONES. Pure."""
+    turn = pm.rigid(game) * pm.rigid(deform).inverse() * pm.rigid(chain)
+    values = pm.flat(pm.rotation(turn))
+    values[12:15] = pm.flat(game)[12:15]
+    return om.MMatrix(values)
 
 
 def _named(items):
@@ -448,16 +493,16 @@ def _shown(rig, base):
 
 
 def _drive(rig, base, game_path):
-    """`rigid(G) . rigid(D)^-1 . S`: the game bone as the drive chain holds it."""
-    return pm.rigid(_world(game_path)) * pm.rigid(_world(base.deform)).inverse() * \
-        _shown(rig, base)
+    """`drive_of(G, D, S)`: the game bone as the drive chain holds it, at its own place."""
+    return drive_of(_world(game_path), _world(base.deform), _shown(rig, base))
 
 
 def drive_matrices(rig):
-    """{game leaf: 16 floats} for the six unrolled bones the rig drives (upperarm, lowerarm,
-    thigh, calf per side; neck_01, neck_02): `G . D^-1 . S` - `S` the FKX and IKX joints blended
-    as the rig blends them for a limb, the FKX joint for the neck. The other bones are absent:
-    their `world` is their drive."""
+    """{game leaf: 16 floats} for the four unrolled limb bones a side the rig drives (upperarm,
+    lowerarm, thigh, calf): `drive_of(G, D, S)` - `S` the FKX and IKX joints blended as the rig
+    blends them. The other bones are absent: their `world` is their drive. The neck is no
+    longer here (2026-10-02, task 6b): its controls hold any turn of its bones, so it lands the
+    BONES, and a neck in drive form put a skeleton's card 12.7 deg off Manny_Rig's neck_02."""
     game = game_bones(rig)
     out = {}
     for leaf, base in bases(rig).items():
@@ -600,6 +645,7 @@ class _Job(object):
         if missing:
             self.notes["missing"] = NO_CONTROL % (len(missing), maya_rigs.label(rig),
                                                   _named(missing))
+        self.member_set = set(self.members)
         self.limbs = limb_members(self.members)
         self.session = _Session()
 
@@ -651,7 +697,7 @@ class _Job(object):
         chain = [self.bases.get(name) for name in game[:3]]
         if not (ik and align) or not all(b and b.fkx for b in chain):
             return None
-        out = {"ik": ik, "pole": pole, "game": game, "chain": chain,
+        out = {"ik": ik, "pole": pole, "game": game, "chain": chain, "align": align,
                "k": pm.rigid(_world(align)) * pm.rigid(_world(chain[2].fkx)).inverse()}
         self._remember(ik)
         out["guard"] = self._guard(ik, pole)
@@ -748,24 +794,39 @@ class _Job(object):
             self._move(base.fk, pm.position(aim))
 
     def _fk(self, leaf):
+        """The member's FK control onto its target. Its FKX joint below it and its deformation
+        joint standing with that joint: analytic (`L^-1 . S*`). Otherwise numeric, on the
+        DEFORMATION joint - so the bone lands: the neck's FKX joint is no child of its control
+        (the in-between), and NeckPart1_M takes a share of the head's twist (`SHARE_FROM`), the
+        head re-solved inside every probe when it is a member."""
         base = self.bases[leaf]
         aim = self.target(leaf)
         if aim is None or not base.fk:
             return
-        if leaf in self.in_control:
+        if leaf in self.in_control and base.base not in SHARE_FROM:
             self._turn(base.fk, self.in_control[leaf].inverse() * aim)
-        elif base.fkx:
-            self._numeric(base.fk, base.fkx, pm.rotation(aim))
+            return
+        joint = base.deform or base.fkx
+        if not joint:
+            return
+        after = [other for other, b in self.bases.items()
+                 if b.base == SHARE_FROM.get(base.base) and b.side == base.side
+                 and other in self.member_set and other in self.in_control]
+        self._numeric(base.fk, joint, pm.rotation(aim), after)
 
-    def _numeric(self, control, joint, aim):
+    def _numeric(self, control, joint, aim, after=()):
         """The control turned until `joint` stands on `aim` - damped least squares
         (`solve_step`) on the joint's world rotation, its Jacobian by finite differences of the
-        control's world rotation, a few rounds. Its two users: the neck's in-between (its joint
-        is not below its control) and the IK toes (their SC handle aims the toes joint, which
-        does not compose rigidly with the control). The last write is always a solution, never
-        a probe."""
+        control's world rotation, a few rounds; the members `after` (analytic ones: the head
+        under the neck) re-solved after every write, a probe's included, when the joint answers
+        to them. Its users: the neck's in-between (its joint is not below its control), NeckPart1
+        (the head's twist share) and the IK toes (their SC handle aims the toes joint, which does
+        not compose rigidly with the control). The last write is always a solution, never a
+        probe."""
 
         def error():
+            for leaf in after:
+                self._fk(leaf)
             return rotation_vector(pm.rotation(_world(joint)).inverse() * aim)
 
         now = pm.rotation(_world(control))
@@ -784,6 +845,7 @@ class _Job(object):
             step = solve_step(columns, e0)
             if step is None:
                 self._turn(control, now)
+                error()
                 return
             now = now * turn(step)
             self._turn(control, now)
@@ -823,7 +885,14 @@ class _Job(object):
         chain = [self.target(name) for name in info["game"][:3]]
         if any(m is None for m in chain):
             return
-        aim = info["k"] * chain[2]
+        # the whole chain a member: its FK half was just solved onto it, so the IK end and the
+        # pole read the FKX chain as it now STANDS - the rig's own lengths, where a target's
+        # place is a model of them (Manny_Rig's point-constrained calf wanders 0.06 cm from pose
+        # to pose, and an IK foot put on the model stood that far off its FK foot). Part of it:
+        # the targets, so a hand pose onto an IK arm whose FK half stands elsewhere keeps the arm
+        solved = all(name in self.member_set for name in info["game"][:3])
+        fkx = [pm.rigid(_world(b.fkx)) for b in info["chain"]] if solved else chain
+        aim = pm.rigid(_world(info["align"])) if solved else info["k"] * chain[2]
         if self._turn(info["ik"], aim):
             self._move(info["ik"], pm.position(aim))
         if "toes" in info:
@@ -832,8 +901,8 @@ class _Job(object):
             if info["side"] is None:
                 self.notes["side " + label] = NO_SIDE % label
             else:
-                s, e, w = (pm.position(m) for m in chain)
-                point = pole_point(s, e, w, pm.rotation(chain[1]), info["side"])
+                s, e, w = (pm.position(m) for m in fkx)
+                point = pole_point(s, e, w, pm.rotation(fkx[1]), info["side"])
                 self._move(info["pole"], point)
         self._hinge(key, info, chain)
 
@@ -912,9 +981,12 @@ class _Job(object):
 
 
 def _rows(rig, all_bases, game, wanted, members):
-    """`worst`'s rows for the members as the rig stands now: the six unrolled bones by their
-    drive (`_drive`), the four limb ones by where they point, every other member by its game
-    bone."""
+    """`worst`'s rows for the members as the rig stands now: the four unrolled limb bones by
+    their drive (`_drive`) and by where they point, every other member by its game bone's whole
+    turn; the pelvis by its place too - the one bone a solve places (RootX_M). Every other bone
+    stands where the rig's own lengths put it, which a target's place only models (Manny_Rig's
+    point-constrained calf wanders 0.06 cm from pose to pose): measured, that read as a miss on
+    every pose and re-solved for nothing."""
     by_joint = dict(((b.base, b.side), b) for b in all_bases.values())
 
     def shown(base):
@@ -934,7 +1006,7 @@ def _rows(rig, all_bases, game, wanted, members):
             offset = (pm.position(shown(child)) - pm.position(actual)) * \
                 pm.rotation(actual).inverse()
             direction = (offset.x, offset.y, offset.z)
-        rows.append((leaf, actual, pm.matrix(wanted[leaf]), direction))
+        rows.append((leaf, actual, pm.matrix(wanted[leaf]), direction, leaf == PELVIS))
     return rows
 
 
@@ -976,8 +1048,8 @@ def controls_for(rig, members):
 
 def measure(rig, wanted, members):
     """(worst degrees, worst cm, worst leaf) of the members against `wanted` as the rig stands
-    now (after the keys): the four unrolled limb bones by where they point, the rest by their
-    whole rotation, every member's position - the unrolled bones read in drive form."""
+    now (after the keys): the four unrolled limb bones by where they point (read in drive
+    form), the rest by their whole rotation, the pelvis's position (`_rows`)."""
     all_bases = bases(rig)
     game = game_bones(rig)
     wanted = dict((leaf.split(":")[-1], pm.rigid(m)) for leaf, m in (wanted or {}).items())

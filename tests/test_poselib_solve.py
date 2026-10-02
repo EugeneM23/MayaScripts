@@ -298,13 +298,54 @@ class Worst(unittest.TestCase):
     def test_nothing_measured(self):
         self.assertEqual(rigsolve.worst([]), (0.0, 0.0, None))
 
+    def test_a_row_not_placed_is_judged_by_its_turn_alone(self):
+        """Only the pelvis is placed by a solve (RootX_M); every other bone stands where the
+        rig's own lengths put it - Manny_Rig's point-constrained game bones wander 0.06 cm from
+        pose to pose - so its position is no miss."""
+        a = placed(euler((0, 0, 0)), (0, 0, 0))
+        rows = [("calf_l", a, placed(euler((0, 0, 0)), (0, 0.06, 0)), None, False),
+                ("pelvis", a, placed(euler((0, 0, 0)), (0, 0.004, 0)), None, True)]
+        deg, cm, leaf = rigsolve.worst(rows)
+        self.assertAlmostEqual(cm, 0.004, places=9)
+        self.assertEqual(leaf, "pelvis")
+
 
 class Unrolled(unittest.TestCase):
+    """The unrolled bones are the four of a limb whose AdvancedSkeleton deformation joint never
+    rolls (its roll lives in the twist joints, trap 126): only they are given in DRIVE form. The
+    neck's in-between takes a share of the head's twist into neck_02 (measured: FKHead_M rx 30
+    turned NeckPart1_M 15.0000, FKXNeckPart1_M 0.0000, Neck_M 0.0000), but its controls can hold
+    any turn of their bones, so the neck lands its BONES - a skeleton's card held in drive form
+    put Manny_Rig's neck_02 12.7 deg off."""
 
-    def test_the_six_bones(self):
-        self.assertEqual(sorted(rigsolve.UNROLLED),
-                         ["Elbow", "Hip", "Knee", "Neck", "NeckPart1", "Shoulder"])
+    def test_the_four_limb_bones(self):
+        self.assertEqual(rigsolve.UNROLLED, ("Shoulder", "Elbow", "Hip", "Knee"))
         self.assertEqual(rigsolve.DIRECTION_BASES, ("Shoulder", "Elbow", "Hip", "Knee"))
+
+    def test_the_share_of_the_head(self):
+        self.assertEqual(rigsolve.SHARE_FROM, {"NeckPart1": "Head"})
+
+
+class DriveOf(unittest.TestCase):
+    """A drive is the drive chain's TURN at the game bone's PLACE: the chain stands on the
+    deformation joint, and Manny_Rig's game calf, point-constrained with an offset, stands
+    0.064 cm off `Knee_L` - a drive read whole put the calf there, off the bone every card and
+    every target is read from."""
+
+    def test_the_turn_of_the_chain_at_the_place_of_the_bone(self):
+        g = placed(euler((10, 20, 30)), (4.0, 95.0, -2.0))
+        d = placed(euler((12, 18, 33)), (4.0, 95.0, -2.0))
+        s = placed(euler((40, -5, 60)), (4.0, 95.5, -2.0))
+        got = rigsolve.drive_of(g, d, s)
+        self.assertLess(angle(got, g * d.inverse() * s), 1e-9)
+        self.assertLess((om.MVector(got[12], got[13], got[14]) -
+                         om.MVector(4.0, 95.0, -2.0)).length(), 1e-12)
+
+    def test_with_the_chain_on_the_joint_it_is_the_bone(self):
+        g = placed(euler((10, 20, 30)), (4.0, 95.0, -2.0))
+        d = placed(euler((12, 18, 33)), (4.0, 95.0, -2.0))
+        got = rigsolve.drive_of(g, d, d)
+        self.assertLess(angle(got, g), 1e-9)
 
 
 class RecordingCmds(object):

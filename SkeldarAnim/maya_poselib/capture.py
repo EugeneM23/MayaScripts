@@ -3,10 +3,11 @@
 The animator: «если анимация относится к ригу то мы должны сохранять анимацию не контроллов а
 костей». So a CHARACTER pose holds the BONES of one character (`scene.skeleton`: every bone, for
 recognising the skeleton later, with the members the selection names), and on a rig source also
-each limb bone's DRIVE - the bone as the rig's drive chain holds it, with the roll AdvancedSkeleton
-moved into the twist joints put back (`rigsolve.drive_matrices`, trap 126). Anything selected that
-is no character's makes an OBJECTS pose instead: Studio Library's attribute pose, every keyable
-scalar unlocked attribute of each selected transform.
+each unrolled limb bone's DRIVE - the bone as the rig's drive chain holds it, with the roll
+AdvancedSkeleton moved into the twist joints put back (`rigsolve.drive_matrices`, trap 126), read
+with the skeleton (`scene.skeleton`). Anything selected that is no character's makes an OBJECTS
+pose instead: Studio Library's attribute pose, every keyable scalar unlocked attribute of each
+selected transform.
 
 `build_pose` refuses two characters at once («pick one character for a pose») - a card is the
 bones of ONE skeleton; objects selected beside one character are left out of its pose, and the
@@ -15,8 +16,8 @@ keeps those members, one turned off drops them, and one turned ON that the selec
 touch brings that region in whole (`region_members`) - so a chip always means what it shows.
 
 Measured (2026-10-02, mayapy standalone): a pose of Manny_Rig reads in 0.13-0.17 s and is 57-61
-KB of JSON (93 bones x rest + world, drives on the ten unrolled bones); `build_pose(frame=12)`
-from frame 5 reads frame 12 and leaves the time at 5.
+KB of JSON (93 bones x rest + world, drives on the eight unrolled limb bones);
+`build_pose(frame=12)` from frame 5 reads frame 12 and leaves the time at 5.
 
 **The thumbnail** (`thumbnail`) is a playblast of the panel the animator looks at
 (`maya_vpstudio.active_panel`), at its own port size (WYSIWYG for their camera), with the curves,
@@ -39,7 +40,6 @@ import time
 
 import maya.cmds as cmds
 
-from maya_poselib import posemath
 from maya_poselib import scene
 from maya_poselib import store
 
@@ -54,7 +54,6 @@ LEAST_BLASTS, MOST_BLASTS = 3, 5
 SMALLEST_PORT = 16                # px: a port smaller than this is a hidden window (trap 105)
 NO_VIEWPORT = "no viewport for a thumbnail"
 NO_BONE = "no bone of %s in the pose of %s"
-NO_DRIVE = "the rig's drive chain was not read (rigsolve is not built yet)"
 
 
 # ------------------------------------------------------------------ pure
@@ -141,36 +140,23 @@ def _at(frame):
 
 # ------------------------------------------------------------------ the poses
 
-def _drives(ref, notes):
-    """{leaf: [16]} of a rig source's drive chain (`rigsolve.drive_matrices`); {} for a
-    skeleton."""
-    if ref.kind != "rig" or ref.rig is None:
-        return {}
-    try:
-        from maya_poselib import rigsolve
-    except ImportError:
-        notes.append(NO_DRIVE)
-        return {}
-    return dict((name, posemath.flat(m)) for name, m in rigsolve.drive_matrices(ref.rig).items())
-
-
 def character_pose(ref, nodes, regions=None):
     """(data, note): the pose of the character `ref` as `nodes` (the selection's parts of it)
-    name its bones, narrowed by `regions` when given; (None, refusal) when nothing is left."""
+    name its bones, narrowed by `regions` when given; (None, refusal) when nothing is left. A
+    rig's drives come with its skeleton (`scene.skeleton`: `rigsolve.drive_matrices`)."""
     notes = []
     bones, convention = scene.skeleton(ref, notes)
     members = scene.members_of(ref, nodes, bones)
     members = region_members(bones, members, regions)
     if not members:
         return None, NO_BONE % (", ".join(regions or ()) or "the selection", ref.label)
-    drives = _drives(ref, notes)
     records = {}
     for name, bone in bones.items():
         record = {"parent": bone["parent"], "canonical": bone["canonical"],
                   "rest": bone["rest"], "world": bone["world"],
                   "rotateOrder": bone["rotateOrder"]}
-        if name in drives:
-            record["drive"] = drives[name]
+        if bone.get("drive"):
+            record["drive"] = bone["drive"]
         records[name] = record
     data = _common("character")
     data.update({"character": scene.identity(ref, convention), "bones": records,

@@ -372,6 +372,133 @@ class MirrorRules(unittest.TestCase):
         self.assertLess(pm.angle(m["upperarm_l"]["drive"], m["upperarm_l"]["world"]), 1e-9)
 
 
+def standing(locals_=None, scale=1.0, off=None, rest_locals=None):
+    """`skeleton`, with each bone in `off` ({leaf: (x, y, z)}) standing that far off its bind in
+    its parent's frame - its world (and its subtree's) moved, its rest left where the bind put it.
+    Manny's skeleton stands 0.07 cm off its own bind at the left calf (trap 171), and a rig's game
+    bones, point-constrained to AdvancedSkeleton's, wander from pose to pose."""
+    locals_, off = locals_ or {}, off or {}
+    worlds, rests, out = {}, {}, {}
+    for name, parent, t in CHAIN:
+        t = tuple(v * scale for v in t)
+        moved = tuple(a + b for a, b in zip(t, off.get(name, (0.0, 0.0, 0.0))))
+        rest_turn = (rest_locals or {}).get(name, (0, 0, 0))
+        rests[name] = trs(t, rest_turn) * (rests[parent] if parent else om.MMatrix())
+        worlds[name] = trs(moved, locals_.get(name, rest_turn)) * \
+            (worlds[parent] if parent else om.MMatrix())
+        out[name] = {"parent": parent, "canonical": name, "rest": pm.flat(rests[name]),
+                     "world": pm.flat(worlds[name])}
+    return out
+
+
+POSE = {"pelvis": (0, 10, 5), "spine_01": (5, 0, 10), "upperarm_l": (0, 30, 40),
+        "lowerarm_l": (0, 0, 50), "hand_l": (10, 20, 30), "thigh_l": (-30, 0, 10),
+        "calf_l": (40, 0, 0), "foot_l": (5, 10, 0)}
+
+
+class Twins(unittest.TestCase):
+    """The spec: a twin gives A = I, so a pose saved and applied on the same model is exact - a
+    twin being the median paired length within 1 % (maya_retargetmode's rule) with every rest
+    direction within `TWIN_DEG` (an A-posed and a T-posed copy of one skeleton are no twins)."""
+
+    def assertExact(self, source, out, members):
+        for leaf in members:
+            self.assertLess(pm.angle(out[leaf], pm.matrix(source[leaf]["world"])), 1e-6, leaf)
+
+    def test_what_is_a_twin(self):
+        same = skeleton()
+        self.assertTrue(pm.twin(pm.pairs(same, skeleton()), same, skeleton()))
+        bigger = skeleton(scale=1.2)
+        self.assertFalse(pm.twin(pm.pairs(same, bigger), same, bigger))
+        a_pose = skeleton(rest_locals={"upperarm_l": (0, 0, -40)})
+        self.assertFalse(pm.twin(pm.pairs(a_pose, same), a_pose, same))
+        off = standing(off={"calf_l": (0.0, 0.0, 0.07)})
+        self.assertTrue(pm.twin(pm.pairs(off, off), off, off))
+
+    def test_a_twin_standing_off_its_bind_is_exact(self):
+        # Manny's skeleton onto Manny's skeleton: the calf 0.07 cm off its bind on both read the
+        # thigh's direction 0.089 deg off its rest one - an alignment a twin must not have
+        s = standing(POSE, off={"calf_l": (0.0, 0.0, 0.07)})
+        t = standing(off={"calf_l": (0.0, 0.0, 0.07)})
+        members = [b for b in s if b != "root"]
+        self.assertExact(s, pm.targets(s, t, pm.pairs(s, t), members), members)
+
+    def test_a_twin_whose_bones_wander_from_pose_to_pose_is_exact(self):
+        # Manny_Rig onto Manny_Rig: the game calf, point-constrained to AdvancedSkeleton's knee,
+        # stands 0.06 cm one way in the card's pose and the other way in the target's
+        s = standing(POSE, off={"calf_l": (0.0, 0.0, 0.06)})
+        t = standing(off={"calf_l": (0.0, 0.0, -0.06)})
+        members = [b for b in s if b != "root"]
+        out = pm.targets(s, t, pm.pairs(s, t), members)
+        self.assertExact(s, out, members)
+
+    def test_an_a_posed_copy_is_still_aligned(self):
+        s = skeleton({"upperarm_l": (0, 0, -40)}, rest_locals={"upperarm_l": (0, 0, -40)})
+        t = skeleton()
+        align = pm.alignments(pm.pairs(s, t), s, t)
+        self.assertAlmostEqual(pm.angle(align["upperarm_l"], om.MMatrix()), 40.0, 6)
+
+
+class AsItStands(unittest.TestCase):
+    """Where a bone points is read from where its child STANDS, on both skeletons (trap 171): a
+    source standing off its bind points where its child is, not where the bind put it."""
+
+    def test_a_target_bone_points_where_the_source_bone_does(self):
+        s = standing(POSE, off={"calf_l": (0.0, 0.0, 0.5)})      # 0.64 deg off its bind
+        t = skeleton(scale=1.3)                                  # no twin: 30 % longer
+        out = pm.targets(s, t, pm.pairs(s, t), ["pelvis", "thigh_l", "calf_l"])
+        want = pm.position(pm.matrix(s["calf_l"]["world"])) - \
+            pm.position(pm.matrix(s["thigh_l"]["world"]))
+        got = pm.position(out["calf_l"]) - pm.position(out["thigh_l"])
+        self.assertLess(pm.direction_angle(got, want), 1e-6)
+
+    def test_a_chord_past_an_unpaired_bone_is_read_at_rest(self):
+        # a UE4 spine under a UE5 one: the target's spine_01 points at its spine_02, partnered
+        # by the source's spine_02 and spine_04 - spine_04 is no child of spine_02, so the chord
+        # between them is the rest one (a posed spine_03 would swing the pelvis with it). Here the
+        # thigh's partner child is the foot, past an unpaired calf bent 40 deg and standing 0.5
+        # cm off its bind: the alignment is the unposed skeleton's
+        s = standing(POSE, off={"calf_l": (0.0, 0.0, 0.5)})
+        t = skeleton(scale=1.3)
+        pairs = pm.pairs(s, t)
+        pairs_skip = dict(pairs)
+        del pairs_skip["calf_l"]                       # the thigh's direction child is now the foot
+        align = pm.alignments(pairs_skip, s, t)
+        rest = pm.alignments(pairs_skip, skeleton(), t)
+        self.assertLess(pm.angle(align["thigh_l"], rest["thigh_l"]), 1e-9)
+
+
+class TargetDrive(unittest.TestCase):
+    """Onto a rig the four unrolled limb bones are in DRIVE form on both sides: a target bone
+    that carries a `drive` stands in it, so what follows it follows the drive chain the rig
+    holds it by - a hand under a posed forearm keeps its place on the forearm's drive, not on the
+    unrolled bone (the forearm's roll lives in the twist joints, trap 126)."""
+
+    def test_a_bone_follows_the_drive_of_a_posed_parent(self):
+        s = skeleton({"lowerarm_l": (0, 0, 50)})
+        s["lowerarm_l"]["drive"] = pm.flat(trs((0, 0, 0), (35, 0, 0)) *
+                                           pm.matrix(s["lowerarm_l"]["world"]))
+        t = skeleton({"hand_l": (0, 20, 10)})
+        roll = trs((0, 0, 0), (-60, 0, 0)) * pm.matrix(t["lowerarm_l"]["world"])
+        t["lowerarm_l"]["drive"] = pm.flat(roll)
+        out = pm.targets(s, t, pm.pairs(s, t), ["lowerarm_l"], use_drive=True)
+        self.assertLess(pm.angle(out["lowerarm_l"], pm.matrix(s["lowerarm_l"]["drive"])), 1e-6)
+        want = pm.rotation(pm.matrix(t["hand_l"]["world"])) * pm.rotation(roll).inverse()
+        got = pm.rotation(out["hand_l"]) * pm.rotation(out["lowerarm_l"]).inverse()
+        self.assertLess(pm.angle(got, want), 1e-6)
+
+    def test_without_use_drive_the_target_stands_in_its_world(self):
+        s = skeleton({"lowerarm_l": (0, 0, 50)})
+        t = skeleton({"hand_l": (0, 20, 10)})
+        t["lowerarm_l"]["drive"] = pm.flat(trs((0, 0, 0), (-60, 0, 0)) *
+                                           pm.matrix(t["lowerarm_l"]["world"]))
+        out = pm.targets(s, t, pm.pairs(s, t), ["lowerarm_l"])
+        want = pm.rotation(pm.matrix(t["hand_l"]["world"])) * \
+            pm.rotation(pm.matrix(t["lowerarm_l"]["world"])).inverse()
+        got = pm.rotation(out["hand_l"]) * pm.rotation(out["lowerarm_l"]).inverse()
+        self.assertLess(pm.angle(got, want), 1e-6)
+
+
 class Names(unittest.TestCase):
 
     def test_more_spellings_and_centre_bones(self):

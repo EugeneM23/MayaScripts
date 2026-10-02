@@ -17,7 +17,8 @@ The animator: «мне не обязательно выделять именно
 
 A skeleton read here (`skeleton`) is `{leaf: bone}` - the leaf with its namespace stripped, so a
 card made on `Manny_Rig1` applies onto `Manny_Rig2` by name - each bone `{path, parent,
-canonical, rest, world, rotateOrder, jointOrient, rotateAxis}`. `rest` is the skinCluster's bind
+canonical, rest, world, rotateOrder, jointOrient, rotateAxis}` - a rig's four unrolled limb bones
+a side with their `drive` too (`rigsolve.drive_matrices`). `rest` is the skinCluster's bind
 (`maya_retargetmode.rest_world`; a joint's own `.bindPose` was measured 3.5 cm stale, trap 176),
 `world` the bone as it stands at the current frame. `canonical` is our UE5 name from
 `maya_skeletonmap.recognize` run on the WHOLE skeleton with its rest positions (it refuses a hand
@@ -528,7 +529,12 @@ def _joints(root):
 def skeleton(ref, notes=None):
     """(bones, convention): the character's game skeleton as `{leaf: bone}` (the module
     docstring) and its naming convention (`maya_skeletonmap.convention_of`). A leaf twice in one
-    skeleton keeps the first and is noted into `notes` (a list) when one is given."""
+    skeleton keeps the first and is noted into `notes` (a list) when one is given.
+
+    On a RIG the four unrolled limb bones a side (upperarm, lowerarm, thigh, calf) also carry
+    their `drive` as it stands (`rigsolve.drive_matrices`): a card saved from the rig keeps it,
+    and a target read here stands in it (`posemath.targets`), so what follows such a bone
+    follows the drive chain the rig holds it by."""
     import maya_retargetmode
     paths = _joints(ref.root)
     rests = dict((p, [float(v) for v in maya_retargetmode.rest_world(p)]) for p in paths)
@@ -551,6 +557,11 @@ def skeleton(ref, notes=None):
             "jointOrient": [float(v) for v in cmds.getAttr(path + ".jointOrient")[0]],
             "rotateAxis": [float(v) for v in cmds.getAttr(path + ".rotateAxis")[0]],
         }
+    if ref.kind == "rig" and ref.rig is not None:
+        from maya_poselib import rigsolve
+        for name, drive in rigsolve.drive_matrices(ref.rig).items():
+            if name in bones:
+                bones[name]["drive"] = posemath.flat(drive)
     if notes is not None:
         for name in sorted(n for n, count in seen.items() if count > 1):
             notes.append(DUPLICATE % (ref.label, seen[name], name))

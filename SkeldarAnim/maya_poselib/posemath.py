@@ -17,7 +17,9 @@ holds it, with the roll AdvancedSkeleton moves into the twist joints put back (t
 - `pairs` answers which source bone plays each target bone - by leaf name when both carry the
   UE limbs, else through the canonical names, the spine and neck chain onto chain;
 - `alignments` the minimal rotation taking each target bone's rest direction onto its
-  partner's (identity for a twin) - `skeletonimport._alignments`' rule, trap 171 included;
+  partner's, each read where the bone's child stands (trap 171, on both skeletons) -
+  `skeletonimport._alignments`' rule - and the identity for a `twin` (the same body: lengths
+  within 1 %, rests within a degree);
 - `targets` the world matrix of EVERY target bone: each member takes its partner's rotation
   RELATIVE TO ITS NEAREST PAIRED ANCESTOR, carried through the two rests, so a hand pose lands
   on the arm as it stands and a full pose on a character standing elsewhere keeps its place and
@@ -50,6 +52,15 @@ UE4_SPINE = {"spine_01": "spine_02", "spine_02": "spine_04", "spine_03": "spine_
 REGIONS = ("Head", "Spine", "Pelvis", "Arm L", "Hand L", "Arm R", "Hand R", "Leg L", "Leg R")
 SCALE_TOLERANCE = 0.02     # two bodies within 2 % of each other's size are one size
 SHORTEST_HEIGHT = 1.0      # cm: a pelvis lower than this over its root says nothing of size
+# a twin (`twin`): the median paired length within 1 % - maya_retargetmode.TWIN_TOLERANCE, its
+# SHORTEST and NOT_A_LENGTH restated (that module imports maya.cmds) - and every rest direction
+# within TWIN_DEG: what the alignment of a twin reads is its bones standing off their bind
+# (Manny's skeleton, 0.09 deg at the thigh) or wandering from pose to pose (Manny_Rig's
+# point-constrained game bones, up to 0.2 deg), never a rest of its own
+TWIN_LENGTH = 0.01
+TWIN_DEG = 1.0
+SHORTEST_LENGTH = 1.0      # cm: a shorter bone does not vote
+NOT_A_LENGTH = ("root", "pelvis", "center_of_mass", "interaction")
 # world Y where a skeleton with no root of its own stands at its bind: its top joint's parent is
 # the world (or a group at the origin), so its floor is that origin's height - the retarget's
 # `their_floor` for such a source (maya_skeletonmap.size_ratio)
@@ -385,12 +396,20 @@ def alignments(pairs, source, target):
 
     The direction child is `direction_children(canonical_parents(...))` of the TARGET's paired
     bones in our names (leaves on the UE road, canonical names on the other), mapped back to
-    leaves; twist bones and helpers are never direction children. The target direction is the
-    child's offset in the bone's CURRENT frame re-expressed in its rest frame (trap 171: `local
-    = (pos(child_now) - pos(bone_now)) · rigid(bone_now)⁻¹`, `t_dir = local · rigid(bone_rest)`
-    as a vector); the source direction the partner child's rest position minus the partner's.
-    A bone with no paired direction child inherits its nearest paired ancestor's; the root's is
-    identity. For a twin every one is ≈ identity."""
+    leaves; twist bones and helpers are never direction children. Where a bone points is read
+    from where its child STANDS, in the bone's rest frame (trap 171: `local = (pos(child_now) -
+    pos(bone_now)) · rigid(bone_now)⁻¹`, `dir = local · rigid(bone_rest)` as a vector) - the
+    target's always, the source's (its `world`) when the partner child is the partner's own
+    child: a skeleton standing off its bind (Manny's, 0.07 cm at the left calf) points where its
+    child is. A partner child further down (the UE4 spine's chord past a source bone it lacks)
+    is read off the two rests: as it stands, the chord would follow the skipped bone's pose and
+    turn the bone - and what hangs off it, the pelvis's thighs - with it. A bone with no paired
+    direction child inherits its nearest paired ancestor's; the root's is identity.
+
+    A `twin` (the same body) takes the identity everywhere - the spec's rule, so a pose saved
+    and applied on the same model is exact: what its alignment would read is its bones' stand-off
+    from the bind and their wander from pose to pose (measured 0.09 deg at Manny's thigh, 0.19 deg
+    at Manny_Rig's knee), never a rest of its own."""
     ue = ue_named(source) and ue_named(target)
     target_root = root_of(target)
     usable = [t for t in _ordered(target) if t in pairs and t != target_root
@@ -416,18 +435,79 @@ def alignments(pairs, source, target):
                 _paired_ancestor(target, leaf, pairs, source, target_root)
             turn = om.MMatrix(out[above]) if above in out else om.MMatrix()
         out[leaf] = turn
+    if twin(pairs, source, target, out):
+        return dict((leaf, om.MMatrix()) for leaf in out)
     return out
+
+
+def _standing(bones, leaf, child):
+    """The direction from a bone to its child as the skeleton STANDS, in the bone's rest frame."""
+    bone_now, child_now = matrix(bones[leaf]["world"]), matrix(bones[child]["world"])
+    local = (position(child_now) - position(bone_now)) * rigid(bone_now).inverse()
+    return local * rigid(bones[leaf]["rest"])
 
 
 def _alignment(source, target, pairs, leaf, child):
     """The minimal rotation for one bone, or None when a direction is zero."""
-    bone_now, child_now = matrix(target[leaf]["world"]), matrix(target[child]["world"])
-    local = (position(child_now) - position(bone_now)) * rigid(bone_now).inverse()
-    t_dir = local * rigid(target[leaf]["rest"])
-    s_dir = position(source[pairs[child]]["rest"]) - position(source[pairs[leaf]]["rest"])
+    t_dir = _standing(target, leaf, child)
+    s, sc = pairs[leaf], pairs[child]
+    if source[sc].get("parent") == s and source[s].get("world") and source[sc].get("world"):
+        s_dir = _standing(source, s, sc)
+    else:
+        s_dir = position(source[sc]["rest"]) - position(source[s]["rest"])
     if t_dir.length() < EPS or s_dir.length() < EPS:
         return None
     return om.MQuaternion(t_dir.normal(), s_dir.normal()).asMatrix()
+
+
+# ---------------------------------------------------------------- twins
+
+def _lengths(pairs, source, target):
+    """[(source length, target length)]: each paired target bone (helpers, the root, the pelvis
+    and `NOT_A_LENGTH` out) against its nearest paired ancestor, kept only when the partners
+    stand in the same order on the source - `maya_retargetmode.segments`' rule, on the rests."""
+    target_root = root_of(target)
+    rows = []
+    for leaf in _ordered(target):
+        if leaf == target_root or leaf in NOT_A_LENGTH or is_helper(leaf):
+            continue
+        name = target[leaf].get("canonical") or leaf
+        if name in NOT_A_LENGTH or leaf not in pairs or pairs[leaf] not in source:
+            continue
+        anchor = _paired_ancestor(target, leaf, pairs, source, None)
+        if anchor is None or pairs[anchor] not in source:
+            continue
+        s, sa = pairs[leaf], pairs[anchor]
+        if sa not in _source_ancestors(source, s):
+            continue
+        rows.append(((position(source[s]["rest"]) - position(source[sa]["rest"])).length(),
+                     (position(target[leaf]["rest"]) - position(target[anchor]["rest"])).length()))
+    return rows
+
+
+def _source_ancestors(bones, leaf):
+    out, node, seen = set(), bones[leaf].get("parent"), set()
+    while node in bones and node not in seen:
+        seen.add(node)
+        out.add(node)
+        node = bones[node].get("parent")
+    return out
+
+
+def twin(pairs, source, target, align=None):
+    """Are the two skeletons the same body? The median paired length within `TWIN_LENGTH`
+    (`maya_retargetmode.measure`'s twin: |s - t| / max over the bones longer than
+    `SHORTEST_LENGTH`) AND every rest alignment within `TWIN_DEG` (`align`, read when not given)
+    - lengths alone would call an A-posed and a T-posed copy of one skeleton twins and drop the
+    40 deg their rests differ by. Pure."""
+    diffs = sorted(abs(s - t) / max(s, t) for s, t in _lengths(pairs, source, target)
+                   if max(s, t) > SHORTEST_LENGTH)
+    if not diffs or diffs[len(diffs) // 2] > TWIN_LENGTH:
+        return False
+    if align is None:
+        align = alignments(pairs, source, target)
+    return all(math.degrees(2.0 * math.acos(min(1.0, abs(_quaternion(m).w)))) <= TWIN_DEG
+               for m in align.values())
 
 
 # ---------------------------------------------------------------- size
@@ -464,7 +544,13 @@ def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="
     """{target leaf: om.MMatrix}: where EVERY target bone stands for the source's pose
     (unchanged bones at their current world).
 
-    `P[s]` is `source[s]["drive"]` when `use_drive` and the bone has one, else its `world`.
+    `P[s]` is `source[s]["drive"]` when `use_drive` and the bone has one, else its `world`; the
+    target stands in `T_now[x]` = its own `drive` on the same terms (a rig read by
+    `scene.skeleton` carries the four unrolled limb bones' drives), else its `world` - so a hand
+    that is no member, under a forearm that is, keeps the place it has on the forearm's DRIVE
+    chain, the relation the rig holds rigid (on the unrolled bone it turns with the forearm's
+    roll: 60 deg of it came out on the hand). A skeleton's bone without a drive plays its
+    drive: the bone with its roll, the drive's very definition.
     Parents first, a target bone `t` that is a member's partner (`pairs[t] in members`), with
     `tp` its nearest paired ancestor, `s = pairs[t]`, `sp = pairs[tp]`, takes the rotation
 
@@ -494,7 +580,8 @@ def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="
     target_root = root_of(target)
     own_root = _own_root(pairs, source, target_root)
     target_pelvis = _find(target, pelvis)
-    now = dict((leaf, matrix(bone["world"])) for leaf, bone in target.items())
+    now = dict((leaf, matrix(bone["drive"] if use_drive and bone.get("drive") else bone["world"]))
+               for leaf, bone in target.items())
 
     def pose(s):
         bone = source[s]
