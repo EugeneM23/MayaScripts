@@ -7,6 +7,7 @@ is nothing to restore afterwards; the one thing written is the selection, and
 it is put back.
 """
 
+import contextlib
 import math
 import os
 
@@ -168,6 +169,27 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
         root = resolve_root()
     if start is None or end is None:
         start, end = export_range()
+    # The FBX exporter writes a selected bone's ANCESTORS into the file (measured 2026-10-02), so a
+    # character standing in its outliner group (2026-10-02) has its top -- the root, or the
+    # Armature Null over it -- out at world level for the length of the export, put back after.
+    with _out_of_group(root) as root:
+        return _export_hierarchy(fbx_path, root, start, end, layout)
+
+
+@contextlib.contextmanager
+def _out_of_group(root):
+    """`chargroup.lifted`, lazily and guarded: a Maya without Scene Setup exports as before."""
+    try:
+        from maya_scenesetup import chargroup
+    except ImportError:
+        yield root
+        return
+    with chargroup.lifted(root) as path:
+        yield path or root
+
+
+def _export_hierarchy(fbx_path, root, start, end, layout):
+    """The body of `export_hierarchy`, the root out of any character group."""
 
     folder = os.path.dirname(fbx_path)
     if folder and not os.path.isdir(folder):

@@ -352,7 +352,9 @@ def _trail(namespace, parent, leaf, colour, part):
 def create(char, model, info):
     """Build the network for `char` from `model`; returns the group."""
     namespace = char.namespace
-    parent = char.rig.group if char.rig else None
+    # A rig's under its own group; a skeleton's in its character group (2026-10-02), else at world
+    # level (a skeleton added before the groups).
+    parent = char.rig.group if char.rig else maya_rigs.group_of(char.root)
     made = []
 
     def node(kind, leaf, **kw):

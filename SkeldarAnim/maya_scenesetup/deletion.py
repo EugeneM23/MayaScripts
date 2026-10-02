@@ -425,12 +425,21 @@ def _skeleton_roots(rigs):
     return out
 
 
+def _character_group(path):
+    """The character's outliner group (2026-10-02), or None for one added before the groups.
+    Its display layer is a DG node touching only the group, so it goes as garbage."""
+    found = maya_rigs.group_of(path) if path else None
+    return [found] if found else []
+
+
 def _rig_character(rig):
     if rig.namespace:
         tops = [top for top in cmds.ls(assemblies=True, long=True) or []
                 if in_namespace(top, rig.namespace)]
     else:
         tops = [rig.group] + ([rig.skeleton_root] if rig.skeleton_root else [])
+    if getattr(rig, "character", ""):
+        tops = [rig.character] + tops
     joints = maya_rigs.rig_paths(rig)
     roots = [rig.skeleton_root] if rig.skeleton_root else []
     parts = tops + _skinned_meshes(roots) + _drivers(joints) + _spaces(joints) \
@@ -442,8 +451,8 @@ def _rig_character(rig):
 def _skeleton_character(root):
     uuids, label = recorded(root)
     joints = _joints(root)
-    parts = [root] + _skinned_meshes([root]) + _drivers(joints) + _spaces(joints) \
-        + _com_groups(root) + _recorded_tops(uuids)
+    parts = _character_group(root) + [root] + _skinned_meshes([root]) + _drivers(joints) \
+        + _spaces(joints) + _com_groups(root) + _recorded_tops(uuids)
     leaf = root.split("|")[-1]
     shown = "{0} ({1})".format(label, leaf) if label else "{0} (skeleton)".format(leaf)
     return Character("skeleton", shown, "", root, None, _raise(parts))

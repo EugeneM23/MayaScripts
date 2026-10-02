@@ -496,6 +496,50 @@ def place(entry, namespace, root, at):
     return node
 
 
+def group_base(entry, namespace):
+    """Pure: what a character's group and layer are named for -- a rig's namespace (`Manny_Rig1`:
+    the name every message uses), a skeleton's asset file stem (`Manny_Skeleton`, `Creep_Skeleton`,
+    `UE4_Mannequin`)."""
+    if namespace:
+        return namespace
+    return os.path.splitext(os.path.basename(getattr(entry, "file", "") or ""))[0] \
+        or getattr(entry, "key", "") or "Character"
+
+
+def world_tops(paths):
+    """Pure: the world-level DAG paths among `paths` (`|root`, `|Armature`, `|camera1`), in order,
+    without repeats."""
+    return [p for p in dict.fromkeys(paths or []) if p and p.count("|") == 1]
+
+
+def group_character(entry, new, namespace, root):
+    """The character just added, in ONE outliner group with its own display layer (2026-10-02,
+    `chargroup`). A rig's group holds every world-level node of its namespace, a skeleton's every
+    world-level node its import brought. Returns (group, layer) or (None, None)."""
+    from maya_scenesetup import chargroup
+    if namespace:
+        import maya_rigs
+        rig = maya_rigs.find(namespace)
+        root = rig.skeleton_root if rig is not None else root
+        tops = [t for t in cmds.ls(assemblies=True, long=True) or []
+                if maya_rigs.namespace_of(t) == namespace
+                or maya_rigs.namespace_of(t).startswith(namespace + ":")]
+    else:
+        tops = world_tops(cmds.ls(cmds.ls(new or [], type="transform", long=True) or [],
+                                  long=True) or [])
+    if not tops:
+        return None, None
+    return chargroup.make(group_base(entry, namespace), getattr(entry, "label", ""), root, tops)
+
+
+def character_group(root_or_rig):
+    """THE public question (2026-10-02): the character group of a root, any node of a character,
+    or a `maya_rigs.Rig` -- a long path, or None for a character added before the groups (and for
+    anything of nobody's). Park a new part of a character with `chargroup.park(node, owner)`."""
+    from maya_scenesetup import chargroup
+    return chargroup.group_of(root_or_rig)
+
+
 def add_character(entry=None, rgb=None, at=None):
     """Import a character, colour it, sweep it, connect it, and say so.
 
@@ -596,6 +640,15 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
     note = "" if namespace else rename_note(
         root, before_roots + ([root] if root else []))
     placed = at if place(entry, namespace, root, at) else None
+    # Every part in ONE outliner group with its own display layer (2026-10-02). Best effort, like
+    # the record below: the character is what the press is for, and it has arrived.
+    root_uuid = (cmds.ls(root, uuid=True) or [None])[0] if root else None
+    try:
+        group_character(entry, new, namespace, root)
+    except Exception as exc:                                     # noqa: BLE001
+        print("Add Character: no character group ({0})".format(exc))
+    if root_uuid:
+        root = (cmds.ls(root_uuid, long=True) or [root])[0]
     if root and not namespace:
         # What this import brought, for Characters > Delete (2026-10-01): a skeleton's asset can
         # carry nodes connected to nothing of it (Manny's: the dead half of a rig, a camera1),

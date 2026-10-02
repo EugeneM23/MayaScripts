@@ -599,7 +599,7 @@ def rig_skeleton_root(paths_or_rig=None):
     if paths_or_rig is None:
         rig, _ = _rig(None)
         return rig.skeleton_root if rig else ""
-    groups = set(maya_rigs.top_of(r.group) for r in maya_rigs.rigs())
+    groups = set(r.group for r in maya_rigs.rigs())
     outside = [p for p in paths_or_rig if not any(maya_rigs.under(p, g) for g in groups)]
     return maya_rigs.shallowest(outside)
 

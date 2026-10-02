@@ -98,7 +98,7 @@ class BonesOnly(unittest.TestCase):
 
     def test_every_joint_is_selected_by_its_uuid(self):
         import inspect
-        source = inspect.getsource(animexport.export_hierarchy)
+        source = inspect.getsource(animexport._export_hierarchy)
         self.assertIn("joint_ids", source)
         self.assertNotIn("cmds.select(path, replace=True)", source)
 
@@ -293,7 +293,7 @@ class CascadeurLayout(unittest.TestCase):
         """2026-09-25: «верхняя группа называлась Armature» -- the name no longer comes from
         the character."""
         import inspect
-        source = inspect.getsource(animexport.export_hierarchy)
+        source = inspect.getsource(animexport._export_hierarchy)
         self.assertIn("fbxlayout.WRAPPER_NAME", source)
         self.assertNotIn("character_name(", source)
         self.assertIn("fbxlayout.wrapped(", source)
@@ -311,4 +311,4 @@ class CascadeurLayout(unittest.TestCase):
     def test_our_character_tag_stays_out_of_the_file(self):
         """Measured: the exporter wrote `skeldarCharacter` into the FBX as a property of root."""
         import inspect
-        self.assertIn("fbxlayout.tag_held(", inspect.getsource(animexport.export_hierarchy))
+        self.assertIn("fbxlayout.tag_held(", inspect.getsource(animexport._export_hierarchy))

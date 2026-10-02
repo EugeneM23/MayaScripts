@@ -391,9 +391,14 @@ def _length(path, frame=None):
 
 def top_name(root):
     """The skeleton's top node: its root, or the group above it (the
-    Creep's Armature)."""
+    Creep's Armature) -- below the character group since 2026-10-02."""
     path = (cmds.ls(root, long=True) or [root])[0]
-    return path.split("|")[1] if path.count("|") >= 1 else path
+    parts = [p for p in path.split("|") if p]
+    if len(parts) >= 2:
+        import maya_rigs
+        if maya_rigs.is_character_group("|" + parts[0]):
+            return parts[1]
+    return parts[0] if parts else path
 
 
 def new_skeleton(entry):

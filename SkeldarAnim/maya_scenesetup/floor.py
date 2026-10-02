@@ -86,6 +86,9 @@ def drop(entry, bone, point, heading, rgb=None):
     cmds.autoKeyframe(state=False)
     try:
         weapon, note = attach.import_weapon(entry, None, rgb)
+        # The character's, so in its group (2026-10-02); an identity parent changes nothing below.
+        from maya_scenesetup import chargroup
+        weapon = chargroup.park(weapon, bone) or weapon
         scale = float(getattr(entry, "scale", 1.0) or 1.0)
         rotate, translate = lying_pose(model_box(weapon, scale), scale, point,
                                        heading)

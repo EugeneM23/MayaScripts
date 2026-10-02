@@ -133,11 +133,14 @@ def _group_under(parent, group_marker=GROUP_MARKER, group_name=GROUP_NAME):
 
 
 def group_for(hand, group_marker=GROUP_MARKER, group_name=GROUP_NAME):
-    """Where `hand`'s space stands: in the rig's own group when the hand is a rig's, else at
-    world level -- never inside the skeleton."""
+    """Where `hand`'s space stands: in the rig's own (AdvancedSkeleton) group when the hand is a
+    rig's; else in the skeleton's character group (2026-10-02: per character, not one world-level
+    group every bare skeleton shared); else -- a skeleton added before the groups -- at world
+    level. Never inside the skeleton."""
     rig = maya_rigs.rig_of(hand, maya_rigs.rigs())
-    return _group_under(maya_rigs.top_of(rig.group) if rig is not None and rig.group else None,
-                        group_marker, group_name)
+    if rig is not None and rig.group:
+        return _group_under(rig.group, group_marker, group_name)
+    return _group_under(maya_rigs.group_of(hand), group_marker, group_name)
 
 
 def ensure_marked_space(bone, marker, group_marker, group_name, suffix):

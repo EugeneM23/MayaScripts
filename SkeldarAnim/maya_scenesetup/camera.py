@@ -231,6 +231,10 @@ def setup(bone, start, end):
         cmds.setAttr(shape + ".focalLength", FOCAL)
         cmds.addAttr(transform, longName=MARKER, attributeType="bool",
                      defaultValue=True)
+        # In the bone's character group (2026-10-02), not loose at world level; an identity
+        # parent, so the placement below is the same either way.
+        from maya_scenesetup import chargroup
+        transform = chargroup.park(transform, bone) or transform
 
         cmds.xform(transform, matrix=placed_matrix(world_matrix(bone), offset),
                    worldSpace=True)
