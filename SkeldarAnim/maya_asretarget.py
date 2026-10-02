@@ -1163,7 +1163,7 @@ def _measure(root, bones, rig_bones, drives, rig):
     """The clip against the rig's game skeleton (`maya_retargetmode`)."""
     start, end = retargetmode.key_span(list(bones.values()))
     return retargetmode.measure_scene(pairs_of(drives, rig_bones), rig_bones, bones,
-                                      start, end, source=leaf(root),
+                                      start, end, source=retargetmode.clip_name(root),
                                       target=maya_rigs.label(rig))
 
 
@@ -1319,6 +1319,75 @@ def report(source_root=None, rig=None):
     return "\n".join(line for line in lines if line)
 
 
+FOLLOW_ATTR = "skeldarStretchFollow"     # on our point constraints game bone <- AS joint
+
+
+def follow_plan(bones):
+    """Pure: which game bones get a position follow for the squash & stretch.
+
+    `bones` is [(leaf, {constraint type: [targets]}, is_twist)] for the rig's
+    game skeleton. A bone driven by ONE orientConstraint and nothing that moves
+    it (no point, no parent constraint) is a bone of a rotation-only rig (the
+    Creep's procedure, 2026-09-24: «Bones take ORIENTATION only»): the AS joint
+    it turns with stands ON it (measured 0.0000 cm), so a point constraint with
+    no offset moves nothing at rest and carries a stretched FK chain into the
+    exported bone. Twist bones keep riding their parents (the AS Part joints
+    stand up to 0.17 cm off the Creep's twists). Returns [(leaf, target)]."""
+    out = []
+    for name, kinds, twist in bones:
+        if twist or "pointConstraint" in kinds or "parentConstraint" in kinds:
+            continue
+        targets = kinds.get("orientConstraint") or []
+        if len(targets) == 1:
+            out.append((name, targets[0]))
+    return out
+
+
+def position_follow(rig, on):
+    """Give a rotation-only rig's game bones their AS joints' POSITION (on) for a
+    squash & stretch take, or take it away again (off) for a rotations take, so a
+    rotations export keeps exact lengths and no translation below the pelvis.
+    Our constraints are marked (FOLLOW_ATTR) and found by that, never by name.
+    Returns (made, removed)."""
+    made = removed = 0
+    root = rig.skeleton_root
+    if not root or not cmds.objExists(root):
+        return 0, 0
+    rows = []
+    paths = {}
+    for path in [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                              fullPath=True) or []):
+        kinds = {}
+        for con in cmds.listRelatives(path, children=True, type="constraint",
+                                      fullPath=True) or []:
+            if cmds.attributeQuery(FOLLOW_ATTR, node=con, exists=True):
+                if not on:
+                    cmds.delete(con)
+                    removed += 1
+                else:
+                    kinds.setdefault("ours", []).append(con)
+                continue
+            kind = cmds.nodeType(con)
+            fn = getattr(cmds, kind, None)
+            targets = fn(con, query=True, targetList=True) if fn else []
+            kinds.setdefault(kind, []).extend(
+                [(cmds.ls(t, long=True) or [t])[0] for t in targets or []])
+        if path == root or "ours" in kinds:
+            continue
+        name = leaf(path)
+        paths[name] = path
+        rows.append((name, kinds, "twist" in name))
+    if not on:
+        return 0, removed
+    for name, target in follow_plan(rows):
+        if rig.group and not maya_rigs.under(target, rig.group):
+            continue
+        con = cmds.pointConstraint(target, paths[name], maintainOffset=False)[0]
+        cmds.addAttr(con, longName=FOLLOW_ATTR, attributeType="bool", defaultValue=True)
+        made += 1
+    return made, 0
+
+
 def connected_mode(rig=None):
     """Which retarget the standing holder was connected with: "rotation",
     "stretch", "twin", or None (nothing standing, or the legacy call)."""
@@ -1395,6 +1464,20 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
         _holder(rig)
         _remember_source(plan.root, holder)
         _remember_mode(plan.bones_mode, holder)
+        # a rotation-only rig's game bones follow their AS joints by orientation
+        # alone: a stretch take needs their positions too, a rotations take does
+        # not want them (exact lengths, no translation keys below the pelvis)
+        follow = ""
+        if plan.scaled:
+            count = position_follow(rig, True)[0]
+            if count:
+                follow = ("%d game bones now follow their AS joints' positions too (the "
+                          "rig's bones took orientation only)" % count)
+        elif plan.bones_mode == retargetmode.ROTATION:
+            count = position_follow(rig, False)[1]
+            if count:
+                follow = ("%d game bones back to orientation only (a stretch take had "
+                          "given them position)" % count)
         followers = {}
         if plan.scaled:
             # squash & stretch onto another body: the source drives read the
@@ -1490,6 +1573,8 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
                 turned, helped)]
     for note in plan.notes:
         lines.append(note)
+    if follow:
+        lines.append(follow)
     if ground:
         lines.append(ground)
     if plan.missing:

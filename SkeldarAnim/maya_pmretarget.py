@@ -839,7 +839,7 @@ def measure(source_root=None, rig=None):
         return None, plan.refusal
     start, end = retargetmode.key_span(list(plan.bones.values()))
     return retargetmode.measure_scene(pairs_of(plan.drives), plan.rig_bones, plan.bones, start, end,
-                                      source=leaf(plan.root), target=maya_rigs.label(plan.rig),
+                                      source=retargetmode.clip_name(plan.root), target=maya_rigs.label(plan.rig),
                                       extra=(OUR_ROOT, OUR_PELVIS)), ""
 
 

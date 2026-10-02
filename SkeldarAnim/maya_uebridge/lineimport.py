@@ -185,6 +185,22 @@ class _Versions(object):
     def __init__(self, clips):
         self.clips = clips
         self.decisions = None
+        # by UUID: the clip being placed is wrapped (re-parented) before it is
+        # asked about, so its recorded path is stale by then (trap 16)
+        self.uuids = []
+        for clip in clips:
+            try:
+                self.uuids.append((cmds.ls(clip["source"], uuid=True) or [None])[0])
+            except Exception:                                # noqa: BLE001
+                self.uuids.append(None)
+
+    def _source(self, index):
+        uuid = self.uuids[index] if index < len(self.uuids) else None
+        if uuid:
+            found = cmds.ls(uuid, long=True) or []
+            if found:
+                return found[0]
+        return self.clips[index]["source"]
 
     def _decide(self, measures):
         import maya_retargetmode
@@ -197,16 +213,17 @@ class _Versions(object):
             probe = getattr(mod, "measure", None)
             if probe is None:
                 return None
-            self._decide([probe(source_root=c["source"], rig=rig)[0] for c in self.clips])
+            self._decide([probe(source_root=self._source(i), rig=rig)[0]
+                          for i in range(len(self.clips))])
         return self.decisions[index]
 
     def for_skeleton(self, index):
         """A `decide` for `skeletonimport.onto_skeleton` of clip `index`."""
         def decide(source, root, label, start):
             if self.decisions is None:
-                self._decide([skeletonimport.measure(c["source"], root,
+                self._decide([skeletonimport.measure(self._source(i), root,
                                                      c["info"].get("start"), label)
-                              for c in self.clips])
+                              for i, c in enumerate(self.clips)])
             return self.decisions[index]
         return decide
 

@@ -97,6 +97,14 @@ def leaf(path):
     return path.split("|")[-1].split(":")[-1]
 
 
+def clip_name(path):
+    """What a message calls a clip's skeleton: the namespace its root was
+    imported into (the bridge names it after the animation), else the root's
+    name. Pure."""
+    node = path.split("|")[-1]
+    return node.rsplit(":", 1)[0].split(":")[-1] if ":" in node else node
+
+
 def excluded(name, extra=()):
     """Whether a bone's length says nothing about proportions. Pure."""
     low = name.lower()

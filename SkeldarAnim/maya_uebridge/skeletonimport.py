@@ -465,7 +465,7 @@ def measure(source_root, target_root, start=None, label=""):
         span = maya_retargetmode.key_span(list(source.values()))
         end = span[1]
     return maya_retargetmode.measure_scene(
-        pairs, target, source, start, end, source=leaf(source_root),
+        pairs, target, source, start, end, source=maya_retargetmode.clip_name(source_root),
         target=label or leaf(target_root))
 
 
@@ -596,7 +596,7 @@ def onto_skeleton(entry, namespace, info, source, name, point=None, decide=None)
     decision = None
     if decide is not None:
         try:
-            decision = decide(source, root, "{0} {1}".format(entry.label, top), start)
+            decision = decide(source, root, entry.label, start)
         except maya_retargetmode.Cancelled:
             discard_new(root)
             cmds.namespace(removeNamespace=namespace, deleteNamespaceContent=True)
