@@ -33,7 +33,10 @@ SPARK_RATE = 30.0           # sparks a second while it burns
 #  catalog.Model key. A model not here (the Auto card) has none: the old
 #  hover. A new character row wants a fire here (a test pins it).
 FIRES = {"Manny": "ember", "Creep": "spectral", "Orc_D": "toxic",
-         "UE4_Mannequin": "arcane"}
+         "UE4_Mannequin": "arcane",
+         #  the unknown rig or skeleton (the «?» card): a BLACK fire («для
+         #  карточки неизвестного рига и скелета ... черный огонь на фоне»)
+         "Auto": "void"}
 
 
 def fire_of(model):
@@ -60,7 +63,55 @@ PALETTES = {
                (0.24, (96, 20, 150), 0.55), (0.36, (150, 50, 220), 0.88),
                (0.52, (190, 100, 250), 1.0), (0.70, (220, 160, 255), 1.0),
                (0.86, (240, 210, 255), 1.0), (1.00, (252, 244, 255), 1.0)],
+    #  The black fire: the hotter, the blacker, a smouldering blood-red only
+    #  at its edge. Black adds nothing to a dark card, so it is LAID OVER
+    #  (STYLES' "over") a red glow of its own standing behind the tongues,
+    #  which shows them in silhouette.
+    "void": [(0.00, (0, 0, 0), 0.0), (0.10, (90, 12, 8), 0.12),
+             (0.18, (176, 34, 16), 0.62), (0.26, (74, 10, 6), 0.90),
+             (0.36, (18, 4, 4), 0.97), (0.55, (5, 2, 2), 1.0),
+             (1.00, (0, 0, 0), 1.0)],
+    #  the black fire's sparks: cinders, red cooling from orange-white
+    #  (drawn additive like every spark)
+    "cinder": [(0.00, (0, 0, 0), 0.0), (0.14, (60, 8, 4), 0.04),
+               (0.24, (140, 20, 8), 0.55), (0.36, (196, 44, 14), 0.88),
+               (0.52, (232, 80, 26), 1.0), (0.70, (246, 132, 60), 1.0),
+               (0.86, (252, 186, 126), 1.0), (1.00, (255, 230, 204), 1.0)],
 }
+
+#  How a fire is drawn beyond its palette. A fire of light ("add", every
+#  colour fire) is added onto the dark card, and its other colours come from
+#  its palette (`style`). The black fire is laid "over" a backdrop and a glow
+#  of its own - higher up and smaller (`embers_at`, `embers_reach`, in card
+#  heights and widths), so the tongues stand black against it - its sparks
+#  are cinders, and its ring, rim and glow the red of its edge. Colours are
+#  (r, g, b) 0..255.
+STYLES = {
+    "void": dict(blend="over", sparks="cinder", backdrop=(44, 26, 26),
+                 embers=(206, 44, 22), embers_strength=0.80,
+                 embers_at=0.52, embers_reach=0.78,
+                 rim=(236, 78, 44), light=(150, 36, 20),
+                 ring=(214, 58, 36), glow=(176, 30, 18)),
+}
+
+
+def style(name):
+    """How fire `name` is drawn: blend ("add" or "over"), the palette of its
+    sparks, its backdrop, embers, rim, light, ring and glow colours (r, g,
+    b), and the glow under the flames: embers_strength, its centre
+    embers_at card heights from the top, its radius embers_reach widths."""
+    def at(t):
+        r, g, b, _a = palette_rgba(name, t)
+        return (int(r), int(g), int(b))
+    r, g, b, _a = palette_rgba(name, 0.20)
+    out = dict(blend="add", sparks=name,
+               backdrop=(int(r * 0.30 + 16), int(g * 0.30 + 14),
+                         int(b * 0.30 + 15)),
+               embers=at(0.34), embers_strength=0.30, embers_at=1.15,
+               embers_reach=0.95, rim=at(0.84), light=at(0.50),
+               ring=at(0.78), glow=at(0.50))
+    out.update(STYLES.get(name, {}))
+    return out
 
 
 # ------------------------------------------------------------ palettes

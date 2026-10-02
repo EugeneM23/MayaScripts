@@ -39,10 +39,32 @@ class Palettes(unittest.TestCase):
         self.assertEqual(cf.fire_of("UE4_Mannequin"), "arcane")
 
     def test_a_model_not_named_has_no_fire(self):
-        self.assertEqual(cf.fire_of("Auto"), "")
         self.assertEqual(cf.fire_of("nobody"), "")
 
-    def test_the_lut_is_premultiplied_and_runs_dark_to_white_hot(self):
+    def test_the_unknown_card_burns_black(self):
+        """The «?» card (catalog.AUTO): «черный огонь на фоне»."""
+        self.assertEqual(cf.fire_of(catalog.AUTO), "void")
+        look = cf.style("void")
+        self.assertEqual(look["blend"], "over")         # black is laid, not added
+        self.assertIn(look["sparks"], cf.PALETTES)
+        self.assertNotEqual(look["sparks"], "void")     # its sparks still glow
+        r, g, b, a = cf.palette_rgba("void", 1.0)
+        self.assertEqual((r, g, b, a), (0, 0, 0, 1.0))  # the hottest is black
+        self.assertLess(look["embers_at"], 1.0)         # its glow stands behind
+        self.assertGreater(look["embers_strength"], cf.style("ember")["embers_strength"])
+
+    def test_every_fire_has_a_whole_style(self):
+        for name in set(cf.FIRES.values()):
+            look = cf.style(name)
+            self.assertIn(look["blend"], ("add", "over"), name)
+            self.assertIn(look["sparks"], cf.PALETTES, name)
+            for key in ("backdrop", "embers", "rim", "light", "ring", "glow"):
+                self.assertEqual(len(look[key]), 3, (name, key))
+                self.assertTrue(all(0 <= c <= 255 for c in look[key]),
+                                (name, key))
+
+    def test_the_lut_is_premultiplied_and_runs_dark_to_its_hottest(self):
+        """A fire of light runs to white-hot, the black fire to black."""
         for name in cf.PALETTES:
             lut = cf.palette_lut(name)
             self.assertEqual(lut.shape, (256, 4))
@@ -50,7 +72,10 @@ class Palettes(unittest.TestCase):
             self.assertTrue((lut[:, :3] <= lut[:, 3:4]).all(), name)
             self.assertEqual(int(lut[0, 3]), 0)
             self.assertEqual(int(lut[255, 3]), 255)
-            self.assertGreater(int(lut[255, :3].min()), 200, name)
+            if cf.style(name)["blend"] == "add":
+                self.assertGreater(int(lut[255, :3].min()), 200, name)
+            else:
+                self.assertLess(int(lut[255, :3].max()), 10, name)
 
     def test_hotter_is_never_more_transparent(self):
         for name in cf.PALETTES:

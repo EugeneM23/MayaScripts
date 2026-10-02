@@ -314,10 +314,30 @@ class FireOnHover(unittest.TestCase):
         self.assertEqual(self.grid._hover, "Creep")     # the old hover stands
 
     def test_a_model_with_no_fire_keeps_the_old_hover(self):
-        self.assertEqual(self.cf.fire_of("Auto"), "")
-        if "Auto" in self.keys():
-            self.grid.hover_model("Auto")
-            self.assertEqual(self.grid.fx, {})
+        fires = dict(self.cf.FIRES)
+        self.addCleanup(lambda: self.cf.FIRES.update(fires))
+        del self.cf.FIRES["Creep"]
+        self.grid.hover_model("Creep")
+        self.assertEqual(self.grid.fx, {})
+        self.assertEqual(self.grid._hover, "Creep")
+
+    def test_the_unknown_card_burns_black_on_a_red_glow(self):
+        """«для карточки неизвестного рига и скелета ... черный огонь»: black
+        flames (laid over, not added) against a red glow of their own."""
+        auto = self.cf.FIRES and [k for k in self.keys()
+                                  if self.cf.fire_of(k) == "void"]
+        self.assertTrue(auto, "the «?» card is in the grid")
+        black = lambda r, g, b: max(r, g, b) < 16                     # noqa: E731
+        # red, not the «?» mark's orange (accent, r/g 1.8)
+        glow = lambda r, g, b: r > 2.6 * g and r > 2.6 * b and r > 90  # noqa: E731
+        box = self.box(auto[0])
+        cold = self.render(self.grid)
+        self.assertLess(self.count(cold, box, black), 5)
+        self.assertLess(self.count(cold, box, glow), 5)
+        self.burn(auto[0])
+        hot = self.render(self.grid)
+        self.assertGreater(self.count(hot, box, black), 40)
+        self.assertGreater(self.count(hot, box, glow), 40)
 
     def test_moving_on_puts_the_first_out_and_lights_the_second(self):
         self.burn("Creep", 0.3)

@@ -8432,10 +8432,20 @@ flipbook). The verdict: «У каждого персонажа свой цвет
     the fire's colour.
   The mouse off: the source dies, the flames finish rising and burn out (1.4 s measured), the card settles.
 - **A fire per character** - `maya_charfire.FIRES` by model key: Manny `ember` (the hub's orange), Creep
-  `spectral` blue, Orc D `toxic` green, UE4 Mannequin `arcane` violet. A model not in it has no fire and
-  the old hover: the Auto card (a peer's, the same day). A new character model wants a fire there (a test
-  pins every model with a catalog row to a palette of its own). The table is NOT in `catalog.py` on
-  purpose (the peer was rewriting `MODELS` the same hour).
+  `spectral` blue, Orc D `toxic` green, UE4 Mannequin `arcane` violet, and the «?» card (`catalog.AUTO`)
+  `void`, a BLACK fire (below). A model not in it has no fire and the old hover. A new character model
+  wants a fire there (a test pins every model with a catalog row to a palette of its own). The table is
+  NOT in `catalog.py` on purpose (a peer was rewriting `MODELS` the same hour).
+- **The black fire** («для карточки неизвестного рига и скелета ... черный огонь на фоне», the same
+  evening). Black ADDED to a dark card is nothing, so a fire's look is `maya_charfire.style(name)`:
+  `blend` "add" (every colour fire, its other colours from its palette) or "over" (`STYLES["void"]`).
+  - The `void` palette runs the hotter the blacker, a blood-red only at its edge.
+  - It is LAID OVER a red glow of its own standing behind the tongues (`embers_at` 0.52 card heights,
+    `embers_reach` 0.78, strength 0.8; a colour fire's glow sits below the card), so the tongues stand
+    black against it.
+  - Its sparks are another palette (`cinder`), additive like every spark; its ring, rim and name are red.
+  - The first try put the glow at the bottom with a crimson-pink edge: the black covered its own glow and
+    read as smoke, and the pink fought the «?» mark's orange.
 - **No fire**: on a dimmed portrait, during a drag (the drag puts it out), with ⋮ → Interface animations
   off (`maya_hubmotion.enabled()`, asked through `maya_chargrid._animations`, a test seam).
 - **`SkeldarAnim/maya_charfire.py`** (numpy + stdlib; a subprocess test pins it; a payload row): the
@@ -8456,11 +8466,12 @@ flipbook). The verdict: «У каждого персонажа свой цвет
     body), the grid draws its burning cards itself, clipped.
   - The grid's `destroyed` deletes it; the content's death takes it too.
 
-Proof: `tests/test_charfire.py` 23; `tests/test_chargrid.py` 13 new (lights, not a dimmed one, not with
-the animations off, not the Auto card, moving on, burning out and the timer stopping, the Creep blue and
-the Orc green in the picture, a drag, a click burst, the overlay in a scroll area drawing it past the
-grid and the grid skipping it, a grid cut by its parent drawing itself, the overlay dying with the grid);
-3897 unit tests. `docs/superpowers/plans/verify_character_fire.py` **9/9 in a disposable GUI Maya** (port
+Proof: `tests/test_charfire.py` 25; `tests/test_chargrid.py` 14 new (lights, not a dimmed one, not with
+the animations off, not a model with no fire, moving on, burning out and the timer stopping, the Creep blue
+and the Orc green in the picture, the «?» card black on red, a drag, a click burst, the overlay in a
+scroll area drawing it past the grid and the grid skipping it, a grid cut by its parent drawing itself,
+the overlay dying with the grid); 3959 unit tests. `docs/superpowers/plans/verify_character_fire.py`
+**10/10 in a disposable GUI Maya** (port
 7037, scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`, minimized, killed after) on the repo's hub floated to the
 dock's 510 px, a real QMouseEvent on the grid:
 - the overlay at (0, 122, 510 x 376) around the grid's (16, 189, 475 x 287), drawing the Creep;
@@ -8468,8 +8479,9 @@ dock's 510 px, a real QMouseEvent on the grid:
 - the paints of a burning frame p95 **4.2 ms** (grid + overlay), a loop turn p99 9.2 ms;
 - cold 1.43 s after the mouse left, the timer stopped, the overlay hidden;
 - off with Interface animations off;
-- after `maya_hub.rebuild()`: 0 overlays left, the new grid burning again.
-Picture: the hub with Manny burning (DWM's copy of the window).
+- after `maya_hub.rebuild()`: 0 overlays left, the new grid burning again;
+- the «?» card: 471 opaque black samples and 636 red ones in the overlay's picture.
+Pictures: the hub with Manny burning, and with the «?» card (DWM's copy of the window).
 
 198. **A Bash heredoc in this harness turns a double backslash into a single one** (2026-10-02, twice:
      a patch script, and this very paragraph, both written with `<<'EOF'`, the quoted delimiter that should

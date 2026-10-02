@@ -190,17 +190,22 @@ def _classes():
         """What one fire draws with, made once."""
 
         def __init__(self, name):
+            look_of = charfire.style(name)
             self.name = name
             self.lut = charfire.palette_lut(name)
-            self.sprites = [sprite(name, t) for t in (0.62, 0.78, 0.95)]
-            self.rim = fire_colour(name, 0.84)
-            self.light = fire_colour(name, 0.50)
-            self.ring = fire_colour(name, 0.78)
-            self.glow = fire_colour(name, 0.50)
-            self.base = fire_colour(name, 0.34)
-            r, g, b, _a = charfire.palette_rgba(name, 0.20)
-            self.bg_hot = QtGui.QColor(int(r * 0.30 + 16), int(g * 0.30 + 14),
-                                       int(b * 0.30 + 15))
+            #  a fire of light is added onto the card; the black fire laid over
+            self.mode = Plus if look_of["blend"] == "add" else Over
+            self.sparks = look_of["sparks"]
+            self.sprites = [sprite(self.sparks, t) for t in (0.62, 0.78, 0.95)]
+            self.rim = QtGui.QColor(*look_of["rim"])
+            self.light = QtGui.QColor(*look_of["light"])
+            self.ring = QtGui.QColor(*look_of["ring"])
+            self.glow = QtGui.QColor(*look_of["glow"])
+            self.base = QtGui.QColor(*look_of["embers"])
+            self.embers = look_of["embers_strength"]
+            self.embers_at = look_of["embers_at"]
+            self.embers_reach = look_of["embers_reach"]
+            self.bg_hot = QtGui.QColor(*look_of["backdrop"])
 
     LOOKS = {}
 
@@ -839,7 +844,7 @@ def _classes():
                 tail = QtCore.QPointF(x - float(sparks.vel[i, 0]) * side * 0.05,
                                       y - float(sparks.vel[i, 1]) * side * 0.05)
                 grad = QtGui.QLinearGradient(head, tail)
-                grad.setColorAt(0.0, fire_colour(flame.name, 0.5 + 0.4 * left,
+                grad.setColorAt(0.0, fire_colour(flame.sparks, 0.5 + 0.4 * left,
                                                  0.65 * alpha))
                 grad.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
                 pen = QtGui.QPen(QtGui.QBrush(grad), max(1.0, d * 0.28))
@@ -912,10 +917,10 @@ def _classes():
                 p.fillRect(box, QtGui.QBrush(dark))
                 embers = QtGui.QRadialGradient(
                     QtCore.QPointF(centre.x(),
-                                   box.bottom() + box.height() * 0.15),
-                    box.width() * 0.95)
+                                   box.top() + box.height() * flame.embers_at),
+                    box.width() * flame.embers_reach)
                 c = QtGui.QColor(flame.base)
-                c.setAlphaF(min(1.0, 0.30 * heat + 0.20 * fx.flash))
+                c.setAlphaF(min(1.0, flame.embers * heat + 0.20 * fx.flash))
                 embers.setColorAt(0.0, c)
                 embers.setColorAt(1.0, QtGui.QColor(0, 0, 0, 0))
                 p.setCompositionMode(Plus)
@@ -927,6 +932,7 @@ def _classes():
                 height, width = data.shape[0], data.shape[1]
                 image = QtGui.QImage(data.data, width, height, width * 4,
                                      Premultiplied)
+                p.setCompositionMode(flame.mode)     # light added, black laid
                 p.drawImage(target, image)
                 del image, data
                 p.setCompositionMode(Over)
