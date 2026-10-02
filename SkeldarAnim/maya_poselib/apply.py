@@ -70,16 +70,19 @@ cancel would leave a step that changes nothing, and would fold whatever else the
 during the drag into it). `finish` puts the values back unrecorded first, then keys the mix in
 one `UNDO_CHUNK` - so its Ctrl+Z finds every static channel at its value from before the session,
 not at the preview's. A session ended after the TIME moved (a `finish` then keys nothing) sets
-back only the free channels; the keyed and layered ones are evaluated on the frame now shown
-(`_settle`) - their start values belong to the old frame. `plan_for` solves unrecorded too.
+back only the free channels; the keyed and layered ones are evaluated on the frame now shown,
+their feeding nodes dirtied first (`_settle`) - their start values belong to the old frame, and a
+static channel in a layer is not time-dependent. `plan_for` solves unrecorded too.
 
 ## Objects (`apply_objects`)
 
 Studio Library's attribute pose, and the SELECTION decides (`pair_objects`): with objects
-selected the pose goes onto them only - each by name with the namespace ignored, the ones left
-taking the stored objects left by order when they are as many - and nothing unselected is
-touched, the card's originals included; with nothing selected, onto the stored objects found in
-the scene (the exact path, else the one transform carrying the leaf).
+selected the pose goes onto them only - a stored object's own path first, then each by name
+with the namespace ignored (the next stored object of that name not taken yet: two referenced
+copies of one prop each take their own), the ones left taking the stored objects left by order
+when they are as many - and nothing unselected is touched, the card's originals included; with
+nothing selected, onto the stored objects found in the scene (the exact path, else the one
+transform carrying the leaf).
 
 ## Select objects (`select_objects`)
 
@@ -358,24 +361,41 @@ def pair_objects(objects, selected, found):
     """([(stored record, scene path)], how) for an objects pose - the SELECTION decides:
 
     - something selected: the pose goes onto the selection ONLY, nothing unselected is touched.
-      Each selected path whose leaf, namespace dropped, is a stored object's name takes the
-      first stored object of that name (two selected copies of one object both take it); the
-      selected paths left over then take the stored objects left over BY ORDER, when they are
-      as many. `how` is "name", "order" or "name+order"; the pairs come by-name first, in the
-      stored order, then by order;
+      A selected path that IS a stored object's path takes that object; each other selected
+      path whose leaf, namespace dropped, is a stored object's name takes the next stored
+      object of that name not taken yet, in the stored order - so two referenced copies of a
+      prop (`|propA:ctrl`, `|propB:ctrl`, one leaf) each take their own values, selected
+      together or alone - and, when every one of that name is taken, the first of them (two
+      selected copies of one object both take it); the selected paths left over then take the
+      stored objects left over BY ORDER, when they are as many. `how` is "name", "order" or
+      "name+order"; the pairs come by-name first, in the stored order (then the selection's),
+      then by order;
     - nothing selected: the stored objects found in the scene (`found`: {index: path or None},
       `_find_object`'s exact path, else the one transform carrying the leaf), `how` "stored";
     - else ([], ""). Pure."""
     selected = list(selected or ())
     if selected:
-        by_name, named, used = [], set(), set()
-        for i, record in enumerate(objects):
-            for path in selected:
-                if path not in named and scene.leaf(path) == record.get("name"):
-                    by_name.append((record, path))
-                    named.add(path)
+        taken, used = OrderedDict(), set()          # selected path -> stored index
+        for path in selected:
+            for i, record in enumerate(objects):
+                if i not in used and record.get("path") == path:
+                    taken[path] = i
                     used.add(i)
-        left_paths = [path for path in selected if path not in named]
+                    break
+        for path in selected:
+            if path in taken:
+                continue
+            same = [i for i, record in enumerate(objects)
+                    if record.get("name") == scene.leaf(path)]
+            if not same:
+                continue
+            free = [i for i in same if i not in used]
+            taken[path] = free[0] if free else same[0]
+            used.add(taken[path])
+        order = dict((path, n) for n, path in enumerate(selected))
+        by_name = [(objects[i], path) for path, i in
+                   sorted(taken.items(), key=lambda item: (item[1], order[item[0]]))]
+        left_paths = [path for path in selected if path not in taken]
         left_objects = [record for i, record in enumerate(objects) if i not in used]
         by_order = []
         if left_paths and len(left_paths) == len(left_objects):
@@ -1041,13 +1061,27 @@ class Blend(object):
     def _settle(self, now):
         """Every value back after the time MOVED since `start`: the free channels (no input)
         set back to their start values - they hold whatever a preview set - and every keyed or
-        layered one evaluated at `now` once (`currentTime(now, update=True)`, which re-evaluates
-        at the same time: measured) - its start value was the OLD frame's, and setting it would
-        leave that stale value holding until the next time change. Unrecorded, autoKey off."""
+        layered one evaluated at `now` once, with the node feeding it DIRTIED first
+        (`keys.feed_of`, then `dgdirty`, then `currentTime(now, update=True)`) - its start value
+        was the OLD frame's, and setting it would leave that stale value holding. The dirty is
+        not optional: a same-time `currentTime` re-evaluates a time curve, but a static channel
+        in a layer (an `animBlendNode` over no curve: Create Layer From Selected puts every
+        static channel of a control there) is not time-dependent and kept the preview's value
+        through every later time change - measured in DG evaluation, and in parallel for a
+        rotate, a nested and an override layer; dirtied, every case reads its own value (fix
+        round 1's probe). Unrecorded, autoKey off."""
         with _unrecorded(), _auto_off():
+            free, fed = OrderedDict(), []
             for plan, _extra in self.entries:
-                keys.preview(OrderedDict((plug, value) for plug, value in plan.current.items()
-                                         if keys.input_of(plug) == "free"))
+                for plug, value in plan.current.items():
+                    kind, node = keys.feed_of(plug)
+                    if kind == "free":
+                        free[plug] = value
+                    elif kind in ("curve", "layer") and node not in fed:
+                        fed.append(node)
+            keys.preview(free)
+            if fed:
+                cmds.dgdirty(fed)
             cmds.currentTime(now, update=True)
         _refresh()
 

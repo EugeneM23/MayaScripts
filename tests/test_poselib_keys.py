@@ -356,6 +356,24 @@ class InputOf(Restoring):
                 raise ValueError("No object matches name: " + plug)
         keys.cmds = Gone()
         self.assertEqual(keys.input_of("gone.tx"), "missing")
+        self.assertEqual(keys.feed_of("gone.tx"), ("missing", None))
+
+    def test_feed_of_names_the_node_a_blend_dirties(self):
+        # a Blend cancelled after the time moved dirties the node feeding a keyed or layered
+        # channel - a static channel in a layer is not time-dependent (fix round 1)
+        keys.cmds = PlugCmds(inputs={"a.tx": ("a_tx", "animCurveTL"),
+                                     "a.rx": ("blend1", "animBlendNodeAdditiveRotation"),
+                                     "a.ty": ("c1", "parentConstraint")})
+        self.assertEqual(keys.feed_of("a.tx"), ("curve", "a_tx"))
+        self.assertEqual(keys.feed_of("a.rx"), ("layer", "blend1"))
+        self.assertEqual(keys.feed_of("a.ty"), ("driven", "c1"))
+        self.assertEqual(keys.feed_of("a.tz"), ("free", None))
+
+    def test_feed_of_through_the_compound_parent(self):
+        # a layered rotate is fed through `rotate`, not `rotateX`
+        keys.cmds = PlugCmds(compound={"a.rx": "blend2.output"},
+                             types={"blend2": "animBlendNodeAdditiveRotation"})
+        self.assertEqual(keys.feed_of("a.rx"), ("layer", "blend2"))
 
 
 class CurrentAndPreview(Restoring):

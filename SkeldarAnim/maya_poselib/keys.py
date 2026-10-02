@@ -31,8 +31,9 @@ parent (`decomposeMatrix.outputRotate -> joint.rotate`, `plusMinusAverage.output
 translate`), which `listConnections` on the leaf does not see - `connectionInfo` does.
 
 `write` answers `Written`: the pair (keys made, notes) it always answered, and the plugs that
-took a key (`plugs`) - what a status line counts. `input_of` says what feeds a plug (free, a
-curve, a layer, driven), for a Blend that has to put back only what holds a value by itself.
+took a key (`plugs`) - what a status line counts. `feed_of` / `input_of` say what feeds a plug
+(free, a curve, a layer, driven) and through which node, for a Blend that has to put back only
+what holds a value by itself and have the rest evaluated afresh (its feeding node dirtied).
 
 `preview` is the live half (the Blend slider, a middle-drag across a card): plain `setAttr`,
 which works on layered and keyed channels and holds until the next time change; the last
@@ -193,19 +194,29 @@ def writable(plug):
     return True, ""
 
 
-def input_of(plug):
-    """What feeds `plug` now: "free" | "curve" | "layer" | "driven" (`input_kind` of its
-    source, the compound parent's included), "missing" for a plug that is not there.
+def feed_of(plug):
+    """(kind, node): what feeds `plug` now - "free" | "curve" | "layer" | "driven"
+    (`input_kind` of its source, the compound parent's included), "missing" for a plug that is
+    not there - and the node feeding it (None when free or missing).
 
     A Blend cancelled after the time moved asks it: a FREE channel holds whatever was set on it
-    and has to be set back, a keyed or layered one shows the new frame once time is evaluated -
-    setting the start's value there would leave a stale value holding until the next time
-    change."""
+    and has to be set back; a keyed or layered one is given back by evaluating the frame shown
+    with its feeding node DIRTIED first - setting the start's value there would leave the OLD
+    frame's value holding, and a same-time `currentTime` alone leaves a blend node that does not
+    depend on time clean (a static channel in a layer kept the preview's value through every
+    later time change: measured, in DG and in parallel evaluation)."""
     try:
         nodes = _feeds(plug)
     except (ValueError, RuntimeError):
-        return "missing"
-    return input_kind(cmds.objectType(nodes[0])) if nodes else "free"
+        return "missing", None
+    if not nodes:
+        return "free", None
+    return input_kind(cmds.objectType(nodes[0])), nodes[0]
+
+
+def input_of(plug):
+    """`feed_of`'s kind alone: "free" | "curve" | "layer" | "driven" | "missing"."""
+    return feed_of(plug)[0]
 
 
 def current(plugs):

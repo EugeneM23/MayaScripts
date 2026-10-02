@@ -319,11 +319,48 @@ class PairObjects(unittest.TestCase):
                          ("name", [("pCube1", "|a:pCube1"), ("pCube1", "|b:pCube1")]))
 
     def test_a_selected_object_takes_one_stored_object_of_its_name(self):
-        # two stored objects share a leaf (|a|pCube1, |b|pCube1): the selected one takes the first
+        # two stored objects share a leaf (|a|pCube1, |b|pCube1) and neither is selected: the
+        # selected copy takes the first not taken - the first
         objects = [obj("pCube1", "|a|pCube1"), obj("pCube1", "|b|pCube1")]
         got, how = ap.pair_objects(objects, ["|copy:pCube1"], {})
         self.assertEqual((how, [(o["path"], p) for o, p in got]),
                          ("name", [("|a|pCube1", "|copy:pCube1")]))
+
+    # two referenced copies of one prop share a leaf: the most common Studio-Library case. The
+    # first rewrite gave every selected path the FIRST stored object of its leaf - propB took
+    # propA's values, selected with it or alone (fix round 1)
+
+    def props(self):
+        return [obj("ctrl", "|propA:ctrl", translateX=1.0),
+                obj("ctrl", "|propB:ctrl", translateX=2.0)]
+
+    def test_two_same_named_originals_selected_each_take_their_own(self):
+        got, how = ap.pair_objects(self.props(), ["|propA:ctrl", "|propB:ctrl"], {})
+        self.assertEqual((how, [(o["path"], o["attrs"]["translateX"], p) for o, p in got]),
+                         ("name", [("|propA:ctrl", 1.0, "|propA:ctrl"),
+                                   ("|propB:ctrl", 2.0, "|propB:ctrl")]))
+        got, how = ap.pair_objects(self.props(), ["|propB:ctrl", "|propA:ctrl"], {})
+        self.assertEqual([(o["path"], p) for o, p in got],
+                         [("|propA:ctrl", "|propA:ctrl"), ("|propB:ctrl", "|propB:ctrl")])
+
+    def test_the_second_same_named_original_alone_takes_its_own(self):
+        got, how = ap.pair_objects(self.props(), ["|propB:ctrl"], {})
+        self.assertEqual((how, [(o["path"], o["attrs"]["translateX"], p) for o, p in got]),
+                         ("name", [("|propB:ctrl", 2.0, "|propB:ctrl")]))
+
+    def test_same_named_copies_take_the_stored_ones_in_order_then_the_first(self):
+        # three copies, none an original: the next not taken in the stored order, and the third,
+        # with both taken, the first of the name
+        got, how = ap.pair_objects(self.props(), ["|c1:ctrl", "|c2:ctrl", "|c3:ctrl"], {})
+        self.assertEqual((how, [(o["path"], p) for o, p in got]),
+                         ("name", [("|propA:ctrl", "|c1:ctrl"), ("|propA:ctrl", "|c3:ctrl"),
+                                   ("|propB:ctrl", "|c2:ctrl")]))
+
+    def test_an_original_keeps_its_own_and_a_copy_takes_the_other(self):
+        # propB's own path wins even selected after the copy, which then takes propA
+        got, how = ap.pair_objects(self.props(), ["|copy:ctrl", "|propB:ctrl"], {})
+        self.assertEqual((how, [(o["path"], p) for o, p in got]),
+                         ("name", [("|propA:ctrl", "|copy:ctrl"), ("|propB:ctrl", "|propB:ctrl")]))
 
 
 # ------------------------------------------------------------------ the native rebuild
@@ -415,6 +452,9 @@ class FakeCmds(object):
     def refresh(self, **kwargs):
         self.log.append(("refresh",))
 
+    def dgdirty(self, nodes):
+        self.log.append(("dirty", list(nodes), self.recording))
+
     def getAttr(self, plug):
         return 0
 
@@ -425,7 +465,7 @@ class FakeCmds(object):
 class FakeKeys(object):
     """`keys` as a press sees it: the layer (and its refusal), the quaternion note, the reads and
     writes logged. `write` keys every plug but those in `refused`; `inputs` says what feeds a
-    plug (`input_of`), "free" when unnamed."""
+    plug (`input_of`, `feed_of` - its node `feed:<plug>`), "free" when unnamed."""
 
     Written = real_keys.Written
 
@@ -461,6 +501,10 @@ class FakeKeys(object):
 
     def input_of(self, plug):
         return self.inputs.get(plug, "free")
+
+    def feed_of(self, plug):
+        kind = self.input_of(plug)
+        return kind, (None if kind in ("free", "missing") else "feed:" + plug)
 
 
 class Press(unittest.TestCase):
@@ -675,13 +719,17 @@ class Press(unittest.TestCase):
     # ---- a blend ended after the time moved
 
     FREE, KEYED = "Manny_Rig1:FKWrist_L.rotateX", "Manny_Rig1:FKWrist_L.rotateY"
+    LAYERED, DRIVEN = "Manny_Rig1:FKWrist_L.rotateZ", "Manny_Rig1:FKElbow_L.rotateX"
 
-    def moved_blend(self):
+    def moved_blend(self, inputs=None):
         def plan(data, target, mirror=False):
-            values = OrderedDict([(self.FREE, 30.0), (self.KEYED, 50.0)])
-            return ap.Plan(target, values, {self.FREE: 10.0, self.KEYED: 20.0}, [], {}), None
+            values = OrderedDict([(self.FREE, 30.0), (self.KEYED, 50.0), (self.LAYERED, 70.0),
+                                  (self.DRIVEN, 90.0)])
+            current = {self.FREE: 10.0, self.KEYED: 20.0, self.LAYERED: 40.0, self.DRIVEN: 60.0}
+            return ap.Plan(target, values, current, [], {}), None
         ap._plan = plan
-        ap.keys = FakeKeys(self.log, inputs={self.KEYED: "curve"})
+        ap.keys = FakeKeys(self.log, inputs=inputs if inputs is not None else {
+            self.KEYED: "curve", self.LAYERED: "layer", self.DRIVEN: "driven"})
         blend = ap.Blend()
         self.assertEqual(blend.start(self.card), "")
         blend.set(0.5)
@@ -691,18 +739,36 @@ class Press(unittest.TestCase):
         return blend
 
     def assert_settled(self):
-        # the free channel set back to its start value, the keyed one never written (its start
-        # value is the OLD frame's): the time evaluated once at the frame now shown, unrecorded
+        # the free channel set back to its start value, the keyed and the layered one never
+        # written (their start values are the OLD frame's): their feeding nodes dirtied - a
+        # static channel in a layer is not time-dependent, a same-time currentTime alone left it
+        # on the preview's value (fix round 1) - then the time evaluated once at the frame now
+        # shown; the driven one neither; all of it unrecorded
         previews = [entry[1] for entry in self.log if entry[0] == "preview"]
         self.assertEqual(previews, [{self.FREE: 10.0}])
+        dirty = [entry for entry in self.log if entry[0] == "dirty"]
+        self.assertEqual(dirty, [("dirty", ["feed:" + self.KEYED, "feed:" + self.LAYERED],
+                                  False)])
         times = [entry for entry in self.log if entry[0] == "time"]
         self.assertEqual(times, [("time", 13.0, True, False)])
         names = [entry[0] for entry in self.log]
-        self.assertLess(names.index("preview"), names.index("time"))
+        self.assertLess(names.index("preview"), names.index("dirty"))
+        self.assertLess(names.index("dirty"), names.index("time"))
         self.assertNotIn("open", names)
         self.assertNotIn("write", names)
         self.assertTrue(ap.cmds.recording)
         self.assertTrue(ap.cmds.auto)
+
+    def test_a_blend_over_free_channels_only_dirties_nothing(self):
+        blend = self.moved_blend(inputs={})
+        blend.cancel()
+        names = [entry[0] for entry in self.log]
+        self.assertNotIn("dirty", names)
+        self.assertEqual([entry for entry in self.log if entry[0] == "time"],
+                         [("time", 13.0, True, False)])
+        self.assertEqual([entry[1] for entry in self.log if entry[0] == "preview"],
+                         [{self.FREE: 10.0, self.KEYED: 20.0, self.LAYERED: 40.0,
+                           self.DRIVEN: 60.0}])
 
     def test_a_blend_cancelled_after_the_time_moved_sets_back_only_the_free_channels(self):
         blend = self.moved_blend()

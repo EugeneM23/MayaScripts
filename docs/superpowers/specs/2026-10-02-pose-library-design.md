@@ -87,10 +87,14 @@ on idle (trap 120): two blasts must agree, up to five, with idle events pumped b
 **Targets** are every character the selection touches (any part: «достаточно выделить любую часть»),
 each a rig or a skeleton; nothing selected → the only character in the scene, else a refusal naming
 them. An objects pose: **the selection decides** — with objects selected the pose goes onto the
-selection ONLY (nothing unselected is touched, the card's originals included): each selected object
-by name (namespace-blind) among the stored ones, the selected objects left over taking the stored
-entries left over by order when their counts match; with nothing selected, onto the stored objects
-found in the scene (the exact path first, then by leaf when exactly one transform carries it).
+selection ONLY (nothing unselected is touched, the card's originals included): a selected object
+that IS a stored one (its path) takes its own entry; each other selected object by name
+(namespace-blind) among the stored ones — the next entry of that name not taken yet, in the stored
+order, so two referenced copies of one prop each take their own values, and when every entry of the
+name is taken the first one (two selected copies of one object both take it); the selected objects
+left over taking the stored entries left over by order when their counts match; with nothing
+selected, onto the stored objects found in the scene (the exact path first, then by leaf when
+exactly one transform carries it).
 
 **Pairing** source bone → target bone (pure):
 
