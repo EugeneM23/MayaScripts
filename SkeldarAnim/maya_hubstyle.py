@@ -190,6 +190,25 @@ GLOW = {
 }
 
 
+#  A control under the mouse (2026-10-02, «все надпись немного подсвечивались
+#  легким свечением когда мы наводим на них мышкой»; prototype A, the glow in
+#  the text's own colour): its ink - luminance above its face by `lo`, fully
+#  by `lo + span` - blurred `radius` logical px, x `gain`, taken off the ink
+#  itself, added at `strength`. The orange primary button (dark letters on a
+#  lit face) gets a `rim` inside its edge instead, `rim_depth` px deep.
+#  maya_hubglow is the arithmetic, maya_hubqt.HoverGlow the drawing.
+HOVER_GLOW = {
+    "lo": 25.0,
+    "span": 70.0,
+    "radius": 5.0,
+    "gain": 2.2,
+    "strength": 0.42,
+    "rim": "#fff1e2",
+    "rim_strength": 0.38,
+    "rim_depth": 6.0,
+}
+
+
 def glow_rings(level, flash, scale=1.0):
     """The inner glow at `level` (0..1) and `flash` (0..1) at the display's
     `scale`: [(inset, width, alpha)] in logical px from the inside of the

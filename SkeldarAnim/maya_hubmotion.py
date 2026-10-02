@@ -51,6 +51,11 @@ FLASH_RISE = 0.18
 #  a fade turned back near its end still takes a moment
 LIGHT_MIN_MS = 40
 
+#  A control's glow under the mouse (2026-10-02): the card light's rhythm a
+#  little quicker, a control being smaller than a card
+GLOW_IN_MS = 110
+GLOW_OUT_MS = 220
+
 
 def _cmds():
     import maya.cmds as cmds
@@ -113,6 +118,14 @@ def light_ms(on, start, target):
     LIGHT_IN_MS / LIGHT_OUT_MS for the whole way, its share for part of it
     (a fade turned back mid-way), never under LIGHT_MIN_MS."""
     whole = LIGHT_IN_MS if on else LIGHT_OUT_MS
+    return max(LIGHT_MIN_MS, int(round(whole * abs(target - start))))
+
+
+def glow_ms(on, start, target):
+    """Milliseconds for a control's glow from `start` to `target` (0..1):
+    GLOW_IN_MS / GLOW_OUT_MS for the whole way, its share for part of it,
+    never under LIGHT_MIN_MS."""
+    whole = GLOW_IN_MS if on else GLOW_OUT_MS
     return max(LIGHT_MIN_MS, int(round(whole * abs(target - start))))
 
 
