@@ -1125,12 +1125,26 @@ class HoverGlow(SeamsMixin, unittest.TestCase):
     def test_what_glows_is_what_is_clickable(self):
         root = self.skin.root
         for widget in (self.button, self.segment, self.check, self.combo,
-                       self.card.header, self.jump, self.skin.hotkeys,
-                       self.skin.version, self.skin.menu_button):
+                       self.jump, self.skin.hotkeys, self.skin.version,
+                       self.skin.menu_button):
             self.assertTrue(hubqt.glowing(widget, root), widget)
         for widget in (self.label, self.field, self.card.body,
                        self.card.frame, self.skin.header, None):
             self.assertFalse(hubqt.glowing(widget, root), widget)
+
+    def test_a_card_header_does_not_glow_its_card_lights(self):
+        """«уберем свечение из надписей заголовков разделов мы и так разделы
+        подсвечивали раньше» - the header still ticks and lights its card."""
+        self.assertFalse(hubqt.glowing(self.card.header, self.skin.root))
+        self.assertTrue(hubqt.sounding(self.card.header, self.skin.root))
+        self._enter(self.card.header)
+        self.assertIsNone(self.card.header.graphicsEffect())
+        self.assertIsNone(self.skin.glow.lit)
+        self.assertEqual(self.skin.active, "colour")
+        title = self.card.header.findChild(QtWidgets.QLabel,
+                                           "skeldarHubCardTitle_colour")
+        self._enter(title)
+        self.assertIsNone(self.skin.glow.lit)
 
     def test_not_disabled_not_a_swatch_not_a_foreign_effect(self):
         root = self.skin.root
@@ -1173,9 +1187,11 @@ class HoverGlow(SeamsMixin, unittest.TestCase):
         self._enter(self.button)
         self._at(motion.GLOW_IN_MS)
         effect = self._effect(self.button)
+        self.assertTrue(effect.rising)
         self.now[0] = 200.0
         self._leave(self.button)
         self.assertIsNone(self.skin.glow.lit)
+        self.assertFalse(effect.rising)                    # drawn directly
         self.now[0] = 200.0 + motion.GLOW_OUT_MS / 2000.0
         self.skin.glow.tick()
         self.assertGreater(effect.level, 0.0)
@@ -1184,6 +1200,22 @@ class HoverGlow(SeamsMixin, unittest.TestCase):
         self.skin.glow.tick()
         self.assertEqual(effect.level, 0.0)
         self.assertIs(self._effect(self.button), effect)   # kept, dark
+
+    def test_a_dark_effect_is_disabled_so_qt_never_calls_it(self):
+        """Every control hovered once keeps its effect; a sliding card
+        repaints them all - dark, Qt paints them as if they had none."""
+        import maya_hubmotion as motion
+        self._enter(self.button)
+        effect = self._effect(self.button)
+        self.assertFalse(effect.isEnabled())               # not up yet
+        self._at(motion.GLOW_IN_MS / 2.0)
+        self.assertTrue(effect.isEnabled())
+        self.now[0] = 300.0
+        self._leave(self.button)
+        self.now[0] = 301.0
+        self.skin.glow.tick()
+        self.assertEqual(effect.level, 0.0)
+        self.assertFalse(effect.isEnabled())
 
     def test_one_at_a_time(self):
         self._enter(self.button)
@@ -1195,15 +1227,15 @@ class HoverGlow(SeamsMixin, unittest.TestCase):
         self._at(600)
         self.assertEqual((first.level, second.level), (0.0, 1.0))
 
-    def test_a_child_of_the_card_header_keeps_the_header_lit(self):
-        self._enter(self.card.header)
+    def test_a_child_of_a_glowing_control_keeps_it_lit(self):
+        """The mouse onto a child of the lit control (Maya builds some of
+        its controls from several widgets): the control stays lit."""
+        child = QtWidgets.QLabel("inner", self.button)
+        self._enter(self.button)
         lit = self.skin.glow.lit
-        self.assertIs(lit, self._effect(self.card.header))
-        title = self.card.header.findChild(QtWidgets.QLabel,
-                                           "skeldarHubCardTitle_colour")
-        self._enter(title)
+        self._enter(child)
         self.assertIs(self.skin.glow.lit, lit)
-        self.assertIsNone(title.graphicsEffect())
+        self.assertIsNone(child.graphicsEffect())
 
     def test_the_card_body_darkens_it(self):
         self._enter(self.button)
@@ -1349,6 +1381,43 @@ class HoverGlowPaint(unittest.TestCase):
         self.assertTrue(self.effect.broken)
         self.assertIn("no numpy today", self.effect.error)
         self.assertEqual(int(abs(lit - dark).max()), 0)
+
+    def test_going_dark_draws_the_control_directly(self):
+        """Fading out, the control is drawn as Qt draws it (its own
+        ClearType text back as the hover style comes off), the lit
+        picture's glow over it - no new source pixmap."""
+        import numpy as np
+        dark = self._grab(0.0)
+        self._grab(1.0)
+        drawn = self.effect.from_pixmap
+        self.assertGreaterEqual(drawn, 1)
+        self.effect.rising = False
+        fading = self._grab(0.6)
+        self.assertEqual(self.effect.from_pixmap, drawn)
+        diff = fading - dark
+        self.assertGreaterEqual(int(diff.min()), -1)
+        self.assertGreater(int(diff.max()), 10)
+
+    def test_going_dark_the_glow_follows_the_control(self):
+        import numpy as np
+        import maya_hubglow
+        self._grab(1.0)
+        self.effect.rising = False
+        self.host.layout().setContentsMargins(30, 50, 30, 10)
+        for _ in range(4):
+            self.app.processEvents()
+        dark = self._grab(0.0)
+        self.effect.rising = False
+        self.effect.level = 1.0
+        fading = self._grab(1.0)
+        diff = np.abs(fading - dark).max(axis=2)
+        rect = self.button.geometry()
+        reach = maya_hubglow.pad(1.0) + 1
+        outside = np.ones(diff.shape, bool)
+        outside[max(0, rect.top() - reach):rect.bottom() + reach + 1,
+                max(0, rect.left() - reach):rect.right() + reach + 1] = False
+        self.assertGreater(int(diff.max()), 10)
+        self.assertEqual(int(diff[outside].max()), 0)
 
     def test_a_working_glow_is_not_broken(self):
         self._grab(1.0)

@@ -425,9 +425,14 @@ GLOW_TICK_MS = 16
 
 def glowing(widget, root):
     """Whether `widget` glows under the mouse: a control that ticks on hover
-    (`sounding`), not a colour swatch (a dot has no ink), carrying no
-    graphics effect of somebody else's."""
+    (`sounding`), not a card header (its card lights up already - the
+    animator, minutes after the first build: «уберем свечение из надписей
+    заголовков разделов мы и так разделы подсвечивали раньше»), not a colour
+    swatch (a dot has no ink), carrying no graphics effect of somebody
+    else's."""
     if widget is None or not sounding(widget, root):
+        return False
+    if isinstance(widget, _head_class()):
         return False
     if widget.property("skRole") == "swatch":
         return False
@@ -458,8 +463,13 @@ def _glow_class():
                 self.broken = False
                 self.error = None
                 self.computed = 0
+                #  coming up or lit (the Glower says): drawn from the source
+                #  pixmap; going dark: drawn directly (see draw)
+                self.rising = True
+                self.from_pixmap = 0
                 self._key = None
                 self._image = None
+                self._delta = QtCore.QPoint()
 
             def boundingRectFor(self, rect):               # noqa: N802
                 if self.mode != "ink":
@@ -472,6 +482,17 @@ def _glow_class():
                 if self.level <= 0.002 or self.broken:
                     self.drawSource(painter)
                     return
+                if not self.rising and self._image is not None:
+                    self._draw_fading(painter)
+                    return
+                #  Coming up or lit: the control drawn from its source
+                #  pixmap, which feeds the glow (crc-cached). Its text is
+                #  then grayscale-antialiased, not ClearType (a pixmap with
+                #  alpha; measured 2026-10-02: 434 edge pixels of "Camera
+                #  Setup" up to 52 levels apart) - the switch lands with the
+                #  hover style's own repaint. Qt offers no way round it:
+                #  drawSource after sourcePixmap draws that very pixmap,
+                #  and sourcePixmap after drawSource broke the drawing.
                 offset = QtCore.QPoint()
                 padding = (QtWidgets.QGraphicsEffect.PadToEffectiveBoundingRect
                            if self.mode == "ink"
@@ -481,19 +502,42 @@ def _glow_class():
                 if source.isNull():
                     self.drawSource(painter)
                     return
+                self.from_pixmap += 1
                 inner = self.sourceBoundingRect(QtCore.Qt.DeviceCoordinates)
+                self._delta = offset - QtCore.QPoint(int(round(inner.left())),
+                                                     int(round(inner.top())))
                 painter.save()
                 try:
                     painter.setWorldTransform(QtGui.QTransform())
                     painter.drawPixmap(offset, source)
                     image = self._glow(source, inner, offset)
                     if image is not None:
-                        painter.setOpacity(min(1.0, self.level))
-                        painter.setCompositionMode(
-                            QtGui.QPainter.CompositionMode_Plus)
-                        painter.drawImage(offset, image)
+                        self._plus(painter, offset, image)
                 finally:
                     painter.restore()
+
+            def _draw_fading(self, painter):
+                """Going dark: the control drawn as Qt draws it - DIRECTLY
+                once it has repainted itself (the hover style coming off
+                as the mouse leaves), so its ClearType text is back at that
+                very moment and not when the glow ends - the glow of the
+                lit picture over it (the ink did not move), where the
+                control stands now."""
+                self.drawSource(painter)
+                inner = self.sourceBoundingRect(QtCore.Qt.DeviceCoordinates)
+                offset = QtCore.QPoint(int(round(inner.left())),
+                                       int(round(inner.top()))) + self._delta
+                painter.save()
+                try:
+                    painter.setWorldTransform(QtGui.QTransform())
+                    self._plus(painter, offset, self._image)
+                finally:
+                    painter.restore()
+
+            def _plus(self, painter, offset, image):
+                painter.setOpacity(min(1.0, self.level))
+                painter.setCompositionMode(QtGui.QPainter.CompositionMode_Plus)
+                painter.drawImage(offset, image)
 
             def _glow(self, source, inner, offset):
                 try:
@@ -548,8 +592,8 @@ class Glower(object):
     raises on a call rather than crashing - found again through
     `widget.graphicsEffect()` while the widget is in its own event. Every
     effect is held: PySide deletes one whose wrapper is collected (measured
-    2026-10-02). An effect stays on its control once made; at level 0 it
-    draws the control as it is."""
+    2026-10-02). An effect stays on its control once made; dark it is
+    disabled, and Qt paints the control as if it had none."""
 
     def __init__(self, root, scale=1.0, motion=None):
         q = qt()
@@ -592,6 +636,7 @@ class Glower(object):
             return None
         mode = "rim" if widget.property("skRole") == "primary" else "ink"
         effect = cls(mode, self.scale)
+        effect.setEnabled(False)                  # dark until it fades up
         widget.setGraphicsEffect(effect)
         self.effects = [e for e in self.effects if _valid(e)]
         self.effects.append(effect)
@@ -629,10 +674,17 @@ class Glower(object):
         self.effects = [e for e in self.effects if e is not effect]
 
     def _set(self, effect, level):
+        """`effect` at `level`; dark, it is DISABLED - Qt then paints its
+        control directly and never calls our Python `draw` (every control
+        hovered once keeps its effect, and a card sliding repaints them
+        all)."""
         if not _valid(effect):
             self._drop(effect)
             return False
         effect.level = level
+        lit = level > 0.002
+        if effect.isEnabled() != lit:
+            effect.setEnabled(lit)
         effect.update()
         return True
 
@@ -641,6 +693,7 @@ class Glower(object):
             self._drop(effect)
             return
         start = effect.level
+        effect.rising = end > 0.0
         if not self._animated() or start == end:
             self._fades.pop(id(effect), None)
             self._set(effect, end)
