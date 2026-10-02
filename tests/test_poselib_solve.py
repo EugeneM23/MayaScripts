@@ -307,6 +307,91 @@ class Unrolled(unittest.TestCase):
         self.assertEqual(rigsolve.DIRECTION_BASES, ("Shoulder", "Elbow", "Hip", "Knee"))
 
 
+class RecordingCmds(object):
+    """The few `cmds` calls `_Job.run`'s frame makes, recorded in order: the undo chunk, the
+    evaluation manager (already in `FRESH_MODE`, so `_fresh` switches nothing), the settle's
+    time change and the session's autoKey toggles."""
+
+    def __init__(self):
+        self.log = []
+
+    def undoInfo(self, openChunk=False, closeChunk=False, chunkName=None, **kwargs):
+        if openChunk:
+            self.log.append(("open", chunkName))
+        if closeChunk:
+            self.log.append(("close",))
+
+    def evaluationManager(self, query=False, mode=None):
+        if query:
+            return [rigsolve.FRESH_MODE]
+        self.log.append(("em", mode))
+
+    def currentTime(self, value=None, query=False, update=None):
+        if query:
+            return 7.0
+        self.log.append(("time", value))
+
+    def autoKeyframe(self, query=False, state=None):
+        if query:
+            return True
+        self.log.append(("autoKey", state))
+
+
+class OneUndoStep(unittest.TestCase):
+    """A solve is ONE closed undo chunk around everything it writes and puts back - the autoKey
+    toggles, the settle, every temporary setAttr and every restore - so a Ctrl+Z after it is one
+    net-nothing step. Measured before the fix (mayapy, Manny_Rig, autoKey on, a solve outside any
+    chunk): the scene came back exact, then the first Ctrl+Z turned the animator's autoKey OFF and
+    the second put the solve's temporary 30 deg on an unkeyed FKElbow_L.rotateX (trap 186). The
+    scene half is proved by the task's scratch check (undo6.py); this pins the frame's order."""
+
+    def setUp(self):
+        self.fake = RecordingCmds()
+        self.saved = rigsolve.cmds
+        rigsolve.cmds = self.fake
+
+    def tearDown(self):
+        rigsolve.cmds = self.saved
+
+    def job(self, run_pass=None):
+        from collections import OrderedDict
+        job = object.__new__(rigsolve._Job)
+        job.rig, job.members, job.notes = None, [], OrderedDict()
+        job.session = rigsolve._Session()
+        log = self.fake.log
+        job.sample = lambda: log.append(("sample",))
+        job.plan_levels = lambda: log.append(("levels",))
+        job.run_pass = run_pass or (lambda: log.append(("pass",)))
+        job.rows = lambda: []
+        return job
+
+    def test_the_chunk_holds_everything_the_solve_does(self):
+        solution = self.job().run()
+        self.assertEqual(self.fake.log, [
+            ("open", rigsolve.UNDO_CHUNK),
+            ("autoKey", False),
+            ("time", 7.0),
+            ("sample",), ("levels",), ("pass",),
+            ("autoKey", True),
+            ("close",),
+        ])
+        self.assertEqual(rigsolve.UNDO_CHUNK, "skeldarPoseSolve")
+        self.assertEqual(dict(solution.values), {})
+
+    def test_a_solve_that_raises_still_closes_its_chunk(self):
+        log = self.fake.log
+
+        def broken():
+            log.append(("pass",))
+            raise RuntimeError("half way")
+
+        with self.assertRaises(RuntimeError):
+            self.job(broken).run(settle=False)
+        self.assertEqual(log[0], ("open", rigsolve.UNDO_CHUNK))
+        self.assertEqual(log[-2:], [("autoKey", True), ("close",)])
+        self.assertEqual(sum(1 for entry in log if entry[0] == "close"), 1)
+
+
 class Shared(unittest.TestCase):
 
     def test_one_solution_shape_for_both(self):

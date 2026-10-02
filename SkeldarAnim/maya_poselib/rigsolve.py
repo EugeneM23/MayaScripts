@@ -96,6 +96,20 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
 6. read every value written (`values`, the FINAL channel values), put every temporary write back
    in reverse order, autoKey as it was.
 
+**All of it is ONE closed undo chunk** (`UNDO_CHUNK`, `_one_undo_step`, outermost: around the
+evaluation switch, the settle, the autoKey toggles, every temporary `setAttr` and every restore),
+so a Ctrl+Z after a solve is one step that changes nothing and the next undoes what the animator
+did before it - inside Apply's own chunk it nests and goes with Apply. Measured without it
+(mayapy, Manny_Rig, autoKey on, a solve of `lowerarm_l` outside any chunk, its target the
+unkeyed `FKElbow_L.rotateX` at 30 with the rig at 0): the scene came back exact, then the first
+Ctrl+Z turned the animator's autoKey OFF and the second set `FKElbow_L.rotateX` to 30 - the
+solve's temporary value, lasting on a static channel - while the marker the animator changed
+just before the solve stayed changed (trap 186: a round trip leaves its steps on the queue).
+With the chunk, on that scene, on a keyed rig solved whole under the parallel EM, nested in an
+outer chunk and on a solve that raises half way: one Ctrl+Z leaves every control channel, its
+keys, autoKey, the evaluation mode and the time as found, redo too, and the second takes the
+marker back.
+
 The spine in IK (`FKIKSpine_M` not 0) takes the pose on its FK half, said so. A limb in IK whose
 FK forearm / calf is twisted about its own bone loses that twist (an IK elbow is a hinge) - the
 angle is measured after the IK is set and said, as the Connections FK / IK switch does.
@@ -160,6 +174,7 @@ ROTATE = ("rotateX", "rotateY", "rotateZ")
 TRANSLATE = ("translateX", "translateY", "translateZ")
 
 FRESH_MODE = "off"         # the evaluation the solve reads under; None leaves the manager be
+UNDO_CHUNK = "skeldarPoseSolve"   # the one undo step a solve's round trip makes
 PASSES = 3                 # solve, measure, solve again - at most
 TOL_DEG = 0.01
 TOL_CM = 0.01
@@ -452,6 +467,21 @@ def drive_matrices(rig):
 
 
 # ------------------------------------------------------------------ scene state
+
+@contextlib.contextmanager
+def _one_undo_step():
+    """The block as ONE closed undo chunk (`UNDO_CHUNK`), closed whatever happens: a solve's
+    writes and their restores net to nothing, so undoing the chunk is a step that changes
+    nothing - left loose, each write, each restore and each autoKey toggle is a step of its own
+    and the animator's next Ctrl+Z presses replay them onto the rig (trap 186). Not
+    `stateWithoutFlush`: switching the queue off inside Apply's chunk breaks that chunk (trap
+    145); a chunk nests in it."""
+    cmds.undoInfo(openChunk=True, chunkName=UNDO_CHUNK)
+    try:
+        yield
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
 
 @contextlib.contextmanager
 def _fresh():
@@ -855,7 +885,7 @@ class _Job(object):
         return _rows(self.rig, self.bases, self.game, self.wanted, self.members)
 
     def run(self, settle=True):
-        with _fresh(), self.session:
+        with _one_undo_step(), _fresh(), self.session:
             if settle:
                 cmds.currentTime(cmds.currentTime(query=True), update=True)
             self.sample()
@@ -912,8 +942,10 @@ def solve(rig, wanted, members, settle=True):
     """Solution: the FINAL channel values of the rig's controls that put the `members` (game
     leaves) on `wanted` ({game leaf: matrix} for every target bone - `posemath.targets`, the six
     unrolled bones in drive form). The scene is left exactly as found: every temporary
-    `setAttr` is put back, autoKey as it was, the evaluation manager as it was. `skipped` names
-    the plugs that could not be written (`keys.writable`), `notes` what the line should say."""
+    `setAttr` is put back, autoKey as it was, the evaluation manager as it was - and the round
+    trip is ONE undo step (`UNDO_CHUNK`) that changes nothing when undone, nested in a caller's
+    own chunk when there is one. `skipped` names the plugs that could not be written
+    (`keys.writable`), `notes` what the line should say."""
     return _Job(rig, wanted, members).run(settle)
 
 
