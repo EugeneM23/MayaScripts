@@ -21,7 +21,17 @@ about WHEN the press asks as much as about what it builds.
      same two ways, a twin exact without asking.
   f  a batch of three clips onto Creep skeletons asks ONCE, the worst named.
   g  Cancel - the Retarget button, a bridge import onto a new rig, a batch onto new rigs:
-     no node left behind, the rig's take as it was.
+     no node left behind, the rig's take as it was, the scene's time unit, its keys, its
+     ranges and its frame as they were (an FBX import switches all four).
+  h  the scale pivot (the fix pass): a clip standing off the origin, moved and turned,
+     squashed & stretched onto a Creep through the Retarget button - the game root starts
+     where the clip's root does, not (1 - s) of the way to the origin; and a bridge import
+     onto a Creep standing turned at a place keeps it there.
+
+The fix pass (2026-10-02) also made b4 measure the stretch AS THE RIG STANDS (legs in
+IK keep their lengths and say so), b6 find the follows by their attribute and put the
+bones' translates back, e check that Rotations keep Manny's IK feet on the clip's, and
+d move the clip after the connect (one frame for the PlayerMale's body).
 """
 import math
 import os
@@ -39,7 +49,7 @@ PLUGIN = (sys.argv[1] if len(sys.argv) > 1 and os.path.isdir(sys.argv[1])
           else os.path.normpath(os.path.join(HERE, "..", "..", "..", "SkeldarAnim")))
 if not os.path.isdir(PLUGIN):
     PLUGIN = os.path.normpath(os.path.join(HERE, "..", "..", "SkeldarAnim"))
-PHASES = set((sys.argv[2] if len(sys.argv) > 2 else "a,b,c,f,g").split(","))
+PHASES = set((sys.argv[2] if len(sys.argv) > 2 else "a,b,c,f,g,h").split(","))
 sys.path.insert(0, PLUGIN)
 for p in ("matrixNodes", "quatNodes", "fbxmaya"):
     try:
@@ -218,6 +228,80 @@ def compare(target_root, source_root, samples, scale=1.0):
     return worst_pos, worst_rot, worst_dir, worst_len
 
 
+LIMB_BONES = {"leg_l": ("thigh_l", "calf_l", "foot_l", "ball_l"),
+              "leg_r": ("thigh_r", "calf_r", "foot_r", "ball_r"),
+              "arm_l": ("upperarm_l", "lowerarm_l", "hand_l"),
+              "arm_r": ("upperarm_r", "lowerarm_r", "hand_r")}
+
+
+def ik_bones(rig):
+    """{limb in IK: its game bones} (fingers ride an IK hand too)."""
+    out = {}
+    for limb in ar.ik_limbs(dict((label, cmds.getAttr(maya_rigs.node(rig, "FKIK%s%s.FKIKBlend" % (b, s))))
+                                 for b, s, label in ar.IK_LIMBS
+                                 if cmds.objExists(maya_rigs.node(rig, "FKIK%s%s.FKIKBlend" % (b, s))))):
+        names = set(LIMB_BONES[limb])
+        if limb.startswith("arm"):
+            side = limb[-1]
+            names |= set(n for n in by_leaf(rig.skeleton_root)
+                         if n.endswith("_" + side) and rm.region_of(n) == "fingers")
+        out[limb] = names
+    return out
+
+
+def compare_as_it_stands(target_root, source_root, samples, scale, limbs):
+    """The stretch take as the rig stands: (worst position of a bone OUTSIDE the IK limbs off
+    the scaled clip joint, its bone; worst length change of an IK limb's bone against the
+    bind; worst IK END bone off the scaled clip joint)."""
+    inside = set()
+    for names in limbs.values():
+        inside |= names
+    ends = set(n for names in limbs.values() for n in names if n.startswith(("foot_", "hand_")))
+    pairs = [(n, t, s) for n, t, s in skeleton_pairs(target_root, source_root)
+             if not n.startswith(SKIP_POS) and "twist" not in n]
+    tpaths = dict((n, t) for n, t, _ in pairs)
+    rest = bind_lengths(tpaths)
+    out_pos, ik_len, ik_end = (0.0, ""), (0.0, ""), (0.0, "")
+    for f in samples:
+        cmds.currentTime(f, update=True)
+        now = lengths_now(tpaths)
+        for n, t, s in pairs:
+            d = (pos(t) - pos(s) * scale).length()
+            if n in ends and d > ik_end[0]:
+                ik_end = (d, "%s@%g" % (n, f))
+            if n in inside:
+                if n in rest and n in now and n not in ("foot_l", "foot_r", "hand_l", "hand_r"):
+                    dl = abs(now[n] - rest[n])
+                    if dl > ik_len[0]:
+                        ik_len = (dl, "%s@%g" % (n, f))
+                continue
+            if d > out_pos[0]:
+                out_pos = (d, "%s@%g" % (n, f))
+    return out_pos, ik_len, ik_end
+
+
+def time_setup():
+    """A film scene with keys of its own, ranges and a frame - what a Cancel must give back."""
+    cmds.currentUnit(time="film", updateAnimation=True)
+    loc = cmds.spaceLocator(name="verifyTimeKeys")[0]
+    cmds.setKeyframe(loc, attribute="tx", time=24, value=1)
+    cmds.setKeyframe(loc, attribute="tx", time=48, value=2)
+    cmds.playbackOptions(min=5, max=40, animationStartTime=0, animationEndTime=50)
+    cmds.currentTime(7)
+    return loc
+
+
+def time_now(loc):
+    return (cmds.currentUnit(q=True, time=True),
+            tuple(cmds.keyframe(loc + ".tx", q=True, timeChange=True) or []),
+            tuple(cmds.playbackOptions(q=True, **{f: True})
+                  for f in ("min", "max", "animationStartTime", "animationEndTime")),
+            cmds.currentTime(q=True))
+
+
+TIME_EXPECTED = ("film", (24.0, 48.0), (5.0, 40.0, 0.0, 50.0), 7.0)
+
+
 def region_lengths(paths):
     out = {}
     for n, l in lengths_now(paths).items():
@@ -301,6 +385,7 @@ if "b" in PHASES:
         m, _ = ar.measure(source_root=src, rig=keep)
         print("    measured:", m.median, m.scale, m.regions, m.stretch_bone, m.stretch_cm)
         before_regions = region_lengths(dict((n, p) for n, p in by_leaf(squash.skeleton_root).items()))
+        bind_t = dict((n, cmds.getAttr(p + ".translate")[0]) for n, p in by_leaf(squash.skeleton_root).items())
         del ASKED[:]
         ANSWER[0] = rm.KEEP
         ok, text = rr.run_retarget(source_root=src, rig=keep)
@@ -321,7 +406,15 @@ if "b" in PHASES:
         gate("b3-" + key, ok and len(ASKED) == 1 and "stretch - %s squashed" % squash.namespace in text,
              "Auto asked once; Squash & stretch -> stretch")
         cmds.currentTime(first, update=True)
-        ik_pos = compare(squash.skeleton_root, src, samples, m.scale)[0]
+        limbs = ik_bones(squash)
+        out_pos, ik_len, ik_end = compare_as_it_stands(squash.skeleton_root, src, samples, m.scale, limbs)
+        named = all(limb in text for limb in limbs) and ("in IK keep" in text if limbs else True)
+        gate("b4-" + key, out_pos[0] < 0.05 and ik_len[0] < 1e-3 and ik_end[0] < 1.0 and named,
+             "stretch AS THE RIG STANDS: every bone outside the IK limbs (%s) on the clip's joint at "
+             "x%.4f to %.4f cm (%s); the IK limbs' bones keep their lengths to %.2e cm (%s), their ends "
+             "%.4f cm off the clip's (%s); the line names them: %s"
+             % (", ".join(sorted(limbs)) or "none", m.scale, out_pos[0], out_pos[1], ik_len[0], ik_len[1],
+                ik_end[0], ik_end[1], named))
         # the FK product: every limb shown in FK for the measurement (the rig's legs default to
         # IK, and an IK limb reaches with the rig's own lengths) and put back after
         blends = [maya_rigs.node(squash, "FKIK%s_%s.FKIKBlend" % (limb, side))
@@ -335,12 +428,10 @@ if "b" in PHASES:
         finally:
             for b, v in held:
                 cmds.setAttr(b, v)
-        gate("b4-" + key, worst_pos[0] < 0.05 and worst_rot[0] < 0.05,
-             "stretch, the limbs shown in FK: every paired bone on the clip's joint at x%.4f to %.4f cm "
-             "(%s), turned as the clip's to %.4f deg (%s); lengths moved up to %.2f cm; as the rig "
-             "stands (legs in IK, the rig's own lengths) %.4f cm (%s)"
-             % (m.scale, worst_pos[0], worst_pos[1], worst_rot[0], worst_rot[1], worst_len[0],
-                ik_pos[0], ik_pos[1]))
+        gate("b4fk-" + key, worst_pos[0] < 0.05 and worst_rot[0] < 0.05,
+             "stretch, the limbs switched to FK for the measurement: every paired bone on the clip's "
+             "joint at x%.4f to %.4f cm (%s), turned as the clip's to %.4f deg (%s); lengths moved up "
+             "to %.2f cm" % (m.scale, worst_pos[0], worst_pos[1], worst_rot[0], worst_rot[1], worst_len[0]))
         cmds.currentTime(first, update=True)
         after_regions = region_lengths(dict((n, p) for n, p in by_leaf(squash.skeleton_root).items()))
         measured = dict(m.regions)
@@ -354,21 +445,26 @@ if "b" in PHASES:
         gate("b5-" + key, worst_pp < 1.0,
              "the lengths changed by the measured difference at the first frame: %s - worst %.2f points"
              % (", ".join(rows), worst_pp))
-        follows = [c for c in cmds.ls(type="pointConstraint", long=True)
-                   if cmds.attributeQuery(ar.FOLLOW_ATTR, node=c, exists=True)
-                   and c.startswith("|" + squash.namespace)]
+        def our_follows():
+            return [c for c in cmds.listRelatives(squash.skeleton_root, allDescendents=True,
+                                                  type="pointConstraint", fullPath=True) or []
+                    if cmds.attributeQuery(ar.FOLLOW_ATTR, node=c, exists=True)]
+        follows = our_follows()
+        followed = set(leaf(cmds.listRelatives(c, parent=True, fullPath=True)[0]) for c in follows)
         # the same rig retargeted again with Rotations: the position follow taken away, every
         # length back to the bind
         del ASKED[:]
         ok, text = rr.run_retarget(source_root=src, rig=squash, bones=rm.ROTATION)
-        left = [c for c in cmds.ls(type="pointConstraint")
-                if cmds.attributeQuery(ar.FOLLOW_ATTR, node=c, exists=True)
-                and c.startswith(squash.namespace + ":")]
+        left = our_follows()
+        now_t = by_leaf(squash.skeleton_root)
+        worst_t = max([max(abs(a - b) for a, b in zip(cmds.getAttr(now_t[n] + ".translate")[0], bind_t[n]))
+                       for n in followed if n in now_t] or [0.0])
         worst_pos, worst_rot, worst_dir, worst_len = compare(squash.skeleton_root, src, samples)
-        gate("b6-" + key, ok and not ASKED and follows and not left and worst_len[0] < 1e-4,
-             "stretch gave %d game bones a position follow; Rotations on the same rig takes them "
-             "away (%d left) and every length is the bind's again to %.2e cm (%s)"
-             % (len(follows), len(left), worst_len[0], worst_len[1]))
+        gate("b6-" + key, ok and not ASKED and follows and not left and worst_len[0] < 1e-4 and worst_t < 1e-6,
+             "stretch gave %d game bones a position follow (found by their attribute under the "
+             "skeleton); Rotations on the same rig takes them away (%d left), their translates "
+             "written back to the bind's to %.2e, every length the bind's again to %.2e cm (%s)"
+             % (len(follows), len(left), worst_t, worst_len[0], worst_len[1]))
 
 # ------------------------------------------------------------------- c
 if "c" in PHASES:
@@ -423,6 +519,7 @@ if "e" in PHASES:
         for answer in (rm.KEEP, rm.SQUASH):
             cmds.file(new=True, force=True)
             rig = add("Manny_Rig")
+            legacy = add("Manny_Rig") if answer == rm.KEEP else None
             src = import_clip(MIXAMO, "mx")
             first, last = clip_range(src)
             cmds.playbackOptions(min=first, max=last, animationStartTime=first, animationEndTime=last)
@@ -439,6 +536,8 @@ if "e" in PHASES:
             game = plan.rig_bones
             rest = bind_lengths(game)
             parent = (cmds.listRelatives(src, parent=True, fullPath=True) or [None])[0]
+            # the stretch scales about the clip root's first-frame floor point (the fix pass)
+            pivot_w = rm.floor_pivot(rm.root_start(src, first))
             blends = [maya_rigs.node(rig, "FKIK%s_%s.FKIKBlend" % (limb, side))
                       for limb in ("Arm", "Leg") for side in ("L", "R")]
             for b in [b for b in blends if cmds.objExists(b)]:
@@ -456,12 +555,42 @@ if "e" in PHASES:
                     if ours in ("root",) or ours.startswith(SKIP_POS) or theirs not in plan.bones:
                         continue
                     p = om.MPoint(pos(plan.bones[theirs])) * pm_.inverse()
-                    expected = om.MPoint(p.x * m.scale, p.y * m.scale, p.z * m.scale) * pm_
+                    c = om.MPoint(*pivot_w) * pm_.inverse()
+                    expected = om.MPoint(c.x + (p.x - c.x) * m.scale, c.y + (p.y - c.y) * m.scale,
+                                         c.z + (p.z - c.z) * m.scale) * pm_
                     dd = (om.MVector(pos(game[ours])) - om.MVector(expected)).length()
                     if dd > worst_pos[0]:
                         worst_pos = (dd, "%s@%g" % (ours, f))
             tag = "e-%s" % ("keep" if answer == rm.KEEP else "squash")
             if answer == rm.KEEP:
+                # the legacy road kept (the fix pass): Rotations on a rig without the rotation
+                # mark IS the legacy plan for a foreign clip - FK by angle, the IK ends on the
+                # clip's hands and feet. A second Manny retargeted by the legacy call must stand
+                # where the first does, bone for bone, with the limbs in FK and in IK
+                cmds.currentTime(first, update=True)
+                ar.reset_build_pose(legacy)
+                print("   ", ar.connect(source_root=src, rig=legacy).splitlines()[0][:160])
+                print("   ", rr.bake(rig=legacy)[:120])
+                a, b = by_leaf(rig.skeleton_root), by_leaf(legacy.skeleton_root)
+                lblends = [maya_rigs.node(legacy, "FKIK%s_%s.FKIKBlend" % (limb, side))
+                           for limb in ("Arm", "Leg") for side in ("L", "R")]
+                same = (0.0, "")
+                for value in (0, 10):
+                    for blend in [x for x in blends + lblends if cmds.objExists(x)]:
+                        cmds.setAttr(blend, value)
+                    for f in samples:
+                        cmds.currentTime(f, update=True)
+                        for n in a:
+                            if n in b:
+                                dd = (pos(a[n]) - pos(b[n])).length()
+                                if dd > same[0]:
+                                    same = (dd, "%s@%g blend %d" % (n, f, value))
+                for blend in [x for x in blends + lblends if cmds.objExists(x)]:
+                    cmds.setAttr(blend, 0)
+                gate(tag + "-legacy", same[0] < 1e-5 and "ROTATIONS (every bone its own length" in text,
+                     "Rotations on Manny IS the legacy plan for a Mixamo clip: against a Manny retargeted "
+                     "by the legacy call, worst %.2e cm (%s), limbs in FK and in IK; the line says so"
+                     % same)
                 # Manny's game bones follow AS by the vendor's -mo point constraints, and its
                 # left leg's fit stands 0.0637 cm off calf_l (CLAUDE.md, the twin work): that
                 # offset wanders with the knee's roll, so 0.1 cm is this rig's own floor
@@ -505,6 +634,8 @@ if "d" in PHASES:
             game = by_leaf(rig.skeleton_root)
             fk = [d for d in plan.drives if d.kind == "fk"]
             rest = bind_lengths(game)
+            pelvis_src = plan.bones.get(dict((pm.our_bone(d.control), d.source) for d in plan.drives
+                                             if d.kind == "pelvis").get(pm.OUR_PELVIS, ""))
             worst_pos, worst_len = (0.0, ""), (0.0, "")
             # the FK product: the limbs shown in FK (the Lugal's legs default to IK)
             blends = [maya_rigs.node(rig, "FKIK%s_%s.FKIKBlend" % (limb, side))
@@ -521,8 +652,11 @@ if "d" in PHASES:
                             worst_len = (d, "%s@%g" % (n, f))
                 for d in fk:
                     ours, theirs = pm.our_bone(d.control), plan.bones.get(d.source)
-                    if ours in game and theirs:
-                        dd = (pos(game[ours]) - pos(theirs) * plan.scale).length()
+                    if ours in game and theirs and pelvis_src:
+                        # the body: the clip's shape about its pelvis at our size (the PlayerMale's
+                        # FK hangs off its scaled pelvis, rest offset and all - the fix pass)
+                        dd = ((pos(game[ours]) - pos(game[pm.OUR_PELVIS]))
+                              - (pos(theirs) - pos(pelvis_src)) * plan.scale).length()
                         if dd > worst_pos[0]:
                             worst_pos = (dd, "%s@%g" % (ours, f))
             tag = "d-%s" % ("keep" if answer == rm.KEEP else "squash")
@@ -533,9 +667,55 @@ if "d" in PHASES:
                      % (len(ASKED), worst_len[0], worst_len[1]))
             else:
                 gate(tag, ok and len(ASKED) == 1 and "SQUASH" in text.upper() and worst_pos[0] < 0.01,
-                     "asked once, stretch: every FK-driven game bone on the clip's joint at x%.4f to %.4f "
-                     "units (%s); lengths moved up to %.3f units"
+                     "asked once, stretch: every FK-driven game bone about the game pelvis is the clip's "
+                     "shape about its pelvis at x%.4f to %.4f units (%s); lengths moved up to %.3f units"
                      % (plan.scale, worst_pos[0], worst_pos[1], worst_len[0]))
+
+        # the PlayerMale's stretch in ONE frame (the fix pass): the clip wrapped, connected,
+        # then moved and turned as the bridge moves it - the body must stay the clip's scaled
+        # shape about its pelvis (FK riding a rigid copy of the clip's top node while Main and
+        # the pelvis rode the scaled group tore it by (1 - s) of the move)
+        cmds.file(LUGAL, open=True, force=True, executeScriptNodes=False, prompt=False)
+        rig = maya_rigs.rigs()[0]
+        src = import_clip(HEAVY, "clip")
+        first, last = clip_range(src)
+        cmds.playbackOptions(min=first, max=last, animationStartTime=first, animationEndTime=last)
+        wrap = cmds.group(empty=True, name="verifyWrap")
+        src = cmds.parent(src, wrap)[0]
+        src = cmds.ls(src, long=True)[0]
+        cmds.currentTime(first, update=True)
+        pm.reset_build_pose(rig)
+        plan = pm._plan(src, rig)          # before the connect: its rests are the build pose's
+        print("   ", pm.connect(source_root=src, rig=rig, bones=rm.STRETCH).splitlines()[0][:200])
+        cmds.setAttr(wrap + ".translate", 30.0, 0.0, 20.0)
+        cmds.setAttr(wrap + ".rotate", 0.0, 25.0, 0.0)
+        # the limbs shown in FK, as d-squash measures them (the Lugal's legs default to IK, and an
+        # IK leg reaches with the rig's own lengths - the stretch's stated limit, not the frame's)
+        for blend in [maya_rigs.node(rig, "FKIK%s_%s.FKIKBlend" % (limb, side))
+                      for limb in ("Arm", "Leg") for side in ("L", "R")]:
+            if cmds.objExists(blend):
+                cmds.setAttr(blend, 0)
+        game = by_leaf(rig.skeleton_root)
+        tear = (0.0, "")
+        pelvis_src = plan.bones.get(dict((pm.our_bone(d.control), d.source) for d in plan.drives
+                                         if d.kind == "pelvis").get(pm.OUR_PELVIS, ""), None)
+        for f in frames(first, last, 5):
+            cmds.currentTime(f, update=True)
+            for d in plan.drives:
+                if d.kind != "fk":
+                    continue
+                ours, theirs = pm.our_bone(d.control), plan.bones.get(d.source)
+                if ours in game and theirs and pelvis_src and pm.OUR_PELVIS in game:
+                    got = pos(game[ours]) - pos(game[pm.OUR_PELVIS])
+                    want = (pos(theirs) - pos(pelvis_src)) * plan.scale
+                    dd = (got - want).length()
+                    if dd > tear[0]:
+                        tear = (dd, "%s@%g" % (ours, f))
+        pm.disconnect(rig=rig)
+        gate("d-frame", tear[0] < 0.01,
+             "the clip moved 36 units and turned 25 deg after the connect: every FK-driven game bone "
+             "about the game pelvis is the clip's shape about its pelvis at x%.4f to %.4f units (%s)"
+             % (plan.scale, tear[0], tear[1]))
 
 # ------------------------------------------------------------------- f
 if "f" in PHASES:
@@ -593,7 +773,8 @@ if "g" in PHASES:
          and not leftovers(before) and not (snapshot() ^ before),
          "the Retarget button: Cancel -> %r, the rig's %d curves and %d keys as they were, nodes %+d"
          % (text, len(curves), len(keys), len(snapshot()) - len(before)))
-    # a bridge import onto a NEW Creep rig, cancelled
+    # a bridge import onto a NEW Creep rig, cancelled - in a film scene with keys of its own
+    keys_loc = time_setup()
     saved_entry = rigimport.new_rig_entry
     rigimport.new_rig_entry = lambda: catalog.character_by_key("Creep_Rig")
     namespaces = set(cmds.namespaceInfo(":", listOnlyNamespaces=True) or [])
@@ -604,14 +785,18 @@ if "g" in PHASES:
     finally:
         rigimport.new_rig_entry = saved_entry
     left = leftovers(before)
+    timing = time_now(keys_loc)
     gate("g2", text == rigimport.CANCELLED and len(ASKED) == 1 and not left
          and set(cmds.namespaceInfo(":", listOnlyNamespaces=True) or []) == namespaces
-         and len(maya_rigs.rigs()) == 1,
-         "a bridge import onto a new Creep: %r, %d node(s) left %s, rigs %d, namespaces as they were"
-         % (text, len(left), left[:5], len(maya_rigs.rigs())))
+         and len(maya_rigs.rigs()) == 1 and timing == TIME_EXPECTED,
+         "a bridge import onto a new Creep: %r, %d node(s) left %s, rigs %d, namespaces as they were; "
+         "the time as it was: %s (unit, the scene's own keys, ranges, frame)"
+         % (text, len(left), left[:5], len(maya_rigs.rigs()), timing))
     # a batch onto new rigs, cancelled
     Rec = __import__("collections").namedtuple("Rec", "name package fps")
     rigimport.new_rig_entry = lambda: catalog.character_by_key("Creep_Rig")
+    cmds.delete(keys_loc)
+    keys_loc = time_setup()
     before = snapshot()
     del ASKED[:]
     try:
@@ -620,10 +805,94 @@ if "g" in PHASES:
     finally:
         rigimport.new_rig_entry = saved_entry
     left = leftovers(before)
+    timing = time_now(keys_loc)
     gate("g3", lineimport.CANCELLED in text and len(ASKED) == 1 and not left and len(maya_rigs.rigs()) == 1
-         and set(cmds.namespaceInfo(":", listOnlyNamespaces=True) or []) == namespaces,
-         "a batch of two onto new Creeps: %r, one question, %d node(s) left %s"
-         % (text, len(left), left[:5]))
+         and set(cmds.namespaceInfo(":", listOnlyNamespaces=True) or []) == namespaces
+         and timing == TIME_EXPECTED,
+         "a batch of two onto new Creeps: %r, one question, %d node(s) left %s; the time as it was: %s"
+         % (text, len(left), left[:5], timing))
+
+# ------------------------------------------------------------------- h
+if "h" in PHASES:
+    print("--- phase h: the scale pivot - a clip off the origin, a rig at a place")
+    cmds.file(new=True, force=True)
+    creep = add("Creep_Rig")
+    src = import_clip(HEAVY, "clip")
+    first, last = clip_range(src)
+    cmds.playbackOptions(min=first, max=last, animationStartTime=first, animationEndTime=last)
+    moved = cmds.group(empty=True, name="verifyMoved")
+    src = cmds.ls(cmds.parent(src, moved)[0], long=True)[0]      # parented at rest, THEN changed
+    # the group stays at the origin, turned 30 and scaled 0.8 (the Creep's legs equal a UE clip's,
+    # so at x1 no pivot could show); the ROOT starts away from it: its own keys moved (150, -80)
+    cmds.setAttr(moved + ".rotate", 0.0, 30.0, 0.0)
+    cmds.setAttr(moved + ".scale", 0.8, 0.8, 0.8)
+    for attr, value in (("tx", 150.0), ("tz", -80.0)):
+        if cmds.keyframe(src + "." + attr, q=True, keyframeCount=True):
+            cmds.keyframe(src + "." + attr, edit=True, relative=True, valueChange=value)
+        else:
+            cmds.setAttr(src + "." + attr, cmds.getAttr(src + "." + attr) + value)
+    start = cmds.getAttr(src + ".worldMatrix[0]", time=first)
+    m, _ = ar.measure(source_root=src, rig=creep)
+    del ASKED[:]
+    ok, text = rr.run_retarget(source_root=src, rig=creep, bones=rm.STRETCH)
+    print("   ", text[:220])
+    cmds.currentTime(first, update=True)
+    root = by_leaf(creep.skeleton_root)["root"]
+    got = pos(root)
+    off = math.hypot(got.x - start[12], got.z - start[14])
+    origin = math.hypot(got.x - m.scale * start[12], got.z - m.scale * start[14])
+    gate("h1", ok and not ASKED and off < 0.01,
+         "a clip whose root starts at (%.1f, %.1f) away from its space's origin, stretched at x%.4f: "
+         "the game root starts on it to %.4f cm (scaled about the space's origin it would stand %.2f cm "
+         "away)"
+         % (start[12], start[14], m.scale, off, origin))
+    samples = frames(first, last)
+    shape = (0.0, "")
+    t, sp = by_leaf(creep.skeleton_root), by_leaf(src)
+    for f in samples:
+        cmds.currentTime(f, update=True)
+        for a, b in [(a, b) for a, b in (("upperarm_l", "lowerarm_l"), ("lowerarm_r", "hand_r"),
+                                         ("spine_01", "neck_01"), ("pelvis", "head"))
+                     if a in t and b in t and a in sp and b in sp]:
+            dd = abs((pos(t[b]) - pos(t[a])).length() - m.scale * (pos(sp[b]) - pos(sp[a])).length())
+            if dd > shape[0]:
+                shape = (dd, "%s-%s@%g" % (a, b, f))
+    gate("h2", shape[0] < 0.05, "the body is the clip's at x%.4f, moved and turned: worst span off "
+         "%.4f cm (%s)" % (m.scale, shape[0], shape[1]))
+    # the bridge onto a Creep STANDING at a place, turned: the stretch keeps it there
+    cmds.file(new=True, force=True)
+    creep = add("Creep_Rig")
+    cmds.xform(creep.main, worldSpace=True, translation=(120.0, 0.0, -60.0), rotation=(0, 30, 0))
+    del ASKED[:]
+    ANSWER[0] = rm.SQUASH
+    text = rigimport.import_and_retarget(HEAVY, "Heavy", set_timeline=True, target="rig", rig=creep)
+    print("   ", text[:220])
+    first = cmds.playbackOptions(q=True, min=True)
+    cmds.currentTime(first, update=True)
+    main = cmds.xform(creep.main, q=True, ws=True, m=True)
+    yaw = rigimport.facing(main)
+    off = math.hypot(main[12] - 120.0, main[14] + 60.0)
+    gate("h3", len(ASKED) == 1 and "squashed & stretched" in text and off < 0.05 and abs(yaw - 30.0) < 0.05,
+         "Squash & stretch onto a Creep standing at (120, -60) turned 30: Main at the clip's first frame "
+         "%.4f cm off the place, facing %.4f deg" % (off, yaw))
+    # the Skeleton mode's drop point: the clip moved onto it BEFORE the transfer, so the
+    # stretch must scale about where the root now starts
+    cmds.file(new=True, force=True)
+    namespace, info, source = rigimport.import_source(HEAVY, "Heavy", set_timeline=True)
+    del ASKED[:]
+    ANSWER[0] = rm.SQUASH
+    line, failure, top = skeletonimport.onto_skeleton(catalog.character_by_key("Creep"), namespace, info,
+                                                      source, "Heavy", (100.0, 0.0, -50.0),
+                                                      decide=skeletonimport.choose_for)
+    print("   ", (failure or line)[:220])
+    root = [j for j in cmds.ls(type="joint", long=True)
+            if not cmds.listRelatives(j, parent=True, type="joint") and leaf(j) == "root"][0]
+    cmds.currentTime(info.get("start"), update=True)
+    got = pos(root)
+    off = math.hypot(got.x - 100.0, got.z + 50.0)
+    gate("h4", not failure and len(ASKED) == 1 and "squashed & stretched" in line and off < 0.05,
+         "Skeleton mode, a Creep skeleton dropped at (100, -50), stretched: its root starts %.4f cm off "
+         "the point" % off)
 
 rm.set_asker(None)
 print("RESULT: %s" % ("ALL GATES PASSED" if not FAILS else "FAILED %s" % FAILS))

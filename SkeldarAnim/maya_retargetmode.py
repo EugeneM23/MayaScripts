@@ -628,6 +628,12 @@ def scaled_follower(joint, space, scaled, factor, name):
     cmds.connectAttr(follow + ".translate", body + ".translate")
     cmds.connectAttr(follow + ".rotate", body + ".rotate")
     unit = cmds.createNode("transform", name=name, parent=body, skipSelect=True)
-    inverse = 1.0 / factor if abs(factor) > 1e-9 else 1.0
+    # scale 1 in WORLD: the body carries `factor` AND whatever scale the clip's top node
+    # has (a scaled wrapper is copied into the space at creation, and a parentConstraint
+    # never drives scale, so it stays what it was) - a follower left at that scale would
+    # scale the rest offsets the constraints on it carry
+    world = cmds.xform(body, query=True, worldSpace=True, matrix=True)
+    size = math.sqrt(world[0] ** 2 + world[1] ** 2 + world[2] ** 2)
+    inverse = 1.0 / size if size > 1e-9 else 1.0
     cmds.setAttr(unit + ".scale", inverse, inverse, inverse)
     return unit, made

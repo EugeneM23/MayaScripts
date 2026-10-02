@@ -62,8 +62,9 @@ Two facts that changed the design, both now traps:
 Stdlib at import (a subprocess test pins it); the scene wrappers import `maya.cmds` inside.
 
 - **ROTATIONS** («кости не растягиваются»): every bone turns as the clip's (aligned rests as
-  before) and keeps the target's own length; root and pelvis placed; IK ends and poles follow the
-  rig's own FK. On a rig: `drive_plan(rotation=True)` - exactly the rotation-marked rig's plan.
+  before) and keeps the target's own length; root and pelvis placed. On a rotation-marked rig:
+  `drive_plan(rotation=True)`, IK ends and poles following the rig's own FK; on any other rig
+  (since the fix pass, addendum 1) the legacy plan with no FK position, IK ends on the clip's.
   On a skeleton: orient for every bone, orient + point for root and pelvis, a twin included.
 - **STRETCH** («учитывается растяжение»): every bone lands on the clip's joint, the clip taken at
   OUR size - `s` = our leg chains over the clip's (pose-independent: a clip's rest pose is never
@@ -172,7 +173,7 @@ already follow AS's point constraints. `measure`, `pairs_of`, `connected_mode`.
 7. The position follow on the rotation-only rigs is added by a stretch press and removed by a
    rotations press - not shipped in the assets.
 8. In stretch the IK limbs still follow the rig's FK and reach with the rig's own lengths; the FK
-   chain carries the stretch. Measured: the Orc D's ball 0.56 cm off in IK (its foot is not the
+   chain carries the stretch. Since the fix pass the question and the status line SAY it. Measured: the Orc D's ball 0.56 cm off in IK (its foot is not the
    clip's), 0.0002 cm in FK; the Creep 0.0097 / 0.0001.
 9. The batch is asked once; twins in it stay exact whatever the answer.
 10. The setting lives in the Retarget card only (above).
@@ -225,11 +226,86 @@ The existing proofs, run standalone against this worktree (`run_verify.py` rewro
 checkout's paths): `verify_rig_pipeline.py` **0 of 30 failed**, `verify_many_rigs.py` **0 of 32**,
 `verify_creep_rig_asset.py` **0 of 16**, `verify_orc_d_rig_asset.py` **0 of 22**,
 `verify_weapon_space.py` **0 of 11**. Unit tests: **3562, OK** (55 new: `test_retargetmode.py`,
-`test_retarget_versions.py`). The whole verify, all seven phases in one run: **31 of 31 gates**.
+`test_retarget_versions.py`). The whole verify, all seven phases in one run: **31 of 31 gates** (before the fix pass; after it **39 of 39** over eight phases - the addendum).
 
 Not proven: the dialog itself in a GUI Maya (the answerer stands in for it; `confirmDialog` with
 those buttons is Maya's own); a real Mixamo clip onto a Creep (the conventions session's mapping
 makes it reachable); the Animation Setup card carrying the setting.
+
+## Addendum: the fix pass (the same day, an independent review)
+
+Eight findings, each confirmed by reading the code and measured where it was cheap; seven fixed,
+one (the IK limbs) answered by saying it rather than changing the rig's mode.
+
+1. **Rotations broke Manny's legacy Mixamo road** (confirmed). `ROTATION` forced
+   `rotation=True` for every rig, so «Keep proportions» (and Auto in a batch) put Manny's IK ends
+   on the rig's own FKX instead of the clip's hands and feet; `verify_asretarget_mixamo.py` calls
+   `connect()` without `bones` and could not see it. Now `rotation` is the rig's MARK
+   (`rotation_mode`); an unmarked rig in Rotations runs the legacy plan with
+   `drive_plan(keep_lengths=True)`: FK by angle and NO position, a twin's neither, IK ends and
+   poles on the clip's own bones. Measured first: **`stretchy` is 0 on the IK arms and legs of
+   Manny_Rig and Creep_Rig** (and Lenght1/2 1.0), so an IK limb bends and never stretches - the
+   lengths are kept and the feet stand on the clip's footprints. The connect's line says
+   «ROTATIONS (every bone its own length, the IK hands and feet on the clip's)», the note
+   `keep_note`. Gate e-keep-ik.
+2. **The PlayerMale's stretch tore the body when the clip moved after the connect** (confirmed).
+   Its FK followers rode `retargetmode.scale_space` (a rigid copy of the clip's top node) while
+   Main and RootX_M rode pm's own `_scale_group` (world positions times s, about the origin, plus
+   the rest offset). Now the FK followers ride pm's `_scaled_follower` with the pelvis drive's world
+   offset (`stretch_offset`): ONE frame, so the body is the clip's scaled shape about its pelvis
+   whatever moves. Not changed: pm's legacy travel itself scales about the world origin, so a clip
+   moved after the connect moves Main s times as far - that was so before this task and is noted,
+   not fixed (no PlayerMale row ships). Gate d-frame.
+3. **Stretch did not do what the dialog said for a limb in IK** (confirmed; the Creep's and the Orc
+   D's legs default to IK). Driving AS's IK `stretchy` / `Lenght1/2` would stretch an IK limb only
+   outward and only to a constant ratio, and switching the blends would change the animator's rig
+   mode unasked - so it is SAID instead: the question («a limb in IK keeps its own lengths, its end
+   following the FK (switch it to FK to see the clip's)») and the connect's first line, which the
+   button's status carries («SQUASH & STRETCH - leg_l, leg_r in IK keep their own lengths, their
+   ends following the FK - switch them to FK to see the clip's»; `ik_limbs`, `stretch_ik_note`, the
+   same in pm). Gate b4 now measures the promise AS THE RIG STANDS: every bone outside the IK limbs
+   on the clip's joint, the IK limbs' lengths kept, their ends on the clip's to a centimetre, the
+   line naming them; the FK-switched measurement stays as b4fk.
+4. **A Cancel left the scene's time changed** (confirmed and measured in mayapy, trap 162?):
+   FBXImport of a 30 fps clip into a film scene switches it to ntsc AND RESCALES the keys already
+   there (a key at 24 lands on 30), sets the playback and animation ranges to the clip's and the
+   current time to its first frame. `rigimport.time_state` / `restore_time`: the unit back with
+   `updateAnimation` (the keys return to 24), then the ranges and the frame in the old unit's
+   frames. Every Cancel after an import restores it (the bridge onto a rig, onto a skeleton, onto
+   one standing, a batch). Gates g2, g3 (a film scene with keys at 24/48, ranges 5-40 / 0-50,
+   frame 7).
+5. **The clip was scaled about its space's origin** (confirmed): every place the bridge computes
+   is measured from the UNSCALED root at its first frame, so a root starting away from the origin
+   put the stretched body (1 - s) of that distance off. `scale_space` sets the scaled group's
+   `scalePivot` to the root's first-frame floor point (x, 0, z) in the space (`root_start`,
+   `floor_pivot`, `to_local`). A scaled clip top node now also leaves the followers at world scale
+   1 (`scaled_follower` cancels the body's whole world scale, not just s). Gate h1: a clip under a
+   group turned 30° and scaled 0.8 (s = 1.25), its root's own keys moved (150, -80) off the group's
+   origin - the stretched game root starts on it to **0.0000 cm**; the pre-fix code, run as a
+   control from a `git archive` of 614ec05, put it **33.78 cm** away. h2-h4: the body intact (the
+   clip's spans times s to 0.0000), a bridge import onto a Creep standing at (120, -60) turned 30°
+   (Main on the place to 0.0002 cm, facing 30.0000°), a Skeleton-mode drop point (0.0000 - not
+   discriminating: the Creep skeleton's s is 1.0000 against a UE clip, the old code passes it too).
+6. **Gate b6's "no follow left" could not fail** (confirmed): Maya names a pointConstraint in the
+   ROOT namespace (`b_pointConstraint1` for `Creep_Rig:b`), so a namespace-prefix filter on short
+   names found nothing whatever happened. The follows are found by their attribute under the rig's
+   skeleton.
+7. **A removed follow left the bone at the DG's last evaluation** (confirmed by reading; trap 58's
+   mechanism). The follow now remembers the bone's own translate (`skeldarStretchRest`, double3)
+   and Rotations writes it back after deleting it (a follow from before the fix pass: the
+   bind-local translate from `bindPreMatrix`). Gate b6: the translates back to **0.0**.
+8. **The skeleton transfer judged "twin" again by its own rule** (confirmed): the decision came from
+   `measure` (nearest paired ancestor, at the bind), `transfer` re-ran `is_twin` (DAG parent, as the
+   target stands) - the line could name one version while the other ran. `Decision` carries the
+   measure's `twin` (a fourth field, default None) and `transfer(twin=)` runs on it.
+
+Fix-pass proof: `verify_retarget_modes.py` - see the CLAUDE.md draft below for the numbers;
+`test_retarget_fixpass.py` (18 tests, the pure halves). **Positive control**: the new gates run
+against the pre-fix plugin (`git archive 614ec05`) fail where they should - d-squash **0.267
+units** (the PlayerMale's FK off its pelvis by the rest offset), d-frame **31.99 units** ((1 - s) of
+the 36-unit move), h1 **33.78 cm**. Decided alone in the fix pass: 1 keeps the legacy
+road rather than announcing a change; 3 says it rather than flipping blends or driving AS's IK
+stretch; 2 leaves pm's legacy origin-scaled travel alone.
 
 ## CLAUDE.md section (draft)
 
@@ -247,7 +323,10 @@ The animator: «у нас должно быть две версии ретарг
 modules build their own drives.
 
 - **ROTATIONS**: every bone turns as the clip's and keeps the target's length; root and pelvis
-  placed; IK ends and poles follow the rig's own FK. **STRETCH**: every bone on the clip's joint,
+  placed; on a rotation-marked rig (the Creep, the Orc D) the IK ends and poles follow the rig's
+  own FK, on any other (Manny) they stay on the clip's hands and feet - the legacy plan with no FK
+  position (`drive_plan(keep_lengths=True)`): an AS IK limb has `stretchy` 0 on every shipped rig,
+  it bends and never stretches. **STRETCH**: every bone on the clip's joint,
   the clip taken at OUR size (`s` = our legs over the clip's; a clip's rest is never visible, its
   legs are) - the target's lengths become the clip's, its animated stretch included. **The twin's
   stretch IS the old twin path**, unchanged to **0.0 cm** (a Manny retargeted with the new press
@@ -257,45 +336,60 @@ modules build their own drives.
   Animation Setup import rows were another session's that day). **Auto**: a twin (median paired
   bone ≤ 1 %) - stretch, exact, never asked; the same proportions at another size (the scaled
   median ≤ 1 %) - stretch; anything else - one `confirmDialog` («Heavy onto Creep_Rig: ... Squash &
-  stretch would change Creep_Rig's proportions: arms -17 %, spine +1 %, fingers -30 %.»; **Keep
-  proportions** (default) / **Squash & stretch** / **Cancel**); batch mode: rotations, said so. The
-  status line always names the version and why. `set_asker` installs an answerer (the verify).
+  stretch would change Creep_Rig's proportions: arms -17 %, spine +1 %, fingers -30 %.» - and «a
+  limb in IK keeps its own lengths, its end following the FK»; **Keep proportions** (default) /
+  **Squash & stretch** / **Cancel**); batch mode: rotations, said so. The status line always names
+  the version and why, and a stretch's names the limbs in IK («SQUASH & STRETCH - leg_l, leg_r in
+  IK keep their own lengths ...»). `set_asker` installs an answerer (the verify).
 - **Lengths by the retarget's own map**: each paired bone against its nearest PAIRED ancestor (a
   3-joint Mixamo spine against our 5 compares chord with chord); root, pelvis and the helpers are
   not lengths; regions by our bone's name. Ours from the skinCluster's `bindPreMatrix` (trap 159?),
   the clip's at its first frame.
 - **Scaled followers**: under the holder, a space riding the clip root's PARENT rigidly (the
   bridge's wrapper is moved onto the rig's place after the connect: the move rides 1:1), a follow
-  point+orient-constrained to the joint, its channels connected into a node under a group scaled s,
-  a child scaled 1/s - at the joint times s, turned as it, scale 1. Transforms and connections only.
+  point+orient-constrained to the joint, its channels connected into a node under a group scaled s
+  **about the clip root's first-frame floor point** (`scalePivot`, trap 163?), a child cancelling
+  the body's whole world scale - at the joint times s, turned as it, scale 1. Transforms and
+  connections only.
 - `maya_asretarget.connect(bones=None|"rotation"|"stretch")` (None the legacy rule every older
   caller keeps): stretch onto another body is `drive_plan(scaled=True)` - the rotation plan whose FK
   controls (and Main, RootX_M) take position from the followers with the twin path's own offsets.
   **The Creep's and the Orc D's game bones follow AS by orientation only** (trap 160?): a stretch
   press gives each such bone a point constraint from its AS joint (marked `skeldarStretchFollow`, no
-  offset - the joint stands on the bone), a rotations press takes them away. The holder remembers
-  the version (`connected_mode`); the helper bones carry in world space only for the twin.
-  `maya_pmretarget.connect(bones=)`: stretch adds the followers at the module's travel scale.
+  offset - the joint stands on the bone, its own translate kept on it as `skeldarStretchRest`), a
+  rotations press takes them away and writes that translate back (trap 58's mechanism). The holder
+  remembers the version (`connected_mode`); the helper bones carry in world space only for the
+  twin. `maya_pmretarget.connect(bones=)`: stretch puts every FK control on the clip's joint in the
+  frame Main and the pelvis ride - pm's own scaled group, plus the pelvis's rest offset - so the body
+  is the clip's shape about its pelvis whatever moves the clip after the connect.
 - **Every press decides before anything changes**: the Retarget button before the reset; the
   bridge onto a rig imports the clip FIRST, asks, then resets (Cancel removes the clip; an added rig
   is deleted again); onto a skeleton (`onto_skeleton` / `onto_existing(decide=)`; Cancel deletes the
   added skeleton and the clip); a batch (`lineimport._Versions`) measures every clip against the
   first target it adds and asks ONCE, the worst named, by UUID (trap 161?). «cancelled - nothing
-  changed».
+  changed» - and it is: every Cancel after an import puts the scene's time unit (with its keys),
+  ranges and frame back (`rigimport.time_state` / `restore_time`, trap 162?). The skeleton transfer
+  runs on the twin verdict the press decided on (`Decision.twin`), never its own second opinion.
 
-Proof: `docs/superpowers/plans/verify_retarget_modes.py` **31/31 standalone** (phases a, b, c,
-d, e, f, g; numbers in the spec): Manny a twin, 0 questions, every bone on the clip's 0.072 cm (its
-left-leg fit), the legacy path to 0.0; Creep_Rig / Orc_D_Rig asked once each, Keep - lengths kept
-5.9e-14 / 1.9e-5 cm, orientations 0.0013°; Squash - every paired bone on the clip's joint 0.0001 /
-0.0002 cm (limbs in FK; legs in IK 0.0097 / 0.56 - an IK limb reaches with the rig's own lengths),
-the lengths changed by the measured -16.7 % / -4.9 %, the follow taken away again by Rotations;
-skeletons Manny exact 8.9e-4 cm unasked, Creep Keep 5.6e-14 / Squash 7.2e-14; the Lugal rig opened
-read-only - Keep 6e-4 units, Squash 0.0007 units at x0.117; a Mixamo clip onto Manny at x0.946 -
-Squash 0.064 cm (Manny's own left-leg fit); a batch of 3 asked once; Cancel - 0 nodes left, the
-rig's 190 curves and 11590 keys untouched. `verify_rig_pipeline.py` 30/30, `verify_many_rigs.py`
-32/32, `verify_creep_rig_asset.py` 16/16, `verify_orc_d_rig_asset.py` 22/22,
-`verify_weapon_space.py` 11/11. 3562 unit tests. Mixamo onto Manny in rotations now has its IK
-ends follow the rig's FK (the legacy `connect()` still puts them on the clip's positions).
+Proof: `docs/superpowers/plans/verify_retarget_modes.py` **39 of 39 gates standalone** after the
+review's fix pass (phases a-h; numbers in the spec): Manny a twin, 0 questions, every bone on the
+clip's 0.072 cm (its left-leg fit), the legacy path to 0.0; Creep_Rig / Orc_D_Rig asked once each,
+Keep - lengths kept 5.9e-14 / 1.9e-5 cm, orientations 0.0013°; Squash AS THE RIG STANDS - every bone
+outside the IK legs on the clip's joint 0.0001 / 0.0002 cm, the IK legs' lengths kept (3.9e-10 /
+1.6e-6) with their ends 0.0002 cm off the clip's, the line naming them; the lengths changed by the
+measured -16.7 % / -4.9 %; Rotations on the same rig took the 62 follows away and wrote every
+translate back to 0.0; skeletons Manny exact 8.9e-4 cm unasked, Creep Keep 5.6e-14 / Squash
+7.2e-14; the Lugal rig opened read-only - Keep 6e-4 units, Squash 0.0007 units at x0.117 about its
+pelvis, and 0.0007 again with the clip moved 36 units and turned 25° AFTER the connect; a Mixamo
+clip onto Manny - Keep IS the legacy plan (a second Manny retargeted by the legacy call 0.0 cm,
+limbs in FK and in IK), Squash 0.064 cm; a batch of 3 asked once; Cancel - 0 nodes left, the rig's
+190 curves and 11590 keys untouched, and in a film scene with keys at 24/48 the unit, the keys, the
+ranges 5-40 / 0-50 and frame 7 all back; a clip under a group turned 30° and scaled 0.8 (x1.25),
+its root's keys moved (150, -80) off the group's origin: the stretched game root starts ON it to
+0.0000 cm, where the pre-fix code put it 33.78 cm away (the positive control: the pre-fix plugin
+fails d-squash 0.267 units, d-frame 31.99, h1 33.78);
+`verify_rig_pipeline.py` 30/30, `verify_many_rigs.py` 32/32, `verify_creep_rig_asset.py` 16/16 after
+the fix pass. 3580 unit tests.
 
 159?. **A joint's own `.bindPose` attribute can be stale by centimetres**: on Manny_Rig's game
       skeleton parent-child distances read from it differed from the bind by up to 3.5 cm, so a
@@ -306,6 +400,24 @@ ends follow the rig's FK (the legacy `connect()` still puts them on the clip's p
       squash & stretch put every FK control on the clip's joints and the exported skeleton did not
       move: lengths 0.0 % against an asked -16.7 %, a fingertip 18.6 cm off. Every control gate
       would have passed; only measuring the GAME bones caught it.
+162?. **An FBX import changes the scene's time, and a Cancel has to change it back.** Measured in
+      mayapy: FBXImport of a 30 fps clip into a film scene (FBXImportSetMayaFrameRate off) switches
+      it to ntsc AND RESCALES the keys already there - a key at 24 lands on 30 - and puts the
+      playback and animation ranges on the clip's and the time on its first frame. `currentUnit
+      -time film -updateAnimation true` takes the keys back to 24; the ranges and the frame are
+      then set in the old unit's frames. A Cancel that only deleted the imported nodes left all four
+      changed, and every node-counting gate passed.
+163?. **A body scaled about its space's ORIGIN stands (1 - s) of its start away from where the
+      bridge put it** - every place (`place_moves`, a drop point, a skeleton's own place) is
+      measured from the UNSCALED root at its first frame. Scale about the root's first-frame floor
+      point (`scalePivot`). Two verify lessons from proving it: the Creep's legs equal a UE clip's,
+      so s = 1.0000 and no pivot can show - scale the clip's group to make s 1.25; and `cmds.parent`
+      KEEPS the world position, so moving a group and then parenting the clip under it moves
+      nothing (the gate read a root at (0, 0) and could not fail) - parent first, then move.
+164?. **Maya names a constraint in the ROOT namespace**: `pointConstraint` on `Creep_Rig:b` makes
+      `b_pointConstraint1`, so a gate filtering constraints by a namespace prefix on short names
+      finds nothing whatever happened - "no follow left" could not fail. Find our nodes by their
+      attribute under the rig's skeleton.
 161?. **A batch that measures every clip when the first is placed reads the first clip at a stale
       path**: `onto_skeleton` wraps the clip's root (re-parents it) before it asks, and the other
       clips' recorded paths were fine while the first one's was `|Heavy:root` - «No object matches
