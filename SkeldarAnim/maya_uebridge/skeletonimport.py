@@ -275,8 +275,12 @@ def selection_names(selection, bare, rigs):
         if cmds.objectType(path) == "joint":
             root = _top_joint(path)
         else:
+            # A part parked in a skeleton's character group (2026-10-02) -- a weapon on the floor,
+            # the Camera Setup camera, the CoM handle -- names the skeleton the group's message
+            # link names, as `skeleton.current_root` reads it.
             root = _skin_root(path) or next(
-                (r for r in bare if maya_rigs.under(r, path)), None)
+                (r for r in bare if maya_rigs.under(r, path)), None) \
+                or maya_rigs.group_root(maya_rigs.group_of(path))
         if root in bare:
             named.append(root)
     return named, rig_labels

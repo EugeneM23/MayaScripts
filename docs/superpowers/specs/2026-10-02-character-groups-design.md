@@ -119,8 +119,9 @@ holding the group again.
   what they saw before (`root_state`'s "root stands under X - plain layout" would otherwise have sent
   every grouped Manny out without its Armature).
 - **Delete**: a rig's tops gain `rig.character`, a skeleton's parts `group_of(root)`; the layer goes
-  as garbage. **Decided**: whatever stands in a character's group goes with it - the group IS the
-  character (a cube the animator parented into it goes too; one outside it never).
+  as garbage. ~~Decided: whatever stands in a character's group goes with it~~ - reversed in the fix
+  pass (addendum, finding 2): a prop of the animator's parented into the group is a stranger, moved
+  out to world level and kept, and named in the confirm.
 - **Legacy**: a character added before has no group; every lookup answers None / "" and every road
   behaves as before (gated: its spaces at world level, its export, its Delete).
 - **The bridge** retargets in world space onto grouped rigs, adds new ones grouped, and its square of
@@ -129,11 +130,11 @@ holding the group again.
 
 ## Proof
 
-- Unit: **3531 tests, OK** (`tests/test_rigs.py` `CharacterGroup`, new
+- Unit: **3545 tests, OK** after the fix pass (3531 at the build) (`tests/test_rigs.py` `CharacterGroup`, new
   `tests/test_scenesetup_chargroup.py`: names, `free_base`, `child_on_path`, `group_base`,
   `world_tops`, the markers, the wiring of every parking road; `test_uebridge_export` now inspects
   `_export_hierarchy`, where the body moved).
-- `docs/superpowers/plans/verify_character_groups.py`, mayapy standalone, **106/106** (phases A-F):
+- `docs/superpowers/plans/verify_character_groups.py`, mayapy standalone, **146/146** after the fix pass (phases A-I; 106/106 at the build, A-F):
   - A, every row alone: one new world-level node (its group) and one layer of ours holding it alone,
     marked with the row, linked from its root, locked at identity, the line still counting what
     arrived; a rig's `group` AdvancedSkeleton's below the character group, its skeleton outside the
@@ -188,6 +189,74 @@ holding the group again.
 - The group is locked: moving it by hand is refused by Maya. Unlocking and moving it would offset the
   character from its export (the export lifts relatively); stated, not guarded.
 
+## Addendum: the review's seven findings (the fix pass, 2026-10-02)
+
+An independent review read the build and named seven defects; each was read in the code and run,
+six fixed and one tightened:
+
+1. **One Ctrl+Z after an export undid the lift's last step** (fixed). `chargroup.lifted`'s re-parents
+   and rename were recorded one by one, AFTER `_export_hierarchy` had put the selection back, so the
+   first Ctrl+Z after Export FBX... / Export to uasset / a checkout EXPORT took a grouped root (or the
+   Creep's `Armature`) out of its group to world level. `animexport.export_hierarchy` now runs the
+   lift and the whole body inside ONE closed undo chunk (`skeldarExportFbx`, closed in a `finally`):
+   everything in it ends where it began, so one Ctrl+Z is a net nothing and redo too. A chunk, not
+   `_unrecorded`: trap 145 says turning recording off inside an open chunk breaks the chunk, and a
+   chunk nests safely inside a caller's. Gated: phase C, all six exports undone and redone with the
+   scene state equal; the control (the lift + body without the chunk, one undo) takes the top out.
+2. **Delete took the animator's own props parked in the group, unnamed** (fixed; the decision above
+   reversed). A child of the character group that is none of the character's - not a part nor above
+   or under one, not in its namespace, not recorded by its Add, carrying no attribute of ours
+   (`deletion.OUR_ATTR_PREFIXES`: `skeldar*`, `mayaWeapon*`, `mayaArmor*`, `mayaSceneSetup*`,
+   `rigPicker*`) - is a **stranger** (`deletion.strangers`, pure): it names no character when selected,
+   Delete moves it out to world level where it stood (`parent -world`, in the same undo chunk) and
+   keeps it, and the confirm and the line name it («Not theirs, in their group - moved out to world
+   level and kept: prop_cube»). `Character` gained `strangers`, `Plan` gained `kept` (both defaulted).
+   Gated: phase I, a cube parented into a Manny skeleton's group.
+3. **`selection_names` disagreed with `current_root`** (fixed). A floor weapon, the Camera Setup camera
+   or the CoM handle parked in a skeleton's group named nothing for Skeleton x Onto selected while
+   `current_root` named the skeleton. `selection_names` now falls back to the group's root
+   (`maya_rigs.group_root(group_of(path))`) for a non-joint no rig owns. Gated: phase I, the mesh, the
+   floor weapon and the camera of each of two Manny skeletons.
+4. **Grouped characters keep plain names** (measured, documented, no code change needed). A second
+   Manny skeleton now arrives as `|Manny_Skeleton1_Character|root` with plain meshes (`Skin_3p`), no
+   longer `Manny_Skeleton_root` - nothing collides at world level. Measured with two Manny and two
+   Creep skeletons (phase I): the Colour card's target of each mesh is that character's own shape and
+   none of the others', a real recolour through each Manny's group lands on its own two shapes only
+   (`colour.unambiguous` holds: `skinCluster -q -geometry` hands back a partial path that is unique);
+   Export with a mesh selected resolves that character's root; with NOTHING selected the export
+   refuses - before this it picked "the one named `root`" (the first Manny) silently, now four plain
+   `root`s make that step undecidable: the bridge's own rule («guessing between two plausible
+   skeletons ... is worse than asking») now applies to every second skeleton; Onto selected names each
+   by its mesh, floor weapon and camera; Delete of one leaves the other whole. `rename_note` says
+   nothing for a grouped skeleton - correct, nothing was renamed.
+5. **The status line named the lift's transient `root1`** (fixed). Beside a world-level `|root` (a
+   legacy skeleton) a lifted grouped root is `root1` for the export's length, and `root_note` said
+   «root motion: `root1` treated as `root`». `export_hierarchy` takes the leaf the outliner shows BEFORE
+   the lift and hands it to `_export_hierarchy(shown=)`. Gated: phase C, a world `root` beside a
+   grouped Manny skeleton: the line names nothing, both roots back as `root`; the control (no shown
+   name) names `root1`.
+6. **`chargroup.make` was not atomic** (fixed). Any failure inside it now runs `_unmake`: the tops it
+   moved back to world level by UUID, the layer and the group deleted - a group that still holds a top
+   it could not move out is never deleted (its marker is removed instead, so no lookup reads it as a
+   character) - then re-raises; `_after_import` puts «no character group (...) - its parts stand at
+   world level» on the Add line (it used to print to the Script Editor only). Gated: phase G, three
+   failures injected one call each (`createDisplayLayer` on a Manny skeleton, the second `parent` on a
+   Creep skeleton, `editDisplayLayerMembers` on a Manny rig): no group, no layer of ours, the world
+   level exactly a legacy Add's, the line saying so.
+7. **The bridge gate proved little** (tightened). Phase H retargets the same UE clip onto a Manny rig
+   moved to (90, -40) and turned 60°, grouped and ungrouped: `hand_r`, the root and `Main` over five
+   frames equal to **0.0** (hand_r travels 157.5 cm), the source namespace and the holder gone on both
+   roads, the character group still at the origin.
+
+Proof of the fix pass: 3545 unit tests, OK (14 new: `test_uebridge_export.ExportIsOneUndoStep`,
+`test_scenesetup_deletion.Strangers`, `test_scenesetup_chargroup.AllOrNothing`);
+`verify_character_groups.py` **146/146** standalone, the whole of A-I in one run; re-run on this
+worktree after the fixes: `verify_delete_character.py` **82/82** (its plugin path now takes
+`SKELDAR_PLUGIN`; mayapy's exit then crashed in nCloth's class cleanup after the last line - at
+process shutdown, as before), `verify_cascadeur_layout.py` **10/10**, `verify_weapon_space.py`
+**11/11**. Not re-run: the GUI verifies (`verify_characters_card`, `verify_uebridge_drag/many`,
+`verify_com`) - their roads are phases B, F, H and I here.
+
 ## CLAUDE.md section (draft)
 
 ## One outliner group and one layer per character (2026-10-02)
@@ -225,12 +294,24 @@ node per character, and 0 for every extra.
   and its loose parts. `top_of(rig.group)` was the identity and is `rig.group` now everywhere.
 - **Exports lift the character's top out of the group** (`chargroup.lifted`, around
   `animexport._export_hierarchy`, both layouts, every road), because the exporter writes ancestors
-  (trap 159?).
-- **Who is it**: the group or a non-joint in a skeleton's group names that skeleton
-  (`skeleton._group_root`); Delete takes the group and its layer; a legacy character (no group)
-  behaves exactly as before.
+  (trap 159?), all of it inside ONE closed undo chunk (`skeldarExportFbx`), so a Ctrl+Z after an
+  export is a net nothing (trap 163?); the status line names the root as the outliner shows it, never
+  the lift's transient `root1` beside a world-level `root` (`_export_hierarchy(shown=)`).
+- **Who is it**: the group or a non-joint in a skeleton's group (a mesh, the camera, a floor weapon,
+  the CoM) names that skeleton - `skeleton._group_root` and `skeletonimport.selection_names` alike;
+  Delete takes the group and its layer, but a **stranger** in the group (the animator's own prop:
+  nothing of ours, not recorded, not in the namespace - `deletion.strangers`) names no character, is
+  moved out to world level and kept, and the confirm names it; a legacy character (no group) behaves
+  exactly as before.
+- **`chargroup.make` is all or nothing**: a failure moves the tops back to world by UUID, deletes the
+  layer and the group (never a group still holding a top), re-raises, and the Add line says «no
+  character group (...)».
+- **Plain names now**: a grouped second Manny skeleton is `|Manny_Skeleton1_Character|root` with plain
+  meshes (nothing collides at world level), so Export / Import with NOTHING selected and two plain
+  skeletons refuses where "the one named `root`" used to pick the first silently; a mesh, bone or the
+  group selected decides it.
 
-Proof: `verify_character_groups.py` **106/106 standalone** - A every row: one node + one layer,
+Proof: `verify_character_groups.py` **146/146 standalone** - A every row: one node + one layer,
 locked, linked, the grouping moving nothing (joints and sampled vertices **0.0 cm** against the same Add
 ungrouped), V off **75 / 83 / 79 / 4 / 5 / 1 visible shapes → 0** with the assets' own layers forced on;
 B four characters with their kits: nothing at world level but the four groups, the who-is-it questions
@@ -243,7 +324,7 @@ existing verifies re-run on the branch: delete 82/82, rig pipeline 30/30, many r
 11/11, inventory 14/14, armor 15/15, cascadeur layout 10/10, Creep rig 16/16, Orc D 22/22, one shader
 4/4, Creep skeleton 9/9, FK/IK 63/63, weapon socket 10/10; in a disposable GUI Maya (port 7064) Connections 40/40 and Add
 Character 31/31 - every first-run failure a world-level path literal in the verify, moved into the
-group. 3531 unit tests; the Outliner and Layer Editor photographed (`character_groups_outliner.png`).
+group. G a grouping that fails half way leaves a legacy character and says so; H a UE clip onto a turned, moved grouped rig equal to the ungrouped one (0.0 over 5 frames); I two Manny + two Creep skeletons (plain `root`s): recolour, export, Onto selected, the animator's prop kept by Delete. 3545 unit tests; the Outliner and Layer Editor photographed (`character_groups_outliner.png`).
 
 159?. **The FBX exporter writes a selected node's ANCESTORS into the file.** Measured 2026-10-02:
      `FBXExport -s` of the joints of `|CharGrp|root|pelvis` with `FBXExportIncludeChildren false` came
@@ -262,3 +343,15 @@ group. 3531 unit tests; the Outliner and Layer Editor photographed (`character_g
 161?. **Re-parenting the import's nodes invalidates the paths `returnNewNodes` gave** (trap 16 in
      Add Character): the first grouped build said «added - 0 joints, 0 meshes». Resolve the import by
      UUID across any re-parent.
+163?. **A context manager that edits the scene and puts it back leaves its LAST step on the undo
+     queue.** `chargroup.lifted` re-parented the top to world and back around every export; both moves
+     were recorded, so the animator's first Ctrl+Z after Export FBX... undid the "back" and the
+     grouped root jumped to world level - the scene state after the export was exact, and no gate
+     pressed undo. Wrap a round trip in ONE closed undo chunk (a net no-op to undo), not in
+     `stateWithoutFlush` (trap 145 breaks an enclosing chunk), and gate it with `cmds.undo()` + a
+     control without the chunk.
+164?. **Grouping characters ends the world-level name clash that a rule quietly relied on.** Every
+     second skeleton used to arrive renamed (`Manny_Skeleton_root`), so "the one named `root`" picked
+     the first plain one; grouped, every skeleton keeps a plain `root`, and an Export / Import with
+     nothing selected now refuses between them. Right by the bridge's own rule (never guess), but a
+     behaviour change: list every rule that reads a short name before removing what made names unique.

@@ -34,9 +34,17 @@ import maya.cmds as cmds
 
 import maya_rigs
 
-Character = collections.namedtuple("Character", "kind label namespace root rig parts")
+# `strangers`: children of the character's outliner group (2026-10-02) that are none of its -- the
+# animator's own props parked in the folder. They name no character and are kept on Delete.
+Character = collections.namedtuple("Character", "kind label namespace root rig parts strangers",
+                                   defaults=((),))
 Plan = collections.namedtuple(
-    "Plan", "characters tops core doomed namespaces riders disconnects foreign summaries refusal")
+    "Plan", "characters tops core doomed namespaces riders disconnects foreign summaries refusal "
+            "kept", defaults=((),))
+
+# A node carrying a user attribute that starts with one of these is ours (a weapon, a space, the
+# camera, the CoM, a label, a record...), never a stranger in a character's group.
+OUR_ATTR_PREFIXES = ("skeldar", "mayaWeapon", "mayaArmor", "mayaSceneSetup", "rigPicker")
 
 # The scene's registries: a node of these types links unrelated characters (every shading group
 # meets `lightLinker1`, every ikHandle its solver) and never belongs to one.
@@ -151,10 +159,42 @@ def in_namespace(path, namespace):
 
 
 def owners(path, characters):
-    """The characters `path` belongs to: under one of its parts, or in its namespace. Pure."""
+    """The characters `path` belongs to: under one of its parts, or in its namespace -- and not
+    under one of its group's strangers (the animator's own prop in the folder). Pure."""
     return [c for c in characters
-            if in_namespace(path, c.namespace)
-            or any(_under(path, part) for part in c.parts)]
+            if (in_namespace(path, c.namespace)
+                or any(_under(path, part) for part in c.parts))
+            and not any(_under(path, s) for s in getattr(c, "strangers", ()) or ())]
+
+
+def strangers(children, parts, namespace, recorded, uuid_of, attrs_of):
+    """The children of a character's outliner group that are none of the character's: not a
+    part, nor above or under one, not in its namespace, not recorded by its Add, carrying none of
+    our markers (`OUR_ATTR_PREFIXES`). `parts` must not hold the group itself. Pure over the two
+    injected questions.
+
+    2026-10-02: the group is the folder the animator opens the outliner on, and a prop dropped
+    into it would otherwise go with the character on Delete, unnamed."""
+    out = []
+    for child in children or []:
+        if any(_under(child, part) or _under(part, child) for part in parts or []):
+            continue
+        if in_namespace(child, namespace):
+            continue
+        if recorded and uuid_of(child) in recorded:
+            continue
+        if any(attr.startswith(OUR_ATTR_PREFIXES) for attr in attrs_of(child) or []):
+            continue
+        out.append(child)
+    return out
+
+
+def kept_note(kept):
+    """The line's word on the strangers moved out of a group. Pure."""
+    if not kept:
+        return ""
+    return "Kept at world level (not the character's): {0}.".format(
+        ", ".join(path.split("|")[-1] for path in kept))
 
 
 def choose(selection, characters):
@@ -175,7 +215,7 @@ def counted(count, word):
     return "{0} {1}{2}".format(count, word, "" if count == 1 else "s")
 
 
-def confirm_text(summaries, disconnects=(), foreign=()):
+def confirm_text(summaries, disconnects=(), foreign=(), kept=()):
     """The question before the delete. `summaries`: [(label, [what of theirs goes])]. Pure."""
     count = len(summaries)
     lines = ["Delete {0} and everything that belongs to {1}?".format(
@@ -189,6 +229,11 @@ def confirm_text(summaries, disconnects=(), foreign=()):
         shown = list(foreign)[:6]
         more = len(foreign) - len(shown)
         lines += ["", "Constrained to them - the constraint goes with them, they keep their pose: "
+                  + ", ".join(shown) + (" and {0} more".format(more) if more else "")]
+    if kept:
+        shown = [path.split("|")[-1] for path in kept][:6]
+        more = len(kept) - len(shown)
+        lines += ["", "Not theirs, in their group - moved out to world level and kept: "
                   + ", ".join(shown) + (" and {0} more".format(more) if more else "")]
     lines += ["", "Ctrl+Z brings them back."]
     return "\n".join(lines)
@@ -432,6 +477,16 @@ def _character_group(path):
     return [found] if found else []
 
 
+def _strangers_of(group, parts, namespace, recorded_uuids):
+    """`strangers` over the scene: the group's children (long paths)."""
+    if not group or not cmds.objExists(group):
+        return []
+    children = cmds.listRelatives(group, children=True, fullPath=True) or []
+    others = [part for part in parts if part != group]
+    return strangers(children, others, namespace, recorded_uuids, _uuid,
+                     lambda node: cmds.listAttr(node, userDefined=True) or [])
+
+
 def _rig_character(rig):
     if rig.namespace:
         tops = [top for top in cmds.ls(assemblies=True, long=True) or []
@@ -444,18 +499,23 @@ def _rig_character(rig):
     roots = [rig.skeleton_root] if rig.skeleton_root else []
     parts = tops + _skinned_meshes(roots) + _drivers(joints) + _spaces(joints) \
         + sum((_com_groups(root) for root in roots), [])
+    group = getattr(rig, "character", "") or ""
     return Character("rig", "{0} (rig)".format(maya_rigs.label(rig)), rig.namespace,
-                     rig.skeleton_root or "", rig, _raise(parts))
+                     rig.skeleton_root or "", rig, _raise(parts),
+                     _strangers_of(group, parts, rig.namespace, set()))
 
 
 def _skeleton_character(root):
     uuids, label = recorded(root)
     joints = _joints(root)
-    parts = _character_group(root) + [root] + _skinned_meshes([root]) + _drivers(joints) \
+    group = _character_group(root)
+    parts = group + [root] + _skinned_meshes([root]) + _drivers(joints) \
         + _spaces(joints) + _com_groups(root) + _recorded_tops(uuids)
     leaf = root.split("|")[-1]
     shown = "{0} ({1})".format(label, leaf) if label else "{0} (skeleton)".format(leaf)
-    return Character("skeleton", shown, "", root, None, _raise(parts))
+    return Character("skeleton", shown, "", root, None, _raise(parts),
+                     _strangers_of(group[0] if group else "", parts,
+                                   maya_rigs.namespace_of(root), uuids))
 
 
 def characters():
@@ -661,7 +721,8 @@ def plan(chars):
     """Everything the delete of `chars` takes, and what it does on the way. Reads only."""
     refusal = _refusal(chars)
     tops = _raise(sum((list(c.parts) for c in chars), []))
-    core = _descendants(tops)
+    kept = outermost(sum((list(getattr(c, "strangers", ()) or ()) for c in chars), []))
+    core = _descendants(tops) - _descendants(kept)
     namespaces = []
     for char in chars:
         if char.kind == "rig":
@@ -713,7 +774,7 @@ def plan(chars):
     foreign = _foreign(core, skip)
     summaries = [(c.label, _summary(c)) for c in chars]
     return Plan(chars, outermost(tops), core, doomed, namespaces, riders, disconnects, foreign,
-                summaries, refusal)
+                summaries, refusal, kept)
 
 
 # ----------------------------------------------------------- the delete
@@ -759,6 +820,9 @@ def execute(p, unowned=0):
             import maya_rig_retarget
             maya_rig_retarget.disconnect(rig=rig)
             notes.append("{0} disconnected (the take not baked).".format(maya_rigs.label(rig)))
+        moved = _keep(p.kept)
+        if moved:
+            notes.append(kept_note(moved))
         _untrack_com(p.core)
         everything = set(p.core) | set(p.doomed)
         for uuid in everything:
@@ -778,6 +842,19 @@ def execute(p, unowned=0):
         cmds.undoInfo(closeChunk=True)
     gone = before - len(cmds.ls() or [])
     return deleted_message([c.label for c in p.characters], gone, unowned, notes)
+
+
+def _keep(kept):
+    """The strangers out of their character's group to world level, where they stood (the group is
+    an identity folder; `parent -world` keeps the world matrix either way). Returns their paths."""
+    out = []
+    for uuid in [_uuid(path) for path in kept or []]:
+        path = _path(uuid) if uuid else None
+        if not path or path.count("|") == 1:
+            continue
+        cmds.parent(path, world=True)
+        out.append(_path(uuid) or path)
+    return out
 
 
 def _remove_namespace(namespace, notes):
@@ -825,6 +902,6 @@ def delete_selected(selection=None, confirm=None):
     if p.refusal:
         return p.refusal
     if not (confirm or _confirm)(confirm_text(p.summaries, [maya_rigs.label(r) for r in p.disconnects],
-                                              p.foreign)):
+                                              p.foreign, p.kept)):
         return CANCELLED
     return execute(p, len(unowned))

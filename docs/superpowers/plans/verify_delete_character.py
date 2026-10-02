@@ -33,7 +33,7 @@ for _plugin in ("matrixNodes", "quatNodes", "fbxmaya"):
     except RuntimeError:
         pass
 
-REPO = "C:/!!!Work/MayaScripts/SkeldarAnim"
+REPO = os.environ.get("SKELDAR_PLUGIN") or "C:/!!!Work/MayaScripts/SkeldarAnim"
 sys.path.insert(0, REPO)
 cmds.undoInfo(state=True, infinity=True)
 

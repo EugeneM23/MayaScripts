@@ -140,25 +140,64 @@ def make(base, label, root, tops):
     Returns (group long path, layer). Runs inside Add Character's unrecorded block (trap 115: the
     import flushed the undo queue anyway)."""
     base = free_base(base, taken_names())
-    group = cmds.createNode("transform", name=":" + group_name(base), skipSelect=True)
-    group = _long(group)
-    cmds.addAttr(group, longName=MARKER, dataType="string")
-    cmds.setAttr(group + "." + MARKER, label or "", type="string")
-    cmds.addAttr(group, longName=ROOT_LINK, attributeType="message")
-    if root and cmds.objExists(root):
-        cmds.connectAttr(root + ".message", group + "." + ROOT_LINK)
-    uuid = _uuid(group)
-    moving = [u for u in (_uuid(t) for t in tops or []) if u]
-    for item in moving:
-        path = _long(item)
-        if path and not maya_rigs.under(path, _long(uuid)):
-            cmds.parent(path, _long(uuid), relative=True)
-    group = _long(uuid)
-    for attr in LOCKED:
-        cmds.setAttr(group + "." + attr, lock=True)
-    layer = cmds.createDisplayLayer(name=":" + layer_name(base), empty=True, noRecurse=True)
-    cmds.editDisplayLayerMembers(layer, group, noRecurse=True)
+    uuid, layer, moved = None, None, []
+    try:
+        group = cmds.createNode("transform", name=":" + group_name(base), skipSelect=True)
+        uuid = _uuid(group)
+        group = _long(group)
+        cmds.addAttr(group, longName=MARKER, dataType="string")
+        cmds.setAttr(group + "." + MARKER, label or "", type="string")
+        cmds.addAttr(group, longName=ROOT_LINK, attributeType="message")
+        if root and cmds.objExists(root):
+            cmds.connectAttr(root + ".message", group + "." + ROOT_LINK)
+        for item in [u for u in (_uuid(t) for t in tops or []) if u]:
+            path = _long(item)
+            if path and not maya_rigs.under(path, _long(uuid)):
+                cmds.parent(path, _long(uuid), relative=True)
+                moved.append(item)
+        group = _long(uuid)
+        for attr in LOCKED:
+            cmds.setAttr(group + "." + attr, lock=True)
+        layer = cmds.createDisplayLayer(name=":" + layer_name(base), empty=True, noRecurse=True)
+        cmds.editDisplayLayerMembers(layer, group, noRecurse=True)
+    except Exception:
+        # All or nothing (2026-10-02, the review): a group half made -- some tops in it, no
+        # layer -- would be read as the whole character by every lookup that asks for it.
+        _unmake(uuid, layer, moved)
+        raise
     return group, layer
+
+
+def _unmake(uuid, layer, moved):
+    """`make` undone: the moved tops back at world level by UUID, the layer and the group gone,
+    so the character stands exactly as an Add before the groups left it. Every step on its own."""
+    for item in moved:
+        path = _long(item)
+        if path and path.count("|") > 1:
+            try:
+                cmds.parent(path, world=True, relative=True)
+            except RuntimeError:
+                pass
+    if layer and cmds.objExists(layer):
+        try:
+            cmds.delete(layer)
+        except RuntimeError:
+            pass
+    path = _long(uuid) if uuid else None
+    if not path:
+        return
+    try:
+        if cmds.listRelatives(path, children=True):
+            # a top that would not come out: never delete it with the group -- the group only
+            # stops being a character group (its marker gone), a plain transform over it
+            if cmds.attributeQuery(MARKER, node=path, exists=True):
+                cmds.deleteAttr(path + "." + MARKER)
+            return
+        for attr in LOCKED:
+            cmds.setAttr(path + "." + attr, lock=False)
+        cmds.delete(path)
+    except RuntimeError:
+        pass
 
 
 def park(node, owner):

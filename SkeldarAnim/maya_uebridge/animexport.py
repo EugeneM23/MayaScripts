@@ -172,8 +172,18 @@ def export_hierarchy(fbx_path, root=None, start=None, end=None, layout=LAYOUT):
     # The FBX exporter writes a selected bone's ANCESTORS into the file (measured 2026-10-02), so a
     # character standing in its outliner group (2026-10-02) has its top -- the root, or the
     # Armature Null over it -- out at world level for the length of the export, put back after.
-    with _out_of_group(root) as root:
-        return _export_hierarchy(fbx_path, root, start, end, layout)
+    # The name the animator sees is taken BEFORE the lift: a lifted `root` beside a world-level
+    # `root` is `root1` for the export's length, and the status line must not name that.
+    # One undo chunk round all of it: the lift, the layout's Null and the renames are scene edits
+    # that end where they began, so a Ctrl+Z after an export undoes the whole round trip (a net
+    # nothing) instead of its LAST step -- which put a grouped root back out at world level.
+    shown = (root or "").split("|")[-1]
+    cmds.undoInfo(openChunk=True, chunkName="skeldarExportFbx")
+    try:
+        with _out_of_group(root) as root:
+            return _export_hierarchy(fbx_path, root, start, end, layout, shown=shown)
+    finally:
+        cmds.undoInfo(closeChunk=True)
 
 
 @contextlib.contextmanager
@@ -188,8 +198,9 @@ def _out_of_group(root):
         yield path or root
 
 
-def _export_hierarchy(fbx_path, root, start, end, layout):
-    """The body of `export_hierarchy`, the root out of any character group."""
+def _export_hierarchy(fbx_path, root, start, end, layout, shown=None):
+    """The body of `export_hierarchy`, the root out of any character group. `shown` is the root's
+    leaf as the outliner shows it (before any lift renamed it), for the status line."""
 
     folder = os.path.dirname(fbx_path)
     if folder and not os.path.isdir(folder):
@@ -199,7 +210,7 @@ def _export_hierarchy(fbx_path, root, start, end, layout):
     times = cmds.keyframe(joints, query=True, timeChange=True) or []
 
     notes = _apply_export_options(start, end)
-    leaf = root.split("|")[-1]
+    leaf = shown or root.split("|")[-1]
     previous = cmds.ls(selection=True, long=True) or []
     root_uuid = (cmds.ls(root, uuid=True) or [None])[0]
     joint_ids = cmds.ls(joints, uuid=True) or []

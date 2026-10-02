@@ -143,5 +143,34 @@ class Wiring(unittest.TestCase):
         self.assertIn("_out_of_group(", self._source(animexport, "export_hierarchy"))
 
 
+
+class AllOrNothing(unittest.TestCase):
+    """2026-10-02 (the review): a group half made -- some tops in it, no layer -- would be read
+    as the whole character. `make` undoes itself on any failure and re-raises; the Add line says
+    the character was not grouped. The scene half: verify_character_groups.py phase G."""
+
+    def test_make_undoes_itself_and_reraises(self):
+        import inspect
+        source = inspect.getsource(chargroup.make)
+        self.assertIn("_unmake(", source)
+        self.assertIn("raise", source.split("_unmake(")[1])
+
+    def test_unmake_never_deletes_a_top_with_the_group(self):
+        import inspect
+        source = inspect.getsource(chargroup._unmake)
+        self.assertIn("world=True", source)
+        self.assertIn("listRelatives(path, children=True)", source)
+
+    def test_the_add_line_names_the_failure(self):
+        note = character.group_failed_note(RuntimeError("parent: node is locked\nmore"))
+        self.assertIn("no character group (parent: node is locked)", note)
+        self.assertIn("world level", note)
+        self.assertIn("group_failed_note(", inspect_source(character._after_import))
+
+
+def inspect_source(func):
+    import inspect
+    return inspect.getsource(func)
+
 if __name__ == "__main__":
     unittest.main()

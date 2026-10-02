@@ -392,6 +392,16 @@ def phase_c():
             grouped = os.path.join(TMP, "g_%s_%s.fbx" % (entry.key, layout))
             info = animexport.export_hierarchy(grouped, root=root, start=0, end=30, layout=layout)
             gate("C %s: the scene is put back exactly" % label, state(root) == before)
+            # One Ctrl+Z after an export is a net nothing (the review: it used to undo the lift's
+            # LAST step and put the top out at world level), and redo too.
+            cmds.undo()
+            after_undo = state(cmds.ls(root_uuid, long=True)[0])
+            cmds.redo()
+            after_redo = state(cmds.ls(root_uuid, long=True)[0])
+            gate("C %s: one Ctrl+Z after the export leaves the top in its group, redo too" % label,
+                 after_undo == before and after_redo == before
+                 and maya_rigs.under(cmds.ls(root_uuid, long=True)[0], group),
+                 (after_undo[0], after_redo[0]))
             # the same character out of its group by hand: the file a legacy character writes
             top = chargroup.child_on_path(root, group)
             top_uuid = cmds.ls(top, uuid=True)[0]
@@ -415,6 +425,42 @@ def phase_c():
     c_top, _j, _m = read_back(control)
     gate("C control: without the lift the group IS in the file (%s)" % c_top,
          any(GROUP_SUFFIX_IN(t) for t in c_top), c_top)
+
+    # Control for the undo gate: the lift and the body WITHOUT the chunk, then one Ctrl+Z -- the
+    # top comes out of its group (what the chunk exists to prevent), so the gate above can fail.
+    root_uuid = cmds.ls(root, uuid=True)[0]
+    with animexport._out_of_group(root) as lifted_root:
+        animexport._export_hierarchy(os.path.join(TMP, "nochunk.fbx"), lifted_root, 0, 30,
+                                     "plain")
+    cmds.undo()
+    out = not maya_rigs.under(cmds.ls(root_uuid, long=True)[0], group)
+    cmds.redo()
+    gate("C control: without the chunk one Ctrl+Z takes the top out of its group",
+         out and maya_rigs.under(cmds.ls(root_uuid, long=True)[0], group))
+
+    # The lift beside a world-level `root` (a legacy skeleton): the lifted root is `root1` for the
+    # export's length, and the status line must not name it (the review's finding).
+    stray = cmds.createNode("joint", skipSelect=True)
+    stray = cmds.rename(stray, "root")
+    stray_uuid = cmds.ls(stray, uuid=True)[0]
+    root = cmds.ls(root_uuid, long=True)[0]
+    before = state(root)
+    info = animexport.export_hierarchy(os.path.join(TMP, "beside_root.fbx"), root=root, start=0,
+                                       end=30, layout="plain")
+    gate("C beside a world `root`: the line names `root`, never the lift's `root1` (%r)"
+         % info.get("warning"), info.get("root") == "root"
+         and "root1" not in (info.get("warning") or ""), info)
+    gate("C beside a world `root`: the scene put back, both roots named `root`",
+         state(cmds.ls(root_uuid, long=True)[0]) == before
+         and cmds.ls(root_uuid, long=True)[0].split("|")[-1] == "root"
+         and cmds.ls(stray_uuid, long=True)[0] == "|root")
+    with animexport._out_of_group(cmds.ls(root_uuid, long=True)[0]) as lifted_root:
+        leaf_then = lifted_root.split("|")[-1]
+        control = animexport._export_hierarchy(os.path.join(TMP, "beside_ctl.fbx"),
+                                               lifted_root, 0, 30, "plain")
+    gate("C control: without the shown name the line names `%s`" % leaf_then,
+         leaf_then != "root" and leaf_then in (control.get("warning") or ""), control)
+    cmds.delete(cmds.ls(stray_uuid, long=True)[0])
 
 
 def GROUP_SUFFIX_IN(name):
@@ -512,9 +558,210 @@ def phase_f():
              and layout)
 
 
+class _Failing(object):
+    """`maya.cmds` with ONE call of one command made to raise -- `chargroup.make` failing half
+    way. Only that call: the rollback goes through the same `cmds` and must be able to run."""
+
+    def __init__(self, real, name, after=0):
+        self._real, self._name, self._after, self._calls = real, name, after, 0
+
+    def __getattr__(self, attr):
+        if attr != self._name:
+            return getattr(self._real, attr)
+
+        def failing(*args, **kwargs):
+            self._calls += 1
+            if self._calls == self._after + 1:      # that one call only: the rollback's own run
+                raise RuntimeError("probe: %s refused" % self._name)
+            return getattr(self._real, attr)(*args, **kwargs)
+        return failing
+
+
+def phase_g():
+    """`chargroup.make` failing half way leaves the character exactly as an Add before the groups
+    left it -- no half group, no layer -- and the Add line says so (the review's finding)."""
+    for key, fail, after in (("Manny", "createDisplayLayer", 0), ("Creep", "parent", 1),
+                             ("Manny_Rig", "editDisplayLayerMembers", 0)):
+        cmds.file(new=True, force=True)
+        layers_before = set(cmds.ls(type="displayLayer") or [])
+        real = chargroup.cmds
+        chargroup.cmds = _Failing(real, fail, after)
+        try:
+            entry, root, rig, group, line = add(key)
+        finally:
+            chargroup.cmds = real
+        world_now = tops() - set(["|persp", "|top", "|front", "|side"])
+        layers_left = set(cmds.ls(type="displayLayer") or []) - layers_before
+        ours = [l for l in layers_left if l.endswith(chargroup.LAYER_SUFFIX)]
+        loose = sorted(t for t in world_now if maya_rigs.is_character_group(t))
+        # the same Add with the grouping switched off, for the shape it must equal
+        cmds.file(new=True, force=True)
+        _e, legacy_root, _r, _g, _l = ungrouped_add(key)
+        legacy_world = tops() - set(["|persp", "|top", "|front", "|side"])
+        gate("G %s, %s refused: no group, no layer, the tops as a legacy Add leaves them "
+             "(%d at world)" % (entry.label, fail, len(world_now)),
+             group is None and not loose and not ours
+             and sorted(t.split("|")[-1] for t in world_now)
+             == sorted(t.split("|")[-1] for t in legacy_world), (loose, ours, sorted(world_now)))
+        gate("G %s, %s refused: the Add line says the character was not grouped" % (
+            entry.label, fail), "no character group" in (line or ""), line)
+
+
+def phase_h():
+    """A UE clip onto a GROUPED rig equals the same clip onto the same rig ungrouped: the rig
+    turned and moved first (rig_place keeps its place and facing), hand_r and root over the take,
+    the source namespace gone, the holder gone (the review: `hand_r moved > 1 cm` proved nothing)."""
+    if not os.path.isfile(CLIP):
+        gate("H: the clip is on disk", False, CLIP)
+        return
+    from maya_uebridge import rigimport
+    found = []
+    for grouped in (False, True):
+        cmds.file(new=True, force=True)
+        entry, root, rig, group, _l = (add if grouped else ungrouped_add)("Manny_Rig")
+        cmds.setAttr(rig.main + ".translateX", 90.0)
+        cmds.setAttr(rig.main + ".translateZ", -40.0)
+        cmds.setAttr(rig.main + ".rotateY", 60.0)
+        namespaces = set(cmds.namespaceInfo(":", listOnlyNamespaces=True) or [])
+        print("   ", rigimport.import_and_retarget(CLIP, "Heavy", target="rig", rig=rig))
+        hand = skeleton.resolve_bone(rig.skeleton_root, "hand_r")
+        track = []
+        for frame in (0, 10, 20, 30, 40):
+            cmds.currentTime(frame - 1)
+            cmds.currentTime(frame)
+            track.append((world(hand), world(rig.skeleton_root), world(rig.main)))
+        left = set(cmds.namespaceInfo(":", listOnlyNamespaces=True) or []) - namespaces
+        holder = maya_rigs.node(rig, "MoCapConstraints")
+        found.append((track, left, cmds.objExists(holder), group))
+    (ref, ref_left, ref_holder, _g), (got, left, holder, group) = found
+    worst_hand = max(worst(a[0], b[0]) for a, b in zip(ref, got))
+    worst_root = max(worst(a[1], b[1]) for a, b in zip(ref, got))
+    worst_main = max(worst(a[2], b[2]) for a, b in zip(ref, got))
+    moved = max(worst(got[0][0], g[0]) for g in got)
+    gate("H: the clip onto the grouped rig = onto the ungrouped one (hand_r %.1e, root %.1e, "
+         "Main %.1e over 5 frames; hand_r travels %.1f)" % (worst_hand, worst_root, worst_main,
+                                                            moved),
+         worst_hand < 1e-4 and worst_root < 1e-4 and worst_main < 1e-4 and moved > 1.0
+         and bool(group))
+    gate("H: the source namespace and the holder gone, both roads",
+         not left and not holder and not ref_left and not ref_holder,
+         (sorted(left), holder, sorted(ref_left), ref_holder))
+    turned = cmds.xform(cmds.ls(found[1][3], long=True)[0] if found[1][3] else "|persp",
+                        query=True, worldSpace=True, matrix=True)
+    gate("H: the character group still at the origin after the retarget",
+         worst(turned, list(om.MMatrix())) < 1e-12)
+
+
+def phase_i():
+    """Two grouped characters of ONE skeleton asset (two Manny skeletons, two Creep skeletons):
+    a grouped second Manny keeps a plain `root` and plain mesh names now (no world-level clash),
+    so every rule written for 'only the top node collides' is asked again here; and a prop of the
+    animator's dropped into a group, the floor weapon and the camera selected."""
+    from maya_scenesetup import colour as colouring
+    from maya_uebridge import animexport, skeletonimport
+    import maya_colour
+    cmds.file(new=True, force=True)
+    cmds.playbackOptions(minTime=0, maxTime=10, animationStartTime=0, animationEndTime=10)
+    cast = [add(k) for k in ("Manny", "Manny", "Creep", "Creep")]
+    names = [c[1].split("|")[-1] for c in cast]
+    gate("I: the second Manny and Creep keep a plain `root` (%s)" % names,
+         names == ["root"] * 4, [c[1] for c in cast])
+    # the Colour card on each one's mesh: that character's shapes, nobody else's
+    for i, (entry, root, rig, group, _l) in enumerate(cast):
+        want = set(maya_colour.without_weapons(colouring.character_meshes(root)))
+        others = set()
+        for j, c in enumerate(cast):
+            if j != i:
+                others |= set(colouring.character_meshes(c[1]))
+        mesh = cmds.listRelatives(sorted(want)[0], parent=True, fullPath=True)[0]
+        found = maya_colour.targets([mesh], connected="")
+        shapes = set(found[0].shapes) if found else set()
+        gate("I %s #%d: the Colour card's target is its own %d shapes" % (entry.label, i,
+                                                                          len(want)),
+             bool(want) and shapes and shapes <= want and not (shapes & others),
+             (len(shapes), len(shapes & others)))
+    # a real recolour of each Manny through its group: its own shapes take the colour, the
+    # other's keep theirs (the shapes share leaf names now -- colour.unambiguous's case)
+    red, teal = (0.8, 0.1, 0.1), (0.1, 0.7, 0.7)
+    for (entry, root, rig, group, _l), rgb in zip(cast[:2], (red, teal)):
+        print("   ", maya_colour.paint(rgb, selection=[group], connected="", undoable=False))
+    for (entry, root, rig, group, _l), rgb in zip(cast[:2], (red, teal)):
+        shapes = list(maya_colour.without_weapons(colouring.character_meshes(root)))
+        worn = colouring.colour_of(shapes)
+        gate("I recolour %s in %s: its %d shapes wear it, the other Manny not" % (
+            group.split("|")[-1], colouring.colour_name(rgb), len(shapes)),
+            bool(shapes) and worn is not None and colouring.same_colour(worn, rgb), worn)
+    # export: nothing selected refuses (two plausible skeletons), each selected exports itself
+    cmds.select(clear=True)
+    try:
+        animexport.resolve_root()
+        refused = False
+    except RuntimeError as exc:
+        refused = True
+        print("    nothing selected:", exc)
+    gate("I export: with nothing selected and four skeletons the export refuses (no guess)",
+         refused)
+    for i, (entry, root, rig, group, _l) in enumerate(cast[:2]):
+        mesh = cmds.listRelatives(char_shapes(root, None)[0], parent=True, fullPath=True)[0]
+        cmds.select(mesh, replace=True)
+        resolved = animexport.resolve_root()
+        gate("I export Manny #%d: its mesh selected resolves its own root" % i,
+             resolved == root, (resolved, root))
+        cmds.select(clear=True)
+    # Onto selected: each mesh, the floor weapon, the camera name their own skeleton
+    from maya_scenesetup import equip
+    spear = catalog.by_key("Spear_01")
+    for i, (entry, root, rig, group, _l) in enumerate(cast[:2]):
+        print("   ", equip.to_floor(root, spear, (150.0 * (i + 1), 0.0, 40.0), (1.0, 0.0, 0.0)))
+        bone = skeleton.resolve_bone(root, camera.BONE)
+        print("   ", camera.setup(bone, 0, 10))
+    bare, rigs_ = skeletonimport.bare_roots(), maya_rigs.rigs()
+    for i, (entry, root, rig, group, _l) in enumerate(cast[:2]):
+        floor_weapon = equip.occupant(root, "R")[0] or equip.occupant(root, "L")[0]
+        cam = camera.camera_for(skeleton.resolve_bone(root, camera.BONE))
+        mesh = cmds.listRelatives(char_shapes(root, None)[0], parent=True, fullPath=True)[0]
+        for what, node in (("mesh", mesh), ("floor weapon", floor_weapon), ("camera", cam)):
+            named, _labels = skeletonimport.selection_names([cmds.ls(node, long=True)[0]], bare,
+                                                            rigs_)
+            cmds.select(node, replace=True)
+            current = skeleton.current_root()
+            gate("I Onto selected, Manny #%d's %s: names its own skeleton, as current_root does"
+                 % (i, what), named == [root] and current == root, (named, current))
+    cmds.select(clear=True)
+    # the animator's prop parked in the first Manny's group: kept on Delete, named in the confirm
+    entry, root, rig, group, _l = cast[0]
+    prop = cmds.polyCube(name="prop_cube")[0]
+    prop = cmds.parent(prop, group)[0]
+    prop_uuid = cmds.ls(prop, uuid=True)[0]
+    cmds.setAttr(cmds.ls(prop_uuid, long=True)[0] + ".translateX", 33.0)
+    at_before = world(cmds.ls(prop_uuid, long=True)[0])
+    picked, _u = deletion.choose([cmds.ls(prop_uuid, long=True)[0]], deletion.characters())
+    gate("I prop: the animator's own prop in the group names no character", picked == [],
+         [c.label for c in picked])
+    asked = []
+    other = cast[1]
+    mesh = cmds.listRelatives(char_shapes(root, None)[0], parent=True, fullPath=True)[0]
+    line = deletion.delete_selected([mesh], confirm=lambda text: asked.append(text) or True)
+    print("    ", line)
+    kept = cmds.ls(prop_uuid, long=True)
+    gate("I prop: Delete of the character keeps the prop at world level, where it stood",
+         bool(kept) and kept[0].count("|") == 1 and worst(world(kept[0]), at_before) < 1e-9
+         and not cmds.objExists(group), (kept, line))
+    gate("I prop: the confirm and the line name the prop",
+         asked and "prop_cube" in asked[0] and "prop_cube" in (line or ""), (asked, line))
+    gate("I Delete: the other Manny skeleton whole (its group, root, meshes)",
+         cmds.objExists(other[3]) and cmds.objExists(other[1])
+         and bool(char_shapes(other[1], None)))
+    cmds.undo()
+    back = cmds.ls(prop_uuid, long=True)
+    gate("I prop: Ctrl+Z puts the character and the prop in its group back",
+         cmds.objExists(group) and back and maya_rigs.under(back[0], group), back)
+
+
 if __name__ == "__main__":
     for name, phase in (("A", phase_a), ("B", phase_b), ("C", phase_c), ("D", phase_d),
-                        ("E", phase_e), ("F", phase_f)):
+                        ("E", phase_e), ("F", phase_f), ("G", phase_g), ("H", phase_h),
+                        ("I", phase_i)):
         if os.environ.get("PHASES") and name not in os.environ["PHASES"]:
             continue
         print("=== phase", name)

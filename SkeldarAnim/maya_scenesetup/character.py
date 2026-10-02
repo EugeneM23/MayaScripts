@@ -512,6 +512,12 @@ def world_tops(paths):
     return [p for p in dict.fromkeys(paths or []) if p and p.count("|") == 1]
 
 
+def group_failed_note(exc):
+    """Pure: the Add line's word when the character could not be grouped (it stands as before)."""
+    return "no character group ({0}) - its parts stand at world level".format(
+        str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__)
+
+
 def group_character(entry, new, namespace, root):
     """The character just added, in ONE outliner group with its own display layer (2026-10-02,
     `chargroup`). A rig's group holds every world-level node of its namespace, a skeleton's every
@@ -649,7 +655,10 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
     try:
         group_character(entry, new, namespace, root)
     except Exception as exc:                                     # noqa: BLE001
+        # `chargroup.make` is all or nothing: the character stands as before the groups, and
+        # the line says so (it used to go to the Script Editor only).
         print("Add Character: no character group ({0})".format(exc))
+        note = ((note + " - ") if note else "") + group_failed_note(exc)
     if root_uuid:
         root = (cmds.ls(root_uuid, long=True) or [root])[0]
     if new_uuids:
