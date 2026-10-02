@@ -40,7 +40,11 @@ against the card, independently of the press's own measure.
             step); a session at 0.3 finished - keys at the frame on the mixed values, «at 30 %»,
             one Ctrl+Z puts every channel and curve back; a session ended after the time moved
             (and previewed on at the new frame) - nothing keyed, the free channels at their
-            start values, the keyed ones on their curves at the frame shown.
+            start values, the keyed ones on their curves at the frame shown; the same cancelled
+            with every other control's static channels in an animation layer, in DG evaluation
+            and in parallel - the layered ones on their own values, also after the next time
+            change (a static channel in a layer is not time-dependent: the settle dirties its
+            feeding node).
   partial   the left-hand card onto the Manny skeleton (through its root) and onto Creep_Rig
             (through a control): only the hand's channels change - the skeleton's hand and finger
             joints, the Creep's FK wrist and finger controls and its IK arm's end (both modes
@@ -58,7 +62,9 @@ against the card, independently of the press's own measure.
             the namespace ignored): their attributes equal the card's, the originals untouched;
             the SELECTION decides - by order onto two differently named boxes WITH the originals
             in the scene (they do not move); by name and the rest by order (a copy and a box);
-            nothing selected: the stored originals by their paths, the copies beside unmoved.
+            nothing selected: the stored originals by their paths, the copies beside unmoved;
+            two props of one leaf in two namespaces (`propA:ctrl`, `propB:ctrl`) each taking
+            their own values, selected together and the second alone (the first unmoved).
   select    Select objects: the hand card's controls on Manny_Rig (`rigsolve.controls_for`),
             the hand's joints on the Manny skeleton, with nothing selected the character in the
             card's own namespace; an objects card's objects.
@@ -806,7 +812,69 @@ def phase_blend():
          0.0 <= keyed_off <= 1e-6 and moved > 1.0 and not blend.active(),
          "free %d off %.3g, keyed %d off their curves at 6 %.3g (the curves moved %.1f since "
          "the start); %s" % (len(free), free_off, len(keyed), keyed_off, moved, text))
+    # STATIC channels in an animation layer (Create Layer From Selected puts every static channel
+    # of a control there), the time moved mid-blend, then cancel, in DG evaluation and in
+    # parallel: every layered channel shows its own value again and keeps it through the next
+    # time change. The 7m settle (a same-time `currentTime` alone) left them on the preview's -
+    # an `animBlendNode` over no curve is not time-dependent - a value that then stood through
+    # every time change for an S key or autoKey to bake (fix round 1)
     a.reset()
+    cmds.currentTime(4)
+    set_values(pose_values(a, seed=1.0))
+    evaluate()
+    planned = list(ap.plan_for(CARDS["full"], a.ref).values)
+    nodes = []
+    for plug in planned:
+        if plug.rsplit(".", 1)[0] not in nodes:
+            nodes.append(plug.rsplit(".", 1)[0])
+    in_layer = set(nodes[::2])                     # every other control: layered and free mixed
+    cmds.animLayer("BlendL")
+    cmds.animLayer("BlendL", edit=True,
+                   attribute=[p for p in planned if p.rsplit(".", 1)[0] in in_layer])
+    mode = cmds.evaluationManager(query=True, mode=True)[0]
+    try:
+        for em in ("off", "parallel"):
+            cmds.evaluationManager(mode=em)
+            evaluate()
+            blend = ap.Blend()
+            refusal = blend.start(CARDS["full"], selection=[a.rig.main])
+            current, final = {}, {}
+            for plan, _extra in blend.entries:
+                current.update(plan.current)
+                final.update(plan.values)
+            blend.set(0.5)
+            cmds.currentTime(6, update=True)                # the animator scrubbed
+            blend.set(0.7)                                  # ... and dragged on at the new frame
+            shown = ap.mix(current, final, 0.7, ap.rotations_of(final))
+            blend.cancel()
+            layered = [p for p in final if keys.input_of(p) == "layer"]
+            free = [p for p in final if keys.input_of(p) == "free"]
+
+            def off(plugs):
+                return max([abs(float(cmds.getAttr(p)) - current[p]) for p in plugs] or [-1.0])
+            layered_off, free_off = off(layered), off(free)
+            previewed = max([abs(shown[p] - current[p]) for p in layered] or [0.0])
+            evaluate()                                      # the next time change
+            later = off(layered)
+            gate("blend cancelled after a time change, static channels in a layer (%s): back on "
+                 "their own values" % em,
+                 refusal == "" and layered and free and 0.0 <= layered_off <= 1e-6 and
+                 0.0 <= later <= 1e-6 and 0.0 <= free_off <= 1e-9 and previewed > 1.0 and
+                 not blend.active(),
+                 "evaluation %s; layered %d off %.3g, after the next time change %.3g (the "
+                 "preview had them up to %.1f off); free %d off %.3g" % (
+                     cmds.evaluationManager(query=True, mode=True)[0], len(layered), layered_off,
+                     later, previewed, len(free), free_off))
+    finally:
+        cmds.evaluationManager(mode=mode)
+        if cmds.objExists("BlendL"):
+            cmds.delete("BlendL")
+        root = cmds.animLayer(query=True, root=True)
+        if root and not cmds.animLayer(root, query=True, children=True):
+            cmds.delete(root)
+    a.reset()
+    gate("blend layer cleaned up", keys.active_layer() == (None, ""), "%s, evaluation %s" % (
+        keys.active_layer(), cmds.evaluationManager(query=True, mode=True)[0]))
 
 
 def phase_partial():
@@ -1086,6 +1154,51 @@ def phase_objects():
     cmds.delete(copies + boxes + [third])
     if cmds.namespace(exists=":copy"):
         cmds.namespace(removeNamespace=":copy", mergeNamespaceWithRoot=True)
+    # two referenced copies of one prop share a leaf (`|propA:ctrl`, `|propB:ctrl`): each takes
+    # its OWN values, selected together or alone - the first rewrite gave every selected path the
+    # first stored object of its leaf, so propB took propA's values (fix round 1)
+    props = []
+    for ns, values in (("propA", {"translateX": 1.0, "rotateY": 10.0}),
+                       ("propB", {"translateX": 2.0, "rotateY": 20.0})):
+        if not cmds.namespace(exists=":" + ns):
+            cmds.namespace(add=ns)
+        node = cmds.rename(_cube("ctrl_" + ns, values), ns + ":ctrl")
+        props.append(cmds.ls(node, long=True)[0])
+    prop_card, _note = capture.build_pose(props)
+    prop_card["name"] = "Props"
+    stored = dict((record["path"], record["attrs"]) for record in prop_card["objects"])
+
+    def scramble():
+        for node in props:
+            for attr in ("translateX", "rotateY"):
+                cmds.setAttr(node + "." + attr, 9.0)
+
+    def own_off(nodes):
+        return max(abs(float(cmds.getAttr(node + "." + attr)) - value)
+                   for node in nodes for attr, value in stored[node].items())
+    scramble()
+    ok, text = ap.apply(prop_card, selection=list(reversed(props)))
+    say("   objects, two same-named props: %s" % text)
+    evaluate()
+    both = own_off(props)
+    gate("objects two same-named props selected: each takes its own values",
+         ok and sorted(stored) == sorted(props) and both <= 1e-6,
+         "max %.3g over %s" % (both, ", ".join(props)))
+    cmds.cutKey(props, clear=True)                  # static again, so "unmoved" means unmoved
+    scramble()
+    first = values_of([props[0] + "." + attr for attr in stored[props[0]]])
+    ok, text = ap.apply(prop_card, selection=[props[1]])
+    say("   objects, the second prop alone: %s" % text)
+    evaluate()
+    alone = own_off([props[1]])
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in first.items())
+    gate("objects the second same-named prop alone takes its own values, the first unmoved",
+         ok and alone <= 1e-6 and moved <= 1e-9, "max %.3g, %s moved %.3g" % (
+             alone, props[0], moved))
+    cmds.delete(props)
+    for ns in ("propA", "propB"):
+        if cmds.namespace(exists=":" + ns):
+            cmds.namespace(removeNamespace=":" + ns, mergeNamespaceWithRoot=True)
 
 
 def phase_select():
