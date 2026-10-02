@@ -912,6 +912,36 @@ def canonical_parents(mapping, parents):
     return out
 
 
+HAND_DIRECTION = ("middle_01", "index_01", "ring_01", "pinky_01", "middle_metacarpal",
+                  "index_metacarpal", "ring_metacarpal", "pinky_metacarpal", "thumb_01")
+
+
+def direction_children(parents):
+    """{our bone: the child its DIRECTION is read toward}, from a canonical
+    hierarchy ({bone: parent bone}, `canonical_parents`). The pelvis and the
+    spine point up their own chain (never at a thigh or a clavicle), a hand at
+    its middle finger (never the thumb: 30.77 deg of wrist roll, measured
+    2026-09-05), anything else at its first child by name. A bone with no
+    child is absent: it inherits its parent's alignment. Pure."""
+    kids = collections.defaultdict(list)
+    for bone, parent in parents.items():
+        if parent:
+            kids[parent].append(bone)
+    out = {}
+    for bone, children in kids.items():
+        side = bone[-2:] if bone.endswith(("_l", "_r")) else ""
+        base = bone[:-2] if side else bone
+        if base == "hand":
+            prefer = [name + side for name in HAND_DIRECTION]
+        elif bone == "pelvis" or base.startswith(("spine", "neck")):
+            prefer = sorted(k for k in children if k.startswith(("spine", "neck"))) + ["head"]
+        else:
+            prefer = []
+        choice = next((k for k in prefer if k in children), None)
+        out[bone] = choice or sorted(children)[0]
+    return out
+
+
 def scale_ratio(rig_pelvis_height, source_pelvis_height):
     """Our pelvis height over the source's (each above its own floor), 1.0 when
     the source's is not usable. Pure."""

@@ -69,6 +69,7 @@ import maya.api.OpenMaya as om
 import maya.cmds as cmds
 
 import maya_rigs
+import maya_skeletonmap as skelmap
 
 # ------------------------------------------------------------------ our rig
 
@@ -565,6 +566,8 @@ def rest_matrices(bones, schema, rig_rest=None):
     "template"    -- the shipped bind pose (UE5 Manny, UE4 mannequin); a source bone the
                      template does not know is left out and reported as missing.
     """
+    if schema.rest == "given":
+        return dict(schema.rest_given)
     if schema.rest == "ours":
         return dict((name, list(rig_rest[name])) for name in bones if name in (rig_rest or {}))
     if schema.rest == "template":
@@ -581,6 +584,93 @@ def rest_matrices(bones, schema, rig_rest=None):
             base = om.MMatrix(cmds.getAttr(above[0] + ".worldMatrix[0]")) if above else om.MMatrix()
         out[name] = list(_local_rest(bones[name]) * base)
     return out
+
+
+# ------------------------------------------------- any other convention (2026-10-02)
+#
+# A source none of SCHEMAS knows (a Biped, Rigify, a CC or Daz character, a CMU BVH,
+# Unity, VRM ...) is read by maya_skeletonmap and re-keyed into UE names, so it runs
+# through the UE5 rows above as if it were Manny - rest aligned, rotations only, the
+# travel scaled as for every source here. A copy of the sibling module's idea, not of
+# its code: this module still takes nothing of the Manny rig's (a test pins that).
+
+MIXAMO_CONVENTIONS = ("mixamo", "motionbuilder_hik")
+GENERIC_SPINE = ("spine_01", "spine_02", "spine_03", "spine_05")     # UE5_ROWS' spine
+GENERIC_NECK = ("neck_01",)
+
+
+class GenericSchema(Schema):
+    """A Schema read by maya_skeletonmap; carries `bones`, `rest_given`,
+    `parents`, `convention`, `rest_choice` and `notes` beside the tuple."""
+
+
+def ue_names_of_ours():
+    """Pure: {our PlayerMale bone: the UE bone the same AS control drives}."""
+    ue = dict(UE5_ROWS)
+    out = {OUR_PELVIS: "pelvis", OUR_ROOT: "root"}
+    for base, ours in OUR_ROWS:
+        if base not in ue:
+            continue
+        for (side, our_side), (_s, ue_side) in zip(OUR_SIDES, UE_SIDES):
+            out[our_side + ours] = ue[base] + ue_side
+    return out
+
+
+def _joint_paths(root):
+    return [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or [])
+
+
+def _zero_rest(paths):
+    parents = skelmap.parent_map(paths)
+    out = {}
+    for path in sorted(paths, key=lambda p: (p.count("|"), p)):
+        parent = parents.get(path)
+        if parent in out:
+            base = om.MMatrix(out[parent])
+        else:
+            above = cmds.listRelatives(path, parent=True, fullPath=True)
+            base = om.MMatrix(cmds.getAttr(above[0] + ".worldMatrix[0]")) if above else om.MMatrix()
+        out[path] = list(_local_rest(path) * base)
+    return out
+
+
+def _rest_candidates(paths):
+    out = {"jointOrient": _zero_rest(paths)}
+    if cmds.keyframe(paths, query=True, keyframeCount=True) or 0:
+        first = cmds.findKeyframe(paths, which="first")
+        out["firstFrame"] = dict((p, cmds.getAttr(p + ".worldMatrix[0]", time=first)) for p in paths)
+    return out
+
+
+def generic_schema(source_root, rig_rest):
+    """(GenericSchema, refusal) for a source no row of SCHEMAS knows."""
+    paths = _joint_paths(source_root)
+    live = dict((p, tuple(cmds.xform(p, query=True, worldSpace=True, translation=True))) for p in paths)
+    result = skelmap.recognize(paths, live, spine_targets=GENERIC_SPINE, neck_targets=GENERIC_NECK)
+    if result.refusal:
+        return None, "%s: %s" % (leaf(source_root), result.refusal)
+    wanted = set(ue for base, ue in UE5_ROWS)
+    mapping = dict((k, v) for k, v in result.mapping.items()
+                   if k in ("pelvis", "root") or k[:-2] in wanted or k in wanted)
+    rig_pos = dict((ue, position(rig_rest[ours])) for ours, ue in ue_names_of_ours().items()
+                   if ours in rig_rest)
+    candidates = _rest_candidates(paths)
+    choice, scores = skelmap.choose_rest(
+        dict((name, dict((o, position(m[s])) for o, s in mapping.items() if s in m))
+             for name, m in candidates.items()), rig_pos)
+    rest = candidates[choice or "jointOrient"]
+    named = set(mapping)
+    rows = [(a, u) for a, u in UE5_ROWS if u in named or u + "_l" in named or u + "_r" in named]
+    schema = GenericSchema("generic:" + result.convention, rows, UE_SIDES, False, "pelvis",
+                           "root" if "root" in mapping else None, "given", None, True, (), ())
+    schema.bones = mapping
+    schema.rest_given = dict((o, list(rest[s])) for o, s in mapping.items())
+    schema.parents = skelmap.canonical_parents(mapping, skelmap.parent_map(paths))
+    schema.convention, schema.rest_choice = result.convention, choice
+    schema.notes = ["source read as %s (%d bones mapped, confidence %.2f); rest pose: %s"
+                    % (result.convention, len(mapping), result.confidence, choice)] + list(result.notes)
+    del scores
+    return schema, ""
 
 
 def rig_paths(rig=None):
@@ -842,11 +932,14 @@ def _plan(source_root=None, rig=None):
         cmds.listRelatives(game_root, allDescendents=True, type="joint", fullPath=True) or []))
     bones = source_bones(source_root)
     schema = detect_schema(list(bones))
-    if schema is None:
-        return empty._replace(
-            refusal="%s is none of %s (looked for %s)" % (
-                leaf(source_root), "/".join(s.name for s in SCHEMAS),
-                "; ".join("%s: %s" % (s.name, ", ".join(s.required)) for s in SCHEMAS)))
+    if schema is None or (schema is MIXAMO and skelmap.convention_of(list(bones.values()))
+                          not in MIXAMO_CONVENTIONS):
+        # none of SCHEMAS: any other convention, read by maya_skeletonmap
+        schema, refusal = generic_schema(source_root, dict(
+            (name, cmds.getAttr(path + ".worldMatrix[0]")) for name, path in rig_bones.items()))
+        if schema is None:
+            return empty._replace(refusal=refusal)
+        bones = dict(schema.bones)
     controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
     drives, missing = drive_plan(controls, list(bones), schema)
     drives = [d for d in drives
@@ -867,12 +960,13 @@ def _plan(source_root=None, rig=None):
         return empty._replace(refusal="no bone of %s matches this rig" % leaf(source_root))
     fk = [d for d in drives if d.kind == "fk"]
     triples = [(d.control, our_bone(d.control), d.source) for d in fk]
-    align = (alignments(triples, rig_rest, src_rest, parents_of(rig_bones), parents_of(bones))
+    align = (alignments(triples, rig_rest, src_rest, parents_of(rig_bones),
+                        getattr(schema, "parents", None) or parents_of(bones))
              if schema.align else dict((d.control, list(om.MMatrix())) for d in fk))
     scale = scale_factor(rig_rest, src_rest, schema)
     notes = ["schema %s%s; the source stands %.4g times our size, so its travel is scaled by %.4f"
              % (schema.name, (", rest from %s" % schema.template) if schema.template else "",
-                1.0 / scale if scale else 0.0, scale)]
+                1.0 / scale if scale else 0.0, scale)] + list(getattr(schema, "notes", []))
     if schema.align:
         worst = max([(rotation_angle(a), c) for c, a in align.items()] or [(0.0, "")])
         notes.append("rest poses aligned bone by bone, worst %.2f deg (%s)" % (worst[0], worst[1]))
