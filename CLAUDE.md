@@ -7828,10 +7828,14 @@ Proof on the MERGED tree, every one standalone (mayapy, scratch `MAYA_APP_DIR` e
   **82/82**, `verify_weapon_space.py` **11/11**;
 - **3796 unit tests**, OK.
 
-**Not proven on the merged tree**: the GUI halves (the Connect block and the Retarget card's
-`[Auto | Rotations | Stretch]` segments photographed in the skinned hub, the stretch question dialog
-on screen, a real mouse drag) - the branches' own GUI runs were on their branches, and the stretch
-question was answered through `maya_retargetmode.set_asker` in every proof. Unity is read off the disk
+**Seen on the merged tree in a disposable GUI Maya** (port 7071, scratch `MAYA_APP_DIR`, killed after):
+the Animation Setup card with the Connect inset (content 504 within the dock's 510 viewport) and the
+Retarget card's `[Auto | Rotations | Stretch]`; three UE clips as a square onto new Manny rigs - the scene's
+top level exactly `Manny_Rig_Character`, `Manny_Rig1_Character`, `Manny_Rig2_Character`, a layer each, each
+`<ns>:clipLabel` inside its group naming its clip, the Auto version «stretch - twin, exact»
+(`merged_animation_setup.png`, `merged_retarget_card.png`, `merged_outliner.png`, `merged_square_labels.jpg`).
+**Not proven there**: the stretch question dialog on screen (every proof answers it through
+`maya_retargetmode.set_asker`; a modal blocks the port) and a real mouse drag. Unity is read off the disk
 only (no live editor link). No real Max / Blender / Unity / BVH file exists on this machine: those
 conventions are proven on synthetic skeletons and on files the verifies wrote.
 
