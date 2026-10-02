@@ -8477,3 +8477,100 @@ Picture: the hub with Manny burning (DWM's copy of the window).
      continuation and the replacement's text no longer matched the file (the assert caught it). Write
      Python and anything with backslashes through the Write / Edit tools (trap 101 is PowerShell's
      version).
+
+## The «?» card: a clip onto ours when its skeleton is ours, else in its own (2026-10-02)
+
+The animator, with Maya and their Unreal project MarkerLess_02 open («где много разных персонажей»): «Иногда
+хочется иметь возможность импортировать анимацию с исходным ригом скелетом который находится в движке а не
+переносить на наши. Давай сделаем карточку рига и скелета со знаком вопроса и когда переносим анимацию при
+выбраной этой карточке наш плагин будет смотреть какой скелет в исходном файле если он найдет скелет который
+совпадает с нашим то перенесем анимацию на наш риг или скелет, если ... совпадений нету то импортируем в
+сцену родной риг или скелет». Asked, all three the recommendation: an **explicit target wins** (Onto selected
+with a character of the kind selected, a drop on one; never "the only rig in the scene"); a native is
+**painted in a palette colour** (Unreal's FBX carries no textures); **the kind is kept** (Rig matches our rigs,
+Skeleton our skeletons - a UE4 clip with Rig, an Orc clip with Skeleton come in their own skeleton). Spec
+`docs/superpowers/specs/2026-10-02-auto-character-import-design.md`, plan beside it.
+
+**Measured first** (12 skeletons, ~2500 clips):
+- `FbxExportOption.export_preview_mesh = True` brings the skinned mesh beside `root` (no wrapper) with a
+  `bindPose`; the exporter picks the mesh itself (none of the preview-mesh calls exist in Python).
+- **Unreal gives a Manny clip QUINN's mesh** (trap 199), so the match reads the ANIMATION's bones.
+- The share of the clip's voting bones whose animated length - the median over 9 sampled frames, to the
+  nearest bone both sides share - is within 1 % of ours at the bind separates every skeleton there: matches
+  0.88-1.00 (Manny, MC_DungeonLife's and MC_LongswordVol2's UE5 mannequins, Orc on Orc D, UE4), the rest
+  ≤ 0.47 (an Orc clip against Manny). A single median does not: Orc against Manny reads 1.9 %.
+
+**The card**: `catalog.AUTO = "Auto"` last in `MODELS` (`is_auto`; `kinds_of(AUTO)` is `KINDS`;
+`character_for(AUTO, k)` None; `rows_of_kind`), a drawn «?» (`assets/character_portraits/Auto.png`,
+`make_auto_portrait.py` - vector paths: offscreen Qt has no font). Picked in both kinds, never dragged in, no
+Open scene; + Import, a portrait drop and Open scene refuse it (`charlook.AUTO_ADD`); the line says
+`charlook.auto_text(kind)`. `scene window.current_choice()` / `auto_kind()` answer for the grid and the
+dropdown fallback («Auto [rig]» / «Auto [skeleton]») alike; `chosen_character()` stays None for it. The grid
+wraps 4 + 1 in the 360 px dock. `make_character_portraits.render_all` skips it.
+
+**The match** (`maya_uebridge/skeletonmatch.py`, stdlib): `assets/character_skeletons.json` is every catalog
+row's game skeleton at its bind (`leaf: [parent, x, y, z]`, `maya_retargetmode.rest_world`) with the asset's
+sha1 - written by `docs/superpowers/plans/make_character_skeletons.py` (mayapy); **a unit test pins the sha1:
+rebuild a character asset, re-run the script**. `score` (helpers and root/pelvis never vote, bones < 1 cm
+neither, the two anchors must agree), `match` (≥ 10 voters, share ≥ 0.75, ties to catalog order),
+`match_text` («matched Manny [rig] - 78 of 78 bones» / «no skeleton of ours (best Orc D [rig]: 3 % of 64
+bones)»). The clip side is `autoimport.clip_bones` - `getAttr(worldMatrix, time=)` on the plain keyed skeleton.
+
+**The roads** (`maya_uebridge/autoimport.py`): `window.auto_kind()` first in `import_selected` /
+`import_dropped`. `_auto_press`: Onto selected + a character of the kind selected (`explicit_rig` /
+`explicit_skeleton`, selection only) → today's road onto it, bones-only export; otherwise one clip →
+`import_auto`, several → `lineimport.run(..., auto=True)`, both with `_export_with_mesh`
+(`uescripts.export_script(preview_mesh=True)`; a file source brings what it holds). `import_auto`: import
+(a failure takes the namespaces back, time restored) → match among the kind's rows → a rig row:
+`onto_new_rig` (`ready_rig` → `decide_bones` → `retarget_imported`, one chunk; a twin is never asked) / a
+skeleton row: `onto_new_skeleton` → else `nativeimport.keep`. The batch matches each clip, lays the square out
+unscaled, works the matched first (a Cancel then finds nothing kept), one `_Versions` per row, `auto_summary`
+(«Manny_Rig MM_Fall_Loop, own Kwang_GDC Ability_Q_Catch»). The drag reads `auto_kind` at its start: a floor aim
+carries `auto` (`Scene._marked`), its caption «A_Jump · our rig if it matches, else its own · floor (x, z)»;
+over a rig / skeleton it is today's drop.
+
+**The native character** (`maya_uebridge/nativeimport.keep`, unrecorded - trap 115): placed by offsetting
+its root's translate keys (`local_delta` through the parent's world-inverse; no wrapper, trap 182), ONE group
++ layer (`chargroup.make`) named for its largest skinned mesh (`Kwang_GDC_Character`) else the clip, its
+namespace - and any nested in it, Mixamo's `mixamorig:` - merged into the root namespace AFTER the group
+exists (plain names, nothing at world level to collide), the next palette colour, Delete's record («Kwang_GDC
+[own skeleton]»), the clip's label. A root under an ancestor the clip ANIMATES (a Unity clip keyed on the
+model's top, a Blender Armature) is not moved and says so: an offset in a moving space swings it on an arc,
+and moving the ancestor would move a skinned mesh under it twice. Only a CHAIN of nested namespaces is
+flattened; siblings (a scene holding two namespaced characters) keep their own. From then on it is a
+skeleton like any other (Onto selected, Export FBX, Delete, Colour).
+
+**The review's fixes** (a four-lens review, every finding verified twice): an Auto press runs inside
+`autoimport.kept_selection` - the rig it ADDS selects itself (Add Character's rule), and the next Auto press,
+Onto selected, took that for the animator's explicit target (a Kwang clip landing on the Manny just added,
+its take replaced; verify phase `repeat`); the native's move is read through its parent at the clip's
+FIRST frame; the template pin hashes the asset with CRLF read as LF (`skeletonmatch.asset_digest`: a
+Windows checkout writes a text `.ma` with CRLF, and the pin must agree in every worktree).
+
+Proof: `verify_auto_character.py` (fixtures by `export_auto_fixtures.py`, six clips with their meshes) -
+**all 44 gates green standalone**: the match table 6/6; Manny and Orc D added and retargeted, nothing asked
+(Manny 0.097 cm - its own left-leg fit; Orc D every bone pointing as the clip's to 0.087°, trap 200); the UE4
+skeleton 0.021 cm; Kwang native - group, layer, plain names, 116 joints, skin, colour, record, label, the
+root on the drop point to 0.0000, every joint on the moved clip 0.000000 cm, the mesh 8e-6 cm, Delete whole +
+Ctrl+Z; an Orc clip with Skeleton in its own skeleton (`SK_Orc_Marauder_G`); Mixamo's Sweep Fall in its own
+(`|Sweep_Fall_Character|Hips`); the batch of three, nothing asked, slots 250 cm apart; two Auto presses in a row (the
+second matched, not put on the rig the first added); the explicit target
+(the selected Manny takes a Kwang clip, asked; nothing selected → native); the native exported (116 bones,
+plain, no mesh); a later clip onto the native, exact, in place. Live in a disposable GUI Maya (7033) against
+the running editor: the card picked through a Qt press (`auto_card.png`), Import Animation on Kwang (3.7 s,
+native) and MM_Fall_Loop (11.7 s, Manny_Rig, Onto selected with nothing selected), a batch of four (31.8 s:
+Manny_Rig, Orc_D_Rig, own Kwang_GDC, own SK_AttackTest - `auto_square.jpg`), two floor drops through
+`import_dropped`. Unit tests: `test_uebridge_skeletonmatch.py`, `test_uebridge_autoimport.py`, the Auto
+classes of the lineimport / listdrag / window / catalog / chargrid / charlook / scenesetup-window tests.
+Not built: textures for a native (asked), an AS rig for one, choosing Unreal's mesh, matching by the Skeleton
+asset's name.
+
+199. **Unreal's AnimSequence FBX export gives a Manny clip QUINN's mesh.** With `export_preview_mesh` the
+     exporter takes the clip's preview mesh, else its skeleton's, else `FindCompatibleMesh()` - and for
+     three SK_Mannequin folders it found `SKM_Quinn_Simple`. The mesh's bind then has Quinn's proportions
+     (2 % of the bones within 1 % of Manny's) while the animation's bones are Manny's (100 %). A skeleton
+     test read off the bind would call every Manny clip a stranger; read the animated bones.
+200. **An Orc pack's MM_ clips carry Manny-length arms** (the arm bones 6.4 % off Orc D's rest; Unreal's
+     translation retargeting hides it on the Orc's mesh). They still match Orc D (0.88), and the twin
+     retarget keeps Orc D's bones: the hand ends 1.7 cm off the raw FBX joints while every bone POINTS as
+     the clip's (0.087°) - what Unreal shows. A gate on positions alone calls that broken.
