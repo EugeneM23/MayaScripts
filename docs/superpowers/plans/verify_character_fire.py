@@ -20,8 +20,7 @@ QMouseEvent sent to the grid.
     7  Interface animations off: no fire, the old hover
     8  a hub rebuild leaves no overlay behind, and the new grid burns again
     9  a picture of the hub with a card burning (DWM's copy of the window)
-   10  the «?» card (catalog.AUTO) burns BLACK: opaque black flames and a red
-       glow of their own in the overlay's picture
+   10  the «?» card (catalog.AUTO) burns orange, as Manny's does
 
 UI only: no scene node is touched; the switch's optionVar is put back.
 
@@ -296,36 +295,26 @@ try:
     leave(grid)
     run(until=lambda: not grid.fx, timeout=6.0)
 
-    # ------------------------------------- 10 the «?» card burns black
-    import maya_charfire
-    unknown = [k for k in keys(grid) if maya_charfire.fire_of(k) == "void"]
-    black_n = red_n = 0
-    if unknown:
-        move(grid, centre(grid, unknown[0]))
+    # ------------------------------- 10 the «?» card burns as Manny's
+    from maya_scenesetup import catalog
+    hot_n = 0
+    if catalog.AUTO in keys(grid):
+        move(grid, centre(grid, catalog.AUTO))
         run(1.2)
         overlay = grid.overlay
-        rect_u = grid.rects()[keys(grid).index(unknown[0])]
+        rect_u = grid.rects()[keys(grid).index(catalog.AUTO)]
         o = overlay.origin if overlay else QtCore.QPoint(0, 0)
         lifted = render(overlay) if overlay else QtGui.QImage()
-        # the transparent overlay reads (0, 0, 0) where it drew nothing:
-        # black counts only where it drew (alpha), then the red glow
-        black_n = 0
-        for x in range(int(rect_u[0]) + o.x(), int(rect_u[0] + rect_u[2]) + o.x(), 2):
-            for y in range(int(rect_u[1]) + o.y(), int(rect_u[1] + rect_u[3]) + o.y(), 2):
-                if 0 <= x < lifted.width() and 0 <= y < lifted.height():
-                    c = lifted.pixelColor(x, y)
-                    if c.alpha() > 240 and max(c.red(), c.green(), c.blue()) < 16:
-                        black_n += 1
-        red_n = count(lifted, rect_u,
-                      lambda r, g, b: r > 2.6 * g and r > 2.6 * b and r > 90,
+        # the fire's yellow-orange, brighter than the «?» mark's accent
+        hot_n = count(lifted, rect_u,
+                      lambda r, g, b: r > 235 and g > 140 and b < 150,
                       o.x(), o.y())
         if OUT and overlay:
             lifted.save(os.path.join(OUT, "fire_overlay_unknown.png"))
         leave(grid)
         run(until=lambda: not grid.fx, timeout=6.0)
-    gate(10, "the «?» card burns black on a red glow of its own",
-         bool(unknown) and black_n > 40 and red_n > 40,
-         "%s: black %d, red %d" % (unknown, black_n, red_n))
+    gate(10, "the «?» card burns orange, as Manny's",
+         hot_n > 30, "%d fire samples" % hot_n)
 finally:
     maya_hub.set_animations(saved_switch)
 

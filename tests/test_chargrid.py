@@ -321,23 +321,20 @@ class FireOnHover(unittest.TestCase):
         self.assertEqual(self.grid.fx, {})
         self.assertEqual(self.grid._hover, "Creep")
 
-    def test_the_unknown_card_burns_black_on_a_red_glow(self):
-        """«для карточки неизвестного рига и скелета ... черный огонь»: black
-        flames (laid over, not added) against a red glow of their own."""
-        auto = self.cf.FIRES and [k for k in self.keys()
-                                  if self.cf.fire_of(k) == "void"]
-        self.assertTrue(auto, "the «?» card is in the grid")
-        black = lambda r, g, b: max(r, g, b) < 16                     # noqa: E731
-        # red, not the «?» mark's orange (accent, r/g 1.8)
-        glow = lambda r, g, b: r > 2.6 * g and r > 2.6 * b and r > 90  # noqa: E731
-        box = self.box(auto[0])
-        cold = self.render(self.grid)
-        self.assertLess(self.count(cold, box, black), 5)
-        self.assertLess(self.count(cold, box, glow), 5)
-        self.burn(auto[0])
-        hot = self.render(self.grid)
-        self.assertGreater(self.count(hot, box, black), 40)
-        self.assertGreater(self.count(hot, box, glow), 40)
+    def test_the_unknown_card_burns_as_mannys_does(self):
+        """The «?» card burns orange (2026-10-02, «так же как и карточка
+        менни»): flame-orange where it was the dark field."""
+        from maya_scenesetup import catalog
+        self.assertIn(catalog.AUTO, self.keys())
+        # the fire's yellow-orange, brighter than the «?» mark's accent
+        flame = lambda r, g, b: r > 235 and g > 140 and b < 150      # noqa: E731
+        box = self.box(catalog.AUTO)
+        cold = self.count(self.render(self.grid), box, flame)
+        self.assertLess(cold, 5)
+        self.burn(catalog.AUTO)
+        self.assertIn(catalog.AUTO, self.grid.fx)
+        hot = self.count(self.render(self.grid), box, flame)
+        self.assertGreater(hot, 30, (cold, hot))
 
     def test_moving_on_puts_the_first_out_and_lights_the_second(self):
         self.burn("Creep", 0.3)
