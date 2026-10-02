@@ -18,7 +18,7 @@ sets PHASE (and REPO, the plugin folder to prove) first:
     PHASE = "drag_rig1"  gate 5: a new rig on the point, labelled with it; a second clip
                          dropped onto the standing rig
     PHASE = "drag_rig2"  its label read; a third clip dropped onto it
-    PHASE = "drag_end"   gate 6: labelled, then the text replaced on the same node;
+    PHASE = "drag_end"   gate 6: labelled, then relabelled with the second clip;
                          clip_labels_drag.png
 
 Spec: docs/superpowers/specs/2026-10-02-clip-labels-design.md
@@ -460,10 +460,12 @@ def phase_drag_end():
     texts1, nodes1 = WORLD["after1"]
     texts2, nodes2 = _rig_labels()
     print("status:", window_status())
-    gate(6, "two clips dropped in turn onto the standing rig: labelled, then its text replaced "
-            "on the same node",
-         texts1 == [RIG_CLIPS[0]] and texts2 == [RIG_CLIPS[1]] and nodes1 == nodes2
-         and len(nodes1) == 1, "%s -> %s" % (texts1, texts2))
+    # Since the 2026-10-02 fix pass the reset in front of a drop onto a standing rig takes the
+    # old label with the take, and the press writes a fresh one: one label, the new text.
+    gate(6, "two clips dropped in turn onto the standing rig: labelled, then relabelled with the "
+            "second clip, one label throughout",
+         texts1 == [RIG_CLIPS[0]] and texts2 == [RIG_CLIPS[1]]
+         and len(nodes1) == 1 and len(nodes2) == 1, "%s -> %s" % (texts1, texts2))
     cmds.currentTime(0)
     scratch = os.path.join(OUT, "_clip_labels_probe.jpg")
     textures_loaded(scratch)

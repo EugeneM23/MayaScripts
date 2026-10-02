@@ -169,13 +169,22 @@ class Ensure(unittest.TestCase):
         self.calls = []
         self.links = {}          # root -> [label]
         self.marks = {}          # label -> clip
-        saved = dict(cmds=cliplabel.cmds, make=cliplabel._make, write=cliplabel._write)
+        saved = dict(cmds=cliplabel.cmds, make=cliplabel._make, write=cliplabel._write,
+                     follows=cliplabel.follows, follow=cliplabel._follow,
+                     unfollow=cliplabel._unfollow)
 
         def restore():
             cliplabel.cmds = saved["cmds"]
             cliplabel._make = saved["make"]
             cliplabel._write = saved["write"]
+            cliplabel.follows = saved["follows"]
+            cliplabel._follow = saved["follow"]
+            cliplabel._unfollow = saved["unfollow"]
         self.addCleanup(restore)
+        self.whole = True        # does the standing label still follow its root?
+        cliplabel.follows = lambda label, root: self.whole
+        cliplabel._follow = lambda label, root: self.calls.append(("follow", label, root))
+        cliplabel._unfollow = lambda label: self.calls.append(("unfollow", label))
         cliplabel.cmds = types.SimpleNamespace(
             ls=lambda node, long=False: [node],
             objExists=lambda node: True,
@@ -205,6 +214,120 @@ class Ensure(unittest.TestCase):
         self.marks["|root_clipLabel"] = "Walk"
         self.assertEqual(cliplabel.ensure("|root", "Walk"), "|root_clipLabel")
         self.assertEqual(self.calls, [])
+
+    def test_a_label_that_stopped_following_is_made_to_follow_again(self):
+        """Its network deleted, or the first build's pointConstraint: the next
+        import does not leave it frozen where it stands."""
+        self.links["|root"] = ["|root_clipLabel"]
+        self.marks["|root_clipLabel"] = "Walk"
+        self.whole = False
+        self.assertEqual(cliplabel.ensure("|root", "Walk"), "|root_clipLabel")
+        self.assertEqual(self.calls, [("unfollow", "|root_clipLabel"),
+                                      ("follow", "|root_clipLabel", "|root")])
+
+    def test_a_repair_with_a_new_clip_rewrites_the_text_too(self):
+        self.links["|root"] = ["|root_clipLabel"]
+        self.marks["|root_clipLabel"] = "Walk"
+        self.whole = False
+        cliplabel.ensure("|root", "Run")
+        self.assertEqual([c[0] for c in self.calls], ["write", "unfollow", "follow"])
+
+
+class SourceName(unittest.TestCase):
+    """The Retarget button's source gives a clip name, or none - never a wrong one."""
+
+    def test_a_namespaced_source_is_named_by_its_namespace(self):
+        self.assertEqual(cliplabel.clip_name_from("|A_Jump:root|A_Jump:pelvis"), "A_Jump")
+
+    def test_a_nested_namespace_gives_the_outermost(self):
+        self.assertEqual(cliplabel.clip_name_from("|Sweep_Fall:mixamorig:Hips"), "Sweep_Fall")
+
+    def test_a_named_group_above_the_bones_names_it(self):
+        self.assertEqual(cliplabel.clip_name_from("|Run_Fwd|root", top_is_joint=False), "Run_Fwd")
+
+    def test_an_importers_wrapper_names_nothing(self):
+        for top in ("Armature", "SK_Mannequin_root", "Root", "Group"):
+            name = cliplabel.clip_name_from("|%s|root" % top, top_is_joint=False)
+            self.assertEqual(name, "" if top != "SK_Mannequin_root" else top)
+
+    def test_a_bare_root_joint_names_nothing(self):
+        self.assertEqual(cliplabel.clip_name_from("|root"), "")
+
+    def test_a_scene_opened_from_a_clip_file_names_it(self):
+        self.assertEqual(cliplabel.clip_name_from("|root", True, "C:/clips/Walk_01.fbx"), "Walk_01")
+        self.assertEqual(cliplabel.clip_name_from("|Hips", True, "D:\\mocap\\jump.BVH"), "jump")
+
+    def test_a_working_scene_never_names_the_clip(self):
+        self.assertEqual(cliplabel.clip_name_from("|root", True, "C:/work/shot_010.ma"), "")
+        self.assertEqual(cliplabel.clip_name_from("|root", True, "C:/work/shot_010.mb"), "")
+
+    def test_nothing_gives_nothing(self):
+        self.assertEqual(cliplabel.clip_name_from(None), "")
+        self.assertEqual(cliplabel.clip_name_from("", True, ""), "")
+
+
+class Follows(unittest.TestCase):
+    """Is the follow network whole - the translate from one of ours, one of ours reading the root."""
+
+    def test_whole(self):
+        self.assertTrue(cliplabel.follows_plan("loc", "at", ["at", "floor", "mult", "loc"]))
+
+    def test_the_first_builds_constraint_is_not_ours(self):
+        self.assertFalse(cliplabel.follows_plan("label_pointConstraint1", None, []))
+
+    def test_nothing_drives_it(self):
+        self.assertFalse(cliplabel.follows_plan(None, "at", ["at", "loc"]))
+
+    def test_reading_another_root_is_not_following_this_one(self):
+        self.assertFalse(cliplabel.follows_plan("loc", None, ["at", "loc"]))
+
+    def test_the_offset_is_a_world_point_through_the_parents_inverse(self):
+        """The fix for a group that moves: the network ends in the label's own
+        parentInverseMatrix, so FRONT and the floor stay world numbers."""
+        import inspect
+        src = inspect.getsource(cliplabel._follow)
+        self.assertIn("parentInverseMatrix", src)
+        self.assertNotIn("pointConstraint", inspect.getsource(cliplabel._make))
+
+
+class Clear(unittest.TestCase):
+    """A label and its follow nodes go when the character's take is cleared."""
+
+    def test_clear_deletes_the_labels_and_their_parts(self):
+        deleted = []
+        saved = cliplabel.cmds, cliplabel.labels_of, cliplabel.parts_of
+        self.addCleanup(lambda: setattr(cliplabel, "cmds", saved[0]))
+        self.addCleanup(lambda: setattr(cliplabel, "labels_of", saved[1]))
+        self.addCleanup(lambda: setattr(cliplabel, "parts_of", saved[2]))
+        cliplabel.cmds = types.SimpleNamespace(
+            ls=lambda node, long=False: [node], objExists=lambda node: True,
+            delete=lambda nodes: deleted.extend(nodes))
+        cliplabel.labels_of = lambda root: ["|g|ns:clipLabel"]
+        cliplabel.parts_of = lambda label: ["ns:clipLabel_rootAt", "ns:clipLabel_labelLocal"]
+        self.assertEqual(cliplabel.clear("|ns:root"), 1)
+        self.assertEqual(deleted, ["ns:clipLabel_rootAt", "ns:clipLabel_labelLocal",
+                                   "|g|ns:clipLabel"])
+
+    def test_clear_rig_never_raises(self):
+        saved = cliplabel.clear
+        self.addCleanup(lambda: setattr(cliplabel, "clear", saved))
+        cliplabel.clear = lambda root: 1 / 0
+        rig = types.SimpleNamespace(skeleton_root="|r:root", main="r:Main")
+        self.assertEqual(cliplabel.clear_rig(rig), 0)
+
+    def test_relabel_without_a_name_clears(self):
+        calls = []
+        saved = cliplabel.clip_name_of, cliplabel.clear_rig, cliplabel.label_rig
+        self.addCleanup(lambda: setattr(cliplabel, "clip_name_of", saved[0]))
+        self.addCleanup(lambda: setattr(cliplabel, "clear_rig", saved[1]))
+        self.addCleanup(lambda: setattr(cliplabel, "label_rig", saved[2]))
+        cliplabel.clear_rig = lambda rig: calls.append("clear")
+        cliplabel.label_rig = lambda rig, name: calls.append(("label", name))
+        cliplabel.clip_name_of = lambda source: ""
+        cliplabel.relabel_rig("R", "|root")
+        cliplabel.clip_name_of = lambda source: "A_Jump"
+        cliplabel.relabel_rig("R", "|A_Jump:root")
+        self.assertEqual(calls, ["clear", ("label", "A_Jump")])
 
 
 class EveryRoad(unittest.TestCase):

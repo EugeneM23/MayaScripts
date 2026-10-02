@@ -335,6 +335,10 @@ def ready_rig(plan):
     # measure the pole offsets against that pose. What is still posed
     # afterwards is a channel nothing here may touch, and that IS a refusal.
     curves, zeroed = mod.reset_build_pose(rig)
+    # The take is gone, so its name goes too: a refusal from here on (still
+    # posed, no joint in the clip, a connect refused) must not leave the rig
+    # labelled with a clip it no longer plays (2026-10-02, cliplabel).
+    _unlabel(rig)
     if curves or zeroed:
         notes.append("previous take cleared ({0} curves), rig at "
                      "build pose".format(curves))
@@ -367,6 +371,15 @@ def _label(rig, name):
     except ImportError:
         return None
     return cliplabel.label_rig(rig, name)
+
+
+def _unlabel(rig):
+    """The rig's label gone with its take (the reset above). Never fails."""
+    try:
+        from maya_scenesetup import cliplabel
+    except ImportError:
+        return 0
+    return cliplabel.clear_rig(rig)
 
 
 def retarget_imported(rig, mod, namespace, info, source, name, place=None):

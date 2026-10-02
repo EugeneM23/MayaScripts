@@ -11,7 +11,11 @@ Import Animation button in every mode, a drag onto a rig, a skeleton or the
 floor, a batch square - ends in `rigimport.retarget_imported` (a rig) or
 `skeletonimport.onto_skeleton` / `onto_existing` (a skeleton), and those
 three call `label_rig` / `label_skeleton`. One label per character: a later
-import onto the same one REPLACES its text.
+import onto the same one REPLACES its text. **A label names the take the
+character plays, so whatever clears the take clears the label**: the rig
+reset in front of every import (`rigimport.ready_rig`) and the Retarget
+button's (`maya_rig_retarget.run_retarget`, which labels the rig afterwards
+with its source's name when it has one - `clip_name_from`).
 
 **What it is, measured in a GUI Maya 2027 before choosing** (spec:
 docs/superpowers/specs/2026-10-02-clip-labels-design.md):
@@ -27,9 +31,14 @@ docs/superpowers/specs/2026-10-02-clip-labels-design.md):
   draw reads, the parent's reference what the pick reads. Reference alone,
   on either node, draws the text BLACK whatever its colour (invisible on a
   dark backdrop); template draws a dim grey.
-- it FOLLOWS the character on the floor: a `pointConstraint` to the root
-  bone, Y skipped and the label's own Y on 0, so a walking clip's name walks
-  with it, exactly, and costs one constraint.
+- it FOLLOWS the character on the floor, in WORLD space: four DG nodes
+  (`_follow`) take the root bone's world X and Z, put Y on the floor and
+  FRONT ahead on world +Z, and bring that point into the label's parent
+  space through the label's own `parentInverseMatrix`. A walking clip's name
+  walks with it, exactly, and moving or turning the group the label hangs
+  in moves nothing (a `pointConstraint`'s offset - the first build - is in
+  the constrained node's PARENT space, so it turned and rose with the
+  group). The four nodes are linked to the label by message (`PART_LINK`).
 
 **Never in an export, never in the skeleton**: the label is not under the
 root (the exporter takes a selected node's children along, trap 76); for a
@@ -50,6 +59,7 @@ import maya.cmds as cmds
 
 MARKER = "skeldarClipLabel"          # string, on the label transform: the clip's name
 ROOT_LINK = "skeldarClipLabelRoot"   # message, fed by the character root's .message
+PART_LINK = "skeldarClipLabelOf"     # message on each follow node, fed by the label's .message
 LEAF = "clipLabel"                   # the transform's name (never searched for)
 # cm ahead of the root on world +Z (every rig faces +Z): just past Main's ring (radius 40.52),
 # so the name stands on clear floor and not on the feet or the ring.
@@ -61,7 +71,16 @@ MAX_CHARS = 48
 # a dark backdrop), text 1.35 - no luminance beats ~2.3 against a grey background AND white
 # bodies at once, so the hue decides: orange stands apart from every neutral behind it.
 COLOUR = "#e07a36"
-LOCKED = ("translateY", "rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
+# The translate is DRIVEN by the follow network; rotate and scale are locked.
+LOCKED = ("rotateX", "rotateY", "rotateZ", "scaleX", "scaleY", "scaleZ")
+TRANSLATE = ("translateX", "translateY", "translateZ")
+# Top nodes whose name says nothing about the clip (an FBX importer's or a
+# DCC's wrapper, a bare root): a source under one of them gives no name.
+GENERIC = ("armature", "root", "skeleton", "group", "scene", "rootnode", "hips",
+           "reference", "skel", "rig", "world", "null", "bip001", "bip01")
+# A scene OPENED from one of these is a clip; a .ma / .mb is a working file.
+CLIP_FILES = (".fbx", ".bvh", ".dae", ".abc", ".htr", ".trc", ".c3d", ".asf",
+              ".amc", ".glb", ".gltf", ".usd", ".usda", ".usdc", ".usdz")
 
 # What a clip's name may still carry when it came from a file (a folder of
 # FBX, a BVH): the extension goes, the name stays.
@@ -124,6 +143,48 @@ def plan(existing, text):
     keep, current = existing[0]
     extra = [path for path, _text in existing[1:]]
     return ("keep" if current == text else "update"), keep, extra
+
+
+def clip_name_from(source_root, top_is_joint=True, scene_file=""):
+    """The clip's name a hand-imported source skeleton gives, or "" when it
+    gives none. Pure.
+
+    The Retarget button takes any skeleton the animator imported, and its
+    name is rarely written anywhere: a namespace is the bridge's own spelling
+    (its «as a new skeleton» import names it for the clip, `namespace_for`),
+    so the OUTERMOST namespace of the source's top node wins; else that top
+    node when it is not a joint and not a generic wrapper (`GENERIC`: an
+    importer's `Armature`, a bare `root`); else the scene's own file when the
+    scene was OPENED from a clip file (`CLIP_FILES` - never a .ma / .mb, the
+    animator's working file). Nothing else: a wrong name is worse than none,
+    so "" means the label goes."""
+    parts = [p for p in str(source_root or "").split("|") if p]
+    if parts:
+        top = parts[0]
+        if ":" in top:
+            return top.split(":")[0]
+        if not top_is_joint and top.lower() not in GENERIC:
+            return top
+    if scene_file:
+        leaf = str(scene_file).replace("\\", "/").split("/")[-1]
+        stem, ext = os.path.splitext(leaf)
+        if stem and ext.lower() in CLIP_FILES:
+            return stem
+    return ""
+
+
+def follows_plan(translate_from, root_from, parts):
+    """Is a label's follow network whole? Pure.
+
+    `translate_from` the node driving its translateX, `root_from` the
+    network's decomposeMatrix that reads THIS root, `parts` the nodes linked
+    to the label by `PART_LINK`. Whole means the translate comes from one of
+    OUR parts and one part reads the root - a label whose network was
+    deleted, or which still carries the first build's pointConstraint, is
+    rebuilt."""
+    parts = set(parts or ())
+    return (bool(translate_from) and translate_from in parts
+            and bool(root_from) and root_from in parts)
 
 
 def colour_of(hex_colour):
@@ -224,15 +285,103 @@ def _make(root, namespace, home, name, text):
     cmds.addAttr(label, longName=ROOT_LINK, attributeType="message")
     cmds.connectAttr(root + ".message", label + "." + ROOT_LINK)
     _write(label, name, text)
-    # The floor height first, in world space (the home is static); then the
-    # constraint takes X and Z from the root on every frame.
-    at = cmds.xform(root, query=True, worldSpace=True, translation=True)
-    cmds.xform(label, worldSpace=True, translation=(at[0], FLOOR, at[2] + FRONT))
-    cmds.pointConstraint(root, label, skip="y", maintainOffset=False,
-                         offset=(0.0, 0.0, FRONT))
+    _follow(label, root)
     for attr in LOCKED:
         cmds.setAttr(label + "." + attr, lock=True)
     return label
+
+
+def parts_of(label):
+    """The follow nodes linked to `label` (by `PART_LINK`)."""
+    out = []
+    if not label or not cmds.objExists(label):
+        return out
+    for node in cmds.listConnections(label + ".message", source=False,
+                                     destination=True) or []:
+        if (cmds.attributeQuery(PART_LINK, node=node, exists=True)
+                and node not in out):
+            out.append(node)
+    return out
+
+
+def _follow(label, root):
+    """The label on the floor FRONT ahead of `root`, in world space, on every
+    frame: root.worldMatrix -> decompose (its world X, Z) -> compose (Y on
+    the floor) -> mult (FRONT on world +Z - two pure translations add in
+    either order - then the label's parentInverseMatrix) -> decompose ->
+    label.translate. The parent's inverse is what keeps the point a WORLD
+    point however the group above the label stands."""
+    base = label.split("|")[-1]
+    made = []
+
+    def part(kind, suffix):
+        node = cmds.createNode(kind, name="{0}_{1}".format(base, suffix),
+                               skipSelect=True)
+        cmds.addAttr(node, longName=PART_LINK, attributeType="message")
+        cmds.connectAttr(label + ".message", node + "." + PART_LINK)
+        made.append(node)
+        return node
+
+    at_root = part("decomposeMatrix", "rootAt")
+    floor = part("composeMatrix", "floorAt")
+    total = part("multMatrix", "labelAt")
+    local = part("decomposeMatrix", "labelLocal")
+    cmds.connectAttr(root + ".worldMatrix[0]", at_root + ".inputMatrix")
+    cmds.connectAttr(at_root + ".outputTranslateX", floor + ".inputTranslateX")
+    cmds.connectAttr(at_root + ".outputTranslateZ", floor + ".inputTranslateZ")
+    cmds.setAttr(floor + ".inputTranslateY", FLOOR)
+    cmds.connectAttr(floor + ".outputMatrix", total + ".matrixIn[0]")
+    ahead = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+             0.0, 0.0, 1.0, 0.0, 0.0, 0.0, FRONT, 1.0]
+    cmds.setAttr(total + ".matrixIn[1]", ahead, type="matrix")
+    cmds.connectAttr(label + ".parentInverseMatrix[0]", total + ".matrixIn[2]")
+    cmds.connectAttr(total + ".matrixSum", local + ".inputMatrix")
+    for attr in TRANSLATE:
+        cmds.setAttr(label + "." + attr, lock=False)
+    cmds.connectAttr(local + ".outputTranslate", label + ".translate", force=True)
+    return made
+
+
+def _unfollow(label):
+    """Whatever made `label` follow, gone: our follow nodes, a pointConstraint
+    the first build hung under it, any input left on its translate."""
+    nodes = parts_of(label)
+    nodes += cmds.listRelatives(label, children=True, type="constraint",
+                                fullPath=True) or []
+    nodes = [n for n in nodes if cmds.objExists(n)]
+    if nodes:
+        cmds.delete(nodes)
+    for attr in ("translate",) + TRANSLATE:
+        for plug in cmds.listConnections(label + "." + attr, source=True,
+                                         destination=False, plugs=True) or []:
+            try:
+                cmds.disconnectAttr(plug, label + "." + attr)
+            except RuntimeError:
+                pass
+    for attr in TRANSLATE:
+        cmds.setAttr(label + "." + attr, lock=False)
+
+
+def follows(label, root):
+    """Does `label` still follow `root` through a whole follow network?"""
+    parts = parts_of(label)
+    driver = None
+    for attr in ("translate", "translateX"):        # the compound, or a child wired alone
+        found = cmds.listConnections(label + "." + attr, source=True,
+                                     destination=False) or []
+        if found:
+            driver = found[0]
+            break
+    root_long = _long(root)
+    root_from = None
+    for node in parts:
+        if cmds.nodeType(node) != "decomposeMatrix":
+            continue
+        for src in cmds.listConnections(node + ".inputMatrix", source=True,
+                                        destination=False) or []:
+            if _long(src) == root_long:
+                root_from = node
+    return follows_plan(driver, root_from, parts)
 
 
 def ensure(root, name, namespace="", home=None):
@@ -252,7 +401,63 @@ def ensure(root, name, namespace="", home=None):
         return _make(root, namespace, home, name, text)
     if action == "update":
         _write(keep, name, text)
+    if not follows(keep, root):
+        # Its network was deleted, or it is the first build's constraint:
+        # make it follow again rather than leave it frozen where it stands.
+        _unfollow(keep)
+        _follow(keep, root)
     return keep
+
+
+def clear(root):
+    """Every label of the character whose root is `root`, gone with its
+    follow nodes. How many went."""
+    root = _long(root)
+    if root is None:
+        return 0
+    labels = labels_of(root)
+    nodes = []
+    for label in labels:
+        nodes += parts_of(label) + [label]
+    nodes = [n for n in nodes if cmds.objExists(n)]
+    if nodes:
+        cmds.delete(nodes)
+    return len(labels)
+
+
+def clear_rig(rig):
+    """The rig's label gone - its take was cleared, so the name would lie.
+    Never raises (see `label_rig`)."""
+    try:
+        return clear(rig.skeleton_root or rig.main)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+        return 0
+
+
+def clip_name_of(source_root):
+    """`clip_name_from` over the scene: the source's top node and the scene's
+    own file."""
+    path = _long(source_root) or ""
+    parts = [p for p in path.split("|") if p]
+    top_is_joint = True
+    if parts:
+        top_is_joint = cmds.objectType("|" + parts[0]) == "joint"
+    scene = cmds.file(query=True, sceneName=True) or ""
+    return clip_name_from(path, top_is_joint, scene)
+
+
+def relabel_rig(rig, source_root):
+    """After the Retarget button's bake: the rig labelled with its source's
+    clip name, or its label gone when the source gives none. Never raises."""
+    try:
+        name = clip_name_of(source_root) if source_root else ""
+        if name:
+            return label_rig(rig, name)
+        clear_rig(rig)
+    except Exception:                                        # noqa: BLE001
+        traceback.print_exc()
+    return None
 
 
 def label_rig(rig, name):

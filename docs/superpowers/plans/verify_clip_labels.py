@@ -13,8 +13,10 @@ Gates:
  2  the labels follow their rigs over the take: at the first, middle and last frame (a real time
     change) each stands on the floor (y 0) at its root's x/z + FRONT, while the thrust's root
     travels ~2.5 m (the positive control: a label that did not follow would read that far off)
- 3  a single import onto rig 1 (Import Animation, Rig mode): its label's text replaced, the same
-    node, still one; the same clip again keeps it
+ 3a the reset in front of an import onto a standing rig takes its label with the take (so a
+    refusal after it leaves no stale name)
+ 3  a single import onto rig 1 (Import Animation, Rig mode): one label, reading the new clip;
+    the same clip again keeps it
  4  a batch in the Skeleton mode (Characters on Manny UE5 [skeleton]): one label per skeleton at
     world level, linked by message, following its root
  5  Skeleton x Onto selected onto skeleton 1: its label's text replaced, one label
@@ -24,6 +26,12 @@ Gates:
     brings them back linked; the other characters keep theirs
  8  nothing stray: every label in the scene belongs to a character standing
  9  a Creep rig, its root under its Armature Null: labelled, following its root
+10  the rig's top group moved and turned: the label still on the floor FRONT ahead of the root on
+    world +Z (the positive control: the first build's pointConstraint scheme reads >10 cm off)
+11  a label whose follow network was deleted, or carrying the first build's pointConstraint,
+    follows again after the next import, on the same node
+12  the Retarget button (a hand-imported, namespaced source) relabels the rig with the namespace
+13  the Retarget button with a source that names no clip leaves the rig unlabelled
 """
 
 import math
@@ -220,15 +228,21 @@ def main():
     # ------------------------------------------------------------- 3: a re-import onto rig 1
     rig1 = rigs[0]
     before = by_root[rig1.skeleton_root][0]
-    before_uuid = cmds.ls(before, uuid=True)[0]
     old_clip = cliplabel.clip_of(before)
+    # 3a (fix pass): the reset in front of every import takes the take, and the name with it -
+    # so a refusal after the reset (still posed, no joint, a connect refused) leaves no lie.
+    plan, refusal = rigimport.plan_press("rig", rig1)
+    rigimport.ready_rig(plan)
+    gone = labels_by_root().get(rig1.skeleton_root, [])
+    gate("3a the rig's reset takes its label with the take (no stale name after a refusal)",
+         not refusal and not gone and not cmds.objExists(before), "%d left" % len(gone))
     new_clip = "Sword_Idle"
     line = rigimport.import_and_retarget(CLIPS[new_clip], new_clip, clip_fps=30,
                                          target="rig", rig=rig1)
     print("re-import:", line)
     after = labels_by_root().get(rig1.skeleton_root, [])
-    same = len(after) == 1 and cmds.ls(after[0], uuid=True)[0] == before_uuid
-    gate("3 a single import onto rig 1 replaces its label's text on the same node",
+    same = len(after) == 1
+    gate("3 a single import onto rig 1: one label, reading the new clip",
          same and cliplabel.text_of(after[0]) == new_clip,
          "%s -> %s, %d label(s)" % (old_clip, cliplabel.text_of(after[0]) if after else None,
                                     len(after)))
@@ -353,6 +367,100 @@ def main():
          "%s %s, worst %.6f cm over %.1f cm" % (creep[0].namespace if creep else None,
                                                 [cliplabel.text_of(f) for f in found],
                                                 error, travel))
+
+    fix_pass(rig1, rigs[1], skel1)
+
+
+def _set_group(group, translate, rotate):
+    """The rig's top group moved / turned, its locks lifted and put back."""
+    locked = []
+    for attr in ("translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ"):
+        plug = group + "." + attr
+        if cmds.getAttr(plug, lock=True):
+            locked.append(plug)
+            cmds.setAttr(plug, lock=False)
+    cmds.xform(group, translation=translate, rotation=rotate, worldSpace=False)
+    for plug in locked:
+        cmds.setAttr(plug, lock=True)
+
+
+def fix_pass(rig1, rig_b, skel1):
+    """Gates 10-13, the review's findings (2026-10-02 fix pass)."""
+    # ------------------------------------------------------------- 10: the group moves
+    label = labels_by_root()[rig1.skeleton_root][0]
+    # The positive control: the first build's scheme, a pointConstraint under the same group.
+    old = cmds.createNode("transform", name="oldSchemeControl", skipSelect=True)
+    old = cmds.parent(old, rig1.group)[0]
+    cmds.pointConstraint(rig1.skeleton_root, old, skip="y", maintainOffset=False,
+                         offset=(0.0, 0.0, cliplabel.FRONT))
+    _set_group(rig1.group, (37.0, 22.0, -15.0), (0.0, 40.0, 0.0))
+    frames = frames_of(rig1.skeleton_root)
+    error, travel = follow_error(label, rig1.skeleton_root, frames)
+    old_long = cmds.ls(old, long=True)[0]
+    worst_old = 0.0
+    for frame in frames:
+        cmds.currentTime(frame - 1)
+        cmds.currentTime(frame)
+        r, p = wt(rig1.skeleton_root), wt(old_long)
+        want = (r[0], cliplabel.FLOOR, r[2] + cliplabel.FRONT)
+        worst_old = max(worst_old, max(abs(p[i] - want[i]) for i in range(3)))
+    gate("10 with the rig's group moved (37, 22, -15) and turned 40 deg the label still stands on "
+         "the floor FRONT ahead of the root on world +Z", error < 0.01 and worst_old > 10.0,
+         "label %.6f cm; the old pointConstraint scheme %.3f cm off" % (error, worst_old))
+    cmds.delete(old_long)
+    _set_group(rig1.group, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+
+    # ------------------------------------------------------------- 11: a broken label is mended
+    label = labels_by_root()[skel1][0]
+    uuid = cmds.ls(label, uuid=True)[0]
+    cmds.delete(cliplabel.parts_of(label))
+    broken = not cliplabel.follows(label, skel1)
+    clip = cliplabel.clip_of(label)
+    cliplabel.label_skeleton(skel1, clip)
+    label = cmds.ls(uuid, long=True)[0]
+    error, _t = follow_error(label, skel1, frames_of(skel1))
+    mended = cliplabel.follows(label, skel1) and error < 0.01
+    # and the first build's shape: a pointConstraint under the label instead of the network
+    cmds.delete(cliplabel.parts_of(label))
+    for attr in ("translateX", "translateY", "translateZ"):
+        cmds.setAttr(label + "." + attr, lock=False)
+    cmds.pointConstraint(skel1, label, skip="y", maintainOffset=False,
+                         offset=(0.0, 0.0, cliplabel.FRONT))
+    cliplabel.label_skeleton(skel1, clip)
+    label = cmds.ls(uuid, long=True)[0]
+    no_constraint = not cmds.listRelatives(label, children=True, type="constraint")
+    error2, _t = follow_error(label, skel1, frames_of(skel1))
+    gate("11 a label whose network was deleted, or that still carries the first build's "
+         "pointConstraint, follows again after the next import - the same node",
+         broken and mended and no_constraint and cliplabel.follows(label, skel1)
+         and error2 < 0.01, "%.6f / %.6f cm" % (error, error2))
+
+    # ------------------------------------------------------------- 12: the Retarget button
+    import maya_rig_retarget
+    before = labels_by_root()[rig_b.skeleton_root][0]
+    old_text = cliplabel.text_of(before)
+    namespace, _info, source = rigimport.import_source(CLIPS["ShortSword_Walk_1P"], "Walk_byHand",
+                                                       30)
+    ok, text = maya_rig_retarget.run_retarget(source_root=source, rig=rig_b)
+    print("retarget button:", text)
+    after = labels_by_root().get(rig_b.skeleton_root, [])
+    gate("12 the Retarget button relabels the rig with its source's clip (its namespace)",
+         ok and len(after) == 1 and cliplabel.text_of(after[0]) == namespace
+         and namespace != old_text,
+         "%s -> %s" % (old_text, [cliplabel.text_of(a) for a in after]))
+
+    # ------------------------------------------------------------- 13: a source with no name
+    namespace2, _info, source2 = rigimport.import_source(CLIPS["Sword_Idle"], "NoName", 30)
+    uuid2 = cmds.ls(source2, uuid=True)[0]
+    cmds.namespace(removeNamespace=namespace2, mergeNamespaceWithRoot=True)
+    source2 = cmds.ls(uuid2, long=True)[0]
+    ok2, text2 = maya_rig_retarget.run_retarget(source_root=source2, rig=rig_b)
+    print("retarget button, nameless source %s:" % source2, text2)
+    left = labels_by_root().get(rig_b.skeleton_root, [])
+    gate("13 a source that names no clip (a bare root, a working scene) leaves the rig unlabelled, "
+         "never wearing the previous clip's name",
+         ok2 and not left and cliplabel.clip_name_of(source2) == "",
+         "%s, %d label(s)" % (source2, len(left)))
 
 
 try:
