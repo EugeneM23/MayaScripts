@@ -131,6 +131,38 @@ def explicit_skeleton():
     return skeletonimport.choose_skeleton(named, rig_labels, [], labels)
 
 
+class kept_selection(object):
+    """The selection as the press found it, put back after it (by UUID).
+
+    A character an Auto press ADDS selects itself - Add Character's rule, so the next press acts
+    on it - and the next Auto press, Onto selected, would read that as the animator's explicit
+    target: a Kwang clip landing on the Manny the previous press added, its take replaced (the
+    review, 2026-10-02). Only a selection the animator made names a target."""
+
+    def __enter__(self):
+        try:
+            picked = cmds.ls(selection=True, long=True) or []
+            # never `ls([], uuid=True)`: with nothing to convert it answers every name (trap 8)
+            self.uuids = (cmds.ls(picked, uuid=True) or []) if picked else []
+        except Exception:                                    # noqa: BLE001
+            self.uuids = None                     # a `cmds` without a scene: nothing to keep
+        return self
+
+    def __exit__(self, *_exc):
+        if self.uuids is None:
+            return False
+        try:
+            live = [p for u in self.uuids for p in (cmds.ls(u, long=True) or [])]
+            if live:
+                cmds.select(live, replace=True)
+            else:
+                cmds.select(clear=True)
+        except Exception:                                    # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+        return False
+
+
 def discard(namespace):
     """A clip skeleton nothing will keep."""
     try:
@@ -194,10 +226,15 @@ def import_auto(fbx_path, name, kind, clip_fps=None, set_timeline=True, at=None)
     `fbx_path` is a clip reference (an Unreal export with its mesh, a file's clip); `kind` the
     card's [Rig | Skeleton]; `at` a floor point (a drop): the character - ours or its own -
     stands there at the clip's first frame. Refusals of the import take back what it made."""
-    import maya_retargetmode
-    from maya_scenesetup import catalog
     if kind not in KINDS:
         return "unknown kind {0!r}".format(kind)
+    with kept_selection():
+        return _import_auto(fbx_path, name, kind, clip_fps, set_timeline, at)
+
+
+def _import_auto(fbx_path, name, kind, clip_fps, set_timeline, at):
+    import maya_retargetmode
+    from maya_scenesetup import catalog
     timing = rigimport.time_state()
     before = set(animimport.existing_namespaces())
     try:

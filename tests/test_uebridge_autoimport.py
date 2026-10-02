@@ -68,15 +68,39 @@ class Pure(unittest.TestCase):
 
     def test_a_world_move_in_the_parent_s_space(self):
         self.assertEqual(nativeimport.local_delta((1.0, 2.0, 3.0), None), (1.0, 2.0, 3.0))
-        # a parent turned 90 deg about Y: its inverse turns world +X onto local +Z
-        c, s = math.cos(math.radians(-90)), math.sin(math.radians(-90))
-        inverse = [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]
+        # Maya's row vectors: a node's world point is p_local * M. A parent turned +90 deg about
+        # Y has rows x -> (0, 0, -1), z -> (1, 0, 0): its local +Z points along world +X, so its
+        # INVERSE takes a world +X move onto local +Z - the sign is the convention, asserted.
+        world = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]
+        inverse = [0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 0, 1]
         x, y, z = nativeimport.local_delta((10.0, 0.0, 0.0), inverse)
         self.assertAlmostEqual(x, 0.0)
-        self.assertAlmostEqual(abs(z), 10.0)
-        # a parent scaled 2: half the move in its space
-        scaled = [0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1]
-        self.assertEqual(nativeimport.local_delta((10.0, 0.0, 4.0), scaled), (5.0, 0.0, 2.0))
+        self.assertAlmostEqual(z, 10.0)
+        back = nativeimport.local_delta((x, y, z), world)
+        for got, want in zip(back, (10.0, 0.0, 0.0)):
+            self.assertAlmostEqual(got, want)
+        # not symmetric: 30 deg about Y, a non-uniform scale, and a translation row to ignore -
+        # the row-vector product written out, and the column-vector one shown to differ
+        c, s = math.cos(math.radians(30)), math.sin(math.radians(30))
+        m = [2 * c, 0, -2 * s, 0, 0, 1, 0, 0, 0.5 * s, 0, 0.5 * c, 0, 7.0, 8.0, 9.0, 1]
+        v = (3.0, -1.0, 4.0)
+        rows = (v[0] * m[0] + v[1] * m[4] + v[2] * m[8],
+                v[0] * m[1] + v[1] * m[5] + v[2] * m[9],
+                v[0] * m[2] + v[1] * m[6] + v[2] * m[10])
+        columns = (v[0] * m[0] + v[1] * m[1] + v[2] * m[2],
+                   v[0] * m[4] + v[1] * m[5] + v[2] * m[6],
+                   v[0] * m[8] + v[1] * m[9] + v[2] * m[10])
+        got = nativeimport.local_delta(v, m)
+        for g, want in zip(got, rows):
+            self.assertAlmostEqual(g, want)
+        self.assertGreater(max(abs(a - b) for a, b in zip(rows, columns)), 1.0)
+
+    def test_only_a_chain_of_namespaces_is_flattened(self):
+        self.assertTrue(nativeimport.single_chain("A", ["A:mixamorig"]))
+        self.assertTrue(nativeimport.single_chain("A", ["A:b", "A:b:c"]))
+        self.assertTrue(nativeimport.single_chain("A", []))
+        self.assertFalse(nativeimport.single_chain("A", ["A:Hero", "A:Enemy"]))
+        self.assertFalse(nativeimport.single_chain("A", ["A:b", "A:b:c", "A:b:d"]))
 
     def test_namespaces_deepest_first(self):
         self.assertEqual(nativeimport.depth_first(["A", "A:mixamorig", "A:b:c", ""]),
@@ -254,6 +278,52 @@ class OntoNewRig(unittest.TestCase):
         self.assertIn(("discard", "A"), self.calls)
         self.assertIn(("discard_rig", "Manny_Rig1"), self.calls)
         self.assertEqual([c[1] for c in self.calls if c[0] == "undo"][-1], ("closeChunk",))
+
+
+class KeptSelection(unittest.TestCase):
+    """The review, 2026-10-02: a rig an Auto press adds selects itself (Add Character's rule), and
+    the next Auto press, Onto selected, read that as the animator's explicit target. The press
+    leaves the selection as it found it."""
+
+    def setUp(self):
+        self.selection = []
+        self.nodes = {"|Manny_Rig:Main": "U-MAIN", "|cube": "U-CUBE"}
+        saved = autoimport.cmds
+        self.addCleanup(setattr, autoimport, "cmds", saved)
+
+        def ls(*args, **kwargs):
+            if kwargs.get("selection"):
+                return list(self.selection)
+            items = args[0] if args else []
+            items = [items] if isinstance(items, str) else list(items)
+            if kwargs.get("uuid"):
+                return [self.nodes[i] for i in items if i in self.nodes]
+            back = dict((u, p) for p, u in self.nodes.items())
+            return [back[i] for i in items if i in back]
+
+        def select(*args, **kwargs):
+            if kwargs.get("clear"):
+                self.selection = []
+            else:
+                self.selection = list(args[0])
+        autoimport.cmds = types.SimpleNamespace(ls=ls, select=select)
+
+    def test_nothing_selected_stays_nothing_selected(self):
+        with autoimport.kept_selection():
+            self.selection = ["|Manny_Rig:Main"]          # the rig the press added selects itself
+        self.assertEqual(self.selection, [])
+
+    def test_the_animator_s_selection_comes_back(self):
+        self.selection = ["|cube"]
+        with autoimport.kept_selection():
+            self.selection = ["|Manny_Rig:Main"]
+        self.assertEqual(self.selection, ["|cube"])
+
+    def test_a_scene_less_cmds_keeps_nothing_and_raises_nothing(self):
+        autoimport.cmds = types.SimpleNamespace()
+        with autoimport.kept_selection() as kept:
+            pass
+        self.assertIsNone(kept.uuids)
 
 
 class Purity(unittest.TestCase):

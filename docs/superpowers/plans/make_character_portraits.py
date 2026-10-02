@@ -14,6 +14,8 @@ give the span, the meshes' top the crown - turned a little toward the
 character's left and a little above the eyes. One frame playblast at RENDER px
 with the background transparent, scaled to catalog's 256 px with smooth
 filtering, written to SkeldarAnim/assets/character_portraits/<model>.png (RGBA).
+The Auto card (2026-10-02) has no character to render: its «?» is drawn by
+make_auto_portrait.py, and both calls below leave it out.
 
     render_all()             every model into the plugin's assets
     render("Manny", out)     one model into `out`
@@ -188,6 +190,9 @@ def _idle(seconds):
 
 def render(model, out_dir):
     """One model's portrait into `out_dir`; its path and a line of numbers."""
+    if catalog.is_auto(model):
+        print("%s has no character - draw it with make_auto_portrait.py" % model)
+        return None
     entry = catalog.character_for(model, "rig") or catalog.character_for(model, "skeleton")
     cmds.file(new=True, force=True)
     print(character.add_character(entry))
@@ -238,7 +243,9 @@ def render_all(out_dir=None):
     out_dir = out_dir or os.path.join(REPO, "assets", "character_portraits")
     if not os.path.isdir(out_dir):
         os.makedirs(out_dir)
-    return [render(model.key, out_dir) for model in catalog.MODELS]
+    # the Auto card has no character to render: its «?» is drawn by make_auto_portrait.py
+    return [render(model.key, out_dir) for model in catalog.MODELS
+            if not catalog.is_auto(model.key)]
 
 
 if __name__ == "__main__":

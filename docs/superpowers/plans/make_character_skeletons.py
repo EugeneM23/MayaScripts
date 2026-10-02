@@ -10,7 +10,6 @@ Run in mayapy standalone, never in the animator's Maya (it opens each asset in t
 
     & 'C:\\Program Files\\Autodesk\\Maya2027\\bin\\mayapy.exe' docs/superpowers/plans/make_character_skeletons.py
 """
-import hashlib
 import json
 import os
 import sys
@@ -18,14 +17,6 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.normpath(os.path.join(HERE, "..", "..", "..", "SkeldarAnim"))
 OUT = os.path.join(PLUGIN, "assets", "character_skeletons.json")
-
-
-def sha1_of(path):
-    digest = hashlib.sha1()
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def leaf(path):
@@ -71,7 +62,9 @@ def main():
             assert name not in bones, "%s: %s twice" % (entry.key, name)
             bones[name] = [leaf(parent[0]) if parent and joint != root else None,
                            round(matrix[12], 4), round(matrix[13], 4), round(matrix[14], 4)]
-        rows[entry.key] = {"file": entry.file, "sha1": sha1_of(path), "kind": entry.kind,
+        from maya_uebridge import skeletonmatch
+        rows[entry.key] = {"file": entry.file, "sha1": skeletonmatch.asset_digest(path),
+                           "kind": entry.kind,
                            "model": entry.model, "bones": bones}
         print("row", entry.key, len(bones), "bones, root", leaf(root))
         sys.stdout.flush()

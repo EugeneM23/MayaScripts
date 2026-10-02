@@ -346,6 +346,17 @@ def _auto_one(clip, point, versions, groups, index):
 
 def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
         set_timeline=True, step=lineup.STEP, auto=False):
+    """The press for several animations (`_run`). An Auto press leaves the selection as it found
+    it (`autoimport.kept_selection`): a rig it added must not become the next press's target."""
+    if not auto:
+        return _run(record_list, export, target, centre, set_timeline, step, auto)
+    from maya_uebridge import autoimport
+    with autoimport.kept_selection():
+        return _run(record_list, export, target, centre, set_timeline, step, auto)
+
+
+def _run(record_list, export, target, centre=(0.0, 0.0, 0.0),
+         set_timeline=True, step=lineup.STEP, auto=False):
     """The press for several animations. Returns the status line.
 
     `export(record)` answers (fbx path, fps) - the window's round trip to the

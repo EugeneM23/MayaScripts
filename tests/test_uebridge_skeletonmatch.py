@@ -174,12 +174,8 @@ class ShippedTemplates(unittest.TestCase):
         for entry in self.catalog.CHARACTERS:
             row = self.payload["rows"][entry.key]
             self.assertEqual(row["file"], entry.file)
-            digest = hashlib.sha1()
-            with open(self.catalog.character_file(entry), "rb") as handle:
-                for block in iter(lambda: handle.read(1 << 20), b""):
-                    digest.update(block)
             self.assertEqual(
-                row["sha1"], digest.hexdigest(),
+                row["sha1"], sm.asset_digest(self.catalog.character_file(entry)),
                 "%s changed since its bones were read - run "
                 "docs/superpowers/plans/make_character_skeletons.py in mayapy" % entry.file)
 
@@ -207,6 +203,22 @@ class ShippedTemplates(unittest.TestCase):
         for rig, bare in (("Manny_Rig", "Manny"), ("Creep_Rig", "Creep")):
             self.assertEqual(sm.score(clip_of(self.templates[rig]), self.templates[bare]).share,
                              1.0)
+
+
+class Digest(unittest.TestCase):
+
+    def test_a_crlf_checkout_digests_as_its_lf_original(self):
+        """git writes a text .ma with CRLF in a Windows worktree: the pin must not see it."""
+        import tempfile
+        folder = tempfile.mkdtemp()
+        lf, crlf = os.path.join(folder, "lf.ma"), os.path.join(folder, "crlf.ma")
+        with open(lf, "wb") as handle:
+            handle.write(b'requires maya "2027";\ncreateNode joint -n "root";\n')
+        with open(crlf, "wb") as handle:
+            handle.write(b'requires maya "2027";\r\ncreateNode joint -n "root";\r\n')
+        self.assertEqual(sm.asset_digest(lf), sm.asset_digest(crlf))
+        with open(lf, "rb") as handle:
+            self.assertEqual(sm.asset_digest(lf), hashlib.sha1(handle.read()).hexdigest())
 
 
 class Purity(unittest.TestCase):

@@ -67,6 +67,19 @@ def depth_first(namespaces):
                   key=lambda name: (-name.count(":"), name))
 
 
+def single_chain(namespace, nested):
+    """Whether the namespaces nested in `namespace` form one chain (`ns:mixamorig`, `ns:a:b`):
+    each holds at most one child. Siblings (`ns:Hero` beside `ns:Enemy`) are characters of their
+    own a merge into one namespace would mix. Pure."""
+    children = {}
+    for name in nested or []:
+        name = name.lstrip(":")
+        parent = name.rsplit(":", 1)[0] if ":" in name else ""
+        children.setdefault(parent, []).append(name)
+    return all(len(kids) <= 1 for parent, kids in children.items()
+               if parent == namespace or parent.startswith(namespace + ":"))
+
+
 def _plural(count, word):
     return "{0} {1}{2}".format(count, word, "" if count == 1 else "es" if word == "mesh"
                                else "s")
@@ -126,11 +139,48 @@ def _curve_on(plug):
     return found[0] if found else None
 
 
-def move_root(root, delta):
+def _moves(node):
+    """Whether `node`'s transform channels carry time curves (the animation moves it)."""
+    for attr in ("translate", "rotate", "scale"):
+        for axis in AXES:
+            for curve in cmds.listConnections("{0}.{1}{2}".format(node, attr, axis),
+                                              source=True, destination=False,
+                                              type="animCurve") or []:
+                if cmds.nodeType(curve) in ("animCurveTL", "animCurveTA", "animCurveTU"):
+                    return True
+    return False
+
+
+def moving_ancestor(root):
+    """The first ancestor of `root` whose transform the animation moves (a Unity clip keyed on the
+    model's top, a Blender Armature carrying the motion), or None."""
+    parts = [p for p in root.split("|")[1:-1] if p]
+    for i in range(len(parts)):
+        path = "|" + "|".join(parts[:i + 1])
+        if _moves(path):
+            return path
+    return None
+
+
+def move_root(root, delta, frame=None):
     """Offset the root's translate - its keys, else its values - by the world move `delta`, in
-    its parent's space. Returns a note for what could not move ("" when everything did)."""
+    its parent's space at `frame` (the clip's first; None: now). Returns a note for what could not
+    move ("" when everything did).
+
+    A root under a MOVING ancestor is not moved: a constant offset in a moving space swings the
+    character on an arc, and moving the ancestor instead would move a skinned mesh under it twice
+    (its skin already follows the joints) - it stands where the clip has it, and the note says
+    so."""
+    moving = moving_ancestor(root)
+    if moving:
+        return ("its root rides {0}, which the clip animates - it stands where the clip has "
+                "it".format(moving.split("|")[-1].split(":")[-1]))
     parent = cmds.listRelatives(root, parent=True, fullPath=True)
-    inverse = cmds.getAttr(parent[0] + ".worldInverseMatrix[0]") if parent else None
+    inverse = None
+    if parent:
+        plug = parent[0] + ".worldInverseMatrix[0]"
+        inverse = (cmds.getAttr(plug) if frame is None
+                   else cmds.getAttr(plug, time=frame))
     local = local_delta(delta, inverse)
     stuck = []
     for axis, offset in zip(AXES, local):
@@ -155,11 +205,14 @@ def move_root(root, delta):
 
 
 def merge_into_root(namespace):
-    """The clip's namespace and every one nested in it merged into the root namespace, deepest
-    first. Returns a note ("" when every one went)."""
-    nested = cmds.namespaceInfo(namespace, listOnlyNamespaces=True, recurse=True) or []
+    """The clip's namespace merged into the root namespace - with every one nested in it, deepest
+    first, when they form one chain (Mixamo's `mixamorig:`); siblings (a scene holding two
+    namespaced characters) keep namespaces of their own. Returns a note ("" when every one went)."""
+    nested = [n.lstrip(":") for n in
+              cmds.namespaceInfo(namespace, listOnlyNamespaces=True, recurse=True) or []]
+    flatten = nested if single_chain(namespace, nested) else []
     left = []
-    for each in depth_first(nested + [namespace]):
+    for each in depth_first(flatten + [namespace]):
         each = each.lstrip(":")
         if not cmds.namespace(exists=":" + each):
             continue
@@ -193,7 +246,7 @@ def keep(namespace, info, source, name, point=None, why=""):
         if point is not None:
             start = rigimport.root_at(source, info.get("start"))
             dx, dy, dz = rigimport.shift_for(point, start)
-            stuck = move_root(source, (dx, dy, dz))
+            stuck = move_root(source, (dx, dy, dz), info.get("start"))
             if stuck:
                 notes.append(stuck)
             else:

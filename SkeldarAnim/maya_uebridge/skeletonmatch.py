@@ -21,6 +21,7 @@ bind (`docs/superpowers/plans/make_character_skeletons.py`). Stdlib only, and pu
 """
 
 import collections
+import hashlib
 import json
 import math
 import os
@@ -139,6 +140,15 @@ def match_text(found, label_of=None):
 
 
 # --------------------------------------------------------------------- data
+
+def asset_digest(path):
+    """The sha1 a template pins its asset by: of the file's bytes with CRLF read as LF - git turns a
+    text `.ma` into CRLF in every Windows checkout (core.autocrlf), and the same scene must give
+    the same digest in every worktree (the review, 2026-10-02)."""
+    with open(path, "rb") as handle:
+        data = handle.read()
+    return hashlib.sha1(data.replace(b"\r\n", b"\n")).hexdigest()
+
 
 _CACHE = {}
 
