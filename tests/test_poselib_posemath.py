@@ -438,6 +438,38 @@ class Twins(unittest.TestCase):
         align = pm.alignments(pm.pairs(s, t), s, t)
         self.assertAlmostEqual(pm.angle(align["upperarm_l"], om.MMatrix()), 40.0, 6)
 
+    def test_a_card_whose_bones_carry_translations_is_exact(self):
+        # a UE 3P clip translates neck_01 and the clavicles ~3.7 cm (trap 152), a squash &
+        # stretch retarget every bone: a card from such a frame applied back onto its own model
+        # is still its twin. Read off the pose, 1.0 cm at the calf made it none and turned
+        # thigh_l 1.273 deg off the card, 3.0 cm 3.814 deg - and 0.5 cm was still a twin
+        t = skeleton()
+        members = [b for b in t if b != "root"]
+        for off in (0.07, 0.5, 1.0, 3.0, 10.0):
+            s = standing(POSE, off={"calf_l": (0.0, 0.0, off)})
+            pairs = pm.pairs(s, t)
+            self.assertTrue(pm.twin(pairs, s, t), off)
+            self.assertExact(s, pm.targets(s, t, pairs, members), members)
+
+    def test_a_target_standing_far_off_its_bind_is_exact(self):
+        s = standing(POSE)
+        t = standing(off={"calf_l": (0.0, 0.0, 3.0), "upperarm_l": (0.0, 3.7, 0.0)})
+        members = [b for b in s if b != "root"]
+        pairs = pm.pairs(s, t)
+        self.assertTrue(pm.twin(pairs, s, t))
+        self.assertExact(s, pm.targets(s, t, pairs, members), members)
+
+    def test_twin_is_decided_on_the_rests_whatever_either_pose(self):
+        a_pose = {"upperarm_l": (0, 0, -40)}
+        for off in (0.0, 1.0, 3.0):
+            moved = {"calf_l": (0.0, 0.0, off), "lowerarm_l": (0.0, off, 0.0)}
+            back = {"calf_l": (0.0, 0.0, -off), "lowerarm_l": (0.0, -off, 0.0)}
+            a = standing(POSE, off=moved, rest_locals=a_pose)
+            t = standing(off=back)
+            # the same rests standing anyhow: a twin; an A-posed rest copy: none, posed or not
+            self.assertTrue(pm.twin(pm.pairs(t, t), standing(POSE, off=moved), t), off)
+            self.assertFalse(pm.twin(pm.pairs(a, t), a, t), off)
+
 
 class AsItStands(unittest.TestCase):
     """Where a bone points is read from where its child STANDS, on both skeletons (trap 171): a
