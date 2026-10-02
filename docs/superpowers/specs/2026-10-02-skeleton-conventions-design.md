@@ -188,6 +188,14 @@ path}. The hierarchy comes WITH the paths (`parent_map`: the nearest ancestor in
   proven on synthetic skeletons built to the researched conventions. BVH import itself is
   agent A's (formats).
 - The PlayerMale rig's connect was not run (its asset is not in the plugin); its schema is.
+  Its own travel scaling is unchanged for its fixed schemas; a generic source takes the
+  pose-free `size_ratio` (`schema.size`) - not proven on a real PlayerMale rig.
+- `verify_asretarget_mixamo.py` was not run: it is a live-scene script (the animator's rig in
+  the root namespace, AdvancedSkeleton sourced); the Mixamo rig road is covered instead by
+  Sweep Fall onto Manny_Rig in the standalone verify (unchanged, 0.104 deg).
+- The square's per-clip size is estimated against Manny's bind, not the rig the press will
+  add: exact for every shipped rig and skeleton (they stand on Manny's legs), a 4 % estimate
+  for the UE4 Mannequin skeleton - the spacing only, never the bake.
 - The structural fallback maps no fingers; a foreign skeleton without a head is refused.
 - CAT rigs have no table of their own (user-named; the generic tokens read typical names).
 
@@ -208,6 +216,101 @@ path}. The hierarchy comes WITH the paths (`parent_map`: the nearest ancestor in
   functions after `onto_existing`/before `onto_skeleton`, `result_line` (the convention), the
   two "no bone matches" refusals (+ `_why`). Agent A's import funnel calls these unchanged.
 - `install.py`: one payload row.
+- Fix pass: `maya_asretarget.generic_schema` / `_unit_sources` / `_plan` (the fallback when the
+  map refuses a scored source), `maya_pmretarget.generic_schema` / `_plan` / the scale line,
+  `skeletonimport.transfer` (the fallback), `_source_rests` (bindPose), `transfer_foreign` (size,
+  pivot, static root), new `scales_travel` / `reference_positions` / `travel_scale`;
+  `maya_uebridge/lineimport.py` ONE line block (the tracks scaled before the layout) and an
+  import - agent E (labels) and A (sources) may touch `lineimport.run`; the edit is the
+  `tracks = [...]` statement only. `tests/test_uebridge_lineimport.py`: `travel_scale` stubbed
+  in `setUp` (a new name in `saved_si`), two tests, `kinds()` ignores the new probe call.
+
+## Fix pass (2026-10-02, after an independent review)
+
+The review found five things; four were real defects, the fifth a verify that could not see
+them. Each is fixed, a test or a gate for each:
+
+1. **The size read the pelvis in whichever rest `choose_rest` picked** - the FIRST FRAME for a
+   source whose bind lives in its rotate channels (its jointOrient pose is a straight line). A
+   clip starting in a crouch read its pelvis 20-60 % low and scaled every position drive (Main,
+   RootX_M, the IK ends, the transfer's absolute pelvis, the root travel) by that much. Now
+   `maya_skeletonmap.size_ratio(ours, candidates, our_floor, their_floor)`: the first candidate
+   (bindPose, jointOrient, firstFrame) that **`stands`** - both legs straight (hip-ankle 98 % of
+   the two bones) and running down the body (20 deg), the body upright (20 deg of world +Y), the
+   ankles within a quarter of a leg of its floor - gives our pelvis over our floor against its
+   pelvis over its floor (the source's parent origin); nothing standing - a crouched or jumping
+   first frame with no bind, a lying clip - the **leg lengths** (thigh + calf, pose-free). The
+   transfer reads a skinned source's bindPose too (it had only jointOrient / firstFrame).
+   *Measured first, and it decided the floor*: the pelvis over the ANKLES (the first fix) read
+   Sweep Fall 4.4 % too big against Manny - Mixamo's hips stand 5.05 cm over its thighs,
+   Manny's 2.1 - and would have put our feet 3.5 cm off the floor; over the floor it reads
+   x1.0126, our size within 2 %, as before.
+2. **The unit scale was applied about the source's parent origin** while a floor drop, a kept
+   place and the square are all read off the UNSCALED first frame: a scaled clip landed
+   (s - 1) * p0 off. Now both roads scale about **`scale_pivot`** - the floor under the root's
+   first frame (`_unit_sources`' scaled node and `transfer_foreign`'s `skeldarUnitScale` take a
+   `scalePivot` in the source parent's frame; the rest is scaled about the same point) - so the
+   first frame stays where the drop put it and only the travel grows. And
+   **`lineimport.run` reads each clip's travel at the size it will be baked at**
+   (`skeletonimport.travel_scale` + `skelmap.scaled_track`): a clip the retarget does not scale
+   (`scales_travel`: every UE limb by name; Mixamo / HumanIK onto a new RIG) is 1.0, any other
+   is sized against Manny's bind (`reference_positions`, the shipped template - every rig and
+   skeleton of ours stands on Manny's legs), within 2 % ours.
+3. **A floor-level root that never moves** (HumanIK's `Reference`, CC's `BoneRoot`) took Main and
+   the exported root off the travel, which then lived in the pelvis. **`drop_static_root`**: the
+   root's world matrix sampled over the keys (`sample_frames`, at most 120) - constant (to 1e-3
+   of a leg, 1e-5 on the rotation) while the hips travel more than 5 % of a leg on the ground -
+   drops it from the mapping, with a note («Character1_Reference never moves while the hips
+   travel - no root bone, Main takes the hips' travel»); an in-place clip keeps its root. In
+   `generic_schema` (both modules) and `transfer_foreign`. (On the RIG road HumanIK takes the
+   MIXAMO schema, which never had a root.)
+4. **A UE clip missing a limb or the head was refused** («not a humanoid this retarget knows»):
+   the guard sent every UE5-scored source without the 13 UE limbs to the generic road, which
+   refuses what lacks a core bone. Now when the map refuses a source that `detect_schema`
+   scored (UE5 or Mixamo), the OLD road runs (`_plan` in both modules), and
+   `skeletonimport.transfer` falls back to the leaf road when `transfer_foreign` refuses and
+   leaf pairs exist - "a source bone the clip lacks is named and skipped", as it always was.
+5. **The verify could not fail on these** (one Manny-sized body, frame 0 = the rest, the
+   expected scale computed with the implementation's formula). Now the expected size is
+   DERIVED from the fixture's own constants (the hips over the floor x the unit x the body
+   factor, or the leg bones), the used size is the plan's / the transfer's / measured off the
+   bake, and they must agree to 0.5 %; new fixtures on both roads (below).
+
+One trap found on the way (165?): a verify that read the rig road's size with `_plan` BEFORE
+the button's `reset_build_pose` measured the rig still standing in the previous convention's
+take - x100 for x100.94, x2.222 for x2.243 - and blamed the code.
+
+Proof of the fix pass:
+- **3576 unit tests OK** (+27: `tests/test_skeletonmap_size.py` 21 - legs, stands, a crouch /
+  a straight line / a jump / a lying pose not standing, the crouch's old reading 0.32 off,
+  the floors, the static root, sample_frames, the pivot; wiring 4 - `scales_travel`, Manny's
+  reference 95.8968 / 85.5625; lineimport 2 - the square laid out at the baked size: B's
+  reach 30 keyed, 90 baked, the next column 250 + 90 away).
+- **`verify_skeleton_conventions.py` 122/122** in mayapy standalone (62 s):
+  - the 13 conventions + 4 variants onto Manny_Rig / Creep_Rig / Orc_D_Rig and Manny UE5 /
+    Creep / **UE4 Mannequin** skeletons (new target: its three spine joints read through the
+    map) - directions 0.0000-0.16 deg (rig) / 0.0005 deg (skeletons), lengths 0.000000 (Manny
+    rig's left leg 0.107 cm with a 120 deg knee - its known wander), travel 0.0000 cm, the
+    used size the derived one (x100.94 metres, x2.243 CMU, x0.8888 `unity_tall` with 15 %
+    longer legs, x1.041 `unity_crouch` by the legs, x1 `unity_crouch_bind` standing on its
+    bindPose), the skeleton's pelvis at the scaled source's height 0.0000 cm;
+  - `hik_reference`: «root takes the hips' horizontal travel (Character1_Reference never
+    moves)», root travel 0.0000 cm off the hips';
+  - an **arms-only UE clip** (a copy of Manny's own joints, legs deleted): Manny_Rig on the UE
+    road (0.0005 deg), the Manny skeleton as a twin (77 bones, 0.0000 deg, the 16 leg bones
+    named missing);
+  - **the drop**: a CMU clip (x2.243) starting 20.12 cm off its origin, onto (150, 0, -80) on a
+    new Manny rig - Main **0.0000 cm** off the point - and onto (-120, 0, 60) on a new skeleton
+    - root **0.0000 cm** off; the positive control, the same drop scaled about the clip's
+    origin, lands **25.02 cm** off ((s - 1) |p0| = 25.02);
+  - **the square**: two such clips through `lineimport.run`, new skeletons and new rigs - each
+    on its slot to 0.0000 cm, the baked root paths **250.00 cm** apart (the step); read at the
+    keyed size they would have stood **219.79 cm** apart;
+  - Sweep Fall (Mixamo): rig still the MIXAMO schema (0.104 deg); skeletons x1 (within 2 %) on
+    Manny/Creep, x1.022 on the UE4 Mannequin (the ankle reading had said x0.956 / x0.905),
+    every bone 0.0001 deg, the pelvis at the scaled height 0.0000 cm.
+- Re-run on the branch: `verify_rig_pipeline.py` **0 of 30 failed**, `verify_many_rigs.py`
+  **0 of 32**, `verify_creep_rig_asset.py` **0 of 16**.
 
 ## CLAUDE.md section (draft)
 
@@ -239,23 +342,41 @@ frame); it sets only the roll, never where a bone points.
 **Wired in without touching UE5 or Mixamo**: `maya_asretarget` / `maya_pmretarget` keep their
 schemas; a source neither (or one only SCORING as Mixamo - CMU, Unity - or as UE5 by one shared
 name - ARP's `hand_r`, Daz's `pelvis`) becomes a `GenericSchema` re-keyed into UE names, never
-a twin, its rest chosen, its size scaled about its own origin through unregistered stand-ins
-(`_unit_sources`) beyond 2 %. `skeletonimport.transfer`: a clip without the UE limbs by name
-goes to `transfer_foreign` - both skeletons read, paired through our names (chains distributed
-chain onto chain), each bone oriented through a rest-aligned offset, the pelvis placed, the
-root on the hips' ground travel (`ground_axis`: the Creep's root is under a -90 X Null), the
-source scaled for the bake. `Sweep Fall.fbx` now goes onto our skeletons too.
+a twin, its rest chosen, beyond 2 % of our size driven through unregistered stand-ins
+(`_unit_sources`). If the map refuses a source that DID score (an arms-only UE clip), the old
+road runs. `skeletonimport.transfer`: a clip without the UE limbs by name goes to
+`transfer_foreign` - both skeletons read, paired through our names (chains distributed chain
+onto chain), each bone oriented through a rest-aligned offset, the pelvis placed, the root on
+the hips' ground travel (`ground_axis`: the Creep's root is under a -90 X Null), the source
+scaled for the bake; a map refusal with leaf pairs falls back to the leaf road. `Sweep
+Fall.fbx` now goes onto our skeletons too.
 
-Proof: `verify_skeleton_conventions.py` **76/76 in mayapy standalone** - 13 synthetic
+**The size, without the pose** (`size_ratio`): the pelvis over the floor in the first
+candidate rest that STANDS on it (`stands`: legs straight and down an upright body, the ankles
+near its floor), else the leg lengths - never the pelvis of a crouched first frame. Over the
+FLOOR, not the ankles: Mixamo's hips stand 5 cm over its thighs, Manny's 2, and the ankle
+reading put Sweep Fall 4.4 % off. **Scaled about the floor under the root's first frame**
+(`scale_pivot`), so a drop, a kept place and the square (read off the unscaled first frame)
+hold; the square reads each clip's travel at its baked size (`travel_scale`). **A root that
+never moves while the hips travel** (HumanIK's Reference, CC's BoneRoot) is no root
+(`drop_static_root`).
+
+Proof: `verify_skeleton_conventions.py` **122/122 in mayapy standalone** - 13 synthetic
 conventions (each with its own joint axes, rest in jointOrient or in rotate, metres / BVH units,
 a Z-up Biped wrapper) plus Sweep Fall onto Manny_Rig, Creep_Rig, Orc_D_Rig (the Retarget
 button) and Manny UE5 / Creep skeletons: every mapped bone POINTS where the source's does -
 **0.0078 deg** Manny_Rig (0.16 at its neck in-between), **0.0002** Creep/Orc D, **0.0005** the
 skeletons - lengths unchanged (0.000000 cm; Manny's left leg its own 0.05 cm wander), travel
 scaled exactly (x100.94 metres, x2.2432 CMU, 0.0000 cm), refusals, the rest forced either way
-(directions 0.0000 / 0.0000, frames 95.8 deg apart), controls 70-149 deg.
-`verify_rig_pipeline.py` 30/30, `verify_many_rigs.py` 32/32, `verify_creep_rig_asset.py` 16/16
-on the branch. 3549 unit tests. No real Max/Blender/Unity/BVH file exists here: synthetic only.
+(directions 0.0000 / 0.0000, frames 95.8 deg apart), controls 70-149 deg; and, after an
+independent review, four variants (15 % longer legs x0.8888, a crouched first frame x1.041 by
+the legs and x1 on its bindPose, a static HumanIK Reference) with the expected size DERIVED
+from the fixture's constants, the UE4 Mannequin as a target, an arms-only UE clip on both
+roads, a CMU clip 20 cm off its origin dropped on a point (Main / root 0.0000 cm off; scaled
+about its origin, the control, 25.02 cm) and two in a square (250.00 cm apart; 219.79 at the
+keyed size). `verify_rig_pipeline.py` 30/30, `verify_many_rigs.py` 32/32,
+`verify_creep_rig_asset.py` 16/16 on the branch. 3576 unit tests. No real Max/Blender/Unity/
+BVH file exists here: synthetic only.
 
 159?. **Maya has no `.` or `-` in a node name: an FBX import writes Rigify's `DEF-spine.003` as
      `DEF_spine_003` and ARP's `root.x` as `root_x`.** A reader written for the source file's
@@ -275,3 +396,15 @@ on the branch. 3549 unit tests. No real Max/Blender/Unity/BVH file exists here: 
      metacarpal.
 164?. **The session scratchpad is shared by parallel agents**: another agent's commit message
      replaced this one's `msg1.txt` between two calls. Name scratch files per agent.
+165?. **A rig carrying the last take reads as another size.** The verify read the rig road's
+     size with `_plan` before the button's `reset_build_pose` and got x100 for x100.94, x2.222
+     for x2.243: `rest_matrices(..., "live")` read the game skeleton in the previous clip's pose.
+     Every press resets first; anything that asks the plan must too.
+166?. **"Where is the pelvis" is a pose question.** The first build sized a source by its pelvis
+     height in the chosen rest - a crouched first frame read it 20-60 % low. And the pelvis over
+     the ANKLES is a convention question: Mixamo's hips stand 5 cm over its thighs, Manny's 2,
+     4.4 % apart on the same height. Size by the pelvis over the floor in a pose that STANDS,
+     else by the leg bones.
+167?. **A scale about the origin moves a clip that does not start there.** Drops and kept places
+     read the unscaled first frame; a CMU clip x2.24 starting 20 cm out landed 25.02 cm off the
+     cursor. Scale about the floor under the first frame.
