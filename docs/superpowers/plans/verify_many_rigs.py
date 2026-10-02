@@ -167,7 +167,9 @@ def main():
     print("    ADD (%.1f s): %s" % (time.time() - t0, text))
     rigs = maya_rigs.rigs()
     gate(4, "added as Manny_Rig" in text and len(rigs) == 1 and rigs[0].namespace == "Manny_Rig"
-         and rigs[0].skeleton_root == "|Manny_Rig:root" and rigs[0].group == "|Manny_Rig:Group",
+         and rigs[0].skeleton_root.endswith("|Manny_Rig:root")
+         and rigs[0].group.endswith("|Manny_Rig:Group")  # in its character group (2026-10-02)
+         and maya_rigs.under(rigs[0].group, rigs[0].character or rigs[0].group),
          "Add Character: the rig in its own namespace, group and skeleton found",
          repr(rigs[0]._replace(control_set="...", main="...")) if rigs else "none")
     gate(5, (cmds.ls(selection=True, long=True) or []) == [rigs[0].main] if rigs else False,
@@ -278,7 +280,7 @@ def main():
     export_info = animexport.export_hierarchy(out)
     gate(26, export_root == rig_b.skeleton_root and os.path.isfile(out) and export_info.get("joints") == 93,
          "Export FBX: rig B's skeleton, 93 bones", "%s -> %s" % (export_root, export_info.get("root")))
-    gate(27, cmds.objExists("|Manny_Rig1:root|Manny_Rig1:pelvis") and cmds.objExists("|Manny_Rig:root"),
+    gate(27, cmds.objExists("Manny_Rig1:root|Manny_Rig1:pelvis") and cmds.objExists("Manny_Rig:root"),
          "after the export every joint wears its namespace again")
     animimport.import_clip(out, "chk", set_timeline=False, merge=False)
     chk = [j.split("|")[-1] for j in cmds.ls("chk:*", type="joint", long=True)]
@@ -295,7 +297,7 @@ def main():
     bone = skeleton.resolve_bone(root, "weapon_r")
     hand = attach.parent_bone(bone)
     weapon, note = attach.attach(entry, hand, bone)
-    gate(29, root == rig_b.skeleton_root and bone and bone.startswith("|Manny_Rig1:root")
+    gate(29, root == rig_b.skeleton_root and bone and "|Manny_Rig1:root|" in bone
          and weapon and bonedrive.driving_weapon(bone) == weapon
          and not bonedrive.driving_weapon(bones_a["weapon_r"]),
          "a weapon on rig B lands in rig B's hand and drives rig B's weapon_r only",

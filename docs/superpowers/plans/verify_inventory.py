@@ -176,7 +176,9 @@ thick_up = (om.MVector(up[8], up[9], up[10]).normal().y) if spear else 0.0
 socket = mdiff(unscaled(wm(B["weapon_r"])), om.MMatrix(bonedrive.matrix_of(
     bonedrive.frame_of(spear), (0, 0, 0))).inverse() * unscaled(wm(spear))) if spear else 9.0
 gate(5, spear is not None and not attach.find_attached(B["hand_r"])
-     and not cmds.listRelatives(spear, parent=True)
+     and (not cmds.listRelatives(spear, parent=True)  # world level, or since 2026-10-02 the
+          or maya_rigs.is_character_group(            # character's own group
+              cmds.listRelatives(spear, parent=True, fullPath=True)[0]))
      and cmds.getAttr(spear + "." + attach.MARKER) == "Spear_01",
      "both hands taken: the spear REPLACED the right hand's sword and lies at world level: %s" % spear)
 gate(6, low is not None and abs(low) < 1e-4 and thick_up > 0.9999,

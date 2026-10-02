@@ -110,6 +110,13 @@ def mesh_of(root):
     return cmds.listRelatives(shapes[0], parent=True, fullPath=True)[0] if shapes else None
 
 
+def _at(root, leaf):
+    """A top of the character `root` belongs to, by leaf: `|leaf` at world level (before
+    2026-10-02), `<its group>|leaf` in its character group since."""
+    group = maya_rigs.group_of(root)
+    return (group or "") + "|" + leaf
+
+
 def world(node):
     return [round(v, 6) for v in cmds.xform(node, query=True, matrix=True, worldSpace=True)]
 
@@ -246,8 +253,8 @@ def phase_b():
                       (cam_a, rig_a_label), (handle_a, rig_a_label),
                       (mesh_of(manny), label[manny]), (manny + "|pelvis", label[manny]),
                       (dagger, label[manny]), (floor_spear, label[manny]), (cam_m, label[manny]),
-                      (handle_m, label[manny]), ("|SKM_Manny_Simple", label[manny]),
-                      ("|camera1", label[manny]), ("|Armature", label[creep]),
+                      (handle_m, label[manny]), (_at(manny, "SKM_Manny_Simple"), label[manny]),
+                      (_at(manny, "camera1"), label[manny]), (_at(creep, "Armature"), label[creep]),
                       (creep_space, label[creep]), (clip_root, label[clip_root])):
         got = names_of(part)
         gate("B names: %s -> %s" % (part.split("|")[-1], who), got == [who], got)
@@ -318,6 +325,7 @@ def phase_c():
     roots = set(builder.character_roots())
     character.add_character(catalog.character_by_key("Creep"))
     creep = new_root(roots)
+    armature = cmds.listRelatives(creep, parent=True, fullPath=True)[0]
     cube = cmds.ls(cmds.polyCube(name="lonelyCube")[0], long=True)[0]
     before = uuids()
     line, asked = press([])
@@ -330,7 +338,7 @@ def phase_c():
     gate("C: a mixed selection deletes the character and keeps the cube",
          cmds.objExists(cube) and not cmds.objExists(creep), line)
     gate("C: the line says the cube stays", "1 selected node belongs to no character" in line, line)
-    gate("C: the Creep's Armature went with it", not cmds.objExists("|Armature"))
+    gate("C: the Creep's Armature went with it", not cmds.objExists(armature), armature)
 
 
 if __name__ == "__main__":

@@ -215,7 +215,10 @@ else:
              "weapon out of the right hand to world" in text and "right hand follows" in text, text)
         weapon = cx.weapon_of(rig)
         gate(10, "the weapon stands in world and its track is intact (OverRig parent_out)",
-             not cmds.listRelatives(weapon, parent=True) and drift(weapon, weapon_track) < 1e-3,
+             (not cmds.listRelatives(weapon, parent=True)        # world level, or since 2026-10-02
+              or maya_rigs.is_character_group(                  # the character's own group
+                  cmds.listRelatives(weapon, parent=True, fullPath=True)[0]))
+             and drift(weapon, weapon_track) < 1e-3,
              "%.6f" % drift(weapon, weapon_track))
         gate(11, "both IK controls carry exactly one constraint of ours, no keys",
              len(cx.our_constraints(ik_r)) == 1 and len(cx.our_constraints(ik_l)) == 1

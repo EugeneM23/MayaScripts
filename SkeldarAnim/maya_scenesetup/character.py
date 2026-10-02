@@ -642,13 +642,18 @@ def _after_import(entry, new, namespace, before_roots, rgb, at, textured,
     placed = at if place(entry, namespace, root, at) else None
     # Every part in ONE outliner group with its own display layer (2026-10-02). Best effort, like
     # the record below: the character is what the press is for, and it has arrived.
+    # By UUID across it: the re-parent invalidates every path below (trap 16) -- against stale
+    # paths the line counted 0 joints and 0 meshes, and the record would hold nothing.
     root_uuid = (cmds.ls(root, uuid=True) or [None])[0] if root else None
+    new_uuids = cmds.ls(new or [], uuid=True) or []
     try:
         group_character(entry, new, namespace, root)
     except Exception as exc:                                     # noqa: BLE001
         print("Add Character: no character group ({0})".format(exc))
     if root_uuid:
         root = (cmds.ls(root_uuid, long=True) or [root])[0]
+    if new_uuids:
+        new = [path for uuid in new_uuids for path in (cmds.ls(uuid, long=True) or [])]
     if root and not namespace:
         # What this import brought, for Characters > Delete (2026-10-01): a skeleton's asset can
         # carry nodes connected to nothing of it (Manny's: the dead half of a rig, a camera1),

@@ -79,7 +79,7 @@ h, h2, manny = rigs.get("Creep_Rig"), rigs.get("Creep_Rig1"), rigs.get("Manny_Ri
 gate(3, ar.rotation_mode(h) and ar.rotation_mode(h2) and not ar.rotation_mode(manny),
      "rotation-only mark: Creep %s, Creep1 %s, Manny %s" % (ar.rotation_mode(h), ar.rotation_mode(h2), ar.rotation_mode(manny)))
 #  since 2026-09-28 in the layout of the Creep's own FBX: `root` under the Null `Armature`
-gate(4, h.skeleton_root == "|Creep_Rig:Armature|Creep_Rig:root" and len(cmds.listRelatives(h.skeleton_root, ad=True, type="joint")) == 90 and cmds.objExists("Creep_Rig:weapon_r") and cmds.objExists("Creep_Rig:weapon_l"),
+gate(4, h.skeleton_root == "|Creep_Rig_Character|Creep_Rig:Armature|Creep_Rig:root" and len(cmds.listRelatives(h.skeleton_root, ad=True, type="joint")) == 90 and cmds.objExists("Creep_Rig:weapon_r") and cmds.objExists("Creep_Rig:weapon_l"),
      "the Creep's skeleton under its Armature: %s, %d joints below it" % (h.skeleton_root, len(cmds.listRelatives(h.skeleton_root, ad=True, type="joint") or [])))
 scripts = [s for s in cmds.ls(type="script") if s.startswith(("Creep_Rig", "Manny_Rig"))]
 gate(5, not [s for s in scripts if s.startswith("Creep_Rig")], "script nodes the Creep asset brought: %s" % [s for s in scripts if s.startswith("Creep_Rig")])
@@ -95,7 +95,7 @@ for sc in cmds.ls(type="skinCluster"):
             worst = max(worst, max(abs(p.getElement(r, c) - (r == c)) for r in range(4) for c in range(4)))
 off = ar.posed_controls(rig=h)
 gate(6, len(skins) == 5 and worst < 1e-4 and not off, "%d Creep skins at their bind (|BPM*WM - I| %.2e), controls at default %s" % (len(skins), worst, off[:4]))
-geo = cmds.listRelatives("|Creep_Rig:Group|Creep_Rig:Geometry", children=True) or []
+geo = cmds.listRelatives("|Creep_Rig_Character|Creep_Rig:Group|Creep_Rig:Geometry", children=True) or []
 painted = [m for m in cmds.ls("Creep_Rig:Creep_*", type="mesh") if not cmds.getAttr(m + ".intermediateObject")]
 colours = set()
 for m in painted:
