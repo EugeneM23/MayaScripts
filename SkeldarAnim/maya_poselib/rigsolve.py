@@ -88,7 +88,10 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
 3. **RootX_M** from the pelvis (translate + rotate) when the pelvis is a member - first, every
    chain hangs below it;
 4. level by level down the game skeleton: each member's FK control onto `L^-1 . S*` against its
-   parent read now (rotate channels only - lengths are the rig's); **at a limb's END level** (the
+   parent read now (rotate channels only - lengths are the rig's) - and each HELD bone's
+   (`held_bones`): a bone no member of the pose that a member's solve would move off its rigid
+   follow, the neck's in-between (a card with one neck - Mixamo's, the UE4 Mannequin's - posing
+   neck_01 put neck_02 28.9 deg off it, task 7's verify); **at a limb's END level** (the
    hand, the foot) the limb's IK half, before anything below it reads the deformation wrist:
    - the IK end (translate + rotate) for any member of the limb's chain: with the WHOLE chain a
      member, onto `AlignIKTo` as the FKX chain just solved now stands - the rig's own lengths,
@@ -265,6 +268,32 @@ def limb_members(members):
                 entry = out.setdefault((kind, side), {"end": False, "pole": False})
                 entry["end"] = True
                 entry["pole"] = entry["pole"] or base in limb.upper
+    return out
+
+
+def held_bones(members, children, numeric, controlled):
+    """The game bones a solve must HOLD on their targets though no member of the pose: a child
+    (`children`: {leaf: [child leaves]} of the game skeleton) of a member - or of a bone held so
+    - whose control is solved `numeric`ally because its FKX joint is not below it. On the shipped
+    rigs that is the neck's in-between: solving `FKNeck_M` turns `FKOffsetNeckPart1_M` by the
+    control's WHOLE turn while neck_01 takes half (bias 0), so neck_02 left alone does not follow
+    neck_01 rigidly as the transfer has it (`posemath.targets`: every bone that is no member
+    follows its parent). Measured (task 7, a Mixamo card - one neck - onto Manny_Rig): neck_02
+    28.9 deg off that rigid follow, neck_01 pointing 14.3 deg off its source's neck. Only bones
+    with a control (`controlled`), never a twist or a helper bone. In the order found. Pure."""
+    member_set = set(members or ())
+    out = []
+    queue = [leaf for leaf in members or () if leaf in numeric]
+    while queue:
+        parent = queue.pop(0)
+        for child in children.get(parent, ()):
+            if child in member_set or child in out or child not in controlled:
+                continue
+            if pm.is_twist(child) or pm.is_helper(child):
+                continue
+            out.append(child)
+            if child in numeric:
+                queue.append(child)
     return out
 
 
@@ -619,6 +648,17 @@ def _analytic(base):
     return bool(base.fk and base.fkx) and base.fkx.startswith(base.fk + "|")
 
 
+def _children(game):
+    """{leaf: [child leaves]} of the game skeleton (`game_bones`: {leaf: long path})."""
+    leaf_of = dict((path, leaf) for leaf, path in game.items())
+    out = {}
+    for leaf, path in sorted(game.items(), key=lambda item: item[1]):
+        parent = leaf_of.get(path.rsplit("|", 1)[0])
+        if parent is not None:
+            out.setdefault(parent, []).append(leaf)
+    return out
+
+
 class _Job(object):
     """One solve: the samples, the targets and the writes of `solve`."""
 
@@ -645,8 +685,18 @@ class _Job(object):
         if missing:
             self.notes["missing"] = NO_CONTROL % (len(missing), maya_rigs.label(rig),
                                                   _named(missing))
-        self.member_set = set(self.members)
+        # the limbs the POSE touches (a held bone never poses a limb's IK half) ...
         self.limbs = limb_members(self.members)
+        # ... and the bones a member's solve would move off their rigid follow (`held_bones`),
+        # solved onto their targets with the members - structurally for `controls_for`, those
+        # with a target for a solve
+        numeric = set(leaf for leaf, b in self.bases.items()
+                      if b.fk and b.fkx and not _analytic(b))
+        controlled = set(leaf for leaf, b in self.bases.items() if b.fk)
+        self.held_all = held_bones(self.members, _children(self.game), numeric, controlled)
+        self.held = [leaf for leaf in self.held_all if leaf in self.wanted]
+        self.members.extend(self.held)
+        self.member_set = set(self.members)
         self.session = _Session()
 
     # ---- sampling
@@ -1023,12 +1073,13 @@ def solve(rig, wanted, members, settle=True):
 
 def controls_for(rig, members):
     """The controls Apply would key for `members` (long paths, in solve order): each member's FK
-    control (`RootX_M` for the pelvis), and for every limb a member touches its IK end (the
+    control (`RootX_M` for the pelvis) and each held bone's (`held_bones`: the neck's
+    in-between), and for every limb a member touches its IK end (the
     leg's toes too) and - when its upper or middle bone is a member - its pole; a limb whose IK
     solve attributes are off their defaults keeps its IK half and gives none."""
     job = _Job(rig, {}, members)
     out = []
-    for leaf in job.members:
+    for leaf in job.members + [h for h in job.held_all if h not in job.member_set]:
         control = job.bases[leaf].fk
         if control and control not in out:
             out.append(control)

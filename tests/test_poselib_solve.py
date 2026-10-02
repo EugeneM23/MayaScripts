@@ -174,6 +174,45 @@ class LimbMembers(unittest.TestCase):
                                ("leg", "R"): {"end": True, "pole": True}})
 
 
+class Held(unittest.TestCase):
+    """A bone no member of the pose but moved, non-rigidly, by a member's solve: the child of a
+    member whose FKX joint is NOT below its control - AdvancedSkeleton's neck in-between, where
+    solving FKNeck_M turns FKOffsetNeckPart1_M by the control's whole turn and neck_01 by half.
+    Measured (task 7's verify, a Mixamo card - one neck - onto Manny_Rig): neck_02, not paired,
+    stood 28.9 deg off the transfer's rigid follow and neck_01 pointed 14.3 deg off its source's
+    neck. Such a child is held on its target (its rigid follow)."""
+
+    CHILDREN = {"spine_05": ["neck_01", "clavicle_l"], "neck_01": ["neck_02"],
+                "neck_02": ["head"], "pelvis": ["spine_01", "thigh_l"],
+                "lowerarm_l": ["lowerarm_twist_01_l", "hand_l"]}
+
+    def held(self, members, numeric=("neck_01",)):
+        controlled = {"neck_01", "neck_02", "head", "spine_05", "clavicle_l", "spine_01",
+                      "thigh_l", "hand_l", "lowerarm_l", "lowerarm_twist_01_l"}
+        return rigsolve.held_bones(members, self.CHILDREN, set(numeric), controlled)
+
+    def test_the_child_of_a_member_through_the_in_between_is_held(self):
+        self.assertEqual(self.held(["spine_05", "neck_01", "head"]), ["neck_02"])
+        self.assertEqual(self.held(["neck_01"]), ["neck_02"])
+
+    def test_a_member_child_is_no_held_one(self):
+        self.assertEqual(self.held(["neck_01", "neck_02", "head"]), [])
+
+    def test_a_rigid_parent_holds_nothing(self):
+        # the pelvis (RootX_M, no FKX joint) and every FK control above its FKX joint
+        self.assertEqual(self.held(["pelvis", "lowerarm_l", "spine_05"], numeric=()), [])
+
+    def test_a_held_bone_through_the_in_between_holds_its_own_child(self):
+        self.assertEqual(self.held(["neck_01"], numeric=("neck_01", "neck_02")),
+                         ["neck_02", "head"])
+
+    def test_twist_and_helper_bones_and_bones_with_no_control_are_never_held(self):
+        got = rigsolve.held_bones(["lowerarm_l"], {"lowerarm_l": ["lowerarm_twist_01_l",
+                                                                  "ik_hand_l", "hand_l"]},
+                                  {"lowerarm_l"}, {"lowerarm_twist_01_l", "ik_hand_l"})
+        self.assertEqual(got, [])
+
+
 class PolePoint(unittest.TestCase):
     """The pole for a drive chain: in the chain's own bend plane when it is bent (an IK elbow
     then lands exactly), fkik's nudge in the elbow's frame only when it is straight."""
