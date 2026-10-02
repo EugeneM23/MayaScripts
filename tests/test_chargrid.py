@@ -19,6 +19,7 @@ except Exception:                                            # noqa: BLE001
 
 import maya_chargrid as cg
 import maya_charlook as look
+from maya_scenesetup import catalog
 
 
 class FakeScene(object):
@@ -79,9 +80,23 @@ class Grid(unittest.TestCase):
                     if image.pixelColor(x, y).alpha() > 0)
         self.assertGreater(inked, 200)
 
-    def test_four_tiles_one_row_in_the_dock(self):
-        self.assertEqual(len(self.grid.rects()), 4)
-        self.assertEqual(self.grid.height_for(330), look.grid(330, 4)[3])
+    def test_one_tile_per_model(self):
+        count = len(catalog.MODELS)
+        self.assertEqual(len(self.grid.rects()), count)
+        self.assertEqual(self.grid.height_for(330), look.grid(330, count)[3])
+
+    def test_the_auto_card_is_picked_in_both_kinds(self):
+        """2026-10-02: the «?» card has no row, and is pickable all the same."""
+        for kind in catalog.KINDS:
+            self.grid.set_kind(kind)
+            self.assertTrue(self.grid.available("Auto"))
+        self.assertTrue(self.grid.select("Auto"))
+        self.assertEqual(self.acts("select")[-1], ("select", "Auto"))
+
+    def test_the_auto_card_offers_no_scene_and_is_never_placed(self):
+        self.assertEqual(self.grid.context_actions("Auto"), [])
+        self.assertEqual(self.grid.drop_at(10, 10, "Auto"), look.AUTO_ADD)
+        self.assertEqual(self.acts("place"), [])
 
     def test_a_click_selects_and_calls_back(self):
         self.assertTrue(self.grid.select("Creep"))
@@ -164,6 +179,18 @@ class Grid(unittest.TestCase):
         self.assertIsNone(self.grid._drag)
         self.assertEqual(self.grid.selected, "Manny")
 
+    def test_a_press_and_a_pull_on_the_auto_card_picks_it_and_drags_nothing(self):
+        """2026-10-02: the «?» card is picked, never carried into a viewport."""
+        E, L, N = QT.QtCore.QEvent, QT.QtCore.Qt.LeftButton, QT.QtCore.Qt.NoButton
+        index = [m.key for m in catalog.MODELS].index("Auto")
+        start = self.centre(index)
+        self._mouse(E.MouseButtonPress, start, L, L)
+        self.assertEqual(self.grid.selected, "Auto")
+        self._mouse(E.MouseMove, start + QT.QtCore.QPoint(-900, 400), N, L)
+        self.assertIsNone(self.grid._drag)
+        self._mouse(E.MouseButtonRelease, start + QT.QtCore.QPoint(-900, 400), L, N)
+        self.assertEqual(self.acts("place"), [])
+
     def test_escape_cancels_a_drag(self):
         E, L, N = QT.QtCore.QEvent, QT.QtCore.Qt.LeftButton, QT.QtCore.Qt.NoButton
         start = self.centre(0)
@@ -223,7 +250,7 @@ class Grid(unittest.TestCase):
         host.resize(330, 10)
         grid = cg.make_grid(self.scene, parent=host, kind="rig", selected="Manny")
         grid.fit(host)
-        self.assertEqual(host.height(), look.grid(330, 4)[3])
+        self.assertEqual(host.height(), look.grid(330, len(catalog.MODELS))[3])
         self.assertEqual(grid.geometry(), host.rect())
 
 

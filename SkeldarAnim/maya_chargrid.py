@@ -233,8 +233,9 @@ def _classes():
             """What the right button offers over `model` (2026-09-30, «при
             нажатии правой клавишей по иконке рига ... Open scene»): the file
             of the kind the switch shows, opened as the scene; a dimmed
-            portrait's row is shown disabled. [] off every portrait."""
-            if not model:
+            portrait's row is shown disabled. [] off every portrait, and on the Auto card, which
+            has no file of its own (2026-10-02)."""
+            if not model or catalog.is_auto(model):
                 return []
             if not self.available(model):
                 return [(look.open_absent_text(self.kind), None)]
@@ -250,6 +251,8 @@ def _classes():
             model = model or (self._drag or {}).get("model")
             if not model:
                 return self.status_text
+            if catalog.is_auto(model):
+                return self._say(look.AUTO_ADD)
             if not self.available(model):
                 name = catalog.model_by_key(model)
                 return self._say(look.absent_text(name.label if name else model,
@@ -346,7 +349,9 @@ def _classes():
             model = self.model_at(local.x(), local.y())
             if model and self.select(model):
                 point = self._global(event)
-                self._press = (model, (point.x(), point.y()))
+                # the Auto card is picked, never dragged in: it has no character of its own
+                if not catalog.is_auto(model):
+                    self._press = (model, (point.x(), point.y()))
 
         def mouseMoveEvent(self, event):                     # noqa: N802
             point = self._global(event)

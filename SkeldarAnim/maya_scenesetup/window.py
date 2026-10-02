@@ -508,6 +508,40 @@ def remembered_choice():
                        remembered_character())
 
 
+def auto_label(kind):
+    """The Auto card's row in the dropdown (no Qt): «Auto [rig]» / «Auto [skeleton]»."""
+    return "Auto [{0}]".format(kind)
+
+
+AUTO_LABELS = dict((auto_label(each), each) for each in catalog.KINDS)
+
+
+def _dropdown_value():
+    """The dropdown's label where it stands (the grid could not be built), else None."""
+    if cmds.optionMenu(_CHARACTER, exists=True):
+        return cmds.optionMenu(_CHARACTER, query=True, value=True) or ""
+    return None
+
+
+def current_choice():
+    """(model, kind) the card stands on: the dropdown's row where it stands, else the grid's
+    memory (`remembered_choice`). The Auto card is (catalog.AUTO, kind) either way (2026-10-02)."""
+    label = _dropdown_value()
+    if label is None:
+        return remembered_choice()
+    if label in AUTO_LABELS:
+        return catalog.AUTO, AUTO_LABELS[label]
+    entry = catalog.character_by_label(label) or catalog.default_rig()
+    return entry.model, entry.kind
+
+
+def auto_kind():
+    """The kind the Auto card brings when it is the one picked (2026-10-02, «карточку рига и
+    скелета со знаком вопроса»), else None: every import road asks this first."""
+    model, kind = current_choice()
+    return kind if catalog.is_auto(model) else None
+
+
 def chosen_character():
     """The catalog row Add Character imports.
 
@@ -516,16 +550,21 @@ def chosen_character():
     должен добавлять наш адванцед скелетон риг»). Otherwise the chosen model
     in the chosen kind, which is None when the model has no such row (Orc D
     has no skeleton, the UE4 Mannequin no rig): Add refuses it by name.
+    The Auto card has no row in either: None (2026-10-02).
     """
-    if cmds.optionMenu(_CHARACTER, exists=True):
-        label = cmds.optionMenu(_CHARACTER, query=True, value=True) or ""
+    label = _dropdown_value()
+    if label is not None:
+        if label in AUTO_LABELS:
+            return None
         return catalog.character_by_label(label) or catalog.default_rig()
     model, kind = remembered_choice()
     return catalog.character_for(model, kind)
 
 
 def _absent_choice():
-    model, kind = remembered_choice()
+    model, kind = current_choice()
+    if catalog.is_auto(model):
+        return charlook.AUTO_ADD
     return charlook.absent_text(catalog.model_by_key(model).label, kind)
 
 
@@ -535,6 +574,10 @@ def say_character(text):
 
 
 def _say_choice():
+    kind = auto_kind()
+    if kind:
+        say_character(charlook.auto_text(kind))
+        return
     entry = chosen_character()
     say_character(charlook.import_text(entry.label) if entry
                   else _absent_choice())
@@ -575,6 +618,11 @@ def remembered_character():
 
 def character_changed():
     """Remember the choice. Nothing else: the press is what imports."""
+    label = _dropdown_value() or ""
+    if label in AUTO_LABELS:
+        cmds.optionVar(stringValue=(_CHARACTER_OPTIONVAR, label))
+        _status(charlook.auto_text(AUTO_LABELS[label]), _CHARACTER_STATUS)
+        return
     entry = chosen_character()
     cmds.optionVar(stringValue=(_CHARACTER_OPTIONVAR, entry.label))
     _status("Import will bring: {0}".format(entry.label),
@@ -594,8 +642,12 @@ def add_character():
     arrives in the next free palette colour, so two presses in a row never
     collide, and the Colour section repaints the selection -- Add leaves the
     new rig's Main selected. A model without a row of the chosen kind is
-    refused by name, nothing imported.
+    refused by name, nothing imported - and so is the Auto card, which has
+    no character of its own (2026-10-02).
     """
+    if auto_kind():
+        say_character(charlook.AUTO_ADD)
+        return
     entry = chosen_character()
     if entry is None:
         say_character(_absent_choice())
@@ -624,6 +676,9 @@ def place_character(model, kind, point):
     """A portrait dropped on the floor (2026-09-30, «зажать на портрете и
     перетащить его в сцену»): the character added standing at `point`.
     Returns what the line says -- the grid shows it too."""
+    if catalog.is_auto(model):
+        say_character(charlook.AUTO_ADD)
+        return charlook.AUTO_ADD
     entry = catalog.character_for(model, kind)
     if entry is None:
         found = catalog.model_by_key(model)
@@ -645,6 +700,9 @@ def open_character_scene(model, kind):
     model's file in `kind` - the rig or the skeleton the switch shows - opened
     as the scene. Returns what the line says."""
     from maya_scenesetup import opener
+    if catalog.is_auto(model):
+        say_character(charlook.AUTO_ADD)
+        return charlook.AUTO_ADD
     entry = catalog.character_for(model, kind)
     if entry is None:
         found = catalog.model_by_key(model)
@@ -914,12 +972,13 @@ def _character_dropdown():
                                "the [skeleton] rows are bare skeletons.",
                     changeCommand=lambda *_args: _run(character_changed,
                                                       _CHARACTER_STATUS))
-    for label in catalog.character_labels():
+    labels = catalog.character_labels() + [auto_label(each) for each in catalog.KINDS]
+    for label in labels:
         cmds.menuItem(label=label)
     # A label the table no longer carries is simply not selected, so the
     # menu stays on the rig -- the default anyone who never opens it gets.
     remembered = remembered_character()
-    if remembered and remembered in catalog.character_labels():
+    if remembered and remembered in labels:
         cmds.optionMenu(_CHARACTER, edit=True, value=remembered)
 
 

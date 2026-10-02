@@ -709,7 +709,7 @@ class Models(unittest.TestCase):
 
     def test_the_models_in_grid_order(self):
         self.assertEqual([m.key for m in catalog.MODELS],
-                         ["Manny", "Creep", "Orc_D", "UE4_Mannequin"])
+                         ["Manny", "Creep", "Orc_D", "UE4_Mannequin", "Auto"])
         self.assertEqual(catalog.model_by_key("Orc_D").label, "Orc D")
         self.assertIsNone(catalog.model_by_key("Sevarog"))
 
@@ -719,6 +719,21 @@ class Models(unittest.TestCase):
             self.assertIn(entry.model, keys, entry.key)
         for model in catalog.MODELS:
             self.assertTrue(catalog.kinds_of(model.key), model.key)
+
+    def test_the_auto_card_has_no_row_and_every_kind(self):
+        """2026-10-02: the «?» card finds a character on import - none of its own."""
+        self.assertTrue(catalog.is_auto(catalog.AUTO))
+        self.assertFalse(catalog.is_auto("Manny"))
+        self.assertEqual(catalog.kinds_of(catalog.AUTO), catalog.KINDS)
+        for kind in catalog.KINDS:
+            self.assertIsNone(catalog.character_for(catalog.AUTO, kind))
+        self.assertNotIn(catalog.AUTO, [e.model for e in catalog.CHARACTERS])
+
+    def test_the_rows_of_a_kind(self):
+        self.assertEqual([e.key for e in catalog.rows_of_kind("rig")],
+                         ["Manny_Rig", "Creep_Rig", "Orc_D_Rig"])
+        self.assertEqual([e.key for e in catalog.rows_of_kind("skeleton")],
+                         ["Manny", "Creep", "UE4_Mannequin"])
 
     def test_a_model_and_a_kind_name_at_most_one_row(self):
         pairs = [(e.model, e.kind) for e in catalog.CHARACTERS]

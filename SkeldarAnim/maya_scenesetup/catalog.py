@@ -108,9 +108,24 @@ CHARACTERS = [
 # in this order, the kind chosen by a [Rig | Skeleton] switch above it. A row
 # is (model, kind): Orc D has no skeleton, the UE4 Mannequin no rig.
 Model = collections.namedtuple("Model", "key label")
-MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"),
-          Model("Orc_D", "Orc D"), Model("UE4_Mannequin", "UE4 Mannequin")]
 KINDS = ("rig", "skeleton")
+
+# The Auto card (2026-10-02, «сделаем карточку рига и скелета со знаком вопроса ... если он найдет
+# скелет который совпадает с нашим то перенесем анимацию на наш риг или скелет, если ... совпадений
+# нету то импортируем в сцену родной риг или скелет»): a portrait with no row of its own, pickable in
+# both kinds. An import with it picked puts the clip on OUR rig / skeleton of that kind whose
+# skeleton the clip's is (maya_uebridge.skeletonmatch), else brings the clip in its own skeleton.
+# Spec: docs/superpowers/specs/2026-10-02-auto-character-import-design.md.
+AUTO = "Auto"
+
+MODELS = [Model("Manny", "Manny"), Model("Creep", "Creep"),
+          Model("Orc_D", "Orc D"), Model("UE4_Mannequin", "UE4 Mannequin"),
+          Model(AUTO, "Auto")]
+
+
+def is_auto(model):
+    """Whether `model` (a key) is the Auto card."""
+    return model == AUTO
 
 
 def model_by_key(key):
@@ -126,7 +141,8 @@ def model_of(entry):
 
 
 def character_for(model, kind):
-    """The row of `model` in `kind`, or None when the model has no such row."""
+    """The row of `model` in `kind`, or None when the model has no such row (the Auto card has
+    none in either kind: it is not a character, it finds one)."""
     for entry in CHARACTERS:
         if entry.model == model and entry.kind == kind:
             return entry
@@ -134,8 +150,16 @@ def character_for(model, kind):
 
 
 def kinds_of(model):
-    """The kinds `model` ships in, in KINDS order."""
+    """The kinds `model` ships in, in KINDS order - every kind for the Auto card, which brings
+    whatever the clip it imports turns out to be."""
+    if is_auto(model):
+        return KINDS
     return tuple(kind for kind in KINDS if character_for(model, kind))
+
+
+def rows_of_kind(kind):
+    """The catalog rows of `kind`, in table order: what the Auto card matches a clip among."""
+    return [entry for entry in CHARACTERS if entry.kind == kind]
 
 
 def default_model():

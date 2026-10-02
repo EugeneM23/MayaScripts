@@ -111,6 +111,17 @@ def tag_text(kind):
     return "no " + kind
 
 
+# The Auto card (2026-10-02): no character of its own - an import finds one.
+AUTO_ADD = ("Auto brings no character of its own - Import Animation puts a clip on our "
+            "character whose skeleton it is, else brings it in its own skeleton")
+
+
+def auto_text(kind):
+    """What the line says while the Auto card is picked."""
+    return ("Auto [{0}] - Import Animation puts a clip on our {0} whose skeleton it is, "
+            "else brings it in its own skeleton").format(kind)
+
+
 OPEN_SCENE = "Open scene"
 
 

@@ -96,6 +96,13 @@ class Lines(unittest.TestCase):
     def test_the_tag(self):
         self.assertEqual(look.tag_text("skeleton"), "no skeleton")
 
+    def test_the_auto_lines(self):
+        """2026-10-02: the «?» card says what an import with it does, and what + Import cannot."""
+        self.assertTrue(look.auto_text("rig").startswith("Auto [rig] - Import Animation"))
+        self.assertIn("its own skeleton", look.auto_text("skeleton"))
+        self.assertIn("our skeleton", look.auto_text("skeleton"))
+        self.assertIn("no character of its own", look.AUTO_ADD)
+
 
 class Drag(unittest.TestCase):
 

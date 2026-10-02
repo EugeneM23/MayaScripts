@@ -322,9 +322,12 @@ class AddCharacterPress(unittest.TestCase):
 
     def setUp(self):
         self.saved = [(window, n, getattr(window, n)) for n in
-                      ("chosen_character", "remembered_choice", "refresh", "_status")]
+                      ("chosen_character", "remembered_choice", "refresh", "_status",
+                       "_dropdown_value")]
         self.saved.append((window.character, "add_character", window.character.add_character))
         self.lines, self.added = [], []
+        window._dropdown_value = lambda: None
+        window.remembered_choice = lambda: ("Manny", "rig")
         window.refresh = lambda: None
         window._status = lambda message, control=None: self.lines.append(message)
         window.character.add_character = lambda entry, rgb=None, at=None: (
@@ -356,6 +359,23 @@ class AddCharacterPress(unittest.TestCase):
         text = window.place_character("UE4_Mannequin", "rig", (1.0, 0.0, 2.0))
         self.assertEqual(self.added, [])
         self.assertIn("UE4 Mannequin has no rig", text)
+
+    def test_the_auto_card_adds_nothing(self):
+        """2026-10-02: Auto has no character of its own - an import finds one."""
+        window.chosen_character = lambda: None
+        window.remembered_choice = lambda: ("Auto", "rig")
+        window.add_character()
+        self.assertEqual(self.added, [])
+        self.assertEqual(self.lines[-1], window.charlook.AUTO_ADD)
+
+    def test_the_auto_card_is_never_placed(self):
+        text = window.place_character("Auto", "skeleton", (1.0, 0.0, 2.0))
+        self.assertEqual(self.added, [])
+        self.assertEqual(text, window.charlook.AUTO_ADD)
+
+    def test_the_auto_card_opens_no_scene(self):
+        self.assertEqual(window.open_character_scene("Auto", "rig"),
+                         window.charlook.AUTO_ADD)
 
 
 class DeletePress(unittest.TestCase):
@@ -452,6 +472,46 @@ class Choice(unittest.TestCase):
             self.assertIsNone(window.chosen_character())
             fake.stored[window._KIND_OPTIONVAR] = "rig"
             self.assertEqual(window.chosen_character().key, "Orc_D_Rig")
+        finally:
+            window.cmds = real
+
+    def test_the_auto_card_is_a_kept_choice_with_no_row(self):
+        """2026-10-02: «Auto» is a model of its own, pickable in both kinds."""
+        self.assertEqual(window.choice_from("Auto", "skeleton", ""), ("Auto", "skeleton"))
+        fake = FakeUiCmds(menu_exists=False, stored={
+            window._MODEL_OPTIONVAR: "Auto", window._KIND_OPTIONVAR: "skeleton"})
+        real, window.cmds = window.cmds, fake
+        try:
+            self.assertIsNone(window.chosen_character())
+            self.assertEqual(window.current_choice(), ("Auto", "skeleton"))
+            self.assertEqual(window.auto_kind(), "skeleton")
+            fake.stored[window._MODEL_OPTIONVAR] = "Manny"
+            self.assertIsNone(window.auto_kind())
+        finally:
+            window.cmds = real
+
+    def test_the_dropdown_carries_the_auto_card_too(self):
+        """Without Qt the card is a dropdown: «Auto [rig]» / «Auto [skeleton]» after the rows."""
+        fake = FakeUiCmds(menu_value="Auto [rig]")
+        real, window.cmds = window.cmds, fake
+        try:
+            self.assertIsNone(window.chosen_character())
+            self.assertEqual(window.current_choice(), ("Auto", "rig"))
+            self.assertEqual(window.auto_kind(), "rig")
+            fake.menu_value = "Creep [skeleton]"
+            self.assertEqual(window.current_choice(), ("Creep", "skeleton"))
+            self.assertIsNone(window.auto_kind())
+            self.assertEqual(window.chosen_character().key, "Creep")
+        finally:
+            window.cmds = real
+
+    def test_picking_the_auto_card_says_what_an_import_does(self):
+        fake = FakeUiCmds(menu_exists=False, stored={window._KIND_OPTIONVAR: "rig"})
+        real, window.cmds = window.cmds, fake
+        try:
+            window.select_model("Auto")
+            self.assertEqual(fake.stored[window._MODEL_OPTIONVAR], "Auto")
+            self.assertEqual(fake.status[-1], window.charlook.auto_text("rig"))
         finally:
             window.cmds = real
 
