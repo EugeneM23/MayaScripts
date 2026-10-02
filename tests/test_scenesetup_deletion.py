@@ -217,6 +217,66 @@ class Owners(unittest.TestCase):
         self.assertEqual(unowned, ["|pCube1"])
 
 
+class Strangers(unittest.TestCase):
+    """2026-10-02 (the character groups' review): the character group is a folder the animator
+    can drop their own things into, and Delete takes everything under its parts -- a prop parked
+    in `Manny_Rig1_Character` went with the rig unnamed. A child of the group that is none of
+    the character's is a STRANGER: kept, moved out to world level, named in the confirm."""
+
+    GROUP = "|Manny_Skeleton_Character"
+
+    def strangers(self, children, parts=(), namespace="", recorded=(), attrs=None):
+        attrs = attrs or {}
+        return deletion.strangers(children, list(parts), namespace, set(recorded),
+                                  lambda p: "uuid:" + p, lambda p: attrs.get(p, []))
+
+    def test_a_prop_of_the_animators_is_a_stranger(self):
+        g = self.GROUP
+        self.assertEqual(self.strangers([g + "|root", g + "|prop_cube"], parts=[g + "|root"]),
+                         [g + "|prop_cube"])
+
+    def test_a_part_and_whatever_holds_one_are_the_characters(self):
+        g = "|Creep_Skeleton_Character"
+        self.assertEqual(self.strangers([g + "|Armature", g + "|Creep_Body"],
+                                        parts=[g + "|Armature|root", g + "|Creep_Body"]), [])
+
+    def test_the_rigs_namespace_is_the_rigs(self):
+        g = "|Manny_Rig1_Character"
+        self.assertEqual(self.strangers([g + "|Manny_Rig1:Group", g + "|Manny_Rig1:SKM"],
+                                        namespace="Manny_Rig1"), [])
+
+    def test_what_the_add_recorded_is_the_characters(self):
+        g = self.GROUP
+        self.assertEqual(self.strangers([g + "|camera1"], recorded=["uuid:" + g + "|camera1"]),
+                         [])
+
+    def test_our_markers_make_it_ours(self):
+        g = self.GROUP
+        children = [g + "|SceneSetup_camera", g + "|WeaponSpaces", g + "|CenterOfMass",
+                    g + "|SpearMesh", g + "|animLabel", g + "|locator1"]
+        attrs = {children[0]: ["mayaSceneSetupCamera"], children[1]: ["mayaWeaponSpaces"],
+                 children[2]: ["skeldarCom"], children[3]: ["mayaWeapon", "mayaWeaponSource"],
+                 children[4]: ["skeldarAnimLabel"], children[5]: ["myOwnAttr"]}
+        self.assertEqual(self.strangers(children, attrs=attrs), [g + "|locator1"])
+
+    def test_a_stranger_names_no_character_when_selected(self):
+        g = self.GROUP
+        c = deletion.Character("skeleton", "Manny UE5 [skeleton] (root)", "", g + "|root", None,
+                               [g], [g + "|prop_cube"])
+        self.assertEqual(deletion.owners(g + "|prop_cube|prop_cubeShape", [c]), [])
+        self.assertEqual(deletion.owners(g + "|root|pelvis", [c]), [c])
+        self.assertEqual(deletion.owners(g, [c]), [c])
+
+    def test_the_confirm_names_what_is_kept(self):
+        text = deletion.confirm_text([("Manny_Rig1 (rig)", [])], kept=["prop_cube"])
+        self.assertIn("prop_cube", text)
+        self.assertIn("kept", text)
+
+    def test_the_line_names_what_was_kept(self):
+        self.assertIn("prop_cube", deletion.kept_note(["|prop_cube"]))
+        self.assertEqual(deletion.kept_note([]), "")
+
+
 class Texts(unittest.TestCase):
     def test_the_confirm_names_everything(self):
         text = deletion.confirm_text(

@@ -786,6 +786,10 @@ def apply(wanted, rig=None, weapon=None):
                 was = (cmds.listRelatives(weapon, parent=True, fullPath=True) or [None])[0]
                 overrig.parent_out(weapon)
                 weaponspace.prune(was)
+                # out of the hand, still the character's: into its group (2026-10-02), an
+                # identity parent, so the track parent_out baked in world is unchanged
+                from maya_scenesetup import chargroup
+                chargroup.park(cmds.ls(uuid, long=True)[0], rig)
             elif step == "hang":
                 hand, bone = bones[side]
                 # into the space that follows the hand -- the skeleton holds

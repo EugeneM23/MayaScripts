@@ -47,7 +47,7 @@ import maya_rig_retarget  # noqa: E402,F401
 import maya_rigs  # noqa: E402
 
 NS = "Manny_Rig"          # the namespace Add Character gives the first rig (2026-09-08)
-RIG_ROOT = "|%s:root" % NS
+RIG_ROOT = "|%s_Character|%s:root" % (NS, NS)  # in its character group since 2026-10-02
 
 RESULTS = []
 

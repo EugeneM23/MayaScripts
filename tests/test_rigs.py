@@ -154,5 +154,43 @@ class Shallowest(unittest.TestCase):
         self.assertEqual(maya_rigs.top_of("|Group"), "|Group")
 
 
+# 2026-10-02: a character's outliner group above the rig's own AdvancedSkeleton group.
+G = "|Manny_Rig2_Character"
+C = Rig("Manny_Rig2", "Manny_Rig2:ControlSet",
+        G + "|Manny_Rig2:Group|Manny_Rig2:MotionSystem|Manny_Rig2:MainSystem|Manny_Rig2:Main",
+        G + "|Manny_Rig2:Group", G + "|Manny_Rig2:root", G)
+
+
+class CharacterGroup(unittest.TestCase):
+
+    def test_the_rigs_group_is_the_one_below_the_character_group(self):
+        self.assertEqual(maya_rigs.top_below(C.main, {G}), G + "|Manny_Rig2:Group")
+
+    def test_with_no_character_group_it_is_top_of(self):
+        self.assertEqual(maya_rigs.top_below(A.main, {G}), "|Manny_Rig:Group")
+        self.assertEqual(maya_rigs.top_below(A.main, set()), maya_rigs.top_of(A.main))
+
+    def test_a_group_that_merely_shares_the_prefix_is_not_it(self):
+        self.assertEqual(maya_rigs.top_below("|Manny_Rig2_CharacterX|a", {G}),
+                         "|Manny_Rig2_CharacterX")
+
+    def test_a_rig_made_before_has_no_character(self):
+        self.assertEqual(A.character, "")
+        self.assertEqual(Rig("", "ControlSet", "|Group|Main", "|Group", "|root").character, "")
+
+    def test_the_character_group_and_its_loose_parts_are_the_rigs(self):
+        rigs = [A, C]
+        self.assertIs(maya_rigs.rig_of(G, rigs), C)
+        self.assertIs(maya_rigs.rig_of(G + "|SceneSetup_camera", rigs), C)
+        self.assertIs(maya_rigs.rig_of(G + "|Manny_Rig2:root|Manny_Rig2:pelvis", rigs), C)
+
+    def test_another_characters_group_is_not_this_rigs(self):
+        self.assertIsNone(maya_rigs.rig_of("|Manny_Skeleton_Character|root", [A, C]))
+
+    def test_the_rig_group_is_still_outside_the_skeleton(self):
+        self.assertFalse(maya_rigs.under(C.skeleton_root, C.group))
+        self.assertTrue(maya_rigs.under(C.skeleton_root, C.character))
+
+
 if __name__ == "__main__":
     unittest.main()

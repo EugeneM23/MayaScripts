@@ -275,8 +275,12 @@ def selection_names(selection, bare, rigs):
         if cmds.objectType(path) == "joint":
             root = _top_joint(path)
         else:
+            # A part parked in a skeleton's character group (2026-10-02) -- a weapon on the floor,
+            # the Camera Setup camera, the CoM handle -- names the skeleton the group's message
+            # link names, as `skeleton.current_root` reads it.
             root = _skin_root(path) or next(
-                (r for r in bare if maya_rigs.under(r, path)), None)
+                (r for r in bare if maya_rigs.under(r, path)), None) \
+                or maya_rigs.group_root(maya_rigs.group_of(path))
         if root in bare:
             named.append(root)
     return named, rig_labels
@@ -391,9 +395,14 @@ def _length(path, frame=None):
 
 def top_name(root):
     """The skeleton's top node: its root, or the group above it (the
-    Creep's Armature)."""
+    Creep's Armature) -- below the character group since 2026-10-02."""
     path = (cmds.ls(root, long=True) or [root])[0]
-    return path.split("|")[1] if path.count("|") >= 1 else path
+    parts = [p for p in path.split("|") if p]
+    if len(parts) >= 2:
+        import maya_rigs
+        if maya_rigs.is_character_group("|" + parts[0]):
+            return parts[1]
+    return parts[0] if parts else path
 
 
 def new_skeleton(entry):

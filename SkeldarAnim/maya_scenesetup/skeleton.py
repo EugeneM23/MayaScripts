@@ -94,6 +94,16 @@ def choose_root(selection_roots_, rig_roots, scene_roots):
     return None
 
 
+def _group_root(path, rigs_):
+    """The root of the skeleton whose character group holds `path`, when `path` is not a joint
+    and no rig's; else None (a joint answers by its topmost joint, a rig's node by its rig)."""
+    if not path or not cmds.objExists(path) or cmds.objectType(path) == "joint":
+        return None
+    if maya_rigs.rig_of(path, rigs_) is not None:
+        return None
+    return maya_rigs.group_root(maya_rigs.group_of(path))
+
+
 def current_root():
     """Ask the scene the three questions and let `choose_root` decide.
 
@@ -120,6 +130,9 @@ def current_root():
     from maya_scenesetup import weaponspace
     selection = [weaponspace.hand_for(path) or armor.bone_for(path) or path
                  for path in selection]
+    # A skeleton's character group (2026-10-02), or anything in it that is not a bone (a mesh, the
+    # camera, a weapon on the floor), names the skeleton its message link names.
+    selection = [_group_root(path, rigs_) or path for path in selection]
     # The rigs' own deformation joints have no joint parent and would count
     # as skeletons of their own; the game skeletons they drive are the ones.
     scene_roots = [root for root in builder.character_roots()

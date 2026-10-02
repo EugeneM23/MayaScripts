@@ -131,7 +131,7 @@ D, D2, F = bones(d.skeleton_root), bones(d2.skeleton_root), bones(f.skeleton_roo
 foreign = sorted(set(a for p in D.values() for a in cmds.listAttr(p, userDefined=True) or []
                      if a not in ("filmboxTypeID", "lockInfluenceWeights")))
 scripts = [s for s in cmds.ls(type="script") if s.startswith("Orc_D_Rig")]
-gate(3, ar.rotation_mode(d) and ar.rotation_mode(d2) and d.skeleton_root == "|Orc_D_Rig:root" and len(D) == 95
+gate(3, ar.rotation_mode(d) and ar.rotation_mode(d2) and d.skeleton_root == "|Orc_D_Rig_Character|Orc_D_Rig:root" and len(D) == 95
      and all(n in D for n in ("weapon_r", "weapon_l", "camera_root", "camera_bone", "AB_Armor_Shoulder_L"))
      and not foreign and not scripts,
      "rotation-only, 95 joints with the helper bones and pads, foreign attributes %s, script nodes %s" % (foreign, scripts))
@@ -145,12 +145,12 @@ for sc in skin:
 off = ar.posed_controls(rig=d)
 gate(4, len(skin) == 2 and worst < 1e-4 and not off, "the two D skins (3P, 1P) at their bind (%.2e), controls at default %s" % (worst, off[:3]))
 
-mesh = "|Orc_D_Rig:Group|Orc_D_Rig:Geometry|Orc_D_Rig:Orc_D_3P"      # «Orc_D_Body» until 2026-09-28
-mesh1 = "|Orc_D_Rig:Group|Orc_D_Rig:Geometry|Orc_D_Rig:Orc_D_1P"
+mesh = "|Orc_D_Rig_Character|Orc_D_Rig:Group|Orc_D_Rig:Geometry|Orc_D_Rig:Orc_D_3P"      # «Orc_D_Body» until 2026-09-28
+mesh1 = "|Orc_D_Rig_Character|Orc_D_Rig:Group|Orc_D_Rig:Geometry|Orc_D_Rig:Orc_D_1P"
 shape = live_shape(mesh)
 fn = mfn(shape)
 bs = [b for b in cmds.ls(type="blendShape") if b.startswith("Orc_D_Rig:")]
-gate(5, cmds.listRelatives("|Orc_D_Rig:Group|Orc_D_Rig:Geometry", children=True) == ["Orc_D_Rig:Orc_D_3P", "Orc_D_Rig:Orc_D_1P"]
+gate(5, cmds.listRelatives("|Orc_D_Rig_Character|Orc_D_Rig:Group|Orc_D_Rig:Geometry", children=True) == ["Orc_D_Rig:Orc_D_3P", "Orc_D_Rig:Orc_D_1P"]
      and (fn.numVertices, fn.numPolygons) == (27546, 47374) and cmds.polyUVSet(shape, q=True, allUVSets=True) == ["map1"]
      and len(bs) == 1 and len(cmds.blendShape(bs[0], q=True, weight=True)) == 56
      and not cmds.listAttr(mesh, userDefined=True),
@@ -350,14 +350,14 @@ try:
     painted = colour.paint(d2_shapes, colour.PALETTE[4].rgb, "Orc_D_Rig1")
 finally:
     cmds.undoInfo(closeChunk=True)
-d2_worn = worn(live_shape("|Orc_D_Rig1:Group|Orc_D_Rig1:Geometry|Orc_D_Rig1:Orc_D_3P"))
-d2_worn_1p = worn(live_shape("|Orc_D_Rig1:Group|Orc_D_Rig1:Geometry|Orc_D_Rig1:Orc_D_1P"))
+d2_worn = worn(live_shape("|Orc_D_Rig1_Character|Orc_D_Rig1:Group|Orc_D_Rig1:Geometry|Orc_D_Rig1:Orc_D_3P"))
+d2_worn_1p = worn(live_shape("|Orc_D_Rig1_Character|Orc_D_Rig1:Group|Orc_D_Rig1:Geometry|Orc_D_Rig1:Orc_D_1P"))
 d1_worn = worn(shape)
 gate(14, painted and list(d2_worn) == [painted] and list(d2_worn_1p) == [painted] and colour.is_ours(painted)
      and d1_worn == on_d,
      "Recolour on the second Orc D: it wears %s only (teal, ours); the first still %s" % (d2_worn, sorted(d1_worn)))
 text = character.add_character(orc_d, colour.PALETTE[0].rgb)
-third = live_shape("|Orc_D_Rig2:Group|Orc_D_Rig2:Geometry|Orc_D_Rig2:Orc_D_3P") if cmds.objExists("Orc_D_Rig2:Orc_D_3P") else None
+third = live_shape("|Orc_D_Rig2_Character|Orc_D_Rig2:Group|Orc_D_Rig2:Geometry|Orc_D_Rig2:Orc_D_3P") if cmds.objExists("Orc_D_Rig2:Orc_D_3P") else None
 third_worn = worn(third) if third else {}
 gate(15, third and " - textured" in text and len(third_worn) == 4
      and all(cmds.attributeQuery(colour.TEXTURE_MARKER, node=m, exists=True) for m in third_worn),

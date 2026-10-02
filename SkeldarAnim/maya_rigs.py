@@ -20,6 +20,15 @@ Two rigs selected is no answer. This is the toolset's standing rule
 (selection, then the sole candidate, then refuse) applied to rigs.
 
 Spec: docs/superpowers/specs/2026-09-08-many-rigs-design.md
+
+**A character has ONE outliner group since 2026-10-02** («все части которые относятся к одному
+персонажу ригу были в одной группе ... пользователь открыл аутлайнер и сразу все понял»; spec
+docs/superpowers/specs/2026-10-02-character-groups-design.md): a locked identity transform at world
+level marked `skeldarCharacterGroup` (`CHARACTER_MARKER`), holding the AdvancedSkeleton `Group`, the
+game skeleton, the asset's other tops and everything parked for the character. A rig's `group` stays
+AdvancedSkeleton's own -- the topmost ancestor of `Main` BELOW a character group (`top_below`) -- so
+"the skeleton root is outside the group", `foreign_constraints` and `rig_of` keep their meaning; the
+character group is `character`. A rig added before has no character group and `character` is "".
 """
 
 import collections
@@ -27,12 +36,20 @@ import collections
 import maya.cmds as cmds
 
 # namespace: "" for the root namespace. control_set / main: scene names.
-# group: the rig's top DAG node (long path). skeleton_root: the game
-# skeleton the rig drives (long path), or "" when it drives none.
-Rig = collections.namedtuple("Rig", "namespace control_set main group skeleton_root")
+# group: AdvancedSkeleton's top DAG node (long path) -- below the character group when there is
+# one. skeleton_root: the game skeleton the rig drives (long path), or "" when it drives none.
+# character: the character group holding all of it (long path), "" for a rig added before
+# 2026-10-02.
+Rig = collections.namedtuple("Rig", "namespace control_set main group skeleton_root character",
+                             defaults=("",))
 
 CONTROL_SET = "ControlSet"      # AdvancedSkeleton's own set of every control
 MAIN = "Main"                   # ... and its top control
+
+# A character's outliner group (2026-10-02): the marker (its catalog label, for the record) and the
+# message link from the character's root (a rig's game skeleton root, a skeleton's root).
+CHARACTER_MARKER = "skeldarCharacterGroup"
+CHARACTER_ROOT = "skeldarCharacterRoot"
 
 NO_RIG = "no AdvancedSkeleton rig in this scene (ControlSet/Main missing)"
 
@@ -92,7 +109,8 @@ def rig_of(path, rigs):
             if rig.namespace and namespace == rig.namespace:
                 return rig
     for rig in rigs:
-        if under(path, rig.group) or under(path, rig.skeleton_root):
+        if under(path, rig.group) or under(path, rig.skeleton_root) \
+                or under(path, getattr(rig, "character", "")):
             return rig
     return None
 
@@ -135,7 +153,65 @@ def shallowest(paths):
     return sorted(paths, key=lambda p: (p.count("|"), p))[0]
 
 
+def top_below(path, groups):
+    """The topmost ancestor-or-self of `path` that is not one of `groups` (the character groups):
+    `|Manny_Rig_Character|Manny_Rig:Group|...|Main` -> `|Manny_Rig_Character|Manny_Rig:Group`, and
+    with no character group above it, `top_of`. Pure."""
+    parts = [p for p in (path or "").split("|") if p]
+    for i in range(1, len(parts) + 1):
+        node = "|" + "|".join(parts[:i])
+        if node not in groups:
+            return node
+    return path
+
+
 # ----------------------------------------------------------------- scene
+
+def is_character_group(node):
+    """True when `node` is a character's outliner group (`CHARACTER_MARKER`)."""
+    return bool(node) and cmds.objExists(node) \
+        and cmds.attributeQuery(CHARACTER_MARKER, node=node, exists=True)
+
+
+def character_groups():
+    """Every character group in the scene (they stand at world level), long paths."""
+    return [top for top in cmds.ls(assemblies=True, long=True) or [] if is_character_group(top)]
+
+
+def group_of(path):
+    """The character group `path` is, or lies under, or None. Found by its marker, never by name;
+    a node outside every character group (a legacy character, the animator's own) answers None."""
+    if not path or not cmds.objExists(path):
+        return None
+    long_path = (cmds.ls(path, long=True) or [path])[0]
+    top = top_of(long_path)
+    return top if is_character_group(top) else None
+
+
+def marked_near_top(marker, depth=3):
+    """Transforms carrying `marker` among the top `depth` levels of the DAG, long paths: the
+    weapon / armor spaces groups stand at world level (a skeleton added before 2026-10-02), in a
+    character group (a bare skeleton's), or in a rig's AdvancedSkeleton group -- which is one
+    level deeper since the character groups (`|Manny_Rig_Character|Manny_Rig:Group|ArmorSpaces`)."""
+    found, level = [], cmds.ls(assemblies=True, long=True) or []
+    for _ in range(depth):
+        nxt = []
+        for node in level:
+            if cmds.attributeQuery(marker, node=node, exists=True):
+                found.append(node)
+            nxt += cmds.listRelatives(node, children=True, type="transform", fullPath=True) or []
+        level = nxt
+    return found
+
+
+def group_root(group):
+    """The character root a character group's message link names, long path, or None."""
+    if not is_character_group(group) or \
+            not cmds.attributeQuery(CHARACTER_ROOT, node=group, exists=True):
+        return None
+    found = cmds.listConnections(group + "." + CHARACTER_ROOT, source=True, destination=False) or []
+    paths = cmds.ls(found[:1], long=True) or []
+    return paths[0] if paths else None
 
 def control_sets():
     """Every `ControlSet` in the scene, whatever its namespace."""
@@ -166,17 +242,23 @@ def rigs():
     """Every rig in the scene, sorted by namespace (the root one first).
 
     A rig is a `ControlSet` with exactly one `Main` beside it in the same
-    namespace; the group is `Main`'s top ancestor, never `|Group` by name.
+    namespace; the group is `Main`'s top ancestor below the character group
+    (`top_below`), never `|Group` by name; the character group, when there is
+    one, is `Main`'s top ancestor.
     """
     out = []
+    groups = None
     for control_set in control_sets():
         namespace = namespace_of(control_set)
         mains = cmds.ls(node(namespace, MAIN), long=True) or []
         if len(mains) != 1:
             continue
-        group = top_of(mains[0])
+        if groups is None:
+            groups = set(character_groups())
+        group = top_below(mains[0], groups)
+        top = top_of(mains[0])
         out.append(Rig(namespace, control_set, mains[0], group,
-                       skeleton_root_of(namespace, group)))
+                       skeleton_root_of(namespace, group), top if top in groups else ""))
     return sorted(out, key=lambda rig: rig.namespace)
 
 

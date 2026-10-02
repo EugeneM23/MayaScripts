@@ -119,14 +119,10 @@ def _has(node, attr):
 
 
 def _groups():
-    """Every ArmorSpaces group: at world level, or under a rig's top group."""
-    found = []
-    for top in cmds.ls(assemblies=True, long=True) or []:
-        for node in [top] + (cmds.listRelatives(top, children=True, type="transform",
-                                                fullPath=True) or []):
-            if _has(node, GROUP_MARKER):
-                found.append(node)
-    return found
+    """Every ArmorSpaces group: at world level, in a character group, or in a rig's own group (one
+    level deeper since the character groups, 2026-10-02)."""
+    import maya_rigs
+    return maya_rigs.marked_near_top(GROUP_MARKER)
 
 
 def pieces():

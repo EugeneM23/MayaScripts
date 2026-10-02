@@ -153,7 +153,7 @@ chan = [cmds.getAttr(piece + "." + a) for a in ("tx", "ty", "tz", "rx", "ry", "r
 space = (cmds.listRelatives(piece, parent=True, fullPath=True) or [""])[0] if piece else ""
 group = (cmds.listRelatives(space, parent=True, fullPath=True) or [""])[0] if space else ""
 gate(2, piece is not None and max(abs(c) for c in chan) < 1e-9 and space.endswith("lowerarm_l_armorSpace")
-     and group.startswith("|Manny_Rig:Group|") and not piece.startswith(MANNY + "|")
+     and group.startswith("|Manny_Rig_Character|Manny_Rig:Group|") and not piece.startswith(MANNY + "|")
      and cmds.getAttr(piece + "." + armor.NAMESPACE) == "Tech_Limb",
      "the group at identity in the space, outside the skeleton, in the rig's group, namespace Tech_Limb: %s" % piece)
 mesh = smeshes[0] if smeshes else None
@@ -250,10 +250,10 @@ bare_piece = armor.worn(BARE).get("Tech_Limb", (None,))[0]
 bare_group = cmds.listRelatives(cmds.listRelatives(bare_piece, parent=True, fullPath=True)[0],
                                 parent=True, fullPath=True)[0] if bare_piece else ""
 roots_now = builder.character_roots()
-gate(11, bare_piece is not None and bare_group == "|ArmorSpaces"
+gate(11, bare_piece is not None and bare_group == "|Manny_Skeleton_Character|ArmorSpaces"  # its own, since 2026-10-02
      and float(np.abs(wm(bare_piece) - wm(LOWER[BARE])).max()) < 1e-6
      and not [r for r in roots_now if "Tech_Limb" in r],
-     "the bare skeleton: its space at world level (%s), the shield on its lowerarm_l, still no extra character"
+     "the bare skeleton: its space in its own group (%s), the shield on its lowerarm_l, still no extra character"
      % bare_group)
 
 lines = [armor.unequip(r, "Tech_Limb") for r in (MANNY, CREEP, ORC, BARE)]

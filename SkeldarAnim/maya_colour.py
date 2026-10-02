@@ -194,6 +194,15 @@ def connected_root():
         return None
 
 
+def _group_root(path):
+    """The root a character group links, when `path` IS one; else None."""
+    try:
+        import maya_rigs
+        return maya_rigs.group_root(path) if maya_rigs.is_character_group(path) else None
+    except Exception:                                            # noqa: BLE001
+        return None
+
+
 def target_for(node):
     """What painting `node` should mean, or None when it means nothing.
 
@@ -217,6 +226,11 @@ def target_for(node):
                           without_weapons(colouring.character_meshes(root)),
                           leaf(root))
         return None
+    #  A character's outliner group (2026-10-02) means its character, as a bone does -- not every
+    #  mesh under it (its armor, a parked weapon).
+    root = _group_root(long_name)
+    if root:
+        return Target(leaf(root), without_weapons(colouring.character_meshes(root)), leaf(root))
     shapes = colouring.mesh_shapes([long_name])
     if shapes:
         return Target(leaf(long_name), shapes, leaf(long_name))

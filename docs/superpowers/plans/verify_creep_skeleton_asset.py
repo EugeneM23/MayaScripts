@@ -46,7 +46,7 @@ print("   ", text.splitlines()[0])
 new = [n for n in cmds.ls() if n not in before]
 gate(1, entry.label in catalog.character_labels() and text.startswith("Creep [skeleton] added"), "the row and the press: %s" % text.splitlines()[0])
 #  since 2026-09-28 in the layout of the Creep's own FBX: `root` under the Null `Armature`, the meshes at the top
-root = cmds.ls("|Armature|root", type="joint", long=True)
+root = cmds.ls("|Creep_Skeleton_Character|Armature|root", type="joint", long=True)
 joints = ([root[0]] + cmds.listRelatives(root[0], ad=True, type="joint", fullPath=True)) if root else []
 gate(2, len(joints) == 91 and not [n for n in new if ":" in n], "91 joints under |Armature|root, plain names (%d namespaced nodes)" % len([n for n in new if ":" in n]))
 worst, skins = 0.0, cmds.ls(type="skinCluster")
@@ -64,7 +64,11 @@ on_bones = cmds.listRelatives(root[0], ad=True, type="constraint") or []
 gate(4, not rigish and not on_bones and not maya_rigs.rigs() and not [n for n in new if cmds.nodeType(n) == "script"],
      "nothing of the rig came along: %d rig-type nodes, %d constraints on bones, rigs %s, script nodes %s"
      % (len(rigish), len(on_bones), maya_rigs.rigs(), [n for n in new if cmds.nodeType(n) == "script"]))
-geo = [t for t in cmds.ls(assemblies=True) if t.startswith("Creep_")]
+# beside the Armature: at the top of the scene before 2026-10-02, in the character's group since
+_beside = maya_rigs.group_of(root[0]) if root else None
+geo = [t.split("|")[-1] for t in (cmds.listRelatives(_beside, children=True, fullPath=True)
+                                   if _beside else cmds.ls(assemblies=True, long=True)) or []
+       if t.split("|")[-1].startswith("Creep_")]
 wr = [j for j in joints if j.endswith("|hand_r|weapon_r")]
 wl = [j for j in joints if j.endswith("|hand_l|weapon_l")]
 gate(5, {"Creep_Body", "Creep_Back", "Creep_Arm_L", "Creep_Arm_R", "Creep_Face"} <= set(geo) and "Creep_Props" not in geo
@@ -82,7 +86,7 @@ gate(6, len(painted) == 5 and len(colours) == 3, "%d meshes textured with %s" % 
 # beside the rig
 rig_text = character.add_character(catalog.character_by_key("Creep_Rig"))
 rigs = maya_rigs.rigs()
-gate(7, len(rigs) == 1 and rigs[0].namespace == "Creep_Rig" and rigs[0].skeleton_root == "|Creep_Rig:Armature|Creep_Rig:root" and cmds.objExists("|Armature|root"),
+gate(7, len(rigs) == 1 and rigs[0].namespace == "Creep_Rig" and rigs[0].skeleton_root == "|Creep_Rig_Character|Creep_Rig:Armature|Creep_Rig:root" and cmds.objExists("|Creep_Skeleton_Character|Armature|root"),
      "the rig added beside it is the only rig and drives its own skeleton: %s" % [(r.namespace, r.skeleton_root) for r in rigs])
 rest = dict((j, wm(j)) for j in joints)
 cmds.setAttr("Creep_Rig:FKShoulder_L.rotateZ", 30)
@@ -91,8 +95,13 @@ cmds.setAttr("Creep_Rig:FKShoulder_L.rotateZ", 0)
 gate(8, moved < 1e-9, "posing the rig moves the clean skeleton by %.9f" % moved)
 second = character.add_character(entry)
 print("   ", second.splitlines()[0])
-# the second one's Null is renamed on arrival (the top node clashes); its root under it keeps its name
-nulls = [t for t in cmds.ls(assemblies=True, long=True) if ":" not in t
-         and [c for c in cmds.listRelatives(t, children=True, fullPath=True, type="joint") or [] if c.endswith("|root")]]
-gate(9, "|Armature" in nulls and len(nulls) == 2, "a second skeleton renames only its Null, each holding a `root`: %s" % nulls)
+# Since 2026-10-02 each skeleton stands in a character group of its own, so the second one's Null no
+# longer clashes on arrival: two groups, each holding an `Armature` with its `root`.
+import maya_rigs  # noqa: E402
+nulls = [c for g in maya_rigs.character_groups()
+         for c in cmds.listRelatives(g, children=True, fullPath=True, type="transform") or []
+         if [j for j in cmds.listRelatives(c, children=True, fullPath=True, type="joint") or []
+             if j.endswith("|root")]]
+gate(9, len(nulls) == 2 and all(n.endswith("|Armature") for n in nulls),
+     "a second skeleton: its own group, each holding an Armature with its `root`: %s" % nulls)
 print("RESULT: %d of 9 gates failed %s" % (len(FAILS), FAILS))

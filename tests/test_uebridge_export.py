@@ -98,7 +98,7 @@ class BonesOnly(unittest.TestCase):
 
     def test_every_joint_is_selected_by_its_uuid(self):
         import inspect
-        source = inspect.getsource(animexport.export_hierarchy)
+        source = inspect.getsource(animexport._export_hierarchy)
         self.assertIn("joint_ids", source)
         self.assertNotIn("cmds.select(path, replace=True)", source)
 
@@ -293,7 +293,7 @@ class CascadeurLayout(unittest.TestCase):
         """2026-09-25: «верхняя группа называлась Armature» -- the name no longer comes from
         the character."""
         import inspect
-        source = inspect.getsource(animexport.export_hierarchy)
+        source = inspect.getsource(animexport._export_hierarchy)
         self.assertIn("fbxlayout.WRAPPER_NAME", source)
         self.assertNotIn("character_name(", source)
         self.assertIn("fbxlayout.wrapped(", source)
@@ -311,4 +311,63 @@ class CascadeurLayout(unittest.TestCase):
     def test_our_character_tag_stays_out_of_the_file(self):
         """Measured: the exporter wrote `skeldarCharacter` into the FBX as a property of root."""
         import inspect
-        self.assertIn("fbxlayout.tag_held(", inspect.getsource(animexport.export_hierarchy))
+        self.assertIn("fbxlayout.tag_held(", inspect.getsource(animexport._export_hierarchy))
+
+
+class ExportIsOneUndoStep(unittest.TestCase):
+    """2026-10-02 (the character groups' review): the export's scene edits -- the lift out of the
+    character group, the layout's Null, the renames -- end where they began, and they were
+    recorded one by one, so the first Ctrl+Z after an export undid its LAST step: a grouped root
+    jumped out of its group to world level. One closed undo chunk round all of it makes that
+    Ctrl+Z a net nothing; and the status line names the root as the outliner shows it, not the
+    `root1` a lift beside a world-level `root` wears for the export's length."""
+
+    def setUp(self):
+        import contextlib
+        self.calls = []
+        test = self
+
+        class FakeCmds(object):
+            def undoInfo(self, **kwargs):
+                test.calls.append(("undo", tuple(sorted(kwargs))))
+
+        @contextlib.contextmanager
+        def lifted(root):
+            test.calls.append(("lift", root))
+            yield root.replace("|G|root", "|root1")
+
+        def body(fbx_path, root, start, end, layout, shown=None):
+            test.calls.append(("body", root, shown))
+            if test.raise_in_body:
+                raise RuntimeError("the exporter fell over")
+            return {"root": shown}
+
+        self.saved = (animexport.cmds, animexport._out_of_group, animexport._export_hierarchy,
+                      animexport.animimport.ensure_fbx_plugin)
+        animexport.cmds = FakeCmds()
+        animexport._out_of_group = lifted
+        animexport._export_hierarchy = body
+        animexport.animimport.ensure_fbx_plugin = lambda: None
+        self.raise_in_body = False
+
+    def tearDown(self):
+        (animexport.cmds, animexport._out_of_group, animexport._export_hierarchy,
+         animexport.animimport.ensure_fbx_plugin) = self.saved
+
+    def test_the_lift_and_the_body_run_inside_one_chunk(self):
+        animexport.export_hierarchy("x.fbx", root="|G|root", start=0, end=10)
+        kinds = [c[0] for c in self.calls]
+        self.assertEqual(kinds, ["undo", "lift", "body", "undo"])
+        self.assertIn("openChunk", self.calls[0][1])
+        self.assertIn("closeChunk", self.calls[-1][1])
+
+    def test_the_chunk_closes_when_the_export_fails(self):
+        self.raise_in_body = True
+        with self.assertRaises(RuntimeError):
+            animexport.export_hierarchy("x.fbx", root="|G|root", start=0, end=10)
+        self.assertIn("closeChunk", self.calls[-1][1])
+
+    def test_the_status_names_the_root_as_the_outliner_shows_it(self):
+        info = animexport.export_hierarchy("x.fbx", root="|G|root", start=0, end=10)
+        self.assertEqual(self.calls[2], ("body", "|root1", "root"))
+        self.assertEqual(info["root"], "root")

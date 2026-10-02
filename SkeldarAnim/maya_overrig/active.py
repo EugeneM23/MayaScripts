@@ -72,13 +72,17 @@ ARMOR_GROUP_MARKER = "mayaArmorSpaces"
 def armor_groups():
     """Every ArmorSpaces group (at world level, or under a rig's top group). A skeletal armor
     piece (2026-10-01, the Tech Limb's shield) hangs its joints there, and its Root has no joint
-    parent -- without this it would count as one more character in the scene."""
-    found = []
-    for top in cmds.ls(assemblies=True, long=True) or []:
-        for node in [top] + (cmds.listRelatives(top, children=True, type="transform",
-                                                fullPath=True) or []):
+    parent -- without this it would count as one more character in the scene. Three levels deep
+    since the character groups (2026-10-02): `|Manny_Rig_Character|Manny_Rig:Group|ArmorSpaces`."""
+    found, level = [], cmds.ls(assemblies=True, long=True) or []
+    for _ in range(3):
+        nxt = []
+        for node in level:
             if cmds.attributeQuery(ARMOR_GROUP_MARKER, node=node, exists=True):
                 found.append(node)
+            nxt += cmds.listRelatives(node, children=True, type="transform",
+                                      fullPath=True) or []
+        level = nxt
     return found
 
 
