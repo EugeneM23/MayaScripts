@@ -83,7 +83,11 @@ Measure = collections.namedtuple(
     "Measure", "source target twin median scaled_median scale regions "
                "stretch_bone stretch_cm count")
 Measure.__new__.__defaults__ = ("", "", False, 1.0, 1.0, 1.0, (), "", 0.0, 0)
-Decision = collections.namedtuple("Decision", "mode ask reason")
+Decision = collections.namedtuple("Decision", "mode ask reason twin")
+# twin -- what the MEASURE said (True / False), so the press that runs the version runs it
+#         on the same verdict the status line reports; None when nothing was measured or the
+#         verdict cannot matter (Rotations never take a twin's positions)
+Decision.__new__.__defaults__ = (None,)
 
 
 class Cancelled(Exception):
@@ -278,7 +282,8 @@ def question(m, others=0):
     lines.append("Keep proportions: the bones turn as the clip's and keep "
                  "their own lengths.")
     lines.append("Squash & stretch: every bone lands on the clip's joint, its "
-                 "length the clip's.")
+                 "length the clip's - a limb in IK keeps its own lengths, its end "
+                 "following the FK (switch it to FK to see the clip's).")
     return "\n".join(lines)
 
 
@@ -307,29 +312,31 @@ def decide(setting, m, can_ask):
     """
     if setting == ROTATION:
         return Decision(ROTATION, False, "rotations - the Retarget card says Rotations")
+    twin = None if m is None or not m.count else bool(m.twin)
     if setting == STRETCH:
-        tail = ", exact (a twin)" if m is not None and m.twin else ""
-        return Decision(STRETCH, False, "stretch - the Retarget card says Stretch" + tail)
-    if m is None or not m.count:
+        tail = ", exact (a twin)" if twin else ""
+        return Decision(STRETCH, False, "stretch - the Retarget card says Stretch" + tail, twin)
+    if twin is None:
         return Decision(None, False, "")
-    if m.twin:
+    if twin:
         return Decision(STRETCH, False, "stretch - {0} is the clip's twin, exact".format(
-            m.target or "the character"))
+            m.target or "the character"), True)
     if same_proportions(m):
         return Decision(STRETCH, False,
                         "stretch - the clip has {0}'s proportions at x{1:.3g}".format(
-                            m.target or "our", m.scale))
+                            m.target or "our", m.scale), False)
     if not can_ask:
-        return Decision(ROTATION, False, keep_reason(m, "no one to ask here"))
-    return Decision(ROTATION, True, keep_reason(m))
+        return Decision(ROTATION, False, keep_reason(m, "no one to ask here"), False)
+    return Decision(ROTATION, True, keep_reason(m), False)
 
 
 def answered(decision, button, m):
     """The Decision once the dialog answered `button`; None for Cancel. Pure."""
+    twin = None if m is None else bool(m.twin)
     if button == SQUASH:
-        return Decision(STRETCH, False, stretch_reason(m))
+        return Decision(STRETCH, False, stretch_reason(m), twin)
     if button in (KEEP, None, ""):
-        return Decision(ROTATION, False, keep_reason(m))
+        return Decision(ROTATION, False, keep_reason(m), twin)
     return None
 
 
@@ -550,9 +557,47 @@ def key_span(paths):
 #           follow) -> unit (scale 1/s): the follower
 #
 # Transforms and plain connections only, so everything dies with `parent`.
+#
+# The scale is taken about the clip root's FIRST-FRAME FLOOR POINT (its x and z
+# at the clip's first key, y 0), not the space's origin: every place the
+# bridge computes (`rigimport.place_moves`, the drop point, a skeleton's own
+# place) is measured from the UNSCALED root at its first frame, so a body
+# scaled about the origin stood (1 - s) times the root's start away from it -
+# the fix pass of 2026-10-02 (a clip whose root starts at x = 150 put a Creep's
+# Main 25 cm short). About that point the scaled root starts exactly where the
+# clip's does, and a wrapper turned about the root's start turns it in place.
 
-def scale_space(source_root, factor, parent, name):
-    """The space node and its scaled group, under `parent` (None: world).
+def floor_pivot(point):
+    """(x, 0, z): the floor point under `point`. Pure."""
+    return (float(point[0]), 0.0, float(point[2]))
+
+
+def to_local(point, matrix):
+    """`point` (world) in the space whose world matrix is `matrix` (16 floats, row
+    vectors). Arithmetic only (OpenMaya, no scene)."""
+    import maya.api.OpenMaya as om
+    p = om.MPoint(point[0], point[1], point[2]) * om.MMatrix(matrix).inverse()
+    return (p.x, p.y, p.z)
+
+
+def root_start(source_root, start=None):
+    """The clip root's world position at the clip's first frame: `start`, else its
+    joints' first key, else where it stands now."""
+    import maya.cmds as cmds
+    if start is None:
+        joints = [source_root] + (cmds.listRelatives(source_root, allDescendents=True,
+                                                     type="joint", fullPath=True) or [])
+        start = key_span(joints)[0]
+    if start is None:
+        m = cmds.getAttr(source_root + ".worldMatrix[0]")
+    else:
+        m = cmds.getAttr(source_root + ".worldMatrix[0]", time=start)
+    return (m[12], m[13], m[14])
+
+
+def scale_space(source_root, factor, parent, name, start=None):
+    """The space node and its scaled group, under `parent` (None: world), the
+    scale taken about the clip root's first-frame floor point (above).
     Returns (space, scaled_group, made constraints)."""
     import maya.cmds as cmds
     kwargs = dict(skipSelect=True)
@@ -566,6 +611,9 @@ def scale_space(source_root, factor, parent, name):
                    matrix=cmds.xform(up[0], query=True, worldSpace=True, matrix=True))
         made.append(cmds.parentConstraint(up[0], space, maintainOffset=True)[0])
     scaled = cmds.createNode("transform", name=name + "Scaled", parent=space, skipSelect=True)
+    pivot = to_local(floor_pivot(root_start(source_root, start)),
+                     cmds.xform(space, query=True, worldSpace=True, matrix=True))
+    cmds.setAttr(scaled + ".scalePivot", *pivot)
     cmds.setAttr(scaled + ".scale", factor, factor, factor)
     return space, scaled, made
 

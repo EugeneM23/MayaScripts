@@ -301,6 +301,7 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
     failures, done, widened, imported = [], [], [], []
     shape = versions = None
     cancelled = False
+    timing = rigimport.time_state()
     progress = _Progress(3 * total)
     try:
         exported = []
@@ -383,6 +384,7 @@ def run(record_list, export, target, centre=(0.0, 0.0, 0.0),
                     # and every clip skeleton imported for the batch goes
                     for rest in imported:
                         _discard(rest["namespace"])
+                    rigimport.restore_time(timing)
                     text = "{0} animations: {1}".format(len(imported), CANCELLED)
                     print("[uebridge] {0}".format(text))
                     return text

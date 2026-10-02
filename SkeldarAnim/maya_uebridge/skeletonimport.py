@@ -395,6 +395,7 @@ def import_onto_existing(fbx_path, name, root, clip_fps=None, set_timeline=True)
     Returns the status line."""
     root_uuid = cmds.ls(root, uuid=True)[0]
     place = skeleton_place(root)
+    timing = rigimport.time_state()
     namespace, info, source = rigimport.import_source(fbx_path, name, clip_fps,
                                                       set_timeline)
     if source is None:
@@ -405,6 +406,7 @@ def import_onto_existing(fbx_path, name, root, clip_fps=None, set_timeline=True)
         line, failure = onto_existing(root, namespace, info, source, name, place,
                                       decide=choose_for)
     except maya_retargetmode.Cancelled:
+        rigimport.restore_time(timing)
         return CANCELLED
     return failure or line
 
@@ -469,12 +471,16 @@ def measure(source_root, target_root, start=None, label=""):
         target=label or leaf(target_root))
 
 
-def transfer(source_root, target_root, start, end, mode=None, scale=None):
+def transfer(source_root, target_root, start, end, mode=None, scale=None, twin=None):
     """The clip under `source_root` onto the skeleton under `target_root`,
     baked over start..end: dict(twin, moved, skipped, missing, mode).
 
     `mode` is the retarget version (`drive_for`); `scale` our size over the
-    clip's for the squash & stretch (measured when not given)."""
+    clip's for the squash & stretch (measured when not given); `twin` the
+    verdict the press DECIDED on (`maya_retargetmode.Decision.twin`, the fix
+    pass of 2026-10-02) - given, it is the one this transfer runs, so the
+    version the status line names is the version that ran; None measures here
+    (`is_twin`, the legacy rule)."""
     source = dict((leaf(j), j) for j in _joints(source_root))
     targets = [j for j in _joints(target_root) if j != target_root]
     target = dict((leaf(j), j) for j in targets)
@@ -484,7 +490,7 @@ def transfer(source_root, target_root, start, end, mode=None, scale=None):
                     mode=mode)
     lengths = [(_length(source[s], start), _length(target[t]))
                for t, s in pairs.items() if not t.startswith(HELPERS)]
-    twin = is_twin(lengths)
+    twin = is_twin(lengths) if twin is None else bool(twin)
     plan = [(target_root, source_root, leaf(target_root), True)]
     plan += [(target[t], source[s], t, False) for t, s in sorted(pairs.items())]
     constraints, driven, skipped, temp = [], [], [], []
@@ -555,7 +561,8 @@ def discard_new(root):
 def _transfer(source, root, start, end, decision):
     """`transfer` with the decided version (the legacy call without one)."""
     if decision is not None and decision.mode:
-        return transfer(source, root, start, end, mode=decision.mode)
+        return transfer(source, root, start, end, mode=decision.mode,
+                        twin=getattr(decision, "twin", None))
     return transfer(source, root, start, end)
 
 
@@ -618,6 +625,7 @@ def import_onto_skeleton(fbx_path, name, clip_fps=None, set_timeline=True,
     status line."""
     import maya_retargetmode
     entry = entry or skeleton_entry()
+    timing = rigimport.time_state()
     namespace, info, source = rigimport.import_source(fbx_path, name, clip_fps,
                                                       set_timeline)
     if source is None:
@@ -626,5 +634,6 @@ def import_onto_skeleton(fbx_path, name, clip_fps=None, set_timeline=True,
         line, failure, _top = onto_skeleton(entry, namespace, info, source, name, at,
                                             decide=choose_for)
     except maya_retargetmode.Cancelled:
+        rigimport.restore_time(timing)
         return CANCELLED
     return failure or line

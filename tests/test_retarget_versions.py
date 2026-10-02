@@ -258,9 +258,10 @@ class SkeletonCancel(unittest.TestCase):
         self.addCleanup(restore)
         si.new_skeleton = lambda entry: (self.calls.append(("add",)) or ("|root1", "added"))
         si.discard_new = lambda root: self.calls.append(("discard", root))
-        si.transfer = lambda source, root, start, end, mode=None: (
-            self.calls.append(("transfer", mode)) or dict(twin=False, moved=89, skipped=[], missing=[],
-                                                          mode=mode))
+        self.twins = []
+        si.transfer = lambda source, root, start, end, mode=None, twin=None: (
+            self.calls.append(("transfer", mode)) or self.twins.append(twin) or
+            dict(twin=bool(twin), moved=89, skipped=[], missing=[], mode=mode))
         si.cmds = types.SimpleNamespace(
             ls=lambda node, uuid=False, long=False: ["UUID"] if uuid else ["|root1"],
             namespace=lambda **k: self.calls.append(("delete_ns", k.get("removeNamespace"))))
@@ -280,6 +281,17 @@ class SkeletonCancel(unittest.TestCase):
                                                "|A:root", "A", None, decide=decide)
         self.assertIn(("transfer", rm.STRETCH), self.calls)
         self.assertTrue(line.endswith("stretch - why"))
+
+    def test_the_transfer_runs_on_the_verdict_the_line_reports(self):
+        # the fix pass: the press decided "twin" on retargetmode's measure; the transfer
+        # must not judge again by its own rule and run the other version
+        for twin in (True, False):
+            del self.twins[:]
+            decide = lambda source, root, label, start, t=twin: rm.Decision(
+                rm.STRETCH, False, "stretch - why", t)
+            si.onto_skeleton(self.entry, "A", {"start": 0.0, "end": 30.0}, "|A:root", "A", None,
+                             decide=decide)
+            self.assertEqual(self.twins, [twin])
 
 
 class RigImportCancel(unittest.TestCase):

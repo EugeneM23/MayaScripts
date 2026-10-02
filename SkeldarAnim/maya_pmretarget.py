@@ -843,6 +843,33 @@ def measure(source_root=None, rig=None):
                                       extra=(OUR_ROOT, OUR_PELVIS)), ""
 
 
+def stretch_offset(pos):
+    """Pure: the world offset a squash & stretch FK follower carries - the pelvis's
+    (RootX_M's) rest offset, so the scaled body hangs off the scaled pelvis; else Main's
+    when it follows a root bone; else none."""
+    for control in ("RootX_M", "Main"):
+        if control in pos:
+            return tuple(pos[control])
+    return (0.0, 0.0, 0.0)
+
+
+IK_LIMBS = (("Arm", "_L", "arm_l"), ("Arm", "_R", "arm_r"), ("Leg", "_L", "leg_l"), ("Leg", "_R", "leg_r"))
+
+
+def ik_limbs(blends):
+    """Pure: the limbs shown in IK, from {limb label: FKIKBlend value} (10 IK, 0 FK)."""
+    return [limb for limb, value in sorted(blends.items()) if value is not None and value > 5.0]
+
+
+def _ik_limbs(rig):
+    blends = {}
+    for base, side, label in IK_LIMBS:
+        plug = _n(rig, "FKIK%s%s.FKIKBlend" % (base, side))
+        if cmds.objExists(plug):
+            blends[label] = cmds.getAttr(plug)
+    return ik_limbs(blends)
+
+
 def connected_mode(rig=None):
     """Which retarget the standing holder was connected with ("rotation" / "stretch"), or None."""
     rig, _ = _rig(rig)
@@ -1016,10 +1043,13 @@ def connect(source_root=None, require_build_pose=True, rig=None, bones=None):
             if not cmds.attributeQuery(MODE_ON_HOLDER, node=holder, exists=True):
                 cmds.addAttr(holder, longName=MODE_ON_HOLDER, dataType="string")
             cmds.setAttr(holder + "." + MODE_ON_HOLDER, bones, type="string")
-        space = scaled_group = None
-        if plan.stretch:
-            space, scaled_group, _made = retargetmode.scale_space(
-                plan.root, plan.scale, holder, _n(rig, STRETCH_PREFIX))
+        # squash & stretch: the FK controls stand where the clip's joints stand IN THE
+        # FRAME MAIN AND THE PELVIS ARE IN - pm's own scaled group, world positions times
+        # the size ratio, plus the pelvis's world rest offset - so the body is the clip's
+        # scaled shape about its own pelvis however the clip is moved after the connect
+        # (the fix pass of 2026-10-02: FK riding a rigid copy of the clip's top node while
+        # Main and the pelvis rode this group tore the body by (1 - s) of every move)
+        body_offset = stretch_offset(pos)
         for d in plan.drives:
             control = _n(rig, d.control)
             order = cmds.getAttr(control + ".rotateOrder")
@@ -1031,9 +1061,9 @@ def connect(source_root=None, require_build_pose=True, rig=None, bones=None):
                     made.append(cmds.orientConstraint(target, control,
                                                       offset=euler_offset(rot[d.control], order))[0])
                 if plan.stretch:
-                    follower, _cons = retargetmode.scaled_follower(
-                        target, space, scaled_group, plan.scale,
-                        _n(rig, STRETCH_PREFIX + "_" + d.control))
+                    follower, cons = _scaled_follower(target, STRETCH_PREFIX + d.control, plan.scale,
+                                                      body_offset, rig)
+                    made += cons
                     made.append(cmds.pointConstraint(follower, control)[0])
             elif d.kind in ("main", "pelvis"):
                 target = plan.bones[d.source]
@@ -1064,10 +1094,14 @@ def connect(source_root=None, require_build_pose=True, rig=None, bones=None):
         cmds.autoKeyframe(state=auto)
 
     kinds = collections.Counter(d.kind for d in plan.drives)
-    lines = ["retarget connected: %d controls of %s driven from %s -- %d FK by rotation, %d IK ends and %d poles "
-             "following our own FK joints, %d constraints"
-             % (len(plan.drives), maya_rigs.label(rig), leaf(plan.root), kinds["fk"], kinds["ik"] + kinds["iktoes"],
-                kinds["pole"], len(made))]
+    in_ik = _ik_limbs(rig) if plan.stretch else []
+    lines = ["retarget connected: %d controls of %s driven from %s -- %d FK by %s, %d IK ends and %d poles "
+             "following our own FK joints, %d constraints%s"
+             % (len(plan.drives), maya_rigs.label(rig), leaf(plan.root), kinds["fk"],
+                "rotation and position (SQUASH & STRETCH)" if plan.stretch else "rotation",
+                kinds["ik"] + kinds["iktoes"], kinds["pole"], len(made),
+                (" - %s in IK keep their own lengths, their ends following the FK" % ", ".join(in_ik))
+                if in_ik else "")]
     lines += plan.notes
     if plan.missing:
         lines.append("no source bone for: " + ", ".join(c for c, _ in plan.missing))
