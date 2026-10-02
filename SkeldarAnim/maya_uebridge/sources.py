@@ -126,7 +126,7 @@ def take_rows(path, takes, source="folder", note=""):
     one row when it holds one take (named for the file), one row per take
     otherwise (`stem · take`). A take that spans nothing is no animation.
     Pure."""
-    stem = os.path.splitext(os.path.basename(path))[0]
+    stem = os.path.basename(path)          # the file, extension and all
     moving = [t for t in takes if t[3] is not None and t[2] is not None
               and t[3] > t[2]]
     if len(moving) <= 1:
@@ -223,7 +223,9 @@ def scan(top, source, takes_of, read_text=None, progress=None, walk=os.walk):
 
 
 def _stem(path):
-    return os.path.splitext(os.path.basename(path))[0]
+    """A whole-file row's name: the file NAME with its extension - six formats
+    of one clip are six rows that must read apart (measured in the card)."""
+    return os.path.basename(path)
 
 
 def _read_text(path):

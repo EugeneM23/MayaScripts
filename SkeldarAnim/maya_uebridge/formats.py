@@ -160,8 +160,13 @@ def import_clip(ref, namespace, set_timeline=True, clip_fps=None):
 
 def _import_fbx(path, clip, namespace, set_timeline, clip_fps):
     take = clip.get("take")
-    if not take and clip.get("take_name"):
-        take = take_index(fbx_takes(path), clip["take_name"])
+    if take or clip.get("take_name"):
+        # `FBXImport -t` looks the index up in the file the plugin READ LAST
+        # (measured: after a scan had read other files, `-t 2` answered
+        # "take not found"), so the file is read again first.
+        takes = fbx_takes(path)
+        if not take:
+            take = take_index(takes, clip["take_name"])
     info = animimport.import_clip(path, namespace, set_timeline=False,
                                   clip_fps=clip_fps, merge=False,
                                   take=int(take) if take else None)
@@ -335,6 +340,14 @@ def build(namespace, joints, tracks, times, set_timeline=True, fps=None,
         unit = om.MTime.uiUnit()
         start = om.MTime(times[0], om.MTime.kSeconds).asUnits(unit)
         end = om.MTime(times[-1], om.MTime.kSeconds).asUnits(unit)
+    scene = animimport.scene_fps()
+    if fps and scene and abs(fps - scene) > 0.01:
+        # keys go on the clip's own times (seconds), so it plays at its own
+        # speed - between the scene's frames when the rates differ; said,
+        # the scene's rate is the animator's (the bridge never writes it)
+        note = ("a {0:g} fps clip on the {1:g} fps timeline: keys at its own "
+                "times".format(fps, scene))
+        warning = "  |  ".join(w for w in (warning, note) if w)
     return _info(namespace, start, end, fps, warning, set_timeline)
 
 

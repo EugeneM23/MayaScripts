@@ -370,7 +370,11 @@ def menu_items(source, recent, hub=(), open_projects=()):
             continue
         seen.add(key)
         name = os.path.basename(os.path.normpath(path)) or path
-        items.append(("{0}  -  {1}".format(name, path.replace("\\", "/"))
+        #  the path's TAIL only: a dropdown is as wide as its longest item,
+        #  and a whole temp path widened the block to 682 px (measured in
+        #  the card, 2026-10-02 - the animator's dock is 360)
+        items.append(("{0}  -  {1}".format(name, records._tail(
+            os.path.dirname(os.path.normpath(path)).replace("\\", "/"), 24))
                       if source == "folder" else name, path))
     items.append((BROWSE, None))
     return items
@@ -386,9 +390,13 @@ def _fill_menu(items, chosen=None):
     for label, _value in items:
         cmds.menuItem(parent=_PROJECT, label=label)
     _STATE["menu"] = [v for _l, v in items]
-    values = _STATE["menu"]
-    if chosen is not None and chosen in values:
-        cmds.optionMenu(_PROJECT, edit=True, select=values.index(chosen) + 1)
+    #  by the folder, not the spelling: the Hub writes C:\\a, a browse C:/a
+    keys = [os.path.normcase(os.path.normpath(v)) if v else None
+            for v in _STATE["menu"]]
+    if chosen is not None:
+        key = os.path.normcase(os.path.normpath(chosen))
+        if key in keys:
+            cmds.optionMenu(_PROJECT, edit=True, select=keys.index(key) + 1)
 
 
 def _file_menu(source, chosen):

@@ -656,7 +656,7 @@ class FileSources(unittest.TestCase):
 
     def test_a_folder_dropdown_names_the_folder_and_its_path(self):
         items = window.menu_items("folder", ["C:/clips/mocap"])
-        self.assertEqual(items[0], ("mocap  -  C:/clips/mocap", "C:/clips/mocap"))
+        self.assertEqual(items[0], ("mocap  -  C:/clips", "C:/clips/mocap"))
 
     def test_the_file_cache_keeps_every_field(self):
         payload = window.file_cache_payload([self.file], "folder", "C:/f")

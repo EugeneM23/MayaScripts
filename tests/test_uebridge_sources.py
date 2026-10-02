@@ -301,12 +301,12 @@ class Sources(unittest.TestCase):
 
     def test_one_take_one_row_several_one_each(self):
         one = sources.take_rows("C:/a/walk.fbx", [(1, "Take 001", 0.0, 30.0)])
-        self.assertEqual([(r.name, r.clip, r.frames) for r in one], [("walk", "", 31)])
+        self.assertEqual([(r.name, r.clip, r.frames) for r in one], [("walk.fbx", "", 31)])
         many = sources.take_rows("C:/a/pack.fbx", [(1, "Take 001", 0.0, 30.0),
                                                    (2, "jump", 0.0, 10.0),
                                                    (3, "still", 5.0, 5.0)])
         self.assertEqual([(r.name, r.clip) for r in many],
-                         [("pack · Take 001", "take=1"), ("pack · jump", "take=2")])
+                         [("pack.fbx · Take 001", "take=1"), ("pack.fbx · jump", "take=2")])
 
     def test_a_unity_model_lists_its_meta_clips(self):
         rows = sources.unity_model_rows("C:/p/Assets/Bow.fbx",
@@ -326,7 +326,7 @@ class Sources(unittest.TestCase):
                 handle.write(SIMPLE_BVH if name.endswith(".bvh") else ANIM)
         rows = sources.scan(top, "folder", takes_of=lambda p: [])
         self.assertEqual(sorted((r.name, r.fmt, r.frames) for r in rows),
-                         [("Fire", "anim", 31), ("run", "bvh", 2)])
+                         [("Fire", "anim", 31), ("run.bvh", "bvh", 2)])
 
     def test_a_broken_file_keeps_a_row_that_says_so(self):
         top = tempfile.mkdtemp()
