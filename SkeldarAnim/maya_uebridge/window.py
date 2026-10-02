@@ -63,10 +63,23 @@ _LIST = "ueAnimBridgeList"
 _SEARCH = "ueAnimBridgeSearch"
 _STATUS = "mayaSceneSetupCharacterStatus"
 _HEADER = "ueAnimBridgeHeader"
-_HEADING = "ueAnimBridgeHeading"     # «UE Connect», the rows' title (2026-10-01)
+_HEADING = "ueAnimBridgeHeading"     # «Connect», the block's title (2026-10-02)
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
 _MODE = "ueAnimBridgeMode"
+#  2026-10-02 («раздел с подключением к unreal engine нужно визуально как-то
+#  отделить ... подключаться не только к анриал енжину а и к Unity, и просто к
+#  папке с FBX файлами»): the rows are one block set into the card, and a
+#  switch above them says where the animations come from.
+_INSET = "ueAnimBridgeInset"
+_SOURCE = "ueAnimBridgeSource"
+_UASSET = "ueAnimBridgeExportUasset"
+SOURCE_VAR = "ueAnimBridgeSourceKind"          # the switch's memory
+LOCATION_VAR = "ueAnimBridgeLocation_{0}"       # the folder / project picked
+RECENT_VAR = "ueAnimBridgeRecent_{0}"           # JSON list: folders / projects
+BROWSE = "Browse..."
+#  The block's look in the classic hub (the skin styles it by its role).
+INSET_CLASSIC_BG = (0.215, 0.22, 0.235)
 
 # Windows earlier builds left open: the checkouts popup of 2026-08-21's
 # afternoon, and the bridge's own standalone window (before the hub,
@@ -77,7 +90,8 @@ LEGACY_WINDOWS = ("ueBridgeCheckouts", "ueAnimBridgeWindow")
 CACHE_NAME = "maya_uebridge_cache.json"
 
 _STATE = {"records": [], "filtered": [], "project": "", "choice": "",
-          "content_dir": ""}
+          "content_dir": "", "source": None, "menu": [], "location": "",
+          "unreal_labels": []}
 
 
 # ---------------------------------------------------------------- cache
@@ -254,18 +268,33 @@ def _with_note(text, note):
 # ---------------------------------------------------------------- actions
 
 def _project_changed():
-    """Picking another editor reloads the list from it."""
+    """Picking another editor reloads the list from it; for a folder or a
+    Unity project, picking one shows its last scan (Browse... asks)."""
+    if current_source() != "unreal":
+        _location_changed()
+        return
     _STATE["choice"] = project_choice()
     refresh()
 
 
 def refresh():
+    """Re-read the list from the source: the chosen editor's every
+    AnimSequence for Unreal, a scan of the folder or the Unity project
+    otherwise. Either way the answer is cached."""
+    if current_source() != "unreal":
+        _refresh_files()
+        return
+    _refresh_unreal()
+
+
+def _refresh_unreal():
     """Ask the chosen editor for every AnimSequence and cache the answer."""
     # Discovery is answered without connecting to anything, so the menu can be
     # filled before we decide who to talk to.
     nodes = uelink.discover_nodes()
     labels = uelink.node_labels(nodes)
     fill_project_menu(labels)
+    _STATE["unreal_labels"] = list(labels)
     chosen = uelink.node_label(uelink.pick_node(nodes, project_choice()))
     if cmds.optionMenu(_PROJECT, query=True, numberOfItems=True):
         cmds.optionMenu(_PROJECT, edit=True, value=chosen)
@@ -293,6 +322,275 @@ def refresh():
     if extra:
         _status("{0}  |  {1}".format(
             cmds.text(_STATUS, query=True, label=True), extra))
+
+
+# ---------------------------------------------------------------- sources
+
+def current_source():
+    """"unreal", "unity" or "folder": the switch over the block."""
+    source = _STATE.get("source")
+    if source is None:
+        # not built yet (a hotkey row, another module): the switch's memory,
+        # or a refresh would ignore the remembered Folder / Unity (fix review)
+        try:
+            source = _var(SOURCE_VAR, "unreal")
+        except Exception:                                    # noqa: BLE001
+            source = "unreal"
+    return source if source in ("unreal", "unity", "folder") else "unreal"
+
+
+def _var(name, default=""):
+    if cmds.optionVar(exists=name):
+        return cmds.optionVar(query=name)
+    return default
+
+
+def _recent(source):
+    try:
+        return [p for p in json.loads(_var(RECENT_VAR.format(source), "[]") or "[]")
+                if isinstance(p, str)]
+    except ValueError:
+        return []
+
+
+def _remember(source, location):
+    from maya_uebridge import sources
+    cmds.optionVar(stringValue=(LOCATION_VAR.format(source), location or ""))
+    if location:
+        cmds.optionVar(stringValue=(RECENT_VAR.format(source), json.dumps(
+            sources.recent(_recent(source), location))))
+
+
+def menu_items(source, recent, hub=(), open_projects=()):
+    """[(label, value)] of the dropdown for a file source: the Unity Hub's
+    projects (an open one says so) and the ones browsed to, or the folders
+    browsed to; then Browse... (value None). Pure."""
+    items, seen = [], set()
+    if source == "unity":
+        for title, path, version, _modified in hub:
+            key = os.path.normcase(os.path.normpath(path))
+            seen.add(key)
+            label = "{0}  ({1}{2})".format(
+                title, version, ", open" if key in open_projects else "")
+            items.append((label, path))
+    for path in recent:
+        key = os.path.normcase(os.path.normpath(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        name = os.path.basename(os.path.normpath(path)) or path
+        #  the path's TAIL only: a dropdown is as wide as its longest item,
+        #  and a whole temp path widened the block to 682 px (measured in
+        #  the card, 2026-10-02 - the animator's dock is 360)
+        items.append(("{0}  -  {1}".format(name, records._tail(
+            os.path.dirname(os.path.normpath(path)).replace("\\", "/"), 24))
+                      if source == "folder" else name, path))
+    items.append((BROWSE, None))
+    return items
+
+
+def _fill_menu(items, chosen=None):
+    """The dropdown holds `items`; `chosen` (a value) picked when it is one."""
+    if not cmds.optionMenu(_PROJECT, exists=True):
+        _STATE["menu"] = [v for _l, v in items]
+        return
+    for item in (cmds.optionMenu(_PROJECT, query=True, itemListLong=True) or []):
+        cmds.deleteUI(item)
+    for label, _value in items:
+        cmds.menuItem(parent=_PROJECT, label=label)
+    _STATE["menu"] = [v for _l, v in items]
+    #  by the folder, not the spelling: the Hub writes C:\\a, a browse C:/a
+    keys = [os.path.normcase(os.path.normpath(v)) if v else None
+            for v in _STATE["menu"]]
+    if chosen is not None:
+        key = os.path.normcase(os.path.normpath(chosen))
+        if key in keys:
+            cmds.optionMenu(_PROJECT, edit=True, select=keys.index(key) + 1)
+
+
+def _file_menu(source, chosen):
+    from maya_uebridge import unityfiles
+    hub, opened = (), set()
+    if source == "unity":
+        hub = unityfiles.hub_projects()
+        for _title, path, _v, _m in hub:
+            if unityfiles.is_open(path):
+                opened.add(os.path.normcase(os.path.normpath(path)))
+    recent = _recent(source)
+    if chosen and chosen not in recent:
+        recent = [chosen] + recent
+    _fill_menu(menu_items(source, recent, hub, opened), chosen)
+
+
+def _menu_value():
+    if not cmds.optionMenu(_PROJECT, exists=True):
+        return _STATE.get("location") or None
+    index = cmds.optionMenu(_PROJECT, query=True, select=True) or 0
+    values = _STATE.get("menu") or []
+    return values[index - 1] if 0 < index <= len(values) else None
+
+
+def _browse(source):
+    caption = ("Pick a Unity project folder" if source == "unity"
+               else "Pick a folder of animations")
+    picked = cmds.fileDialog2(fileMode=3, dialogStyle=2, caption=caption)
+    return picked[0].replace("\\", "/") if picked else None
+
+
+def file_cache_payload(record_list, source, location):
+    """The cache of a file source: the records whole. Pure."""
+    return {"source": source, "location": location,
+            "assets": [dict(rec._asdict()) for rec in record_list]}
+
+
+def _file_cache_path(source, location):
+    from maya_uebridge import sources
+    return os.path.join(temp_folder(), sources.cache_name(source, location))
+
+
+def _load_file_cache(source, location):
+    try:
+        with open(_file_cache_path(source, location), "r") as handle:
+            return records.parse_payload(json.load(handle))
+    except (OSError, IOError, ValueError):
+        return None
+
+
+def _save_file_cache(record_list, source, location):
+    try:
+        with open(_file_cache_path(source, location), "w") as handle:
+            json.dump(file_cache_payload(record_list, source, location), handle)
+    except (OSError, IOError):
+        pass
+
+
+def _show_location(source, location):
+    """The list from `location`'s last scan, without scanning."""
+    from maya_uebridge import sources
+    _STATE["location"] = location or ""
+    cached = _load_file_cache(source, location) if location else None
+    _STATE["records"] = cached or []
+    _repopulate(quiet=True)
+    _header(sources.header_line(source, location, len(cached) if cached is not None
+                                else None, cached is not None))
+
+
+def _source_changed(source):
+    """The switch moved: the dropdown, the list and the exports follow."""
+    _STATE["source"] = source
+    cmds.optionVar(stringValue=(SOURCE_VAR, source))
+    if cmds.button(_UASSET, exists=True):
+        cmds.button(_UASSET, edit=True, enable=source == "unreal")
+    if source == "unreal":
+        cached, project, choice, content_dir = load_cache()
+        _STATE.update(records=cached, project=project, choice=choice,
+                      content_dir=content_dir)
+        # the editors the last Refresh found, not the cache's one label: a
+        # switch to Folder and back must not drop them (the fix review)
+        labels = list(_STATE.get("unreal_labels") or [])
+        label = choice or _project_label(project)
+        if label and (choice or project) and label not in labels:
+            labels.insert(0, label)
+        _fill_menu([(l, None) for l in labels])
+        if label and label in labels and cmds.optionMenu(_PROJECT, exists=True):
+            cmds.optionMenu(_PROJECT, edit=True, value=label)
+        _repopulate(quiet=True)
+        _header(editor_line(False, len(cached)))
+        return
+    location = _var(LOCATION_VAR.format(source), "") or ""
+    _file_menu(source, location or None)
+    _show_location(source, location)
+
+
+def _location_changed():
+    """A pick in the dropdown of a file source: its last scan, or - for
+    Browse... - a folder asked for and remembered."""
+    source = current_source()
+    value = _menu_value()
+    if value is None:
+        value = _browse(source)
+        if not value:
+            _file_menu(source, _STATE.get("location") or None)
+            _status("nothing picked")
+            return
+    _remember(source, value)
+    _file_menu(source, value)
+    _show_location(source, value)
+    if _load_file_cache(source, value) is None:
+        _status("press Refresh to scan {0}".format(value))
+
+
+def _refresh_files():
+    """Scan the picked folder or Unity project, under a cancellable
+    progress window, and cache what it holds."""
+    from maya_uebridge import formats, sources, unityfiles
+    source = current_source()
+    location = _STATE.get("location") or _menu_value()
+    if not location:
+        location = _browse(source)
+        if not location:
+            _status("nothing picked")
+            return
+        _remember(source, location)
+        _file_menu(source, location)
+    if not os.path.isdir(location):
+        _status("{0} is not a folder".format(location))
+        return
+    if source == "unity" and not unityfiles.is_project(location):
+        _status("{0} is not a Unity project (no Assets and ProjectSettings in "
+                "it)".format(location))
+        return
+    progress = _ScanProgress()
+    try:
+        found = sources.scan(location, source, formats.fbx_takes,
+                             progress=progress.step)
+    finally:
+        progress.close()
+    _STATE["location"] = location
+    _STATE["records"] = found
+    if not progress.cancelled:
+        _save_file_cache(found, source, location)
+    _header(sources.header_line(source, location, len(found), False))
+    _repopulate()
+    if progress.cancelled:
+        _status("scan cancelled - {0} animations so far, not cached".format(
+            len(found)))
+
+
+class _ScanProgress(object):
+    """Maya's progress window over a scan, cancellable; nothing where it
+    cannot stand (a batch session)."""
+
+    def __init__(self):
+        self.on = False
+        self.cancelled = False
+        try:
+            cmds.progressWindow(title="Connect", progress=0, maxValue=100,
+                                status="scanning...", isInterruptable=True)
+            self.on = True
+        except Exception:                                    # noqa: BLE001
+            pass
+
+    def step(self, done, total, path):
+        if not self.on or done % 10:
+            return True
+        try:
+            if cmds.progressWindow(query=True, isCancelled=True):
+                self.cancelled = True
+                return False
+            cmds.progressWindow(edit=True, progress=int(100 * done / max(1, total)),
+                                status="{0} / {1}  {2}".format(
+                                    done, total, os.path.basename(path)[:40]))
+        except Exception:                                    # noqa: BLE001
+            pass
+        return True
+
+    def close(self):
+        if self.on:
+            try:
+                cmds.progressWindow(endProgress=True)
+            except Exception:                                # noqa: BLE001
+                pass
 
 
 #  The press's internal modes: the Characters card's kind times the target.
@@ -378,6 +676,50 @@ def retarget_selected():
 
 
 def _export_from_editor(record):
+    """The clip out of its source: (clip reference, fps) for the import
+    funnel (`rigimport.import_source`). Every road calls this one function
+    - the button, the double click, the drag, the square of several - so a
+    file source needs no road of its own (2026-10-02): its record already
+    names its file and clip (`sources.record_ref`). An Unreal record is
+    exported by the editor into the temp folder, as since 2026-08-16."""
+    if getattr(record, "source", "unreal") != "unreal":
+        from maya_uebridge import sources
+        ref = sources.record_ref(record)
+        refusal = file_refusal(record) or _clip_check(ref)
+        if refusal:
+            raise uelink.UeBridgeError(refusal)
+        return ref, record.fps
+    return _export_unreal(record)
+
+
+def _clip_check(ref):
+    """The file read again for what its import would refuse - a take no
+    longer in it, a Unity clip with no model and no positions, a glTF with
+    no skeleton - BEFORE the press adds a rig (the fix review, 2026-10-02:
+    these used to raise inside the import, after a 9.5 s Manny was added)."""
+    from maya_uebridge import formats  # lazy: Maya's own readers
+    return formats.check(ref)
+
+
+def file_refusal(record):
+    """Why a file's clip cannot be imported, "" when it can. Pure: a row
+    that is listed only to say so (a Humanoid muscle clip, an unreadable
+    file) refuses BEFORE anything is imported or added."""
+    note = getattr(record, "skeleton", "") or ""
+    if note == "humanoid":
+        return "{0}: a Humanoid muscle clip - export it as FBX from Unity".format(
+            record.name)
+    if note == "compressed":
+        return "{0}: a compressed Unity clip - untick Anim. Compression, or " \
+               "export FBX".format(record.name)
+    if note.startswith("unreadable") or note == "no curves":
+        return "{0}: {1}".format(record.name, note)
+    if record.path and not os.path.isfile(record.path):
+        return "{0}: the file is gone ({1}) - Refresh".format(record.name, record.path)
+    return ""
+
+
+def _export_unreal(record):
     """The clip out of the editor into the temp folder: (fbx path, fps)."""
     out = os.path.join(temp_folder(), "export.json")
     fbx = os.path.join(temp_folder(), "{0}.fbx".format(record.name))
@@ -608,6 +950,10 @@ def export_uasset_selected():
     the UI state it needs.
     """
     chosen = _selected_records()
+    if current_source() != "unreal" or any(
+            getattr(r, "source", "unreal") != "unreal" for r in chosen):
+        return _status("Export to uasset writes an Unreal asset - pick Unreal "
+                       "in Connect and the AnimSequence to overwrite")
     if len(chosen) > 1:
         return _status("pick one animation to overwrite - {0} are picked"
                        .format(len(chosen)))
@@ -675,10 +1021,45 @@ def build_rows():
     the two exports a row under it. The editor line is the card's CONTEXT
     now - the character line is its subtitle.
     """
-    #  the rows' title, as every section of a card has one (2026-10-01:
-    #  «Та часть где мы подключаемся к анрилу ее нужно озаглавить UE Connect»)
-    hubstyle.mark(cmds.text(_HEADING, label="UE Connect", align="left",
+    #  2026-10-02: ONE block set into the card - its own background, a
+    #  hairline round it, padded («раздел с подключением ... визуально как-то
+    #  отделить») - holding everything of the connection; the card's status
+    #  line stays outside it. The skin paints it by its role ("inset"); the
+    #  classic hub gives the column a background of its own.
+    inset = cmds.columnLayout(_INSET, adjustableColumn=True, rowSpacing=4,
+                              columnAttach=("both", 6),
+                              **hubstyle.pick({}, {"backgroundColor":
+                                                   INSET_CLASSIC_BG}))
+    hubstyle.mark(inset, "inset", layout=True)
+    #  the block's title (2026-10-01 «UE Connect»; «Connect» since it reaches
+    #  Unity and a folder too)
+    hubstyle.mark(cmds.text(_HEADING, label="Connect", align="left",
                             font="boldLabelFont"), "heading")
+    #  where the animations come from
+    from maya_uebridge import sources
+    segments = cmds.rowLayout(numberOfColumns=len(sources.SOURCES),
+                              columnAttach=[(i + 1, "both", 1)
+                                            for i in range(len(sources.SOURCES))])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(_SOURCE)
+    remembered = _var(SOURCE_VAR, "unreal") or "unreal"
+    if remembered not in sources.SOURCES:
+        remembered = "unreal"
+    tips = {"unreal": "The running Unreal editor's AnimSequences (Python "
+                      "Remote Execution on)",
+            "unity": "A Unity project read off the disk - Unity Hub's recent "
+                     "projects, or Browse...: model files' clips and .anim "
+                     "clips under Assets",
+            "folder": "A folder of animation files: FBX (every take), Collada, "
+                      "Maya .ma/.mb, BVH, glTF/GLB, USD, Unity .anim"}
+    for source in sources.SOURCES:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            source_button(source), style="textOnly",
+            label=sources.LABELS[source], height=22,
+            select=source == remembered, annotation=tips[source],
+            onCommand=lambda *_a, s=source: _run(lambda: _source_changed(s))),
+            "segment")
+    cmds.setParent("..")
     #  two lines tall: a wrapped label keeps the one-line height it was
     #  given and clips the rest (measured in the hub, 2026-09-17).
     hubstyle.mark(cmds.text(_HEADER, label=editor_line(False), align="left",
@@ -686,14 +1067,17 @@ def build_rows():
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "left", 4)])
     cmds.optionMenu(
-        _PROJECT, annotation="The running Unreal editor to read from",
+        _PROJECT, annotation="Unreal: the running editor to read from. Unity: "
+                             "the project. Folder: the folder - Browse... "
+                             "picks another",
         changeCommand=lambda *_: _run(_project_changed,
-                                      busy="switching editor..."))
+                                      busy="switching..."))
     hubstyle.mark(cmds.button(
         label=hubstyle.tool_label("Refresh"),
         width=hubstyle.tool_width(90), height=24,
-        annotation="Read the animations from the open editor",
-        command=lambda *_: _run(refresh, busy="asking the editor...")),
+        annotation="Read the animations again: from the open editor, or a "
+                   "scan of the project / folder",
+        command=lambda *_: _run(refresh, busy=_refresh_busy())),
         "tool", "refresh")
     cmds.setParent("..")
 
@@ -714,8 +1098,7 @@ def build_rows():
                    "drop on the floor lay them all out in a square - about "
                    "the scene's zero for the button, about the point for a "
                    "drop.",
-        doubleClickCommand=lambda *_: _run(import_selected,
-                                           busy="exporting from the editor..."))
+        doubleClickCommand=lambda *_: _run(import_selected, busy=_import_busy()))
 
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
                    columnAttach=[(1, "left", 0), (2, "both", 4)])
@@ -735,10 +1118,10 @@ def build_rows():
 
     hubstyle.mark(cmds.button(
         label="Import Animation", height=32,
-        annotation="Import the selected animation(s) from Unreal onto the "
+        annotation="Import the selected animation(s) from the source onto the "
                    "character Animation Setup and the Import row say",
         command=lambda *_: _run(import_selected,
-                                busy="exporting from the editor...")),
+                                busy=_import_busy())),
         "primary", "download")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 4)])
@@ -751,31 +1134,38 @@ def build_rows():
                                 busy="writing the fbx...")),
         "secondary", "upload")
     hubstyle.mark(cmds.button(
-        label="Export to uasset", height=28, width=130,
+        _UASSET, label="Export to uasset", height=28, width=130,
         annotation="Overwrite the selected AnimSequence with the scene's "
                    "animation. Asks first. Does NOT touch Perforce: the "
                    "uasset is written on disk with no changelist behind it, "
-                   "and a read-only flag is cleared.",
+                   "and a read-only flag is cleared. Unreal only.",
         command=lambda *_: _run(export_uasset_selected,
                                 busy="writing the uasset...")),
         "secondary")
     cmds.setParent("..")
+    cmds.setParent("..")             # out of the Connect block
 
-    cached, project, choice, content_dir = load_cache()
-    _STATE["records"] = cached
-    _STATE["project"] = project
-    _STATE["choice"] = choice
-    _STATE["content_dir"] = content_dir
-    # Show the remembered project straight away; Refresh replaces the menu with
-    # whatever is actually running. Discovery on open would make the window
-    # take a second to appear even with no editor about.
-    if choice or project:
-        fill_project_menu([choice or _project_label(project)])
-    # Quiet: the card's line says the portrait's choice on open; the cache is
-    # the editor line's to say.
-    _repopulate(quiet=True)
-    _header(editor_line(False, len(cached)))
+    # Show the remembered source's last listing straight away (its cache);
+    # Refresh replaces it with what is there now. Discovery on open would make
+    # the card take a second to appear even with no editor about. Quiet: the
+    # card's line says the portrait's choice on open.
+    _source_changed(remembered)
     _attach_drag()
+
+
+def source_button(source):
+    """The Connect switch's segment of `source`."""
+    return "{0}_{1}".format(_SOURCE, source)
+
+
+def _refresh_busy():
+    return {"unreal": "asking the editor...", "unity": "scanning the project...",
+            "folder": "scanning the folder..."}.get(current_source(), "...")
+
+
+def _import_busy():
+    return ("exporting from the editor..." if current_source() == "unreal"
+            else "importing...")
 
 
 def _attach_drag():

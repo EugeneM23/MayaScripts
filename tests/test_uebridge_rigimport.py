@@ -497,6 +497,28 @@ class ThePress(unittest.TestCase):
         self.assertIn("retarget refused: no bone of A matches", text)
         self.assertIn("imported as A", text)
 
+    def test_an_import_that_fails_after_an_add_takes_the_rig_back(self):
+        """The fix review, 2026-10-02: a file source's import can fail after
+        the press added a rig; what the press made goes, and the line says
+        why - never a traceback over a rig nobody asked for."""
+        def broken(*a, **k):
+            self.calls.append(("import", a[1]))
+            raise RuntimeError("Fire: no model beside it carries its bones")
+        rigimport.animimport.import_clip = broken
+        undone = []
+        real = rigimport._undo_failed_import
+        rigimport._undo_failed_import = lambda before, plan, rig: (
+            undone.append((plan["add"], rig.namespace)) or
+            "the rig it added and the clip were removed")
+        self.addCleanup(setattr, rigimport, "_undo_failed_import", real)
+        text = rigimport.import_and_retarget("C:/t/A.fbx", "A", target="new_rig")
+        self.assertIn("A could not be imported: Fire: no model beside it", text)
+        self.assertIn("the rig it added and the clip were removed", text)
+        self.assertEqual(undone, [(True, "Manny_Rig1")])
+        self.assertEqual(self._steps(), ["add", "import"])
+        undo = [c[1] for c in self.calls if c[0] == "undo"]
+        self.assertEqual(undo, [("chunkName", "openChunk"), ("closeChunk",)])
+
     def test_the_whole_press_is_one_undo_chunk(self):
         self._one_rig_current()
         rigimport.import_and_retarget("C:/t/A.fbx", "A")

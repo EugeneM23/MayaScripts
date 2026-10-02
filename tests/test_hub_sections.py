@@ -368,7 +368,7 @@ class SceneSetup(unittest.TestCase):
                  and self._marks().get(c[1][0]) is not None
                  and self._marks()[c[1][0]].role == "heading"]
         self.assertEqual(heads, [(scenesetup._CHARACTERS_HEADING, "Characters"),
-                                 (uebridge._HEADING, "UE Connect")])
+                                 (uebridge._HEADING, "Connect")])
 
     def test_the_inventory_is_two_tabs_one_shown(self):
         """2026-10-01, the evening: «переключаемся нажимая на название
@@ -645,9 +645,35 @@ class UeBridge(unittest.TestCase):
          uebridge.fill_project_menu, uebridge._attach_drag) = self.saved
         uebridge._header = self.saved_header
 
-    def test_no_window_and_no_column_of_its_own(self):
+    def test_no_window_and_one_block_set_into_the_card(self):
+        """2026-10-02: «раздел с подключением ... визуально как-то отделить» -
+        the rows' one column is the Connect block, an inset in the skin, a
+        background of its own in the classic hub."""
         self.assertEqual(self.fake.windows, {})
-        self.assertFalse([c for c in self.fake.calls if c[0] == "columnLayout"])
+        columns = [c for c in self.fake.calls if c[0] == "columnLayout"
+                   and not c[2].get("edit") and not c[2].get("query")]
+        self.assertEqual([c[1][0] for c in columns], [uebridge._INSET])
+        self.assertEqual(columns[0][2]["backgroundColor"], uebridge.INSET_CLASSIC_BG)
+        insets = [m for m in self.marks if m.role == "inset"]
+        self.assertEqual(len(insets), 1)
+        self.assertTrue(insets[0].layout)
+
+    def test_the_source_switch_is_three_segments(self):
+        """Unreal, Unity, Folder - the remembered one lit (Unreal by default)."""
+        segments = [c for c in self.fake.calls if c[0] == "iconTextRadioButton"
+                    and c[1][0].startswith(uebridge._SOURCE)]
+        self.assertEqual([c[2]["label"] for c in segments],
+                         ["Unreal", "Unity", "Folder"])
+        self.assertEqual([c[2]["select"] for c in segments], [True, False, False])
+        marks = dict((m.name, m) for m in self.marks)
+        for call in segments:
+            self.assertEqual(marks[call[1][0]].role, "segment")
+            self.assertTrue(callable(call[2]["onCommand"]))
+
+    def test_the_heading_comes_first_in_the_block(self):
+        texts = [c[1][0] for c in self.fake.calls if c[0] == "text" and c[1]
+                 and not c[2].get("edit")]
+        self.assertEqual(texts[0], uebridge._HEADING)
 
     def test_not_a_section_any_more(self):
         self.assertFalse(hasattr(uebridge, "build_panel"))
@@ -672,6 +698,7 @@ class UeBridge(unittest.TestCase):
         self.assertFalse([c for c in self.fake.calls
                           if c[0] == "radioButtonGrp"])
         segments = [c for c in self.fake.calls if c[0] == "iconTextRadioButton"
+                    and c[1][0].startswith(uebridge._MODE)
                     and not c[2].get("edit")]
         self.assertEqual([c[2]["label"] for c in segments],
                          ["Onto selected", "New"])
@@ -688,6 +715,7 @@ class UeBridge(unittest.TestCase):
         marks = [m for m in self.marks if m.role == "primary"]
         self.assertEqual([m.icon for m in marks], ["download"])
         labels = [c[2]["label"] for c in self.fake.calls if c[0] == "button"
+                  and "label" in c[2]
                   and not c[2].get("edit")]
         self.assertIn("Import Animation", labels)
         self.assertNotIn("Import", labels)

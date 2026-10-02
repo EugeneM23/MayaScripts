@@ -673,8 +673,13 @@ def stale_line(names):
         len(names), shown)
 
 
-def import_command(fbx_path):
+def import_command(fbx_path, take=None):
     """MEL for the FBX plugin's own importer.
+
+    `take` (2026-10-02, a file of several takes) is the 1-based take index
+    `FBXImport -t` imports; measured: an FBX written with two split takes
+    reads as three (`Take 001` whole, then the two), and `-t 2` brings the
+    first split's keys only (0..10 of 0..18).
 
     `cmds.file(i=True, type="FBX")` looks like the obvious call and is wrong:
     it brings the skeleton and silently drops every animation curve, because
@@ -684,11 +689,14 @@ def import_command(fbx_path):
     Forward slashes only: inside a MEL string a backslash starts an escape, so
     a Windows path would mangle before the importer ever saw it.
     """
+    if take:
+        return 'FBXImport -f "{0}" -t {1};'.format(fbx_path.replace("\\", "/"),
+                                                   int(take))
     return 'FBXImport -f "{0}";'.format(fbx_path.replace("\\", "/"))
 
 
 def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
-                merge=None):
+                merge=None, take=None):
     """Bring `fbx_path` into the scene and report what actually arrived.
 
     With `merge` the clip lands on the skeleton already in the scene, matched
@@ -762,7 +770,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
         # Nested, so the hold has already freed the name.
         with other_skeletons_held(target) as failed_to_hold:
             with target_root_plain(target, target_joints) as root_as:
-                mel.eval(import_command(fbx_path))
+                mel.eval(import_command(fbx_path, take))
         unheld = list(failed_to_hold)
     else:
         # FBXImport has no namespace flag, but it honours the current one
@@ -771,7 +779,7 @@ def import_clip(fbx_path, namespace=None, set_timeline=True, clip_fps=None,
             cmds.namespace(addNamespace=namespace)
         cmds.namespace(setNamespace=namespace)
         try:
-            mel.eval(import_command(fbx_path))
+            mel.eval(import_command(fbx_path, take))
         finally:
             cmds.namespace(setNamespace=":")
 
