@@ -8,11 +8,13 @@ their FK/IK blends. Run with a scratch MAYA_APP_DIR (the animator's prefs never 
         docs/superpowers/plans/verify_poselib_solve.py [out.txt]
 
 Every gate prints `PASS/FAIL <name> <value>`, the run ends `SUMMARY x/y` (an optional file
-argument gets the same lines). The real road every time: a card is `capture.build_pose` of a
-selection, a target is `scene.skeleton`, the transfer `posemath.pairs / scale_between /
-targets`, the solve `rigsolve.solve` / `skelsolve.solve`, the keys `keys.write` on the layer
-`keys.active_layer` answers (none: plain keys) - then a real time change evaluates the rig and
-the BONES are measured against the card, independently of the solver's own `measure`.
+argument gets the same lines). The plugin is the one beside this script (`<repo>/SkeldarAnim`;
+`$env:POSELIB_PLUGIN` names another), and its path is the first line. The real road every
+time: a card is `capture.build_pose` of a selection, a target is `scene.skeleton`, the
+transfer `posemath.pairs / scale_between / targets`, the solve `rigsolve.solve` /
+`skelsolve.solve`, the keys `keys.write` on the layer `keys.active_layer` answers (none:
+plain keys) - then a real time change evaluates the rig and the BONES are measured against the
+card, independently of the solver's own `measure`.
 
   save      Manny_Rig, Creep_Rig, Orc_D_Rig, the Manny UE5 skeleton (twice), the Creep skeleton
             and the UE4 Mannequin added; each rig posed by its FK controls (arms with a forearm
@@ -55,7 +57,10 @@ the BONES are measured against the card, independently of the solver's own `meas
             size.
   skeleton  a Manny skeleton posed by every joint (the pelvis moved too) onto a second Manny
             skeleton standing elsewhere (moved and turned): every member, twist bones included,
-            on the source's pose relative to the root to 0.001 deg / 0.001 cm.
+            on the source's pose relative to the root to 0.001 deg / 0.001 cm. Then a card
+            whose bones carry TRANSLATIONS (neck_01 and the clavicles 3.7 cm off their bind, as
+            a UE 3P clip has them, the left calf 3 cm): still a twin (decided on the rests),
+            every member TURNED as the card's to 0.001 deg (its places the target's lengths).
   partial   the Creep_Rig's left-hand pose onto the Creep_Rig standing in another pose: only
             the left hand's controls change - its FK wrist, its finger controls and the IK arm's
             end (the spec's «both modes keyed»: the IK wrist is the hand's own) - every other
@@ -100,9 +105,15 @@ maya.standalone.initialize(name="python")
 import maya.api.OpenMaya as om  # noqa: E402
 import maya.cmds as cmds  # noqa: E402
 
-PLUGIN = "C:/!!!Work/MayaScripts-poselib/SkeldarAnim"
-if PLUGIN not in sys.path:
-    sys.path.insert(0, PLUGIN)
+# the plugin beside THIS script (<repo>/SkeldarAnim), never a path written in: run from another
+# checkout, a fixed path would import that checkout's plugin and prove its code (CLAUDE.md note
+# 9). POSELIB_PLUGIN overrides it.
+HERE = os.path.dirname(os.path.abspath(__file__))
+PLUGIN = os.path.normpath(os.environ.get("POSELIB_PLUGIN") or
+                          os.path.join(HERE, "..", "..", "..", "SkeldarAnim"))
+if not os.path.isfile(os.path.join(PLUGIN, "maya_poselib", "posemath.py")):
+    raise ImportError("no plugin with maya_poselib at %s" % PLUGIN)
+sys.path.insert(0, PLUGIN)
 for _plugin in ("matrixNodes", "quatNodes", "fbxmaya"):
     cmds.loadPlugin(_plugin, quiet=True)
 cmds.currentUnit(time="ntsc")
@@ -961,6 +972,63 @@ def phase_skeleton():
          and not solution.skipped, "%d of %d %s" % (count, len(solution.values), key_notes))
     source_ch.reset()
     target.reset()
+    translated_card(source_ch, target, bones)
+
+
+# where a UE 3P clip moves its bones off the bind (trap 152: neck_01 and the clavicles ~3.7 cm),
+# plus a calf 3 cm out (a squash & stretch take moves every bone) - in each joint's parent frame
+TRANSLATED = {"neck_01": (0.0, 3.7, 0.0), "clavicle_l": (0.0, 3.7, 1.0),
+              "clavicle_r": (0.0, -3.7, 1.0), "calf_l": (0.0, 0.0, 3.0)}
+
+
+def translated_card(source_ch, target, bones):
+    """A card whose bones carry TRANSLATIONS is still its own model's twin (posemath.twin decides
+    on the two rests): onto the second Manny skeleton standing elsewhere every member TURNS as
+    the card's, relative to the root, to 0.001 deg - its places are the target's own lengths
+    (only the pelvis takes the card's). Read as the bones stood, a calf 1 cm off its bind made
+    the card no twin and turned thigh_l 1.273 deg off it (3 cm: 3.814 deg)."""
+    root = pm.root_of(bones)
+    for i, leaf in enumerate(sorted(bones)):
+        if leaf == root or pm.is_helper(leaf):
+            continue
+        path = bones[leaf]["path"]
+        r = cmds.getAttr(path + ".rotate")[0]
+        cmds.setAttr(path + ".rotate", r[0] + 8 * math.cos(i), r[1] + 6 * math.sin(1.3 * i),
+                     r[2] + 10 * math.cos(0.7 * i + 2))
+    for leaf, (dx, dy, dz) in sorted(TRANSLATED.items()):
+        path = bones[leaf]["path"]
+        t = cmds.getAttr(path + ".translate")[0]
+        cmds.setAttr(path + ".translate", t[0] + dx, t[1] + dy, t[2] + dz)
+    evaluate()
+    data, note = capture.build_pose([source_ch.root])
+    say("   translated card: %s" % note)
+    cmds.setAttr(target.root + ".translate", -120.0, 0.0, 80.0)
+    cmds.setAttr(target.root + ".rotateY", -65.0)
+    evaluate()
+    wanted, members_t, t_bones, pairs, _scale = transfer(data, target)
+    source = data["bones"]
+    is_twin = pm.twin(pairs, source, t_bones)
+    # how far each moved bone stands off its bind in its parent's frame, read off the card
+    off = max((pm.position(rel(source[leaf]["world"], source[source[leaf]["parent"]]["world"]))
+               - pm.position(rel(source[leaf]["rest"], source[source[leaf]["parent"]]["rest"]))
+               ).length() for leaf in TRANSLATED)
+    solution, count, key_notes = solve_and_key(target, wanted, members_t, t_bones)
+    s_root = pm.matrix(source[root]["world"])
+    t_root = W(target.root)
+    rows = []
+    for leaf in members_t:
+        got = rel(W(t_bones[leaf]["path"]), t_root)
+        want = rel(pm.matrix(source[leaf]["world"]), s_root)
+        rows.append((leaf, pm.angle(got, want), 0.0))
+    deg, _cm, at_deg, _at = worst_of(rows)
+    gate("skeleton a card with translated bones is a twin, every member turned as it",
+         is_twin and deg <= 0.001 and off >= 3.0,
+         "twin %s, %.7f deg (%s), %d members, the card's bones up to %.3f cm off their bind" % (
+             is_twin, deg, at_deg, len(rows), off))
+    gate("skeleton the translated card keyed", count == len(solution.values) and not key_notes
+         and not solution.skipped, "%d of %d %s" % (count, len(solution.values), key_notes))
+    source_ch.reset()
+    target.reset()
 
 
 def phase_partial():
@@ -1011,6 +1079,7 @@ def phase_partial():
 
 def run():
     t0 = time.time()
+    say("plugin %s (posemath from %s)" % (PLUGIN, os.path.dirname(pm.__file__)))
     phase_save()
     for name, fn in (("rig-twin", phase_rig_twin), ("ik", phase_ik), ("neck", phase_neck),
                      ("cross", phase_cross), ("skeleton", phase_skeleton),
