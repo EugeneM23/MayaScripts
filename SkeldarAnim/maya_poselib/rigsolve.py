@@ -218,7 +218,10 @@ NUMERIC_TOL = 1e-7         # rad: converged
 DAMPING = 1e-9             # of J'J's mean diagonal: Newton at full rank, the least step below it
 NAMED = 4
 
-DRIVEN = "%d member(s) are driven on a rig (twist and helper bones): %s"
+# the words of the note on members the rig's own network drives - `apply.shown_notes` matches on
+# them to keep that note off the status line, so they live here once
+DRIVEN_PHRASE = "member(s) are driven on a rig (twist and helper bones)"
+DRIVEN = "%d " + DRIVEN_PHRASE + ": %s"
 NO_CONTROL = "%d member(s) have no control on %s: %s"
 SPINE_IK = "the spine shows IK - its FK took the pose"
 IK_KEPT = "%s: the IK half is not posed - %s off the default"

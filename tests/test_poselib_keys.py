@@ -324,6 +324,40 @@ class Writable(Restoring):
         self.assertEqual(keys.writable("gone.tx"), (False, "missing"))
 
 
+class InputOf(Restoring):
+    """What feeds a plug - a Blend cancelled after the time moved sets back the FREE channels
+    only and evaluates the rest at the frame shown."""
+
+    def test_nothing_connected_is_free(self):
+        keys.cmds = PlugCmds()
+        self.assertEqual(keys.input_of("a.tx"), "free")
+
+    def test_a_time_curve_a_layer_and_a_constraint(self):
+        keys.cmds = PlugCmds(inputs={"a.tx": ("a_tx", "animCurveTL"),
+                                     "a.rx": ("blend1", "animBlendNodeAdditiveRotation"),
+                                     "a.ty": ("c1", "parentConstraint")})
+        self.assertEqual(keys.input_of("a.tx"), "curve")
+        self.assertEqual(keys.input_of("a.rx"), "layer")
+        self.assertEqual(keys.input_of("a.ty"), "driven")
+
+    def test_a_feed_through_the_compound_parent_is_seen(self):
+        keys.cmds = PlugCmds(compound={"a.rx": "dm1.outputRotate"},
+                             types={"dm1": "decomposeMatrix"})
+        self.assertEqual(keys.input_of("a.rx"), "driven")
+
+    def test_a_locked_keyed_plug_is_still_a_curve(self):
+        # a lock is no feed: the channel shows its curve at the frame either way
+        keys.cmds = PlugCmds(locked=["a.tx"], inputs={"a.tx": ("a_tx", "animCurveTL")})
+        self.assertEqual(keys.input_of("a.tx"), "curve")
+
+    def test_a_missing_plug_is_missing(self):
+        class Gone(PlugCmds):
+            def listConnections(self, plug, **kw):
+                raise ValueError("No object matches name: " + plug)
+        keys.cmds = Gone()
+        self.assertEqual(keys.input_of("gone.tx"), "missing")
+
+
 class CurrentAndPreview(Restoring):
 
     def test_current_reads_floats(self):
@@ -444,6 +478,31 @@ class Write(Restoring):
     def test_nothing_to_write(self):
         keys.cmds = FakeCmds()
         self.assertEqual(keys.write({}, 1.0, None), (0, []))
+        self.assertEqual(keys.write({}, 1.0, None).plugs, [])
+
+    def test_the_answer_is_the_pair_it_was_and_names_the_plugs_keyed(self):
+        # a status line counts what was KEYED (the review of task 7): the pair unpacks and
+        # compares as ever, `plugs` holds the plugs that took a key, in their order
+        class Locked(FakeCmds):
+            def getAttr(self, plug, **kw):
+                return plug == "a.ty"
+        keys.cmds = Locked()
+        written = keys.write({"b.tx": 1.0, "a.ty": 2.0, "a.tz": 3.0}, 1.0, None)
+        count, notes = written
+        self.assertEqual((count, len(notes)), (2, 1))
+        self.assertEqual(written, (2, notes))
+        self.assertEqual((written.count, written.notes), (2, notes))
+        self.assertEqual(written.plugs, ["b.tx", "a.tz"])
+
+    def test_a_key_the_layer_refused_is_not_among_the_plugs(self):
+        class Refusing(FakeCmds):
+            def setKeyframe(self, plug, **kw):
+                FakeCmds.setKeyframe(self, plug, **kw)
+                return 0 if plug == "a.ty" else 1
+        keys.cmds = Refusing()
+        written = keys.write({"a.tx": 1.0, "a.ty": 2.0}, 1.0,
+                             keys.Layer("AddL", False, True, False, False))
+        self.assertEqual(written.plugs, ["a.tx"])
 
     def test_a_locked_plug_is_skipped_and_named(self):
         class Locked(FakeCmds):

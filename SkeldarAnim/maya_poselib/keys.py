@@ -30,6 +30,10 @@ constraint on `weapon_r` has to be. "Driven" includes a connection into the chan
 parent (`decomposeMatrix.outputRotate -> joint.rotate`, `plusMinusAverage.output3D ->
 translate`), which `listConnections` on the leaf does not see - `connectionInfo` does.
 
+`write` answers `Written`: the pair (keys made, notes) it always answered, and the plugs that
+took a key (`plugs`) - what a status line counts. `input_of` says what feeds a plug (free, a
+curve, a layer, driven), for a Blend that has to put back only what holds a value by itself.
+
 `preview` is the live half (the Blend slider, a middle-drag across a card): plain `setAttr`,
 which works on layered and keyed channels and holds until the next time change; the last
 `current` values put everything back. A scripted `setAttr` KEYS under autoKey, so the caller
@@ -162,6 +166,14 @@ def _compound_feed(plug):
     return [node]
 
 
+def _feeds(plug):
+    """[the node feeding `plug`] - through the plug itself, else its compound parent; [] when
+    nothing does. Raises on a missing plug, as the queries do."""
+    nodes = cmds.listConnections(plug, source=True, destination=False,
+                                 skipConversionNodes=True) or []
+    return nodes or _compound_feed(plug)
+
+
 def writable(plug):
     """(True, "") when a value can be set and keyed on `plug`, else (False, why).
 
@@ -173,15 +185,27 @@ def writable(plug):
     try:
         if cmds.getAttr(plug, lock=True):
             return False, "locked"
-        nodes = cmds.listConnections(plug, source=True, destination=False,
-                                     skipConversionNodes=True) or []
-        if not nodes:
-            nodes = _compound_feed(plug)
+        nodes = _feeds(plug)
     except (ValueError, RuntimeError):
         return False, "missing"
     if nodes and input_kind(cmds.objectType(nodes[0])) == "driven":
         return False, "driven by " + nodes[0]
     return True, ""
+
+
+def input_of(plug):
+    """What feeds `plug` now: "free" | "curve" | "layer" | "driven" (`input_kind` of its
+    source, the compound parent's included), "missing" for a plug that is not there.
+
+    A Blend cancelled after the time moved asks it: a FREE channel holds whatever was set on it
+    and has to be set back, a keyed or layered one shows the new frame once time is evaluated -
+    setting the start's value there would leave a stale value holding until the next time
+    change."""
+    try:
+        nodes = _feeds(plug)
+    except (ValueError, RuntimeError):
+        return "missing"
+    return input_kind(cmds.objectType(nodes[0])) if nodes else "free"
 
 
 def current(plugs):
@@ -226,8 +250,28 @@ def _note(reason, plugs):
     return NOT_KEYED % (len(plugs), reason, shown)
 
 
+class Written(tuple):
+    """What `write` answers: the pair (keys made, notes) it always answered - it unpacks and
+    compares as that pair - plus `plugs`, the plugs that took a key, in their order (a status
+    line counts what was KEYED, not what was planned)."""
+
+    def __new__(cls, count, notes, plugs=()):
+        self = tuple.__new__(cls, (count, notes))
+        self.plugs = list(plugs)
+        return self
+
+    @property
+    def count(self):
+        return self[0]
+
+    @property
+    def notes(self):
+        return self[1]
+
+
 def write(values, frame, layer):
-    """Key `values` ({plug: FINAL value}) on `frame`; (keys made, notes).
+    """Key `values` ({plug: FINAL value}) on `frame`; `Written` (keys made, notes) with `.plugs`
+    the plugs keyed.
 
     With a non-base `layer` each plug is added to it first (the layer refuses a key for a plug
     it does not hold); the base needs no adding and `layer=None` means a scene with no layers
@@ -237,6 +281,7 @@ def write(values, frame, layer):
     """
     added = layer is not None and not layer.base
     count = 0
+    keyed = []
     skipped = {}
     for plug, value in values.items():
         ok, reason = writable(plug)
@@ -252,10 +297,11 @@ def write(values, frame, layer):
             continue
         if made:
             count += int(made)
+            keyed.append(plug)
         else:
             skipped.setdefault("no key made" if layer is None else
                                "layer %s took no key" % layer.name, []).append(plug)
-    return count, [_note(reason, plugs) for reason, plugs in skipped.items()]
+    return Written(count, [_note(reason, plugs) for reason, plugs in skipped.items()], keyed)
 
 
 def quaternion_note(layer):

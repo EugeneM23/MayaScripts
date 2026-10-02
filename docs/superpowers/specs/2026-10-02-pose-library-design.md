@@ -86,8 +86,11 @@ on idle (trap 120): two blasts must agree, up to five, with idle events pumped b
 
 **Targets** are every character the selection touches (any part: «достаточно выделить любую часть»),
 each a rig or a skeleton; nothing selected → the only character in the scene, else a refusal naming
-them. An objects pose applies to the selected objects matched by name (namespace-blind), else to
-the stored objects found in the scene, else by selection order when the counts match.
+them. An objects pose: **the selection decides** — with objects selected the pose goes onto the
+selection ONLY (nothing unselected is touched, the card's originals included): each selected object
+by name (namespace-blind) among the stored ones, the selected objects left over taking the stored
+entries left over by order when their counts match; with nothing selected, onto the stored objects
+found in the scene (the exact path first, then by leaf when exactly one transform carries it).
 
 **Pairing** source bone → target bone (pure):
 
@@ -207,8 +210,9 @@ the hub's way), Qt inside, the hub's stylesheet and tokens:
 - **drag a card** past the start distance: the hub's ghost with the thumbnail; over a character in
   a viewport («Fist · onto Manny_Rig1» — `droptarget.character_target`) the release applies onto it;
   over an empty floor («Fist · a new Manny [rig] · floor (120, -36)») the source character is added
-  there (`character.add_character(at=)`; a native skeleton is rebuilt bones-only from the card) and
-  posed — deferred one idle (Add takes seconds), the import flushes undo (trap 115) so only the pose
+  there (`character.add_character(at=)`; a native skeleton is rebuilt bones-only from the card, its
+  root ON the point whatever the card's rest, in one group and layer with Delete's record, as a
+  native import is) and posed — deferred one idle (Add takes seconds), the import flushes undo (trap 115) so only the pose
   is undoable; over a folder in the tree it moves the card; over the window or the hub nothing;
   Esc / right button cancel;
 - **Select objects** (and the right button's row): on the target character (the selection's, else

@@ -24,7 +24,8 @@ The animator: «Выделив наши объекты мы можем прим�
    FINAL channel values, the scene left as found. A source member nothing pairs with is named
    («no hand_l on Creep_Rig»); twist bones are not (the target's own twist bones ride its limb);
 4. **the keys** (`keys.write`) on the current frame, the layer and `value=` final, `alpha` < 1
-   mixing the current values and the pose's first (`mix`);
+   mixing the current values and the pose's first (`mix`) - the status line counts the nodes
+   that TOOK a key (`Written.plugs`), a plug the layer refused or a driven one named instead;
 5. the frame re-evaluated (`currentTime(t, update=True)`) and **measured** - `rigsolve.measure`
    on a rig, every member joint's world against its target on a skeleton - the worst in the
    status line (`summary`).
@@ -49,7 +50,10 @@ Auto card's own) is REBUILT, bones only, from its rests (`rebuild_joints`, `form
 namespace `pose_<name>`) - with one hidden cube skinned to it at that rest (`REST_PROXY`): an
 unskinned joint's rest reads as its current world (`maya_retargetmode.rest_world`), so without it
 the next card applied onto the posed rebuild, or a pose saved from it, would take the first pose
-for the bind. The rebuild is unrecorded too, as an Add is.
+for the bind. Its root is moved to stand ON the point, whatever the card's rest (`floor_move`),
+and it becomes a character like every other - one outliner group and layer (`chargroup.make`)
+and Delete's record, labelled «<card name> [own skeleton]» as a native import is
+(`nativeimport.keep`'s calls). The rebuild is unrecorded too, as an Add is.
 
 ## Blend (`Blend`, and `apply(alpha=)`)
 
@@ -65,14 +69,17 @@ back the same way - so a cancel leaves NO undo step at all (a chunk held open fr
 cancel would leave a step that changes nothing, and would fold whatever else the animator did
 during the drag into it). `finish` puts the values back unrecorded first, then keys the mix in
 one `UNDO_CHUNK` - so its Ctrl+Z finds every static channel at its value from before the session,
-not at the preview's.
+not at the preview's. A session ended after the TIME moved (a `finish` then keys nothing) sets
+back only the free channels; the keyed and layered ones are evaluated on the frame now shown
+(`_settle`) - their start values belong to the old frame. `plan_for` solves unrecorded too.
 
 ## Objects (`apply_objects`)
 
-Studio Library's attribute pose: the stored values onto the selected objects matched by name
-with the namespace ignored, else onto the stored objects found in the scene (by path, else by a
-leaf name only one transform carries), else by selection order when the counts match
-(`pair_objects`, the spec's order).
+Studio Library's attribute pose, and the SELECTION decides (`pair_objects`): with objects
+selected the pose goes onto them only - each by name with the namespace ignored, the ones left
+taking the stored objects left by order when they are as many - and nothing unselected is
+touched, the card's originals included; with nothing selected, onto the stored objects found in
+the scene (the exact path, else the one transform carrying the leaf).
 
 ## Select objects (`select_objects`)
 
@@ -80,7 +87,7 @@ What a press would key: on a rig `rigsolve.controls_for` the target members, on 
 member joints, an objects pose its objects. The character is the selection's, else the only one,
 else the one in the card's own namespace.
 
-Proof: docs/superpowers/plans/verify_poselib_apply.py, mayapy standalone, 51/51 (2026-10-03),
+Proof: docs/superpowers/plans/verify_poselib_apply.py, mayapy standalone, 60/60 (2026-10-03),
 the bones measured against the card after a real time change: a full card onto a second
 Manny_Rig standing at (300, 0, -120) turned 70 deg, Main unmoved, every member on the card
 relative to the root 0.0007 deg; a mirrored right arm onto the left 0.0002 deg on each parent;
@@ -91,8 +98,16 @@ layer, every base curve key for key, the pose on the card 0.0001 deg, a locked l
 with nothing changed; one Ctrl+Z after a press putting all 1408 channels and every curve back
 exactly; a Creep_Rig card dropped on an empty floor standing its Main on the point (0.000000
 cm) and its bones on the pose (0.00006 deg), the selection kept, one Ctrl+Z taking the pose
-keys only. Each family fails on the code it guards against (no chunk, plain keys under a layer,
-a session held in one chunk, eulers lerped, the neck not held - task 7's mutation runs).
+keys only; a Mixamo card whose rest root stands at (40, -25) rebuilt with its root ON the drop
+point (0.000000 cm - the first build stood it 47.17 cm away, at rest + point), in one group and
+layer, recorded, and Delete taking its 224 nodes and nothing else; a quaternion-accumulation
+layer refused with nothing changed; `plan_for` leaving no undo step; a Blend ended after the
+time moved leaving the 146 free channels at their start values and the 96 keyed ones on their
+curves at the new frame (0); objects by order onto the selection with the card's originals in
+the scene, by name then order, the originals by path with nothing selected. Each family fails
+on the code it guards against (no chunk, plain keys under a layer, a session held in one chunk,
+eulers lerped, the neck not held - task 7's mutation runs; the apply of before task 7m failing
+7 of the 60, no quaternion refusal, no group - task 7m's).
 
 Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Apply - where, and how", "Keys
 - the active layer", "Blend", "The window").
@@ -100,6 +115,7 @@ Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Apply - where, 
 
 import contextlib
 import math
+import traceback
 from collections import OrderedDict, namedtuple
 
 import maya.api.OpenMaya as om
@@ -132,6 +148,8 @@ ROTATE = ("rotateX", "rotateY", "rotateZ")
 ORDERS = ("xyz", "yzx", "zxy", "xzy", "yxz", "zyx")
 NAMED = 4
 SHOW_CM = 0.0005                    # a worst place smaller than this is not said
+SHOW_DEG = 0.0005                   # ... nor a worst angle smaller than this
+DEG_PLACES = 4                      # the decimals of the worst angle («worst 0.0007 deg»)
 
 NO_CARD = "no pose card"
 NO_BONES = "the card holds no bones"
@@ -140,7 +158,10 @@ NO_CHARACTER = "no character in the scene to apply a pose to"
 NOT_A_CHARACTER = "the selection holds no character - select any part of one"
 MANY = "%d characters in the scene (%s) - select any part of the one you mean"
 NOT_FOUND = "no character at %s"
-OBJECTS_MISSING = "none of the pose's %d object%s is selected or in the scene"
+OBJECTS_MISSING = "none of the pose's %d object%s is in the scene - select the ones to put it on"
+SELECTION_UNMATCHED = ("the selection matches none of the pose's %d object%s - select them "
+                       "(by name), or as many objects as it holds (%d)")
+NOT_MATCHED = "%d selected matched nothing of the pose: %s"
 OBJECTS_ONTO = "an objects pose goes onto objects - select them and Apply"
 NO_SOURCE = "the card names no character of ours and holds no bones - nothing to add"
 NOT_ADDED = "%s was not added: %s"
@@ -157,7 +178,7 @@ SELECTED = "Selected %d %s on %s"
 
 # the rig's twist (and helper) bones are DRIVEN by its own network from the limbs the pose turns
 # (rigsolve.DRIVEN): saying so on every full pose onto a rig is no news to the animator
-_QUIET = rigsolve.DRIVEN.split("%d", 1)[1].split("%s", 1)[0]
+_QUIET = rigsolve.DRIVEN_PHRASE
 
 
 # ------------------------------------------------------------------ pure
@@ -244,9 +265,13 @@ def _line(result):
         text += " at frame " + _num(result.frame)
         if result.worst is not None:
             deg, cm = result.worst[0], result.worst[1]
-            text += " - worst %s deg" % _num(deg)
+            worst = []
+            if deg >= SHOW_DEG:
+                worst.append("%s deg" % _num(deg, DEG_PLACES))
             if cm >= SHOW_CM:
-                text += " / %s cm" % _num(cm)
+                worst.append("%s cm" % _num(cm))
+            if worst:
+                text += " - worst " + " / ".join(worst)
     else:
         text += "nothing keyed"
     for note in result.notes or ():
@@ -259,7 +284,8 @@ def summary(results):
 
     «Fist onto Manny_Rig1: 23 controls keyed on AnimLayer1 at frame 12 - worst 0.003 deg | the FK
     forearm twist is lost on arm_r (31 deg)» - the layer only when the scene has layers, the worst
-    place only when it is worth a word, «mirrored» / «at 50 %» when so. Pure."""
+    angle (4 decimals) and place only when each is worth a word (`SHOW_DEG`, `SHOW_CM`),
+    «mirrored» / «at 50 %» when so. `count` is the nodes that took a key. Pure."""
     return " | ".join(_line(result) for result in results)
 
 
@@ -329,25 +355,36 @@ def unpaired_note(names, label):
 
 
 def pair_objects(objects, selected, found):
-    """([(stored record, scene path)], how) for an objects pose - the spec's order:
+    """([(stored record, scene path)], how) for an objects pose - the SELECTION decides:
 
-    - `name`: every selected path whose leaf, namespace dropped, is a stored object's name (two
-      selected copies of one object both take it);
-    - `stored`: else the stored objects found in the scene (`found`: {index: path or None});
-    - `order`: else the selection by order, when as many are selected as the card holds;
+    - something selected: the pose goes onto the selection ONLY, nothing unselected is touched.
+      Each selected path whose leaf, namespace dropped, is a stored object's name takes the
+      first stored object of that name (two selected copies of one object both take it); the
+      selected paths left over then take the stored objects left over BY ORDER, when they are
+      as many. `how` is "name", "order" or "name+order"; the pairs come by-name first, in the
+      stored order, then by order;
+    - nothing selected: the stored objects found in the scene (`found`: {index: path or None},
+      `_find_object`'s exact path, else the one transform carrying the leaf), `how` "stored";
     - else ([], ""). Pure."""
-    by_name = []
-    for record in objects:
-        for path in selected or ():
-            if scene.leaf(path) == record.get("name"):
-                by_name.append((record, path))
-    if by_name:
-        return by_name, "name"
+    selected = list(selected or ())
+    if selected:
+        by_name, named, used = [], set(), set()
+        for i, record in enumerate(objects):
+            for path in selected:
+                if path not in named and scene.leaf(path) == record.get("name"):
+                    by_name.append((record, path))
+                    named.add(path)
+                    used.add(i)
+        left_paths = [path for path in selected if path not in named]
+        left_objects = [record for i, record in enumerate(objects) if i not in used]
+        by_order = []
+        if left_paths and len(left_paths) == len(left_objects):
+            by_order = list(zip(left_objects, left_paths))
+        how = "+".join(word for word, part in (("name", by_name), ("order", by_order)) if part)
+        return by_name + by_order, how
     stored = [(record, found[i]) for i, record in enumerate(objects) if (found or {}).get(i)]
     if stored:
         return stored, "stored"
-    if selected and len(selected) == len(objects):
-        return list(zip(objects, selected)), "order"
     return [], ""
 
 
@@ -523,8 +560,11 @@ def _plan(data, ref, mirror=False):
 def plan_for(data, ref, mirror=False):
     """The Plan of `data` onto the character `ref` (`scene.CharacterRef`): every channel value
     the press would key, what those channels show now, the notes, what the solver skipped. The
-    scene is left exactly as found (a rig's solve is one net-nothing undo step of its own)."""
-    return _plan(data, ref, mirror)[0]
+    scene is left exactly as found and the undo queue too: the solve runs UNRECORDED (a rig's
+    solve is otherwise one net-nothing step of its own - an empty Ctrl+Z for the animator), the
+    rule `Blend.start` follows. So, as a Blend's, never call it inside an open chunk (trap 145)."""
+    with _unrecorded():
+        return _plan(data, ref, mirror)[0]
 
 
 def _measure(plan, extra):
@@ -568,14 +608,17 @@ def _key_entries(entries, name, frame, layer, alpha=1.0, mirror=False):
     for plan, extra in entries:
         values = plan.values if alpha >= 1.0 else \
             mix(plan.current, plan.values, alpha, rotations_of(plan.values))
-        count, notes = keys.write(values, frame, layer) if values else (0, [])
-        keyed.append((plan, extra, values, count, notes))
-    if any(count for _p, _e, _v, count, _n in keyed):
+        written = keys.write(values, frame, layer) if values else keys.Written(0, [], [])
+        count, notes = written
+        keyed.append((plan, extra, written.plugs, count, notes))
+    if any(count for _p, _e, _k, count, _n in keyed):
         cmds.currentTime(frame, update=True)
     results = []
-    for plan, extra, values, count, notes in keyed:
+    for plan, extra, plugs, count, notes in keyed:
         worst = _measure(plan, extra) if count and alpha >= 1.0 else None
-        nodes = len(set(plug.rsplit(".", 1)[0] for plug in values)) if count else 0
+        # the nodes that TOOK a key: a plug the layer refused, a locked or driven one, is named
+        # in the notes and not counted
+        nodes = len(set(plug.rsplit(".", 1)[0] for plug in plugs))
         label = target_label(plan.ref) if plan.ref is not None else extra.label
         results.append(Result(name, label, nodes, _noun(plan.ref),
                               layer.name if layer is not None else None, frame,
@@ -677,18 +720,42 @@ def _add(entry, point):
     return root, ADDED % (entry.label, scene.leaf(root), x, z)
 
 
+def floor_move(at, point):
+    """The world move (dx, 0, dz) that stands a root now at `at` (x, y, z) on the floor `point`:
+    its first position IS the point, whatever the card's rest put it at; the height is the
+    card's. Pure."""
+    x, _y, z = float(point[0]), 0.0, float(point[2])
+    return (x - float(at[0]), 0.0, z - float(at[2]))
+
+
+def _long(uuid):
+    found = cmds.ls(uuid, long=True) if uuid else []
+    return found[0] if found else None
+
+
+def _scene_uuids():
+    """Every node's UUID - `ls(uuid=True)` with no objects answers NAMES (trap 8)."""
+    return set(cmds.ls(cmds.ls() or [], uuid=True) or [])
+
+
 def _rebuild(data, point):
     """(root, line): the card's skeleton rebuilt at its rest, bones only, in `pose_<name>`, with
     a hidden cube skinned to it at that rest (`REST_PROXY` - its bind is its rest from then on),
-    moved onto the floor point. Unrecorded, as an Add is."""
-    from maya_scenesetup import character
-    from maya_uebridge import formats
+    its root moved so it stands ON the floor point (`floor_move`), then made a character like
+    every other: one outliner group and display layer over the root and the cube
+    (`chargroup.make`, named for the namespace: `pose_Sweep_Character`) and Delete's record of
+    every node the rebuild made (`deletion.record_import`), labelled as a native import is, for
+    the card («Sweep [own skeleton]», `nativeimport.LABEL`). Unrecorded, as an Add is."""
+    from maya_scenesetup import character, chargroup, deletion
+    from maya_uebridge import formats, nativeimport
     joints = rebuild_joints(data["bones"])
     namespace = character.free_namespace(
         NATIVE_PREFIX + formats.legal(data.get("name") or "Pose").replace(":", "_"),
         character.existing_namespaces())
     x, _y, z = character.placement(point)
+    notes = []
     with _unrecorded():
+        before = _scene_uuids()
         formats.build(namespace, joints, [None] * len(joints), [], set_timeline=False)
         paths = dict((scene.leaf(p), p) for p in
                      cmds.ls(namespace + ":*", type="joint", long=True) or [])
@@ -697,13 +764,30 @@ def _rebuild(data, point):
             return None, NOT_ADDED % (data.get("name") or "the pose's skeleton", "no joint built")
         root_uuid = cmds.ls(built[0], uuid=True)[0]
         proxy = cmds.polyCube(name=namespace + ":" + REST_PROXY, constructionHistory=False)[0]
+        proxy_uuid = cmds.ls(proxy, uuid=True)[0]
         cmds.skinCluster(built + [proxy], toSelectedBones=True, name=namespace + ":restSkin")
         cmds.addAttr(proxy, longName=REST_MARK, attributeType="bool", defaultValue=True)
         cmds.setAttr(proxy + ".visibility", False)
-        root = cmds.ls(root_uuid, long=True)[0]
-        cmds.move(x, 0.0, z, root, relative=True, worldSpace=True)
-        root = cmds.ls(root_uuid, long=True)[0]
-    return root, REBUILT % (namespace, x, z)
+        root = _long(root_uuid)
+        dx, dy, dz = floor_move(cmds.xform(root, query=True, worldSpace=True, translation=True),
+                                point)
+        cmds.move(dx, dy, dz, root, relative=True, worldSpace=True)
+        made = [uuid for uuid in _scene_uuids() if uuid not in before]
+        # named for the card («SweepOff [own skeleton]»): the namespace names the group, and the
+        # status line already shows it beside the label («... (pose_SweepOff)»)
+        label = nativeimport.LABEL.format(data.get("name") or namespace)
+        try:
+            chargroup.make(namespace, label, _long(root_uuid),
+                           [_long(root_uuid), _long(proxy_uuid)])
+        except Exception as exc:                             # noqa: BLE001
+            traceback.print_exc()
+            notes.append(character.group_failed_note(exc))
+        try:
+            deletion.record_import(_long(root_uuid), made, label)
+        except Exception as exc:                             # noqa: BLE001
+            print("Pose Library: no record for Delete (%s)" % exc)
+        root = _long(root_uuid)
+    return root, " - ".join([REBUILT % (namespace, x, z)] + notes)
 
 
 def drop_floor(data, point, mirror=False):
@@ -756,11 +840,15 @@ def _objects_entry(data, selection):
     objects = (data or {}).get("objects") or []
     if not objects:
         return None, NO_OBJECTS
+    plural = "" if len(objects) == 1 else "s"
     selected = _selected(selection)
-    found = dict((i, _find_object(record)) for i, record in enumerate(objects))
+    found = {} if selected else dict((i, _find_object(record))
+                                     for i, record in enumerate(objects))
     matched, how = pair_objects(objects, selected, found)
     if not matched:
-        return None, OBJECTS_MISSING % (len(objects), "" if len(objects) == 1 else "s")
+        if selected:
+            return None, SELECTION_UNMATCHED % (len(objects), plural, len(objects))
+        return None, OBJECTS_MISSING % (len(objects), plural)
     values, missing = OrderedDict(), []
     for record, path in matched:
         for attr, value in (record.get("attrs") or {}).items():
@@ -768,7 +856,11 @@ def _objects_entry(data, selection):
                 values[path + "." + attr] = float(value)
             else:
                 missing.append("%s.%s" % (scene.leaf(path), attr))
-    notes = [BY_ORDER] if how == "order" else []
+    notes = [BY_ORDER] if "order" in how else []
+    taken = set(path for _record, path in matched)
+    idle = [path for path in selected if path not in taken]
+    if idle:
+        notes.append(NOT_MATCHED % (len(idle), _named(scene.leaf(p) for p in idle)))
     if missing:
         notes.append(NOT_POSED % (len(missing), "no such attribute", _named(missing)))
     nodes = len(set(path for _record, path in matched))
@@ -946,8 +1038,27 @@ class Blend(object):
             results = _key_entries(entries, data.get("name"), _frame(), layer, alpha, mirror)
         return summary(results)
 
+    def _settle(self, now):
+        """Every value back after the time MOVED since `start`: the free channels (no input)
+        set back to their start values - they hold whatever a preview set - and every keyed or
+        layered one evaluated at `now` once (`currentTime(now, update=True)`, which re-evaluates
+        at the same time: measured) - its start value was the OLD frame's, and setting it would
+        leave that stale value holding until the next time change. Unrecorded, autoKey off."""
+        with _unrecorded(), _auto_off():
+            for plan, _extra in self.entries:
+                keys.preview(OrderedDict((plug, value) for plug, value in plan.current.items()
+                                         if keys.input_of(plug) == "free"))
+            cmds.currentTime(now, update=True)
+        _refresh()
+
     def cancel(self):
-        """Every value back as it was at `start`; the session ends. Unrecorded."""
+        """Every value back as it was at `start` (after a time change: the free channels so,
+        the keyed and layered ones on the frame now shown - `_settle`); the session ends.
+        Unrecorded."""
         if self.active():
-            self._show(None)
+            now = _frame()
+            if abs(now - self.frame) > 1e-9:
+                self._settle(now)
+            else:
+                self._show(None)
         self._clear()
