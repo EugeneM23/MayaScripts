@@ -136,7 +136,8 @@ def convention_of(paths):
         return "3dsmax_biped"
     if any(n.startswith("DEF-") or n.startswith("DEF_") for n in leaves):
         return "blender_rigify"
-    if any(n.endswith(".x") for n in leaves) or any("stretch" in n for n in low):
+    if any(n.endswith(".x") for n in leaves) or any("stretch" in n for n in low) \
+            or ("root_x" in names and any(n.endswith("_x") and n != "root_x" for n in leaves)):
         return "blender_autorigpro"
     if {"abdomenLower", "lShldrBend"} & names or {"abdomen", "lShldr"} & names:
         return "daz_genesis"
@@ -256,7 +257,8 @@ def parse(path, convention="generic"):
 def _rigify(name):
     """Rigify's deform spine is numbered, not named: `spine` is the hips,
     .001-.003 the spine, .004/.005 the neck, .006 the head."""
-    match = re.match(r"^(?:DEF[-_])?spine(?:\.(\d+))?$", name)
+    # Maya has no '.' or '-' in a node name: an FBX import makes DEF-spine.003 DEF_spine_003
+    match = re.match(r"^(?:DEF[-_])?spine(?:[._](\d+))?$", name)
     if not match:
         return None
     number = int(match.group(1) or 0)
@@ -624,6 +626,22 @@ def recognize(paths, positions=None, spine_targets=TARGET_SPINE,
     return Result(mapping, convention, confidence, missing, refusal, notes, chains)
 
 
+# the limbs a UE clip always names its way; NOT the head - a first-person UE clip
+# (LongSword_Attack_Right_Heavy_1P, 90 joints) carries none, and the first build of
+# this guard sent it down the generic road, which refused it (measured 2026-10-02)
+UE_LIMBS = ("pelvis", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r", "foot_r",
+            "upperarm_l", "lowerarm_l", "hand_l", "upperarm_r", "lowerarm_r", "hand_r")
+
+
+def covers_ue_core(leaf_names):
+    """Pure: does a skeleton carry every UE limb bone BY NAME (`pelvis`,
+    `thigh_l`, `hand_r` ...)? A UE4 or UE5 clip always does; an Auto-Rig Pro
+    export shares `hand_r` and a Daz figure `pelvis` with it and nothing more -
+    one shared name made them score as Unreal (measured 2026-10-02)."""
+    names = set(leaf_names)
+    return all(name in names for name in UE_LIMBS)
+
+
 def _word(target):
     side = ""
     base = target
@@ -799,7 +817,7 @@ def _structural(paths, parents, positions, notes, spine_targets, neck_targets):
         if foot:
             mapping["foot_" + side] = foot
             toes = [p for p in lower if depth(p, parents) == depth(foot, parents) + 1]
-            if toes and kids.get(toes[0]):
+            if toes:
                 mapping["ball_" + side] = toes[0]
     for _gap, arm_leaf, branch in (first, second):
         side = side_of(arm_leaf)

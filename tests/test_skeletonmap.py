@@ -76,6 +76,33 @@ class TestTokens(unittest.TestCase):
         self.assertEqual(sm.parse("DEF-spine.005", "blender_rigify").kind, "neck")
         self.assertEqual(sm.parse("DEF-spine.006", "blender_rigify").kind, "head")
 
+    def test_maya_sanitised_names(self):
+        # Maya has no '.' or '-' in a node name: an FBX import writes '_'
+        self.assertEqual(sm.parse("DEF_spine_005", "blender_rigify").kind, "neck")
+        self.assertEqual(sm.parse("DEF_spine", "blender_rigify").kind, "hips")
+        self.assertEqual(sm.convention_of(["|root_x", "|root_x|spine_01_x",
+                                           "|root_x|thigh_stretch_l"]), "blender_autorigpro")
+        self.assertEqual(sm.convention_of(["|DEF_spine", "|DEF_spine|DEF_thigh_L"]),
+                         "blender_rigify")
+        rows, _expected = fixtures.build("rigify")
+        clean = [(n.replace("-", "_").replace(".", "_"), p and p.replace("-", "_").replace(".", "_"), x)
+                 for n, p, x in rows]
+        paths = fixtures.paths(clean)
+        result = sm.recognize(list(paths.values()),
+                              dict((paths[n], pos) for n, _p, pos in clean))
+        self.assertEqual(result.refusal, "")
+        self.assertEqual(sm.leaf(result.mapping["head"]), "DEF_spine_006")
+        self.assertEqual(sm.leaf(result.mapping["neck_02"]), "DEF_spine_005")
+
+    def test_ue_core_by_name_and_not_by_one_shared_name(self):
+        ue5 = [n for n, _p, _x in fixtures.build("ue5")[0]]
+        self.assertTrue(sm.covers_ue_core(ue5))
+        self.assertTrue(sm.covers_ue_core([n for n in ue5 if n != "head"]))   # a 1P clip
+        arp = [n.replace(".", "_") for n, _p, _x in fixtures.build("arp")[0]]
+        self.assertIn("hand_r", arp)
+        self.assertFalse(sm.covers_ue_core(arp))
+        self.assertFalse(sm.covers_ue_core([n for n, _p, _x in fixtures.build("daz")[0]]))
+
     def test_xsens_spine(self):
         for name in ("L5", "L3", "T12", "T8"):
             self.assertEqual(sm.parse(name).kind, "spine")

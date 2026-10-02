@@ -94,9 +94,9 @@ def is_twin(lengths, tolerance=TWIN_TOLERANCE, shortest=SHORTEST):
 # The bones a UE clip always carries: with all of them paired by leaf name the clip is
 # Unreal's and the transfer below is the one it has been since 2026-10-01; without them
 # it is another convention, read by maya_skeletonmap (2026-10-02).
-UE_CORE = ("pelvis", "head", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r",
+UE_CORE = ("pelvis", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r",
            "foot_r", "upperarm_l", "lowerarm_l", "hand_l", "upperarm_r", "lowerarm_r",
-           "hand_r")
+           "hand_r")             # never the head: a first-person UE clip carries none
 SCALE_TOLERANCE = 0.02     # a source within 2 % of the skeleton's size is its size
 
 
@@ -600,10 +600,16 @@ def _offset_euler(target_rest, source_rest, align, rotate_order):
     return (math.degrees(e.x), math.degrees(e.y), math.degrees(e.z))
 
 
-def _alignments(canon, target_rest, source_rest, parents):
+def _alignments(canon, target_rest, source_rest, parents, target_live):
     """{our bone: the minimal world rotation taking the target's rest
     direction onto the source's}; a bone with no direction child inherits
-    its parent's."""
+    its parent's.
+
+    The target's direction is its child's offset AS THE SKELETON STANDS, in
+    the bone's rest frame: the rest frame is the bind (the roll), but where a
+    bone points is its child's actual place - Manny's skeleton stands 0.07 cm
+    off its own bind at the left calf, and a direction read off the bind
+    alone came out 0.0989 deg wrong at every frame (measured 2026-10-02)."""
     import maya.api.OpenMaya as om
     import maya_skeletonmap as skelmap
     children = skelmap.direction_children(parents)
@@ -611,13 +617,20 @@ def _alignments(canon, target_rest, source_rest, parents):
     def at(rest, path):
         m = rest[path]
         return om.MVector(m[12], m[13], m[14])
+
+    def target_direction(bone_path, child_path):
+        live = om.MMatrix(target_live[bone_path])
+        offset = at(target_live, child_path) - at(target_live, bone_path)
+        local = offset * _rigid(live).inverse()
+        local = om.MVector(local.x, local.y, local.z)
+        return local * _rigid(target_rest[bone_path])
     out = {}
     order = sorted(canon, key=lambda b: _canonical_depth(b, parents))
     for bone in order:
         child = children.get(bone)
         rotation = None
         if child in canon:
-            t_dir = at(target_rest, canon[child][0]) - at(target_rest, canon[bone][0])
+            t_dir = target_direction(canon[bone][0], canon[child][0])
             s_dir = at(source_rest, canon[child][1]) - at(source_rest, canon[bone][1])
             if t_dir.length() > 1e-9 and s_dir.length() > 1e-9:
                 rotation = list(om.MQuaternion(t_dir.normal(), s_dir.normal()).asMatrix())
@@ -660,6 +673,7 @@ def transfer_foreign(source_root, target_root, start, end):
         return dict(twin=False, moved=0, skipped=[], missing=target_names,
                     refusal=found.refusal, convention=found.convention)
     target_rest = _rest_of_target(target_paths)
+    target_live = dict((p, _world(p)) for p in target_paths)
     ours = skelmap.recognize(target_paths, dict(
         (p, (m[12], m[13], m[14])) for p, m in target_rest.items()))
     if ours.refusal:
@@ -686,7 +700,7 @@ def transfer_foreign(source_root, target_root, start, end):
                                 source_rest[canon["pelvis"][1]][13] - origin[1])
     if abs(scale - 1.0) <= SCALE_TOLERANCE:
         scale = 1.0
-    align = _alignments(canon, target_rest, source_rest, parents)
+    align = _alignments(canon, target_rest, source_rest, parents, target_live)
     uuids = dict((p, cmds.ls(p, uuid=True)[0]) for p in source_paths)
     wrapper = None
     if scale != 1.0:

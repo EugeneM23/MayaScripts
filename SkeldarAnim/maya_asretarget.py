@@ -552,6 +552,12 @@ def alignments(triples, rig_rest, src_rest, rig_parents, src_parents):
     for control, our_bone, src_bone in ordered:
         best = None
         want = DIRECTION_CHILD.get(our_bone)
+        # a source WITH metacarpals (Rigify's palm, Daz's carpal) maps ours too, and the
+        # hand then points at the middle metacarpal: aimed past it at the finger, its
+        # direction would depend on the metacarpal's own turn (3.3 deg, measured 2026-10-02)
+        meta = want.replace("_01_", "_metacarpal_") if want else None
+        if meta in preferred:
+            want = meta
         if want is not None and want in preferred:
             best = (0, want, preferred[want])
         for other, other_our, other_src in triples:
@@ -1330,7 +1336,8 @@ def _plan(source_root=None, rig=None):
                            fullPath=True) or []))
     bones = source_bones(source_root)
     schema, score = detect_schema(list(bones))
-    if schema is None or (schema is MIXAMO and not mixamo_like(list(bones.values()))):
+    if schema is None or (schema is MIXAMO and not mixamo_like(list(bones.values()))) \
+            or (schema is UE5 and not skelmap.covers_ue_core(bones)):
         # neither UE5 nor Mixamo: any other convention, read by maya_skeletonmap
         schema, refusal = generic_schema(source_root, rig_bones)
         if schema is None:
