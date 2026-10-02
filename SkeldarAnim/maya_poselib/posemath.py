@@ -50,6 +50,10 @@ UE4_SPINE = {"spine_01": "spine_02", "spine_02": "spine_04", "spine_03": "spine_
 REGIONS = ("Head", "Spine", "Pelvis", "Arm L", "Hand L", "Arm R", "Hand R", "Leg L", "Leg R")
 SCALE_TOLERANCE = 0.02     # two bodies within 2 % of each other's size are one size
 SHORTEST_HEIGHT = 1.0      # cm: a pelvis lower than this over its root says nothing of size
+# world Y where a skeleton with no root of its own stands at its bind: its top joint's parent is
+# the world (or a group at the origin), so its floor is that origin's height - the retarget's
+# `their_floor` for such a source (maya_skeletonmap.size_ratio)
+FLOOR = 0.0
 EPS = 1e-9
 
 _ARM = ("clavicle", "upperarm", "lowerarm")
@@ -313,7 +317,7 @@ def _chain(index, prefix):
 def _own_root(pairs, source, target_root):
     """Does the source have a root of its own? Not when the bone partnering the target root
     also plays another target bone - Mixamo's Hips is both its root and its pelvis. A source
-    with no root of its own stands its root frame at the world origin, unturned."""
+    with no root of its own takes its GROUND frame (`_ground`) as its root's."""
     partner = pairs.get(target_root)
     if partner is None or partner not in source:
         return False
@@ -329,6 +333,48 @@ def _paired_ancestor(target, leaf, pairs, source, target_root):
             return node
         node = target[node].get("parent")
     return None
+
+
+# ---------------------------------------------------------------- a source with no root
+
+def _heading(turn):
+    """The yaw about world +Y of a world-space turn: its twist about +Y in the swing-twist split
+    `turn = swing · yaw`, the swing's axis lying in the floor (the quaternion's vector part
+    projected onto Y). Identity for a half turn about a floor axis (the bone upside down), which
+    has no heading."""
+    q = _quaternion(turn)
+    size = math.hypot(q.y, q.w)
+    if size < EPS:
+        return om.MMatrix()
+    return om.MQuaternion(0.0, q.y / size, 0.0, q.w / size).asMatrix()
+
+
+def _ground(rest, pose):
+    """(pose frame, rest frame) standing in for the root of a skeleton that has none, read off
+    its top bone (Mixamo's Hips). Both stand on the rest floor (`FLOOR`) under the bone - its x
+    and z; the rest frame unturned (world axes: a bind stands facing the way the target's root
+    rest does), the pose frame turned by the bone's HEADING, the yaw about world +Y of its
+    rest-to-pose turn `rot(rest)⁻¹ · rot(pose)`.
+
+    So a card made on such a skeleton standing elsewhere, turned elsewhere, transfers and
+    mirrors as it would from a twin with a root at that ground frame: the character stays
+    where it stands and faces. The cost, stated: the hips' own yaw against the body's facing
+    cannot be told apart from the facing on a skeleton with no root - it is read as the facing."""
+    rest, pose = matrix(rest), matrix(pose)
+    turn = rotation(rest).inverse() * rotation(pose)
+    at_rest, at_pose = position(rest), position(pose)
+    return (_placed(_heading(turn), om.MVector(at_pose.x, FLOOR, at_pose.z)),
+            _placed(om.MMatrix(), om.MVector(at_rest.x, FLOOR, at_rest.z)))
+
+
+def _root_frames(bones, root, pose, rootless):
+    """(pose frame, rest frame) of a skeleton's root for `pose` (the root bone's world or
+    drive): the root bone's own, else - a skeleton with no root of its own - its ground frame
+    (`_ground`). The one place `targets`, `mirror` and `scale_between` read a root from."""
+    rest = matrix(bones[root]["rest"])
+    if rootless:
+        return _ground(rest, pose)
+    return matrix(pose), rest
 
 
 # ---------------------------------------------------------------- rest alignment
@@ -390,7 +436,7 @@ def scale_between(source, target, pairs):
     """How much bigger the target's body is: the pelvis's rest height above the root's rest
     along world Y, target over source. 1.0 when either pelvis is missing or a height is below
     1 cm; a ratio within 2 % of 1 is 1.0. A skeleton whose root IS its pelvis (Mixamo's Hips)
-    measures it above the world origin."""
+    measures it above its ground frame's rest (`_ground`: the rest floor, `FLOOR`)."""
     target_root, target_pelvis = root_of(target), _find(target, "pelvis")
     source_root = pairs.get(target_root) or root_of(source)
     source_pelvis = pairs.get(target_pelvis) if target_pelvis else None
@@ -405,7 +451,10 @@ def scale_between(source, target, pairs):
 
 
 def _height(bones, pelvis, root):
-    floor = 0.0 if root == pelvis else position(bones[root]["rest"]).y
+    """The pelvis's rest height over its root's rest frame (the ground's, for a skeleton whose
+    root is its pelvis)."""
+    rest = bones[root]["rest"]
+    floor = position(_root_frames(bones, root, rest, root == pelvis)[1]).y
     return position(bones[pelvis]["rest"]).y - floor
 
 
@@ -436,8 +485,10 @@ def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="
         pos     = pos(T_now[t_root]) + d_t · rotation(T_now[t_root])
 
     A source with no root of its own (its root also plays another target bone, Mixamo's Hips)
-    has its root frame at the world origin: `P[s_root]` and `S_rest[s_root]` are identity there,
-    or the pelvis would land on the target's root and lose its turn."""
+    reads `P[s_root]` and `S_rest[s_root]` off its GROUND frame (`_ground`): the rest floor
+    under the hips, turned by their heading. Read literally the rule would hold the pelvis
+    relative to ITSELF - its offset zero, on the target's root, its turn lost - and the world
+    origin in its place would carry the card's world placement and facing into the target."""
     members = set(members or ())
     align = alignments(pairs, source, target)
     target_root = root_of(target)
@@ -450,10 +501,15 @@ def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="
         return matrix(bone["drive"] if use_drive and bone.get("drive") else bone["world"])
 
     def frame(leaf):
-        """(P, S_rest) of a target bone's partner; the world for a source with no root."""
-        if leaf is None or (leaf == target_root and not own_root):
+        """(P, S_rest) of a target bone's partner - for the target root, the source root's
+        frames (`_root_frames`: the ground's for a source with no root of its own)."""
+        if leaf is None:
             return om.MMatrix(), om.MMatrix()
-        s = pairs[leaf]
+        s = pairs.get(leaf)
+        if s not in source:                 # an unpaired target root: nothing to stand on
+            return om.MMatrix(), om.MMatrix()
+        if leaf == target_root:
+            return _root_frames(source, s, pose(s), not own_root)
         return pose(s), matrix(source[s]["rest"])
 
     def offset(leaf):
@@ -505,13 +561,16 @@ def mirror(source, members):
     drive reads its opposite's world where the opposite has none). Members swap to their
     opposites; centre members stay. The opposite comes from the canonical name's side, else the
     leaf's side token (`opposite`). A skeleton whose root IS its pelvis (Mixamo's Hips) has no
-    root frame of its own: it mirrors in the world's, the hips included (as `targets` reads
-    it)."""
+    root frame of its own: it mirrors in its ground frame (`_ground`, as `targets` reads it) -
+    the floor under the hips, turned by their heading - so it keeps its place and facing and
+    swaps left and right as a twin with a root there would; the hips mirror as a centre bone.
+    (The world's frame instead would reflect the card's world place and facing: a body facing
+    +X would come back facing -X.)"""
     root = root_of(source)
     pelvis = _find(source, "pelvis")
     rootless = pelvis == root
     sides = _opposites(source)
-    rest_root = om.MMatrix() if rootless else rotation(source[root]["rest"])
+    rest_root = rotation(_root_frames(source, root, source[root]["rest"], rootless)[1])
     flip = _reflection(source, rest_root)
     rest = dict((x, rotation(b["rest"]) * rest_root.inverse()) for x, b in source.items())
     out = dict((leaf, dict(bone)) for leaf, bone in source.items())
@@ -519,8 +578,8 @@ def mirror(source, members):
         if not any(key in bone for bone in source.values()):
             continue
         pose = dict((x, matrix(b.get(key) or b["world"])) for x, b in source.items())
-        root_turn = om.MMatrix() if rootless else rotation(pose[root])
-        root_place = om.MVector() if rootless else position(pose[root])
+        root_frame = _root_frames(source, root, pose[root], rootless)[0]
+        root_turn, root_place = rotation(root_frame), position(root_frame)
         delta = dict((x, rest[x].inverse() * (rotation(pose[x]) * root_turn.inverse()))
                      for x in source)
         for leaf, bone in source.items():

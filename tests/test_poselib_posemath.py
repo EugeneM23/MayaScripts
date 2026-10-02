@@ -241,7 +241,7 @@ class TransferRules(unittest.TestCase):
         s, t = skeleton(), skeleton(scale=1.015)
         self.assertEqual(pm.scale_between(s, t, pm.pairs(s, t)), 1.0)
 
-    def test_a_source_with_no_root_has_its_frame_at_the_world_origin(self):
+    def test_a_source_with_no_root_poses_the_pelvis(self):
         s = rootless(skeleton({"pelvis": (0, 0, 20), "upperarm_l": (0, 30, 40)}))
         t = skeleton()
         pairs = pm.pairs(s, t)
@@ -252,6 +252,64 @@ class TransferRules(unittest.TestCase):
         self.assertAlmostEqual(pm.position(out["pelvis"]).y, 95.0, 6)
         self.assertLess(pm.angle(out["upperarm_l"], pm.matrix(s["mx_upperarm_l"]["world"])), 1e-6)
         self.assertAlmostEqual(pm.scale_between(s, skeleton(scale=2.0), pairs), 2.0, 6)
+
+
+# a rootless source moved, and moved and turned, off the origin (a Mixamo native dropped on a
+# point, a clip whose hips walk and turn) - its pelvis tilted to the side only, a pure swing,
+# so its heading IS the place's turn and a rooted twin standing there is the same pose
+PLACES = (trs((120, 0, -36)), trs((120, 0, -36), (0, 90, 0)), trs((-40, 0, 75), (0, -135, 0)))
+TILTED = {"pelvis": (0, 0, 20), "spine_01": (5, 0, 10), "upperarm_l": (0, 30, 40),
+          "upperarm_r": (10, 30, -40), "lowerarm_r": (0, 0, 35), "thigh_l": (-25, 0, 5)}
+
+
+def forward(m):
+    """A bone's +Z in world."""
+    return om.MVector(0, 0, 1) * pm.rotation(m)
+
+
+class Rootless(unittest.TestCase):
+
+    def assertSameMatrix(self, a, b, what):
+        self.assertLess(pm.angle(a, b), 1e-6, what)
+        self.assertLess((pm.position(a) - pm.position(b)).length(), 1e-6, what)
+
+    def test_moved_and_turned_it_transfers_as_its_rooted_twin(self):
+        for place in PLACES:
+            rooted = skeleton(TILTED, place=place)
+            mixamo = rootless(rooted)
+            for t in (skeleton(), skeleton(place=trs((300, 0, -50), (0, 90, 0)))):
+                want = pm.targets(rooted, t, pm.pairs(rooted, t), list(TILTED))
+                got = pm.targets(mixamo, t, pm.pairs(mixamo, t), ["mx_" + b for b in TILTED])
+                for leaf in t:
+                    self.assertSameMatrix(got[leaf], want[leaf], leaf)
+
+    def test_the_hips_off_the_origin_stay_over_the_target_root(self):
+        # the reviewer's measure: the hips at (120, 95, -36) once put the pelvis there, 125 cm
+        # off a root at the origin, and a 90 deg turn turned it 90 deg off the root's facing
+        for place in PLACES[:2]:
+            s = rootless(skeleton(TILTED, place=place))
+            t = skeleton()
+            out = pm.targets(s, t, pm.pairs(s, t), ["mx_pelvis"])
+            self.assertLess((pm.position(out["pelvis"]) - om.MVector(0, 95, 0)).length(), 1e-9)
+            self.assertLess(pm.direction_angle(forward(out["pelvis"]), om.MVector(0, 0, 1)), 1e-6)
+
+    def test_its_size_is_measured_on_its_rest_floor(self):
+        for place in PLACES:
+            s = rootless(skeleton(TILTED, place=place))
+            big = skeleton(scale=2.0)
+            self.assertAlmostEqual(pm.scale_between(s, big, pm.pairs(s, big)), 2.0, 9)
+
+    def test_its_heading_is_the_yaw_of_the_turn(self):
+        swing = om.MQuaternion(math.radians(40), om.MVector(1, 0, 1)).asMatrix()
+        yaw = trs(r=(0, 70, 0))
+        self.assertLess(pm.angle(pm._heading(swing * yaw), yaw), 1e-9)
+        self.assertLess(pm.angle(pm._heading(trs(r=(0, -110, 0))), trs(r=(0, -110, 0))), 1e-9)
+        self.assertLess(pm.angle(pm._heading(trs(r=(180, 0, 0))), om.MMatrix()), 1e-9)
+        pose, rest = pm._ground(trs((1, 95, 2)), trs(r=(0, 0, 20)) * trs((7, 95, 3), (0, 30, 0)))
+        self.assertLess((pm.position(pose) - om.MVector(7, pm.FLOOR, 3)).length(), 1e-9)
+        self.assertLess((pm.position(rest) - om.MVector(1, pm.FLOOR, 2)).length(), 1e-9)
+        self.assertLess(pm.angle(pose, trs(r=(0, 30, 0))), 1e-9)
+        self.assertLess(pm.angle(rest, om.MMatrix()), 1e-9)
 
 
 class MirrorRules(unittest.TestCase):
@@ -265,14 +323,46 @@ class MirrorRules(unittest.TestCase):
         self.assertAlmostEqual(pm.position(m["pelvis"]["world"]).z, 3.0, 9)
         self.assertLess(pm.angle(m["pelvis"]["world"], om.MMatrix()), 1e-9)
 
-    def test_a_source_whose_root_is_its_pelvis_mirrors_in_the_world(self):
+    def test_a_source_whose_root_is_its_pelvis_mirrors_on_its_ground(self):
+        # the hips stand at (7, 95, 3) facing 30 deg round, rolled 20 deg to the side: the mirror
+        # keeps the place and the facing and rolls them the other way (in the world's frame they
+        # came back at (-7, 95, 3) facing -30 deg: the body turned, not mirrored)
         s = rootless(skeleton())
-        s["mx_pelvis"]["world"] = pm.flat(trs((7, 95, 3), (0, 30, 0)))
+        s["mx_pelvis"]["world"] = pm.flat(trs(r=(0, 0, 20)) * trs((7, 95, 3), (0, 30, 0)))
         m, members = pm.mirror(s, ["mx_pelvis"])
         self.assertEqual(members, ["mx_pelvis"])
-        want = trs((-7, 95, 3), (0, -30, 0))
+        want = trs(r=(0, 0, -20)) * trs((7, 95, 3), (0, 30, 0))
         self.assertLess(pm.angle(m["mx_pelvis"]["world"], want), 1e-9)
         self.assertLess((pm.position(m["mx_pelvis"]["world"]) - pm.position(want)).length(), 1e-9)
+
+    def test_a_rootless_source_moved_and_turned_mirrors_as_its_rooted_twin(self):
+        for place in PLACES:
+            rooted = skeleton(TILTED, place=place)
+            mixamo = rootless(rooted)
+            members = ["upperarm_r", "lowerarm_r", "pelvis", "spine_01", "thigh_l"]
+            want, want_members = pm.mirror(rooted, members)
+            got, got_members = pm.mirror(mixamo, ["mx_" + b for b in members])
+            self.assertEqual(got_members, ["mx_" + b for b in want_members])
+            for leaf in rooted:
+                if leaf == "root":
+                    continue
+                a, b = pm.matrix(got["mx_" + leaf]["world"]), pm.matrix(want[leaf]["world"])
+                self.assertLess(pm.angle(a, b), 1e-6, leaf)
+                self.assertLess((pm.position(a) - pm.position(b)).length(), 1e-6, leaf)
+            # the reviewer's measure: turned 90 deg the hips faced (1, 0, 0), and came back
+            # facing (-1, 0, 0)
+            hips = forward(got["mx_pelvis"]["world"])
+            self.assertLess(pm.direction_angle(hips, forward(mixamo["mx_pelvis"]["world"])), 1e-6)
+
+    def test_a_rootless_mirror_twice_is_identity(self):
+        s = rootless(skeleton(TILTED, place=PLACES[2]))
+        once, mem = pm.mirror(s, ["mx_upperarm_r", "mx_pelvis", "mx_thigh_l"])
+        twice, mem2 = pm.mirror(once, mem)
+        self.assertEqual(sorted(mem2), ["mx_pelvis", "mx_thigh_l", "mx_upperarm_r"])
+        for leaf in s:
+            a, b = pm.matrix(twice[leaf]["world"]), pm.matrix(s[leaf]["world"])
+            self.assertLess(pm.angle(a, b), 1e-6, leaf)
+            self.assertLess((pm.position(a) - pm.position(b)).length(), 1e-6, leaf)
 
     def test_the_drive_mirrors_too(self):
         s = skeleton({"upperarm_r": (0, 30, -40)})
