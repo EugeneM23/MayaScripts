@@ -112,6 +112,11 @@ SECTIONS = (
     Section("com", "Center of Mass", "maya_com.panel",
             "build_panel", "skeldarHubFrameCom",
             "animation", "target"),
+    #  2026-10-02: the Pose Library - cards of a character's bones. The window
+    #  is its own workspaceControl; the card is one line and Open Pose Library.
+    Section("poses", "Pose Library", "maya_poselib.window",
+            "build_panel", "skeldarHubFramePoses",
+            "animation", "books"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

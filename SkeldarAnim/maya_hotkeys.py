@@ -826,6 +826,8 @@ _OURS = (
      "Open the Center of Mass section: the CoM point, its trail, the CoM "
      "tool",
      partial(_show, "maya_com.panel", "show_window")),
+    ("window.poses", "Windows", "Pose Library", "Open the Pose Library",
+     partial(_show, "maya_poselib.window", "show_window")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",

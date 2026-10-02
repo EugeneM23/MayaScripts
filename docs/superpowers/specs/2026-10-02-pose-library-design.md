@@ -42,11 +42,13 @@ build, the animator commits them from the repo.
     `{parent, canonical, rest[16], world[16], drive[16]?, rotateOrder}`:
     - `rest` = `maya_retargetmode.rest_world` (the skinCluster bind; trap 176);
     - `world` = the bone as it stands (what the skeleton SHOWS);
-    - `drive` (rig sources only, the limb bones AdvancedSkeleton keeps unrolled — upperarm,
-      lowerarm, thigh, calf, neck_01, neck_02): the bone as the rig's DRIVE CHAIN holds it,
-      `G · D⁻¹ · S` (G the game bone, D its AS deformation joint, S the FKX/IKX chain blended as the
-      rig blends it — `fkik.blended`), i.e. with the roll AdvancedSkeleton moved into the twist
-      joints put back (trap 126);
+    - `drive` (rig sources only, the eight limb bones AdvancedSkeleton keeps unrolled — upperarm,
+      lowerarm, thigh, calf per side; `rigsolve.drive_matrices`): the bone as the rig's DRIVE
+      CHAIN holds it, `G · D⁻¹ · S` (G the game bone, D its AS deformation joint, S the FKX/IKX
+      chain blended as the rig blends it — `fkik.blended`), i.e. with the roll AdvancedSkeleton
+      moved into the twist joints put back (trap 126). Not the neck (task 6b): its controls hold
+      any turn of its bones, so the neck lands its BONES (step 6 below) — in drive form a
+      skeleton's card put Manny_Rig's neck_02 12.7° off;
     - `canonical` = our UE5 name from `maya_skeletonmap.recognize` run on the WHOLE source
       skeleton (it refuses a hand chain alone);
   - `members`: the bones the pose holds (a hand pose holds the hand's bones; see Save);
@@ -118,8 +120,12 @@ exactly one transform carries it).
 - **positions**: every bone keeps the target's own lengths (forward kinematics from its current
   local translations); only the **pelvis** takes the pose's offset from the root, scaled by the two
   bodies' size (`maya_skeletonmap.size_ratio`), in the target root's frame;
-- a twin (`maya_retargetmode.measure`: median paired length ≤ 1 %) gives `A = I`, so a pose saved
-  and applied on the same model is exact.
+- a twin gives `A = I`, so a pose saved and applied on the same model is exact. A twin is
+  decided on the two RESTS alone, never on a pose (`posemath.twin`): the median paired length
+  within 1 % (`maya_retargetmode.measure`'s rule) AND every paired bone's rest chord to its
+  direction child within `posemath.TWIN_DEG` (1°) of its partner's — lengths alone would call an
+  A-posed and a T-posed copy of one skeleton twins, and read as the bones stand a card whose
+  bones carry translations stopped being a twin of its own model past ~1 cm.
 
 **Mirror** transforms the source pose before the transfer: each bone takes its opposite's delta
 from rest, reflected across the source's sagittal plane (`F = I − 2·l·lᵀ` in the root's frame, `l`
@@ -153,8 +159,9 @@ constrained, nothing baked, `reset_build_pose` is never called):
 5. **RootX_M** from the pelvis (`M = RootX · G_pelvis⁻¹`, constant), translate + rotate; **Main**
    is never written;
 6. **the neck**: `FKNeck_M.bias` and the in-between's twist share are READ, never written
-   (`set_exact_neck`'s "leave them there"); the neck controls are solved so the bones land
-   (the in-between's weight inverted), measured by the verify at bias 0 and 10;
+   (`set_exact_neck`'s "leave them there"); the neck controls are solved NUMERICALLY so the
+   neck's BONES land (`FKNeck_M` through the in-between's blend, `NeckPart1` with the head
+   re-solved inside every probe — `rigsolve`), measured by the verify at bias 0 and 10;
 7. the spine in IK (`FKIKSpine_M` not 0): the FK spine is posed and the line says the spine shows IK;
 8. write (below), evaluate, **measure** every member bone against its target (directions for the
    four unrolled limb bones, full rotation for the rest) and, if anything is off by more than

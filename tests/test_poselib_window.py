@@ -326,7 +326,9 @@ class Workspace(unittest.TestCase):
         self.assertEqual(roles[0], ("note", None))
         self.assertEqual(roles[1][0], "primary")
         import maya_hubicons
-        self.assertEqual(roles[1][1], "books" if "books" in maya_hubicons.ICONS else "folder")
+        self.assertEqual(roles[1][1], "books")
+        self.assertIn("books", maya_hubicons.ICONS)
+        self.assertFalse(hasattr(pw, "_open_icon"))      # the folder fallback is gone
         texts = [c for c in self.cmds.calls if c[0] == "text"]
         self.assertEqual(texts[0][2]["label"], "Poses of bones - onto any rig or skeleton.")
         buttons = [c for c in self.cmds.calls if c[0] == "button"]

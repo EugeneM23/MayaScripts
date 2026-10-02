@@ -477,7 +477,17 @@ class OurRows(unittest.TestCase):
                 if not row[0].startswith("overrig.")]
         #  + window.inventory (2026-09-29), + graph.overlay (2026-09-30),
         #  + window.shared (2026-09-30), + window.com (2026-10-01), + window.armor (2026-10-01)
-        self.assertEqual(len(ours), 36)
+        #  + window.poses (2026-10-02)
+        self.assertEqual(len(ours), 37)
+
+    def test_the_pose_library_row(self):
+        """The Pose Library's window (2026-10-02): an opener like the hub's sections."""
+        found = maya_hotkeys.row("window.poses")
+        self.assertIsNotNone(found)
+        self.assertEqual(found[1:4], ("SkeldarAnim.Windows", "Pose Library",
+                                      "Open the Pose Library"))
+        self.assertIs(found[4].func, maya_hotkeys._show)
+        self.assertEqual(found[4].args, ("maya_poselib.window", "show_window"))
 
     def test_the_graph_overlay_row(self):
         """Maya's Graph Editor over the viewport, see-through (2026-09-30)."""
@@ -496,7 +506,7 @@ class OurRows(unittest.TestCase):
                          ["window.armor", "window.com", "window.connections",
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
-                          "window.scenesetup", "window.shared",
+                          "window.poses", "window.scenesetup", "window.shared",
                           "window.uebridge", "window.weapons"])
 
     def test_the_picker_rows(self):
@@ -629,8 +639,9 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 13)
         self.assertIn("maya_hub", names)
+        self.assertIn("maya_poselib.window", names)
         self.assertIn("maya_scenesetup.armorpanel", names)
         self.assertIn("maya_com.panel", names)
         self.assertIn("maya_share", names)

@@ -96,6 +96,15 @@ class Payload(unittest.TestCase):
         self.assertIn("maya_graphoverlay", install.payload())
         self.assertIn("maya_com", install.payload())
 
+    def test_the_pose_library_ships(self):
+        """2026-10-02: the package and its library folder - a package is purged on an update,
+        the library is data."""
+        self.assertIn("maya_poselib", install.payload())
+        self.assertIn("poses", install.payload())
+        self.assertIn("maya_poselib", install.module_names())
+        self.assertNotIn("poses", install.module_names())
+        self.assertTrue(os.path.isfile(os.path.join(PLUGIN, "poses", ".gitkeep")))
+
     def test_the_viewport_studio_ships(self):
         self.assertIn("maya_vpstudio.py", install.payload())
 
@@ -370,6 +379,116 @@ class CopyPayload(unittest.TestCase):
         self.assertFalse(install.same_place(REPO, self.dest))
 
 
+def _write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _read(path):
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
+class KeepsLocalPoses(unittest.TestCase):
+    """2026-10-02, the Pose Library: «локальные позы переживают каждую установку». The installed
+    `poses/` is moved aside before the folder is replaced, and every file the new build does not
+    carry is put back; a build's own file wins over a local one of the same relative path."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="skeldar_poses_")
+        self.src = os.path.join(self.tmp, "build", "SkeldarAnim")
+        self.dest = os.path.join(self.tmp, "prefs", "SkeldarAnim")
+        _write(os.path.join(self.src, "maya_tool.py"), "new tool")
+        _write(os.path.join(self.src, "poses", ".gitkeep"), "")
+        _write(os.path.join(self.src, "poses", "Shipped.pose", "pose.json"), "new shipped")
+        _write(os.path.join(self.dest, "maya_tool.py"), "old tool")
+        _write(os.path.join(self.dest, "stray.txt"), "left over")
+        _write(os.path.join(self.dest, "poses", "Shipped.pose", "pose.json"), "old shipped")
+        _write(os.path.join(self.dest, "poses", "Mine.pose", "pose.json"), "mine")
+        _write(os.path.join(self.dest, "poses", "Mine.pose", "thumbnail.jpg"), "jpg")
+        _write(os.path.join(self.dest, "poses", "Fights", "Kick.pose", "pose.json"), "kick")
+        os.makedirs(os.path.join(self.dest, "poses", "Empty folder"))
+        self.saved = install.payload
+        install.payload = lambda: ("maya_tool.py", "poses")
+
+    def tearDown(self):
+        install.payload = self.saved
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def poses(self, *parts):
+        return os.path.join(self.dest, "poses", *parts)
+
+    def test_a_local_card_survives_and_a_shipped_one_is_the_build_s(self):
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(_read(self.poses("Mine.pose", "pose.json")), "mine")
+        self.assertEqual(_read(self.poses("Mine.pose", "thumbnail.jpg")), "jpg")
+        self.assertEqual(_read(self.poses("Fights", "Kick.pose", "pose.json")), "kick")
+        self.assertEqual(_read(self.poses("Shipped.pose", "pose.json")), "new shipped")
+        self.assertEqual(sorted(kept), ["Fights/Kick.pose/pose.json", "Mine.pose/pose.json",
+                                        "Mine.pose/thumbnail.jpg"])
+
+    def test_an_empty_local_folder_survives(self):
+        install.copy_payload(self.src, self.dest)
+        self.assertTrue(os.path.isdir(self.poses("Empty folder")))
+
+    def test_the_rest_is_still_replaced(self):
+        install.copy_payload(self.src, self.dest)
+        self.assertEqual(_read(os.path.join(self.dest, "maya_tool.py")), "new tool")
+        self.assertFalse(os.path.exists(os.path.join(self.dest, "stray.txt")))
+
+    def test_nothing_is_left_beside_the_install(self):
+        install.copy_payload(self.src, self.dest)
+        self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+    def test_a_fresh_install_keeps_nothing(self):
+        shutil.rmtree(self.dest)
+        self.assertEqual(install.copy_payload(self.src, self.dest), [])
+        self.assertEqual(sorted(os.listdir(self.poses())), [".gitkeep", "Shipped.pose"])
+        self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+    def test_keep_local_alone(self):
+        old = os.path.join(self.tmp, "old")
+        new = os.path.join(self.tmp, "new")
+        _write(os.path.join(old, "A.pose", "pose.json"), "local a")
+        _write(os.path.join(old, "B.pose", "pose.json"), "local b")
+        _write(os.path.join(new, "B.pose", "pose.json"), "build b")
+        self.assertEqual(install.keep_local(old, new), ["A.pose/pose.json"])
+        self.assertEqual(_read(os.path.join(new, "A.pose", "pose.json")), "local a")
+        self.assertEqual(_read(os.path.join(new, "B.pose", "pose.json")), "build b")
+        self.assertTrue(os.path.isfile(os.path.join(old, "A.pose", "pose.json")))  # a copy
+
+    def test_a_failed_restore_keeps_the_old_poses_and_says_where(self):
+        def boom(old, new):
+            raise OSError("disk full")
+        saved, install.keep_local = install.keep_local, boom
+        printed = []
+        saved_print = install._say
+        install._say = printed.append
+        try:
+            install.copy_payload(self.src, self.dest)
+        finally:
+            install.keep_local, install._say = saved, saved_print
+        left = [n for n in os.listdir(os.path.dirname(self.dest)) if n != "SkeldarAnim"]
+        self.assertEqual(len(left), 1)
+        aside = os.path.join(os.path.dirname(self.dest), left[0], "poses")
+        self.assertEqual(_read(os.path.join(aside, "Mine.pose", "pose.json")), "mine")
+        self.assertEqual(len(printed), 1)
+        self.assertIn("disk full", printed[0])
+        self.assertIn(aside.replace("\\", "/"), printed[0])
+        #  the install itself went through
+        self.assertEqual(_read(os.path.join(self.dest, "maya_tool.py")), "new tool")
+
+    def test_a_failed_copy_still_puts_the_poses_back(self):
+        """Trap 113: a payload row the source does not hold raised after the rmtree. The local
+        poses are back in the installed folder before the error goes on."""
+        install.payload = lambda: ("maya_tool.py", "missing.py", "poses")
+        with self.assertRaises((IOError, OSError)):
+            install.copy_payload(self.src, self.dest)
+        self.assertEqual(_read(self.poses("Mine.pose", "pose.json")), "mine")
+        self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+
 class VersionRecord(unittest.TestCase):
     """`version.json`: which build an installed copy is, for Check update
     (2026-09-28). A build carries its own; a copy installed from the
@@ -456,12 +575,15 @@ class InstallOrder(unittest.TestCase):
             self.dialogs.append(kwargs.get("message", ""))
 
         hub_open = False
+        poses_open = False
 
         def workspaceControl(self, name, **kwargs):
-            return self.hub_open and name == install.HUB_CONTROL
+            return ((self.hub_open and name == install.HUB_CONTROL)
+                    or (self.poses_open and name == install.POSELIB_CONTROL))
 
         def evalDeferred(self, call, **kwargs):
             self.deferred.append(call)
+            self.__dict__.setdefault("deferred_flags", []).append(kwargs)
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="skeldar_order_")
@@ -547,6 +669,97 @@ class RebuildsTheOpenHub(unittest.TestCase):
         self.assertIn("hub is rebuilt", self.fake.dialogs[0])
 
 
+class RebuildsTheOpenPoseLibrary(unittest.TestCase):
+    """The Pose Library's window is a workspaceControl of its own (2026-10-02): an open one is
+    rebuilt from the new modules after an install, deferred at the lowest priority as the hub."""
+
+    FakeCmds = InstallOrder.FakeCmds
+
+    def setUp(self):
+        InstallOrder.setUp(self)
+        self.calls = []
+        self.saved_rebuilds = (install.rebuild_open_hub, install.rebuild_open_poselib)
+        install.rebuild_open_hub = lambda dest: self.calls.append(("hub", dest))
+        install.rebuild_open_poselib = lambda dest: self.calls.append(("poses", dest))
+
+    def tearDown(self):
+        install.rebuild_open_hub, install.rebuild_open_poselib = self.saved_rebuilds
+        InstallOrder.tearDown(self)
+
+    def run_deferred(self):
+        for call in self.fake.deferred:
+            call()
+
+    def test_an_open_pose_library_is_rebuilt_after_the_install(self):
+        self.fake.poses_open = True
+        dest = install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.assertEqual(len(self.fake.deferred), 1)
+        self.assertEqual(self.fake.deferred_flags, [{"lowestPriority": True}])
+        self.run_deferred()
+        self.assertEqual(self.calls, [("poses", dest.replace("\\", "/"))])
+
+    def test_both_open_both_rebuilt(self):
+        self.fake.hub_open = self.fake.poses_open = True
+        install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.run_deferred()
+        self.assertEqual(sorted(name for name, _dest in self.calls), ["hub", "poses"])
+
+    def test_closed_nothing_scheduled(self):
+        install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.assertEqual(self.fake.deferred, [])
+
+    def test_the_dialog_says_the_pose_library_was_rebuilt(self):
+        self.fake.poses_open = True
+        self.purged = ["maya_poselib", "maya_poselib.window"]
+        install.install(os.path.join(PLUGIN, "install.py"))
+        self.assertIn("Pose Library is rebuilt", self.fake.dialogs[0])
+
+    def test_the_installer_s_name_is_the_window_s(self):
+        from maya_poselib import window
+        self.assertEqual(install.POSELIB_CONTROL, window.CONTROL)
+
+
+class RebuildOpenPoseLibrary(unittest.TestCase):
+    """The deferred call: the FRESH maya_poselib.window rebuilds inside its standing control."""
+
+    Window = None
+
+    def setUp(self):
+        self.path = list(sys.path)
+
+        class Window(object):
+            def __init__(self, open_):
+                self.open_, self.rebuilt = open_, 0
+
+            def is_open(self):
+                return self.open_
+
+            def rebuild(self):
+                self.rebuilt += 1
+        self.Window = Window
+
+    def tearDown(self):
+        sys.path[:] = self.path
+
+    def test_the_fresh_window_rebuilds(self):
+        window = self.Window(True)
+        asked = []
+        self.assertTrue(install.rebuild_open_poselib(
+            "C:/prefs/SkeldarAnim", importer=lambda n: asked.append(n) or window))
+        self.assertEqual((asked, window.rebuilt), (["maya_poselib.window"], 1))
+        self.assertIn("C:/prefs/SkeldarAnim", sys.path)
+
+    def test_a_window_closed_meanwhile_is_left_alone(self):
+        window = self.Window(False)
+        self.assertFalse(install.rebuild_open_poselib("C:/x", importer=lambda n: window))
+        self.assertEqual(window.rebuilt, 0)
+
+    def test_a_failing_rebuild_is_reported_not_raised(self):
+        def boom(name):
+            raise ImportError("no maya_poselib")
+        self.assertFalse(install.rebuild_open_poselib("C:/x", importer=boom))
+
+
 class RebuildOpenHub(unittest.TestCase):
     """What the deferred call does: the FRESH maya_hub, from the installed folder, rebuilds the
     accordion inside the standing control -- where it is docked survives."""
@@ -607,7 +820,7 @@ class PurgeModules(unittest.TestCase):
         self.assertNotIn("install", install.module_names())
 
     def test_data_folders_are_not_modules(self):
-        for name in ("icons", "assets", "overrig"):
+        for name in ("icons", "assets", "overrig", "poses"):
             self.assertNotIn(name, install.module_names())
 
     def test_the_package_root_goes_with_its_submodules(self):

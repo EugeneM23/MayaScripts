@@ -1736,12 +1736,6 @@ def show_window():
                               uiScript=uiscript(plugin_root()))
 
 
-def _open_icon():
-    """The hub card button's icon: `books` once the hub has it, else `folder`."""
-    import maya_hubicons
-    return "books" if "books" in maya_hubicons.ICONS else "folder"
-
-
 def build_panel():
     """The hub card (Animation): one line and Open Pose Library - the window itself is too big
     for an accordion card."""
@@ -1755,6 +1749,6 @@ def build_panel():
                                          "the scene, applied onto any rig or skeleton, dragged "
                                          "onto a character or the floor",
                               command=lambda *_a: show_window()),
-                  "primary", _open_icon())
+                  "primary", "books")
     cmds.setParent("..")
     return column

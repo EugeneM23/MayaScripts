@@ -20,12 +20,20 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 SHELF = "SkeldarAnim"
 
 # The hub's workspaceControl (maya_hub.CONTROL). Named here, not imported: at
 # drop time nothing of ours is on sys.path.
 HUB_CONTROL = "skeldarAnimHub"
+# The Pose Library's (maya_poselib.window.CONTROL), the same way (2026-10-02).
+POSELIB_CONTROL = "skeldarPoseLibrary"
+
+# The payload's library folder (2026-10-02): the animator's own cards saved
+# into the INSTALLED copy must survive the install that replaces it.
+POSES = "poses"
+KEPT_PREFIX = "SkeldarAnim_poses_kept_"
 
 # Which build an installed copy is (2026-09-28, Check update): a build
 # carries this file, and an install from the repository writes its git
@@ -70,6 +78,8 @@ _PAYLOAD = (
     "maya_ikmatch.py",          # the IK limbs take the FK limbs' shape (2026-10-02)
     "maya_graphoverlay",        # the Graph Editor over the viewport (2026-09-30)
     "maya_com",                 # the centre of mass (2026-10-01)
+    "maya_poselib",             # the Pose Library (2026-10-02)
+    "poses",                    # its shipped library; local cards survive an install
     "maya_update.py",
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh
@@ -254,19 +264,94 @@ def same_place(a, b):
     return os.path.samefile(a, b)
 
 
+def _say(message):
+    """A line for the Script Editor (a seam: the tests catch it)."""
+    print(message)
+
+
+def keep_local(old, new):
+    """Every file under the old `poses` that the new build does not carry, copied in;
+    a build's own file wins over a local one of the same relative path.
+
+    Folders come along too - a catalog the animator made and has not filled yet - unless the
+    build holds a FILE of that name (the build wins there as well). `old` is only read. Returns
+    the relative paths of the files put back, "/"-separated, in walk order.
+    """
+    kept = []
+    for base, dirs, files in os.walk(old):
+        dirs.sort()
+        rel = os.path.relpath(base, old)
+        parts = [] if rel == os.curdir else rel.split(os.sep)
+        folder = os.path.join(new, *parts)
+        if os.path.exists(folder) and not os.path.isdir(folder):
+            dirs[:] = []                     # the build's file of that name wins
+            continue
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        for name in sorted(files):
+            target = os.path.join(folder, name)
+            if os.path.exists(target):
+                continue                     # the build's own file wins
+            shutil.copy2(os.path.join(base, name), target)
+            kept.append("/".join(parts + [name]))
+    return kept
+
+
+def _put_back_poses(aside, dest):
+    """The local poses moved aside into `aside` copied back under `dest`; the temp folder is
+    removed only once they are. A failure never raises (this runs in copy_payload's `finally`,
+    where it would hide the copy's own error) and never deletes them: it says where they are."""
+    old = os.path.join(aside, POSES)
+    try:
+        kept = keep_local(old, os.path.join(dest, POSES))
+    except Exception as exc:                                 # noqa: BLE001
+        _say("SkeldarAnim: the local poses were not put back ({0}) - they are kept in"
+             " {1}".format(exc, old.replace("\\", "/")))
+        return []
+    shutil.rmtree(aside, ignore_errors=True)
+    return kept
+
+
 def copy_payload(src_root, dest):
-    """The whitelist into `dest`, replacing whatever was there."""
-    if os.path.isdir(dest):
-        shutil.rmtree(dest)
-    os.makedirs(dest)
-    ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
-    for name in payload():
-        src = os.path.join(src_root, name)
-        target = os.path.join(dest, name)
-        if os.path.isdir(src):
-            shutil.copytree(src, target, ignore=ignore)
-        else:
-            shutil.copy2(src, target)
+    """The whitelist into `dest`, replacing whatever was there - all but the poses the animator
+    saved into the installed library (2026-10-02, the Pose Library: local poses survive every
+    install). Returns the relative paths of the local pose files put back.
+
+    The installed `poses/` is RENAMED aside first, into a temp folder beside `dest`: the same
+    volume, so nothing is copied, and a rename that fails (a file held open) raises with nothing
+    moved or deleted - `shutil.move` would fall back to copy-then-delete, and a delete failing
+    half way leaves the only whole copy in the temp folder. Then the folder is replaced, then
+    `keep_local` puts back every file the new build does not carry. The poses go back even when
+    the copy itself fails half way (trap 113: a payload row the source does not hold) - that
+    error then goes on.
+    """
+    aside = None
+    old_poses = os.path.join(dest, POSES)
+    if os.path.isdir(old_poses):
+        aside = tempfile.mkdtemp(prefix=KEPT_PREFIX,
+                                 dir=os.path.dirname(os.path.abspath(dest)))
+        try:
+            os.rename(old_poses, os.path.join(aside, POSES))
+        except OSError:
+            os.rmdir(aside)                  # still empty: nothing was moved
+            raise
+    kept = []
+    try:
+        if os.path.isdir(dest):
+            shutil.rmtree(dest)
+        os.makedirs(dest)
+        ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+        for name in payload():
+            src = os.path.join(src_root, name)
+            target = os.path.join(dest, name)
+            if os.path.isdir(src):
+                shutil.copytree(src, target, ignore=ignore)
+            else:
+                shutil.copy2(src, target)
+    finally:
+        if aside is not None:
+            kept = _put_back_poses(aside, dest)
+    return kept
 
 
 def git_output(cwd, *args):
@@ -406,16 +491,26 @@ def install(dropped=None, quiet=False):
     # `_reopen`, so an install run from a hub button never deletes the layout
     # holding that button under itself.
     hub_open = bool(cmds.workspaceControl(HUB_CONTROL, exists=True))
+    target = dest.replace("\\", "/")
     if hub_open:
-        target = dest.replace("\\", "/")
         cmds.evalDeferred(lambda: rebuild_open_hub(target),
+                          lowestPriority=True)
+    # The Pose Library's window is a control of its own (2026-10-02): the same
+    # staleness, the same deferred rebuild.
+    poses_open = bool(cmds.workspaceControl(POSELIB_CONTROL, exists=True))
+    if poses_open:
+        cmds.evalDeferred(lambda: rebuild_open_poselib(target),
                           lowestPriority=True)
     if not quiet:
         note = ""
         if reloaded:
-            then = ("The open SkeldarAnim hub is rebuilt from\nthe new one;"
-                    " restart Maya if anything still\nlooks old."
-                    if hub_open else
+            rebuilt = [name for name, is_open in (("SkeldarAnim hub", hub_open),
+                                                  ("Pose Library", poses_open))
+                       if is_open]
+            then = ("The open {0} {1} rebuilt from\nthe new one;"
+                    " restart Maya if anything still\nlooks old.".format(
+                        " and ".join(rebuilt), "is" if len(rebuilt) == 1 else "are")
+                    if rebuilt else
                     "Close any of our panels that\nare open and reopen them"
                     " from the shelf; restart\nMaya if anything still looks"
                     " old.")
@@ -449,6 +544,28 @@ def rebuild_open_hub(dest, importer=None):
     except Exception as exc:                                 # noqa: BLE001
         print("SkeldarAnim: the open hub was not rebuilt ({0}) - press the"
               " SkeldarAnim shelf button".format(exc))
+        return False
+
+
+def rebuild_open_poselib(dest, importer=None):
+    """The Pose Library's window rebuilt inside its standing control from the FRESH
+    maya_poselib.window -- the installed copy's, `dest` first on sys.path -- as
+    `rebuild_open_hub` does the hub (2026-10-02). True when it was rebuilt; a window closed
+    meanwhile is left alone, and a failure is printed, never raised (this runs deferred)."""
+    if importer is None:
+        import importlib
+        importer = importlib.import_module
+    if dest not in sys.path:
+        sys.path.insert(0, dest)
+    try:
+        window = importer("maya_poselib.window")
+        if not window.is_open():
+            return False
+        window.rebuild()
+        return True
+    except Exception as exc:                                 # noqa: BLE001
+        print("SkeldarAnim: the open Pose Library was not rebuilt ({0}) - close it and open it"
+              " again from the hub".format(exc))
         return False
 
 

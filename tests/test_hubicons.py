@@ -18,7 +18,7 @@ _WANTED = ("user", "sword", "hand-grab", "transfer-in", "arrows-exchange",
            "bulb", "palette", "keyboard", "dots-vertical", "chevron-down",
            "chevron-right", "plus", "camera", "trash", "folder", "brush",
            "download", "upload", "refresh", "check", "x", "link", "unlink",
-           "arrow-back-up", "shield")
+           "arrow-back-up", "shield", "books")
 
 
 class TheSet(unittest.TestCase):
@@ -33,6 +33,14 @@ class TheSet(unittest.TestCase):
             self.assertTrue(paths, name)
             for d in paths:
                 self.assertRegex(d, r"^[Mm]", name)
+
+    def test_the_pose_library_s_books(self):
+        """2026-10-02: Tabler's `books`, two spines, a leaning third book, and their bands."""
+        paths = icons.ICONS["books"]
+        self.assertEqual(len(paths), 7)
+        self.assertEqual(paths[2:4], ("M5 8h4", "M9 16h4"))
+        self.assertTrue(paths[4].startswith("M13.803 4.56l2.184 -.53"))
+        self.assertTrue(paths[4].endswith("-1.219l.133 -.041z"))
 
     def test_the_licence_notice_rides_along(self):
         self.assertIn("MIT", icons.__doc__)

@@ -84,12 +84,23 @@ class TheTable(unittest.TestCase):
         And the same evening the UE Bridge became part of Characters, the
         first card - the Scene group above Animation («Characters самой
         первой, Scene выше») - and was named Animation Setup («Раздел
-        Character Заменим на Animationsetup»), its key still "characters"."""
+        Character Заменим на Animationsetup»), its key still "characters".
+        The Pose Library joined Animation on 2026-10-02, after the Center of Mass."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Retarget", "Graph Overlay",
-                          "Center of Mass",
+                          "Center of Mass", "Pose Library",
                           "Studio", "Colour", "Hotkeys", "Update"])
+
+    def test_the_pose_library_card(self):
+        """2026-10-02: the window is too big for an accordion, so the card is one line and Open
+        Pose Library; the hub's Tabler `books`."""
+        sec = hub.section("poses")
+        self.assertEqual((sec.label, sec.module, sec.builder, sec.frame, sec.group, sec.icon),
+                         ("Pose Library", "maya_poselib.window", "build_panel",
+                          "skeldarHubFramePoses", "animation", "books"))
+        keys = [s.key for s in hub.SECTIONS]
+        self.assertEqual(keys.index("poses"), keys.index("com") + 1)
 
     def test_the_ue_bridge_is_an_alias_of_characters(self):
         """2026-10-01: no section of its own; its key opens the card it
@@ -115,7 +126,7 @@ class TheTable(unittest.TestCase):
             ("connections", "scene"), ("shared", "scene"),
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
-            ("studio", "look"),
+            ("poses", "animation"), ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
             ("update", "settings")])
         for sec in hub.SECTIONS:
@@ -134,7 +145,7 @@ class TheTable(unittest.TestCase):
         (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
-                          "retarget", "graphoverlay", "com",
+                          "retarget", "graphoverlay", "com", "poses",
                           "studio", "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
@@ -146,6 +157,7 @@ class TheTable(unittest.TestCase):
             "retarget": ("maya_rig_retarget", "build_panel"),
             "graphoverlay": ("maya_graphoverlay.mode", "build_panel"),
             "com": ("maya_com.panel", "build_panel"),
+            "poses": ("maya_poselib.window", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
             "colour": ("maya_colour", "build_panel"),
@@ -524,7 +536,8 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("group", "scene"), ("card", "characters"), ("card", "weapons"),
             ("card", "connections"), ("card", "shared"),
             ("group", "animation"), ("card", "retarget"),
-            ("card", "graphoverlay"), ("card", "com"), ("group", "look"),
+            ("card", "graphoverlay"), ("card", "com"), ("card", "poses"),
+            ("group", "look"),
             ("card", "studio"), ("card", "colour"), ("group", "settings"),
             ("card", "update")])
         self.assertEqual(self.fake.frames, {})
