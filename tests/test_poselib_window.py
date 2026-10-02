@@ -822,12 +822,189 @@ class Blend(WindowCase):
         self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
         self.assertEqual(slider.value(), 0)
 
-    def test_a_click_on_the_groove_blends_once(self):
+    # -- the slider under a real mouse. Review finding 1 (2026-10-03): every value change that
+    #    was not a handle drag keyed a blend at once - a wheel notch (3 notches: 3 blends of 3 %)
+    #    and the groove's auto-repeat (a press held 1.5 s: 17 blends of 10 %, each keyed) - with
+    #    no preview and no release. These go through QApplication.sendEvent, as the mouse does.
+
+    def blend_calls(self):
+        return [entry for entry in self.scene.log if entry[0].startswith("blend")]
+
+    def slider_mouse(self, kind, x, button=None, held=None):
+        """A mouse event on the Blend slider at local x (its vertical middle). `button` is the
+        one pressed or released (left by default); `held` what is down after the event."""
+        Qt = QT.QtCore.Qt
+        slider = self.win.blend
+        button = Qt.LeftButton if button is None else button
+        if held is None:
+            held = Qt.NoButton if kind == "release" else button
+        types = {"press": QT.QtCore.QEvent.MouseButtonPress,
+                 "move": QT.QtCore.QEvent.MouseMove,
+                 "release": QT.QtCore.QEvent.MouseButtonRelease}
+        local = QT.QtCore.QPoint(int(x), slider.height() // 2)
+        event = QT.QtGui.QMouseEvent(types[kind], QT.QtCore.QPointF(local),
+                                     QT.QtCore.QPointF(slider.mapToGlobal(local)),
+                                     Qt.NoButton if kind == "move" else button, held,
+                                     Qt.NoModifier)
+        QT.QtWidgets.QApplication.sendEvent(slider, event)
+        return event
+
+    def wheel(self, widget, dy):
+        """One wheel notch over `widget`, delivered as Qt delivers one from the mouse: to the
+        widget, then up its parents while it is ignored. The walk is done here because Qt 6 does
+        not propagate a wheel event sent from Python (it is not spontaneous; QApplication::notify
+        «Synthesized events shouldn't propagate») - measured offscreen (task8/probe_wheel.py): an
+        ignoring child in a QScrollArea left the bar at 635, the walk moved it to 575. The widget
+        that took it, or None."""
+        Qt = QT.QtCore.Qt
+        centre = widget.rect().center()
+        spot = widget.mapToGlobal(centre)
+        target = widget
+        while target is not None:
+            event = QT.QtGui.QWheelEvent(QT.QtCore.QPointF(target.mapFromGlobal(spot)),
+                                         QT.QtCore.QPointF(spot), QT.QtCore.QPoint(),
+                                         QT.QtCore.QPoint(0, dy), Qt.NoButton, Qt.NoModifier,
+                                         Qt.NoScrollPhase, False)
+            QT.QtWidgets.QApplication.sendEvent(target, event)
+            if event.isAccepted():
+                return target
+            target = None if target.isWindow() else target.parentWidget()
+        return None
+
+    def test_the_wheel_over_the_slider_scrolls_the_panel_and_keys_nothing(self):
+        self.win.pick(self.fist)
+        self.win.resize(1000, 300)                   # a short dock: the side panel scrolls
+        self.pump()
+        side = self.win.findChild(QT.QtWidgets.QScrollArea, "skeldarPoseSideScroll")
+        bar = side.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)
+        bar.setValue(bar.maximum())
+        slider = self.win.blend
+        seen = [bar.value()]
+        for dy in (120, 120, 120, -120, -120, -120):  # three notches up, three down
+            taker = self.wheel(slider, dy)
+            self.assertIsNot(taker, slider)
+            seen.append(bar.value())
+        self.assertLess(seen[3], seen[0])            # the panel scrolled up ...
+        self.assertGreater(seen[6], seen[3])         # ... and down again
+        self.assertEqual(slider.value(), 0)
+        self.assertEqual(self.blend_calls(), [])
+
+    def test_a_click_on_the_groove_previews_there_and_keys_once_on_the_release(self):
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        x = slider.width() * 0.4
+        self.slider_mouse("press", x)
+        value = slider.sliderPosition()
+        self.assertTrue(20 <= value <= 45, value)    # the handle jumped under the press ...
+        self.assertLessEqual(abs(slider.handle_rect().center().x() - int(x)), 1)  # centred
+        self.assertTrue(slider.isSliderDown())
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+                                              ("blend_set", value / 100.0)])
+        self.slider_mouse("release", x)
+        self.assertEqual(self.blend_calls()[2:], [("blend_finish",)])
+        self.assertFalse(slider.isSliderDown())
+        self.assertEqual(slider.value(), 0)
+        self.assertEqual(self.win.status.text(), "blended")
+
+    def test_a_press_held_on_the_groove_keys_once_and_only_after_the_release(self):
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        x = slider.width() * 0.85
+        self.slider_mouse("press", x)
+        value = slider.sliderPosition()
+        end = time.time() + 0.7          # past Qt's 500 ms auto-repeat delay, into its repeats
+        while time.time() < end:
+            self.app.processEvents()
+            time.sleep(0.01)
+        self.assertEqual(slider.sliderPosition(), value)
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+                                              ("blend_set", value / 100.0)])
+        self.slider_mouse("release", x)
+        self.assertEqual(self.blend_calls()[2:], [("blend_finish",)])
+        self.assertEqual(slider.value(), 0)
+
+    def test_a_press_on_the_groove_starts_a_drag(self):
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        width = slider.width()
+        self.slider_mouse("press", width * 0.3)
+        self.slider_mouse("move", width * 0.6, held=QT.QtCore.Qt.LeftButton)
+        self.slider_mouse("move", width * 0.9, held=QT.QtCore.Qt.LeftButton)
+        last = slider.sliderPosition()
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.slider_mouse("release", width * 0.9)
+        alphas = [entry[1] for entry in self.scene.calls("blend_set")]
+        self.assertEqual(len(alphas), 3)
+        self.assertEqual(alphas, sorted(alphas))
+        self.assertEqual(alphas[-1], last / 100.0)
+        self.assertEqual(len(self.scene.calls("blend_start")), 1)
+        self.assertEqual(self.blend_calls()[-1], ("blend_finish",))
+        self.assertEqual(len(self.scene.calls("blend_finish")), 1)
+
+    def test_a_drag_of_the_handle_previews_and_keys_on_release(self):
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        self.slider_mouse("press", 2)                # the handle stands at 0, at the left end
+        self.assertTrue(slider.isSliderDown())
+        self.slider_mouse("move", slider.width() * 0.6, held=QT.QtCore.Qt.LeftButton)
+        moved = slider.sliderPosition()
+        self.assertGreater(moved, 0)
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.slider_mouse("release", slider.width() * 0.6)
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+                                              ("blend_set", moved / 100.0), ("blend_finish",)])
+        self.assertEqual(slider.value(), 0)
+
+    def test_escape_mid_slider_drag_puts_every_value_back(self):
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        self.slider_mouse("press", slider.width() * 0.5)
+        self.escape(self.win)
+        self.slider_mouse("move", slider.width() * 0.8, held=QT.QtCore.Qt.LeftButton)
+        self.slider_mouse("release", slider.width() * 0.8)
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.assertEqual(slider.value(), 0)
+
+    def test_the_middle_and_right_buttons_on_the_slider_do_nothing(self):
+        Qt = QT.QtCore.Qt
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        for button in (Qt.MiddleButton, Qt.RightButton):
+            self.slider_mouse("press", slider.width() * 0.5, button=button)
+            self.slider_mouse("release", slider.width() * 0.5, button=button)
+        self.assertEqual(self.blend_calls(), [])
+        self.assertEqual(slider.value(), 0)
+
+    def test_keys_never_move_the_slider(self):
+        Qt = QT.QtCore.Qt
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        for key in (Qt.Key_Right, Qt.Key_PageUp, Qt.Key_End, Qt.Key_Up):
+            QT.QtWidgets.QApplication.sendEvent(
+                slider, QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, key, Qt.NoModifier))
+        self.assertEqual(slider.value(), 0)
+        self.assertEqual(self.blend_calls(), [])
+
+    def test_a_handle_a_style_jumped_before_the_press_is_previewed_at_once(self):
+        # QSlider's absolute-set branch (a style giving the left button SH_Slider_AbsoluteSet-
+        # Buttons) moves the handle BEFORE it downs the slider: the session must preview there
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        slider.setSliderPosition(20)                 # up: the label only
+        self.assertEqual(self.blend_calls(), [])
+        slider.setSliderDown(True)                   # sliderPressed
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+                                              ("blend_set", 0.2)])
+        slider.setSliderDown(False)                  # sliderReleased
+        self.assertEqual(self.blend_calls()[-1], ("blend_finish",))
+        self.assertEqual(slider.value(), 0)
+
+    def test_a_value_set_by_code_keys_nothing(self):
         self.win.pick(self.fist)
         self.win.blend.setValue(30)
-        self.assertEqual(self.scene.calls("blend_set"), [("blend_set", 0.3)])
-        self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
-        self.assertEqual(self.win.blend.value(), 0)
+        self.assertEqual(self.blend_calls(), [])
 
 
 class Save(WindowCase):

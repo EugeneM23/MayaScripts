@@ -34,9 +34,11 @@ What a card does under the mouse, each a measured Qt habit of the plugin's other
     right button cancel;
   - a MIDDLE drag across it blends (Studio Library's gesture): `alpha = dx / (200 px x the
     display scale)`, clamped to 0..1, previewed live, keyed on release; Esc puts every value
-    back. The Blend slider does the same: a drag previews, the release keys, a click on the
-    groove blends once; the slider then reads 0 again, because the pose it keyed IS the new
-    "current" a next blend starts from.
+    back. The Blend slider does the same under a LEFT drag only (`BlendSlider`): a drag
+    previews, the release keys. A press on the groove puts the handle there and starts that
+    same drag, with no page step and no auto-repeat. The wheel and the keys never move it: the
+    wheel scrolls the side panel. The slider then reads 0 again, because the pose it keyed IS
+    the new "current" a next blend starts from.
 
 Every scene call goes through `Scene` (the tests replace it): Save and the thumbnail
 (`capture`), Apply and the blend (`apply`, imported lazily - this module imports neither Maya
@@ -484,6 +486,98 @@ def _classes():
     Qt = QtCore.Qt
     scaled = cardgrid.scaled
 
+    # ---------------------------------------------------------- the Blend slider
+
+    class BlendSlider(QtWidgets.QSlider):
+        """The Blend slider: only a LEFT DRAG moves it, so only a release keys a blend.
+
+        A stock QSlider also moves under the wheel (it takes wheel events with NoFocus), under
+        the keys, and under a groove press, which page-steps at once and then auto-repeats. Each
+        of those changed the value with the slider up. Review finding 1 (2026-10-03) measured
+        what that did when valueChanged keyed: three wheel notches keyed three 3 % blends. A
+        left press held 1.5 s on the groove keyed seventeen 10 % blends, each one starting from
+        the pose the last keyed, about 83 % of the card in 17 undo steps. So:
+
+          - the wheel and the keys are IGNORED: the wheel goes on to the side panel's scroll
+            area, which scrolls (that panel scrolls in a short dock);
+          - a left press on the GROOVE downs the slider first (sliderPressed: the session
+            starts), then puts the handle's centre under the press (sliderMoved: the preview),
+            and follows the mouse until the release (sliderReleased: the blend is keyed).
+            There is no page step and no auto-repeat. A left press on the HANDLE is Qt's own
+            drag, which keeps the grab offset;
+          - the middle and right buttons are ignored (in Fusion the middle one jumps the
+            handle, a path that runs before sliderPressed).
+        """
+
+        def __init__(self, parent=None):
+            QtWidgets.QSlider.__init__(self, Qt.Horizontal, parent)
+            self._groove_drag = False
+
+        def _geometry(self):
+            opt = QtWidgets.QStyleOptionSlider()
+            self.initStyleOption(opt)
+            style = self.style()
+            groove = style.subControlRect(QtWidgets.QStyle.CC_Slider, opt,
+                                          QtWidgets.QStyle.SC_SliderGroove, self)
+            handle = style.subControlRect(QtWidgets.QStyle.CC_Slider, opt,
+                                          QtWidgets.QStyle.SC_SliderHandle, self)
+            return opt, groove, handle
+
+        def value_at(self, x):
+            """The value whose handle is centred on local `x`, by Qt's own arithmetic
+            (QSliderPrivate::pixelPosToRangeValue, a press minus the handle's half width)."""
+            opt, groove, handle = self._geometry()
+            lowest = groove.x()
+            highest = groove.right() - handle.width() + 1
+            return QtWidgets.QStyle.sliderValueFromPosition(
+                self.minimum(), self.maximum(),
+                int(round(x)) - (handle.width() - 1) // 2 - lowest,
+                max(1, highest - lowest), opt.upsideDown)
+
+        def handle_rect(self):
+            """Where the style draws the handle now, local px."""
+            return self._geometry()[2]
+
+        def on_handle(self, point):
+            return self.handle_rect().contains(point)
+
+        def wheelEvent(self, event):                         # noqa: N802
+            event.ignore()
+
+        def keyPressEvent(self, event):                      # noqa: N802
+            event.ignore()
+
+        def mousePressEvent(self, event):                    # noqa: N802
+            if event.button() != Qt.LeftButton or event.buttons() != Qt.LeftButton:
+                event.ignore()
+                return
+            point = event.position().toPoint()
+            if self.on_handle(point):
+                QtWidgets.QSlider.mousePressEvent(self, event)
+                return
+            event.accept()
+            self._groove_drag = True
+            self.setSliderDown(True)
+            self.setSliderPosition(self.value_at(point.x()))
+
+        def mouseMoveEvent(self, event):                     # noqa: N802
+            if self._groove_drag:
+                event.accept()
+                self.setSliderPosition(self.value_at(event.position().x()))
+                return
+            QtWidgets.QSlider.mouseMoveEvent(self, event)
+
+        def mouseReleaseEvent(self, event):                  # noqa: N802
+            if self._groove_drag:
+                if event.button() != Qt.LeftButton:
+                    event.ignore()
+                    return
+                event.accept()
+                self._groove_drag = False
+                self.setSliderDown(False)
+                return
+            QtWidgets.QSlider.mouseReleaseEvent(self, event)
+
     # ---------------------------------------------------------- the window
 
     class PoseWindow(QtWidgets.QWidget):
@@ -502,7 +596,6 @@ def _classes():
             self.picked = None
             self.picked_data = None
             self._blend = None              # dict(path) while a blend session stands
-            self._slider_reset = False
             self._save = None               # dict(initial, snapshot, touched) while saving
             self._building_tree = False
             self.scroll = None
@@ -734,7 +827,7 @@ def _classes():
             blend_row = QtWidgets.QHBoxLayout()
             blend_row.setSpacing(s(6))
             blend_row.addWidget(self._label("Blend", "context"))
-            self.blend = QtWidgets.QSlider(Qt.Horizontal)
+            self.blend = BlendSlider()
             self.blend.setObjectName("skeldarPoseBlend")
             self.blend.setRange(0, 100)
             self.blend.setFocusPolicy(Qt.NoFocus)
@@ -1227,18 +1320,22 @@ def _classes():
             return self.say(BLEND_CANCELLED)
 
         def _reset_slider(self):
-            self._slider_reset = True
             try:
                 self.blend.blockSignals(True)
                 self.blend.setValue(0)
             finally:
                 self.blend.blockSignals(False)
-                self._slider_reset = False
             self.blend_label.setText("0 %")
 
+        #  The slider's three drag signals are the whole blend: pressed starts the session,
+        #  moved previews, released keys. BlendSlider moves only under a left drag (a groove
+        #  press included), so nothing else can key.
+
         def _slider_pressed(self):
-            if self.picked:
-                self._blend_begin(self.picked)
+            if self.picked and self._blend_begin(self.picked):
+                position = self.blend.sliderPosition()
+                if position:            # a style that jumped the handle before the press
+                    self._blend_set(position / 100.0)
 
         def _slider_moved(self, value):
             if self._blend is not None:
@@ -1251,15 +1348,9 @@ def _classes():
                 self._reset_slider()
 
         def _slider_value(self, value):
+            """The label follows the handle. It never keys: review finding 1 (2026-10-03)
+            measured a wheel notch and the groove's auto-repeat keying here."""
             self.blend_label.setText("%d %%" % value)
-            if self._slider_reset or self.blend.isSliderDown() or not value:
-                return
-            #  a click on the groove (or a key): one blend, keyed at once
-            if self.picked and self._blend_begin(self.picked):
-                self._blend_set(value / 100.0)
-                self.blend_release()
-            else:
-                self._reset_slider()
 
         def keyPressEvent(self, event):                      # noqa: N802
             if event.key() == Qt.Key_Escape and self._blend is not None:
@@ -1509,7 +1600,7 @@ def _classes():
             self.refresh()
             return self.say("%s moved to the trash (%s)" % (folder_text(rel), trash))
 
-    _CLASSES.update(PoseWindow=PoseWindow, qt=q)
+    _CLASSES.update(PoseWindow=PoseWindow, BlendSlider=BlendSlider, qt=q)
     return _CLASSES
 
 
