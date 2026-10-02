@@ -45,6 +45,7 @@ import maya.cmds as cmds
 
 import maya_retargetmode as retargetmode
 import maya_rigs
+import maya_skeletonmap as skelmap
 
 # AdvancedSkeleton deform-joint base -> UE bone base.  The rig's own map
 # (2026-09-04), minus the twist Part joints: they have no FK controls and the
@@ -565,6 +566,12 @@ def alignments(triples, rig_rest, src_rest, rig_parents, src_parents):
     for control, our_bone, src_bone in ordered:
         best = None
         want = DIRECTION_CHILD.get(our_bone)
+        # a source WITH metacarpals (Rigify's palm, Daz's carpal) maps ours too, and the
+        # hand then points at the middle metacarpal: aimed past it at the finger, its
+        # direction would depend on the metacarpal's own turn (3.3 deg, measured 2026-10-02)
+        meta = want.replace("_01_", "_metacarpal_") if want else None
+        if meta in preferred:
+            want = meta
         if want is not None and want in preferred:
             best = (0, want, preferred[want])
         for other, other_our, other_src in triples:
@@ -784,6 +791,195 @@ def tpose_note(rest, schema):
                     "vertically (a T-pose is sideways only), height %.2f cm"
                     % (abs(b[0] - a[0]), abs(b[1] - a[1]), top))
     return ""
+
+
+# ------------------------------------------------- any other convention (2026-10-02)
+#
+# The animator asked for retargets from the most used bone hierarchies (Unity, Mixamo,
+# Blender, MotionBuilder, 3ds Max, Unreal) onto our rigs (the spec quotes the ask; this
+# file stays ASCII - a test reads it as cp1252). UE5 and Mixamo keep their own schemas exactly; anything
+# else is read by `maya_skeletonmap` and becomes a GENERIC schema in OUR names - the
+# source's bones re-keyed as if they were a UE5 skeleton's (`pelvis`, `upperarm_l`,
+# ...), so every policy below them (drive_plan, alignments, offsets, the vendor's Bake)
+# runs unchanged. Never a twin: FK takes rotation only and the rest poses are aligned.
+
+GENERIC_SCALE_TOL = 0.02          # a size within 2 % of ours is our size
+MIXAMO_CONVENTIONS = ("mixamo", "motionbuilder_hik")
+UNIT_PREFIX = "asrtUnit_"
+
+
+class GenericSchema(Schema):
+    """A Schema whose source is read by maya_skeletonmap. Beside the tuple it
+    carries what the map found: `bones` ({our name: source path}), `rest_given`
+    (the chosen rest, our names, positions scaled), `parents` (the mapped
+    hierarchy in our names), `scale` / `origin` (travel scaled about the source's
+    own origin when its size is not ours), `convention`, `rest_choice`, `notes`."""
+
+
+def _joint_paths(root):
+    return [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                        fullPath=True) or [])
+
+
+def _zero_rest(paths):
+    """{path: world matrix with every rotate at 0}, walked down from the top -
+    the rest a BVH, a Mixamo or a Biped FBX keeps in its jointOrient."""
+    parents = skelmap.parent_map(paths)
+    out = {}
+    for path in sorted(paths, key=lambda p: (p.count("|"), p)):
+        parent = parents.get(path)
+        if parent in out:
+            base = om.MMatrix(out[parent])
+        else:
+            above = cmds.listRelatives(path, parent=True, fullPath=True)
+            base = om.MMatrix(cmds.getAttr(above[0] + ".worldMatrix[0]")) if above else om.MMatrix()
+        out[path] = list(_local_rest(path) * base)
+    return out
+
+
+def rest_candidates(paths):
+    """{name: {path: world matrix}}: the poses a foreign source's rest may be.
+
+    jointOrient -- every rotate at 0 (BVH, Mixamo, most FBX from Max/Blender);
+    firstFrame  -- the clip's first key (a UE-style clip keeps its bind in the
+                   rotate channels, so its zero pose is a straight line);
+    bindPose    -- the joints' own `.bindPose` world matrix, when a dagPose binds
+                   them all (a skinned source)."""
+    out = {"jointOrient": _zero_rest(paths)}
+    count = cmds.keyframe(paths, query=True, keyframeCount=True) or 0
+    if count:
+        first = cmds.findKeyframe(paths, which="first")
+        out["firstFrame"] = dict((p, cmds.getAttr(p + ".worldMatrix[0]", time=first))
+                                 for p in paths)
+    try:
+        bound = all(cmds.dagPose(p, query=True, bindPose=True) for p in paths)
+    except RuntimeError:
+        bound = False
+    if bound and all(cmds.attributeQuery("bindPose", node=p, exists=True) for p in paths):
+        out["bindPose"] = dict((p, list(cmds.getAttr(p + ".bindPose"))) for p in paths)
+    return out
+
+
+def scaled_matrix(matrix, scale, origin):
+    """Pure: the same frame with its position moved to origin + scale * (p - origin)."""
+    m = list(matrix)
+    for i in range(3):
+        m[12 + i] = origin[i] + scale * (m[12 + i] - origin[i])
+    return m
+
+
+def _sample_frames(paths):
+    """Whole frames over the source's keys (at most 120), [] for an unkeyed one."""
+    if not (cmds.keyframe(paths, query=True, keyframeCount=True) or 0):
+        return []
+    return skelmap.sample_frames(cmds.findKeyframe(paths, which="first"),
+                                 cmds.findKeyframe(paths, which="last"))
+
+
+def mixamo_like(paths):
+    """Is a source that scored as Mixamo really Mixamo / HumanIK? A CMU BVH or a
+    Unity Mecanim skeleton shares `Hips` or `LeftArm` with it and nothing else."""
+    return skelmap.convention_of(paths) in MIXAMO_CONVENTIONS
+
+
+def generic_schema(source_root, rig_bones):
+    """(GenericSchema, refusal) for a source neither UE5 nor Mixamo, read by
+    maya_skeletonmap; the rest pose is the candidate whose bones point most
+    like the rig's own rest (`skelmap.choose_rest`) - it sets only the roll,
+    where the bones POINT does not depend on it."""
+    paths = _joint_paths(source_root)
+    live = dict((p, tuple(cmds.xform(p, query=True, worldSpace=True, translation=True)))
+                for p in paths)
+    result = skelmap.recognize(paths, live)
+    if result.refusal:
+        return None, "%s: %s" % (leaf(source_root), result.refusal)
+    ours = set(our_bone_map().values()) | set(["root"])
+    mapping = dict((k, v) for k, v in result.mapping.items() if k in ours)
+    notes = list(result.notes)
+    frames = _sample_frames(paths)
+    candidates = rest_candidates(paths)
+    cand_pos = dict((name, dict((o, position(mats[s])) for o, s in mapping.items() if s in mats))
+                    for name, mats in candidates.items())
+    mapping = skelmap.drop_static_root(
+        mapping, lambda path, frame: cmds.getAttr(path + ".worldMatrix[0]", time=frame),
+        frames, skelmap.leg_length(cand_pos.get("jointOrient", {})), notes)
+    rig_rest = rest_matrices(rig_bones, "live")
+    rig_pos = dict((n, position(m)) for n, m in rig_rest.items())
+    choice, scores = skelmap.choose_rest(cand_pos, rig_pos)
+    rest = candidates[choice or "jointOrient"]
+    above = cmds.listRelatives(source_root, parent=True, fullPath=True)
+    origin = tuple(cmds.xform(above[0], query=True, worldSpace=True, translation=True)) \
+        if above else (0.0, 0.0, 0.0)
+    # the size without the pose (a crouched first frame read the pelvis 20-60 % low), scaled
+    # about the floor under the root's first frame, where a drop or a kept place puts it
+    scale, sized = skelmap.size_ratio(rig_pos, cand_pos,
+                                      rig_pos["root"][1] if "root" in rig_pos else 0.0, origin[1])
+    if abs(scale - 1.0) <= GENERIC_SCALE_TOL:
+        scale = 1.0
+    first = cmds.getAttr(source_root + ".worldMatrix[0]", time=frames[0]) if frames \
+        else cmds.getAttr(source_root + ".worldMatrix[0]")
+    origin = skelmap.scale_pivot(position(first), origin)
+    named = set(mapping)
+    rows = [(a, u) for a, u in ROWS if u in named or u + "_l" in named or u + "_r" in named]
+    schema = GenericSchema(name="generic:" + result.convention, rows=rows, sides=SIDES,
+                           side_before=False, ik_rows=IK_ROWS, pole_rows=POLE_ROWS,
+                           pelvis="pelvis", root_bone="root" if "root" in mapping else None,
+                           rest="given", align=True, twin=False, hints=())
+    schema.bones = mapping
+    schema.rest_given = dict((o, scaled_matrix(rest[s], scale, origin)) for o, s in mapping.items())
+    schema.parents = skelmap.canonical_parents(mapping, skelmap.parent_map(paths))
+    schema.scale, schema.origin = scale, origin
+    schema.convention, schema.rest_choice = result.convention, choice
+    schema.notes = ["source read as %s (%d bones mapped, confidence %.2f); rest pose: %s%s%s"
+                    % (result.convention, len(mapping), result.confidence, choice,
+                       (" (%s)" % ", ".join("%s %.0f deg" % kv for kv in sorted(scores.items())))
+                       if len(scores) > 1 else "",
+                       ("; the source is %.4g times our size (%s), its travel scaled by %.4f"
+                        % (1.0 / scale, sized, scale)) if scale != 1.0 else "")] + notes
+    return schema, ""
+
+
+def _unit_sources(plan, rig):
+    """{our name: a stand-in path} for a source whose size is not ours: per bone a
+    transform under the holder at the bone's world ROTATION and its position scaled
+    by `schema.scale` about `schema.origin` - the floor under the root's first frame,
+    carried in the source root's parent's frame (the parent a drop shift or a Z-up
+    wrapper moves), so the first frame stands where a drop or a kept place put it. The rest offsets were read from a rest scaled the same way,
+    so every position drive lands at our size; rotation drives see the bone
+    unchanged. None of these constraints is registered: the vendor's Bake must not
+    bake them, and they die with the holder."""
+    schema = plan.schema
+    if getattr(schema, "scale", 1.0) == 1.0:
+        return plan.bones
+    holder = holder_of(rig)
+    space = cmds.createNode("transform", name=_n(rig, UNIT_PREFIX + "space"), parent=holder,
+                            skipSelect=True)
+    above = cmds.listRelatives(plan.root, parent=True, fullPath=True)
+    if above:
+        cmds.parentConstraint(above[0], space, maintainOffset=False)
+    scaled = cmds.createNode("transform", name=_n(rig, UNIT_PREFIX + "scale"), parent=space,
+                             skipSelect=True)
+    cmds.setAttr(scaled + ".scale", schema.scale, schema.scale, schema.scale)
+    # about the same pivot the rest was scaled about (`skelmap.scale_pivot`: the floor
+    # under the root's first frame), in the space's own frame - the source's parent's
+    pivot = om.MPoint(*schema.origin)
+    if above:
+        pivot = pivot * om.MMatrix(cmds.getAttr(above[0] + ".worldMatrix[0]")).inverse()
+    cmds.setAttr(scaled + ".scalePivot", pivot.x, pivot.y, pivot.z)
+    out = {}
+    for ours, path in plan.bones.items():
+        follow = cmds.createNode("transform", name=_n(rig, UNIT_PREFIX + "follow_" + ours),
+                                 parent=space, skipSelect=True)
+        cmds.pointConstraint(path, follow, maintainOffset=False)
+        cmds.orientConstraint(path, follow, maintainOffset=False)
+        stand = cmds.createNode("transform", name=_n(rig, UNIT_PREFIX + ours), parent=scaled,
+                                skipSelect=True)
+        cmds.connectAttr(follow + ".translate", stand + ".translate")
+        cmds.connectAttr(follow + ".rotate", stand + ".rotate")
+        cmds.setAttr(stand + ".scale", 1.0 / schema.scale, 1.0 / schema.scale,
+                     1.0 / schema.scale)
+        out[ours] = (cmds.ls(stand, long=True) or [stand])[0]
+    return out
 
 
 def rig_paths(rig=None):
@@ -1216,12 +1412,17 @@ def _plan(source_root=None, rig=None, bones_mode=None):
                            fullPath=True) or []))
     bones = source_bones(source_root)
     schema, score = detect_schema(list(bones))
-    if schema is None:
-        return empty._replace(
-            refusal="%s is neither a UE5 skeleton nor a Mixamo one (none of %s "
-                    "found) - a third schema needs a row in SCHEMAS"
-                    % (leaf(source_root),
-                       ", ".join(sorted(set(h for s in SCHEMAS for h in s.hints)))))
+    if schema is None or (schema is MIXAMO and not mixamo_like(list(bones.values()))) \
+            or (schema is UE5 and not skelmap.covers_ue_core(bones)):
+        # neither UE5 nor Mixamo: any other convention, read by maya_skeletonmap
+        generic, refusal = generic_schema(source_root, rig_bones)
+        if generic is not None:
+            schema, bones = generic, dict(generic.bones)
+        elif schema is None:
+            return empty._replace(refusal=refusal)
+        # else the map refused what scored as UE5 / Mixamo by name - an arms-only or
+        # upper-body UE clip: the old road drives the bones it has and names the rest
+    rotation = rotation_mode(rig)
     controls = [c for c in candidates(schema) if cmds.objExists(_n(rig, c))]
     ours = our_bone_map()
     scaled, scale, remembered = False, 1.0, ""
@@ -1255,11 +1456,12 @@ def _plan(source_root=None, rig=None, bones_mode=None):
         return empty._replace(
             refusal="no bone of %s matches this rig" % leaf(source_root))
 
-    src_rest = rest_matrices(bones, schema.rest)
+    src_rest = (dict(schema.rest_given) if schema.rest == "given"
+                else rest_matrices(bones, schema.rest))
     rig_rest = rest_matrices(rig_bones, "live")
     triples = [(d.control, ours[d.control], d.bone) for d in drives if not d.own]
     align = (alignments(triples, rig_rest, src_rest,
-                        parents_of(rig_bones), parents_of(bones))
+                        parents_of(rig_bones), getattr(schema, "parents", None) or parents_of(bones))
              if schema.align else
              dict((d.control, list(om.MMatrix())) for d in drives if not d.own))
     # a rotation copy onto a rig with its own proportions is the point of the mode, not a
@@ -1267,7 +1469,7 @@ def _plan(source_root=None, rig=None, bones_mode=None):
     warn = "" if rotation else scale_warning(
         segment_lengths(dict((n, position(m)) for n, m in src_rest.items())),
         segment_lengths(dict((n, position(m)) for n, m in rig_rest.items())))
-    notes = []
+    notes = list(getattr(schema, "notes", []))
     if schema.align:
         worst = max([(rotation_angle(a), c) for c, a in align.items()] or [(0.0, "")])
         notes.append("rest poses aligned bone by bone, worst %.2f deg (%s)"
@@ -1577,6 +1779,10 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
                         plan.bones[bone], space, scaled_group, plan.scale,
                         _n(rig, STRETCH_PREFIX + "_" + bone))[0]
                 return followers[bone]
+        else:
+            # a foreign source at another size is driven through stand-ins at our
+            # size (maya_skeletonmap); the squash & stretch above scales it itself
+            plan = plan._replace(bones=_unit_sources(plan, rig))
         for drive in plan.drives:
             control = _n(rig, drive.control)
             order = cmds.getAttr(control + ".rotateOrder")
@@ -1674,7 +1880,7 @@ def connect(source_root=None, require_build_pose=True, exact_neck=True, rig=None
                  " Bake reads the RANGE, so match it to the clip first"
                  % (cmds.playbackOptions(query=True, min=True),
                     cmds.playbackOptions(query=True, max=True),
-                    _key_range(list(plan.bones.values()))))
+                    _key_range(list(source_bones(plan.root).values()))))
     lines.append(set_exact_neck(rig) if exact_neck else neck_note(rig))
     lines.append("the rig FOLLOWS the clip now and keeps nothing of it yet: run bake() -- the vendor's "
                  "Bake over the clip's keys, then its Disconnect (or, in AdvancedSkeleton: MoCap "

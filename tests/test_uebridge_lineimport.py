@@ -113,7 +113,7 @@ class Press(unittest.TestCase):
         rigimport.root_at = root_at
 
         saved_si = dict((name, getattr(skeletonimport, name)) for name in (
-            "precheck", "skeleton_entry", "onto_skeleton"))
+            "precheck", "skeleton_entry", "onto_skeleton", "travel_scale"))
         self.addCleanup(lambda: [setattr(skeletonimport, k, v) for k, v in saved_si.items()])
         self.skeleton_refusal = ""
         skeletonimport.precheck = lambda entry=None: self.skeleton_refusal
@@ -126,6 +126,12 @@ class Press(unittest.TestCase):
             self.namespaces.discard(namespace)
             return "%s onto %s" % (name, entry.label), "", next(tops)
         skeletonimport.onto_skeleton = onto_skeleton
+        self.scales = {}                # clip name: the size its travel is baked at
+
+        def travel_scale(source, target):
+            self.calls.append(("scale", source, target))
+            return self.scales.get(source.split(":")[0].lstrip("|"), 1.0)
+        skeletonimport.travel_scale = travel_scale
 
         def progress(*args, **kwargs):
             if kwargs.get("query"):
@@ -153,7 +159,7 @@ class Press(unittest.TestCase):
         return "C:/t/%s.fbx" % record.name, 30.0
 
     def kinds(self):
-        return [c[0] for c in self.calls if c[0] != "step"]
+        return [c[0] for c in self.calls if c[0] not in ("step", "scale")]
 
     def test_every_clip_leaves_the_editor_before_the_first_import(self):
         lineimport.run(self.records, self.export, "new_rig")
@@ -180,6 +186,33 @@ class Press(unittest.TestCase):
         self.assertIn("3 animations onto 3 new rigs in a 2 x 2 square about (0, 0)", text)
         self.assertIn("Manny_Rig1 A, Manny_Rig2 B, Manny_Rig3 C", text)
         self.assertIn("widened beside B", text)
+
+    def test_a_scaled_clip_is_laid_out_at_the_size_it_will_travel(self):
+        """The fix pass, 2026-10-02: a CMU or metre-scale clip is baked at our
+        size about its first frame, so its travel is read at that size before
+        the square is laid out - or neighbours overlap. B first, so its reach
+        (30 to the right, three times that baked) pushes the next column."""
+        self.scales = {"B": 3.0}
+        order = "BAC"
+        records = [next(r for r in self.records if r.name == n) for n in order]
+        lineimport.run(records, self.export, "new_rig")
+        self.assertIn(("scale", "|B:root", "new_rig"), self.calls)
+        tracks = dict((n, TRACKS[n]) for n in "AC")
+        first = TRACKS["B"][0]
+        tracks["B"] = [tuple(f + 3.0 * (c - f) for c, f in zip(p, first)) for p in TRACKS["B"]]
+        x = [lineup.side_extent(tracks[n], lineup.COLUMNS) for n in order]
+        z = [lineup.side_extent(tracks[n], lineup.ROWS) for n in order]
+        points = [c[3] for c in self.calls if c[0] == "retarget"]
+        self.assertEqual(points, lineup.square_slots((0.0, 0.0, 0.0), x, z))
+        self.assertAlmostEqual(points[1][0] - points[0][0], 250.0 + 90.0)   # B's baked reach
+        unscaled = lineup.square_slots((0.0, 0.0, 0.0),
+                                       [lineup.side_extent(TRACKS[n], lineup.COLUMNS) for n in order],
+                                       [lineup.side_extent(TRACKS[n], lineup.ROWS) for n in order])
+        self.assertAlmostEqual(unscaled[1][0] - unscaled[0][0], 250.0 + 30.0)
+
+    def test_the_skeleton_road_asks_for_its_own_scale(self):
+        lineimport.run(self.records, self.export, "skeleton")
+        self.assertIn(("scale", "|A:root", "skeleton"), self.calls)
 
     def test_about_a_point_whatever_the_camera(self):
         lineimport.run(self.records, self.export, "new_rig", centre=(100.0, 0.0, -40.0))

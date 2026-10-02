@@ -62,6 +62,7 @@ _PAYLOAD = (
     "maya_rigs.py",
     "maya_asretarget.py",
     "maya_pmretarget.py",
+    "maya_skeletonmap.py",      # any humanoid convention onto our names (2026-10-02)
     "maya_rig_retarget.py",
     "maya_retargetmode.py",     # rotations or squash & stretch, and the choice (2026-10-02)
     "maya_graphoverlay",        # the Graph Editor over the viewport (2026-09-30)
