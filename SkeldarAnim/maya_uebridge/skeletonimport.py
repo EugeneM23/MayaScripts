@@ -958,8 +958,6 @@ def _identity():
     return om.MMatrix()
 
 
-def onto_skeleton(entry, namespace, info, source, name, point=None):
-
 CANCELLED = "cancelled - nothing changed"
 
 
@@ -991,9 +989,6 @@ def _with_reason(line, decision):
     if decision is not None and decision.reason:
         return "{0}  |  {1}".format(line, decision.reason)
     return line
-
-
-def onto_skeleton(entry, namespace, info, source, name, point=None, decide=None):
 
 
 def onto_skeleton(entry, namespace, info, source, name, point=None, decide=None):

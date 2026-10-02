@@ -316,6 +316,11 @@ class RigImportCancel(unittest.TestCase):
         rigimport.cmds = types.SimpleNamespace(
             undoInfo=lambda **k: None,
             namespace=lambda **k: self.calls.append(("delete_ns", k.get("removeNamespace"))))
+        # the press notes the namespaces before its import (the sources merge,
+        # 2026-10-02: a failed file import is taken back)
+        saved_ns = rigimport.animimport.existing_namespaces
+        self.addCleanup(lambda: setattr(rigimport.animimport, "existing_namespaces", saved_ns))
+        rigimport.animimport.existing_namespaces = lambda: []
 
         def cancel(rig, mod, source):
             self.calls.append(("decide",))
