@@ -332,6 +332,19 @@ def _box_blur(a, radius):
             + cs[:-n, :-n]) / float(n * n)
 
 
+#  A portrait at least this opaque hides the fire behind it whole (the «?»
+#  card's faint silhouette is 0.30): «чтобы огонь как и на других карточках
+#  горел за силуэтом».
+BODY_ALPHA = 0.25
+
+
+def body_mask(alpha):
+    """Where a portrait hides the fire behind it, 0..1: its silhouette as
+    if it were opaque (alpha BODY_ALPHA and up), its edges still soft."""
+    alpha = np.asarray(alpha, np.float32)
+    return np.clip(alpha / BODY_ALPHA, 0.0, 1.0).astype(np.float32)
+
+
 def lit_masks(alpha):
     """(shade, rim, light) float32 masks 0..1 from a portrait's alpha (a
     square float array): the silhouette (darkened, backlit), the inside of

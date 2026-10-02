@@ -336,6 +336,25 @@ class FireOnHover(unittest.TestCase):
         hot = self.count(self.render(self.grid), box, flame)
         self.assertGreater(hot, 30, (cold, hot))
 
+    def test_the_fire_burns_behind_the_unknown_cards_silhouette(self):
+        """«сделай что бы огонь как и на других карточках горел за
+        силуэтом»: where the «?» card's faint silhouette stands the card
+        looks as it does cold; beside it the fire shows."""
+        from maya_scenesetup import catalog
+        x, y, w, h = self.box(catalog.AUTO)
+        body = (int(x + w * 40 / 256.0), int(y + h * 245 / 256.0))   # alpha 0.30
+        empty = (int(x + w * 40 / 256.0), int(y + h * 180 / 256.0))  # alpha 0
+        cold = self.render(self.grid)
+        self.burn(catalog.AUTO)
+        hot = self.render(self.grid)
+
+        def change(point):
+            a, b = cold.pixelColor(*point), hot.pixelColor(*point)
+            return max(abs(a.red() - b.red()), abs(a.green() - b.green()),
+                       abs(a.blue() - b.blue()))
+        self.assertLess(change(body), 40)
+        self.assertGreater(change(empty), 60)
+
     def test_moving_on_puts_the_first_out_and_lights_the_second(self):
         self.burn("Creep", 0.3)
         self.grid.hover_model("Orc_D")

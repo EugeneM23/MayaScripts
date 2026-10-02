@@ -8440,8 +8440,12 @@ flipbook). The verdict: «У каждого персонажа свой цвет
   added onto) a red glow standing behind the tongues. The animator then asked for it to burn like
   Manny's («Давай не делать черный огонь а сделаем так же как и карточка менни»), and the black fire
   was taken out whole (its palettes, `style()`, the "over" blend). Its portrait is a TRANSLUCENT
-  silhouette, so the fire shows through the body, and the orange «?» mark nearly melts into the orange
-  flames (seen in the picture). A body that hides the fire behind it is the fix if it is ever wanted.
+  silhouette (alpha 0.30, the «?» 1.0), so the fire showed through the body and the orange «?» melted
+  into the flames; then «сделай что бы огонь как и на других карточках горел за силуэтом».
+- **Every portrait hides the fire behind its body**: under the portrait `_paint_hot` lays
+  `charfire.body_mask(alpha)` (alpha 0.25 and up as opaque, the edges soft) filled with the card's own
+  face colour (`_body_for`, cached per model, size and face). A faint silhouette then looks as it does
+  cold, with the fire behind it; an opaque portrait (Manny's) is unchanged, no halo.
 - **No fire**: on a dimmed portrait, during a drag (the drag puts it out), with ⋮ → Interface animations
   off (`maya_hubmotion.enabled()`, asked through `maya_chargrid._animations`, a test seam).
 - **`SkeldarAnim/maya_charfire.py`** (numpy + stdlib; a subprocess test pins it; a payload row): the
@@ -8462,11 +8466,11 @@ flipbook). The verdict: «У каждого персонажа свой цвет
     body), the grid draws its burning cards itself, clipped.
   - The grid's `destroyed` deletes it; the content's death takes it too.
 
-Proof: `tests/test_charfire.py` 24; `tests/test_chargrid.py` 14 new (lights, not a dimmed one, not with
+Proof: `tests/test_charfire.py` 25; `tests/test_chargrid.py` 15 new (lights, not a dimmed one, not with
 the animations off, not a model with no fire, moving on, burning out and the timer stopping, the Creep blue
-and the Orc green in the picture, the «?» card burning orange, a drag, a click burst, the overlay in a
-scroll area drawing it past the grid and the grid skipping it, a grid cut by its parent drawing itself,
-the overlay dying with the grid); 3958 unit tests. `docs/superpowers/plans/verify_character_fire.py`
+and the Orc green in the picture, the «?» card burning orange and behind its silhouette, a drag, a click
+burst, the overlay in a scroll area drawing it past the grid and the grid skipping it, a grid cut by its
+parent drawing itself, the overlay dying with the grid); 3960 unit tests. `docs/superpowers/plans/verify_character_fire.py`
 **10/10 in a disposable GUI Maya** (port
 7037, scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`, minimized, killed after) on the repo's hub floated to the
 dock's 510 px, a real QMouseEvent on the grid:
@@ -8476,8 +8480,10 @@ dock's 510 px, a real QMouseEvent on the grid:
 - cold 1.43 s after the mouse left, the timer stopped, the overlay hidden;
 - off with Interface animations off;
 - after `maya_hub.rebuild()`: 0 overlays left, the new grid burning again;
-- the «?» card burning orange: 317 fire samples in the overlay's picture (a run right after Maya's
-  launch: paints p95 5.4 ms, a loop turn p99 58 ms while Maya was still settling).
+- the «?» card burning orange (295 fire samples in the overlay's picture) and behind its silhouette:
+  the body at the bottom stays grey (84, 81, 83);
+- a run sent seconds after Maya's launch reads a loop turn p99 of 56-58 ms (Maya still settling, the
+  paints still p95 4.8 ms); the same run on the warmed-up Maya: p99 10.6 ms, paints 4.35 ms.
 Pictures: the hub with Manny burning, and with the «?» card (DWM's copy of the window).
 
 198. **A Bash heredoc in this harness turns a double backslash into a single one** (2026-10-02, twice:

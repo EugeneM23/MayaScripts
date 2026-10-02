@@ -223,17 +223,20 @@ def _classes():
         return QtGui.QImage(data.data, side_x, side_y, side_x * 4,
                             Premultiplied).copy()
 
-    def lit_images(pixmap, side, flame):
-        """(shade, rim, firelight) images of a portrait drawn `side` px."""
+    def portrait_alpha(pixmap, side):
+        """A portrait's alpha drawn `side` px square, a float array 0..1."""
         import numpy as np
         image = pixmap.toImage().scaled(
             side, side, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
         ).convertToFormat(QtGui.QImage.Format_ARGB32)
         bits = np.frombuffer(image.constBits(), np.uint8).reshape(
             side, image.bytesPerLine())
-        alpha = bits[:, :side * 4].reshape(side, side, 4)[:, :, 3].astype(
+        return bits[:, :side * 4].reshape(side, side, 4)[:, :, 3].astype(
             np.float32) / 255.0
-        shade, rim, light = charfire.lit_masks(alpha)
+
+    def lit_images(pixmap, side, flame):
+        """(shade, rim, firelight) images of a portrait drawn `side` px."""
+        shade, rim, light = charfire.lit_masks(portrait_alpha(pixmap, side))
         return (mask_image(shade, QtGui.QColor(0, 0, 0)),
                 mask_image(rim, flame.rim), mask_image(light, flame.light))
 
@@ -818,6 +821,20 @@ def _classes():
                 self._lit[cache] = lit_images(pixmap, side, flame)
             return self._lit[cache]
 
+        def _body_for(self, key, side, face):
+            """The portrait's silhouette, opaque, in the card's own face
+            colour: laid under the portrait it hides the fire behind the
+            body, so a faint silhouette (the «?» card's) looks as it does on
+            a cold card and the fire burns behind it, as on the others."""
+            cache = ("body", key, side, face.rgba())
+            if cache not in self._lit:
+                pixmap = self.pixmaps.get(key)
+                if pixmap is None or pixmap.isNull():
+                    return None
+                self._lit[cache] = mask_image(
+                    charfire.body_mask(portrait_alpha(pixmap, side)), face)
+            return self._lit[cache]
+
         def _paint_sparks(self, p, box, fx, flame, front):
             sparks = fx.sparks
             if not len(sparks.age):
@@ -932,6 +949,9 @@ def _classes():
                 del image, data
                 p.setCompositionMode(Over)
                 self._paint_sparks(p, box, fx, flame, front=False)
+            body = self._body_for(key, side, face)
+            if body is not None:                 # the fire behind the body
+                p.drawImage(box, body)
             p.setOpacity(0.45 if dragging == key else 1.0)
             if pixmap is not None and not pixmap.isNull():
                 p.drawPixmap(box, pixmap, QtCore.QRectF(pixmap.rect()))

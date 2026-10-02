@@ -20,7 +20,8 @@ QMouseEvent sent to the grid.
     7  Interface animations off: no fire, the old hover
     8  a hub rebuild leaves no overlay behind, and the new grid burns again
     9  a picture of the hub with a card burning (DWM's copy of the window)
-   10  the «?» card (catalog.AUTO) burns orange, as Manny's does
+   10  the «?» card (catalog.AUTO) burns orange, as Manny's does, and behind
+       its faint silhouette: the body stays grey
 
 UI only: no scene node is touched; the switch's optionVar is put back.
 
@@ -297,7 +298,7 @@ try:
 
     # ------------------------------- 10 the «?» card burns as Manny's
     from maya_scenesetup import catalog
-    hot_n = 0
+    hot_n, body_rgb = 0, (255, 255, 255)
     if catalog.AUTO in keys(grid):
         move(grid, centre(grid, catalog.AUTO))
         run(1.2)
@@ -309,12 +310,21 @@ try:
         hot_n = count(lifted, rect_u,
                       lambda r, g, b: r > 235 and g > 140 and b < 150,
                       o.x(), o.y())
+        # the fire burns BEHIND its faint silhouette (alpha 0.30): a point
+        # of the body at the bottom stays the silhouette's grey
+        ux, uy, uw, uh = rect_u
+        bx = int(ux + uw * 40 / 256.0) + o.x()
+        by = int(uy + uh * 245 / 256.0) + o.y()
+        c = lifted.pixelColor(bx, by)
+        body_rgb = (c.red(), c.green(), c.blue())
         if OUT and overlay:
             lifted.save(os.path.join(OUT, "fire_overlay_unknown.png"))
         leave(grid)
         run(until=lambda: not grid.fx, timeout=6.0)
-    gate(10, "the «?» card burns orange, as Manny's",
-         hot_n > 30, "%d fire samples" % hot_n)
+    gate(10, "the «?» card burns orange, as Manny's, behind its silhouette",
+         hot_n > 30 and max(body_rgb) < 120
+         and max(body_rgb) - min(body_rgb) < 30,
+         "%d fire samples; the body at the bottom %s" % (hot_n, body_rgb))
 finally:
     maya_hub.set_animations(saved_switch)
 

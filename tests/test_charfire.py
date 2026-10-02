@@ -220,6 +220,18 @@ class LitMasks(unittest.TestCase):
         self.assertGreater(float(rim[32, 32 - 21]), 0.1)   # just inside
         self.assertEqual(float(rim[2, 2]), 0.0)            # outside
 
+    def test_the_body_hides_the_fire_behind_even_a_faint_silhouette(self):
+        """«чтобы огонь как и на других карточках горел за силуэтом»: the «?»
+        card's silhouette is alpha 0.30, and it still covers the fire whole;
+        nothing covers where the picture is empty."""
+        alpha = np.array([[0.0, 0.1, 0.30, 1.0]], np.float32)
+        body = cf.body_mask(alpha)
+        self.assertEqual(float(body[0, 0]), 0.0)
+        self.assertGreater(float(body[0, 1]), 0.0)          # an edge: partly
+        self.assertLess(float(body[0, 1]), 1.0)
+        self.assertEqual(float(body[0, 2]), 1.0)
+        self.assertEqual(float(body[0, 3]), 1.0)
+
     def test_the_firelight_comes_from_below(self):
         alpha = np.ones((40, 40), np.float32)
         _shade, _rim, light = cf.lit_masks(alpha)
