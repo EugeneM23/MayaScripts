@@ -96,8 +96,8 @@ class FakeCmds(object):
         return self.batch
 
     def progressWindow(self, **kw):
-        if self.batch:
-            raise AssertionError("no progressWindow in batch mode")
+        # every call recorded, batch mode or not: an AssertionError raised here would be caught
+        # by Progress's own "no UI" guard, and a test asserting none came could not fail
         if kw.get("query"):
             assert kw.get("isCancelled"), kw
             return self.cancel_after is not None and self.steps >= self.cancel_after
@@ -207,6 +207,17 @@ class WalkOrder(Rebound):
                 pass
         self.assertEqual(self.log, [("tweaks",), ("suspend",), ("resume",)])
 
+    def test_an_evaluation_that_cannot_be_made_resumes_the_viewport(self):
+        # `_evaluation` imports the solver late: an ImportError there (a module mid-update) must
+        # not leave the viewport suspended for the rest of the session
+        def unimportable(tweaks, skip):
+            raise ImportError("cannot import name 'rigsolve'")
+        timewalk._evaluation = unimportable
+        with self.assertRaises(ImportError):
+            with timewalk.Walk(fresh=True):
+                pass
+        self.assertEqual(self.log, [("tweaks",), ("suspend",), ("resume",)])
+
     def test_restore_all_sets_back_every_tweak_now_and_on_exit(self):
         # a cancelled press: its chunk undone, nothing was keyed after all
         with timewalk.Walk(fresh=True) as walk:
@@ -232,10 +243,13 @@ class DefaultEvaluation(unittest.TestCase):
 class ProgressWindow(Rebound):
 
     def test_batch_never_opens_a_window_and_always_goes_on(self):
+        # the fake opens a window in batch mode as anywhere else: only Progress's own question
+        # (`about -batch`) keeps it shut
         timewalk.cmds = FakeCmds(self.log, batch=True)
         with timewalk.Progress("Saving Walk", 3) as progress:
             self.assertTrue(progress.step("frame 1"))
             self.assertTrue(progress.step("frame 2"))
+            self.assertFalse(progress.on)
         self.assertEqual(self.log, [])
 
     def test_opens_steps_and_ends(self):

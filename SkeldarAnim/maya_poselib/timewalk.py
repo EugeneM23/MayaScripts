@@ -60,7 +60,8 @@ class Walk(object):
     `keys.write` answer them) - checked on real Maya, a keyed `loc.sx` was set back over its new
     key while `loc.scaleX` was skipped. An exception inside the walk goes on after all of that;
     a step that fails on exit is raised after the others ran, unless the walk's own exception is
-    already on its way.
+    already on its way. An evaluation that cannot be made or entered (the solver's late import
+    failing, the switch refused) resumes the viewport before the error goes on.
 
     `restore_all()` is a cancelled press's: its chunk undone, nothing it keyed stands, so every
     tweak goes back - now, and again on exit (the time put back throws them away once more)."""
@@ -78,8 +79,10 @@ class Walk(object):
         self._here = oma.MAnimControl.currentTime()
         cmds.refresh(suspend=True)
         if self.fresh:
-            evaluating = _evaluation(self.tweaks, self.keyed)
             try:
+                # inside the guard: `_evaluation` imports the solver late, and an import that
+                # fails must not leave the viewport suspended any more than a switch refused
+                evaluating = _evaluation(self.tweaks, self.keyed)
                 evaluating.__enter__()
             except BaseException:
                 cmds.refresh(suspend=False)
