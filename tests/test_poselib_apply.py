@@ -775,6 +775,19 @@ class Press(unittest.TestCase):
         self.assertEqual((ok, text), (True, "rebuilt | posed"))
         self.assertEqual(added, ["Manny_Rig", "rebuild"])
 
+    def test_drop_floor_hands_the_added_character_to_onto_when_given(self):
+        # an animation card's drop (animapply.drop_floor): the same road to the new character,
+        # then ITS press in place of the pose's
+        added = self.floor_patched()
+        posed = []
+        ap.apply_onto = lambda data, root, mirror=False: posed.append(root) or (True, "posed")
+        onto = []
+        ok, text = ap.drop_floor(dict(self.card, character={"key": "Manny_Rig"}),
+                                 (1.0, 0, 2.0), onto=lambda root: onto.append(root) or
+                                 (True, "pasted"))
+        self.assertEqual((ok, text), (True, "added | pasted"))
+        self.assertEqual((added, onto, posed), (["Manny_Rig"], ["|root"], []))
+
     # ---- what the line counts
 
     def test_the_line_counts_the_nodes_that_took_a_key(self):
