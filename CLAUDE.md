@@ -8661,3 +8661,101 @@ asset's name.
      translation retargeting hides it on the Orc's mesh). They still match Orc D (0.88), and the twin
      retarget keeps Orc D's bones: the hand ends 1.7 cm off the raw FBX joints while every bone POINTS as
      the clip's (0.087°) - what Unreal shows. A gate on positions alone calls that broken.
+
+## The Pose Library: cards of bones, onto any rig or skeleton (2026-10-02/03)
+
+The animator: «библиотеку поз на подобии studio library ... если анимация относится к ригу то мы должны
+сохранять анимацию не контроллов а костей ... задействовал уже написаные элементы ретаргета ... достаточно
+выделить любую часть скелета или рига нажать apply ... перетягивать наши карточки на персонажа ... Поза должна
+накладываться на текущий активный анимационный слой ... в пустую сцену ... загрузит исходный риг или скелет».
+Asked: **Blend and Mirror** in the first version; the library is **a `poses/` folder in the plugin, installed
+like all our content**, local poses survive an install, and on the animator's machine the library points at
+the repo's `SkeldarAnim/poses` once (`skeldarPoseLibraryRoot`) so a commit + push ships them; **the character
+stays where it stands** (root/Main never written, the pelvis relative to the root); **always a key**, on the
+active layer; **both FK and IK** keyed on a rig. Poses only - animation cards later. Spec
+`docs/superpowers/specs/2026-10-02-pose-library-design.md`, plan beside it. Built in its own worktree
+(`feature/pose-library`) by subagent waves, each task reviewed, then a four-lens final review with three
+skeptics per finding (10 confirmed, 2 critical) and two fix rounds.
+
+- **A card** is `<Name>.pose/` (`pose.json` + `thumbnail.jpg`) in plain folders (`maya_poselib/store.py`,
+  stdlib, atomic writes, deletes to `<userAppDir>/SkeldarPoses_trash`). A character card holds EVERY bone of
+  the source skeleton (rest = `rest_world`, the bind; world; the canonical name from `maya_skeletonmap.
+  recognize` over the WHOLE skeleton - it refuses a hand chain alone) and the members; a rig card also the
+  DRIVE of the eight unrolled limb bones (`G·D⁻¹·S`: the roll AdvancedSkeleton moved into the twist joints,
+  put back). An objects card holds keyable attributes (Studio Library's kind); the selection decides where it
+  goes, and never onto a character's parts.
+- **The transfer** (`posemath`, pure): pairs by leaf when both skeletons are UE-named, else by canonical name
+  (spine/neck distributed); each member's rotation relative to its nearest PAIRED ancestor, carried through the
+  two rests (`O = rigid(T_rest)·A·rigid(S_rest)⁻¹`, `A` the minimal rest-direction turn); every bone keeps its
+  own length; the pelvis takes the card's offset from the root, scaled. A skeleton is ROOTED only when its top
+  joint is a canonical `root` at its own feet; otherwise (Mixamo's Hips, a Biped's Bip001) it stands on its
+  GROUND frame (the floor under the top joint, turned by its heading), source and target alike. A twin (median
+  length ≤ 1 % AND every rest chord within `TWIN_DEG`, 1°) is exact. Mirror reflects each bone's root-space
+  delta from rest (`r[s]·F·D[opposite]·F`). The drive is read where the target does not carry the source's
+  twist bones.
+- **Onto a rig** (`rigsolve`, `fkik`'s analytic switch generalised to the whole rig; no constraint, no bake,
+  never `reset_build_pose`): sampled once; per AS base `S* = O_g⁻¹·W*`; FK controls level by level DOWN THE
+  GAME SKELETON with each parent read live (robust to the `FKPS2*` point constraints, the finger SDK groups,
+  `FKGlobalHead_M`); **`FKNeck_M` has no FKX joint under it** (the neck in-between drives `FKXNeck_M`) - it is
+  solved numerically, `bias`/share never written; IK ends from `K·S*` (`AlignIKTo*`), poles on the plane,
+  IKToes by a relation plus a numeric finish (the SC handle is not rigid: 9.9° off by the relation alone);
+  RootX_M from the pelvis; a half-blended limb's IK half keeps its non-member places from the IKX chain.
+  **Onto a skeleton** (`skelsolve`): joint channels `R = RA⁻¹·L·JO⁻¹`, the euler nearest the current one.
+- **Keys** (`keys`): the active layer = the selected non-base layer (several → the topmost, named), else
+  BaseAnimation; a locked one is refused, a muted or zero-weight one is said; plugs are added to the layer; one
+  undo chunk per press, autoKey off inside it.
+- **The window** (`maya_poselib/window.py` + `cardgrid.py`, a workspaceControl `skeldarPoseLibrary` on the
+  hub's pattern): folders, search (name, folder, character), sort, card size, **+ Save pose** (region chips
+  pre-lit from the selection; Snapshot = a playblast of the active panel, square, controls/joints/labels hidden
+  and put back), details with **Apply**, **Mirror**, **Blend** (the slider, or a middle drag across a card;
+  previews unrecorded, keys on the release, Esc puts every value back), **Select objects**; the right button
+  (Apply, Apply mirrored, Select objects, Rename, Move to…, Replace thumbnail, Update from selection, Show in
+  Explorer, Delete). A card dragged onto a character in a viewport applies onto it; onto the empty floor it
+  adds the card's source character there (a native skeleton is rebuilt bones-only, grouped) and poses it; onto
+  a folder it moves there. Hub card **Pose Library** (Animation, icon `books`), hotkey row `window.poses`.
+- **The install** keeps local poses CARD BY CARD against `poses/.shipped.json` (what each build shipped, with
+  sha1s): a colleague's card is never merged file by file into a shipped one (a clash goes back beside it as
+  «Name (local)»), a shipped card deleted or renamed upstream does not come back, a failure keeps the aside
+  folder and says where. An open Pose Library is rebuilt after an install, like the hub.
+
+Proof: `verify_poselib_solve.py` **109/109** and `verify_poselib_apply.py` **117/117** (mayapy standalone:
+layers, undo in DG and parallel, the animator's tweaks, mirror, blend, partial cards, half-blended limbs,
+Mixamo, a Biped, characters standing low and high, objects, the floor drop); `verify_poselib_gui.py` **50/50**
+in a disposable GUI Maya on port 7031 (the window from the hub card, Save with a real thumbnail, search,
+folders, drops onto a rig and onto the floor, the blend slider and the middle drag, Esc; pictures
+`poselib_window.png`, `poselib_window_save.png`, `poselib_viewport.png`); 4595 unit tests. Not exercised: a
+real OS mouse over the viewport, Alt+Tab mid-drag (proven with sent Qt events only). Not built: animation
+cards, selection sets, bone translations below the pelvis, applying with the root, the IK spine, sending a
+pose through Shared.
+
+205. **`setKeyframe(plug, animLayer=L, value=v)` takes `v` as the plug's FINAL value** on an additive layer
+     (it writes `v − base`, divided by the weight), on an override layer, and on BaseAnimation under an
+     additive layer (measured 2026-10-02, mayapy). Without `animLayer` the key goes to Maya's own best layer,
+     not the selected one; a plug not in `L` is refused with a warning (add it first); a LOCKED layer still
+     takes a scripted key; quaternion accumulation (`rotationAccumulationMode` 1) breaks the per-channel
+     arithmetic. `setAttr` on a layered channel works and holds until the next time evaluation.
+206. **A same-frame `currentTime` re-evaluates every time curve in the scene**, so every unkeyed tweak on a
+     keyed channel snaps back to its curve - on characters and props the press never touched. The pose
+     library's first build "settled" with it: an Apply of a hand card threw away the animator's hand-posed
+     body, and Esc after a blend "put back" the curve values. Every gate was green, because no fixture carried
+     a tweak. An evaluation-manager switch (DG ↔ parallel) does the same. Dirty only what you changed
+     (`dgdirty` the feeding nodes); where a re-evaluation cannot be avoided, record the plugs whose value
+     differs from their curve at the frame and set them back through **MPlug** - a `setAttr` inside the
+     press's chunk is replayed to the curve by its Ctrl+Z.
+207. **Under the parallel evaluation manager a read after scripted `setAttr`s can go stale on a KEYED rig**
+     (measured in a GUI Maya, 2026-10-03): `FKHead_M.parentMatrix[0]` read after the neck's numeric probes set
+     `FKNeckPart1_M` came back 4e-4 and then 0.62 off, and the head landed 8-24° off in 16 of 16 trials, while
+     an unkeyed rig read identically to DG. The solve runs under DG (`rigsolve.FRESH_MODE = "off"`, the mode
+     put back after): the switch costs ~0.03 s and FLUSHES Cached Playback, which refills on the next
+     evaluation (61 frames in 0.3-0.4 s).
+208. **An install that restores a folder FILE BY FILE glues two things into one.** `keep_local` put back every
+     file the new build lacked: a colleague's card at a shipped card's path got the shipped `pose.json` with
+     its own thumbnail, and a shipped card renamed upstream came back for ever. Decide per unit (a `.pose`
+     folder) against a manifest of what the previous build shipped.
+209. **A "rest" mixed from two sources moves with the character.** `rest_world` answers the skinCluster's bind
+     for a skinned joint and the CURRENT world for an unskinned one (Manny's `weapon_*`, `camera_*`), so with
+     Main at y = -150 half the rest stood 150 cm away from the other half, recognize's floor rule read the root
+     as no root, and the pelvis landed 245.9 cm over it instead of 95.9. One consistent rest per skeleton: an
+     unskinned joint below the top rests at its parent's bind, an unskinned TOP joint at its bind pose
+     (`dagPose`) - never through a descendant that moves against it: taken from the pelvis, an unweighted
+     root followed a crouch and the whole card landed turned 30°.
