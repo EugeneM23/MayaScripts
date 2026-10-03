@@ -672,13 +672,17 @@ class RefreshWorld(unittest.TestCase):
 
     ROOT, ARM = "|chr|r:root", "|chr|r:root|r:upperarm_l"
 
-    def bones(self):
+    def bones(self, rig=True):
+        """`scene.skeleton`'s bones: on a rig the unrolled upper arm carries its drive, on a
+        skeleton no bone carries one."""
         static = {"rotateOrder": 0, "jointOrient": [0.0, 0.0, 0.0], "rotateAxis": [0.0, 0.0, 0.0]}
+        arm = dict(static, path=self.ARM, parent="root", canonical="upperarm_l",
+                   rest=_at(20, 140, 0), world=_at(20, 140, 0))
+        if rig:
+            arm["drive"] = _at(20, 140, 0, 5.0)
         return {"root": dict(static, path=self.ROOT, parent=None, canonical="root",
                              rest=_at(0, 0, 0), world=_at(0, 0, 0)),
-                "upperarm_l": dict(static, path=self.ARM, parent="root", canonical="upperarm_l",
-                                   rest=_at(20, 140, 0), world=_at(20, 140, 0),
-                                   drive=_at(20, 140, 0, 5.0))}
+                "upperarm_l": arm}
 
     def setUp(self):
         from maya_poselib import rigsolve
@@ -698,7 +702,7 @@ class RefreshWorld(unittest.TestCase):
         scene.cmds, self.rigsolve.drive_matrices = self.saved
 
     def test_a_skeleton_s_worlds_are_read_again(self):
-        bones = self.bones()
+        bones = self.bones(rig=False)
         import copy
         before = copy.deepcopy(bones)
         out = scene.refresh_world(SKELETON._replace(root=self.ROOT), bones)
@@ -711,8 +715,9 @@ class RefreshWorld(unittest.TestCase):
             for field in ("path", "parent", "canonical", "rest", "rotateOrder", "jointOrient",
                           "rotateAxis"):
                 self.assertEqual(out[name][field], bones[name][field], (name, field))
-        self.assertEqual(self.drives, [])                     # a skeleton has no drives
-        self.assertEqual(out["upperarm_l"]["drive"], bones["upperarm_l"]["drive"])
+        # a skeleton plays its bones' worlds: no drive is asked for and none appears
+        self.assertEqual(self.drives, [])
+        self.assertEqual([name for name in out if "drive" in out[name]], [])
         self.assertEqual(sorted(self.fake.read),
                          sorted([self.ROOT + ".worldMatrix[0]", self.ARM + ".worldMatrix[0]"]))
 

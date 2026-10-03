@@ -170,8 +170,11 @@ def solve(ref, bones, wanted, members, seed=None, root=False):
     the curves never flip (trap 108) - a channel the walk has not keyed yet still shows the
     take's value. `root` (an animation's travel): the skeleton's own root (`posemath.has_root`),
     when `wanted` holds it, is written too - rotate and translate, against its DAG parent, like
-    the pelvis; its blocked channels land in `skipped[root]`. Without it the root is never
-    written (the pose rule: the character stays where it stands)."""
+    the pelvis - ALL SIX CHANNELS OR NONE, as rigsolve writes Main: a root one of whose
+    channels is not writable is left where it stands, named in `skipped[root]`, and the bones
+    below, solved against the root's target, keep the clip's pose about it in place (the pose
+    rule). Without it the root is never written (the pose rule: the character stays where it
+    stands)."""
     wanted = dict((leaf, pm.matrix(m)) for leaf, m in (wanted or {}).items())
     # a root of its own is written only for the travel (`root`); a top joint that is no root
     # (Mixamo's Hips: its pelvis) is a member like any other - `posemath.targets` keeps its
@@ -198,6 +201,13 @@ def solve(ref, bones, wanted, members, seed=None, root=False):
             continue
         bone = bones[leaf]
         path = bone["path"]
+        if leaf == top:
+            # the travel: all six channels or none (rigsolve's Main) - a root turned but not
+            # moved, or moved but not turned, would carry half of it
+            _plugs, why = _blocked(path, ROTATE + TRANSLATE)
+            if why:
+                skipped[leaf] = why
+                continue
         parent = bone.get("parent")
         dag_parent = pm.matrix(cmds.getAttr(path + ".parentMatrix[0]"))
         if parent in bones:

@@ -667,11 +667,22 @@ class RootWritten(SkeletonFake):
                                    root=True)
         self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".")])
 
-    def test_a_locked_root_translate_is_skipped(self):
+    def test_a_locked_root_translate_keeps_the_whole_root(self):
+        # all six channels or none, like rigsolve's Main: a root turned but not moved would carry
+        # half the travel
         solution = self.solve(root=True, locked=[self.ROOT + ".translateX"])
         self.assertIn("root", solution.skipped)
         self.assertIn("translateX locked", solution.skipped["root"])
-        self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".translate")])
+        self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".")])
+        # the body below solves as the pose rule has it: the pelvis against the root's target
+        self.assertAlmostEqual(solution.values[self.PELVIS + ".rotateZ"], 15.0, places=6)
+
+    def test_a_locked_root_rotate_keeps_the_whole_root(self):
+        # ... and a root moved but not turned would carry the other half
+        solution = self.solve(root=True, locked=[self.ROOT + ".rotateY"])
+        self.assertIn("rotateY locked", solution.skipped["root"])
+        self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".")])
+        self.assertAlmostEqual(solution.values[self.PELVIS + ".rotateZ"], 15.0, places=6)
 
 
 # a Manny_Rig's structure as data: the game root and pelvis, a left hand
@@ -823,6 +834,81 @@ class MainFirst(StructureFake):
         self.assertIn(rigsolve.MAIN_KEPT % "translateY locked", solution.notes)
         self.assertEqual(rigsolve.MAIN_KEPT,
                          "Main kept where it stands (%s) - the travel is not carried")
+
+
+class MainSampleCmds(StructureCmds):
+    """StructureCmds answering what the REAL `_Job.sample` and `_Job._main` read of Main and the
+    game root: their world matrices, Main's parent (the identity), rotate order, axis and
+    channels; every `setAttr` lands in `values`."""
+
+    def __init__(self, worlds, values):
+        StructureCmds.__init__(self)
+        self.worlds, self.values = worlds, dict(values)
+
+    def getAttr(self, plug, **kwargs):
+        node, attr = plug.rsplit(".", 1)
+        if attr == "worldMatrix[0]":
+            return list(self.worlds[node])
+        if attr == "parentMatrix[0]":
+            return list(om.MMatrix())
+        if attr == "rotateOrder":
+            return 0
+        if attr in ("rotateAxis", "rotate"):
+            return [tuple(self.values.get("%s.%s%s" % (node, attr, axis), 0.0)
+                          for axis in "XYZ")]
+        return self.values.get(plug, 0.0)
+
+    def setAttr(self, plug, value):
+        self.values[plug] = value
+
+
+class MainSampled(unittest.TestCase):
+    """The REAL `_Job.sample` reads the game root's offset in Main, `O = rigid(G_root) .
+    rigid(Main)^-1` (row vectors: the root stands at `G = O . Main`), and `_main` turns and moves
+    Main onto `O^-1 . wanted[root]`. Main turned about Y and the game root turned about X in it
+    (a UE root, Z up) do not commute, so a product the wrong way round (`Main^-1 . G`, or
+    `wanted . O^-1`) lands Main elsewhere - `MainFirst` stubs `sample` and could not see it."""
+
+    MAIN = placed(euler((0.0, 40.0, 0.0)), (120.0, 0.0, -30.0))
+    OFFSET = placed(euler((-90.0, 0.0, 0.0)), (0.0, 0.0, 3.0))       # the game root in Main
+
+    def setUp(self):
+        from unittest import mock
+        values = {MAIN_PATH + ".rotateY": 40.0, MAIN_PATH + ".translateX": 120.0,
+                  MAIN_PATH + ".translateY": 0.0, MAIN_PATH + ".translateZ": -30.0}
+        self.fake = MainSampleCmds({MAIN_PATH: self.MAIN,
+                                    STRUCTURE_GAME["root"]: self.OFFSET * self.MAIN}, values)
+        patches = [mock.patch.object(rigsolve, "cmds", self.fake),
+                   mock.patch.object(rigsolve, "keys", Writable()),
+                   mock.patch.object(rigsolve, "bases", lambda rig: {}),
+                   mock.patch.object(rigsolve, "game_bones", lambda rig: dict(STRUCTURE_GAME))]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def job(self, wanted):
+        return rigsolve._Job(rigsolve.Solver(STRUCTURE_RIG, [], main=True), wanted)
+
+    def test_the_offset_is_the_game_root_in_main(self):
+        job = self.job({"root": om.MMatrix()})
+        job.sample()
+        worst = max(abs(job.main_offset[i] - self.OFFSET[i]) for i in range(16))
+        self.assertLess(worst, 1e-9)
+        # the other order is no small difference here: the fixture tells the two apart
+        other = self.MAIN.inverse() * (self.OFFSET * self.MAIN)
+        self.assertGreater(max(abs(other[i] - self.OFFSET[i]) for i in range(16)), 0.5)
+
+    def test_main_lands_where_the_game_root_stands_on_its_target(self):
+        # the root's target is where it would stand under Main turned 70 at (40, 0, 75)
+        moved = placed(euler((0.0, 70.0, 0.0)), (40.0, 0.0, 75.0))
+        job = self.job({"root": self.OFFSET * moved})
+        job.sample()
+        job._main()
+        self.assertNotIn("main", job.notes)
+        got = [self.fake.values[MAIN_PATH + "." + channel]
+               for channel in rigsolve.ROTATE + rigsolve.TRANSLATE]
+        for value, want in zip(got, (0.0, 70.0, 0.0, 40.0, 0.0, 75.0)):
+            self.assertAlmostEqual(value, want, places=6)
 
 
 class RigSeedCmds(object):
