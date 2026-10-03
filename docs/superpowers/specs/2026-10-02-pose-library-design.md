@@ -236,9 +236,27 @@ The hub gets a **Pose Library** card in Animation (one line and **Open Pose Libr
 ## The install
 
 `poses/` is a payload row. `install.copy_payload` no longer loses local poses: the installed
-`poses/` is moved aside before the folder is replaced and every file the new build does not carry
-is put back (a build's own file wins over a local one of the same path). An open Pose Library is
-rebuilt from the new modules after an install, as the hub is.
+`poses/` is moved aside before the folder is replaced and put back **card by card** (a
+`<Name>.pose` folder is one unit, never merged file by file - the final review, 2026-10-03: a
+file-by-file merge threw a colleague's `Pose` card away for the first shipped `Pose` and could
+glue their thumbnail onto it):
+
+- every install and every build records what it SHIPPED in `poses/.shipped.json` (each card's
+  relative path and its files' sha1, made from the payload itself; `make_build` writes it into
+  the archive, never taking one from the tree; the leading dot keeps it out of the library);
+- a card still identical to the previous build's manifest entry is the BUILD's: the new build
+  carries it, or it renamed, moved or deleted it upstream - then it stays gone (a curated
+  library does not grow back);
+- every other card is LOCAL (absent from the old manifest, or changed since: Update from
+  selection, Replace thumbnail) and goes back whole at its place - or, where the new build ships
+  a card of that path (case-insensitively, as the disk compares), BESIDE it as
+  `<Name> (local).pose` (`store.unique_name`'s rule: `(local) 2`, ...), its `name` field with it;
+  a card byte-identical to the build's own is not doubled;
+- folders come along; anything that cannot go back (a build's file where a local folder was)
+  keeps the aside folder, and the Script Editor and the install's dialog say where it is;
+- a copy that fails half way puts everything back and drops nothing (no new manifest).
+
+An open Pose Library is rebuilt from the new modules after an install, as the hub is.
 
 ## Not built
 

@@ -108,6 +108,19 @@ class Cards(unittest.TestCase):
         os.makedirs(os.path.join(self.root, ".git"))
         self.assertEqual(store.folders(self.root), ["A", "A/B"])
 
+    def test_the_install_s_manifest_is_no_card_and_no_folder(self):
+        """`poses/.shipped.json` (the install's record of the shipped cards, 2026-10-03) lives in
+        the library folder and is never listed - as a file, or should a folder carry its name."""
+        store.write(self.root, "", "Fist", pose())
+        with open(os.path.join(self.root, ".shipped.json"), "w") as handle:
+            handle.write("{}")
+        self.assertEqual([c.name for c in store.cards(self.root)[0]], ["Fist"])
+        self.assertEqual(store.folders(self.root), [])
+        os.remove(os.path.join(self.root, ".shipped.json"))
+        os.makedirs(os.path.join(self.root, ".shipped.json"))
+        self.assertEqual(store.folders(self.root), [])
+        self.assertEqual(store.cards(self.root)[1], [])
+
     def test_rename_folder(self):
         store.write(self.root, "A", "P", pose())
         self.assertEqual(store.rename_folder(self.root, "A", "Hands"), "Hands")

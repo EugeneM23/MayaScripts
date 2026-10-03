@@ -49,7 +49,7 @@ import install  # noqa: E402  -- needs the line above
 # Same exclusions the installer's copy applies. A .pyc in a handed-off
 # archive is at best noise and at worst a stale compile of code the
 # archive no longer holds.
-_IGNORE = ("__pycache__", "*.pyc")
+_IGNORE = ("__pycache__", "*.pyc", "*" + install.HALF_WRITTEN)
 
 _STAMP = "BUILD_INFO.txt"
 
@@ -111,8 +111,8 @@ def entries(src_root, names=None):
             rel = os.path.relpath(walk_root, src_root).replace("\\", "/")
             found.append((walk_root, "{0}/{1}/".format(top, rel)))
             for f in sorted(files):
-                if _ignored(f):
-                    continue
+                if _ignored(f) or (rel == install.POSES and f == install.SHIPPED):
+                    continue                # the manifest is made, never taken from the tree
                 found.append((os.path.join(walk_root, f),
                               "{0}/{1}/{2}".format(top, rel, f)))
     return sorted(found, key=lambda pair: pair[1])
@@ -164,11 +164,21 @@ def build_info(src_root, names=None, day=None):
 
 
 def write_archive(src_root, out_path, names=None, stamp=None, record=None):
-    """The payload into `out_path`. Returns the archive names written."""
+    """The payload into `out_path`. Returns the archive names written.
+
+    The `poses` row carries `poses/.shipped.json` (2026-10-03): the manifest of the cards this
+    build ships, made here from the tree (`install.shipped_manifest`), never taken from it - the
+    next install reads it to tell the shipped cards from a colleague's own."""
+    names = payload_names() if names is None else names
     written = []
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for path, arcname in entries(src_root, names):
             zf.write(path, arcname)
+            written.append(arcname)
+        poses = os.path.join(src_root, install.POSES)
+        if install.POSES in names and os.path.isdir(poses):
+            arcname = "{0}/{1}/{2}".format(install.SHELF, install.POSES, install.SHIPPED)
+            zf.writestr(arcname, install.manifest_text(install.shipped_manifest(poses)))
             written.append(arcname)
         if stamp:
             arcname = "{0}/{1}".format(install.SHELF, _STAMP)

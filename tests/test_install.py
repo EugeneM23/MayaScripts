@@ -390,10 +390,22 @@ def _read(path):
         return handle.read()
 
 
+def _sha(text):
+    import hashlib
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def _card_json(name):
+    return json.dumps({"format": "skeldar.pose", "version": 1, "kind": "character",
+                       "name": name})
+
+
 class KeepsLocalPoses(unittest.TestCase):
     """2026-10-02, the Pose Library: «локальные позы переживают каждую установку». The installed
-    `poses/` is moved aside before the folder is replaced, and every file the new build does not
-    carry is put back; a build's own file wins over a local one of the same relative path."""
+    `poses/` is moved aside before the folder is replaced and put back CARD by CARD (2026-10-03,
+    the final review): the previous build's manifest (`poses/.shipped.json`) tells its own cards
+    from the colleague's; a local card never merges into a shipped one - it goes back whole, at
+    its place, or beside a shipped card of its name as `<Name> (local)`."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="skeldar_poses_")
@@ -405,19 +417,44 @@ class KeepsLocalPoses(unittest.TestCase):
         _write(os.path.join(self.dest, "maya_tool.py"), "old tool")
         _write(os.path.join(self.dest, "stray.txt"), "left over")
         _write(os.path.join(self.dest, "poses", "Shipped.pose", "pose.json"), "old shipped")
+        self.manifest(self.poses(), {"Shipped.pose": {"pose.json": _sha("old shipped")}})
         _write(os.path.join(self.dest, "poses", "Mine.pose", "pose.json"), "mine")
         _write(os.path.join(self.dest, "poses", "Mine.pose", "thumbnail.jpg"), "jpg")
         _write(os.path.join(self.dest, "poses", "Fights", "Kick.pose", "pose.json"), "kick")
         os.makedirs(os.path.join(self.dest, "poses", "Empty folder"))
-        self.saved = install.payload
+        self.saved = (install.payload, install._say)
+        self.said = []
         install.payload = lambda: ("maya_tool.py", "poses")
+        install._say = self.said.append
 
     def tearDown(self):
-        install.payload = self.saved
+        install.payload, install._say = self.saved
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def poses(self, *parts):
         return os.path.join(self.dest, "poses", *parts)
+
+    @staticmethod
+    def manifest(poses, cards):
+        """A previous install's `.shipped.json`, as that install wrote it."""
+        _write(os.path.join(poses, install.SHIPPED),
+               install.manifest_text({"format": install.SHIPPED_FORMAT, "version": 1,
+                                      "cards": cards}))
+
+    def build(self, cards):
+        """A build tree of its own: `cards` {relative card path: {file: text}}."""
+        root = tempfile.mkdtemp(prefix="build_", dir=self.tmp)
+        _write(os.path.join(root, "maya_tool.py"), "tool")
+        _write(os.path.join(root, "poses", ".gitkeep"), "")
+        for rel, files in cards.items():
+            for name, text in files.items():
+                _write(os.path.join(root, "poses", *(rel.split("/") + [name])), text)
+        return root
+
+    def listing(self):
+        return sorted(install.poses_walk(self.poses())[0])
+
+    # ---- the rules that stood, on the new mechanism
 
     def test_a_local_card_survives_and_a_shipped_one_is_the_build_s(self):
         kept = install.copy_payload(self.src, self.dest)
@@ -427,6 +464,13 @@ class KeepsLocalPoses(unittest.TestCase):
         self.assertEqual(_read(self.poses("Shipped.pose", "pose.json")), "new shipped")
         self.assertEqual(sorted(kept), ["Fights/Kick.pose/pose.json", "Mine.pose/pose.json",
                                         "Mine.pose/thumbnail.jpg"])
+        self.assertEqual(kept.renamed, {})
+        self.assertEqual(self.listing(), ["Fights/Kick.pose", "Mine.pose", "Shipped.pose"])
+
+    def test_the_new_manifest_lists_the_build_s_cards_only(self):
+        install.copy_payload(self.src, self.dest)
+        self.assertEqual(install.read_shipped(self.poses()),
+                         {"Shipped.pose": {"pose.json": _sha("new shipped")}})
 
     def test_an_empty_local_folder_survives(self):
         install.copy_payload(self.src, self.dest)
@@ -441,11 +485,131 @@ class KeepsLocalPoses(unittest.TestCase):
         install.copy_payload(self.src, self.dest)
         self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
 
-    def test_a_fresh_install_keeps_nothing(self):
+    def test_a_fresh_install_keeps_nothing_and_records_the_build(self):
         shutil.rmtree(self.dest)
         self.assertEqual(install.copy_payload(self.src, self.dest), [])
-        self.assertEqual(sorted(os.listdir(self.poses())), [".gitkeep", "Shipped.pose"])
+        self.assertEqual(sorted(os.listdir(self.poses())),
+                         [".gitkeep", install.SHIPPED, "Shipped.pose"])
         self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+    # ---- the critical finding: a local card of a shipped card's name
+
+    def test_a_local_card_of_a_shipped_card_s_name_goes_beside_it_whole(self):
+        """The default name is «Pose»: the first shipped `Pose` replaced every colleague's own
+        `Pose` and glued their thumbnail onto it."""
+        _write(self.poses("Pose.pose", "pose.json"), _card_json("Pose"))
+        _write(self.poses("Pose.pose", "thumbnail.jpg"), "their picture")
+        _write(os.path.join(self.src, "poses", "Pose.pose", "pose.json"), "shipped pose")
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(sorted(os.listdir(self.poses("Pose.pose"))), ["pose.json"])
+        self.assertEqual(_read(self.poses("Pose.pose", "pose.json")), "shipped pose")
+        local = self.poses("Pose (local).pose")
+        self.assertEqual(json.loads(_read(os.path.join(local, "pose.json")))["name"],
+                         "Pose (local)")
+        self.assertEqual(_read(os.path.join(local, "thumbnail.jpg")), "their picture")
+        self.assertEqual(kept.renamed, {"Pose.pose": "Pose (local).pose"})
+        self.assertTrue(any("Pose (local).pose" in line for line in self.said))
+        self.assertIn("(local)", install.poses_note(kept))
+        self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+    def test_a_case_twin_is_one_card_and_goes_beside_it(self):
+        _write(self.poses("fist.pose", "pose.json"), "mine")
+        _write(os.path.join(self.src, "poses", "Fist.pose", "pose.json"), "shipped fist")
+        if not os.path.exists(os.path.join(self.src, "poses", "FIST.pose")):
+            self.skipTest("a case-sensitive disk: two cards")
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(_read(self.poses("Fist.pose", "pose.json")), "shipped fist")
+        self.assertEqual(_read(self.poses("fist (local).pose", "pose.json")), "mine")
+        self.assertEqual(kept.renamed, {"fist.pose": "fist (local).pose"})
+
+    def test_a_second_local_twin_takes_the_next_free_name(self):
+        _write(self.poses("Pose.pose", "pose.json"), "mine")
+        _write(self.poses("Pose (local).pose", "pose.json"), "an older local one")
+        _write(os.path.join(self.src, "poses", "Pose.pose", "pose.json"), "shipped")
+        _write(os.path.join(self.src, "poses", "Pose (local).pose", "pose.json"), "shipped too")
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(_read(self.poses("Pose (local) 2.pose", "pose.json")), "mine")
+        self.assertEqual(_read(self.poses("Pose (local) (local).pose", "pose.json")),
+                         "an older local one")
+        self.assertEqual(len(kept.renamed), 2)
+
+    def test_a_local_card_the_same_as_the_build_s_is_not_doubled(self):
+        """An install from before the manifest: a card byte-identical to the new build's own is
+        the build's, not a local one to keep beside it."""
+        os.remove(self.poses(install.SHIPPED))
+        _write(self.poses("Shipped.pose", "pose.json"), "new shipped")
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertNotIn("Shipped (local).pose", os.listdir(self.poses()))
+        self.assertEqual(kept.renamed, {})
+
+    def test_a_shipped_card_the_colleague_changed_is_theirs(self):
+        """Update from selection / Replace thumbnail on a shipped card: no longer the build's -
+        kept beside the new build's own."""
+        _write(self.poses("Shipped.pose", "pose.json"), "updated from the selection")
+        _write(self.poses("Shipped.pose", "thumbnail.jpg"), "a new picture")
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(sorted(os.listdir(self.poses("Shipped.pose"))), ["pose.json"])
+        self.assertEqual(_read(self.poses("Shipped.pose", "pose.json")), "new shipped")
+        local = self.poses("Shipped (local).pose")
+        self.assertEqual(_read(os.path.join(local, "pose.json")), "updated from the selection")
+        self.assertEqual(_read(os.path.join(local, "thumbnail.jpg")), "a new picture")
+        self.assertEqual(kept.renamed, {"Shipped.pose": "Shipped (local).pose"})
+
+    def test_a_file_where_a_local_folder_was_keeps_the_aside_and_says_where(self):
+        _write(self.poses("Hands", "Grip.pose", "pose.json"), "grip")
+        _write(os.path.join(self.src, "poses", "Hands"), "a file the build ships")
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(_read(self.poses("Hands")), "a file the build ships")
+        self.assertIn("Hands/Grip.pose", kept.unrestored)
+        left = [n for n in os.listdir(os.path.dirname(self.dest)) if n != "SkeldarAnim"]
+        self.assertEqual(len(left), 1)
+        aside = os.path.join(os.path.dirname(self.dest), left[0], "poses")
+        self.assertEqual(_read(os.path.join(aside, "Hands", "Grip.pose", "pose.json")), "grip")
+        self.assertEqual(kept.aside, aside.replace("\\", "/"))
+        self.assertTrue(any(kept.aside in line for line in self.said))
+        self.assertIn(kept.aside, install.poses_note(kept))
+        #  everything else went back
+        self.assertEqual(_read(self.poses("Mine.pose", "pose.json")), "mine")
+
+    # ---- the important finding: what the build removed stays removed
+
+    def test_renamed_deleted_and_moved_upstream_stay_gone(self):
+        first = self.build({"Fist.pose": {"pose.json": "fist"},
+                            "Old idle.pose": {"pose.json": "idle"},
+                            "Grip.pose": {"pose.json": "grip"}})
+        shutil.rmtree(self.dest)
+        install.copy_payload(first, self.dest)
+        _write(self.poses("Mine.pose", "pose.json"), "mine")
+        second = self.build({"Punch.pose": {"pose.json": "fist"},     # Fist renamed
+                             "Hands/Grip.pose": {"pose.json": "grip"}})   # Grip moved
+        kept = install.copy_payload(second, self.dest)                # Old idle deleted
+        self.assertEqual(self.listing(), ["Hands/Grip.pose", "Mine.pose", "Punch.pose"])
+        self.assertEqual(sorted(kept.dropped), ["Fist.pose", "Grip.pose", "Old idle.pose"])
+        self.assertEqual(list(kept), ["Mine.pose/pose.json"])
+        #  and the third install too: nothing comes back
+        install.copy_payload(second, self.dest)
+        self.assertEqual(self.listing(), ["Hands/Grip.pose", "Mine.pose", "Punch.pose"])
+
+    def test_a_dropped_card_the_colleague_changed_stays_at_its_place(self):
+        first = self.build({"Old idle.pose": {"pose.json": "idle"}})
+        shutil.rmtree(self.dest)
+        install.copy_payload(first, self.dest)
+        _write(self.poses("Old idle.pose", "pose.json"), "idle, my version")
+        second = self.build({"Other.pose": {"pose.json": "other"}})
+        kept = install.copy_payload(second, self.dest)
+        self.assertEqual(_read(self.poses("Old idle.pose", "pose.json")), "idle, my version")
+        self.assertEqual(kept.dropped, [])
+        self.assertEqual(install.read_shipped(self.poses()),
+                         {"Other.pose": {"pose.json": _sha("other")}})
+
+    def test_a_card_the_colleague_deleted_comes_back_from_the_build(self):
+        """The other side of the same rule: a shipped card is the BUILD's - one deleted here
+        comes back while the build ships it (the window's Delete is a move to the trash)."""
+        shutil.rmtree(self.poses("Shipped.pose"))
+        install.copy_payload(self.src, self.dest)
+        self.assertEqual(_read(self.poses("Shipped.pose", "pose.json")), "new shipped")
+
+    # ---- the pieces
 
     def test_keep_local_alone(self):
         old = os.path.join(self.tmp, "old")
@@ -453,40 +617,76 @@ class KeepsLocalPoses(unittest.TestCase):
         _write(os.path.join(old, "A.pose", "pose.json"), "local a")
         _write(os.path.join(old, "B.pose", "pose.json"), "local b")
         _write(os.path.join(new, "B.pose", "pose.json"), "build b")
-        self.assertEqual(install.keep_local(old, new), ["A.pose/pose.json"])
+        kept = install.keep_local(old, new, {"B.pose": {"pose.json": _sha("build b")}})
+        self.assertEqual(list(kept), ["A.pose/pose.json", "B (local).pose/pose.json"])
         self.assertEqual(_read(os.path.join(new, "A.pose", "pose.json")), "local a")
         self.assertEqual(_read(os.path.join(new, "B.pose", "pose.json")), "build b")
+        self.assertEqual(_read(os.path.join(new, "B (local).pose", "pose.json")), "local b")
         self.assertTrue(os.path.isfile(os.path.join(old, "A.pose", "pose.json")))  # a copy
 
+    def test_the_walk_sees_cards_folders_and_loose_files(self):
+        root = os.path.join(self.tmp, "walk")
+        _write(os.path.join(root, "A", "B.pose", "pose.json"), "b")
+        _write(os.path.join(root, "A", "B.pose", "sub", "x.txt"), "x")
+        _write(os.path.join(root, "note.txt"), "n")
+        _write(os.path.join(root, install.SHIPPED), "{}")
+        _write(os.path.join(root, "C.pose", "pose.json.part"), "half")
+        _write(os.path.join(root, "_trash", "D.pose", "pose.json"), "d")
+        cards, folders, files = install.poses_walk(root)
+        self.assertEqual(cards, ["A/B.pose", "C.pose"])
+        self.assertEqual(folders, ["A", "_trash", "_trash/D.pose"])
+        self.assertEqual(files, ["_trash/D.pose/pose.json", "note.txt"])
+        self.assertEqual(sorted(install.card_files(os.path.join(root, "A", "B.pose"))),
+                         ["pose.json", "sub/x.txt"])
+        self.assertEqual(install.card_files(os.path.join(root, "C.pose")), {})
+
+    def test_a_broken_manifest_reads_as_none(self):
+        root = os.path.join(self.tmp, "broken")
+        self.assertIsNone(install.read_shipped(root))
+        _write(os.path.join(root, install.SHIPPED), "not json")
+        self.assertIsNone(install.read_shipped(root))
+        _write(os.path.join(root, install.SHIPPED), json.dumps({"format": "other"}))
+        self.assertIsNone(install.read_shipped(root))
+
     def test_a_failed_restore_keeps_the_old_poses_and_says_where(self):
-        def boom(old, new):
+        def boom(*args):
             raise OSError("disk full")
-        saved, install.keep_local = install.keep_local, boom
-        printed = []
-        saved_print = install._say
-        install._say = printed.append
+        saved = install.keep_local
+        install.keep_local = boom
         try:
-            install.copy_payload(self.src, self.dest)
+            kept = install.copy_payload(self.src, self.dest)
         finally:
-            install.keep_local, install._say = saved, saved_print
+            install.keep_local = saved
         left = [n for n in os.listdir(os.path.dirname(self.dest)) if n != "SkeldarAnim"]
         self.assertEqual(len(left), 1)
         aside = os.path.join(os.path.dirname(self.dest), left[0], "poses")
         self.assertEqual(_read(os.path.join(aside, "Mine.pose", "pose.json")), "mine")
-        self.assertEqual(len(printed), 1)
-        self.assertIn("disk full", printed[0])
-        self.assertIn(aside.replace("\\", "/"), printed[0])
+        self.assertEqual(len(self.said), 1)
+        self.assertIn("disk full", self.said[0])
+        self.assertIn(aside.replace("\\", "/"), self.said[0])
+        self.assertEqual(kept.aside, aside.replace("\\", "/"))
         #  the install itself went through
         self.assertEqual(_read(os.path.join(self.dest, "maya_tool.py")), "new tool")
 
-    def test_a_failed_copy_still_puts_the_poses_back(self):
+    def test_a_failed_copy_still_puts_the_poses_back_and_drops_nothing(self):
         """Trap 113: a payload row the source does not hold raised after the rmtree. The local
-        poses are back in the installed folder before the error goes on."""
+        poses are back in the installed folder before the error goes on - and the old build's
+        own card too: with no new build's poses, nothing reads as removed upstream."""
         install.payload = lambda: ("maya_tool.py", "missing.py", "poses")
         with self.assertRaises((IOError, OSError)):
             install.copy_payload(self.src, self.dest)
         self.assertEqual(_read(self.poses("Mine.pose", "pose.json")), "mine")
+        self.assertEqual(_read(self.poses("Shipped.pose", "pose.json")), "old shipped")
+        self.assertEqual(install.read_shipped(self.poses()),
+                         {"Shipped.pose": {"pose.json": _sha("old shipped")}})
         self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+    def test_the_install_dialog_names_a_renamed_card(self):
+        kept = install.Kept(["Pose (local).pose/pose.json"])
+        kept.renamed = {"Pose.pose": "Pose (local).pose"}
+        self.assertIn("1 local pose card", install.poses_note(kept))
+        self.assertEqual(install.poses_note(install.Kept()), "")
+        self.assertEqual(install.poses_note(None), "")
 
 
 class VersionRecord(unittest.TestCase):

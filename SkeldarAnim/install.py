@@ -34,6 +34,18 @@ POSELIB_CONTROL = "skeldarPoseLibrary"
 # into the INSTALLED copy must survive the install that replaces it.
 POSES = "poses"
 KEPT_PREFIX = "SkeldarAnim_poses_kept_"
+# What a build SHIPPED in poses/, card by card (2026-10-03, the final review):
+# each shipped card's relative path and its files' sha1, written at install
+# and build time from the payload itself. The next install reads it to tell
+# the previous build's own cards from the colleague's - a card is ONE unit
+# (`<Name>.pose/`), never merged file by file. Its leading dot keeps it out of
+# the library's listing (`maya_poselib.store`'s hidden-name rule).
+SHIPPED = ".shipped.json"
+SHIPPED_FORMAT = "skeldar.shipped"
+CARD_SUFFIX = ".pose"               # maya_poselib.store.CARD_SUFFIX
+CARD_NAME_MAX = 80                  # maya_poselib.store.NAME_MAX
+LOCAL_SUFFIX = " (local)"           # a local card put back beside a shipped one of its name
+HALF_WRITTEN = ".part"              # a card file being written (store's atomic writes)
 
 # Which build an installed copy is (2026-09-28, Check update): a build
 # carries this file, and an install from the repository writes its git
@@ -269,61 +281,307 @@ def _say(message):
     print(message)
 
 
-def keep_local(old, new):
-    """Every file under the old `poses` that the new build does not carry, copied in;
-    a build's own file wins over a local one of the same relative path.
+def _hidden_pose_folder(name):
+    """A folder the library never lists (`maya_poselib.store._hidden`): `.git`, `_trash...`."""
+    return name.startswith(".") or name.lower().startswith("_trash")
 
-    Folders come along too - a catalog the animator made and has not filled yet - unless the
-    build holds a FILE of that name (the build wins there as well). `old` is only read. Returns
-    the relative paths of the files put back, "/"-separated, in walk order.
-    """
-    kept = []
-    for base, dirs, files in os.walk(old):
+
+def _is_card(name):
+    return name.lower().endswith(CARD_SUFFIX)
+
+
+def poses_walk(root):
+    """(cards, folders, files) of a pose library folder, relative "/" paths, parents first: every
+    CARD folder (`<Name>.pose`, never entered - a card is one unit), every other folder, every file
+    outside a card. Inside a hidden folder (`.git`, `_trash`: the library lists nothing there)
+    everything is a plain file. The shipped manifest and `.part` halves are left out."""
+    cards, folders, files = [], [], []
+    for base, dirs, names in os.walk(root):
         dirs.sort()
-        rel = os.path.relpath(base, old)
+        names.sort()
+        rel = os.path.relpath(base, root)
         parts = [] if rel == os.curdir else rel.split(os.sep)
-        folder = os.path.join(new, *parts)
-        if os.path.exists(folder) and not os.path.isdir(folder):
-            dirs[:] = []                     # the build's file of that name wins
-            continue
-        if not os.path.isdir(folder):
-            os.makedirs(folder)
-        for name in sorted(files):
-            target = os.path.join(folder, name)
-            if os.path.exists(target):
-                continue                     # the build's own file wins
-            shutil.copy2(os.path.join(base, name), target)
-            kept.append("/".join(parts + [name]))
-    return kept
+        hidden = any(_hidden_pose_folder(part) for part in parts)
+        if not hidden:
+            for name in [d for d in dirs if _is_card(d) and not _hidden_pose_folder(d)]:
+                cards.append("/".join(parts + [name]))
+                dirs.remove(name)
+        folders.extend("/".join(parts + [d]) for d in dirs)
+        for name in names:
+            if name.endswith(HALF_WRITTEN) or (not parts and name == SHIPPED):
+                continue
+            files.append("/".join(parts + [name]))
+    #  sorted as paths: a folder sorts before everything inside it, so parents stay first
+    return sorted(cards), sorted(folders), sorted(files)
 
 
-def _put_back_poses(aside, dest):
-    """The local poses moved aside into `aside` copied back under `dest`; the temp folder is
-    removed only once they are. A failure never raises (this runs in copy_payload's `finally`,
-    where it would hide the copy's own error) and never deletes them: it says where they are."""
-    old = os.path.join(aside, POSES)
+def _sha1(path):
+    import hashlib
+    digest = hashlib.sha1()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def card_files(card):
+    """{file's relative "/" path: its sha1} of every file of the card folder `card` (a `.part`
+    half left out)."""
+    out = {}
+    for base, dirs, names in os.walk(card):
+        dirs.sort()
+        rel = os.path.relpath(base, card)
+        parts = [] if rel == os.curdir else rel.split(os.sep)
+        for name in sorted(names):
+            if not name.endswith(HALF_WRITTEN):
+                out["/".join(parts + [name])] = _sha1(os.path.join(base, name))
+    return out
+
+
+def shipped_manifest(poses):
+    """The manifest of a build's `poses` folder: {"format", "version", "cards": {relative card
+    path: card_files}} - every card the build ships, file by file."""
+    cards = {}
+    if os.path.isdir(poses):
+        for rel in poses_walk(poses)[0]:
+            cards[rel] = card_files(os.path.join(poses, *rel.split("/")))
+    return {"format": SHIPPED_FORMAT, "version": 1, "cards": cards}
+
+
+def manifest_text(manifest):
+    return json.dumps(manifest, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def write_shipped(poses):
+    """`<poses>/.shipped.json` written from what the folder holds now (the build's cards, before
+    any local card is put back); the cards it lists ({path: files})."""
+    manifest = shipped_manifest(poses)
+    target = os.path.join(poses, SHIPPED)
+    part = target + HALF_WRITTEN
+    with open(part, "w", encoding="utf-8") as handle:
+        handle.write(manifest_text(manifest))
+    os.replace(part, target)
+    return manifest["cards"]
+
+
+def read_shipped(poses):
+    """{relative card path: card_files} of the manifest in `poses`; None when there is none or
+    it cannot be read (an install from before 2026-10-03 wrote none)."""
     try:
-        kept = keep_local(old, os.path.join(dest, POSES))
+        with open(os.path.join(poses, SHIPPED), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    cards = data.get("cards") if isinstance(data, dict) else None
+    if data.get("format") != SHIPPED_FORMAT or not isinstance(cards, dict):
+        return None
+    return dict((str(rel), dict(files)) for rel, files in cards.items()
+                if isinstance(files, dict))
+
+
+def _folded(cards):
+    """{lower-case relative path: files}: the disk compares names without case."""
+    return dict((rel.lower(), files) for rel, files in (cards or {}).items())
+
+
+def free_card(folder, name, suffix=LOCAL_SUFFIX):
+    """The card folder name `<name> (local).pose` free in `folder` - then `<name> (local)
+    2.pose` ... - capped at the library's 80 characters (`maya_poselib.store.unique_name`'s
+    rule)."""
+    number = 1
+    while True:
+        tail = suffix if number == 1 else "%s %d" % (suffix, number)
+        stem = name[:CARD_NAME_MAX - len(tail)].rstrip(". ") + tail
+        if not os.path.exists(os.path.join(folder, stem + CARD_SUFFIX)):
+            return stem + CARD_SUFFIX
+        number += 1
+
+
+def _rename_inside(card, name):
+    """The card's pose.json `name` set to its new folder's (best effort: a card that cannot be
+    read keeps its file as it is - the library names a card by its folder anyway)."""
+    target = os.path.join(card, "pose.json")
+    try:
+        with open(target, encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+        if not isinstance(data, dict):
+            return
+        data["name"] = name
+        part = target + HALF_WRITTEN
+        with open(part, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, separators=(",", ":"))
+        os.replace(part, target)
+    except (OSError, ValueError):
+        pass
+
+
+class Kept(list):
+    """What `keep_local` put back: the relative "/" paths of the local files (the list it always
+    answered), and `renamed` {local card: where it went beside a shipped card of its name},
+    `dropped` [the previous build's own cards the new build no longer ships], `unrestored`
+    [what could not go back - the aside folder is then kept], `aside` (that folder, or "")."""
+
+    def __init__(self, items=()):
+        list.__init__(self, items)
+        self.renamed = {}
+        self.dropped = []
+        self.unrestored = []
+        self.aside = ""
+
+
+def keep_local(old, new, new_cards=None):
+    """The old installed `poses` (`old`, only read) put back into the new build's (`new`), CARD by
+    CARD (2026-10-03, the final review: a file-by-file merge glued a colleague's thumbnail onto
+    a shipped pose and threw their own pose.json away with the aside folder).
+
+    The previous build's manifest (`old/.shipped.json`) says which cards IT shipped. A card
+    still byte-identical to its manifest entry is the build's - the new build decides: it
+    carries it, or it renamed, moved or deleted it upstream (`new_cards`, the new build's
+    manifest, says which; that card is then `dropped`, never brought back). Every other card is
+    LOCAL - absent from the old manifest, or changed since (Update from selection, Replace
+    thumbnail) - and goes back WHOLE at its place; where the new build holds a card of that path
+    (case-insensitively, as the disk compares) it goes back BESIDE it, `<Name> (local).pose`
+    (`free_card`), never mixed into it - unless it is the very same files. `new_cards` None (the
+    new build's poses never arrived: the copy failed half way) drops nothing and puts every
+    card back where the new build has none.
+
+    Folders come along (a catalog made and not filled yet), and files outside cards when the new
+    build has none of that path; a file of the new build in the way of a folder, or a different
+    file at the same path, leaves that part `unrestored`. Returns a `Kept`."""
+    result = Kept()
+    shipped = _folded(read_shipped(old))
+    built = None if new_cards is None else _folded(new_cards)
+    cards, folders, files = poses_walk(old)
+
+    def parent_ready(rel):
+        folder = os.path.dirname(os.path.join(new, *rel.split("/")))
+        if os.path.isdir(folder):
+            return True
+        if os.path.exists(folder):
+            return False
+        try:
+            os.makedirs(folder)
+        except OSError:
+            return False
+        return True
+
+    for rel in folders:
+        target = os.path.join(new, *rel.split("/"))
+        if os.path.isdir(target):
+            continue
+        if os.path.exists(target) or not parent_ready(rel):
+            result.unrestored.append(rel + "/")
+            continue
+        os.makedirs(target)
+    for rel in cards:
+        source = os.path.join(old, *rel.split("/"))
+        files_now = card_files(source)
+        target = os.path.join(new, *rel.split("/"))
+        if shipped.get(rel.lower()) == files_now:
+            if built is not None and rel.lower() not in built:
+                result.dropped.append(rel)
+                continue
+            if built is not None or os.path.exists(target):
+                continue                     # the build's own card: the new build's stands
+        placed = rel
+        if os.path.exists(target):
+            if os.path.isdir(target) and card_files(target) == files_now:
+                continue                     # the very same card the new build ships
+            folder = os.path.dirname(target)
+            name = os.path.basename(rel)[:-len(CARD_SUFFIX)]
+            if not os.path.isdir(folder):
+                result.unrestored.append(rel)
+                continue
+            placed = "/".join(rel.split("/")[:-1] + [free_card(folder, name)])
+            result.renamed[rel] = placed
+        if not parent_ready(placed):
+            result.unrestored.append(rel)
+            continue
+        destination = os.path.join(new, *placed.split("/"))
+        shutil.copytree(source, destination)
+        if placed != rel:
+            _rename_inside(destination, os.path.basename(placed)[:-len(CARD_SUFFIX)])
+        result.extend(placed + "/" + name for name in sorted(files_now))
+    for rel in files:
+        target = os.path.join(new, *rel.split("/"))
+        source = os.path.join(old, *rel.split("/"))
+        if os.path.exists(target):
+            if not (os.path.isfile(target) and _sha1(target) == _sha1(source)):
+                result.unrestored.append(rel)
+            continue
+        if not parent_ready(rel):
+            result.unrestored.append(rel)
+            continue
+        shutil.copy2(source, target)
+        result.append(rel)
+    manifest = os.path.join(old, SHIPPED)
+    if built is None and os.path.isfile(manifest) and os.path.isdir(new) \
+            and not os.path.exists(os.path.join(new, SHIPPED)):
+        #  the new build's poses never arrived: the old install stands back as it was, its
+        #  manifest with it, so the next install still knows which cards were the build's
+        shutil.copy2(manifest, os.path.join(new, SHIPPED))
+    return result
+
+
+def _put_back_poses(aside, dest, new_cards=None):
+    """The local poses moved aside into `aside` put back under `dest` (`keep_local`); the temp
+    folder is removed only once EVERY local file is back. A card put beside a shipped one of its
+    name, and anything that could not go back, is said (the Script Editor, and `Kept` for the
+    install's dialog) with where the aside folder is. A failure never raises (this runs in
+    copy_payload's `finally`, where it would hide the copy's own error) and never deletes
+    them: it says where they are."""
+    old = os.path.join(aside, POSES)
+    where = old.replace("\\", "/")
+    try:
+        kept = keep_local(old, os.path.join(dest, POSES), new_cards)
     except Exception as exc:                                 # noqa: BLE001
         _say("SkeldarAnim: the local poses were not put back ({0}) - they are kept in"
-             " {1}".format(exc, old.replace("\\", "/")))
-        return []
+             " {1}".format(exc, where))
+        failed = Kept()
+        failed.unrestored = ["poses"]
+        failed.aside = where
+        return failed
+    for rel, placed in sorted(kept.renamed.items()):
+        _say("SkeldarAnim: your pose card {0} has the name of a card this build ships - it is"
+             " kept beside it as {1}".format(rel, placed))
+    if kept.unrestored:
+        kept.aside = where
+        _say("SkeldarAnim: {0} local pose file(s) could not go back ({1}) - they are kept in"
+             " {2}".format(len(kept.unrestored), ", ".join(kept.unrestored[:4]), where))
+        return kept
     shutil.rmtree(aside, ignore_errors=True)
     return kept
+
+
+def poses_note(kept):
+    """The install dialog's lines about the local poses: renamed cards and a kept aside folder;
+    "" when there is nothing to say."""
+    if not isinstance(kept, Kept):
+        return ""
+    lines = []
+    if kept.renamed:
+        lines.append("{0} local pose card(s) had a shipped card's name and were kept beside it"
+                     " as \"<Name> (local)\".".format(len(kept.renamed)))
+    if kept.aside:
+        lines.append("Some local poses could not go back - they are kept in\n{0}".format(
+            kept.aside))
+    return "\n".join(lines)
 
 
 def copy_payload(src_root, dest):
     """The whitelist into `dest`, replacing whatever was there - all but the poses the animator
     saved into the installed library (2026-10-02, the Pose Library: local poses survive every
-    install). Returns the relative paths of the local pose files put back.
+    install).
 
     The installed `poses/` is RENAMED aside first, into a temp folder beside `dest`: the same
     volume, so nothing is copied, and a rename that fails (a file held open) raises with nothing
     moved or deleted - `shutil.move` would fall back to copy-then-delete, and a delete failing
-    half way leaves the only whole copy in the temp folder. Then the folder is replaced, then
-    `keep_local` puts back every file the new build does not carry. The poses go back even when
-    the copy itself fails half way (trap 113: a payload row the source does not hold) - that
-    error then goes on.
+    half way leaves the only whole copy in the temp folder. Then the folder is replaced, the new
+    build's cards recorded in `poses/.shipped.json` (`write_shipped`: what THIS build shipped,
+    read by the next install), then `keep_local` puts the local cards back, card by card. The
+    poses go back even when the copy itself fails half way (trap 113: a payload row the source
+    does not hold) - that error then goes on, and with no new manifest nothing is dropped.
+    Returns `keep_local`'s `Kept`.
     """
     aside = None
     old_poses = os.path.join(dest, POSES)
@@ -335,12 +593,13 @@ def copy_payload(src_root, dest):
         except OSError:
             os.rmdir(aside)                  # still empty: nothing was moved
             raise
-    kept = []
+    kept = Kept()
+    new_cards = None
     try:
         if os.path.isdir(dest):
             shutil.rmtree(dest)
         os.makedirs(dest)
-        ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+        ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "*" + HALF_WRITTEN)
         for name in payload():
             src = os.path.join(src_root, name)
             target = os.path.join(dest, name)
@@ -348,9 +607,11 @@ def copy_payload(src_root, dest):
                 shutil.copytree(src, target, ignore=ignore)
             else:
                 shutil.copy2(src, target)
+            if name == POSES and os.path.isdir(target):
+                new_cards = write_shipped(target)
     finally:
         if aside is not None:
-            kept = _put_back_poses(aside, dest)
+            kept = _put_back_poses(aside, dest, new_cards)
     return kept
 
 
@@ -476,8 +737,9 @@ def install(dropped=None, quiet=False):
         else source_root()
     dest = os.path.join(cmds.internalVar(userAppDir=True),
                         "scripts", SHELF)
+    kept = None
     if not same_place(src, dest):
-        copy_payload(src, dest)
+        kept = copy_payload(src, dest)
         write_version(src, dest)
     reloaded = purge_modules()
     _build_shelf(dest.replace("\\", "/"))
@@ -517,6 +779,9 @@ def install(dropped=None, quiet=False):
             note = ("\n\nThe previous version was loaded in this session"
                     "\n({0} modules dropped). {1}".format(len(reloaded),
                                                           then))
+        poses = poses_note(kept)
+        if poses:
+            note += "\n\n" + poses
         cmds.confirmDialog(
             title="SkeldarAnim",
             message="Installed: shelf {0}, {1} buttons.\n{2}{3}".format(

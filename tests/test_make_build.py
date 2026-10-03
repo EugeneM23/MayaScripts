@@ -203,6 +203,29 @@ class VersionRecord(FakeTree):
         self.assertEqual(make_build.parse_args([]), (None, None))
 
 
+class ShippedPoses(FakeTree):
+    """The `poses` row carries the manifest of the cards the build ships (2026-10-03): made from
+    the tree, never taken from it; a half-written card file stays home."""
+
+    NAMES = ("tool.py", "poses")
+
+    def test_the_archive_carries_the_cards_manifest(self):
+        import hashlib
+        _write(os.path.join(self.root, "poses", "Hands", "Fist.pose", "pose.json"), "fist")
+        _write(os.path.join(self.root, "poses", "Fist.pose", "pose.json.part"), "half")
+        _write(os.path.join(self.root, "poses", install.SHIPPED), "a stale one")
+        path = make_build.build(self.out, self.root, self.NAMES)
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            manifest = json.loads(zf.read("SkeldarAnim/poses/" + install.SHIPPED))
+        self.assertEqual(names.count("SkeldarAnim/poses/" + install.SHIPPED), 1)
+        self.assertFalse([n for n in names if n.endswith(".part")])
+        self.assertEqual(manifest["format"], install.SHIPPED_FORMAT)
+        self.assertEqual(manifest["cards"], {
+            "Hands/Fist.pose": {"pose.json": hashlib.sha1(b"fist").hexdigest()},
+            "Fist.pose": {}})
+
+
 class Verify(FakeTree):
 
     def test_a_complete_archive_passes(self):
