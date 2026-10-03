@@ -434,7 +434,9 @@ def build_animation(selection=None, regions=None, start=None, end=None, progress
     when None, both made whole once (`_whole`): a CHARACTER card when the selection touches
     exactly one character (`character_animation`), else an OBJECTS card of its transforms
     (frames None: an objects card keeps its curves in the header), else (None, None, why) - an
-    empty range, two characters, nothing selected, no member left, a cancel (`CANCELLED`)."""
+    empty range, two characters, nothing selected, no member left, a cancel (`CANCELLED`).
+    `progress` (a `timewalk.Progress`, or None) is stepped once per frame of a character's walk
+    - `end - start + 1` steps; an objects card walks no time and steps nothing."""
     if start is None or end is None:
         first, last = default_range()
         start = first if start is None else start
