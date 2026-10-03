@@ -21,7 +21,7 @@ Asked and answered:
 | extras in the first version | **Blend** (mix the current pose and the card's, 0..100 %) and **Mirror** (left ↔ right) |
 | where the library lives | **a `poses/` folder in the plugin, installed like all our content** |
 | the install wipes the installed folder | **local poses survive every install; on the animator's machine the library points at the repo's `SkeldarAnim/poses` once, so a commit + push ships the poses** |
-| a full pose on a character standing elsewhere | **the character stays where it stands and faces** (root / Main untouched; the pelvis relative to the root) |
+| a full pose on a character standing elsewhere | **the character stays where it stands and faces** (root / Main untouched; the pelvis relative to the root - on a skeleton with no root of its own, its ground frame) |
 | keys | **always a key on the current frame, on the active animation layer** |
 | a limb in IK | **both modes keyed**: FK and IK controls both take the pose, as the retarget does |
 
@@ -114,12 +114,28 @@ exactly one transform carries it).
   rigid(S_rest[s])⁻¹` and `A` the minimal rotation taking the target's rest bone direction onto the
   source's (`skeletonimport._alignments`, identity for a twin); `tp` the nearest paired target
   ancestor (`canonical_parents`), whose `W*` is its own target when it is a member and its CURRENT
-  world when it is not — so a hand pose lands on the arm as it stands. The roots are always paired
-  with each other, and the target root keeps its place: `W*[root] = T_now[root]`;
-- `P` is the source's `drive` where the TARGET is a rig and the bone has one, else its `world`;
+  world when it is not — so a hand pose lands on the arm as it stands;
+- **the root frame** (the final review, 2026-10-03): a skeleton has a ROOT of its own only when its
+  top joint stands at the floor — `posemath.has_root`: its canonical name is `root`, recognize's
+  floor rule. Otherwise — Mixamo's Hips (its top joint IS its pelvis), 3ds Max Biped's Bip001 (a
+  centre of mass at the hips' height) — its root frame is its GROUND frame: the floor under its
+  top joint, turned by that joint's heading. Source and target alike. A target with a root has it
+  paired with the source's top joint and keeps its place: `W*[root] = T_now[root]`. A target
+  without one keeps its top joint's own partner (Mixamo's Hips ← the source's pelvis) and keeps
+  its GROUND frame: the top joint takes the pose like any member and is then put back on its
+  current heading and floor place (`posemath._on_ground`) — it takes the card's swing and height,
+  the character keeps where it stands and faces, and a card applied twice lands once. The cost,
+  stated: on such a target the facing IS the Hips' heading, so a rooted card's pelvis yaw and
+  floor offset against its root are read as the facing and the place (the rootless source's rule,
+  the other way round);
+- `P` is the source's `drive` where the TARGET is a rig and the bone has one, and on a skeleton
+  where the target cannot take the roll through twist bones of its own — no target bone plays any
+  of the source bone's twist children (Mixamo's Arm / ForeArm / UpLeg / Leg: read as the world,
+  the roll was lost and showed as a 17-39 deg twist at the wrist); else its `world`
+  (`posemath.drive_bones`);
 - **positions**: every bone keeps the target's own lengths (forward kinematics from its current
-  local translations); only the **pelvis** takes the pose's offset from the root, scaled by the two
-  bodies' size (`maya_skeletonmap.size_ratio`), in the target root's frame;
+  local translations); only the **pelvis** takes the pose's offset from the source's root frame,
+  scaled by the two bodies' size (`maya_skeletonmap.size_ratio`), in the target's root frame;
 - a twin gives `A = I`, so a pose saved and applied on the same model is exact. A twin is
   decided on the two RESTS alone, never on a pose (`posemath.twin`): the median paired length
   within 1 % (`maya_retargetmode.measure`'s rule) AND every paired bone's rest chord to its
@@ -135,8 +151,9 @@ the leaf's side token (`Left/Right`, `_l/_r`, `.L/.R`, `_L_/_R_`).
 
 **Onto a skeleton**: each member's local = `W*[t] · W*[parent]⁻¹` → joint rotate channels
 (`R = RA⁻¹ · L · JO⁻¹` in its rotate order, the euler nearest the current one); the pelvis also its
-translate. A channel driven by anything that is not a curve or a layer (a weapon link's constraint,
-the animator's own) is skipped and named.
+translate. A root of its own is never written; a top joint that is no root (Mixamo's Hips) is
+written as the member it is. A channel driven by anything that is not a curve or a layer (a weapon
+link's constraint, the animator's own) is skipped and named.
 
 **Onto a rig** (`rigsolve`, generalising `fkik`'s analytic switch to the whole rig; nothing is
 constrained, nothing baked, `reset_build_pose` is never called):

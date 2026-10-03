@@ -63,6 +63,7 @@ TWIN_LENGTH = 0.01
 TWIN_DEG = 1.0
 SHORTEST_LENGTH = 1.0      # cm: a shorter bone does not vote
 NOT_A_LENGTH = ("root", "pelvis", "center_of_mass", "interaction")
+ROOT = "root"              # the canonical name of a root standing at the floor (`has_root`)
 # world Y where a skeleton with no root of its own stands at its bind: its top joint's parent is
 # the world (or a group at the origin), so its floor is that origin's height - the retarget's
 # `their_floor` for such a source (maya_skeletonmap.size_ratio)
@@ -257,6 +258,20 @@ def ue_named(bones):
     return skelmap.covers_ue_core(bones)
 
 
+def has_root(bones):
+    """Does the skeleton have a ROOT of its own: is its top joint (`root_of`) the bone our names
+    call `root` - an ancestor of the hips standing at the FLOOR (`maya_skeletonmap`'s rule, which
+    `recognize` gave the card and the target their `canonical` names by)?
+
+    Not on Mixamo's shape, whose top joint IS its pelvis (Hips), and not on 3ds Max Biped's,
+    whose top joint (Bip001) is the centre of mass at the hips' height - a floor root there would
+    read the body's lean as its facing and stand the pelvis ON the target's root, 96 cm into the
+    floor (the final review, 2026-10-03). A skeleton with no root of its own stands on its
+    GROUND frame (`_ground`), source and target alike."""
+    top = root_of(bones)
+    return top is not None and bones[top].get("canonical") == ROOT
+
+
 def _find(bones, name):
     """The leaf playing our bone `name`: the one whose canonical name it is, else the leaf
     spelled so; None when neither."""
@@ -290,14 +305,18 @@ def pairs(source, target):
     "spine_04", "spine_03": "spine_05"}`. Otherwise by canonical name: a target bone whose
     canonical name a source bone carries, helpers never; the spine (`spine_*`) and the neck
     (`neck_*`) paired chain onto chain with `distribute(source_chain, target_chain)`, each chain
-    that side's canonical spine/neck bones bottom-up by canonical name. The two roots
-    (`root_of`) are always paired, last, so the target root's partner is the source root."""
+    that side's canonical spine/neck bones bottom-up by canonical name. A target with a root of
+    its own (`has_root`) has it paired with the source's top joint (`root_of`), last, so the
+    target root's partner is the source root - or, on a source without one, the top joint its
+    ground frame is read off. A target WITHOUT one keeps its top joint's own partner: Mixamo's
+    Hips are its pelvis and pair with the source's pelvis (paired with the source's root they
+    lost the card's hips turn and height, 15.8 deg on a twin - the final review)."""
     if ue_named(source) and ue_named(target):
         out = _by_leaf(source, target)
     else:
         out = _by_canonical(source, target)
     target_root, source_root = root_of(target), root_of(source)
-    if target_root is not None and source_root is not None:
+    if target_root is not None and source_root is not None and has_root(target):
         out[target_root] = source_root
     return out
 
@@ -327,18 +346,9 @@ def _chain(index, prefix):
     return [index[name] for name in sorted(index) if name.startswith(prefix)]
 
 
-def _own_root(pairs, source, target_root):
-    """Does the source have a root of its own? Not when the bone partnering the target root
-    also plays another target bone - Mixamo's Hips is both its root and its pelvis. A source
-    with no root of its own takes its GROUND frame (`_ground`) as its root's."""
-    partner = pairs.get(target_root)
-    if partner is None or partner not in source:
-        return False
-    return all(s != partner for t, s in pairs.items() if t != target_root)
-
-
 def _paired_ancestor(target, leaf, pairs, source, target_root):
-    """The bone's nearest ancestor that has a partner (the target root always counts)."""
+    """The bone's nearest ancestor that has a partner (`target_root` always counts; None for a
+    target with no root of its own, whose root frame - its ground - is no bone)."""
     node, seen = target[leaf].get("parent"), set()
     while node in target and node not in seen:
         seen.add(node)
@@ -390,6 +400,23 @@ def _root_frames(bones, root, pose, rootless):
     return matrix(pose), rest
 
 
+def _on_ground(turn, point, rest, ground):
+    """(turn, point) of a rootless TARGET's top joint, so that its ground frame stays where it
+    stands: the turn keeps the joint's swing past its rest and takes the ground's heading back
+    (`ground` the frame `_ground` read off the joint as it stands now), the point keeps the
+    ground's place on the floor and takes only its height. Read back through `_ground`, the new
+    pose gives the same ground frame - the character stays where it stands and faces, as a
+    rooted target's root does, and a card applied twice lands where it landed once. (A rooted
+    card's pelvis turned or offset against its root has nothing else to be on such a target:
+    its yaw and its place there are read as the facing and the place, the rootless source's
+    rule the other way round.)"""
+    rest_turn = rotation(rest)
+    relative = rest_turn.inverse() * rotation(turn)
+    swing = relative * _heading(relative).inverse()
+    place = position(ground)
+    return rest_turn * swing * rotation(ground), om.MVector(place.x, point.y, place.z)
+
+
 # ---------------------------------------------------------------- rest alignment
 
 def alignments(pairs, source, target):
@@ -439,7 +466,7 @@ def _direction_children(pairs, source, target):
     names (leaves on the UE road, canonical names on the other), mapped back to leaves. The one
     rule `alignments` reads directions by and `twin` compares the rests by."""
     ue = ue_named(source) and ue_named(target)
-    target_root = root_of(target)
+    target_root = root_of(target) if has_root(target) else None   # a rootless top is a bone
     usable = [t for t in _ordered(target) if t in pairs and t != target_root
               and pairs[t] in source and not is_helper(t) and not is_twist(t)]
     mapping, names = {}, {}
@@ -537,10 +564,11 @@ def twin(pairs, source, target):
 def scale_between(source, target, pairs):
     """How much bigger the target's body is: the pelvis's rest height above the root's rest
     along world Y, target over source. 1.0 when either pelvis is missing or a height is below
-    1 cm; a ratio within 2 % of 1 is 1.0. A skeleton whose root IS its pelvis (Mixamo's Hips)
-    measures it above its ground frame's rest (`_ground`: the rest floor, `FLOOR`)."""
+    1 cm; a ratio within 2 % of 1 is 1.0. A skeleton with no root of its own (`has_root`:
+    Mixamo's Hips, Biped's centre of mass) measures it above its ground frame's rest (`_ground`:
+    the rest floor, `FLOOR`) - over Bip001 at the hips' height it read 0 and the size 1.0."""
     target_root, target_pelvis = root_of(target), _find(target, "pelvis")
-    source_root = pairs.get(target_root) or root_of(source)
+    source_root = root_of(source)
     source_pelvis = pairs.get(target_pelvis) if target_pelvis else None
     if target_pelvis is None or source_pelvis not in source or source_root not in source:
         return 1.0
@@ -553,21 +581,48 @@ def scale_between(source, target, pairs):
 
 
 def _height(bones, pelvis, root):
-    """The pelvis's rest height over its root's rest frame (the ground's, for a skeleton whose
-    root is its pelvis)."""
+    """The pelvis's rest height over its root's rest frame (the ground's, for a skeleton with no
+    root of its own)."""
     rest = bones[root]["rest"]
-    floor = position(_root_frames(bones, root, rest, root == pelvis)[1]).y
+    floor = position(_root_frames(bones, root, rest, not has_root(bones))[1]).y
     return position(bones[pelvis]["rest"]).y - floor
 
 
 # ---------------------------------------------------------------- the transfer
 
+def drive_bones(source, target, pairs, use_drive=False):
+    """The source bones a transfer reads in their DRIVE form (`P[s]` below): a rig card's four
+    unrolled limb bones a side carry one - the bone as the rig's drive chain holds it, its roll
+    put back (AdvancedSkeleton moves the roll into the twist joints, trap 126).
+
+    Onto a rig (`use_drive`), every bone with a drive. Onto a skeleton, a bone whose roll the
+    target cannot take through twist bones of its own - no target bone plays any of the source
+    bone's twist children: a Mixamo target's Arm / ForeArm / UpLeg / Leg, or any non-UE native
+    skeleton. Read as the card's world there, the unrolled bone lost the roll and the whole
+    forearm roll showed as a twist at the wrist, 17-39 deg (the final review, 2026-10-03); a UE
+    skeleton takes its twist bones by leaf and reproduces the rig from the world form."""
+    played = set(pairs.values())
+    out = set()
+    for leaf, bone in source.items():
+        if not bone.get("drive"):
+            continue
+        if use_drive:
+            out.add(leaf)
+            continue
+        twists = [c for c, b in source.items() if b.get("parent") == leaf and is_twist(c)]
+        if not any(c in played for c in twists):
+            out.add(leaf)
+    return out
+
+
 def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="pelvis"):
     """{target leaf: om.MMatrix}: where EVERY target bone stands for the source's pose
     (unchanged bones at their current world).
 
-    `P[s]` is `source[s]["drive"]` when `use_drive` and the bone has one, else its `world`; the
-    target stands in `T_now[x]` = its own `drive` on the same terms (a rig read by
+    `P[s]` is `source[s]["drive"]` for the bones `drive_bones` names (every one that has one
+    when `use_drive` - the target is a rig - else those whose roll the target's own twist bones
+    cannot take), else its `world`; the target stands in `T_now[x]` = its own `drive` when
+    `use_drive` and it has one (a rig read by
     `scene.skeleton` carries the four unrolled limb bones' drives), else its `world` - so a hand
     that is no member, under a forearm that is, keeps the place it has on the forearm's DRIVE
     chain, the relation the rig holds rigid (on the unrolled bone it turns with the forearm's
@@ -583,74 +638,102 @@ def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="
     `W[tp]` being `tp`'s RESULT (its target when solved, else where it followed to). Every other
     bone follows its parent rigidly, `W[x] = (T_now[x] · T_now[parent]⁻¹) · W[parent]`, so a
     non-member between two members, and every descendant, moves with what moved. Positions:
-    every bone keeps its own local translation, `local_translation(t) · W[parent]`. The root
-    keeps its current world. The PELVIS (the target bone playing `pelvis`, paired with a
-    member) takes the pose's offset from the root, in the source root's frame, into the target
-    root's, scaled:
+    every bone keeps its own local translation, `local_translation(t) · W[parent]`. The PELVIS
+    (the target bone playing `pelvis`, paired with a member) takes the pose's offset from the
+    source's ROOT FRAME into the target's, scaled:
 
-        d_local = (pos(P[s_pelvis]) - pos(P[s_root])) · rotation(P[s_root])⁻¹
+        d_local = (pos(P[s_pelvis]) - pos(P_root)) · rotation(P_root)⁻¹
         d_t     = d_local · rotation(O_root)⁻¹ · scale
-        pos     = pos(T_now[t_root]) + d_t · rotation(T_now[t_root])
+        pos     = pos(T_root) + d_t · rotation(T_root)
 
-    A source with no root of its own (its root also plays another target bone, Mixamo's Hips)
-    reads `P[s_root]` and `S_rest[s_root]` off its GROUND frame (`_ground`): the rest floor
-    under the hips, turned by their heading. Read literally the rule would hold the pelvis
-    relative to ITSELF - its offset zero, on the target's root, its turn lost - and the world
-    origin in its place would carry the card's world placement and facing into the target."""
+    A ROOT FRAME is a skeleton's root (`has_root`: its top joint standing at the floor), else its
+    GROUND frame (`_ground`: the rest floor under its top joint, turned by its heading) - for a
+    source (Mixamo's Hips, Biped's centre of mass) as for a target. Read literally on a source
+    with none the rule held the pelvis relative to ITSELF, its offset zero, on the target's
+    root; with the centre of mass for a root it stood the pelvis 96 cm into the floor. `O_root
+    = rigid(T_root_rest) · rigid(P_root_rest)⁻¹`. A target's root frame keeps where it stands:
+    its root keeps its current world (never written), and with no root of its own its top joint
+    - a member like any other when its partner is one (Mixamo's Hips: the card's pelvis turn and
+    height, 15.8 deg and every bone with it lost on a twin before the final review) - is put on
+    `_on_ground`, so its ground frame reads the same after: the character stays where it stands
+    and faces."""
     members = set(members or ())
     align = alignments(pairs, source, target)
     target_root = root_of(target)
-    own_root = _own_root(pairs, source, target_root)
+    if target_root is None:
+        return {}
+    rooted = has_root(target)
     target_pelvis = _find(target, pelvis)
     now = dict((leaf, matrix(bone["drive"] if use_drive and bone.get("drive") else bone["world"]))
                for leaf, bone in target.items())
+    drives = drive_bones(source, target, pairs, use_drive)
 
     def pose(s):
         bone = source[s]
-        return matrix(bone["drive"] if use_drive and bone.get("drive") else bone["world"])
+        return matrix(bone["drive"] if s in drives else bone["world"])
+
+    # the two root frames: (pose / now, rest) - the source's (`_root_frames`), the target's
+    source_root = root_of(source)
+    if source_root is None:
+        source_frame = (om.MMatrix(), om.MMatrix())
+    else:
+        source_frame = _root_frames(source, source_root, pose(source_root),
+                                    not has_root(source))
+    if rooted:
+        root_world, root_rest = om.MMatrix(now[target_root]), matrix(target[target_root]["rest"])
+    else:
+        root_world, root_rest = _ground(target[target_root]["rest"], now[target_root])
+    root_offset = rigid(root_rest) * rigid(source_frame[1]).inverse()
+
+    def is_frame(leaf):
+        return leaf is None or (rooted and leaf == target_root)
 
     def frame(leaf):
-        """(P, S_rest) of a target bone's partner - for the target root, the source root's
-        frames (`_root_frames`: the ground's for a source with no root of its own)."""
-        if leaf is None:
-            return om.MMatrix(), om.MMatrix()
+        """(P, S_rest) of a target bone's partner - for the ROOT FRAME (`None`, or the target's
+        own root) the source's root frame."""
+        if is_frame(leaf):
+            return source_frame
         s = pairs.get(leaf)
-        if s not in source:                 # an unpaired target root: nothing to stand on
+        if s not in source:
             return om.MMatrix(), om.MMatrix()
-        if leaf == target_root:
-            return _root_frames(source, s, pose(s), not own_root)
         return pose(s), matrix(source[s]["rest"])
 
     def offset(leaf):
         """O: the target's rest against its partner's, through the alignment."""
-        if leaf is None:
-            return om.MMatrix()
+        if is_frame(leaf):
+            return root_offset
         rest = frame(leaf)[1]
         return rigid(target[leaf]["rest"]) * align.get(leaf, om.MMatrix()) * rigid(rest).inverse()
 
+    anchor = target_root if rooted else None
     out = {}
     for leaf in _ordered(target):
         parent = target[leaf].get("parent")
-        if leaf == target_root or parent not in target:
+        top = parent not in target
+        if (rooted and leaf == target_root) or (top and leaf != target_root):
             out[leaf] = om.MMatrix(now[leaf])
             continue
-        local = now[leaf] * now[parent].inverse()
+        parent_now = root_world if top else now[parent]
+        parent_world = root_world if top else out[parent]
+        local = now[leaf] * parent_now.inverse()
         s = pairs.get(leaf)
         if s not in members or s not in source:
-            out[leaf] = local * out[parent]
+            out[leaf] = local * parent_world
             continue
-        above = _paired_ancestor(target, leaf, pairs, source, target_root)
-        above_world = out[above] if above is not None else om.MMatrix()
+        above = _paired_ancestor(target, leaf, pairs, source, anchor)
+        above_world = out[above] if above is not None else root_world
         turn = rotation(offset(leaf) * rotation(pose(s)) * rotation(frame(above)[0]).inverse()
                         * offset(above).inverse() * rotation(above_world))
         if leaf == target_pelvis:
-            root_pose = frame(target_root)[0]
+            root_pose = source_frame[0]
             d_local = (position(pose(s)) - position(root_pose)) * rotation(root_pose).inverse()
-            d_t = d_local * rotation(offset(target_root)).inverse() * scale
-            point = position(now[target_root]) + d_t * rotation(now[target_root])
+            d_t = d_local * rotation(root_offset).inverse() * scale
+            point = position(root_world) + d_t * rotation(root_world)
         else:
             t = position(local)
-            point = om.MPoint(t.x, t.y, t.z) * out[parent]
+            point = om.MPoint(t.x, t.y, t.z) * parent_world
+        if top:
+            turn, point = _on_ground(turn, point, target[leaf]["rest"], root_world)
         out[leaf] = _placed(turn, point)
     return out
 
@@ -669,15 +752,15 @@ def mirror(source, members):
     − pos(P[root])) · rot(P[root])⁻¹`, `d' = d · F`. Both `world` and `drive` are mirrored (a
     drive reads its opposite's world where the opposite has none). Members swap to their
     opposites; centre members stay. The opposite comes from the canonical name's side, else the
-    leaf's side token (`opposite`). A skeleton whose root IS its pelvis (Mixamo's Hips) has no
-    root frame of its own: it mirrors in its ground frame (`_ground`, as `targets` reads it) -
-    the floor under the hips, turned by their heading - so it keeps its place and facing and
-    swaps left and right as a twin with a root there would; the hips mirror as a centre bone.
-    (The world's frame instead would reflect the card's world place and facing: a body facing
-    +X would come back facing -X.)"""
+    leaf's side token (`opposite`). A skeleton with no root of its own (`has_root`: Mixamo's
+    Hips, Biped's centre of mass) mirrors in its ground frame (`_ground`, as `targets` reads it)
+    - the floor under its top joint, turned by its heading - so it keeps its place and facing
+    and swaps left and right as a twin with a root there would; its top joint mirrors as a
+    centre bone. (The world's frame instead would reflect the card's world place and facing: a
+    body facing +X would come back facing -X.)"""
     root = root_of(source)
     pelvis = _find(source, "pelvis")
-    rootless = pelvis == root
+    rootless = not has_root(source)
     sides = _opposites(source)
     rest_root = rotation(_root_frames(source, root, source[root]["rest"], rootless)[1])
     flip = _reflection(source, rest_root)

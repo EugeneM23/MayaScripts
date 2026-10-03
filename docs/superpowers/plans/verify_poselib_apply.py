@@ -58,6 +58,19 @@ against the card, independently of the press's own measure.
             spine_04, neck_02 - Mixamo has three spine bones and one neck) on the transfer's
             rigid follow to 0.01 deg - neck_02 below a posed neck_01 stood 28.9 deg off it, the
             rig's neck in-between turning it, until rigsolve held it (`held_bones`).
+  rootless  (the final review, 2026-10-03) the Mixamo card onto a second, unposed Mixamo skeleton
+            turned 50 deg and moved - a twin whose top joint is its pelvis: every member, the
+            Hips included, on the card carried from the card's ground frame into the target's
+            (0.01 deg / 0.01 cm; the old code left the Hips where they stood, 15.8 deg and the
+            body with them), its ground frame where it stood, applied again nothing moves; the
+            Manny_Rig card onto it - every paired member, the Hips too, pointing where the card's
+            does in the card's pelvis ground frame (0.25 deg: the facing of a rootless target
+            is its Hips' heading), no «no pelvis», and the hand's twist on its forearm the
+            card's DRIVE's (the roll Mixamo has no twist bones to take; 40+ deg off read as the
+            world); a 3ds Max Biped (Bip001 a centre of mass at the hips' height) leant 20 deg
+            and lowered 20 cm, carded, onto the Manny skeleton - the pelvis at the source's
+            height over its floor and the spine leaning 20 deg (the old code stood the pelvis
+            on the root and read the lean as the facing).
   objects   two cubes posed, an objects card, applied to renamed copies in a namespace (by name,
             the namespace ignored): their attributes equal the card's, the originals untouched;
             the SELECTION decides - by order onto two differently named boxes WITH the originals
@@ -79,7 +92,9 @@ against the card, independently of the press's own measure.
             takes the pose keys and nothing else (the rig and its channels at Add's values);
             `drop_floor` of a Mixamo card (no catalog row) whose rest root stands OFF the origin
             (40, -25) - rebuilt bones only in `pose_<name>`, its root ON the point, every member
-            on the card relative to the root (0.01 deg), its rest still the card's once posed
+            - the Hips too, its root AND its pelvis - on the card carried from the card's ground
+            frame (0.01 deg / 0.01 cm; «relative to the root» left the Hips out and could not
+            fail on their lost turn), its rest still the card's once posed
             (the hidden bind cube); one outliner group and layer over it, Delete's record
             («<card name> [own skeleton]»), and Delete taking it whole and nothing else.
 
@@ -132,7 +147,8 @@ from maya_poselib import capture, keys, rigsolve, scene  # noqa: E402
 from maya_poselib import posemath as pm  # noqa: E402
 
 PHASES = [p.strip() for p in os.environ.get(
-    "POSELIB_PHASES", "undo,root,mirror,blend,partial,mixamo,objects,select,layers,floor"
+    "POSELIB_PHASES",
+    "undo,root,mirror,blend,partial,mixamo,rootless,objects,select,layers,floor"
 ).split(",") if p.strip()]
 OUT = io.open(sys.argv[1], "w", encoding="utf-8") if len(sys.argv) > 1 else None
 RESULTS = []
@@ -445,9 +461,10 @@ def target_members(data, ch, mirror=False):
 
 
 def direction_children(pairs, source, target):
-    """{target leaf: its direction child}, read the way `posemath.alignments` reads it."""
+    """{target leaf: its direction child}, read the way `posemath.alignments` reads it (a top
+    joint that is no root - Mixamo's Hips - is a bone like the others)."""
     ue = pm.ue_named(source) and pm.ue_named(target)
-    root = pm.root_of(target)
+    root = pm.root_of(target) if pm.has_root(target) else None
     usable = [t for t in pm._ordered(target) if t in pairs and t != root and pairs[t] in source
               and not pm.is_helper(t) and not pm.is_twist(t)]
     mapping, names = {}, {}
@@ -942,15 +959,20 @@ MIXAMO_POSE = {   # our bone: delta on the local rotate channels, degrees
 }
 
 
-def build_mixamo(ns="mx", offset=None):
+def build_mixamo(ns="mx", offset=None, posed=True, convention="mixamo"):
     """The Mixamo fixture as joints in `ns` (`mixamorig:` names inside it), oriented as Mixamo
     orients (Y down the bone, `yzx`), the T-pose rest in jointOrient - moved by `offset` (x, y,
     z) when given, so the rest's root stands off the origin - bound to a cube at that rest (a
-    Mixamo character's bind is its skin's), then posed by MIXAMO_POSE. (top, {ours: path})."""
-    rows, expected = fixtures.build("mixamo")
-    for full in (ns, ns + ":mixamorig"):
-        if not cmds.namespace(exists=":" + full):
-            cmds.namespace(add=full.split(":")[-1], parent=":" + ":".join(full.split(":")[:-1]))
+    Mixamo character's bind is its skin's), then posed by MIXAMO_POSE unless `posed` is False.
+    `convention` another of `tests/skeleton_conventions.py`'s (3ds Max's `biped`). (top, {ours:
+    path})."""
+    rows, expected = fixtures.build(convention)
+    for full in sorted(set(":".join([ns] + n.split(":")[:-1]) for n, _p, _pos in rows)):
+        parts = full.split(":")
+        for i in range(1, len(parts) + 1):
+            here = ":".join(parts[:i])
+            if not cmds.namespace(exists=":" + here):
+                cmds.namespace(add=parts[i - 1], parent=":" + ":".join(parts[:i - 1]))
     made = {}
     for name, parent, pos in rows:
         under = made.get(parent)
@@ -973,7 +995,7 @@ def build_mixamo(ns="mx", offset=None):
     cube = cmds.polyCube(name=ns + ":body", constructionHistory=False)[0]
     cmds.skinCluster(joints + [cube], toSelectedBones=True)
     for ours, delta in MIXAMO_POSE.items():
-        if ours in expected:
+        if ours in expected and posed:
             joint = path(expected[ours])
             rest = cmds.getAttr(joint + ".rotate")[0]
             cmds.setAttr(joint + ".rotate", *[r + d for r, d in zip(rest, delta)])
@@ -987,20 +1009,30 @@ def pointing(data, ch):
     its own) - verify_poselib_solve's cross gate."""
     source = data["bones"]
     members, pairs, bones = target_members(data, ch)
-    use_drive = ch.rig is not None
+    use_drive = ch.rig is not None or not pm.ue_named(bones)   # a target with no twist bones
     p = dict((leaf, pm.matrix(b["drive"] if use_drive and b.get("drive") else b["world"]))
              for leaf, b in source.items())
     t_root, s_root = pm.root_of(bones), pm.root_of(source)
-    rootless = not pm._own_root(pairs, source, t_root)
+    rootless = not pm.has_root(source)
     now = dict((leaf, W(b["path"])) for leaf, b in bones.items())
-    t_frame = pm.rotation(now[t_root]).inverse() * pm.rotation(bones[t_root]["rest"])
-    pose_frame, rest_frame = pm._root_frames(source, s_root, p[s_root], rootless)
+    # the target's root frame: its root, else its ground (the floor under its top joint, turned
+    # by its heading - kept by the press, read here after it)
+    t_pose, t_rest = pm._root_frames(bones, t_root, now[t_root], not pm.has_root(bones))
+    t_frame = pm.rotation(t_pose).inverse() * pm.rotation(t_rest)
+    if pm.has_root(bones):
+        pose_frame, rest_frame = pm._root_frames(source, s_root, p[s_root], rootless)
+    else:
+        # a target with no root of its own keeps the heading of its Hips: the card's pelvis yaw
+        # against its root is read as the facing there (the spec), so the card is read in its
+        # PELVIS's ground frame
+        s_pelvis = pm._find(source, "pelvis")
+        pose_frame, rest_frame = pm._ground(source[s_pelvis]["rest"], p[s_pelvis])
     s_frame = pm.rotation(pose_frame).inverse() * pm.rotation(rest_frame)
     children = direction_children(pairs, source, bones)
     rows = []
     for leaf in members:
         child = children.get(leaf)
-        if child is None or child not in now:
+        if child is None or child not in now or leaf not in now:
             continue
         s, sc = pairs[leaf], pairs[child]
         if source[sc]["parent"] == s:
@@ -1057,6 +1089,173 @@ def phase_mixamo():
          ok and rows and deg <= 0.1 and rootless,
          "%.6f deg (%s), %d bones, rootless %s" % (deg, at, len(rows), rootless))
     a.reset()
+
+
+def ground_frame(bones, world=None):
+    """The ground frame (`posemath._ground`) of a skeleton's top joint: as it stands (`world`
+    given: as read from the scene), else as the card / bones hold it."""
+    top = pm.root_of(bones)
+    return pm._ground(bones[top]["rest"], world if world is not None else
+                      bones[top]["world"])[0]
+
+
+def carried_rows(data, ch, members, before):
+    """[(leaf, deg, cm)]: each member bone's WORLD - the top joint (the Hips) included - against
+    the card's own, carried from the card's ground frame into the target's ground frame as it
+    stood BEFORE the press (`before`). For a twin with no root of its own: what «exact» means
+    when the character keeps its place and facing."""
+    source = data["bones"]
+    carry = ground_frame(source).inverse() * before
+    game = scene_worlds(ch)
+    rows = []
+    for leaf in members:
+        if leaf not in game or leaf not in source:
+            continue
+        want = pm.rigid(pm.matrix(source[leaf]["world"]) * carry)
+        rows.append((leaf, pm.angle(game[leaf], want),
+                     (pm.position(game[leaf]) - pm.position(want)).length()))
+    return rows
+
+
+def twist_from_rest(fore, hand, fore_rest, hand_rest):
+    """The hand's turn about its forearm's bone since the rest, degrees: the hand in its
+    forearm's frame now against at rest (`local . local_rest^-1`, the hand's own frame), its
+    twist about the forearm-to-hand chord there."""
+    local = pm.rotation(hand) * pm.rotation(fore).inverse()
+    local_rest = pm.rotation(hand_rest) * pm.rotation(fore_rest).inverse()
+    delta = local * local_rest.inverse()
+    axis = ((pm.position(hand_rest) - pm.position(fore_rest)) *
+            pm.rotation(hand_rest).inverse()).normal()
+    q = om.MTransformationMatrix(delta).rotation(asQuaternion=True)
+    proj = q.x * axis.x + q.y * axis.y + q.z * axis.z
+    angle = math.degrees(2.0 * math.atan2(proj, q.w))
+    return (angle + 180.0) % 360.0 - 180.0
+
+
+def phase_rootless():
+    """A target whose top joint is its pelvis, and a source whose top joint is a centre of mass
+    (the final review, 2026-10-03)."""
+    data = CARDS["mixamo"]
+    top, _by_ours = build_mixamo("mxt", posed=False)
+    cmds.rotate(0, 50, 0, top, relative=True, worldSpace=True)
+    cmds.move(60, 0, -40, top, relative=True, worldSpace=True)
+    evaluate()
+    ch = Char("mxt", top)
+    bones = ch.bones()
+    before = ground_frame(bones, W(top))
+    cmds.currentTime(13)
+    ok, text = ap.apply(data, selection=[top])
+    say("   rootless twin: %s" % text)
+    evaluate()
+    members, _pairs, _b = target_members(data, ch)
+    rows = carried_rows(data, ch, members, before)
+    deg, cm, at, at_cm = worst_of(rows)
+    hips = [r for r in rows if r[0] == pm.root_of(bones)]
+    # the old code kept the Hips where they stood: 15.8 deg off, the body with them
+    gate("rootless a Mixamo card onto its rootless twin (turned 50, moved): every member, the "
+         "Hips too, on the card in its ground frame", ok and hips and deg <= 0.01 and cm <= 0.01,
+         "%.6f deg (%s) %.6f cm (%s), %d bones, Hips %.6f deg" % (
+             deg, at, cm, at_cm, len(rows), hips[0][1] if hips else -1))
+    after = ground_frame(bones, W(top))
+    gate("rootless its ground frame where it stood (place and facing kept)",
+         pm.angle(after, before) <= 1e-6 and
+         (pm.position(after) - pm.position(before)).length() <= 1e-6,
+         "%.3g deg %.3g cm" % (pm.angle(after, before),
+                               (pm.position(after) - pm.position(before)).length()))
+    values = values_of(ch.plugs)
+    ok2, text2 = ap.apply(data, selection=[top])
+    evaluate()
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in values.items())
+    gate("rootless applied again: nothing moves", ok2 and moved <= 1e-6, "%.3g" % moved)
+    # a rig card (UE) onto it: its pelvis pairs with the Hips (it named «no pelvis ... on Hips»
+    # and gave the Hips the card's ROOT), and the unrolled limb bones' roll comes from the
+    # card's DRIVE - Mixamo has no twist bones to take it (17-39 deg lost at the wrist)
+    ch.reset()
+    full = CARDS["full"]
+    ok, text = ap.apply(full, selection=[top])
+    say("   rootless UE card onto Mixamo: %s" % text)
+    evaluate()
+    rows, _r = pointing(full, ch)
+    deg, _cm, at, _a = worst_of(rows)
+    say("   rootless UE card worst rows: %s" % ", ".join(
+        "%s %.4f" % (r[0], r[1]) for r in sorted(rows, key=lambda r: -r[1])[:8]))
+    hips_row = [r for r in rows if r[0] == pm.root_of(bones)]
+    # 0.25, not the cross gates' 0.1: on a target with no root of its own the facing IS the
+    # Hips' heading, and the Hips' rest alignment (Manny's pelvis chord onto the fixture's, a
+    # minimal turn of ~2 deg off the vertical) shifts what «heading» reads by 0.19 deg on this
+    # pair - every bone by the same 0.19, the Hips' own direction 0.02 (a twin: 0.000000 above)
+    gate("rootless a rig card onto Mixamo: every paired member points where the card's does, "
+         "the Hips too, and no «no pelvis»", ok and hips_row and deg <= 0.25 and
+         "no pelvis" not in text,
+         "%.6f deg (%s), %d bones, Hips %.4f" % (deg, at, len(rows),
+                                                 hips_row[0][1] if hips_row else -1))
+    source = full["bones"]
+    by_ours = dict((b.get("canonical"), leaf) for leaf, b in bones.items() if b.get("canonical"))
+    twists = []
+    for side in ("l", "r"):
+        fore, hand = by_ours.get("lowerarm_" + side), by_ours.get("hand_" + side)
+        card = twist_from_rest(source["lowerarm_" + side]["drive"],
+                               source["hand_" + side]["world"],
+                               source["lowerarm_" + side]["rest"],
+                               source["hand_" + side]["rest"])
+        shown = twist_from_rest(source["lowerarm_" + side]["world"],
+                                source["hand_" + side]["world"],
+                                source["lowerarm_" + side]["rest"],
+                                source["hand_" + side]["rest"])
+        got = twist_from_rest(W(bones[fore]["path"]), W(bones[hand]["path"]),
+                              bones[fore]["rest"], bones[hand]["rest"])
+        twists.append((side, card, shown, got))
+    off = max(abs((g - c + 180.0) % 360.0 - 180.0) for _s, c, _w, g in twists)
+    rolled = min(abs((w - c + 180.0) % 360.0 - 180.0) for _s, c, w, _g in twists)
+    # within a few degrees, not exactly: Manny's A-posed and Mixamo's T-posed rests align the
+    # forearm and the hand by two different minimal turns, and a twist read in each one's own
+    # frame differs by that (posemath's unit test holds the drive exact on a twin); the roll the
+    # world form loses is ten times that
+    gate("rootless a rig card onto Mixamo: the hand's twist on its forearm is the card's (the "
+         "roll in the forearm, from the drive)", off <= 5.0 and rolled >= 30.0,
+         "%s; off %.4f deg, the unrolled bone would read %.1f+ deg off" % (", ".join(
+             "%s card %.2f got %.2f (unrolled %.2f)" % (s, c, g, w)
+             for s, c, w, g in twists), off, rolled))
+    ch.reset()
+    cmds.setAttr(top + ".visibility", False)
+    # a centre-of-mass top (3ds Max Biped's Bip001, at the hips' height): leant 20 deg and
+    # lowered 20 cm, carded, onto the Manny skeleton - its pelvis stood ON the root, 96 cm into
+    # the floor, and the lean was read as the facing
+    btop, bours = build_mixamo("bip", posed=False, convention="biped")
+    cmds.rotate(20, 0, 0, btop, relative=True, worldSpace=True)
+    cmds.move(0, -20, 0, btop, relative=True, worldSpace=True)
+    evaluate()
+    card, note = capture.build_pose([btop])
+    card["name"] = "Biped"
+    cmds.setAttr(btop + ".visibility", False)
+    say("   biped card: %s" % note)
+    s = CH["S"]
+    s.reset()
+    ok, text = ap.apply(card, selection=[s.root])
+    say("   biped onto the Manny skeleton: %s" % text)
+    evaluate()
+    sb = s.bones()
+    source = card["bones"]
+    pelvis_s = next(l for l, b in source.items() if b.get("canonical") == "pelvis")
+    spine_s = next(l for l, b in source.items() if b.get("canonical") == "spine_01")
+    up = om.MVector(0, 1, 0)
+    s_height = pm.position(source[pelvis_s]["world"]).y
+    scale = pm.position(sb["pelvis"]["rest"]).y / pm.position(source[pelvis_s]["rest"]).y
+    scale = 1.0 if abs(scale - 1.0) <= pm.SCALE_TOLERANCE else scale     # the spec's 2 % rule
+    t_height = pm.position(W(sb["pelvis"]["path"])).y - pm.position(W(s.root)).y
+    s_lean = pm.direction_angle(pm.position(source[spine_s]["world"]) -
+                                pm.position(source[pelvis_s]["world"]), up)
+    t_lean = pm.direction_angle(pm.position(W(sb["spine_01"]["path"])) -
+                                pm.position(W(sb["pelvis"]["path"])), up)
+    gate("biped the top joint is no root (a centre of mass)",
+         not pm.has_root(source) and source[pm.root_of(source)].get("canonical") is None,
+         "%s canonical %s" % (pm.root_of(source), source[pm.root_of(source)].get("canonical")))
+    gate("biped onto the Manny skeleton: the pelvis at the source's height over its floor, scaled",
+         ok and abs(t_height - s_height * scale) <= 0.01,
+         "%.4f cm against %.4f x %.4f = %.4f" % (t_height, s_height, scale, s_height * scale))
+    gate("biped onto the Manny skeleton: the spine leans as the source's", abs(t_lean - s_lean)
+         <= 0.05 and s_lean > 15.0, "%.4f deg against %.4f" % (t_lean, s_lean))
+    s.reset()
 
 
 def _cube(name, values):
@@ -1438,10 +1637,19 @@ def phase_floor():
              off, at_root.x, at_root.y, at_root.z, rest_root.x, rest_root.z))
     ch = Char("native", root)
     members, _p, _b = target_members(card, ch)
-    rows = rel_rows(card, ch, members)
+    # the rebuild stood at its rest ON the point, unturned: its ground frame there. The card's
+    # Hips are its root AND its pelvis: «relative to the root» left them out and could not see
+    # them lose the card's turn and height (the final review) - every member's WORLD is compared,
+    # the Hips included, carried from the card's ground frame
+    before = om.MMatrix()
+    before[12], before[14] = NATIVE_AT[0], NATIVE_AT[2]
+    rows = carried_rows(card, ch, members, before)
     deg, cm, at, _a = worst_of(rows)
-    gate("floor native: every member on the card relative to the root", rows and deg <= 0.01,
-         "%.6f deg (%s) %.6f cm, %d bones" % (deg, at, cm, len(rows)))
+    hips = [r for r in rows if r[0] == pm.root_of(card["bones"])]
+    gate("floor native: every member on the card in its ground frame, the Hips too",
+         rows and hips and deg <= 0.01 and cm <= 0.01,
+         "%.6f deg (%s) %.6f cm, %d bones, Hips %.6f deg" % (deg, at, cm, len(rows),
+                                                             hips[0][1] if hips else -1))
     bones = ch.bones()
     drift = max(matrix_diff(bones[leaf]["rest"], card["bones"][leaf]["rest"])
                 for leaf in card["bones"] if leaf in bones)
@@ -1483,7 +1691,8 @@ def run():
     setup()
     for name, fn in (("undo", phase_undo), ("root", phase_root), ("mirror", phase_mirror),
                      ("blend", phase_blend), ("partial", phase_partial),
-                     ("mixamo", phase_mixamo), ("objects", phase_objects),
+                     ("mixamo", phase_mixamo), ("rootless", phase_rootless),
+                     ("objects", phase_objects),
                      ("select", phase_select), ("layers", phase_layers),
                      ("floor", phase_floor)):
         if name not in PHASES:

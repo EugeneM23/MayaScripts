@@ -37,7 +37,9 @@ did before. Measured (`verify_poselib_apply.py` `undo`): every channel of the ri
 keyed and static ones alike (an undone `setKeyframe` on a static channel puts its value back).
 
 **Main and a skeleton's root are never written** - the character stays where it stands and faces
-(the animator's answer); the pelvis comes relative to the root.
+(the animator's answer); the pelvis comes relative to the root. A skeleton with no root of its own
+(`posemath.has_root`: Mixamo's Hips, its top joint AND its pelvis) stands on its GROUND frame: its
+top joint is written as the pelvis it is, and keeps the floor place and heading it had.
 
 ## Onto the floor (`drop_floor`)
 
@@ -597,7 +599,7 @@ def _measure(plan, extra):
         return None
     if ref.kind == "rig":
         return rigsolve.measure(ref.rig, extra.wanted, extra.members)
-    root = skelsolve.root_leaf(ref, extra.bones)
+    root = skelsolve.root_leaf(ref, extra.bones) if pm.has_root(extra.bones) else None
     worst = (0.0, 0.0, None)
     for leaf in extra.members:
         if leaf == root or leaf in plan.skipped or leaf not in extra.wanted:
@@ -952,7 +954,7 @@ def select_objects(data, selection=None):
         if ref.kind == "rig":
             found = rigsolve.controls_for(ref.rig, members_t)
         else:
-            root = skelsolve.root_leaf(ref, bones)
+            root = skelsolve.root_leaf(ref, bones) if pm.has_root(bones) else None
             found = [bones[leaf]["path"] for leaf in members_t if leaf != root]
         nodes.extend(n for n in found if n not in nodes)
         labels.append(target_label(ref))

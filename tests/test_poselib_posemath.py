@@ -183,6 +183,18 @@ def names_only(names, prefix=""):
     return out
 
 
+def with_twist(bones):
+    """A copy with `upperarm_twist_01_l` halfway down the left upper arm (UE's twist bone)."""
+    out = dict((leaf, dict(bone)) for leaf, bone in bones.items())
+    arm = bones["upperarm_l"]
+    half = trs((14, 0, 0))
+    out["upperarm_twist_01_l"] = {
+        "parent": "upperarm_l", "canonical": None,
+        "rest": pm.flat(half * pm.matrix(arm["rest"])),
+        "world": pm.flat(half * pm.matrix(arm["world"]))}
+    return out
+
+
 def rootless(bones):
     """A copy with the root gone and its children at the top, every leaf `mx_`-prefixed (the
     canonical names kept): Mixamo's shape, whose Hips is its root."""
@@ -226,16 +238,25 @@ class PairingRules(unittest.TestCase):
 
 class TransferRules(unittest.TestCase):
 
-    def test_the_drive_is_used_only_when_asked(self):
-        s = skeleton({"upperarm_l": (0, 30, 40)})
+    def test_the_drive_is_used_onto_a_rig_or_where_no_twist_bone_takes_the_roll(self):
+        s = with_twist(skeleton({"upperarm_l": (0, 30, 40)}))
         drive = trs((15, 135, 0), (25, 30, 40))
         s["upperarm_l"]["drive"] = pm.flat(drive)
-        t = skeleton()
+        t = with_twist(skeleton())
         pairs = pm.pairs(s, t)
+        self.assertEqual(pairs["upperarm_twist_01_l"], "upperarm_twist_01_l")
         driven = pm.targets(s, t, pairs, ["upperarm_l"], use_drive=True)
         shown = pm.targets(s, t, pairs, ["upperarm_l"])
         self.assertLess(pm.angle(driven["upperarm_l"], drive), 1e-6)
         self.assertLess(pm.angle(shown["upperarm_l"], pm.matrix(s["upperarm_l"]["world"])), 1e-6)
+        # a target with no twist bone of its own (Mixamo's Arm): the roll is the drive's - read
+        # as the world it was lost, and showed as a twist at the next joint (the final review)
+        bare = skeleton()
+        self.assertEqual(pm.drive_bones(s, bare, pm.pairs(s, bare)), set(["upperarm_l"]))
+        alone = pm.targets(s, bare, pm.pairs(s, bare), ["upperarm_l"])
+        self.assertLess(pm.angle(alone["upperarm_l"], drive), 1e-6)
+        self.assertEqual(pm.drive_bones(s, t, pairs), set())
+        self.assertEqual(pm.drive_bones(s, t, pairs, use_drive=True), set(["upperarm_l"]))
 
     def test_a_size_within_two_percent_is_one(self):
         s, t = skeleton(), skeleton(scale=1.015)
@@ -310,6 +331,144 @@ class Rootless(unittest.TestCase):
         self.assertLess((pm.position(rest) - om.MVector(1, pm.FLOOR, 2)).length(), 1e-9)
         self.assertLess(pm.angle(pose, trs(r=(0, 30, 0))), 1e-9)
         self.assertLess(pm.angle(rest, om.MMatrix()), 1e-9)
+
+
+def ground_of(bones, top):
+    """The ground frame `targets` reads off a rootless skeleton's top joint as it stands."""
+    return pm._ground(bones[top]["rest"], bones[top]["world"])[0]
+
+
+class RootlessTarget(unittest.TestCase):
+    """The final review (2026-10-03): a TARGET whose top joint is its pelvis (Mixamo's Hips) kept
+    them where they stood - every pose onto it lost the card's hips turn and height, 15.8 deg on
+    a twin, and the whole body with them. The target's root frame is its GROUND frame now (the
+    floor under the hips, turned by their heading) and the hips a member: they take the card's
+    swing and height, keeping the character's place and facing."""
+
+    def assertSameMatrix(self, a, b, what, tol=1e-6):
+        self.assertLess(pm.angle(a, b), tol, what)
+        self.assertLess((pm.position(a) - pm.position(b)).length(), tol, what)
+
+    def test_a_card_onto_its_rootless_twin_lands_in_the_twin_s_ground_frame(self):
+        # the card's hips swung only (no heading): every bone exact against the card, carried
+        # from the card's ground (120, 0, -36) to the target's (0, 0, 0)
+        card = rootless(skeleton(TILTED, place=trs((120, 0, -36))))
+        target = rootless(skeleton())
+        self.assertFalse(pm.has_root(card))
+        members = list(card)
+        out = pm.targets(card, target, pm.pairs(card, target), members)
+        carry = ground_of(card, "mx_pelvis").inverse() * ground_of(target, "mx_pelvis")
+        for leaf in card:
+            self.assertSameMatrix(out[leaf], pm.matrix(card[leaf]["world"]) * carry, leaf)
+        self.assertAlmostEqual(pm.angle(out["mx_pelvis"], target["mx_pelvis"]["world"]),
+                               20.0, 6)                  # the old code left them at rest
+
+    def test_the_hips_keep_the_character_s_place_and_facing(self):
+        # the card's hips turned 30 deg as well: on a rootless card that is its FACING; the
+        # target faces 70 deg and stands at (-40, 0, 75) - it keeps both, and takes the swing
+        card = rootless(skeleton(TILTED, place=trs((120, 0, -36), (0, 30, 0))))
+        target = rootless(skeleton(place=trs((-40, 0, 75), (0, 70, 0))))
+        out = pm.targets(card, target, pm.pairs(card, target), list(card))
+        before, after = ground_of(target, "mx_pelvis"), pm._ground(
+            target["mx_pelvis"]["rest"], out["mx_pelvis"])[0]
+        self.assertSameMatrix(after, before, "the ground frame", 1e-9)
+        carry = ground_of(card, "mx_pelvis").inverse() * before
+        for leaf in card:
+            self.assertSameMatrix(out[leaf], pm.matrix(card[leaf]["world"]) * carry, leaf)
+
+    def test_applied_twice_it_lands_once(self):
+        card = rootless(skeleton(TILTED, place=trs((10, 0, 5), (0, -50, 0))))
+        target = rootless(skeleton(place=trs((-40, 0, 75), (0, 70, 0))))
+        pairs = pm.pairs(card, target)
+        once = pm.targets(card, target, pairs, list(card))
+        posed = dict((leaf, dict(bone, world=pm.flat(once[leaf])))
+                     for leaf, bone in target.items())
+        twice = pm.targets(card, posed, pm.pairs(card, posed), list(card))
+        for leaf in target:
+            self.assertSameMatrix(twice[leaf], once[leaf], leaf, 1e-9)
+
+    def test_a_rooted_card_onto_a_rootless_target_poses_the_hips(self):
+        # a UE card: its pelvis is paired with the Hips (not its root - the old pairing gave
+        # the Hips the card's ROOT and named the pelvis «no pelvis on Hips»)
+        card = skeleton(TILTED)
+        target = rootless(skeleton(place=trs((-40, 0, 75), (0, 70, 0))))
+        pairs = pm.pairs(card, target)
+        self.assertEqual(pairs["mx_pelvis"], "pelvis")
+        self.assertNotIn("root", pairs.values())
+        out = pm.targets(card, target, pairs, [b for b in card if b != "root"])
+        place = trs((-40, 0, 75), (0, 70, 0))
+        for leaf in ("mx_pelvis", "mx_spine_01", "mx_upperarm_l", "mx_thigh_l", "mx_hand_r"):
+            want = pm.matrix(card[leaf[3:]]["world"]) * place
+            self.assertSameMatrix(out[leaf], want, leaf)
+
+    def test_a_rooted_target_is_unchanged(self):
+        # the rule the rest of the library stands on: a root of its own stays where it stands
+        s, t = skeleton(TILTED), skeleton(place=trs((300, 0, -50), (0, 90, 0)))
+        out = pm.targets(s, t, pm.pairs(s, t), [b for b in s if b != "root"])
+        self.assertSameMatrix(out["root"], pm.matrix(t["root"]["world"]), "root", 1e-12)
+
+
+COM_HEIGHT = 95.0
+
+
+def biped(locals_=None, com=((0, COM_HEIGHT, 0), (0, 0, 0)), place=om.MMatrix()):
+    """3ds Max Biped's shape: `bip` - the centre of mass at the hips' height, no canonical name
+    (recognize gives Bip001 none: it stands off the floor) - over the pelvis and the rest of
+    `CHAIN`; `com` its (translate, rotate) when posed, its rest at (0, 95, 0)."""
+    locals_ = locals_ or {}
+    rests = {"bip": trs((0, COM_HEIGHT, 0))}
+    worlds = {"bip": trs(*com) * place}
+    out = {"bip": {"parent": None, "canonical": None, "rest": pm.flat(rests["bip"]),
+                   "world": pm.flat(worlds["bip"])}}
+    for name, parent, t in CHAIN[1:]:
+        parent = "bip" if parent == "root" else parent
+        t = (0, 0, 0) if name == "pelvis" else t
+        rests[name] = trs(t) * rests[parent]
+        worlds[name] = trs(t, locals_.get(name, (0, 0, 0))) * worlds[parent]
+        out[name] = {"parent": parent, "canonical": name, "rest": pm.flat(rests[name]),
+                     "world": pm.flat(worlds[name])}
+    return out
+
+
+class CentreOfMass(unittest.TestCase):
+    """The final review (2026-10-03): a source whose top joint is a CENTRE OF MASS (Biped's
+    Bip001, at the hips' height) was read as a floor root - the pelvis landed ON the target's
+    root, 96 cm into the floor, and the body's lean (carried by Bip001) was read as its facing.
+    A top joint is a root only at the floor (`has_root`: its canonical name `root`); this one
+    stands on its ground frame, as Mixamo's Hips do."""
+
+    def test_it_has_no_root(self):
+        self.assertFalse(pm.has_root(biped()))
+        self.assertTrue(pm.has_root(skeleton()))
+
+    def test_its_lean_and_its_drop_reach_the_target(self):
+        # Bip001 leant 20 deg forward and lowered 20 cm: the probe's measure
+        source = biped(com=((30, COM_HEIGHT - 20, -10), (20, 0, 0)))
+        target = skeleton(place=trs((300, 0, -50), (0, 90, 0)))
+        members = [b for b in source if b != "bip"]
+        out = pm.targets(source, target, pm.pairs(source, target), members)
+        place = trs((300, 0, -50), (0, 90, 0))
+        ground = trs((30, 0, -10))
+        for leaf in ("pelvis", "spine_01", "head", "upperarm_l", "thigh_r"):
+            want = pm.matrix(source[leaf]["world"]) * ground.inverse() * place
+            self.assertLess(pm.angle(out[leaf], want), 1e-6, leaf)
+        rise = (pm.position(out["pelvis"]) - pm.position(out["root"])).y
+        self.assertAlmostEqual(rise, COM_HEIGHT - 20, 6)       # the old code read 0
+        spine = pm.position(out["head"]) - pm.position(out["spine_01"])
+        self.assertAlmostEqual(pm.direction_angle(spine, om.MVector(0, 1, 0)), 20.0, 6)
+
+    def test_its_size_is_its_pelvis_over_its_floor(self):
+        self.assertAlmostEqual(pm.scale_between(biped(), skeleton(scale=2.0),
+                                                pm.pairs(biped(), skeleton(scale=2.0))), 2.0, 9)
+
+    def test_it_mirrors_on_its_ground(self):
+        source = biped({"upperarm_r": (0, 30, -40)}, com=((5, 80, 3), (0, 0, 15)))
+        members = [b for b in source if b != "bip"]
+        once, mem = pm.mirror(source, members)
+        self.assertAlmostEqual(pm.angle(once["bip"]["world"], trs(r=(0, 0, -15))), 0.0, 6)
+        twice, _mem = pm.mirror(once, mem)
+        for leaf in source:
+            self.assertLess(pm.angle(twice[leaf]["world"], source[leaf]["world"]), 1e-6, leaf)
 
 
 class MirrorRules(unittest.TestCase):

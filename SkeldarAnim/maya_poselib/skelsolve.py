@@ -15,7 +15,11 @@ alternate triple and the 360 multiples both count - a key next to the old one ca
 trap 108). Only the PELVIS (canonical `pelvis`, else the leaf) also takes its translate: every
 other bone keeps the target's own length (the spec's "rotations only"; `posemath.targets` already
 placed it by the bone's own local translation). The ROOT is never written - the character stays
-where it stands - and a member that is the root is left out without a word.
+where it stands - and a member that is the root is left out without a word. A skeleton with no
+root of its own (`posemath.has_root`: Mixamo's Hips are its top joint AND its pelvis) has its
+top joint written like the pelvis it is, rotate and translate: `posemath.targets` puts it on its
+GROUND frame as it stands, which is what keeps that character in place (the final review,
+2026-10-03: left out, the card's hips turn and height were lost, 15.8 deg on a twin).
 
 The parent a joint's channels are relative to is its DAG parent. A card's `parent` is the nearest
 JOINT above, and a group can stand between the two (a skeleton parked under a transform of its
@@ -145,7 +149,9 @@ def solve(ref, bones, wanted, members):
     whose rotate channels are not writable is skipped and named (`skipped[leaf]`); a member the
     skeleton does not hold is noted."""
     wanted = dict((leaf, pm.matrix(m)) for leaf, m in (wanted or {}).items())
-    root = root_leaf(ref, bones)
+    # a root of its own is never written; a top joint that is no root (Mixamo's Hips: its
+    # pelvis) is a member like any other - `posemath.targets` keeps its ground frame in place
+    root = root_leaf(ref, bones) if pm.has_root(bones) else None
     pelvis = pelvis_of(bones)
     values, notes, skipped = {}, [], {}
     missing = []
