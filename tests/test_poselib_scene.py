@@ -470,6 +470,11 @@ class RegionMembers(unittest.TestCase):
 
 class Thumbnail(unittest.TestCase):
 
+    def test_a_thumbnail_is_640_px(self):
+        # a card under the mouse is shown twice its size (2026-10-03): a 112 px card at 150 %
+        # is 336 px grown, a 200 px one 600 - a 320 px picture would be soft there
+        self.assertEqual(capture.THUMB_SIZE, 640)
+
     def test_the_centred_square(self):
         self.assertEqual(capture.square(1600, 900), (350, 0, 900))
         self.assertEqual(capture.square(500, 800), (0, 150, 500))

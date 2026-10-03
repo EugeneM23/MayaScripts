@@ -25,6 +25,16 @@ GAP = 8                 # between rows, and the least between columns
 NAME_H = 34             # the strip under a card: its name and, under it, the character chip
 GHOST = 96              # the thumbnail riding the cursor during a drag
 THROTTLE_MS = 33        # the drag's caption is re-read at most this often
+
+#  The card under the mouse shown ZOOM times larger over its neighbours (2026-10-03, the
+#  animator: «при наведении на карточку позы ... карточка увеличивалась в двое»): growing
+#  answers the mouse quickly, shrinking a little slower (eased out both ways); the grown card
+#  keeps ZOOM_MARGIN off the viewport's edges, so its shadow is not cut
+ZOOM = 2.0
+ZOOM_MARGIN = 6
+ZOOM_IN_MS = 140
+ZOOM_OUT_MS = 180
+ZOOM_MIN_MS = 40        # a zoom turned back near its end still takes a moment
 DOT = "·"          # the middle dot the plugin's captions separate with
 
 OFF_WINDOW = "release off the window to apply"
@@ -111,6 +121,109 @@ def hit(rects, x, y, scale=1.0):
         if rx <= x < rx + rw and ry <= y < ry + rh:
             return index
     return None
+
+
+def _inside(start, length, grown, view_start, view_length, margin):
+    """Where a grown span of `grown` px, centred on the span `start`..`start + length`, starts
+    once moved inside the view's span less `margin`. A card standing closer to the view's edge
+    than the margin (the grid's first column touches the pane's left edge) lets its grown span
+    reach that edge but no further, so the grown card still holds the card's own span - the
+    mouse on the card stays on the grown card. A card cut by the edge gets no such leave."""
+    centred = start + length / 2.0 - grown / 2.0
+    end, view_end = start + length, view_start + view_length
+    low = start if view_start <= start < view_start + margin else view_start + margin
+    high = (end - grown) if view_end - margin < end <= view_end else view_end - margin - grown
+    if high < low:                          # wider than the view: centred on it
+        return view_start + (view_length - grown) / 2.0
+    return min(max(centred, low), high)
+
+
+def zoom_rect(rect, view, scale=1.0, factor=ZOOM, margin=ZOOM_MARGIN):
+    """(tile, z): the card whose square is `rect` shown `z` times larger. `tile` is the grown
+    tile - its square and its name strip - as floats (x, y, w, h): the card's own tile grown
+    about its centre, then moved inside `view` (x, y, w, h: the part of the canvas the
+    viewport shows; None for no view) less `margin` logical px on every side (`_inside`).
+    `z` is `factor` unless the view cannot hold that - then what fits, never below 1. Pure."""
+    x, y, w, h = rect
+    k = float(scale or 1.0)
+    tw, th = float(w), float(h + _px(NAME_H, k))
+    z = float(factor)
+    if view is None:
+        gw, gh = tw * z, th * z
+        return (x + (tw - gw) / 2.0, y + (th - gh) / 2.0, gw, gh), z
+    vx, vy, vw, vh = view
+    m = margin * k
+    if tw > 0 and th > 0:
+        z = min(z, (vw - 2 * m) / tw, (vh - 2 * m) / th)
+    z = max(1.0, z)
+    gw, gh = tw * z, th * z
+    return (_inside(x, tw, gw, vx, vw, m), _inside(y, th, gh, vy, vh, m), gw, gh), z
+
+
+def zoom_at(rect, target, level, scale=1.0):
+    """(tile, z) `level` (0..1, already eased) of the way from the card's own tile (`rect` its
+    square) to `target` (`zoom_rect`'s answer). Pure."""
+    own = tile_rect(rect, scale)
+    if level <= 0:
+        return own, 1.0
+    if level >= 1:
+        return target
+    (gx, gy, gw, gh), z = target
+    tile = tuple(a + (b - a) * level for a, b in zip(own, (gx, gy, gw, gh)))
+    return tile, 1.0 + (z - 1.0) * level
+
+
+def _ease(t):
+    """Cubic ease-out of `t` (0..1): maya_hubmotion.ease (this module imports no plugin
+    module)."""
+    t = min(1.0, max(0.0, float(t)))
+    return 1.0 - (1.0 - t) ** 3
+
+
+def zoom_ms(start, target):
+    """Milliseconds for a zoom from `start` to `target` (0..1): ZOOM_IN_MS growing, ZOOM_OUT_MS
+    shrinking, for the whole way; its share for part of it, never under ZOOM_MIN_MS; 0 for no
+    way at all."""
+    if start == target:
+        return 0
+    whole = ZOOM_IN_MS if target > start else ZOOM_OUT_MS
+    return max(ZOOM_MIN_MS, int(round(whole * abs(target - start))))
+
+
+class Zoom(object):
+    """One card's zoom level over time: 0 at rest, 1 grown, eased out from wherever it stood
+    when it was last turned (`to`). Times are milliseconds on any clock that only goes up."""
+
+    def __init__(self):
+        self.start = 0.0
+        self.target = 0.0
+        self.t0 = 0
+        self.ms = 0
+
+    def level(self, now):
+        if self.ms <= 0:
+            return self.target
+        u = (now - self.t0) / float(self.ms)
+        if u >= 1.0:
+            return self.target
+        return self.start + (self.target - self.start) * _ease(u)
+
+    def to(self, target, now, animate=True):
+        """Head for `target` from where it stands at `now`; at once without `animate`. The
+        target it already heads for changes nothing (the clock is not restarted)."""
+        target = float(target)
+        if target == self.target and (self.moving(now) or self.level(now) == target):
+            return
+        current = self.level(now)
+        self.start, self.target, self.t0 = current, target, now
+        self.ms = zoom_ms(current, target) if animate else 0
+
+    def moving(self, now):
+        return self.ms > 0 and now - self.t0 < self.ms
+
+    def lifted(self, now):
+        """Above the grid: growing, grown or still shrinking."""
+        return self.level(now) > 0.0 or self.target > 0.0
 
 
 def drop_caption(name, aim):

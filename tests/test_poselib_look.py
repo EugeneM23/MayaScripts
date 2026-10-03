@@ -505,6 +505,166 @@ class StatusLine(unittest.TestCase):
         self.assertEqual(look.status_line([]), "")
 
 
+class ZoomRect(unittest.TestCase):
+    """The card under the mouse shown twice as large over its neighbours (2026-10-03): its tile
+    grown about its own centre, moved inside the viewport rather than cut."""
+
+    VIEW = (0, 0, 1000, 800)
+
+    def grown(self, rect, view=VIEW, scale=1.0, **kw):
+        return look.zoom_rect(rect, view, scale, **kw)
+
+    def test_the_numbers(self):
+        self.assertEqual(look.ZOOM, 2.0)
+        self.assertEqual(look.ZOOM_MARGIN, 6)
+        self.assertEqual((look.ZOOM_IN_MS, look.ZOOM_OUT_MS), (140, 180))
+
+    def test_twice_the_tile_about_its_centre(self):
+        rect = (400, 300, 112, 112)
+        (x, y, w, h), z = self.grown(rect)
+        self.assertEqual(z, 2.0)
+        tile = _tile(rect)
+        self.assertEqual((w, h), (tile[2] * 2.0, tile[3] * 2.0))
+        self.assertAlmostEqual(x + w / 2.0, tile[0] + tile[2] / 2.0)
+        self.assertAlmostEqual(y + h / 2.0, tile[1] + tile[3] / 2.0)
+
+    def test_moved_inside_the_top_left(self):
+        (x, y, w, h), z = self.grown((20, 20, 112, 112))
+        self.assertEqual(z, 2.0)
+        self.assertEqual((x, y), (look.ZOOM_MARGIN, look.ZOOM_MARGIN))
+
+    def test_moved_inside_the_bottom_right(self):
+        rect = (1000 - 112 - 20, 800 - 112 - look.NAME_H - 20, 112, 112)
+        (x, y, w, h), _z = self.grown(rect)
+        self.assertAlmostEqual(x + w, 1000 - look.ZOOM_MARGIN)
+        self.assertAlmostEqual(y + h, 800 - look.ZOOM_MARGIN)
+
+    def test_a_card_on_the_edge_grows_flush_with_it(self):
+        # the first column touches the pane's left edge: the margin would put the grown card
+        # beside the mouse instead of under it
+        (x, y, _w, _h), _z = self.grown((0, 0, 112, 112))
+        self.assertEqual((x, y), (0, 0))
+        rect = (1000 - 112, 800 - 112 - look.NAME_H, 112, 112)
+        (x, y, w, h), _z = self.grown(rect)
+        self.assertEqual((x + w, y + h), (1000, 800))
+
+    def test_the_view_is_where_the_scroll_stands(self):
+        # the viewport shows canvas rows 2000..2400: a card near its top edge grows downwards
+        rect = (300, 2010, 112, 112)
+        (_x, y, _w, _h), _z = self.grown(rect, view=(0, 2000, 1000, 400))
+        self.assertEqual(y, 2000 + look.ZOOM_MARGIN)
+
+    def test_a_card_cut_by_the_edge_grows_inside_the_view(self):
+        (_x, y, _w, _h), _z = self.grown((300, 1950, 112, 112), view=(0, 2000, 1000, 400))
+        self.assertEqual(y, 2000 + look.ZOOM_MARGIN)
+
+    def test_a_short_view_shrinks_the_factor_to_fit(self):
+        rect = (100, 100, 112, 112)
+        tile_h = 112 + look.NAME_H
+        (_x, y, _w, h), z = self.grown(rect, view=(0, 0, 1000, 250))
+        self.assertAlmostEqual(z, (250 - 2 * look.ZOOM_MARGIN) / float(tile_h))
+        self.assertAlmostEqual(h, 250 - 2 * look.ZOOM_MARGIN)
+        self.assertTrue(0 <= y and y + h <= 250)
+
+    def test_never_smaller_than_the_card(self):
+        (_x, _y, w, _h), z = self.grown((0, 0, 112, 112), view=(0, 0, 90, 90))
+        self.assertEqual(z, 1.0)
+        self.assertEqual(w, 112)
+
+    def test_the_scale_multiplies_the_margin(self):
+        (x, y, _w, _h), _z = self.grown((30, 30, 168, 168), view=(0, 0, 1500, 1200), scale=1.5)
+        self.assertEqual((x, y), (look.ZOOM_MARGIN * 1.5, look.ZOOM_MARGIN * 1.5))
+
+    def test_the_name_strip_grows_with_it(self):
+        (_x, _y, w, h), z = self.grown((400, 300, 168, 168), view=(0, 0, 1500, 1200),
+                                       scale=1.5)
+        self.assertAlmostEqual(h - w, round(look.NAME_H * 1.5) * z)
+
+    def test_no_view_is_centred(self):
+        (x, y, w, h), z = self.grown((400, 300, 112, 112), view=None)
+        self.assertEqual(z, 2.0)
+        self.assertEqual((x, y), (400 - 56, 300 - (112 + look.NAME_H) / 2.0))
+
+    def test_the_grown_card_holds_the_card_s_own_tile(self):
+        # so the mouse, on the card's own tile when it starts to grow, is on the grown card
+        _cols, rects, _h = look.grid(700, 30, look.CELL_DEFAULT)
+        for view in ((0, 0, 700, 500), (0, 300, 700, 400), (0, 610, 700, 310)):
+            for rect in rects:
+                x, y, w, h = _tile(rect)
+                if not (view[1] <= y and y + h <= view[1] + view[3]):
+                    continue                    # a card cut by the edge is not hovered whole
+                (gx, gy, gw, gh), z = self.grown(rect, view=view)
+                self.assertEqual(z, 2.0)
+                self.assertTrue(gx <= x and x + w <= gx + gw, (rect, view))
+                self.assertTrue(gy <= y and y + h <= gy + gh, (rect, view))
+                self.assertTrue(view[0] <= gx and gx + gw <= view[0] + view[2], (rect, view))
+                self.assertTrue(view[1] <= gy and gy + gh <= view[1] + view[3], (rect, view))
+
+
+class ZoomAt(unittest.TestCase):
+
+    def test_the_ends_and_the_middle(self):
+        rect = (400, 300, 112, 112)
+        target = look.zoom_rect(rect, (0, 0, 1000, 800))
+        self.assertEqual(look.zoom_at(rect, target, 0.0), (_tile(rect), 1.0))
+        self.assertEqual(look.zoom_at(rect, target, 1.0), target)
+        (x, y, w, h), z = look.zoom_at(rect, target, 0.5)
+        self.assertEqual(z, 1.5)
+        self.assertEqual(w, 112 * 1.5)
+        tile = _tile(rect)
+        self.assertAlmostEqual(x, (tile[0] + target[0][0]) / 2.0)
+
+
+class Zoom(unittest.TestCase):
+    """One card's zoom level over time: 0 at rest, 1 grown."""
+
+    def test_at_rest(self):
+        zoom = look.Zoom()
+        self.assertEqual(zoom.level(0), 0.0)
+        self.assertFalse(zoom.moving(0))
+        self.assertFalse(zoom.lifted(0))
+
+    def test_growing_takes_zoom_in_ms_eased_out(self):
+        zoom = look.Zoom()
+        zoom.to(1.0, 1000)
+        self.assertTrue(zoom.moving(1000))
+        self.assertTrue(zoom.lifted(1001))
+        self.assertGreater(zoom.level(1000 + look.ZOOM_IN_MS // 2), 0.6)   # fast start
+        self.assertLess(zoom.level(1000 + look.ZOOM_IN_MS - 1), 1.0)
+        self.assertEqual(zoom.level(1000 + look.ZOOM_IN_MS), 1.0)
+        self.assertFalse(zoom.moving(1000 + look.ZOOM_IN_MS))
+
+    def test_shrinking_takes_zoom_out_ms(self):
+        zoom = look.Zoom()
+        zoom.to(1.0, 0, animate=False)
+        zoom.to(0.0, 500)
+        self.assertGreater(zoom.level(500 + look.ZOOM_OUT_MS - 1), 0.0)
+        self.assertEqual(zoom.level(500 + look.ZOOM_OUT_MS), 0.0)
+        self.assertFalse(zoom.lifted(500 + look.ZOOM_OUT_MS))
+
+    def test_turned_back_mid_way_starts_where_it_stands(self):
+        zoom = look.Zoom()
+        zoom.to(1.0, 0)
+        mid = zoom.level(40)
+        zoom.to(0.0, 40)
+        self.assertEqual(zoom.level(40), mid)
+        self.assertEqual(zoom.ms, max(look.ZOOM_MIN_MS, int(round(look.ZOOM_OUT_MS * mid))))
+
+    def test_without_animation_at_once(self):
+        zoom = look.Zoom()
+        zoom.to(1.0, 0, animate=False)
+        self.assertEqual(zoom.level(0), 1.0)
+        self.assertFalse(zoom.moving(0))
+        zoom.to(0.0, 5, animate=False)
+        self.assertEqual(zoom.level(5), 0.0)
+
+    def test_the_same_target_again_changes_nothing(self):
+        zoom = look.Zoom()
+        zoom.to(1.0, 0)
+        zoom.to(1.0, 50)
+        self.assertEqual(zoom.t0, 0)
+
+
 class Boundary(unittest.TestCase):
     """look is stdlib only: the window imports Qt, the geometry must not."""
 

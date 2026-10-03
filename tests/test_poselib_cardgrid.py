@@ -85,6 +85,12 @@ class FakePanel(object):
         return self.blend
 
 
+def _tile(rect, scale=1.0):
+    """A card's square and its name strip as (x, y, w, h)."""
+    x, y, w, h = rect
+    return (x, y, w, h + int(round(look.NAME_H * scale)))
+
+
 def card(path, name, thumbnail="", kind="character", label="Manny [rig]"):
     return store.Card(path, "", name, "2026-10-02T18:00:00", "Eugene", label, kind, 1, [],
                       thumbnail)
@@ -303,6 +309,178 @@ class Mouse(CanvasCase):
         self.canvas.keyPressEvent(QT.QtGui.QKeyEvent(QT.QtCore.QEvent.KeyPress, Qt.Key_Escape,
                                                      Qt.NoModifier))
         self.assertIn(("blend_cancel",), self.panel.log)
+
+
+class HoverZoom(CanvasCase):
+    """The card under the mouse shown twice as large over its neighbours (2026-10-03)."""
+
+    COLOURS = ("#c03030", "#30c030", "#3030c0", "#c0c030")
+
+    def setUp(self):
+        CanvasCase.setUp(self)
+        self.animations = True
+        original = cardgrid._animations
+        cardgrid._animations = lambda: self.animations
+        self.addCleanup(setattr, cardgrid, "_animations", original)
+        self.now = 0
+        self.canvas._now = lambda: self.now
+        self.cards = self.coloured(self.COLOURS)
+        self.canvas.set_cards(self.cards)
+        self.canvas.fit(500, 600)               # one row of three, room below to grow into
+
+    def coloured(self, colours):
+        cards = []
+        for index, name in enumerate(colours):
+            folder = os.path.join(self.tmp, "Z%d.pose" % index).replace("\\", "/")
+            os.makedirs(folder)
+            image = QT.QtGui.QImage(64, 64, QT.QtGui.QImage.Format_RGB32)
+            image.fill(QT.QtGui.QColor(name))
+            path = folder + "/" + store.THUMB_FILE
+            image.save(path, "JPG")
+            cards.append(card(folder, "Z%d" % index, path))
+        return cards
+
+    def hover(self, point):
+        self.mouse("move", point, QT.QtCore.Qt.NoButton, QT.QtCore.Qt.NoButton)
+
+    def settle(self, ms=1000):
+        self.now += ms
+        self.canvas._tick()
+
+    def z(self, index):
+        return self.canvas.shown(index)[1]
+
+    def colour_at(self, x, y):
+        return self.render().pixelColor(x, y)
+
+    def test_without_animations_the_card_grows_at_once_and_shrinks_at_once(self):
+        self.animations = False
+        self.hover(self.centre(1))
+        self.assertEqual(self.z(1), look.ZOOM)
+        self.assertFalse(self.canvas.zoom_timer.isActive())
+        self.canvas.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.assertEqual(self.z(1), 1.0)
+        self.assertEqual(self.canvas.shown(1)[0], _tile(self.canvas.rects()[1]))
+
+    def test_with_animations_it_grows_through_the_timer_and_the_timer_stops(self):
+        self.hover(self.centre(1))
+        self.assertEqual(self.z(1), 1.0)
+        self.assertTrue(self.canvas.zoom_timer.isActive())
+        self.now += look.ZOOM_IN_MS // 2
+        self.canvas._tick()
+        self.assertTrue(1.0 < self.z(1) < look.ZOOM)
+        self.settle()
+        self.assertEqual(self.z(1), look.ZOOM)
+        self.assertFalse(self.canvas.zoom_timer.isActive())
+        self.canvas.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.assertTrue(self.canvas.zoom_timer.isActive())
+        self.settle()
+        self.assertEqual(self.z(1), 1.0)
+        self.assertFalse(self.canvas.zoom_timer.isActive())
+        self.assertEqual(self.canvas._zooms, {})
+
+    def test_the_grown_card_is_drawn_over_its_neighbour(self):
+        x, y, w, _h = self.canvas.rects()[2]
+        point = (x + 10, y + 40)                 # the third card's square, near its left edge
+        self.assertGreater(self.colour_at(*point).blue(), 150)
+        self.animations = False
+        self.hover(self.centre(1))
+        (gx, gy, gw, _gh), _z = self.canvas.shown(1)
+        self.assertTrue(gx <= point[0] < gx + gw and gy <= point[1] < gy + gw)
+        seen = self.colour_at(*point)
+        self.assertGreater(seen.green(), 150)    # the second card's green, not the blue
+        self.assertLess(seen.blue(), 100)
+
+    def test_its_picture_is_read_at_twice_the_side(self):
+        self.animations = False
+        self.hover(self.centre(1))
+        self.render()
+        side = self.canvas.rects()[1][2]
+        self.assertIn((self.cards[1].thumbnail, int(round(side * look.ZOOM))),
+                      self.canvas.pixmaps)
+        self.canvas.fit(500, 600)               # the layout keeps that size in the cache
+        self.assertIn(int(round(side * look.ZOOM)), set(key[1] for key in self.canvas.pixmaps))
+
+    def test_a_click_on_the_grown_card_over_a_neighbour_picks_the_grown_card(self):
+        self.animations = False
+        self.hover(self.centre(1))
+        x, y, _w, _h = self.canvas.rects()[2]
+        over = QT.QtCore.QPoint(x + 10, y + 40)
+        self.assertEqual(self.canvas.card_at(over.x(), over.y()).path, self.cards[1].path)
+        self.mouse("press", over, QT.QtCore.Qt.LeftButton)
+        self.mouse("release", over, QT.QtCore.Qt.LeftButton)
+        self.assertIn(("pick", self.cards[1].path), self.panel.log)
+        self.assertNotIn(("pick", self.cards[2].path), self.panel.log)
+
+    def test_the_grown_card_holds_the_hover_while_the_mouse_is_on_it(self):
+        self.animations = False
+        self.hover(self.centre(1))
+        x, y, _w, _h = self.canvas.rects()[2]
+        self.hover(QT.QtCore.QPoint(x + 10, y + 40))
+        self.assertEqual(self.z(1), look.ZOOM)
+        self.assertEqual(self.z(2), 1.0)
+
+    def test_off_the_grown_card_onto_a_neighbour_the_neighbour_grows(self):
+        self.animations = False
+        self.hover(self.centre(1))
+        (gx, _gy, gw, _gh), _z = self.canvas.shown(1)
+        x, y, w, _h = self.canvas.rects()[2]
+        self.assertLess(gx + gw, x + w)
+        self.hover(QT.QtCore.QPoint(x + w - 5, y + 40))
+        self.assertEqual(self.z(1), 1.0)
+        self.assertEqual(self.z(2), look.ZOOM)
+
+    def test_a_card_shrinking_is_drawn_under_the_one_growing(self):
+        self.hover(self.centre(1))
+        self.settle()
+        x, y, w, _h = self.canvas.rects()[2]
+        self.hover(QT.QtCore.QPoint(x + w - 5, y + 40))
+        self.now += 20
+        self.canvas._tick()
+        self.assertGreater(self.z(1), 1.0)       # still shrinking ...
+        self.assertGreater(self.z(2), 1.0)       # ... while the next grows
+        order = [path for path, _zoom in self.canvas.lifted_order()]
+        self.assertEqual(order, [self.cards[1].path, self.cards[2].path])
+
+    def test_a_drag_shrinks_it(self):
+        self.animations = False
+        point = self.centre(1)
+        self.hover(point)
+        self.mouse("press", point, QT.QtCore.Qt.LeftButton)
+        self.mouse("move", point + QT.QtCore.QPoint(-3000, 0), QT.QtCore.Qt.NoButton,
+                   QT.QtCore.Qt.LeftButton)
+        self.assertIsNotNone(self.canvas._drag)
+        self.assertEqual(self.z(1), 1.0)
+        self.mouse("release", point + QT.QtCore.QPoint(-3000, 0), QT.QtCore.Qt.LeftButton)
+
+    def test_the_blend_keeps_it_grown(self):
+        self.animations = False
+        point = self.centre(1)
+        self.hover(point)
+        Qt = QT.QtCore.Qt
+        self.mouse("press", point, Qt.MiddleButton)
+        self.mouse("move", point + QT.QtCore.QPoint(300, 0), Qt.NoButton, Qt.MiddleButton)
+        self.assertEqual(self.z(1), look.ZOOM)
+        self.mouse("release", point, Qt.MiddleButton, Qt.NoButton)
+
+    def test_a_reread_keeps_the_hover_on_the_same_card(self):
+        self.animations = False
+        self.hover(self.centre(1))
+        self.canvas.set_cards(list(reversed(self.cards)))
+        moved = [c.path for c in self.canvas.cards].index(self.cards[1].path)
+        self.assertEqual(self.canvas._hover, moved)
+        self.assertEqual(self.z(moved), look.ZOOM)
+        self.canvas.set_cards(self.cards[2:])
+        self.assertIsNone(self.canvas._hover)
+        self.assertEqual(self.canvas._zooms, {})
+
+    def test_a_short_viewport_grows_it_only_as_far_as_fits(self):
+        self.animations = False
+        self.canvas.fit(500, 200)
+        self.hover(self.centre(1))
+        (_x, gy, _w, gh), z = self.canvas.shown(1)
+        self.assertTrue(1.0 < z < look.ZOOM)
+        self.assertTrue(0 <= gy and gy + gh <= 200)
 
 
 if __name__ == "__main__":

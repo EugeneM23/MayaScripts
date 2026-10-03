@@ -23,7 +23,8 @@ KB of JSON (93 bones x rest + world, drives on the eight unrolled limb bones);
 (`maya_vpstudio.active_panel`), at its own port size (WYSIWYG for their camera), with the curves,
 joints, locators, the clip labels (dimensions), the grid, the HUD, the manipulators and the
 selection highlight switched off for the blast and put back (each queried first); centre-cropped
-square, scaled to 320 px, JPG. Viewport 2.0 loads textures while Maya is IDLE (trap 120): the
+square, scaled to 640 px (320 until 2026-10-03, when a card under the mouse began to grow twice
+its size), JPG. Viewport 2.0 loads textures while Maya is IDLE (trap 120): the
 blast is repeated with idle events pumped between until two in a row are byte-identical - at least
 three blasts (trap 120 measured two early blasts agreeing on a half-loaded texture), at most five.
 Batch mode or no model panel: `(False, "no viewport for a thumbnail")`. Qt is imported inside
@@ -48,7 +49,7 @@ AUTHOR_VAR = "skeldarShareName"   # maya_share.AUTHOR_VAR: who the Shared card s
 HIDDEN = ("nurbsCurves", "joints", "locators", "dimensions", "grid", "manipulators",
           "headsUpDisplay", "selectionHiliteDisplay", "handles", "ikHandles", "deformers",
           "motionTrails", "cameras", "lights", "follicles", "nParticles")
-THUMB_SIZE = 320
+THUMB_SIZE = 640
 JPG_QUALITY = 92                  # the card's thumbnail
 BLAST_QUALITY = 95                # the raw blast it is cut from
 LEAST_BLASTS, MOST_BLASTS = 3, 5

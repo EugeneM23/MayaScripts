@@ -8759,3 +8759,36 @@ pose through Shared.
      unskinned joint below the top rests at its parent's bind, an unskinned TOP joint at its bind pose
      (`dagPose`) - never through a descendant that moves against it: taken from the pelvis, an unweighted
      root followed a crouch and the whole card landed turned 30°.
+
+**The card under the mouse grows twice its size** (2026-10-03, the animator: «при наведении на карточку позы
+в библиотеке поз наша карточка увеличивалась в двое»; asked, all three the recommendation: over its
+neighbours, at once and eased, new thumbnails at 640 px). Spec
+`docs/superpowers/specs/2026-10-03-pose-card-hover-zoom-design.md`.
+- **Where** (`look.zoom_rect`, pure): the card's tile (square + name strip) grown `ZOOM` (2) times about its
+  centre, then moved inside the viewport's visible part of the canvas (`CardCanvas.view`) less `ZOOM_MARGIN`
+  (6); a card already closer to the edge than the margin (the grid's first column touches the pane) grows
+  flush with that edge, so the grown card always holds the card's own tile and the mouse stays on it; a
+  viewport too short for 2x shrinks the factor (never below 1). Computed at paint time: a scroll or a resize
+  mid-zoom needs nothing.
+- **When** (`look.Zoom`, one per card while lifted, by PATH): eased out from where it stands, `ZOOM_IN_MS` 140
+  growing, `ZOOM_OUT_MS` 180 shrinking; at once with ⋮ → Interface animations off (`cardgrid._animations`).
+  A 16 ms `zoom_timer` runs only while one moves, each tick repainting only `_reach` (own ∪ grown tile + the
+  shadow).
+- **Drawn**: everything at `z` (radius, outline, fonts, chip), on a plate of the canvas colour with a soft
+  drop shadow, the picture read at twice the card's side (`zoom_side`, kept by `fit`'s cache); the cards
+  shrinking under the one growing (`lifted_order`).
+- **The mouse**: `index_at` asks the hovered card's grown tile first — a click, a drag, the right button or
+  a middle-drag blend on the part covering a neighbour act on the grown card, and the grown card keeps the
+  hover while the mouse is on it; a left drag starting shrinks it (the ghost takes over); a scroll re-reads
+  the card under the cursor; a re-read of the library keeps the hover by path.
+- `capture.THUMB_SIZE` 640 (was 320; a 112 px card at 150 % is 336 px grown). Cards saved before keep their
+  320 px picture; Replace thumbnail re-takes it.
+Proof: `docs/superpowers/plans/verify_poselib_zoom.py` **24/24 in a disposable GUI Maya** (port
+7043, scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`; Qt mouse events, no OS cursor): 2x reached monotonically in
+147 ms and back in 183 ms, the timer stopping; the grown tile holding the card's own and inside the
+viewport (flush with its top-left corner for card 0); a frame's repaint median 3.3 ms, p95 4.1 ms; DWM's
+copy of the window showing the grown card's colour over its neighbour (`poselib_zoom.png`); a press there
+picking the grown card; a neighbour growing while the first shrinks, drawn on top; a scroll; animations
+off at once; a real `capture.thumbnail` 640 x 640. Unit tests `test_poselib_look` (`zoom_rect`, `zoom_at`,
+`Zoom`) and `test_poselib_cardgrid.HoverZoom`; `verify_poselib_gui.py` 47/47 again there (its save
+gate now asks for `capture.THUMB_SIZE`); 4628 unit tests.

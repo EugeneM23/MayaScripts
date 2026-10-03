@@ -27,8 +27,8 @@ second Maya is launched for it with a scratch MAYA_APP_DIR (its own prefs, its o
              tall as its text needs, nothing outside the window or cut by the side panel's
              viewport - the details and the save panel both
     save     a Manny_Rig control selected (A's Main), + Save pose CLICKED: the save panel, its
-             snapshot; Save CLICKED - a card with a thumbnail, a 320 x 320 JPG that is not blank
-             (pixel spread); a second card from A's left wrist control
+             snapshot; Save CLICKED - a card with a thumbnail, a `capture.THUMB_SIZE` square
+             JPG that is not blank (pixel spread); a second card from A's left wrist control
     list     both cards listed; the search narrows to one; a folder made (New folder, the name
              answered by the verify) and the hand card moved there by `drop_at` over the folder
              item of the tree
@@ -1005,8 +1005,10 @@ def phase_save():
     gate("save Main selected, + Save pose and Save clicked: a card with a thumbnail",
          opened and shot and exists and os.path.isfile(thumb) and not window().saving(),
          "panel %s, snapshot %s ('%s'), card %s | '%s'" % (opened, shot, snap_line, exists, line))
-    gate("save the thumbnail is a 320 x 320 JPG that is not blank",
-         head == b"\xff\xd8\xff" and (w_, h_) == (320, 320) and spread > SPREAD_MIN,
+    from maya_poselib import capture as _capture
+    size = _capture.THUMB_SIZE
+    gate("save the thumbnail is a %d x %d JPG that is not blank" % (size, size),
+         head == b"\xff\xd8\xff" and (w_, h_) == (size, size) and spread > SPREAD_MIN,
          "%dx%d, jpeg %s, grey spread %.1f (> %.0f)" % (w_, h_, head == b"\xff\xd8\xff", spread,
                                                        SPREAD_MIN))
     data = store.read(path)
