@@ -17,7 +17,9 @@ The mouse, the plugin's grids' habits (`maya_armorgrid`, `maya_chargrid`): a cli
 double-click applies, the right button runs the window's `context_actions`; a LEFT drag past
 `QApplication.startDragDistance()` carries the hub's ghost - its caption re-read at most every
 `look.THROTTLE_MS` - and the release is the window's `drop_at`; a MIDDLE drag is the blend
-(`blend_drag` with the travel, `blend_release`); Esc or the right button cancel either.
+(`blend_drag` with the travel, `blend_release`); Esc or the right button cancel either, and so
+does a release that never arrives (`lost_release`: the next move without the button held - an
+Alt+Tab or a modal dialog mid-drag - ends the drag and cancels the blend, said).
 
 What the canvas asks of its `panel` (the window; the tests hand in the real one): `k`, `scene`
 (`snapshot_scene`), `scroll`, `thumb_side()`, `pick`, `apply_card`, `context_actions`, `aim`,
@@ -36,6 +38,10 @@ CANVAS_NAME = "skeldarPoseCards"
 SCROLL_NAME = "skeldarPoseScroll"
 GHOST_NAME = "skeldarPoseGhost"
 CANCELLED = "cancelled"
+# a drag or a blend whose button release never arrived (Alt+Tab, a modal dialog mid-drag): the
+# next move with the button no longer held says so, and the window losing focus does too
+LOST_DRAG = "the button was let go elsewhere - the drag cancelled"
+LOST_BLEND = "the button was let go elsewhere - the blend cancelled, every value back"
 
 
 def _last_line(error_text):
@@ -232,6 +238,26 @@ def _classes():
             """The middle drag forgotten (Esc put the values back): its next moves do nothing."""
             self._mid = None
 
+        def lost_release(self):
+            """A drag or a middle-drag blend whose button release never reached us (Alt+Tab or
+            a modal dialog mid-drag, a release outside Qt): the drag ended - the ghost hidden,
+            the keyboard given back - and the blend cancelled, every value back, both said. Left
+            standing, the session swallowed every press on the grid, held the keyboard (Maya's
+            hotkeys went to the window) and kept its previews unrecorded on the free channels (the
+            final review). True when anything was ended."""
+            ended = False
+            if self._drag:
+                self._end_drag()
+                self.panel.say(LOST_DRAG)
+                ended = True
+            if self.panel.blending():
+                self._mid = None
+                self.panel.blend_cancel()
+                self.panel.say(LOST_BLEND)
+                ended = True
+            self._mid = self._press = None
+            return ended
+
         # ------------------------------------------------------ mouse
 
         def mousePressEvent(self, event):                    # noqa: N802
@@ -266,14 +292,18 @@ def _classes():
             point = global_of(event)
             buttons = event.buttons()
             if self._drag:
+                if not buttons & Qt.LeftButton:      # its release never came: ended, said
+                    self.lost_release()
+                    return
                 self._drag["ghost"].follow(point)
                 self._caption(point)
                 return
             if self._mid is not None:
-                if buttons & Qt.MiddleButton:
-                    if self.panel.blend_drag(self._mid["path"], point.x() - self._mid["x"]) \
-                            is None:
-                        self._mid = None             # refused: the line says why
+                if not buttons & Qt.MiddleButton:    # its release never came: cancelled, said
+                    self.lost_release()
+                    return
+                if self.panel.blend_drag(self._mid["path"], point.x() - self._mid["x"]) is None:
+                    self._mid = None                 # refused: the line says why
                 return
             if self._press and buttons & Qt.LeftButton:
                 card, (sx, sy) = self._press

@@ -846,6 +846,69 @@ class Blend(WindowCase):
         self.assertEqual(self.scene.calls("blend_finish"), [])
         self.assertEqual(len(self.scene.calls("blend_start")), 1)
 
+    # the final review (2026-10-03): a release lost to Alt+Tab or a modal dialog left the session
+    # open - every press on the grid swallowed, the keyboard grabbed, the previews unrecorded
+
+    def test_a_lost_middle_release_cancels_the_blend_and_says_so(self):
+        start = self.card_point(self.fist, local=True)
+        self.middle("press", start)
+        self.middle("move", start + QT.QtCore.QPoint(100, 0))
+        self.assertTrue(self.win.blending())
+        self.middle("move", start + QT.QtCore.QPoint(140, 0), QT.QtCore.Qt.NoButton)
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.assertFalse(self.win.blending())
+        self.assertIsNone(QT.QtWidgets.QWidget.keyboardGrabber())
+        self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_BLEND)
+        # and the grid takes presses again: a click picks
+        self.mouse(self.win.canvas, "press", self.card_point(self.idle, local=True),
+                   QT.QtCore.Qt.LeftButton)
+        self.assertEqual(self.win.picked, self.idle)
+
+    def test_a_lost_left_release_ends_the_drag(self):
+        canvas = self.win.canvas
+        start = self.card_point(self.fist, local=True)
+        self.mouse(canvas, "press", start, QT.QtCore.Qt.LeftButton)
+        far = start + QT.QtCore.QPoint(-4000, 40)
+        self.mouse(canvas, "move", far, QT.QtCore.Qt.NoButton, QT.QtCore.Qt.LeftButton)
+        ghost = canvas._drag["ghost"]
+        self.mouse(canvas, "move", far + QT.QtCore.QPoint(5, 0), QT.QtCore.Qt.NoButton,
+                   QT.QtCore.Qt.NoButton)
+        self.assertIsNone(canvas._drag)
+        self.assertFalse(ghost.isVisible())
+        self.assertEqual(self.scene.calls("apply_onto"), [])
+        self.assertIsNone(QT.QtWidgets.QWidget.keyboardGrabber())
+        self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_DRAG)
+
+    def test_a_lost_slider_release_cancels_and_keys_nothing(self):
+        self.win.pick(self.fist)
+        slider = self.win.blend
+        self.slider_mouse("press", slider.width() * 0.5)
+        self.assertTrue(self.win.blending())
+        self.slider_mouse("move", slider.width() * 0.7, held=QT.QtCore.Qt.NoButton)
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertEqual(self.scene.calls("blend_finish"), [])
+        self.assertFalse(slider.isSliderDown())
+        self.assertEqual(slider.value(), 0)
+        self.assertFalse(self.win.blending())
+        self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_BLEND)
+
+    def test_losing_the_focus_mid_blend_cancels_it(self):
+        self.win.blend_drag(self.fist, 40)
+        self.assertTrue(self.win.blending())
+        self.win.isActiveWindow = lambda: False                 # Alt+Tab
+        QT.QtWidgets.QApplication.sendEvent(self.win,
+                                            QT.QtCore.QEvent(QT.QtCore.QEvent.ActivationChange))
+        self.assertEqual(self.scene.calls("blend_cancel"), [("blend_cancel",)])
+        self.assertFalse(self.win.blending())
+        self.assertEqual(self.win.status.text(), pw.cardgrid.LOST_BLEND)
+
+    def test_losing_the_focus_with_nothing_going_on_does_nothing(self):
+        self.win.isActiveWindow = lambda: False
+        QT.QtWidgets.QApplication.sendEvent(self.win,
+                                            QT.QtCore.QEvent(QT.QtCore.QEvent.ActivationChange))
+        self.assertEqual(self.scene.calls("blend_cancel"), [])
+
     def test_escape_on_the_window_cancels_too(self):
         self.win.blend_drag(self.fist, 40)
         self.escape(self.win)

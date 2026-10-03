@@ -263,7 +263,9 @@ the hub's way), Qt inside, the hub's stylesheet and tokens:
   root ON the point whatever the card's rest, in one group and layer with Delete's record, as a
   native import is) and posed — deferred one idle (Add takes seconds), the import flushes undo (trap 115) so only the pose
   is undoable; over a folder in the tree it moves the card; over the window or the hub nothing;
-  Esc / right button cancel;
+  Esc / right button cancel - and so does a release that never arrives (Alt+Tab or a modal dialog
+  mid-drag: the next move without the button held, or the window losing the focus, ends the drag
+  and cancels a blend, every value back, the keyboard given back, said);
 - **Select objects** (and the right button's row): on the target character (the selection's, else
   the only one, else the source's namespace if it is in the scene) the controls the pose would key
   on a rig, the bones on a skeleton; an objects pose its objects.

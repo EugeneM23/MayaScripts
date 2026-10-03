@@ -516,6 +516,21 @@ def _classes():
         def __init__(self, parent=None):
             QtWidgets.QSlider.__init__(self, Qt.Horizontal, parent)
             self._groove_drag = False
+            # a drag whose release never comes (Alt+Tab, a release outside Qt) is seen on the
+            # next move with the left button no longer held - moves without a button arrive
+            # only with tracking on - and `on_lost` (the window's) is told instead of a release
+            self.on_lost = None
+            self.setMouseTracking(True)
+
+        def drop(self):
+            """The slider up again WITHOUT sliderReleased (which keys the blend)."""
+            self._groove_drag = False
+            if self.isSliderDown():
+                self.blockSignals(True)
+                try:
+                    self.setSliderDown(False)
+                finally:
+                    self.blockSignals(False)
 
         def _geometry(self):
             opt = QtWidgets.QStyleOptionSlider()
@@ -565,6 +580,13 @@ def _classes():
             self.setSliderPosition(self.value_at(point.x()))
 
         def mouseMoveEvent(self, event):                     # noqa: N802
+            if (self._groove_drag or self.isSliderDown()) and \
+                    not event.buttons() & Qt.LeftButton:
+                event.accept()                   # the release was lost: told, never keyed
+                self.drop()
+                if self.on_lost is not None:
+                    self.on_lost()
+                return
             if self._groove_drag:
                 event.accept()
                 self.setSliderPosition(self.value_at(event.position().x()))
@@ -844,6 +866,7 @@ def _classes():
             self.blend.sliderMoved.connect(self._slider_moved)
             self.blend.sliderReleased.connect(self._slider_released)
             self.blend.valueChanged.connect(self._slider_value)
+            self.blend.on_lost = self.lost_release
             blend_row.addWidget(self.blend, 1)
             self.blend_label = self._label("0 %", "context", "skeldarPoseBlendValue")
             self.blend_label.setMinimumWidth(s(36))
@@ -1394,6 +1417,29 @@ def _classes():
                 self.blend_cancel()
                 return
             QtWidgets.QWidget.keyPressEvent(self, event)
+
+        def lost_release(self):
+            """A drag, a middle-drag blend or a slider blend whose button release never came
+            (Alt+Tab or a modal dialog mid-drag, a release outside Qt): the drag ended and the
+            blend cancelled - every value back, the keyboard given back, nothing keyed - and
+            said (`cardgrid.LOST_*`). The slider's own lost release and the window losing the
+            focus land here (the final review: left standing, the session swallowed every press
+            on the grid, held the keyboard and kept its previews unrecorded)."""
+            ended = self.canvas.lost_release()
+            if self._blend is not None:
+                self.blend_cancel()
+                self.say(cardgrid.LOST_BLEND)
+                ended = True
+            self.blend.drop()
+            self._reset_slider()
+            return ended
+
+        def changeEvent(self, event):                        # noqa: N802
+            QtWidgets.QWidget.changeEvent(self, event)
+            if event.type() == QtCore.QEvent.ActivationChange and not self.isActiveWindow() \
+                    and (self._blend is not None or self.canvas._drag
+                         or self.canvas._mid is not None or self.blend.isSliderDown()):
+                self.lost_release()
 
         # ------------------------------------------------------ save
 
