@@ -14,8 +14,12 @@ joint's rotate order, the euler NEAREST the channel's current value (`closestSol
 alternate triple and the 360 multiples both count - a key next to the old one carries no flip,
 trap 108). Only the PELVIS (canonical `pelvis`, else the leaf) also takes its translate: every
 other bone keeps the target's own length (the spec's "rotations only"; `posemath.targets` already
-placed it by the bone's own local translation). The ROOT is never written - the character stays
-where it stands - and a member that is the root is left out without a word. A skeleton with no
+placed it by the bone's own local translation). The ROOT is never written by a pose - the
+character stays where it stands - and a member that is the root is left out without a word; an
+animation carrying its travel asks for it (`root=True`, 2026-10-03: the clip starts where the
+character stands and walks on from there), and then the root is written like the pelvis, rotate
+and translate. A frame of an animation is solved with the previous frame's values as the
+nearest-euler `seed`, so its curves never flip (trap 108). A skeleton with no
 root of its own (`posemath.has_root`: Mixamo's Hips are its top joint AND its pelvis) has its
 top joint written like the pelvis it is, rotate and translate: `posemath.targets` puts it on its
 GROUND frame as it stands, which is what keeps that character in place (the final review,
@@ -138,20 +142,42 @@ def _blocked(path, channels):
     return plugs, ""
 
 
-def solve(ref, bones, wanted, members):
+def _seeded(plugs, seed):
+    """The rotate values `seed` ({plug: value}) holds for all of `plugs`, else None - two eulers
+    of three from one frame and one from another are no reference at all."""
+    if not seed:
+        return None
+    found = [seed.get(plug) for plug in plugs]
+    if any(value is None for value in found):
+        return None
+    return [float(value) for value in found]
+
+
+def solve(ref, bones, wanted, members, seed=None, root=False):
     """Solution for a bare skeleton: the FINAL rotate channels of every member joint (and the
     pelvis's translate) that put it on `wanted`.
 
-    `ref` is the CharacterRef (its root is never written), `bones` `scene.skeleton(ref)[0]`
-    ({leaf: {path, parent, rest, world, rotateOrder, jointOrient, rotateAxis}}), `wanted`
-    {leaf: matrix (MMatrix or 16 floats)} for every target bone - `posemath.targets` - and
-    `members` the leaves to write. A bone missing from `wanted` stands where it stands. A member
-    whose rotate channels are not writable is skipped and named (`skipped[leaf]`); a member the
-    skeleton does not hold is noted."""
+    `ref` is the CharacterRef, `bones` `scene.skeleton(ref)[0]` ({leaf: {path, parent, rest,
+    world, rotateOrder, jointOrient, rotateAxis}}), `wanted` {leaf: matrix (MMatrix or 16
+    floats)} for every target bone - `posemath.targets` - and `members` the leaves to write. A
+    bone missing from `wanted` stands where it stands. A member whose rotate channels are not
+    writable is skipped and named (`skipped[leaf]`); a member the skeleton does not hold is
+    noted.
+
+    `seed` ({plug: value}, a previous frame's `Solution.values`) is the nearest-euler reference
+    of every joint it names all three rotate channels of, in place of what the channel shows: an
+    animation walk keys frame after frame, each frame's eulers nearest the previous frame's so
+    the curves never flip (trap 108) - a channel the walk has not keyed yet still shows the
+    take's value. `root` (an animation's travel): the skeleton's own root (`posemath.has_root`),
+    when `wanted` holds it, is written too - rotate and translate, against its DAG parent, like
+    the pelvis; its blocked channels land in `skipped[root]`. Without it the root is never
+    written (the pose rule: the character stays where it stands)."""
     wanted = dict((leaf, pm.matrix(m)) for leaf, m in (wanted or {}).items())
-    # a root of its own is never written; a top joint that is no root (Mixamo's Hips: its
-    # pelvis) is a member like any other - `posemath.targets` keeps its ground frame in place
-    root = root_leaf(ref, bones) if pm.has_root(bones) else None
+    # a root of its own is written only for the travel (`root`); a top joint that is no root
+    # (Mixamo's Hips: its pelvis) is a member like any other - `posemath.targets` keeps its
+    # ground frame in place
+    top = root_leaf(ref, bones) if pm.has_root(bones) else None
+    write_root = bool(root) and top is not None and top in wanted
     pelvis = pelvis_of(bones)
     values, notes, skipped = {}, [], {}
     missing = []
@@ -161,11 +187,14 @@ def solve(ref, bones, wanted, members):
             return wanted[leaf]
         return pm.matrix(bones[leaf]["world"])
 
-    for leaf in parents_first(bones, list(members or ())):
+    order = parents_first(bones, list(members or ()))
+    if write_root and top not in order:
+        order.insert(0, top)                          # the shallowest: before every member
+    for leaf in order:
         if leaf not in bones:
             missing.append(leaf)
             continue
-        if leaf == root:
+        if leaf == top and not write_root:
             continue
         bone = bones[leaf]
         path = bone["path"]
@@ -185,7 +214,9 @@ def solve(ref, bones, wanted, members):
         if why:
             skipped[leaf] = why
         else:
-            current = [float(cmds.getAttr(p)) for p in plugs]
+            current = _seeded(plugs, seed)
+            if current is None:
+                current = [float(cmds.getAttr(p)) for p in plugs]
             channels = joint_channels(local, bone.get("jointOrient") or (0, 0, 0),
                                       bone.get("rotateAxis") or (0, 0, 0),
                                       bone.get("rotateOrder", 0), current)
@@ -193,7 +224,7 @@ def solve(ref, bones, wanted, members):
             for channel, value in zip(ROTATE, channels):
                 values["%s.%s" % (name, channel)] = value
 
-        if leaf == pelvis:
+        if leaf == pelvis or leaf == top:
             t_plugs, t_why = _blocked(path, TRANSLATE)
             if t_why:
                 skipped[leaf] = (skipped[leaf] + "; " if leaf in skipped else "") + t_why

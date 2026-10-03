@@ -4,8 +4,23 @@ The animator: «если анимация относится к ригу то м
 костей». A card holds the game skeleton's bones; `posemath.targets` says where every game bone of
 the TARGET rig should stand; this module finds the control values that put them there - the
 spec's "Onto a rig", `maya_scenesetup.fkik`'s analytic switch generalised from one arm to the
-whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never called; `Main`,
-`FKNeck_M.bias`, the neck's twist share and every `FKIK*.FKIKBlend` are read, never written.
+whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never called;
+`FKNeck_M.bias`, the neck's twist share and every `FKIK*.FKIKBlend` are read, never written, and
+`Main` is written only for an animation's travel (`Solver(main=True)`, below).
+
+**A `Solver` holds the structure, a `_Job` one frame** (2026-10-03, the animation cards): the
+game bones, the bases, the member filter, the limbs and the held bones are read once per target
+(`Solver`), and each frame of an animation's walk is one `Solver.solve(wanted, seed)` - its
+eulers taken nearest the PREVIOUS frame's values (`seed`), so the keyed curves never flip (trap
+108). A pose is the one-frame case: `solve(rig, wanted, members)` is `Solver(rig, members)
+.solve(wanted)`, exactly what it was. An animation carrying its travel asks for `main`: a frame
+whose `wanted` holds the game root turns and moves `Main` onto `O^-1 . wanted[root]` first (`O =
+rigid(G_root) . rigid(Main)^-1`, the game root in Main, sampled each frame - the rig's
+`root <- Main` constraint), and RootX_M and every chain solve against it; a Main that cannot be
+written is left where it stands and named (`MAIN_KEPT`). Measured (task 5's scratch probe, mayapy
+standalone): Manny_Rig and Creep_Rig posed and their whole targets moved 120 cm and turned 40
+deg - the game root on its target to 0.000000 deg / cm, every member to 0.0006 deg; a seed 360
+away on a wrist answered 360 away, the same rotation.
 
 ## What the rig is (measured 2026-10-02, mayapy standalone, Manny_Rig / Creep_Rig / Orc_D_Rig)
 
@@ -97,8 +112,10 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
    pole's side of the CURRENT IK chain (`fkik.pole_side`), the blends;
 2. the drive chain's target `S*[b] = O_g^-1 . wanted[g]` for every base `wanted` holds (for a
    bone in its own form - every one but the four unrolled - the deformation joint's target);
-3. **RootX_M** from the pelvis (translate + rotate) when the pelvis is a member - first, every
-   chain hangs below it;
+3. **Main** onto the game root's target, only for an animation's travel (`Solver(main=True)`
+   and the root in `wanted`) - first of all, the whole rig hangs below it; then **RootX_M**
+   from the pelvis (translate + rotate) when the pelvis is a member - every chain hangs below
+   it;
 4. level by level down the game skeleton: each member's FK control onto `L^-1 . S*` against its
    parent read now (rotate channels only - lengths are the rig's) - and each HELD bone's
    (`held_bones`): a bone no member of the pose that a member's solve would move off its rigid
@@ -187,7 +204,8 @@ from maya_poselib import keys
 from maya_poselib import posemath as pm
 from maya_poselib.skelsolve import Solution, joint_channels
 
-__all__ = ["Solution", "Base", "bases", "drive_matrices", "solve", "controls_for", "measure"]
+__all__ = ["Solution", "Base", "Solver", "bases", "drive_matrices", "solve", "controls_for",
+           "measure", "MAIN_KEPT"]
 
 # leaf  -- the game bone ("hand_l"); base / side -- AdvancedSkeleton's ("Wrist", "_L");
 # fk    -- the control (RootX_M for the pelvis); fkx / ikx / deform -- the joints; long paths or
@@ -253,6 +271,8 @@ NO_SIDE = "%s: the IK pole stands on the limb's line - no bend plane to read, th
 HINGE = "the FK %s twist is lost on %s (an IK %s is a hinge): %g deg"
 TOES = "the IK toes do not reach the ball's turn on %s: %g deg"
 OFF = "the pose lands within %.3f deg / %.3f cm (worst: %s)"
+MAIN_KEPT = "Main kept where it stands (%s) - the travel is not carried"
+NO_MAIN = "no Main found"
 
 
 # ------------------------------------------------------------------- pure
@@ -699,21 +719,36 @@ def _children(game):
     return out
 
 
-class _Job(object):
-    """One solve: the samples, the targets and the writes of `solve`."""
+def _main_path(rig):
+    """The long path of the rig's `Main` (`rig.main`, else its namespace's `Main`), or None when
+    it is missing or ambiguous."""
+    name = getattr(rig, "main", None) or maya_rigs.node(rig, maya_rigs.MAIN)
+    found = cmds.ls(name, long=True) or []
+    return found[0] if len(found) == 1 else None
 
-    def __init__(self, rig, wanted, members):
+
+class Solver(object):
+    """The rig's structure for one set of members, read ONCE: the game bones, the bases, the
+    member filter and its notes, the limbs the members touch, the held bones (`held_bones`) and -
+    when asked (`main`) - Main's path. A pose solves one frame on it (`solve(rig, wanted,
+    members)` is `Solver(rig, members).solve(wanted)`); an animation (2026-10-03) solves every
+    frame of its walk on one Solver, each frame's eulers seeded with the previous frame's values.
+
+    The ROOT is never a member - the character stays where it stands. An animation carrying its
+    travel asks for `main`: then a frame whose `wanted` holds the game root turns and moves Main
+    onto it FIRST (`_Job._main`), and everything below solves against the moved Main."""
+
+    def __init__(self, rig, members, main=False):
         self.rig = rig
-        self.wanted = dict((leaf.split(":")[-1], pm.rigid(m)) for leaf, m in (wanted or {}).items())
         self.game = game_bones(rig)
         self.bases = bases(rig)
         self.root = maya_rigs.leaf(rig.skeleton_root) if rig.skeleton_root else None
+        # the members as `measure` reads them: plain leaves, the root out
+        self.leaves = [leaf for leaf in _plain(members) if leaf != self.root]
         self.members = []
         self.notes = OrderedDict()
         driven, missing = [], []
-        for leaf in _plain(members):
-            if leaf == self.root:
-                continue                                  # Main is never written
+        for leaf in self.leaves:
             if leaf in self.bases and self.bases[leaf].fk:       # the pelvis's is RootX_M
                 self.members.append(leaf)
             elif pm.is_helper(leaf) or pm.is_twist(leaf):
@@ -728,15 +763,74 @@ class _Job(object):
         # the limbs the POSE touches (a held bone never poses a limb's IK half) ...
         self.limbs = limb_members(self.members)
         # ... and the bones a member's solve would move off their rigid follow (`held_bones`),
-        # solved onto their targets with the members - structurally for `controls_for`, those
-        # with a target for a solve
+        # solved onto their targets with the members - structurally for `controls`, those with
+        # a target for a frame's solve
         numeric = set(leaf for leaf, b in self.bases.items()
                       if b.fk and b.fkx and not _analytic(b))
         controlled = set(leaf for leaf, b in self.bases.items() if b.fk)
         self.held_all = held_bones(self.members, _children(self.game), numeric, controlled)
+        self.main_asked = bool(main)
+        self.main = _main_path(rig) if main else None
+        self.spelled = {}          # {control path: its short name}, the seed's spelling
+
+    def solve(self, wanted, seed=None):
+        """Solution for one frame - exactly `solve(rig, wanted, members)`'s, the structure
+        reused. `seed` ({spelled plug: value}, a previous frame's `Solution.values`) is the
+        nearest-euler reference of every control it names all three rotate channels of, else
+        the control's current rotate. With `main` and the game root in `wanted`, Main is turned
+        and moved first onto `O^-1 . wanted[root]` (`O = rigid(G_root) . rigid(Main)^-1`, sampled
+        each frame) and its values land in `values`; a Main that cannot be written is left and
+        named (`MAIN_KEPT`)."""
+        return _Job(self, wanted, seed).run()
+
+    def measure(self, wanted):
+        """`measure(rig, wanted, members)`, the structure reused."""
+        wanted = dict((leaf.split(":")[-1], pm.rigid(m)) for leaf, m in (wanted or {}).items())
+        return worst(_rows(self.rig, self.bases, self.game, wanted, self.leaves))
+
+    def controls(self):
+        """`controls_for(rig, members)`: the controls a press would key, in solve order - Main
+        first when asked (`main`)."""
+        out = [self.main] if self.main else []
+        member_set = set(self.members)
+        for leaf in self.members + [h for h in self.held_all if h not in member_set]:
+            control = self.bases[leaf].fk
+            if control and control not in out:
+                out.append(control)
+        for (kind, side), how in self.limbs.items():
+            limb, suffix = LIMBS[kind], "_" + side
+            ik, pole = _one(self.rig, limb.ik + suffix), _one(self.rig, limb.pole + suffix)
+            if not ik or _Job._guard(ik, pole):
+                continue
+            nodes = [ik]
+            if limb.toes:
+                nodes.append(_one(self.rig, limb.toes + suffix))
+            if how["pole"]:
+                nodes.append(pole)
+            out.extend(n for n in nodes if n and n not in out)
+        return out
+
+
+class _Job(object):
+    """One frame's solve on a `Solver`'s structure: the samples, the targets and the writes."""
+
+    def __init__(self, solver, wanted, seed=None):
+        self.rig, self.game, self.bases, self.root = solver.rig, solver.game, solver.bases, \
+            solver.root
+        self.wanted = dict((leaf.split(":")[-1], pm.rigid(m)) for leaf, m in (wanted or {}).items())
+        self.seed = dict(seed or {})
+        self.spelled = solver.spelled
+        self.notes = OrderedDict(solver.notes)
+        self.limbs = solver.limbs
+        self.held_all = solver.held_all
+        # the held bones with a target this frame solve with the members
         self.held = [leaf for leaf in self.held_all if leaf in self.wanted]
-        self.members.extend(self.held)
+        self.members = solver.members + self.held
         self.member_set = set(self.members)
+        # Main carries the travel when asked and this frame says where the game root goes
+        self.main = solver.main
+        self.main_wanted = solver.main_asked and self.root in self.game and \
+            self.root in self.wanted
         self.session = _Session()
 
     # ---- sampling
@@ -745,6 +839,11 @@ class _Job(object):
         """Everything the solve holds constant, read once before anything moves."""
         self.offset, self.in_control, self.order, self.axis, self.rest_rotate = {}, {}, {}, {}, {}
         self.shown = {}
+        if self.main_wanted and self.main:
+            # O: the game root in Main - Main stands where `O^-1 . G_root` puts it
+            self.main_offset = pm.rigid(_world(self.game[self.root])) * \
+                pm.rigid(_world(self.main)).inverse()
+            self._remember(self.main)
         for leaf, base in self.bases.items():
             if leaf not in self.game or not base.deform:
                 continue
@@ -770,12 +869,30 @@ class _Job(object):
             self.ik[key] = self._sample_limb(*key)
 
     def _remember(self, control):
-        """The control's rotate order, rotateAxis and rotate values before anything moved."""
+        """The control's rotate order, rotateAxis and the rotate values its eulers are taken
+        nearest to: the seed's (`_seeded`), else what it shows before anything moved."""
         if control in self.order:
             return
         self.order[control] = int(cmds.getAttr(control + ".rotateOrder"))
         self.axis[control] = tuple(cmds.getAttr(control + ".rotateAxis")[0])
-        self.rest_rotate[control] = tuple(float(v) for v in cmds.getAttr(control + ".rotate")[0])
+        seeded = self._seeded(control)
+        if seeded is None:
+            seeded = tuple(float(v) for v in cmds.getAttr(control + ".rotate")[0])
+        self.rest_rotate[control] = seeded
+
+    def _seeded(self, control):
+        """The control's rotate values in the seed ({spelled plug: value}: a previous frame's
+        `Solution.values`), or None when it does not name all three - an animation's frame is
+        solved nearest the frame before, so its curves never flip (trap 108), where the take
+        the walk has not keyed yet would hand it any old euler."""
+        if not self.seed:
+            return None
+        if control not in self.spelled:
+            self.spelled[control] = _name(control)
+        found = [self.seed.get(self.spelled[control] + "." + ch) for ch in ROTATE]
+        if any(value is None for value in found):
+            return None
+        return tuple(float(value) for value in found)
 
     def _sample_limb(self, kind, side):
         """The limb's IK nodes and constants, or None when the rig has no IK for it."""
@@ -952,9 +1069,31 @@ class _Job(object):
 
     # ---- the pieces
 
+    def _main(self):
+        """Main onto the game root's target - the travel of an animation (`Solver(main=True)`):
+        turned and moved onto `O^-1 . wanted[root]` before anything else moves, so RootX_M and
+        every chain below solve against it. A Main any of whose six channels cannot be written
+        (locked, driven by somebody's constraint) is left where it stands, every channel, and
+        named (`MAIN_KEPT`) - a Main turned but not moved would carry half the travel."""
+        if not self.main:
+            self.notes["main"] = MAIN_KEPT % NO_MAIN
+            return
+        plugs = [self.main + "." + ch for ch in ROTATE + TRANSLATE]
+        if not self.session.allowed(plugs):
+            plug = next(p for p in plugs if p in self.session.skipped)
+            self.notes["main"] = MAIN_KEPT % ("%s %s" % (plug.rsplit(".", 1)[-1],
+                                                         self.session.skipped[plug]))
+            return
+        aim = self.main_offset.inverse() * self.wanted[self.root]
+        if self._turn(self.main, aim):
+            self._move(self.main, pm.position(aim))
+
     def _root(self):
         base = self.bases[PELVIS]
-        aim = self.root_offset * self.wanted.get(PELVIS, pm.rigid(_world(self.game[PELVIS])))
+        pelvis = self.wanted.get(PELVIS)
+        if pelvis is None:
+            pelvis = pm.rigid(_world(self.game[PELVIS]))
+        aim = self.root_offset * pelvis
         if self._turn(base.fk, aim):
             self._move(base.fk, pm.position(aim))
 
@@ -1120,6 +1259,8 @@ class _Job(object):
         self.levels = level_order(depths)
 
     def run_pass(self):
+        if self.main_wanted:
+            self._main()                          # first: everything hangs below Main
         if PELVIS in self.members:
             self._root()
         members = set(self.members)
@@ -1200,43 +1341,22 @@ def solve(rig, wanted, members):
     autoKey as it was, the evaluation manager as it was - and the round trip is ONE undo step
     (`UNDO_CHUNK`) that changes nothing when undone, nested in a caller's own chunk when there
     is one. `skipped` names the plugs that could not be written (`keys.writable`), `notes` what
-    the line should say."""
-    return _Job(rig, wanted, members).run()
+    the line should say. One frame on a `Solver` - an animation keeps the Solver for its walk."""
+    return Solver(rig, members).solve(wanted)
 
 
-def controls_for(rig, members):
+def controls_for(rig, members, main=False):
     """The controls Apply would key for `members` (long paths, in solve order): each member's FK
     control (`RootX_M` for the pelvis) and each held bone's (`held_bones`: the neck's
     in-between), and for every limb a member touches its IK end (the
     leg's toes too) and - when its upper or middle bone is a member - its pole; a limb whose IK
-    solve attributes are off their defaults keeps its IK half and gives none."""
-    job = _Job(rig, {}, members)
-    out = []
-    for leaf in job.members + [h for h in job.held_all if h not in job.member_set]:
-        control = job.bases[leaf].fk
-        if control and control not in out:
-            out.append(control)
-    for (kind, side), how in job.limbs.items():
-        limb, suffix = LIMBS[kind], "_" + side
-        ik, pole = _one(rig, limb.ik + suffix), _one(rig, limb.pole + suffix)
-        if not ik or job._guard(ik, pole):
-            continue
-        nodes = [ik]
-        if limb.toes:
-            nodes.append(_one(rig, limb.toes + suffix))
-        if how["pole"]:
-            nodes.append(pole)
-        out.extend(n for n in nodes if n and n not in out)
-    return out
+    solve attributes are off their defaults keeps its IK half and gives none. `main` (an
+    animation carrying its travel): Main first."""
+    return Solver(rig, members, main).controls()
 
 
 def measure(rig, wanted, members):
     """(worst degrees, worst cm, worst leaf) of the members against `wanted` as the rig stands
     now (after the keys): the four unrolled limb bones by where they point (read in drive
     form), the rest by their whole rotation, the pelvis's position (`_rows`)."""
-    all_bases = bases(rig)
-    game = game_bones(rig)
-    wanted = dict((leaf.split(":")[-1], pm.rigid(m)) for leaf, m in (wanted or {}).items())
-    root = maya_rigs.leaf(rig.skeleton_root) if rig.skeleton_root else None
-    leaves = [leaf for leaf in _plain(members) if leaf != root]
-    return worst(_rows(rig, all_bases, game, wanted, leaves))
+    return Solver(rig, members).measure(wanted)
