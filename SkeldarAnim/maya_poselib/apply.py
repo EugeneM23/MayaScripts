@@ -58,8 +58,8 @@ selection put back (Add selects the rig's Main), and the pose applied onto it as
 `file -import` flushes Maya's undo queue (trap 115), so only the pose is undoable: one Ctrl+Z
 takes the pose keys and leaves the character. A card with no row of ours (a native skeleton, the
 Auto card's own) is REBUILT, bones only, from its rests (`rebuild_joints`, `formats.build`, in the
-namespace `pose_<name>`) - with one hidden cube skinned to it at that rest (`REST_PROXY`): an
-unskinned joint's rest reads as its current world (`maya_retargetmode.rest_world`), so without it
+namespace `pose_<name>`) - with one hidden cube skinned to it at that rest (`REST_PROXY`): a
+skeleton with no skin at all rests as it stands (`scene.rests`), so without it
 the next card applied onto the posed rebuild, or a pose saved from it, would take the first pose
 for the bind. Its root is moved to stand ON the point, whatever the card's rest (`floor_move`),
 and it becomes a character like every other - one outliner group and layer (`chargroup.make`)

@@ -40,7 +40,13 @@ build, the animator commits them from the repo.
     `rotation_only` (the rig's mark);
   - `bones`: EVERY bone of the source skeleton (context for recognising it later), each
     `{parent, canonical, rest[16], world[16], drive[16]?, rotateOrder}`:
-    - `rest` = `maya_retargetmode.rest_world` (the skinCluster bind; trap 176);
+    - `rest` = `maya_retargetmode.rest_world` (the skinCluster bind; trap 176) for a skinned
+      joint; an UNSKINNED one (weapon_*, camera_*) rides its parent's rest with its own local as
+      it stands, an unskinned top joint its nearest skinned descendant's way to the bind, a
+      skeleton with no skin at all rests as it stands (`scene.rests`) - one rest wherever the
+      character stands: read as the helper's current world, a Manny 150 cm low lost its root
+      (the floor rule took a helper for the floor) and its pelvis went 245.897 cm over the root
+      for 95.897 (fix round 2);
     - `world` = the bone as it stands (what the skeleton SHOWS);
     - `drive` (rig sources only, the eight limb bones AdvancedSkeleton keeps unrolled — upperarm,
       lowerarm, thigh, calf per side; `rigsolve.drive_matrices`): the bone as the rig's DRIVE

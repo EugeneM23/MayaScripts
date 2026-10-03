@@ -148,7 +148,7 @@ from maya_poselib import posemath as pm  # noqa: E402
 
 PHASES = [p.strip() for p in os.environ.get(
     "POSELIB_PHASES",
-    "undo,root,mirror,blend,tweaks,partial,mixamo,rootless,objects,select,layers,floor"
+    "undo,root,low,mirror,blend,tweaks,partial,mixamo,rootless,objects,select,layers,floor"
 ).split(",") if p.strip()]
 OUT = io.open(sys.argv[1], "w", encoding="utf-8") if len(sys.argv) > 1 else None
 RESULTS = []
@@ -657,6 +657,61 @@ def phase_root():
          "is keyed, the neck too", ok and listed and not unkeyed,
          "%d listed, unkeyed %s | %s" % (len(listed), unkeyed, text))
     b.reset()
+
+
+def phase_low():
+    """Fix round 2: a character standing LOW (or high) keeps its root. The rests read for the
+    unskinned helpers (weapon_*, camera_*) were their CURRENT world while every skinned joint
+    read its bind: with Main (or a skeleton's root) at -150 the helpers stood 150 cm under the
+    bind's feet, the floor rule took them for the floor, the root lost its name and the pelvis
+    went over the world floor - 245.897 cm over the root for 95.897. Here a Manny_Rig and a
+    Manny skeleton at -150 and +80: every rest as at 0, still rooted, their own card (saved at
+    0) re-applied there, and a card SAVED there applied back at 0 - the pelvis 95.897 over the
+    root each time."""
+    for label, ch in (("Manny_Rig", CH["B"]), ("Manny skeleton", CH["S"])):
+        ch.reset()
+        mover = ch.rig.main if ch.rig is not None else ch.root
+        select = ch.rig.main if ch.rig is not None else ch.root
+        root, pelvis = ch.root, ch.game()["pelvis"]
+        cmds.setAttr(mover + ".translateY", 0.0)
+        evaluate()
+        bind = pm.position(W(pelvis)).y - pm.position(W(root)).y
+        rests_at_0 = dict((leaf, b["rest"]) for leaf, b in ch.bones().items())
+        cmds.currentTime(1)
+        card_0, _n = capture.build_pose([select])
+        for height in (-150.0, 80.0):
+            ch.reset()
+            cmds.setAttr(mover + ".translateY", height)
+            evaluate()
+            bones = ch.bones()
+            drift = max(max(abs(a - b) for a, b in zip(bones[leaf]["rest"], rests_at_0[leaf]))
+                        for leaf in bones)
+            gate("low %s at %+g: every rest as at 0, the helpers too - and still a root" % (
+                label, height), drift <= 1e-6 and pm.has_root(bones),
+                "worst %.3g, has_root %s" % (drift, pm.has_root(bones)))
+            card_low, _n = capture.build_pose([select])
+            cmds.currentTime(6)
+            ok, text = ap.apply(card_0, selection=[select])
+            evaluate()
+            over = pm.position(W(pelvis)).y - pm.position(W(root)).y
+            gate("low %s at %+g: its own card re-applied - the pelvis over the root" % (
+                label, height), ok and abs(over - bind) <= 0.001,
+                "%.4f cm against %.4f | %s" % (over, bind, text))
+            ch.reset()
+            cmds.setAttr(mover + ".translateY", 0.0)
+            evaluate()
+            cmds.currentTime(7)
+            ok, text = ap.apply(card_low, selection=[select])
+            evaluate()
+            over = pm.position(W(pelvis)).y - pm.position(W(root)).y
+            gate("low %s: a card saved at %+g is read with its root and lands at 0" % (
+                label, height), ok and pm.has_root(card_low["bones"]) and
+                abs(over - bind) <= 0.001,
+                "has_root %s, %.4f cm against %.4f | %s" % (
+                    pm.has_root(card_low["bones"]), over, bind, text))
+        ch.reset()
+        cmds.setAttr(mover + ".translateY", 0.0)
+        evaluate()
 
 
 def _root_space(m, root):
@@ -1919,7 +1974,8 @@ def run():
     t0 = time.time()
     say("plugin %s (apply from %s)" % (PLUGIN, os.path.dirname(ap.__file__)))
     setup()
-    for name, fn in (("undo", phase_undo), ("root", phase_root), ("mirror", phase_mirror),
+    for name, fn in (("undo", phase_undo), ("root", phase_root), ("low", phase_low),
+                     ("mirror", phase_mirror),
                      ("blend", phase_blend), ("tweaks", phase_tweaks),
                      ("partial", phase_partial),
                      ("mixamo", phase_mixamo), ("rootless", phase_rootless),

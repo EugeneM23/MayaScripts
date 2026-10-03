@@ -554,5 +554,69 @@ class SquareJpg(unittest.TestCase):
         self.assertFalse(os.path.exists(target))
 
 
+def _at(x, y, z, turn=0.0):
+    """A flat world matrix: turned `turn` degrees about Y, standing at (x, y, z)."""
+    import math
+    c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+    return [c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0, x, y, z, 1.0]
+
+
+def _moved(flat, dy):
+    out = list(flat)
+    out[13] += dy
+    return out
+
+
+class Rests(unittest.TestCase):
+    """`scene.rests`: ONE rest for the whole skeleton, wherever it stands now (fix round 2). A
+    Manny 150 cm low read its skinned joints at their bind and its unskinned helpers (weapon_r,
+    camera_root) where they stood, 150 cm under the bind's feet - the floor rule then took a
+    helper for the floor and the root lost its name."""
+
+    ROOT, PELVIS = "|root", "|root|pelvis"
+    HAND, WEAPON = "|root|pelvis|hand_r", "|root|pelvis|hand_r|weapon_r"
+    CAMERA = "|root|camera_root"
+    PATHS = [ROOT, CAMERA, PELVIS, HAND, WEAPON]
+
+    def binds(self):
+        return {self.ROOT: _at(0, 0, 0), self.PELVIS: _at(0, 96, 0),
+                self.HAND: _at(-40, 100, 5, 30.0)}
+
+    def now(self, dy, hand_turn=30.0):
+        # the whole character moved by dy, the hand turned on, the helpers riding their parents
+        return {self.ROOT: _at(0, dy, 0), self.CAMERA: _at(0, 164 + dy, 0),
+                self.PELVIS: _at(0, 96 + dy, 0), self.HAND: _at(-40, 100 + dy, 5, hand_turn),
+                self.WEAPON: _at(-45, 90 + dy, 5, hand_turn)}
+
+    def close(self, a, b, places=9):
+        for x, y in zip(a, b):
+            self.assertAlmostEqual(x, y, places=places)
+
+    def test_a_skinned_joint_rests_at_its_bind(self):
+        out = scene.rests(self.PATHS, self.binds(), self.now(-150.0))
+        for path, bind in self.binds().items():
+            self.assertEqual(out[path], bind)
+
+    def test_an_unskinned_helper_rides_its_parents_bind_wherever_the_character_stands(self):
+        at_0 = scene.rests(self.PATHS, self.binds(), self.now(0.0))
+        for dy in (-150.0, 80.0):
+            low = scene.rests(self.PATHS, self.binds(), self.now(dy))
+            self.close(low[self.WEAPON], at_0[self.WEAPON])
+            self.close(low[self.CAMERA], at_0[self.CAMERA])
+        self.assertAlmostEqual(at_0[self.CAMERA][13], 164.0)
+        self.assertAlmostEqual(at_0[self.WEAPON][13], 90.0)
+
+    def test_an_unskinned_top_joint_takes_its_skinned_descendants_way_to_the_bind(self):
+        binds = self.binds()
+        del binds[self.ROOT]
+        out = scene.rests(self.PATHS, binds, self.now(-150.0))
+        self.close(out[self.ROOT], _at(0, 0, 0))
+        self.close(out[self.CAMERA], _at(0, 164, 0))
+
+    def test_no_skin_at_all_rests_as_it_stands(self):
+        now = self.now(-150.0)
+        self.assertEqual(scene.rests(self.PATHS, {}, now), now)
+
+
 if __name__ == "__main__":
     unittest.main()
