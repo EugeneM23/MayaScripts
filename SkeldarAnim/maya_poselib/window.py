@@ -1643,7 +1643,24 @@ def sheet(scale=1.0):
     for n in (2, 3, 4, 6, 8, 10):
         values["p%d" % n] = hubstyle.px(n, scale)
         values["r%d" % n] = hubstyle.px(n, scale)
-    return hubstyle.stylesheet(scale, arrow=arrow) + _SHEET.format(**values).strip() + "\n"
+    text = hubstyle.stylesheet(scale, arrow=arrow) + _SHEET.format(**values).strip() + "\n"
+    #  the tree's arrows, the hub's chevrons: with no ::branch rule Maya's own style drew the
+    #  open arrow as a white box beside the dark skin, and then a picked folder's arrow on a
+    #  blue square - the branch area takes the style's selection unless told (the live run,
+    #  2026-10-03)
+    try:
+        opened = maya_hubqt.icon_file("chevron-down", hubstyle.TOKENS["muted"])
+        closed = maya_hubqt.icon_file("chevron-right", hubstyle.TOKENS["muted"])
+    except Exception:                                        # noqa: BLE001
+        opened = closed = None
+    text += ("QTreeWidget#{0} {{ show-decoration-selected: 0; }}\n"
+             "QTreeWidget#{0}::branch, QTreeWidget#{0}::branch:selected {{ "
+             "background: transparent; border-image: none; }}\n").format(TREE_NAME)
+    if opened and closed:
+        text += ("QTreeWidget#{0}::branch:has-children:open {{ image: url({1}); }}\n"
+                 "QTreeWidget#{0}::branch:has-children:closed {{ image: url({2}); }}\n"
+                 ).format(TREE_NAME, opened, closed)
+    return text
 
 
 # ------------------------------------------------------------------ open

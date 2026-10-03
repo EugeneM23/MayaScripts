@@ -406,6 +406,19 @@ class RebuildJoints(unittest.TestCase):
                          (-140.0, 0.0, 75.0))
         self.assertEqual(ap.floor_move((0.0, 95.0, 0.0), (150.0, 7.0, -60.0)), (150.0, 0.0, -60.0))
 
+    def test_the_line_names_the_floor_point_as_the_ghost_did(self):
+        # the live run (2026-10-03): the ghost said «floor (0, 141)» for z 140.699 and the line
+        # after the drop «at floor (0, 140)» - "%d" truncated where the caption rounds
+        from maya_poselib import look
+        for point in ((0.0, 0.0, 140.699), (-36.7, 0.0, 12.5), (120.49, 0.0, -0.5)):
+            caption = look.drop_caption("Fist", {"kind": "floor", "label": "Manny [rig]",
+                                                  "point": point})[0]
+            floor = caption.split("floor ")[-1]
+            self.assertEqual(ap.ADDED % (("Manny [rig]", "Manny_Rig2") + ap.floor_xz(point)),
+                             "a new Manny [rig] Manny_Rig2 at floor " + floor)
+            self.assertEqual(ap.REBUILT % (("pose_Fist",) + ap.floor_xz(point)),
+                             "pose_Fist rebuilt (bones only) at floor " + floor)
+
     def test_a_joint_name_maya_cannot_take_is_made_legal(self):
         joints = ap.rebuild_joints({"DEF-spine.003": {"parent": None,
                                                       "rest": placed((0, 0, 0), (0, 0, 0))}})

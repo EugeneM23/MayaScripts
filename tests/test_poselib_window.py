@@ -431,6 +431,19 @@ class Listing(WindowCase):
         self.assertIn(hubstyle.TOKENS["panel"], sheet)
         self.assertIn('QPushButton[skRole="primary"]', sheet)
 
+    def test_the_folder_tree_draws_the_hubs_chevrons(self):
+        # the live run (2026-10-03, poselib_window.png): with no ::branch rule, Maya's own style
+        # drew the tree's open arrow as a white box beside the dark skin
+        sheet = self.win.styleSheet()
+        self.assertRegex(sheet, r"QTreeWidget#skeldarPoseFolders::branch, "
+                                r"QTreeWidget#skeldarPoseFolders::branch:selected \{[^}]*"
+                                r"transparent")
+        self.assertIn("QTreeWidget#skeldarPoseFolders { show-decoration-selected: 0; }", sheet)
+        self.assertRegex(sheet, r"#skeldarPoseFolders::branch:has-children:open \{[^}]*"
+                                r"chevron-down")
+        self.assertRegex(sheet, r"#skeldarPoseFolders::branch:has-children:closed \{[^}]*"
+                                r"chevron-right")
+
     def test_the_header_shows_the_library_path(self):
         self.assertIn(self.root, self.win.path_label.text())
 

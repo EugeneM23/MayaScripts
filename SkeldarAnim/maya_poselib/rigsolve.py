@@ -54,9 +54,21 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
   rotate channels times its parent's; `joint_channels` would take a rotateAxis anyway.
 - In mayapy (`evaluationManager -mode off`, DG) a `getAttr` after a `setAttr` is FRESH: the FKX
   joint and the game hand read after a control's `setAttr` equal what `dgdirty -allPlugs` gives.
-  A GUI Maya runs the parallel EM, where freshness is not measured yet: `_fresh()` is the one
-  switch point (`FRESH_MODE`, the evaluation the solve reads under - "off" by default, switched
-  only when the scene is not already there and put back in a `finally`).
+  **A GUI Maya runs the parallel EM, and there it is NOT always fresh** (measured 2026-10-03 in a
+  disposable GUI Maya, docs/superpowers/plans/verify_poselib_gui.py `fresh` and `stale`): every
+  FK control set level by level and its FKX joint, deformation joint and game bone read after
+  each set read exactly as in DG (63 levels, 189 channels, keyed or not), and a whole solve gave
+  DG's values on an UNKEYED rig (Manny_Rig, and the Creep's IK legs and numeric toes: 242 values,
+  0 apart) - but on a KEYED rig `FKHead_M.parentMatrix[0]`, read after the neck's numeric probes
+  set `FKNeckPart1_M`, came back stale (0.62 in a matrix element): the head was solved against
+  an old parent and the pose landed 8 to 24 deg off at the head, every trial (4 of 4 in the
+  verify, 16 of 16 in a longer probe), where DG landed it to 0.0002 deg. So `FRESH_MODE` is
+  "off" - the solve reads under DG, `_fresh()` the one switch point, switching only when the
+  scene is not already there and putting the manager back in a `finally`. Its price, measured
+  in the same run: the switch 0.04 s and the first evaluation after it 0.07-0.09 s against
+  0.03 s; and the switch FLUSHES Cached Playback (61 cached frames of three rigs -> 2 at a
+  switch, -> 0 across a whole solve, the background fill idle until the next evaluation, which
+  refilled them in 0.3-0.4 s). `None` (the manager left be) is the measured-wrong choice.
 - `setAttr` on a keyed channel holds until the next time change, and downstream reads see it -
   so the temporary writes work on a keyed rig, and every one is put back (`_Session`).
 - `AlignIKToWrist_*` / `AlignIKToAnkle_*` are DAG children of `FKXWrist_*` / `FKXAnkle_*` and
@@ -205,7 +217,7 @@ BLEND = "FKIKBlend"
 ROTATE = ("rotateX", "rotateY", "rotateZ")
 TRANSLATE = ("translateX", "translateY", "translateZ")
 
-FRESH_MODE = "off"         # the evaluation the solve reads under; None leaves the manager be
+FRESH_MODE = "off"         # the solve reads under DG: the parallel EM read stale (docstring)
 UNDO_CHUNK = "skeldarPoseSolve"   # the one undo step a solve's round trip makes
 PASSES = 3                 # solve, measure, solve again - at most
 TOL_DEG = 0.01

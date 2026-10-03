@@ -472,6 +472,51 @@ class OneUndoStep(unittest.TestCase):
         self.assertEqual(sum(1 for entry in log if entry[0] == "close"), 1)
 
 
+class ParallelCmds(RecordingCmds):
+    """RecordingCmds in a GUI Maya: the evaluation manager answers "parallel" until switched."""
+
+    def __init__(self):
+        RecordingCmds.__init__(self)
+        self.mode = "parallel"
+
+    def evaluationManager(self, query=False, mode=None):
+        if query:
+            return [self.mode]
+        self.log.append(("em", mode))
+        self.mode = mode
+
+
+class FreshMode(unittest.TestCase):
+    """The solve reads under DG. Measured 2026-10-03 in a disposable GUI Maya (verify_poselib_gui
+    `fresh` / `stale`): under the parallel evaluation manager `FKHead_M.parentMatrix[0]` read
+    after the neck's numeric probes set `FKNeckPart1_M` on a KEYED rig came back stale, and the
+    head landed 8 to 24 deg off its pose in every trial; DG landed it to 0.0002 deg. Leaving the
+    manager be (`FRESH_MODE = None`) is the measured-wrong choice, whatever the switch costs
+    (Cached Playback flushed)."""
+
+    job = OneUndoStep.job
+
+    def setUp(self):
+        self.fake = ParallelCmds()
+        self.saved = rigsolve.cmds
+        rigsolve.cmds = self.fake
+
+    def tearDown(self):
+        rigsolve.cmds = self.saved
+
+    def test_the_solve_reads_under_dg(self):
+        self.assertEqual(rigsolve.FRESH_MODE, "off")
+
+    def test_a_parallel_scene_is_switched_inside_the_chunk_and_put_back(self):
+        self.job().run()
+        log = self.fake.log
+        self.assertEqual(log[0], ("open", rigsolve.UNDO_CHUNK))
+        self.assertEqual(log[1], ("em", "off"))
+        self.assertEqual(log[-2:], [("em", "parallel"), ("close",)])
+        self.assertLess(log.index(("em", "off")), log.index(("sample",)))
+        self.assertEqual(self.fake.mode, "parallel")
+
+
 class Shared(unittest.TestCase):
 
     def test_one_solution_shape_for_both(self):

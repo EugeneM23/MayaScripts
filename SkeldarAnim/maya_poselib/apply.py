@@ -724,7 +724,7 @@ def _add(entry, point):
     from maya_overrig import builder
     from maya_scenesetup import catalog, character
     from maya_uebridge import rigimport
-    x, _y, z = character.placement(point)
+    x, z = floor_xz(point)
     if catalog.is_rig(entry):
         before = maya_rigs.rigs()
         text = character.add_character(entry, at=point)
@@ -738,6 +738,13 @@ def _add(entry, point):
     if root is None:
         return None, NOT_ADDED % (entry.label, text)
     return root, ADDED % (entry.label, scene.leaf(root), x, z)
+
+
+def floor_xz(point):
+    """(x, z) of a floor point as the lines print it: ROUNDED, as the ghost's caption rounds
+    them (`look.drop_caption`) - "%d" of the floats truncated, and the live run read «floor (0,
+    141)» on the ghost and «at floor (0, 140)» after the drop (2026-10-03). Pure."""
+    return int(round(float(point[0]))), int(round(float(point[2])))
 
 
 def floor_move(at, point):
@@ -772,7 +779,7 @@ def _rebuild(data, point):
     namespace = character.free_namespace(
         NATIVE_PREFIX + formats.legal(data.get("name") or "Pose").replace(":", "_"),
         character.existing_namespaces())
-    x, _y, z = character.placement(point)
+    x, z = floor_xz(point)
     notes = []
     with _unrecorded():
         before = _scene_uuids()
