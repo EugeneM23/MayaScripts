@@ -642,6 +642,21 @@ def phase_root():
     cmds.setAttr(b.rig.main + ".translate", 0.0, 0.0, 0.0)
     cmds.setAttr(b.rig.main + ".rotateY", 0.0)
     b.reset()
+    # the case that reproduces it whatever the solve's residual: a card with the rig's own
+    # (default) neck onto that rig standing at its build pose - the neck stands EXACTLY on the
+    # card's, the review's «a card with a default neck onto a rig with a default neck: 71 keyed»
+    evaluate()
+    still, _n = capture.build_pose([b.rig.main])
+    cmds.currentTime(30)
+    ok, text = ap.apply(still, selection=[b.node("FKWrist_L")])
+    s_members, _p, _b = target_members(still, b)
+    listed = rigsolve.controls_for(b.rig, s_members)
+    unkeyed = [n.split("|")[-1] for n in listed
+               if not cmds.keyframe(n, query=True, time=(30, 30))]
+    gate("root a card of the build pose onto the build pose: every control Select objects lists "
+         "is keyed, the neck too", ok and listed and not unkeyed,
+         "%d listed, unkeyed %s | %s" % (len(listed), unkeyed, text))
+    b.reset()
 
 
 def _root_space(m, root):
@@ -958,6 +973,18 @@ def phase_tweaks():
                  "spine %.4f prop %.4f, wrist key %s, evaluation %s | %s" % (
                      got[spine], got[prop_tx], keyed_wrist,
                      cmds.evaluationManager(query=True, mode=True)[0], text))
+            # Save a pose of ANOTHER frame (`build_pose(frame=)`): the time goes there and
+            # comes back, and coming back re-evaluates this frame - its tweaks set back after
+            set_values({spine: 25.0, prop_tx: 40.0})
+            other, _n = capture.build_pose([a.rig.main], frame=8)
+            got = values_of([spine, prop_tx])
+            gate("tweaks (%s) a pose saved off another frame: the tweaks of this one stand, the "
+                 "time back" % mode,
+                 other is not None and abs(got[spine] - 25.0) <= 1e-6 and
+                 abs(got[prop_tx] - 40.0) <= 1e-6 and
+                 abs(cmds.currentTime(query=True) - 5.0) < 1e-9,
+                 "spine %.4f prop %.4f, time %s" % (got[spine], got[prop_tx],
+                                                    cmds.currentTime(query=True)))
     finally:
         cmds.evaluationManager(mode=mode_before)
         cmds.autoKeyframe(state=auto)
@@ -1721,9 +1748,12 @@ def phase_layers():
     say("   muted: %s" % text)
     changed, gone, new = curves_same(before, curve_state())
     in_layer = layer_curves("PoseM")
+    # read with getattr so the same gate FAILS (not raises) on a build without the rule
+    muted_text = getattr(keys, "MUTED",
+                         "%s is muted - the keys are in it, the pose shows when it is on")
     gate("layers muted PoseM: keyed into it, and the line says it is muted",
-         ok and picked is not None and picked.muted and new and set(new) <= in_layer and
-         not changed and not gone and (keys.MUTED % "PoseM") in text,
+         ok and picked is not None and getattr(picked, "muted", False) and new and
+         set(new) <= in_layer and not changed and not gone and (muted_text % "PoseM") in text,
          "%d new curves (%d in PoseM) | %s" % (len(new), len(set(new) & in_layer), text))
     cmds.animLayer("PoseM", edit=True, mute=False)
     deg, cm, at = landed(a, card, 9)
