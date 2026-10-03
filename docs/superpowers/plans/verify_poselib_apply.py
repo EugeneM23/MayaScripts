@@ -607,6 +607,89 @@ def phase_undo():
     keyed_half(s, values)
     undo_gate("Manny skeleton", s, s.root)
     s.reset()
+    undo_keeps_tweaks()
+
+
+def undo_keeps_tweaks():
+    """Fix round 2: one Ctrl+Z after an Apply or a Blend finish threw every tweak in the scene
+    away under the PARALLEL evaluation manager (the GUI's default) - the press's switch to DG
+    re-evaluated the scene, the tweaks were set back by `setAttr` INSIDE the press's chunk, and
+    undoing the press replayed that restore backwards (25 / 40 after the press, 0 / 0 after the
+    undo). In both evaluation modes, a Manny_Rig control the hand card does not hold
+    (FKSpine1_M.rx) and an unrelated prop's tx, keyed 0 at 0 and 10, tweaked at 5 to 25 / 40
+    with autoKey off: an Apply, a Blend finished at 60 %, and an Apply onto an additive layer -
+    the tweaks stand after the press AND after one Ctrl+Z, while the press's keys (and the
+    layer's new members) are gone."""
+    a = CH["A"]
+    card = CARDS["hand"]
+    spine = a.node("FKSpine1_M") + ".rotateX"
+    prop = cmds.ls(cmds.spaceLocator(name="undoTweakProp")[0], long=True)[0]
+    ptx = prop + ".translateX"
+    tweaks = {spine: 25.0, ptx: 40.0}
+    layers_before = set(cmds.ls(type="animLayer") or [])
+    auto = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    mode_before = cmds.evaluationManager(query=True, mode=True)[0]
+    try:
+        for mode in ("off", "parallel"):
+            for how in ("apply", "blend", "layer"):
+                a.reset()
+                for plug in tweaks:
+                    for t in (0, 10):
+                        cmds.setKeyframe(plug, time=t, value=0.0)
+                layer = None
+                if how == "layer":
+                    layer = cmds.animLayer("PoseUndo")
+                    cmds.animLayer(layer, edit=True, selected=True, preferred=True)
+                cmds.evaluationManager(mode=mode)
+                cmds.currentTime(5, update=True)
+                set_values(tweaks)
+                members = set(cmds.animLayer(layer, query=True, attribute=True) or []) \
+                    if layer else set()
+                before = curve_state()
+                if how == "blend":
+                    blend = ap.Blend()
+                    refusal = blend.start(card, selection=[a.node("FKWrist_L")])
+                    blend.set(0.6)
+                    text = blend.finish()
+                    ok = refusal == ""
+                else:
+                    ok, text = ap.apply(card, selection=[a.node("FKWrist_L")])
+                pressed = values_of(list(tweaks))
+                _changed, _gone, new = curves_same(before, curve_state())
+                added = set(cmds.animLayer(layer, query=True, attribute=True) or []) - members \
+                    if layer else set()
+                gate("undo tweaks (%s, %s): the press keyed the card, the tweaks stand" % (
+                    mode, how), ok and (new or added) and
+                    all(abs(pressed[p] - v) <= 1e-6 for p, v in tweaks.items()),
+                    "spine %.4f prop %.4f, %d new curves, %d new layer members | %s" % (
+                        pressed[spine], pressed[ptx], len(new), len(added), text))
+                cmds.undo()
+                undone = values_of(list(tweaks))
+                changed, gone, new = curves_same(before, curve_state())
+                left = set(cmds.animLayer(layer, query=True, attribute=True) or []) - members \
+                    if layer else set()
+                gate("undo tweaks (%s, %s): one Ctrl+Z - the press's keys gone, the tweaks "
+                     "stand" % (mode, how),
+                     not changed and not gone and not new and not left and
+                     all(abs(undone[p] - v) <= 1e-6 for p, v in tweaks.items()),
+                     "spine %.4f prop %.4f, curves %d changed %d gone %d new, layer members "
+                     "%d left" % (undone[spine], undone[ptx], len(changed), len(gone), len(new),
+                                  len(left)))
+                cmds.evaluationManager(mode=mode_before)
+                # the layer AND the BaseAnimation its creation made: left, the next case would
+                # key onto BaseAnimation and the layers phase find a layer in the scene
+                for made in sorted(set(cmds.ls(type="animLayer") or []) - layers_before,
+                                   key=lambda n: (n == "BaseAnimation", n)):
+                    if cmds.objExists(made):
+                        cmds.delete(made)
+                cmds.cutKey(list(tweaks), clear=True)
+    finally:
+        cmds.evaluationManager(mode=mode_before)
+        cmds.autoKeyframe(state=auto)
+        if cmds.objExists(prop):
+            cmds.delete(prop)
+        a.reset()
 
 
 def phase_root():

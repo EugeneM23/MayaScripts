@@ -898,6 +898,51 @@ class Tweaks(Restoring):
         self.assertEqual(keys.Tweaks().restore(), [])
         self.assertEqual(fake.log, [])
 
+    def api(self, fail=()):
+        """keys._api_set replaced by a recorder (the plugs it set, and the values into the fake
+        scene); a plug in `fail` raises as the API does for one it cannot reach."""
+        original, ready = keys._api_set, keys._api_ready
+        self.addCleanup(setattr, keys, "_api_set", original)
+        self.addCleanup(setattr, keys, "_api_ready", ready)
+        keys._api_ready = lambda: True
+        calls = []
+
+        def record(plug, value):
+            if plug in fail:
+                raise RuntimeError("(kInvalidParameter): Object does not exist")
+            calls.append((plug, value))
+            keys.cmds.values[plug] = value
+        keys._api_set = record
+        return calls
+
+    def test_the_restore_is_no_step_on_the_undo_queue(self):
+        # fix round 2: through setAttr the restore was recorded in the press's chunk, and one
+        # Ctrl+Z of the press replayed it backwards - every tweak gone again (parallel, the
+        # GUI's default). It goes through the API, which the undo queue never sees.
+        fake = TweakCmds(**self.SCENE)
+        keys.cmds = fake
+        calls = self.api()
+        tweaks = keys.Tweaks()
+        for plug in fake.values:
+            fake.values[plug] = 0.0
+        back = tweaks.restore(skip=["rig:FKWrist_L.rotateX"])
+        self.assertEqual(sorted(back), ["prop.translateX", "rig:FKSpine1_M.rotateX"])
+        self.assertEqual(sorted(calls), [("prop.translateX", 40.0),
+                                         ("rig:FKSpine1_M.rotateX", 25.0)])
+        self.assertEqual([entry for entry in fake.log if entry[0] == "set"], [])   # no setAttr
+
+    def test_a_plug_the_api_cannot_reach_still_goes_back_through_set_attr(self):
+        fake = TweakCmds(**self.SCENE)
+        keys.cmds = fake
+        calls = self.api(fail=("prop.translateX",))
+        tweaks = keys.Tweaks()
+        for plug in fake.values:
+            fake.values[plug] = 0.0
+        tweaks.restore()
+        self.assertEqual(fake.values["prop.translateX"], 40.0)
+        self.assertEqual([p for _s, p, _v, _a in fake.log], ["prop.translateX"])
+        self.assertIn(("rig:FKSpine1_M.rotateX", 25.0), calls)
+
 
 if __name__ == "__main__":
     unittest.main()

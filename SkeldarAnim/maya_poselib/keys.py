@@ -449,9 +449,16 @@ class Tweaks(object):
         return out
 
     def restore(self, skip=()):
-        """Every captured plug that moved, set back to what it showed (autoKey off: a scripted
-        `setAttr` keys under it) - but those `skip` names (any spelling of the node): the plugs
-        a press keyed. The plugs set back."""
+        """Every captured plug that moved, set back to what it showed - but those `skip` names
+        (any spelling of the node): the plugs a press keyed. The plugs set back.
+
+        UNRECORDED (`_set_quiet`, through the API): a restore puts back what an evaluation threw
+        away, it is no step of the press. Through `setAttr` it was recorded in the press's
+        chunk, and one Ctrl+Z of the press replayed it backwards - every tweak the evaluation
+        manager's switch had thrown away and the restore had put back went with the undo, in
+        the GUI's default parallel evaluation (fix round 2, measured: 25 / 40 after the press,
+        0 / 0 after one Ctrl+Z). Not `undoInfo -stateWithoutFlush` around it: the restore runs
+        inside the press's chunk, which that would break (trap 145)."""
         moved = self.moved()
         if not moved:
             return []
@@ -464,10 +471,65 @@ class Tweaks(object):
                 if skipped and _identity(plug) in skipped:
                     continue
                 try:
-                    cmds.setAttr(plug, self.values[plug])
+                    _set_quiet(plug, self.values[plug])
                     back.append(plug)
                 except RuntimeError:
                     pass
         finally:
             cmds.autoKeyframe(state=auto)
         return back
+
+
+def _api_set(plug, value):
+    """`plug` set to `value` through `MPlug` - in the UI units `getAttr` answered it in (an angle
+    in the scene's angle unit, a distance in its linear unit, a time in its time unit). Maya's
+    undo queue never sees an API set. Raises when the plug cannot be found or set."""
+    import maya.api.OpenMaya as om
+    selection = om.MSelectionList()
+    selection.add(plug)
+    target = selection.getPlug(0)
+    attr = target.attribute()
+    if attr.hasFn(om.MFn.kUnitAttribute):
+        unit = om.MFnUnitAttribute(attr).unitType()
+        if unit == om.MFnUnitAttribute.kAngle:
+            target.setMAngle(om.MAngle(value, om.MAngle.uiUnit()))
+            return
+        if unit == om.MFnUnitAttribute.kDistance:
+            target.setMDistance(om.MDistance(value, om.MDistance.uiUnit()))
+            return
+        if unit == om.MFnUnitAttribute.kTime:
+            target.setMTime(om.MTime(value, om.MTime.uiUnit()))
+            return
+    if attr.hasFn(om.MFn.kEnumAttribute):
+        target.setShort(int(round(value)))
+        return
+    if attr.hasFn(om.MFn.kNumericAttribute):
+        kind = om.MFnNumericAttribute(attr).numericType()
+        if kind == om.MFnNumericData.kBoolean:
+            target.setBool(bool(round(value)))
+            return
+        if kind in tuple(getattr(om.MFnNumericData, name) for name in
+                         ("kByte", "kChar", "kShort", "kInt", "kLong", "kInt64")
+                         if hasattr(om.MFnNumericData, name)):
+            target.setInt(int(round(value)))
+            return
+    target.setDouble(float(value))
+
+
+def _api_ready():
+    """Is the scene Maya's own - `cmds` the real `maya.cmds`? A test's fake scene has no plug
+    for the API to set, and an API call with no Maya session up crashes the interpreter."""
+    return getattr(cmds, "__name__", None) == "maya.cmds"
+
+
+def _set_quiet(plug, value):
+    """`plug` back to `value` without a step on the undo queue (`_api_set`); a plug the API
+    cannot reach (an ambiguous name, an odd attribute type) through `setAttr` - recorded, but
+    the tweak is back. Raises RuntimeError only when neither can set it."""
+    if _api_ready():
+        try:
+            _api_set(plug, value)
+            return
+        except (RuntimeError, TypeError, ValueError):
+            pass
+    cmds.setAttr(plug, value)

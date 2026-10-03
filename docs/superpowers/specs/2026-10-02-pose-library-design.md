@@ -237,6 +237,11 @@ dirtying its feeding curve or layer node, and where the solve must switch the ev
 (DG for its reads, a GUI Maya) every time-fed channel is read first and set back after each switch,
 all but what the press keyed (`keys.Tweaks`). A pose applied to a hand leaves the body posed by
 hand, the other characters and the props as they stand; Esc puts back the animator's values.
+That setting back is NO step on the undo queue (`MPlug`, which the queue never sees - not
+`undoInfo -stateWithoutFlush`, which inside the press's chunk would break it, trap 145): recorded
+in the press's chunk, one Ctrl+Z replayed it backwards and threw every tweak away again under
+the parallel evaluation manager (fix round 2). One Ctrl+Z undoes the press's keys and layer
+members and leaves the tweaks standing, in both evaluation modes.
 
 ## Blend
 
