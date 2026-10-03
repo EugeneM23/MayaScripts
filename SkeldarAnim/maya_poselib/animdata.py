@@ -2,10 +2,10 @@
 
 The animator: «теперь давай добавим возможность сохранять анимации. Все правила которые работают
 для поз должны работать и для анимаций. Так же мы должны уметь выбирать способ вставки анимации как
-в studio library». An animation card is a pose card per frame: the header (`anim.json`) holds each bone's STATIC half
-(parent, canonical name, rest, rotate order) once, and `frames.json.gz` its per-frame half - every
-bone's world matrix (and, from a rig, the drive of the unrolled limb bones) on every frame of the
-range. This module holds what needs no scene:
+в studio library». An animation card is a pose card per frame: the header (`anim.json`) holds
+each bone's STATIC half (parent, canonical name, rest, rotate order) once, and `frames.json.gz`
+its per-frame half - every bone's world matrix (and, from a rig, the drive of the unrolled limb
+bones) on every frame of the range. This module holds what needs no scene:
 
   - the frame CODEC: a world matrix written as seven numbers, a unit quaternion and a translation
     (`encode` / `decode`). Scale and shear are dropped - the pose library reads a bone's turn and
@@ -79,9 +79,9 @@ def _clean(value, places):
 def encode(flat):
     """[qx, qy, qz, qw, tx, ty, tz] of a 16-float world matrix: its turn as a unit quaternion
     (9 decimals - about 1e-7 degrees, far below what a key shows) and its translation (6
-    decimals of a cm, a hundredth of a micron). Maya's quaternion of the same turn (MQuaternion: +90 about X
-    is (sin 45, 0, 0, cos 45)). Shepperd's method, the branch on the largest diagonal term, so a
-    half turn reads as exactly as the identity."""
+    decimals of a cm, a hundredth of a micron). Maya's quaternion of the same turn
+    (MQuaternion: +90 about X is (sin 45, 0, 0, cos 45)). Shepperd's method, the branch on the
+    largest diagonal term, so a half turn reads as exactly as the identity."""
     r0, r1, r2 = _rows(flat)
     # M = the column-vector matrix, the transpose of the row-vector rows
     m00, m01, m02 = r0[0], r1[0], r2[0]
@@ -160,8 +160,12 @@ def _frame(time):
     return int(math.floor(float(time) + 0.5))
 
 
-def _flag(value):
-    """A remembered on/off as a bool: optionVars hand back ints and strings ("0" is off)."""
+def _flag(value, default):
+    """A remembered on/off as a bool: optionVars hand back ints and strings ("0" is off); None
+    (a JSON null - nothing remembered) is `default`, never "off": bool(None) would turn
+    At current time off for whoever kept no value."""
+    if value is None:
+        return default
     if isinstance(value, str):
         return value.strip().lower() not in _FALSE
     return bool(value)
@@ -182,20 +186,20 @@ def _number(value):
 def options_from(mapping):
     """`Options` of a mapping (the window's remembered values): only the fields `Options` knows
     are read, each validated - an unknown paste mode is "replace", unknown keys "every", flags
-    are bools, range ends floats or None - so a value from an older build or a colleague's prefs
-    never reaches a press."""
+    are bools (a missing one or a null its default), range ends floats or None - so a value
+    from an older build or a colleague's prefs never reaches a press."""
     mapping = mapping or {}
     base = Options()
     mode = mapping.get("mode", base.mode)
     keys = mapping.get("keys", base.keys)
     return Options(
         mode=mode if mode in MODES else "replace",
-        at_current=_flag(mapping.get("at_current", base.at_current)),
+        at_current=_flag(mapping.get("at_current"), base.at_current),
         start=_number(mapping.get("start")),
         end=_number(mapping.get("end")),
-        connect=_flag(mapping.get("connect", base.connect)),
+        connect=_flag(mapping.get("connect"), base.connect),
         keys=keys if keys in KEY_MODES else "every",
-        in_place=_flag(mapping.get("in_place", base.in_place)))
+        in_place=_flag(mapping.get("in_place"), base.in_place))
 
 
 def paste_plan(start, end, key_times, options, current):

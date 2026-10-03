@@ -212,6 +212,16 @@ class Plan(unittest.TestCase):
                          (False, True, "every", None, None))
         self.assertEqual(ad.options_from({"end": 12}).end, 12.0)
 
+    def test_a_flag_held_as_null_is_its_default(self):
+        # a JSON null (nothing remembered) is no "off": bool(None) would paste at the clip's
+        # own frames instead of the current one
+        o = ad.options_from({"at_current": None, "connect": None, "in_place": None})
+        self.assertEqual((o.at_current, o.connect, o.in_place), (True, False, False))
+        self.assertEqual(o, ad.Options())
+        # a value given still wins
+        o = ad.options_from({"at_current": False, "connect": 1, "in_place": "on"})
+        self.assertEqual((o.at_current, o.connect, o.in_place), (False, True, True))
+
     def test_every_mode_has_a_label(self):
         self.assertEqual(set(ad.MODE_LABELS), set(ad.MODES))
         self.assertEqual(ad.MODE_LABELS["replace_all"], "Replace all")
