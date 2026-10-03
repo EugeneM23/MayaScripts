@@ -110,7 +110,12 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
      so the IK shows exactly what the FK does (a target's place is only a model of them:
      Manny_Rig's point-constrained calf wanders 0.06 cm from pose to pose, and an IK foot put on
      the model stood that far off its FK foot); with part of it, onto `K . S*[end]`, so a hand
-     pose onto an IK arm whose FK half stands elsewhere keeps the arm where it is shown;
+     pose onto an IK arm whose FK half stands elsewhere keeps the arm where it is shown - and a
+     limb shown HALF WAY between FK and IK has each half take the pose relative to itself
+     (`half_blended`, `target_fk`, `ik_chain`: a member's relation to its parent on that half's
+     own parent, the other bones where that half holds them), so the arm stays where it is
+     shown (the final review: at a blend of 0.5 the IK wrist was put on the blended one and the
+     forearm moved 5.1 cm);
    - the leg's `roll` / `rock` at their defaults with it (the end is computed for them);
    - `IKToes` onto the ball's `S*` (rotate only: the relation, then `_numeric`);
    - the pole on the plane of the limb's chain (`pole_point`, the side sampled before; the FKX
@@ -227,6 +232,7 @@ STRAIGHT = 1e-4            # of the limb: an elbow nearer its line than this has
 NUMERIC_ROUNDS = 6
 NUMERIC_EPS = 1e-4         # rad: the finite difference of the numeric solve
 NUMERIC_TOL = 1e-7         # rad: converged
+HALF_EDGE = 1e-6           # of the FK/IK blend: within this of 0 or 1 a limb shows one half
 DAMPING = 1e-9             # of J'J's mean diagonal: Newton at full rank, the least step below it
 NAMED = 4
 
@@ -763,7 +769,9 @@ class _Job(object):
         if not (ik and align) or not all(b and b.fkx for b in chain):
             return None
         out = {"ik": ik, "pole": pole, "game": game, "chain": chain, "align": align,
-               "k": pm.rigid(_world(align)) * pm.rigid(_world(chain[2].fkx)).inverse()}
+               "k": pm.rigid(_world(align)) * pm.rigid(_world(chain[2].fkx)).inverse(),
+               # the IK half as it stands before anything moves (`ik_chain`)
+               "ikx": [pm.rigid(_world(b.ikx)) if b.ikx else None for b in chain]}
         self._remember(ik)
         out["guard"] = self._guard(ik, pole)
         if pole:
@@ -811,6 +819,79 @@ class _Job(object):
         if leaf in self.wanted and leaf in self.offset:
             return self.offset[leaf].inverse() * self.wanted[leaf]
         return self.shown.get(leaf)
+
+    def half_blended(self, key):
+        """Is the limb `key` shown half way between FK and IK (0 < FKIKBlend < 10) with only PART
+        of its chain a member of the pose (a hand card)? Then each half takes the pose relative
+        to ITSELF (`target_fk`, `ik_chain`). At 0 or 10 one half IS what shows, and the other
+        takes the shown result, as the retarget does - so a switch shows the same limb."""
+        if key not in self.limbs:
+            return False
+        weight = self.blends.get(key, 0.0)
+        if not HALF_EDGE < weight < 1.0 - HALF_EDGE:
+            return False
+        limb = LIMBS[key[0]]
+        chain = [name + "_" + key[1].lower() for name in limb.game[:3]]
+        return not all(n in self.member_set for n in chain)
+
+    def target_fk(self, leaf):
+        """Where the member's FK half should stand: `target(leaf)`, but on a limb half blended
+        with only part of its chain posed (`half_blended`) the pose's relation to the parent bone
+        (`S*[x] . S*[parent]^-1`) on the FKX parent as it now stands. The transfer's `S*` comes
+        relative to the limb as it is SHOWN - the FKX and IKX chains blended - and on a FK half
+        that is not what shows it put the hand off its own forearm. So each half takes the pose
+        relative to itself (`ik_chain` the IK half): the shown limb, FK and IK slerped, is the
+        pose on the shown parent exactly, and the bones the pose does not hold stay where they
+        stood (the final review: at a blend of 0.5 a hand card pulled the IK wrist onto the
+        blended one, and the forearm moved 5.1 cm, the upper arm 10.6 deg)."""
+        aim = self.target(leaf)
+        base, side = _game_parts(leaf)
+        if aim is None or side is None:
+            return aim
+        for kind, limb in LIMBS.items():
+            if base not in limb.game[1:] or not self.half_blended((kind, side)):
+                continue
+            parent = limb.game[limb.game.index(base) - 1] + "_" + side.lower()
+            above, joint = self.target(parent), self.bases.get(parent)
+            if above is None or joint is None or not joint.fkx:
+                return aim
+            return aim * above.inverse() * pm.rigid(_world(joint.fkx))
+        return aim
+
+    def ik_chain(self, info, chain):
+        """The IK half's chain targets on a limb half blended with only part of its chain posed
+        (`half_blended`): each member bone TURNED by the pose's relation to its parent (`S*[x] .
+        S*[parent]^-1`) on the IK half's parent, every other bone by the IK half's own relation
+        to its parent as it stood before the solve (the first one by the IK half's relation to
+        the shown limb, kept on its target - it follows the clavicle), and every bone PLACED by
+        the IK half's own lengths, the first at the IKX joint's place now. So a hand card turns
+        the IK hand at the IKX wrist and moves nothing above it (`target_fk`'s other half). The
+        shown chain's places would not do: the rig LERPS the two halves' places, so a wrist off
+        the blended forearm's frame is where neither half's wrist is (2 cm at a blend of 0.5,
+        the halves 40 cm apart)."""
+        out = []
+        sampled = info["ikx"]
+        for index, (name, base) in enumerate(zip(info["game"][:3], info["chain"])):
+            was = sampled[index] or chain[index]
+            if index == 0:
+                if name in self.member_set:
+                    turn = chain[0]
+                else:
+                    shown = self.shown.get(name, chain[0])
+                    turn = was * shown.inverse() * chain[0]
+                place = pm.position(pm.rigid(_world(base.ikx))) if base.ikx else \
+                    pm.position(chain[0])
+                out.append(pm._placed(pm.rotation(turn), place))
+                continue
+            local = was * (sampled[index - 1] or chain[index - 1]).inverse()   # its own bone
+            if name in self.member_set:
+                turn = pm.rotation(chain[index] * chain[index - 1].inverse()) * \
+                    pm.rotation(out[index - 1])
+            else:
+                turn = pm.rotation(local) * pm.rotation(out[index - 1])
+            t = pm.position(local)
+            out.append(pm._placed(turn, om.MPoint(t.x, t.y, t.z) * out[index - 1]))
+        return out
 
     # ---- writes
 
@@ -865,7 +946,7 @@ class _Job(object):
         (the in-between), and NeckPart1_M takes a share of the head's twist (`SHARE_FROM`), the
         head re-solved inside every probe when it is a member."""
         base = self.bases[leaf]
-        aim = self.target(leaf)
+        aim = self.target_fk(leaf)
         if aim is None or not base.fk:
             return
         if leaf in self.in_control and base.base not in SHARE_FROM:
@@ -896,6 +977,13 @@ class _Job(object):
 
         now = pm.rotation(_world(control))
         e0 = error()
+        if math.sqrt(sum(v * v for v in e0)) < NUMERIC_TOL:
+            # already on its target: still WRITTEN, so it is keyed - «always a key on the current
+            # frame»; a neck standing on the card's (the same card applied again later to hold a
+            # pose) went unkeyed, and a later neck key elsewhere changed this frame (the final
+            # review)
+            self._turn(control, now)
+            return
         for _ in range(NUMERIC_ROUNDS):
             if math.sqrt(sum(v * v for v in e0)) < NUMERIC_TOL:
                 return
@@ -916,15 +1004,19 @@ class _Job(object):
             self._turn(control, now)
             e0 = error()
 
-    def _toes(self, key, info):
+    def _toes(self, key, info, foot=None):
         """The IK toes onto the ball's target. `IKXToes` is aimed by an SC handle that hangs
         under `IKToes` (`IKToesHandle_*`, its effector at `IKXToesEnd_*`), and the aim does not
         compose rigidly with the control: the relation `IKToes . IKXToes^-1` read off the rig
         put a 3-axis toe turn 9.88 deg off (Creep, 9.91 Orc D) while the turn is within reach.
         So the relation is the first guess and `_numeric` finishes it; a turn still out of
-        reach, the leg shown in IK, is said."""
+        reach, the leg shown in IK, is said. `foot`, the IK half's own foot target (a leg only
+        part of which is a member, `ik_chain`): the ball's relation to the foot is put on it."""
         self.notes.pop("toes %s %s" % key, None)
         ball = self.target(info["game"][3])
+        shown_foot = self.target(info["game"][2])
+        if ball is not None and foot is not None and shown_foot is not None:
+            ball = ball * shown_foot.inverse() * foot
         if ball is None or not self._turn(info["toes"], info["toes_rel"] * ball):
             return
         joint = info["toes_joint"]
@@ -955,13 +1047,18 @@ class _Job(object):
         # place is a model of them (Manny_Rig's point-constrained calf wanders 0.06 cm from pose
         # to pose, and an IK foot put on the model stood that far off its FK foot). Part of it:
         # the targets, so a hand pose onto an IK arm whose FK half stands elsewhere keeps the arm
+        # where it is shown - and, shown half way between FK and IK, the pose on the IK half as IT
+        # stands (`ik_chain`), the FK half's likewise (`target_fk`)
         solved = all(name in self.member_set for name in info["game"][:3])
+        half = self.half_blended(key)
+        if half:
+            chain = self.ik_chain(info, chain)
         fkx = [pm.rigid(_world(b.fkx)) for b in info["chain"]] if solved else chain
         aim = pm.rigid(_world(info["align"])) if solved else info["k"] * chain[2]
         if self._turn(info["ik"], aim):
             self._move(info["ik"], pm.position(aim))
         if "toes" in info:
-            self._toes(key, info)
+            self._toes(key, info, chain[2] if half else None)
         if pose_pole:
             if info["side"] is None:
                 self.notes["side " + label] = NO_SIDE % label

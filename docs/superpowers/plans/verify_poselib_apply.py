@@ -628,6 +628,17 @@ def phase_root():
     deg, cm, at_deg, at_cm = worst_of(rows)
     gate("root every member on the card relative to the root", rows and deg <= 0.01,
          "%.6f deg (%s), places %.6f cm (%s), %d bones" % (deg, at_deg, cm, at_cm, len(rows)))
+    # the same card again at a later frame, to hold the pose (blocking): the rig already stands
+    # on it there - the neck's controls, solved numerically, converged at the start and took NO
+    # key (the final review: 71 of 73 controls), so a later neck key changed this frame
+    cmds.currentTime(20)
+    ok, text = ap.apply(CARDS["full"], selection=[b.node("FKWrist_L")])
+    listed = rigsolve.controls_for(b.rig, members)
+    unkeyed = [n.split("|")[-1] for n in listed
+               if not cmds.keyframe(n, query=True, time=(20, 20))]
+    gate("root applied again where it already stands: every control Select objects lists is "
+         "keyed", ok and listed and not unkeyed, "%d listed, unkeyed %s | %s" % (
+             len(listed), unkeyed, text))
     cmds.setAttr(b.rig.main + ".translate", 0.0, 0.0, 0.0)
     cmds.setAttr(b.rig.main + ".rotateY", 0.0)
     b.reset()
@@ -947,6 +958,75 @@ def phase_partial():
          ok and changed and not stray,
          "%d changed, stray %s" % (len(changed), [n.split("|")[-1] for n in stray]))
     c.reset()
+    partial_blends()
+
+
+def _below(bones, leaf, tops):
+    node, seen = bones[leaf].get("parent"), set()
+    while node in bones and node not in seen:
+        if node in tops:
+            return True
+        seen.add(node)
+        node = bones[node].get("parent")
+    return False
+
+
+def partial_blends():
+    """The final review (2026-10-03): the hand card onto a Manny_Rig arm whose FK and IK halves
+    stand ~10 cm apart at the wrist, at FKIKBlend 0, 5 and 10. Every bone the pose does not hold
+    stays where it stood (places, and the unrolled limb bones by where they point - their roll
+    is the twist network's, which follows the hand) and the hand lands on the card on its
+    forearm's drive. At 5 the old solve pulled the IK wrist onto the blended one: the forearm
+    moved 5.1 cm, the upper arm 10.6 deg."""
+    b = CH["B"]
+    card = CARDS["hand"]
+    source = card["bones"]
+    for blend in (0.0, 5.0, 10.0):
+        b.reset()
+        set_values(pose_values(b, seed=0.7))
+        ik = b.node("IKArm_L")
+        cmds.setAttr(ik + ".translate", 8.0, -6.0, 5.0)
+        cmds.setAttr(ik + ".rotate", 20.0, -15.0, 10.0)
+        cmds.setAttr(b.node("FKIKArm_L") + ".FKIKBlend", blend)
+        evaluate()
+        apart = (pm.position(W(b.node("FKXWrist_L"))) -
+                 pm.position(W(b.node("IKXWrist_L")))).length()
+        bones = b.bones()
+        members, _pairs, _b = target_members(card, b)
+        before = scene_worlds(b)
+        cmds.currentTime(9)
+        ok, text = ap.apply(card, selection=[b.node("FKWrist_L")])
+        evaluate()
+        after = scene_worlds(b)
+        held = set(members)
+        rows = []
+        for leaf, was in before.items():
+            if leaf in held or pm.is_twist(leaf) or pm.is_helper(leaf) or \
+                    _below(bones, leaf, held):
+                continue                    # ik_hand_l rides the hand by its constraint
+            now = after[leaf]
+            cm = (pm.position(now) - pm.position(was)).length()
+            base = leaf[:-2] if leaf.endswith(("_l", "_r")) else leaf
+            child = UNROLLED_LIMB.get(base)
+            if child is not None and child + leaf[-2:] in after:
+                child = child + leaf[-2:]
+                deg = pm.direction_angle(pm.position(after[child]) - pm.position(now),
+                                         pm.position(before[child]) - pm.position(was))
+            else:
+                deg = pm.angle(now, was)
+            rows.append((leaf, deg, cm))
+        hand_cm = (pm.position(after["hand_l"]) - pm.position(before["hand_l"])).length()
+        deg, cm, at, at_cm = worst_of(rows)
+        gate("partial blend %g (halves %.1f cm apart): the bones the hand card does not hold stay"
+             % (blend, apart), ok and apart > 5.0 and deg <= 0.01 and cm <= 0.01 and
+             hand_cm <= 0.01, "%.6f deg (%s) %.6f cm (%s), the hand's place %.6f cm, %d bones"
+             % (deg, at, cm, at_cm, hand_cm, len(rows)))
+        drive = pm.matrix(rigsolve.drive_matrices(b.rig)["lowerarm_l"])
+        got = rel(after["hand_l"], drive)
+        want = rel(source["hand_l"]["world"], source["lowerarm_l"]["drive"])
+        gate("partial blend %g: the hand on the card on its forearm's drive" % blend,
+             pm.angle(got, want) <= 0.01, "%.6f deg | %s" % (pm.angle(got, want), text))
+    b.reset()
 
 
 MIXAMO_POSE = {   # our bone: delta on the local rotate channels, degrees

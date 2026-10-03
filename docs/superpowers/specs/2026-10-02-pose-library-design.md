@@ -168,7 +168,12 @@ constrained, nothing baked, `reset_build_pose` is never called):
    joint — `FKParentConstraintToWrist_*`, `…ToChest`, `…ToRoot`), the piece in between sampled;
    anchors the solve does not move keep their current world; rotate channels only;
 4. **IK ends** of every limb with a member: `IK* = K · S*[end]` (`K` = `AlignIKTo<Wrist|Ankle>` in
-   its FKX joint); **IKToes** from the ball the same way through its own chain; **poles** on the
+   its FKX joint); a limb shown HALF WAY between FK and IK (0 < FKIKBlend < 10) with only part of
+   its chain a member (a hand card) has each half take the pose relative to ITSELF instead - a
+   member's relation to its parent on that half's own parent, the other bones where that half
+   holds them - so the bones the pose does not hold stay where they are shown (the final review:
+   the blended targets moved the forearm 5.1 cm at 0.5); **IKToes** from the ball the same way
+   through its own chain; **poles** on the
    plane of the limb's `S*` (`fkik.pole_point`, the side read off the current IK chain); the arm's
    `swivel` and the leg's `roll`/`rock` keyed at 0 on that frame (the pose decides the foot); a
    limb whose `stretchy`, `antiPop` or pole `follow`/`lock` is off its default keeps its IK half
