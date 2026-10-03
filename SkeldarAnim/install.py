@@ -46,6 +46,7 @@ CARD_SUFFIX = ".pose"               # maya_poselib.store.CARD_SUFFIX
 CARD_NAME_MAX = 80                  # maya_poselib.store.NAME_MAX
 LOCAL_SUFFIX = " (local)"           # a local card put back beside a shipped one of its name
 HALF_WRITTEN = ".part"              # a card file being written (store's atomic writes)
+OS_CLUTTER = frozenset(("thumbs.db", "desktop.ini", ".ds_store"))   # no card's files, lower case
 
 # Which build an installed copy is (2026-09-28, Check update): a build
 # carries this file, and an install from the repository writes its git
@@ -325,15 +326,17 @@ def _sha1(path):
 
 
 def card_files(card):
-    """{file's relative "/" path: its sha1} of every file of the card folder `card` (a `.part`
-    half left out)."""
+    """{file's relative "/" path: its sha1} of every file of the card folder `card` - a `.part`
+    half and the files the OS writes into a folder by itself (`OS_CLUTTER`: Explorer's
+    Thumbs.db / desktop.ini) left out, so a shipped card a colleague merely LOOKED at in Explorer
+    still reads as the build's."""
     out = {}
     for base, dirs, names in os.walk(card):
         dirs.sort()
         rel = os.path.relpath(base, card)
         parts = [] if rel == os.curdir else rel.split(os.sep)
         for name in sorted(names):
-            if not name.endswith(HALF_WRITTEN):
+            if not name.endswith(HALF_WRITTEN) and name.lower() not in OS_CLUTTER:
                 out["/".join(parts + [name])] = _sha1(os.path.join(base, name))
     return out
 
@@ -372,7 +375,9 @@ def read_shipped(poses):
             data = json.load(handle)
     except (OSError, ValueError):
         return None
-    cards = data.get("cards") if isinstance(data, dict) else None
+    if not isinstance(data, dict):          # valid JSON that is no manifest: [] or null
+        return None
+    cards = data.get("cards")
     if data.get("format") != SHIPPED_FORMAT or not isinstance(cards, dict):
         return None
     return dict((str(rel), dict(files)) for rel, files in cards.items()

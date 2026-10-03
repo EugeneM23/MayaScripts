@@ -648,6 +648,28 @@ class KeepsLocalPoses(unittest.TestCase):
         _write(os.path.join(root, install.SHIPPED), json.dumps({"format": "other"}))
         self.assertIsNone(install.read_shipped(root))
 
+    def test_valid_json_that_is_no_object_reads_as_no_manifest(self):
+        # the scoped re-review: `[]` or `null` raised AttributeError out of the install
+        root = os.path.join(self.tmp, "listy")
+        for text in ("[]", "null", "3", '"x"'):
+            _write(os.path.join(root, install.SHIPPED), text)
+            self.assertIsNone(install.read_shipped(root), text)
+
+    def test_explorer_s_own_files_do_not_make_a_shipped_card_local(self):
+        # Thumbs.db / desktop.ini appear in a folder a colleague merely opened in Explorer:
+        # the card is still the build's - renamed upstream, it does not come back
+        first = self.build({"Fist.pose": {"pose.json": "fist"}})
+        shutil.rmtree(self.dest)
+        install.copy_payload(first, self.dest)
+        _write(self.poses("Fist.pose", "Thumbs.db"), "explorer's")
+        _write(self.poses("Fist.pose", "desktop.ini"), "[.ShellClassInfo]")
+        second = self.build({"Punch.pose": {"pose.json": "fist"}})
+        kept = install.copy_payload(second, self.dest)
+        self.assertEqual(self.listing(), ["Punch.pose"])
+        self.assertEqual(kept.dropped, ["Fist.pose"])
+        self.assertEqual(install.card_files(os.path.join(first, "poses", "Fist.pose")),
+                         {"pose.json": _sha("fist")})
+
     def test_a_failed_restore_keeps_the_old_poses_and_says_where(self):
         def boom(*args):
             raise OSError("disk full")

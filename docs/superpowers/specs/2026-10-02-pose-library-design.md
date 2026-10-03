@@ -294,7 +294,9 @@ glue their thumbnail onto it):
 
 - every install and every build records what it SHIPPED in `poses/.shipped.json` (each card's
   relative path and its files' sha1, made from the payload itself; `make_build` writes it into
-  the archive, never taking one from the tree; the leading dot keeps it out of the library);
+  the archive, never taking one from the tree; the leading dot keeps it out of the library) -
+  the files the OS writes into a folder by itself (Thumbs.db, desktop.ini, .DS_Store) are no
+  card's files and never compared, and a manifest that is not a JSON object reads as none;
 - a card still identical to the previous build's manifest entry is the BUILD's: the new build
   carries it, or it renamed, moved or deleted it upstream - then it stays gone (a curated
   library does not grow back);
