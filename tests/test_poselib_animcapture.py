@@ -14,16 +14,25 @@ fake `cmds` for `animcapture`, `capture` and `keys` (the save reuses `capture._c
 of `preview` needs a viewport and is proven in the GUI verify; its refusals, the order of its steps
 against a fake playblast, and the sheet's paint (Qt offscreen) are proven here.
 
+Fix round 1: a Save is no step of the animator's undo queue (the walk and the blast run with the
+queue off - `SaveIsNoUndoStep`, the undo half of `PreviewSteps`), and the blast's pieces are
+`capture`'s, written once and called by the thumbnail and the preview alike (`SharedBlastPieces`,
+`ThumbnailThroughThePieces`, `OneCopy`).
+
 Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("Save")
 """
 
+import ast
 import copy
+import inspect
 import math
 import os
 import shutil
+import sys
 import tempfile
 import types
 import unittest
+from collections import OrderedDict
 
 from maya_poselib import animcapture as ac
 from maya_poselib import animdata
@@ -82,7 +91,9 @@ class FakeCurve(object):
 
 class FakeCmds(object):
     """The `cmds` a save meets: plugs and their inputs, time curves, worlds that follow the
-    current frame, a set's members, the undo state, a model panel and its playblast."""
+    current frame, a set's members, the undo state, autoKey, a model panel and its playblast.
+    `touched` keeps (what, the undo state it ran under) of every call that changes the scene or
+    the view - what a Save must do with the undo queue off."""
 
     _TANGENT = {"inTangentType": 2, "outTangentType": 3, "inAngle": 4, "inWeight": 5,
                 "outAngle": 6, "outWeight": 7}
@@ -103,9 +114,12 @@ class FakeCmds(object):
         self.undo = True
         self.copies = 0
         self.editor = {}            # model editor flag -> shown
+        self.unknown = set()        # model editor flags this editor does not know (it raises)
         self.blasted = []           # every playblast's keywords
         self.skip_frames = set()    # frames the sequence playblast does not write
         self.colours = {}           # frame -> (r, g, b) the playblast paints
+        self.auto = True            # autoKeyframe -state
+        self.touched = []           # (what, the undo state it ran under)
 
     # ---- capture._common
     def file(self, query=False, sceneName=False):
@@ -228,6 +242,16 @@ class FakeCmds(object):
             return None
         raise AssertionError("a save opens no undo chunk: %r" % kw)
 
+    def autoKeyframe(self, query=False, state=None):
+        """`autoKeyframe -q -state` / `-state v`: a toggle is a step of the undo queue in Maya
+        (trap 145), so each one notes the undo state it ran under."""
+        if query:
+            return self.auto
+        self.auto = bool(state)
+        self.log.append(("autoKeyframe", self.auto))
+        self.touched.append(("autoKeyframe", self.undo))
+        return None
+
     # ---- sets
     def sets(self, name, query=False):
         return list(self.members.get(name, []))
@@ -238,18 +262,23 @@ class FakeCmds(object):
     # ---- the preview's viewport
     def modelEditor(self, panel, query=False, edit=False, **flags):
         (flag, value), = flags.items()
+        if flag in self.unknown:
+            raise RuntimeError("Invalid flag '%s'" % flag)
         if query:
             return self.editor.get(flag, True)
         self.editor[flag] = value
         self.log.append(("editor", flag, value))
+        self.touched.append(("editor", self.undo))
         return None
 
     def refresh(self, force=False, **kw):
         self.log.append(("refresh",))
+        self.touched.append(("refresh", self.undo))
 
     def playblast(self, **kw):
         self.blasted.append(kw)
         self.log.append(("playblast", tuple(kw["frame"]), "completeFilename" in kw))
+        self.touched.append(("playblast", self.undo))
         import maya_hubqt
         qt = maya_hubqt.qt()
         width, height = kw["widthHeight"]
@@ -267,23 +296,32 @@ class FakeCmds(object):
 
 class FakeWalk(object):
     """timewalk.Walk: `go` moves the fake scene's frame; entering and leaving are logged, and
-    leaving puts the frame back."""
+    leaving puts the frame back. `thrown`: the walk threw an unkeyed tweak away, so leaving sets
+    it back as `keys.Tweaks.restore` does - autoKey turned off and back, two steps on the undo
+    queue unless it is off. Each step notes the undo state it ran under (`cmds.touched`)."""
 
-    def __init__(self, cmds, fresh):
-        self.cmds, self.fresh = cmds, fresh
+    def __init__(self, cmds, fresh, thrown=False):
+        self.cmds, self.fresh, self.thrown = cmds, fresh, thrown
         self.keyed = []
 
     def __enter__(self):
         self.here = self.cmds.frame
         self.cmds.log.append(("walk enter", self.fresh))
+        self.cmds.touched.append(("walk enter", self.cmds.undo))
         return self
 
     def go(self, frame):
         self.cmds.log.append(("go", frame))
+        self.cmds.touched.append(("go", self.cmds.undo))
         self.cmds.frame = frame
 
     def __exit__(self, kind, error, trace):
         self.cmds.frame = self.here
+        if self.thrown:
+            auto = self.cmds.autoKeyframe(query=True, state=True)
+            self.cmds.autoKeyframe(state=False)
+            self.cmds.autoKeyframe(state=auto)
+        self.cmds.touched.append(("walk exit", self.cmds.undo))
         self.cmds.log.append(("walk exit",))
         return False
 
@@ -291,9 +329,10 @@ class FakeWalk(object):
 class FakeTimewalk(object):
     def __init__(self, cmds):
         self.walks = []
+        self.thrown = False             # the walks made from now on throw a tweak away
 
         def walk(fresh=True):
-            made = FakeWalk(cmds, fresh)
+            made = FakeWalk(cmds, fresh, self.thrown)
             self.walks.append(made)
             return made
         self.Walk = walk
@@ -380,7 +419,7 @@ class Rebound(unittest.TestCase):
         self.log = self.cmds.log
         saved = [(ac, name, getattr(ac, name)) for name in
                  ("cmds", "scene", "timewalk", "keys", "oma", "_drive_matrices",
-                  "_highlight", "_panel", "_qt", "_pump")]
+                  "_highlight", "_panel", "_qt")]
         saved += [(capture, "cmds", capture.cmds), (keys, "cmds", keys.cmds),
                   (capture, "_port", capture._port)]
         self.addCleanup(lambda: [setattr(module, name, value) for module, name, value in saved])
@@ -388,6 +427,35 @@ class Rebound(unittest.TestCase):
         self.timewalk = FakeTimewalk(self.cmds)
         ac.timewalk = self.timewalk
         ac._highlight = lambda: None
+
+    def rebind(self, owner, name, value):
+        """`owner.name` = `value` for this test, put back after - deleted when it was not
+        there (a module function the code under test may not have yet)."""
+        missing = object()
+        old = getattr(owner, name, missing)
+
+        def back():
+            if old is missing:
+                if hasattr(owner, name):
+                    delattr(owner, name)
+            else:
+                setattr(owner, name, old)
+        self.addCleanup(back)
+        setattr(owner, name, value)
+
+    def rebind_module(self, name, module):
+        """`sys.modules[name]` = `module` for this test (an `import name` inside the code then
+        finds it), put back after."""
+        missing = object()
+        old = sys.modules.get(name, missing)
+
+        def back():
+            if old is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = old
+        self.addCleanup(back)
+        sys.modules[name] = module
 
     def character(self, ref=SKELETON, members=None, selection=None):
         """The scene holds one three-bone character `ref`, the selection one of its bones."""
@@ -681,7 +749,7 @@ class CharacterCard(Rebound):
         self.assertEqual(len(progress.texts), 2)
         self.assertEqual([entry for entry in self.log if entry[0] == "go"],
                          [("go", 0), ("go", 1)])
-        self.assertEqual(self.log[-1], ("walk exit",))
+        self.assertEqual(self.log[-2:], [("walk exit",), ("undo", True)])   # left, queue back
         self.assertEqual(self.cmds.frame, 12.0)
 
     def test_a_rig_keeps_its_drives_every_frame_and_its_controls_key_times(self):
@@ -748,6 +816,64 @@ class CharacterCard(Rebound):
         self.assertEqual(header["objects"], [])
         self.assertTrue(note.endswith(" | 1 object outside Manny UE5 [skeleton] left out"),
                         note)
+
+
+class SaveIsNoUndoStep(Rebound):
+    """A Save runs outside any undo chunk (`_unrecorded`'s docstring), so whatever it toggles
+    on the way is a step of the animator's undo queue unless the queue is off. The walk's exit
+    sets the tweaks back (`keys.Tweaks.restore`), turning autoKey off and back - measured in
+    mayapy 2027 (fix round 1): a locator's tx keyed 0/10, set to 99 by hand at frame 0, then
+    autoKey turned on; after the Save's walk the animator's first Ctrl+Z switched autoKey OFF,
+    the second back ON, and their setAttr was never reached. The walk runs with the queue off
+    and puts it back as it was, whatever ends it."""
+
+    def test_the_walk_runs_with_the_undo_queue_off(self):
+        self.character()
+        self.timewalk.thrown = True
+        header, _frames, _note = ac.build_animation([PATHS["pelvis"]], start=0, end=2)
+        self.assertIsNotNone(header)
+        self.assertEqual([kind for kind, _undo in self.cmds.touched],
+                         ["walk enter", "go", "go", "go", "autoKeyframe", "autoKeyframe",
+                          "walk exit"])
+        self.assertEqual(set(undo for _kind, undo in self.cmds.touched), set([False]))
+        self.assertEqual([entry for entry in self.log if entry[0] == "undo"],
+                         [("undo", False), ("undo", True)])
+        self.assertLess(self.log.index(("undo", False)), self.log.index(("walk enter", False)))
+        self.assertGreater(self.log.index(("undo", True)), self.log.index(("walk exit",)))
+        self.assertIs(self.cmds.undo, True)
+        self.assertIs(self.cmds.auto, True)                 # the toggles end where they began
+
+    def test_a_cancelled_walk_puts_the_queue_back_on(self):
+        self.character()
+        self.timewalk.thrown = True
+        progress = FakeProgress([True, False])
+        self.assertEqual(ac.build_animation([PATHS["pelvis"]], start=0, end=5,
+                                            progress=progress),
+                         (None, None, "cancelled - nothing saved"))
+        self.assertEqual(set(undo for _kind, undo in self.cmds.touched), set([False]))
+        self.assertEqual(self.log[-2:], [("walk exit",), ("undo", True)])
+        self.assertIs(self.cmds.undo, True)
+
+    def test_a_walk_that_fails_puts_the_queue_back_on(self):
+        self.character()
+        self.timewalk.thrown = True
+
+        def broken(frame):
+            raise RuntimeError("no world at %s" % frame)
+        self.cmds.worlds[PATHS["spine_01"]] = broken
+        with self.assertRaises(RuntimeError):
+            ac.build_animation([PATHS["pelvis"]], start=0, end=2)
+        self.assertEqual(set(undo for _kind, undo in self.cmds.touched), set([False]))
+        self.assertEqual(self.log[-2:], [("walk exit",), ("undo", True)])
+        self.assertIs(self.cmds.undo, True)
+
+    def test_a_queue_already_off_is_left_off_by_the_walk(self):
+        self.character()
+        self.cmds.undo = False
+        header, _frames, _note = ac.build_animation([PATHS["pelvis"]], start=0, end=2)
+        self.assertIsNotNone(header)
+        self.assertEqual([entry for entry in self.log if entry[0] == "undo"], [])
+        self.assertIs(self.cmds.undo, False)
 
 
 # ------------------------------------------------------------------ objects
@@ -878,23 +1004,33 @@ class FakeTime(object):
 
 
 class FakeAnimControl(object):
-    def __init__(self, log):
-        self.log, self.now = log, FakeTime(12.0)
+    def __init__(self, log, cmds=None):
+        self.log, self.cmds, self.now = log, cmds, FakeTime(12.0)
 
     def currentTime(self):
         return self.now
 
     def setCurrentTime(self, time):
         self.log.append(("time", time.value))
+        if self.cmds is not None:
+            self.cmds.touched.append(("time", self.cmds.undo))
         self.now = time
 
 
 class FakeTweaks(object):
-    def __init__(self, log):
-        self.log = log
+    """keys.Tweaks: read and set back, both logged. With `cmds`, the set-back finds a tweak the
+    blasts threw away and puts it back as `keys.Tweaks.restore` does: autoKey turned off and
+    back - two steps on the undo queue unless it is off."""
+
+    def __init__(self, log, cmds=None):
+        self.log, self.cmds = log, cmds
         log.append(("tweaks",))
 
     def restore(self, skip=()):
+        if self.cmds is not None:
+            auto = self.cmds.autoKeyframe(query=True, state=True)
+            self.cmds.autoKeyframe(state=False)
+            self.cmds.autoKeyframe(state=auto)
         self.log.append(("restore",))
         return []
 
@@ -1006,6 +1142,26 @@ class Sheet(QtCase):
         self.assertIn("nothing readable", note)
         self.assertFalse(os.path.exists(target))
 
+    def test_each_cell_cut_and_the_sheet_written_by_captures_pieces(self):
+        # fix round 1: the crop + scale and the atomic JPG write are the thumbnail's own
+        # (`capture.square_scaled`, `capture.save_jpg`), not a copy of them
+        calls = []
+        real_scaled, real_save = capture.square_scaled, capture.save_jpg
+        self.rebind(capture, "square_scaled", lambda qt, image, size: calls.append(
+            ("cell", image.width(), image.height(), size)) or real_scaled(qt, image, size))
+        self.rebind(capture, "save_jpg", lambda image, path, quality: calls.append(
+            ("write", image.width(), image.height(), path, quality))
+            or real_save(image, path, quality))
+        pictures = [self.picture("p%d.png" % i, 80, 45, colour)
+                    for i, colour in enumerate(COLOURS[:3])]
+        target = os.path.join(self.dir, "preview.jpg")
+        self.assertEqual(ac.paint_sheet(self.qt, pictures, target, 32), (True, ""))
+        self.assertEqual(calls, [("cell", 80, 45, 32)] * 3
+                         + [("write", 2 * 32, 2 * 32, target, ac.SHEET_QUALITY)])
+        for index, colour in enumerate(COLOURS[:3]):
+            x, y, _size, _ = look.sheet_cell(index, 2, 32)
+            self.near(self.colour_at(target, x + 16, y + 16), colour)
+
     def test_the_blasted_frames_read_back_in_frame_order(self):
         for name in ("frame.0002.jpg", "frame.-001.jpg", "frame.0000.jpg", "first.jpg",
                      "frame.0001.png", "other.0003.jpg"):
@@ -1028,11 +1184,13 @@ class PreviewSteps(QtCase):
         ac._panel = lambda: "modelPanel4"
         capture._port = lambda panel: (96, 54)
         ac._qt = lambda: self.qt
-        ac._pump = lambda qt: self.log.append(("pump",))
-        self.control = FakeAnimControl(self.log)
+        self.rebind(capture, "pump", lambda qt: self.log.append(("pump",)))
+        self.control = FakeAnimControl(self.log, self.cmds)
         ac.oma = types.SimpleNamespace(MAnimControl=self.control)
-        ac.keys = types.SimpleNamespace(Tweaks=lambda: FakeTweaks(self.log),
-                                        TIME_CURVES=keys.TIME_CURVES, feed_of=keys.feed_of)
+        self.thrown = False             # the blasts threw a tweak away (its set-back toggles)
+        ac.keys = types.SimpleNamespace(
+            Tweaks=lambda: FakeTweaks(self.log, self.cmds if self.thrown else None),
+            TIME_CURVES=keys.TIME_CURVES, feed_of=keys.feed_of)
         self.cmds.editor = {"joints": True, "grid": False, "nurbsCurves": True}
         self.cmds.colours = dict((frame, COLOURS[frame % len(COLOURS)]) for frame in range(-5, 80))
         self.target = os.path.join(self.dir, "preview.jpg").replace("\\", "/")
@@ -1058,7 +1216,7 @@ class PreviewSteps(QtCase):
     def test_the_order_of_the_press(self):
         ac.preview(self.target, 0, 4)
         kinds = [entry[0] for entry in self.log]
-        self.assertEqual(kinds[0], "tweaks")                            # first, before any time
+        self.assertEqual(kinds[:2], ["undo", "tweaks"])     # the queue off, the tweaks read first
         blasts = [entry for entry in self.log if entry[0] == "playblast"]
         self.assertGreaterEqual(len(blasts), 3)                         # trap 120: settled
         for entry in blasts[:-1]:
@@ -1071,7 +1229,8 @@ class PreviewSteps(QtCase):
         self.assert_flags_back()
         last_blast = len(self.log) - 1 - kinds[::-1].index("playblast")
         tail = [entry for entry in self.log[last_blast + 1:] if entry[0] != "editor"]
-        self.assertEqual(tail, [("time", 12.0), ("restore",)])          # time back, tweaks after
+        # the time back, then the tweaks set back, then the undo queue back on
+        self.assertEqual(tail, [("time", 12.0), ("restore",), ("undo", True)])
         self.assertTrue(all(kw["offScreen"] and kw["editorPanelName"] == "modelPanel4"
                             and kw["widthHeight"] == (96, 54) and kw["format"] == "image"
                             for kw in self.cmds.blasted))
@@ -1103,7 +1262,7 @@ class PreviewSteps(QtCase):
                          (False, "cancelled - nothing saved", None))
         self.assertFalse(os.path.exists(self.target))
         self.assertIn(("time", 12.0), self.log)
-        self.assertEqual(self.log[-1], ("restore",))
+        self.assertEqual(self.log[-2:], [("restore",), ("undo", True)])
 
     def test_a_failing_playblast_is_no_preview_and_puts_everything_back(self):
         def broken(**kw):
@@ -1112,7 +1271,269 @@ class PreviewSteps(QtCase):
         self.assertEqual(ac.preview(self.target, 0, 4),
                          (False, "no preview - playblast: the panel is gone", None))
         self.assert_flags_back()
-        self.assertEqual(self.log[-2:], [("time", 12.0), ("restore",)])
+        self.assertEqual(self.log[-3:], [("time", 12.0), ("restore",), ("undo", True)])
+        self.assertIs(self.cmds.undo, True)
+
+    # ---- fix round 1: a preview is no step of the animator's undo queue
+
+    def test_the_blast_runs_with_the_undo_queue_off(self):
+        # a playblast steps the time and throws an unkeyed tweak away; setting it back
+        # (`keys.Tweaks.restore`) toggles autoKey - two loose steps on the queue, measured, until
+        # the blast ran unrecorded
+        self.thrown = True
+        ok, note, _info = ac.preview(self.target, 0, 4)
+        self.assertTrue(ok, note)
+        kinds = [kind for kind, _undo in self.cmds.touched]
+        self.assertIn("playblast", kinds)
+        self.assertEqual(kinds[-3:], ["time", "autoKeyframe", "autoKeyframe"])   # set back last
+        self.assertEqual(set(undo for _kind, undo in self.cmds.touched), set([False]))
+        self.assertEqual([entry for entry in self.log if entry[0] == "undo"],
+                         [("undo", False), ("undo", True)])
+        self.assertEqual((self.log[0], self.log[-1]), (("undo", False), ("undo", True)))
+        self.assertIs(self.cmds.undo, True)
+        self.assertIs(self.cmds.auto, True)
+
+    def test_a_failing_blast_still_sets_back_with_the_queue_off(self):
+        self.thrown = True
+
+        def broken(**kw):
+            raise RuntimeError("playblast: the panel is gone")
+        self.cmds.playblast = broken
+        self.assertFalse(ac.preview(self.target, 0, 4)[0])
+        self.assertEqual([kind for kind, _undo in self.cmds.touched][-3:],
+                         ["time", "autoKeyframe", "autoKeyframe"])
+        self.assertEqual(set(undo for _kind, undo in self.cmds.touched), set([False]))
+        self.assertIs(self.cmds.undo, True)
+
+    def test_a_queue_already_off_is_left_off_by_the_preview(self):
+        self.cmds.undo = False
+        ok, note, _info = ac.preview(self.target, 0, 4)
+        self.assertTrue(ok, note)
+        self.assertEqual([entry for entry in self.log if entry[0] == "undo"], [])
+        self.assertIs(self.cmds.undo, False)
+
+    # ---- fix round 1: the blast is capture's, not a copy of it
+
+    def test_the_preview_blasts_with_captures_options_flags_and_pump(self):
+        real_options, real_shown, real_set = (capture.blast_options, capture.shown_flags,
+                                              capture.set_flags)
+        asked = []
+        self.rebind(capture, "blast_options", lambda panel, width, height: dict(
+            real_options(panel, width, height), sentinel=(panel, width, height)))
+        self.rebind(capture, "shown_flags",
+                    lambda panel: asked.append(("shown", panel)) or real_shown(panel))
+        self.rebind(capture, "set_flags", lambda panel, values: asked.append(
+            ("set", panel, dict(values))) or real_set(panel, values))
+        ok, note, _info = ac.preview(self.target, 0, 4)
+        self.assertTrue(ok, note)
+        self.assertGreaterEqual(len(self.cmds.blasted), 4)          # settled, then the sequence
+        self.assertEqual([kw.get("sentinel") for kw in self.cmds.blasted],
+                         [("modelPanel4", 96, 54)] * len(self.cmds.blasted))
+        self.assertEqual([entry[:2] for entry in asked],
+                         [("shown", "modelPanel4"), ("set", "modelPanel4"),
+                          ("set", "modelPanel4")])
+        shown = real_shown("modelPanel4")
+        self.assertEqual(asked[1][2], dict((flag, False) for flag in shown))   # all off ...
+        self.assertEqual(asked[2][2], shown)                                   # ... and back
+        # idle pumped BETWEEN the first-frame blasts (the last blast is the sequence)
+        self.assertEqual(self.log.count(("pump",)), len(self.cmds.blasted) - 2)
+
+
+# ------------------------------------------------------------------ capture's pieces, shared
+
+BLAST_OPTIONS = dict(format="image", compression="jpg", quality=95, widthHeight=(96, 54),
+                     percent=100, viewer=False, showOrnaments=False, offScreen=True,
+                     forceOverwrite=True, clearCache=True, editorPanelName="modelPanel4")
+
+
+class SharedBlastPieces(QtCase):
+    """The blast's pieces in `capture` (fix round 1: about 25 lines had been copied into
+    `animcapture` - the next fix to the thumbnail's blast would have landed in one copy only):
+    the editor flags read and set, the playblast's options, one frame blasted, the idle pump,
+    the centre square scaled, the JPG written whole."""
+
+    def test_the_shown_flags_each_read_and_one_the_editor_refuses_left_out(self):
+        self.cmds.editor = {"joints": True, "grid": False}
+        self.cmds.unknown = set(["follicles"])
+        shown = capture.shown_flags("modelPanel4")
+        self.assertEqual(list(shown), [flag for flag in capture.HIDDEN if flag != "follicles"])
+        self.assertIs(shown["joints"], True)
+        self.assertIs(shown["grid"], False)
+        self.assertEqual([entry for entry in self.log if entry[0] == "editor"], [])   # a query
+
+    def test_the_flags_set_each_on_its_own_one_refused_stops_none(self):
+        self.cmds.unknown = set(["grid"])
+        capture.set_flags("modelPanel4", OrderedDict([("joints", False), ("grid", False),
+                                                      ("nurbsCurves", True)]))
+        self.assertEqual([entry for entry in self.log if entry[0] == "editor"],
+                         [("editor", "joints", False), ("editor", "nurbsCurves", True)])
+
+    def test_the_blast_options(self):
+        self.assertEqual(capture.blast_options("modelPanel4", 96, 54), BLAST_OPTIONS)
+        self.assertEqual(capture.BLAST_QUALITY, 95)
+
+    def test_one_frame_blasted_after_a_refresh_its_bytes_answered(self):
+        path = os.path.join(self.dir, "one.jpg").replace("\\", "/")
+        options = capture.blast_options("modelPanel4", 32, 18)
+        data = capture.blast_file(options, 7, path)
+        with open(path, "rb") as handle:
+            self.assertEqual(data, handle.read())
+        self.assertTrue(data)
+        self.assertEqual([entry[0] for entry in self.log], ["refresh", "playblast"])
+        self.assertEqual(self.cmds.blasted, [dict(options, frame=[7], completeFilename=path)])
+
+    def test_the_pump_turns_mayas_idle_queue_then_qts_events(self):
+        import maya.utils
+        turned = []
+        self.rebind(maya.utils, "processIdleEvents", lambda: turned.append("maya idle"))
+        qt = types.SimpleNamespace(QtWidgets=types.SimpleNamespace(
+            QApplication=types.SimpleNamespace(processEvents=lambda: turned.append("qt"))))
+        capture.pump(qt)
+        self.assertEqual(turned, ["maya idle", "qt"])
+
+    def picture(self, width, height):
+        """A `width` x `height` QImage: blue outside its centred square, red inside."""
+        gui = self.qt.QtGui
+        image = gui.QImage(width, height, gui.QImage.Format_RGB32)
+        image.fill(gui.QColor(0, 0, 255))
+        x, y, side = capture.square(width, height)
+        painter = gui.QPainter(image)
+        painter.fillRect(x, y, side, side, gui.QColor(255, 0, 0))
+        painter.end()
+        return image
+
+    def test_the_centre_square_scaled_smooth(self):
+        for width, height in ((400, 225), (90, 160)):
+            small = capture.square_scaled(self.qt, self.picture(width, height), 50)
+            self.assertEqual((small.width(), small.height()), (50, 50))
+            for x, y in ((1, 1), (48, 1), (1, 48), (48, 48), (25, 25)):
+                colour = small.pixelColor(x, y)
+                self.assertGreater(colour.red(), 200, (width, height, x, y))   # no blue margin
+                self.assertLess(colour.blue(), 60, (width, height, x, y))
+
+    def test_a_jpg_written_whole_or_not_at_all(self):
+        image = self.picture(64, 64)
+        path = os.path.join(self.dir, "out.jpg")
+        self.assertEqual(capture.save_jpg(image, path, 80), (True, ""))
+        self.assertFalse(self.qt.QtGui.QImage(path).isNull())
+        self.assertFalse(os.path.exists(path + ".part"))
+        nowhere = os.path.join(self.dir, "no_such_folder", "out.jpg")
+        self.assertEqual(capture.save_jpg(image, nowhere, 80),
+                         (False, "could not write " + nowhere))
+        self.assertFalse(os.path.exists(nowhere))
+        self.assertFalse(os.path.exists(nowhere + ".part"))
+
+
+class ThumbnailThroughThePieces(QtCase):
+    """`capture.thumbnail` against the fake playblast: what the pose card's still did before
+    its pieces were lifted out for the preview (fix round 1) and does after - the HIDDEN flags
+    off for the blasts and put back, the tweaks read first and set back last, idle pumped
+    between the blasts, the same playblast options, a `size` px square JPG, the raw blast
+    removed. Written against the code before the lift and green on both."""
+
+    def setUp(self):
+        QtCase.setUp(self)
+        self.cmds.batch = False
+        self.cmds.editor = {"joints": True, "grid": False, "nurbsCurves": True}
+        capture._port = lambda panel: (96, 54)
+        self.rebind(capture, "keys", types.SimpleNamespace(Tweaks=lambda: FakeTweaks(self.log)))
+        self.rebind_module("maya_vpstudio",
+                           types.SimpleNamespace(active_panel=lambda: "modelPanel4"))
+        import maya.utils
+        self.rebind(maya.utils, "processIdleEvents", lambda: self.log.append(("idle",)))
+        self.raw = os.path.join(tempfile.gettempdir(),
+                                "skeldar_pose_thumbnail_%d.jpg" % os.getpid()).replace("\\", "/")
+
+    def test_the_still(self):
+        target = os.path.join(self.dir, "thumbnail.jpg")
+        self.assertEqual(capture.thumbnail(target, 64),
+                         (True, "thumbnail from modelPanel4 (96x54, 3 blasts)"))
+        image = self.qt.QtGui.QImage(target)
+        self.assertEqual((image.width(), image.height()), (64, 64))
+        self.assertFalse(os.path.exists(self.raw))
+        self.assertFalse(os.path.exists(target + ".part"))
+        self.assertEqual(self.cmds.blasted,
+                         [dict(BLAST_OPTIONS, frame=[12.0], completeFilename=self.raw)] * 3)
+
+    def test_the_order(self):
+        capture.thumbnail(os.path.join(self.dir, "thumbnail.jpg"), 64)
+        kinds = [entry[0] for entry in self.log]
+        self.assertEqual(kinds[0], "tweaks")
+        blasts = [index for index, kind in enumerate(kinds) if kind == "playblast"]
+        hidden = [entry for entry in self.log[:blasts[0]] if entry[0] == "editor"]
+        self.assertEqual(set(entry[1] for entry in hidden), set(capture.HIDDEN))
+        self.assertEqual(set(entry[2] for entry in hidden), set([False]))
+        between = [entry[0] for entry in self.log[blasts[0]:blasts[-1]]
+                   if entry[0] in ("idle", "playblast")]
+        self.assertEqual(between, ["playblast", "idle", "playblast", "idle"])
+        tail = [entry for entry in self.log[blasts[-1] + 1:] if entry[0] != "editor"]
+        self.assertEqual(tail, [("restore",)])
+        before = {"joints": True, "grid": False, "nurbsCurves": True}
+        for flag in capture.HIDDEN:
+            self.assertEqual(self.cmds.editor.get(flag, True), before.get(flag, True), flag)
+
+
+def calls_in(module):
+    """[(name, owner, keywords)] of every call in `module`'s source: `name` the function or
+    method called, `owner` the plain name it was called on ("" for none), `keywords` the
+    keyword names passed."""
+    out = []
+    for node in ast.walk(ast.parse(inspect.getsource(module))):
+        if not isinstance(node, ast.Call):
+            continue
+        func, words = node.func, [word.arg for word in node.keywords if word.arg]
+        if isinstance(func, ast.Attribute):
+            owner = func.value.id if isinstance(func.value, ast.Name) else ""
+            out.append((func.attr, owner, words))
+        elif isinstance(func, ast.Name):
+            out.append((func.id, "", words))
+    return out
+
+
+class OneCopy(unittest.TestCase):
+    """Each piece of the blast is written ONCE, in `capture`, and `animcapture` calls it (fix
+    round 1). Read off the two modules' code: a piece copied back would show here before it
+    drifts from the thumbnail's."""
+
+    PIECES = {          # one frame blasted (blast_file): the single playblast, pinned below
+        "modelEditor": "the editor flags (shown_flags, set_flags)",
+        "processIdleEvents": "the idle pump (pump)",
+        "processEvents": "the idle pump (pump)",
+        "scaled": "the centre square scaled (square_scaled)",
+        "save": "the JPG written (save_jpg)",
+    }
+
+    def test_animcapture_holds_no_piece_of_the_blast(self):
+        calls = calls_in(ac)
+        for name, piece in self.PIECES.items():
+            self.assertNotIn(name, [call[0] for call in calls], piece)
+        self.assertNotIn(("replace", "os"), [call[:2] for call in calls],
+                         "the JPG written whole (save_jpg)")
+        for word in ("offScreen", "editorPanelName", "widthHeight", "quality", "percent"):
+            self.assertNotIn(word, [w for call in calls for w in call[2]],
+                             "the playblast's options (blast_options)")
+
+    def test_capture_holds_each_piece_once(self):
+        calls = calls_in(capture)
+        names = [call[0] for call in calls]
+        self.assertEqual(names.count("modelEditor"), 2)           # shown_flags, set_flags
+        self.assertEqual(names.count("processIdleEvents"), 1)     # pump
+        self.assertEqual(names.count("scaled"), 1)                # square_scaled
+        self.assertEqual(names.count("playblast"), 1)             # blast_file
+        self.assertEqual([call[:2] for call in calls].count(("replace", "os")), 1)   # save_jpg
+        keywords = [word for call in calls for word in call[2]]
+        self.assertEqual(keywords.count("offScreen"), 1)          # blast_options
+
+    def test_animcapture_blasts_its_sequence_with_captures_options(self):
+        # the one playblast animcapture makes itself - the preview's frames, in one go - takes
+        # its options from capture (`**options`), adding only where the frames go
+        (blast,) = [node for node in ast.walk(ast.parse(inspect.getsource(ac)))
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "playblast"]
+        self.assertEqual(sorted(word.arg for word in blast.keywords if word.arg),
+                         ["filename", "frame", "framePadding"])
+        self.assertEqual([type(word.value).__name__ for word in blast.keywords
+                          if word.arg is None], ["Name"])          # ** the options
 
 
 if __name__ == "__main__":

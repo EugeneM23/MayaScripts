@@ -30,6 +30,13 @@ three blasts (trap 120 measured two early blasts agreeing on a half-loaded textu
 Batch mode or no model panel: `(False, "no viewport for a thumbnail")`. Qt is imported inside
 `thumbnail` only, so importing this module drags none in.
 
+The blast's PIECES are functions here (2026-10-03, the animation card's review), because the
+animation card's preview (`animcapture.preview`) blasts the same way over a range: the editor
+flags read and set (`shown_flags`, `set_flags`), the playblast's options (`blast_options`), one
+frame blasted (`blast_file`), the idle pump between blasts (`pump`), the centre square scaled
+(`square_scaled`), the JPG written whole (`save_jpg`). Both call them; a fix to the blast lands
+in both at once.
+
 Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Save")
 """
 
@@ -223,7 +230,7 @@ def build_pose(selection=None, regions=None, frame=None):
         return None, scene.NOTHING
 
 
-# ------------------------------------------------------------------ the thumbnail
+# ------------------------------------------------------------------ the blast's pieces
 
 def _port(panel):
     """(width, height) of a model panel's port, or None."""
@@ -234,6 +241,82 @@ def _port(panel):
     except RuntimeError:
         return None
 
+
+def shown_flags(panel):
+    """{flag: shown} of HIDDEN as `panel`'s editor shows them now, each asked on its own; a
+    flag the editor does not know is left out - neither hidden for a blast nor put back."""
+    shown = {}
+    for flag in HIDDEN:
+        try:
+            shown[flag] = cmds.modelEditor(panel, query=True, **{flag: True})
+        except Exception:                                    # noqa: BLE001
+            continue
+    return shown
+
+
+def set_flags(panel, values):
+    """`panel`'s editor flags set to `values` ({flag: shown}), each on its own: one the editor
+    refuses stops none of the others."""
+    for flag, value in values.items():
+        try:
+            cmds.modelEditor(panel, edit=True, **{flag: value})
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def pump(qt):
+    """Maya's idle queue and Qt's events turned once - between two blasts: Viewport 2.0 loads
+    textures only while Maya is IDLE (trap 120). `qt` is `maya_hubqt.qt()`."""
+    import maya.utils
+    maya.utils.processIdleEvents()
+    qt.QtWidgets.QApplication.processEvents()
+
+
+def blast_options(panel, width, height):
+    """The playblast flags every blast of the library takes: JPG images at BLAST_QUALITY, the
+    port's own size at 100 % (WYSIWYG for the animator's camera), offscreen, no viewer and no
+    ornaments, overwriting, the cache cleared, from `panel`."""
+    return dict(format="image", compression="jpg", quality=BLAST_QUALITY,
+                widthHeight=(width, height), percent=100, viewer=False, showOrnaments=False,
+                offScreen=True, forceOverwrite=True, clearCache=True, editorPanelName=panel)
+
+
+def blast_file(options, frame, path):
+    """The bytes of ONE playblast of `frame` into the file `path`, with `options`
+    (`blast_options`), the viewport refreshed first - what `settle` compares, blast after
+    blast."""
+    cmds.refresh(force=True)
+    cmds.playblast(frame=[frame], completeFilename=path, **options)
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def square_scaled(qt, image, size):
+    """`image` (a QImage) centre-cropped square (`square`) and scaled to `size` px with smooth
+    filtering. `qt` is `maya_hubqt.qt()` (a QImage needs no QApplication)."""
+    x, y, side = square(image.width(), image.height())
+    return image.copy(x, y, side, side).scaled(
+        size, size, qt.QtCore.Qt.IgnoreAspectRatio, qt.QtCore.Qt.SmoothTransformation)
+
+
+def save_jpg(image, path, quality):
+    """(ok, note): `image` (a QImage) written as a JPG at `quality` to `path` - through `path +
+    ".part"` and `os.replace`, so a reader never sees half a file; the `.part` is gone whatever
+    happens."""
+    part = path + ".part"
+    try:
+        if not image.save(part, "JPG", quality):
+            return False, "could not write " + path
+        os.replace(part, path)
+    finally:
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+    return True, ""
+
+
+# ------------------------------------------------------------------ the thumbnail
 
 def thumbnail(path, size=THUMB_SIZE):
     """(ok, note): the active model panel blasted at the current frame into a `size` px square
@@ -252,28 +335,10 @@ def thumbnail(path, size=THUMB_SIZE):
     qt = maya_hubqt.qt()
     if qt is None:
         return False, "no Qt for a thumbnail"
-    import maya.utils
     raw = os.path.join(tempfile.gettempdir(),
                        "skeldar_pose_thumbnail_%d.jpg" % os.getpid()).replace("\\", "/")
-    shown = {}
-    for flag in HIDDEN:
-        try:
-            shown[flag] = cmds.modelEditor(panel, query=True, **{flag: True})
-        except Exception:                                    # noqa: BLE001
-            continue
-
-    def blast():
-        cmds.refresh(force=True)
-        cmds.playblast(frame=[cmds.currentTime(query=True)], format="image", compression="jpg",
-                       quality=BLAST_QUALITY, completeFilename=raw, widthHeight=(width, height),
-                       percent=100, viewer=False, showOrnaments=False, offScreen=True,
-                       forceOverwrite=True, clearCache=True, editorPanelName=panel)
-        with open(raw, "rb") as handle:
-            return handle.read()
-
-    def pump():
-        maya.utils.processIdleEvents()
-        qt.QtWidgets.QApplication.processEvents()
+    options = blast_options(panel, width, height)
+    shown = shown_flags(panel)
 
     #  a playblast steps the time to its frame - the current one - and may re-evaluate it, which
     #  throws away the animator's unkeyed tweaks on keyed channels; Save reads the pose AFTER the
@@ -281,18 +346,11 @@ def thumbnail(path, size=THUMB_SIZE):
     #  has no viewport to blast - the final review asked)
     tweaks = keys.Tweaks()
     try:
-        for flag in shown:
-            try:
-                cmds.modelEditor(panel, edit=True, **{flag: False})
-            except Exception:                                # noqa: BLE001
-                pass
-        _picture, count, settled = settle(blast, pump)
+        set_flags(panel, dict((flag, False) for flag in shown))
+        _picture, count, settled = settle(
+            lambda: blast_file(options, cmds.currentTime(query=True), raw), lambda: pump(qt))
     finally:
-        for flag, value in shown.items():
-            try:
-                cmds.modelEditor(panel, edit=True, **{flag: value})
-            except Exception:                                # noqa: BLE001
-                pass
+        set_flags(panel, shown)
         tweaks.restore()
     try:
         ok, note = square_jpg(qt, raw, path, size)
@@ -309,24 +367,11 @@ def thumbnail(path, size=THUMB_SIZE):
 
 
 def square_jpg(qt, source, path, size=THUMB_SIZE):
-    """(ok, note): the picture at `source` centre-cropped square (`square`), scaled to `size` px
-    with smooth filtering and written as a JPG at `path` - through `path + ".part"` and
-    `os.replace`, so a reader never sees half a file. `qt` is `maya_hubqt.qt()` (a QImage needs no
-    QApplication)."""
+    """(ok, note): the picture at `source` centre-cropped square and scaled to `size` px with
+    smooth filtering (`square_scaled`), written as a JPG at `path` (`save_jpg`: through `path +
+    ".part"` and `os.replace`, so a reader never sees half a file). `qt` is `maya_hubqt.qt()` (a
+    QImage needs no QApplication)."""
     image = qt.QtGui.QImage(source)
     if image.isNull():
         return False, "the playblast wrote nothing readable"
-    x, y, side = square(image.width(), image.height())
-    small = image.copy(x, y, side, side).scaled(
-        size, size, qt.QtCore.Qt.IgnoreAspectRatio, qt.QtCore.Qt.SmoothTransformation)
-    part = path + ".part"
-    try:
-        if not small.save(part, "JPG", JPG_QUALITY):
-            return False, "could not write " + path
-        os.replace(part, path)
-    finally:
-        try:
-            os.remove(part)
-        except OSError:
-            pass
-    return True, ""
+    return save_jpg(square_scaled(qt, image, size), path, JPG_QUALITY)

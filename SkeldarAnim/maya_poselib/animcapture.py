@@ -32,13 +32,21 @@ Frames are WHOLE frames: a range's ends are rounded half up ONCE (`_whole`, `ani
 Python's round() goes to even) and every count, walk and preview frame comes from those two ints.
 The header carries them as the floats the card's shape names (`"start": 0.0`).
 
-**The preview** (`preview`) is the thumbnail's machinery over the range: the panel the animator
-looks at (`maya_vpstudio.active_panel`) at its port's size, `capture.HIDDEN`'s editor flags off for
-the blasts and put back, the first frame blasted until two blasts agree (trap 120,
-`capture.settle`), then ONE playblast of the preview's frames (`look.preview_frames`: at most 60,
-every `step`-th) into a temporary folder; each frame centre-cropped square, scaled to 320 px and
-painted into one SPRITE SHEET (`paint_sheet`, `look.sheet_cell`), JPG; the tweaks and the time put
-back. Batch mode, no panel or no Qt: no preview, and the card shows its still.
+**The preview** (`preview`) is the thumbnail's machinery over the range - its pieces are
+`capture`'s, called here, not copied (fix round 1): the panel the animator looks at
+(`maya_vpstudio.active_panel`) at its port's size, `capture.HIDDEN`'s editor flags off for the
+blasts and put back (`capture.shown_flags`, `set_flags`), the first frame blasted until two
+blasts agree (trap 120, `capture.settle` over `capture.blast_file`, `capture.pump` between), then
+ONE playblast of the preview's frames (`look.preview_frames`: at most 60, every `step`-th) with
+the thumbnail's options (`capture.blast_options`) into a temporary folder; each frame
+centre-cropped square and scaled to 320 px (`capture.square_scaled`), painted into one SPRITE
+SHEET (`paint_sheet`, `look.sheet_cell`) and written as the thumbnail is (`capture.save_jpg`);
+the tweaks and the time put back. Batch mode, no panel or no Qt: no preview, and the card shows
+its still.
+
+**A Save is no step of the animator's undo queue.** It runs outside any undo chunk, so the walk
+and the preview's blasts run with the queue off (`_unrecorded`), and so do the duplicates
+`object_curves` reads curves off.
 
 `progress` (a `timewalk.Progress`) is stepped once per frame read and once per preview cell
 painted; a cancel saves nothing (`CANCELLED`, which the window tells apart from «no preview»).
@@ -51,6 +59,12 @@ Measured (2026-10-03, mayapy standalone, Maya 2027):
 - read RECORDED, that duplicate leaves steps on the undo queue: the animator's next Ctrl+Z brought
   the deleted duplicate back (`prop_translateX1`) instead of their own last step - unrecorded
   (`_unrecorded`), one Ctrl+Z takes their step back and no curve is left over;
+- a walk, and a preview's blasts, throw an unkeyed tweak away, and `keys.Tweaks.restore` sets it
+  back with autoKey turned off and on around it - TWO steps of the queue (fix round 1: a
+  locator's tx keyed 0/10 and set to 99 by hand at frame 0, autoKey then turned on; after a Save
+  over 0-6 the first Ctrl+Z switched autoKey off, the second on, the third off again, tx 99 all
+  along - where a scene with no Save took the setAttr back on the second); with the walk and the
+  blasts unrecorded the queue is the no-Save scene's, step for step;
 - `keyframe -q -breakdown -time (a, b)` answers the TIMES of the breakdown keys in the span;
 - `getAttr(plug, time=t)` on a LAYERED channel reads the composite - base plus layer - exactly as
   a time change shows it (frames 0, 3, 5, 7 and 10 compared);
@@ -117,6 +131,28 @@ def _span(start, end):
     """The header's range: the whole source frames as the floats the card's shape names, and
     their count."""
     return {"start": float(start), "end": float(end), "frames": end - start + 1}
+
+
+# ------------------------------------------------------------------ the undo queue
+
+@contextlib.contextmanager
+def _unrecorded():
+    """Undo recording off for the block, without the flush `undoInfo(state=False)` does, and
+    back as it was after, whatever ends the block (`apply._unrecorded`'s rule): a Save is no
+    step of the animator's. Around the duplicates `object_curves` reads curves off, and around
+    the walk (`_walk`) and the preview's blasts (`_blast`), whose tweak set-back
+    (`keys.Tweaks.restore`) turns autoKey off and back - each toggle a step of the queue in
+    Maya, so the animator's next Ctrl+Z switched autoKey off instead of taking their last step
+    back (fix round 1, measured). A save runs outside any undo chunk - toggled inside one, the
+    recording breaks that chunk (trap 145)."""
+    was = bool(cmds.undoInfo(query=True, state=True))
+    if was:
+        cmds.undoInfo(stateWithoutFlush=False)
+    try:
+        yield
+    finally:
+        if was:
+            cmds.undoInfo(stateWithoutFlush=True)
 
 
 # ------------------------------------------------------------------ the range
@@ -249,13 +285,17 @@ def _walk(ref, bones, start, end, progress=None):
     (`animdata.encode`) one after another into a flat row; on a rig the drives
     (`_drive_matrices`) of the bones the FIRST frame answered for, which are the rig's structure
     and the same every frame - so every drive series holds one entry a frame, as the world rows
-    do; then `progress.step`. A cancel leaves the walk at once (the time goes back with it)."""
+    do; then `progress.step`. A cancel leaves the walk at once (the time goes back with it).
+
+    The walk runs with the undo queue off (`_unrecorded`), its exit included: the walk throws
+    the animator's unkeyed tweaks away and its exit sets them back, toggling autoKey - left
+    recorded, two loose steps the animator's next Ctrl+Z presses replay (fix round 1)."""
     order = list(bones)
     paths = [bones[name]["path"] for name in order]
     rig = ref.rig if ref.kind == "rig" else None
     world, drive, driven = [], {}, None
     count = end - start + 1
-    with timewalk.Walk(fresh=False) as walk:
+    with _unrecorded(), timewalk.Walk(fresh=False) as walk:
         for index, frame in enumerate(range(start, end + 1)):
             walk.go(frame)
             row = []
@@ -307,22 +347,6 @@ def character_animation(ref, nodes, regions, start, end, progress=None):
 
 
 # ------------------------------------------------------------------ objects' curves
-
-@contextlib.contextmanager
-def _unrecorded():
-    """Undo recording off for the block, without the flush `undoInfo(state=False)` does, and
-    back as it was after (`apply._unrecorded`'s rule): the duplicates a save reads curves off are
-    no step of the animator's. A save runs outside any undo chunk - toggled inside one, the
-    recording breaks that chunk (trap 145)."""
-    was = bool(cmds.undoInfo(query=True, state=True))
-    if was:
-        cmds.undoInfo(stateWithoutFlush=False)
-    try:
-        yield
-    finally:
-        if was:
-            cmds.undoInfo(stateWithoutFlush=True)
-
 
 def _number(value):
     """A channel's value as a float (a bool and an enum's int too), None for anything that is no
@@ -482,71 +506,39 @@ def _qt():
     return maya_hubqt.qt()
 
 
-def _pump(qt):
-    """Maya's idle queue and Qt's events turned once between two blasts: Viewport 2.0 loads
-    textures only while Maya is idle (trap 120). A seam."""
-    import maya.utils
-    maya.utils.processIdleEvents()
-    qt.QtWidgets.QApplication.processEvents()
-
-
-def _shown_flags(panel):
-    """{flag: shown} of `capture.HIDDEN` as the panel shows them now; a flag the editor does not
-    know is left out (it is neither hidden nor put back)."""
-    shown = {}
-    for flag in capture.HIDDEN:
-        try:
-            shown[flag] = cmds.modelEditor(panel, query=True, **{flag: True})
-        except Exception:                                    # noqa: BLE001
-            continue
-    return shown
-
-
-def _set_flags(panel, values):
-    """The panel's editor flags set to `values`, each on its own (one refused stops none)."""
-    for flag, value in values.items():
-        try:
-            cmds.modelEditor(panel, edit=True, **{flag: value})
-        except Exception:                                    # noqa: BLE001
-            pass
-
-
 def _blast(qt, panel, width, height, frames, folder):
     """(blasts taken at the first frame, settled): the first of `frames` blasted until two blasts
-    in a row agree (`capture.settle`, idle events pumped between - trap 120), then ONE playblast
-    of `frames` into `folder` as `<BLAST_BASE>.<frame>.jpg`, at the port's size, offscreen.
+    in a row agree (`capture.settle` over `capture.blast_file`, idle events pumped between by
+    `capture.pump` - trap 120), then ONE playblast of `frames` into `folder` as
+    `<BLAST_BASE>.<frame>.jpg` - the thumbnail's own options (`capture.blast_options`: the
+    port's size, offscreen), only where the frames go added.
 
-    Around it, in this order: the editor flags read and the animator's tweaks read
-    (`keys.Tweaks`: a playblast steps the time, which throws away unkeyed tweaks on keyed
-    channels), the time remembered, the flags off; after it, whatever happened: the flags back,
-    the time back (`MAnimControl`, unrecorded), the tweaks set back. A playblast that fails
-    raises, after all of that."""
-    options = dict(format="image", compression="jpg", quality=capture.BLAST_QUALITY,
-                   widthHeight=(width, height), percent=100, viewer=False,
-                   showOrnaments=False, offScreen=True, forceOverwrite=True, clearCache=True,
-                   editorPanelName=panel)
+    Around it, in this order: the editor flags read (`capture.shown_flags`) and the animator's
+    tweaks read (`keys.Tweaks`: a playblast steps the time, which throws away unkeyed tweaks on
+    keyed channels), the time remembered, the flags off (`capture.set_flags`); after it,
+    whatever happened: the flags back, the time back (`MAnimControl`, unrecorded), the tweaks
+    set back. All of it with the undo queue off (`_unrecorded`): the set-back toggles autoKey,
+    and a preview is no step of the animator's (fix round 1). A playblast that fails raises,
+    after all of that."""
+    options = capture.blast_options(panel, width, height)
     first = folder + "/first.jpg"
-
-    def blast():
-        cmds.refresh(force=True)
-        cmds.playblast(frame=[frames[0]], completeFilename=first, **options)
-        with open(first, "rb") as handle:
-            return handle.read()
-
-    shown = _shown_flags(panel)
-    tweaks = keys.Tweaks()
-    here = oma.MAnimControl.currentTime()
-    try:
-        _set_flags(panel, dict((flag, False) for flag in shown))
-        _picture, count, settled = capture.settle(blast, lambda: _pump(qt))
-        cmds.playblast(frame=list(frames), filename=folder + "/" + BLAST_BASE,
-                       framePadding=FRAME_PADDING, **options)
-    finally:
-        _set_flags(panel, shown)
+    with _unrecorded():
+        shown = capture.shown_flags(panel)
+        tweaks = keys.Tweaks()
+        here = oma.MAnimControl.currentTime()
         try:
-            oma.MAnimControl.setCurrentTime(here)
+            capture.set_flags(panel, dict((flag, False) for flag in shown))
+            _picture, count, settled = capture.settle(
+                lambda: capture.blast_file(options, frames[0], first),
+                lambda: capture.pump(qt))
+            cmds.playblast(frame=list(frames), filename=folder + "/" + BLAST_BASE,
+                           framePadding=FRAME_PADDING, **options)
         finally:
-            tweaks.restore()
+            capture.set_flags(panel, shown)
+            try:
+                oma.MAnimControl.setCurrentTime(here)
+            finally:
+                tweaks.restore()
     return count, settled
 
 
@@ -570,10 +562,11 @@ def blasted(folder, base=BLAST_BASE):
 
 def paint_sheet(qt, pictures, path, size=look.PREVIEW_SIZE, progress=None):
     """(ok, note): `pictures` (image paths, in play order) painted into ONE sprite sheet at
-    `path` - each centre-cropped square (`capture.square`), scaled to `size` px with smooth
-    filtering, into its cell (`look.sheet_cell`: `look.sheet_columns` cells to a row, left to
-    right, top to bottom; a short last row stays black) - and written as a JPG (SHEET_QUALITY)
-    through `path + ".part"` and `os.replace`, so a reader never sees half a sheet.
+    `path` - each centre-cropped square and scaled to `size` px with smooth filtering as the
+    thumbnail is (`capture.square_scaled`), into its cell (`look.sheet_cell`:
+    `look.sheet_columns` cells to a row, left to right, top to bottom; a short last row stays
+    black) - and written as a JPG (SHEET_QUALITY) the thumbnail's way (`capture.save_jpg`:
+    through `path + ".part"` and `os.replace`, so a reader never sees half a sheet).
     `progress.step` once per cell; a cancel (False, CANCELLED) and a picture that cannot be read
     write nothing. `qt` is `maya_hubqt.qt()` (a QImage needs no QApplication)."""
     if not pictures:
@@ -589,27 +582,14 @@ def paint_sheet(qt, pictures, path, size=look.PREVIEW_SIZE, progress=None):
             image = gui.QImage(picture)
             if image.isNull():
                 return False, "the playblast wrote nothing readable for cell %d" % index
-            x, y, side = capture.square(image.width(), image.height())
-            cell = image.copy(x, y, side, side).scaled(
-                size, size, qt.QtCore.Qt.IgnoreAspectRatio, qt.QtCore.Qt.SmoothTransformation)
-            cx, cy, _w, _h = look.sheet_cell(index, columns, size)
-            painter.drawImage(qt.QtCore.QPoint(cx, cy), cell)
+            x, y, _w, _h = look.sheet_cell(index, columns, size)
+            painter.drawImage(qt.QtCore.QPoint(x, y), capture.square_scaled(qt, image, size))
             if progress is not None and not progress.step(
                     "preview %d of %d" % (index + 1, len(pictures))):
                 return False, CANCELLED
     finally:
         painter.end()
-    part = path + ".part"
-    try:
-        if not sheet.save(part, "JPG", SHEET_QUALITY):
-            return False, "could not write " + path
-        os.replace(part, path)
-    finally:
-        try:
-            os.remove(part)
-        except OSError:
-            pass
-    return True, ""
+    return capture.save_jpg(sheet, path, SHEET_QUALITY)
 
 
 def _first_line(error):
