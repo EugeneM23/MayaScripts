@@ -32,11 +32,13 @@ scroll or a resize mid-zoom needs no bookkeeping.
 
 ## Which card, and the mouse
 
-- What you see is what you press: `index_at` asks the hovered card's CURRENT grown tile first,
+- *(Superseded the same day - see the addendum: the card is read off its place in the grid.)*
+  What you see is what you press: `index_at` asks the hovered card's CURRENT grown tile first,
   then the grid. A click, a double-click, a drag, a middle-drag blend and the right button act on
   the grown card even where it covers a neighbour.
-- The grown card holds the hover while the mouse is inside it; leaving it (onto a neighbour's
-  uncovered part, a gap, out of the canvas) shrinks it and lets the card under the mouse grow.
+- *(Superseded, the addendum.)* The grown card holds the hover while the mouse is inside it;
+  leaving it (onto a neighbour's uncovered part, a gap, out of the canvas) shrinks it and lets the
+  card under the mouse grow.
 - Several cards can be shrinking at once; the one growing is drawn on top of them, they on top
   of the grid.
 - A left drag starting shrinks the card (the ghost takes over); a middle-drag blend keeps it
@@ -60,3 +62,22 @@ the grown card covering a neighbour picks the grown card, leaving the canvas shr
 shrinks it, a re-read keeps the hover by path, the 2x picture cached. `test_poselib_scene`:
 `THUMB_SIZE` is 640. A disposable GUI Maya: the window on a library of cards, a real hover, the
 picture photographed.
+
+## Addendum (the same day, after using it): the card is read off its place, always
+
+The animator: «Давай попробуем сделать так что бы наша система принимала решение о том какую
+карточку увеличить не на основе границ уже увеличеной карточке а всегда на основе границ изначальной
+карточки. Сейчас бывает такое что одна карточка почти полностью перекрывает другую и не совсем
+удобно».
+
+The first build let the grown card keep the hover while the mouse was anywhere on it, and a press
+there act on it. A 2x card covers half of each neighbour, so a neighbour was reachable only from its
+far half. Now `index_at` is the grid's places alone (`look.hit`):
+
+- the mouse onto a neighbour's place grows the neighbour, even where the grown card covers it; the
+  card growing is drawn on top, so the card on top is always the card under the mouse by its place;
+- a click, a double-click, a drag, the right button and a middle-drag blend act on that same card;
+- a gap between places is no card: the grown card shrinks while the mouse crosses it.
+
+`zoom_rect` still keeps the grown tile holding the card's own place (the mouse that grew it is on
+it); nothing else of the zoom changed.

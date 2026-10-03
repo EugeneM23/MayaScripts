@@ -26,9 +26,10 @@ Alt+Tab or a modal dialog mid-drag - ends the drag and cancels the blend, said).
 moved inside the viewport rather than cut (`look.zoom_rect`), eased in `look.ZOOM_IN_MS` and out
 in `look.ZOOM_OUT_MS` (`look.Zoom`, one per card while it is above the grid; at once with ⋮ →
 Interface animations off). Lifted, it stands on a plate with a soft drop shadow and its picture
-is read at twice the card's side. What you see is what you press: `index_at` asks the grown
-card's tile first, so a click, a drag or the right button on the part covering a neighbour acts
-on the grown card, and the grown card keeps the hover while the mouse is on it. A 16 ms timer
+is read at twice the card's side. Which card grows is read off the grid's PLACES alone
+(`index_at`, the same answer a press gets): the mouse over a neighbour's place grows the
+neighbour even where the grown card covers it, and the one growing is drawn on top, so the card
+on top is the card a press acts on; a gap between places grows nothing. A 16 ms timer
 runs only while a card grows or shrinks, each tick repainting only what the moving cards can
 cover (`_reach`). Spec: docs/superpowers/specs/2026-10-03-pose-card-hover-zoom-design.md
 
@@ -223,15 +224,11 @@ def _classes():
             return self.pixmaps[key]
 
         def index_at(self, x, y):
-            """The card a press at (x, y) acts on: the grown card under the mouse wherever it
-            covers its neighbours (what you see is what you press), else the grid's."""
-            hover = self._hover
-            if hover is not None and hover < len(self._rects):
-                zoom = self._zooms.get(self.cards[hover].path)
-                if zoom is not None and zoom.lifted(self._now()):
-                    (tx, ty, tw, th), _z = self.shown(hover)
-                    if tx <= x < tx + tw and ty <= y < ty + th:
-                        return hover
+            """The card at (x, y) - always by its PLACE in the grid, never by a grown card's
+            tile (2026-10-03, the animator: «всегда на основе границ изначальной карточки»: a
+            grown card covering most of its neighbour kept the neighbour from growing). So the
+            card under the mouse is the one that grows, drawn on top, and the one a press acts
+            on; a gap between places is no card."""
             return look.hit(self._rects, x, y, self.k)
 
         def card_at(self, x, y):

@@ -8777,18 +8777,25 @@ neighbours, at once and eased, new thumbnails at 640 px). Spec
 - **Drawn**: everything at `z` (radius, outline, fonts, chip), on a plate of the canvas colour with a soft
   drop shadow, the picture read at twice the card's side (`zoom_side`, kept by `fit`'s cache); the cards
   shrinking under the one growing (`lifted_order`).
-- **The mouse**: `index_at` asks the hovered card's grown tile first — a click, a drag, the right button or
-  a middle-drag blend on the part covering a neighbour act on the grown card, and the grown card keeps the
-  hover while the mouse is on it; a left drag starting shrinks it (the ghost takes over); a scroll re-reads
-  the card under the cursor; a re-read of the library keeps the hover by path.
+- **The mouse — always the card's PLACE** (the same day, after using it: «принимала решение о том какую
+  карточку увеличить ... всегда на основе границ изначальной карточки. Сейчас бывает такое что одна
+  карточка почти полностью перекрывает другую»): `index_at` is `look.hit` on the grid alone. The first
+  build let the grown card keep the hover and take the presses wherever it covered a neighbour, so a
+  neighbour was reachable only from its far half. Now the mouse onto a neighbour's place grows the
+  neighbour even under the grown card; the one growing is drawn on top, so the card on top is the card a
+  click, a drag, the right button or a middle-drag blend acts on; a gap between places grows nothing. A
+  left drag starting shrinks the card (the ghost takes over); a scroll re-reads the card under the cursor;
+  a re-read of the library keeps the hover by path.
 - `capture.THUMB_SIZE` 640 (was 320; a 112 px card at 150 % is 336 px grown). Cards saved before keep their
   320 px picture; Replace thumbnail re-takes it.
-Proof: `docs/superpowers/plans/verify_poselib_zoom.py` **24/24 in a disposable GUI Maya** (port
-7043, scratch `MAYA_APP_DIR`, `MAYA_NO_HOME`; Qt mouse events, no OS cursor): 2x reached monotonically in
-147 ms and back in 183 ms, the timer stopping; the grown tile holding the card's own and inside the
-viewport (flush with its top-left corner for card 0); a frame's repaint median 3.3 ms, p95 4.1 ms; DWM's
-copy of the window showing the grown card's colour over its neighbour (`poselib_zoom.png`); a press there
-picking the grown card; a neighbour growing while the first shrinks, drawn on top; a scroll; animations
-off at once; a real `capture.thumbnail` 640 x 640. Unit tests `test_poselib_look` (`zoom_rect`, `zoom_at`,
-`Zoom`) and `test_poselib_cardgrid.HoverZoom`; `verify_poselib_gui.py` 47/47 again there (its save
-gate now asks for `capture.THUMB_SIZE`); 4628 unit tests.
+Proof: `docs/superpowers/plans/verify_poselib_zoom.py` in a disposable GUI Maya (port 7043, scratch
+`MAYA_APP_DIR`, `MAYA_NO_HOME`; Qt mouse events, no OS cursor) — **26/26 on the place rule**, plus its
+`thumb` gate from the first build's run: 2x reached monotonically in 143 ms and back in 184 ms, the timer
+stopping; the grown tile holding the card's own and inside the viewport (flush with its top-left corner
+for card 0); a frame's repaint median 3.3-4.1 ms, p95 4.1-4.7 ms; DWM's copy of the window showing the
+grown card's colour over its neighbour (`poselib_zoom.png`); the mouse onto that covered part growing the
+NEIGHBOUR, a click there picking it, a gap growing nothing; a neighbour growing while the first shrinks,
+drawn on top; a scroll; animations off at once; a real `capture.thumbnail` 640 x 640. Unit tests
+`test_poselib_look` (`zoom_rect`, `zoom_at`, `Zoom`) and `test_poselib_cardgrid.HoverZoom`;
+`verify_poselib_gui.py` 47/47 on the first build (its save gate now asks for `capture.THUMB_SIZE`); 4629
+unit tests.

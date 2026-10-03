@@ -401,24 +401,40 @@ class HoverZoom(CanvasCase):
         self.canvas.fit(500, 600)               # the layout keeps that size in the cache
         self.assertIn(int(round(side * look.ZOOM)), set(key[1] for key in self.canvas.pixmaps))
 
-    def test_a_click_on_the_grown_card_over_a_neighbour_picks_the_grown_card(self):
+    def test_the_card_under_the_mouse_is_read_off_the_grid_never_off_the_grown_card(self):
+        # 2026-10-03, the animator: «принимала решение ... всегда на основе границ изначальной
+        # карточки» - a grown card covering most of its neighbour must not keep it from growing
         self.animations = False
         self.hover(self.centre(1))
         x, y, _w, _h = self.canvas.rects()[2]
         over = QT.QtCore.QPoint(x + 10, y + 40)
-        self.assertEqual(self.canvas.card_at(over.x(), over.y()).path, self.cards[1].path)
-        self.mouse("press", over, QT.QtCore.Qt.LeftButton)
-        self.mouse("release", over, QT.QtCore.Qt.LeftButton)
-        self.assertIn(("pick", self.cards[1].path), self.panel.log)
-        self.assertNotIn(("pick", self.cards[2].path), self.panel.log)
+        (gx, gy, gw, _gh), _z = self.canvas.shown(1)
+        self.assertTrue(gx <= over.x() < gx + gw and gy <= over.y() < gy + gw)   # covered ...
+        self.assertEqual(self.canvas.card_at(over.x(), over.y()).path, self.cards[2].path)
+        self.hover(over)                                  # ... and still the neighbour grows
+        self.assertEqual(self.z(1), 1.0)
+        self.assertEqual(self.z(2), look.ZOOM)
 
-    def test_the_grown_card_holds_the_hover_while_the_mouse_is_on_it(self):
+    def test_a_click_acts_on_the_card_whose_place_is_under_the_mouse(self):
         self.animations = False
         self.hover(self.centre(1))
         x, y, _w, _h = self.canvas.rects()[2]
-        self.hover(QT.QtCore.QPoint(x + 10, y + 40))
-        self.assertEqual(self.z(1), look.ZOOM)
-        self.assertEqual(self.z(2), 1.0)
+        over = QT.QtCore.QPoint(x + 10, y + 40)
+        self.mouse("press", over, QT.QtCore.Qt.LeftButton)
+        self.mouse("release", over, QT.QtCore.Qt.LeftButton)
+        self.assertIn(("pick", self.cards[2].path), self.panel.log)
+        self.assertNotIn(("pick", self.cards[1].path), self.panel.log)
+
+    def test_the_gap_between_cards_grows_nothing(self):
+        self.animations = False
+        self.hover(self.centre(1))
+        x, y, w, _h = self.canvas.rects()[1]
+        nx = self.canvas.rects()[2][0]
+        gap = QT.QtCore.QPoint((x + w + nx) // 2, y + 40)
+        self.assertIsNone(self.canvas.card_at(gap.x(), gap.y()))
+        self.hover(gap)
+        self.assertEqual(self.z(1), 1.0)
+        self.assertEqual(self.canvas._zooms, {})
 
     def test_off_the_grown_card_onto_a_neighbour_the_neighbour_grows(self):
         self.animations = False

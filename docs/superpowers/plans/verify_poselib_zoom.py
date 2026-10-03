@@ -26,7 +26,9 @@ cursor - the animator's desktop is theirs):
     photo    DWM's copy of the window (never QWidget.grab of Maya widgets - trap 134) into
              poselib_zoom.png; where the grown card covers a neighbour the window shows the grown
              card's colour, a card far from it its own
-    press    a click on the part covering a neighbour picks the grown card (the window's pick)
+    press    the mouse onto the part of a neighbour the grown card covers grows the neighbour
+             (which card grows is read off the grid's places alone), a click there picks it,
+             a gap between places grows nothing
     move_on  onto a neighbour's uncovered part: it grows while the first shrinks, drawn on top
     edges    the top-left card grows flush with the viewport's corner, the last card of the
              visible bottom row inside the viewport
@@ -370,21 +372,43 @@ def phase_photo():
 
 
 def phase_press():
+    """Which card grows is read off the grid's places alone (2026-10-03, the animator: «всегда
+    на основе границ изначальной карточки»): the mouse onto the part of a neighbour the grown
+    card covers grows the NEIGHBOUR, drawn on top, and a press there picks it; a gap grows
+    nothing."""
+    from maya_poselib import look
     q = qt()
     Qt = q.QtCore.Qt
     cv = canvas()
+    mouse(cv, "move", centre(cv, HOVERED))
+    pump(350)
+    (gx, gy, gw, _gh), _z = cv.shown(HOVERED)
     nx, ny, nw, nh = cv.rects()[HOVERED + 1]
     over = q.QtCore.QPoint(int(nx + 6), int(ny + nh * 0.75))
-    named = cv.card_at(over.x(), over.y())
+    covered = gx <= over.x() < gx + gw and gy <= over.y() < gy + gw
+    mouse(cv, "move", over)
+    pump(350)
+    order = [os.path.basename(path) for path, _zoom in cv.lifted_order()]
+    gate("press the mouse onto the covered part of a neighbour grows the neighbour",
+         covered and cv.shown(HOVERED + 1)[1] == look.ZOOM and cv.shown(HOVERED)[1] == 1.0
+         and order == [os.path.basename(cv.cards[HOVERED + 1].path)],
+         "covered %s, neighbour %.3f, first %.3f, lifted %s" % (
+             covered, cv.shown(HOVERED + 1)[1], cv.shown(HOVERED)[1], order))
     mouse(cv, "press", over, Qt.LeftButton, Qt.LeftButton)
     mouse(cv, "release", over, Qt.LeftButton, Qt.NoButton)
     settle()
     win = window()
-    gate("press on the part covering a neighbour picks the grown card",
-         named is not None and named.path == cv.cards[HOVERED].path
-         and win.picked == cv.cards[HOVERED].path,
-         "card_at %s, picked %s" % (named.name if named else None,
-                                    os.path.basename(win.picked or "")))
+    gate("press a click there picks the card on top - the neighbour",
+         win.picked == cv.cards[HOVERED + 1].path, os.path.basename(win.picked or ""))
+    x, y, w, _h = cv.rects()[HOVERED]
+    gap = q.QtCore.QPoint(int((x + w + nx) // 2), int(y + 40))
+    mouse(cv, "move", gap)
+    pump(350)
+    gate("press the gap between two places grows nothing",
+         cv.card_at(gap.x(), gap.y()) is None and cv._zooms == {}
+         and not cv.zoom_timer.isActive(), "at x %d" % gap.x())
+    mouse(cv, "move", centre(cv, HOVERED))
+    pump(350)
 
 
 def phase_move_on():
