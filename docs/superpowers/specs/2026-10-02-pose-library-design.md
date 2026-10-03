@@ -96,7 +96,11 @@ order, so two referenced copies of one prop each take their own values, and when
 name is taken the first one (two selected copies of one object both take it); the selected objects
 left over taking the stored entries left over by order when their counts match; with nothing
 selected, onto the stored objects found in the scene (the exact path first, then by leaf when
-exactly one transform carries it).
+exactly one transform carries it). A part of a character (a rig's Main, a control, a joint, a
+weapon in a hand) is never an object: selected beside objects it is left out and named, selected
+alone the press is refused, and a stored name found only on a character is not found (the final
+review: right after Add Character, which selects the new rig's Main, a one-object card keyed Main
+by selection order).
 
 **Pairing** source bone → target bone (pure):
 

@@ -1539,6 +1539,43 @@ def phase_objects():
     for ns in ("propA", "propB"):
         if cmds.namespace(exists=":" + ns):
             cmds.namespace(removeNamespace=":" + ns, mergeNamespaceWithRoot=True)
+    # a rig part selected (the final review): right after Add Character the new rig's Main is
+    # the selection, and a one-object card applied then keyed Main by selection order - an
+    # objects pose is for anything that is no character's, so Main is refused alone and left out
+    # beside a box, by Apply and by a Blend; Main never keyed, never moved
+    a = CH["A"]
+    a.reset()
+    box_card, _note = capture.build_pose([_cube("tweakBox", {"translateX": 120.0,
+                                                              "translateZ": -80.0,
+                                                              "rotateY": 90.0})])
+    box_card["name"] = "Box"
+    main_plugs = [p for p in a.plugs if p.split("|")[-1].split(":")[-1].startswith("Main.")]
+    main_before = values_of(main_plugs)
+    ok, text = ap.apply(box_card, selection=[a.rig.main])
+    blend = ap.Blend()
+    refusal = blend.start(box_card, selection=[a.rig.main])
+    blend.cancel()
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in main_before.items())
+    keyed = cmds.listConnections(main_plugs, source=True, destination=False,
+                                 type="animCurve") or []
+    gate("objects a rig's Main alone: refused (Apply and Blend), named, never keyed",
+         not ok and "Main is part of" in text and "Main is part of" in refusal and
+         moved <= 1e-9 and not keyed, "%s | %s | moved %.3g, %d curves" % (
+             text, refusal, moved, len(keyed)))
+    other = _cube("otherBox", {})
+    ok, text = ap.apply(box_card, selection=[a.rig.main, other])
+    evaluate()
+    moved = max(abs(float(cmds.getAttr(p)) - v) for p, v in main_before.items())
+    landed_box = abs(float(cmds.getAttr(other + ".translateX")) - 120.0)
+    gate("objects Main beside a box: the box takes the card, Main left out and said",
+         ok and landed_box <= 1e-6 and moved <= 1e-9 and "Main is part of" in text and
+         not (cmds.listConnections(main_plugs, source=True, destination=False,
+                                   type="animCurve") or []),
+         "%s | the box off %.3g, Main moved %.3g" % (text, landed_box, moved))
+    cmds.delete(other)
+    for node in cmds.ls("tweakBox", long=True) or []:
+        cmds.delete(node)
+    a.reset()
 
 
 def phase_select():

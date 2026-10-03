@@ -550,9 +550,12 @@ class Press(unittest.TestCase):
         self.saved = dict((name, getattr(ap, name)) for name in
                           ("cmds", "keys", "_plan", "_targets", "_measure", "rotations_of",
                            "_add", "_rebuild", "_reselect", "apply_onto", "_selected",
-                           "_find_object", "_objects_entry", "_switches", "_evaluated"))
+                           "_find_object", "_objects_entry", "_switches", "_evaluated",
+                           "_not_characters"))
         ap.cmds = FakeCmds(self.log)
         ap.keys = FakeKeys(self.log)
+        self.parts = {}                      # path -> the character it is part of
+        ap._not_characters = self.not_characters
         self.switch = False                  # the scene under DG: the measure switches nothing
         ap._switches = lambda: self.switch
         log = self.log
@@ -578,6 +581,17 @@ class Press(unittest.TestCase):
 
     def log_recording(self):
         return ap.cmds.recording
+
+    def not_characters(self, paths):
+        """`_not_characters` on `self.parts`, its notes spelled as the real one spells them."""
+        loose = [p for p in paths if p not in self.parts]
+        named = [p.split("|")[-1].split(":")[-1] for p in paths if p in self.parts]
+        whose = ", ".join(sorted(set(self.parts[p] for p in paths if p in self.parts)))
+        if not named:
+            return loose, ""
+        if len(named) == 1:
+            return loose, ap.CHARACTER_PART % (named[0], whose)
+        return loose, ap.CHARACTER_PARTS % (len(named), whose)
 
     def tearDown(self):
         for name, value in self.saved.items():
@@ -907,6 +921,37 @@ class Press(unittest.TestCase):
         self.assertEqual(dict(entry[0].values), {"|grp|pCube1.translateX": 1.0})
         self.assertEqual(entry[0].notes, [])
         ap._find_object = lambda record: None
+        self.assertEqual(ap._objects_entry(self.CUBES, []),
+                         (None, ap.OBJECTS_MISSING % (2, "s")))
+
+    # the final review (2026-10-03): a one-object card applied right after Add Character (which
+    # selects the new rig's Main) keyed Main by selection order - an objects pose is for
+    # anything that is NOT a character, and a character's parts are left out of it
+
+    MAIN = "|Manny_Rig_Character|Manny_Rig:Group|Manny_Rig:Main"
+
+    def test_a_character_part_alone_is_refused_and_named(self):
+        ap._selected = lambda selection: list(selection or [])
+        self.parts = {self.MAIN: "Manny_Rig"}
+        entry, refusal = ap._objects_entry({"kind": "objects", "name": "Box",
+                                            "objects": [obj("Box", translateX=120.0)]},
+                                           [self.MAIN])
+        self.assertIsNone(entry)
+        self.assertEqual(refusal, ap.CHARACTER_PART % ("Main", "Manny_Rig") + ap.ONTO_OBJECTS)
+
+    def test_a_character_part_beside_objects_is_left_out_and_said(self):
+        ap._selected = lambda selection: list(selection or [])
+        self.parts = {self.MAIN: "Manny_Rig"}
+        entry, refusal = ap._objects_entry(self.CUBES, [self.MAIN, "|boxA", "|boxB"])
+        self.assertEqual(refusal, "")
+        self.assertEqual(dict(entry[0].values), {"|boxA.translateX": 1.0,
+                                                 "|boxB.translateX": 2.0})
+        self.assertIn(ap.CHARACTER_PART % ("Main", "Manny_Rig") + ap.LEFT_OUT, entry[0].notes)
+
+    def test_nothing_selected_a_stored_name_found_on_a_character_is_none_of_its(self):
+        ap._selected = lambda selection: list(selection or [])
+        ap._find_object = lambda record: "|Manny_Rig:" + record["name"]
+        self.parts = {"|Manny_Rig:pCube1": "Manny_Rig", "|Manny_Rig:pCube2": "Manny_Rig"}
         self.assertEqual(ap._objects_entry(self.CUBES, []),
                          (None, ap.OBJECTS_MISSING % (2, "s")))
 

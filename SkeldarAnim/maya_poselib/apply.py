@@ -93,7 +93,9 @@ with the namespace ignored (the next stored object of that name not taken yet: t
 copies of one prop each take their own), the ones left taking the stored objects left by order
 when they are as many - and nothing unselected is touched, the card's originals included; with
 nothing selected, onto the stored objects found in the scene (the exact path, else the one
-transform carrying the leaf).
+transform carrying the leaf). A part of a CHARACTER is no object (`_not_characters`: a rig's
+Main, a control, a joint, a weapon in a hand): left out and named beside objects, refused alone -
+the first build keyed a just-added rig's Main by selection order (the final review).
 
 ## Select objects (`select_objects`)
 
@@ -176,6 +178,10 @@ OBJECTS_MISSING = "none of the pose's %d object%s is in the scene - select the o
 SELECTION_UNMATCHED = ("the selection matches none of the pose's %d object%s - select them "
                        "(by name), or as many objects as it holds (%d)")
 NOT_MATCHED = "%d selected matched nothing of the pose: %s"
+CHARACTER_PART = "%s is part of %s"
+CHARACTER_PARTS = "%d selected are parts of %s"
+LEFT_OUT = " - left out"
+ONTO_OBJECTS = " - an objects pose goes onto objects: select them, or nothing for its own"
 OBJECTS_ONTO = "an objects pose goes onto objects - select them and Apply"
 NO_SOURCE = "the card names no character of ours and holds no bones - nothing to add"
 NOT_ADDED = "%s was not added: %s"
@@ -913,15 +919,46 @@ def _find_object(record):
     return found[0] if len(found) == 1 else None
 
 
+def _not_characters(paths):
+    """(the paths that are no part of a character, the note naming the ones that are, or "").
+    An objects pose is for anything that is NOT a character (the spec): a rig's Main, a control,
+    a skeleton's root, a weapon in a hand are left out of it - selected beside a prop, or alone
+    (the final review: a one-object card applied right after Add Character, which selects the
+    new rig's Main, keyed Main's translate, rotate and scale by selection order)."""
+    if not paths:
+        return [], ""
+    loose, parts = [], OrderedDict()
+    for path, ref in scene.resolve(paths):
+        if ref is None:
+            loose.append(path)
+        else:
+            parts.setdefault(target_label(ref), []).append(scene.leaf(path))
+    if not parts:
+        return loose, ""
+    names = [name for found in parts.values() for name in found]
+    whose = ", ".join(parts)
+    if len(names) == 1:
+        return loose, CHARACTER_PART % (names[0], whose)
+    return loose, CHARACTER_PARTS % (len(names), whose)
+
+
 def _objects_entry(data, selection):
-    """((Plan, Extra), refusal) for an objects pose against the selection (`pair_objects`)."""
+    """((Plan, Extra), refusal) for an objects pose against the selection (`pair_objects`) - the
+    selection's character parts left out and named (`_not_characters`), the stored objects found
+    by leaf likewise never a character's."""
     objects = (data or {}).get("objects") or []
     if not objects:
         return None, NO_OBJECTS
     plural = "" if len(objects) == 1 else "s"
-    selected = _selected(selection)
-    found = {} if selected else dict((i, _find_object(record))
-                                     for i, record in enumerate(objects))
+    picked = _selected(selection)
+    selected, parts = _not_characters(picked)
+    if picked and not selected:
+        return None, parts + ONTO_OBJECTS
+    found = {}
+    if not selected:
+        paths = dict((i, _find_object(record)) for i, record in enumerate(objects))
+        free = set(_not_characters([p for p in paths.values() if p])[0])
+        found = dict((i, path if path in free else None) for i, path in paths.items())
     matched, how = pair_objects(objects, selected, found)
     if not matched:
         if selected:
@@ -934,7 +971,7 @@ def _objects_entry(data, selection):
                 values[path + "." + attr] = float(value)
             else:
                 missing.append("%s.%s" % (scene.leaf(path), attr))
-    notes = [BY_ORDER] if "order" in how else []
+    notes = ([parts + LEFT_OUT] if parts else []) + ([BY_ORDER] if "order" in how else [])
     taken = set(path for _record, path in matched)
     idle = [path for path in selected if path not in taken]
     if idle:
