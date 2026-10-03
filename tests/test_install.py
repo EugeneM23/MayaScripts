@@ -400,6 +400,11 @@ def _card_json(name):
                        "name": name})
 
 
+def _anim_json(name, note=""):
+    return json.dumps({"format": "skeldar.anim", "version": 1, "kind": "character",
+                       "name": name, "note": note})
+
+
 class KeepsLocalPoses(unittest.TestCase):
     """2026-10-02, the Pose Library: «локальные позы переживают каждую установку». The installed
     `poses/` is moved aside before the folder is replaced and put back CARD by CARD (2026-10-03,
@@ -702,6 +707,81 @@ class KeepsLocalPoses(unittest.TestCase):
         self.assertEqual(install.read_shipped(self.poses()),
                          {"Shipped.pose": {"pose.json": _sha("old shipped")}})
         self.assertEqual(os.listdir(os.path.dirname(self.dest)), ["SkeldarAnim"])
+
+    # ---- animation cards (2026-10-03): a `<Name>.anim` folder is one unit as a `.pose` is
+
+    def anim(self, poses, rel, name, text):
+        """An animation card `rel` under `poses`: its header (`anim.json`, named `name`), its
+        frames and its preview sheet - `text` makes the three differ from another card's."""
+        card = os.path.join(poses, *rel.split("/"))
+        _write(os.path.join(card, "anim.json"), _anim_json(name, text))
+        _write(os.path.join(card, "frames.json.gz"), "frames " + text)
+        _write(os.path.join(card, "preview.jpg"), "sheet " + text)
+        return card
+
+    def test_a_local_animation_survives_whole(self):
+        mine = self.anim(self.poses(), "Loco/Walk.anim", "Walk", "mine")
+        before = install.card_files(mine)
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(install.card_files(self.poses("Loco", "Walk.anim")), before)
+        self.assertEqual(len(before), 3)
+        self.assertIn("Loco/Walk.anim", self.listing())
+        self.assertTrue(set(kept) >= set("Loco/Walk.anim/" + name for name in before))
+        self.assertEqual(kept.renamed, {})
+
+    def test_an_animation_with_a_shipped_name_goes_beside_it(self):
+        self.anim(self.poses(), "Walk.anim", "Walk", "mine")
+        shipped = self.anim(os.path.join(self.src, "poses"), "Walk.anim", "Walk", "shipped")
+        files = install.card_files(shipped)
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(install.card_files(self.poses("Walk.anim")), files)
+        local = self.poses("Walk (local).anim")
+        self.assertEqual(json.loads(_read(os.path.join(local, "anim.json")))["name"],
+                         "Walk (local)")
+        self.assertEqual(_read(os.path.join(local, "frames.json.gz")), "frames mine")
+        self.assertEqual(_read(os.path.join(local, "preview.jpg")), "sheet mine")
+        self.assertFalse(os.path.exists(os.path.join(local, "pose.json")))
+        self.assertEqual(kept.renamed, {"Walk.anim": "Walk (local).anim"})
+
+    def test_a_pose_and_an_animation_of_one_name_are_two_units(self):
+        _write(self.poses("Walk.pose", "pose.json"), _card_json("Walk"))
+        self.anim(os.path.join(self.src, "poses"), "Walk.anim", "Walk", "shipped")
+        kept = install.copy_payload(self.src, self.dest)
+        self.assertEqual(json.loads(_read(self.poses("Walk.pose", "pose.json")))["name"], "Walk")
+        self.assertEqual(_read(self.poses("Walk.anim", "preview.jpg")), "sheet shipped")
+        self.assertEqual(kept.renamed, {})
+        self.assertIn("Walk.anim", self.listing())
+        self.assertIn("Walk.pose", self.listing())
+
+    def test_the_manifest_lists_animation_cards(self):
+        poses = os.path.join(self.tmp, "manifest_poses")
+        card = self.anim(poses, "Loco/Walk.anim", "Walk", "shipped")
+        _write(os.path.join(poses, "Fist.pose", "pose.json"), "fist")
+        cards = install.shipped_manifest(poses)["cards"]
+        self.assertEqual(sorted(cards), ["Fist.pose", "Loco/Walk.anim"])
+        self.assertEqual(sorted(cards["Loco/Walk.anim"]),
+                         ["anim.json", "frames.json.gz", "preview.jpg"])
+        self.assertEqual(cards["Loco/Walk.anim"], install.card_files(card))
+
+    def test_a_shipped_animation_renamed_upstream_stays_gone(self):
+        first = self.build({"Walk.anim": {"anim.json": "walk", "frames.json.gz": "f"}})
+        shutil.rmtree(self.dest)
+        install.copy_payload(first, self.dest)
+        second = self.build({"Stroll.anim": {"anim.json": "walk", "frames.json.gz": "f"}})
+        kept = install.copy_payload(second, self.dest)
+        self.assertEqual(self.listing(), ["Stroll.anim"])
+        self.assertEqual(kept.dropped, ["Walk.anim"])
+
+    def test_a_local_name_is_free_of_both_types(self):
+        folder = os.path.join(self.tmp, "free")
+        _write(os.path.join(folder, "Walk (local).pose", "pose.json"), "a pose")
+        self.assertEqual(install.free_card(folder, "Walk", card_suffix=".anim"),
+                         "Walk (local) 2.anim")
+        self.assertEqual(install.free_card(folder, "Run", card_suffix=".anim"),
+                         "Run (local).anim")
+        self.assertEqual(install.free_card(folder, "Run"), "Run (local).pose")
+        self.assertEqual(install.CARD_SUFFIXES, (".pose", ".anim"))
+        self.assertEqual(install.CARD_SUFFIX, ".pose")
 
     def test_the_install_dialog_names_a_renamed_card(self):
         kept = install.Kept(["Pose (local).pose/pose.json"])

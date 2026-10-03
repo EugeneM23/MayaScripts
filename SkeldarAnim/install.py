@@ -38,11 +38,15 @@ KEPT_PREFIX = "SkeldarAnim_poses_kept_"
 # each shipped card's relative path and its files' sha1, written at install
 # and build time from the payload itself. The next install reads it to tell
 # the previous build's own cards from the colleague's - a card is ONE unit
-# (`<Name>.pose/`), never merged file by file. Its leading dot keeps it out of
-# the library's listing (`maya_poselib.store`'s hidden-name rule).
+# (`<Name>.pose/` or `<Name>.anim/`), never merged file by file. Its leading
+# dot keeps it out of the library's listing (`maya_poselib.store`'s
+# hidden-name rule).
 SHIPPED = ".shipped.json"
 SHIPPED_FORMAT = "skeldar.shipped"
 CARD_SUFFIX = ".pose"               # maya_poselib.store.CARD_SUFFIX
+# Both card types (2026-10-03, animation cards): an `<Name>.anim/` folder
+# is one card unit exactly as a `<Name>.pose/` one (maya_poselib.store.CARD_SUFFIXES).
+CARD_SUFFIXES = (".pose", ".anim")
 CARD_NAME_MAX = 80                  # maya_poselib.store.NAME_MAX
 LOCAL_SUFFIX = " (local)"           # a local card put back beside a shipped one of its name
 HALF_WRITTEN = ".part"              # a card file being written (store's atomic writes)
@@ -288,14 +292,21 @@ def _hidden_pose_folder(name):
 
 
 def _is_card(name):
-    return name.lower().endswith(CARD_SUFFIX)
+    """True for a card folder's name of either type (`Fist.pose`, `Walk.anim`)."""
+    return name.lower().endswith(CARD_SUFFIXES)
+
+
+def _card_suffix(name):
+    """The card's own suffix (".pose" / ".anim", lower case) - the one to slice its name by."""
+    return ".anim" if name.lower().endswith(".anim") else CARD_SUFFIX
 
 
 def poses_walk(root):
     """(cards, folders, files) of a pose library folder, relative "/" paths, parents first: every
-    CARD folder (`<Name>.pose`, never entered - a card is one unit), every other folder, every file
-    outside a card. Inside a hidden folder (`.git`, `_trash`: the library lists nothing there)
-    everything is a plain file. The shipped manifest and `.part` halves are left out."""
+    CARD folder (`<Name>.pose` or `<Name>.anim`, never entered - a card is one unit), every other
+    folder, every file outside a card. Inside a hidden folder (`.git`, `_trash`: the library
+    lists nothing there) everything is a plain file. The shipped manifest and `.part` halves are
+    left out."""
     cards, folders, files = [], [], []
     for base, dirs, names in os.walk(root):
         dirs.sort()
@@ -389,23 +400,25 @@ def _folded(cards):
     return dict((rel.lower(), files) for rel, files in (cards or {}).items())
 
 
-def free_card(folder, name, suffix=LOCAL_SUFFIX):
-    """The card folder name `<name> (local).pose` free in `folder` - then `<name> (local)
-    2.pose` ... - capped at the library's 80 characters (`maya_poselib.store.unique_name`'s
-    rule)."""
+def free_card(folder, name, suffix=LOCAL_SUFFIX, card_suffix=CARD_SUFFIX):
+    """The card folder name `<name> (local)<card_suffix>` free in `folder` - then `<name> (local)
+    2<card_suffix>` ... - capped at the library's 80 characters and free of BOTH card types
+    (`maya_poselib.store.unique_name`'s rule: a pose and an animation never share a name)."""
     number = 1
     while True:
         tail = suffix if number == 1 else "%s %d" % (suffix, number)
         stem = name[:CARD_NAME_MAX - len(tail)].rstrip(". ") + tail
-        if not os.path.exists(os.path.join(folder, stem + CARD_SUFFIX)):
-            return stem + CARD_SUFFIX
+        if not any(os.path.exists(os.path.join(folder, stem + kind)) for kind in CARD_SUFFIXES):
+            return stem + card_suffix
         number += 1
 
 
 def _rename_inside(card, name):
-    """The card's pose.json `name` set to its new folder's (best effort: a card that cannot be
-    read keeps its file as it is - the library names a card by its folder anyway)."""
-    target = os.path.join(card, "pose.json")
+    """The card's main file's `name` - `anim.json` in an `.anim` card, `pose.json` in a `.pose`
+    one - set to its new folder's (best effort: a card that cannot be read keeps its file as it
+    is - the library names a card by its folder anyway)."""
+    main = "anim.json" if _card_suffix(card) == ".anim" else "pose.json"
+    target = os.path.join(card, main)
     try:
         with open(target, encoding="utf-8-sig") as handle:
             data = json.load(handle)
@@ -445,8 +458,9 @@ def keep_local(old, new, new_cards=None):
     manifest, says which; that card is then `dropped`, never brought back). Every other card is
     LOCAL - absent from the old manifest, or changed since (Update from selection, Replace
     thumbnail) - and goes back WHOLE at its place; where the new build holds a card of that path
-    (case-insensitively, as the disk compares) it goes back BESIDE it, `<Name> (local).pose`
-    (`free_card`), never mixed into it - unless it is the very same files. `new_cards` None (the
+    (case-insensitively, as the disk compares) it goes back BESIDE it, `<Name> (local).pose` /
+    `.anim` - its own type (`free_card`), never mixed into it - unless it is the very same files.
+    A pose and an animation of one name are two units (two paths). `new_cards` None (the
     new build's poses never arrived: the copy failed half way) drops nothing and puts every
     card back where the new build has none.
 
@@ -493,11 +507,12 @@ def keep_local(old, new, new_cards=None):
             if os.path.isdir(target) and card_files(target) == files_now:
                 continue                     # the very same card the new build ships
             folder = os.path.dirname(target)
-            name = os.path.basename(rel)[:-len(CARD_SUFFIX)]
+            kind = _card_suffix(rel)
+            name = os.path.basename(rel)[:-len(kind)]
             if not os.path.isdir(folder):
                 result.unrestored.append(rel)
                 continue
-            placed = "/".join(rel.split("/")[:-1] + [free_card(folder, name)])
+            placed = "/".join(rel.split("/")[:-1] + [free_card(folder, name, card_suffix=kind)])
             result.renamed[rel] = placed
         if not parent_ready(placed):
             result.unrestored.append(rel)
@@ -505,7 +520,7 @@ def keep_local(old, new, new_cards=None):
         destination = os.path.join(new, *placed.split("/"))
         shutil.copytree(source, destination)
         if placed != rel:
-            _rename_inside(destination, os.path.basename(placed)[:-len(CARD_SUFFIX)])
+            _rename_inside(destination, os.path.basename(placed)[:-len(_card_suffix(placed))])
         result.extend(placed + "/" + name for name in sorted(files_now))
     for rel in files:
         target = os.path.join(new, *rel.split("/"))

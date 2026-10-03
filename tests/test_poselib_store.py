@@ -160,8 +160,8 @@ class SearchSort(unittest.TestCase):
         # terms from different fields of one card all have to hold
         self.assertEqual(store.filter_cards(cards, "run body creep"), [run])
         self.assertEqual(store.filter_cards(cards, "run hands"), [])
-        # no field holds it
-        self.assertEqual(store.filter_cards(cards, "pose"), [])
+        # no field holds it ("pose" is a pose card's type word since 2026-10-03, so not that)
+        self.assertEqual(store.filter_cards(cards, "walk"), [])
 
     def test_search_ignores_case_and_extra_whitespace(self):
         cards = [self.card("Fist", "Hands"), self.card("Run", "Body")]
@@ -397,6 +397,237 @@ class Invariants(unittest.TestCase):
             os.makedirs(os.path.join(self.root, folder))
         self.assertEqual(store.folders(self.root), ["A", "A/x", "a b", "B"])
         self.assertEqual(store.folders(self.root + "/nowhere"), [])
+
+
+class AnimCards(unittest.TestCase):
+    """2026-10-03, animation cards: a folder <Name>.anim holding anim.json (the header, read by
+    every listing), frames.json.gz (the per-frame data, read by Apply only), the still and the
+    preview sheet - in the same library, under the same rules as a pose card."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+        self.trash = tempfile.mkdtemp()     # outside the library, as the real one is
+        self.addCleanup(shutil.rmtree, self.trash)
+        self.images = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.images)
+
+    def image(self, data=b"\xff\xd8jpg"):
+        """A small image file outside the library; its path."""
+        path = os.path.join(self.images, "%d.jpg" % len(os.listdir(self.images)))
+        with open(path, "wb") as handle:
+            handle.write(data)
+        return path
+
+    def header(self, **extra):
+        data = {"format": store.ANIM_FORMAT, "version": 1, "kind": "character", "name": "Walk",
+                "created": "2026-10-03T12:00:00", "author": "E", "fps": "ntsc",
+                "start": 0.0, "end": 47.0, "frames": 48, "character": {"label": "Manny [rig]"},
+                "members": ["pelvis", "hand_l"], "regions": ["Pelvis"], "bones": {},
+                "preview": {"frames": 48, "columns": 7, "size": 320, "step": 1}}
+        data.update(extra)
+        return data
+
+    def frames(self, count=48):
+        return {"bones": ["root"], "world": [[0, 0, 0, 1, 0, 0, 0]] * count, "drive": {}}
+
+    def test_an_animation_is_a_dot_anim_card_with_its_files(self):
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames(),
+                           thumbnail=self.image(), preview=self.image())
+        self.assertTrue(path.endswith("/Walk.anim"))
+        self.assertEqual(sorted(os.listdir(path)), sorted(
+            [store.ANIM_FILE, store.FRAMES_FILE, store.THUMB_FILE, store.PREVIEW_FILE]))
+        card = store.cards(self.root)[0][0]
+        self.assertEqual((card.type, card.frames, card.fps, card.start, card.end),
+                         ("anim", 48, "ntsc", 0.0, 47.0))
+        self.assertTrue(card.preview.endswith("/Walk.anim/preview.jpg"))
+        self.assertTrue(card.thumbnail.endswith("/Walk.anim/thumbnail.jpg"))
+        self.assertEqual(card.label, "Manny [rig]")
+        self.assertEqual(card.count, 2)
+        self.assertEqual(card.name, "Walk")
+
+    def test_the_suffix_answers_the_type(self):
+        self.assertEqual(store.CARD_SUFFIXES, (".pose", ".anim"))
+        self.assertEqual(store.card_suffix("C:/lib/Walk.anim"), ".anim")
+        self.assertEqual(store.card_suffix("C:/lib/Walk.ANIM/"), ".anim")
+        self.assertEqual(store.card_suffix("C:\\lib\\Fist.pose"), ".pose")
+        self.assertTrue(store.is_anim("C:/lib/Walk.anim"))
+        self.assertFalse(store.is_anim("C:/lib/Fist.pose"))
+
+    def test_read_answers_the_header_and_read_frames_the_data(self):
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        self.assertEqual(store.read(path)["frames"], 48)
+        self.assertEqual(store.read(path)["format"], store.ANIM_FORMAT)
+        self.assertNotIn("world", store.read(path))
+        data = store.read_frames(path)
+        self.assertEqual(len(data["world"]), 48)
+        self.assertEqual(data["bones"], ["root"])
+        self.assertEqual(data["drive"], {})
+
+    def test_the_frames_file_is_compact_gzip_json(self):
+        import gzip
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames(2))
+        with gzip.open(path + "/" + store.FRAMES_FILE, "rt", encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertEqual(json.loads(text), self.frames(2))
+        self.assertNotIn(", ", text)
+        self.assertNotIn(": ", text)
+
+    def test_read_frames_is_cached_until_the_file_changes(self):
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        first = store.read_frames(path)
+        self.assertIs(store.read_frames(path), first)
+        store.write(self.root, "", "Walk", self.header(frames=10), frames=self.frames(10),
+                    replace=True)
+        self.assertEqual(len(store.read_frames(path)["world"]), 10)
+
+    def test_read_frames_refuses_a_missing_or_broken_file(self):
+        path = store.write(self.root, "", "Door", self.header(kind="objects", objects=[]))
+        with self.assertRaises(ValueError):
+            store.read_frames(path)
+        with open(path + "/" + store.FRAMES_FILE, "wb") as handle:
+            handle.write(b"not gzip")
+        with self.assertRaises(ValueError):
+            store.read_frames(path)
+
+    def test_a_pose_card_reads_as_a_pose(self):
+        store.write(self.root, "", "Fist", pose())
+        card = store.cards(self.root)[0][0]
+        self.assertEqual((card.type, card.frames, card.preview, card.fps, card.start, card.end),
+                         ("pose", 0, "", "", 0.0, 0.0))
+
+    def test_a_pose_card_takes_no_frames_and_no_preview(self):
+        with self.assertRaises(ValueError):
+            store.write(self.root, "", "Fist", pose(), frames=self.frames())
+        with self.assertRaises(ValueError):
+            store.write(self.root, "", "Fist", pose(), preview=self.image())
+        self.assertEqual(os.listdir(self.root), [])
+        path = store.write(self.root, "", "Fist", pose())
+        with self.assertRaises(ValueError):
+            store.set_preview(path, self.image())
+        self.assertEqual(os.listdir(path), [store.POSE_FILE])
+
+    def test_set_preview_replaces_the_sheet(self):
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames(),
+                           preview=self.image(b"\xff\xd8one"))
+        store.set_preview(path, self.image(b"\xff\xd8two"))
+        with open(path + "/" + store.PREVIEW_FILE, "rb") as handle:
+            self.assertEqual(handle.read(), b"\xff\xd8two")
+
+    def test_a_name_is_free_only_when_neither_type_holds_it(self):
+        store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        self.assertEqual(store.unique_name(self.root, "", "Walk"), "Walk 2")
+        with self.assertRaises(ValueError):
+            store.write(self.root, "", "Walk", pose())
+        with self.assertRaises(ValueError):
+            store.write(self.root, "", "Walk", pose(), replace=True)
+        store.write(self.root, "", "Fist", pose())
+        self.assertEqual(store.unique_name(self.root, "", "Fist"), "Fist 2")
+        with self.assertRaises(ValueError):
+            store.write(self.root, "", "Fist", self.header(), frames=self.frames())
+        self.assertEqual(sorted(os.listdir(self.root)), ["Fist.pose", "Walk.anim"])
+
+    def test_a_rename_or_a_move_onto_the_other_type_s_name_is_refused(self):
+        walk = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        fist = store.write(self.root, "", "Fist", pose())
+        with self.assertRaises(ValueError):
+            store.rename(walk, "Fist")
+        self.assertEqual(store.read(walk)["name"], "Walk")
+        store.write(self.root, "Loco", "Walk", pose(name="Walk"))
+        with self.assertRaises(ValueError):
+            store.move(walk, self.root, "Loco")
+        self.assertTrue(os.path.isdir(walk) and os.path.isdir(fist))
+
+    def test_an_objects_animation_counts_its_objects(self):
+        store.write(self.root, "", "Door", self.header(kind="objects", objects=[
+            {"name": "door", "path": "|door", "attrs": {}}], members=[]))
+        card = store.cards(self.root)[0][0]
+        self.assertEqual((card.type, card.kind, card.label, card.count),
+                         ("anim", "objects", "objects", 1))
+        self.assertEqual(card.preview, "")
+
+    def test_rename_move_remove_keep_the_suffix(self):
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        path = store.rename(path, "Run")
+        self.assertTrue(path.endswith("/Run.anim"))
+        self.assertEqual(store.read(path)["name"], "Run")
+        self.assertEqual(len(store.read_frames(path)["world"]), 48)
+        store.make_folder(self.root, "", "Loco")
+        path = store.move(path, self.root, "Loco")
+        self.assertTrue(path.endswith("/Loco/Run.anim"))
+        self.assertEqual(store.cards(self.root)[0][0].folder, "Loco")
+        gone = store.remove(path, self.trash)
+        self.assertTrue(gone.endswith("_Run.anim"))
+        self.assertTrue(os.path.isfile(gone + "/" + store.ANIM_FILE))
+
+    def test_remove_keeps_two_of_one_animation_and_its_suffix(self):
+        trash = store.trash_dir(self.trash)
+        gone = []
+        for _ in range(2):
+            path = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+            gone.append(store.remove(path, trash))
+        self.assertEqual(len(set(gone)), 2)
+        self.assertTrue(all(os.path.isdir(path) and path.endswith(".anim") for path in gone))
+
+    def test_a_replace_keeps_the_files_it_is_not_given(self):
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames(),
+                           thumbnail=self.image(), preview=self.image())
+        store.write(self.root, "", "Walk", self.header(frames=10), frames=self.frames(),
+                    replace=True)
+        self.assertTrue(os.path.isfile(path + "/" + store.PREVIEW_FILE))
+        self.assertTrue(os.path.isfile(path + "/" + store.THUMB_FILE))
+        self.assertEqual(store.read(path)["frames"], 10)
+
+    def test_a_failed_animation_write_leaves_no_card(self):
+        with self.assertRaises(OSError):
+            store.write(self.root, "", "Walk", self.header(), frames=self.frames(),
+                        preview=os.path.join(self.images, "missing.jpg"))
+        self.assertEqual(os.listdir(self.root), [])
+
+    def test_a_failed_animation_replace_keeps_the_old_card_whole(self):
+        """The frames are staged with the rest: a replace that dies on the preview must not leave
+        the new frames under the old header."""
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        with self.assertRaises(OSError):
+            store.write(self.root, "", "Walk", self.header(frames=10), frames=self.frames(10),
+                        replace=True, preview=os.path.join(self.images, "missing.jpg"))
+        self.assertEqual(store.read(path)["frames"], 48)
+        self.assertEqual(len(store.read_frames(path)["world"]), 48)
+        self.assertEqual(sorted(os.listdir(path)), [store.ANIM_FILE, store.FRAMES_FILE])
+
+    def test_a_folder_named_like_a_card_is_refused(self):
+        with self.assertRaises(ValueError):
+            store.make_folder(self.root, "", "Loco.anim")
+        store.make_folder(self.root, "", "Loco")
+        with self.assertRaises(ValueError):
+            store.rename_folder(self.root, "Loco", "Loco.anim")
+        with self.assertRaises(ValueError):
+            store.write(self.root, "Loco.anim", "Walk", pose())
+
+    def test_a_broken_animation_header_is_reported(self):
+        os.makedirs(self.root + "/Bad.anim")
+        with open(self.root + "/Bad.anim/anim.json", "w") as f:
+            f.write("{")
+        os.makedirs(self.root + "/Empty.anim")
+        os.makedirs(self.root + "/Posey.anim")
+        with open(self.root + "/Posey.anim/anim.json", "w") as f:
+            json.dump(pose(), f)                         # a pose's format in an animation card
+        found, broken = store.cards(self.root)
+        self.assertEqual(found, [])
+        self.assertEqual(len(broken), 3)
+
+    def test_the_type_word_is_searched_and_the_type_filters(self):
+        store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        store.write(self.root, "", "Fist", pose())
+        cards = store.cards(self.root)[0]
+        self.assertEqual([c.name for c in store.filter_cards(cards, "animation")], ["Walk"])
+        self.assertEqual([c.name for c in store.filter_cards(cards, "pose")], ["Fist"])
+        self.assertEqual([c.name for c in store.of_type(cards, "pose")], ["Fist"])
+        self.assertEqual([c.name for c in store.of_type(cards, "anim")], ["Walk"])
+        self.assertEqual(len(store.of_type(cards, "all")), 2)
+        self.assertEqual(store.TYPES, ("all", "pose", "anim"))
+        with self.assertRaises(ValueError):
+            store.of_type(cards, "clips")
 
 
 def card_named(name):
