@@ -60,7 +60,14 @@ before they were written (a locator keyed tx 0/10/20 = 0/10/20, an additive laye
   False after cutting every key) - and its plug keeps the value the DG last evaluated (0.0587 on
   a plain tx at frame 1). The next `setKeyframe` makes a new curve (on a layer measured to come
   back connected: `findCurveForPlug` answers the same name again), with Maya's defaults - the
-  old curve's infinity and weighting do not come back;
+  old curve's infinity and weighting do not come back by themselves: `curve_state` reads them
+  before a cut, `put_curve_state` gives them to the curve found again after the keys;
+- `setInfinity` given a curve NODE sets nothing and its query answers None (measured, both
+  without and with `-edit`; its flags are `-preInfinite` / `-postInfinite`, `preInfinity` is
+  refused): it works on `node.attr` or `node -attribute`, which a layer makes ambiguous. The
+  curve's own enum attributes `preInfinity` / `postInfinity` ('Constant:Linear:Cycle=3:Cycle
+  with offset:Oscillate') read and write on any curve. `keyTangent -q -weightedTangents`
+  answers a list of one bool, and weighting a curve that already is keeps its weights;
 - `keyframe -edit -relative -timeChange 7 -time (10, 1e9)` moves 10, 20 to 17, 27 on the base
   curve and on a layer curve alike, the other layers' curves untouched; it answers 1 (curves),
   not the keys moved;
@@ -91,6 +98,11 @@ TWEAK_TOL = 1e-9
 BIG = 1e9
 # in-tangent types Maya refuses to set (measured: a warning, and the in-tangent reset to auto)
 _NO_IN_TYPES = ("step", "stepnext")
+# an animCurve's `preInfinity` / `postInfinity` enum (measured: 'Constant:Linear:Cycle=3:Cycle
+# with offset:Oscillate') in `setInfinity`'s spelling - `curve_state` reads it, `put_curve_state`
+# writes it back
+_INFINITY = {0: "constant", 1: "linear", 3: "cycle", 4: "cycleRelative", 5: "oscillate"}
+_INFINITY_VALUE = dict((name, value) for value, name in _INFINITY.items())
 
 LOCKED = "the animation layer %s is locked - unlock it or pick another"
 MUTED = "%s is muted - the keys are in it, the pose shows when it is on"
@@ -101,6 +113,7 @@ QUATERNION = ("the additive animation layer %s accumulates rotation as quaternio
 NOT_KEYED = "%d not keyed (%s): %s"
 KEYS_REFUSED = "%d of %d keys on %s not keyed (%s)"
 TANGENTS_LOST = "%s keyed, its tangents not set (%s)"
+NO_CURVE = "no curve found for its keys"
 
 # plugs named per reason in a note: a whole rig skipped must not print three hundred names
 NAMED = 4
@@ -332,10 +345,12 @@ def preview(values):
 
 
 def _key(plug, value, frame, layer):
-    """One final-value key, on the layer when there is one; the number of keys Maya made."""
+    """One final-value key, on the layer when there is one (a `Layer` or a layer's name); the
+    number of keys Maya made."""
     if layer is None:
         return cmds.setKeyframe(plug, time=frame, value=value)
-    return cmds.setKeyframe(plug, time=frame, value=value, animLayer=layer.name)
+    name = layer.name if isinstance(layer, Layer) else str(layer)
+    return cmds.setKeyframe(plug, time=frame, value=value, animLayer=name)
 
 
 def _why(error):
@@ -558,17 +573,17 @@ def _field(key, index):
 def _fixed_tangents(key, weighted):
     """The `keyTangent` flags that put a stored FIXED tangent's angles (and, on a weighted curve,
     weights) back, or {} - for any other type Maya computes them from the neighbours when the
-    type is set (measured), so a stored number would be thrown away. A tangent whose two sides
-    differ was broken: `lock` off, or Maya keeps it locked over two different angles."""
+    type is set (measured), so a stored number would be thrown away. A tangent whose two ANGLES
+    differ was broken: `lock` off, or Maya keeps it locked over two different angles. Two
+    different WEIGHTS are no break: the lock ties the angles, and a unified tangent keeps in /
+    out weights 2 / 3 under it (measured) - `weightLock` off is what lets them differ."""
     if "fixed" not in (_field(key, 2), _field(key, 3)) or len(key) < 8:
         return {}
     in_angle, in_weight, out_angle, out_weight = key[4], key[5], key[6], key[7]
     flags = {"inAngle": in_angle, "outAngle": out_angle}
-    broken = abs(float(in_angle) - float(out_angle)) > 1e-6
     if weighted:
         flags.update(inWeight=in_weight, outWeight=out_weight, weightLock=False)
-        broken = broken or abs(float(in_weight) - float(out_weight)) > 1e-6
-    if broken:
+    if abs(float(in_angle) - float(out_angle)) > 1e-6:
         flags["lock"] = False
     return flags
 
@@ -588,7 +603,8 @@ def _type_flags(key):
 
 def write_keys(plug, keys_list, layer, weighted=False, tangents=True):
     """Keys with their tangents onto `plug`: `Written` (keys made, notes) as `write`'s, `.plugs`
-    [plug] when any key landed.
+    [plug] when any key landed. `layer` a `Layer`, a layer's NAME (the base when it is the
+    scene's root layer, as `curve_for` / `cut` / `shift` take it) or None.
 
     Each `[t, v, in_type, out_type, in_angle, in_weight, out_angle, out_weight]` is keyed
     (`_key`: the FINAL value, on the layer when there is one - the plug added to a non-base layer
@@ -599,19 +615,21 @@ def write_keys(plug, keys_list, layer, weighted=False, tangents=True):
     ...)` - in that order because an angle or a weight set turns a tangent fixed and a type set
     recomputes them (measured). On a layer the tangents are the layer curve's: only the types
     travel. A plug `writable` refuses takes nothing and is named; keys Maya refuses are named
-    with their count; a tangent Maya refuses leaves the keys and says so."""
+    with their count; a tangent Maya refuses - or a curve `curve_for` cannot find for keys that
+    landed - leaves the keys and says so."""
     ok, reason = writable(plug)
     if not ok:
         return Written(0, [_note(reason, [plug])])
-    if layer is not None and not layer.base:
+    name, base = _layer_parts(layer)
+    if name is not None and not base:
         try:
-            cmds.animLayer(layer.name, edit=True, attribute=plug)
+            cmds.animLayer(name, edit=True, attribute=plug)
         except RuntimeError as error:
             return Written(0, [_note(_why(error), [plug])])
     count, landed, refused = 0, [], {}
     for key in keys_list:
         try:
-            made = _key(plug, key[1], key[0], layer) or 0
+            made = _key(plug, key[1], key[0], name) or 0
         except RuntimeError as error:
             refused.setdefault(_why(error), []).append(key[0])
             continue
@@ -619,35 +637,120 @@ def write_keys(plug, keys_list, layer, weighted=False, tangents=True):
             count += int(made)
             landed.append(key)
         else:
-            refused.setdefault("no key made" if layer is None else
-                               "layer %s took no key" % layer.name, []).append(key[0])
+            refused.setdefault("no key made" if name is None else
+                               "layer %s took no key" % name, []).append(key[0])
     notes = [KEYS_REFUSED % (len(times), len(keys_list), plug, why)
              for why, times in refused.items()]
     if not landed:
         return Written(count, notes)
-    curve = curve_for(plug, layer)
-    if curve is not None:
-        try:
-            _put_tangents(curve, landed, weighted, tangents)
-        except RuntimeError as error:
-            notes.append(TANGENTS_LOST % (plug, _why(error)))
+    edits = _tangent_edits(landed, weighted, tangents)
+    if edits:
+        curve = curve_for(plug, layer)
+        if curve is None:
+            notes.append(TANGENTS_LOST % (plug, NO_CURVE))
+        else:
+            try:
+                _put_tangents(curve, edits)
+            except RuntimeError as error:
+                notes.append(TANGENTS_LOST % (plug, _why(error)))
     return Written(count, notes, [plug])
 
 
-def _put_tangents(curve, landed, weighted, tangents):
-    """`write_keys`' tangent half on `curve`: weighted first, the fixed tangents' angles and
-    weights, then every key's types (`tangents` False: the types alone)."""
+def _tangent_edits(landed, weighted, tangents):
+    """[(time span or None, flags)]: the `keyTangent` edits `write_keys` makes on the curve of
+    the keys that `landed`, in their order - the curve weighted first (span None), the fixed
+    tangents' angles and weights, then every key's types (`tangents` False: the types alone).
+    Empty when the keys carry nothing to put back."""
+    edits = []
     if tangents:
         if weighted:
-            cmds.keyTangent(curve, edit=True, weightedTangents=True)
+            edits.append((None, {"weightedTangents": True}))
         for key in landed:
             flags = _fixed_tangents(key, weighted)
             if flags:
-                cmds.keyTangent(curve, edit=True, time=(key[0], key[0]), **flags)
+                edits.append(((key[0], key[0]), flags))
     for key in landed:
         flags = _type_flags(key)
         if flags:
-            cmds.keyTangent(curve, edit=True, time=(key[0], key[0]), **flags)
+            edits.append(((key[0], key[0]), flags))
+    return edits
+
+
+def _put_tangents(curve, edits):
+    """`_tangent_edits`' edits on `curve`, each a `keyTangent(curve, edit=True, ...)` - a span's
+    on that key alone (`time=(t, t)`), the others on the whole curve."""
+    for span, flags in edits:
+        if span is None:
+            cmds.keyTangent(curve, edit=True, **flags)
+        else:
+            cmds.keyTangent(curve, edit=True, time=span, **flags)
+
+
+def curve_state(plugs, layer):
+    """{plug: {"preInfinity": str, "postInfinity": str, "weighted": bool}} of each plug's time
+    curve on `layer` (`curve_for`), for the plugs that have one - read BEFORE a cut that may
+    delete the curve (Maya deletes an emptied curve, measured). The infinity in `setInfinity`'s
+    spelling ("constant", "linear", "cycle", "cycleRelative", "oscillate"), read off the
+    curve's own `preInfinity` / `postInfinity` enum: measured, `setInfinity` given a curve NODE
+    answers None to a query and sets nothing (it works on `node.attr`, which a layer makes
+    ambiguous). The weighting is `_weighted`'s. A curve whose reads raise is left out. Nothing
+    is written."""
+    state = OrderedDict()
+    for plug in plugs:
+        curve = curve_for(plug, layer)
+        if curve is None:
+            continue
+        try:
+            pre = cmds.getAttr(curve + ".preInfinity")
+            post = cmds.getAttr(curve + ".postInfinity")
+            weighted = _weighted(curve)
+        except (RuntimeError, ValueError, TypeError):
+            continue
+        state[plug] = {"preInfinity": _INFINITY.get(int(pre), "constant"),
+                       "postInfinity": _INFINITY.get(int(post), "constant"),
+                       "weighted": weighted}
+    return state
+
+
+def _weighted(curve):
+    """Is `curve` weighted? `keyTangent -q -weightedTangents` answers a list of one bool
+    (measured)."""
+    answer = cmds.keyTangent(curve, query=True, weightedTangents=True)
+    if isinstance(answer, (list, tuple)):
+        answer = answer[0] if answer else False
+    return bool(answer)
+
+
+def put_curve_state(state, layer):
+    """Each plug's curve on `layer`, looked up AGAIN (a cut deleted it and the keys made a new
+    one), given back its pre/post infinity and its weighting; a plug with no curve now is
+    skipped. Returns the number of curves restored - each curve once, however many spellings of
+    its plug `state` holds.
+
+    `curve_state`'s dict. The infinity is written on the curve's own `preInfinity` /
+    `postInfinity` (measured: `setInfinity` on a curve node sets nothing), the weighting with
+    `keyTangent(curve, edit=True, weightedTangents=...)` (measured: weighting a curve that
+    already is keeps its weights); a value the curve already has is not written again, so a
+    fresh curve that kept Maya's defaults costs nothing. A curve that refuses a write (a
+    referenced one) keeps what it refused and is not counted."""
+    restored, seen = 0, set()
+    for plug, saved in (state or {}).items():
+        curve = curve_for(plug, layer)
+        if curve is None or curve in seen:
+            continue
+        seen.add(curve)
+        try:
+            for attr in ("preInfinity", "postInfinity"):
+                value = _INFINITY_VALUE.get(saved.get(attr))
+                if value is not None and int(cmds.getAttr(curve + "." + attr)) != value:
+                    cmds.setAttr(curve + "." + attr, value)
+            weighted = bool(saved.get("weighted"))
+            if _weighted(curve) != weighted:
+                cmds.keyTangent(curve, edit=True, weightedTangents=weighted)
+        except (RuntimeError, ValueError, TypeError):
+            continue
+        restored += 1
+    return restored
 
 
 # ------------------------------------------------------------------ the animator's tweaks

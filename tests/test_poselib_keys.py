@@ -964,10 +964,12 @@ class CurveCmds(object):
     `found` {(layer, plug): [curves]} is what `findCurveForPlug` answers (missing: None),
     `plain` {plug: [nodes]} what feeds the plug itself, `types` {node: type}, `times`
     {curve: [key times]} - edited by `cutKey` / `keyframe -edit` as Maya would. `raising` names
-    layers whose query raises (a scene with no layers). Every call is logged."""
+    layers whose query raises (a scene with no layers). `infinity` {curve: (pre, post)} the
+    enum values of its `preInfinity` / `postInfinity` (0 when not given), `weighted` {curve:
+    bool} its weighting - both read and written as Maya does. Every call is logged."""
 
     def __init__(self, found=None, plain=None, types=None, times=None, raising=(), root=None,
-                 locked=()):
+                 locked=(), infinity=None, weighted=None):
         self.found = dict(found or {})
         self.plain = dict(plain or {})
         self.types = dict(types or {})
@@ -975,6 +977,8 @@ class CurveCmds(object):
         self.raising = set(raising)
         self.root = root
         self.locked = set(locked)
+        self.infinity = dict(infinity or {})
+        self.weighted = dict(weighted or {})
         self.log = []
 
     def animLayer(self, name=None, **kw):
@@ -1020,7 +1024,12 @@ class CurveCmds(object):
         return 0                                # measured: cutKey -clear answers 0 regardless
 
     def keyTangent(self, curve, **kw):
+        if kw.get("query"):
+            assert kw.get("weightedTangents"), kw
+            return [self.weighted.get(curve, False)]        # measured: a list of one bool
         self.log.append(("tangent", curve, dict(kw)))
+        if "weightedTangents" in kw:
+            self.weighted[curve] = bool(kw["weightedTangents"])
         return 1
 
     def setKeyframe(self, plug, **kw):
@@ -1030,7 +1039,16 @@ class CurveCmds(object):
     def getAttr(self, plug, **kw):
         if kw.get("lock"):
             return plug in self.locked
+        node, _dot, attr = plug.rpartition(".")
+        if attr in ("preInfinity", "postInfinity"):
+            return self.infinity.get(node, (0, 0))[attr == "postInfinity"]
         raise AssertionError((plug, kw))
+
+    def setAttr(self, plug, value, **kw):
+        self.log.append(("set", plug, value))
+        node, _dot, attr = plug.rpartition(".")
+        pre, post = self.infinity.get(node, (0, 0))
+        self.infinity[node] = (value, post) if attr == "preInfinity" else (pre, value)
 
     def connectionInfo(self, plug, **kw):
         return False
@@ -1164,6 +1182,17 @@ class Cut(Restoring):
         self.assertEqual(keys.cut(["a.tx"], None, 0, 5), 1)
         self.assertEqual(fake.times["a_translateX"], [10])
 
+    def test_a_maya_error_from_the_cut_is_raised(self):
+        # a press must not paste over a take it could not clear (a referenced curve)
+        class Refusing(CurveCmds):
+            def cutKey(self, curve, **kw):
+                raise RuntimeError("cutKey: the curve is from a referenced file")
+        keys.cmds = Refusing(**self.SCENE)
+        with self.assertRaises(RuntimeError):
+            keys.cut(["a.tx", "a.ty"], ADD, 5, 15)
+        with self.assertRaises(RuntimeError):
+            keys.cut(["a.tx"], ADD)
+
 
 class Shift(Restoring):
 
@@ -1204,6 +1233,17 @@ class Shift(Restoring):
         keys.cmds = fake
         self.assertEqual(keys.shift(["a.tx", "|a.tx"], ADD, 0, 4), 1)
         self.assertEqual(fake.times["cx"], [14])
+
+    def test_a_maya_error_from_the_move_is_raised(self):
+        # an Insert must not key its clip over keys it could not move out of the way
+        class Refusing(CurveCmds):
+            def keyframe(self, curve, **kw):
+                if kw.get("edit"):
+                    raise RuntimeError("keyframe: the curve is from a referenced file")
+                return CurveCmds.keyframe(self, curve, **kw)
+        keys.cmds = Refusing(**self.SCENE)
+        with self.assertRaises(RuntimeError):
+            keys.shift(["a.tx"], ADD, 10, 7)
 
 
 class WriteKeys(Restoring):
@@ -1353,6 +1393,160 @@ class WriteKeys(Restoring):
         written = keys.write_keys("a.tx", [[3.0, 7.0]], ADD)
         self.assertEqual(written.count, 1)
         self.assertEqual(fake.calls("tangent"), [])
+
+    def test_two_weights_never_unlock_a_unified_tangent(self):
+        # measured: a locked (unified) tangent keeps in / out weights 2 / 3 with its angles
+        # equal - the lock ties the ANGLES, and clearing it for two weights broke a tangent the
+        # animator had unified
+        fake = self.fake(None)
+        keys.cmds = fake
+        keys.write_keys("a.tx", [[5.0, 1.0, "fixed", "fixed", 10.0, 2.0, 10.0, 3.0]], None,
+                        weighted=True)
+        fixed = [t[2] for t in fake.calls("tangent") if "inWeight" in t[2]]
+        self.assertEqual(len(fixed), 1)
+        self.assertEqual((fixed[0]["inWeight"], fixed[0]["outWeight"]), (2.0, 3.0))
+        self.assertIs(fixed[0]["weightLock"], False)
+        self.assertNotIn("lock", fixed[0])
+        # two ANGLES still break it, whatever the weights
+        fake = self.fake(None)
+        keys.cmds = fake
+        keys.write_keys("a.tx", [[5.0, 1.0, "fixed", "fixed", 10.0, 2.0, 25.0, 2.0]], None,
+                        weighted=True)
+        fixed = [t[2] for t in fake.calls("tangent") if "inWeight" in t[2]]
+        self.assertIs(fixed[0]["lock"], False)
+
+    def test_a_layer_given_by_name_is_keyed_as_the_layer(self):
+        # as curve_for / cut / shift take it: the base is the scene's root layer
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx"]}, types={"cx": "animCurveTL"},
+                         root="BaseAnimation")
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, "AddL", tangents=False)
+        self.assertEqual((written.count, written.notes, written.plugs), (3, [], ["a.tx"]))
+        self.assertEqual(fake.calls("add"), [("add", "AddL", "a.tx")])
+        self.assertEqual([entry[4] for entry in fake.calls("key")], ["AddL"] * 3)
+        self.assertEqual([t[1] for t in fake.calls("tangent")], ["cx"] * 3)
+        fake = CurveCmds(found={("BaseAnimation", "a.tx"): ["cx"]},
+                         types={"cx": "animCurveTL"}, root="BaseAnimation")
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, "BaseAnimation", tangents=False)
+        self.assertEqual(written.count, 3)
+        self.assertEqual(fake.calls("add"), [])
+        self.assertEqual([entry[4] for entry in fake.calls("key")], ["BaseAnimation"] * 3)
+
+    def test_keys_whose_curve_is_not_found_say_their_tangents_were_not_set(self):
+        # the layer answers no curve for keys it took: said, never skipped in silence
+        fake = CurveCmds()
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, ADD, tangents=False)
+        self.assertEqual((written.count, written.plugs), (3, ["a.tx"]))
+        self.assertEqual(written.notes, [keys.TANGENTS_LOST % ("a.tx", keys.NO_CURVE)])
+        self.assertEqual(fake.calls("tangent"), [])
+        # keys that carry no tangent have nothing to lose: no note
+        keys.cmds = CurveCmds()
+        self.assertEqual(keys.write_keys("a.tx", [[3.0, 7.0]], ADD).notes, [])
+
+    def test_a_tangent_maya_refuses_keeps_the_keys_and_says_so(self):
+        class Refusing(CurveCmds):
+            def keyTangent(self, curve, **kw):
+                raise RuntimeError("keyTangent: cannot edit a referenced curve\nmore text")
+        keys.cmds = Refusing(found={("AddL", "a.tx"): ["cx"]}, types={"cx": "animCurveTL"})
+        written = keys.write_keys("a.tx", self.KEYS, ADD, tangents=False)
+        self.assertEqual((written.count, written.plugs), (3, ["a.tx"]))
+        self.assertEqual(written.notes, [keys.TANGENTS_LOST % (
+            "a.tx", "keyTangent: cannot edit a referenced curve")])
+
+    def test_a_plug_the_layer_refuses_to_take_is_named_and_keyed_nowhere(self):
+        class Refusing(CurveCmds):
+            def animLayer(self, name=None, **kw):
+                if kw.get("edit"):
+                    raise RuntimeError("animLayer: AddL cannot hold a.tx")
+                return CurveCmds.animLayer(self, name, **kw)
+        fake = Refusing(found={("AddL", "a.tx"): ["cx"]}, types={"cx": "animCurveTL"})
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, ADD)
+        self.assertEqual((written.count, written.plugs), (0, []))
+        self.assertEqual(written.notes, [keys.NOT_KEYED % (
+            1, "animLayer: AddL cannot hold a.tx", "a.tx")])
+        self.assertEqual(fake.calls("key") + fake.calls("tangent"), [])
+
+
+class CurveState(Restoring):
+    """A cut that empties a curve DELETES it (measured: plain, base and layer curves alike) and
+    the keys make a new one with Maya's defaults - constant infinity, unweighted. `curve_state`
+    reads each plug's curve's infinity and weighting BEFORE the cut, `put_curve_state` gives
+    them back to the curve found AGAIN after the keys. Read and written on the curve's own
+    `preInfinity` / `postInfinity` (measured: `setInfinity` given a curve node does nothing,
+    and its query answers None - it works on `node.attr`, which a layer makes ambiguous)."""
+
+    def test_each_curve_s_infinity_and_weighting_is_read(self):
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx"], ("AddL", "a.ty"): ["cy"]},
+                         infinity={"cx": (3, 5), "cy": (1, 4)}, weighted={"cx": True})
+        keys.cmds = fake
+        state = keys.curve_state(["a.tx", "a.ty", "a.tz"], ADD)
+        self.assertEqual(state, {
+            "a.tx": {"preInfinity": "cycle", "postInfinity": "oscillate", "weighted": True},
+            "a.ty": {"preInfinity": "linear", "postInfinity": "cycleRelative",
+                     "weighted": False}})
+        self.assertEqual(list(state), ["a.tx", "a.ty"])           # a.tz has no curve
+        self.assertEqual(fake.calls("set") + fake.calls("tangent"), [])   # nothing written
+
+    def test_the_state_goes_back_onto_the_curve_found_again(self):
+        # the cut deleted cx; the keys made cx1 with Maya's defaults
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx1"]})
+        keys.cmds = fake
+        state = {"a.tx": {"preInfinity": "cycle", "postInfinity": "cycleRelative",
+                          "weighted": True},
+                 "a.tz": {"preInfinity": "oscillate", "postInfinity": "linear",
+                          "weighted": False}}
+        self.assertEqual(keys.put_curve_state(state, ADD), 1)     # a.tz: no curve now
+        self.assertEqual(fake.infinity["cx1"], (3, 4))
+        self.assertIs(fake.weighted["cx1"], True)
+        self.assertIn(("tangent", "cx1", {"edit": True, "weightedTangents": True}), fake.log)
+
+    def test_a_round_trip_through_a_new_curve(self):
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx"]}, infinity={"cx": (5, 3)},
+                         weighted={"cx": True})
+        keys.cmds = fake
+        state = keys.curve_state(["a.tx"], ADD)
+        fake.found[("AddL", "a.tx")] = ["cx1"]                     # cut, keyed again
+        self.assertEqual(keys.put_curve_state(state, ADD), 1)
+        self.assertEqual((fake.infinity["cx1"], fake.weighted["cx1"]), ((5, 3), True))
+
+    def test_what_a_curve_already_has_is_not_written_again(self):
+        # Maya's defaults put back on a fresh curve: nothing to do, nothing on the undo queue
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx1"]})
+        keys.cmds = fake
+        state = {"a.tx": {"preInfinity": "constant", "postInfinity": "constant",
+                          "weighted": False}}
+        self.assertEqual(keys.put_curve_state(state, ADD), 1)
+        self.assertEqual(fake.calls("set") + fake.calls("tangent"), [])
+
+    def test_two_spellings_of_one_curve_count_it_once(self):
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx"], ("AddL", "|a.tx"): ["cx"]})
+        keys.cmds = fake
+        state = dict((plug, {"preInfinity": "cycle", "postInfinity": "cycle",
+                             "weighted": False}) for plug in ("a.tx", "|a.tx"))
+        self.assertEqual(keys.put_curve_state(state, ADD), 1)
+        self.assertEqual(len(fake.calls("set")), 2)                # pre and post, once
+
+    def test_a_curve_that_refuses_its_state_is_left_and_not_counted(self):
+        class Refusing(CurveCmds):
+            def setAttr(self, plug, value, **kw):
+                raise RuntimeError("setAttr: the attribute is locked")
+        keys.cmds = Refusing(found={("AddL", "a.tx"): ["cx"], ("AddL", "a.ty"): ["cy"]})
+        state = dict((plug, {"preInfinity": "cycle", "postInfinity": "constant",
+                             "weighted": False}) for plug in ("a.tx", "a.ty"))
+        self.assertEqual(keys.put_curve_state(state, ADD), 0)
+
+    def test_without_layers_the_plug_s_own_curve(self):
+        fake = CurveCmds(plain={"a.tx": ["a_translateX"]}, types={"a_translateX": "animCurveTL"},
+                         infinity={"a_translateX": (0, 3)})
+        keys.cmds = fake
+        state = keys.curve_state(["a.tx"], None)
+        self.assertEqual(state["a.tx"]["postInfinity"], "cycle")
+        fake.infinity["a_translateX"] = (0, 0)
+        self.assertEqual(keys.put_curve_state(state, None), 1)
+        self.assertEqual(fake.infinity["a_translateX"], (0, 3))
 
 
 if __name__ == "__main__":
