@@ -20,7 +20,8 @@ card made on `Manny_Rig1` applies onto `Manny_Rig2` by name - each bone `{path, 
 canonical, rest, world, rotateOrder, jointOrient, rotateAxis}` - a rig's four unrolled limb bones
 a side with their `drive` too (`rigsolve.drive_matrices`). `rest` is the skinCluster's bind
 (`maya_retargetmode.rest_world`; a joint's own `.bindPose` was measured 3.5 cm stale, trap 176) -
-an unskinned helper's rides its parent's (`rests`: one rest, wherever the character stands now) -
+an unskinned helper's rides its parent's, an unskinned top joint's is its bind pose's (`rests`,
+`bind_pose`: one rest, wherever the character stands now and however its pelvis moves) -
 `world` the bone as it stands at the current frame. `canonical` is our UE5 name from
 `maya_skeletonmap.recognize` run on the WHOLE skeleton with its rest positions (it refuses a hand
 chain alone); on a refusal a UE-named skeleton keeps its leaves as its names, any other none.
@@ -552,15 +553,23 @@ def _joints(root):
     return sorted(set(paths), key=lambda p: p.split("|"))
 
 
-def rests(paths, binds, now):
+def rests(paths, binds, now, posed=None):
     """{path: flat rest world} of a skeleton's joints, ONE consistent rest: pure.
 
     `paths` parents first (`_joints`), `binds` {path: flat} the skinned joints' binds
-    (`maya_retargetmode.rest_world`), `now` {path: flat} every joint's world as it stands. A
-    skinned joint rests at its bind; an UNSKINNED one (UE's weapon_r / weapon_l, camera_root /
-    camera_bone) takes its parent's rest with its own local as it stands now - the helper rides
-    its parent - and an unskinned TOP joint takes its nearest skinned descendant's way to its
-    bind. A skeleton with no skin at all rests as it stands.
+    (`maya_retargetmode.rest_world`), `now` {path: flat} every joint's world as it stands,
+    `posed` {path: flat} the worlds ONE bind pose (a dagPose) holds for the joints it lists.
+
+    - a skinned joint rests at its bind;
+    - an unskinned joint UNDER another (UE's weapon_r / weapon_l, camera_root / camera_bone)
+      takes its parent's rest with its own local as it stands now - the helper rides its parent;
+    - an unskinned TOP joint (a root no skin holds: Character Creator's BoneRoot, an exporter
+      that writes only deforming bones) rests where the bind pose holds it - carried onto the
+      skin's bind through the pose's own relation to the nearest skinned descendant it also
+      lists - and, listed in none, where it stands. NEVER through a descendant's CURRENT pose:
+      the pelvis moves against the root, and a root rested on a crouched, turned pelvis lost
+      its name and stood the skeleton's own card 30 deg off (fix round 3);
+    - a skeleton with no skin at all rests as it stands.
 
     Read straight off `rest_world` - the bind for a skinned joint, the CURRENT world for any
     other - the rest mixed two poses: a Manny standing 150 cm low (Main.ty -150) had its helpers
@@ -568,6 +577,7 @@ def rests(paths, binds, now):
     floor, the root (at the bind's 0) stood 50 cm over it and lost its name - `has_root` False,
     the pelvis put over the WORLD floor, 245.897 cm over the root for 95.897 (fix round 2)."""
     parents = skelmap.parent_map(paths)
+    posed = posed or {}
     if not binds:
         return dict((p, list(now[p])) for p in paths)
     out = {}
@@ -577,17 +587,43 @@ def rests(paths, binds, now):
             continue
         parent = parents.get(path)
         if parent is not None and parent in out:
-            anchor, anchor_rest = parent, out[parent]
-        else:
-            below = [q for q in binds if q.startswith(path + "|")]
-            if not below:
-                out[path] = list(now[path])
-                continue
-            anchor = min(below, key=lambda q: (q.count("|"), q))
-            anchor_rest = binds[anchor]
-        out[path] = posemath.flat(posemath.matrix(now[path]) *
-                                  posemath.matrix(now[anchor]).inverse() *
-                                  posemath.matrix(anchor_rest))
+            out[path] = posemath.flat(posemath.matrix(now[path]) *
+                                      posemath.matrix(now[parent]).inverse() *
+                                      posemath.matrix(out[parent]))
+            continue
+        if path not in posed:
+            out[path] = list(now[path])
+            continue
+        below = [q for q in binds if q in posed and q.startswith(path + "|")]
+        if not below:
+            out[path] = list(posed[path])
+            continue
+        anchor = min(below, key=lambda q: (q.count("|"), q))
+        out[path] = posemath.flat(posemath.matrix(posed[path]) *
+                                  posemath.matrix(posed[anchor]).inverse() *
+                                  posemath.matrix(binds[anchor]))
+    return out
+
+
+def bind_pose(top, paths):
+    """{path: flat world} of the joints of `paths` that the bind pose (dagPose) listing `top`
+    holds - of several, the one listing the most of them (ties by name); {} when none lists it."""
+    poses = cmds.dagPose(top, query=True, bindPose=True) or []
+    if not poses:
+        return {}
+    listed = dict((pose, {}) for pose in poses)
+    for path in paths:
+        for plug in cmds.listConnections(path + ".message", source=False, destination=True,
+                                         plugs=True, type="dagPose") or []:
+            pose, _dot, attr = plug.partition(".")
+            if pose in listed and attr.startswith("members["):
+                listed[pose][path] = int(attr[len("members["):].split("]")[0])
+    pose = max(sorted(listed), key=lambda p: len(listed[p]))
+    out = {}
+    for path, index in listed[pose].items():
+        world = cmds.getAttr("%s.worldMatrix[%d]" % (pose, index))
+        if world and len(world) == 16:
+            out[path] = [float(v) for v in world]
     return out
 
 
@@ -616,10 +652,13 @@ def skeleton(ref, notes=None):
         bind = _bind(path)
         if bind is not None:
             binds[path] = bind
-    rest = rests(paths, binds, now)
+    parents = skelmap.parent_map(paths)
+    top_unskinned = [p for p in paths if p not in binds and parents.get(p) is None] \
+        if binds else []
+    posed = bind_pose(top_unskinned[0], paths) if top_unskinned else {}
+    rest = rests(paths, binds, now, posed)
     result = skelmap.recognize(paths, dict((p, tuple(m[12:15])) for p, m in rest.items()))
     names = canonical_names(paths, result.mapping, bool(result.refusal))
-    parents = skelmap.parent_map(paths)
     bones, seen = {}, collections.Counter(leaf(p) for p in paths)
     for path in paths:
         name = leaf(path)

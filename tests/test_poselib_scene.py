@@ -606,12 +606,37 @@ class Rests(unittest.TestCase):
         self.assertAlmostEqual(at_0[self.CAMERA][13], 164.0)
         self.assertAlmostEqual(at_0[self.WEAPON][13], 90.0)
 
-    def test_an_unskinned_top_joint_takes_its_skinned_descendants_way_to_the_bind(self):
+    def crouched(self, dy):
+        # the hips crouched 35 and turned 30 against the root: the pelvis moves against the root
+        now = self.now(dy)
+        now[self.PELVIS] = _at(0, 61 + dy, 0, 30.0)
+        return now
+
+    def test_an_unskinned_top_joint_rests_where_the_bind_pose_holds_it(self):
+        # fix round 3: taken from the pelvis's CURRENT pose, a root under crouched, turned hips
+        # rested 35 cm low and turned 30 - it lost its name and the card landed 30 deg off
         binds = self.binds()
         del binds[self.ROOT]
-        out = scene.rests(self.PATHS, binds, self.now(-150.0))
+        posed = {self.ROOT: _at(0, 0, 0), self.PELVIS: _at(0, 96, 0)}
+        for dy in (0.0, -150.0):
+            out = scene.rests(self.PATHS, binds, self.crouched(dy), posed)
+            self.close(out[self.ROOT], _at(0, 0, 0))
+            self.close(out[self.CAMERA], _at(0, 164, 0))
+
+    def test_through_the_pose_s_own_relation_when_the_pose_stands_elsewhere(self):
+        # a bind pose saved where the character stood 20 cm aside: carried onto the skin's
+        # bind through the pose's own root-to-pelvis relation, never through the current one
+        binds = self.binds()
+        del binds[self.ROOT]
+        posed = {self.ROOT: _at(20, 0, 0), self.PELVIS: _at(20, 96, 0)}
+        out = scene.rests(self.PATHS, binds, self.crouched(-150.0), posed)
         self.close(out[self.ROOT], _at(0, 0, 0))
-        self.close(out[self.CAMERA], _at(0, 164, 0))
+
+    def test_an_unskinned_top_joint_no_bind_pose_lists_rests_where_it_stands(self):
+        binds = self.binds()
+        del binds[self.ROOT]
+        out = scene.rests(self.PATHS, binds, self.crouched(0.0))
+        self.close(out[self.ROOT], _at(0, 0, 0))            # not the crouched pelvis's way
 
     def test_no_skin_at_all_rests_as_it_stands(self):
         now = self.now(-150.0)

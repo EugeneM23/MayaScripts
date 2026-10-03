@@ -148,7 +148,8 @@ from maya_poselib import posemath as pm  # noqa: E402
 
 PHASES = [p.strip() for p in os.environ.get(
     "POSELIB_PHASES",
-    "undo,root,low,mirror,blend,tweaks,partial,mixamo,rootless,objects,select,layers,floor"
+    "undo,root,low,unskinned,mirror,blend,tweaks,partial,mixamo,rootless,objects,select,layers,"
+    "floor"
 ).split(",") if p.strip()]
 OUT = io.open(sys.argv[1], "w", encoding="utf-8") if len(sys.argv) > 1 else None
 RESULTS = []
@@ -795,6 +796,71 @@ def phase_low():
         ch.reset()
         cmds.setAttr(mover + ".translateY", 0.0)
         evaluate()
+
+
+def phase_unskinned():
+    """Fix round 3: an UNSKINNED top joint (a root no skin holds - Character Creator's
+    BoneRoot, an exporter writing only deforming bones). Fix round 2 rested it through its
+    nearest skinned descendant's CURRENT pose - the pelvis, which moves against the root: with
+    the hips crouched 35 and turned 30 the root lost its name and the skeleton's own standing
+    card landed 30 deg turned (the hand 26.75 cm off; 150 cm at root -150). The reviewer's case:
+    a fresh Manny skeleton, its root and the root's children but the pelvis taken out of the
+    skin; a card with the arm up; then at root 0 and -150, the hips crouched and turned, the
+    card applied: the pelvis and the hand on the card relative to the root to 0.01."""
+    root = add("Manny")
+    try:
+        joints = [root] + (cmds.listRelatives(root, allDescendents=True, type="joint",
+                                              fullPath=True) or [])
+        leafs = dict((scene.leaf(j), j) for j in joints)
+        loose = [root] + [c for c in (cmds.listRelatives(root, children=True, type="joint",
+                                                         fullPath=True) or [])
+                          if scene.leaf(c) != "pelvis"]
+        for cluster in set(cmds.listConnections(joints, type="skinCluster") or []):
+            held = set(cmds.ls(cmds.skinCluster(cluster, query=True, influence=True) or [],
+                               long=True))
+            for joint in loose:
+                if joint in held:
+                    cmds.skinCluster(cluster, edit=True, removeInfluence=joint)
+        unskinned = not cmds.listConnections(root + ".worldMatrix[0]", type="skinCluster")
+        ref = scene.skeleton_ref(root)
+        pelvis, hand, upper = leafs["pelvis"], leafs["hand_l"], leafs["upperarm_l"]
+
+        def rel(node):
+            return W(node) * W(root).inverse()
+
+        cmds.currentTime(21)
+        arm = cmds.getAttr(upper + ".rotateZ")
+        cmds.setAttr(upper + ".rotateZ", arm + 20.0)
+        evaluate()
+        card, _n = capture.build_pose([root])
+        want_p, want_h = rel(pelvis), rel(hand)
+        cmds.setAttr(upper + ".rotateZ", arm)
+        t0, r0 = cmds.getAttr(pelvis + ".translate")[0], cmds.getAttr(pelvis + ".rotate")[0]
+        for frame_, dy in ((22, 0.0), (23, -150.0)):
+            cmds.currentTime(frame_)
+            cmds.setAttr(root + ".translateY", dy)
+            cmds.xform(pelvis, relative=True, worldSpace=True, translation=(0, -35, 0))
+            cmds.xform(pelvis, relative=True, worldSpace=True, rotation=(0, 30, 0))
+            bones, _c = scene.skeleton(ref)
+            ok, text = ap.apply(card, selection=[root])
+            evaluate()
+            got_p, got_h = rel(pelvis), rel(hand)
+            dp = (pm.position(got_p) - pm.position(want_p)).length()
+            dh = (pm.position(got_h) - pm.position(want_h)).length()
+            ap_, ah = pm.angle(got_p, want_p), pm.angle(got_h, want_h)
+            gate("unskinned root at %+g, the hips crouched 35 and turned 30: still a root, the "
+                 "skeleton's own card lands - the pelvis and the hand on it" % dy,
+                 ok and unskinned and pm.has_root(bones) and max(dp, dh) <= 0.01 and
+                 max(ap_, ah) <= 0.01,
+                 "root unskinned %s, has_root %s | pelvis %.4f cm %.4f deg, hand %.4f cm "
+                 "%.4f deg | %s" % (unskinned, pm.has_root(bones), dp, ap_, dh, ah, text))
+            cmds.cutKey(joints, clear=True)
+            cmds.setAttr(pelvis + ".translate", *t0)
+            cmds.setAttr(pelvis + ".rotate", *r0)
+            cmds.setAttr(root + ".translateY", 0.0)
+    finally:
+        if root and cmds.objExists(root):
+            deletion.delete_selected([root], confirm=lambda question: True)
 
 
 def _root_space(m, root):
@@ -2058,6 +2124,7 @@ def run():
     say("plugin %s (apply from %s)" % (PLUGIN, os.path.dirname(ap.__file__)))
     setup()
     for name, fn in (("undo", phase_undo), ("root", phase_root), ("low", phase_low),
+                     ("unskinned", phase_unskinned),
                      ("mirror", phase_mirror),
                      ("blend", phase_blend), ("tweaks", phase_tweaks),
                      ("partial", phase_partial),

@@ -42,7 +42,11 @@ build, the animator commits them from the repo.
     `{parent, canonical, rest[16], world[16], drive[16]?, rotateOrder}`:
     - `rest` = `maya_retargetmode.rest_world` (the skinCluster bind; trap 176) for a skinned
       joint; an UNSKINNED one (weapon_*, camera_*) rides its parent's rest with its own local as
-      it stands, an unskinned top joint its nearest skinned descendant's way to the bind, a
+      it stands; an unskinned TOP joint (a root no skin holds) rests where the bind pose
+      (dagPose) listing it holds it - carried onto the skin's bind through the pose's own relation
+      to a skinned descendant it lists - and, listed in none, where it stands: never through a
+      descendant's current pose (fix round 3: the pelvis moves against the root, and a root
+      rested on crouched, turned hips lost its name, the skeleton's own card 30 deg off); a
       skeleton with no skin at all rests as it stands (`scene.rests`) - one rest wherever the
       character stands: read as the helper's current world, a Manny 150 cm low lost its root
       (the floor rule took a helper for the floor) and its pelvis went 245.897 cm over the root
