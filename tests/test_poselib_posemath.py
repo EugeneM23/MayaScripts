@@ -715,6 +715,216 @@ class Names(unittest.TestCase):
         self.assertFalse(pm.is_twist("upperarm_l"))
 
 
+# ---------------------------------------------------------------- an animation: one Transfer,
+# many frames (2026-10-03). The alignment is read once, off the FIRST pasted frame; each frame
+# carries its own pose and the target's root frame where the clip's travel puts it.
+# Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md
+
+def same(test, a, b, tol, what=""):
+    """Every element of two matrices within `tol`."""
+    a, b = pm.matrix(a), pm.matrix(b)
+    worst = max(abs(a[i] - b[i]) for i in range(16))
+    test.assertLessEqual(worst, tol, "%s: %g" % (what, worst))
+
+
+def with_helper(bones, local=trs((5, 0, 3), (0, 25, 0))):
+    """A copy with `ik_foot_root` - an export helper, no member, no partner - under the root."""
+    out = dict((leaf, dict(bone)) for leaf, bone in bones.items())
+    root = bones["root"]
+    out["ik_foot_root"] = {"parent": "root", "canonical": None,
+                           "rest": pm.flat(local * pm.matrix(root["rest"])),
+                           "world": pm.flat(local * pm.matrix(root["world"]))}
+    return out
+
+
+def root_moved(bones, place):
+    """A copy whose root bone stands on `place` (its world only: what `travel` reads)."""
+    out = dict((leaf, dict(bone)) for leaf, bone in bones.items())
+    out[pm.root_of(bones)]["world"] = pm.flat(place)
+    return out
+
+
+class TransferFrames(unittest.TestCase):
+
+    def fixtures(self):
+        """(source, target, members, scale): a twin, a ×1.2 non-twin, a source with no root."""
+        twin_s = skeleton(POSE)
+        twin_t = skeleton(place=trs((300, 0, -50), (0, 90, 0)))
+        big_s = standing(POSE, off={"calf_l": (0.0, 0.0, 0.5)})
+        big_t = skeleton(scale=1.2)
+        mx_s = rootless(skeleton(TILTED, place=trs((120, 0, -36), (0, 90, 0))))
+        mx_t = skeleton(place=trs((-40, 0, 75), (0, 70, 0)))
+        return ((twin_s, twin_t, [b for b in twin_s if b != "root"], 1.0),
+                (big_s, big_t, [b for b in big_s if b != "root"],
+                 pm.scale_between(big_s, big_t, pm.pairs(big_s, big_t))),
+                (mx_s, mx_t, list(mx_s), 1.0))
+
+    def test_targets_equals_a_transfers_frame(self):
+        for source, target, members, scale in self.fixtures():
+            pairs = pm.pairs(source, target)
+            want = pm.targets(source, target, pairs, members, scale=scale)
+            got = pm.Transfer(source, target, pairs, members, scale=scale).frame()
+            self.assertEqual(sorted(got), sorted(want))
+            for leaf in want:
+                same(self, got[leaf], want[leaf], 1e-12, leaf)
+
+    def test_frame_takes_another_pose_with_the_alignment_of_the_first(self):
+        # the calf stands 0.5 cm off its bind in the first frame: the thigh's alignment reads it
+        first = standing(POSE, off={"calf_l": (0.0, 0.0, 0.5)})
+        target = skeleton(scale=1.2)                             # no twin: 20 % longer
+        pairs = pm.pairs(first, target)
+        self.assertFalse(pm.twin(pairs, first, target))
+        members = [b for b in first if b != "root"]
+        scale = pm.scale_between(first, target, pairs)
+        transfer = pm.Transfer(first, target, pairs, members, scale=scale)
+        aligned = pm.alignments(pairs, first, target)
+        for leaf in aligned:
+            same(self, transfer.align[leaf], aligned[leaf], 0.0, leaf)
+        second_pose = {"pelvis": (0, -20, 0), "spine_01": (-10, 5, 0), "upperarm_l": (10, -30, 60),
+                       "thigh_l": (20, 10, -5), "calf_l": (-60, 0, 0), "hand_l": (0, 40, 0)}
+        # the same translations as the first: `targets` reads the same alignment off it
+        alike = standing(second_pose, off={"calf_l": (0.0, 0.0, 0.5)})
+        want = pm.targets(alike, target, pairs, members, scale=scale)
+        got = transfer.frame(alike)
+        for leaf in want:
+            same(self, got[leaf], want[leaf], 1e-9, leaf)
+        # other translations: the frame's own alignment differs, the transfer keeps the first's
+        moved = standing(second_pose, off={"calf_l": (0.0, 0.0, -0.5)})
+        own = pm.alignments(pairs, moved, target)
+        self.assertGreater(pm.angle(own["thigh_l"], transfer.align["thigh_l"]), 1.0)
+        out = transfer.frame(moved)
+        for leaf, above in (("calf_l", "thigh_l"), ("lowerarm_l", "upperarm_l"),
+                            ("spine_01", "pelvis")):
+            o_t = pm.rigid(target[leaf]["rest"]) * transfer.align[leaf] * \
+                pm.rigid(moved[leaf]["rest"]).inverse()
+            o_tp = pm.rigid(target[above]["rest"]) * transfer.align[above] * \
+                pm.rigid(moved[above]["rest"]).inverse()
+            wanted = o_t * pm.rotation(moved[leaf]["world"]) * \
+                pm.rotation(moved[above]["world"]).inverse() * o_tp.inverse()
+            got_turn = pm.rotation(out[leaf]) * pm.rotation(out[above]).inverse()
+            self.assertLess(pm.angle(got_turn, pm.rotation(wanted)), 1e-9, leaf)
+
+    def test_root_world_moves_the_root_and_carries_its_children(self):
+        source = skeleton(POSE)
+        target = with_helper(skeleton(place=trs((300, 0, -50), (0, 90, 0))))
+        pairs = pm.pairs(source, target)
+        self.assertNotIn("ik_foot_root", pairs)
+        members = [b for b in source if b != "root"]
+        transfer = pm.Transfer(source, target, pairs, members)
+        here = trs((40, 0, -25), (0, 60, 0))
+        out = transfer.frame(root_world=here)
+        same(self, out["root"], here, 1e-12, "root")
+        local = pm.matrix(target["ik_foot_root"]["world"]) * \
+            pm.matrix(target["root"]["world"]).inverse()
+        same(self, out["ik_foot_root"], local * here, 1e-9, "ik_foot_root")
+        # the pelvis 95 cm over the new root (a twin: the card's offset, unscaled)
+        want = pm.position(here) + om.MVector(0, 95, 0) * pm.rotation(here)
+        self.assertLess((pm.position(out["pelvis"]) - want).length(), 1e-9)
+        # the members ride the new root as the card's ride its own (at the origin)
+        for leaf in ("pelvis", "upperarm_l", "hand_l", "calf_l"):
+            same(self, out[leaf], pm.matrix(source[leaf]["world"]) * here, 1e-9, leaf)
+        # without it the root keeps where it stands
+        same(self, transfer.frame()["root"], target["root"]["world"], 1e-12, "standing")
+
+    def test_root_world_on_a_rootless_target_is_its_ground(self):
+        card = skeleton(TILTED)
+        target = rootless(skeleton(place=trs((-40, 0, 75), (0, 70, 0))))
+        pairs = pm.pairs(card, target)
+        transfer = pm.Transfer(card, target, pairs, [b for b in card if b != "root"])
+        here = trs((10, 0, 20), (0, -30, 0))
+        out = transfer.frame(root_world=here)
+        hips = pm.position(out["mx_pelvis"])
+        self.assertAlmostEqual(hips.x, 10.0, 9)
+        self.assertAlmostEqual(hips.z, 20.0, 9)
+        ground = pm._ground(target["mx_pelvis"]["rest"], out["mx_pelvis"])[0]
+        same(self, ground, here, 1e-9, "the ground frame")
+        # the body the card's, carried from its root onto the new ground
+        for leaf in ("mx_spine_01", "mx_upperarm_l", "mx_thigh_l"):
+            same(self, out[leaf], pm.matrix(card[leaf[3:]]["world"]) * here, 1e-9, leaf)
+
+    def test_place(self):
+        source = skeleton(POSE)
+        target = skeleton(place=trs((300, 0, -50), (0, 90, 0)))
+        transfer = pm.Transfer(source, target, pm.pairs(source, target), ["upperarm_l"])
+        same(self, transfer.place(), target["root"]["world"], 0.0, "rooted")
+        other = skeleton(place=trs((5, 0, 6), (0, 10, 0)))
+        same(self, transfer.place(other), other["root"]["world"], 0.0, "another target")
+        bare = rootless(skeleton(TILTED, place=trs((-40, 0, 75), (0, 70, 0))))
+        transfer = pm.Transfer(source, bare, pm.pairs(source, bare), ["upperarm_l"])
+        want = pm._ground(bare["mx_pelvis"]["rest"], bare["mx_pelvis"]["world"])[0]
+        same(self, transfer.place(), want, 0.0, "rootless")
+
+    def test_root_frame(self):
+        bones = skeleton(place=trs((5, 0, 6), (0, 10, 0)))
+        pose, rest = pm.root_frame(bones)
+        same(self, pose, bones["root"]["world"], 0.0, "pose")
+        same(self, rest, bones["root"]["rest"], 0.0, "rest")
+        other = skeleton(place=trs((-7, 0, 1)))
+        same(self, pm.root_frame(bones, other)[0], other["root"]["world"], 0.0, "another pose")
+        bare = rootless(skeleton(TILTED, place=trs((-40, 0, 75), (0, 70, 0))))
+        want = pm._ground(bare["mx_pelvis"]["rest"], bare["mx_pelvis"]["world"])
+        got = pm.root_frame(bare)
+        same(self, got[0], want[0], 0.0, "ground")
+        same(self, got[1], want[1], 0.0, "ground rest")
+
+
+class Travel(unittest.TestCase):
+
+    def transfer(self, source, target=None, scale=1.0):
+        target = skeleton() if target is None else target
+        pairs = pm.pairs(source, target)
+        return pm.Transfer(source, target, pairs, [b for b in source if b != "root"], scale=scale)
+
+    def test_travel_on_a_twin_is_the_root_motion(self):
+        first, now = skeleton(), skeleton(place=trs((10, 0, 20), (0, 30, 0)))
+        got = self.transfer(first).travel(now, first)
+        want = pm.rigid(now["root"]["world"]) * pm.rigid(first["root"]["world"]).inverse()
+        same(self, got, want, 1e-12)
+        # from a first frame that stands elsewhere too
+        start = skeleton(place=trs((-3, 0, 4), (0, -15, 0)))
+        got = self.transfer(first).travel(now, start)
+        want = pm.rigid(now["root"]["world"]) * pm.rigid(start["root"]["world"]).inverse()
+        same(self, got, want, 1e-12)
+
+    def test_travel_is_carried_through_the_root_axes_and_scaled(self):
+        # a UE target: its root rests turned -90 about X (Z up), the card's at identity
+        target = skeleton()
+        ue = pm.flat(trs(r=(-90, 0, 0)))
+        target["root"] = dict(target["root"], rest=ue, world=ue)
+        first, now = skeleton(), skeleton(place=trs((10, 0, 20), (0, 30, 0)))
+        got = self.transfer(first, target, scale=2.0).travel(now, first)
+        q = trs(r=(-90, 0, 0))
+        motion = pm.rigid(now["root"]["world"])
+        self.assertLess(pm.angle(got, q * pm.rotation(motion) * q.inverse()), 1e-9)
+        want = pm.position(motion) * q.inverse() * 2.0
+        self.assertLess((pm.position(got) - want).length(), 1e-9)
+        # the card's 20 cm forward (+Z) is the UE root's -Y, its 10 cm to the side +X - doubled
+        self.assertAlmostEqual(pm.position(got).y, -40.0, 9)
+        self.assertAlmostEqual(pm.position(got).x, 20.0, 9)
+        self.assertAlmostEqual(pm.position(got).z, 0.0, 9)
+
+    def test_travel_mirrored_reflects_the_sideways_step(self):
+        first = skeleton()
+        transfer = self.transfer(first)
+        side = transfer.travel(skeleton(place=trs((10, 0, 0))), first, flip=True)
+        self.assertLess((pm.position(side) - om.MVector(-10, 0, 0)).length(), 1e-9)
+        ahead = transfer.travel(skeleton(place=trs((0, 0, 10))), first, flip=True)
+        self.assertLess((pm.position(ahead) - om.MVector(0, 0, 10)).length(), 1e-9)
+        turn = transfer.travel(skeleton(place=trs(r=(0, 30, 0))), first, flip=True)
+        self.assertLess(pm.angle(turn, trs(r=(0, -30, 0))), 1e-9)
+        # unflipped: as it was
+        turn = transfer.travel(skeleton(place=trs(r=(0, 30, 0))), first)
+        self.assertLess(pm.angle(turn, trs(r=(0, 30, 0))), 1e-9)
+
+    def test_travel_of_a_rootless_source_is_its_ground_motion(self):
+        source = rootless(skeleton())
+        first = root_moved(source, trs((5, 90, 0)))
+        now = root_moved(source, trs((15, 95, 10), (0, 20, 0)))
+        got = self.transfer(first).travel(now, first)
+        self.assertLess((pm.position(got) - om.MVector(10, 0, 10)).length(), 1e-9)
+        self.assertLess(pm.angle(got, trs(r=(0, 20, 0))), 1e-9)
+
+
 class Purity(unittest.TestCase):
 
     def test_imports(self):
