@@ -95,6 +95,7 @@ class FakeScene(object):
         return self.regions
 
     def apply_targets(self):
+        self.reads = getattr(self, "reads", 0) + 1
         return self.targets
 
     def save(self, name, folder, regions, snapshot_path):
@@ -557,6 +558,43 @@ class Details(WindowCase):
             time.sleep(0.01)
         self.assertTrue(self.win.apply_button.isEnabled())
         self.assertEqual(self.win.target_line.text(), "onto Manny_Rig1")
+
+    # the final review (2026-10-03): the selection was read again on every card click - 0.8 s
+    # with a rig's 187 controls selected, 3 s with the save panel open, before a drag could start
+
+    def test_a_card_click_reads_nothing_of_the_scene(self):
+        self.win.pick(self.fist)
+        reads = self.scene.reads
+        self.win.pick(self.idle)
+        self.win.pick(self.fist)
+        self.assertEqual(self.scene.reads, reads)
+        self.assertTrue(self.win.apply_button.isEnabled())
+        self.assertEqual(self.win.target_line.text(), "onto Manny_Rig1")
+
+    def test_with_no_card_picked_a_selection_change_reads_nothing(self):
+        self.win.unpick()
+        reads = getattr(self.scene, "reads", 0)
+        self.win.follow()
+        self.assertEqual(getattr(self.scene, "reads", 0), reads)
+        self.assertFalse(self.win.apply_button.isEnabled())
+        self.win.pick(self.fist)                  # read once, the first time it is needed
+        self.assertEqual(self.scene.reads, reads + 1)
+
+    def test_a_hidden_window_reads_when_it_shows_again(self):
+        self.win.pick(self.fist)
+        self.win.hide()
+        self.scene.targets = ("select a part of one of 2 characters", False)
+        self.scene.callback()
+        self.assertFalse(self.win.follow_timer.isActive())
+        self.assertTrue(self.win.apply_button.isEnabled())         # not read while hidden
+        self.win.show()
+        self.assertTrue(self.win.follow_timer.isActive())
+        deadline = time.time() + 2.0
+        while self.win.apply_button.isEnabled() and time.time() < deadline:
+            self.app.processEvents()
+            time.sleep(0.01)
+        self.assertFalse(self.win.apply_button.isEnabled())
+        self.assertEqual(self.win.target_line.text(), "select a part of one of 2 characters")
 
     def test_select_objects(self):
         self.win.pick(self.idle)

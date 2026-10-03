@@ -452,27 +452,52 @@ def _bare():
     return skeletonimport.bare_roots()
 
 
-def character_of(path, rigs=None, bare=None):
+def character_of(path, rigs=None, bare=None, refs=None):
     """The CharacterRef `path` belongs to, or None (the module docstring's rules). `rigs` and
-    `bare` (the skeletons no rig owns) are read from the scene when not given."""
+    `bare` (the skeletons no rig owns) are read from the scene when not given; `refs` (a dict)
+    keeps one `rig_ref` per rig and one `skeleton_ref` per skeleton across the calls of one
+    selection.
+
+    A node of a rig - its namespace, its group, its game skeleton, its character group - is
+    answered by `maya_rigs.rig_of` (pure) BEFORE the weapon and armour walks: those climb every
+    ancestor of a deep AdvancedSkeleton control asking each for a marker, and with a rig's 187
+    controls selected that cost 0.8 s on every selection change and every card click (the final
+    review); a weapon or an armour piece of a rig stands in its group and is answered the same."""
     from maya_scenesetup import armor, weaponspace
     from maya_uebridge import skeletonimport
     path = _long(path) if path else None
     if path is None:
         return None
-    path = weaponspace.hand_for(path) or armor.bone_for(path) or path
+    refs = {} if refs is None else refs
     rigs = maya_rigs.rigs() if rigs is None else rigs
-    rig = maya_rigs.rig_of(path, rigs)
-    if rig is not None:
-        return rig_ref(rig)
     bare = _bare() if bare is None else bare
+    rig = maya_rigs.rig_of(path, rigs)
+    if rig is None and cmds.objectType(path) == "joint":
+        # a bare skeleton's own joint names it at once (an armour piece's joints stand under
+        # their own top joint, no skeleton's: they go on to the walk)
+        root = skeletonimport._top_joint(path)
+        if root in bare:
+            return _cached(refs, ("skeleton", root), lambda: skeleton_ref(root))
+    if rig is None:
+        path = weaponspace.hand_for(path) or armor.bone_for(path) or path
+        rig = maya_rigs.rig_of(path, rigs)
+    if rig is not None:
+        return _cached(refs, ("rig", rig.namespace, rig.group), lambda: rig_ref(rig))
     if cmds.objectType(path) == "joint":
         root = skeletonimport._top_joint(path)
     else:
         root = skeletonimport._skin_root(path) \
             or next((r for r in bare if maya_rigs.under(r, path)), None) \
             or maya_rigs.group_root(maya_rigs.group_of(path))
-    return skeleton_ref(root) if root in bare else None
+    if root not in bare:
+        return None
+    return _cached(refs, ("skeleton", root), lambda: skeleton_ref(root))
+
+
+def _cached(refs, key, make):
+    if key not in refs:
+        refs[key] = make()
+    return refs[key]
 
 
 def resolve(selection=None):
@@ -487,8 +512,8 @@ def resolve(selection=None):
             objects.append(path)
     if not objects:
         return []
-    rigs, bare = maya_rigs.rigs(), _bare()
-    return [(path, character_of(path, rigs, bare)) for path in objects]
+    rigs, bare, refs = maya_rigs.rigs(), _bare(), {}
+    return [(path, character_of(path, rigs, bare, refs)) for path in objects]
 
 
 def characters(selection=None):
@@ -587,11 +612,30 @@ def identity(ref, convention=None):
             "rotation_only": rotation_only}
 
 
-def _kind(path):
+def _own(ref, path):
+    """Is `path` the character's own node - in its non-empty namespace (a rig's controls and
+    joints, a namespaced skeleton's), or one of its JOINTS? Then no weapon space or armour space
+    stands above it, and `_kind` skips the walks up its ancestors (a weapon and an armour piece
+    stand in spaces of their own, outside the skeleton; one parented by hand under a bone still
+    carries its own marker, which is still asked)."""
+    if ref is None:
+        return False
+    namespace = maya_rigs.namespace_of(path)
+    if ref.namespace and namespace == ref.namespace:
+        return True
+    return ref.kind == "skeleton" and not namespace and maya_rigs.under(path, ref.root) and \
+        cmds.nodeType(path) == "joint"
+
+
+def _kind(path, ref=None):
     """The selection kind of one DAG transform (`members_from_selection`): a weapon - in a hand's
-    space or out on the floor (the marked node itself) - or an armour piece is an accessory."""
+    space or out on the floor (the marked node itself) - or an armour piece is an accessory. The
+    character `ref`'s own nodes (`_own`) are asked only for those markers of their own, never
+    walked up: a rig's 187 controls walked cost 0.8 s on every selection change (the final
+    review)."""
     from maya_scenesetup import armor, bonedrive, weaponspace
-    if weaponspace.hand_for(path) or armor.bone_for(path) or any(
+    walked = not _own(ref, path) and (weaponspace.hand_for(path) or armor.bone_for(path))
+    if walked or any(
             cmds.attributeQuery(marker, node=path, exists=True)
             for marker in (bonedrive.MARKER, armor.MARKER)):
         return ACCESSORY
@@ -610,5 +654,5 @@ def members_of(ref, nodes, bones=None):
     for node in nodes or ():
         path = dag_object(node)
         if path is not None:
-            selection.append((path, _kind(path)))
+            selection.append((path, _kind(path, ref)))
     return members_from_selection(ref, selection, bones)

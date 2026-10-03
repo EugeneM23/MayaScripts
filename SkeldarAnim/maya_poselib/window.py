@@ -47,9 +47,13 @@ files (rename, move, remove, folders) are `store`'s, plain disk work. A press ne
 into Qt: it lands on the status line, the traceback in the Script Editor (trap 20).
 
 The selection is followed: a `SelectionChanged` scriptJob (with Undo / Redo / a new scene),
-coalesced through a 120 ms timer since reading the scene's characters costs ~0.1 s, keeps the
-target line and Apply's enabled state true; the jobs die with the window (`destroyed`,
-capturing the job ids and never the widget - the inventory's `watch` / `unwatch`).
+coalesced through a 120 ms timer, keeps the target line and Apply's enabled state true; the jobs
+die with the window (`destroyed`, capturing the job ids and never the widget - the inventory's
+`watch` / `unwatch`). The read happens once per selection change, while a card is picked (or
+the save panel is open) and the window shows - a card click reuses it (`show_targets`), a hidden
+docked tab reads when it shows again: with a rig's 187 controls selected it cost 0.8 s, 3 s with
+the save panel open, on every change and every click (the final review); `scene.resolve` now
+answers a rig's nodes without walking their ancestors (0.05 s for those 187).
 
 Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window")
 """
@@ -599,6 +603,8 @@ def _classes():
             self._save = None               # dict(initial, snapshot, touched) while saving
             self._building_tree = False
             self.scroll = None
+            self._targets = None            # the last `apply_targets` reading, None: unknown
+            self._stale = False             # the selection changed while the window was hidden
             self.follow_timer = QtCore.QTimer(self)
             self.follow_timer.setObjectName("skeldarPoseFollow")
             self.follow_timer.setSingleShot(True)
@@ -1100,7 +1106,7 @@ def _classes():
             else:
                 self.thumb.setPixmap(QtGui.QPixmap())
                 self.thumb.setText("no thumbnail")
-            self.follow()
+            self.show_targets()
             return True
 
         def unpick(self):
@@ -1111,32 +1117,63 @@ def _classes():
             self.info.setText("pick a card")
             self.thumb.setPixmap(QtGui.QPixmap())
             self.thumb.setText("")
-            self.follow()
+            self.show_targets()
 
         def _queue_follow(self, *_args):
-            """The scriptJob's callback: the reading coalesced (a marquee fires many)."""
+            """The scriptJob's callback: the reading coalesced (a marquee fires many) - and
+            not at all while the window is hidden (a docked tab behind another): the read waits
+            for the window to show (`showEvent`)."""
             try:
-                if q.shiboken.isValid(self):
-                    self.follow_timer.start()
+                if not q.shiboken.isValid(self):
+                    return
+                if not self.isVisible():
+                    self._stale = True
+                    return
+                self.follow_timer.start()
             except Exception:                                # noqa: BLE001
                 pass
 
-        def follow(self):
-            """The target line and Apply's state read from the selection again; the save
-            panel's character line (and its chips, until the animator touched one) too."""
-            card = self._card(self.picked) if self.picked else None
+        def showEvent(self, event):                          # noqa: N802
+            QtWidgets.QWidget.showEvent(self, event)
+            if self._stale:
+                self._stale = False
+                self.follow_timer.start()
+
+        def _read_targets(self):
             try:
-                if card is not None and card.kind == "objects":
-                    text, ok = OBJECTS_TARGET, True
-                else:
-                    text, ok = self.scene.apply_targets()
+                self._targets = self.scene.apply_targets()
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
-                text, ok = _last_line(traceback.format_exc()), False
+                self._targets = (_last_line(traceback.format_exc()), False)
+            return self._targets
+
+        def show_targets(self):
+            """The target line and the buttons for the card picked, from the LAST reading of the
+            selection - a card click reads nothing (the selection is what it was; the
+            SelectionChanged job keeps the reading true), read once when there is none yet."""
+            card = self._card(self.picked) if self.picked else None
+            if card is not None and card.kind == "objects":
+                text, ok = OBJECTS_TARGET, True
+            elif card is not None:
+                text, ok = self._targets if self._targets is not None else self._read_targets()
+            else:
+                text, ok = "", False
             self.target_line.setText(text)
             self.apply_button.setEnabled(card is not None and bool(ok))
             self.select_button.setEnabled(card is not None)
             self.blend.setEnabled(card is not None)
+
+        def follow(self):
+            """The selection read again (the final review: once per selection change, never per
+            card click - with a rig's 187 controls selected each read cost 0.8 s, and a click
+            stalled before a drag could start): who Apply would pose, when a card is picked -
+            none is, nothing reads it until one is - and the save panel's character line (and
+            its chips, until the animator touched one)."""
+            card = self._card(self.picked) if self.picked else None
+            self._targets = None
+            if card is not None and card.kind != "objects":
+                self._read_targets()
+            self.show_targets()
             if self._save is not None:
                 try:
                     self.save_character.setText(self.scene.selection_label())
