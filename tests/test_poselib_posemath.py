@@ -916,6 +916,30 @@ class Travel(unittest.TestCase):
         turn = transfer.travel(skeleton(place=trs(r=(0, 30, 0))), first)
         self.assertLess(pm.angle(turn, trs(r=(0, 30, 0))), 1e-9)
 
+    def test_travel_mirrored_is_reflected_in_its_own_axes_then_carried(self):
+        """`Q · (F · L · F) · Q⁻¹`, never `F · (Q · L · Q⁻¹) · F`: told apart only when Q does not
+        commute with F, and F is read in the source root's REST frame - so the source's root rests
+        turned 40 about Y (the whole skeleton with it: its left-right axis is +X in the root's
+        axes, not in the world's), the target's 70 (Q a 30 turn about Y), and the step tilts as
+        it turns. The expectation is built from plain matrices, no posemath."""
+        source = skeleton(rest_locals={"root": (0, 40, 0)})
+        target = skeleton(rest_locals={"root": (0, 70, 0)})
+        transfer = self.transfer(source, target, scale=1.5)
+        first_place = trs((3, 0, -4), (0, 25, 0))
+        step = trs((10, 2, 20), (12, 30, -8))          # the motion in the first frame's root axes
+        got = transfer.travel(root_moved(source, step * first_place),
+                              root_moved(source, first_place), flip=True)
+        f = om.MMatrix([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])   # across +X
+        q = trs(r=(0, 30, 0))
+        want = q * f * step * f * q.inverse()
+        self.assertLess(pm.angle(got, want), 1e-9)
+        t = om.MVector(10, 2, 20) * f * q.inverse() * 1.5
+        self.assertLess((pm.position(got) - t).length(), 1e-9)
+        # the wrong order lands elsewhere, both turn and place: the fixture can tell
+        wrong = f * q * step * q.inverse() * f
+        self.assertGreater(pm.angle(wrong, want), 1.0)
+        self.assertGreater((pm.position(wrong) * 1.5 - t).length(), 1.0)
+
     def test_travel_of_a_rootless_source_is_its_ground_motion(self):
         source = rootless(skeleton())
         first = root_moved(source, trs((5, 90, 0)))
