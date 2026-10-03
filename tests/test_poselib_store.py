@@ -481,6 +481,15 @@ class AnimCards(unittest.TestCase):
                     replace=True)
         self.assertEqual(len(store.read_frames(path)["world"]), 10)
 
+    def test_frames_without_a_drive_answer_an_empty_one(self):
+        """A skeleton's clip carries no drive; the answer holds `bones`, `world` and `drive`
+        whatever the file wrote, so a reader never asks whether the key is there."""
+        path = store.write(self.root, "", "Walk", self.header(),
+                           frames={"bones": ["root"], "world": [[0, 0, 0, 1, 0, 0, 0]]})
+        data = store.read_frames(path)
+        self.assertEqual(data["drive"], {})
+        self.assertIs(store.read_frames(path), data)          # cached as it was answered
+
     def test_read_frames_refuses_a_missing_or_broken_file(self):
         path = store.write(self.root, "", "Door", self.header(kind="objects", objects=[]))
         with self.assertRaises(ValueError):
@@ -526,6 +535,27 @@ class AnimCards(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.write(self.root, "", "Fist", self.header(), frames=self.frames())
         self.assertEqual(sorted(os.listdir(self.root)), ["Fist.pose", "Walk.anim"])
+
+    def test_a_card_beside_the_other_type_of_its_name_is_still_replaced(self):
+        """The install keeps local cards card by card, so a local Walk.pose can stand beside a
+        shipped Walk.anim (keep_local puts it back there, not `write`) - and Update from
+        selection REPLACES it. The other suffix is asked only for a card that does not exist
+        yet: a replace of one that does is no new name."""
+        store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        os.makedirs(self.root + "/Walk.pose")
+        with open(self.root + "/Walk.pose/" + store.POSE_FILE, "w") as handle:
+            json.dump(pose(name="Walk"), handle)
+        path = store.write(self.root, "", "Walk", pose(members=("a", "b")), replace=True)
+        self.assertTrue(path.endswith("/Walk.pose"))
+        self.assertEqual(store.read(path)["members"], ["a", "b"])
+        anim = store.write(self.root, "", "Walk", self.header(frames=10), frames=self.frames(10),
+                           replace=True)
+        self.assertEqual(store.read(anim)["frames"], 10)
+        self.assertEqual(sorted(os.listdir(self.root)), ["Walk.anim", "Walk.pose"])
+        # without replace both are still refused: each name is taken by its own card
+        for data, extra in ((pose(), {}), (self.header(), {"frames": self.frames()})):
+            with self.assertRaises(ValueError):
+                store.write(self.root, "", "Walk", data, **extra)
 
     def test_a_rename_or_a_move_onto_the_other_type_s_name_is_refused(self):
         walk = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
@@ -615,6 +645,22 @@ class AnimCards(unittest.TestCase):
         found, broken = store.cards(self.root)
         self.assertEqual(found, [])
         self.assertEqual(len(broken), 3)
+
+    def test_a_header_number_that_is_no_number_is_a_broken_card(self):
+        """Python's json reads Infinity and NaN, and an integer of any length: `int(inf)` is an
+        OverflowError, `int(nan)` a ValueError, `float(10 ** 400)` an OverflowError - each a
+        card reported broken, never an exception out of `cards()` blanking the library."""
+        for name, field in (("Inf", '"frames": Infinity'), ("NaN", '"frames": NaN'),
+                            ("Huge", '"start": 1' + "0" * 400)):
+            os.makedirs(self.root + "/%s.anim" % name)
+            with open(self.root + "/%s.anim/anim.json" % name, "w") as handle:
+                handle.write('{"format": "%s", "version": 1, "kind": "character", %s}'
+                             % (store.ANIM_FORMAT, field))
+        store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        found, broken = store.cards(self.root)
+        self.assertEqual([card.name for card in found], ["Walk"])
+        self.assertEqual(sorted(os.path.basename(path) for path in broken),
+                         ["Huge.anim", "Inf.anim", "NaN.anim"])
 
     def test_the_type_word_is_searched_and_the_type_filters(self):
         store.write(self.root, "", "Walk", self.header(), frames=self.frames())

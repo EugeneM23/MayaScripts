@@ -15,10 +15,12 @@ The rules this module keeps, so the window above it can be simple:
   - every path it returns uses "/" (Windows takes both; the cards, the tree and the details
     text then compare equal);
   - a card is written ATOMICALLY (each file through `<file>.part`, then `os.replace`), its
-    main file (`pose.json` / `anim.json`) LAST, and a card that fails half way is not left
-    behind, so a reader never sees a half card;
-  - a name is free in a folder only when NEITHER suffix holds it, so a pose and an animation
-    never share a name there;
+    main file (`pose.json` / `anim.json`) LAST, so a reader never sees a new card before it
+    is whole; a write that fails while STAGING leaves an existing card as it was and a new
+    one not at all (the swaps that follow happen one by one, so a replace failing between
+    two of them keeps the files already swapped);
+  - a NEW card's name is free in a folder only when NEITHER suffix holds it, so a pose and an
+    animation never share a name there through `write`;
   - nothing is deleted: `remove` moves a card or a folder into a trash folder, stamped;
   - a card that cannot be read is REPORTED (`cards` returns it in `broken`), never raised, so
     one bad file from a colleague's merge does not blank the library;
@@ -277,9 +279,10 @@ _FRAMES = {}
 def read_frames(path):
     """The per-frame data of the animation card at `path`: {"bones": [leaf...], "world":
     [[q7 per bone] per frame], "drive": {leaf: [[q7] per frame]}} decoded from its
-    `frames.json.gz`. Cached - one entry, keyed by the file's path, time and size, so a card
-    written again is read again; the answer is the cached object, read it, never change it.
-    ValueError when the file is missing, is not gzip JSON or is not that shape."""
+    `frames.json.gz` - `drive` always there, {} when the file holds none (a skeleton's clip).
+    Cached - one entry, keyed by the file's path, time and size, so a card written again is
+    read again; the answer is the cached object, read it, never change it. ValueError when the
+    file is missing, is not gzip JSON or is not that shape."""
     target = _fwd(path) + "/" + FRAMES_FILE
     try:
         stat = os.stat(target)
@@ -298,6 +301,7 @@ def read_frames(path):
             and isinstance(data.get("world"), list)
             and isinstance(data.get("drive", {}), dict)):
         raise ValueError("%s: not an animation's frames" % target)
+    data.setdefault("drive", {})       # a skeleton's clip carries none: the answer always does
     _FRAMES.clear()
     _FRAMES[key] = data
     return data
@@ -306,7 +310,10 @@ def read_frames(path):
 def _card(path, folder, name):
     """The `Card` for the card folder at `path` (ValueError when it cannot be read). The name is
     the FOLDER's: the card is addressed by its path, so a rename done in Explorer shows at once.
-    An animation's header adds its frame count, range, time unit and preview sheet."""
+    An animation's header adds its frame count, range, time unit and preview sheet; a number
+    there that is no number - JSON's Infinity or NaN, an integer too long for a float - makes
+    the card unreadable (an OverflowError or a ValueError of `int` / `float`), never an error
+    out of `cards()`."""
     data = read(path)
     anim = is_anim(path)
     try:
@@ -325,7 +332,7 @@ def _card(path, folder, name):
             start = float(data.get("start") or 0.0)
             end = float(data.get("end") or 0.0)
             fps = str(data.get("fps") or "")
-    except (AttributeError, TypeError, OSError) as exc:
+    except (AttributeError, TypeError, ValueError, OverflowError, OSError) as exc:
         raise ValueError("%s: unreadable fields (%s)" % (path, exc))
     image = path + "/" + THUMB_FILE
     thumbnail = image if os.path.isfile(image) else ""
@@ -407,12 +414,16 @@ def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, 
     as `frames.json.gz`); a pose card given either of the last two is refused before anything
     is written.
 
-    A name is taken when a card of EITHER type wears it: refused. An existing card of the same
-    type is refused unless `replace` - then what is given is swapped in and every file NOT
-    given (the still, the preview, the frames) is kept. Every file is staged as `<file>.part`
-    first and only then swapped in, the main file LAST: a reader sees the main file only when
-    the card is whole, and a write that fails while staging leaves an existing card as it was
-    and removes a new one again."""
+    A NEW card's name is taken when a card of EITHER type wears it: refused. An existing card
+    of the same type is refused unless `replace` - then what is given is swapped in and every
+    file NOT given (the still, the preview, the frames) is kept. A replace never asks the
+    other suffix: the install keeps local cards card by card, so a local `Walk.pose` can stand
+    beside a shipped `Walk.anim`, and Update from selection replaces it. Every file is staged
+    as `<file>.part` first and only then swapped in, the main file LAST: a reader sees a new
+    card's main file only when the card is whole, and a write that fails while STAGING leaves
+    an existing card as it was and removes a new one again. The swaps are one `os.replace`
+    after another, so a replace that fails between two of them (a disk pulled away) keeps the
+    files it had swapped already."""
     folder = _clean_folder(folder)
     name = safe_name(name)
     if _hidden(name):
@@ -424,7 +435,7 @@ def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, 
     suffix, other = (ANIM_SUFFIX, CARD_SUFFIX) if anim else (CARD_SUFFIX, ANIM_SUFFIX)
     card = here + "/" + name + suffix
     existed = os.path.isdir(card)
-    if (existed and not replace) or os.path.exists(here + "/" + name + other):
+    if (existed and not replace) or (not existed and os.path.exists(here + "/" + name + other)):
         raise ValueError("%s already exists in %s" % (name, folder or "the library"))
     data = dict(data)
     data.setdefault("format", FORMAT)
