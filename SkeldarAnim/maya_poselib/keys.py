@@ -40,7 +40,40 @@ which works on layered and keyed channels and holds until the next time change; 
 `current` values put everything back. A scripted `setAttr` KEYS under autoKey, so the caller
 holds autoKey off for the length of a preview session, as `write`'s caller does.
 
-Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Keys - the active layer").
+**Layer curves** (the animation cards, 2026-10-03): a paste works on the ACTIVE layer's curve of
+each channel - `curve_for` finds it, `cut` empties a range of it (Replace / Replace all),
+`shift` moves its later keys out of the way (Insert), `write_keys` keys a stored curve with its
+tangents (an objects card). Other layers' curves are never touched. Measured in mayapy 2027
+before they were written (a locator keyed tx 0/10/20 = 0/10/20, an additive layer, an override):
+
+- `animLayer -q -findCurveForPlug` answers a LIST (`['loc_translateX_L1_inputB']` on the additive
+  layer, `['loc_translateX']` on BaseAnimation for a layered plug), None for a plug the layer
+  does not hold or holds without keys (the override, before its first key) - and None on
+  BaseAnimation for a plug keyed PLAINLY in a layered scene (its curve is the plug's own: the
+  connection path). With no layers at all there is no BaseAnimation and the query RAISES («A
+  single anim layer node must be specified»): the connection path again;
+- `cutKey -time (5, 15)` is inclusive (keys 5, 10, 15 of 0..20 removed) and `cutKey -clear`
+  ANSWERS 0 whatever it removed (trap 57's family): the counts come from `keyframe -q
+  -keyframeCount` first, over the same span. `-clear` leaves the clipboard (the animator's copied
+  keys) alone;
+- a curve the cut EMPTIES is DELETED by Maya - plain, base and layer curves alike (`objExists`
+  False after cutting every key) - and its plug keeps the value the DG last evaluated (0.0587 on
+  a plain tx at frame 1). The next `setKeyframe` makes a new curve (on a layer measured to come
+  back connected: `findCurveForPlug` answers the same name again), with Maya's defaults - the
+  old curve's infinity and weighting do not come back;
+- `keyframe -edit -relative -timeChange 7 -time (10, 1e9)` moves 10, 20 to 17, 27 on the base
+  curve and on a layer curve alike, the other layers' curves untouched; it answers 1 (curves),
+  not the keys moved;
+- an angle (or a weight) set on a key turns its tangent "fixed" (`keyTangent -inAngle 30
+  -outAngle -20` on an auto key: both kept, both types fixed, in one call even under the default
+  lock; weights 7 / 9 likewise); a TYPE set after it recomputes angle AND weight for auto,
+  spline, linear, clamped and flat (back to 0 deg / 3.333 on a weighted curve) and "fixed" keeps
+  them. So a stored angle or weight only means something on a FIXED tangent: `write_keys` sets
+  those first and every key's types after. An in-tangent of "step"/"stepnext" is refused with a
+  warning and the key's in-tangent reset to auto: never passed.
+
+Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Keys - the active layer"),
+docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("The paste modes").
 """
 
 from collections import OrderedDict, namedtuple
@@ -54,6 +87,10 @@ TIME_CURVES = ("animCurveTA", "animCurveTL", "animCurveTT", "animCurveTU")
 # through (its output is the channel), these are left alone
 _NOT_A_CHANNEL = ("pairBlend", "character", "clipScheduler", "clipLibrary", "expression")
 TWEAK_TOL = 1e-9
+# the far end of an open time span - `keyframe -time (10, 1e9)` measured reaching every later key
+BIG = 1e9
+# in-tangent types Maya refuses to set (measured: a warning, and the in-tangent reset to auto)
+_NO_IN_TYPES = ("step", "stepnext")
 
 LOCKED = "the animation layer %s is locked - unlock it or pick another"
 MUTED = "%s is muted - the keys are in it, the pose shows when it is on"
@@ -62,6 +99,8 @@ QUATERNION = ("the additive animation layer %s accumulates rotation as quaternio
               "cannot take exact rotate keys - switch it to component accumulation or pick "
               "another layer (translate channels are fine)")
 NOT_KEYED = "%d not keyed (%s): %s"
+KEYS_REFUSED = "%d of %d keys on %s not keyed (%s)"
+TANGENTS_LOST = "%s keyed, its tangents not set (%s)"
 
 # plugs named per reason in a note: a whole rig skipped must not print three hundred names
 NAMED = 4
@@ -376,6 +415,239 @@ def quaternion_note(layer):
     if layer is None or not (layer.quaternion and layer.additive):
         return ""
     return QUATERNION % layer.name
+
+
+# ------------------------------------------------------------------ layer curves
+
+def _layer_parts(layer):
+    """(name, base) of a layer given as a `Layer`, as a layer's NAME, or None ((None, False): a
+    scene with no layers). A name is the base when it is the scene's root layer."""
+    if layer is None:
+        return None, False
+    if isinstance(layer, Layer):
+        return layer.name, layer.base
+    name = str(layer)
+    try:
+        root = cmds.animLayer(query=True, root=True)
+    except (RuntimeError, TypeError, ValueError):
+        root = None
+    return name, name == root
+
+
+def _own_curve(plug):
+    """The time curve feeding `plug` itself (unit conversions looked through), or None - what a
+    plug keyed outside every layer is keyed on. A driven-key curve (`animCurveU*`), a layer's
+    blend node or a constraint is no time curve."""
+    try:
+        nodes = cmds.listConnections(plug, source=True, destination=False,
+                                     skipConversionNodes=True) or []
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    for node in nodes:
+        if cmds.nodeType(node) in TIME_CURVES:
+            return node
+    return None
+
+
+def curve_for(plug, layer):
+    """The time curve (animCurveT*) holding `plug`'s keys on `layer`, or None when it has none.
+
+    With a layer (BaseAnimation included) it is `animLayer(L, query=True,
+    findCurveForPlug=plug)`'s first answer - measured: a list, `['loc_translateX_L1_inputB']` on
+    an additive layer, `['loc_translateX']` on the base for a layered plug. The base answers None
+    for a plug keyed PLAINLY in a layered scene (in no layer: measured), and that plug's own curve
+    IS its base curve, so the base falls back to the connection path; any other layer answering
+    None does not hold the plug (or holds it unkeyed), and the plug's own curve is not this
+    layer's to cut or move - None. Without layers (`layer` None: no BaseAnimation exists, and the
+    query measured RAISING) the plug's own curve (`listConnections(plug, source=True,
+    destination=False, skipConversionNodes=True)` filtered to TIME_CURVES). A query that raises
+    answers like an empty one."""
+    name, base = _layer_parts(layer)
+    if name is not None:
+        try:
+            found = cmds.animLayer(name, query=True, findCurveForPlug=plug)
+        except (RuntimeError, TypeError, ValueError):
+            found = None
+        if isinstance(found, str):
+            found = [found]
+        if found:
+            return found[0]
+        if not base:
+            return None
+    return _own_curve(plug)
+
+
+def _curves(plugs, layer):
+    """[curve]: each plug's `curve_for` curve, each curve ONCE - two spellings of one plug must
+    not be cut twice, nor moved twice (a key shifted twice lands twice as late); plugs with no
+    curve left out without a word."""
+    out, seen = [], set()
+    for plug in plugs:
+        curve = curve_for(plug, layer)
+        if curve and curve not in seen:
+            seen.add(curve)
+            out.append(curve)
+    return out
+
+
+def _count(curve, span=None):
+    """How many keys `curve` holds - inside `span` (inclusive) when given. Asked BEFORE an edit:
+    `cutKey -clear` answers 0 whatever it removed and `keyframe -edit` the curves it edited
+    (both measured), so neither tells how many keys it reached."""
+    try:
+        if span is None:
+            return int(cmds.keyframe(curve, query=True, keyframeCount=True) or 0)
+        return int(cmds.keyframe(curve, query=True, keyframeCount=True, time=span) or 0)
+    except (RuntimeError, TypeError, ValueError):
+        return 0
+
+
+def cut(plugs, layer, start=None, end=None):
+    """Keys removed from each plug's `curve_for` curve: inside [start, end] (inclusive), or every
+    key when both are None (one None: that end open). The number of keys removed.
+
+    `cutKey(curve, time=(start, end), clear=True)` - `-clear` leaves the clipboard (the
+    animator's copied keys) alone; measured inclusive (5, 10, 15 of 0..20 gone for (5, 15)). A
+    curve with nothing in the span is not touched; a plug with no curve on `layer` is skipped
+    quietly (the paste just keys it). A curve the cut EMPTIES is deleted by Maya (measured:
+    plain, base and layer curves alike) and its plug keeps the value the DG last evaluated; the
+    next key makes a new one with Maya's defaults (its old infinity and weighting do not come
+    back). Inside the press's undo chunk, a Ctrl+Z brings the old curve back whole. A Maya error
+    (a referenced curve) is raised: a press must not paste over a take it could not clear."""
+    if start is None and end is None:
+        span = None
+    else:
+        span = (-BIG if start is None else start, BIG if end is None else end)
+    removed = 0
+    for curve in _curves(plugs, layer):
+        count = _count(curve, span)
+        if not count:
+            continue
+        if span is None:
+            cmds.cutKey(curve, clear=True)
+        else:
+            cmds.cutKey(curve, time=span, clear=True)
+        removed += count
+    return removed
+
+
+def shift(plugs, layer, at, by):
+    """Every key at or after `at` on each plug's `curve_for` curve moved `by` frames later
+    (`keyframe -edit -relative -timeChange by -time (at, BIG)`: measured, 10 and 20 to 17 and
+    27, the base curve and a layer curve alike, the other layers' curves where they were); the
+    keys moved, counted. Insert's gap: the paste keys into [at, at + by - 1] afterwards. A plug
+    with no curve, a curve with nothing at or after `at`, and a zero shift are left alone."""
+    if not by:
+        return 0
+    span = (at, BIG)
+    moved = 0
+    for curve in _curves(plugs, layer):
+        count = _count(curve, span)
+        if not count:
+            continue
+        cmds.keyframe(curve, edit=True, relative=True, timeChange=by, time=span)
+        moved += count
+    return moved
+
+
+def _field(key, index):
+    """`key[index]`, None when the stored key is shorter (a key saved with time and value only)."""
+    return key[index] if len(key) > index else None
+
+
+def _fixed_tangents(key, weighted):
+    """The `keyTangent` flags that put a stored FIXED tangent's angles (and, on a weighted curve,
+    weights) back, or {} - for any other type Maya computes them from the neighbours when the
+    type is set (measured), so a stored number would be thrown away. A tangent whose two sides
+    differ was broken: `lock` off, or Maya keeps it locked over two different angles."""
+    if "fixed" not in (_field(key, 2), _field(key, 3)) or len(key) < 8:
+        return {}
+    in_angle, in_weight, out_angle, out_weight = key[4], key[5], key[6], key[7]
+    flags = {"inAngle": in_angle, "outAngle": out_angle}
+    broken = abs(float(in_angle) - float(out_angle)) > 1e-6
+    if weighted:
+        flags.update(inWeight=in_weight, outWeight=out_weight, weightLock=False)
+        broken = broken or abs(float(in_weight) - float(out_weight)) > 1e-6
+    if broken:
+        flags["lock"] = False
+    return flags
+
+
+def _type_flags(key):
+    """The `keyTangent` flags that set a stored key's tangent TYPES, or {} when none are stored.
+    An in-tangent "step"/"stepnext" is not passed: Maya refuses it (measured, a warning and the
+    in-tangent reset to auto), so the key keeps what keying gave it."""
+    flags = {}
+    in_type, out_type = _field(key, 2), _field(key, 3)
+    if in_type and in_type not in _NO_IN_TYPES:
+        flags["inTangentType"] = in_type
+    if out_type:
+        flags["outTangentType"] = out_type
+    return flags
+
+
+def write_keys(plug, keys_list, layer, weighted=False, tangents=True):
+    """Keys with their tangents onto `plug`: `Written` (keys made, notes) as `write`'s, `.plugs`
+    [plug] when any key landed.
+
+    Each `[t, v, in_type, out_type, in_angle, in_weight, out_angle, out_weight]` is keyed
+    (`_key`: the FINAL value, on the layer when there is one - the plug added to a non-base layer
+    first, as `write` does), then - when `tangents`, the caller's call: no layer, where the
+    stored curve IS the plug's whole motion - the curve turned weighted when `weighted` and
+    every FIXED tangent's angles and weights set (`_fixed_tangents`), and last
+    every key's tangent TYPES (`_type_flags`), each `keyTangent(curve, edit=True, time=(t, t),
+    ...)` - in that order because an angle or a weight set turns a tangent fixed and a type set
+    recomputes them (measured). On a layer the tangents are the layer curve's: only the types
+    travel. A plug `writable` refuses takes nothing and is named; keys Maya refuses are named
+    with their count; a tangent Maya refuses leaves the keys and says so."""
+    ok, reason = writable(plug)
+    if not ok:
+        return Written(0, [_note(reason, [plug])])
+    if layer is not None and not layer.base:
+        try:
+            cmds.animLayer(layer.name, edit=True, attribute=plug)
+        except RuntimeError as error:
+            return Written(0, [_note(_why(error), [plug])])
+    count, landed, refused = 0, [], {}
+    for key in keys_list:
+        try:
+            made = _key(plug, key[1], key[0], layer) or 0
+        except RuntimeError as error:
+            refused.setdefault(_why(error), []).append(key[0])
+            continue
+        if made:
+            count += int(made)
+            landed.append(key)
+        else:
+            refused.setdefault("no key made" if layer is None else
+                               "layer %s took no key" % layer.name, []).append(key[0])
+    notes = [KEYS_REFUSED % (len(times), len(keys_list), plug, why)
+             for why, times in refused.items()]
+    if not landed:
+        return Written(count, notes)
+    curve = curve_for(plug, layer)
+    if curve is not None:
+        try:
+            _put_tangents(curve, landed, weighted, tangents)
+        except RuntimeError as error:
+            notes.append(TANGENTS_LOST % (plug, _why(error)))
+    return Written(count, notes, [plug])
+
+
+def _put_tangents(curve, landed, weighted, tangents):
+    """`write_keys`' tangent half on `curve`: weighted first, the fixed tangents' angles and
+    weights, then every key's types (`tangents` False: the types alone)."""
+    if tangents:
+        if weighted:
+            cmds.keyTangent(curve, edit=True, weightedTangents=True)
+        for key in landed:
+            flags = _fixed_tangents(key, weighted)
+            if flags:
+                cmds.keyTangent(curve, edit=True, time=(key[0], key[0]), **flags)
+    for key in landed:
+        flags = _type_flags(key)
+        if flags:
+            cmds.keyTangent(curve, edit=True, time=(key[0], key[0]), **flags)
 
 
 # ------------------------------------------------------------------ the animator's tweaks

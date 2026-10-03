@@ -944,5 +944,416 @@ class Tweaks(Restoring):
         self.assertIn(("rig:FKSpine1_M.rotateX", 25.0), calls)
 
 
+# ------------------------------------------------------------------ layer curves (2026-10-03)
+# The animation cards paste onto the ACTIVE layer's curve of each channel (spec
+# 2026-10-03-pose-library-animation-design.md, "The paste modes"). Measured in mayapy 2027 before
+# these were written: `animLayer -q -findCurveForPlug` answers a LIST of curve names for a plug
+# inside the layer, None for a plug the layer does not hold - and None on BaseAnimation for a
+# plug keyed plainly in a layered scene (its curve is the plug's own); with no layers at all it
+# RAISES («A single anim layer node must be specified»). `cutKey -clear` answers 0 even when it
+# removed keys, so the counts come from `keyframe -q -keyframeCount` first. An angle set on a key
+# turns its tangent to "fixed"; a type set after it brings auto/spline back - angles first.
+
+BASE = keys.Layer("BaseAnimation", True, False, False, False)
+ADD = keys.Layer("AddL", False, True, False, False)
+
+
+class CurveCmds(object):
+    """Maya's curve commands over a small scene.
+
+    `found` {(layer, plug): [curves]} is what `findCurveForPlug` answers (missing: None),
+    `plain` {plug: [nodes]} what feeds the plug itself, `types` {node: type}, `times`
+    {curve: [key times]} - edited by `cutKey` / `keyframe -edit` as Maya would. `raising` names
+    layers whose query raises (a scene with no layers). Every call is logged."""
+
+    def __init__(self, found=None, plain=None, types=None, times=None, raising=(), root=None,
+                 locked=()):
+        self.found = dict(found or {})
+        self.plain = dict(plain or {})
+        self.types = dict(types or {})
+        self.times = {curve: list(ts) for curve, ts in (times or {}).items()}
+        self.raising = set(raising)
+        self.root = root
+        self.locked = set(locked)
+        self.log = []
+
+    def animLayer(self, name=None, **kw):
+        if kw.get("query") and "findCurveForPlug" in kw:
+            self.log.append(("find", name, kw["findCurveForPlug"]))
+            if name in self.raising:
+                raise RuntimeError("A single anim layer node must be specified.")
+            return self.found.get((name, kw["findCurveForPlug"]))
+        if kw.get("query") and kw.get("root"):
+            return self.root
+        if kw.get("edit") and "attribute" in kw:
+            self.log.append(("add", name, kw["attribute"]))
+            return None
+        raise AssertionError((name, kw))
+
+    def listConnections(self, plug, **kw):
+        self.log.append(("conn", plug, dict(kw)))
+        return list(self.plain[plug]) if plug in self.plain else None
+
+    def nodeType(self, node):
+        return self.types.get(node, "transform")
+
+    @staticmethod
+    def _inside(t, span):
+        return span is None or span[0] <= t <= span[1]
+
+    def keyframe(self, curve, **kw):
+        span = kw.get("time")
+        if kw.get("query") and kw.get("keyframeCount"):
+            return sum(1 for t in self.times.get(curve, []) if self._inside(t, span))
+        if kw.get("edit"):
+            self.log.append(("move", curve, dict(kw)))
+            assert kw.get("relative"), kw
+            self.times[curve] = [t + kw["timeChange"] if self._inside(t, span) else t
+                                 for t in self.times.get(curve, [])]
+            return 1
+        raise AssertionError((curve, kw))
+
+    def cutKey(self, curve, **kw):
+        self.log.append(("cut", curve, dict(kw)))
+        span = kw.get("time")
+        self.times[curve] = [t for t in self.times.get(curve, []) if not self._inside(t, span)]
+        return 0                                # measured: cutKey -clear answers 0 regardless
+
+    def keyTangent(self, curve, **kw):
+        self.log.append(("tangent", curve, dict(kw)))
+        return 1
+
+    def setKeyframe(self, plug, **kw):
+        self.log.append(("key", plug, kw.get("time"), kw.get("value"), kw.get("animLayer")))
+        return 1
+
+    def getAttr(self, plug, **kw):
+        if kw.get("lock"):
+            return plug in self.locked
+        raise AssertionError((plug, kw))
+
+    def connectionInfo(self, plug, **kw):
+        return False
+
+    def objectType(self, node):
+        return self.types.get(node, "transform")
+
+    def calls(self, kind):
+        return [entry for entry in self.log if entry[0] == kind]
+
+
+class CurveFor(Restoring):
+
+    def test_a_layer_asks_find_curve_for_plug_and_takes_the_first(self):
+        fake = CurveCmds(found={("AddL", "a.tx"): ["a_translateX_AddL_inputB"]})
+        keys.cmds = fake
+        self.assertEqual(keys.curve_for("a.tx", ADD), "a_translateX_AddL_inputB")
+        self.assertEqual(fake.calls("find"), [("find", "AddL", "a.tx")])
+        self.assertEqual(fake.calls("conn"), [])
+
+    def test_the_base_answers_its_curve_for_a_layered_plug(self):
+        fake = CurveCmds(found={("BaseAnimation", "a.tx"): ["a_translateX"]})
+        keys.cmds = fake
+        self.assertEqual(keys.curve_for("a.tx", BASE), "a_translateX")
+
+    def test_a_plainly_keyed_plug_in_a_layered_scene_is_the_bases_own_curve(self):
+        # measured: findCurveForPlug on BaseAnimation answers None for a plug in no layer
+        fake = CurveCmds(plain={"a.tz": ["a_translateZ"]}, types={"a_translateZ": "animCurveTL"})
+        keys.cmds = fake
+        self.assertEqual(keys.curve_for("a.tz", BASE), "a_translateZ")
+        (_c, plug, kw), = fake.calls("conn")
+        self.assertEqual(plug, "a.tz")
+        self.assertTrue(kw.get("source"))
+        self.assertFalse(kw.get("destination"))
+        self.assertTrue(kw.get("skipConversionNodes"))
+
+    def test_a_non_base_layer_without_the_plug_has_no_curve(self):
+        # the layer does not hold it (or holds it unkeyed): the plug's own curve is the base's,
+        # not this layer's - never cut or moved for a paste onto this layer
+        fake = CurveCmds(plain={"a.tz": ["a_translateZ"]}, types={"a_translateZ": "animCurveTL"})
+        keys.cmds = fake
+        self.assertIsNone(keys.curve_for("a.tz", ADD))
+        self.assertEqual(fake.calls("conn"), [])
+
+    def test_no_layers_reads_the_plugs_own_time_curve(self):
+        class NoLayers(CurveCmds):
+            def animLayer(self, name=None, **kw):
+                raise AssertionError("no animLayer query without layers")
+        fake = NoLayers(plain={"a.rx": ["a_rotateX"]}, types={"a_rotateX": "animCurveTA"})
+        keys.cmds = fake
+        self.assertEqual(keys.curve_for("a.rx", None), "a_rotateX")
+
+    def test_only_time_curves_count(self):
+        # a driven key (animCurveU*), a layer's blend node, a constraint: no time curve
+        for node, kind in (("sdk", "animCurveUL"), ("blend1", "animBlendNodeAdditiveDL"),
+                           ("pc1", "parentConstraint")):
+            keys.cmds = CurveCmds(plain={"a.tx": [node]}, types={node: kind})
+            self.assertIsNone(keys.curve_for("a.tx", None), kind)
+
+    def test_nothing_connected_is_no_curve(self):
+        keys.cmds = CurveCmds()
+        self.assertIsNone(keys.curve_for("a.tx", None))
+        self.assertIsNone(keys.curve_for("a.tx", BASE))
+
+    def test_a_query_that_raises_is_no_curve_quietly(self):
+        keys.cmds = CurveCmds(raising=["AddL"])
+        self.assertIsNone(keys.curve_for("a.tx", ADD))
+
+    def test_a_single_string_answer_is_taken_too(self):
+        keys.cmds = CurveCmds(found={("AddL", "a.tx"): "a_tx_AddL"})
+        self.assertEqual(keys.curve_for("a.tx", ADD), "a_tx_AddL")
+
+    def test_a_layer_given_by_name_is_the_base_when_it_is_the_root(self):
+        fake = CurveCmds(plain={"a.tz": ["a_translateZ"]}, types={"a_translateZ": "animCurveTL"},
+                         root="BaseAnimation")
+        keys.cmds = fake
+        self.assertEqual(keys.curve_for("a.tz", "BaseAnimation"), "a_translateZ")
+        self.assertIsNone(keys.curve_for("a.tz", "AddL"))
+
+
+class Cut(Restoring):
+
+    SCENE = dict(found={("AddL", "a.tx"): ["cx"], ("AddL", "a.ty"): ["cy"]},
+                 times={"cx": [0, 5, 10, 15, 20], "cy": [12, 30]})
+
+    def test_a_range_cuts_inside_it_inclusive_and_counts(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        removed = keys.cut(["a.tx", "a.ty"], ADD, 5, 15)
+        self.assertEqual(removed, 4)                      # 5, 10, 15 and 12: cutKey answers 0
+        self.assertIn(("cut", "cx", {"time": (5, 15), "clear": True}), fake.log)
+        self.assertIn(("cut", "cy", {"time": (5, 15), "clear": True}), fake.log)
+        self.assertEqual(fake.times, {"cx": [0, 20], "cy": [30]})
+
+    def test_no_range_cuts_every_key(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.cut(["a.tx", "a.ty"], ADD), 7)
+        self.assertEqual(fake.calls("cut"), [("cut", "cx", {"clear": True}),
+                                             ("cut", "cy", {"clear": True})])
+
+    def test_a_plug_with_no_curve_is_skipped_quietly(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.cut(["a.tz", "a.tx"], ADD, 0, 0), 1)
+        self.assertEqual([c[1] for c in fake.calls("cut")], ["cx"])
+
+    def test_a_curve_with_nothing_in_the_range_is_not_touched(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.cut(["a.ty"], ADD, 0, 10), 0)
+        self.assertEqual(fake.calls("cut"), [])
+
+    def test_one_curve_reached_twice_is_cut_once(self):
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx"], ("AddL", "|a.tx"): ["cx"]},
+                         times={"cx": [1, 2]})
+        keys.cmds = fake
+        self.assertEqual(keys.cut(["a.tx", "|a.tx"], ADD), 2)
+        self.assertEqual(len(fake.calls("cut")), 1)
+
+    def test_an_open_end_reaches_every_key_past_the_start(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.cut(["a.tx"], ADD, 10, None), 3)
+        self.assertEqual(fake.times["cx"], [0, 5])
+
+    def test_without_layers_the_plain_curve_is_cut(self):
+        fake = CurveCmds(plain={"a.tx": ["a_translateX"]},
+                         types={"a_translateX": "animCurveTL"}, times={"a_translateX": [0, 10]})
+        keys.cmds = fake
+        self.assertEqual(keys.cut(["a.tx"], None, 0, 5), 1)
+        self.assertEqual(fake.times["a_translateX"], [10])
+
+
+class Shift(Restoring):
+
+    SCENE = dict(found={("AddL", "a.tx"): ["cx"], ("AddL", "a.ty"): ["cy"]},
+                 times={"cx": [0, 10, 20], "cy": [3, 12]})
+
+    def test_every_key_at_or_after_moves_later_and_is_counted(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        moved = keys.shift(["a.tx", "a.ty"], ADD, 10, 7)
+        self.assertEqual(moved, 3)
+        self.assertIn(("move", "cx", {"edit": True, "relative": True, "timeChange": 7,
+                                      "time": (10, keys.BIG)}), fake.log)
+        self.assertEqual(fake.times, {"cx": [0, 17, 27], "cy": [3, 19]})
+
+    def test_a_plug_with_no_curve_is_skipped_quietly(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.shift(["a.tz"], ADD, 0, 5), 0)
+        self.assertEqual(fake.calls("move"), [])
+
+    def test_nothing_after_the_frame_moves_nothing(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.shift(["a.ty"], ADD, 50, 5), 0)
+        self.assertEqual(fake.calls("move"), [])
+
+    def test_a_zero_shift_is_nothing(self):
+        fake = CurveCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.shift(["a.tx"], ADD, 0, 0), 0)
+        self.assertEqual(fake.calls("move"), [])
+
+    def test_one_curve_reached_twice_moves_once(self):
+        # moved twice it would land twice as late
+        fake = CurveCmds(found={("AddL", "a.tx"): ["cx"], ("AddL", "|a.tx"): ["cx"]},
+                         times={"cx": [10]})
+        keys.cmds = fake
+        self.assertEqual(keys.shift(["a.tx", "|a.tx"], ADD, 0, 4), 1)
+        self.assertEqual(fake.times["cx"], [14])
+
+
+class WriteKeys(Restoring):
+
+    KEYS = [[0.0, 1.0, "auto", "auto", 0.0, 1.0, 0.0, 1.0],
+            [10.0, 5.0, "fixed", "fixed", 30.0, 2.0, -20.0, 3.0],
+            [20.0, 2.0, "linear", "step", 12.0, 1.0, 0.0, 1.0]]
+
+    def fake(self, layer_name="AddL"):
+        found = {(layer_name, "a.tx"): ["cx"]} if layer_name else {}
+        plain = {} if layer_name else {"a.tx": ["cx"]}
+        return CurveCmds(found=found, plain=plain, types={"cx": "animCurveTL"})
+
+    def test_every_key_on_the_layer_after_adding_the_plug(self):
+        fake = self.fake()
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, ADD, tangents=False)
+        self.assertEqual((written.count, written.notes, written.plugs), (3, [], ["a.tx"]))
+        kinds = [entry[0] for entry in fake.log if entry[0] in ("add", "key")]
+        self.assertEqual(kinds, ["add", "key", "key", "key"])
+        self.assertEqual(fake.calls("key"), [("key", "a.tx", 0.0, 1.0, "AddL"),
+                                             ("key", "a.tx", 10.0, 5.0, "AddL"),
+                                             ("key", "a.tx", 20.0, 2.0, "AddL")])
+
+    def test_types_per_key_on_the_layer_curve_and_no_angles_on_a_layer(self):
+        fake = self.fake()
+        keys.cmds = fake
+        keys.write_keys("a.tx", self.KEYS, ADD, tangents=False)
+        self.assertEqual(fake.calls("tangent"), [
+            ("tangent", "cx", {"edit": True, "time": (0.0, 0.0), "inTangentType": "auto",
+                               "outTangentType": "auto"}),
+            ("tangent", "cx", {"edit": True, "time": (10.0, 10.0), "inTangentType": "fixed",
+                               "outTangentType": "fixed"}),
+            ("tangent", "cx", {"edit": True, "time": (20.0, 20.0), "inTangentType": "linear",
+                               "outTangentType": "step"})])
+
+    def test_no_layer_keys_without_the_flag_and_sets_fixed_angles_then_types(self):
+        # measured: an angle (or a weight) set on a key turns the tangent "fixed", and a type set
+        # after it recomputes angle AND weight for auto/spline/linear/clamped/flat - so a stored
+        # angle matters on a FIXED tangent only, and it goes first, the types after it
+        fake = self.fake(None)
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, None)
+        self.assertEqual(written.count, 3)
+        self.assertEqual([entry[4] for entry in fake.calls("key")], [None, None, None])
+        tangents = fake.calls("tangent")
+        self.assertEqual(len(tangents), 4)                    # one fixed key's angles, 3 types
+        angles, types = tangents[0], tangents[1:]
+        self.assertEqual(angles[2]["time"], (10.0, 10.0))
+        self.assertEqual((angles[2]["inAngle"], angles[2]["outAngle"]), (30.0, -20.0))
+        self.assertNotIn("inWeight", angles[2])               # not weighted: weights untouched
+        self.assertNotIn("inTangentType", angles[2])
+        self.assertTrue(all("inAngle" not in t[2] for t in types))
+        self.assertEqual([t[2]["time"] for t in types], [(0.0, 0.0), (10.0, 10.0), (20.0, 20.0)])
+
+    def test_different_angles_unlock_the_tangent_equal_ones_do_not(self):
+        fake = self.fake(None)
+        keys.cmds = fake
+        keys.write_keys("a.tx", self.KEYS, None)
+        self.assertIs(fake.calls("tangent")[0][2]["lock"], False)   # 30 / -20: broken
+        fake = self.fake(None)
+        keys.cmds = fake
+        keys.write_keys("a.tx", [[5.0, 1.0, "fixed", "fixed", 10.0, 1.0, 10.0, 1.0]], None)
+        self.assertNotIn("lock", fake.calls("tangent")[0][2])        # 10 / 10
+
+    def test_one_fixed_side_sets_the_angles_too(self):
+        fake = self.fake(None)
+        keys.cmds = fake
+        keys.write_keys("a.tx", [[5.0, 1.0, "auto", "fixed", 0.0, 1.0, 25.0, 1.0]], None)
+        angles = fake.calls("tangent")[0][2]
+        self.assertEqual(angles["outAngle"], 25.0)
+
+    def test_weighted_turns_the_curve_weighted_first_and_sets_weights(self):
+        fake = self.fake(None)
+        keys.cmds = fake
+        keys.write_keys("a.tx", self.KEYS, None, weighted=True)
+        tangents = fake.calls("tangent")
+        self.assertEqual(tangents[0], ("tangent", "cx", {"edit": True, "weightedTangents": True}))
+        fixed = tangents[1][2]
+        self.assertEqual(fixed["time"], (10.0, 10.0))
+        self.assertEqual((fixed["inWeight"], fixed["outWeight"]), (2.0, 3.0))
+        self.assertIs(fixed["weightLock"], False)
+
+    def test_weighted_on_a_layer_changes_nothing_of_the_curve(self):
+        # on a layer the tangents are the layer curve's: only the types travel
+        fake = self.fake()
+        keys.cmds = fake
+        keys.write_keys("a.tx", self.KEYS, ADD, weighted=True, tangents=False)
+        self.assertTrue(all("weightedTangents" not in t[2] for t in fake.calls("tangent")))
+
+    def test_a_step_in_tangent_is_not_passed(self):
+        # measured: Maya refuses in-tangents "step"/"stepnext" with a warning and resets them to
+        # auto - the key keeps what keying gave it
+        fake = self.fake()
+        keys.cmds = fake
+        keys.write_keys("a.tx", [[4.0, 1.0, "step", "step", 0, 1, 0, 1],
+                                 [6.0, 2.0, "stepnext", "linear", 0, 1, 0, 1]], ADD,
+                        tangents=False)
+        tangents = fake.calls("tangent")
+        self.assertEqual(tangents[0][2], {"edit": True, "time": (4.0, 4.0),
+                                          "outTangentType": "step"})
+        self.assertEqual(tangents[1][2], {"edit": True, "time": (6.0, 6.0),
+                                          "outTangentType": "linear"})
+
+    def test_the_base_layer_is_keyed_never_added_to(self):
+        fake = CurveCmds(found={("BaseAnimation", "a.tx"): ["cx"]}, types={"cx": "animCurveTL"})
+        keys.cmds = fake
+        keys.write_keys("a.tx", self.KEYS, BASE, tangents=False)
+        self.assertEqual(fake.calls("add"), [])
+        self.assertEqual([entry[4] for entry in fake.calls("key")], ["BaseAnimation"] * 3)
+
+    def test_a_locked_plug_takes_nothing_and_is_named(self):
+        fake = CurveCmds(locked=["a.tx"])
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, ADD)
+        self.assertEqual((written.count, written.plugs), (0, []))
+        self.assertEqual(len(written.notes), 1)
+        self.assertIn("locked", written.notes[0])
+        self.assertEqual([e for e in fake.log if e[0] in ("add", "key", "tangent")], [])
+
+    def test_a_key_refused_is_named_and_not_counted(self):
+        class Refusing(CurveCmds):
+            def setKeyframe(self, plug, **kw):
+                CurveCmds.setKeyframe(self, plug, **kw)
+                return 0 if kw.get("time") == 10.0 else 1
+        fake = Refusing(found={("AddL", "a.tx"): ["cx"]})
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", self.KEYS, ADD, tangents=False)
+        self.assertEqual(written.count, 2)
+        self.assertEqual(len(written.notes), 1)
+        self.assertIn("a.tx", written.notes[0])
+        self.assertIn("1 of 3", written.notes[0])
+        # the types are set on the keys that exist only
+        self.assertEqual([t[2]["time"] for t in fake.calls("tangent")],
+                         [(0.0, 0.0), (20.0, 20.0)])
+
+    def test_nothing_keyed_no_tangents(self):
+        fake = self.fake()
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", [], ADD)
+        self.assertEqual((written.count, written.notes, written.plugs), (0, [], []))
+        self.assertEqual(fake.calls("tangent"), [])
+
+    def test_keys_without_tangent_fields_are_keyed_alone(self):
+        fake = self.fake()
+        keys.cmds = fake
+        written = keys.write_keys("a.tx", [[3.0, 7.0]], ADD)
+        self.assertEqual(written.count, 1)
+        self.assertEqual(fake.calls("tangent"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
