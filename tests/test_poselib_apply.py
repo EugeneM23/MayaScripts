@@ -10,6 +10,7 @@ attributes (CLAUDE.md's rule) and restored in `tearDown`. The scene half is
 docs/superpowers/plans/verify_poselib_apply.py (mayapy standalone).
 """
 
+import contextlib
 import math
 import unittest
 from collections import OrderedDict
@@ -498,6 +499,9 @@ class FakeKeys(object):
         self.log.append(("quaternion",))
         return self.quaternion
 
+    def layer_note(self, layer):
+        return real_keys.layer_note(layer)
+
     def current(self, plugs):
         return dict((p, 0.0) for p in plugs)
 
@@ -519,6 +523,21 @@ class FakeKeys(object):
         kind = self.input_of(plug)
         return kind, (None if kind in ("free", "missing") else "feed:" + plug)
 
+    @property
+    def Tweaks(self):                                        # noqa: N802 - keys.Tweaks
+        log = self.log
+
+        class Tweaks(object):
+            """The scene's tweaks: read (logged), and set back (logged with what is skipped)."""
+
+            def __init__(self):
+                log.append(("tweaks",))
+
+            def restore(self, skip=()):
+                log.append(("restore", sorted(skip)))
+                return []
+        return Tweaks
+
 
 class Press(unittest.TestCase):
     """The frame of a press: refusals before anything, ONE undo chunk around the solve and the
@@ -531,9 +550,19 @@ class Press(unittest.TestCase):
         self.saved = dict((name, getattr(ap, name)) for name in
                           ("cmds", "keys", "_plan", "_targets", "_measure", "rotations_of",
                            "_add", "_rebuild", "_reselect", "apply_onto", "_selected",
-                           "_find_object", "_objects_entry"))
+                           "_find_object", "_objects_entry", "_switches", "_evaluated"))
         ap.cmds = FakeCmds(self.log)
         ap.keys = FakeKeys(self.log)
+        self.switch = False                  # the scene under DG: the measure switches nothing
+        ap._switches = lambda: self.switch
+        log = self.log
+
+        @contextlib.contextmanager
+        def evaluated(tweaks, skip):
+            log.append(("evaluate", tweaks is not None, sorted(skip)))
+            yield
+            log.append(("evaluated",))
+        ap._evaluated = evaluated
         self.target = ref("Manny_Rig1")
         ap._targets = lambda selection: ([self.target], "")
         ap._measure = lambda plan, extra: (0.001, 0.0, "hand_l")
@@ -568,6 +597,44 @@ class Press(unittest.TestCase):
         self.assertEqual(self.log[names.index("close") - 1], ("autoKey", True))
         self.assertEqual(text, "Fist onto Manny_Rig1: 1 control keyed at frame 12 - worst "
                                "0.001 deg")
+
+    def test_a_press_changes_no_time_and_measures_under_the_solve_s_evaluation(self):
+        """The final review: a same-frame `currentTime` after the keys threw away every unkeyed
+        tweak on a keyed channel in the scene. The measure reads under `rigsolve._fresh`, the
+        plugs just keyed handed to it as those NOT to set back."""
+        ok, text = ap.apply(self.card)
+        self.assertTrue(ok, text)
+        names = [entry[0] for entry in self.log]
+        self.assertNotIn("time", names)
+        self.assertNotIn("tweaks", names)            # under DG nothing re-evaluates: none read
+        self.assertEqual(self.log[names.index("evaluate")],
+                         ("evaluate", False, ["Manny_Rig1:FKWrist_L.rotateX"]))
+        self.assertLess(names.index("write"), names.index("evaluate"))
+        self.assertLess(names.index("evaluated"), names.index("close"))
+
+    def test_in_a_parallel_scene_the_tweaks_are_read_before_the_keys(self):
+        self.switch = True
+        ok, text = ap.apply(self.card)
+        self.assertTrue(ok, text)
+        names = [entry[0] for entry in self.log]
+        self.assertLess(names.index("tweaks"), names.index("write"))
+        self.assertEqual(self.log[names.index("evaluate")],
+                         ("evaluate", True, ["Manny_Rig1:FKWrist_L.rotateX"]))
+
+    def test_a_muted_layer_takes_the_keys_and_the_line_says_why_nothing_shows(self):
+        muted = real_keys.Layer("PoseM", False, True, False, False, True, 1.0)
+        ap.keys = FakeKeys(self.log, layer=muted)
+        ok, text = ap.apply(self.card)
+        self.assertTrue(ok, text)
+        self.assertIn("write", [entry[0] for entry in self.log])
+        self.assertIn("1 control keyed on PoseM", text)
+        self.assertIn(real_keys.MUTED % "PoseM", text)
+
+    def test_a_layer_at_weight_zero_is_said_too(self):
+        ap.keys = FakeKeys(self.log, layer=real_keys.Layer("PoseW", False, True, False, False,
+                                                           False, 0.0))
+        ok, text = ap.apply(self.card)
+        self.assertIn(real_keys.NO_WEIGHT % "PoseW", text)
 
     def test_a_refused_layer_changes_nothing(self):
         ap.keys = FakeKeys(self.log, refusal="the animation layer L is locked")
@@ -767,6 +834,11 @@ class Press(unittest.TestCase):
         names = [entry[0] for entry in self.log]
         self.assertLess(names.index("preview"), names.index("dirty"))
         self.assertLess(names.index("dirty"), names.index("time"))
+        # the scene's OTHER tweaks read before that time evaluation and set back after it, the
+        # session's own channels aside (the final review)
+        self.assertLess(names.index("tweaks"), names.index("time"))
+        self.assertEqual(self.log[names.index("time") + 1],
+                         ("restore", sorted([self.FREE, self.KEYED, self.LAYERED, self.DRIVEN])))
         self.assertNotIn("open", names)
         self.assertNotIn("write", names)
         self.assertTrue(ap.cmds.recording)

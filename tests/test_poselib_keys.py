@@ -681,13 +681,16 @@ class QuaternionNote(unittest.TestCase):
 class LayerSceneCmds(object):
     """Maya's animLayer queries over a small tree: {parent: [children]}, children bottom to top."""
 
-    def __init__(self, tree, selected=(), locked=(), override=(), quaternion=(), root="BaseAnimation"):
+    def __init__(self, tree, selected=(), locked=(), override=(), quaternion=(), root="BaseAnimation",
+                 muted=(), weights=None):
         self.tree = tree
         self.root = root
         self.selected = set(selected)
         self.locked = set(locked)
         self.override = set(override) | ({root} if root else set())
         self.quaternion = set(quaternion)
+        self.muted = set(muted)
+        self.weights = dict(weights or {})
 
     def animLayer(self, name=None, **kw):
         if not kw.get("query"):
@@ -702,6 +705,12 @@ class LayerSceneCmds(object):
             return name in self.locked
         if kw.get("override"):
             return name in self.override
+        if kw.get("mute"):
+            return name in self.muted
+        if kw.get("weight"):
+            return self.weights.get(name, 1.0)
+        if kw.get("parent"):
+            return next((p for p, kids in self.tree.items() if name in kids), None)
         raise AssertionError(kw)
 
     def getAttr(self, plug, **kw):
@@ -775,6 +784,119 @@ class ActiveLayer(Restoring):
         keys.cmds = Old(self.TREE, selected=["A"])
         layer, _ = keys.active_layer()
         self.assertFalse(layer.quaternion)
+
+    # the final review (2026-10-03): a muted or zero-weight active layer took the keys and the
+    # pose did not show, with no word why - keyed anyway, and said
+
+    def test_a_muted_layer_takes_the_keys_and_is_said(self):
+        keys.cmds = LayerSceneCmds(self.TREE, selected=["A"], muted=["A"])
+        layer, refusal = keys.active_layer()
+        self.assertEqual((layer.name, refusal), ("A", ""))
+        self.assertTrue(layer.muted)
+        self.assertEqual(keys.layer_note(layer), keys.MUTED % "A")
+
+    def test_a_layer_under_a_muted_parent_is_muted(self):
+        keys.cmds = LayerSceneCmds(self.TREE, selected=["Nested"], muted=["B"])
+        layer, _ = keys.active_layer()
+        self.assertEqual(layer.name, "Nested")
+        self.assertTrue(layer.muted)
+
+    def test_a_layer_at_weight_zero_is_said(self):
+        keys.cmds = LayerSceneCmds(self.TREE, selected=["C"], weights={"C": 0.0})
+        layer, _ = keys.active_layer()
+        self.assertEqual(layer.weight, 0.0)
+        self.assertEqual(keys.layer_note(layer), keys.NO_WEIGHT % "C")
+
+    def test_a_layer_on_at_any_weight_and_the_base_say_nothing(self):
+        keys.cmds = LayerSceneCmds(self.TREE, selected=["C"], weights={"C": 0.4})
+        self.assertEqual(keys.layer_note(keys.active_layer()[0]), "")
+        keys.cmds = LayerSceneCmds(self.TREE)
+        self.assertEqual(keys.layer_note(keys.active_layer()[0]), "")
+        self.assertEqual(keys.layer_note(None), "")
+
+
+class TweakCmds(object):
+    """A scene of time curves for `time_fed` / `Tweaks`: `links` {node: [destination plugs]} (a
+    curve's, or a layer blend node's output), `types` {node: type}, `values` {plug: value},
+    `uuids` {node name, any spelling's leaf: uuid}; `setAttr` and autoKey logged."""
+
+    def __init__(self, links, types, values, uuids=None):
+        self.links, self.types, self.values = links, types, dict(values)
+        self.uuids = dict(uuids or {})
+        self.log, self.auto = [], True
+
+    def ls(self, *args, **kw):
+        if kw.get("type"):
+            return [n for n, t in self.types.items() if t in kw["type"]]
+        if kw.get("uuid"):
+            leaf = args[0].split("|")[-1]
+            return [self.uuids[leaf]] if leaf in self.uuids else []
+        raise AssertionError((args, kw))
+
+    def listConnections(self, nodes, **kw):
+        assert kw.get("connections") and kw.get("plugs") and kw.get("skipConversionNodes")
+        out = []
+        for node in nodes:
+            for plug in self.links.get(node, ()):
+                out += [node + ".output", plug]
+        return out
+
+    def nodeType(self, node):
+        return self.types.get(node, "transform")
+
+    def getAttr(self, plug):
+        return self.values[plug]
+
+    def setAttr(self, plug, value):
+        self.values[plug] = value
+        self.log.append(("set", plug, value, self.auto))
+
+    def autoKeyframe(self, query=False, state=None):
+        if query:
+            return self.auto
+        self.auto = state
+
+
+class Tweaks(Restoring):
+    """The final review (2026-10-03): a same-frame time change - and an evaluation manager
+    switch - throws away every unkeyed tweak on a keyed channel in the scene. `Tweaks` reads
+    every time-fed channel first and sets back the ones that moved, but the plugs a press keyed."""
+
+    SCENE = dict(
+        links={"spine_rx": ["rig:FKSpine1_M.rotateX"], "prop_tx": ["prop.translateX"],
+               "wrist_base": ["wrist_rx_L1.inputA"], "wrist_layer": ["wrist_rx_L1.inputB"],
+               "wrist_rx_L1": ["rig:FKWrist_L.rotateX"], "elbow_rx": ["pairBlend1.inRotateX1"]},
+        types={"spine_rx": "animCurveTA", "prop_tx": "animCurveTL", "wrist_base": "animCurveTA",
+               "wrist_layer": "animCurveTA", "wrist_rx_L1": "animBlendNodeAdditiveRotation",
+               "elbow_rx": "animCurveTA", "pairBlend1": "pairBlend"},
+        values={"rig:FKSpine1_M.rotateX": 25.0, "prop.translateX": 40.0,
+                "rig:FKWrist_L.rotateX": 15.0},
+        uuids={"rig:FKSpine1_M": "U-SPINE", "prop": "U-PROP", "rig:FKWrist_L": "U-WRIST"})
+
+    def test_every_time_fed_channel_through_layers_but_no_pair_blend(self):
+        keys.cmds = TweakCmds(**self.SCENE)
+        self.assertEqual(sorted(keys.time_fed()), ["prop.translateX", "rig:FKSpine1_M.rotateX",
+                                                   "rig:FKWrist_L.rotateX"])
+
+    def test_what_moved_is_set_back_but_what_the_press_keyed(self):
+        fake = TweakCmds(**self.SCENE)
+        keys.cmds = fake
+        tweaks = keys.Tweaks()
+        # a re-evaluation: every tweak back on its curve
+        for plug in fake.values:
+            fake.values[plug] = 0.0
+        back = tweaks.restore(skip=["|grp|rig:FKWrist_L.rotateX"])     # keyed: another spelling
+        self.assertEqual(sorted(back), ["prop.translateX", "rig:FKSpine1_M.rotateX"])
+        self.assertEqual(fake.values, {"rig:FKSpine1_M.rotateX": 25.0, "prop.translateX": 40.0,
+                                       "rig:FKWrist_L.rotateX": 0.0})
+        self.assertTrue(all(auto is False for _s, _p, _v, auto in fake.log))   # never keyed
+        self.assertTrue(fake.auto)                                          # autoKey back
+
+    def test_nothing_moved_nothing_set(self):
+        fake = TweakCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.Tweaks().restore(), [])
+        self.assertEqual(fake.log, [])
 
 
 if __name__ == "__main__":

@@ -92,7 +92,7 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
 
 ## The solve
 
-1. sample the rig once (after one evaluation at the current frame): every G, D, FKX, IKX,
+1. sample the rig once, as it stands (no time change - see the tweaks below): every G, D, FKX, IKX,
    control, the constant pieces `O_g`, `L`, `K`, the toes' relation, `RootX . G_pelvis^-1`, the
    pole's side of the CURRENT IK chain (`fkik.pole_side`), the blends;
 2. the drive chain's target `S*[b] = O_g^-1 . wanted[g]` for every base `wanted` holds (for a
@@ -134,7 +134,8 @@ whole rig. Nothing is constrained, nothing baked, `reset_build_pose` is never ca
    in reverse order, autoKey as it was.
 
 **All of it is ONE closed undo chunk** (`UNDO_CHUNK`, `_one_undo_step`, outermost: around the
-evaluation switch, the settle, the autoKey toggles, every temporary `setAttr` and every restore),
+evaluation switch, the tweaks put back, the autoKey toggles, every temporary `setAttr` and every
+restore),
 so a Ctrl+Z after a solve is one step that changes nothing and the next undoes what the animator
 did before it - inside Apply's own chunk it nests and goes with Apply. Measured without it
 (mayapy, Manny_Rig, autoKey on, a solve of `lowerarm_l` outside any chunk, its target the
@@ -151,11 +152,16 @@ The spine in IK (`FKIKSpine_M` not 0) takes the pose on its FK half, said so. A 
 FK forearm / calf is twisted about its own bone loses that twist (an IK elbow is a hinge) - the
 angle is measured after the IK is set and said, as the Connections FK / IK switch does.
 
-**One cost, stated:** the sample starts with `currentTime(currentTime)` (`settle`), which
-re-evaluates the frame - an unkeyed tweak on a KEYED channel reverts to its curve, as any time
-change reverts it.
+**The animator's tweaks survive a solve** (the final review, 2026-10-03): an unkeyed value on a
+keyed channel (set with autoKey off) holds until the next time change, and re-evaluating the scene
+throws it away - on every character and prop, not only the target. The first build began each
+solve with a same-frame `currentTime` (a "settle") and lost them all, so a hand card reverted a
+body posed by hand and Esc after a blend put back the curves' values. The solve changes no time
+any more (under DG a read after a write is fresh), and the evaluation switch `_fresh` makes in a
+GUI Maya, which re-evaluates too (measured), is wrapped: every time-fed channel is read first
+(`keys.Tweaks`) and set back after each switch.
 
-Proof: docs/superpowers/plans/verify_poselib_solve.py, mayapy standalone, 107/107 (cards made
+Proof: docs/superpowers/plans/verify_poselib_solve.py, mayapy standalone, 109/109 (cards made
 by `capture.build_pose`, targets by `scene.skeleton` + `posemath.targets`, keys by
 `keys.write`, the bones measured against the card): every rig's full card back onto itself
 standing elsewhere 0.00014 deg / 0.00007 cm, its FK controls on the values that made the pose
@@ -578,19 +584,32 @@ def _one_undo_step():
         cmds.undoInfo(closeChunk=True)
 
 
+def switches():
+    """Will `_fresh` switch the evaluation manager (the scene is not under `FRESH_MODE` now)?"""
+    mode = (cmds.evaluationManager(query=True, mode=True) or [None])[0]
+    return bool(FRESH_MODE) and mode != FRESH_MODE
+
+
 @contextlib.contextmanager
-def _fresh():
+def _fresh(tweaks=None, skip=()):
     """The evaluation the solve reads under (`FRESH_MODE`): switched only when the scene is not
-    already there, put back whatever happens."""
+    already there, put back whatever happens. A switch re-evaluates every time curve in the
+    scene and so throws away the animator's unkeyed tweaks on keyed channels (the final review,
+    measured both ways): they are read first (`keys.Tweaks`, or `tweaks` given) and set back
+    after each switch - but `skip`, the plugs a press has just keyed."""
     mode = (cmds.evaluationManager(query=True, mode=True) or [None])[0]
     switch = bool(FRESH_MODE) and mode != FRESH_MODE
     if switch:
+        if tweaks is None:
+            tweaks = keys.Tweaks()
         cmds.evaluationManager(mode=FRESH_MODE)
+        tweaks.restore(skip)
     try:
         yield
     finally:
         if switch:
             cmds.evaluationManager(mode=mode)
+            tweaks.restore(skip)
 
 
 class _Session(object):
@@ -1115,10 +1134,11 @@ class _Job(object):
     def rows(self):
         return _rows(self.rig, self.bases, self.game, self.wanted, self.members)
 
-    def run(self, settle=True):
+    def run(self):
+        #  no time change to "settle" the rig first: under DG a read after a write is fresh, and
+        #  a same-frame currentTime threw away every unkeyed tweak on a keyed channel in the
+        #  whole scene (the final review) - `_fresh` puts back what its own switch throws away
         with _one_undo_step(), _fresh(), self.session:
-            if settle:
-                cmds.currentTime(cmds.currentTime(query=True), update=True)
             self.sample()
             self.plan_levels()
             measured = (0.0, 0.0, None)
@@ -1172,15 +1192,16 @@ def _rows(rig, all_bases, game, wanted, members):
     return rows
 
 
-def solve(rig, wanted, members, settle=True):
+def solve(rig, wanted, members):
     """Solution: the FINAL channel values of the rig's controls that put the `members` (game
     leaves) on `wanted` ({game leaf: matrix} for every target bone - `posemath.targets`, the six
-    unrolled bones in drive form). The scene is left exactly as found: every temporary
-    `setAttr` is put back, autoKey as it was, the evaluation manager as it was - and the round
-    trip is ONE undo step (`UNDO_CHUNK`) that changes nothing when undone, nested in a caller's
-    own chunk when there is one. `skipped` names the plugs that could not be written
-    (`keys.writable`), `notes` what the line should say."""
-    return _Job(rig, wanted, members).run(settle)
+    unrolled bones in drive form). The scene is left exactly as found - the animator's unkeyed
+    tweaks on keyed channels anywhere in it included: every temporary `setAttr` is put back,
+    autoKey as it was, the evaluation manager as it was - and the round trip is ONE undo step
+    (`UNDO_CHUNK`) that changes nothing when undone, nested in a caller's own chunk when there
+    is one. `skipped` names the plugs that could not be written (`keys.writable`), `notes` what
+    the line should say."""
+    return _Job(rig, wanted, members).run()
 
 
 def controls_for(rig, members):

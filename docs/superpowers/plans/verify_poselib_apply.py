@@ -148,7 +148,7 @@ from maya_poselib import posemath as pm  # noqa: E402
 
 PHASES = [p.strip() for p in os.environ.get(
     "POSELIB_PHASES",
-    "undo,root,mirror,blend,partial,mixamo,rootless,objects,select,layers,floor"
+    "undo,root,mirror,blend,tweaks,partial,mixamo,rootless,objects,select,layers,floor"
 ).split(",") if p.strip()]
 OUT = io.open(sys.argv[1], "w", encoding="utf-8") if len(sys.argv) > 1 else None
 RESULTS = []
@@ -905,6 +905,67 @@ def phase_blend():
         keys.active_layer(), cmds.evaluationManager(query=True, mode=True)[0]))
 
 
+def phase_tweaks():
+    """The final review (2026-10-03): every solve began with a same-frame `currentTime`, and the
+    press re-evaluated the frame again after its keys - each threw away every unkeyed tweak on a
+    keyed channel in the scene. Here, in DG and under the parallel evaluation manager (the
+    solve's switch to DG re-evaluates the scene too): Manny_Rig's FKSpine1_M (no part of the
+    hand card) and FKWrist_L (part of it) and a locator's tx keyed 0 at 0 and 10, tweaked at 5 to
+    25 / 15 / 40 with autoKey off. A Blend started, previewed and cancelled puts back the
+    ANIMATOR'S values, the wrist's 15 included (the old cancel put back the curves' 0); an
+    Apply leaves the spine's and the prop's tweaks standing; the evaluation manager as found."""
+    a = CH["A"]
+    card = CARDS["hand"]
+    spine, wrist = a.node("FKSpine1_M") + ".rotateX", a.node("FKWrist_L") + ".rotateX"
+    prop = cmds.spaceLocator(name="tweakProp")[0]
+    prop_tx = cmds.ls(prop, long=True)[0] + ".translateX"
+    auto = cmds.autoKeyframe(query=True, state=True)
+    cmds.autoKeyframe(state=False)
+    mode_before = cmds.evaluationManager(query=True, mode=True)[0]
+    try:
+        for mode in ("off", "parallel"):
+            a.reset()
+            for plug in (spine, wrist, prop_tx):
+                cmds.setKeyframe(plug, time=0, value=0.0)
+                cmds.setKeyframe(plug, time=10, value=0.0)
+            cmds.evaluationManager(mode=mode)
+            cmds.currentTime(5, update=True)
+            tweaks = {spine: 25.0, wrist: 15.0, prop_tx: 40.0}
+            set_values(tweaks)
+            shown = values_of(list(tweaks))
+            blend = ap.Blend()
+            refusal = blend.start(card, selection=[a.node("FKWrist_L")])
+            blend.set(0.5)
+            previewed = float(cmds.getAttr(wrist))
+            blend.cancel()
+            got = values_of(list(tweaks))
+            off = max(abs(got[p] - v) for p, v in tweaks.items())
+            gate("tweaks (%s) a Blend started and cancelled: the animator's tweaks back - on a "
+                 "keyed control the card leaves alone, on a prop, and the card's own wrist (not "
+                 "its curve's 0)" % mode,
+                 refusal == "" and max(abs(shown[p] - v) for p, v in tweaks.items()) <= 1e-9 and
+                 abs(previewed - 15.0) > 1e-3 and off <= 1e-6,
+                 "spine %.4f wrist %.4f prop %.4f (previewed wrist %.4f) %s" % (
+                     got[spine], got[wrist], got[prop_tx], previewed, refusal))
+            ok, text = ap.apply(card, selection=[a.node("FKWrist_L")])
+            got = values_of([spine, prop_tx])
+            keyed_wrist = cmds.keyframe(wrist, query=True, time=(5, 5), valueChange=True)
+            gate("tweaks (%s) Apply: the tweaks off the card stand (a keyed control it does not "
+                 "hold, a prop), the card's wrist keyed" % mode,
+                 ok and abs(got[spine] - 25.0) <= 1e-6 and abs(got[prop_tx] - 40.0) <= 1e-6 and
+                 bool(keyed_wrist) and
+                 cmds.evaluationManager(query=True, mode=True)[0] == mode,
+                 "spine %.4f prop %.4f, wrist key %s, evaluation %s | %s" % (
+                     got[spine], got[prop_tx], keyed_wrist,
+                     cmds.evaluationManager(query=True, mode=True)[0], text))
+    finally:
+        cmds.evaluationManager(mode=mode_before)
+        cmds.autoKeyframe(state=auto)
+        if cmds.objExists(prop):
+            cmds.delete(prop)
+        a.reset()
+
+
 def phase_partial():
     s, c = CH["S"], CH["C"]
     s.reset()
@@ -1610,6 +1671,28 @@ def phase_layers():
          "%s | curves %d/%d/%d, channels %.3g" % (text, len(changed), len(gone), len(new),
                                                   moved))
     cmds.animLayer("PoseO", edit=True, lock=False)
+    # a MUTED additive layer selected (the final review): it takes the keys - they are right the
+    # moment it is on again - and the line says why the pose does not show
+    cmds.animLayer("PoseM")
+    cmds.animLayer("PoseM", edit=True, mute=True)
+    cmds.animLayer("PoseO", edit=True, selected=False, preferred=False)
+    cmds.animLayer("PoseM", edit=True, selected=True, preferred=True)
+    picked = keys.active_layer()[0]
+    before = curve_state()
+    cmds.currentTime(9)
+    ok, text = ap.apply(card, selection=[a.rig.main])
+    say("   muted: %s" % text)
+    changed, gone, new = curves_same(before, curve_state())
+    in_layer = layer_curves("PoseM")
+    gate("layers muted PoseM: keyed into it, and the line says it is muted",
+         ok and picked is not None and picked.muted and new and set(new) <= in_layer and
+         not changed and not gone and (keys.MUTED % "PoseM") in text,
+         "%d new curves (%d in PoseM) | %s" % (len(new), len(set(new) & in_layer), text))
+    cmds.animLayer("PoseM", edit=True, mute=False)
+    deg, cm, at = landed(a, card, 9)
+    gate("layers muted PoseM: on again, the pose on the card", deg <= 0.01,
+         "%.6f deg (%s) %.6f cm" % (deg, at, cm))
+    cmds.animLayer("PoseM", edit=True, selected=False, preferred=False)
     # an additive layer accumulating rotation as QUATERNIONS (`rotationAccumulationMode` 1 - no
     # animLayer flag for it in Maya 2027, trap 41): refused, nothing changed
     cmds.animLayer("PoseQ")
@@ -1627,7 +1710,7 @@ def phase_layers():
          "quaternions" in text and not changed and not gone and not new and moved <= 1e-9,
          "%s | curves %d/%d/%d, channels %.3g" % (text, len(changed), len(gone), len(new),
                                                   moved))
-    for name in ("PoseQ", "PoseO", "PoseL"):
+    for name in ("PoseQ", "PoseM", "PoseO", "PoseL"):
         if cmds.objExists(name):
             cmds.delete(name)
     root = cmds.animLayer(query=True, root=True)
@@ -1770,7 +1853,8 @@ def run():
     say("plugin %s (apply from %s)" % (PLUGIN, os.path.dirname(ap.__file__)))
     setup()
     for name, fn in (("undo", phase_undo), ("root", phase_root), ("mirror", phase_mirror),
-                     ("blend", phase_blend), ("partial", phase_partial),
+                     ("blend", phase_blend), ("tweaks", phase_tweaks),
+                     ("partial", phase_partial),
                      ("mixamo", phase_mixamo), ("rootless", phase_rootless),
                      ("objects", phase_objects),
                      ("select", phase_select), ("layers", phase_layers),

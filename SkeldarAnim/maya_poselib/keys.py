@@ -43,13 +43,21 @@ holds autoKey off for the length of a preview session, as `write`'s caller does.
 Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Keys - the active layer").
 """
 
-from collections import namedtuple
+from collections import OrderedDict, namedtuple
 
 import maya.cmds as cmds
 
-Layer = namedtuple("Layer", "name base additive locked quaternion")
+Layer = namedtuple("Layer", "name base additive locked quaternion muted weight",
+                   defaults=(False, 1.0))
+TIME_CURVES = ("animCurveTA", "animCurveTL", "animCurveTT", "animCurveTU")
+# nodes a time curve feeds that are no channel the animator sets: a layer's blend node is looked
+# through (its output is the channel), these are left alone
+_NOT_A_CHANNEL = ("pairBlend", "character", "clipScheduler", "clipLibrary", "expression")
+TWEAK_TOL = 1e-9
 
 LOCKED = "the animation layer %s is locked - unlock it or pick another"
+MUTED = "%s is muted - the keys are in it, the pose shows when it is on"
+NO_WEIGHT = "%s is at weight 0 - the keys are in it, the pose shows at its weight"
 QUATERNION = ("the additive animation layer %s accumulates rotation as quaternions, which "
               "cannot take exact rotate keys - switch it to component accumulation or pick "
               "another layer (translate channels are fine)")
@@ -78,10 +86,28 @@ def pick_layer(layers):
         rec = bases[0] if bases else min(layers, key=lambda r: r["order"])
     picked = Layer(rec["name"], bool(rec["base"]),
                    not rec["base"] and not rec["override"],
-                   bool(rec["locked"]), bool(rec["quaternion"]))
+                   bool(rec["locked"]), bool(rec["quaternion"]),
+                   bool(rec.get("muted", False)), float(rec.get("weight", 1.0)))
     if picked.locked:
         return None, LOCKED % picked.name
     return picked, ""
+
+
+def layer_note(layer):
+    """Why a pose keyed into `layer` will not show, or "": a MUTED layer (or one under a muted
+    parent) and a layer at WEIGHT 0 take the keys - `setKeyframe(value=)` writes them as if the
+    layer were on, at full weight - while the scene keeps showing what is under it, and the
+    press read as «23 controls keyed» with a large unexplained worst (the final review). Keyed
+    anyway, and said: muting a layer is a way of LOOKING at the take - unlike a lock, which the
+    animator sets to protect a layer and which is refused (`LOCKED`) - and the keys are right
+    the moment the layer is on again."""
+    if layer is None or layer.base:
+        return ""
+    if layer.muted:
+        return MUTED % layer.name
+    if abs(layer.weight) < 1e-9:
+        return NO_WEIGHT % layer.name
+    return ""
 
 
 def input_kind(source_type):
@@ -126,18 +152,44 @@ def active_layer():
     root = cmds.animLayer(query=True, root=True)
     if not root:
         return None, ""
-    records = []
+    records, muted = [], {}
     for order, name in enumerate(_walk(root)):
+        base = name == root
         records.append({
             "name": name,
-            "base": name == root,
+            "base": base,
             "selected": bool(cmds.animLayer(name, query=True, selected=True)),
             "locked": bool(cmds.animLayer(name, query=True, lock=True)),
             "override": bool(cmds.animLayer(name, query=True, override=True)),
             "quaternion": _quaternion(name),
+            "muted": False if base else _muted(name, root, muted),
+            "weight": 1.0 if base else _weight(name),
             "order": order,
         })
     return pick_layer(records)
+
+
+def _muted(name, root, known):
+    """Is the layer muted, itself or through a muted parent (a parent's mute silences what is
+    under it)? `known` caches the answers of one walk."""
+    if name in known:
+        return known[name]
+    try:
+        own = bool(cmds.animLayer(name, query=True, mute=True))
+        parent = cmds.animLayer(name, query=True, parent=True)
+    except (RuntimeError, TypeError, ValueError):
+        own, parent = False, None
+    if isinstance(parent, (list, tuple)):
+        parent = parent[0] if parent else None
+    known[name] = own or bool(parent and parent != root and _muted(parent, root, known))
+    return known[name]
+
+
+def _weight(name):
+    try:
+        return float(cmds.animLayer(name, query=True, weight=True))
+    except (RuntimeError, TypeError, ValueError):
+        return 1.0
 
 
 def _compound_feed(plug):
@@ -324,3 +376,98 @@ def quaternion_note(layer):
     if layer is None or not (layer.quaternion and layer.additive):
         return ""
     return QUATERNION % layer.name
+
+
+# ------------------------------------------------------------------ the animator's tweaks
+
+def time_fed():
+    """Every channel in the scene a TIME curve feeds - straight, through a unit conversion, or
+    through an animation layer's blend nodes (looked through to the channel they drive) - as
+    `node.attr` plugs, each once. Nodes that are no channel (`_NOT_A_CHANNEL`: a pairBlend under
+    a constraint, a character set) are left out."""
+    curves = cmds.ls(type=TIME_CURVES) or []
+    out, seen, frontier, kinds = OrderedDict(), set(), curves, {}
+    while frontier:
+        pairs = cmds.listConnections(frontier, source=False, destination=True, plugs=True,
+                                     connections=True, skipConversionNodes=True) or []
+        frontier = []
+        for plug in pairs[1::2]:
+            node = plug.split(".")[0]
+            if node not in kinds:
+                kinds[node] = cmds.nodeType(node)
+            kind = kinds[node]
+            if kind.startswith("animBlendNode"):
+                if node not in seen:
+                    seen.add(node)
+                    frontier.append(node)
+            elif kind not in _NOT_A_CHANNEL and not kind.startswith("animCurve"):
+                out[plug] = True
+    return list(out)
+
+
+def _identity(plug):
+    """(the node's UUID, the attribute) of a plug however its node is spelled; None for a plug
+    whose node is not one node."""
+    node, _dot, attr = plug.rpartition(".")
+    found = cmds.ls(node, uuid=True) or []
+    return (found[0], attr) if len(found) == 1 else None
+
+
+class Tweaks(object):
+    """What every time-fed channel of the scene SHOWS (`time_fed`), read once, and put back.
+
+    A same-frame `currentTime`, and switching the evaluation manager (the solve reads under DG,
+    `rigsolve._fresh`), re-evaluate every time curve in the scene - and an unkeyed TWEAK on a
+    keyed channel (a value set with autoKey off, which holds until the next time change) snaps
+    back to its curve: on another character, on a prop, on the very channels a press leaves
+    alone (the final review, 2026-10-03: a hand card applied, the body posed by hand snapped to
+    its keys; Esc after a blend put back the curves' values, not the animator's). So a press
+    reads them first and, after anything that re-evaluates the scene, `restore` sets back every
+    one that moved - but the plugs it keyed itself, which show their new key. Measured: 4224
+    keyed channels on three rigs read in a few hundredths of a second."""
+
+    def __init__(self):
+        self.values = OrderedDict()
+        for plug in time_fed():
+            try:
+                value = cmds.getAttr(plug)
+            except (RuntimeError, ValueError, TypeError):
+                continue
+            if isinstance(value, (bool, int, float)):
+                self.values[plug] = float(value)
+
+    def moved(self):
+        """The captured plugs whose value is not what it was."""
+        out = []
+        for plug, value in self.values.items():
+            try:
+                now = float(cmds.getAttr(plug))
+            except (RuntimeError, ValueError, TypeError):
+                continue
+            if abs(now - value) > TWEAK_TOL:
+                out.append(plug)
+        return out
+
+    def restore(self, skip=()):
+        """Every captured plug that moved, set back to what it showed (autoKey off: a scripted
+        `setAttr` keys under it) - but those `skip` names (any spelling of the node): the plugs
+        a press keyed. The plugs set back."""
+        moved = self.moved()
+        if not moved:
+            return []
+        skipped = set(filter(None, (_identity(p) for p in skip or ())))
+        auto = cmds.autoKeyframe(query=True, state=True)
+        cmds.autoKeyframe(state=False)
+        back = []
+        try:
+            for plug in moved:
+                if skipped and _identity(plug) in skipped:
+                    continue
+                try:
+                    cmds.setAttr(plug, self.values[plug])
+                    back.append(plug)
+                except RuntimeError:
+                    pass
+        finally:
+            cmds.autoKeyframe(state=auto)
+        return back

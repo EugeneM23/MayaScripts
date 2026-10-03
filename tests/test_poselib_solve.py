@@ -389,8 +389,8 @@ class DriveOf(unittest.TestCase):
 
 class RecordingCmds(object):
     """The few `cmds` calls `_Job.run`'s frame makes, recorded in order: the undo chunk, the
-    evaluation manager (already in `FRESH_MODE`, so `_fresh` switches nothing), the settle's
-    time change and the session's autoKey toggles."""
+    evaluation manager (already in `FRESH_MODE`, so `_fresh` switches nothing), any time change
+    (there must be none) and the session's autoKey toggles."""
 
     def __init__(self):
         self.log = []
@@ -445,12 +445,13 @@ class OneUndoStep(unittest.TestCase):
         job.rows = lambda: []
         return job
 
-    def test_the_chunk_holds_everything_the_solve_does(self):
+    def test_the_chunk_holds_everything_the_solve_does_and_no_time_change(self):
+        # no time change: the first build's same-frame `currentTime` "settle" threw away every
+        # unkeyed tweak on a keyed channel in the whole scene (the final review)
         solution = self.job().run()
         self.assertEqual(self.fake.log, [
             ("open", rigsolve.UNDO_CHUNK),
             ("autoKey", False),
-            ("time", 7.0),
             ("sample",), ("levels",), ("pass",),
             ("autoKey", True),
             ("close",),
@@ -466,7 +467,7 @@ class OneUndoStep(unittest.TestCase):
             raise RuntimeError("half way")
 
         with self.assertRaises(RuntimeError):
-            self.job(broken).run(settle=False)
+            self.job(broken).run()
         self.assertEqual(log[0], ("open", rigsolve.UNDO_CHUNK))
         self.assertEqual(log[-2:], [("autoKey", True), ("close",)])
         self.assertEqual(sum(1 for entry in log if entry[0] == "close"), 1)
@@ -498,11 +499,27 @@ class FreshMode(unittest.TestCase):
 
     def setUp(self):
         self.fake = ParallelCmds()
-        self.saved = rigsolve.cmds
+        self.saved = rigsolve.cmds, rigsolve.keys
         rigsolve.cmds = self.fake
+        log = self.fake.log
+
+        class Tweaks(object):
+            def __init__(self):
+                log.append(("tweaks",))
+
+            def restore(self, skip=()):
+                log.append(("restore", list(skip)))
+                return []
+
+        class Keys(object):
+            pass
+        fake_keys = Keys()
+        fake_keys.Tweaks = Tweaks
+        fake_keys.writable = rigsolve.keys.writable
+        rigsolve.keys = fake_keys
 
     def tearDown(self):
-        rigsolve.cmds = self.saved
+        rigsolve.cmds, rigsolve.keys = self.saved
 
     def test_the_solve_reads_under_dg(self):
         self.assertEqual(rigsolve.FRESH_MODE, "off")
@@ -511,10 +528,22 @@ class FreshMode(unittest.TestCase):
         self.job().run()
         log = self.fake.log
         self.assertEqual(log[0], ("open", rigsolve.UNDO_CHUNK))
-        self.assertEqual(log[1], ("em", "off"))
-        self.assertEqual(log[-2:], [("em", "parallel"), ("close",)])
+        self.assertEqual(log[-2:], [("restore", []), ("close",)])
         self.assertLess(log.index(("em", "off")), log.index(("sample",)))
+        self.assertLess(log.index(("em", "parallel")), log.index(("close",)))
         self.assertEqual(self.fake.mode, "parallel")
+
+    def test_the_switch_puts_the_scene_s_tweaks_back_both_ways(self):
+        """The final review: switching the evaluation manager re-evaluates every time curve in
+        the scene, and an unkeyed tweak on a keyed channel snaps back to its curve. The tweaks
+        are read BEFORE the switch, and set back right after it - before the solve reads the rig,
+        and again after the switch back."""
+        self.job().run()
+        log = self.fake.log
+        self.assertEqual(log[1:4], [("tweaks",), ("em", "off"), ("restore", [])])
+        self.assertLess(log.index(("restore", [])), log.index(("sample",)))
+        back = len(log) - 1 - log[::-1].index(("em", "parallel"))
+        self.assertEqual(log[back + 1], ("restore", []))
 
 
 class Shared(unittest.TestCase):

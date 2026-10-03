@@ -214,7 +214,19 @@ named), else `BaseAnimation`; no layers at all → plain keys. Locked → refuse
 active layer is added to it. Every value is keyed with the layer and `value=` final; eulers nearest
 the current value. An additive layer in quaternion accumulation: the per-channel final values are
 corrected so the composite lands (measured in the verify), or the press refuses naming the layer.
+A MUTED layer (itself or under a muted parent) or one at weight 0 takes the keys and the line says
+so («PoseM is muted - the keys are in it, the pose shows when it is on»): muting is a way of
+looking at the take, not a protection like a lock, and the keys are right the moment the layer is
+on (the final review: it read as «73 controls keyed» with a large unexplained worst).
 One undo chunk per apply.
+
+**The animator's tweaks** (the final review, 2026-10-03): an unkeyed value on a keyed channel —
+set with autoKey off — holds until the next time change, and any re-evaluation of the scene throws
+it away, everywhere at once. No press, solve or blend changes time: a keyed plug is shown by
+dirtying its feeding curve or layer node, and where the solve must switch the evaluation manager
+(DG for its reads, a GUI Maya) every time-fed channel is read first and set back after each switch,
+all but what the press keyed (`keys.Tweaks`). A pose applied to a hand leaves the body posed by
+hand, the other characters and the props as they stand; Esc puts back the animator's values.
 
 ## Blend
 

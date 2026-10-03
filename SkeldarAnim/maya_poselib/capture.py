@@ -40,6 +40,7 @@ import time
 
 import maya.cmds as cmds
 
+from maya_poselib import keys
 from maya_poselib import scene
 from maya_poselib import store
 
@@ -131,11 +132,13 @@ def _at(frame):
     if frame is None or abs(float(frame) - now) < 1e-9:
         yield now
         return
+    tweaks = keys.Tweaks()          # coming back re-evaluates the frame: its tweaks put back
     cmds.currentTime(frame)
     try:
         yield frame
     finally:
         cmds.currentTime(now)
+        tweaks.restore()
 
 
 # ------------------------------------------------------------------ the poses
@@ -271,6 +274,11 @@ def thumbnail(path, size=THUMB_SIZE):
         maya.utils.processIdleEvents()
         qt.QtWidgets.QApplication.processEvents()
 
+    #  a playblast steps the time to its frame - the current one - and may re-evaluate it, which
+    #  throws away the animator's unkeyed tweaks on keyed channels; Save reads the pose AFTER the
+    #  snapshot, so they are read first and set back (a GUI Maya only: not measured here, mayapy
+    #  has no viewport to blast - the final review asked)
+    tweaks = keys.Tweaks()
     try:
         for flag in shown:
             try:
@@ -284,6 +292,7 @@ def thumbnail(path, size=THUMB_SIZE):
                 cmds.modelEditor(panel, edit=True, **{flag: value})
             except Exception:                                # noqa: BLE001
                 pass
+        tweaks.restore()
     try:
         ok, note = square_jpg(qt, raw, path, size)
     finally:

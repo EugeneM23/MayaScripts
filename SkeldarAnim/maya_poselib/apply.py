@@ -26,9 +26,18 @@ The animator: «Выделив наши объекты мы можем прим�
 4. **the keys** (`keys.write`) on the current frame, the layer and `value=` final, `alpha` < 1
    mixing the current values and the pose's first (`mix`) - the status line counts the nodes
    that TOOK a key (`Written.plugs`), a plug the layer refused or a driven one named instead;
-5. the frame re-evaluated (`currentTime(t, update=True)`) and **measured** - `rigsolve.measure`
-   on a rig, every member joint's world against its target on a skeleton - the worst in the
-   status line (`summary`).
+5. **measured** - `rigsolve.measure` on a rig, every member joint's world against its target on a
+   skeleton - the worst in the status line (`summary`).
+
+**No time changes, and the animator's tweaks survive** (the final review, 2026-10-03): an unkeyed
+value on a keyed channel - set with autoKey off - holds until the next time change, and the first
+build re-evaluated the frame twice per press (`currentTime(t)` in the solve and after the keys),
+so a hand card reverted a body posed by hand, another character and a prop with it, and a Blend
+cancelled with Esc put back the curves' values. Neither press nor solve changes time now; the
+evaluation switch the solve makes in a GUI Maya re-evaluates too, so every time-fed channel is
+read first and set back after it (`keys.Tweaks`, `rigsolve._fresh`) - all but what the press
+keyed. A Blend ended after the time MOVED re-evaluates its own channels on purpose (`_settle`)
+and sets the rest back the same way.
 
 Steps 3-5 are ONE undo chunk (`UNDO_CHUNK`, `_press`), autoKey off inside it and put back:
 `rigsolve.solve`'s own chunk nests in it, so one Ctrl+Z takes the whole press back - the keys,
@@ -616,6 +625,18 @@ def _measure(plan, extra):
     return worst
 
 
+def _switches():
+    """Will the measure's evaluation switch the evaluation manager (`rigsolve.switches`: a GUI
+    Maya under the parallel EM)? Then the scene's tweaks are read before the keys. A seam."""
+    return rigsolve.switches()
+
+
+def _evaluated(tweaks, skip):
+    """The evaluation the measure reads under (`rigsolve._fresh`: DG, the scene's tweaks set
+    back after each switch, the keyed plugs `skip` aside). A seam."""
+    return rigsolve._fresh(tweaks, skip)
+
+
 def _noun(ref):
     if ref is None:
         return "objects"
@@ -623,30 +644,58 @@ def _noun(ref):
 
 
 def _key_entries(entries, name, frame, layer, alpha=1.0, mirror=False):
-    """[Result] after keying every entry's values (mixed at `alpha`) on `frame` / `layer`, the
-    frame re-evaluated and measured (alpha 1 only: a blend lands where it was asked, between).
-    Runs inside the caller's `_press`."""
-    keyed = []
+    """[Result] after keying every entry's values (mixed at `alpha`) on `frame` / `layer`, and
+    measuring them (alpha 1 only: a blend lands where it was asked, between). Runs inside the
+    caller's `_press`.
+
+    No time change: a same-frame `currentTime` here threw away every unkeyed tweak on a keyed
+    channel in the whole scene - another character's, a prop's, the target's own channels the
+    pose leaves alone (the final review). The keyed plugs' feeding nodes are dirtied instead,
+    so each shows its new key (a tweaked one went on showing the tweak); the measure reads
+    under the solve's evaluation (`rigsolve._fresh`), whose switch in a GUI Maya re-evaluates
+    the scene - so the scene's tweaks are read before the keys (`keys.Tweaks`) and set back
+    after it, all but the plugs just keyed."""
+    tweaks = keys.Tweaks() if _switches() else None
+    keyed, keyed_plugs = [], []
     for plan, extra in entries:
         values = plan.values if alpha >= 1.0 else \
             mix(plan.current, plan.values, alpha, rotations_of(plan.values))
         written = keys.write(values, frame, layer) if values else keys.Written(0, [], [])
         count, notes = written
         keyed.append((plan, extra, written.plugs, count, notes))
-    if any(count for _p, _e, _k, count, _n in keyed):
-        cmds.currentTime(frame, update=True)
+        keyed_plugs.extend(written.plugs)
+    # a keyed channel the animator had tweaked goes on showing the TWEAK after its new key - no
+    # time change re-reads it (measured: a locator's 40 stood over its key of 7). Its feeding
+    # node dirtied - the curve, or the layer's blend node (the plug itself did not do for a
+    # layered one) - the next read pulls the key; nothing else in the scene is re-evaluated
+    feeds = []
+    for plug in keyed_plugs:
+        kind, node = keys.feed_of(plug)
+        if kind in ("curve", "layer") and node not in feeds:
+            feeds.append(node)
+    if feeds:
+        cmds.dgdirty(feeds)
+    measured = {}
+    with _evaluated(tweaks, keyed_plugs):
+        for index, (plan, extra, _plugs, count, _notes) in enumerate(keyed):
+            if count and alpha >= 1.0:
+                measured[index] = _measure(plan, extra)
+    # a muted (or weight 0) layer took the keys and shows none of them: said once (the worst
+    # then measures what shows, not the keys)
+    hidden = keys.layer_note(layer) if any(count for _p, _e, _k, count, _n in keyed) else ""
     results = []
-    for plan, extra, plugs, count, notes in keyed:
-        worst = _measure(plan, extra) if count and alpha >= 1.0 else None
+    for index, (plan, extra, plugs, count, notes) in enumerate(keyed):
+        worst = measured.get(index)
         # the nodes that TOOK a key: a plug the layer refused, a locked or driven one, is named
         # in the notes and not counted
         nodes = len(set(plug.rsplit(".", 1)[0] for plug in plugs))
         label = target_label(plan.ref) if plan.ref is not None else extra.label
+        lines = shown_notes(list(plan.notes) + _skipped_note(plan.skipped) + notes)
+        if hidden and index == 0:
+            lines.insert(0, hidden)
         results.append(Result(name, label, nodes, _noun(plan.ref),
                               layer.name if layer is not None else None, frame,
-                              worst[:2] if worst else None,
-                              shown_notes(list(plan.notes) + _skipped_note(plan.skipped) + notes),
-                              alpha, mirror))
+                              worst[:2] if worst else None, lines, alpha, mirror))
     return results
 
 
@@ -1078,20 +1127,25 @@ class Blend(object):
         static channel of a control there) is not time-dependent and kept the preview's value
         through every later time change - measured in DG evaluation, and in parallel for a
         rotate, a nested and an override layer; dirtied, every case reads its own value (fix
-        round 1's probe). Unrecorded, autoKey off."""
+        round 1's probe). Unrecorded, autoKey off. The scene's OTHER tweaks on keyed channels -
+        made at the frame now shown - are read before that `currentTime` and set back after it
+        (`keys.Tweaks`; the session's own plugs aside)."""
         with _unrecorded(), _auto_off():
-            free, fed = OrderedDict(), []
+            free, fed, mine = OrderedDict(), [], []
             for plan, _extra in self.entries:
                 for plug, value in plan.current.items():
+                    mine.append(plug)
                     kind, node = keys.feed_of(plug)
                     if kind == "free":
                         free[plug] = value
                     elif kind in ("curve", "layer") and node not in fed:
                         fed.append(node)
+            tweaks = keys.Tweaks()
             keys.preview(free)
             if fed:
                 cmds.dgdirty(fed)
             cmds.currentTime(now, update=True)
+            tweaks.restore(mine)
         _refresh()
 
     def cancel(self):
