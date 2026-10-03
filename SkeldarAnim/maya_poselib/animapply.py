@@ -42,7 +42,9 @@ prepared once.
    keys (`keys.write`: the final values, on the frame the walk stands on and the active layer),
    the keyed plugs handed to the walk (`walk.keyed`: never set back as tweaks), their feeding
    nodes dirtied (`keys.feed_of`: a channel the solve's temporary writes left holding a value
-   would show it over its new key), the measure (alpha 1 only: a blend lands between - the rig's
+   would show it over its new key), the measure (only when the keys are the solve itself -
+   never at a blend, which lands between, nor when Connect moved a channel off the transfer on
+   purpose: a wrist that stood 20 deg off would read «worst 20 deg»; the rig's
    `Solver.measure`, a skeleton's `apply._measure`), the worst frame kept; Esc in the progress
    window cancels;
 6. the curves' infinity and weighting given back (`keys.put_curve_state`), the chunk closed,
@@ -465,6 +467,9 @@ class _Target(object):
         if connect and self.plugs:
             skip = _plugs_of(self.dry, self.root_node) if self.root_node else ()
             self.offsets = animdata.connect_offsets(self.before, self.dry, skip)
+        # did Connect move any channel off the transfer? Then no frame is measured (`key`).
+        # Exact on purpose: only an offset of exactly 0 leaves the keys the solve itself
+        self.connected = any(self.offsets.values())
         self.rotations = _rotations(self.dry) if alpha < 1.0 and self.plugs else {}
 
     def _note(self, texts):
@@ -526,7 +531,11 @@ class _Target(object):
         self.nodes.update(plug.rsplit(".", 1)[0] for plug in written.plugs)
         self._note(written.notes)
         _dirty(written.plugs)
-        if alpha >= 1.0 and written.plugs:
+        # measured only when the keys ARE the transfer's solve: a blend lands between the take
+        # and the clip by design, and Connect moves its channels off the transfer on purpose
+        # (each starts where it stood) - against `wanted` either reads as the transfer's error
+        # («worst 20 deg» for a wrist that stood 20 deg off the clip's first frame)
+        if alpha >= 1.0 and not self.connected and written.plugs:
             self._worse(self._measure(wanted, values, solution.skipped, bones), time)
 
     def status(self, header, plan, options, layer, alpha, mirror, notes=()):

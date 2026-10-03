@@ -710,6 +710,46 @@ class Connect(Base):
                 self.assertEqual(entry[1][plug], 100.0 * n + j)
         self.assertAlmostEqual(writes[0][1][WRIST], 5.0 + 1.0, places=12)
 
+    def test_a_connected_paste_is_not_measured_and_says_no_worst(self):
+        # Connect moves every channel off the transfer ON PURPOSE (to start where it stood): the
+        # wrist 20 deg off the clip's first frame, measured against the transfer, would read
+        # «worst 20 deg / 3.5 cm at frame 14» on a correct paste - the review's case
+        self.world.values = {WRIST: 21.0}                     # the dry solve answers 1.0
+        self.world.measured = {2: (20.0, 3.5, "hand_l")}     # what the measure would read
+        ok, text = self.press(options={"connect": True})
+        self.assertTrue(ok, text)
+        self.assertNotIn("measure", self.world.names())
+        self.assertNotIn("worst", text)
+        self.assertEqual(text.split(" | ")[0],
+                         "Walk onto Manny_Rig1: 2 controls keyed over frames 12-17 (6 frames, "
+                         "replace)")
+        # the keys are still the solve moved by Connect's offset (20 = 21 - 1)
+        self.assertEqual([e[1][WRIST] for e in self.writes()],
+                         [float(n) + 20.0 for n in range(2, 8)])
+
+    def test_a_connected_paste_onto_a_skeleton_is_not_measured(self):
+        aa._targets = lambda selection, prefer=None: ([self.skel], "")
+        self.world.values = {HAND + ".rotateX": 21.0}
+        self.world.measured = {2: (20.0, 0.0, "hand_l")}
+        ok, text = self.press(options={"connect": True})
+        self.assertTrue(ok, text)
+        self.assertNotIn("measure", self.world.names())
+        self.assertNotIn("worst", text)
+        # the root carries the travel: placed, never offset - so it alone is no reason to skip
+        self.assertEqual([e[1][SKEL_ROOT + ".translateX"] for e in self.writes()],
+                         [10.0 * n for n in range(2, 8)])
+
+    def test_a_connect_that_moves_no_channel_is_measured(self):
+        # the take already stands where the clip's first frame puts it: every offset 0, the keys
+        # ARE the transfer's solve, and the line says how close it came (Main's own difference
+        # is no offset - the travel is placed)
+        self.world.values = {WRIST: 1.0}                      # the dry solve answers 1.0
+        self.world.measured = {2: (0.25, 0.0, "hand_l")}
+        ok, text = self.press(options={"connect": True})
+        self.assertTrue(ok, text)
+        self.assertEqual([e[1] for e in self.world.entries("measure")], [0, 1, 2, 3, 4, 5])
+        self.assertIn(" - worst 0.25 deg at frame 14", text)
+
 
 class BlendPress(Base):
 
