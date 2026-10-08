@@ -106,6 +106,10 @@ class World(object):
         self.place = moved(100.0, 0.0, 50.0)
         self.blocked = {}                # plug -> why keys.writable refuses it
         self.characters = {}             # path -> CharacterRef (character_of)
+        self.ground_of = None            # frame -> the target's ground as it stands there
+        self.top_member = False          # a skeleton solve writes its top joint (rootless)
+        self.fail_at = None              # a solve number that raises
+        self.refuse_breakdown = None     # keyframe -edit -breakdown raising
 
     def value(self, plug, frame):
         found = self.values.get(plug, 0.0)
@@ -174,6 +178,12 @@ class FakeCmds(object):
     def select(self, nodes, add=False, replace=False, **kwargs):
         self.world.log.append(("select", list(nodes), add))
 
+    def keyframe(self, curve, edit=False, time=None, breakdown=None, **kwargs):
+        assert edit and breakdown is not None, kwargs
+        if self.world.refuse_breakdown is not None:
+            self.world.refuse_breakdown(curve, time=time)
+        self.world.log.append(("keyframe", curve, tuple(time), breakdown))
+
 
 class FakeKeys(object):
     """`keys` as an animation press sees it: the layer, the quaternion note, what plugs show,
@@ -235,6 +245,28 @@ class FakeKeys(object):
                                tangents))
         return real_keys.Written(len(keys_list), [], [plug])
 
+    NO_CURVE = real_keys.NO_CURVE
+
+    def curve_for(self, plug, layer):
+        return "curve:" + plug
+
+    def shown_at_start(self, tweaks, plugs):
+        """What the plugs showed when the walk was entered (its `tweaks`' reading)."""
+        self.world.log.append(("shown", sorted(plugs)))
+        return OrderedDict((p, tweaks.values[p] if p in tweaks.values else
+                            self.world.value(p, self.world.frame)) for p in plugs)
+
+    def undo_marks(self, values):
+        self.world.log.append(("mark", OrderedDict(values)))
+        return list(values)
+
+
+class FakeTweaks(object):
+    """keys.Tweaks: every plug the world knows, read where the walk is entered."""
+
+    def __init__(self, world):
+        self.values = dict((plug, world.value(plug, world.frame)) for plug in world.values)
+
 
 class FakeWalk(object):
 
@@ -243,16 +275,27 @@ class FakeWalk(object):
     def __init__(self, fresh=True):
         self.fresh = fresh
         self.keyed = []
+        self.moved = False
 
     def __enter__(self):
         self.world.log.append(("walk", self.fresh))
         self.world.walks.append(self)
         self.here = self.world.frame            # the real walk puts the time back on exit
+        self.tweaks = FakeTweaks(self.world)
         return self
 
     def go(self, frame):
         self.world.frame = frame
+        self.moved = True
         self.world.log.append(("go", frame))
+
+    def arrive(self, frame):
+        """`timewalk.Walk.arrive`: no time set on the frame the walk entered on until it moved."""
+        if not self.moved and abs(float(frame) - float(self.here)) <= 1e-9:
+            self.world.log.append(("arrive", frame))
+            return False
+        self.go(frame)
+        return True
 
     def restore_all(self):
         self.world.log.append(("restore_all",))
@@ -283,7 +326,10 @@ class FakeScene(object):
 
     def refresh_world(self, ref, bones):
         self.world.log.append(("refresh", ref.root, self.world.frame))
-        return OrderedDict((k, dict(v)) for k, v in bones.items())
+        out = OrderedDict((k, dict(v)) for k, v in bones.items())
+        if self.world.ground_of is not None and "root" in out:
+            out["root"]["ground"] = list(self.world.ground_of(self.world.frame))
+        return out
 
     def character_of(self, path):
         return self.world.characters.get(path)
@@ -301,15 +347,21 @@ class FakeTransfer(object):
                                use_drive))
 
     def place(self, target=None):
+        if target is not None and "ground" in target.get("root", {}):
+            return om.MMatrix(target["root"]["ground"])
         return om.MMatrix(self.world.place)
 
-    def frame(self, source=None, target=None, root_world=None):
+    def frame(self, source=None, target=None, root_world=None, source_root=None):
         self.world.log.append(("frame", index(source), mirrored(source), flat(root_world)))
+        if source_root is not None:
+            self.world.log.append(("source_root", index(source), flat(source_root)))
         return {"index": index(source), "mirrored": mirrored(source)}
 
-    def travel(self, source_now, source_first, flip=False):
+    def travel(self, source_now, source_first, flip=False, roots=None):
         self.world.log.append(("travel", index(source_now), index(source_first), flip,
                                mirrored(source_now) or mirrored(source_first)))
+        if roots is not None:
+            self.world.log.append(("travel_roots", flat(roots[0]), flat(roots[1])))
         return moved(10.0 * (index(source_now) - index(source_first)))
 
 
@@ -326,14 +378,23 @@ class FakePm(object):
     def scale_between(self, source, target, pairs):
         return 1.0
 
-    def mirror(self, source, members):
-        self.world.log.append(("mirror", index(source)))
+    def mirror(self, source, members, root_frame=None):
+        self.world.log.append(("mirror", index(source), flat(root_frame)))
         out = OrderedDict((leaf, dict(bone, mirrored=True)) for leaf, bone in source.items())
         swap = {"hand_l": "hand_r", "hand_r": "hand_l"}
         return out, [swap.get(m, m) for m in members or ()]
 
     def has_root(self, bones):
         return self.rooted
+
+    def root_of(self, bones):
+        return "root"
+
+    def clip_roots(self, first, worlds):
+        """posemath.clip_roots: one marker a frame - the root frame at z = 1000 + the world's x
+        (the card's frame i stands at x = i)."""
+        self.world.log.append(("clip_roots", len(worlds)))
+        return [moved(0.0, 0.0, 1000.0 + om.MMatrix(world)[12]) for world in worlds]
 
     _find = staticmethod(real_pm._find)
     is_twist = staticmethod(real_pm.is_twist)
@@ -358,6 +419,8 @@ class FakeRigsolve(object):
 
             def solve(self, wanted, seed=None):
                 outer.world.calls += 1
+                if outer.world.fail_at == outer.world.calls:
+                    raise RuntimeError("solve failed")
                 n = float(outer.world.calls)
                 outer.world.log.append(("solve", wanted["index"],
                                         None if seed is None else dict(seed)))
@@ -381,11 +444,13 @@ class FakeSkelsolve(object):
 
     def solve(self, ref, bones, wanted, members, seed=None, root=False):
         self.world.calls += 1
+        if self.world.fail_at == self.world.calls:
+            raise RuntimeError("solve failed")
         n = float(self.world.calls)
         self.world.log.append(("skel", wanted["index"], None if seed is None else dict(seed),
                                root, list(members)))
         values = OrderedDict([(HAND + ".rotateX", n)])
-        if root:
+        if root or self.world.top_member:
             values[SKEL_ROOT + ".translateX"] = 10.0 * n
         return Solution(values, [], {})
 
@@ -528,16 +593,19 @@ class Order(Base):
         ok, text = self.press()
         self.assertTrue(ok, text)
         names = self.world.names()
-        wanted = ["layer", "quaternion", "walk", "go", "skeleton", "solve", "current", "open",
-                  "state", "cut"] + ["go", "solve", "write"] * 6 + ["restate", "close", "walked"]
+        wanted = ["layer", "quaternion", "walk", "arrive", "skeleton", "solve", "current",
+                  "shown", "open", "mark", "state", "cut", "arrive", "solve", "write"] + \
+            ["go", "solve", "write"] * 5 + ["restate", "close", "walked"]
         got = [n for n in names if n in set(wanted)]
         self.assertEqual(got, wanted)
         self.assertEqual(self.world.entries("walk"), [("walk", True)])
         self.assertEqual(self.world.entries("open"), [("open", aa.UNDO_CHUNK)])
         self.assertEqual(aa.UNDO_CHUNK, "skeldarAnimApply")
-        # the walk goes to the paste frame first, then to every planned frame in order, each
-        # key on the frame the walk stands on
-        self.assertEqual([e[1] for e in self.world.entries("go")], [12, 12, 13, 14, 15, 16, 17])
+        # the paste starts on the current frame: the walk sets no time there (M2: a time set
+        # on the frame the scene stands on throws the animator's tweaks away), then goes to
+        # every planned frame in order, each key on the frame the walk stands on
+        self.assertEqual([e[1] for e in self.world.entries("arrive")], [12, 12])
+        self.assertEqual([e[1] for e in self.world.entries("go")], [13, 14, 15, 16, 17])
         self.assertEqual([e[2] for e in self.writes()], [12, 13, 14, 15, 16, 17])
         # a solve per frame, of that frame's source, after a fresh read of the target there
         self.assertEqual([e[1] for e in self.solves()], [0, 0, 1, 2, 3, 4, 5])
@@ -669,14 +737,142 @@ class Travel(Base):
         self.assertTrue(all(e[3] is False for e in self.world.entries("skel")))
         self.assertIn(aa.ROOT_KEPT % ("root", "rotateZ driven by root_parentConstraint1"), text)
 
-    def test_a_rootless_skeleton_keeps_the_moving_ground_with_no_root_to_check(self):
+    def test_a_rootless_skeleton_keeps_the_moving_ground(self):
         aa._targets = lambda selection, prefer=None: ([self.skel], "")
         aa.pm = FakePm(self.world, rooted=False)
-        self.world.blocked[SKEL_ROOT + ".rotateZ"] = "locked"      # no root: nothing asked
         self.press()
         frames = self.world.entries("frame")
         self.assertEqual(frames[-1][3], flat(moved(50.0) * self.world.place))
         self.assertTrue(all(e[3] is True for e in self.world.entries("skel")))
+
+    def test_a_rootless_skeleton_whose_top_joint_cannot_be_written_carries_nothing(self):
+        """The final review (S6): a rootless target carries the travel on its top joint, a
+        member written anyway - and it was never asked whether all six of its channels can be:
+        a locked hips translate turned the body on a ground that stayed. All six or none, as
+        for Main and a root - and the line says so."""
+        aa._targets = lambda selection, prefer=None: ([self.skel], "")
+        aa.pm = FakePm(self.world, rooted=False)
+        self.world.blocked[SKEL_ROOT + ".translateZ"] = "locked"
+        ok, text = self.press()
+        self.assertTrue(all(e[3] is False for e in self.world.entries("skel")))
+        self.assertTrue(all(e[3] is None for e in self.world.entries("frame")))
+        self.assertEqual(self.world.entries("travel"), [])
+        self.assertIn(aa.ROOT_KEPT % ("root", "translateZ locked"), text)
+
+
+class Rootless(Base):
+    """A card with no root of its own (Mixamo's Hips): its root frame on every frame from
+    `posemath.clip_roots`, its heading steadied across the clip (the final review, M3) - the
+    travel, the transfer's pelvis offset and the mirror all read that one."""
+
+    def setUp(self):
+        Base.setUp(self)
+        aa.pm = FakePm(self.world, rooted=False)
+
+    def test_the_travel_and_the_frame_read_the_steadied_roots(self):
+        ok, text = self.press()
+        self.assertTrue(ok, text)
+        self.assertEqual(self.world.entries("clip_roots"), [("clip_roots", 6)])
+        root = lambda i: flat(moved(0.0, 0.0, 1000.0 + i))         # noqa: E731
+        self.assertEqual([e[1:] for e in self.world.entries("travel_roots")],
+                         [(root(i), root(0)) for i in range(6)])
+        # the dry solve and every frame: the source's root frame is the steadied one
+        self.assertEqual([e[1:] for e in self.world.entries("source_root")],
+                         [(0, root(0))] + [(i, root(i)) for i in range(6)])
+
+    def test_mirrored_the_mirror_plane_is_the_steadied_root_s(self):
+        self.press(mirror=True)
+        root = lambda i: flat(moved(0.0, 0.0, 1000.0 + i))         # noqa: E731
+        self.assertEqual([e[1:] for e in self.world.entries("mirror")],
+                         [(0, root(0))] + [(i, root(i)) for i in range(6)])
+
+    def test_a_part_of_the_clip_steadies_over_that_part(self):
+        self.press(options={"at_current": False, "start": 2, "end": 4})
+        self.assertEqual(self.world.entries("clip_roots"), [("clip_roots", 3)])
+        self.assertEqual(self.world.entries("source_root")[0][1:],
+                         (2, flat(moved(0.0, 0.0, 1002.0))))
+
+    def test_a_rooted_card_steadies_nothing(self):
+        aa.pm = FakePm(self.world, rooted=True)
+        self.press(mirror=True)
+        self.assertEqual(self.world.entries("clip_roots"), [])
+        self.assertEqual(self.world.entries("source_root"), [])
+        self.assertEqual(self.world.entries("travel_roots"), [])
+        self.assertTrue(all(e[2] is None for e in self.world.entries("mirror")))
+
+
+class InPlaceGround(Base):
+    """The final review (M4): a ROOTLESS target pasted In place stands on the ground its top
+    joint makes - and that joint is a planned member, cut by Replace and keyed every frame, so
+    frame i read its ground off the curve the press was rewriting. It is read at every pasted
+    frame BEFORE the ops and handed to the transfer."""
+
+    def setUp(self):
+        Base.setUp(self)
+        aa._targets = lambda selection, prefer=None: ([self.skel], "")
+        aa.pm = FakePm(self.world, rooted=False)
+        self.world.top_member = True
+        self.world.ground_of = lambda frame: ident(7.0 * frame, 0.0, 3.0)
+
+    def test_the_ground_of_every_pasted_frame_is_read_before_the_ops(self):
+        ok, text = self.press(options={"in_place": True})
+        self.assertTrue(ok, text)
+        names = self.world.names()
+        cut = names.index("cut")
+        before = [e for e in self.world.log[:cut] if e[0] == "refresh"]
+        self.assertEqual([e[2] for e in before], [12, 13, 14, 15, 16, 17])
+        # every frame's transfer stands on the ground read there BEFORE anything was cut
+        frames = self.world.entries("frame")[1:]
+        self.assertEqual([e[3] for e in frames],
+                         [flat(ident(7.0 * t, 0.0, 3.0)) for t in range(12, 18)])
+
+    def test_a_target_carrying_the_travel_reads_no_ground(self):
+        self.press()
+        cut = self.world.names().index("cut")
+        self.assertEqual([e for e in self.world.log[:cut] if e[0] == "refresh"], [])
+
+    def test_a_rooted_target_in_place_reads_no_ground(self):
+        aa.pm = FakePm(self.world, rooted=True)
+        self.press(options={"in_place": True})
+        cut = self.world.names().index("cut")
+        self.assertEqual([e for e in self.world.log[:cut] if e[0] == "refresh"], [])
+        self.assertTrue(all(e[3] is None for e in self.world.entries("frame")))
+
+
+class UndoMark(Base):
+    """The final review (M1): every frame's solve records its temporary sets and their restores
+    in the press's chunk, at frames that are not the current one, and one Ctrl+Z replayed them
+    backwards - every planned channel ended showing the FIRST pasted frame's value. The chunk's
+    first step now sets each planned channel to what it showed when the press began."""
+
+    def test_the_first_step_of_the_chunk_marks_what_the_planned_plugs_showed(self):
+        self.world.values = {WRIST: lambda frame: 2.0 * frame,
+                             MAIN_SHORT + ".translateX": lambda frame: 100.0 + frame}
+        ok, text = self.press(options={"at_current": False})       # pasted at 0..5, now 12
+        self.assertTrue(ok, text)
+        names = self.world.names()
+        opened = names.index("open")
+        marks = self.world.entries("mark")
+        self.assertEqual(len(marks), 1)
+        # right after autoKey goes off, before any curve is read, cut or keyed
+        self.assertEqual(self.world.log[opened + 1], ("autoKey", False))
+        self.assertEqual(names[opened + 2], "mark")
+        values = marks[0][1]
+        self.assertEqual(sorted(values), sorted([WRIST] + MAIN_PLUGS))
+        # what they showed on frame 12, where the press began - never frame 0's
+        self.assertEqual(values[WRIST], 24.0)
+        self.assertEqual(values[MAIN_SHORT + ".translateX"], 112.0)
+
+    def test_no_planned_plug_no_mark(self):
+        aa.rigsolve = FakeRigsolve(self.world)
+        empty = type("Solver", (object,), {
+            "__init__": lambda s, rig, members, main=False: None,
+            "solve": lambda s, wanted, seed=None: Solution(OrderedDict(), [], {}),
+            "measure": lambda s, wanted: (0.0, 0.0, None)})
+        aa.rigsolve.Solver = empty
+        self.press()
+        self.assertEqual(self.world.entries("mark"), [])
+        self.assertNotIn("open", self.world.names())
 
 
 class Mirror(Base):
@@ -792,11 +988,54 @@ class Cancel(Base):
         self.assertEqual(names.count("undo"), 1)
         self.assertEqual(len(progress.steps), 3)
 
-    def test_with_undo_off_a_cancel_says_the_keys_stay(self):
+    def test_with_undo_off_a_cancel_says_what_stays(self):
+        """The final review (S3): with undo off nothing can be undone - so what was keyed
+        stays, its curves get their infinity and weighting back like any paste's, the walk
+        never sets the keyed plugs back as tweaks (they show their new keys), and the line
+        names what stays: the frames keyed and what the mode did to the keys."""
         self.world.recording = False
         ok, text = self.press(progress=Progress(cancel_at=2))
-        self.assertEqual((ok, text), (False, aa.CANCELLED_KEPT))
+        self.assertEqual((ok, text), (False, aa.CANCELLED_KEPT % (
+            "frames 12-13 keyed, the pasted channels' keys in 12-17 cut")))
+        names = self.world.names()
+        self.assertNotIn("undo", names)
+        self.assertNotIn("restore_all", names)
+        self.assertIn("restate", names)
+        self.assertLess(max(i for i, n in enumerate(names) if n == "write"),
+                        names.index("restate"))
+        self.assertTrue(self.world.walks[0].keyed)               # handed over, never set back
+
+    def test_with_undo_off_the_line_says_what_each_mode_did(self):
+        self.world.recording = False
+        for mode, done in (("replace_all", "every key of the pasted channels cut"),
+                           ("insert", "the pasted channels' keys from 12 on moved 6 later"),
+                           ("merge", None)):
+            self.world.calls = 0
+            ok, text = self.press(options={"mode": mode}, progress=Progress(cancel_at=1))
+            want = "frame 12 keyed" + (", " + done if done else "")
+            self.assertEqual(text, aa.CANCELLED_KEPT % want, mode)
+
+    def test_an_error_mid_press_undoes_the_half_paste_and_raises(self):
+        """The final review (S2): a solve that raised on the third frame left two frames keyed
+        and the cut done - the chunk closed with half a paste in it. Now it is undone (one
+        `cmds.undo`, after the chunk closed), every tweak set back, and the error goes on."""
+        self.world.fail_at = 4                    # the dry solve, then frames 12, 13 - then 14
+        with self.assertRaises(RuntimeError):
+            self.press()
+        names = self.world.names()
+        self.assertEqual(len(self.writes()), 2)
+        tail = [n for n in names[names.index("close"):] if n in
+                ("close", "undo", "restore_all", "walked", "restate")]
+        self.assertEqual(tail, ["close", "undo", "restore_all", "walked"])
+        self.assertTrue(self.world.auto)          # autoKey back
+
+    def test_an_error_with_undo_off_undoes_nothing(self):
+        self.world.recording = False
+        self.world.fail_at = 4
+        with self.assertRaises(RuntimeError):
+            self.press()
         self.assertNotIn("undo", self.world.names())
+        self.assertNotIn("restore_all", self.world.names())
 
 
 class Refusals(Base):
@@ -999,6 +1238,51 @@ class Objects(Base):
         names = self.world.names()
         self.assertEqual(names[-2:], ["close", "undo"])
         self.assertNotIn("restate", names)
+
+    def test_the_breakdown_keys_land_as_breakdowns(self):
+        """The final review (S4): the card keeps which of its keys were breakdowns, and the
+        paste keyed them as plain keys. A stored breakdown inside the range is made one again
+        on its landed key; one outside the range, or at an inserted end, is no key of the
+        paste."""
+        tx = self.objects["objects"][0]["attrs"]["translateX"]
+        tx["keys"].append([20.0, 2.0, "auto", "auto", 0.0, 1.0, 0.0, 1.0])
+        tx["breakdown"] = [10.0, 20.0]
+        self.objects.update(end=20.0, frames=21)
+        aa.apply(self.objects, None, options={"end": 10})          # 0..10 at 30
+        self.assertEqual(self.world.entries("keyframe"),
+                         [("keyframe", "curve:|locB.translateX", (40.0, 40.0), True)])
+        del self.world.log[:]
+        aa.apply(self.objects, None)                                # 0..20 at 30
+        self.assertEqual([e[2] for e in self.world.entries("keyframe")],
+                         [(40.0, 40.0), (50.0, 50.0)])
+        # a key the edit refuses: the line says so, the paste stands
+        def refuse(curve, **kw):
+            raise RuntimeError("keyframe: referenced\nmore")
+        self.world.refuse_breakdown = refuse
+        ok, text = aa.apply(self.objects, None)
+        self.assertTrue(ok, text)
+        self.assertIn(aa.BREAKDOWN_LOST % ("|locB.translateX", "keyframe: referenced"), text)
+
+    def test_with_undo_off_a_cancel_keeps_the_channels_keyed_and_says_so(self):
+        self.world.recording = False
+        ok, text = aa.apply(self.objects, None, progress=Progress(cancel_at=1))
+        self.assertEqual((ok, text), (False, aa.CANCELLED_KEPT % (
+            "1 channel keyed, the channels' keys in 30-40 cut")))
+        names = self.world.names()
+        self.assertNotIn("undo", names)
+        self.assertIn("restate", names)
+
+    def test_an_error_mid_objects_press_undoes_the_half_paste(self):
+        def boom(plug, keys_list, layer, weighted=False, tangents=True):
+            if plug.endswith("visibility"):
+                raise RuntimeError("setKeyframe failed")
+            self.world.log.append(("write_keys", plug))
+            return real_keys.Written(len(keys_list), [], [plug])
+        aa.keys.write_keys = boom
+        with self.assertRaises(RuntimeError):
+            aa.apply(self.objects, None)
+        names = self.world.names()
+        self.assertEqual(names[-2:], ["close", "undo"])
 
     def test_an_objects_card_does_not_go_onto_a_character(self):
         self.assertEqual(aa.apply_onto(self.objects, None, "|root"), (False, ap.OBJECTS_ONTO))

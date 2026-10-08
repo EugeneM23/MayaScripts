@@ -17,7 +17,14 @@ prepared once.
    (`animdata.paste_plan`: `EMPTY_RANGE`);
 2. ONE time walk for the whole press (`timewalk.Walk(fresh=True)`: the animator's unkeyed tweaks
    read first and set back after, the time put back, the solve's DG evaluation entered once);
-   at the paste frame `a` each target is prepared (`_Target`): its skeleton read there
+   the walk ARRIVES at the paste frame `a` (`Walk.arrive`: no time set when the scene already
+   stands there - a same-frame time set throws every unkeyed tweak away, and a paste at the
+   current frame must read what the animator sees, Main dragged by hand to place the walk
+   included: the final review, M2); a ROOTLESS card's root frame read on every pasted frame,
+   its heading steadied across the clip (`_clip_roots`, `posemath.clip_roots`: near upside down
+   a frame's own heading is noise - a hips roll keyed Main spinning, M3) and handed to the
+   travel, the transfer's pelvis offset and the mirror alike; at `a` each target is prepared
+   (`_Target`): its skeleton read there
    (`scene.skeleton`), the pairing, the size and the member lists of the clip's FIRST pasted
    frame, whether it carries the travel (`_carry`), one `posemath.Transfer` - its rest alignment
    read once off that first frame UNMIRRORED (a mirrored frame's rotations against its unmirrored
@@ -27,17 +34,27 @@ prepared once.
    keys, what they show before it (`keys.current` - Connect's reference), the first seed. The
    dry solves run UNRECORDED (`_unrecorded`, outside any chunk - trap 145): a rig's solve is a
    chunk of its own, and before the press's it would be one empty Ctrl+Z for the animator;
-3. Blend < 100 %: the walk reads every planned plug at every pasted frame as the take stands
-   (the partner of each frame's mix);
-4. ONE undo chunk (`UNDO_CHUNK`), autoKey off inside it: the planned plugs' curves' infinity
-   and weighting read (`keys.curve_state` - a cut that empties a curve DELETES it, measured,
-   and the next key makes a curve with Maya's defaults), then the paste mode on the ACTIVE
-   layer's curves of every target's planned plugs (`plan.ops`: Replace cuts [a, b], Replace all
-   every key, Insert moves every key at or after `a` later by the clip's length, Merge nothing);
-5. per pasted frame: the walk goes there; per target its skeleton read again
+3. BEFORE anything is cut or keyed, one pass over the pasted frames reads what later frames
+   must not read off curves the press rewrites: at Blend < 100 % every planned plug as the take
+   stands (the partner of each frame's mix), and the ground a ROOTLESS target that carries no
+   travel stands on (`read_ground` - its top joint is a planned member, cut by Replace and keyed
+   every frame: M4); then what every planned plug SHOWED when the press began
+   (`keys.shown_at_start`: the walk's tweaks reading, else the value);
+4. ONE undo chunk (`UNDO_CHUNK`), autoKey off inside it: FIRST every planned plug set to what it
+   showed when the press began (`keys.undo_marks`) - each frame's solve records its temporary
+   sets and their restores in the chunk at frames that are not the current one, and a Ctrl+Z
+   replays them backwards: undone LAST, the mark leaves every channel showing what it showed
+   before the press, never the first pasted frame's value (M1) -; the planned plugs' curves'
+   infinity and weighting read (`keys.curve_state` - a cut that empties a curve DELETES it,
+   measured, and the next key makes a curve with Maya's defaults), then the paste mode on the
+   ACTIVE layer's curves of every target's planned plugs (`plan.ops`: Replace cuts [a, b],
+   Replace all every key, Insert moves every key at or after `a` later by the clip's length,
+   Merge nothing);
+5. per pasted frame: the walk arrives there; per target its skeleton read again
    (`scene.refresh_world` - what the card does not hold plays the take under it), the frame's
    source bones decoded (`bones_at`, mirrored when asked), the root frame where the travel puts
-   it (`travel · place`), the transfer, the solve with the PREVIOUS frame's values as the
+   it (`travel · place`, else the ground read before), the transfer, the solve with the
+   PREVIOUS frame's values as the
    nearest-euler seed (the curves never flip - trap 108), Connect's offsets, Blend's mix, the
    keys (`keys.write`: the final values, on the frame the walk stands on and the active layer),
    the keyed plugs handed to the walk (`walk.keyed`: never set back as tweaks), their feeding
@@ -53,9 +70,12 @@ prepared once.
    frame 31», a card saved at another rate than the scene's said (`FPS_NOTE`: pasted frame for
    frame), a muted layer said (`keys.layer_note`). A note every frame repeats with another
    number (an IK elbow losing a forearm twist of N deg) is said once (`_note_key`);
-7. Cancel: the chunk closed and undone (`cmds.undo`, once - every key, cut and move back; with
-   undo off there is nothing to undo and the line says what stays), every tweak set back
-   (`walk.restore_all`) - `CANCELLED`.
+7. Cancel: the chunk closed and undone (`cmds.undo`, once - every key, cut and move back), every
+   tweak set back (`walk.restore_all`) - `CANCELLED`. With undo off nothing can be undone: what
+   was keyed stays, its curves get their state back, the walk never sets the keyed plugs back,
+   and the line says what stays (`CANCELLED_KEPT`: the frames keyed, what the mode cut or moved -
+   S3). A press that RAISES inside its chunk is undone the same way before the error goes on
+   (`_undo_failed`: half a paste is never left behind - S2).
 
 ## The travel («от места персонажа»)
 
@@ -64,11 +84,13 @@ travel: frame i's root frame is `Transfer.travel(source i, first, flip=mirror) �
 source root frame's motion from the first pasted frame, carried into the target's root axes and
 scaled, from where the target stands at `a`. A rig's `Main` is written onto it
 (`Solver(main=True)`), a skeleton's root joint (`skelsolve.solve(root=True)`), a rootless
-skeleton's top joint keeps the moving ground (`posemath._on_ground`). A Main or a root whose six
-rotate / translate channels cannot ALL be written (locked, driven) carries nothing - half a
-travel would tear the pelvis off its root - and the line says so (`rigsolve.MAIN_KEPT`,
-`ROOT_KEPT`); a hand card, or In place, is the pose rule: the root never written. Connect never
-offsets Main or the root: the travel is placed, not offset.
+skeleton's top joint keeps the moving ground (`posemath._on_ground`). A Main, a root or a
+rootless skeleton's top joint whose six rotate / translate channels cannot ALL be written
+(locked, driven) carries nothing - half a travel would tear the pelvis off its root - and the line
+says so (`rigsolve.MAIN_KEPT`, `ROOT_KEPT`); a hand card, or In place, is the pose rule: the root
+never written. Connect never offsets Main or the root: the travel is placed, not offset. A
+rootless card's travel moves by its ground frame with the heading `posemath.clip_roots`
+steadied across the clip.
 
 ## Objects (`_press_objects`)
 
@@ -80,7 +102,11 @@ shifted onto the paste frame; a static attribute one key at `a`; Connect moves a
 channel so its first pasted value is what it showed at `a`, Blend mixes each key with what the
 channel showed at that key's time (read before the ops); keyed with their tangents
 (`keys.write_keys`: angles and weights only without layers - on a layer the tangents are the
-layer curve's and only their types travel). The paste modes as for a character. Measured (mayapy
+layer curve's and only their types travel), a stored breakdown key made a breakdown again
+(`_breakdowns`: `keyframe -edit -time (t, t) -breakdown true`, measured on a plain and a layer
+curve, undone with the chunk). The paste modes as for a character; a Blend mixes the key VALUES
+at the clip's own key times and keeps the clip's tangents - the take's motion between them is no
+part of the mix. Measured (mayapy
 2027, task 8's probe): a final-value key on an additive layer at a time that is NOT the current
 one lands right - Maya reads the layers under it at the KEY's time (tx 15 at frame 10 with the
 time at 0: the layer key 5, the base 10, shown 15) - so objects are keyed without a walk; a
@@ -118,6 +144,7 @@ options", "The paste modes", "Root motion", "Per frame", "The press, in order", 
 
 import contextlib
 import re
+import traceback
 from collections import OrderedDict
 
 import maya.cmds as cmds
@@ -146,9 +173,10 @@ TOL_CM = 0.01
 
 NO_FRAMES = "the card has no frames - save it again"
 CANCELLED = "cancelled - nothing changed"
-CANCELLED_KEPT = "cancelled - undo is off, so the frames keyed so far stay"
+CANCELLED_KEPT = "cancelled - undo is off, so what was done stays: %s"
 FPS_NOTE = "the card is %s, the scene %s - pasted frame for frame"
 ROOT_KEPT = "%s kept where it stands (%s) - the travel is not carried"
+BREAKDOWN_LOST = "the breakdown keys of %s stay plain keys (%s)"
 NO_ROOT = "not found"
 CARRIED = " + %s (it carries the travel)"
 STEP = "%s: frame %s"
@@ -306,15 +334,71 @@ def _objects_pairs(header, selection):
 @contextlib.contextmanager
 def _chunk():
     """The block as ONE undo chunk (`UNDO_CHUNK`), autoKey off inside it and put back - closed
-    whatever happens. Every solve's own chunk nests in it, so one Ctrl+Z is the whole paste."""
+    whatever happens, a failing autoKey query included. Every solve's own chunk nests in it, so
+    one Ctrl+Z is the whole paste. Never an empty chunk: `autoKeyframe -state` is a step on the
+    undo queue even when it sets the state autoKey already has (measured), so `_undo_failed`
+    undoes this chunk and never the animator's step before it."""
     cmds.undoInfo(openChunk=True, chunkName=UNDO_CHUNK)
-    auto = cmds.autoKeyframe(query=True, state=True)
+    auto = None
     try:
+        auto = cmds.autoKeyframe(query=True, state=True)
         cmds.autoKeyframe(state=False)
         yield
     finally:
-        cmds.autoKeyframe(state=auto)
-        cmds.undoInfo(closeChunk=True)
+        try:
+            if auto is not None:
+                cmds.autoKeyframe(state=auto)
+        finally:
+            cmds.undoInfo(closeChunk=True)
+
+
+def _undo_failed(recording, walk=None):
+    """A press that RAISED inside its chunk (the chunk closed by then): the chunk undone when
+    undo is on - half a paste is never left behind (the final review, S2) - and the walk's
+    tweaks all set back (`walk.restore_all`: nothing it keyed stands). With undo off there is
+    nothing to undo. Never raises over the press's own error."""
+    if not recording:
+        return
+    try:
+        cmds.undo()
+    except Exception:                                    # noqa: BLE001 - the press's error goes on
+        traceback.print_exc()
+    if walk is not None:
+        try:
+            walk.restore_all()
+        except Exception:                                # noqa: BLE001
+            traceback.print_exc()
+
+
+def _kept(done, plan, noun):
+    """CANCELLED_KEPT's line - a press cancelled with undo off keeps what it did, and says what:
+    `done` («frames 12-14», «3 channels») keyed, and what the paste mode did to the keys there
+    (`plan.ops`): Replace cut [a, b], Replace all every key, Insert moved the keys from `a` on
+    (the final review, S3)."""
+    parts = ["%s keyed" % done] if done else ["nothing keyed"]
+    for op in plan.ops:
+        if op[0] == "cut":
+            parts.append("the %s' keys in %s-%s cut" % (noun, _num(op[1]), _num(op[2])))
+        elif op[0] == "cut_all":
+            parts.append("every key of the %s cut" % noun)
+        elif op[0] == "shift":
+            parts.append("the %s' keys from %s on moved %s later" % (noun, _num(op[1]),
+                                                                       _num(op[2])))
+    return CANCELLED_KEPT % ", ".join(parts)
+
+
+def _num(value):
+    """A frame as the line writes it: «12», «12.5»."""
+    return "%g" % float(value)
+
+
+def _span(times):
+    """«frame 12» / «frames 12-14» of the target times keyed so far, "" for none."""
+    if not times:
+        return ""
+    if len(times) == 1:
+        return "frame %s" % _num(times[0])
+    return "frames %s-%s" % (_num(min(times)), _num(max(times)))
 
 
 @contextlib.contextmanager
@@ -395,7 +479,9 @@ def _carry(ref, bones, travel):
     on its root joint - each only when all six of its rotate / translate channels can be
     written (half a travel - turned, not moved - would tear the pelvis off its root); else not,
     and the note says why (`rigsolve.MAIN_KEPT`, `ROOT_KEPT`). A skeleton with no root of its
-    own carries it on its moving ground: its top joint is a member, written anyway."""
+    own carries it on its moving ground: its top joint, a member - under the same rule, all six
+    of ITS channels or no travel (the final review, S6: a locked hips translate would have
+    turned the body on a ground that stayed)."""
     if not travel:
         return False, None, ""
     if ref.kind == "rig":
@@ -405,7 +491,10 @@ def _carry(ref, bones, travel):
         why = _blocked(node)
         return (False, None, rigsolve.MAIN_KEPT % why) if why else (True, node, "")
     if not pm.has_root(bones):
-        return True, None, ""
+        top = pm.root_of(bones)
+        node = (bones.get(top) or {}).get("path")
+        why = _blocked(node) if node else ""
+        return (False, None, ROOT_KEPT % (top, why)) if why else (True, None, "")
     root = skelsolve.root_leaf(ref, bones)
     node = (bones.get(root) or {}).get("path")
     if not node:
@@ -421,17 +510,38 @@ def _plugs_of(values, node):
     return [plug for plug in values if plug.rsplit(".", 1)[0] in names]
 
 
+def _clip_roots(frames, first, plan):
+    """{index into the frames arrays: om.MMatrix}: the source's ROOT FRAME on every frame from
+    the first pasted to the last (`posemath.clip_roots` over its top joint's world, decoded off
+    the arrays): a ROOTLESS source's ground heading steadied across the clip - read frame by
+    frame, a hips roll's near-upside-down frames read a 2 deg tilt as a half turn and keyed
+    Main / the root spinning (the final review, M3). None for a source with a root of its own:
+    its root bone is read per frame as it always was."""
+    root = pm.root_of(first)
+    if root is None or pm.has_root(first):
+        return None
+    names = list(frames.get("bones") or ())
+    if root not in names:
+        return None
+    slot = names.index(root)
+    lo, hi = plan.frames[0][1], plan.frames[-1][1]
+    indices = list(range(lo, hi + 1))
+    worlds = [animdata.decode(frames["world"][i][7 * slot:7 * slot + 7]) for i in indices]
+    return dict(zip(indices, pm.clip_roots(first, worlds)))
+
+
 # ------------------------------------------------------------------ one character
 
 class _Target(object):
     """One character of a press, prepared ONCE at the paste frame (the module's step 2), then
     keyed frame by frame (`key`)."""
 
-    def __init__(self, ref, first, source, members, travel, alpha, connect):
+    def __init__(self, ref, first, source, members, travel, alpha, connect, first_root=None):
         """`first` is the clip's first pasted frame UNMIRRORED (the transfer's alignment),
         `source` the same frame as the press hands it over (mirrored when asked), `members` the
         card's members as the press uses them (mirrored when asked); `travel` - the card would
-        carry the travel (`_travels`)."""
+        carry the travel (`_travels`); `first_root` the source's root frame at that frame when
+        the press steadied it (`_clip_roots`), else None."""
         self.ref = ref
         self.rig = ref.kind == "rig"
         self.notes = OrderedDict()             # note key -> note, the first seen kept
@@ -441,6 +551,7 @@ class _Target(object):
         self.worst = self.worst_frame = None
         self.score = 0.0
         self.partner = {}                      # target time -> {plug: the take there}
+        self.grounds = {}                      # target time -> its root frame, read before
         found = []
         self.bones = scene.skeleton(ref, found)[0]
         self.pairs = pm.pairs(source, self.bones)
@@ -456,11 +567,20 @@ class _Target(object):
         self.solver = rigsolve.Solver(ref.rig, self.members, main=self.carry) \
             if self.rig else None
         # the DRY solve of the first frame, as it will be keyed: which plugs, and the seed
-        wanted = self.transfer.frame(source, self.bones, self.place if self.carry else None)
+        wanted = self.transfer.frame(source, self.bones, self.place if self.carry else None,
+                                     source_root=first_root)
         solution = self._solve(self.bones, wanted, None)
         self._take(solution)
         self.dry = OrderedDict(solution.values)
         self.plugs = list(self.dry)
+        # a ROOTLESS target that carries no travel stands on the ground its top joint makes -
+        # a planned member: Replace cuts its curve and every frame keys it, so frame i read its
+        # ground off the curve the press was rewriting (the final review, M4). That ground is
+        # read at every pasted frame BEFORE the ops (`read_ground`) and handed to the transfer
+        self.reads_ground = False
+        if self.plugs and not self.carry and not pm.has_root(self.bones):
+            top = (self.bones.get(pm.root_of(self.bones)) or {}).get("path")
+            self.reads_ground = bool(top and _plugs_of(self.dry, top))
         self.before = keys.current(self.plugs) if self.plugs else {}
         self.seed = OrderedDict(self.dry)
         self.offsets = {}
@@ -502,16 +622,27 @@ class _Target(object):
         if self.worst is None or score > self.score:
             self.worst, self.score, self.worst_frame = (deg, cm), score, time
 
-    def key(self, time, source, shown, first, mirror, layer, alpha, keyed):
+    def read_ground(self, time):
+        """The target's root frame as it stands at `time` (`Transfer.place` of its skeleton read
+        there) - read by the press's pass BEFORE its ops (M4)."""
+        self.grounds[time] = self.transfer.place(scene.refresh_world(self.ref, self.bones))
+
+    def key(self, time, source, shown, first, mirror, layer, alpha, keyed, roots=None):
         """One pasted frame (the module's step 5), the walk standing on `time`: `source` is the
         frame's bones unmirrored (the travel reads them), `shown` as the press hands them over
         (mirrored when asked), `first` the first pasted frame unmirrored; `keyed` the walk's
-        list of the plugs keyed."""
+        list of the plugs keyed; `roots` - (this frame's, the first's) source root frame when
+        the press steadied them (`_clip_roots`), else None. The root frame: where the travel
+        puts it, else the ground read before the ops (`read_ground`), else as it stands."""
         bones = scene.refresh_world(self.ref, self.bones)
         root_world = None
         if self.carry:
-            root_world = self.transfer.travel(source, first, flip=mirror) * self.place
-        wanted = self.transfer.frame(shown, bones, root_world)
+            root_world = self.transfer.travel(source, first, flip=mirror, roots=roots) * \
+                self.place
+        elif self.reads_ground:
+            root_world = self.grounds.get(time)
+        wanted = self.transfer.frame(shown, bones, root_world,
+                                     source_root=roots[0] if roots else None)
         solution = self._solve(bones, wanted, self.seed)
         self._take(solution)
         values = OrderedDict(solution.values)
@@ -585,43 +716,71 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
     name = header.get("name") or "Animation"
     recording = bool(cmds.undoInfo(query=True, state=True))
     with timewalk.Walk(fresh=True) as walk:
-        walk.go(plan.a)
-        first = animdata.bones_at(header, frames, plan.frames[0][1])
-        source, used = pm.mirror(first, members) if mirror else (first, members)
+        # `arrive`: a paste starting on the current frame reads the scene as the animator sees
+        # it there, unkeyed tweaks included - Main dragged by hand to place the walk (M2)
+        walk.arrive(plan.a)
+        first_index = plan.frames[0][1]
+        first = animdata.bones_at(header, frames, first_index)
+        roots = _clip_roots(frames, first, plan)
+        first_root = roots[first_index] if roots else None
+        source, used = pm.mirror(first, members, root_frame=first_root) if mirror \
+            else (first, members)
         travel = _travels(header, used, options)
         with _unrecorded():
-            targets = [_Target(ref, first, source, used, travel, alpha, options.connect)
-                       for ref in refs]
+            targets = [_Target(ref, first, source, used, travel, alpha, options.connect,
+                               first_root) for ref in refs]
         if not any(target.plugs for target in targets):
             return _result(targets, header, plan, options, layer, alpha, mirror)
-        if alpha < 1.0:
+        # BEFORE anything is cut or keyed: the take each frame mixes with (Blend), the ground a
+        # rootless target stands on (M4) - read at every pasted frame
+        if alpha < 1.0 or any(target.reads_ground for target in targets):
             for _source, _index, time in plan.frames:
-                walk.go(time)
+                walk.arrive(time)
                 for target in targets:
-                    if target.plugs:
+                    if target.plugs and alpha < 1.0:
                         target.partner[time] = keys.current(target.plugs)
-        cancelled = False
-        with _chunk():
-            states = [keys.curve_state(target.plugs, layer) for target in targets]
-            for target in targets:
-                _ops(plan.ops, target.plugs, layer)
-            for _source, index, time in plan.frames:
-                walk.go(time)
-                bones = animdata.bones_at(header, frames, index)
-                shown = pm.mirror(bones, members)[0] if mirror else bones
+                    if target.reads_ground:
+                        target.read_ground(time)
+        planned = OrderedDict()
+        for target in targets:
+            planned.update((plug, None) for plug in target.plugs)
+        began = keys.shown_at_start(walk.tweaks, list(planned))
+        cancelled, keyed = False, []
+        try:
+            with _chunk():
+                # the chunk's first step: every planned channel set to what it showed when the
+                # press began - undone LAST, so one Ctrl+Z leaves each showing that (M1)
+                keys.undo_marks(began)
+                states = [keys.curve_state(target.plugs, layer) for target in targets]
                 for target in targets:
-                    target.key(time, bones, shown, first, mirror, layer, alpha, walk.keyed)
-                if progress is not None and not progress.step(STEP % (name, "%g" % time)):
-                    cancelled = True
-                    break
-            if not cancelled:
-                for state in states:
-                    keys.put_curve_state(state, layer)
+                    _ops(plan.ops, target.plugs, layer)
+                for _source, index, time in plan.frames:
+                    walk.arrive(time)
+                    bones = animdata.bones_at(header, frames, index)
+                    root = roots.get(index) if roots else None
+                    shown = pm.mirror(bones, members, root_frame=root)[0] if mirror else bones
+                    pair = (root, first_root) if roots else None
+                    for target in targets:
+                        target.key(time, bones, shown, first, mirror, layer, alpha, walk.keyed,
+                                   pair)
+                    keyed.append(time)
+                    if progress is not None and not progress.step(STEP % (name, "%g" % time)):
+                        cancelled = True
+                        break
+                # with undo off a cancel keeps its keys: their curves get their state back too
+                if not cancelled or not recording:
+                    for state in states:
+                        keys.put_curve_state(state, layer)
+        except BaseException:
+            _undo_failed(recording, walk)
+            raise
         if cancelled:
             if recording:
                 cmds.undo()
-            walk.restore_all()
-            return False, CANCELLED if recording else CANCELLED_KEPT
+                walk.restore_all()
+                return False, CANCELLED
+            # undo off: what was keyed stays - and so do the walk's `keyed` (never set back)
+            return False, _kept(_span(keyed), plan, "pasted channels")
     return _result(targets, header, plan, options, layer, alpha, mirror)
 
 
@@ -695,6 +854,45 @@ def _object_keys(curve, lo, hi, plan):
     return [[float(key[0]) + plan.offset] + list(key[1:]) for key in inside], weighted
 
 
+def _breakdown_times(curve, lo, hi, plan, landed):
+    """The TARGET times of a stored CURVE's breakdown keys (`"breakdown": [t...]`, source times)
+    inside the paste's source range [lo, hi], each one a key of `landed` (the keys the paste
+    makes - an end key `_inserted` is a new key, never a breakdown). Pure."""
+    if not isinstance(curve, dict):
+        return []
+    times = [float(key[0]) for key in landed]
+    out = []
+    for source in curve.get("breakdown") or ():
+        try:
+            source = float(source)
+        except (TypeError, ValueError):
+            continue
+        if not lo - EPS <= source <= hi + EPS:
+            continue
+        target = source + plan.offset
+        if any(abs(target - time) <= EPS for time in times):
+            out.append(target)
+    return out
+
+
+def _breakdowns(plug, layer, times):
+    """The keys at `times` on the plug's curve on `layer` made breakdowns (`keyframe -edit
+    -breakdown`) - the objects card keeps which of its keys were breakdowns, and a paste that
+    dropped it turned them into ordinary keys (the final review, S4). Notes for what could not
+    be done."""
+    curve = keys.curve_for(plug, layer)
+    if curve is None:
+        return [BREAKDOWN_LOST % (plug, keys.NO_CURVE)]
+    lost = []
+    for time in times:
+        try:
+            cmds.keyframe(curve, edit=True, time=(time, time), breakdown=True)
+        except RuntimeError as error:
+            lost.append(str(error).strip().splitlines()[0][:80] if str(error).strip() else
+                        type(error).__name__)
+    return [BREAKDOWN_LOST % (plug, lost[0])] if lost else []
+
+
 def _value_at(curve, time):
     """The value a stored CURVE has at source frame `time` (a Blend's preview of an objects
     card): its static value, a key's there, else `_inserted`'s key at `time`, else the value it
@@ -764,11 +962,12 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
     if note and any(plug.rsplit(".", 1)[-1] in ROTATE for plug in channels):
         return False, note
     lo, hi = plan.frames[0][0], plan.frames[-1][0]
-    planned = OrderedDict()
+    planned, breakdowns = OrderedDict(), {}
     for plug, curve in channels.items():
         stored, weighted = _object_keys(curve, lo, hi, plan)
         if stored:
             planned[plug] = (stored, weighted)
+            breakdowns[plug] = _breakdown_times(curve, lo, hi, plan, stored)
     # Connect and Blend read the take as it stands, BEFORE the paste mode cuts or moves it
     if options.connect:
         for plug, (stored, weighted) in list(planned.items()):
@@ -783,35 +982,45 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
                 mixed.append([key[0], was + (float(key[1]) - was) * alpha] + list(key[2:]))
             planned[plug] = (mixed, weighted)
     nodes, said = set(), OrderedDict()
-    cancelled = False
+    cancelled, done = False, []
     if planned:
         recording = bool(cmds.undoInfo(query=True, state=True))
         plugs = list(planned)
-        with _chunk():
-            state = keys.curve_state(plugs, layer)
-            if layer is None:
-                # keyed with its tangents, a weighted card curve keeps its weights: the target
-                # curve's infinity given back, never its weighting over the card's
-                for plug, saved in state.items():
-                    if plug in planned and planned[plug][1]:
-                        state[plug] = dict(saved, weighted=True)
-            _ops(plan.ops, plugs, layer)
-            for plug, (stored, weighted) in planned.items():
-                written = keys.write_keys(plug, stored, layer, weighted,
-                                          tangents=layer is None)
-                nodes.update(p.rsplit(".", 1)[0] for p in written.plugs)
-                for text in written.notes:
-                    said.setdefault(text, text)
-                if progress is not None and not progress.step(
-                        STEP % (header.get("name") or "Animation", scene.leaf(plug))):
-                    cancelled = True
-                    break
-            if not cancelled:
-                keys.put_curve_state(state, layer)
+        try:
+            with _chunk():
+                state = keys.curve_state(plugs, layer)
+                if layer is None:
+                    # keyed with its tangents, a weighted card curve keeps its weights: the
+                    # target curve's infinity given back, never its weighting over the card's
+                    for plug, saved in state.items():
+                        if plug in planned and planned[plug][1]:
+                            state[plug] = dict(saved, weighted=True)
+                _ops(plan.ops, plugs, layer)
+                for plug, (stored, weighted) in planned.items():
+                    written = keys.write_keys(plug, stored, layer, weighted,
+                                              tangents=layer is None)
+                    nodes.update(p.rsplit(".", 1)[0] for p in written.plugs)
+                    for text in written.notes:
+                        said.setdefault(text, text)
+                    if written.plugs and breakdowns.get(plug):
+                        for text in _breakdowns(plug, layer, breakdowns[plug]):
+                            said.setdefault(text, text)
+                    done.append(plug)
+                    if progress is not None and not progress.step(
+                            STEP % (header.get("name") or "Animation", scene.leaf(plug))):
+                        cancelled = True
+                        break
+                # with undo off a cancel keeps its keys: their curves get their state back too
+                if not cancelled or not recording:
+                    keys.put_curve_state(state, layer)
+        except BaseException:
+            _undo_failed(recording)
+            raise
         if cancelled:
             if recording:
                 cmds.undo()
-            return False, CANCELLED if recording else CANCELLED_KEPT
+                return False, CANCELLED
+            return False, _kept(ap._counted(len(done), "channels"), plan, "channels")
     if nodes:
         hidden = keys.layer_note(layer)
         if hidden:
