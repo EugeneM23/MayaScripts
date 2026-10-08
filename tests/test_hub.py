@@ -3,6 +3,8 @@
 Spec: docs/superpowers/specs/2026-09-17-skeldar-hub-design.md
 """
 
+import contextlib
+import io
 import sys
 import types
 import unittest
@@ -959,6 +961,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         FakeSkin.fail_finish = False
         hub._SKIN = None
         hub._EDGE_FAILED = False
+        hub._EDGE_FAILURE = ""
         self.install_fakes()
 
     def tearDown(self):
@@ -966,6 +969,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         FakeSkin.fail_finish = False
         hub._SKIN = None
         hub._EDGE_FAILED = False
+        hub._EDGE_FAILURE = ""
         self.remove_fakes()
 
     def viewport_messages(self):
@@ -1141,6 +1145,113 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         hub.show()
         self.assertIn(hub.CONTROL, self.fake.workspace)
         self.assertEqual(len(self.edges), 1)             # not tried again
+
+    def _maya_like(self):
+        """The fake as Maya behaves where it matters here: deleteUI removes
+        the control, and creating one runs its uiScript (build())."""
+        fake = self.fake
+
+        def delete_ui(name, **kwargs):
+            fake.workspace.pop(name, None)
+            fake.deleted.append(name)
+
+        plain = fake.workspaceControl
+
+        def workspace_control(name, **kwargs):
+            created = not any(kwargs.get(k) for k in (
+                "exists", "query", "q", "edit", "e"))
+            result = plain(name, **kwargs)
+            if created and "uiScript" in kwargs:
+                hub.build()
+            return result
+        fake.deleteUI = delete_ui
+        fake.workspaceControl = workspace_control
+
+    def _drain(self, rounds=10):
+        """Run the deferred queue until it is empty; how many rounds it took
+        (`rounds` + 1: it never emptied)."""
+        for done in range(rounds):
+            if not self.fake.deferred:
+                return done
+            self.fake.run_deferred()
+        return rounds + 1 if self.fake.deferred else rounds
+
+    def test_an_edge_that_cannot_be_built_leaves_the_hub_docked(self):
+        """Review, fix round 1: an Edge raising before the skin (a half
+        installed maya_hubedge, a constructor's first live run) was outside
+        the try that records a failure - nothing printed, edge_on() still
+        True, and the dock and the edge handed the hub to each other on
+        every idle (the control deleted and created again for ever)."""
+        self._maya_like()
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("no edge here")
+        self.he.Edge = broken
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertIsNone(hub.start())
+            hub.show()
+            rounds = self._drain()
+        self.assertLessEqual(rounds, 2)                      # it drained
+        self.assertEqual(self.fake.deferred, [])
+        self.assertIn(hub.CONTROL, self.fake.workspace)      # docked
+        self.assertNotIn(hub.CONTROL, self.fake.deleted)
+        self.assertFalse(hub.edge_on())                      # this session
+        self.assertTrue(hub.is_skinned())
+        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
+        printed = out.getvalue()
+        self.assertIn("edge panel", printed)
+        self.assertIn("no edge here", printed)              # the traceback
+        #  and the animator is told why the dock came back, once
+        said = [text for text, _state in hub._SKIN.said]
+        self.assertEqual(len([t for t in said if "no edge here" in t]), 1)
+        hub.show()
+        said = [text for text, _state in hub._SKIN.said]
+        self.assertEqual(len([t for t in said if "no edge here" in t]), 1)
+
+    def test_a_missing_maya_hubedge_leaves_the_hub_docked(self):
+        """The import itself inside the same try."""
+        self._maya_like()
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+
+        def missing():
+            raise ImportError("No module named 'maya_hubedge'")
+        hub._hubedge = missing
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hub.set_edge(True)
+            self.assertLessEqual(self._drain(), 2)
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+        self.assertFalse(hub.edge_on())
+        self.assertIn("maya_hubedge", out.getvalue())
+
+    def test_a_restored_dock_keeps_the_hub_when_the_edge_cannot_be_built(self):
+        """Maya restored a docked control while edge mode is on, and the
+        edge fails: the hub is built in that control, once."""
+        self._maya_like()
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.workspace[hub.CONTROL] = {}
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("no edge here")
+        self.he.Edge = broken
+        with contextlib.redirect_stdout(io.StringIO()):
+            hub.build()                                     # the uiScript
+            self.assertLessEqual(self._drain(), 2)
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+        self.assertEqual(self.built("characters"), 1)
+        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
+        self.assertTrue([text for text, _state in hub._SKIN.said
+                         if "no edge here" in text])
+
+    def test_the_failure_line_names_the_error_on_one_line(self):
+        text = hub.edge_failure_text(RuntimeError("no edge here\nmore"))
+        self.assertIn("RuntimeError: no edge here", text)
+        self.assertNotIn("\n", text)
+        self.assertIn("docked", text)
+        self.assertIn("(ImportError)", hub.edge_failure_text(ImportError()))
+        text.encode("ascii")                         # printable anywhere
 
     def test_turning_it_on_again_tries_again(self):
         self.fake.optionvars[hub.EDGE_VAR] = 1

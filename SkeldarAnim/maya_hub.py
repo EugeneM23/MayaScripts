@@ -317,11 +317,14 @@ _BUILT_HERE = False
 #  this module object (a maya_hubqt.Skin), or None while the hub is classic.
 _SKIN = None
 
-#  The skin failed to build in the edge panel (2026-10-08): the hub stays in
-#  the dock for the rest of this module object's session, or the uiScript,
-#  start() and show() would hand it back and forth to each other. ⋮ -> Edge
-#  panel (set_edge(True)) tries again; an install brings a fresh module.
+#  The edge panel could not be built (2026-10-08; anything from the import of
+#  maya_hubedge to the skin): the hub stays in the dock for the rest of this
+#  module object's session, or the uiScript, start() and show() would hand it
+#  back and forth to each other. ⋮ -> Edge panel (set_edge(True)) tries
+#  again; an install brings a fresh module. `_EDGE_FAILURE` is the line the
+#  hub says once the dock has opened (`_say_edge_failure`).
 _EDGE_FAILED = False
+_EDGE_FAILURE = ""
 
 
 def _build_classic():
@@ -612,45 +615,96 @@ def _ensure_edge():
 
     Any other goes first, found by name (an older module object's
     included); then a new Edge, registered on maya_hubedge.state(), and the
-    skin in its slot. A skin that fails to build there takes its Edge with
-    it, keeps the hub in the dock for this session (`_EDGE_FAILED`) and is
-    re-raised."""
-    global _SKIN, _BUILT_HERE, _EDGE_FAILED
+    skin in its slot.
+
+    ANY failure on the way - maya_hubedge not importable (a half-finished
+    install), its sweep, the Edge's constructor, the skin - is printed with
+    its traceback, takes what was built with it, keeps the hub in the dock
+    for this session (`_EDGE_FAILED`, and `_EDGE_FAILURE` for the hub's
+    message line once the dock opens) and is re-raised. Review, fix round 1
+    (2026-10-08): only the skin was inside the try, so an Edge that raised
+    left edge_on() True and the dock and the edge handed the hub to each
+    other on every idle, silently."""
+    global _SKIN, _BUILT_HERE, _EDGE_FAILED, _EDGE_FAILURE
     current = edge()
     if current is not None and _skin_at(current):
         return current
-    he = _hubedge()
     if _SKIN is not None:
         #  the skin first: the windows destroy_all deletes may hold its root
         _SKIN.destroy()
         _SKIN = None
-    he.destroy_all()
-    current = he.Edge(scale=_scale(), width=_edge_width(),
-                      on_width=_save_edge_width)
-    he.state()["edge"] = current
+    he = current = None
     try:
+        he = _hubedge()
+        he.destroy_all()
+        current = he.Edge(scale=_scale(), width=_edge_width(),
+                          on_width=_save_edge_width)
+        he.state()["edge"] = current
         _SKIN = _build_skin(host=current.slot)
         _SKIN.set_edge_mode(True)
-    except Exception:
-        print("SkeldarAnim: the hub's skin failed in the edge panel - the "
-              "hub stays docked for this session")
+    except Exception as error:
+        print("SkeldarAnim: the edge panel could not be built - the hub "
+              "stays docked for this session")
         print(traceback.format_exc())
         if _SKIN is not None:
             _SKIN.destroy()
             _SKIN = None
-        current.destroy()
-        he.state()["edge"] = None
+        _undo_edge(he, current)
         _EDGE_FAILED = True
+        _EDGE_FAILURE = edge_failure_text(error)
         raise
     _BUILT_HERE = True
     return current
 
 
+def edge_failure_text(error):
+    """The one line the hub's message line says when the edge panel could
+    not be built and the hub opened docked. Pure."""
+    detail = str(error).strip().splitlines()
+    detail = detail[0] if detail else ""
+    name = type(error).__name__
+    return ("The edge panel could not be built ({0}) - the hub is docked "
+            "for this session; the Script Editor has the details".format(
+                name + ": " + detail if detail else name))
+
+
+def _undo_edge(he, current):
+    """What a failed `_ensure_edge` built goes: the Edge (if its constructor
+    returned), any window a constructor left half way (by name), the state.
+    Each step on its own: the failure being handled may be in any of them."""
+    if current is not None:
+        try:
+            current.destroy()
+        except Exception:                                    # noqa: BLE001
+            print(traceback.format_exc())
+    if he is None:
+        return
+    try:
+        he.destroy_all()
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        if he.state().get("edge") is current or current is None:
+            he.state()["edge"] = None
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def _say_edge_failure():
+    """The dock opened because the edge panel could not be built: the
+    animator is told why on the hub's line, once (the print and the
+    traceback are in the Script Editor already)."""
+    global _EDGE_FAILURE
+    if _EDGE_FAILURE and is_skinned():
+        say(_EDGE_FAILURE, state=None)
+        _EDGE_FAILURE = ""
+
+
 def start():
     """The startup plug-in's call: in edge mode the panel waits at the edge,
-    hidden; docked, nothing. Never raises (a skin failing there is printed
-    by `_ensure_edge`; the shelf button then opens the dock). The Edge, or
-    None."""
+    hidden; docked, nothing. Never raises (a failure is printed by
+    `_ensure_edge`; the shelf button then opens the dock, saying why). The
+    Edge, or None."""
     if not edge_on():
         return None
     try:
@@ -678,8 +732,8 @@ def set_edge(on):
     """⋮ -> Edge panel: switched, remembered. Deferred: the press comes from
     inside the hub the switch rebuilds elsewhere. Refused (False) without
     the skin - the classic hub does not live at the edge (the spec's "not
-    built"). Turning it on tries again after a skin that failed there."""
-    global _EDGE_FAILED
+    built"). Turning it on tries again after an edge panel that failed."""
+    global _EDGE_FAILED, _EDGE_FAILURE
     if on and (classic_asked() or not _qt_available()):
         #  ASCII: printed, and a cp1252 stdout cannot encode the menu's mark
         message = "The edge panel needs the new look (Classic look is on)"
@@ -688,6 +742,7 @@ def set_edge(on):
         return False
     if on:
         _EDGE_FAILED = False
+        _EDGE_FAILURE = ""
     cmds.optionVar(intValue=(EDGE_VAR, int(bool(on))))
     cmds.evalDeferred(lambda: _switch_edge(bool(on)), lowestPriority=True)
     return bool(on)
@@ -731,9 +786,10 @@ def _drop_dock():
 
 def _drop_dock_for_edge():
     """Deferred from `build()`: the control Maya restored goes and the edge
-    panel waits. The edge first - a skin failing there leaves the hub in the
-    control Maya restored, built now. With the mode turned off meanwhile the
-    control gets the hub `build()` did not put in it."""
+    panel waits. The edge first - an edge panel that cannot be built leaves
+    the hub in the control Maya restored, built now (edge_on() is False for
+    the session), saying why. With the mode turned off meanwhile the control
+    gets the hub `build()` did not put in it."""
     if not edge_on():
         if cmds.workspaceControl(CONTROL, exists=True):
             return rebuild()
@@ -742,7 +798,9 @@ def _drop_dock_for_edge():
         _ensure_edge()
     except Exception:                                        # noqa: BLE001
         if cmds.workspaceControl(CONTROL, exists=True):
-            return rebuild()
+            built = rebuild()
+            _say_edge_failure()
+            return built
         return None
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.deleteUI(CONTROL)
@@ -932,6 +990,8 @@ def show(key=None):
             uiScript=uiscript(plugin_root()))
     if key:
         expand(key)
+    #  docked because the edge panel could not be built: said once, here
+    _say_edge_failure()
     return CONTROL
 
 
