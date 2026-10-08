@@ -33,14 +33,32 @@ on top is the card a press acts on; a gap between places grows nothing. A 16 ms 
 runs only while a card grows or shrinks, each tick repainting only what the moving cards can
 cover (`_reach`). Spec: docs/superpowers/specs/2026-10-03-pose-card-hover-zoom-design.md
 
+**An animation card plays on hover** (2026-10-03, the animator: «Карточки с сохраненной
+анимацией должны проигрывать превью этой анимации»): it wears a badge on its picture - the play
+triangle and its frame count (`look.badge_text`) in a small dark pill at the square's
+bottom-right - and the card under the mouse draws its PREVIEW SHEET (`preview.jpg`, up to 60
+cells of 320 px) one cell at a time in place of its still, at the clip's own rate
+(`look.play_cell`: a cell holds `step / fps` seconds), from the first cell each time the mouse
+comes onto it. A sheet is decoded ONCE (`sheet`: the image and the grid its header names,
+`sheet_info`) and the last `SHEETS` are kept, keyed by the file's time and size, so a sheet
+written again is read again; each cell is drawn straight out of it, scaled at paint time. The
+cost is the hovered card alone: a `look.PLAY_MS` timer (`play_timer`) runs only while the card
+under the mouse is an animation with a readable sheet, and repaints only what that card covers
+(`_reach`); a pose card, a leave, a drag, the canvas hiding stop it. The window's details
+picture plays through `preview_frame` (the same sheet, the cell at a time, scaled to a side).
+
 What the canvas asks of its `panel` (the window; the tests hand in the real one): `k`, `scene`
 (`snapshot_scene`), `scroll`, `thumb_side()`, `pick`, `apply_card`, `context_actions`, `aim`,
 `drop_at`, `say`, `blend_drag`, `blend_release`, `blend_cancel`, `blending()`. Qt is imported
 when the classes are first built (`maya_hubqt.qt()`).
 
-Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window")
+Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window"),
+      docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("The window")
 """
 
+import collections
+import math
+import os
 import traceback
 
 from maya_poselib import look
@@ -60,6 +78,33 @@ SHADOW = 12             # logical px the grown card's shadow reaches (at 1x; it 
 SHADOW_DROP = 4         # ... how far down it falls ...
 SHADOW_ALPHA = 0.32     # ... and how dark it is at the card's edge
 SHADOW_RINGS = 8
+
+#  The animation cards: how many preview sheets stay decoded (one 60-cell sheet of 320 px cells
+#  is 2560 x 2240 px - about 23 MB decoded - so a few, never the library's); the badge's font
+#  (logical px), its inset from the square's corner, and how dark its pill is over the picture
+SHEETS = 6
+BADGE_FONT = 9.0
+BADGE_PAD = 4
+BADGE_ALPHA = 0.6
+_SHEET_KEYS = ("frames", "columns", "size", "step")
+
+
+def sheet_info(raw):
+    """The grid of a preview sheet as its card's header names it (`preview`: frames, columns,
+    size, step) - each a whole number of at least one - or None when it names none (missing, not
+    a mapping, a value that is no positive whole number: a sheet read through it would draw
+    garbage, the card shows its still instead). Pure."""
+    if not isinstance(raw, dict):
+        return None
+    info = {}
+    for key in _SHEET_KEYS:
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value) or value != int(value) or value < 1:
+            return None
+        info[key] = int(value)
+    return info
 
 
 def _animations():
@@ -156,6 +201,17 @@ def _classes():
             self.zoom_timer = QtCore.QTimer(self)
             self.zoom_timer.setInterval(ZOOM_TICK_MS)
             self.zoom_timer.timeout.connect(self._tick)
+            #  the animation cards: card path -> (the sheet file's (time, size), (the decoded
+            #  sheet, its grid) or None) for the last SHEETS read, the oldest first; the card
+            #  playing under the mouse and when it began (on `_now`'s clock); the last cell
+            #  `preview_frame` scaled, ((path, stamp, cell, side), picture)
+            self.sheets = collections.OrderedDict()
+            self._playing = None
+            self._play_started = 0
+            self._frame = None
+            self.play_timer = QtCore.QTimer(self)
+            self.play_timer.setInterval(look.PLAY_MS)
+            self.play_timer.timeout.connect(self._play_tick)
             self.setMouseTracking(True)
             self.setFocusPolicy(Qt.ClickFocus)
 
@@ -189,7 +245,8 @@ def _classes():
 
         def set_cards(self, cards, empty_text=""):
             """The cards to show. The card under the mouse keeps the hover - and every card its
-            zoom - by path; a card no longer listed loses both."""
+            zoom - by path; a card no longer listed loses both. A card playing under the mouse
+            plays on, from where it was."""
             hovered = self._hovered_path()
             self.cards = list(cards)
             self._where = dict((one.path, index) for index, one in enumerate(self.cards))
@@ -198,6 +255,7 @@ def _classes():
             for path in [path for path in self._zooms if path not in self._where]:
                 del self._zooms[path]
             self._refit()
+            self._sync_play()
 
         def set_cell(self, cell):
             """The card-size slider's value (logical px)."""
@@ -205,13 +263,128 @@ def _classes():
             self._refit()
 
         def forget(self, path=None):
-            """Drop cached pictures: all, or the card at `path`'s (its thumbnail changed)."""
+            """Drop cached pictures: all, or the card at `path`'s (its thumbnail or its preview
+            sheet changed) - the scaled thumbnails and the decoded sheet both."""
+            self._frame = None
             if path is None:
                 self.pixmaps.clear()
+                self.sheets.clear()
                 return
-            image = path.rstrip("/") + "/" + store.THUMB_FILE
+            path = path.rstrip("/")
+            image = path + "/" + store.THUMB_FILE
             for key in [key for key in self.pixmaps if key[0] == image]:
                 del self.pixmaps[key]
+            self.sheets.pop(path, None)
+
+        # ------------------------------------------------------ the preview sheets
+
+        def sheet(self, card):
+            """(QPixmap, grid) of the animation card's preview sheet - its `preview.jpg`
+            decoded and the grid its header names (`sheet_info`: frames, columns, size, step) -
+            or None: a pose card, a clip saved without a preview, a sheet or a header that
+            cannot be read, a sheet smaller than its grid. Decoded once: the last SHEETS stay,
+            keyed by the card's path and the file's time and size (a sheet written again is
+            read again), the oldest dropped first. A sheet that could not be read is kept as
+            None too, so a playing card does not try it again every frame."""
+            image = getattr(card, "preview", "") or ""
+            if getattr(card, "type", "pose") != "anim" or not image:
+                return None
+            try:
+                stat = os.stat(image)
+            except OSError:
+                return None
+            stamp = (stat.st_mtime_ns, stat.st_size)
+            held = self.sheets.get(card.path)
+            if held is not None and held[0] == stamp:
+                self.sheets.move_to_end(card.path)
+                return held[1]
+            loaded = self._load_sheet(card.path, image)
+            self.sheets[card.path] = (stamp, loaded)
+            self.sheets.move_to_end(card.path)
+            while len(self.sheets) > SHEETS:
+                self.sheets.popitem(last=False)
+            return loaded
+
+        def _load_sheet(self, path, image):
+            """(the decoded sheet, its grid) of the card at `path`, or None. The grid comes
+            from the card's header (`store.read`), read once with the sheet."""
+            try:
+                header = store.read(path)
+            except ValueError:
+                return None
+            info = sheet_info(header.get("preview"))
+            if info is None:
+                return None
+            picture = QtGui.QPixmap(image)
+            if picture.isNull():
+                return None
+            rows = -(-info["frames"] // info["columns"])
+            if picture.width() < info["columns"] * info["size"] or \
+                    picture.height() < rows * info["size"]:
+                return None
+            return picture, info
+
+        def _cell(self, card, info, elapsed):
+            """The sheet rectangle (x, y, w, h) of the cell the card plays `elapsed` ms after it
+            began: `look.play_cell` at the rate of the card's time unit."""
+            cell = look.play_cell(elapsed, info["frames"], info["step"], look.fps_of(card.fps))
+            return look.sheet_cell(cell, info["columns"], info["size"])
+
+        def preview_frame(self, card, elapsed_ms, side):
+            """The cell the animation card's preview plays `elapsed_ms` after it began, as a
+            `side` px square (smooth) - the window's details picture; None when the card has no
+            sheet (`sheet`). The last one made is kept: the details timer asks every PLAY_MS and
+            a cell often stands for several of its ticks."""
+            loaded = self.sheet(card)
+            if loaded is None:
+                return None
+            picture, info = loaded
+            rect = self._cell(card, info, elapsed_ms)
+            key = (card.path, self.sheets[card.path][0], rect, int(side))
+            if self._frame is not None and self._frame[0] == key:
+                return self._frame[1]
+            cell = scaled(picture.copy(*rect), int(side))
+            self._frame = (key, cell)
+            return cell
+
+        def _sync_play(self):
+            """The card under the mouse plays its preview while it is an animation card with a
+            sheet (`sheet`) and no drag carries it: begun when the mouse came onto THIS card
+            (it keeps its start across a re-read of the library), the timer running only then.
+            Anything else stops it, the card left showing its still."""
+            hover = self._hover
+            card = self.cards[hover] if hover is not None and hover < len(self.cards) else None
+            if card is not None and not self._drag and self.sheet(card) is not None:
+                if self._playing != card.path:
+                    self._playing = card.path
+                    self._play_started = self._now()
+                if not self.play_timer.isActive():
+                    self.play_timer.start()
+                return
+            self.play_timer.stop()
+            if self._playing is not None:
+                stopped, self._playing = self._playing, None
+                self._dirty(stopped)
+
+        def _play_tick(self):
+            """One frame of the hovered card's preview: only what that card covers repainted."""
+            if self._playing is None:
+                self.play_timer.stop()
+                return
+            self._dirty(self._playing)
+
+        def _draw_playing(self, p, card, box):
+            """The playing card's current cell drawn into its square `box` (QRectF) straight out
+            of the sheet, scaled at paint time; False - draw the still - for any other card."""
+            if card.path != self._playing:
+                return False
+            loaded = self.sheet(card)
+            if loaded is None:
+                return False
+            picture, info = loaded
+            x, y, w, h = self._cell(card, info, self._now() - self._play_started)
+            p.drawPixmap(box, picture, QtCore.QRectF(x, y, w, h))
+            return True
 
         def thumb(self, image, side):
             """The thumbnail at `image` as a `side` px square, read and scaled once and cached;
@@ -303,7 +476,8 @@ def _classes():
 
         def _set_hover(self, index):
             """The card under the mouse is `index` (None for none): the one before shrinks, this
-            one grows - eased, or at once with the animations off."""
+            one grows - eased, or at once with the animations off - and plays its preview when
+            it has one (`_sync_play`)."""
             if index == self._hover:
                 return
             now, animate = self._now(), _animations()
@@ -322,6 +496,7 @@ def _classes():
             if any(zoom.moving(now) for zoom in self._zooms.values()):
                 if not self.zoom_timer.isActive():
                     self.zoom_timer.start()
+            self._sync_play()
 
         def _prune(self, now):
             for path in [path for path, zoom in self._zooms.items() if not zoom.lifted(now)]:
@@ -517,6 +692,14 @@ def _classes():
             if not self._drag:
                 self._set_hover(None)
 
+        def hideEvent(self, event):                          # noqa: N802
+            """Hidden (the window closed, a docked tab behind another) with no Leave sent: no
+            card is under the mouse any more - none stays grown, none plays, and the play
+            timer never ticks for a canvas nobody sees. A drag keeps its card."""
+            QtWidgets.QWidget.hideEvent(self, event)
+            if not self._drag:
+                self._set_hover(None)
+
         # ------------------------------------------------------ paint
 
         def _stroke(self, p, box, radius, name, width):
@@ -556,11 +739,36 @@ def _classes():
                 p.drawRoundedRect(tile.adjusted(-grow, drop - grow, grow, drop + grow),
                                   radius + grow, radius + grow)
 
+        def _badge(self, p, card, box, z):
+            """An animation card's badge - the play triangle and its frame count
+            (`look.badge_text`) - in a dark pill inset into the square `box`'s bottom-right
+            corner, `z` times its size; nothing for a pose card or a clip of one frame."""
+            text = look.badge_text(card.frames) if getattr(card, "type", "pose") == "anim" \
+                else ""
+            if not text:
+                return
+            k = self.k
+            badge_font = self._font(BADGE_FONT * k * z, True)
+            metrics = QtGui.QFontMetrics(badge_font)
+            pad = BADGE_PAD * k * z
+            height = metrics.height() + pad * 0.5
+            width = min(metrics.horizontalAdvance(text) + 2 * pad, box.width() - 2 * pad)
+            pill = QtCore.QRectF(box.right() - pad - width, box.bottom() - pad - height,
+                                 width, height)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QtGui.QColor(0, 0, 0, int(round(255 * BADGE_ALPHA))))
+            p.drawRoundedRect(pill, height / 2.0, height / 2.0)
+            p.setFont(badge_font)
+            p.setPen(colour("text"))
+            p.drawText(pill, Qt.AlignCenter, text)
+
         def _paint_card(self, p, card, rect, tile, z, chosen, lit, lifted=0.0):
             """The card whose grid square is `rect` drawn at `tile` (x, y, w, h: its square and
             name strip), `z` times its size in the grid - every length grows with it. A
             `lifted` card (its zoom level) stands on a plate of the canvas's own colour with a
-            shadow, over its neighbours, its picture read at twice the grid's side."""
+            shadow, over its neighbours, its picture read at twice the grid's side. The card
+            playing under the mouse shows its preview's cell in place of its still; an
+            animation card wears its badge."""
             k = self.k
             tx, ty, tw, th = tile
             box = QtCore.QRectF(tx, ty, tw, tw)
@@ -574,13 +782,16 @@ def _classes():
             shape = QtGui.QPainterPath()
             shape.addRoundedRect(box, radius, radius)
             p.fillPath(shape, colour("card_active" if chosen else ("hover" if lit else "card")))
-            picture = self.thumb(card.thumbnail, zoom_side(rect[2]) if lifted > 0 else rect[2])
             p.save()
             p.setClipPath(shape)
-            if picture is not None and not picture.isNull():
-                p.drawPixmap(box, picture, QtCore.QRectF(picture.rect()))
-            else:
-                self._missing(p, box)
+            if not self._draw_playing(p, card, box):
+                picture = self.thumb(card.thumbnail,
+                                     zoom_side(rect[2]) if lifted > 0 else rect[2])
+                if picture is not None and not picture.isNull():
+                    p.drawPixmap(box, picture, QtCore.QRectF(picture.rect()))
+                else:
+                    self._missing(p, box)
+            self._badge(p, card, box, z)
             p.restore()
             if chosen:
                 self._stroke(p, box, radius, "accent", max(1.5, 2 * k) * z)
