@@ -1424,6 +1424,18 @@ class TestPanelCompact(unittest.TestCase):
         self.assertEqual(made(fake, "rowLayout", numberOfColumns=2,
                               columnWidth2=(140, 140)), [])
 
+    def test_the_flow_is_marked_for_the_skin_to_keep_its_lines(self):
+        """Live (2026-10-08, verify_hub_compact W9): Maya's flowLayout
+        wrapped the ten chips onto two lines at the dock's width and kept
+        ONE line's height - the second line stood behind the Bright slider.
+        The flow is marked so the skin keeps its wrapped lines in its
+        height (maya_hubqt's "flow")."""
+        _fake, marks = self._build(True)
+        self.assertEqual([(m.role, m.layout) for m in marks
+                          if m.role == "flow"], [("flow", True)])
+        _fake, marks = self._build(False)          # no flow in the classic
+        self.assertEqual([m for m in marks if m.role == "flow"], [])
+
     def test_the_short_labels_cover_every_check(self):
         self.assertEqual(sorted(vp.SHORT_CHECK),
                          sorted(k for k, _l, _n in vp.CHECKS))

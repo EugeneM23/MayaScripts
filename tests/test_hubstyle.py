@@ -98,7 +98,7 @@ class Marks(unittest.TestCase):
         sheet = style.stylesheet()
         styled = [r for r in style.ROLES if '[skRole="%s"]' % r in sheet]
         #  moved or recoloured by the Qt layer rather than styled
-        handled = {"subtitle", "swatchonly", "swatch"}
+        handled = {"subtitle", "swatchonly", "swatch", "flow"}
         for role in style.ROLES:
             self.assertTrue(role in styled or role in handled, role)
 
@@ -289,6 +289,7 @@ class Compact(unittest.TestCase):
     def test_new_roles(self):
         self.assertIn("grip", style.ROLES)
         self.assertIn("dot", style.ROLES)
+        self.assertIn("flow", style.ROLES)        # live, 2026-10-08
 
     def test_tell_reaches_every_listener_and_answers_the_text(self):
         heard = []

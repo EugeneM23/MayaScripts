@@ -265,6 +265,11 @@ def repolish(widget):
     widget.update()
 
 
+def _leaf(name):
+    """A Maya control's short name from its name or full path."""
+    return (name or "").split("|")[-1]
+
+
 def _named(widget, name, role=None):
     widget.setObjectName(name)
     if role:
@@ -1111,6 +1116,9 @@ class Card(object):
         widget.setSizePolicy(q.QtWidgets.QSizePolicy.Ignored,
                              q.QtWidgets.QSizePolicy.Preferred)
         self.subtitle_slot.layout().addWidget(widget, 1)
+        #  elided, right-aligned, its whole text the tooltip (live
+        #  2026-10-08: cut mid-letter, left-aligned)
+        widget.installEventFilter(_elide_class()(widget))
         return widget
 
 
@@ -1402,8 +1410,9 @@ class Skin(object):
         if not self.alive():
             hubstyle.unlisten(self._told)
             return
+        leaf = _leaf(control)
         key = next((k for k, card in self.cards.items()
-                    if control in card.status_controls), None)
+                    if leaf in card.status_controls), None)
         if key is None:
             return
         if text:
@@ -1706,6 +1715,94 @@ def _fill_class():
     return _CLASSES["fill"]
 
 
+def _flow_class():
+    """An event filter keeping a Maya flowLayout as tall as the lines it
+    wrapped its children onto (2026-10-08, the role "flow"). Measured live:
+    the flow put Studio's ten chips on two lines at the dock's width and
+    kept ONE line's height, the second line standing behind the Bright
+    slider. On each Resize - the flow's own layout has placed the children
+    by then (a widget's layout sees the event before its filters) - and
+    each LayoutRequest, its minimum height becomes the bottom of its lowest
+    child: back down when they fit on one line again."""
+    if "flow" not in _CLASSES:
+        q = qt()
+        events = (q.QtCore.QEvent.Resize, q.QtCore.QEvent.LayoutRequest)
+
+        class FlowFit(q.QtCore.QObject):
+
+            def fit(self, flow):
+                bottom = 0
+                for child in flow.children():
+                    if (isinstance(child, q.QtWidgets.QWidget)
+                            and not child.isWindow()
+                            and child.isVisibleTo(flow)):
+                        bottom = max(bottom, child.geometry().bottom() + 1)
+                if bottom and flow.minimumHeight() != bottom:
+                    flow.setMinimumHeight(bottom)
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                if event.type() in events:
+                    try:
+                        self.fit(obj)
+                    except Exception:                        # noqa: BLE001
+                        pass
+                return False
+
+        _CLASSES["flow"] = FlowFit
+    return _CLASSES["flow"]
+
+
+def _elide_class():
+    """An event filter drawing a moved subtitle ELIDED at its width, right-
+    aligned (the mockup's header line), the whole text its tooltip while it
+    does not fit (the spec, 2026-10-08: «The subtitle is elided at the card's
+    width; its tooltip is the full text»). Measured live: Maya's label was
+    cut mid-letter under the chevron («... a CoM h») and stood left-aligned
+    beside the title. The label keeps its text - its writer edits it through
+    cmds - and only its painting is ours; `skElided` says which it is."""
+    if "elide" not in _CLASSES:
+        q = qt()
+        QtCore, QtGui = q.QtCore, q.QtGui
+
+        class Elide(QtCore.QObject):
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                if event.type() != QtCore.QEvent.Paint:
+                    return False
+                try:
+                    return self._paint(obj)
+                except Exception:                            # noqa: BLE001
+                    return False
+
+            def _paint(self, label):
+                #  a PROPERTY: Maya's label reaches us as the cached QWidget
+                #  wrapper (trap 96), which has no text() (live, 2026-10-08)
+                text = label.property("text") or ""
+                rect = label.contentsRect()
+                metrics = label.fontMetrics()
+                elided = metrics.horizontalAdvance(text) > rect.width()
+                shown = metrics.elidedText(text, QtCore.Qt.ElideRight,
+                                           rect.width())
+                if bool(label.property("skElided")) != elided:
+                    label.setProperty("skElided", elided)
+                tip = text if elided else ""
+                if label.toolTip() != tip:
+                    label.setToolTip(tip)
+                painter = QtGui.QPainter(label)
+                try:
+                    label.style().drawItemText(
+                        painter, rect,
+                        int(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter),
+                        label.palette(), label.isEnabled(), shown,
+                        QtGui.QPalette.WindowText)
+                finally:
+                    painter.end()
+                return True
+
+        _CLASSES["elide"] = Elide
+    return _CLASSES["elide"]
+
+
 def ghost_class():
     """The drag ghost the hub's drags share: a pixmap riding the cursor with a
     caption pill under it naming what a release would do - the accent where
@@ -1848,18 +1945,76 @@ def run_menu(parent, point, actions):
     return None
 
 
+def _track_need(cover, inset):
+    """The width a segments track needs to show every segment's text: its
+    buttons' size hints (the skin's stylesheet in them once it is set), the
+    gaps between them and the insets round them. 0 without buttons."""
+    q = qt()
+    buttons = [child for child in cover.children()
+               if isinstance(child, q.QtWidgets.QAbstractButton)]
+    if not buttons:
+        return 0
+    return (sum(button.sizeHint().width() for button in buttons)
+            + inset * (len(buttons) - 1) + 2 * inset)
+
+
+def _track_class():
+    """An event filter on the skin's row over a segments track: whenever
+    that row's layout is asked again (a LayoutRequest - its buttons' size
+    hints changed, the stylesheet that arrives once every card is built
+    among them) the track's minimum width follows what the segments need."""
+    if "track" not in _CLASSES:
+        q = qt()
+
+        class TrackFit(q.QtCore.QObject):
+
+            def __init__(self, cover, inset, parent=None):
+                super(TrackFit, self).__init__(parent)
+                self._cover, self._inset = cover, inset
+
+            def fit(self):
+                track = self._cover.parentWidget()
+                if track is not None:
+                    track.setMinimumWidth(_track_need(self._cover,
+                                                      self._inset))
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                if event.type() == q.QtCore.QEvent.LayoutRequest:
+                    try:
+                        self.fit()
+                    except Exception:                        # noqa: BLE001
+                        pass
+                return False
+
+        _CLASSES["track"] = TrackFit
+    return _CLASSES["track"]
+
+
 def _spread(row, scale=1.0):
     """The segments of a Maya rowLayout share its width equally.
 
     Measured 2026-09-28: the rowLayout's layout is `QmayaRowLayout` (a
     QHBoxLayout underneath) and it places its children at their own widths
     whatever their stretch or size policy says -- the segments packed to
-    the left of their track. A minimum width does move them, and would
-    also stop the dock from ever getting narrower. So the buttons go into
-    a row of OURS laid over the track (kept over it on every resize), with
-    equal stretches; the track keeps no minimum width of theirs. Maya
-    finds a moved control by name as before (the subtitle's move proved
-    it). `row` stays referenced while its children are used."""
+    the left of their track. So the buttons go into a row of OURS laid
+    over the track (kept over it on every resize), with equal stretches.
+    Maya finds a moved control by name as before (the subtitle's move
+    proved it). `row` stays referenced while its children are used.
+
+    Measured live 2026-10-08 (verify_hub_compact), two things about the
+    track itself:
+
+    - emptied of its buttons, a track that is NOT its rowLayout's
+      adjustable column got no width at all - Maya gives such a column its
+      child's own width - and [Onto sel. | New], Arm L's [FK | IK] stood
+      0 px wide, invisible. So the track's minimum width is what its
+      segments' texts need (`_track_need`, kept by `TrackFit` as the
+      stylesheet arrives) - never more, so the dock still narrows to it;
+    - it had taken its buttons' native height plus the insets: every row
+      holding segments stood 46 px (31 logical) at 150 % against the
+      compact skin's 22. The track is `H["segment"]` tall and its buttons
+      the track less the insets, whatever height Maya gave them.
+    """
     q = qt()
     w = q.QtWidgets
     buttons = [child for child in row.children()
@@ -1872,14 +2027,19 @@ def _spread(row, scale=1.0):
     inset = hubstyle.px(2, scale)
     box.setContentsMargins(inset, inset, inset, inset)
     box.setSpacing(inset)
-    height = 0
+    track = hubstyle.px(hubstyle.H["segment"], scale)
+    inner = max(1, track - 2 * inset)
     for button in buttons:
         button.setSizePolicy(w.QSizePolicy.Expanding, w.QSizePolicy.Preferred)
+        button.setMinimumHeight(0)
+        button.setFixedHeight(inner)
         box.addWidget(button, 1)
-        height = max(height, button.sizeHint().height())
-    row.setMinimumHeight(height + 2 * inset)
+    row.setFixedHeight(track)
     watcher = _fill_class()(cover, cover)
     row.installEventFilter(watcher)
+    fit = _track_class()(cover, inset, cover)
+    cover.installEventFilter(fit)
+    fit.fit()
     cover.setGeometry(row.rect())
     cover.show()
     return len(buttons)
@@ -1887,8 +2047,12 @@ def _spread(row, scale=1.0):
 
 # --------------------------------------------------------------- the lists
 
-#  A list's frame and padding, logical px, added to its rows' height
-LIST_FRAME = 8
+#  A list's frame and padding, logical px, added to its rows' height:
+#  measured live 2026-10-08 (verify_hub_compact) as the list's height less
+#  its viewport's - 18 px at 150 % on both lists, the frame, the
+#  stylesheet's padding and Maya's own margins. The first guess, 8, left
+#  the Shared list showing 9 rows.
+LIST_FRAME = 12
 
 
 def list_widget(name):
@@ -1948,9 +2112,12 @@ def apply_list_rows(name, rows, scale):
     """List `name` shows `rows` rows; answers its logical height. The
     seams (`list_row_px`, `set_list_height`) are looked up when this runs,
     so a test's replacement takes effect."""
+    import math
     row = list_row_px(name) / float(scale or 1.0)
-    height = hubstyle.list_height(hubstyle.clamp_rows(rows), row or 16,
-                                  LIST_FRAME)
+    #  never a pixel short: rounded down, the last row lost a pixel and the
+    #  list showed one row fewer (a row of 22 px is 14.67 logical)
+    height = int(math.ceil(hubstyle.clamp_rows(rows) * (row or 16)
+                           + LIST_FRAME - 1e-6))
     set_list_height(name, height)
     return height
 
@@ -1993,6 +2160,31 @@ def _grip_class():
                 self.setProperty("skRole", "grip")
                 self.setCursor(QtCore.Qt.SizeVerCursor)
                 self.setToolTip("Drag to show more or fewer rows")
+                self._watch_first_rows()
+
+            def _watch_first_rows(self):
+                """An EMPTY list is sized from a fallback row - nothing to
+                measure - and the animation list is empty when its card is
+                built (its rows come from a refresh): 24 px against the real
+                21, and it showed 11 rows once filled (live, 2026-10-08). So
+                its first rows size it again from the real row, once."""
+                try:
+                    widget = list_widget(self.list_name)
+                    if widget is None or widget.count():
+                        return
+                    widget.model().rowsInserted.connect(self._first_rows)
+                except Exception:                            # noqa: BLE001
+                    pass
+
+            def _first_rows(self, *_args):
+                try:
+                    widget = list_widget(self.list_name)
+                    if widget is not None:
+                        widget.model().rowsInserted.disconnect(
+                            self._first_rows)
+                except (RuntimeError, TypeError):
+                    pass
+                apply_list_rows(self.list_name, self.rows, self.scale)
 
             def press(self, gy):
                 self._start = (gy, self.rows)
@@ -2099,7 +2291,10 @@ def _apply_mark(mark, card, scale, size):
     if mark.role == "status":
         widget.setVisible(False)
         widget.setMaximumHeight(0)
-        card.status_controls.add(mark.name)
+        #  by its LEAF: `cmds.text(...)` answers the full path, which is
+        #  what a builder marks, while every writer tells the short name it
+        #  edits (live, 2026-10-08: nothing reached the message line)
+        card.status_controls.add(_leaf(mark.name))
         return True
     if mark.role == "note":
         card.add_hint(widget.property("text") or "")
@@ -2112,7 +2307,8 @@ def _apply_mark(mark, card, scale, size):
         #  the placeholder under a list becomes its height grip, kept over
         #  it; the list shows its remembered rows (else 10)
         cover = _grip_class()(mark.target, scale, widget)
-        cover.setObjectName(mark.name + "_grip")
+        #  the leaf: a builder marks the full path cmds answered
+        cover.setObjectName(_leaf(mark.name) + "_grip")
         widget.installEventFilter(_fill_class()(cover, cover))
         cover.setGeometry(widget.rect())
         cover.show()
@@ -2121,12 +2317,19 @@ def _apply_mark(mark, card, scale, size):
     widget.setProperty("skRole", mark.role)
     if mark.role == "inset":
         #  A plain QWidget paints no stylesheet background unless asked to
-        #  (2026-10-02, the Connect block); its own layout gets the padding.
+        #  (2026-10-02, the Connect block); its own layout gets the padding -
+        #  5 in the compact skin (the spec's table, 2026-10-08; was 8).
         widget.setAttribute(q.QtCore.Qt.WA_StyledBackground, True)
         layout = widget.layout()
         if layout is not None:
-            pad = hubstyle.px(8, scale)
+            pad = hubstyle.px(5, scale)
             layout.setContentsMargins(pad, pad, pad, pad)
+        return True
+    if mark.role == "flow":
+        #  its wrapped lines kept in its height (live, 2026-10-08)
+        fit = _flow_class()(widget)
+        widget.installEventFilter(fit)
+        fit.fit(widget)
         return True
     if mark.role == "segments":
         #  after the segment marks (they come later in the list): see

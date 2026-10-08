@@ -220,6 +220,25 @@ class Message(SeamsMixin, unittest.TestCase):
         style.tell("somebodyElse", "x")
         self.assertTrue(self.skin.message.isHidden())
 
+    def test_a_status_marked_by_its_full_path_still_relays(self):
+        """Live (2026-10-08, verify_hub_compact gate 3): `cmds.text(...)`
+        answers the control's FULL path, so the builders mark the status by
+        it, while every writer tells the short name it edits - nothing
+        reached the message line. The leaf names the control."""
+        card = self.skin.add_card("com", "Center of Mass", "target",
+                                  "#7fa9e6", "#23324a")
+        label = self.control(QtWidgets.QLabel, "skeldarComStatus", card.body)
+        path = ("skeldarAnimHub|skeldarAnimHubRoot|skeldarHubBody_com|"
+                "columnLayout9|skeldarComStatus")
+        self.controls[path] = label
+        hubqt.apply_marks([style.Mark(path, "status", None, False, None)],
+                          card, 1.0)
+        style.tell("skeldarComStatus", "CoM added")
+        self.assertEqual(self.skin.message_text.text(), "CoM added")
+        self.assertEqual(self.skin._message_source, "com")
+        style.tell(path, "told by its path")
+        self.assertEqual(self.skin.message_text.text(), "told by its path")
+
     def test_an_empty_text_from_the_shown_source_hides_the_line(self):
         card = self.skin.add_card("com", "Center of Mass", "target",
                                   "#7fa9e6", "#23324a")
@@ -739,13 +758,77 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
                          [1, 1])
         self.assertIs(buttons[1].parentWidget(), cover)
         self.assertGreater(row.minimumHeight(), 0)
-        self.assertEqual(row.minimumWidth(), 0)       # the dock may narrow
         row.resize(300, 30)
         QtWidgets.QApplication.sendEvent(
             row, __import__("PySide6.QtGui", fromlist=["QResizeEvent"])
             .QResizeEvent(QtCore.QSize(300, 30), QtCore.QSize(10, 10)))
         self.assertEqual(cover.geometry().width(), 300)
         self.assertEqual(buttons[0].property("skRole"), "segment")
+
+    def _track(self, name, labels, height=33):
+        """A segments track as the live skin finds it: Maya's buttons at
+        their cmds height (a minimum of their own) inside a rowLayout."""
+        row = self.control(QtWidgets.QWidget, name, self.card.body)
+        box = QtWidgets.QHBoxLayout(row)
+        buttons = []
+        for label in labels:
+            button = self.control(QtWidgets.QPushButton, name + label, row)
+            button.setText(label)
+            button.setMinimumHeight(height + 1)
+            box.addWidget(button)
+            buttons.append(button)
+        marks = [style.Mark(name, "segments", None, True, None)]
+        marks += [style.Mark(name + label, "segment", None, False, None)
+                  for label in labels]
+        return row, buttons, marks
+
+    def test_a_track_is_the_segment_height_its_buttons_inside_it(self):
+        """Live (2026-10-08, verify_hub_compact gate 1c): every row holding
+        segments stood 46 px (31 logical) at 150 % against the compact
+        skin's 22 logical track - the track had taken its buttons' native
+        height plus its insets. The track is H["segment"] tall, its buttons
+        the track less the insets, whatever height Maya gave them."""
+        for scale in (1.0, 1.5):
+            row, buttons, marks = self._track("t%d" % int(scale * 10),
+                                              ("Rig", "Skeleton"),
+                                              height=int(22 * scale))
+            hubqt.apply_marks(marks, self.card, scale)
+            track = style.px(style.H["segment"], scale)
+            inset = style.px(2, scale)
+            self.assertEqual(row.minimumHeight(), track)
+            self.assertEqual(row.maximumHeight(), track)
+            for button in buttons:
+                self.assertEqual(button.minimumHeight(), track - 2 * inset)
+                self.assertEqual(button.maximumHeight(), track - 2 * inset)
+
+    def test_a_track_is_never_narrower_than_its_segments_texts(self):
+        """Live (2026-10-08, verify_hub_compact W6/W8): a track that is not
+        its rowLayout's adjustable column got NO width once its buttons had
+        moved into the skin's row - Maya's rowLayout gives such a column its
+        child's own width, and an emptied track has none: [Onto sel. | New]
+        and Arm L's [FK | IK] stood 0 px wide, invisible. The track's
+        minimum is what its segments' texts need (their size hints, the
+        gaps, the insets) - never more, so the dock still narrows down to
+        it - and follows the hints when the stylesheet changes them."""
+        row, buttons, marks = self._track("trk", ("Onto sel.", "New"))
+        hubqt.apply_marks(marks, self.card, 1.0)
+        cover = buttons[0].parentWidget()
+        inset = style.px(2, 1.0)
+        need = (sum(b.sizeHint().width() for b in buttons) + inset
+                + 2 * inset)
+        self.assertEqual(row.minimumWidth(), need)
+        #  a stylesheet widening the buttons' padding (the skin's, set after
+        #  every card is built) re-fits the track
+        before = row.minimumWidth()
+        cover.setStyleSheet("QPushButton { padding: 0px 40px; }")
+        for button in buttons:
+            button.ensurePolished()
+        QtWidgets.QApplication.sendEvent(
+            cover, QtCore.QEvent(QtCore.QEvent.LayoutRequest))
+        self.assertGreater(row.minimumWidth(), before)
+        need = (sum(b.sizeHint().width() for b in buttons) + inset
+                + 2 * inset)
+        self.assertEqual(row.minimumWidth(), need)
 
     def test_a_swatch_is_painted_its_colour(self):
         dot = self.control(QtWidgets.QPushButton, "dot1", self.card.body)
@@ -773,6 +856,86 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
         self.assertFalse(line.wordWrap())
         self.assertEqual(line.property("skRole"), "subtitle")
         self.assertLess(line.minimumHeight(), 36)
+
+    def test_a_flow_keeps_its_wrapped_lines_in_its_height(self):
+        """Live (2026-10-08, verify_hub_compact W9): Maya's flowLayout put
+        Studio's ten chips on two lines and kept one line's height, the
+        second line behind the next row. Its height follows the lowest chip
+        it laid out - and comes back down when they fit on one line."""
+        flow = self.control(QtWidgets.QWidget, "chips", self.card.body)
+        chips = []
+        for y in (0, 32):
+            chip = QtWidgets.QCheckBox(flow)
+            chip.setGeometry(0, y, 50, 27)
+            chip.show()
+            chips.append(chip)
+        flow.resize(200, 27)
+        hubqt.apply_marks([style.Mark("chips", "flow", None, True, None)],
+                          self.card, 1.0)
+        self.assertEqual(flow.minimumHeight(), 59)
+        chips[1].setGeometry(60, 0, 50, 27)          # a wider row: one line
+        QtWidgets.QApplication.sendEvent(
+            flow, QtGui.QResizeEvent(QtCore.QSize(300, 59),
+                                     QtCore.QSize(200, 27)))
+        self.assertEqual(flow.minimumHeight(), 27)
+
+    def test_the_inset_s_padding_is_the_compact_one(self):
+        """The spec's table (2026-10-08): inset padding 5, was 8 - the
+        Connect block stood 12 px inside its frame at 150 %."""
+        block = self.control(QtWidgets.QWidget, "connect", self.card.body)
+        QtWidgets.QVBoxLayout(block)
+        hubqt.apply_marks([style.Mark("connect", "inset", None, True, None)],
+                          self.card, 1.5)
+        margins = block.layout().contentsMargins()
+        self.assertEqual((margins.left(), margins.top()),
+                         (style.px(5, 1.5), style.px(5, 1.5)))
+
+    def test_a_long_subtitle_is_elided_its_tooltip_the_whole_text(self):
+        """Live (2026-10-08): the CoM card's line ran under the chevron cut
+        mid-letter («... a CoM h»); the spec: «The subtitle is elided at the
+        card's width; its tooltip is the full text». Drawn right-aligned, as
+        the mockup's header line."""
+        line = self.control(QtWidgets.QLabel, "comLine", self.card.body)
+        text = "no character - select a control, a bone or a CoM handle"
+        line.setText(text)
+        hubqt.apply_marks([style.Mark("comLine", "subtitle", None, False,
+                                      None)], self.card, 1.0)
+        #  laid out in a shown hub (offscreen, a label rendered right after
+        #  its move into the header painted nothing)
+        self.host.resize(300, 400)
+        self.host.show()
+        self.app.processEvents()
+        self.assertLess(line.width(), line.fontMetrics().horizontalAdvance(
+            text))
+        image = QtGui.QImage(line.size(), QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        line.render(image)
+        self.assertTrue(line.property("skElided"))
+        self.assertEqual(line.toolTip(), text)
+        line.setText("short")
+        self.app.processEvents()
+        line.render(image)
+        self.assertFalse(line.property("skElided"))
+        self.assertEqual(line.toolTip(), "")
+
+    def test_a_subtitle_reached_as_a_plain_widget_is_elided_too(self):
+        """Live (2026-10-08): Maya's label reaches the skin as the cached
+        QWidget wrapper (trap 96) - no text() - and the first build's filter
+        raised there and let Maya paint it cut. The text is read as a
+        property; a QWidget carrying one stands in for that wrapper."""
+        line = self.control(QtWidgets.QWidget, "wrapped", self.card.body)
+        text = "LongSwordMesh in the right hand; left free - and more"
+        line.setProperty("text", text)
+        hubqt.apply_marks([style.Mark("wrapped", "subtitle", None, False,
+                                      None)], self.card, 1.0)
+        self.host.resize(300, 400)
+        self.host.show()
+        self.app.processEvents()
+        image = QtGui.QImage(line.size(), QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        line.render(image)
+        self.assertTrue(line.property("skElided"))
+        self.assertEqual(line.toolTip(), text)
 
     def test_swatchonly_hides_the_slider_and_its_label(self):
         grp = self.control(QtWidgets.QWidget, "colourGrp", self.card.body)
@@ -988,6 +1151,52 @@ class ListGrip(SeamsMixin, unittest.TestCase):
         image = QtGui.QImage(200, 8, QtGui.QImage.Format_ARGB32)
         image.fill(0)
         grip.render(image)                 # paintEvent must not raise
+
+    def test_an_empty_list_is_sized_again_when_its_first_rows_arrive(self):
+        """Live (2026-10-08, verify_hub_compact W3): the animation list is
+        empty when the card is built (its rows come from a refresh), so its
+        10 rows were measured on the fallback row - 24 px against the real
+        21 - and it showed 11 once filled. The first rows re-size it from
+        the real row, once."""
+        saved = hubqt.list_widget
+        listed = QtWidgets.QListWidget()
+        hubqt.list_widget = lambda name: listed if name == "theList" else None
+        try:
+            hubqt.list_row_px = lambda name: 24        # the fallback, empty
+            self._apply()
+            self.assertEqual(self.heights[-1][1],
+                             style.list_height(10, 24, hubqt.LIST_FRAME))
+            hubqt.list_row_px = lambda name: 21        # the real row, filled
+            listed.addItems(["A_Jump", "A_Run_Fwd"])
+            self.assertEqual(self.heights[-1][1],
+                             style.list_height(10, 21, hubqt.LIST_FRAME))
+            count = len(self.heights)
+            listed.addItems(["more"])                  # once
+            self.assertEqual(len(self.heights), count)
+        finally:
+            hubqt.list_widget = saved
+            listed.deleteLater()
+
+    def test_a_list_built_with_rows_needs_no_second_sizing(self):
+        saved = hubqt.list_widget
+        listed = QtWidgets.QListWidget()
+        listed.addItems(["one"])
+        hubqt.list_widget = lambda name: listed
+        try:
+            self._apply()
+            count = len(self.heights)
+            listed.addItems(["two"])
+            self.assertEqual(len(self.heights), count)
+        finally:
+            hubqt.list_widget = saved
+            listed.deleteLater()
+
+    def test_the_frame_is_what_a_styled_list_takes_round_its_rows(self):
+        """Measured live 2026-10-08: the list's height less its viewport's
+        is 18 px at 150 % on both lists (the frame, the stylesheet's padding
+        and Maya's own margins) - LIST_FRAME's first guess of 8 logical left
+        the Shared list showing 9 rows."""
+        self.assertEqual(hubqt.LIST_FRAME, 12)
 
     def test_a_real_mouse_press_move_release(self):
         """The event handlers, not only press/drag/release: global y."""

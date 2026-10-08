@@ -1690,7 +1690,11 @@ def build_panel():
             annotation=label + " - " + note), "chip")
 
     if hubstyle.skinning():
-        cmds.flowLayout(wrap=True, columnSpacing=3)
+        #  "flow": Maya's flowLayout wraps the chips and keeps ONE line's
+        #  height - the second line stood behind the Bright slider (live,
+        #  2026-10-08); the skin keeps the wrapped lines in its height
+        hubstyle.mark(cmds.flowLayout(wrap=True, columnSpacing=3), "flow",
+                      layout=True)
         for key, label, note in CHECKS:
             chip(key, label, note)
         cmds.setParent("..")

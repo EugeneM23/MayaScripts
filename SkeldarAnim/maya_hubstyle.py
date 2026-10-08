@@ -118,6 +118,8 @@ ROLES = (
     "swatchonly",   # a colorSliderGrp showing only its swatch
     "grip",         # a placeholder under a list the skin turns into a height grip (2026-10-08)
     "dot",          # a one-glyph state mark (● / ○) before a dropdown (2026-10-08)
+    "flow",         # a flowLayout whose wrapped lines the skin keeps in its
+                    # height (layout=True; live 2026-10-08: Maya kept one line's)
 )
 
 Mark = collections.namedtuple("Mark", "name role icon layout colour target",
