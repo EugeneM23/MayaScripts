@@ -263,12 +263,15 @@ def _classes():
             self._refit()
 
         def forget(self, path=None):
-            """Drop cached pictures: all, or the card at `path`'s (its thumbnail or its preview
-            sheet changed) - the scaled thumbnails and the decoded sheet both."""
+            """Drop cached pictures: every scaled thumbnail (the window's refresh: a thumbnail
+            is cached by its path alone), or the card at `path`'s (its thumbnail or its preview
+            sheet changed) - its scaled thumbnails and its decoded sheet both. Forgetting
+            everything KEEPS the decoded sheets: each is about 23 MB of pixels to decode again,
+            and `sheet` already reads one again when its file's time or size changed (Task 9's
+            review: a Refresh, a save or a rename threw every playing card's sheet away)."""
             self._frame = None
             if path is None:
                 self.pixmaps.clear()
-                self.sheets.clear()
                 return
             path = path.rstrip("/")
             image = path + "/" + store.THUMB_FILE

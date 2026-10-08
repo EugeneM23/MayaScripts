@@ -681,8 +681,22 @@ class AnimCards(CanvasCase):
         self.canvas.sheet(other)
         self.canvas.forget(self.walk.path)
         self.assertEqual(list(self.canvas.sheets), [other.path])
+
+    def test_forgetting_everything_keeps_the_decoded_sheets(self):
+        """The window's plain refresh (`forget()`) drops every scaled thumbnail and keeps every
+        decoded sheet - about 23 MB of pixels each, and their cache already checks the file's
+        time and size, so a sheet written again is read again anyway (Task 9's review, minor
+        3); `forget(path)` still drops that card's."""
+        other = self.write_anim("Run")
+        held = self.canvas.sheet(self.walk)[0]
+        self.canvas.sheet(other)
+        self.canvas.thumb(self.walk.thumbnail, 64)
         self.canvas.forget()
-        self.assertEqual(len(self.canvas.sheets), 0)
+        self.assertEqual(self.canvas.pixmaps, {})
+        self.assertEqual(list(self.canvas.sheets), [self.walk.path, other.path])
+        self.assertIs(self.canvas.sheet(self.walk)[0], held)
+        self.canvas.forget(other.path)
+        self.assertEqual(list(self.canvas.sheets), [self.walk.path])
 
     def test_the_frame_playing_at_a_time(self):
         first = self.canvas.preview_frame(self.walk, 0, 40)

@@ -1715,6 +1715,17 @@ class DetailsPlayback(AnimCase):
         self.win.save_cancel.click()
         self.assertTrue(self.win.play_timer.isActive())
 
+    def test_a_refresh_keeps_the_decoded_sheets(self):
+        """A sheet decoded is about 23 MB of pixels and its cache already checks the file's time
+        and size: a plain refresh (Refresh, a save, a rename) keeps it - only the card whose
+        preview was replaced drops it (Task 9's review, minor 3)."""
+        picture = self.win.canvas.sheet(self.win._card(self.walk))[0]
+        self.win.refresh()
+        self.assertIn(self.walk, self.win.canvas.sheets)
+        self.assertIs(self.win.canvas.sheet(self.win._card(self.walk))[0], picture)
+        self.win.replace_preview(self.walk)
+        self.assertIsNot(self.win.canvas.sheet(self.win._card(self.walk))[0], picture)
+
     def test_an_animation_without_a_preview_shows_its_still(self):
         still = write_jpg(os.path.join(self.tmp, "run.jpg"), self.GREEN)
         run = store.write(self.root, "", "Run", anim_data("Run"), still, frames=FRAMES)
@@ -1758,6 +1769,7 @@ class FakeModules(object):
         FakeProgress.log = self.log
         self.built = None             # what build_animation answers; None: a card of 7 frames
         self.previewed = None         # what preview answers; None: a sheet is painted
+        self.preview_error = None     # an exception preview raises instead of answering
         self.colour = "#c08020"
 
     # --- animcapture
@@ -1777,6 +1789,8 @@ class FakeModules(object):
 
     def preview(self, sheet_path, start, end, progress=None):
         self.log.append(("preview", start, end, progress is not None))
+        if self.preview_error is not None:
+            raise self.preview_error
         if self.previewed is not None:
             return self.previewed
         info = write_sheet(sheet_path, (self.colour, "#202020"))
@@ -1986,6 +2000,24 @@ class RealScene(unittest.TestCase):
         self.assertFalse(os.path.isfile(path + "/" + store.PREVIEW_FILE))
         self.assertFalse(os.path.isfile(path + "/" + store.THUMB_FILE))
         self.assertIn("saved without a preview: no viewport for a preview", text)
+
+    def test_a_preview_that_raises_still_saves_the_card(self):
+        """The frames were walked already: an exception out of the preview (a playblast Maya
+        refused) saves the card without one, and says why - the spec's «a preview that cannot be
+        made still saves the card» (Task 9's review, minor 2)."""
+        self.fakes.preview_error = RuntimeError("Maya command error")
+        path, text = self.scene.save("Run", "", None, self.snapshot, anim={"start": 3, "end": 9})
+        self.assertEqual(path, self.root + "/Run.anim")
+        self.assertNotIn("preview", store.read(path))
+        self.assertEqual(len(store.read_frames(path)["world"]), 7)
+        self.assertTrue(os.path.isfile(path + "/" + store.THUMB_FILE))
+        self.assertFalse(os.path.isfile(path + "/" + store.PREVIEW_FILE))
+        self.assertTrue(text.endswith("saved without a preview: RuntimeError: Maya command "
+                                      "error"), text)
+        self.assertEqual(self.logged("progress"),
+                         [("progress", "Saving Run", 14), ("progress_end", "Saving Run")])
+        self.assertEqual([n for n in os.listdir(tempfile.gettempdir())
+                          if n.startswith("skeldar_anim_sheet_%d" % os.getpid())], [])
 
     def test_a_cancelled_save_writes_nothing(self):
         for built, previewed in (((None, None, "cancelled - nothing saved"), None),

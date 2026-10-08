@@ -535,7 +535,8 @@ class Scene(object):
         into a temporary file, then the card written - the frames, the still, the sheet, the
         header last (`store.write`). A cancel in either step writes nothing; a preview that
         cannot be made (batch, no viewport, a playblast that failed) saves the card without
-        one and the line says why."""
+        one and the line says why - a preview that raises too, its error's last line the why
+        (the frames are read by then, and a Save must not lose them over the picture)."""
         from maya_poselib import animcapture
         from maya_poselib import timewalk
         start, end = _whole(anim.get("start")), _whole(anim.get("end"))
@@ -549,7 +550,13 @@ class Scene(object):
                     regions=regions, start=start, end=end, progress=progress)
                 if header is None:
                     return None, note
-                made, said, info = animcapture.preview(sheet, start, end, progress)
+                #  the frames are walked: a preview that RAISES (a playblast Maya refused) is
+                #  one that cannot be made - the card saved without it, the line saying why
+                try:
+                    made, said, info = animcapture.preview(sheet, start, end, progress)
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+                    made, said, info = False, _last_line(traceback.format_exc()), None
             if not made and said == animcapture.CANCELLED:
                 return None, said
             if made:
@@ -1505,7 +1512,7 @@ def _classes():
             if self._folder and self._folder not in folders:
                 self._folder = ""
             self._fill_tree(folders)
-            self.canvas.forget()
+            self.canvas.forget()            # the thumbnails; a decoded sheet checks its file
             self._repopulate()
             if self.picked and not self._card(self.picked):
                 self.unpick()
