@@ -1715,6 +1715,63 @@ class DetailsPlayback(AnimCase):
         self.win.save_cancel.click()
         self.assertTrue(self.win.play_timer.isActive())
 
+    def test_off_the_screen_it_rests_and_plays_again_when_exposed(self):
+        """A floating Pose Library whose Maya is minimised is hidden by Windows while Qt still
+        calls it visible (measured in a GUI Maya, 2026-10-08: isVisible True, isExposed False,
+        IsWindowVisible False) - no hideEvent comes. Its details then draw nothing and the
+        timer slows to PLAY_HIDDEN_MS; exposed again, it plays at PLAY_MS from where the clock
+        is."""
+        self.win.pick(self.walk)
+        before = self.win.thumb.pixmap().cacheKey()
+        self.win._on_screen = lambda: False
+        self.now = 100                                               # cell 1 is due ...
+        self.win._play_tick()
+        self.assertEqual(self.win.thumb.pixmap().cacheKey(), before)  # ... and not drawn
+        self.assertEqual(self.win.play_timer.interval(), pw.PLAY_HIDDEN_MS)
+        self.assertTrue(self.win.play_timer.isActive())
+        self.win._on_screen = lambda: True
+        self.win._play_tick()
+        self.assertGreater(self.centre().blue(), 150)                # cell 1 drawn
+        self.assertEqual(self.win.play_timer.interval(), look.PLAY_MS)
+
+    def test_offscreen_qt_counts_as_on_the_screen(self):
+        """No native window to ask (the offscreen platform the tests run on): on the screen."""
+        self.win.pick(self.walk)
+        self.assertTrue(self.win._on_screen())
+
+    def test_a_native_window_is_seen_while_its_root_is_shown_and_not_minimised(self):
+        """`native_shown` asks Windows from a plain handle (no wrapper of a Maya widget - trap
+        135): the root window of `hwnd` visible and not minimised. A floating window whose Maya
+        is minimised is HIDDEN (measured: IsWindowVisible False); a docked one stands in a
+        minimised Maya (IsIconic True); a handle Windows does not know counts as seen."""
+
+        class User32(object):
+            def __init__(self, known=True, root=7, visible=True, iconic=False):
+                self.known, self.root, self.visible, self.iconic = known, root, visible, iconic
+                self.asked = []
+
+            def IsWindow(self, hwnd):                                # noqa: N802
+                return self.known
+
+            def GetAncestor(self, hwnd, flag):                       # noqa: N802
+                self.asked.append((hwnd, flag))
+                return self.root
+
+            def IsWindowVisible(self, hwnd):                         # noqa: N802
+                return self.visible if hwnd == self.root or not self.root else True
+
+            def IsIconic(self, hwnd):                                # noqa: N802
+                return self.iconic if hwnd == self.root or not self.root else False
+
+        seen = User32()
+        self.assertTrue(pw.native_shown(42, seen))
+        self.assertEqual(seen.asked, [(42, pw.GA_ROOT)])
+        self.assertFalse(pw.native_shown(42, User32(visible=False)))    # hidden with its owner
+        self.assertFalse(pw.native_shown(42, User32(iconic=True)))      # docked, Maya minimised
+        self.assertTrue(pw.native_shown(42, User32(known=False, visible=False)))
+        self.assertTrue(pw.native_shown(0, User32(visible=False)))      # no handle at all
+        self.assertFalse(pw.native_shown(42, User32(root=0, visible=False)))  # its own root
+
     def test_a_refresh_keeps_the_decoded_sheets(self):
         """A sheet decoded is about 23 MB of pixels and its cache already checks the file's time
         and size: a plain refresh (Refresh, a save, a rename) keeps it - only the card whose

@@ -131,6 +131,12 @@ IN_PLACE_VAR = "skeldarPoseLibraryInPlace"
 KEY_LABELS = (("every", "Every frame"), ("source", "Source keys"))
 FRAME_LIMIT = 1000000                # a Start / End spin box's reach, either way
 
+#  The details' playback beat while its window is off the screen - a floating Pose Library whose
+#  Maya is minimised: Windows hides it with no hideEvent, Qt still says visible (measured in a GUI
+#  Maya, 2026-10-08: each 33 ms tick then copied, scaled and set a cell nobody saw, 0.8 ms
+#  each) - slow enough to cost nothing, quick enough to play again when the window comes back
+PLAY_HIDDEN_MS = 500
+GA_ROOT = 2                          # GetAncestor: the root window of a child's chain
 BLEND_SPAN = 200                     # logical px of a middle drag from 0 to 100 %
 FOLLOW_MS = 120                      # the selection's reading, coalesced
 EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
@@ -206,6 +212,45 @@ def _name_of(path):
 def _noun(path):
     """What the card at `path` is, as a dialog's title names it: "animation" or "pose"."""
     return "animation" if store.is_anim(path) else "pose"
+
+
+def native_shown(hwnd, user32):
+    """Whether the native window `hwnd` (a WId as an int) can be seen, asked of Windows
+    (`user32`, `ctypes`' or a test's): its ROOT window (GetAncestor GA_ROOT; the window itself
+    when it is one) visible and not minimised. A floating Pose Library whose Maya is minimised is
+    HIDDEN with its owner (measured 2026-10-08: IsWindowVisible False, Qt still saying visible);
+    a docked one stands in Maya's own window, minimised (IsIconic). No handle, or one Windows
+    does not know (offscreen Qt), counts as seen - nothing to ask."""
+    if not hwnd or not user32.IsWindow(hwnd):
+        return True
+    root = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+    return bool(user32.IsWindowVisible(root)) and not bool(user32.IsIconic(root))
+
+
+_USER32 = []
+
+
+def _user32():
+    """Windows' user32 with the four calls `native_shown` makes typed for 64-bit handles (a
+    WinDLL of its own: `ctypes.windll.user32`, which other code shares, is left as it is), or
+    None off Windows. A seam."""
+    if not _USER32:
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32")
+            user32.IsWindow.argtypes = [wintypes.HWND]
+            user32.IsWindow.restype = wintypes.BOOL
+            user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            user32.GetAncestor.restype = wintypes.HWND
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
+            user32.IsWindowVisible.restype = wintypes.BOOL
+            user32.IsIconic.argtypes = [wintypes.HWND]
+            user32.IsIconic.restype = wintypes.BOOL
+        except (ImportError, AttributeError, OSError):
+            user32 = None
+        _USER32.append(user32)
+    return _USER32[0]
 
 
 def defer(fn):
@@ -1751,13 +1796,46 @@ def _classes():
             if not self.play_timer.isActive():
                 self.play_timer.start()
 
+        def _on_screen(self):
+            """Whether the window can be seen (`native_shown`). `isVisible()` is not enough:
+            Windows hides a floating window with its minimised Maya and Qt sends no hideEvent
+            (measured: isVisible True, isExposed False, Win32 IsWindowVisible False). Asked of
+            Windows from `effectiveWinId()` - an int, the native window this widget draws into,
+            which (unlike `winId()`) does not make the widget native - and never through a
+            wrapper of Maya's own widgets: the first version asked `self.window()
+            .windowHandle().isExposed()` on every tick, and right after the control was built
+            again PySide handed back the DEAD QWindow wrapper cached at a recycled address
+            («Internal C++ object (QWindow) already deleted», in this timer slot - trap 96's
+            family; trap 135's says a stale wrapper of a Maya object can crash instead). Off
+            Windows, or with no native window to ask (offscreen Qt), it counts as on the
+            screen: the details play as they did before. A seam the tests replace."""
+            if QtGui.QGuiApplication.platformName() != "windows":
+                return True
+            user32 = _user32()
+            if user32 is None:
+                return True
+            try:
+                hwnd = int(self.effectiveWinId())
+            except (RuntimeError, TypeError, ValueError):
+                return True
+            return native_shown(hwnd, user32)
+
         def _play_tick(self):
-            """The cell of the picked card's preview playing now, in the details picture."""
+            """The cell of the picked card's preview playing now, in the details picture -
+            nothing while the window is off the screen (`_on_screen`): the timer then beats
+            every PLAY_HIDDEN_MS until it is back, and plays at `look.PLAY_MS` again, from
+            where the clock stands."""
             card = self._card(self._play_path) if self._play_path else None
             if card is None:
                 self.play_timer.stop()
                 self._play_path = None
                 return
+            if not self._on_screen():
+                if self.play_timer.interval() != PLAY_HIDDEN_MS:
+                    self.play_timer.setInterval(PLAY_HIDDEN_MS)
+                return
+            if self.play_timer.interval() != look.PLAY_MS:
+                self.play_timer.setInterval(look.PLAY_MS)
             picture = self.canvas.preview_frame(card, self._clock_ms() - self._play_t0,
                                                 self.thumb_side())
             if picture is not None and not picture.isNull():
