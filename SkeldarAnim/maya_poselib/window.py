@@ -2088,15 +2088,19 @@ def _classes():
             return alpha
 
         def blend_release(self):
-            """The blend keyed where it stands (the middle button or the slider let go)."""
+            """The blend keyed where it stands (the middle button or the slider let go). The
+            session ends HERE, before the press: an animation's blend pastes its whole range
+            for seconds under a progress window, and the window losing the focus to it read
+            the session still standing - cancelled it and said «let go elsewhere» over a paste
+            that went on (the final review, S10)."""
             if self._blend is None:
                 return ""
+            self._blend_end()
             try:
                 text = self.scene.blend_finish()
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 text = _last_line(traceback.format_exc())
-            self._blend_end()
             return self.say(text or "")
 
         def blend_cancel(self):

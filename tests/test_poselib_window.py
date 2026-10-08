@@ -33,6 +33,7 @@ except Exception:                                            # noqa: BLE001
 import maya_hubstyle as hubstyle
 import maya_poselib
 from maya_poselib import animdata
+from maya_poselib import cardgrid
 from maya_poselib import look
 from maya_poselib import store
 from maya_poselib import window as pw
@@ -1745,6 +1746,59 @@ class AnimMenus(AnimCase):
         self.assertEqual(title, "Update animation")
         self.assertIn("10-57", text)
         self.assertIn("thumbnail and preview are kept", text)
+
+
+class LongPress(AnimCase):
+    """The final review (S10): a paste started from a RELEASE - a blend let go, a card dropped
+    on a character - runs for seconds under a progress window, and the window losing the focus
+    to it read the drag or the blend still standing: cancelled the session and said «let go
+    elsewhere» over a paste that went on. Each ends before its press now."""
+
+    def lose_focus(self):
+        self.win.isActiveWindow = lambda: False
+        self.win.changeEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.ActivationChange))
+
+    def test_a_blend_release_ends_the_session_before_the_paste(self):
+        seen = []
+
+        def finish():
+            self.lose_focus()                    # the progress window takes the focus
+            seen.append(self.win.status.text())
+            self.scene.log.append(("blend_finish",))
+            return "Walk at 50 % onto Manny_Rig1"
+        self.scene.blend_finish = finish
+        self.win.pick(self.walk)
+        self.assertEqual(self.win.blend_drag(self.walk, 100), 0.5)
+        self.win.blend_release()
+        self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
+        self.assertEqual(self.scene.calls("blend_cancel"), [])
+        self.assertNotIn(cardgrid.LOST_BLEND, seen)
+        self.assertNotIn(("say", cardgrid.LOST_BLEND), self.scene.log)
+        self.assertEqual(self.win.status.text(), "Walk at 50 % onto Manny_Rig1")
+        self.assertFalse(self.win.blending())
+
+    def test_a_drop_ends_the_drag_before_the_paste(self):
+        Qt = QT.QtCore.Qt
+        said = []
+
+        def onto(path, root, mirror, options=None):
+            self.lose_focus()
+            said.append(self.win.status.text())
+            self.scene.log.append(("apply_onto", path))
+            return True, "Walk onto Manny_Rig1"
+        self.scene.apply_onto = onto
+        canvas = self.win.canvas
+        local = self.card_point(self.walk, local=True)
+        self.mouse(canvas, "press", local, Qt.LeftButton)
+        far = local + QT.QtCore.QPoint(-3000, 0)
+        self.mouse(canvas, "move", far, Qt.NoButton, Qt.LeftButton)
+        self.assertIsNotNone(canvas._drag)
+        self.mouse(canvas, "release", far, Qt.LeftButton)
+        self.assertIsNone(canvas._drag)
+        self.assertEqual(self.scene.calls("apply_onto"), [("apply_onto", self.walk)])
+        self.assertNotIn(cardgrid.LOST_DRAG, said)
+        self.assertNotIn(("say", cardgrid.LOST_DRAG), self.scene.log)
+        self.assertEqual(self.win.status.text(), "Walk onto Manny_Rig1")
 
 
 class LetGo(AnimCase):
