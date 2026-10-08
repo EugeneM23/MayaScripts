@@ -218,6 +218,25 @@ class WalkOrder(Rebound):
                 pass
         self.assertEqual(self.log, [("tweaks",), ("suspend",), ("resume",)])
 
+    def test_arrive_on_the_frame_it_stands_on_does_not_set_the_time(self):
+        """The final review (M2): a `setCurrentTime` to the frame the scene stands on throws
+        away every unkeyed tweak, so a press pasting AT the current frame reads the scene as it
+        stands there - until the walk has moved once; after that `arrive` is `go`."""
+        with timewalk.Walk(fresh=True) as walk:
+            self.assertFalse(walk.arrive(12.0))          # the frame it entered on: no time set
+            self.assertEqual(walk.frame, 12.0)
+            self.assertFalse(walk.arrive(12))
+            self.assertTrue(walk.arrive(13))
+            self.assertTrue(walk.arrive(12.0))           # it has moved: the frame is read again
+        times = [entry for entry in self.log if entry[0] == "time"]
+        self.assertEqual(times, [("time", 13), ("time", 12.0), ("time", 12.0)])
+
+    def test_arrive_elsewhere_goes(self):
+        with timewalk.Walk(fresh=True) as walk:
+            self.assertTrue(walk.arrive(40))
+        self.assertEqual([entry for entry in self.log if entry[0] == "time"],
+                         [("time", 40), ("time", 12.0)])
+
     def test_restore_all_sets_back_every_tweak_now_and_on_exit(self):
         # a cancelled press: its chunk undone, nothing was keyed after all
         with timewalk.Walk(fresh=True) as walk:

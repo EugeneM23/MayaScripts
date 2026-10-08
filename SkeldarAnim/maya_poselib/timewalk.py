@@ -70,6 +70,7 @@ class Walk(object):
         self.fresh = fresh
         self.keyed = []
         self.frame = None
+        self.moved = False                   # has a `go` changed the time yet?
         self.tweaks = None
         self._here = None
         self._evaluating = None
@@ -94,6 +95,22 @@ class Walk(object):
         """The scene at `frame` (the scene's own time unit); `walk.frame` says where it stands."""
         oma.MAnimControl.setCurrentTime(om.MTime(frame, om.MTime.uiUnit()))
         self.frame = frame
+        self.moved = True
+
+    def arrive(self, frame):
+        """`go(frame)` - unless the walk has not moved yet and the scene already stands on
+        `frame`: a `setCurrentTime` to the frame the scene stands on re-evaluates every time
+        curve and throws away the animator's unkeyed tweaks (measured: a tweak of 77 read back
+        as 2.8), so a press pasting at the current frame reads what the animator SEES there -
+        the tweaks the entry set back after its own evaluation switch (the final review, M2:
+        Main dragged by hand to place a walk was keyed where its curve stood). True when it
+        went."""
+        if not self.moved and self._here is not None and \
+                abs(float(frame) - float(self._here.value)) <= 1e-9:
+            self.frame = frame
+            return False
+        self.go(frame)
+        return True
 
     def restore_all(self):
         """Every tweak set back, the press's keyed plugs included - the press was undone. The
