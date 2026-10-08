@@ -1747,6 +1747,37 @@ class AnimMenus(AnimCase):
         self.assertIn("thumbnail and preview are kept", text)
 
 
+class LetGo(AnimCase):
+    """The final review (S8): the module kept the window it built in `_WINDOW` after the window
+    was destroyed, and the dead wrapper kept its grid's decoded preview sheets alive."""
+
+    def setUp(self):
+        AnimCase.setUp(self)
+        saved = list(pw._WINDOW)
+        self.addCleanup(lambda: pw._WINDOW.__setitem__(slice(None), saved))
+
+    def kept(self):
+        win = pw.make_window(self.scene)
+        pw._keep(win)
+        return win
+
+    def test_a_destroyed_window_is_let_go(self):
+        win = self.kept()
+        win.pick(self.walk)
+        self.assertIsNotNone(win.canvas.sheet(win._card(self.walk)))      # a sheet decoded
+        self.assertEqual(pw._WINDOW, [win])
+        QT.shiboken.delete(win)
+        self.assertEqual(pw._WINDOW, [])
+
+    def test_only_the_destroyed_one_is_let_go(self):
+        first = self.kept()
+        second = self.kept()
+        self.addCleanup(second.deleteLater)
+        QT.shiboken.delete(first)
+        self.assertEqual(pw._WINDOW, [second])
+        self.assertIs(pw.live(), second)
+
+
 class DetailsPlayback(AnimCase):
     """The details picture of a picked animation card loops its preview."""
 

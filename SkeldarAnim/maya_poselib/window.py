@@ -90,6 +90,7 @@ Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window"),
       the options", "The window")
 """
 
+import functools
 import math
 import os
 import tempfile
@@ -2597,6 +2598,23 @@ def live():
     return None
 
 
+def _keep(window):
+    """`window` is the one standing (`live`): kept in `_WINDOW` until it is DESTROYED - then let
+    go (`_window_gone`). Held after its death, the dead wrapper kept every decoded preview sheet
+    of its grid alive, ~23 MB a card, until the next build (the final review, S8). The slot is a
+    module-level function given the window's id, never the window: a closure over it would keep
+    it alive just the same."""
+    del _WINDOW[:]
+    _WINDOW.append(window)
+    window.destroyed.connect(functools.partial(_window_gone, id(window)))
+
+
+def _window_gone(key, *_args):
+    """The window whose id is `key` is destroyed: let go of it - and only of it (a window built
+    since stands)."""
+    _WINDOW[:] = [window for window in _WINDOW if id(window) != key]
+
+
 def destroy_roots(host):
     """Delete every Pose Library root standing in `host` NOW - found by objectName, never by
     module state: after an install the fresh module does not know the root an older one built
@@ -2632,8 +2650,7 @@ def build():
         layout = q.QtWidgets.QVBoxLayout(host)
         layout.setContentsMargins(0, 0, 0, 0)
     layout.addWidget(window)
-    del _WINDOW[:]
-    _WINDOW.append(window)
+    _keep(window)
     _BUILT_HERE = True
     return CONTROL
 
