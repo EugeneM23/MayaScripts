@@ -145,10 +145,12 @@ def _unrecorded():
     back as it was after, whatever ends the block (`apply._unrecorded`'s rule): a Save is no
     step of the animator's. Around the duplicates `object_curves` reads curves off, and around
     the walk (`_walk`) and the preview's blasts (`_blast`), whose tweak set-back
-    (`keys.Tweaks.restore`) turns autoKey off and back - each toggle a step of the queue in
-    Maya, so the animator's next Ctrl+Z switched autoKey off instead of taking their last step
-    back (fix round 1, measured). A save runs outside any undo chunk - toggled inside one, the
-    recording breaks that chunk (trap 145)."""
+    (`keys.Tweaks.restore`) puts the animator's tweaks back: it switches autoKey through
+    `MAnimControl` (no step of the queue, measured - through `cmds` each toggle WAS one, and the
+    animator's next Ctrl+Z switched autoKey off instead of taking their last step back: fix
+    round 1), but a plug the API cannot reach goes back through `setAttr`, a recorded step - so
+    the queue stays off around all of it. A save runs outside any undo chunk - toggled inside
+    one, the recording breaks that chunk (trap 145)."""
     was = bool(cmds.undoInfo(query=True, state=True))
     if was:
         cmds.undoInfo(stateWithoutFlush=False)
@@ -292,8 +294,9 @@ def _walk(ref, bones, start, end, progress=None):
     do; then `progress.step`. A cancel leaves the walk at once (the time goes back with it).
 
     The walk runs with the undo queue off (`_unrecorded`), its exit included: the walk throws
-    the animator's unkeyed tweaks away and its exit sets them back, toggling autoKey - left
-    recorded, two loose steps the animator's next Ctrl+Z presses replay (fix round 1)."""
+    the animator's unkeyed tweaks away and its exit sets them back (`keys.Tweaks.restore`: autoKey
+    switched through the API, no step - but a plug the API cannot reach is set through
+    `setAttr`, which the queue would record, a loose step the animator's next Ctrl+Z replays)."""
     order = list(bones)
     paths = [bones[name]["path"] for name in order]
     rig = ref.rig if ref.kind == "rig" else None
@@ -554,9 +557,10 @@ def _blast(qt, panel, width, height, frames, folder):
     tweaks read (`keys.Tweaks`: a playblast steps the time, which throws away unkeyed tweaks on
     keyed channels), the time remembered, the flags off (`capture.set_flags`); after it,
     whatever happened: the flags back, the time back (`MAnimControl`, unrecorded), the tweaks
-    set back. All of it with the undo queue off (`_unrecorded`): the set-back toggles autoKey,
-    and a preview is no step of the animator's (fix round 1). A playblast that fails raises,
-    after all of that."""
+    set back. All of it with the undo queue off (`_unrecorded`): a preview is no step of the
+    animator's - the flags are `modelEditor` edits and a tweak the API cannot reach goes back
+    through `setAttr`, both recorded otherwise (autoKey is switched through the API, no step).
+    A playblast that fails raises, after all of that."""
     options = capture.blast_options(panel, width, height)
     first = folder + "/first.jpg"
     with _unrecorded():
@@ -629,6 +633,18 @@ def paint_sheet(qt, pictures, path, size=look.PREVIEW_SIZE, progress=None):
     return capture.save_jpg(sheet, path, SHEET_QUALITY)
 
 
+def _asked(progress):
+    """Has the animator pressed Esc in `progress` (`timewalk.Progress.asked`: no step taken)?
+    False for no progress, or one that cannot be asked."""
+    ask = getattr(progress, "asked", None)
+    if ask is None:
+        return False
+    try:
+        return bool(ask())
+    except Exception:                                    # noqa: BLE001 - a cancel never raises
+        return False
+
+
 def _first_line(error):
     """The first line of an error, short enough for a status line."""
     lines = str(error).strip().splitlines()
@@ -666,8 +682,16 @@ def preview(sheet_path, start, end, progress=None):
     try:
         try:
             count, settled = _blast(qt, panel, width, height, frames, folder)
+            failed = None
         except (RuntimeError, OSError) as error:
-            return False, "no preview - " + _first_line(error), None
+            failed = error
+        # Esc during the playblast stops it short (or makes it raise): asked FIRST, it is the
+        # animator's cancel - never «a preview that could not be made», which a Save answers
+        # by saving the card without one (the final review, S1)
+        if _asked(progress):
+            return False, CANCELLED, None
+        if failed is not None:
+            return False, "no preview - " + _first_line(failed), None
         found = dict(blasted(folder))
         missing = [frame for frame in frames if frame not in found]
         if missing:

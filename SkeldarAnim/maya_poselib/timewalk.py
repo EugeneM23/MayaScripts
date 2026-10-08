@@ -172,6 +172,20 @@ class Progress(object):
                 self.on = False
         return self
 
+    def asked(self):
+        """Has the animator pressed Esc? Asked of the window with NO step taken - a press asks it
+        after a long call it cannot step through (a playblast Esc stops short: the final review,
+        S1). False in batch mode and where the window cannot be asked."""
+        if not self.on:
+            return False
+        if not self.cancelled:
+            try:
+                self.cancelled = bool(cmds.progressWindow(query=True, isCancelled=True))
+            except Exception:                        # noqa: BLE001 - the window is gone
+                self.on = False
+                return False
+        return self.cancelled
+
     def step(self, text=""):
         """One step done, `text` the status: False once the animator pressed Esc."""
         if not self.on:

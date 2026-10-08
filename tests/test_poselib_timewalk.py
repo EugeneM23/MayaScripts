@@ -285,6 +285,21 @@ class ProgressWindow(Rebound):
             self.assertFalse(progress.step("3"))
             self.assertTrue(progress.cancelled)
 
+    def test_asked_answers_esc_without_a_step(self):
+        timewalk.cmds = FakeCmds(self.log, cancel_after=0)
+        with timewalk.Progress("Saving Walk", 10) as progress:
+            self.assertTrue(progress.asked())
+            self.assertTrue(progress.cancelled)
+            self.assertFalse(progress.step("1"))
+        self.assertEqual([entry for entry in self.log if entry[0] == "progress step"],
+                         [])                                    # asked took no step
+        timewalk.cmds = FakeCmds(self.log)
+        with timewalk.Progress("Saving Walk", 10) as progress:
+            self.assertFalse(progress.asked())
+        timewalk.cmds = FakeCmds(self.log, batch=True)
+        with timewalk.Progress("Saving Walk", 10) as progress:
+            self.assertFalse(progress.asked())
+
     def test_a_window_that_cannot_open_is_a_no_op(self):
         timewalk.cmds = FakeCmds(self.log, open_fails=True)
         with timewalk.Progress("Saving Walk", 3) as progress:

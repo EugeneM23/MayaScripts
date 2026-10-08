@@ -1320,6 +1320,34 @@ class PreviewSteps(QtCase):
         self.assertIn(("time", 12.0), self.log)
         self.assertEqual(self.log[-2:], [("restore",), ("undo", True)])
 
+    def test_esc_during_the_playblast_cancels_and_writes_nothing(self):
+        """The final review (S1): Esc during the playblast stopped it short - read as «the
+        playblast wrote 3 of 5 frames», a preview that could not be made, and the card was saved
+        without one. The progress is asked for a cancel right after the blast (`asked`, no step)
+        and the answer is CANCELLED - nothing written, everything put back."""
+        class Asked(FakeProgress):
+            def asked(self):
+                return True
+        self.cmds.skip_frames = set([3, 4])                   # Esc stopped the playblast short
+        self.assertEqual(ac.preview(self.target, 0, 4, Asked()),
+                         (False, "cancelled - nothing saved", None))
+        self.assertFalse(os.path.exists(self.target))
+        self.assert_flags_back()
+        self.assertEqual(self.log[-3:], [("time", 12.0), ("restore",), ("undo", True)])
+        # a playblast Esc made RAISE: the same answer
+        def stopped(**kw):
+            raise RuntimeError("playblast: interrupted")
+        self.cmds.playblast = stopped
+        self.assertEqual(ac.preview(self.target, 0, 4, Asked()),
+                         (False, "cancelled - nothing saved", None))
+
+    def test_a_progress_without_esc_pressed_previews_as_before(self):
+        class Calm(FakeProgress):
+            def asked(self):
+                return False
+        ok, note, _info = ac.preview(self.target, 0, 4, Calm())
+        self.assertTrue(ok, note)
+
     def test_a_failing_playblast_is_no_preview_and_puts_everything_back(self):
         def broken(**kw):
             raise RuntimeError("playblast: the panel is gone\nmore")
