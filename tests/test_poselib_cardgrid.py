@@ -605,8 +605,13 @@ class AnimCards(CanvasCase):
         self.canvas.set_cards(list(cards))
         self.canvas.fit(500, 600)
 
-    def hover(self, index):
+    def hover(self, index, dwell=True):
+        """The mouse onto card `index` - and resting there (the dwell's timer fired) unless
+        `dwell` is False."""
         self.mouse("move", self.centre(index), QT.QtCore.Qt.NoButton, QT.QtCore.Qt.NoButton)
+        if dwell and self.canvas.dwell_timer.isActive():
+            self.canvas.dwell_timer.stop()
+            self.canvas._dwelt()
 
     def square_colour(self, index):
         """The colour at the middle of the card's square as it is drawn now (grown or not)."""
@@ -780,6 +785,37 @@ class AnimCards(CanvasCase):
         self.canvas._dirty = dirtied.append
         self.canvas._play_tick()
         self.assertEqual(dirtied, [self.walk.path])
+
+    def test_it_plays_only_after_the_mouse_rests_and_a_sweep_decodes_nothing(self):
+        """The final review (S9): a sheet decoded the moment the mouse came onto a card (27-33
+        ms on the GUI thread, measured live), so a sweep across a row of clips stuttered. A card
+        plays once the mouse rested on it `DWELL_MS`: a sweep decodes nothing."""
+        cards = [self.walk] + [self.write_anim("Clip%d" % n) for n in range(3)]
+        self.show(*cards)
+        self.assertEqual(cardgrid.DWELL_MS, 150)
+        timer = self.canvas.dwell_timer
+        self.assertTrue(timer.isSingleShot())
+        self.assertEqual(timer.interval(), cardgrid.DWELL_MS)
+        for index in range(len(cards)):                          # the sweep
+            self.hover(index, dwell=False)
+            self.assertTrue(timer.isActive(), index)
+            self.assertFalse(self.canvas.play_timer.isActive(), index)
+        self.assertEqual(list(self.canvas.sheets), [])           # nothing decoded
+        self.assertGreater(self.square_colour(3).green(), 120)   # the still while it waits
+        timer.stop()
+        self.canvas._dwelt()                                     # it rested on the last one
+        self.assertEqual(list(self.canvas.sheets), [cards[3].path])
+        self.assertTrue(self.canvas.play_timer.isActive())
+        self.assertGreater(self.square_colour(3).red(), 150)     # cell 0
+
+    def test_a_dwell_that_ends_off_its_card_plays_nothing(self):
+        self.show(self.walk, self.fist)
+        self.hover(0, dwell=False)
+        self.canvas.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.assertFalse(self.canvas.dwell_timer.isActive())
+        self.canvas._dwelt()
+        self.assertFalse(self.canvas.play_timer.isActive())
+        self.assertEqual(list(self.canvas.sheets), [])
 
     def test_a_reread_keeps_it_playing_from_where_it_was(self):
         self.show(self.walk, self.fist)

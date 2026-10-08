@@ -39,7 +39,9 @@ triangle and its frame count (`look.badge_text`) in a small dark pill at the squ
 bottom-right - and the card under the mouse draws its PREVIEW SHEET (`preview.jpg`, up to 60
 cells of 320 px) one cell at a time in place of its still, at the clip's own rate
 (`look.play_cell`: a cell holds `step / fps` seconds), from the first cell each time the mouse
-comes onto it. A sheet is decoded ONCE (`sheet`: the image and the grid its header names,
+comes onto it - once it RESTED there `DWELL_MS` (a sheet takes 27-33 ms to decode on the GUI
+thread, and a sweep across a row of clips stuttered: a sweep decodes nothing now - the final
+review, S9). A sheet is decoded ONCE (`sheet`: the image and the grid its header names,
 `sheet_info`) and the last `SHEETS` are kept, keyed by the file's time and size, so a sheet
 written again is read again; each cell is drawn straight out of it, scaled at paint time. The
 cost is the hovered card alone: a `look.PLAY_MS` timer (`play_timer`) runs only while the card
@@ -83,6 +85,10 @@ SHADOW_RINGS = 8
 #  is 2560 x 2240 px - about 23 MB decoded - so a few, never the library's); the badge's font
 #  (logical px), its inset from the square's corner, and how dark its pill is over the picture
 SHEETS = 6
+#  ms the mouse rests on an animation card before it plays: decoding its sheet takes 27-33 ms on
+#  the GUI thread (measured live), so a sweep across a row of clips stuttered - after a dwell a
+#  sweep decodes nothing (the final review, S9)
+DWELL_MS = 150
 BADGE_FONT = 9.0
 BADGE_PAD = 4
 BADGE_ALPHA = 0.6
@@ -212,6 +218,13 @@ def _classes():
             self.play_timer = QtCore.QTimer(self)
             self.play_timer.setInterval(look.PLAY_MS)
             self.play_timer.timeout.connect(self._play_tick)
+            #  the card the mouse came onto, playing once it rested there DWELL_MS
+            self._dwell_path = None
+            self.dwell_timer = QtCore.QTimer(self)
+            self.dwell_timer.setObjectName("skeldarPoseDwell")
+            self.dwell_timer.setSingleShot(True)
+            self.dwell_timer.setInterval(DWELL_MS)
+            self.dwell_timer.timeout.connect(self._dwelt)
             self.setMouseTracking(True)
             self.setFocusPolicy(Qt.ClickFocus)
 
@@ -350,24 +363,54 @@ def _classes():
             self._frame = (key, cell)
             return cell
 
+        def _playable(self, card):
+            """Could `card` play - an animation card naming a preview sheet? Asked WITHOUT
+            decoding it (`sheet` decodes)."""
+            return card is not None and getattr(card, "type", "pose") == "anim" and \
+                bool(getattr(card, "preview", ""))
+
         def _sync_play(self):
             """The card under the mouse plays its preview while it is an animation card with a
-            sheet (`sheet`) and no drag carries it: begun when the mouse came onto THIS card
-            (it keeps its start across a re-read of the library), the timer running only then.
-            Anything else stops it, the card left showing its still."""
+            sheet (`sheet`) and no drag carries it: once the mouse RESTED on it `DWELL_MS`
+            (`dwell_timer`, then `_dwelt`: the sheet decoded and the timer started - a sweep
+            across a row of clips decodes nothing, S9), from its first cell; a card already
+            playing keeps playing (and its start) across a re-read of the library. Anything else
+            stops the dwell and the play, the card left showing its still."""
             hover = self._hover
             card = self.cards[hover] if hover is not None and hover < len(self.cards) else None
-            if card is not None and not self._drag and self.sheet(card) is not None:
-                if self._playing != card.path:
-                    self._playing = card.path
-                    self._play_started = self._now()
-                if not self.play_timer.isActive():
-                    self.play_timer.start()
+            if card is not None and not self._drag and self._playable(card):
+                if self._playing == card.path:
+                    if not self.play_timer.isActive():
+                        self.play_timer.start()
+                    return
+                self._stop_playing()
+                if self._dwell_path != card.path:
+                    self._dwell_path = card.path
+                    self.dwell_timer.start()
                 return
+            self.dwell_timer.stop()
+            self._dwell_path = None
+            self._stop_playing()
+
+        def _stop_playing(self):
+            """The play timer stopped and the card that played shows its still again."""
             self.play_timer.stop()
             if self._playing is not None:
                 stopped, self._playing = self._playing, None
                 self._dirty(stopped)
+
+        def _dwelt(self):
+            """The mouse rested on a card `DWELL_MS`: it plays - its sheet decoded now - when it
+            is still the card under the mouse, nothing carries it and the sheet can be read."""
+            path, self._dwell_path = self._dwell_path, None
+            hover = self._hover
+            card = self.cards[hover] if hover is not None and hover < len(self.cards) else None
+            if card is None or card.path != path or self._drag or self.sheet(card) is None:
+                return
+            self._playing = card.path
+            self._play_started = self._now()
+            self.play_timer.start()
+            self._dirty(card.path)
 
         def _play_tick(self):
             """One frame of the hovered card's preview: only what that card covers repainted."""
@@ -660,10 +703,12 @@ def _classes():
             if self._drag and button == Qt.LeftButton:
                 point = global_of(event)
                 drag = self._drag
-                try:
-                    self.panel.drop_at(point.x(), point.y(), drag["path"], drag["snap"])
-                finally:
-                    self._end_drag()
+                #  the drag ENDED before the press it drops: a paste onto a character runs for
+                #  seconds under a progress window, and the window losing the focus to it read
+                #  the drag still standing - «let go elsewhere» over a paste that went on (the
+                #  final review, S10)
+                self._end_drag()
+                self.panel.drop_at(point.x(), point.y(), drag["path"], drag["snap"])
                 return
             if self._mid is not None and button == Qt.MiddleButton:
                 self._mid = None
