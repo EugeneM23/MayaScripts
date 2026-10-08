@@ -892,6 +892,51 @@ class Tweaks(object):
         return [plug for plug in todo if plug in done]
 
 
+def shown_at_start(tweaks, plugs):
+    """{plug: value}: what each of `plugs` SHOWED when `tweaks` (a `Tweaks`, or None) was read -
+    its captured value for a time-fed plug (matched by the node's shortest unique name, the
+    spelling `time_fed` answers: `cmds.ls(node)`), else what it shows now (a plug no time curve
+    feeds holds its value through a walk). A plug that cannot be read is left out."""
+    captured = tweaks.values if tweaks is not None else {}
+    out = OrderedDict()
+    for plug in plugs:
+        node, _dot, attr = plug.rpartition(".")
+        try:
+            named = cmds.ls(node) or []
+        except (RuntimeError, TypeError, ValueError):
+            named = []
+        key = (named[0] if len(named) == 1 else node) + "." + attr
+        if key in captured:
+            out[plug] = captured[key]
+            continue
+        try:
+            out[plug] = float(cmds.getAttr(plug))
+        except (RuntimeError, TypeError, ValueError):
+            continue
+    return out
+
+
+def undo_marks(values):
+    """Every plug of `values` ({plug: value}) set to its value as an UNDO MARK - the first step
+    of a press's chunk, autoKey already off: the value set UNRECORDED first (`_api_set`, so the
+    plug holds it), then through `setAttr`, recorded - a step whose undo puts back the very value
+    it set. A chunk's later steps (a solve's temporary sets and their restores at frames that
+    are not the current one) replay backwards on Ctrl+Z, each leaving the value it found; this
+    one is undone LAST, so every planned channel ends showing what it showed when the press
+    began (the final review, M1: 180 channels showed the first pasted frame's pose after one
+    Ctrl+Z). The plugs marked; one that refuses is skipped."""
+    done = []
+    for plug, value in values.items():
+        try:
+            if _api_ready():
+                _api_set(plug, value)
+            cmds.setAttr(plug, value)
+        except (RuntimeError, TypeError, ValueError):
+            continue
+        done.append(plug)
+    return done
+
+
 def _auto_key(state=None):
     """autoKey's state (`state` None), or autoKey set to `state` - through the API on Maya's own
     scene (`MAnimControl.autoKeyMode` / `setAutoKeyMode`: no step on the undo queue, measured,

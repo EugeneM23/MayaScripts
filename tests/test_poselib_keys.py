@@ -18,6 +18,7 @@ in the path, which `connectionInfo` names instead of the real driver.
 """
 
 import unittest
+from collections import OrderedDict
 
 from maya_poselib import keys
 
@@ -1029,6 +1030,57 @@ class Tweaks(Restoring):
 
 BASE = keys.Layer("BaseAnimation", True, False, False, False)
 ADD = keys.Layer("AddL", False, True, False, False)
+
+
+class MarkCmds(object):
+    """`ls` (a long path -> its shortest unique name), `getAttr` / `setAttr` over `values`, every
+    set logged."""
+
+    def __init__(self, values, short=None, refuse=()):
+        self.values = dict(values)
+        self.short = dict(short or {})
+        self.refuse = set(refuse)
+        self.log = []
+
+    def ls(self, node):
+        return [self.short.get(node, node)]
+
+    def getAttr(self, plug):
+        if plug not in self.values:
+            raise ValueError("No object matches name: " + plug)
+        return self.values[plug]
+
+    def setAttr(self, plug, value):
+        if plug in self.refuse:
+            raise RuntimeError("setAttr: locked")
+        self.values[plug] = value
+        self.log.append(("set", plug, value))
+
+
+class UndoMarks(Restoring):
+    """The final review (M1): what every planned plug showed when the press began, and the
+    chunk's first step setting each to it."""
+
+    def test_what_a_plug_showed_is_the_tweaks_reading_by_its_short_name(self):
+        tweaks = keys.Tweaks.__new__(keys.Tweaks)
+        tweaks.values = {"pelvis.rotateX": 77.0, "rig:Main.translateX": 500.0}
+        keys.cmds = MarkCmds({"|grp|root|pelvis.rotateX": 2.8, "rig:Main.translateX": 200.0,
+                              "rig:Main.visibility": 1.0},
+                             short={"|grp|root|pelvis": "pelvis"})
+        got = keys.shown_at_start(tweaks, ["|grp|root|pelvis.rotateX", "rig:Main.translateX",
+                                           "rig:Main.visibility", "gone.tx"])
+        # the walk's reading (the tweak), never what the curve shows now; a plug no curve
+        # feeds as it is; one that cannot be read left out
+        self.assertEqual(got, {"|grp|root|pelvis.rotateX": 77.0, "rig:Main.translateX": 500.0,
+                               "rig:Main.visibility": 1.0})
+        self.assertEqual(keys.shown_at_start(None, ["rig:Main.translateX"]),
+                         {"rig:Main.translateX": 200.0})
+
+    def test_undo_marks_set_every_plug_and_skip_one_that_refuses(self):
+        fake = MarkCmds({"a.tx": 1.0, "b.tx": 2.0}, refuse=["b.tx"])
+        keys.cmds = fake
+        self.assertEqual(keys.undo_marks(OrderedDict([("a.tx", 5.0), ("b.tx", 6.0)])), ["a.tx"])
+        self.assertEqual(fake.log, [("set", "a.tx", 5.0)])
 
 
 class CurveCmds(object):
