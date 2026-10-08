@@ -36,6 +36,7 @@ Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md,
 
 import gzip
 import json
+import math
 import os
 import re
 import shutil
@@ -307,13 +308,38 @@ def read_frames(path):
     return data
 
 
+def _finite(value):
+    """`value` as a float, ValueError when it is no FINITE number: JSON's NaN and Infinity read as
+    floats, and `float()` lets both pass (the final review: a card with `"start": NaN` listed,
+    and its pick raised half way)."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("%r is no finite number" % (value,))
+    return number
+
+
+def _key_times(value):
+    """A header's `key_times` checked: absent (None) or a list of finite numbers - a string, a
+    number or a list holding anything else is ValueError (the paste plan iterates and rounds
+    them)."""
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ValueError("key_times is no list")
+    for time_ in value:
+        if isinstance(time_, bool) or not isinstance(time_, (int, float)):
+            raise ValueError("key_times holds %r" % (time_,))
+        _finite(time_)
+
+
 def _card(path, folder, name):
     """The `Card` for the card folder at `path` (ValueError when it cannot be read). The name is
     the FOLDER's: the card is addressed by its path, so a rename done in Explorer shows at once.
     An animation's header adds its frame count, range, time unit and preview sheet; a number
     there that is no number - JSON's Infinity or NaN, an integer too long for a float - makes
-    the card unreadable (an OverflowError or a ValueError of `int` / `float`), never an error
-    out of `cards()`."""
+    the card unreadable (an OverflowError or a ValueError of `int` / `float`, `_finite` for the
+    range), never an error out of `cards()`; so do `key_times` that are no list of numbers
+    (`_key_times`)."""
     data = read(path)
     anim = is_anim(path)
     try:
@@ -329,9 +355,10 @@ def _card(path, folder, name):
         author = str(data.get("author") or "")
         if anim:
             frames = int(data.get("frames") or 0)
-            start = float(data.get("start") or 0.0)
-            end = float(data.get("end") or 0.0)
+            start = _finite(data.get("start") or 0.0)
+            end = _finite(data.get("end") or 0.0)
             fps = str(data.get("fps") or "")
+            _key_times(data.get("key_times"))
     except (AttributeError, TypeError, ValueError, OverflowError, OSError) as exc:
         raise ValueError("%s: unreadable fields (%s)" % (path, exc))
     image = path + "/" + THUMB_FILE
@@ -442,6 +469,15 @@ def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, 
     data.setdefault("version", VERSION)
     data["name"] = name
     os.makedirs(card, exist_ok=True)
+    _swap_in(card, data, frames, thumbnail, preview, existed)
+    return card
+
+
+def _swap_in(card, data, frames, thumbnail, preview, existed):
+    """`write`'s staging and swaps into the card folder `card`: every file given staged as
+    `<file>.part` (the frames, the still, the preview, the main file LAST), then each swapped in
+    with `os.replace`. A failure while staging removes the parts (and, `existed` False, the new
+    card folder) and goes on."""
     staged = []                         # (part, target), in the order they are swapped in
 
     def stage(file_name, writer):
@@ -468,6 +504,30 @@ def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, 
         if not existed:
             shutil.rmtree(card, ignore_errors=True)
         raise
+
+
+def replace(path, data, frames=None, thumbnail=None, preview=None):
+    """Write `data` back into the EXISTING card folder at `path` (either type) - Update from
+    selection and Replace thumbnail address the card they act on by its path, never by a name
+    made again: a card renamed in Explorer to a name `safe_name` changes («Walk. ») came back
+    from a write by name as a stray new card (the final review). `write`'s staging rules
+    (`_swap_in`): every file given swapped in, the main file last, every file NOT given kept;
+    `data` copied, its `name` the folder's own and `format` / `version` set. ValueError - before
+    anything is written - for no card folder at `path`, `data` of the other type, or a pose
+    card given frames or a preview. Answers the path (forward slashes)."""
+    card = _fwd(path)
+    if not _is_card(os.path.basename(card)) or not os.path.isdir(card):
+        raise ValueError("%s: no card to replace" % card)
+    anim = is_anim(card)
+    if (data or {}).get("format", FORMAT) != _format_of(card):
+        raise ValueError("%s: not a %s card's data" % (card, "animation" if anim else "pose"))
+    if not anim and (frames is not None or preview):
+        raise ValueError("a pose card takes no frames and no preview")
+    data = dict(data)
+    data.setdefault("version", VERSION)
+    data["format"] = _format_of(card)
+    data["name"] = _stem(os.path.basename(card))
+    _swap_in(card, data, frames, thumbnail, preview, True)
     return card
 
 
@@ -601,18 +661,25 @@ def rename_folder(root, rel, name):
 
 # ---------------------------------------------------------------- search and sort
 
+#  A search term naming a card's TYPE, as a whole term only (the final review: «po» or «anim»
+#  typed on the way to a name matched every card of that type through its type word)
+TYPE_WORDS = {"pose": ("pose", "poses"), "anim": ("anim", "animation", "animations")}
+
+
 def filter_cards(cards, query):
     """The cards matching `query`: every whitespace-separated term must occur, case-insensitively,
-    in the card's name, folder, character label or type word - "pose" or "animation" ("fist
-    creep" narrows to Creep's fists, "walk animation" to the walks that are clips)."""
+    in the card's name, folder or character label - or BE its type word (`TYPE_WORDS`: «pose» /
+    «poses», «anim» / «animation» / «animations», whole terms only) ("fist creep" narrows to
+    Creep's fists, "walk animation" to the walks that are clips; «po» matches «Point», never
+    every pose)."""
     terms = (query or "").lower().split()
     if not terms:
         return list(cards)
     kept = []
     for card in cards:
-        word = "animation" if card.type == "anim" else "pose"
-        hay = ("%s %s %s %s" % (card.name, card.folder, card.label, word)).lower()
-        if all(term in hay for term in terms):
+        words = TYPE_WORDS["anim" if card.type == "anim" else "pose"]
+        hay = ("%s %s %s" % (card.name, card.folder, card.label)).lower()
+        if all(term in hay or term in words for term in terms):
             kept.append(card)
     return kept
 

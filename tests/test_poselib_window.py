@@ -2143,6 +2143,26 @@ class RealScene(unittest.TestCase):
         self.assertEqual(self.logged("preview"), [])
         self.assertEqual(text, "new thumbnail - thumbnail from modelPanel4")
 
+    def test_update_and_replace_write_into_a_card_renamed_in_explorer(self):
+        """The final review (S13): Update and Replace thumbnail and preview wrote back BY NAME -
+        `store.write(parent, "", name)`, the name made safe again - so a card renamed in
+        Explorer to a name `safe_name` changes («Walk. », «Fist. ») came back as a stray new
+        card beside it. Both write into the card at its path now (`store.replace`)."""
+        walk = self.root + "/Walk. .anim"
+        fist = self.root + "/Fist. .pose"
+        os.rename(self.walk, walk)
+        os.rename(self.fist, fist)
+        before = sorted(os.listdir(self.root))
+        ok, _text = self.scene.update(walk)
+        self.assertTrue(ok)
+        ok, _text = self.scene.update(fist)
+        self.assertTrue(ok)
+        self.scene.replace_preview(walk)
+        self.assertEqual(sorted(os.listdir(self.root)), before)
+        self.assertEqual(len(store.read_frames(walk)["world"]), 48)        # the update's
+        self.assertColour(walk + "/" + store.PREVIEW_FILE, self.fakes.colour)  # the replace's
+        self.assertEqual(store.read(fist)["name"], "Fist. ")
+
 
 if __name__ == "__main__":
     unittest.main()

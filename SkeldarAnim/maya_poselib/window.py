@@ -625,14 +625,16 @@ class Scene(object):
     def update(self, path):
         """(ok, text): the card at `path` re-made from the selection, its name and thumbnail
         kept - an animation over its OWN range again, its preview kept too (the sheet and the
-        grid its header names: the range is the one it was painted over)."""
-        parent, name = os.path.dirname(path.rstrip("/")), _name_of(path)
+        grid its header names: the range is the one it was painted over). Written into the card
+        AT ITS PATH (`store.replace`): a card renamed in Explorer to a name `safe_name` would
+        change came back by name as a stray new card (the final review)."""
+        name = _name_of(path)
         if not store.is_anim(path):
             from maya_poselib import capture
             data, note = capture.build_pose()
             if data is None:
                 return False, note
-            store.write(parent, "", name, data, replace=True)
+            store.replace(path, data)
             return True, "%s updated from the selection - %s" % (name, note)
         from maya_poselib import animcapture
         from maya_poselib import timewalk
@@ -645,16 +647,16 @@ class Scene(object):
             return False, note
         if "preview" in old:
             header["preview"] = old["preview"]
-        store.write(parent, "", name, header, frames=frames, replace=True)
+        store.replace(path, header, frames=frames)
         return True, "%s updated from the selection over frames %d-%d - %s" % (
             name, start, end, note)
 
     def replace_preview(self, path):
         """The line: the card at `path` given its still again (the viewport now) and - an
         animation - its preview again over its own range, in one progress window (a step a
-        cell). Written together (`store.write`, the header last, with the new sheet's grid);
-        a cancel writes nothing; a preview that cannot be made keeps the old one and says
-        why; no still keeps the old one."""
+        cell). Written together into the card at its path (`store.replace`, the header last,
+        with the new sheet's grid); a cancel writes nothing; a preview that cannot be made keeps
+        the old one and says why; no still keeps the old one."""
         image = os.path.join(tempfile.gettempdir(), "skeldar_pose_snapshot_%d_replace.jpg"
                              % os.getpid()).replace("\\", "/")
         sheet = self._sheet_path()
@@ -679,8 +681,7 @@ class Scene(object):
                 return PREVIEW_CANCELLED
             if made:
                 header["preview"] = info
-                store.write(os.path.dirname(path.rstrip("/")), "", _name_of(path), header,
-                            thumbnail=image if shot else None, preview=sheet, replace=True)
+                store.replace(path, header, thumbnail=image if shot else None, preview=sheet)
             elif shot:
                 store.set_thumbnail(path, image)
         finally:

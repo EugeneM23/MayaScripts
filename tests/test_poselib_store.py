@@ -675,6 +675,105 @@ class AnimCards(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.of_type(cards, "clips")
 
+    def test_a_part_of_the_type_word_matches_no_card_by_its_type(self):
+        """The final review (S14): «po» or «anim» typed on the way to a name matched EVERY card
+        of that type through its type word. The type word is a whole term now - pose / poses,
+        anim / animation / animations - and the name, the folder and the label still match by
+        any part."""
+        store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        store.write(self.root, "", "Fist", pose())
+        store.write(self.root, "", "Point", pose(name="Point"))
+        store.write(self.root, "", "Animal", pose(name="Animal"))
+        cards = store.cards(self.root)[0]
+
+        def names(query):
+            return sorted(c.name for c in store.filter_cards(cards, query))
+
+        self.assertEqual(names("po"), ["Point"])                 # the name, not «pose»
+        self.assertEqual(names("ani"), ["Animal"])               # the name, not «animation»
+        self.assertEqual(names("anima"), ["Animal"])
+        for word in ("pose", "poses", "POSES"):
+            self.assertEqual(names(word), ["Animal", "Fist", "Point"], word)
+        for word in ("animation", "Animations"):
+            self.assertEqual(names(word), ["Walk"], word)
+        self.assertEqual(names("anim"), ["Animal", "Walk"])     # the type word, and a name
+        self.assertEqual(names("walk anim"), ["Walk"])
+        self.assertEqual(names("fist animation"), [])
+
+    def test_a_header_range_that_is_no_number_or_key_times_that_are_no_list_is_broken(self):
+        """The final review (S12): `"start": NaN` and `"end": Infinity` passed `float()` and the
+        pick raised half way; a `key_times` that is no list (or holds what is no number) raised in
+        the paste plan. Each is a card reported broken; absent `key_times` is fine."""
+        bad = {"NaNStart": '"start": NaN, "end": 5.0, "frames": 6',
+               "InfEnd": '"start": 0.0, "end": Infinity, "frames": 6',
+               "MinusInf": '"start": -Infinity, "end": 5.0, "frames": 6',
+               "Times": '"start": 0.0, "end": 5.0, "frames": 6, "key_times": "0 5"',
+               "TimesNum": '"start": 0.0, "end": 5.0, "frames": 6, "key_times": 5',
+               "TimesNaN": '"start": 0.0, "end": 5.0, "frames": 6, "key_times": [0, NaN]',
+               "TimesWord": '"start": 0.0, "end": 5.0, "frames": 6, "key_times": [0, "x"]'}
+        good = {"NoTimes": '"start": 0.0, "end": 5.0, "frames": 6',
+                "Times": '"start": 0.0, "end": 5.0, "frames": 6, "key_times": [0, 2.5, 5]',
+                "NullTimes": '"start": 0.0, "end": 5.0, "frames": 6, "key_times": null'}
+        for group, fields in (("Bad", bad), ("Good", good)):
+            for name, field in fields.items():
+                folder = self.root + "/%s%s.anim" % (group, name)
+                os.makedirs(folder)
+                with open(folder + "/anim.json", "w") as handle:
+                    handle.write('{"format": "%s", "version": 1, "kind": "character", %s}'
+                                 % (store.ANIM_FORMAT, field))
+        found, broken = store.cards(self.root)
+        self.assertEqual(sorted(card.name for card in found),
+                         sorted("Good" + name for name in good))
+        self.assertEqual(sorted(os.path.basename(path) for path in broken),
+                         sorted("Bad%s.anim" % name for name in bad))
+
+    def test_replace_writes_into_the_card_at_its_path(self):
+        """The final review (S13): Update and Replace thumbnail wrote back BY NAME, so a card
+        renamed in Explorer to a name `safe_name` changes («Walk.» -> «Walk») came back as a
+        stray new card. `store.replace` writes into the card folder at `path`, the staging rules
+        of `write`: every file given swapped in (the main file last), every file not given
+        kept, the `name` inside the folder's own."""
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames(),
+                           thumbnail=self.image(b"old still"), preview=self.image(b"old sheet"))
+        odd = self.root + "/Walk. .anim"                     # an Explorer rename: «Walk. »
+        os.rename(path, odd)
+        store.replace(odd, self.header(frames=10, name="whatever"), frames=self.frames(10))
+        self.assertEqual(sorted(os.listdir(self.root)), ["Walk. .anim"])      # no stray card
+        self.assertEqual(store.read(odd)["frames"], 10)
+        self.assertEqual(store.read(odd)["name"], "Walk. ")
+        self.assertEqual(len(store.read_frames(odd)["world"]), 10)
+        with open(odd + "/" + store.THUMB_FILE, "rb") as handle:
+            self.assertEqual(handle.read(), b"old still")    # not given: kept
+        store.replace(odd, self.header(), thumbnail=self.image(b"new still"),
+                      preview=self.image(b"new sheet"))
+        for name, data in ((store.THUMB_FILE, b"new still"), (store.PREVIEW_FILE, b"new sheet")):
+            with open(odd + "/" + name, "rb") as handle:
+                self.assertEqual(handle.read(), data)
+        self.assertEqual(len(store.read_frames(odd)["world"]), 10)   # the frames kept
+        self.assertEqual([n for n in os.listdir(odd) if n.endswith(".part")], [])
+        # a pose card too, the pose's own file
+        fist = store.write(self.root, "", "Fist", pose())
+        store.replace(fist, pose(members=("a", "b")))
+        self.assertEqual(store.read(fist)["members"], ["a", "b"])
+        # refused: no card there; the other type's data; a pose given frames
+        with self.assertRaises(ValueError):
+            store.replace(self.root + "/Gone.anim", self.header())
+        with self.assertRaises(ValueError):
+            store.replace(fist, self.header())
+        with self.assertRaises(ValueError):
+            store.replace(odd, pose())
+        with self.assertRaises(ValueError):
+            store.replace(fist, pose(), frames=self.frames())
+        self.assertEqual(store.read(fist)["members"], ["a", "b"])
+
+    def test_a_failed_replace_at_a_path_keeps_the_card_whole(self):
+        path = store.write(self.root, "", "Walk", self.header(), frames=self.frames())
+        with self.assertRaises(OSError):
+            store.replace(path, self.header(frames=10), frames=self.frames(10),
+                          preview=os.path.join(self.images, "missing.jpg"))
+        self.assertEqual(store.read(path)["frames"], 48)
+        self.assertEqual(sorted(os.listdir(path)), [store.ANIM_FILE, store.FRAMES_FILE])
+
 
 def card_named(name):
     return store.Card("p/" + name, "", name, "2026-10-01T00:00:00", "A", "Manny [rig]",
