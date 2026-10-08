@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hub Density</title>
+<style>
+:root {
+  --panel:#1f2023; --card:#2a2c30; --field:#1b1c1f; --line:#45474d; --hover:#34363b;
+  --strip:#17181a; --text:#e4e4e6; --text2:#c9cacf; --muted:#9a9ca3; --faint:#77797f;
+  --accent:#e07a36; --on-accent:#2a1405; --accent-tint:#3a2a1f; --accent-text:#f0a26b;
+  --danger:#e39a93; --status:#24262a; --status-text:#a9abb1; --inset:#232529; --inset-line:#3a3c42;
+  --page:#121315;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--page); color:var(--text); font:11px/1.35 "Segoe UI", sans-serif; }
+.intro { max-width:1180px; margin:18px auto 6px; padding:0 16px; }
+.intro h2 { font-size:17px; margin:0 0 6px; }
+.intro p { color:var(--muted); font-size:13px; margin:0 0 4px; }
+.cols { display:flex; gap:28px; align-items:flex-start; padding:14px 16px 40px; overflow-x:auto; }
+.col { width:360px; flex:none; }
+.col h3 { font-size:14px; margin:0 0 2px; }
+.col .h { color:var(--accent-text); font-size:12px; margin:0 0 8px; height:16px; }
+.notes { color:var(--text2); font-size:12px; margin:10px 0 0; padding-left:16px; }
+.notes li { margin:2px 0; }
+
+/* ---------- the hub, one density per class ---------- */
+.hub { background:var(--panel); border:1px solid #2c2d31; border-radius:6px; }
+.row { display:flex; align-items:center; }
+.grow { flex:1; min-width:0; }
+.logo { background:var(--accent); color:var(--on-accent); font-weight:bold; border-radius:5px;
+        display:flex; align-items:center; justify-content:center; font-size:9px; }
+.title { font-weight:bold; }
+.ico { color:var(--muted); display:flex; align-items:center; justify-content:center; border-radius:5px; }
+.chipv { background:var(--card); color:var(--muted); border-radius:9px; font-size:9.5px; }
+.strip { background:var(--strip); border-radius:7px; display:flex; }
+.strip span { flex:1; display:flex; align-items:center; justify-content:center; }
+.g { color:var(--muted); font-size:9.5px; }
+.card { background:var(--card); border-radius:8px; }
+.cardhead { display:flex; align-items:center; }
+.cicon { border-radius:6px; display:flex; align-items:center; justify-content:center; }
+.ctitle { font-weight:bold; }
+.csub { color:var(--muted); font-size:9.5px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.chev { color:var(--muted); margin-left:auto; }
+.btn { border:1px solid var(--line); border-radius:6px; color:var(--text2); display:flex;
+       align-items:center; justify-content:center; gap:5px; }
+.btn.primary { background:var(--accent); border:none; color:var(--on-accent); font-weight:bold; }
+.btn.danger { color:var(--danger); }
+.btn.tool { background:var(--field); border:none; }
+.seg { background:var(--field); border-radius:6px; display:flex; padding:2px; }
+.seg span { flex:1; display:flex; align-items:center; justify-content:center; color:var(--muted); border-radius:4px; }
+.seg span.on { background:var(--line); color:var(--text); }
+.field { background:var(--field); border-radius:6px; color:var(--faint); display:flex; align-items:center; }
+.list { background:var(--field); border-radius:6px; }
+.list div { color:var(--text2); }
+.list div.sel { background:var(--accent-tint); color:var(--accent-text); }
+.inset { background:var(--inset); border:1px solid var(--inset-line); border-radius:8px; }
+.heading { font-weight:bold; border-bottom:1px solid var(--line); }
+.note, .ctx { color:var(--muted); }
+.status { color:var(--status-text); }
+.ports { display:grid; }
+.port { text-align:center; }
+.port .pic { background:linear-gradient(160deg,#4b4e55,#26282c); border-radius:6px; position:relative; }
+.port .pic.on { outline:2px solid var(--accent); }
+.port .pic::after { content:""; position:absolute; left:28%; right:28%; top:12%; bottom:0;
+   background:radial-gradient(circle at 50% 18%, #c8c9cc 0 16%, transparent 17%),
+              radial-gradient(ellipse at 50% 85%, #b9babe 0 45%, transparent 46%); opacity:.55; }
+.port .pic.dim { opacity:.4; }
+.port .nm { color:var(--text2); }
+.port .nm.b { color:var(--text); font-weight:bold; }
+.chip { background:var(--field); border-radius:10px; color:var(--muted); display:inline-flex; align-items:center; }
+.chip.on { background:var(--accent-tint); color:var(--accent-text); }
+.int { background:var(--field); border-radius:6px; color:var(--text); display:flex; align-items:center; justify-content:flex-end; }
+.tipmark { color:var(--faint); border:1px solid var(--line); border-radius:50%; width:13px; height:13px;
+   display:inline-flex; align-items:center; justify-content:center; font-size:9px; flex:none; }
+.overlay-name { position:absolute; left:0; right:0; bottom:0; font-size:9.5px; padding:1px 0;
+   background:linear-gradient(transparent, rgba(0,0,0,.75)); border-radius:0 0 6px 6px; color:var(--text); z-index:2; }
+
+/* ===== NOW: the current numbers (logical px) ===== */
+.now .hub { padding:6px; }
+.now .hub > * + * { margin-top:6px; }
+.now .head { height:24px; padding:2px; gap:6px; }
+.now .logo { width:20px; height:20px; }
+.now .ico { width:22px; height:22px; }
+.now .chipv { padding:2px 8px; }
+.now .strip { padding:3px; gap:2px; height:28px; }
+.now .g { padding:2px 3px 0; }
+.now .card { padding:7px 8px 8px; }
+.now .cardhead { height:22px; gap:7px; }
+.now .cicon { width:22px; height:22px; }
+.now .body { padding-top:6px; }
+.now .body > * + * { margin-top:6px; }
+.now .btn { height:32px; }
+.now .btn.small { height:28px; }
+.now .seg { height:30px; }
+.now .field { height:24px; padding:0 8px; }
+.now .heading { padding:6px 0 3px; }
+.now .inset { padding:8px; }
+.now .inset > * + * { margin-top:4px; }
+.now .note, .now .ctx, .now .status { min-height:36px; }
+.now .ports { grid-template-columns:repeat(4,1fr); gap:6px; }
+.now .port .pic { height:74px; }
+.now .port .nm { height:18px; line-height:18px; }
+.now .list div { padding:2px 6px; height:18px; }
+.now .chip { height:22px; padding:0 10px; }
+.now .int { height:22px; padding:0 6px; }
+
+/* ===== A: denser, same look ===== */
+.a .hub { padding:4px; }
+.a .hub > * + * { margin-top:4px; }
+.a .head { height:22px; padding:1px; gap:5px; }
+.a .logo { width:18px; height:18px; }
+.a .ico { width:20px; height:20px; }
+.a .chipv { padding:1px 7px; }
+.a .strip { padding:2px; gap:1px; height:24px; }
+.a .g { padding:1px 3px 0; }
+.a .card { padding:5px 6px 6px; }
+.a .cardhead { height:20px; gap:6px; }
+.a .cicon { width:20px; height:20px; }
+.a .body { padding-top:4px; }
+.a .body > * + * { margin-top:4px; }
+.a .btn { height:26px; }
+.a .btn.small { height:24px; }
+.a .seg { height:24px; }
+.a .field { height:22px; padding:0 7px; }
+.a .inset { padding:6px; }
+.a .inset > * + * { margin-top:4px; }
+.a .ports { grid-template-columns:repeat(4,1fr); gap:4px; }
+.a .port .pic { height:64px; }
+.a .port .nm { height:16px; line-height:16px; }
+.a .list div { padding:1px 6px; height:17px; }
+.a .chip { height:20px; padding:0 9px; }
+.a .int { height:20px; padding:0 6px; }
+
+/* ===== B: as dense as it goes ===== */
+.b .hub { padding:3px; }
+.b .hub > * + * { margin-top:3px; }
+.b .head { height:22px; padding:1px; gap:2px; }
+.b .logo { width:18px; height:18px; margin-right:3px; }
+.b .ico { width:20px; height:20px; }
+.b .chipv { padding:1px 6px; }
+.b .card { padding:4px 5px 5px; border-left:3px solid transparent; }
+.b .card.scene { border-left-color:#f0a26b; }
+.b .card.anim { border-left-color:#7fa9e6; }
+.b .cardhead { height:18px; gap:5px; }
+.b .cicon { width:18px; height:18px; }
+.b .body { padding-top:4px; }
+.b .body > * + * { margin-top:3px; }
+.b .btn { height:24px; }
+.b .btn.small { height:22px; }
+.b .seg { height:22px; }
+.b .field { height:20px; padding:0 6px; }
+.b .inset { padding:5px; }
+.b .inset > * + * { margin-top:3px; }
+.b .ports { grid-template-columns:repeat(5,1fr); gap:3px; }
+.b .port .pic { height:56px; }
+.b .list div { padding:1px 6px; height:16px; }
+.b .chip { height:19px; padding:0 8px; }
+.b .int { height:19px; padding:0 5px; }
+.b .msg { background:var(--status); border-radius:6px; color:var(--status-text); padding:3px 7px; }
+</style>
+</head>
+<body>
+<div class="intro">
+  <h2>Насколько плотным сделать хаб?</h2>
+  <p>Ширина колонок — ваш док, 360 px. Над каждой колонкой — высота одного и того же содержимого: шапка и три карточки.</p>
+  <p>Иконка «i» означает, что подсказка ушла во всплывающую подсказку (tooltip): она появляется при наведении и не занимает строку.</p>
+</div>
+
+<div class="cols">
+
+<!-- ======================= NOW ======================= -->
+<div class="col now">
+  <h3>Сейчас</h3><div class="h" data-measure></div>
+  <div class="hub">
+    <div class="row head"><div class="logo">SA</div><div class="title grow">SkeldarAnim</div>
+      <div class="ico">⌨</div><div class="chipv">ed00397</div><div class="ico">⋮</div></div>
+    <div class="strip"><span>👤</span><span>🎒</span><span>✋</span><span>➤</span><span>⇄</span><span>📈</span><span>◎</span><span>📚</span><span>💡</span><span>🎨</span><span>⟳</span></div>
+    <div class="g">Scene</div>
+    <div class="card">
+      <div class="cardhead"><div class="cicon" style="background:#4a3322;color:#f0a26b">👤</div><div class="ctitle">Animation Setup</div><div class="csub">no character</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="heading">Characters</div>
+        <div class="seg"><span class="on">Rig</span><span>Skeleton</span></div>
+        <div class="ports">
+          <div class="port"><div class="pic on"></div><div class="nm b">Manny</div></div>
+          <div class="port"><div class="pic"></div><div class="nm">Creep</div></div>
+          <div class="port"><div class="pic"></div><div class="nm">Orc D</div></div>
+          <div class="port"><div class="pic dim"></div><div class="nm">UE4 Mann…</div></div>
+        </div>
+        <div class="row" style="gap:6px"><div class="btn primary grow">＋ Import</div><div class="btn danger" style="width:100px">🗑 Delete</div></div>
+        <div class="btn">📷 Camera Setup</div>
+        <div class="inset">
+          <div class="heading">Connect</div>
+          <div class="seg"><span class="on">Unreal</span><span>Unity</span><span>Folder</span></div>
+          <div class="ctx">not connected - press Refresh to read the animations from the open editor</div>
+          <div class="row" style="gap:6px"><div class="field grow">MarkerLess_02</div><div class="btn tool" style="width:30px;height:24px">⟳</div></div>
+          <div class="field">search name or folder</div>
+          <div class="list"><div class="sel">A_Jump</div><div>A_Run_Fwd</div><div>A_Walk_Fwd</div><div>MM_Fall_Loop</div></div>
+          <div class="row" style="gap:6px"><span class="note" style="min-height:0">Import</span><div class="seg grow" style="height:28px"><span class="on">Onto selected</span><span>New</span></div></div>
+          <div class="row" style="gap:6px;height:22px"><span class="chip on" style="height:16px;width:16px;padding:0;border-radius:3px"></span>set timeline to clip range</div>
+          <div class="btn primary">⤓ Import Animation</div>
+          <div class="row" style="gap:6px"><div class="btn small grow">⤒ Export FBX...</div><div class="btn small grow">Export to uasset</div></div>
+        </div>
+        <div class="status">Manny [rig] - press Import, or drag the portrait into a viewport</div>
+      </div>
+    </div>
+    <div class="g">Animation</div>
+    <div class="card">
+      <div class="cardhead"><div class="cicon" style="background:#23324a;color:#7fa9e6">⇄</div><div class="ctitle">Retarget</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="note">Select the clip's skeleton (and the rig, when several)</div>
+        <div class="row" style="gap:6px"><span class="note" style="min-height:0">Bones</span><div class="seg grow"><span class="on">Auto</span><span>Rotations</span><span>Stretch</span></div></div>
+        <div class="btn primary">⇄ Retarget</div>
+        <div class="status"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cardhead"><div class="cicon" style="background:#23324a;color:#7fa9e6">◎</div><div class="ctitle">Center of Mass</div><div class="csub">Manny_Rig</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="row" style="gap:4px"><div class="btn primary grow">◎ Add CoM</div><div class="btn" style="width:92px">⟳ Rebuild</div><div class="btn danger" style="width:38px">🗑</div></div>
+        <div class="row" style="gap:8px"><span class="chip on">Trail</span><span class="chip on">Floor</span></div>
+        <div class="row" style="gap:6px"><div class="seg grow" style="height:26px"><span class="on">Playback</span><span>Around</span></div><span class="note" style="min-height:0">frames</span><div class="int" style="width:48px">20</div></div>
+        <div class="btn small">◎ Select CoM</div>
+        <div class="status"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= A ======================= -->
+<div class="col a">
+  <h3>A — плотнее, тот же вид</h3><div class="h" data-measure></div>
+  <div class="hub">
+    <div class="row head"><div class="logo">SA</div><div class="title grow">SkeldarAnim</div>
+      <div class="ico">⌨</div><div class="chipv">ed00397</div><div class="ico">⋮</div></div>
+    <div class="strip"><span>👤</span><span>🎒</span><span>✋</span><span>➤</span><span>⇄</span><span>📈</span><span>◎</span><span>📚</span><span>💡</span><span>🎨</span><span>⟳</span></div>
+    <div class="g">Scene</div>
+    <div class="card">
+      <div class="cardhead"><div class="cicon" style="background:#4a3322;color:#f0a26b">👤</div><div class="ctitle">Animation Setup</div><div class="csub">no character</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="seg"><span class="on">Rig</span><span>Skeleton</span></div>
+        <div class="ports">
+          <div class="port"><div class="pic on"></div><div class="nm b">Manny</div></div>
+          <div class="port"><div class="pic"></div><div class="nm">Creep</div></div>
+          <div class="port"><div class="pic"></div><div class="nm">Orc D</div></div>
+          <div class="port"><div class="pic dim"></div><div class="nm">UE4 Mann…</div></div>
+        </div>
+        <div class="row" style="gap:4px"><div class="btn primary grow">＋ Import</div><div class="btn danger" style="width:84px">🗑 Delete</div><div class="btn" style="width:30px" title="Camera Setup">📷</div></div>
+        <div class="inset">
+          <div class="row" style="gap:6px"><b>Connect</b><div class="seg grow"><span class="on">Unreal</span><span>Unity</span><span>Folder</span></div></div>
+          <div class="row" style="gap:4px"><div class="field grow">MarkerLess_02 · not connected</div><div class="btn tool" style="width:26px;height:22px">⟳</div></div>
+          <div class="field">search name or folder</div>
+          <div class="list"><div class="sel">A_Jump</div><div>A_Run_Fwd</div><div>A_Walk_Fwd</div><div>MM_Fall_Loop</div></div>
+          <div class="row" style="gap:6px"><div class="seg grow"><span class="on">Onto selected</span><span>New</span></div><span class="chip on" title="set timeline to clip range">⏱ range</span></div>
+          <div class="row" style="gap:4px"><div class="btn primary grow">⤓ Import Animation</div><div class="btn small" style="width:30px" title="Export FBX...">⤒</div><div class="btn small" style="width:52px" title="Export to uasset">uasset</div></div>
+        </div>
+        <div class="status">Manny [rig] - press Import, or drag the portrait</div>
+      </div>
+    </div>
+    <div class="g">Animation</div>
+    <div class="card">
+      <div class="cardhead"><div class="cicon" style="background:#23324a;color:#7fa9e6">⇄</div><div class="ctitle">Retarget</div><div class="tipmark" title="Select the clip's skeleton (and the rig, when several)">i</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="row" style="gap:6px"><div class="seg grow"><span class="on">Auto</span><span>Rotations</span><span>Stretch</span></div></div>
+        <div class="btn primary">⇄ Retarget</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="cardhead"><div class="cicon" style="background:#23324a;color:#7fa9e6">◎</div><div class="ctitle">Center of Mass</div><div class="csub">Manny_Rig</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="row" style="gap:4px"><div class="btn primary grow">◎ Add CoM</div><div class="btn" style="width:30px" title="Rebuild">⟳</div><div class="btn danger" style="width:30px">🗑</div></div>
+        <div class="row" style="gap:4px"><span class="chip on">Trail</span><span class="chip on">Floor</span><div class="seg grow"><span class="on">Playback</span><span>Around</span></div><div class="int" style="width:36px">20</div></div>
+        <div class="btn small">◎ Select CoM</div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>Отступы и промежутки — примерно на треть меньше.</li>
+    <li>Кнопки: высота 26 вместо 32; второстепенные (Camera, Rebuild, Export FBX) — иконкой.</li>
+    <li>Пустая строка статуса не занимает места; с текстом занимает столько строк, сколько нужно.</li>
+    <li>Подсказки («Select the clip's skeleton…», «Import», «Bones») убраны во всплывающие подсказки.</li>
+    <li>Заголовок «Characters» убран, «Connect» стоит в одной строке с Unreal | Unity | Folder.</li>
+    <li>Портреты 64 px вместо 74, по-прежнему 4 в ряд.</li>
+  </ul>
+</div>
+
+<!-- ======================= B ======================= -->
+<div class="col b">
+  <h3>B — максимально плотно</h3><div class="h" data-measure></div>
+  <div class="hub">
+    <div class="row head"><div class="logo">SA</div>
+      <div class="ico" style="color:#f0a26b">👤</div><div class="ico" style="color:#f0a26b">🎒</div><div class="ico" style="color:#f0a26b">✋</div><div class="ico" style="color:#f0a26b">➤</div><div class="ico" style="color:#7fa9e6">⇄</div><div class="ico" style="color:#7fa9e6">📈</div><div class="ico" style="color:#7fa9e6">◎</div><div class="ico" style="color:#7fa9e6">📚</div><div class="ico" style="color:#c89be8">💡</div><div class="ico" style="color:#c89be8">🎨</div>
+      <div class="grow"></div><div class="ico">⌨</div><div class="ico">⋮</div></div>
+    <div class="msg">Manny [rig] - press Import, or drag the portrait</div>
+    <div class="card scene">
+      <div class="cardhead"><div class="cicon" style="background:#4a3322;color:#f0a26b">👤</div><div class="ctitle">Animation Setup</div><div class="csub">no character</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="row" style="gap:4px"><div class="seg grow"><span class="on">Rig</span><span>Skeleton</span></div><div class="btn primary" style="width:84px">＋ Import</div><div class="btn danger" style="width:26px">🗑</div><div class="btn" style="width:26px">📷</div></div>
+        <div class="ports">
+          <div class="port"><div class="pic on"><div class="overlay-name"><b>Manny</b></div></div></div>
+          <div class="port"><div class="pic"><div class="overlay-name">Creep</div></div></div>
+          <div class="port"><div class="pic"><div class="overlay-name">Orc D</div></div></div>
+          <div class="port"><div class="pic dim"><div class="overlay-name">UE4</div></div></div>
+          <div class="port"><div class="pic"><div class="overlay-name">?</div></div></div>
+        </div>
+        <div class="inset">
+          <div class="row" style="gap:4px"><div class="seg grow"><span class="on">Unreal</span><span>Unity</span><span>Folder</span></div><div class="btn tool" style="width:24px;height:20px">⟳</div></div>
+          <div class="field">search · MarkerLess_02 · not connected</div>
+          <div class="list"><div class="sel">A_Jump</div><div>A_Run_Fwd</div><div>A_Walk_Fwd</div><div>MM_Fall_Loop</div></div>
+          <div class="row" style="gap:3px"><div class="seg grow"><span class="on">Onto sel.</span><span>New</span></div><span class="chip on">⏱</span><div class="btn primary" style="width:96px">⤓ Import</div><div class="btn small" style="width:24px">⤒</div><div class="btn small" style="width:24px">U</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card anim">
+      <div class="cardhead"><div class="cicon" style="background:#23324a;color:#7fa9e6">⇄</div><div class="ctitle">Retarget</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="row" style="gap:4px"><div class="seg grow"><span class="on">Auto</span><span>Rot.</span><span>Stretch</span></div><div class="btn primary" style="width:110px">⇄ Retarget</div></div>
+      </div>
+    </div>
+    <div class="card anim">
+      <div class="cardhead"><div class="cicon" style="background:#23324a;color:#7fa9e6">◎</div><div class="ctitle">Center of Mass</div><div class="csub">Manny_Rig</div><div class="chev">⌄</div></div>
+      <div class="body">
+        <div class="row" style="gap:3px"><div class="btn primary grow">◎ Add CoM</div><div class="btn" style="width:24px">⟳</div><div class="btn danger" style="width:24px">🗑</div><div class="btn" style="width:56px">Select</div></div>
+        <div class="row" style="gap:3px"><span class="chip on">Trail</span><span class="chip on">Floor</span><div class="seg grow"><span class="on">Playback</span><span>Around</span></div><div class="int" style="width:32px">20</div></div>
+      </div>
+    </div>
+  </div>
+  <ul class="notes">
+    <li>Всё из A, плюс:</li>
+    <li>Полоса иконок разделов переехала в шапку, надписи групп (Scene / Animation) убраны — группу показывает цвет полоски слева у карточки.</li>
+    <li>Одна строка сообщений на весь хаб, под шапкой, вместо строки статуса в каждой карточке.</li>
+    <li>Кнопки ставятся в ряд с переключателями (Rig | Skeleton + Import, Auto | … + Retarget).</li>
+    <li>Портреты по 5 в ряд, имя поверх картинки.</li>
+  </ul>
+</div>
+
+</div>
+<script>
+document.querySelectorAll(".col").forEach(function (col) {
+  var hub = col.querySelector(".hub"), out = col.querySelector("[data-measure]");
+  if (hub && out) out.textContent = "высота: " + Math.round(hub.getBoundingClientRect().height) + " px";
+});
+</script>
+</body>
+</html>

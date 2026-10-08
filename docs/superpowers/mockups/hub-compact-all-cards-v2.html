@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hub Compact B</title>
+<style>
+:root {
+  --panel:#1f2023; --card:#2a2c30; --field:#1b1c1f; --line:#45474d; --hover:#34363b;
+  --text:#e4e4e6; --text2:#c9cacf; --muted:#9a9ca3; --faint:#77797f;
+  --accent:#e07a36; --on-accent:#2a1405; --accent-tint:#3a2a1f; --accent-text:#f0a26b;
+  --danger:#e39a93; --status:#24262a; --status-text:#a9abb1; --inset:#232529; --inset-line:#3a3c42;
+  --ok:#8fd19a; --scene:#f0a26b; --anim:#7fa9e6; --look:#c89be8; --set:#9a9ca3;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:#121315; color:var(--text); font:11px/1.35 "Segoe UI", sans-serif; }
+.wrap { display:flex; gap:28px; align-items:flex-start; padding:16px; overflow-x:auto; }
+.intro { max-width:1100px; padding:16px 16px 0; }
+.intro h2 { font-size:17px; margin:0 0 6px; }
+.intro p { color:var(--muted); font-size:13px; margin:0 0 4px; }
+
+/* the screen diagram */
+.screen { width:430px; flex:none; }
+.screen h3, .notes h3 { font-size:14px; margin:0 0 8px; }
+.mon { position:relative; width:420px; height:262px; background:#3b3d42; border:2px solid #555; border-radius:4px; overflow:hidden; margin-bottom:14px; }
+.mon .menu { position:absolute; left:0; right:0; top:0; height:12px; background:#444649; }
+.mon .shelf { position:absolute; left:0; right:0; top:12px; height:16px; background:#3f4145; border-bottom:1px solid #2d2e31; }
+.mon .vp { position:absolute; left:14px; right:0; top:29px; bottom:22px; background:linear-gradient(#5d6066,#2e3034); }
+.mon .tb { position:absolute; left:0; width:14px; top:29px; bottom:22px; background:#37393d; }
+.mon .ts { position:absolute; left:0; right:0; bottom:0; height:22px; background:#323438; }
+.mon .figure { position:absolute; left:205px; top:70px; width:30px; height:120px; background:radial-gradient(circle at 50% 10%, #ccc 0 9px, transparent 10px), linear-gradient(transparent 22px, #aaa 22px 70%, transparent 70%); opacity:.6; }
+.mon .edge { position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--accent); }
+.mon .pane { position:absolute; left:0; top:0; bottom:0; width:92px; background:var(--panel); box-shadow:4px 0 12px rgba(0,0,0,.55); border-right:1px solid #333; }
+.mon .pane i { display:block; margin:5px; height:9px; border-radius:3px; background:var(--card); }
+.mon .pane i.o { background:var(--accent); width:40%; }
+.mon .cursor { position:absolute; width:0; height:0; border-left:7px solid #fff; border-top:4px solid transparent; border-bottom:4px solid transparent; transform:rotate(-30deg); }
+.cap { color:var(--text2); font-size:12px; margin:-8px 0 14px; }
+.cap b { color:var(--accent-text); }
+
+/* the hub (B) */
+.hub { width:360px; flex:none; background:var(--panel); padding:3px; border:1px solid #2c2d31; }
+.hub > * + * { margin-top:3px; }
+.row { display:flex; align-items:center; gap:3px; }
+.grow { flex:1; min-width:0; }
+.head { height:22px; gap:2px; padding:0 1px; }
+.logo { width:18px; height:18px; background:var(--accent); color:var(--on-accent); font-weight:bold; border-radius:5px;
+        display:flex; align-items:center; justify-content:center; font-size:8.5px; margin-right:3px; flex:none; }
+.ico { width:20px; height:20px; display:flex; align-items:center; justify-content:center; border-radius:5px; color:var(--muted); flex:none; font-size:12px; }
+.ico.on { background:var(--accent-tint); color:var(--accent-text); }
+.ico.s { color:var(--scene); } .ico.a { color:var(--anim); } .ico.l { color:var(--look); } .ico.t { color:var(--set); }
+.ico.new { color:var(--accent); }
+.msg { background:var(--status); border-radius:6px; color:var(--status-text); padding:3px 6px; display:flex; gap:6px; align-items:flex-start; }
+.msg .src { color:var(--scene); flex:none; }
+.msg .x { margin-left:auto; color:var(--faint); }
+.card { background:var(--card); border-radius:8px; padding:4px 5px 5px; border-left:3px solid var(--scene); }
+.card.a { border-left-color:var(--anim); } .card.l { border-left-color:var(--look); } .card.t { border-left-color:var(--set); }
+.card.closed .body { display:none; }
+.ch { display:flex; align-items:center; gap:5px; height:18px; }
+.ci { width:18px; height:18px; border-radius:5px; display:flex; align-items:center; justify-content:center; font-size:10px; flex:none; }
+.ct { font-weight:bold; flex:none; }
+.cs { color:var(--muted); font-size:9.5px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; flex:1; min-width:0; text-align:right; }
+.cv { color:var(--muted); flex:none; }
+.body { padding-top:4px; }
+.body > * + * { margin-top:3px; }
+.btn { height:24px; border:1px solid var(--line); border-radius:6px; color:var(--text2); display:flex; align-items:center;
+       justify-content:center; gap:4px; white-space:nowrap; padding:0 6px; flex:none; }
+.btn.p { background:var(--accent); border:none; color:var(--on-accent); font-weight:bold; }
+.btn.d { color:var(--danger); }
+.btn.sq { width:24px; padding:0; }
+.btn.tool { background:var(--field); border:none; }
+.btn.g { flex:1; min-width:0; }
+.seg { height:22px; background:var(--field); border-radius:6px; display:flex; padding:2px; flex:1; min-width:0; }
+.seg span { flex:1; display:flex; align-items:center; justify-content:center; color:var(--muted); border-radius:4px; white-space:nowrap; }
+.seg span.on { background:var(--line); color:var(--text); }
+.field { height:20px; background:var(--field); border-radius:6px; color:var(--faint); display:flex; align-items:center; padding:0 6px; flex:1; min-width:0; white-space:nowrap; overflow:hidden; }
+.field.v { color:var(--text); }
+.dd::after { content:"⌄"; margin-left:auto; color:var(--muted); }
+.list { background:var(--field); border-radius:6px; }
+.list div { height:16px; padding:0 6px; color:var(--text2); line-height:16px; }
+.list div.sel { background:var(--accent-tint); color:var(--accent-text); }
+.list { overflow:hidden; resize:vertical; min-height:88px; }
+.body > .grip, .inset > .grip { margin-top:0; }
+.grip { height:8px; display:flex; align-items:center; justify-content:center; color:var(--faint);
+        cursor:ns-resize; font-size:10px; line-height:6px; border-radius:3px; }
+.grip:hover { background:var(--hover); color:var(--accent-text); }
+.inset { background:var(--inset); border:1px solid var(--inset-line); border-radius:8px; padding:5px; }
+.inset > * + * { margin-top:3px; }
+.chip { height:19px; background:var(--field); border-radius:10px; color:var(--muted); display:inline-flex; align-items:center; padding:0 8px; flex:none; white-space:nowrap; }
+.chip.on { background:var(--accent-tint); color:var(--accent-text); }
+.lbl { color:var(--muted); width:44px; flex:none; }
+.lbl.b { color:var(--text); font-weight:bold; }
+.int { height:19px; background:var(--field); border-radius:6px; display:flex; align-items:center; justify-content:flex-end; padding:0 5px; flex:none; }
+.ports { display:grid; grid-template-columns:repeat(5,1fr); gap:3px; }
+.pic { height:58px; border-radius:6px; position:relative; background:linear-gradient(160deg,#4b4e55,#26282c); overflow:hidden; }
+.pic.on { outline:2px solid var(--accent); outline-offset:-2px; }
+.pic.dim { opacity:.4; }
+.pic::before { content:""; position:absolute; left:30%; right:30%; top:12%; bottom:0;
+  background:radial-gradient(circle at 50% 18%, #c8c9cc 0 16%, transparent 17%), radial-gradient(ellipse at 50% 85%, #b9babe 0 45%, transparent 46%); opacity:.5; }
+.pic span { position:absolute; left:0; right:0; bottom:0; text-align:center; font-size:9.5px; padding:1px 0;
+  background:linear-gradient(transparent, rgba(0,0,0,.8)); }
+.pic .pill { position:absolute; top:3px; left:3px; right:3px; bottom:auto; background:#223326; color:var(--ok); border-radius:4px; font-size:8.5px; }
+.hands { display:flex; gap:4px; }
+.hand { flex:1; background:var(--field); border-radius:6px; padding:3px 4px; display:flex; gap:4px; }
+.hand.on { outline:2px solid var(--accent); outline-offset:-2px; }
+.hand .nm { font-weight:bold; margin-bottom:1px; }
+.hand .ch6 div { display:flex; justify-content:space-between; height:15px; line-height:15px; font-size:9.5px; color:var(--muted); }
+.hand .ch6 b { color:var(--text); font-weight:normal; background:#141517; border-radius:3px; padding:0 3px; min-width:42px; text-align:right; }
+.hand .well { width:30px; background:#141517; border-radius:4px; }
+.swatches { display:flex; gap:3px; }
+.swatches i { flex:1; height:20px; border-radius:5px; }
+.slider { display:flex; align-items:center; gap:5px; height:19px; }
+.slider .track { flex:1; height:4px; background:var(--field); border-radius:2px; position:relative; }
+.slider .track b { position:absolute; left:0; top:0; bottom:0; width:55%; background:var(--accent); border-radius:2px; }
+.slider .track i { position:absolute; left:55%; top:-4px; width:12px; height:12px; margin-left:-6px; border-radius:6px; background:var(--text); }
+
+.notes { width:420px; flex:none; }
+.notes dl { margin:0; font-size:12px; }
+.notes dt { font-weight:bold; color:var(--accent-text); margin-top:10px; }
+.notes dd { margin:2px 0 0 0; color:var(--text2); }
+.notes dd ul { margin:2px 0; padding-left:16px; }
+</style>
+</head>
+<body>
+<div class="intro">
+  <h2>Вариант B для всех карточек и выезжающая панель</h2>
+  <p>Слева показано, как панель выезжает. В середине — сама панель шириной 360 px: все карточки открыты, в Maya они прокручиваются. Справа написано, что изменилось в каждой карточке. Иконка «ⓘ» значит, что подсказка ушла во всплывающую подсказку.</p>
+</div>
+<div class="wrap">
+
+<div class="screen">
+  <h3>Как выезжает</h3>
+  <div class="mon"><div class="menu"></div><div class="shelf"></div><div class="tb"></div><div class="vp"></div><div class="ts"></div><div class="figure"></div>
+    <div class="cursor" style="left:200px;top:140px"></div></div>
+  <div class="cap"><b>1. Спрятана.</b> У края ничего не видно, Maya выглядит как обычно.</div>
+  <div class="mon"><div class="menu"></div><div class="shelf"></div><div class="tb"></div><div class="vp"></div><div class="ts"></div><div class="figure"></div>
+    <div class="edge"></div><div class="cursor" style="left:1px;top:140px"></div></div>
+  <div class="cap"><b>2. Курсор упёрся в левый край</b> и задержался там примерно на 0,1 с. Задержка нужна, чтобы панель не выпрыгивала, когда мышь проскакивает в угол к меню File.</div>
+  <div class="mon"><div class="menu"></div><div class="shelf"></div><div class="tb"></div><div class="vp"></div><div class="ts"></div><div class="figure"></div>
+    <div class="pane"><i class="o"></i><i></i><i style="height:40px"></i><i style="height:22px"></i><i></i><i style="height:30px"></i></div>
+    <div class="cursor" style="left:50px;top:120px"></div></div>
+  <div class="cap"><b>3. Выехала</b> поверх вьюпорта во всю высоту экрана (над панелью задач Windows). Скорость выезда та же, что у анимаций карточек; если ⋮ → Interface animations выключено, панель появляется сразу.</div>
+  <div class="mon"><div class="menu"></div><div class="shelf"></div><div class="tb"></div><div class="vp"></div><div class="ts"></div><div class="figure"></div>
+    <div class="pane" style="opacity:.55"><i class="o"></i><i></i><i style="height:40px"></i><i style="height:22px"></i></div>
+    <div class="cursor" style="left:200px;top:120px"></div></div>
+  <div class="cap"><b>4. Мышь ушла</b> — через ~0,35 с панель уезжает. Панель НЕ прячется, пока:
+    <br>· нажата кнопка мыши (перетаскивание портрета, анимации или оружия во вьюпорт);
+    <br>· открыт выпадающий список, меню или диалог хаба;
+    <br>· курсор стоит в поле ввода панели (поиск, Name), до клика вне её;
+    <br>· нажата 📌.
+    <br>Кнопка на полке или хоткей открывают панель на нужной карточке; она держится, пока мышь не побывает над ней и не уйдёт.</div>
+  <div class="cap">Ширина запоминается; её можно поменять, потянув за правый край панели.<br>Если панель спрятана и приходит сообщение (импорт по драгу закончился), оно ещё и всплывает во вьюпорте подсказкой Maya на 3 с.</div>
+</div>
+
+<div class="hub">
+  <div class="row head"><div class="logo">SA</div>
+    <div class="ico s on">👤</div><div class="ico s">🎒</div><div class="ico s">✋</div><div class="ico s">➤</div>
+    <div class="ico a">⇄</div><div class="ico a">📈</div><div class="ico a">◎</div><div class="ico a">📚</div>
+    <div class="ico l">💡</div><div class="ico l">🎨</div><div class="ico t new" title="есть новая сборка">⟳</div>
+    <div class="grow"></div><div class="ico" title="Hotkey map">⌨</div><div class="ico" title="Закрепить">📌</div><div class="ico">⋮</div></div>
+  <div class="msg"><span class="src">👤</span><span>Manny [rig] - press Import, or drag the portrait into a viewport</span><span class="x">✕</span></div>
+
+  <div class="card">
+    <div class="ch"><div class="ci" style="background:#4a3322;color:var(--scene)">👤</div><div class="ct">Animation Setup</div><div class="cs">Manny_Rig (rig)</div><div class="cv">⌄</div></div>
+    <div class="body">
+      <div class="row"><div class="seg"><span class="on">Rig</span><span>Skeleton</span></div><div class="btn p" style="width:76px">＋ Import</div><div class="btn d sq">🗑</div><div class="btn sq" title="Camera Setup">📷</div></div>
+      <div class="ports"><div class="pic on"><span><b>Manny</b></span></div><div class="pic"><span>Creep</span></div><div class="pic"><span>Orc D</span></div><div class="pic dim"><span>UE4</span></div><div class="pic"><span>?</span></div></div>
+      <div class="inset">
+        <div class="row"><div class="seg"><span class="on">Unreal</span><span>Unity</span><span>Folder</span></div></div>
+        <div class="row"><div class="field v dd" title="not connected - press Refresh to read the animations from the open editor">● MarkerLess_02</div><div class="btn tool sq" style="height:20px">⟳</div></div>
+        <div class="field">search 619 animations</div>
+        <div class="list"><div class="sel">A_Jump</div><div>A_Run_Fwd</div><div>A_Walk_Fwd</div><div>MM_Fall_Loop</div><div>ShortSword_Walk_1P</div><div>ShortSword_Attack_Thrust_3P</div><div>LongSword_Attack_Right_Heavy_1P</div><div>LongSword_Attack_Right_Heavy_3P</div><div>Knife_Attack_Forward_Hold_01</div><div>Unarmed_Idle_Breathing</div></div>
+        <div class="grip" title="потяни вверх или вниз">⋯</div>
+        <div class="row"><div class="seg" style="flex:none;width:112px"><span class="on">Onto sel.</span><span>New</span></div><span class="chip on" title="set timeline to clip range">⏱</span><div class="btn p g">⤓ Import</div><div class="btn sq" title="Export FBX...">⤒</div><div class="btn" title="Export to uasset" style="padding:0 5px">uasset</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><div class="ci" style="background:#4a3322;color:var(--scene)">🎒</div><div class="ct">Inventory</div><div class="cs">Manny_Rig:root (rig)</div><div class="cv">⌄</div></div>
+    <div class="body">
+      <div class="row"><div class="seg"><span class="on">Weapon</span><span>Armor</span></div><div class="btn p" style="width:76px">⚔ Equip</div><div class="btn d sq" title="Unequip">🗑</div></div>
+      <div class="hands">
+        <div class="hand on"><div class="grow"><div class="nm">Right</div><div class="ch6"><div>tx<b>0</b></div><div>ty<b>0</b></div><div>tz<b>0</b></div><div>rx<b>0</b></div><div>ry<b>0</b></div><div>rz<b>0</b></div></div></div><div class="well"></div></div>
+        <div class="hand"><div class="grow"><div class="nm" style="color:var(--muted)">Left</div><div class="ch6"><div>tx<b>6.621</b></div><div>ty<b>-0.978</b></div><div>tz<b>1.706</b></div><div>rx<b>1.379</b></div><div>ry<b>-1.576</b></div><div>rz<b>-179.5</b></div></div></div><div class="well"></div></div>
+      </div>
+      <div class="ports"><div class="pic on"><span><b>Long Sword</b></span></div><div class="pic"><span class="pill">equipped</span><span>Spear 01</span></div><div class="pic"><span>Spear 03</span></div><div class="pic"><span>Dagger</span></div><div class="pic"><span>Creep Sw.</span></div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><div class="ci" style="background:#4a3322;color:var(--scene)">✋</div><div class="ct">Connections</div><div class="cs">LongSwordMesh in the right hand; left free</div><div class="cv">⌄</div></div>
+    <div class="body">
+      <div class="row"><span class="lbl b">Arm R</span><div class="seg"><span class="on">FK</span><span>IK</span></div><span class="lbl b" style="text-align:right;padding-right:3px">Arm L</span><div class="seg"><span>FK</span><span class="on">IK</span></div></div>
+      <div class="row"><span class="lbl b">Hand R</span><div class="seg"><span class="on">Free</span><span>Weapon</span></div><div class="btn tool sq" style="height:22px">✓</div></div>
+      <div class="row"><span class="lbl b">Hand L</span><div class="seg"><span class="on">Free</span><span>Weapon</span></div><div class="btn tool sq" style="height:22px">✓</div></div>
+      <div class="row"><span class="lbl b">Weapon</span><div class="seg"><span>World</span><span class="on">Hand R</span><span>Hand L</span></div><div class="btn tool sq" style="height:22px">✓</div></div>
+      <div class="row"><div class="btn p g">✓ Apply all</div><div class="btn">🔗 BakeAcross</div><div class="btn">⛓ Release</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="ch"><div class="ci" style="background:#4a3322;color:var(--scene)">➤</div><div class="ct">Shared</div><div class="cs">online · 3 files</div><div class="cv">⌄</div></div>
+    <div class="body">
+      <div class="row"><div class="field v" style="flex:0 0 34%">Eugene</div><div class="field">name (empty: the scene's)</div></div>
+      <div class="row"><div class="btn p g">➤ Send scene</div><div class="btn">⤒ Send file...</div></div>
+      <div class="list"><div class="sel">Oleg · Attack_v2.ma · 2 min</div><div>Eugene · Idle.fbx · 1 h</div><div>Anna · Block.ma · 3 h</div><div>Oleg · Attack_v1.ma · 5 h</div><div>Eugene · Walk_cycle.ma · 6 h</div><div>Anna · Parry_hi.fbx · 1 d</div><div>Anna · Parry_lo.fbx · 1 d</div><div>Oleg · Orc_roar.ma · 1 d</div><div>Eugene · Creep_jump.ma · 2 d</div><div>Anna · Dodge_back.fbx · 2 d</div></div>
+      <div class="grip" title="потяни вверх или вниз">⋯</div>
+      <div class="row"><div class="btn g">⤓ Open</div><div class="btn g">Import</div><div class="btn sq" title="Save to...">📁</div><div class="btn d sq">🗑</div></div>
+    </div>
+  </div>
+
+  <div class="card a">
+    <div class="ch"><div class="ci" style="background:#23324a;color:var(--anim)">⇄</div><div class="ct">Retarget</div><div class="cs"></div><div class="cv">⌄</div></div>
+    <div class="body"><div class="row"><div class="seg"><span class="on">Auto</span><span>Rot.</span><span>Stretch</span></div><div class="btn p" style="width:106px" title="Select the clip's skeleton (and the rig, when several)">⇄ Retarget ⓘ</div></div></div>
+  </div>
+
+  <div class="card a">
+    <div class="ch"><div class="ci" style="background:#23324a;color:var(--anim)">📈</div><div class="ct">Graph Overlay</div><div class="cs">alt+c</div><div class="cv">⌄</div></div>
+    <div class="body"><div class="btn p" title="The Graph Editor over the viewport, see-through">📈 Graph Overlay: OFF ⓘ</div></div>
+  </div>
+
+  <div class="card a">
+    <div class="ch"><div class="ci" style="background:#23324a;color:var(--anim)">◎</div><div class="ct">Center of Mass</div><div class="cs">Manny_Rig</div><div class="cv">⌄</div></div>
+    <div class="body">
+      <div class="row"><div class="btn p g">◎ Add CoM</div><div class="btn sq" title="Rebuild">⟳</div><div class="btn d sq">🗑</div><div class="btn">Select</div></div>
+      <div class="row"><span class="chip on">Trail</span><span class="chip on">Floor</span><div class="seg"><span class="on">Playback</span><span>Around</span></div><div class="int" style="width:32px">20</div></div>
+    </div>
+  </div>
+
+  <div class="card a">
+    <div class="ch"><div class="ci" style="background:#23324a;color:var(--anim)">📚</div><div class="ct">Pose Library</div><div class="cs"></div><div class="cv">⌄</div></div>
+    <div class="body"><div class="btn p" title="Poses of bones - onto any rig or skeleton">📚 Open Pose Library ⓘ</div></div>
+  </div>
+
+  <div class="card l">
+    <div class="ch"><div class="ci" style="background:#3a2a4a;color:var(--look)">💡</div><div class="ct">Studio</div><div class="cs">Soft Studio</div><div class="cv">⌄</div></div>
+    <div class="body">
+      <div class="row"><div class="field v dd">Soft Studio</div><div class="field v dd" style="flex:0 0 32%">Good</div></div>
+      <div class="row" style="flex-wrap:wrap;gap:3px"><span class="chip on">Floor</span><span class="chip on">Shadows</span><span class="chip on" title="Ambient occlusion">AO</span><span class="chip" title="Motion blur">Blur</span><span class="chip on" title="Anti-aliasing">AA</span><span class="chip">Bloom</span><span class="chip" title="Atmosphere">Haze</span><span class="chip" title="Depth of field">DoF</span><span class="chip">Clean</span><span class="chip on">Backdrop</span></div>
+      <div class="slider"><span class="lbl">Bright</span><div class="track"><b></b><i></i></div><div class="int" style="width:34px">1.00</div></div>
+      <div class="slider"><span class="lbl">Rotate</span><div class="track"><b style="width:30%"></b><i style="left:30%"></i></div><div class="int" style="width:34px">0</div></div>
+      <div class="row"><div class="btn p g">💡 Apply Look</div><div class="btn">↶ Restore</div></div>
+    </div>
+  </div>
+
+  <div class="card l">
+    <div class="ch"><div class="ci" style="background:#3a2a4a;color:var(--look)">🎨</div><div class="ct">Colour</div><div class="cs">taken: red, blue</div><div class="cv">⌄</div></div>
+    <div class="body">
+      <div class="swatches" title="paints the selection, else the connected character"><i style="background:#c4473c"></i><i style="background:#d9822b"></i><i style="background:#d6b23a"></i><i style="background:#58a456"></i><i style="background:#2f9c95"></i><i style="background:#3c74c4"></i><i style="background:#8a5cc4"></i><i style="background:#c85b9c"></i></div>
+      <div class="row"><div class="btn sq" style="background:#7a8a9a;border:none"></div><div class="btn g">🖌 Paint</div><div class="btn">🎨 Next free</div></div>
+    </div>
+  </div>
+
+  <div class="card t closed">
+    <div class="ch"><div class="ci" style="background:#2d2f34;color:var(--set)">⟳</div><div class="ct">Update</div><div class="cs">ed00397 · new build 4f2a1c0</div><div class="cv">›</div></div>
+    <div class="body"><div class="btn p">⟳ Check update</div></div>
+  </div>
+</div>
+
+<div class="notes">
+  <h3>Что изменилось</h3>
+  <dl>
+    <dt>Шапка</dt>
+    <dd>Логотип, 11 иконок разделов (цвет — группа), ⌨ карта хоткеев, 📌 закрепить, ⋮. Надпись «SkeldarAnim» и плашка версии убраны. Когда вышла новая сборка, иконка Update ⟳ становится оранжевой (раньше это делала плашка). Надписи групп Scene / Animation / Look убраны: группу показывает полоска слева у карточки.</dd>
+    <dt>Строка сообщений</dt>
+    <dd>Одна на весь хаб, под шапкой. Туда идут сообщения всех карточек, слева иконка карточки, от которой оно пришло. Без текста строка не занимает места, длинное сообщение переносится не больше чем на 3 строки. Строки статуса внутри карточек (высотой 36–54 px) убраны.</dd>
+    <dt>Animation Setup</dt>
+    <dd><ul><li>Rig | Skeleton, Import, Delete и Camera Setup — одна строка, Delete и Camera иконками.</li><li>Портреты по 5 в ряд (вместе с «?»), имя поверх картинки.</li><li>Connect: заголовок убран. Строка «not connected - press Refresh…» стала точкой у проекта (зелёная или серая) и подсказкой. Число анимаций показано в поле поиска.</li><li>Список: по умолчанию 10 строк, под ним полоска ⋯ — тяни вверх или вниз, высота запоминается (от 5 до 40 строк).</li><li>Onto selected | New, галочка «timeline» (иконкой ⏱), Import, Export FBX и uasset — одна строка.</li></ul></dd>
+    <dt>Inventory</dt>
+    <dd>Weapon | Armor, Equip и Unequip — одна строка. Строки каналов в руках ниже (15 px), названия каналов короткие (tx…rz). Оружие по 5 в ряд, имя поверх картинки.</dd>
+    <dt>Connections</dt>
+    <dd>Строка о состоянии («LongSwordMesh in the right hand…») переехала в заголовок карточки. Arm R и Arm L — одна строка. Строка «Acts on» появляется только когда у персонажа два оружия. Apply all, BakeAcross и Release — одна строка.</dd>
+    <dt>Shared</dt>
+    <dd>Подписи «Author» и «Name» убраны, поля стоят в одной строке, по подсказке внутри видно, какое поле какое. Save to — иконкой. Список так же: 10 строк по умолчанию и полоска ⋯ для высоты, запоминается отдельно от списка анимаций.</dd>
+    <dt>Retarget, Graph Overlay, Pose Library</dt>
+    <dd>Подсказки ушли во всплывающие подсказки. В каждой карточке одна строка.</dd>
+    <dt>Studio</dt>
+    <dd>Подсказка убрана. 10 галочек — две строки с короткими названиями (AO, AA, DoF…), полное название при наведении. Ползунки ниже, кнопки в одну строку.</dd>
+    <dt>Colour</dt>
+    <dd>8 цветов в одну строку вместо двух. «taken:…» переехало в заголовок карточки.</dd>
+    <dt>Update</dt>
+    <dd>Установленная версия и найденная сборка показаны в заголовке, внутри одна кнопка.</dd>
+    <dt>Classic look</dt>
+    <dd>Старый вид без скина получает только перестановку строк. Его строки статуса остаются на месте.</dd>
+  </dl>
+</div>
+
+</div>
+</body>
+</html>
