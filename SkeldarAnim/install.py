@@ -72,6 +72,7 @@ _PAYLOAD = (
     "maya_hubsound.py",         # its interface sounds (2026-10-01)
     "maya_hubmotion.py",        # how its cards move (2026-10-01)
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
+    "maya_edgerules.py",        # the edge panel's rules (2026-10-08)
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)
