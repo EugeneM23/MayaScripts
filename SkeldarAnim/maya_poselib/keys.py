@@ -835,43 +835,62 @@ class Tweaks(object):
         0 / 0 after one Ctrl+Z). Not `undoInfo -stateWithoutFlush` around it: the restore runs
         inside the press's chunk, which that would break (trap 145).
 
-        And autoKey is switched ONLY around a `setAttr` (a plug the API cannot reach - an
-        ambiguous name, an odd attribute type: recorded, but the tweak is back), and only when
-        it is on. `autoKeyframe -state` is a step on the undo queue even when it sets the state
-        autoKey already has (task 10's verify, measured in mayapy 2027), and a press's walk
-        restores AFTER its chunk closed: switched around every restore, the switches were the
-        animator's next two Ctrl+Z - the paste still standing after one, autoKey turned OFF by
-        the second. An API set keys nothing with autoKey on (measured; a `setAttr` keyed)."""
+        AutoKey is off around the sets, switched through the API (`_auto_key`), and only when
+        there is something to set back (task 10's verify, measured in mayapy 2027): an API set of
+        a keyed channel with autoKey ON did not hold, or held and went with the next Ctrl+Z,
+        whatever that undid; with autoKey off it held and stood through it. And `autoKeyframe
+        -state` is a step on Maya's undo queue even when it sets the state autoKey already has,
+        while a press's walk restores AFTER its chunk closed - switched through `cmds` around
+        every restore, the two switches were the animator's next two Ctrl+Z: the paste still
+        standing after one, autoKey turned OFF by the second. `MAnimControl.setAutoKeyMode` is
+        no step (measured), and `autoKeyframe -q` reads what it set. A plug the API cannot reach
+        (an ambiguous name, an odd attribute type) goes back through `setAttr` - recorded, but
+        the tweak is back."""
         moved = self.moved()
         if not moved:
             return []
         skipped = set(filter(None, (_identity(p) for p in skip or ())))
         todo = [plug for plug in moved if not (skipped and _identity(plug) in skipped)]
-        done, loud = set(), []
-        for plug in todo:
-            if _api_ready():
-                try:
-                    _api_set(plug, self.values[plug])
-                    done.add(plug)
-                    continue
-                except (RuntimeError, TypeError, ValueError):
-                    pass
-            loud.append(plug)
-        if loud:
-            auto = cmds.autoKeyframe(query=True, state=True)
-            if auto:
-                cmds.autoKeyframe(state=False)
-            try:
-                for plug in loud:
+        if not todo:
+            return []
+        done = set()
+        auto = _auto_key()
+        if auto:
+            _auto_key(False)
+        try:
+            for plug in todo:
+                if _api_ready():
                     try:
-                        cmds.setAttr(plug, self.values[plug])
+                        _api_set(plug, self.values[plug])
                         done.add(plug)
-                    except RuntimeError:
+                        continue
+                    except (RuntimeError, TypeError, ValueError):
                         pass
-            finally:
-                if auto:
-                    cmds.autoKeyframe(state=auto)
+                try:
+                    cmds.setAttr(plug, self.values[plug])
+                    done.add(plug)
+                except RuntimeError:
+                    pass
+        finally:
+            if auto:
+                _auto_key(True)
         return [plug for plug in todo if plug in done]
+
+
+def _auto_key(state=None):
+    """autoKey's state (`state` None), or autoKey set to `state` - through the API on Maya's own
+    scene (`MAnimControl.autoKeyMode` / `setAutoKeyMode`: no step on the undo queue, measured,
+    and `autoKeyframe -q` reads what it set), through `cmds` in a test's fake scene. A seam."""
+    if _api_ready():
+        import maya.api.OpenMayaAnim as oma
+        if state is None:
+            return bool(oma.MAnimControl.autoKeyMode())
+        oma.MAnimControl.setAutoKeyMode(bool(state))
+        return None
+    if state is None:
+        return bool(cmds.autoKeyframe(query=True, state=True))
+    cmds.autoKeyframe(state=bool(state))
+    return None
 
 
 def _api_set(plug, value):

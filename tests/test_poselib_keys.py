@@ -902,19 +902,33 @@ class Tweaks(Restoring):
 
     def api(self, fail=()):
         """keys._api_set replaced by a recorder (the plugs it set, and the values into the fake
-        scene); a plug in `fail` raises as the API does for one it cannot reach."""
-        original, ready = keys._api_set, keys._api_ready
+        scene); a plug in `fail` raises as the API does for one it cannot reach. keys._auto_key
+        - `MAnimControl` on real Maya - works the fake's autoKey and logs each switch in
+        `api_switches`; `auto_at_set` the autoKey state at every API set."""
+        original, ready, auto_key = keys._api_set, keys._api_ready, keys._auto_key
         self.addCleanup(setattr, keys, "_api_set", original)
         self.addCleanup(setattr, keys, "_api_ready", ready)
+        self.addCleanup(setattr, keys, "_auto_key", auto_key)
         keys._api_ready = lambda: True
         calls = []
+        fake = keys.cmds
+        fake.api_switches, fake.auto_at_set = [], []
 
         def record(plug, value):
             if plug in fail:
                 raise RuntimeError("(kInvalidParameter): Object does not exist")
             calls.append((plug, value))
-            keys.cmds.values[plug] = value
+            fake.auto_at_set.append(fake.auto)
+            fake.values[plug] = value
+
+        def switch(state=None):
+            if state is None:
+                return fake.auto
+            fake.api_switches.append(state)
+            fake.auto = state
+            return None
         keys._api_set = record
+        keys._auto_key = switch
         return calls
 
     def test_the_restore_is_no_step_on_the_undo_queue(self):
@@ -932,6 +946,7 @@ class Tweaks(Restoring):
         self.assertEqual(sorted(calls), [("prop.translateX", 40.0),
                                          ("rig:FKSpine1_M.rotateX", 25.0)])
         self.assertEqual([entry for entry in fake.log if entry[0] == "set"], [])   # no setAttr
+        self.assertEqual(fake.switches, [])                  # nor an autoKey switch: a step too
 
     def test_a_plug_the_api_cannot_reach_still_goes_back_through_set_attr(self):
         fake = TweakCmds(**self.SCENE)
@@ -942,18 +957,20 @@ class Tweaks(Restoring):
             fake.values[plug] = 0.0
         tweaks.restore()
         self.assertEqual(fake.values["prop.translateX"], 40.0)
-        self.assertEqual([p for _s, p, _v, _a in fake.log], ["prop.translateX"])
+        self.assertEqual([p for _s, p, _v, auto in fake.log], ["prop.translateX"])
+        self.assertFalse(fake.log[0][3])                   # the setAttr keyed nothing
         self.assertIn(("rig:FKSpine1_M.rotateX", 25.0), calls)
-        self.assertEqual(fake.switches, [False, True])     # autoKey off around the setAttr only
+        self.assertEqual((fake.switches, fake.api_switches), ([], [False, True]))
 
-    # task 10's verify (2026-10-08): `autoKeyframe -state` is a step on Maya's undo queue even
-    # when it sets the state autoKey already has (measured, mayapy 2027) - and a press's walk
-    # restores AFTER its chunk closed, so the restore's two switches were the animator's next
-    # two Ctrl+Z: the paste stood after one Ctrl+Z, and with autoKey on the second turned it
-    # OFF. The API road keys nothing (measured: an MPlug set with autoKey on made no key, a
-    # setAttr did), so only a plug the API cannot reach is set with autoKey switched off.
+    # task 10's verify (2026-10-08), measured in mayapy 2027: `autoKeyframe -state` is a step on
+    # Maya's undo queue even when it sets the state autoKey already has - and a press's walk
+    # restores AFTER its chunk closed, so the restore's two `cmds` switches were the animator's
+    # next two Ctrl+Z: the paste stood after one, and with autoKey on the second turned it OFF.
+    # Yet an API set of a keyed channel with autoKey ON did not hold, or went with the next
+    # Ctrl+Z; with autoKey off it held and stood. So autoKey goes off around the sets through
+    # `MAnimControl.setAutoKeyMode` (no step on the queue) - only when there is a set to make.
 
-    def test_a_restore_through_the_api_never_switches_auto_key(self):
+    def test_a_restore_switches_auto_key_off_through_the_api_never_through_cmds(self):
         fake = TweakCmds(**self.SCENE)
         keys.cmds = fake
         calls = self.api()
@@ -963,7 +980,9 @@ class Tweaks(Restoring):
         back = tweaks.restore(skip=["rig:FKWrist_L.rotateX"])
         self.assertEqual(sorted(back), ["prop.translateX", "rig:FKSpine1_M.rotateX"])
         self.assertEqual(len(calls), 2)
-        self.assertEqual(fake.switches, [])
+        self.assertEqual(fake.auto_at_set, [False, False])     # every API set with autoKey off
+        self.assertEqual(fake.switches, [])                    # no `autoKeyframe -state` step
+        self.assertEqual(fake.api_switches, [False, True])
         self.assertTrue(fake.auto)
 
     def test_only_what_the_press_keyed_moved_switches_nothing(self):
@@ -974,9 +993,9 @@ class Tweaks(Restoring):
         tweaks = keys.Tweaks()
         fake.values["rig:FKWrist_L.rotateX"] = 3.0
         self.assertEqual(tweaks.restore(skip=["rig:FKWrist_L.rotateX"]), [])
-        self.assertEqual((fake.switches, fake.log), ([], []))
+        self.assertEqual((fake.switches, fake.api_switches, fake.log), ([], [], []))
 
-    def test_a_set_attr_with_auto_key_off_switches_nothing(self):
+    def test_auto_key_off_already_switches_nothing(self):
         fake = TweakCmds(**self.SCENE)
         fake.auto = False
         keys.cmds = fake
@@ -986,8 +1005,16 @@ class Tweaks(Restoring):
             fake.values[plug] = 0.0
         tweaks.restore()
         self.assertEqual(fake.values["prop.translateX"], 40.0)
-        self.assertEqual(fake.switches, [])
+        self.assertEqual((fake.switches, fake.api_switches), ([], []))
         self.assertFalse(fake.auto)
+
+    def test_the_auto_key_seam_reads_and_sets_through_cmds_off_maya(self):
+        # a test's fake scene is not Maya's: `_auto_key` falls back to `cmds`
+        fake = TweakCmds(**self.SCENE)
+        keys.cmds = fake
+        self.assertTrue(keys._auto_key())
+        keys._auto_key(False)
+        self.assertEqual((fake.auto, fake.switches), (False, [False]))
 
 
 # ------------------------------------------------------------------ layer curves (2026-10-03)
