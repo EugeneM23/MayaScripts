@@ -3,13 +3,15 @@
 What `maya_hub` builds when Qt is there (2026-09-28, style B + scheme 3 of
 the brainstorm): a root of ours inside the same workspaceControl, holding
 
-    header    the SA mark, "SkeldarAnim", the hotkeys button (lit while the
-              map is on), the version chip (click: Check update), a menu
-    message   one line under the header, shown while it holds text
-    strip     one icon per section: expand it and scroll to it
-    scroll    group labels and CARDS - a clickable header (icon chip,
-              title, the moved subtitle, chevron) over a BODY whose named
-              layout is where a tool's `build_panel()` runs
+    header    the SA mark, the jump icons (one per section: expand it and
+              scroll to it), the hotkeys button (lit while the map is on),
+              the pin (edge panel), a menu - ONE row since 2026-10-08
+    message   up to three lines under the header, shown while it holds text,
+              with the icon of the card that said it (`say`, `_told`)
+    scroll    CARDS - a clickable header (icon chip, title, the moved
+              subtitle, chevron) over a BODY whose named layout is where a
+              tool's `build_panel()` runs, a group-colour stripe down its
+              left edge
 
 Every cmds control a builder makes lands in a body through
 `cmds.setParent(path_of(body_layout))` -- measured 2026-09-28 in a probe
@@ -313,7 +315,9 @@ def _frame_class():
     its plain face) painting its own LIGHT over that face: `level` 0..1 and
     `flash` 0..1, animated by its Card (2026-10-01, «красивый глоу и анимацию
     подсветки»). A full repaint of a card costs 1.5 ms (UE Bridge, measured),
-    so the whole light - the face's tint too - can fade."""
+    so the whole light - the face's tint too - can fade. Since 2026-10-08 it
+    also paints its group's colour as a `stripe` down its left edge (the
+    group labels are gone from the compact skin), under the light."""
     if "frame" not in _CLASSES:
         q = qt()
 
@@ -324,14 +328,36 @@ def _frame_class():
                 self.scale = scale
                 self.level = 0.0
                 self.flash = 0.0
+                self.stripe = None
 
             def paintEvent(self, event):                   # noqa: N802
                 super(CardFrame, self).paintEvent(event)
+                if self.stripe:
+                    paint_stripe(self, self.stripe, self.scale)
                 if self.level > 0.002 or self.flash > 0.002:
                     paint_light(self, self.level, self.flash, self.scale)
 
         _CLASSES["frame"] = CardFrame
     return _CLASSES["frame"]
+
+
+def paint_stripe(widget, colour, scale):
+    """The card's group as a bar down its left edge (2026-10-08: the group
+    labels are gone in the compact skin), clipped by the rounded face."""
+    q = qt()
+    QtCore, QtGui = q.QtCore, q.QtGui
+    radius = float(hubstyle.px(8, scale))
+    bar = float(hubstyle.px(3, scale))
+    painter = QtGui.QPainter(widget)
+    try:
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        face = QtGui.QPainterPath()
+        face.addRoundedRect(QtCore.QRectF(widget.rect()), radius, radius)
+        painter.setClipPath(face)
+        painter.fillRect(QtCore.QRectF(0, 0, bar, widget.height()),
+                         QtGui.QColor(colour))
+    finally:
+        painter.end()
 
 
 def paint_light(widget, level, flash, scale):
@@ -749,6 +775,14 @@ class Card(object):
         w = q.QtWidgets
         self.key = key
         self.scale = scale
+        #  What a section's status line says about its card (2026-10-08): the
+        #  icon and colour go to the message line when this card said
+        #  something; `status_controls` are the cmds controls whose text the
+        #  status relay (maya_hubstyle.tell) takes for this card's; `_hints`
+        #  are its builders' static hints, now the header's tooltip.
+        self.icon_name, self.colour = icon_name, colour
+        self.status_controls = set()
+        self._hints = []
         self._on_toggle = on_toggle
         self._motion = motion
         self._anim = None
@@ -764,9 +798,11 @@ class Card(object):
         self._flash_anim = None
         self.frame = _named(_frame_class()(scale), "skeldarHubCard_" + key)
         self.frame.setProperty("skCard", True)
+        self.frame.stripe = colour
         column = w.QVBoxLayout(self.frame)
         column.setObjectName("skeldarHubCardLayout_" + key)
-        column.setContentsMargins(s(8), s(7), s(8), s(8))
+        #  compact (2026-10-08, variant B): 5 / 4 / 5 / 5, was 8 / 7 / 8 / 8
+        column.setContentsMargins(s(5), s(4), s(5), s(5))
         #  The gap under the header is the BODY's top margin (it was this
         #  column's spacing): it opens and shuts with the body instead of
         #  appearing on the first frame of a slide and vanishing on the last.
@@ -784,14 +820,14 @@ class Card(object):
         row = w.QHBoxLayout(self.header)
         row.setObjectName("skeldarHubCardHeadLayout_" + key)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(s(7))
+        row.setSpacing(s(5))
         chip_label = _named(w.QLabel(), "skeldarHubCardIcon_" + key,
                             "cardicon")
-        chip_label.setFixedSize(s(22), s(22))
+        chip_label.setFixedSize(s(18), s(18))
         chip_label.setAlignment(q.QtCore.Qt.AlignCenter)
-        chip_label.setPixmap(pixmap(icon_name, colour, s(14)))
+        chip_label.setPixmap(pixmap(icon_name, colour, s(12)))
         chip_label.setStyleSheet("background: {0}; border-radius: {1}px;"
-                                 .format(chip, s(6)))
+                                 .format(chip, s(5)))
         title = _named(w.QLabel(label), "skeldarHubCardTitle_" + key,
                        "cardtitle")
         #  Where a moved subtitle goes: takes what the title leaves and never
@@ -811,7 +847,7 @@ class Card(object):
         self.body = _named(w.QWidget(), "skeldarHubBody_" + key)
         self.body_layout = w.QVBoxLayout(self.body)
         self.body_layout.setObjectName("skeldarHubBodyLayout_" + key)
-        self.body_layout.setContentsMargins(0, s(6), 0, 0)
+        self.body_layout.setContentsMargins(0, s(4), 0, 0)
         self.body_layout.setSpacing(0)
         column.addWidget(self.header)
         column.addWidget(self.body)
@@ -820,6 +856,14 @@ class Card(object):
 
     def body_path(self):
         return path_of(self.body_layout)
+
+    def add_hint(self, text):
+        """A builder's static hint, now the header's tooltip (2026-10-08:
+        the compact skin keeps no hint line in the body)."""
+        text = (text or "").strip()
+        if text:
+            self._hints.append(text)
+            self.header.setToolTip("\n".join(self._hints))
 
     def collapsed(self):
         return bool(self._collapsed)
@@ -1075,6 +1119,10 @@ class Skin(object):
         self.cb = callbacks or {}
         self.cards = {}
         self.jumps = {}
+        #  each jump's own colour and icon: the update jump's state paints
+        #  it (set_state) and its group's colour comes back with no state
+        self._jump_colour = {}
+        self._jump_icon = {}
         #  ⋮ -> Interface animations (2026-10-01): the cards slide, a jump
         #  glides (maya_hub sets it from maya_hubmotion's optionVar)
         self.animations = True
@@ -1084,8 +1132,9 @@ class Skin(object):
         self.root = _named(w.QWidget(), hubstyle.ROOT)
         top = w.QVBoxLayout(self.root)
         top.setObjectName("skeldarHubRootLayout")
-        top.setContentsMargins(s(6), s(6), s(6), s(6))
-        top.setSpacing(s(6))
+        #  compact (2026-10-08, variant B): margins and gaps 3, was 6
+        top.setContentsMargins(s(3), s(3), s(3), s(3))
+        top.setSpacing(s(3))
         if parent_layout is not None:
             parent_layout.addWidget(self.root)
 
@@ -1093,13 +1142,6 @@ class Skin(object):
         top.addWidget(self.header)
         self.message = self._build_message()
         top.addWidget(self.message)
-
-        self.strip = _named(w.QWidget(), "skeldarHubStrip", "strip")
-        strip = w.QHBoxLayout(self.strip)
-        strip.setObjectName("skeldarHubStripLayout")
-        strip.setContentsMargins(s(3), s(3), s(3), s(3))
-        strip.setSpacing(s(2))
-        top.addWidget(self.strip)
 
         self.scroll = _named(w.QScrollArea(), hubstyle.SCROLL)
         self.scroll.setWidgetResizable(True)
@@ -1110,7 +1152,7 @@ class Skin(object):
         self.column = w.QVBoxLayout(self.content)
         self.column.setObjectName("skeldarHubColumnLayout")
         self.column.setContentsMargins(0, 0, s(2), 0)
-        self.column.setSpacing(s(6))
+        self.column.setSpacing(s(3))
         self.column.addStretch(1)
         self.scroll.setWidget(self.content)
         self.scroll.viewport().setObjectName(hubstyle.VIEWPORT)
@@ -1156,6 +1198,11 @@ class Skin(object):
         app = q.QtWidgets.QApplication.instance()
         if app is not None:
             app.installEventFilter(self._watcher)
+        #  One message line for the whole hub (2026-10-08): every section's
+        #  status writer tells it (maya_hubstyle.tell); the card marked that
+        #  control (apply_marks -> Card.status_controls).
+        self._message_source = None
+        hubstyle.listen(self._told)
 
     # --------------------------------------------------------------- parts
 
@@ -1186,21 +1233,32 @@ class Skin(object):
         header = _named(w.QWidget(), "skeldarHubHeader", "header")
         row = w.QHBoxLayout(header)
         row.setObjectName("skeldarHubHeaderLayout")
-        row.setContentsMargins(s(2), s(2), s(2), s(2))
-        row.setSpacing(s(6))
+        #  ONE row (2026-10-08, variant B): the mark, the jump icons, the
+        #  hotkeys, the pin, the menu - no title, no version chip, no strip
+        row.setContentsMargins(s(1), s(1), s(1), s(1))
+        row.setSpacing(s(2))
         logo = _named(w.QLabel("SA"), "skeldarHubLogo", "logo")
-        logo.setFixedSize(s(20), s(20))
+        logo.setFixedSize(s(18), s(18))
         logo.setAlignment(q.QtCore.Qt.AlignCenter)
-        title = _named(w.QLabel("SkeldarAnim"), "skeldarHubTitle",
-                       "hubtitle")
+        #  the jumps share what the mark and the buttons leave (add_jump)
+        self.jump_row = w.QHBoxLayout()
+        self.jump_row.setObjectName("skeldarHubJumpRow")
+        self.jump_row.setContentsMargins(0, 0, 0, 0)
+        self.jump_row.setSpacing(s(1))
         self.hotkeys = self._head_button(
             "skeldarHubHotkeys", "keyboard", "Hotkey map: OFF",
             checkable=True)
         self.hotkeys.clicked.connect(lambda *_a: self._call("hotkeys"))
-        self.version = _named(w.QToolButton(), "skeldarHubVersion", "version")
-        self.version.setText("")
-        self.version.setCursor(q.QtCore.Qt.PointingHandCursor)
-        self.version.clicked.connect(lambda *_a: self._call("version"))
+        #  the edge panel's pin: shown only while the hub stands in it
+        #  (set_edge_mode); a checked pin keeps the panel out
+        #  (`_head_button` gives it the muted icon and the accent one for its
+        #  checked state: the pin turns the accent colour while it holds)
+        self.pin = self._head_button("skeldarHubPin", "pin",
+                                     "Keep the panel out (edge panel)",
+                                     checkable=True)
+        self.pin.clicked.connect(
+            lambda checked=False: self._call("pin", bool(checked)))
+        self.pin.setVisible(False)
         self.menu_button = self._head_button("skeldarHubMenu",
                                              "dots-vertical", "More")
         self.menu = w.QMenu(self.menu_button)
@@ -1209,16 +1267,18 @@ class Skin(object):
                           ("Hotkey Editor...", "hotkey_editor"),
                           ("Interface sounds", "sounds"),
                           ("Interface animations", "animations"),
+                          ("Edge panel", "edge"),
                           (None, None),
                           ("Classic look", "classic")):
             if text is None:
                 self.menu.addSeparator()
                 continue
             action = self.menu.addAction(text)
-            if key in ("sounds", "animations"):
-                #  a switch (2026-10-01, the hover sound, the card motion):
-                #  `triggered` carries the new state and is not emitted by
-                #  paint_sounds / paint_animations
+            if key in ("sounds", "animations", "edge"):
+                #  a switch (2026-10-01, the hover sound, the card motion;
+                #  2026-10-08, the edge panel): `triggered` carries the new
+                #  state and is not emitted by paint_sounds /
+                #  paint_animations / paint_edge
                 action.setCheckable(True)
                 action.triggered.connect(
                     lambda checked=False, k=key: self._call(k, bool(checked)))
@@ -1228,10 +1288,9 @@ class Skin(object):
         self.menu_button.setMenu(self.menu)
         self.menu_button.setPopupMode(w.QToolButton.InstantPopup)
         row.addWidget(logo)
-        row.addWidget(title)
-        row.addStretch(1)
+        row.addLayout(self.jump_row, 1)
         row.addWidget(self.hotkeys)
-        row.addWidget(self.version)
+        row.addWidget(self.pin)
         row.addWidget(self.menu_button)
         return header
 
@@ -1242,16 +1301,26 @@ class Skin(object):
         box = _named(w.QWidget(), "skeldarHubMessage", "message")
         row = w.QHBoxLayout(box)
         row.setObjectName("skeldarHubMessageLayout")
-        row.setContentsMargins(s(8), s(4), s(4), s(4))
+        row.setContentsMargins(s(6), s(2), s(2), s(2))
         row.setSpacing(s(4))
+        #  the icon of the card that said it (2026-10-08): hidden for a
+        #  message nobody's card owns ("Hotkey map: ON")
+        self.message_icon = _named(w.QLabel(), "skeldarHubMessageIcon",
+                                   "messageicon")
+        self.message_icon.setFixedSize(s(14), s(14))
+        self.message_icon.setVisible(False)
         self.message_text = _named(w.QLabel(""), "skeldarHubMessageText",
                                    "messagetext")
         self.message_text.setWordWrap(True)
         self.message_text.setSizePolicy(w.QSizePolicy.Ignored,
                                         w.QSizePolicy.Preferred)
+        #  three lines at most; the tooltip holds the whole text (`say`)
+        lines = self.message_text.fontMetrics().lineSpacing()
+        self.message_text.setMaximumHeight(3 * lines + 2)
         self.message_close = self._head_button("skeldarHubMessageClose", "x",
                                                "Hide")
         self.message_close.clicked.connect(lambda *_a: box.setVisible(False))
+        row.addWidget(self.message_icon, 0, q.QtCore.Qt.AlignTop)
         row.addWidget(self.message_text, 1)
         row.addWidget(self.message_close, 0, q.QtCore.Qt.AlignTop)
         box.setVisible(False)
@@ -1286,30 +1355,83 @@ class Skin(object):
         button.setAutoRaise(True)
         button.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,
                              q.QtWidgets.QSizePolicy.Fixed)
+        button.setMinimumWidth(self.px(16))
         button.clicked.connect(lambda *_a, k=key: self._call("jump", k))
-        self.strip.layout().addWidget(button)
+        self.jump_row.addWidget(button)
         self.jumps[key] = button
+        self._jump_colour[key] = colour
+        self._jump_icon[key] = icon_name
         return button
 
     def finish(self, sheet):
         self.root.setStyleSheet(sheet)
 
-    def say(self, text, state=None):
-        """The header's message line: shown while it holds text."""
+    def say(self, text, state=None, source=None):
+        """The message line: shown while it holds text; `source` a card key
+        puts that card's icon at its left. The whole text is the tooltip
+        (the line shows three lines at most)."""
         self.message_text.setText(text or "")
+        self.message_text.setToolTip(text or "")
+        card = self.cards.get(source) if source else None
+        if card is not None:
+            self.message_icon.setPixmap(pixmap(card.icon_name, card.colour,
+                                               self.px(14)))
+        self.message_icon.setVisible(card is not None and bool(text))
+        self._message_source = source if text else None
         self.message.setVisible(bool(text))
         if state is not None:
             self.set_state(state)
 
+    def _told(self, control, text, viewport):
+        """The relay: a section's status control said `text`
+        (maya_hubstyle.tell). The card that marked that control owns the
+        line while it holds text; an empty text from the card that owns it
+        clears the line, from any other it leaves it alone."""
+        if not self.alive():
+            hubstyle.unlisten(self._told)
+            return
+        key = next((k for k, card in self.cards.items()
+                    if control in card.status_controls), None)
+        if key is None:
+            return
+        if text:
+            self.say(text, source=key)
+        elif self._message_source == key:
+            self.say("")
+        self._call("told", key, text, viewport)
+
     def set_state(self, state):
-        self.version.setProperty("skState", state or "")
-        repolish(self.version)
+        """The update jump's colour: "new" accent, "ok" ok, else its group's
+        (2026-10-08: the version chip is gone from the compact header)."""
+        button = self.jumps.get("update")
+        if button is None:
+            return
+        button.setProperty("skState", state or "")
+        tokens = hubstyle.TOKENS
+        colour = {"new": tokens["accent"], "ok": tokens["ok"]}.get(
+            state or "", self._jump_colour.get("update", tokens["muted"]))
+        button.setIcon(icon(self._jump_icon.get("update", "refresh"), colour,
+                            self.px(16)))
+        repolish(button)
 
     def set_version(self, text, tooltip, state=None):
-        self.version.setText(text)
-        self.version.setToolTip(tooltip)
+        """The installed build, as the update jump's tooltip."""
+        button = self.jumps.get("update")
+        if button is not None:
+            button.setToolTip("Update - " + (tooltip or text or ""))
         if state is not None:
             self.set_state(state)
+
+    def paint_edge(self, on):
+        """The menu's Edge panel row shows `on` (no callback)."""
+        self.edge_action.setChecked(bool(on))
+
+    def set_edge_mode(self, on):
+        """The hub stands in the edge panel (`on`): the pin is shown."""
+        self.pin.setVisible(bool(on))
+        if not on:
+            self.pin.setChecked(False)
+        self.paint_edge(on)
 
     def paint_hotkeys(self, active):
         self.hotkeys.setChecked(bool(active))
@@ -1518,6 +1640,7 @@ class Skin(object):
     def destroy(self):
         """Delete the root NOW (not deferred): a classic build right after
         must not meet the controls' names still standing."""
+        hubstyle.unlisten(self._told)
         self.glow.stop()
         if not self.alive():
             return

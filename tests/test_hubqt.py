@@ -25,6 +25,9 @@ class SeamsMixin(object):
 
     def setUp(self):
         self.app = _app()
+        #  skins register on the status relay (2026-10-08); a test that
+        #  deletes a skin's root without destroy() would leave it there
+        style._LISTENERS[:] = []
         self.saved = (hubqt.find, hubqt.path_of)
         self.controls = {}
         hubqt.find = lambda name, layout=False: self.controls.get(name)
@@ -34,7 +37,6 @@ class SeamsMixin(object):
         self.host_layout = QtWidgets.QVBoxLayout(self.host)
         callbacks = {
             "hotkeys": lambda: self.calls.append("hotkeys"),
-            "version": lambda: self.calls.append("version"),
             "check_update": lambda: self.calls.append("check_update"),
             "hotkey_editor": lambda: self.calls.append("hotkey_editor"),
             "classic": lambda: self.calls.append("classic"),
@@ -43,6 +45,9 @@ class SeamsMixin(object):
             "hover": lambda: self.calls.append("hover"),
             "sounds": lambda on: self.calls.append(("sounds", on)),
             "animations": lambda on: self.calls.append(("animations", on)),
+            "pin": lambda on: self.calls.append(("pin", on)),
+            "edge": lambda on: self.calls.append(("edge", on)),
+            "told": lambda *a: None,
         }
         self.skin = hubqt.Skin(self.host_layout, scale=1.0,
                                callbacks=callbacks)
@@ -51,6 +56,7 @@ class SeamsMixin(object):
         hubqt.find, hubqt.path_of = self.saved
         if self.skin.alive():
             self.skin.destroy()
+        style._LISTENERS[:] = []
         self.host.deleteLater()
 
     def control(self, cls, name, parent=None):
@@ -97,31 +103,46 @@ class TheShell(SeamsMixin, unittest.TestCase):
                          QtCore.Qt.ScrollBarAlwaysOff)
         self.assertTrue(self.skin.scroll.widgetResizable())
 
-    def test_the_header_holds_logo_title_hotkeys_version_menu(self):
-        names = [w.objectName() for w in
-                 self.skin.header.findChildren(QtWidgets.QWidget)]
-        for name in ("skeldarHubLogo", "skeldarHubTitle", "skeldarHubHotkeys",
-                     "skeldarHubVersion", "skeldarHubMenu"):
-            self.assertIn(name, names)
+    def test_the_header_holds_logo_jumps_hotkeys_pin_menu(self):
+        """2026-10-08: ONE header row - the mark, the jump icons, the
+        hotkeys, the pin (edge panel), the menu; no title, no version chip,
+        no strip."""
+        names = [self.skin.header.layout().itemAt(i).widget().objectName()
+                 for i in range(self.skin.header.layout().count())
+                 if self.skin.header.layout().itemAt(i).widget()]
+        self.assertEqual(names[0], "skeldarHubLogo")
+        self.assertIn("skeldarHubHotkeys", names)
+        self.assertIn("skeldarHubPin", names)
+        self.assertIn("skeldarHubMenu", names)
+        self.assertNotIn("skeldarHubTitle", names)
+        self.assertNotIn("skeldarHubVersion", names)
+        self.assertFalse(hasattr(self.skin, "strip"))
 
-    def test_the_header_buttons_call_back(self):
+    def test_jumps_go_into_the_header_before_the_buttons(self):
+        self.skin.add_jump("characters", "Animation Setup", "user", "#f0a26b")
+        row = self.skin.jump_row
+        self.assertEqual(row.objectName(), "skeldarHubJumpRow")
+        self.assertEqual(row.itemAt(0).widget(), self.skin.jumps["characters"])
+        header = self.skin.header.layout()
+        self.assertIs(header.itemAt(1).layout(), row)
+
+    def test_the_hotkeys_button_calls_back(self):
         self.skin.hotkeys.click()
-        self.skin.version.click()
-        self.assertEqual(self.calls, ["hotkeys", "version"])
+        self.assertEqual(self.calls, ["hotkeys"])
 
     def test_the_menu_offers_check_update_hotkey_editor_sounds_classic(self):
         actions = [a for a in self.skin.menu.actions() if not a.isSeparator()]
         self.assertEqual([a.text() for a in actions],
                          ["Check update", "Hotkey Editor...",
                           "Interface sounds", "Interface animations",
-                          "Classic look"])
+                          "Edge panel", "Classic look"])
         self.skin.paint_sounds(True)
         self.skin.paint_animations(True)
         for action in actions:
             action.trigger()
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
-                          ("animations", False), "classic"])
+                          ("animations", False), ("edge", True), "classic"])
 
     def test_the_sounds_row_is_a_checkbox_painted_without_a_call(self):
         """2026-10-01: «звук наводки на кнопочку», switched in the menu."""
@@ -166,9 +187,74 @@ class Message(SeamsMixin, unittest.TestCase):
         self.skin.message_close.click()
         self.assertTrue(self.skin.message.isHidden())
 
-    def test_a_state_recolours_the_version_chip(self):
+    def test_a_state_given_with_a_message_paints_the_update_jump(self):
+        self.skin.add_jump("update", "Update", "refresh", "#9a9ca3")
         self.skin.say("Up to date", state="ok")
-        self.assertEqual(self.skin.version.property("skState"), "ok")
+        self.assertEqual(self.skin.jumps["update"].property("skState"), "ok")
+
+    def test_a_told_status_shows_on_the_line_with_its_card(self):
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        card.status_controls.add("skeldarRetargetStatus")
+        told = []
+        self.skin.cb["told"] = lambda key, text, v: told.append((key, text, v))
+        style.tell("skeldarRetargetStatus", "Retargeted 61 frames")
+        self.assertEqual(self.skin.message_text.text(), "Retargeted 61 frames")
+        self.assertFalse(self.skin.message.isHidden())
+        self.assertFalse(self.skin.message_icon.isHidden())
+        self.assertEqual(told, [("retarget", "Retargeted 61 frames", False)])
+
+    def test_an_unknown_control_is_not_shown(self):
+        style.tell("somebodyElse", "x")
+        self.assertTrue(self.skin.message.isHidden())
+
+    def test_an_empty_text_from_the_shown_source_hides_the_line(self):
+        card = self.skin.add_card("com", "Center of Mass", "target",
+                                  "#7fa9e6", "#23324a")
+        card.status_controls.add("skeldarComStatus")
+        style.tell("skeldarComStatus", "added")
+        style.tell("skeldarComStatus", "")
+        self.assertTrue(self.skin.message.isHidden())
+
+    def test_an_empty_text_from_another_source_leaves_the_line(self):
+        a = self.skin.add_card("com", "Center of Mass", "target",
+                               "#7fa9e6", "#23324a")
+        b = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                               "#7fa9e6", "#23324a")
+        a.status_controls.add("skeldarComStatus")
+        b.status_controls.add("skeldarRetargetStatus")
+        style.tell("skeldarComStatus", "added")
+        style.tell("skeldarRetargetStatus", "")
+        self.assertFalse(self.skin.message.isHidden())
+        self.assertEqual(self.skin.message_text.text(), "added")
+
+    def test_a_built_skin_listens_to_the_relay(self):
+        self.assertIn(self.skin._told, style._LISTENERS)
+
+    def test_destroy_stops_listening(self):
+        self.skin.destroy()
+        style.tell("anything", "x")                # no dead widget touched
+        self.assertNotIn(self.skin._told, style._LISTENERS)
+
+    def test_a_said_message_has_no_icon(self):
+        self.skin.say("Hotkey map: ON")
+        self.assertTrue(self.skin.message_icon.isHidden())
+
+    def test_the_icon_follows_the_source_of_the_text(self):
+        self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                           "#7fa9e6", "#23324a")
+        self.skin.say("done", source="retarget")
+        self.assertFalse(self.skin.message_icon.isHidden())
+        self.skin.say("later", source=None)
+        self.assertTrue(self.skin.message_icon.isHidden())
+
+    def test_the_message_line_caps_at_three_lines(self):
+        self.skin.say("word " * 400)
+        lines = self.skin.message_text.fontMetrics().lineSpacing()
+        self.assertLessEqual(self.skin.message_text.maximumHeight(),
+                             3 * lines + 2)
+        self.assertEqual(self.skin.message_text.toolTip().strip(),
+                         ("word " * 400).strip())
 
 
 class HeaderState(SeamsMixin, unittest.TestCase):
@@ -181,13 +267,62 @@ class HeaderState(SeamsMixin, unittest.TestCase):
         self.assertFalse(self.skin.hotkeys.isChecked())
         self.assertIn("OFF", self.skin.hotkeys.toolTip())
 
-    def test_set_version(self):
-        self.skin.set_version("d0a2631", "d0a2631, 2026-09-28 12:22")
-        self.assertEqual(self.skin.version.text(), "d0a2631")
-        self.assertEqual(self.skin.version.toolTip(),
-                         "d0a2631, 2026-09-28 12:22")
+    def test_a_state_and_a_version_paint_the_update_jump(self):
+        self.skin.add_jump("update", "Update", "refresh", "#9a9ca3")
+        self.skin.set_version("d0a2631", "Installed: d0a2631")
+        self.assertEqual(self.skin.jumps["update"].toolTip(),
+                         "Update - Installed: d0a2631")
+        self.skin.set_state("new")
+        self.assertEqual(self.skin.jumps["update"].property("skState"), "new")
+        self.skin.set_state("")
+        self.assertEqual(self.skin.jumps["update"].property("skState"), "")
+
+    def test_set_version_with_a_state_sets_it(self):
+        self.skin.add_jump("update", "Update", "refresh", "#9a9ca3")
         self.skin.set_version("d0a2631", "", state="new")
-        self.assertEqual(self.skin.version.property("skState"), "new")
+        self.assertEqual(self.skin.jumps["update"].property("skState"), "new")
+
+    def test_a_state_without_an_update_jump_is_harmless(self):
+        self.skin.set_state("ok")
+        self.skin.set_version("x", "y")
+
+    def test_the_update_jump_icon_changes_colour_with_the_state(self):
+        self.skin.add_jump("update", "Update", "refresh", "#9a9ca3")
+        button = self.skin.jumps["update"]
+
+        def ink(state):
+            """The colour of the icon's most opaque pixel."""
+            self.skin.set_state(state)
+            image = button.icon().pixmap(16, 16).toImage()
+            best = max(((image.pixelColor(x, y).alpha(), x, y)
+                        for x in range(image.width())
+                        for y in range(image.height())))
+            return image.pixelColor(best[1], best[2]).name()
+        plain = [ink(""), ink("new"), ink("ok")]
+        self.assertEqual(len(set(plain)), 3, plain)
+        self.assertEqual(plain[0], "#9a9ca3")
+
+    def test_the_pin_is_hidden_until_edge_mode_and_calls_back(self):
+        self.calls_pin = []
+        self.skin.cb["pin"] = lambda on: self.calls_pin.append(on)
+        self.assertTrue(self.skin.pin.isHidden())
+        self.skin.set_edge_mode(True)
+        self.assertFalse(self.skin.pin.isHidden())
+        self.assertTrue(self.skin.edge_action.isChecked())
+        self.skin.pin.click()
+        self.assertEqual(self.calls_pin, [True])
+        self.skin.set_edge_mode(False)
+        self.assertTrue(self.skin.pin.isHidden())
+        self.assertFalse(self.skin.pin.isChecked())
+        self.assertFalse(self.skin.edge_action.isChecked())
+
+    def test_the_edge_row_calls_back_with_its_state(self):
+        seen = []
+        self.skin.cb["edge"] = lambda on: seen.append(on)
+        self.skin.edge_action.trigger()
+        self.assertEqual(seen, [True])
+        self.skin.paint_edge(False)               # painted, no callback
+        self.assertEqual(seen, [True])
 
 
 class Cards(SeamsMixin, unittest.TestCase):
@@ -243,12 +378,59 @@ class Cards(SeamsMixin, unittest.TestCase):
         card.set_collapsed(True)
         self.assertEqual(self.calls, [])
 
-    def test_the_jump_strip_calls_back_with_the_key(self):
-        self.skin.add_jump("studio", "Studio", "bulb", "#c89be8")
-        button = self.skin.jumps["studio"]
-        self.assertEqual(button.toolTip(), "Studio")
+    def test_a_jump_calls_back_with_the_key(self):
+        self.skin.add_jump("retarget", "Retarget", "arrows-exchange", "#7fa9e6")
+        button = self.skin.jumps["retarget"]
+        self.assertEqual(button.toolTip(), "Retarget")
         button.click()
-        self.assertEqual(self.calls, [("jump", "studio")])
+        self.assertIn(("jump", "retarget"), self.calls)
+
+    def test_a_hint_goes_to_the_card_header_tooltip(self):
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        card.add_hint("Select the clip's skeleton")
+        card.add_hint("and the rig")
+        card.add_hint("   ")
+        self.assertEqual(card.header.toolTip(),
+                         "Select the clip's skeleton\nand the rig")
+
+    def test_a_card_carries_its_group_stripe(self):
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        self.assertEqual(card.frame.stripe, "#7fa9e6")
+        self.assertEqual((card.icon_name, card.colour),
+                         ("arrows-exchange", "#7fa9e6"))
+        self.assertEqual(card.status_controls, set())
+
+    def test_the_stripe_is_painted_inside_the_card(self):
+        from PySide6 import QtGui
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        frame = card.frame
+        #  a frame under a layout is sized by it when it is rendered (170 x 31
+        #  here), so the image is bigger than that and the sample is taken
+        #  mid-height, clear of the rounded corners
+        image = QtGui.QImage(200, 100, QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        frame.render(image)
+        middle = max(1, frame.height() // 2)
+        self.assertEqual(image.pixelColor(1, middle).name(), "#7fa9e6")
+        self.assertEqual(image.pixelColor(2, middle).name(), "#7fa9e6")
+        self.assertNotEqual(image.pixelColor(frame.width() // 2,
+                                             middle).name(), "#7fa9e6")
+        self.assertNotEqual(image.pixelColor(5, middle).name(), "#7fa9e6")
+        frame.stripe = None                       # no group colour, no bar
+        image.fill(0)
+        frame.render(image)
+        self.assertNotEqual(image.pixelColor(1, middle).name(), "#7fa9e6")
+
+    def test_compact_card_margins(self):
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        m = card.frame.layout().contentsMargins()
+        self.assertEqual((m.left(), m.top(), m.right(), m.bottom()),
+                         (5, 4, 5, 5))
+        self.assertEqual(card.body_layout.contentsMargins().top(), 4)
 
     def test_scroll_to_answers_the_card_s_offset(self):
         self.skin.add_card("a", "A", "user", "#f0a26b", "#4a3322")
@@ -396,8 +578,8 @@ class ActiveCard(SeamsMixin, unittest.TestCase):
 class HoverSound(SeamsMixin, unittest.TestCase):
     """2026-10-01: «я вожу мышкой по кнопочкам нашего меню и вот тут давай
     сделаем приятный и простой звук наводки» - every button of the hub
-    (QAbstractButton: Maya's buttons, checkboxes and segments, our strip and
-    header), its dropdowns and the card headers; nothing else."""
+    (QAbstractButton: Maya's buttons, checkboxes and segments, our jump
+    icons and header), its dropdowns and the card headers; nothing else."""
 
     def setUp(self):
         SeamsMixin.setUp(self)
@@ -423,8 +605,9 @@ class HoverSound(SeamsMixin, unittest.TestCase):
         return self.calls.count("hover")
 
     def test_every_kind_of_button_sounds_once(self):
+        self.skin.set_edge_mode(True)             # the pin is shown
         for widget in (self.button, self.segment, self.check, self.jump,
-                       self.skin.hotkeys, self.skin.version,
+                       self.skin.hotkeys, self.skin.pin,
                        self.skin.menu_button):
             self.assertEqual(self._enter(widget), 1, widget)
 
@@ -824,13 +1007,14 @@ class CardMotion(SeamsMixin, unittest.TestCase):
                 self.assertEqual(now[0], hint, fraction)
             self._at(1.0)
 
-    def test_the_gap_under_the_header_is_unchanged(self):
+    def test_the_gap_under_the_header_is_the_bodys_top_margin(self):
         """The column's spacing moved into the body's top margin, so it
-        opens and shuts with the body; where the content sits is the same."""
+        opens and shuts with the body; 4 since the compact skin
+        (2026-10-08, it was 6)."""
         header = self.card.header
         bottom = header.y() + header.height()
         top = self.child.mapTo(self.card.frame, QtCore.QPoint(0, 0)).y()
-        self.assertEqual(top - bottom, style.px(6, 1.0))
+        self.assertEqual(top - bottom, style.px(4, 1.0))
 
 
 class Rotated(unittest.TestCase):
@@ -1125,7 +1309,7 @@ class HoverGlow(SeamsMixin, unittest.TestCase):
     def test_what_glows_is_what_is_clickable(self):
         root = self.skin.root
         for widget in (self.button, self.segment, self.check, self.combo,
-                       self.jump, self.skin.hotkeys, self.skin.version,
+                       self.jump, self.skin.hotkeys, self.skin.pin,
                        self.skin.menu_button):
             self.assertTrue(hubqt.glowing(widget, root), widget)
         for widget in (self.label, self.field, self.card.body,
