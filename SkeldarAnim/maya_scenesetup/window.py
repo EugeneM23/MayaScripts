@@ -829,6 +829,26 @@ def remove_weapon():
     _status(text)
 
 
+def equip_current():
+    """Equip on the tab row (2026-10-08): the shown tab's Equip - the picked
+    weapon into the picked hand, or the picked armor piece onto the
+    character. Either way through its own section's `_run`, so a failure
+    lands on the card's one line."""
+    if remembered_tab() == "armor":
+        from maya_scenesetup import armorpanel
+        return armorpanel._run(armorpanel.equip_armor)
+    return _run(add_weapon)
+
+
+def unequip_current():
+    """Unequip on the tab row: the shown tab's Unequip (the picked hand's
+    weapon, or the picked armor piece)."""
+    if remembered_tab() == "armor":
+        from maya_scenesetup import armorpanel
+        return armorpanel._run(armorpanel.unequip_armor)
+    return _run(remove_weapon)
+
+
 # Connect Arms To Weapon, Disconnect Arms, Add Aim and Camera Setup left
 # this panel on 2026-09-07 with the move to the AdvancedSkeleton rig
 # (`maya_scenesetup.connect`, `aim` and `camera` stay as modules: the
@@ -923,6 +943,14 @@ def tab_changed(tab):
 
 
 def _tab_row(tab):
+    """`[Weapon | Armor] [Equip] [Unequip]` on ONE row (2026-10-08, variant B,
+    «сделаем его компактным»): the card's one Equip and one Unequip act on the
+    tab shown (`equip_current` / `unequip_current`), so the weapon tab and the
+    armor rows no longer carry a button row each. Equip is the card's primary
+    (the skin draws the sword, the classic hub spells the word); Unequip is an
+    icon in the skin, a word in the classic hub - the tooltips say it."""
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 3), (3, "left", 3)])
     segments = cmds.rowLayout(numberOfColumns=len(TABS),
                               columnAttach=[(i + 1, "both", 1)
                                             for i in range(len(TABS))])
@@ -930,11 +958,32 @@ def _tab_row(tab):
     cmds.iconTextRadioCollection(_INVENTORY_TABS)
     for each, label in TABS:
         hubstyle.mark(cmds.iconTextRadioButton(
-            tab_segment(each), style="textOnly", label=label, height=24,
+            tab_segment(each), style="textOnly", label=label,
+            height=hubstyle.height("segment", 24),
             select=each == tab,
             annotation=("The weapons: the two hands with their grips, the tiles"
                         if each == "weapon" else "The armor: the pieces' tiles"),
             onCommand=tab_changed(each)), "segment")
+    cmds.setParent("..")
+    hubstyle.mark(cmds.button(
+        label="Equip", height=hubstyle.height("button", 32),
+        width=hubstyle.pick(84, 80),
+        annotation="Put the weapon picked in the tiles into the picked hand, "
+                   "at the grip that hand's column shows, move any "
+                   "weapon-bone animation onto it and drive the bone from "
+                   "the weapon. Replaces what that hand held, animation "
+                   "preserved. Or drag the tile onto a hand card, onto a "
+                   "character's hand in a viewport, or onto the floor. "
+                   "On the Armor tab: put the picked piece on.",
+        command=lambda *_args: equip_current()), "primary", "sword")
+    hubstyle.mark(cmds.button(
+        label=hubstyle.pick("", "Unequip"),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 80),
+        annotation="Bake the picked hand's weapon-bone animation back from "
+                   "its weapon, then delete the weapon and its constraint. "
+                   "Deleting the sword by hand instead loses that animation. "
+                   "On the Armor tab: Take the picked piece off the character.",
+        command=lambda *_args: unequip_current()), "danger", "trash")
     cmds.setParent("..")
 
 
@@ -1198,8 +1247,13 @@ def build_weapons_panel():
     («переключаемся нажимая на название раздела Weapon или Armor»): a
     [Weapon | Armor] row, a column per tab, one shown (`show_tab`), the last
     one remembered.
+
+    2026-10-08 («сделаем его компактным», variant B): ONE Equip and ONE
+    Unequip stand on the tab row (`_tab_row`) and act on the shown tab, so
+    neither tab carries a button row; the rows sit 3 apart in the skin.
     """
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
 
     hubstyle.mark(cmds.text(_WEAPONS_BOUND, label="", align="left"),
@@ -1207,34 +1261,17 @@ def build_weapons_panel():
     tab = remembered_tab()
     _tab_row(tab)
 
-    cmds.columnLayout(_TAB_COLUMN["weapon"], adjustableColumn=True, rowSpacing=6,
+    cmds.columnLayout(_TAB_COLUMN["weapon"], adjustableColumn=True,
+                      rowSpacing=hubstyle.row_spacing(6),
                       manage=tab == "weapon")
     cmds.columnLayout(_INVENTORY, adjustableColumn=True)
     cmds.setParent("..")
     if not _attach_inventory():
         _weapon_fallback()
-
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "left", 4)])
-    hubstyle.mark(cmds.button(
-        label="Equip", height=32,
-        annotation="Put the weapon picked in the tiles into the picked hand, "
-                   "at the grip that hand's column shows, move any "
-                   "weapon-bone animation onto it and drive the bone from "
-                   "the weapon. Replaces what that hand held, animation "
-                   "preserved. Or drag the tile onto a hand card, onto a "
-                   "character's hand in a viewport, or onto the floor.",
-        command=lambda *_args: _run(add_weapon)), "primary", "sword")
-    hubstyle.mark(cmds.button(
-        label="Unequip", height=32, width=110,
-        annotation="Bake the picked hand's weapon-bone animation back from "
-                   "its weapon, then delete the weapon and its constraint. "
-                   "Deleting the sword by hand instead loses that animation.",
-        command=lambda *_args: _run(remove_weapon)), "danger", "trash")
-    cmds.setParent("..")
     cmds.setParent("..")                     # the Weapon tab
 
-    cmds.columnLayout(_TAB_COLUMN["armor"], adjustableColumn=True, rowSpacing=6,
+    cmds.columnLayout(_TAB_COLUMN["armor"], adjustableColumn=True,
+                      rowSpacing=hubstyle.row_spacing(6),
                       manage=tab == "armor")
     _armor_rows()
     cmds.setParent("..")                     # the Armor tab

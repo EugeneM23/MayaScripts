@@ -2,18 +2,23 @@
 
 Since 2026-10-01, the evening («объеденим вкладки weapon и армор в одну inventory. Пускай в ней
 будет два раздела weapon и армор ... Пусть все будет конссистентно»), not a card of its own: the
-rows (`build_rows` - the «Armor» heading, the tiles, Equip + Unequip) stand under the Weapon
-section of the Inventory card, write that card's one status line (`_STATUS`) and its subtitle
-(`_BOUND`), and `watch` hangs the pills' SelectionChanged job on that line. A tile also DRAGS onto a
-character in a viewport (`maya_armorgrid`, `equip_on`). Spec:
-docs/superpowers/specs/2026-10-01-inventory-card-design.md
+rows (`build_rows` - the tiles) stand in the Armor tab of the Inventory card, write that card's one
+status line (`_STATUS`) and its subtitle (`_BOUND`), and `watch` hangs the pills' SelectionChanged
+job on that line. A tile also DRAGS onto a character in a viewport (`maya_armorgrid`, `equip_on`).
+Spec: docs/superpowers/specs/2026-10-01-inventory-card-design.md
+
+Since 2026-10-08 (the compact hub, variant B) the Armor tab is the tiles alone: Equip and Unequip
+stand ONCE on the card's tab row and act on the shown tab (`window.equip_current` /
+`unequip_current` run this module's `equip_armor` / `unequip_armor` through `_run`), and `_status`
+tells the hub's one message line what it wrote.
 
 2026-10-01, the animator: «не будем добавлять его в панель с оружием а сделаем для него отдельную
 панель Armor в которой пока будет только техно лимб но позже мы добавим еще разные варианты одежды
 и брони ... просто будем выделять предмет нажимать кнопочку equip и он будет добавляться к нашему
 персонажу в заранее указанное место». The card: the character it acts on (the subtitle, as the
 Characters and Weapons cards write it), the tiles (`maya_armorgrid`, laid over the `_TILES`
-placeholder; without Qt a dropdown of the rows), Equip and Unequip in one row, the line. Equip puts
+placeholder; without Qt a dropdown of the rows), Equip and Unequip (one row in the first build, the
+Inventory's tab row since 2026-10-08), the line. Equip puts
 the picked row on the current character through `armor.equip` -- its bone's armor space, at
 identity, where the game puts it; Unequip takes it off.
 
@@ -71,10 +76,13 @@ def chosen_armor():
 # ------------------------------------------------------------------- scene
 
 def _status(message):
+    """The card's one line, and the hub's message line too (2026-10-08: the
+    skin hides the card's own line and shows what `hubstyle.tell` carries)."""
     try:
         cmds.text(_STATUS, edit=True, label=message)
     except RuntimeError:
         pass                               # the card is not built
+    hubstyle.tell(_STATUS, message)
 
 
 def say(text):
@@ -234,28 +242,15 @@ def _dropdown():
 
 def build_rows():
     """The Armor tab's rows, into whatever layout is current - the Inventory
-    card's Armor column: the tiles (a dropdown where they cannot stand),
-    Equip / Unequip. The tab's segment names it; the card builds the status
-    line after them; then `watch`."""
+    card's Armor column: the tiles (a dropdown where they cannot stand) and
+    nothing else. Equip / Unequip stand on the card's tab row since
+    2026-10-08 (`window.equip_current` / `unequip_current` call this tab's
+    `equip_armor` / `unequip_armor`). The tab's segment names it; the card
+    builds the status line after them; then `watch`."""
     cmds.columnLayout(_TILES, adjustableColumn=True)
     cmds.setParent("..")
     if not _attach_tiles():
         _dropdown()
-
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "left", 4)])
-    hubstyle.mark(cmds.button(
-        label="Equip", height=32,
-        annotation="Put the picked piece on the character, in its place: the bone it rides "
-                   "(the Tech Limb: lowerarm_l, where Atone puts it), outside the skeleton, so "
-                   "an export stays bones only. Replaces what that slot held. Or drag the tile "
-                   "onto a character in a viewport.",
-        command=lambda *_args: _run(equip_armor)), "primary", "shield")
-    hubstyle.mark(cmds.button(
-        label="Unequip", height=32, width=110,
-        annotation="Take the picked piece off the character",
-        command=lambda *_args: _run(unequip_armor)), "danger", "trash")
-    cmds.setParent("..")
 
 
 def show():

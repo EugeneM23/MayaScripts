@@ -264,8 +264,9 @@ class SceneSetup(unittest.TestCase):
                      "iconTextRadioCollection"):
             self.assertFalse([c for c in calls if c[0] == kind], kind)
         labels = [c[2].get("label") for c in calls if c[0] == "button"]
-        #  2026-10-01: Equip / Unequip in both sections of the Inventory card
-        self.assertEqual(labels, ["Equip", "Unequip", "Equip", "Unequip"])
+        #  2026-10-01: Equip / Unequip in both sections of the Inventory card;
+        #  2026-10-08: ONE pair on the tab row, acting on the shown tab
+        self.assertEqual(labels, ["Equip", "Unequip"])
 
     def test_the_weapons_subtitle_names_the_character(self):
         self.assertEqual(self._marks()[scenesetup._WEAPONS_BOUND].role,
@@ -328,16 +329,15 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(roles["Import Animation"], ("primary", "download"))
         self.assertNotIn("Add Character", roles)
         self.assertEqual(roles["Camera"], ("secondary", "camera"))
-        #  the Inventory card: Equip (orange) + Unequip in each section
+        #  the Inventory card: Equip (orange) + Unequip, ONE pair on the tab
+        #  row since 2026-10-08 (they act on the shown tab)
         inventory = [(label, role, icon) for label, role, icon, _i in self._buttons()
                      if label in ("Equip", "Unequip")]
         self.assertEqual(inventory, [("Equip", "primary", "sword"),
-                                     ("Unequip", "danger", "trash"),
-                                     ("Equip", "primary", "shield"),
                                      ("Unequip", "danger", "trash")])
         primaries = [label for label, role, _icon, _i in self._buttons()
                      if role == "primary"]
-        self.assertEqual(primaries, ["+ Import", "Import Animation", "Equip", "Equip"])
+        self.assertEqual(primaries, ["+ Import", "Import Animation", "Equip"])
 
     def test_the_bridge_rows_follow_the_portraits_and_the_card_has_one_line(self):
         """2026-10-01 («UE bridge и character ... объеденить в одно окно»):
@@ -413,15 +413,158 @@ class SceneSetup(unittest.TestCase):
                             for t in texts))
         self.assertIn(scenesetup._CHARACTER_STATUS, fake.children)
 
-    def test_equip_and_unequip_share_a_row(self):
-        found = [i for label, _r, _ic, i in self._buttons() if label in ("Equip", "Unequip")]
-        add, remove = found[0], found[1]
-        rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"]
-        row = max(i for i in rows if i < add)
-        self.assertLess(row, remove)
-        between = [c for c in self.fake.calls[add:remove]
-                   if c[0] == "setParent"]
-        self.assertEqual(between, [])
+    def test_equip_and_unequip_stand_on_the_tab_row(self):
+        """2026-10-08 (variant B): the row holding the [Weapon | Armor]
+        segments has THREE columns - the segments (the adjustable one), Equip,
+        Unequip - and those are the card's only buttons: the weapon tab and the
+        armor rows lost the pair they each had."""
+        calls = self._weapons_calls()
+        rows = [(i, c) for i, c in enumerate(calls)
+                if c[0] == "rowLayout" and not c[2].get("edit")]
+        tab_at, tab = rows[0]
+        segments_at, segments = rows[1]
+        self.assertEqual(tab[2]["numberOfColumns"], 3)
+        self.assertEqual(tab[2]["adjustableColumn"], 1)
+        self.assertEqual(segments[2]["numberOfColumns"], len(scenesetup.TABS))
+        buttons = [i for i, c in enumerate(calls)
+                   if c[0] == "button" and not c[2].get("edit")]
+        self.assertEqual([calls[i][2]["label"] for i in buttons], ["Equip", "Unequip"])
+        radios = [i for i, c in enumerate(calls)
+                  if c[0] == "iconTextRadioButton" and c[1]
+                  and c[1][0].startswith(scenesetup._INVENTORY_TABS)]
+        self.assertLess(tab_at, segments_at)
+        self.assertLess(segments_at, radios[0])
+        self.assertLess(radios[-1], buttons[0])
+        #  the tab row is still open at both buttons: only the segments' own
+        #  row closed between its creation and Unequip ...
+        self.assertEqual(len([c for c in calls[tab_at:buttons[1]]
+                              if c[0] == "setParent"]), 1)
+        #  ... and the very next call closes the tab row, ahead of the tab columns
+        self.assertEqual(calls[buttons[1] + 1][0], "setParent")
+        column = [i for i, c in enumerate(calls) if c[0] == "columnLayout"
+                  and c[1] == (scenesetup._TAB_COLUMN["weapon"],)][0]
+        self.assertLess(buttons[1] + 1, column)
+        roles = self._button_roles()
+        self.assertEqual(roles["Equip"], ("primary", "sword"))
+        self.assertEqual(roles["Unequip"], ("danger", "trash"))
+
+    def _inventory_build(self, skin):
+        """The Inventory card built once more, with the skin's arrangement or
+        the classic hub's: (the fake, its marks)."""
+        fake = FakeUiCmds()
+        scenesetup.cmds = fake
+        armorpanel.cmds = fake
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(skin)
+        try:
+            scenesetup.build_weapons_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        return fake, maya_hubstyle.take_marks()
+
+    def test_the_tab_row_is_compact_in_the_skin_and_words_in_the_classic_hub(self):
+        fake, _marks = self._inventory_build(True)
+        buttons = [c[2] for c in fake.calls if c[0] == "button" and not c[2].get("edit")]
+        self.assertEqual([(b["label"], b["width"], b["height"]) for b in buttons],
+                         [("Equip", 84, 24), ("", 26, 24)])
+        tabs = [c[2]["height"] for c in fake.calls if c[0] == "iconTextRadioButton"
+                and c[1][0].startswith(scenesetup._INVENTORY_TABS)]
+        self.assertEqual(tabs, [22, 22])
+        spacing = [c[2]["rowSpacing"] for c in fake.calls
+                   if c[0] == "columnLayout" and "rowSpacing" in c[2]]
+        self.assertEqual(spacing, [3, 3, 3])
+        fake, _marks = self._inventory_build(False)
+        buttons = [c[2] for c in fake.calls if c[0] == "button" and not c[2].get("edit")]
+        self.assertEqual([(b["label"], b["width"], b["height"]) for b in buttons],
+                         [("Equip", 80, 32), ("Unequip", 80, 32)])
+        tabs = [c[2]["height"] for c in fake.calls if c[0] == "iconTextRadioButton"
+                and c[1][0].startswith(scenesetup._INVENTORY_TABS)]
+        self.assertEqual(tabs, [24, 24])
+        spacing = [c[2]["rowSpacing"] for c in fake.calls
+                   if c[0] == "columnLayout" and "rowSpacing" in c[2]]
+        self.assertEqual(spacing, [6, 6, 6])
+
+    def test_the_buttons_keep_the_weapon_tooltips_and_say_what_the_armor_tab_does(self):
+        buttons = dict((c[2]["label"], c[2]["annotation"]) for c in self.fake.calls
+                       if c[0] == "button" and c[2].get("label") in ("Equip", "Unequip"))
+        self.assertIn("Put the weapon picked in the tiles into the picked hand",
+                      buttons["Equip"])
+        self.assertTrue(buttons["Equip"].endswith(
+            " On the Armor tab: put the picked piece on."))
+        self.assertIn("Bake the picked hand's weapon-bone animation back",
+                      buttons["Unequip"])
+        self.assertTrue(buttons["Unequip"].endswith(
+            " On the Armor tab: Take the picked piece off the character."))
+
+    def test_the_buttons_press_equip_current_and_unequip_current(self):
+        pressed = []
+        saved = (scenesetup.equip_current, scenesetup.unequip_current)
+        try:
+            scenesetup.equip_current = lambda: pressed.append("equip")
+            scenesetup.unequip_current = lambda: pressed.append("unequip")
+            for label in ("Equip", "Unequip"):
+                call = [c for c in self.fake.calls if c[0] == "button"
+                        and c[2].get("label") == label and not c[2].get("edit")][0]
+                call[2]["command"]()
+        finally:
+            scenesetup.equip_current, scenesetup.unequip_current = saved
+        self.assertEqual(pressed, ["equip", "unequip"])
+
+    def test_equip_current_follows_the_tab(self):
+        calls = []
+        saved = (scenesetup.add_weapon, scenesetup.remove_weapon,
+                 armorpanel.equip_armor, armorpanel.unequip_armor,
+                 scenesetup.remembered_tab)
+        try:
+            scenesetup.add_weapon = lambda: calls.append("add_weapon")
+            scenesetup.remove_weapon = lambda: calls.append("remove_weapon")
+            armorpanel.equip_armor = lambda: calls.append("equip_armor")
+            armorpanel.unequip_armor = lambda: calls.append("unequip_armor")
+            scenesetup.remembered_tab = lambda: "armor"
+            scenesetup.equip_current()
+            scenesetup.unequip_current()
+            scenesetup.remembered_tab = lambda: "weapon"
+            scenesetup.equip_current()
+            scenesetup.unequip_current()
+        finally:
+            (scenesetup.add_weapon, scenesetup.remove_weapon,
+             armorpanel.equip_armor, armorpanel.unequip_armor,
+             scenesetup.remembered_tab) = saved
+        self.assertEqual(calls, ["equip_armor", "unequip_armor",
+                                 "add_weapon", "remove_weapon"])
+
+    def test_the_remembered_tab_decides_which_equip_runs(self):
+        calls = []
+        saved = (scenesetup.add_weapon, armorpanel.equip_armor)
+        try:
+            scenesetup.add_weapon = lambda: calls.append("add_weapon")
+            armorpanel.equip_armor = lambda: calls.append("equip_armor")
+            scenesetup.equip_current()                  # nothing remembered: Weapon
+            self.fake.optionvars[scenesetup._TAB_OPTIONVAR] = "armor"
+            scenesetup.equip_current()
+            self.fake.optionvars[scenesetup._TAB_OPTIONVAR] = "nonsense"
+            scenesetup.equip_current()
+        finally:
+            scenesetup.add_weapon, armorpanel.equip_armor = saved
+        self.assertEqual(calls, ["add_weapon", "equip_armor", "add_weapon"])
+
+    def test_a_failing_equip_lands_on_the_card_s_line_on_either_tab(self):
+        def boom():
+            raise RuntimeError("boom")
+        saved = (scenesetup.add_weapon, armorpanel.equip_armor)
+        try:
+            scenesetup.add_weapon = boom
+            armorpanel.equip_armor = boom
+            for tab in ("weapon", "armor"):
+                self.fake.optionvars[scenesetup._TAB_OPTIONVAR] = tab
+                with self.assertRaises(RuntimeError):
+                    scenesetup.equip_current()
+                lines = [c[2].get("label") for c in self.fake.calls
+                         if c[0] == "text" and c[1] == (scenesetup._STATUS,)
+                         and c[2].get("edit")]
+                self.assertEqual(lines[-1], "RuntimeError: boom", tab)
+        finally:
+            scenesetup.add_weapon, armorpanel.equip_armor = saved
 
     def test_characters_has_delete_beside_add_character(self):
         """2026-10-01: «кнопку удаления» - a danger button in the + Import
@@ -599,7 +742,8 @@ class SceneSetup(unittest.TestCase):
 
 class Armor(unittest.TestCase):
     """The Armor section (2026-10-01): its rows in the Inventory card - the
-    heading, the tiles, Equip / Unequip - writing the card's one line."""
+    tiles (Equip / Unequip stand on the card's tab row since 2026-10-08) -
+    writing the card's one line."""
 
     def setUp(self):
         self.saved = (armorpanel.cmds, armorpanel._attach_tiles, armorpanel.refresh,
@@ -652,12 +796,34 @@ class Armor(unittest.TestCase):
         items = [c[2].get("label") for c in fake.calls if c[0] == "menuItem"]
         self.assertEqual(items, catalog.armor_labels())
 
-    def test_equip_is_the_primary_and_unequip_the_danger(self):
-        labels = [b.get("label") for b in self._buttons()]
-        self.assertEqual(labels, ["Equip", "Unequip"])
-        roles = sorted((m.role, m.icon) for m in self.marks.values()
-                       if m.role in ("primary", "danger"))
-        self.assertEqual(roles, [("danger", "trash"), ("primary", "shield")])
+    def test_the_rows_build_only_the_tiles_no_button(self):
+        """2026-10-08: Equip / Unequip stand on the Inventory card's tab row
+        (`window.equip_current` / `unequip_current` dispatch to this tab's
+        `equip_armor` / `unequip_armor`); the Armor tab is the tiles alone."""
+        self.assertEqual(self._buttons(), [])
+        self.assertFalse([c for c in self.fake.calls if c[0] == "rowLayout"])
+        self.assertFalse([m for m in self.marks.values()
+                          if m.role in ("primary", "danger", "secondary")])
+        self.assertEqual(self.tiles, [True])
+
+    def test_the_line_is_told_to_the_hub(self):
+        """2026-10-08: the status writer tells the hub's one message line too,
+        the presses' and the tiles' Open scene alike."""
+        heard = []
+
+        def listener(control, text, viewport=False):
+            heard.append((control, text))
+        maya_hubstyle.listen(listener)
+        try:
+            armorpanel._status("worn")
+            armorpanel.say("opened")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [(armorpanel._STATUS, "worn"),
+                                 (armorpanel._STATUS, "opened")])
+        lines = [c[2].get("label") for c in self.fake.calls
+                 if c[0] == "text" and c[1] == (armorpanel._STATUS,) and c[2].get("edit")]
+        self.assertEqual(lines, ["worn", "opened"])
 
     def test_watch_hangs_one_job_on_the_card_s_line_that_writes_no_line(self):
         armorpanel.watch()
