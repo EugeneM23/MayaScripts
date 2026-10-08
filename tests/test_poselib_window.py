@@ -1491,6 +1491,37 @@ class SaveAnimation(AnimCase):
         self.assertIsNone(self.scene.calls("save")[0][5])
         self.assertEqual(self.win.picked, self.root + "/Pose.pose")
 
+    def test_a_card_the_type_filter_would_hide_shows_all(self):
+        """The final review (S11): an animation saved while the type filter shows Poses landed
+        out of sight - a save that seemed to do nothing. The filter switches to All."""
+        self.win.type_filter.setCurrentIndex(1)                     # Poses
+        self.open()
+        self.win.save_types["anim"].click()
+        self.win.save_confirm.click()
+        path = self.root + "/Anim.anim"
+        self.assertIn(path, self.win.cards_shown())
+        self.assertEqual(self.win.type_filter.currentData(), "all")
+        self.assertEqual(self.scene.options[pw.TYPE_VAR], "all")
+        self.assertTrue(self.win.status.text().endswith(pw.SHOWN_ALL))
+        # one the filter shows anyway: the filter left alone, nothing said
+        self.win.type_filter.setCurrentIndex(2)                     # Animations
+        self.open()
+        self.win.save_types["anim"].click()
+        self.win.save_confirm.click()
+        self.assertEqual(self.win.type_filter.currentData(), "anim")
+        self.assertEqual(self.win.status.text(), "saved Anim 2")
+
+    def test_a_card_the_search_hides_is_said(self):
+        self.win.search.setText("zzz")
+        self.open()
+        self.win.save_confirm.click()
+        path = self.root + "/Pose.pose"
+        self.assertTrue(os.path.isdir(path))
+        self.assertNotIn(path, self.win.cards_shown())
+        self.assertEqual(self.win.search.text(), "zzz")              # the animator's: kept
+        self.assertTrue(self.win.status.text().endswith(pw.HIDDEN_BY_SEARCH))
+        self.assertEqual(self.win.picked, path)
+
 
 class AnimOptions(AnimCase):
 

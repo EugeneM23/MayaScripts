@@ -159,6 +159,8 @@ EMPTY_LIBRARY = "Nothing saved yet - select a character and press Save"
 EMPTY_SEARCH = "No card matches"
 NO_RANGE = "End is before Start - no frame to save"
 NAME_TAKEN = "%s is taken in %s - type another name, or pick another folder"
+SHOWN_ALL = "the type filter shows All, so the new card can be seen"
+HIDDEN_BY_SEARCH = "the new card is hidden by the search - clear it to see the card"
 PREVIEW_CANCELLED = "cancelled - nothing changed"
 PREVIEW_KEPT = "the preview kept: %s"
 NO_PREVIEW = "saved without a preview: %s"
@@ -2309,8 +2311,25 @@ def _classes():
                 return self.say(text)
             self.close_save()
             self.refresh()
-            self.pick(path.replace("\\", "/").rstrip("/"))
+            path = path.replace("\\", "/").rstrip("/")
+            text = self._show_saved(path, text)
+            self.pick(path)
             return self.say(text)
+
+        def _show_saved(self, path, text):
+            """The card just saved made visible: a type filter that would hide it is switched
+            to All; one the SEARCH hides is said - the animator typed it (the final review,
+            S11: a new card hidden by either looked like a save that did nothing). The line."""
+            if path in self.cards_shown():
+                return text
+            card = self._card(path)
+            if card is not None and self.type_filter.currentData() not in ("all", card.type):
+                self.type_filter.setCurrentIndex(0)                   # All (remembered)
+                if path in self.cards_shown():
+                    return text + " | " + SHOWN_ALL
+            if path not in self.cards_shown():
+                return text + " | " + HIDDEN_BY_SEARCH
+            return text
 
         def close_save(self):
             """Cancel (or after a save): the details back, the snapshot file gone."""
