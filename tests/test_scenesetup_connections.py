@@ -618,6 +618,20 @@ class PanelCompact(unittest.TestCase):
                    and c[1] == (cx.CHOOSER_ROW,)][0]
         self.assertEqual(chooser["columnWidth2"], (48, 110))
 
+    def test_the_arms_share_their_row_about_equally_in_the_skin(self):
+        """Live (2026-10-08, verify_hub_compact W8): Maya's rowLayout has
+        one adjustable column, so Arm R's [FK | IK] took the row (299 px)
+        and Arm L's stood at its texts' 49 px - the mockup shows two equal
+        halves. Arm L's column is given half the row at the animator's dock
+        (360 logical); the classic hub, its segments in their own track,
+        keeps its row as it was."""
+        for skin, wanted in ((True, [(4, cx.ARM_L_WIDTH)]), (False, None)):
+            fake, _marks = self._build(skin)
+            row = [c[2] for c in fake.calls if c[0] == "rowLayout"
+                   and c[2].get("numberOfColumns") == 4][0]
+            self.assertEqual(row.get("columnWidth"), wanted, skin)
+        self.assertEqual(cx.ARM_L_WIDTH, 128)
+
     def test_the_classic_hub_keeps_its_numbers(self):
         fake, _marks = self._build(False)
         self.assertEqual(fake.column["rowSpacing"], 6)

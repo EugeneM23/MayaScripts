@@ -141,6 +141,11 @@ IK_CONTROL = "IKArm_{0}"
 # the FK / IK rows (2026-09-30): two check boxes a row, either press switches
 FKIK_BOX = "skeldarConnectionsFKIK_{0}_{1}"
 ARM_ROW = "Arm_{0}"
+#  The skin's Arm L column, logical px (2026-10-08): about half the row at the
+#  animator's 360 px dock. Maya's rowLayout has ONE adjustable column, so Arm
+#  R's [FK | IK] took the row and Arm L's stood at its texts' width (live:
+#  299 px against 49); the mockup shows two equal halves.
+ARM_L_WIDTH = 128
 CHANNELS =("translateX", "translateY", "translateZ",
             "rotateX", "rotateY", "rotateZ")
 
@@ -1279,9 +1284,13 @@ def build_panel():
     #  not fire on the lit segment (a range inside a take of that mode), and
     #  a mixed take lights neither. A press switches at once. Both arms on
     #  one row, Arm R [FK|IK]  Arm L [FK|IK] (2026-10-08).
+    #  the skin's segments leave their tracks for a row of ours, so Arm L's
+    #  track is as wide as its column is given: about half (ARM_L_WIDTH);
+    #  the classic hub's track holds its buttons and sizes itself
     cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
                    columnAttach=[(1, "left", 0), (2, "both", 3),
-                                 (3, "left", 6), (4, "both", 3)])
+                                 (3, "left", 6), (4, "both", 3)],
+                   **hubstyle.pick({"columnWidth": [(4, ARM_L_WIDTH)]}, {}))
     for side in SIDES[::-1]:
         cmds.text(label=ARM_ROW.format(side).replace("_", " "),
                   font="boldLabelFont")

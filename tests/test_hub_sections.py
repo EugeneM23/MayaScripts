@@ -1030,26 +1030,69 @@ class UeBridge(unittest.TestCase):
                and c[2].get("label") == "FBX..."][0]
         self.assertTrue(fbx[2]["annotation"].startswith("Export FBX... - "))
 
-    def test_the_import_row_is_one_row_of_five(self):
+    def _skin_build(self):
+        fake = FakeUiCmds()
+        uebridge.cmds = fake
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(True)
+        try:
+            uebridge.build_rows()
+        finally:
+            maya_hubstyle.set_skinning(False)
+            maya_hubstyle.take_marks()
+        return fake
+
+    @staticmethod
+    def _order(calls):
+        return [c[1][0] if c[1] else c[2].get("label") for c in calls
+                if (c[0] in ("iconTextRadioButton", "checkBox", "button")
+                    and not (c[2].get("edit") or c[2].get("exists")
+                             or c[2].get("query")))]
+
+    def test_the_import_row_is_one_row_of_five_in_the_skin(self):
         """2026-10-08, variant B: [Onto sel. | New] [timeline] [Import]
         [FBX] [uasset] on one row - the exports no longer take a row of their
         own."""
-        rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"
+        fake = self._skin_build()
+        rows = [i for i, c in enumerate(fake.calls) if c[0] == "rowLayout"
                 and c[2].get("numberOfColumns") == 5]
         self.assertEqual(len(rows), 1)
-        inside = self.fake.calls[rows[0]:]
-        order = [c[1][0] if c[1] else c[2].get("label") for c in inside
-                 if (c[0] in ("iconTextRadioButton", "checkBox", "button")
-                     and not (c[2].get("edit") or c[2].get("exists")
-                              or c[2].get("query")))]
-        self.assertEqual(order, [uebridge.target_button("onto"),
-                                 uebridge.target_button("new"),
-                                 uebridge._TIMELINE, "Import Animation",
-                                 "FBX...", uebridge._UASSET])
+        inside = fake.calls[rows[0]:]
+        self.assertEqual(self._order(inside),
+                         [uebridge.target_button("onto"),
+                          uebridge.target_button("new"),
+                          uebridge._TIMELINE, "Import", "", uebridge._UASSET])
         #  the five columns close once for the segments' own row and once for
         #  the row, then the Connect block
         self.assertEqual(len([c for c in inside if c[0] == "setParent"]), 3)
-        self.assertEqual(self.fake.calls[rows[0]][2]["adjustableColumn"], 3)
+        self.assertEqual(fake.calls[rows[0]][2]["adjustableColumn"], 3)
+
+    def test_the_classic_import_row_is_two_rows(self):
+        """Live (2026-10-08, verify_hub_compact C1): the classic hub's words
+        on one row of five asked 544 px - wider than the animator's dock
+        (510), so the classic hub scrolled sideways. There the segments and
+        «timeline» stand over Import Animation and the two exports."""
+        self.assertFalse([c for c in self.fake.calls if c[0] == "rowLayout"
+                          and c[2].get("numberOfColumns") == 5])
+        first = [i for i, c in enumerate(self.fake.calls)
+                 if c[0] == "iconTextRadioButton"
+                 and c[1][0] == uebridge.target_button("onto")][0]
+        #  the row holding the segments' track and «timeline»
+        rows = [i for i, c in enumerate(self.fake.calls[:first])
+                if c[0] == "rowLayout" and c[2].get("numberOfColumns") == 2
+                and c[2].get("adjustableColumn") == 1]
+        self.assertTrue(rows)
+        top = rows[-1]
+        threes = [i for i, c in enumerate(self.fake.calls)
+                  if c[0] == "rowLayout" and c[2].get("numberOfColumns") == 3
+                  and i > first]
+        self.assertEqual(len(threes), 1)
+        self.assertEqual(self._order(self.fake.calls[threes[0]:]),
+                         ["Import Animation", "FBX...", uebridge._UASSET])
+        self.assertEqual(self.fake.calls[threes[0]][2]["adjustableColumn"], 1)
+        self.assertEqual(self._order(self.fake.calls[top:threes[0]]),
+                         [uebridge.target_button("onto"),
+                          uebridge.target_button("new"), uebridge._TIMELINE])
 
     def test_the_timeline_box_is_a_clock_chip(self):
         """The skin draws the checkbox as a pill with a clock; the classic
@@ -1299,8 +1342,10 @@ class CenterOfMassCompact(unittest.TestCase):
         buttons = [c[2] for c in inside(fake, first[0][0]) if c[0] == "button"]
         self.assertEqual([b["label"] for b in buttons],
                          ["Add CoM", "", "", "Select"])
+        #  Select: its icon and its word need 60 logical at 150 % (live,
+        #  2026-10-08: 56 clipped the word, verify_hub_compact gate 1d)
         self.assertEqual([b.get("width") for b in buttons],
-                         [None, 26, 26, 56])
+                         [None, 26, 26, 64])
         self.assertEqual({b["height"] for b in buttons}, {24})
         second = made(fake, "rowLayout", numberOfColumns=4, adjustableColumn=3)
         self.assertEqual(len(second), 1)
@@ -1323,8 +1368,10 @@ class CenterOfMassCompact(unittest.TestCase):
         buttons = [c[2] for c in inside(fake, first[0][0]) if c[0] == "button"]
         self.assertEqual([b["label"] for b in buttons],
                          ["Add CoM", "Rebuild", "Remove", "Select CoM"])
+        #  narrower than the first build's 80, 72, 90: the row asked 496 px,
+        #  its card wider than the animator's dock (live, 2026-10-08)
         self.assertEqual([b.get("width") for b in buttons],
-                         [None, 80, 72, 90])
+                         [None, 64, 60, 72])
         self.assertEqual([b["height"] for b in buttons], [32, 32, 32, 28])
         second = made(fake, "rowLayout", numberOfColumns=5, adjustableColumn=3)
         self.assertEqual(len(second), 1)

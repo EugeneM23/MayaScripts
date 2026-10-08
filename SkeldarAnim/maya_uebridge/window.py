@@ -1151,7 +1151,9 @@ def build_rows():
     animations (`search_hint`); the list shows ten rows by default and a grip
     under it moves that (`hubstyle.grip`); and ONE row holds [Onto sel. |
     New] [timeline] [Import] [FBX] [uasset] - the timeline box a clock chip,
-    the FBX export an icon in the skin.
+    the FBX export an icon in the skin. The classic hub's words do not fit
+    the animator's dock on one row (measured live the same day): there it is
+    two, the segments and «timeline» over Import Animation and the exports.
     """
     #  2026-10-02: ONE block set into the card - its own background, a
     #  hairline round it, padded («раздел с подключением ... визуально как-то
@@ -1248,10 +1250,18 @@ def build_rows():
     hubstyle.grip(cmds.separator(_LIST_GRIP, height=8, style="none"), _LIST)
 
     #  [Onto sel. | New] [clock] [Import] [FBX] [uasset] - one row (variant B)
-    cmds.rowLayout(numberOfColumns=5, adjustableColumn=3,
-                   columnAttach=[(1, "left", 0), (2, "left", 3),
-                                 (3, "both", 3), (4, "left", 3),
-                                 (5, "left", 3)])
+    #  in the skin. The classic hub's words on that row asked 544 px, wider
+    #  than the animator's dock (510; live, 2026-10-08): there the segments
+    #  and «timeline» stand over Import Animation and the two exports.
+    skin = hubstyle.skinning()
+    if skin:
+        cmds.rowLayout(numberOfColumns=5, adjustableColumn=3,
+                       columnAttach=[(1, "left", 0), (2, "left", 3),
+                                     (3, "both", 3), (4, "left", 3),
+                                     (5, "left", 3)])
+    else:
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
+                       columnAttach=[(1, "both", 0), (2, "left", 6)])
     segments = cmds.rowLayout(numberOfColumns=len(TARGETS),
                               columnAttach=[(i + 1, "both", 1)
                                             for i in range(len(TARGETS))])
@@ -1268,6 +1278,11 @@ def build_rows():
     hubstyle.mark(cmds.checkBox(
         _TIMELINE, label=hubstyle.pick("", "timeline"), value=True,
         annotation="set the timeline to the clip's range"), "chip", "clock")
+    if not skin:
+        cmds.setParent("..")
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
+                       columnAttach=[(1, "both", 0), (2, "left", 3),
+                                     (3, "left", 3)])
     hubstyle.mark(cmds.button(
         label=hubstyle.pick("Import", "Import Animation"),
         height=hubstyle.height("button", 32),

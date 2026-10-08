@@ -207,18 +207,22 @@ def build_panel():
         command=lambda *_: _run(add)), "primary", "target")
     hubstyle.mark(cmds.button(
         label=hubstyle.pick("", "Rebuild"),
-        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 80),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 64),
         annotation="Rebuild: weigh the body again (after the mesh or the "
                    "skin changed)",
         command=lambda *_: _run(rebuild)), "secondary", "refresh")
     hubstyle.mark(cmds.button(
         label=hubstyle.pick("", "Remove"),
-        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 72),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 60),
         annotation="Remove the character's CoM, its trail and floor shadow",
         command=lambda *_: _run(remove)), "danger", "trash")
     hubstyle.mark(cmds.button(
         label=hubstyle.pick("Select", "Select CoM"),
-        height=hubstyle.height("button", 28), width=hubstyle.pick(56, 90),
+        #  64: its icon and its word need 60 logical at 150 % (live,
+        #  2026-10-08: 56 clipped the word). The classic widths of this row
+        #  (64, 60, 72; were 80, 72, 90) keep it inside the animator's dock:
+        #  the row asked 496 px, its card 532 against the dock's 510
+        height=hubstyle.height("button", 28), width=hubstyle.pick(64, 72),
         annotation="Select the CoM handle: the CoM tool comes on - drag it, "
                    "Shift on the floor, Ctrl up and down; the body follows",
         command=lambda *_: _run(select_com)), "secondary", "target")
