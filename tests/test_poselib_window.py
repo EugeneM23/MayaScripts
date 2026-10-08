@@ -335,6 +335,28 @@ class Workspace(unittest.TestCase):
         buttons = [c for c in self.cmds.calls if c[0] == "button"]
         self.assertEqual(buttons[0][2]["label"], "Open Pose Library")
 
+    def _built(self, skin):
+        hubstyle.set_skinning(skin)
+        try:
+            pw.build_panel()
+        finally:
+            hubstyle.set_skinning(False)
+        return [c[2] for c in self.cmds.calls if c[0] == "button"][0]
+
+    def test_the_skin_is_tight(self):
+        """2026-10-08, the compact hub: the gap 3, the button 24 - the note
+        stays a `note` mark (the skin makes it the header's tooltip)."""
+        button = self._built(True)
+        self.assertEqual(self.cmds.column["rowSpacing"], 3)
+        self.assertEqual(button["height"], 24)
+        self.assertEqual([m.role for m in hubstyle.take_marks()],
+                         ["note", "primary"])
+
+    def test_the_classic_hub_keeps_its_numbers(self):
+        button = self._built(False)
+        self.assertEqual(self.cmds.column["rowSpacing"], 6)
+        self.assertEqual(button["height"], 34)
+
 
 # ------------------------------------------------------------------ the window
 

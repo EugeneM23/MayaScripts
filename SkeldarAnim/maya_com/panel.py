@@ -38,8 +38,12 @@ def line_for(label, group_info):
 # ------------------------------------------------------------------ scene
 
 def status(message):
+    """The card's status line - and the hub's one message line too
+    (2026-10-08, `hubstyle.tell`; this writer shows nothing in the viewport,
+    so the edge panel may)."""
     if cmds.text(STATUS, exists=True):
         cmds.text(STATUS, edit=True, label=message)
+        hubstyle.tell(STATUS, message, viewport=False)
     return message
 
 
@@ -184,28 +188,48 @@ def refresh(*_):
 
 
 def build_panel():
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    """Two rows (2026-10-08, the compact hub): Add CoM, Rebuild, Remove and
+    Select CoM; then the Trail and Floor chips, the range segments and the
+    frames field. The skin shows the two small buttons and the field as icons
+    and a bare number (their tooltips say what they are); the classic hub
+    keeps the words and the "frames" label."""
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)])
+    cmds.rowLayout(numberOfColumns=4, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 4),
+                                 (3, "both", 4), (4, "both", 4)])
     hubstyle.mark(cmds.button(
-        label="Add CoM", height=32,
+        label="Add CoM", height=hubstyle.height("button", 32),
         annotation="Weigh the body from its mesh and skin and add its centre "
                    "of mass: a live point, its trail and its floor shadow",
         command=lambda *_: _run(add)), "primary", "target")
     hubstyle.mark(cmds.button(
-        label="Rebuild", height=32, width=hubstyle.pick(92, 80),
-        annotation="Weigh the body again (after the mesh or the skin changed)",
+        label=hubstyle.pick("", "Rebuild"),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 80),
+        annotation="Rebuild: weigh the body again (after the mesh or the "
+                   "skin changed)",
         command=lambda *_: _run(rebuild)), "secondary", "refresh")
     hubstyle.mark(cmds.button(
-        label=hubstyle.pick("", "Remove"), height=32,
-        width=hubstyle.pick(38, 72),
+        label=hubstyle.pick("", "Remove"),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 72),
         annotation="Remove the character's CoM, its trail and floor shadow",
         command=lambda *_: _run(remove)), "danger", "trash")
+    hubstyle.mark(cmds.button(
+        label=hubstyle.pick("Select", "Select CoM"),
+        height=hubstyle.height("button", 28), width=hubstyle.pick(56, 90),
+        annotation="Select the CoM handle: the CoM tool comes on - drag it, "
+                   "Shift on the floor, Ctrl up and down; the body follows",
+        command=lambda *_: _run(select_com)), "secondary", "target")
     cmds.setParent("..")
-    cmds.rowLayout(numberOfColumns=2, columnAttach=[(1, "both", 0),
-                                                    (2, "both", 8)])
+    #  The segments take the slack; the classic hub's extra "frames" word is
+    #  one more column before the field.
+    columns = hubstyle.pick(4, 5)
+    cmds.rowLayout(numberOfColumns=columns, adjustableColumn=3,
+                   columnAttach=[(1, "both", 0)]
+                   + [(i, "both", 4) for i in range(2, columns)]
+                   + [(columns, "both", hubstyle.pick(4, 2))])
     hubstyle.mark(cmds.checkBox(TRAIL, label="Trail", value=True,
                                 annotation="The CoM's trail over the range",
                                 changeCommand=_trail_changed), "chip")
@@ -213,9 +237,6 @@ def build_panel():
                                 annotation="The CoM's shadow on the floor and "
                                            "its trail",
                                 changeCommand=_floor_changed), "chip")
-    cmds.setParent("..")
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 6), (3, "both", 2)])
     segments = cmds.rowLayout(numberOfColumns=2,
                               columnAttach=[(1, "both", 1), (2, "both", 1)])
     hubstyle.mark(segments, "segments", layout=True)
@@ -224,19 +245,17 @@ def build_panel():
             (RANGE_SEG[0], "Playback", "the trail over the playback range"),
             (RANGE_SEG[1], "Around", "the trail around the current frame"))):
         hubstyle.mark(cmds.iconTextRadioButton(
-            name, style="textOnly", label=label, height=22, select=index == 0,
+            name, style="textOnly", label=label,
+            height=hubstyle.height("segment", 22), select=index == 0,
             annotation=note, onCommand=_range_changed(index)), "segment")
     cmds.setParent("..")
-    cmds.text(label="frames", align="right")
-    cmds.intField(AROUND, value=20, minValue=1, width=48,
+    if not hubstyle.skinning():
+        cmds.text(label="frames", align="right")
+    cmds.intField(AROUND, value=20, minValue=1, width=hubstyle.pick(36, 48),
+                  height=hubstyle.height("field", 22),
                   annotation="Around: this many frames each way",
                   changeCommand=_around_changed)
     cmds.setParent("..")
-    hubstyle.mark(cmds.button(
-        label="Select CoM", height=28,
-        annotation="Select the CoM handle: the CoM tool comes on - drag it, "
-                   "Shift on the floor, Ctrl up and down; the body follows",
-        command=lambda *_: _run(select_com)), "secondary", "target")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
                             height=36), "status")
     cmds.setParent("..")

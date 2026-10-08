@@ -11,7 +11,7 @@ import unittest
 import maya_colour as mc
 from maya_scenesetup import colour as colouring
 
-from tests.uifakes import FakeUiCmds
+from tests.uifakes import FakeUiCmds, inside, made
 
 
 class TestLeaf(unittest.TestCase):
@@ -492,6 +492,120 @@ class TestPanelBuildsIntoTheHub(unittest.TestCase):
                   if c[0] == "button"]
         for entry in colouring.PALETTE:
             self.assertIn(entry.name, labels)
+
+
+class TestPanelCompact(unittest.TestCase):
+    """The same panel for the skin and for the classic hub (2026-10-08, the
+    compact hub): the eight swatches in ONE row in the skin, four a row in
+    the classic hub; the status tells the hub."""
+
+    def setUp(self):
+        self.real = (mc.cmds, mc.scene_colours)
+        mc.scene_colours = lambda: []
+
+    def tearDown(self):
+        mc.cmds, mc.scene_colours = self.real
+
+    def _build(self, skin):
+        import maya_hubstyle
+        fake = FakeUiCmds(control_height=30)
+        mc.cmds = fake
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(skin)
+        try:
+            mc.build_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        return fake, maya_hubstyle.take_marks()
+
+    def test_the_skin_has_one_row_of_eight_swatches(self):
+        import maya_hubstyle
+        fake, marks = self._build(True)
+        rows = made(fake, "rowLayout", numberOfColumns=8)
+        self.assertEqual(len(rows), 1)
+        index, call = rows[0]
+        cell = (mc.WIDTH - 16) // 8
+        self.assertEqual(call[2]["columnWidth"],
+                         [(i + 1, cell) for i in range(8)])
+        buttons = [c[2] for c in inside(fake, index) if c[0] == "button"]
+        self.assertEqual(len(buttons), 8)
+        for button, entry in zip(buttons, colouring.PALETTE):
+            self.assertEqual((button["label"], button["width"],
+                              button["height"]), ("", cell - 4, 22))
+            self.assertEqual(button["backgroundColor"], entry.rgb)
+            self.assertIn(entry.name, button["annotation"])
+        self.assertEqual([m.colour for m in marks if m.role == "swatch"],
+                         [maya_hubstyle.hex_of(e.rgb)
+                          for e in colouring.PALETTE])
+        self.assertEqual(made(fake, "rowLayout", numberOfColumns=4), [])
+
+    def test_the_classic_hub_keeps_four_a_row_and_the_names(self):
+        fake, _marks = self._build(False)
+        rows = made(fake, "rowLayout", numberOfColumns=mc.COLUMNS)
+        self.assertEqual(len(rows), 2)
+        cell = (mc.WIDTH - 16) // mc.COLUMNS
+        names = []
+        for index, call in rows:
+            self.assertEqual(call[2]["columnWidth"],
+                             [(i + 1, cell) for i in range(mc.COLUMNS)])
+            for button in [c[2] for c in inside(fake, index)
+                           if c[0] == "button"]:
+                names.append(button["label"])
+                self.assertEqual((button["width"], button["height"]),
+                                 (cell - 4, 28))
+        self.assertEqual(names, [e.name for e in colouring.PALETTE])
+
+    def test_paint_and_next_free_are_tight_in_the_skin(self):
+        fake, _marks = self._build(True)
+        by = dict((c[2]["label"], c[2]) for c in fake.calls
+                  if c[0] == "button" and c[2].get("label"))
+        self.assertEqual((by["Paint"]["height"],
+                          by["Next free"]["height"],
+                          by["Next free"]["width"]), (24, 24, 84))
+        self.assertNotIn("Next free colour", by)
+        self.assertEqual(fake.column["rowSpacing"], 3)
+        classic, _marks = self._build(False)
+        by = dict((c[2]["label"], c[2]) for c in classic.calls
+                  if c[0] == "button" and c[2].get("label"))
+        self.assertEqual((by["Paint"]["height"],
+                          by["Next free colour"]["height"],
+                          by["Next free colour"]["width"]), (26, 26, 130))
+        self.assertEqual(classic.column["rowSpacing"], 6)
+
+    def test_taken_stays_a_subtitle_and_the_status_a_status(self):
+        for skin in (True, False):
+            _fake, marks = self._build(skin)
+            by_name = dict((m.name, m.role) for m in marks)
+            self.assertEqual(by_name[mc.TAKEN], "subtitle", skin)
+            self.assertEqual(by_name[mc.STATUS], "status", skin)
+            self.assertEqual(by_name[mc.CUSTOM], "swatchonly", skin)
+
+    def test_the_status_tells_the_hub_and_shows_itself_in_the_viewport(self):
+        import maya_hubstyle
+        fake, _marks = self._build(True)
+        heard = []
+        listener = lambda control, text, viewport: heard.append(
+            (control, text, viewport))
+        maya_hubstyle.listen(listener)
+        try:
+            self.assertEqual(mc._status("painted Manny red"),
+                             "painted Manny red")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [(mc.STATUS, "painted Manny red", True)])
+        self.assertTrue([c for c in fake.calls if c[0] == "headsUpMessage"])
+
+    def test_a_panel_that_is_not_built_tells_nothing(self):
+        import maya_hubstyle
+        mc.cmds = FakeUiCmds()
+        heard = []
+        listener = lambda control, text, viewport: heard.append(text)
+        maya_hubstyle.listen(listener)
+        try:
+            mc._status("nobody listens")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [])
 
 
 class TestShowWindowOpensTheHub(unittest.TestCase):

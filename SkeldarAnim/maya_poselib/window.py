@@ -1841,10 +1841,12 @@ def build_panel():
     for an accordion card."""
     import maya_hubstyle as hubstyle
     cmds = _cmds()
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(NOTE_NAME, label=NOTE, align="left"), "note")
-    hubstyle.mark(cmds.button(OPEN_BUTTON, label=OPEN_LABEL, height=34,
+    hubstyle.mark(cmds.button(OPEN_BUTTON, label=OPEN_LABEL,
+                              height=hubstyle.height("button", 34),
                               annotation="Cards of a character's bones in folders: saved from "
                                          "the scene, applied onto any rig or skeleton, dragged "
                                          "onto a character or the floor",

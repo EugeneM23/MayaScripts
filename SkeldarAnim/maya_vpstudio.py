@@ -1484,6 +1484,12 @@ CHECKS = (
     ("backdrop", "Backdrop", "the look's own colour behind it all"),
 )
 
+#  The compact skin's chip labels (2026-10-08): the full label is the tooltip
+SHORT_CHECK = {"floor": "Floor", "shadows": "Shadows", "ao": "AO",
+               "motion_blur": "Blur", "anti_alias": "AA", "bloom": "Bloom",
+               "fog": "Haze", "dof": "DoF", "clean": "Clean",
+               "backdrop": "Backdrop"}
+
 CONTROL = {"look": "vpStudioLook",
            "quality": "vpStudioQuality",
            "brightness": "vpStudioBrightness",
@@ -1548,6 +1554,9 @@ def _status(text):
     short = text if len(text) <= STATUS_WIDTH else text[:STATUS_WIDTH - 1] + "…"
     if cmds.control(STATUS, exists=True):
         cmds.text(STATUS, edit=True, label=short)
+        #  2026-10-08: the skin's one message line carries the whole text;
+        #  the heads-up below already shows it in the viewport
+        hubstyle.tell(STATUS, text, viewport=True)
     cmds.headsUpMessage(text, time=2.5)
     return text
 
@@ -1647,8 +1656,12 @@ def build_panel():
 
     #  2026-09-28 (the skin): no fixed widths -- the column stretches like
     #  every other section's; the two menus side by side, the ten checks
-    #  as chips two to a row, Apply Look the one primary action.
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    #  as chips, Apply Look the one primary action. 2026-10-08 (the compact
+    #  hub): the chips flow and wrap in one layout under short labels (the
+    #  full label and its note are the tooltip); the classic hub keeps its
+    #  pairs of rows and its words.
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 10)))
 
     hubstyle.mark(cmds.text(label="lighting, shadows, AO and motion blur, "
@@ -1670,37 +1683,56 @@ def build_panel():
             cmds.optionMenu(_control(key), edit=True, value=stored[key])
     cmds.setParent("..")
 
-    for start in range(0, len(CHECKS), 2):
-        cmds.rowLayout(numberOfColumns=2, columnWidth2=(140, 140),
-                       columnAttach=[(1, "left", 0), (2, "left", 4)])
-        for key, label, note in CHECKS[start:start + 2]:
-            hubstyle.mark(cmds.checkBox(
-                _control(key), label=label,
-                value=bool(stored.get(key, DEFAULTS[key])),
-                annotation=note), "chip")
-        cmds.setParent("..")
+    def chip(key, label, note):
+        hubstyle.mark(cmds.checkBox(
+            _control(key), label=hubstyle.pick(SHORT_CHECK[key], label),
+            value=bool(stored.get(key, DEFAULTS[key])),
+            annotation=label + " - " + note), "chip")
 
-    cmds.floatSliderGrp(_control("brightness"), label="Brightness ",
+    if hubstyle.skinning():
+        cmds.flowLayout(wrap=True, columnSpacing=3)
+        for key, label, note in CHECKS:
+            chip(key, label, note)
+        cmds.setParent("..")
+    else:
+        for start in range(0, len(CHECKS), 2):
+            cmds.rowLayout(numberOfColumns=2, columnWidth2=(140, 140),
+                           columnAttach=[(1, "left", 0), (2, "left", 4)])
+            for key, label, note in CHECKS[start:start + 2]:
+                chip(key, label, note)
+            cmds.setParent("..")
+
+    cmds.floatSliderGrp(_control("brightness"),
+                        label=hubstyle.pick("Bright", "Brightness "),
                         field=True, minValue=0.1, maxValue=3.0,
                         value=float(stored.get("brightness", 1.0)),
                         fieldMinValue=0.0, fieldMaxValue=10.0,
-                        columnWidth3=(70, 45, 150), adjustableColumn=3,
+                        columnWidth3=hubstyle.pick((44, 40, 150),
+                                                   (70, 45, 150)),
+                        adjustableColumn=3,
+                        height=hubstyle.height("small", 22),
                         changeCommand=_live_change)
-    cmds.floatSliderGrp(_control("rotate"), label="Rotate ", field=True,
+    cmds.floatSliderGrp(_control("rotate"),
+                        label=hubstyle.pick("Rotate", "Rotate "), field=True,
                         minValue=-180.0, maxValue=180.0,
                         value=float(stored.get("rotate", 0.0)),
                         fieldMinValue=-720.0, fieldMaxValue=720.0,
-                        columnWidth3=(70, 45, 150), adjustableColumn=3,
+                        columnWidth3=hubstyle.pick((44, 40, 150),
+                                                   (70, 45, 150)),
+                        adjustableColumn=3,
+                        height=hubstyle.height("small", 22),
                         changeCommand=_live_change)
 
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "left", 4)])
     hubstyle.mark(cmds.button(
-        label="Apply Look", height=32, backgroundColor=(0.45, 0.70, 0.50),
+        label="Apply Look", height=hubstyle.height("button", 32),
+        backgroundColor=(0.45, 0.70, 0.50),
         annotation="build the chosen look on whatever the scene holds",
         command=_press_setup), "primary", "bulb")
     hubstyle.mark(cmds.button(
-        label="Restore Viewport", height=32, width=130,
+        label=hubstyle.pick("Restore", "Restore Viewport"),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(80, 130),
         annotation="put the animator's own viewport back and delete our "
                    "nodes",
         command=_press_restore), "secondary", "arrow-back-up")

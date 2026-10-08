@@ -512,6 +512,9 @@ def _show(text):
                            fade=True)
     except Exception:                                         # noqa: BLE001
         pass
+    #  2026-10-08: the skin's one message line carries it too; the viewport
+    #  already has it, so the edge panel need not show it again.
+    hubstyle.tell(STATUS, first, viewport=True)
     return text
 
 
@@ -534,11 +537,13 @@ def show_window():
 
 
 def build_panel():
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(label=PANEL_HINT, align="left", wordWrap=True,
                             height=36), "note")
-    hubstyle.mark(cmds.button(BUTTON, label=button_label(), height=34,
+    hubstyle.mark(cmds.button(BUTTON, label=button_label(),
+                              height=hubstyle.height("button", 34),
                               backgroundColor=(0.45, 0.60, 0.70),
                               annotation=PANEL_NOTE, command=_press),
                   "primary", "chart-line")

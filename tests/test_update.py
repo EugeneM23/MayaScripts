@@ -645,6 +645,84 @@ class Panel(unittest.TestCase):
             maya_hub.show = saved
         self.assertEqual(asked, ["update"])
 
+    def _built(self, skin):
+        import maya_hubstyle
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(skin)
+        try:
+            up.build_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        return maya_hubstyle.take_marks()
+
+    def test_the_skin_is_one_tight_line_and_a_slim_button(self):
+        """2026-10-08, the compact hub: the installed line is the card's
+        subtitle on one line (18), the button 24, the gap 3."""
+        marks = self._built(True)
+        installed = [c[2] for c in self.fake.calls if c[0] == "text"
+                     and c[1] == (up.INSTALLED,) and not c[2].get("edit")][0]
+        self.assertEqual((installed["wordWrap"], installed["height"]),
+                         (False, 18))
+        button = [c[2] for c in self.fake.calls if c[0] == "button"][0]
+        self.assertEqual(button["height"], 24)
+        self.assertEqual(self.fake.column["rowSpacing"], 3)
+        by_name = dict((m.name, m.role) for m in marks)
+        self.assertEqual(by_name[up.INSTALLED], "subtitle")
+        self.assertEqual(by_name[up.STATUS], "status")
+
+    def test_the_classic_hub_keeps_its_numbers(self):
+        self._built(False)
+        installed = [c[2] for c in self.fake.calls if c[0] == "text"
+                     and c[1] == (up.INSTALLED,) and not c[2].get("edit")][0]
+        self.assertEqual((installed["wordWrap"], installed["height"]),
+                         (True, 36))
+        button = [c[2] for c in self.fake.calls if c[0] == "button"][0]
+        self.assertEqual(button["height"], 36)
+        self.assertEqual(self.fake.column["rowSpacing"], 6)
+
+
+class TheHubIsToldTheStatus(unittest.TestCase):
+    """2026-10-08: where `_status` writes the card's own line it also tells
+    the hub's one message line (viewport False: this writer shows nothing in
+    the viewport); with no card built the old `hub.say` fallback stays."""
+
+    def setUp(self):
+        import maya_hubstyle
+        self.style = maya_hubstyle
+        self.saved = (up.cmds, sys.modules.get("maya_hub"))
+        up.cmds = PressCmds(tempfile.gettempdir() + "/")
+        self.said = []
+        hub = types.ModuleType("maya_hub")
+        hub.say = lambda message, state=None: self.said.append((message,
+                                                                state))
+        hub.chip_state = lambda state: None
+        sys.modules["maya_hub"] = hub
+        self.heard = []
+        self.listener = lambda control, text, viewport: self.heard.append(
+            (control, text, viewport))
+        self.style.listen(self.listener)
+
+    def tearDown(self):
+        self.style.unlisten(self.listener)
+        up.cmds = self.saved[0]
+        if self.saved[1] is None:
+            sys.modules.pop("maya_hub", None)
+        else:
+            sys.modules["maya_hub"] = self.saved[1]
+
+    def test_the_card_s_line_is_told(self):
+        up.cmds.labels[up.STATUS] = ""
+        up._status("Up to date: aaaaaaa", state="ok")
+        self.assertEqual(self.heard, [(up.STATUS, "Up to date: aaaaaaa",
+                                       False)])
+        self.assertEqual(self.said, [])         # not twice
+
+    def test_with_no_card_the_header_fallback_answers_and_nothing_is_told(self):
+        up._status("Update cancelled - nothing changed.")
+        self.assertEqual(self.heard, [])
+        self.assertEqual(self.said, [("Update cancelled - nothing changed.",
+                                      None)])
+
 
 class Boundary(unittest.TestCase):
 

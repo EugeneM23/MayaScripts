@@ -315,8 +315,9 @@ CUSTOM = "skeldarColourCustom"
 TAKEN = "skeldarColourTaken"
 STATUS = "skeldarColourStatus"
 
-#  Four across, two rows: eight palette entries, and a label under a
-#  coloured button has to stay readable at 60 px.
+#  Four across, two rows in the classic hub: eight palette entries, and a
+#  label under a coloured button has to stay readable at 60 px. (The skin has
+#  no labels and draws all eight in one row, 2026-10-08.)
 COLUMNS = 4
 
 
@@ -325,6 +326,9 @@ def _status(text):
     short = text if len(text) <= STATUS_WIDTH else text[:STATUS_WIDTH - 1] + "…"
     if cmds.control(STATUS, exists=True):
         cmds.text(STATUS, edit=True, label=short)
+        #  2026-10-08: the skin's one message line carries the whole text;
+        #  the heads-up below already shows it in the viewport
+        hubstyle.tell(STATUS, text, viewport=True)
     cmds.headsUpMessage(text, time=2.5)
     return text
 
@@ -389,21 +393,26 @@ def build_panel():
     built into whatever layout is current (the hub's section)."""
     #  2026-09-28 (the skin): the colours as rounded swatches, the custom
     #  swatch with its two verbs in one row, "taken" the card's subtitle.
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
 
     hubstyle.mark(cmds.text(label="paints the selection, else the connected "
                                   "character", align="left"), "note")
 
-    cell = (WIDTH - 16) // COLUMNS
-    for start in range(0, len(colouring.PALETTE), COLUMNS):
-        row = colouring.PALETTE[start:start + COLUMNS]
+    #  2026-10-08 (the compact hub): the skin's eight swatches are ONE row
+    #  (the names are the tooltips); the classic hub keeps four a row.
+    columns = hubstyle.pick(8, COLUMNS)
+    cell = (WIDTH - 16) // columns
+    for start in range(0, len(colouring.PALETTE), columns):
+        row = colouring.PALETTE[start:start + columns]
         cmds.rowLayout(numberOfColumns=len(row),
                        columnWidth=[(i + 1, cell)
                                     for i in range(len(row))])
         for entry in row:
             hubstyle.swatch(cmds.button(
-                label=entry.name, width=cell - 4, height=28,
+                label=hubstyle.pick("", entry.name), width=cell - 4,
+                height=hubstyle.height("small", 28),
                 backgroundColor=entry.rgb,
                 annotation="paint the selection " + entry.name,
                 command=_press(entry.rgb)), entry.rgb)
@@ -418,11 +427,12 @@ def build_panel():
         annotation="any colour off the palette"),
         "swatchonly")
     hubstyle.mark(cmds.button(
-        label="Paint", height=26,
+        label="Paint", height=hubstyle.height("button", 26),
         annotation="paint the selection with the swatch's colour",
         command=_press_custom), "secondary", "brush")
     hubstyle.mark(cmds.button(
-        label="Next free colour", width=130, height=26,
+        label=hubstyle.pick("Next free", "Next free colour"),
+        width=hubstyle.pick(84, 130), height=hubstyle.height("button", 26),
         backgroundColor=(0.45, 0.60, 0.70),
         annotation="the first colour nothing in the scene wears - the same "
                    "question Add Character asks",

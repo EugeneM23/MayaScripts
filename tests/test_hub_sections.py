@@ -17,7 +17,7 @@ from maya_scenesetup import catalog
 from maya_scenesetup import window as scenesetup
 from maya_uebridge import window as uebridge
 
-from tests.uifakes import FakeUiCmds
+from tests.uifakes import FakeUiCmds, inside, made
 
 
 def _hub_asked(show_window):
@@ -1165,6 +1165,220 @@ class Retarget(unittest.TestCase):
     def test_show_window_opens_the_hub_on_its_section(self):
         result, asked = _hub_asked(rr.show_window)
         self.assertEqual((result, asked), ("hub", ["retarget"]))
+
+    def test_the_status_tells_the_hub(self):
+        """2026-10-08: the first line goes to the hub's one message line;
+        the writer shows it in the viewport itself (viewport=True)."""
+        heard = []
+        listener = lambda control, text, viewport: heard.append(
+            (control, text, viewport))
+        maya_hubstyle.listen(listener)
+        try:
+            rr._show("Retargeted\nthe rest stays in the Script Editor")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [(rr.STATUS, "Retargeted", True)])
+
+
+class RetargetCompact(unittest.TestCase):
+    """The version segments and the Retarget button share one row
+    (2026-10-08, variant B of the compact hub); both hubs build it."""
+
+    def _build(self, skin):
+        fake = FakeUiCmds()
+        saved = rr.cmds
+        rr.cmds = fake
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(skin)
+        try:
+            rr.build_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+            rr.cmds = saved
+        return fake, maya_hubstyle.take_marks()
+
+    def _row(self, fake):
+        rows = made(fake, "rowLayout", numberOfColumns=3, adjustableColumn=2)
+        self.assertEqual(len(rows), 1)
+        return rows[0]
+
+    def test_the_segments_and_the_button_share_one_row(self):
+        for skin in (True, False):
+            fake, _marks = self._build(skin)
+            index, call = self._row(fake)
+            self.assertEqual(call[2]["columnAttach"],
+                             [(1, "left", 0), (2, "both", 3), (3, "left", 3)])
+            held = inside(fake, index)
+            radios = [c[1][0] for c in held if c[0] == "iconTextRadioButton"]
+            self.assertEqual(radios, [rr.bones_button(v) for v in
+                                      ("auto", "rotation", "stretch")], skin)
+            buttons = [c for c in held if c[0] == "button"]
+            self.assertEqual([b[2]["label"] for b in buttons], ["Retarget"],
+                             skin)
+            self.assertEqual(buttons[0][2]["annotation"], rr.PANEL_NOTE)
+            #  and the row holds the button LAST, after the segments
+            self.assertEqual([c[0] for c in held if c[0] in
+                              ("text", "rowLayout", "button")],
+                             ["text", "rowLayout", "button"], skin)
+
+    def test_the_skin_has_no_bones_text_and_short_labels(self):
+        fake, _marks = self._build(True)
+        index, _call = self._row(fake)
+        held = inside(fake, index)
+        text = [c for c in held if c[0] == "text"][0]
+        #  a zero-width placeholder keeps the three columns
+        self.assertEqual((text[2]["label"], text[2]["width"]), ("", 1))
+        self.assertNotIn("Bones", [c[2].get("label") for c in held])
+        labels = [c[2]["label"] for c in held
+                  if c[0] == "iconTextRadioButton"]
+        self.assertEqual(labels, ["Auto", "Rot.", "Stretch"])
+        button = [c for c in held if c[0] == "button"][0][2]
+        self.assertEqual((button["height"], button["width"]), (24, 110))
+        self.assertEqual(fake.column["rowSpacing"], 3)
+        heights = [c[2]["height"] for c in held
+                   if c[0] == "iconTextRadioButton"]
+        self.assertEqual(set(heights), {22})
+
+    def test_the_classic_hub_keeps_its_words_and_numbers(self):
+        fake, _marks = self._build(False)
+        index, _call = self._row(fake)
+        held = inside(fake, index)
+        text = [c for c in held if c[0] == "text"][0]
+        self.assertEqual(text[2]["label"], "Bones")
+        labels = [c[2]["label"] for c in held
+                  if c[0] == "iconTextRadioButton"]
+        self.assertEqual(labels, ["Auto", "Rotations", "Stretch"])
+        button = [c for c in held if c[0] == "button"][0][2]
+        self.assertEqual((button["height"], button["width"]), (34, 100))
+        self.assertEqual(fake.column["rowSpacing"], 6)
+
+    def test_the_marks_are_what_they_were(self):
+        for skin in (True, False):
+            fake, marks = self._build(skin)
+            by_role = dict((m.role, m) for m in marks)
+            self.assertEqual(by_role["primary"].icon, "arrows-exchange")
+            #  the hint stays a `note` (the skin makes it the header's tooltip)
+            hints = [c[2] for c in fake.calls if c[0] == "text"
+                     and c[2].get("label") == rr.PANEL_HINT]
+            self.assertEqual(len(hints), 1)
+            self.assertEqual([m.role for m in marks].count("note"), 1)
+            self.assertEqual(by_role["status"].name, rr.STATUS)
+            self.assertTrue(by_role["segments"].layout)
+            self.assertEqual(len([m for m in marks if m.role == "segment"]),
+                             3)
+
+
+class CenterOfMassCompact(unittest.TestCase):
+    """Two rows (2026-10-08): the four buttons, then the chips, the range
+    segments and the frames field. The status tells the hub."""
+
+    def setUp(self):
+        from maya_com import panel
+        self.panel = panel
+        self.saved = (panel.cmds, panel.start)
+        panel.start = lambda: None
+
+    def tearDown(self):
+        self.panel.cmds, self.panel.start = self.saved
+
+    def _build(self, skin):
+        fake = FakeUiCmds()
+        self.panel.cmds = fake
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(skin)
+        try:
+            self.panel.build_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        return fake, maya_hubstyle.take_marks()
+
+    def test_the_skin_rows(self):
+        fake, marks = self._build(True)
+        first = made(fake, "rowLayout", numberOfColumns=4, adjustableColumn=1)
+        self.assertEqual(len(first), 1)
+        buttons = [c[2] for c in inside(fake, first[0][0]) if c[0] == "button"]
+        self.assertEqual([b["label"] for b in buttons],
+                         ["Add CoM", "", "", "Select"])
+        self.assertEqual([b.get("width") for b in buttons],
+                         [None, 26, 26, 56])
+        self.assertEqual({b["height"] for b in buttons}, {24})
+        second = made(fake, "rowLayout", numberOfColumns=4, adjustableColumn=3)
+        self.assertEqual(len(second), 1)
+        held = inside(fake, second[0][0])
+        self.assertEqual([c[1][0] for c in held if c[0] == "checkBox"],
+                         [self.panel.TRAIL, self.panel.FLOOR])
+        self.assertEqual([c[1][0] for c in held
+                          if c[0] == "iconTextRadioButton"],
+                         list(self.panel.RANGE_SEG))
+        field = [c for c in held if c[0] == "intField"][0]
+        self.assertEqual(field[2]["width"], 36)
+        self.assertIn("frames", field[2]["annotation"])
+        texts = [c[2].get("label") for c in held if c[0] == "text"]
+        self.assertNotIn("frames", texts)
+        self.assertEqual(fake.column["rowSpacing"], 3)
+
+    def test_the_classic_rows_keep_their_words(self):
+        fake, _marks = self._build(False)
+        first = made(fake, "rowLayout", numberOfColumns=4, adjustableColumn=1)
+        buttons = [c[2] for c in inside(fake, first[0][0]) if c[0] == "button"]
+        self.assertEqual([b["label"] for b in buttons],
+                         ["Add CoM", "Rebuild", "Remove", "Select CoM"])
+        self.assertEqual([b.get("width") for b in buttons],
+                         [None, 80, 72, 90])
+        self.assertEqual([b["height"] for b in buttons], [32, 32, 32, 28])
+        second = made(fake, "rowLayout", numberOfColumns=5, adjustableColumn=3)
+        self.assertEqual(len(second), 1)
+        held = inside(fake, second[0][0])
+        self.assertIn("frames", [c[2].get("label") for c in held
+                                 if c[0] == "text"])
+        field = [c for c in held if c[0] == "intField"][0]
+        self.assertEqual(field[2]["width"], 48)
+        self.assertEqual(fake.column["rowSpacing"], 6)
+
+    def test_every_control_and_role_stays(self):
+        for skin in (True, False):
+            fake, marks = self._build(skin)
+            for name in (self.panel.SUBTITLE, self.panel.STATUS,
+                         self.panel.TRAIL, self.panel.FLOOR,
+                         self.panel.AROUND, self.panel.RANGE_SEG[0],
+                         self.panel.RANGE_SEG[1]):
+                self.assertIn(name, fake.children, (skin, name))
+            roles = [(m.role, m.icon) for m in marks
+                     if m.role in ("primary", "secondary", "danger")]
+            self.assertEqual(roles, [("primary", "target"),
+                                     ("secondary", "refresh"),
+                                     ("danger", "trash"),
+                                     ("secondary", "target")], skin)
+            by_name = dict((m.name, m.role) for m in marks)
+            self.assertEqual(by_name[self.panel.SUBTITLE], "subtitle")
+            self.assertEqual(by_name[self.panel.STATUS], "status")
+
+    def test_the_status_tells_the_hub(self):
+        fake, _marks = self._build(True)
+        fake.text = lambda name=None, **kw: (
+            True if kw.get("exists") else None)       # the card's line stands
+        heard = []
+        listener = lambda control, text, viewport: heard.append(
+            (control, text, viewport))
+        maya_hubstyle.listen(listener)
+        try:
+            self.assertEqual(self.panel.status("Manny_Rig: CoM added"),
+                             "Manny_Rig: CoM added")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [(self.panel.STATUS, "Manny_Rig: CoM added",
+                                  False)])
+
+    def test_the_status_of_a_card_that_is_not_built_tells_nothing(self):
+        self.panel.cmds = FakeUiCmds()                # nothing exists
+        heard = []
+        listener = lambda control, text, viewport: heard.append(text)
+        maya_hubstyle.listen(listener)
+        try:
+            self.panel.status("nobody listens")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [])
 
 
 class Hotkeys(unittest.TestCase):

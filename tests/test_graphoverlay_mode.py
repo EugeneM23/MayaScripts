@@ -5,6 +5,7 @@ from unittest import mock
 
 from tests.uifakes import FakeUiCmds
 
+import maya_hubstyle as hubstyle
 from maya_graphoverlay import mode, viewport, winstyle
 
 
@@ -58,6 +59,44 @@ class HubSection(unittest.TestCase):
 
     def test_the_section_key(self):
         self.assertEqual(mode.HUB_SECTION, "graphoverlay")
+
+    def test_the_status_tells_the_hub(self):
+        """2026-10-08: the first line goes to the hub's one message line; the
+        writer shows it in the viewport itself (viewport=True)."""
+        mode.build_panel()
+        heard = []
+        listener = lambda control, text, viewport: heard.append(
+            (control, text, viewport))
+        hubstyle.listen(listener)
+        try:
+            mode._show("Graph Overlay is on\nmore for the Script Editor")
+        finally:
+            hubstyle.unlisten(listener)
+        self.assertEqual(heard, [(mode.STATUS, "Graph Overlay is on", True)])
+
+    def _build(self, skin):
+        mode.cmds = self.fake
+        hubstyle.take_marks()
+        hubstyle.set_skinning(skin)
+        try:
+            mode.build_panel()
+        finally:
+            hubstyle.set_skinning(False)
+        return hubstyle.take_marks()
+
+    def test_the_skin_is_tight(self):
+        marks = self._build(True)
+        self.assertEqual(self.fake.column["rowSpacing"], 3)
+        button = [c[2] for c in self.fake.calls if c[0] == "button"][0]
+        self.assertEqual(button["height"], 24)
+        self.assertEqual([(m.role, m.icon) for m in marks
+                          if m.role == "primary"], [("primary", "chart-line")])
+
+    def test_the_classic_hub_keeps_its_numbers(self):
+        self._build(False)
+        self.assertEqual(self.fake.column["rowSpacing"], 6)
+        button = [c[2] for c in self.fake.calls if c[0] == "button"][0]
+        self.assertEqual(button["height"], 34)
 
 
 class LearnTones(unittest.TestCase):

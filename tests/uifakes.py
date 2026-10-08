@@ -184,3 +184,40 @@ class FakeUiCmds(object):
     def removed_prefs(self):
         return [c for c in self.calls
                 if c[0] == "windowPref" and c[2].get("remove")]
+
+
+#  --- reading the arrangement back (2026-10-08, the compact hub) ---
+
+#  What opens a layout that a later setParent("..") closes.
+LAYOUTS = ("rowLayout", "flowLayout", "columnLayout", "formLayout",
+           "frameLayout", "scrollLayout")
+
+
+def is_creation(call):
+    """A recorded call that MADE something (no edit, query or exists flag)."""
+    kwargs = call[2]
+    return not (kwargs.get("edit") or kwargs.get("e") or kwargs.get("query")
+                or kwargs.get("q") or kwargs.get("exists"))
+
+
+def made(fake, kind, **match):
+    """[(position, call)] of the creations of `kind` whose kwargs hold
+    `match`, in the order the fake recorded them."""
+    return [(i, c) for i, c in enumerate(fake.calls)
+            if c[0] == kind and is_creation(c)
+            and all(c[2].get(k) == v for k, v in match.items())]
+
+
+def inside(fake, start):
+    """The calls between the layout created at position `start` and the
+    setParent("..") that closes it, nested layouts included."""
+    depth, out = 1, []
+    for call in fake.calls[start + 1:]:
+        if call[0] in LAYOUTS and is_creation(call):
+            depth += 1
+        elif call[0] == "setParent" and call[1] == ("..",):
+            depth -= 1
+            if not depth:
+                return out
+        out.append(call)
+    return out

@@ -386,6 +386,10 @@ def _status(message, state=None):
         if cmds.text(STATUS, exists=True):
             cmds.text(STATUS, edit=True, label=message)
             shown = True
+            #  2026-10-08: the skin's one message line carries it too (this
+            #  writer shows nothing in the viewport: viewport False)
+            import maya_hubstyle   # stdlib
+            maya_hubstyle.tell(STATUS, message, viewport=False)
     except Exception:                                        # noqa: BLE001
         pass
     hub = sys.modules.get("maya_hub")
@@ -420,13 +424,17 @@ def _press(*_args):
 def build_panel():
     """The installed build, the button, a status line (the hub's section)."""
     import maya_hubstyle as hubstyle   # stdlib
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
-    #  the card's subtitle in the skin (2026-09-28, the card came back)
+    #  the card's subtitle in the skin (2026-09-28, the card came back); one
+    #  line there (2026-10-08, the compact header), two in the classic hub
     hubstyle.mark(cmds.text(INSTALLED, label="Installed:", align="left",
-                            wordWrap=True, height=36), "subtitle")
+                            wordWrap=hubstyle.pick(False, True),
+                            height=hubstyle.pick(18, 36)), "subtitle")
     hubstyle.mark(cmds.button(
-        label="Check update", height=36, backgroundColor=(0.45, 0.60, 0.70),
+        label="Check update", height=hubstyle.height("button", 36),
+        backgroundColor=(0.45, 0.60, 0.70),
         annotation="Compare with the latest build on github.com/{0} and "
                    "install it".format(REPO),
         command=_press), "primary", "refresh")

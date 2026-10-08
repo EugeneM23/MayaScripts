@@ -505,6 +505,10 @@ def _show(text):
                            position="midCenterBot", fade=True)
     except Exception:
         pass
+    #  2026-10-08: the skin's one message line carries it too (the viewport
+    #  already has it, so the edge panel need not show it again); the classic
+    #  hub listens to nothing and keeps the card's own line.
+    hubstyle.tell(STATUS, first, viewport=True)
     return text
 
 
@@ -558,18 +562,31 @@ def _set_bones(value):
     _show("retarget version: %s" % rm.LABELS[value])
 
 
+#  The segments' words in the skin, where the row also holds the Retarget
+#  button (2026-10-08); the classic hub keeps `maya_retargetmode.LABELS`.
+SHORT_LABELS = {"auto": "Auto", "rotation": "Rot.", "stretch": "Stretch"}
+
+
 def _bones_row():
-    """[Auto | Rotations | Stretch] - the retarget version (2026-10-02), the
-    setting every press reads (`maya_retargetmode.setting`), remembered in
-    its optionVar; built into the Retarget card only (the Animation Setup
-    card's import rows are another session's work this day, and the setting
-    is one for every press)."""
+    """[Auto | Rotations | Stretch] and the Retarget button on ONE row - the
+    retarget version (2026-10-02), the setting every press reads
+    (`maya_retargetmode.setting`), remembered in its optionVar; built into the
+    Retarget card only (the Animation Setup card's import rows are another
+    session's work this day, and the setting is one for every press).
+
+    2026-10-08 (the compact hub): the button moved in beside the segments, so
+    the card is a hint, one row and a line. The classic hub keeps the word
+    "Bones" in front; the skin keeps its column with a zero-width text."""
     import maya_retargetmode as rm
     current = rm.setting()
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
-                   columnAttach=[(1, "left", 0), (2, "both", 4)])
-    cmds.text(label="Bones", align="left",
-              annotation="Which retarget the presses run - Auto decides")
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3),
+                                 (3, "left", 3)])
+    if hubstyle.skinning():
+        cmds.text(label="", width=1)
+    else:
+        cmds.text(label="Bones", align="left",
+                  annotation="Which retarget the presses run - Auto decides")
     segments = cmds.rowLayout(numberOfColumns=len(rm.SETTINGS),
                               columnAttach=[(i + 1, "both", 1)
                                             for i in range(len(rm.SETTINGS))])
@@ -577,26 +594,32 @@ def _bones_row():
     cmds.iconTextRadioCollection(BONES)
     for value in rm.SETTINGS:
         hubstyle.mark(cmds.iconTextRadioButton(
-            bones_button(value), style="textOnly", label=rm.LABELS[value],
-            height=22, select=value == current, annotation=BONES_NOTES[value],
+            bones_button(value), style="textOnly",
+            label=hubstyle.pick(SHORT_LABELS[value], rm.LABELS[value]),
+            height=hubstyle.height("segment", 22), select=value == current,
+            annotation=BONES_NOTES[value],
             onCommand=lambda *_a, v=value: _set_bones(v)), "segment")
     cmds.setParent("..")
+    hubstyle.mark(cmds.button(label="Retarget",
+                              height=hubstyle.height("button", 34),
+                              width=hubstyle.pick(110, 100),
+                              backgroundColor=(0.45, 0.60, 0.70),
+                              annotation=PANEL_NOTE, command=_press),
+                  "primary", "arrows-exchange")
     cmds.setParent("..")
 
 
 def build_panel():
-    """One instruction, one button, one status line - the shelf button's
-    action with somewhere to report (2026-09-17, the hub)."""
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    """One instruction, one row (the version and the button), one status line
+    - the shelf button's action with somewhere to report (2026-09-17, the
+    hub)."""
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     #  One line since the skin (2026-09-28): the paragraph is the tooltip.
     hubstyle.mark(cmds.text(label=PANEL_HINT, align="left", wordWrap=True,
                             height=36), "note")
     _bones_row()
-    hubstyle.mark(cmds.button(label="Retarget", height=34,
-                              backgroundColor=(0.45, 0.60, 0.70),
-                              annotation=PANEL_NOTE, command=_press),
-                  "primary", "arrows-exchange")
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
                             height=36), "status")
     cmds.setParent("..")

@@ -13,7 +13,7 @@ import unittest
 
 import maya_vpstudio as vp
 
-from tests.uifakes import FakeUiCmds
+from tests.uifakes import FakeUiCmds, inside, made
 
 
 def dot(a, b):
@@ -1381,6 +1381,139 @@ class TestPanelBuildsIntoTheHub(unittest.TestCase):
         last_create = max(self.fake.calls.index(c) for c in created)
         self.assertTrue(all(self.fake.calls.index(c) > last_create
                             for c in wired))
+
+
+class TestPanelCompact(unittest.TestCase):
+    """The same panel for the skin and for the classic hub (2026-10-08, the
+    compact hub): the ten checks as chips in a wrapping flow, short labels,
+    tight dials; the classic hub keeps its pairs of rows and its words."""
+
+    def setUp(self):
+        self.real = vp.cmds
+
+    def tearDown(self):
+        vp.cmds = self.real
+
+    def _build(self, skin):
+        import maya_hubstyle
+        fake = FakeUiCmds(control_height=25)
+        vp.cmds = fake
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(skin)
+        try:
+            vp.build_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        return fake, maya_hubstyle.take_marks()
+
+    def test_the_skin_s_chips_flow_in_one_wrapping_layout(self):
+        fake, _marks = self._build(True)
+        flows = made(fake, "flowLayout")
+        self.assertEqual(len(flows), 1)
+        index, call = flows[0]
+        self.assertIs(call[2]["wrap"], True)
+        self.assertEqual(call[2]["columnSpacing"], 3)
+        boxes = [c for c in inside(fake, index) if c[0] == "checkBox"]
+        self.assertEqual([b[1][0] for b in boxes],
+                         [vp._control(k) for k, _l, _n in vp.CHECKS])
+        self.assertEqual([b[2]["label"] for b in boxes],
+                         [vp.SHORT_CHECK[k] for k, _l, _n in vp.CHECKS])
+        for (key, label, note), box in zip(vp.CHECKS, boxes):
+            self.assertEqual(box[2]["annotation"], label + " - " + note)
+        #  and no row of two chips is left
+        self.assertEqual(made(fake, "rowLayout", numberOfColumns=2,
+                              columnWidth2=(140, 140)), [])
+
+    def test_the_short_labels_cover_every_check(self):
+        self.assertEqual(sorted(vp.SHORT_CHECK),
+                         sorted(k for k, _l, _n in vp.CHECKS))
+        self.assertEqual(vp.SHORT_CHECK["motion_blur"], "Blur")
+        self.assertEqual(vp.SHORT_CHECK["fog"], "Haze")
+        for label in vp.SHORT_CHECK.values():
+            self.assertLessEqual(len(label), 8)
+
+    def test_the_classic_hub_keeps_its_pairs_of_rows_and_words(self):
+        fake, _marks = self._build(False)
+        self.assertEqual(made(fake, "flowLayout"), [])
+        pairs = made(fake, "rowLayout", numberOfColumns=2,
+                     columnWidth2=(140, 140))
+        self.assertEqual(len(pairs), 5)
+        boxes = [c for c in fake.calls if c[0] == "checkBox"]
+        self.assertEqual([b[2]["label"] for b in boxes],
+                         [label for _k, label, _n in vp.CHECKS])
+        for (key, label, note), box in zip(vp.CHECKS, boxes):
+            self.assertEqual(box[2]["annotation"], label + " - " + note)
+
+    def test_the_dials_and_buttons(self):
+        fake, _marks = self._build(True)
+        dials = dict((c[1][0], c[2]) for c in fake.calls
+                     if c[0] == "floatSliderGrp" and not c[2].get("edit"))
+        bright, rotate = dials["vpStudioBrightness"], dials["vpStudioRotate"]
+        self.assertEqual((bright["label"], rotate["label"]),
+                         ("Bright", "Rotate"))
+        self.assertEqual(bright["columnWidth3"], (44, 40, 150))
+        self.assertEqual((bright["height"], rotate["height"]), (22, 22))
+        buttons = dict((c[2]["label"], c[2]) for c in fake.calls
+                       if c[0] == "button")
+        self.assertEqual(buttons["Apply Look"]["height"], 24)
+        self.assertEqual((buttons["Restore"]["height"],
+                          buttons["Restore"]["width"]), (24, 80))
+        self.assertEqual(fake.column["rowSpacing"], 3)
+        classic, _marks = self._build(False)
+        dials = dict((c[1][0], c[2]) for c in classic.calls
+                     if c[0] == "floatSliderGrp" and not c[2].get("edit"))
+        self.assertEqual(dials["vpStudioBrightness"]["label"], "Brightness ")
+        self.assertEqual(dials["vpStudioBrightness"]["columnWidth3"],
+                         (70, 45, 150))
+        buttons = dict((c[2]["label"], c[2]) for c in classic.calls
+                       if c[0] == "button")
+        self.assertEqual((buttons["Apply Look"]["height"],
+                          buttons["Restore Viewport"]["height"],
+                          buttons["Restore Viewport"]["width"]),
+                         (32, 32, 130))
+        self.assertEqual(classic.column["rowSpacing"], 6)
+
+    def test_the_dropdowns_still_go_live_only_after_the_build(self):
+        for skin in (True, False):
+            fake, _marks = self._build(skin)
+            menus = [c for c in fake.calls if c[0] == "optionMenu"]
+            created = [c for c in menus if not c[2].get("edit")]
+            wired = [c for c in menus
+                     if c[2].get("edit") and "changeCommand" in c[2]]
+            self.assertEqual(len(wired), len(vp.MENUS), skin)
+            for c in created:
+                self.assertNotIn("changeCommand", c[2])
+            last_create = max(fake.calls.index(c) for c in created)
+            self.assertTrue(all(fake.calls.index(c) > last_create
+                                for c in wired), skin)
+
+    def test_the_status_tells_the_hub_and_shows_itself_in_the_viewport(self):
+        import maya_hubstyle
+        fake, _marks = self._build(True)
+        heard = []
+        listener = lambda control, text, viewport: heard.append(
+            (control, text, viewport))
+        maya_hubstyle.listen(listener)
+        try:
+            self.assertEqual(vp._status("Studio on - Good quality"),
+                             "Studio on - Good quality")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [(vp.STATUS, "Studio on - Good quality",
+                                  True)])
+        self.assertTrue([c for c in fake.calls if c[0] == "headsUpMessage"])
+
+    def test_a_panel_that_is_not_built_tells_nothing(self):
+        import maya_hubstyle
+        vp.cmds = FakeUiCmds()
+        heard = []
+        listener = lambda control, text, viewport: heard.append(text)
+        maya_hubstyle.listen(listener)
+        try:
+            vp._status("nobody listens")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [])
 
 
 class TestShowWindowOpensTheHub(unittest.TestCase):
