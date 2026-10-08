@@ -989,7 +989,63 @@ class ObjectCurves(Rebound):
         self.assertEqual((header["start"], header["end"], header["frames"]), (0.0, 10.0, 11))
         self.assertEqual([o["path"] for o in header["objects"]], [node])
         self.assertEqual(note, "1 object: 11 frames (0-10)")
+        # its layered ty is sampled: one read-only walk (no evaluation switch)
+        self.assertEqual([walk.fresh for walk in self.timewalk.walks], [False])
+
+    # task 10's verify (2026-10-08, mayapy 2027): a fed channel read frame after frame with
+    # `getAttr(time=)` - a locator parent-constrained to Manny_Rig's IK hand - answered 1.25e-4
+    # cm off the scene at frame 10, and trap 69 saw such a read not pull a constraint riding an
+    # IK chain at all in a GUI Maya. Every fed channel is read in ONE walk, after a real time
+    # change.
+
+    def test_a_fed_channel_is_read_after_a_real_time_change_never_in_a_time_context(self):
+        node = self.cube()
+        real = self.cmds.getAttr
+
+        def stale(plug, time=None):
+            # trap 69: a context read that does not pull the chain answers the frame shown
+            return real(plug)
+        self.cmds.getAttr = stale
+        self.cmds.frame = 4
+        (record,) = ac.object_curves([node], 0, 10)
+        self.assertEqual([k[1] for k in record["attrs"]["translateY"]["keys"]],
+                         [2.0 * t + 1.0 for t in range(11)])
+        self.assertEqual(self.cmds.frame, 4)                      # the walk put the time back
+
+    def test_every_fed_channel_in_one_walk_with_the_queue_off(self):
+        node = self.cube()
+        other = "|grp|pSphere1"
+        self.cmds.keyable[other] = ["rotateZ"]
+        self.cmds.types["blend2"] = "animBlendNodeAdditiveDA"
+        self.feed(other, "rotateZ", "blend2")
+        self.cmds.values[other + ".rotateZ"] = lambda time: -3.0 * time
+        ac.scene = FakeScene(self.cmds, [(node, None), (other, None)])
+        records = ac.object_curves([node, other], 2, 6)
+        self.assertEqual(len(self.timewalk.walks), 1)
+        self.assertEqual([entry[1] for entry in self.log if entry[0] == "go"], [2, 3, 4, 5, 6])
+        self.assertEqual([k[1] for k in records[1]["attrs"]["rotateZ"]["keys"]],
+                         [-3.0 * t for t in range(2, 7)])
+        self.assertEqual([k[1] for k in records[0]["attrs"]["translateY"]["keys"]],
+                         [2.0 * t + 1.0 for t in range(2, 7)])
+        gone = [undo for what, undo in self.cmds.touched if what in ("walk enter", "go")]
+        self.assertEqual(set(gone), set([False]))                # unrecorded, as a Save is
+        self.assertIs(self.cmds.undo, True)
+
+    def test_no_fed_channel_no_walk(self):
+        node = "|grp|loc"
+        self.cmds.keyable[node] = ["translateX", "visibility"]
+        self.feed(node, "translateX", self.curve("loc_tx", [(0, 0), (10, 5)]))
+        self.cmds.values[node + ".visibility"] = True
+        ac.scene = FakeScene(self.cmds, [(node, None)])
+        (record,) = ac.object_curves([node], 0, 10)
+        self.assertEqual(sorted(record["attrs"]), ["translateX", "visibility"])
         self.assertEqual(self.timewalk.walks, [])
+
+    def test_a_fed_channel_that_answers_no_number_is_left_out_in_its_place(self):
+        node = self.cube()
+        self.cmds.values[node + ".translateY"] = lambda time: "text" if time == 3 else 1.0
+        (record,) = ac.object_curves([node], 0, 10)
+        self.assertEqual(list(record["attrs"]), ["translateX", "visibility"])
 
 
 # ------------------------------------------------------------------ the preview

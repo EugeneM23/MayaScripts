@@ -26,7 +26,8 @@ An OBJECTS card (nothing of a character selected) holds each selected transform'
 unlocked channels as CURVES (`object_curves`): a channel keyed by a plain time curve keeps that
 curve's keys inside the range with their tangents - read off a DUPLICATE given a shape-keeping key
 at each end of the range (`setKeyframe -insert`), never off the scene's curve; a channel a layer,
-a constraint or anything else feeds is sampled on every frame; a free one is a static value.
+a constraint or anything else feeds is sampled on every frame, all of them in one time walk
+(`_sampled`: a real time change, never `getAttr(time=)`); a free one is a static value.
 
 Frames are WHOLE frames: a range's ends are rounded half up ONCE (`_whole`, `animdata`'s rule:
 Python's round() goes to even) and every count, walk and preview frame comes from those two ints.
@@ -64,10 +65,12 @@ Measured (2026-10-03, mayapy standalone, Maya 2027):
   locator's tx keyed 0/10 and set to 99 by hand at frame 0, autoKey then turned on; after a Save
   over 0-6 the first Ctrl+Z switched autoKey off, the second on, the third off again, tx 99 all
   along - where a scene with no Save took the setAttr back on the second); with the walk and the
-  blasts unrecorded the queue is the no-Save scene's, step for step;
+  blasts unrecorded the queue is the no-Save scene's, step for step (since task 10 the restore
+  switches autoKey through the API, which is no step either way);
 - `keyframe -q -breakdown -time (a, b)` answers the TIMES of the breakdown keys in the span;
 - `getAttr(plug, time=t)` on a LAYERED channel reads the composite - base plus layer - exactly as
-  a time change shows it (frames 0, 3, 5, 7 and 10 compared);
+  a time change shows it (frames 0, 3, 5, 7 and 10 compared) - but on a prop held by an IK hand,
+  read frame after frame, 1.25e-4 cm off at frame 10 (task 10's verify): `_sampled` walks;
 - an animation layer's blend node feeds each channel by itself (`animBlendNodeAdditiveDL.output ->
   translateY`, `...DA.output -> rotateX`), and so does a QUATERNION layer's
   (`animBlendNodeAdditiveRotation.outputX -> rotateX`), whose blend node also takes the node's own
@@ -84,6 +87,7 @@ import os
 import re
 import shutil
 import tempfile
+from collections import OrderedDict
 
 import maya.api.OpenMayaAnim as oma
 import maya.cmds as cmds
@@ -387,26 +391,45 @@ def _copied(curve, start, end):
     return {"keys": out, "weighted": weighted, "breakdown": breakdown}
 
 
-def _sampled(plug, start, end):
-    """The CURVE of a channel no plain curve holds - a layer's blend node, a constraint, an
-    expression or a driven key feeds it: its value on every frame of [start, end]
-    (`getAttr(time=)`, measured to read a layered channel's composite) as spline keys. None for
-    a channel that is no number. Not measured: a constraint riding an IK chain (a prop held by a
-    rigged hand), which `getAttr(time=)` was seen NOT to pull (trap 69) - such a prop is saved
-    right once its channels are baked."""
-    out = []
-    for frame in range(start, end + 1):
-        value = _number(cmds.getAttr(plug, time=frame))
-        if value is None:
-            return None
-        out.append([float(frame), value, SAMPLED, SAMPLED, 0.0, 1.0, 0.0, 1.0])
-    return {"keys": out, "weighted": False, "breakdown": []}
+def _sampled(plugs, start, end):
+    """{plug: CURVE} of the channels no plain curve holds - a layer's blend node, a constraint,
+    an expression or a driven key feeds them: each one's value on every frame of [start, end] as
+    spline keys, all of them read in ONE time walk (`timewalk.Walk(fresh=False)`), each value
+    after a REAL time change. A channel that answers no number on some frame is left out.
+
+    Not `getAttr(time=)` (task 10's verify, mayapy 2027): read frame after frame that way, a
+    locator parent-constrained to Manny_Rig's IK hand answered 1.25e-4 cm off what the scene
+    shows at frame 10 (one such read alone agreed to 1e-13 - consecutive context evaluations
+    carry the IK chain's state from one to the next), and in a GUI Maya trap 69 saw it not pull a
+    constraint riding an IK chain at all (0.000 against a real 10.000). The walk reads what the
+    animator sees, as the character's walk does; its exit sets the tweaks it threw away back."""
+    rows = OrderedDict((plug, []) for plug in plugs or ())
+    if not rows:
+        return {}
+    with timewalk.Walk(fresh=False) as walk:
+        for frame in range(start, end + 1):
+            walk.go(frame)
+            for plug in list(rows):
+                try:
+                    value = _number(cmds.getAttr(plug))
+                except (RuntimeError, ValueError, TypeError):
+                    value = None
+                if value is None:
+                    del rows[plug]
+                    continue
+                rows[plug].append([float(frame), value, SAMPLED, SAMPLED, 0.0, 1.0, 0.0, 1.0])
+    return dict((plug, {"keys": out, "weighted": False, "breakdown": []})
+                for plug, out in rows.items())
+
+
+SAMPLE = "sample"                  # `_channel`'s answer for a channel `_sampled` reads
 
 
 def _channel(plug, start, end):
     """One channel's CURVE over [start, end] by what feeds it (`keys.feed_of`): a plain time
     curve copied (`_copied`), nothing at all a static value (`{"static": v}`), anything else
-    sampled (`_sampled`); None for a plug that is missing or holds no number."""
+    `SAMPLE` - read with every other such channel in one walk (`_sampled`); None for a plug that
+    is missing or holds no number."""
     kind, node = keys.feed_of(plug)
     if kind == "missing":
         return None
@@ -415,7 +438,7 @@ def _channel(plug, start, end):
         return None if value is None else {"static": value}
     if kind == "curve":
         return _copied(node, start, end)
-    return _sampled(plug, start, end)
+    return SAMPLE
 
 
 def object_curves(nodes, start, end):
@@ -423,31 +446,44 @@ def object_curves(nodes, start, end):
     component names its transform; each once, in selection order): per object its leaf name
     without the namespace, its long path, and the CURVE of each keyable scalar unlocked
     attribute over [start, end] (whole frames) - a plain time curve copied through a duplicate,
-    a layered or otherwise fed channel sampled every frame, a free one static (`_channel`). A
+    a free one static, a layered or otherwise fed channel sampled every frame (`_channel`) -
+    every object's fed channels in ONE time walk (`_sampled`), none when no channel is fed. A
     channel that cannot be read is left out; an object with no channel keeps an empty record
-    (the apply pairs objects by order too). The duplicates are made, read and deleted with the
-    undo queue off (`_unrecorded`)."""
+    (the apply pairs objects by order too). The duplicates are made, read and deleted, and the
+    walk walked, with the undo queue off (`_unrecorded`)."""
     start, end = _whole(start), _whole(end)
-    objects, seen = [], set()
+    objects, seen, fed = [], set(), []
     with _unrecorded():
         for node in nodes or ():
             path = scene.dag_object(node)
             if path is None or path in seen:
                 continue
             seen.add(path)
-            attrs = {}
+            attrs = OrderedDict()
             try:
                 names = cmds.listAttr(path, keyable=True, scalar=True, unlocked=True) or []
             except (RuntimeError, ValueError):
                 names = []
             for attr in names:
+                plug = path + "." + attr
                 try:
-                    curve = _channel(path + "." + attr, start, end)
+                    curve = _channel(plug, start, end)
                 except (RuntimeError, ValueError, TypeError):
                     continue
-                if curve is not None:
+                if curve is SAMPLE:
+                    fed.append((attrs, attr, plug))
+                    attrs[attr] = None             # its place kept, filled after the walk
+                elif curve is not None:
                     attrs[attr] = curve
             objects.append({"name": scene.leaf(path), "path": path, "attrs": attrs})
+        found = _sampled([plug for _attrs, _attr, plug in fed], start, end)
+    for attrs, attr, plug in fed:
+        if plug in found:
+            attrs[attr] = found[plug]
+        else:
+            del attrs[attr]
+    for record in objects:
+        record["attrs"] = dict(record["attrs"])
     return objects
 
 
@@ -460,7 +496,8 @@ def build_animation(selection=None, regions=None, start=None, end=None, progress
     (frames None: an objects card keeps its curves in the header), else (None, None, why) - an
     empty range, two characters, nothing selected, no member left, a cancel (`CANCELLED`).
     `progress` (a `timewalk.Progress`, or None) is stepped once per frame of a character's walk
-    - `end - start + 1` steps; an objects card walks no time and steps nothing."""
+    - `end - start + 1` steps; an objects card steps nothing (it walks the time only for the
+    channels it samples, `_sampled`)."""
     if start is None or end is None:
         first, last = default_range()
         start = first if start is None else start
