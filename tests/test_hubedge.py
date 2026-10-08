@@ -10,6 +10,7 @@ Spec: docs/superpowers/specs/2026-10-08-hub-compact-and-edge-panel-design.md
 
 import os
 import unittest
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -190,18 +191,47 @@ class EdgeCase(unittest.TestCase):
         self.edge.hide_due()
         self.assertTrue(self.edge.shown)
 
+    def _typing(self, focus, active=True):
+        """blockers() with `focus` as the application's focus widget and the
+        host (in)active. Offscreen Qt gives no window the focus, so both are
+        patched - what is tested is the rule, not the platform."""
+        host_class = type(self.edge.host)
+        with mock.patch.object(QtWidgets.QApplication, "focusWidget",
+                               staticmethod(lambda: focus)), \
+                mock.patch.object(host_class, "isActiveWindow",
+                                  lambda widget: active):
+            return self.edge.blockers()
+
     def test_a_focused_field_postpones(self):
         self._shown()
-        field = QtWidgets.QLineEdit(self.edge.slot)
-        field.show()
-        self.edge.host.activateWindow()
-        field.setFocus()
         self.point = (900, 300)
-        if self.app.focusWidget() is field:          # offscreen may refuse focus
-            if self.edge.host.isActiveWindow():
-                self.assertIn("typing", self.edge.blockers())
-        else:
-            self.assertNotIn("typing", self.edge.blockers())
+        for kind in (QtWidgets.QLineEdit, QtWidgets.QSpinBox,
+                     QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit):
+            field = kind(self.edge.slot)
+            self.assertEqual(self._typing(field), ["typing"], kind.__name__)
+        field = QtWidgets.QLineEdit(self.edge.slot)
+        host_class = type(self.edge.host)
+        with mock.patch.object(QtWidgets.QApplication, "focusWidget",
+                               staticmethod(lambda: field)), \
+                mock.patch.object(host_class, "isActiveWindow",
+                                  lambda widget: True):
+            self.edge.hide_due()
+            self.assertTrue(self.edge.shown)
+            self.assertTrue(self.edge.retry.isActive())    # asks again
+
+    def test_only_a_text_field_of_the_active_panel_counts(self):
+        self._shown()
+        self.point = (900, 300)
+        button = QtWidgets.QPushButton(self.edge.slot)
+        self.assertEqual(self._typing(button), [])         # not a text field
+        outside = QtWidgets.QLineEdit()                    # not the panel's
+        try:
+            self.assertEqual(self._typing(outside), [])
+        finally:
+            outside.deleteLater()
+        field = QtWidgets.QLineEdit(self.edge.slot)
+        self.assertEqual(self._typing(field, active=False), [])  # Maya's
+        self.assertEqual(self._typing(None), [])           # no focus at all
 
     def test_the_width_grip_clamps_and_reports(self):
         self.edge.set_width(1000)
