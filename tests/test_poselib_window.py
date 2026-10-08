@@ -1311,6 +1311,33 @@ class Save(WindowCase):
         self.assertTrue(self.win.saving())
         self.assertEqual(self.win.status.text(), "pick one character for a pose")
 
+    def test_a_taken_name_is_refused_before_the_scene_is_asked(self):
+        """The final review (S7): a name a card holds in the folder was refused only by the
+        disk write - after an animation's walk and preview. Refused at once now, the panel
+        kept; a name that `safe_name` makes the taken one counts too (either type)."""
+        self.open()
+        for typed in ("Fist", " Fist. ", "fist"):
+            self.win.save_name.setText(typed)
+            self.win.save_confirm.click()
+            self.assertEqual(self.scene.calls("save"), [], typed)
+            self.assertTrue(self.win.saving())
+            self.assertEqual(self.win.status.text(),
+                             pw.NAME_TAKEN % (store.safe_name(typed), "Library / Hands"), typed)
+        self.win.save_name.setText("Fist 2")
+        self.win.save_confirm.click()
+        self.assertEqual(len(self.scene.calls("save")), 1)
+
+    def test_the_panel_names_the_folder_the_tree_picks_while_saving(self):
+        self.open()
+        self.assertIn("Library / Hands", self.win.save_folder.text())
+        self.win.set_folder("Hands/Left")
+        self.assertEqual(self.win.save_folder.text(), "in Library / Hands / Left")
+        self.win.tree.setCurrentItem(self.win.folder_item(""))
+        self.assertEqual(self.win.save_folder.text(), "in Library")
+        self.win.save_name.setText("Fist")              # free in the library itself
+        self.win.save_confirm.click()
+        self.assertEqual(self.scene.calls("save")[0][2], "")
+
 
 # ------------------------------------------------------------------ the animation cards
 

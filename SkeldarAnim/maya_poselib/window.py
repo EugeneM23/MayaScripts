@@ -157,6 +157,7 @@ SEARCH_HINT = "search name, folder, character"
 EMPTY_LIBRARY = "Nothing saved yet - select a character and press Save"
 EMPTY_SEARCH = "No card matches"
 NO_RANGE = "End is before Start - no frame to save"
+NAME_TAKEN = "%s is taken in %s - type another name, or pick another folder"
 PREVIEW_CANCELLED = "cancelled - nothing changed"
 PREVIEW_KEPT = "the preview kept: %s"
 NO_PREVIEW = "saved without a preview: %s"
@@ -1642,6 +1643,10 @@ def _classes():
             if self._building_tree or current is None:
                 return
             self._folder = current.data(0, Qt.UserRole) or ""
+            if self._save is not None:
+                #  the save panel names the folder the card goes into: it follows the tree
+                #  (the final review, S7 - the line kept naming the folder it opened on)
+                self.save_folder.setText("in " + folder_text(self._folder))
             self._repopulate()
 
         def _sorted(self, _index):
@@ -2278,6 +2283,15 @@ def _classes():
                 anim = {"start": self.save_start.value(), "end": self.save_end.value()}
                 if anim["end"] < anim["start"]:
                     return self.say(NO_RANGE)
+            #  a name a card of either type holds in the folder is refused NOW - asked after
+            #  the save had walked the frames and blasted the preview, it lost all of that
+            #  (the final review, S7)
+            try:
+                taken = store.unique_name(self.root, folder, name) != store.safe_name(name)
+            except ValueError:
+                taken = False
+            if taken:
+                return self.say(NAME_TAKEN % (store.safe_name(name), folder_text(folder)))
             try:
                 if anim is None:
                     path, text = self.scene.save(name, folder, regions, snapshot)
