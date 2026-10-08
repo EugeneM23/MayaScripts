@@ -9,10 +9,12 @@ once, the collapsed set remembered per section in an optionVar.
 
 And its look (2026-09-28): «нарисовать кастомный красивый интерфейс ... как
 сделать расположение кнопок более красивым». Where Qt is there the hub is
-SKINNED (`maya_hubqt`, `maya_hubstyle`): a header (the hotkey map's switch,
-the installed build's chip, a menu), a strip of icons jumping to a section,
-and the sections as cards in three groups - Scene, Animation, Look. Hotkeys
-and Update are the header there, not cards. Without Qt, or when the
+SKINNED (`maya_hubqt`, `maya_hubstyle`): one header row (the mark, an icon
+per section jumping to it - the update's carries the installed build as its
+tooltip -, the hotkey map's switch, a menu), and the sections as cards in
+groups - Scene, Animation, Look, Settings - each group a colour (a stripe),
+never a label (2026-10-08, the compact hub). Hotkeys are the header there,
+not a card. Without Qt, or when the
 animator asks for it (the menu's Classic look), the CLASSIC hub is built:
 the frameLayout accordion of 2026-09-17, every section in it.
 
@@ -291,8 +293,8 @@ def _build_classic():
         cmds.button(NEW_LOOK_BUTTON, label="Switch to the new look",
                     height=26,
                     annotation="The SkeldarAnim hub in its own skin: cards, "
-                               "a jump strip, the hotkeys and the update in "
-                               "the header",
+                               "a jump icon per section, the hotkeys and "
+                               "the update in the header",
                     command=lambda *_a: set_classic(False))
     for sec in SECTIONS:
         _build_section(sec)
@@ -302,22 +304,32 @@ def _build_classic():
 
 
 def _callbacks():
+    #  "version" is gone (2026-10-08): the compact header has no chip to
+    #  press - the update jump focuses its card, ⋮ -> Check update checks.
     return {
         "hotkeys": _press_hotkeys,
-        "version": _press_update,
         "check_update": _press_update,
         "hotkey_editor": _press_hotkey_editor,
         "classic": lambda: set_classic(True),
         "jump": focus,
         "toggled": remember,
+        "told": _told,
         "hover": _hover_sound,
         "sounds": set_sounds,
         "animations": set_animations,
     }
 
 
+def _told(key, text, viewport):
+    """A card's status reached the message line (maya_hubqt.Skin._told,
+    2026-10-08). The edge panel adds a viewport message while it is hidden
+    (Task 11); until then there is nothing to add."""
+    return None
+
+
 def _dress_header(skin):
-    """The chip = the installed build; the hotkey switch = the map's state."""
+    """The update jump's tooltip = the installed build; the hotkey switch =
+    the map's state."""
     try:
         import maya_update
         record = maya_update.read_record(maya_update.installed_dir())
@@ -378,12 +390,11 @@ def _build_skin():
         for sec in card_sections():
             skin.add_jump(sec.key, sec.label, sec.icon,
                           hubstyle.group(sec.group).colour)
-        current = None
+        #  No group labels (2026-10-08, the compact hub): a card's group is
+        #  the colour of its stripe and of its jump; the cards stand in their
+        #  groups' order all the same (Skin.add_group stays an API).
         for sec in card_sections():
             grp = hubstyle.group(sec.group)
-            if sec.group != current:
-                skin.add_group(grp.key, grp.label)
-                current = sec.group
             card = skin.add_card(sec.key, sec.label, sec.icon, grp.colour,
                                  grp.chip, collapsed=collapsed(sec.key))
             cmds.setParent(card.body_path())
@@ -489,8 +500,9 @@ def _press_hotkeys():
 
 
 def _press_update():
-    """The header's chip and the menu's Check update: the Update card opened
-    (its status line is where the answer goes), then the check."""
+    """The menu's Check update (the header's version chip is gone since
+    2026-10-08): the Update card opened (its status line is where the answer
+    goes), then the check."""
     import maya_update
     if is_skinned() and "update" in _SKIN.cards:
         expand("update")
@@ -498,7 +510,8 @@ def _press_update():
 
 
 def chip_state(state):
-    """Colour the header's version chip ("ok", "new", "" plain)."""
+    """Colour the header's update jump ("ok", "new", "" its group's colour);
+    2026-10-08: it was the version chip's colour before the compact header."""
     if is_skinned():
         _SKIN.set_state(state)
     return state
@@ -565,7 +578,7 @@ def show(key=None):
 
 
 def focus(key):
-    """The jump strip's press: section `key` opened and every other card
+    """A header jump's press: section `key` opened and every other card
     closed (2026-09-28: «при нажатии на верхнюю панель с разделами все другие
     панели должны закрыться и открыться только нужная»), remembered so, lit,
     scrolled to. Outside the skin it is `expand`."""

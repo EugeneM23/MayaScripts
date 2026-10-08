@@ -428,6 +428,7 @@ class FakeSkin(object):
         self.callbacks = callbacks
         self.cards = {}
         self.jumps = []
+        self.groups = []
         self.order = []
         self.said = []
         self.painted = []
@@ -441,6 +442,7 @@ class FakeSkin(object):
         self.jumps.append(key)
 
     def add_group(self, key, label):
+        self.groups.append(key)
         self.order.append(("group", key))
 
     def add_card(self, key, label, icon, colour, chip, collapsed=False):
@@ -530,18 +532,27 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         hub.build()
         self.assertEqual(self.qt.destroyed, [hub.CONTROL])
 
-    def test_cards_under_group_labels_and_no_frames(self):
+    def test_cards_in_group_order_and_no_frames(self):
+        """2026-10-08 (the compact hub): the cards stand in their groups'
+        order with no label between them - a card's group is its stripe."""
         hub.build()
         self.assertEqual(hub._SKIN.order, [
-            ("group", "scene"), ("card", "characters"), ("card", "weapons"),
+            ("card", "characters"), ("card", "weapons"),
             ("card", "connections"), ("card", "shared"),
-            ("group", "animation"), ("card", "retarget"),
-            ("card", "graphoverlay"), ("card", "com"), ("card", "poses"),
-            ("group", "look"),
-            ("card", "studio"), ("card", "colour"), ("group", "settings"),
+            ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
+            ("card", "poses"), ("card", "studio"), ("card", "colour"),
             ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])
+
+    def test_the_skin_has_no_group_labels(self):
+        """The compact skin shows a card's group as a coloured stripe, so
+        `_build_skin` never asks for a group label (Skin.add_group stays an
+        API)."""
+        hub.build()
+        self.assertFalse([entry for entry in hub._SKIN.order
+                          if entry[0] == "group"])
+        self.assertEqual(hub._SKIN.groups, [])
 
     def test_every_card_builder_runs_once_into_its_body(self):
         hub.build()
@@ -700,21 +711,38 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertIs(hub._SKIN.animations, True)
 
     def test_a_header_click_still_opens_one_card_alone(self):
-        """Only the strip closes the others; a card's own header toggles
+        """Only a header jump closes the others; a card's own header toggles
         that card."""
         hub.build()
         hub._SKIN.callbacks["toggled"]("colour", True)
         self.assertFalse(hub._SKIN.cards["studio"].collapsed())
 
-    def test_the_chip_opens_the_update_card_then_checks(self):
+    def test_the_menu_check_update_opens_the_update_card_then_checks(self):
+        """2026-10-08: the version chip is gone (the update jump just
+        focuses its card); the menu's Check update is what opens the card
+        and runs the check."""
         pressed = []
         #  maya_update is the recording fake here (install_fakes)
         self.tools["update"][0]._press = lambda *a: pressed.append(True)
         hub.build()
         hub._SKIN.cards["update"].set_collapsed(True)
-        hub._SKIN.callbacks["version"]()
+        hub._SKIN.callbacks["check_update"]()
         self.assertFalse(hub._SKIN.cards["update"].collapsed())
         self.assertEqual(pressed, [True])
+
+    def test_the_skin_has_no_version_chip_callback(self):
+        """The compact header has no chip to press (Task 2 removed it)."""
+        hub.build()
+        self.assertNotIn("version", hub._SKIN.callbacks)
+
+    def test_told_is_a_quiet_callback(self):
+        """A card's status reached the message line: the hub has nothing to
+        add until the edge panel does (a stub, never an error)."""
+        hub.build()
+        callbacks = hub._SKIN.callbacks
+        self.assertIn("told", callbacks)
+        self.assertIsNone(callbacks["told"]("characters", "Added", True))
+        self.assertIsNone(callbacks["told"]("characters", "", False))
 
     def test_chip_state_colours_the_chip(self):
         hub.build()
