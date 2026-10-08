@@ -549,22 +549,41 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(calls, ["add_weapon", "equip_armor", "add_weapon"])
 
     def test_a_failing_equip_lands_on_the_card_s_line_on_either_tab(self):
-        def boom():
-            raise RuntimeError("boom")
-        saved = (scenesetup.add_weapon, armorpanel.equip_armor)
+        """The failure of the SHOWN tab's press is written on the card's one
+        line by that tab's own `_run` (the armor's through `armorpanel._run`,
+        which writes the same control): each pass raises a message of its own
+        and the line must GROW by that one write - a bare call without `_run`
+        writes nothing, and the earlier pass's text cannot stand in for it."""
+        def lines():
+            return [c[2].get("label") for c in self.fake.calls
+                    if c[0] == "text" and c[1] == (scenesetup._STATUS,)
+                    and c[2].get("edit")]
+        saved = (scenesetup.add_weapon, scenesetup.remove_weapon,
+                 armorpanel.equip_armor, armorpanel.unequip_armor)
+
+        def boom(text):
+            def fail():
+                raise RuntimeError(text)
+            return fail
         try:
-            scenesetup.add_weapon = boom
-            armorpanel.equip_armor = boom
-            for tab in ("weapon", "armor"):
+            for tab, equip, unequip in (("weapon", "add_weapon", "remove_weapon"),
+                                        ("armor", "equip_armor", "unequip_armor")):
+                module = scenesetup if tab == "weapon" else armorpanel
+                setattr(module, equip, boom("equip-" + tab))
+                setattr(module, unequip, boom("unequip-" + tab))
                 self.fake.optionvars[scenesetup._TAB_OPTIONVAR] = tab
-                with self.assertRaises(RuntimeError):
-                    scenesetup.equip_current()
-                lines = [c[2].get("label") for c in self.fake.calls
-                         if c[0] == "text" and c[1] == (scenesetup._STATUS,)
-                         and c[2].get("edit")]
-                self.assertEqual(lines[-1], "RuntimeError: boom", tab)
+                for press, word in ((scenesetup.equip_current, "equip"),
+                                    (scenesetup.unequip_current, "unequip")):
+                    before = len(lines())
+                    with self.assertRaises(RuntimeError):
+                        press()
+                    after = lines()
+                    self.assertEqual(len(after), before + 1, (tab, word))
+                    self.assertEqual(after[-1], "RuntimeError: {0}-{1}".format(word, tab),
+                                     (tab, word))
         finally:
-            scenesetup.add_weapon, armorpanel.equip_armor = saved
+            (scenesetup.add_weapon, scenesetup.remove_weapon,
+             armorpanel.equip_armor, armorpanel.unequip_armor) = saved
 
     def test_characters_has_delete_beside_add_character(self):
         """2026-10-01: «кнопку удаления» - a danger button in the + Import
