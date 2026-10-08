@@ -7,6 +7,9 @@ primary action per section, the palette as dots) and scheme 3 (the accordion
 grouped into Scene / Animation / Look, a strip of icons that jumps to a
 section).
 
+2026-10-08: compact (variant B) - H, the status relay, the list rows; spec
+docs/superpowers/specs/2026-10-08-hub-compact-and-edge-panel-design.md
+
 This module is the look as DATA, stdlib only: the tokens, the groups, the
 whole Qt stylesheet as text, and the marks -- a builder says what a control
 IS (`mark(cmds.button(...), "primary", "plus")`) and the Qt layer
@@ -113,9 +116,12 @@ ROLES = (
                     # 2026-10-02: Connect «визуально как-то отделить»)
     "swatch",       # a colour chip (see swatch())
     "swatchonly",   # a colorSliderGrp showing only its swatch
+    "grip",         # a placeholder under a list the skin turns into a height grip (2026-10-08)
+    "dot",          # a one-glyph state mark (● / ○) before a dropdown (2026-10-08)
 )
 
-Mark = collections.namedtuple("Mark", "name role icon layout colour")
+Mark = collections.namedtuple("Mark", "name role icon layout colour target",
+                              defaults=(None,))
 
 _MARKS = []
 
@@ -132,6 +138,14 @@ def mark(name, role, icon=None, layout=False):
 def swatch(name, rgb):
     """Record a colour chip: a button the skin paints `rgb`, rounded."""
     _MARKS.append(Mark(name, "swatch", None, False, hex_of(rgb)))
+    return name
+
+
+def grip(name, list_name):
+    """Record that placeholder `name` (8 px under a list) is that list's
+    height grip (2026-10-08, «нужно сделать возможность раздвигать или
+    сдвигать окошко по высоте»); the skin draws and drives it."""
+    _MARKS.append(Mark(name, "grip", None, False, None, list_name))
     return name
 
 
@@ -170,6 +184,85 @@ def tool_label(text):
 def tool_width(classic):
     """A tool button's width: an icon's in the skin, the word's otherwise."""
     return pick(30, classic)
+
+
+# ------------------------------------------------------------- compact (B)
+
+#  The compact skin (2026-10-08, «сделаем его компактным»; variant B of the
+#  brainstorm): the builders' control heights, logical px. The classic hub
+#  keeps the numbers each builder passes as `classic`.
+H = {"button": 24, "small": 22, "segment": 22, "field": 20}
+
+
+def height(kind, classic):
+    """A control's height: the compact one in the skin, `classic` otherwise."""
+    return pick(H[kind], classic)
+
+
+def row_spacing(classic=6):
+    """A builder's column rowSpacing: 3 in the skin, `classic` otherwise."""
+    return pick(3, classic)
+
+
+# -------------------------------------------------------- the status relay
+
+#  One message line for the whole hub (2026-10-08): a section's status writer
+#  still writes its own control, and `tell`s the hub too. The skin listens
+#  (maya_hubqt.Skin) and shows the text on its line with the card's icon; the
+#  classic hub listens to nothing and keeps the status lines in the cards.
+_LISTENERS = []
+
+
+def listen(fn):
+    """`fn(control, text, viewport)` is called by every `tell`; returns fn."""
+    if fn not in _LISTENERS:
+        _LISTENERS.append(fn)
+    return fn
+
+
+def unlisten(fn):
+    if fn in _LISTENERS:
+        _LISTENERS.remove(fn)
+
+
+def tell(control, text, viewport=False):
+    """Section status control `control` now says `text`. `viewport`: the
+    writer shows it in the viewport itself (an inViewMessage), so the edge
+    panel need not. Never raises; answers `text`."""
+    for fn in list(_LISTENERS):
+        try:
+            fn(control, text, viewport)
+        except Exception:                                    # noqa: BLE001
+            pass
+    return text
+
+
+# --------------------------------------------------------------- the lists
+
+#  The file lists (the animations, Shared): 10 rows by default, 5..40 by the
+#  grip, remembered per list (2026-10-08, «хотя бы 10 ... раздвигать или
+#  сдвигать окошко по высоте»).
+LIST_VAR = "skeldarAnimHub_listRows_{0}"
+LIST_ROWS = 10
+LIST_MIN = 5
+LIST_MAX = 40
+
+
+def clamp_rows(rows):
+    return int(max(LIST_MIN, min(LIST_MAX, int(round(rows)))))
+
+
+def rows_after_drag(start_rows, dy, row_px):
+    """The rows a list shows after the grip moved `dy` px from where the
+    press found it showing `start_rows`, whole rows, clamped. Pure."""
+    if not row_px or row_px <= 0:
+        return clamp_rows(start_rows)
+    return clamp_rows(start_rows + float(dy) / float(row_px))
+
+
+def list_height(rows, row_px, frame_px):
+    """A list's height showing `rows` rows of `row_px`, plus its frame."""
+    return int(round(rows * row_px + frame_px))
 
 
 # --------------------------------------------------------------- the light
@@ -269,7 +362,7 @@ QFrame[skCard="true"] {{ background: {card}; border-radius: {r8}px;
     border: {p2}px solid {card}; }}
 
 QPushButton {{ background: transparent; border: {b1}px solid {line};
-    border-radius: {r6}px; padding: {p3}px {p8}px; color: {text2}; }}
+    border-radius: {r6}px; padding: {p2}px {p6}px; color: {text2}; }}
 QPushButton:hover {{ background: {hover}; color: {text}; }}
 QPushButton:pressed {{ background: {field}; }}
 QPushButton:disabled {{ color: {faint}; border-color: {hover}; }}
@@ -291,13 +384,13 @@ QPushButton[skRole="segment"]:hover {{ color: {text}; }}
 QPushButton[skRole="segment"]:checked {{ background: {line}; color: {text}; }}
 
 QComboBox {{ background: {field}; border: none; border-radius: {r6}px;
-    padding: {p3}px {p8}px; color: {text}; }}
+    padding: {p1}px {p6}px; color: {text}; }}
 QComboBox:hover {{ background: {field_hover}; }}
 QComboBox QAbstractItemView {{ background: {card}; color: {text};
     border: {b1}px solid {line}; selection-background-color: {accent_tint};
     selection-color: {accent_text}; }}
 QLineEdit {{ background: {field}; border: {b1}px solid {field};
-    border-radius: {r6}px; padding: {p2}px {p6}px; color: {text};
+    border-radius: {r6}px; padding: {p1}px {p6}px; color: {text};
     selection-background-color: {accent_tint}; }}
 QLineEdit:focus {{ border: {b1}px solid {accent}; }}
 QListWidget {{ background: {field}; border: none; border-radius: {r6}px;
@@ -310,7 +403,7 @@ QCheckBox::indicator {{ width: {p13}px; height: {p13}px; border-radius: {r3}px;
     background: {field}; border: {b1}px solid {line}; }}
 QCheckBox::indicator:checked {{ background: {accent}; border: {b1}px solid {accent}; }}
 QCheckBox[skRole="chip"] {{ background: {field}; border-radius: {r10}px;
-    padding: {p3}px {p10}px; color: {muted}; }}
+    padding: {p2}px {p8}px; color: {muted}; }}
 QCheckBox[skRole="chip"]:hover {{ color: {text}; }}
 QCheckBox[skRole="chip"]:checked {{ background: {accent_tint}; color: {accent_text}; }}
 QCheckBox[skRole="chip"]::indicator {{ width: 0px; height: 0px; border: none;
@@ -329,6 +422,10 @@ QLabel[skRole="context"] {{ color: {muted}; }}
 QLabel[skRole="subtitle"] {{ color: {muted}; font-size: {small}px; }}
 QLabel[skRole="heading"] {{ color: {text}; font-weight: bold;
     padding: {p6}px 0px {p3}px 0px; border-bottom: {b1}px solid {line}; }}
+QLabel[skRole="dot"] {{ color: {faint}; }}
+QWidget[skRole="grip"] {{ background: transparent; border-radius: {r3}px; }}
+QWidget[skRole="grip"]:hover {{ background: {hover}; }}
+QLabel[skRole="messageicon"] {{ background: transparent; }}
 
 QScrollBar:vertical {{ background: transparent; width: {p8}px; margin: 0px; }}
 QScrollBar::handle:vertical {{ background: {line}; border-radius: {r4}px;
@@ -350,7 +447,7 @@ QLabel[skRole="logo"] {{ background: {accent}; color: {on_accent};
     border-radius: {r5}px; font-weight: bold; }}
 QLabel[skRole="hubtitle"] {{ color: {text}; font-weight: bold; }}
 QToolButton[skRole="headbtn"] {{ background: transparent; border: none;
-    border-radius: {r6}px; padding: {p3}px; }}
+    border-radius: {r6}px; padding: {p2}px; }}
 QToolButton[skRole="headbtn"]:hover {{ background: {card}; }}
 QToolButton[skRole="headbtn"]:checked {{ background: {accent_tint}; }}
 QToolButton[skRole="headbtn"]::menu-indicator {{ image: none; width: 0px; }}
@@ -365,7 +462,7 @@ QWidget[skRole="message"] {{ background: {status}; border-radius: {r6}px; }}
 QLabel[skRole="messagetext"] {{ color: {status_text}; }}
 QWidget[skRole="strip"] {{ background: {strip}; border-radius: {r7}px; }}
 QToolButton[skRole="jump"] {{ background: transparent; border: none;
-    border-radius: {r5}px; padding: {p3}px; }}
+    border-radius: {r5}px; padding: {p1}px; }}
 QToolButton[skRole="jump"]:hover {{ background: {card}; }}
 QLabel[skRole="grouplabel"] {{ color: {muted}; font-size: {small}px; }}
 QLabel[skRole="cardtitle"] {{ color: {text}; font-weight: bold; }}

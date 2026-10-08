@@ -251,3 +251,89 @@ class GlowPixels(unittest.TestCase):
         self.assertTrue(all(abs(w * 1.5 - 1.0) < 1e-9 for _i, w, _a in rings))
         insets = [i * 1.5 for i, _w, _a in rings]
         self.assertEqual([round(x, 6) for x in insets], list(range(15)))
+
+
+class Compact(unittest.TestCase):
+    """2026-10-08, variant B: the builders' heights, the relay, the lists."""
+
+    def tearDown(self):
+        style.set_skinning(False)
+        style.take_marks()
+        for fn in list(style._LISTENERS):
+            style.unlisten(fn)
+
+    def test_heights_are_the_compact_ones_in_the_skin_only(self):
+        self.assertEqual(style.height("button", 32), 32)
+        style.set_skinning(True)
+        self.assertEqual(style.height("button", 32), 24)
+        self.assertEqual(style.height("small", 28), 22)
+        self.assertEqual(style.height("segment", 22), 22)
+        self.assertEqual(style.height("field", 24), 20)
+
+    def test_row_spacing(self):
+        self.assertEqual(style.row_spacing(), 6)
+        self.assertEqual(style.row_spacing(4), 4)
+        style.set_skinning(True)
+        self.assertEqual(style.row_spacing(4), 3)
+
+    def test_a_grip_mark_names_its_list(self):
+        self.assertEqual(style.grip("aGrip", "aList"), "aGrip")
+        mark = style.take_marks()[0]
+        self.assertEqual((mark.name, mark.role, mark.target),
+                         ("aGrip", "grip", "aList"))
+
+    def test_an_ordinary_mark_has_no_target(self):
+        style.mark("b", "primary", "plus")
+        self.assertIsNone(style.take_marks()[0].target)
+
+    def test_new_roles(self):
+        self.assertIn("grip", style.ROLES)
+        self.assertIn("dot", style.ROLES)
+
+    def test_tell_reaches_every_listener_and_answers_the_text(self):
+        heard = []
+        style.listen(lambda c, t, v: heard.append((c, t, v)))
+        self.assertEqual(style.tell("status1", "done", viewport=True), "done")
+        self.assertEqual(heard, [("status1", "done", True)])
+
+    def test_tell_without_a_listener_is_quiet(self):
+        self.assertEqual(style.tell("status1", "done"), "done")
+
+    def test_a_listener_that_raises_costs_only_itself(self):
+        heard = []
+
+        def bad(*_a):
+            raise RuntimeError("no")
+        style.listen(bad)
+        style.listen(lambda c, t, v: heard.append(t))
+        style.tell("s", "x")
+        self.assertEqual(heard, ["x"])
+
+    def test_unlisten(self):
+        heard = []
+        fn = style.listen(lambda c, t, v: heard.append(t))
+        style.unlisten(fn)
+        style.unlisten(fn)                       # twice is harmless
+        style.tell("s", "x")
+        self.assertEqual(heard, [])
+
+    def test_rows_clamp(self):
+        self.assertEqual(style.clamp_rows(2), 5)
+        self.assertEqual(style.clamp_rows(10.4), 10)
+        self.assertEqual(style.clamp_rows(99), 40)
+
+    def test_rows_after_a_drag_move_by_whole_rows(self):
+        self.assertEqual(style.rows_after_drag(10, 0, 16), 10)
+        self.assertEqual(style.rows_after_drag(10, 7, 16), 10)   # under half
+        self.assertEqual(style.rows_after_drag(10, 9, 16), 11)
+        self.assertEqual(style.rows_after_drag(10, -48, 16), 7)
+        self.assertEqual(style.rows_after_drag(10, -999, 16), 5)
+        self.assertEqual(style.rows_after_drag(10, 50, 0), 10)   # no row size
+
+    def test_list_height(self):
+        self.assertEqual(style.list_height(10, 16, 6), 166)
+
+    def test_the_sheet_has_the_dot_and_grip_rules(self):
+        sheet = style.stylesheet(1.0)
+        self.assertIn('QLabel[skRole="dot"]', sheet)
+        self.assertIn('QWidget[skRole="grip"]', sheet)

@@ -42,6 +42,10 @@ class TheSet(unittest.TestCase):
         self.assertTrue(paths[4].startswith("M13.803 4.56l2.184 -.53"))
         self.assertTrue(paths[4].endswith("-1.219l.133 -.041z"))
 
+    def test_the_edge_panel_icons(self):
+        for name in ("pin", "pinned", "clock"):
+            self.assertIn("<path", icons.svg(name))
+
     def test_the_licence_notice_rides_along(self):
         self.assertIn("MIT", icons.__doc__)
         self.assertIn("Tabler", icons.__doc__)
