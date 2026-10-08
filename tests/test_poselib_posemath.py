@@ -949,6 +949,137 @@ class Travel(unittest.TestCase):
         self.assertLess(pm.angle(got, trs(r=(0, 20, 0))), 1e-9)
 
 
+def yaw_of(m):
+    """The yaw (degrees) of a turn about world +Y."""
+    return math.degrees(pm._yaw_swing(m)[0])
+
+
+def rolling_clip(frames=24, tilt=2.0, step=4.0):
+    """A rootless clip (Mixamo's shape) rolling forward over its hips: a full turn about X over
+    `frames`, a +-`tilt` deg side tilt (about Z) every other frame, no turn about Y at all, the
+    hips moving `step` cm forward a frame. [bones per frame], frames + 1 of them."""
+    out = []
+    for i in range(frames + 1):
+        roll = 360.0 * i / frames
+        side = tilt if i % 2 else -tilt
+        out.append(rootless(skeleton({"pelvis": (roll, 0, side)},
+                                     place=trs((0, 0, step * i)))))
+    return out
+
+
+class SteadyHeading(unittest.TestCase):
+    """The final review's M3: a rootless card's travel read each frame's heading off its top
+    joint's swing-twist yaw, which is ill-conditioned near upside down - a hips forward roll
+    (360 deg about X, a 2 deg side tilt, no turn) keyed Main spinning -4, -15, 180, -6, -7 deg
+    at frames 10-14. `clip_roots` steadies the heading across the inverted span, for the travel
+    and the pelvis's offset together; the pose road (`targets`) is untouched."""
+
+    def setUp(self):
+        self.clip = rolling_clip()
+        self.top = "mx_pelvis"
+        self.worlds = [bones[self.top]["world"] for bones in self.clip]
+        self.target = skeleton()
+        self.pairs = pm.pairs(self.clip[0], self.target)
+        self.members = list(self.clip[0])
+        self.transfer = pm.Transfer(self.clip[0], self.target, self.pairs, self.members)
+
+    def test_a_frame_s_own_heading_spins_at_the_inverted_frames(self):
+        """The fixture can tell: read frame by frame, the root's yaw jumps by more than 90 deg
+        between two neighbours somewhere in the roll (the control)."""
+        yaws = [yaw_of(self.transfer.travel(now, self.clip[0])) for now in self.clip]
+        jumps = [abs(pm._wrapped(math.radians(b - a))) for a, b in zip(yaws, yaws[1:])]
+        self.assertGreater(math.degrees(max(jumps)), 90.0)
+
+    def test_the_steadied_travel_never_turns(self):
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        for i, now in enumerate(self.clip):
+            got = self.transfer.travel(now, self.clip[0], roots=(roots[i], roots[0]))
+            self.assertLess(abs(yaw_of(got)), 8.0, "frame %d: %.3f deg" % (i, yaw_of(got)))
+            # the travel's place is the ground under the hips, as before
+            want = om.MVector(0, 0, 4.0 * i)
+            self.assertLess((pm.position(got) - want).length(), 1e-6, i)
+
+    def test_the_steadied_heading_is_a_frame_s_own_where_the_hips_stand(self):
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        rest = pm.matrix(self.clip[0][self.top]["rest"])
+        for i, bones in enumerate(self.clip):
+            yaw, swing = pm._yaw_swing(pm.rotation(rest).inverse() *
+                                       pm.rotation(bones[self.top]["world"]))
+            if swing <= pm.SWING_LIMIT:
+                own = pm._ground(rest, bones[self.top]["world"])[0]
+                same(self, roots[i], own, 0.0, "frame %d" % i)
+
+    def test_the_pelvis_is_the_card_s_either_way(self):
+        """The pelvis stood exact under the spinning root (the two headings cancelled): handed the
+        steadied root frame for both its offset and its root world, it stands where it did."""
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        for i, now in enumerate(self.clip):
+            raw = self.transfer.frame(now, root_world=self.transfer.travel(now, self.clip[0]))
+            got = self.transfer.frame(now, root_world=self.transfer.travel(
+                now, self.clip[0], roots=(roots[i], roots[0])), source_root=roots[i])
+            self.assertLess(pm.angle(got["pelvis"], raw["pelvis"]), 1e-6, i)
+            self.assertLess((pm.position(got["pelvis"]) -
+                             pm.position(raw["pelvis"])).length(), 1e-6, i)
+
+    def mirrored_pelvis(self, i, steady_mirror):
+        """The target pelvis for frame i of the clip MIRRORED, the travel and the pelvis offset
+        on `clip_roots`' frames - the mirror plane too when `steady_mirror`, else the frame's
+        own heading's."""
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        now, first = self.clip[i], self.clip[0]
+        shown = pm.mirror(now, self.members,
+                          root_frame=roots[i] if steady_mirror else None)[0]
+        travel = self.transfer.travel(now, first, flip=True, roots=(roots[i], roots[0]))
+        return self.transfer.frame(shown, root_world=travel, source_root=roots[i])["pelvis"]
+
+    def test_mirrored_it_is_the_reflection_of_the_unmirrored_every_frame(self):
+        """Mirrored, the roll is the same roll with its side tilt the other way: the target's
+        pelvis the unmirrored one's reflected across the target's sagittal plane, on every frame
+        - the mirror plane turns with the heading, so with the travel steadied it must be the
+        steadied one too (the frame's own heading for the plane: the control, twice the
+        heading's noise off near upside down)."""
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        f = om.MMatrix([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+        worst = {True: 0.0, False: 0.0}
+        for i, now in enumerate(self.clip):
+            plain = self.transfer.frame(now, root_world=self.transfer.travel(
+                now, self.clip[0], roots=(roots[i], roots[0])), source_root=roots[i])["pelvis"]
+            want = f * pm.rotation(plain) * f
+            for steady in (True, False):
+                worst[steady] = max(worst[steady],
+                                    pm.angle(self.mirrored_pelvis(i, steady), want))
+        self.assertLess(worst[True], 1e-6)
+        self.assertGreater(worst[False], 5.0)
+
+    def test_mirror_without_a_root_frame_is_as_it_was(self):
+        for bones in self.clip[::5]:
+            plain = pm.mirror(bones, self.members)[0]
+            own = pm._ground(bones[self.top]["rest"], bones[self.top]["world"])[0]
+            given = pm.mirror(bones, self.members, root_frame=own)[0]
+            for leaf in plain:
+                same(self, given[leaf]["world"], plain[leaf]["world"], 0.0, leaf)
+
+    def test_a_rooted_clip_s_roots_are_its_root_bone_s(self):
+        clip = [skeleton(place=trs((0, 0, 5.0 * i), (0, 20.0 * i, 0))) for i in range(4)]
+        roots = pm.clip_roots(clip[0], [bones["root"]["world"] for bones in clip])
+        for i, bones in enumerate(clip):
+            same(self, roots[i], bones["root"]["world"], 0.0, i)
+
+    def test_steady_yaws_interpolates_the_short_way_and_holds_at_the_ends(self):
+        turn = lambda yaw, roll=0.0: trs(r=(roll, yaw, 0))       # noqa: E731
+        # 170 -> (inverted) -> -170: the short way passes 180, never 0
+        got = pm.steady_yaws([turn(170), turn(0, 180), turn(-170)])
+        self.assertEqual([s for _y, s in got], [False, True, False])
+        self.assertAlmostEqual(abs(pm._wrapped(got[1][0])), math.pi, 9)
+        # inverted at the start and the end: the nearest frame's
+        got = pm.steady_yaws([turn(0, 179), turn(30), turn(50), turn(0, 181)])
+        self.assertAlmostEqual(math.degrees(got[0][0]), 30.0, 9)
+        self.assertAlmostEqual(math.degrees(got[3][0]), 50.0, 9)
+        # nothing within the limit: every frame its own
+        got = pm.steady_yaws([turn(0, 170), turn(0, 190)])
+        self.assertEqual([s for _y, s in got], [False, False])
+
+
 class Purity(unittest.TestCase):
 
     def test_imports(self):
