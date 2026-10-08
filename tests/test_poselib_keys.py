@@ -1082,6 +1082,8 @@ class CurveCmds(object):
         span = kw.get("time")
         if kw.get("query") and kw.get("keyframeCount"):
             return sum(1 for t in self.times.get(curve, []) if self._inside(t, span))
+        if kw.get("query") and kw.get("timeChange"):
+            return [t for t in self.times.get(curve, []) if self._inside(t, span)]
         if kw.get("edit"):
             self.log.append(("move", curve, dict(kw)))
             assert kw.get("relative"), kw
@@ -1266,6 +1268,27 @@ class Cut(Restoring):
         with self.assertRaises(RuntimeError):
             keys.cut(["a.tx"], ADD)
 
+    def test_a_cut_maya_only_warns_about_counts_nothing(self):
+        """The final review (S5), measured: `cutKey` on a REFERENCED curve warns and changes
+        nothing - and the keys were counted as removed. The count is what the curve lost."""
+        class Warning(CurveCmds):
+            def cutKey(self, curve, **kw):
+                self.log.append(("cut", curve, dict(kw)))
+                return 0                                    # a warning, no key gone
+        fake = Warning(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.cut(["a.tx", "a.ty"], ADD, 5, 15), 0)
+        self.assertEqual(keys.cut(["a.tx", "a.ty"], ADD), 0)
+        self.assertEqual(fake.times, {"cx": [0, 5, 10, 15, 20], "cy": [12, 30]})
+        # one curve that refuses beside one that does not: only the other's keys count
+        class Half(CurveCmds):
+            def cutKey(self, curve, **kw):
+                if curve == "cx":
+                    return 0
+                return CurveCmds.cutKey(self, curve, **kw)
+        keys.cmds = Half(**self.SCENE)
+        self.assertEqual(keys.cut(["a.tx", "a.ty"], ADD, 5, 15), 1)
+
 
 class Shift(Restoring):
 
@@ -1317,6 +1340,27 @@ class Shift(Restoring):
         keys.cmds = Refusing(**self.SCENE)
         with self.assertRaises(RuntimeError):
             keys.shift(["a.tx"], ADD, 10, 7)
+
+    def test_a_move_maya_only_warns_about_counts_nothing(self):
+        """The final review (S5), measured: `keyframe -edit` on a REFERENCED curve warns and
+        moves nothing - and the keys were counted as moved. The count is the keys whose times
+        changed."""
+        class Warning(CurveCmds):
+            def keyframe(self, curve, **kw):
+                if kw.get("edit"):
+                    return 0                                # a warning, nothing moved
+                return CurveCmds.keyframe(self, curve, **kw)
+        fake = Warning(**self.SCENE)
+        keys.cmds = fake
+        self.assertEqual(keys.shift(["a.tx", "a.ty"], ADD, 10, 7), 0)
+        self.assertEqual(fake.times, {"cx": [0, 10, 20], "cy": [3, 12]})
+        class Half(CurveCmds):
+            def keyframe(self, curve, **kw):
+                if kw.get("edit") and curve == "cx":
+                    return 0
+                return CurveCmds.keyframe(self, curve, **kw)
+        keys.cmds = Half(**self.SCENE)
+        self.assertEqual(keys.shift(["a.tx", "a.ty"], ADD, 10, 7), 1)
 
 
 class WriteKeys(Restoring):

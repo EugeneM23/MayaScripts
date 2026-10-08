@@ -519,7 +519,7 @@ def _count(curve, span=None):
 
 def cut(plugs, layer, start=None, end=None):
     """Keys removed from each plug's `curve_for` curve: inside [start, end] (inclusive), or every
-    key when both are None (one None: that end open). The number of keys removed.
+    key when both are None (one None: that end open). The number of keys the curves LOST.
 
     `cutKey(curve, time=(start, end), clear=True)` - `-clear` leaves the clipboard (the
     animator's copied keys) alone; measured inclusive (5, 10, 15 of 0..20 gone for (5, 15)). A
@@ -527,8 +527,10 @@ def cut(plugs, layer, start=None, end=None):
     quietly (the paste just keys it). A curve the cut EMPTIES is deleted by Maya (measured:
     plain, base and layer curves alike) and its plug keeps the value the DG last evaluated; the
     next key makes a new one with Maya's defaults (its old infinity and weighting do not come
-    back). Inside the press's undo chunk, a Ctrl+Z brings the old curve back whole. A Maya error
-    (a referenced curve) is raised: a press must not paste over a take it could not clear."""
+    back). Inside the press's undo chunk, a Ctrl+Z brings the old curve back whole. A REFERENCED
+    curve only warns and keeps every key (the final review, measured) - so each curve's keys
+    are counted before and after the cut (`_count`; a deleted curve counts none) and only what
+    it lost is counted; a Maya error the cut raises goes on."""
     if start is None and end is None:
         span = None
     else:
@@ -542,26 +544,39 @@ def cut(plugs, layer, start=None, end=None):
             cmds.cutKey(curve, clear=True)
         else:
             cmds.cutKey(curve, time=span, clear=True)
-        removed += count
+        removed += max(0, count - _count(curve, span))
     return removed
+
+
+def _times(curve, span):
+    """The key times of `curve` inside `span`, [] when it has none (or cannot be read)."""
+    try:
+        return list(cmds.keyframe(curve, query=True, timeChange=True, time=span) or [])
+    except (RuntimeError, TypeError, ValueError):
+        return []
 
 
 def shift(plugs, layer, at, by):
     """Every key at or after `at` on each plug's `curve_for` curve moved `by` frames later
     (`keyframe -edit -relative -timeChange by -time (at, BIG)`: measured, 10 and 20 to 17 and
     27, the base curve and a layer curve alike, the other layers' curves where they were); the
-    keys moved, counted. Insert's gap: the paste keys into [at, at + by - 1] afterwards. A plug
-    with no curve, a curve with nothing at or after `at`, and a zero shift are left alone."""
+    keys MOVED, counted. Insert's gap: the paste keys into [at, at + by - 1] afterwards. A plug
+    with no curve, a curve with nothing at or after `at`, and a zero shift are left alone. A
+    REFERENCED curve only warns and moves nothing (the final review, measured): a curve's keys
+    count only when their times changed (`_times` before and after); a Maya error the move
+    raises goes on."""
     if not by:
         return 0
     span = (at, BIG)
     moved = 0
     for curve in _curves(plugs, layer):
-        count = _count(curve, span)
-        if not count:
+        before = _times(curve, span)
+        if not before:
             continue
         cmds.keyframe(curve, edit=True, relative=True, timeChange=by, time=span)
-        moved += count
+        if _times(curve, span) == before:
+            continue                                # Maya warned and moved nothing
+        moved += len(before)
     return moved
 
 
