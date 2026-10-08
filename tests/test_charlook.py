@@ -18,15 +18,17 @@ class Grid(unittest.TestCase):
     def test_the_animators_dock_holds_one_row_of_four(self):
         cols, cell, rects, height = look.grid(330, 4)
         self.assertEqual(cols, 4)
-        self.assertTrue(72 <= cell <= 120, cell)
+        self.assertTrue(look.CELL_MIN <= cell <= look.CELL_MAX, cell)
         self.assertEqual(len(rects), 4)
-        self.assertEqual(height, cell + look.NAME_H)
+        self.assertEqual(height, cell)          # the name is over the square: no strip
         self.assertEqual(len(set(r[1] for r in rects)), 1)
 
     def test_a_narrow_dock_wraps(self):
-        cols, cell, rects, height = look.grid(200, 4)
+        width = 2 * look.CELL_MIN + look.GAP + 10        # room for two columns, not three
+        cols, cell, rects, height = look.grid(width, 4)
         self.assertEqual(cols, 2)
-        self.assertEqual(height, 2 * (cell + look.NAME_H) + look.GAP)
+        self.assertEqual(height, 2 * cell + look.GAP)
+        self.assertEqual(rects[2][1], cell + look.GAP)   # the next row: a square and a gap down
         self.assertGreater(rects[2][1], rects[0][1])
 
     def test_a_wide_dock_caps_the_portrait(self):
@@ -36,7 +38,7 @@ class Grid(unittest.TestCase):
     def test_no_width_yet_is_one_row_at_the_minimum(self):
         cols, cell, _rects, height = look.grid(0, 4)
         self.assertEqual((cols, cell), (4, look.CELL_MIN))
-        self.assertEqual(height, look.CELL_MIN + look.NAME_H)
+        self.assertEqual(height, look.CELL_MIN)
 
     def test_the_scale_multiplies(self):
         one = look.grid(330, 4)
@@ -57,14 +59,52 @@ class Grid(unittest.TestCase):
 class Hit(unittest.TestCase):
 
     def test_the_tile_and_its_name_are_the_tile(self):
+        """The name lies over the square's bottom (2026-10-08): pressing on it
+        is pressing on the tile, and under the square there is nothing."""
         _c, cell, rects, _h = look.grid(330, 4)
         x, y = rects[2][:2]
         self.assertEqual(look.hit(rects, x + 3, y + 3), 2)
-        self.assertEqual(look.hit(rects, x + 3, y + cell + 5), 2)
+        nx, ny, _nw, nh = look.name_rect(rects[2])
+        self.assertEqual(look.hit(rects, nx + 3, ny + nh // 2), 2)
+        self.assertIsNone(look.hit(rects, x + 3, y + cell + 1))
 
     def test_the_gap_is_nothing(self):
         _c, _cell, rects, _h = look.grid(330, 4)
-        self.assertIsNone(look.hit(rects, rects[0][0] + rects[0][2] + 2, 5))
+        self.assertIsNone(look.hit(rects, rects[0][0] + rects[0][2] + 1, 5))
+
+
+class OverlayNames(unittest.TestCase):
+    """2026-10-08, variant B: five a row in the card, the name over the
+    picture's bottom (no strip under it)."""
+
+    def test_five_portraits_a_row_in_a_338_px_card(self):
+        cols, cell, rects, height = look.grid(338, 5)
+        self.assertEqual(cols, 5)
+        self.assertGreaterEqual(cell, look.CELL_MIN)
+        self.assertEqual(height, cell)                  # one row, no strip
+
+    def test_the_name_lies_inside_the_square(self):
+        rect = (10, 20, 64, 64)
+        nx, ny, nw, nh = look.name_rect(rect)
+        self.assertEqual((nx, nw, nh), (10, 64, look.NAME_H))
+        self.assertEqual(ny + nh, 20 + 64)
+
+    def test_the_name_strip_scales(self):
+        rect = (10, 20, 96, 96)
+        nx, ny, nw, nh = look.name_rect(rect, 1.5)
+        self.assertEqual((nx, nw, nh), (10, 96, int(round(look.NAME_H * 1.5))))
+        self.assertEqual(ny + nh, 20 + 96)
+
+    def test_a_tile_is_its_square(self):
+        self.assertEqual(look.tile_rect((1, 2, 30, 30)), (1, 2, 30, 30))
+        self.assertEqual(look.tile_rect((1, 2, 30, 30), 1.5), (1, 2, 30, 30))
+
+    def test_two_rows_height(self):
+        cols, cell, rects, height = look.grid(338, 7)
+        self.assertEqual(height, 2 * cell + look.GAP)
+
+    def test_the_compact_constants(self):
+        self.assertEqual((look.CELL_MIN, look.GAP, look.NAME_H), (58, 3, 16))
 
 
 class State(unittest.TestCase):

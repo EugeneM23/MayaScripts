@@ -17,10 +17,13 @@ import math
 
 import maya_hubstyle
 
-CELL_MIN = 72           # a portrait is at least this wide ...
+#  The compact hub (2026-10-08, variant B): five tiles a row in a 338 px card
+#  and the name drawn OVER the picture's bottom, on a shade - no strip under
+#  the square. Was CELL_MIN 72, GAP 6 and an 18 px strip beneath.
+CELL_MIN = 58           # a portrait is at least this wide ...
 CELL_MAX = 120          # ... and at most this
-GAP = 6
-NAME_H = 18             # the name strip under a portrait
+GAP = 3
+NAME_H = 16             # the name strip INSIDE the square's bottom
 RADIUS = 6              # a tile's corners: the hub's well radius
 GHOST = 88              # the portrait riding the cursor
 THROTTLE_MS = 33        # the drag's caption is re-read at most this often
@@ -33,12 +36,13 @@ def grid(width, count, scale=1.0):
     """(columns, cell, rects, height) for `count` tiles in `width` physical
     px: as many columns of at least CELL_MIN as fit, never more than `count`,
     each tile a square of at most CELL_MAX, left-aligned, rows wrapping. The
-    rects are the squares; the height includes the name strips. A width of 0
-    (not laid out yet) is one row at the minimum. Pure."""
+    rects are the squares, the name lies over each one's bottom (`name_rect`),
+    so the height is the rows and the gaps between them and nothing else. A
+    width of 0 (not laid out yet) is one row at the minimum. Pure."""
     if count <= 0:
         return (0, 0, [], 0)
     k = float(scale or 1.0)
-    gap, low, high, name = GAP * k, CELL_MIN * k, CELL_MAX * k, NAME_H * k
+    gap, low, high = GAP * k, CELL_MIN * k, CELL_MAX * k
     width = float(width or 0)
     if width <= 0:
         cols, cell = count, low
@@ -50,22 +54,23 @@ def grid(width, count, scale=1.0):
     for index in range(count):
         row, col = divmod(index, cols)
         rects.append((int(round(col * (cell + gap))),
-                      int(round(row * (cell + name + gap))),
+                      int(round(row * (cell + gap))),
                       int(round(cell)), int(round(cell))))
-    height = int(round(rows * (cell + name) + (rows - 1) * gap))
+    height = int(round(rows * cell + (rows - 1) * gap))
     return cols, int(round(cell)), rects, height
 
 
 def name_rect(rect, scale=1.0):
-    """The name strip under a portrait's square."""
+    """The name strip over the bottom of a portrait's square: inside it, the
+    last NAME_H px (2026-10-08; it was a strip under the square)."""
     x, y, w, h = rect
-    return (x, y + h, w, int(round(NAME_H * float(scale or 1.0))))
+    strip = int(round(NAME_H * float(scale or 1.0)))
+    return (x, y + h - strip, w, strip)
 
 
 def tile_rect(rect, scale=1.0):
-    """The square and its name strip: what a press on the tile covers."""
-    x, y, w, h = rect
-    return (x, y, w, h + int(round(NAME_H * float(scale or 1.0))))
+    """What a press on the tile covers: the square - the name is over it."""
+    return rect
 
 
 def hit(rects, x, y, scale=1.0):

@@ -2,7 +2,8 @@
 
 2026-10-01, the animator: «в отличии от оружия не нужно делать сетчатый инвентарь а просто будем
 выделять предмет нажимать кнопочку equip» -- and, asked how the items look, icon tiles like the
-Characters portraits. One square icon per `catalog.ARMOR` row with its name under it:
+Characters portraits. One square icon per `catalog.ARMOR` row with its name over its bottom
+(2026-10-08, the compact hub: five a row, no strip under the square):
 
 - a CLICK picks the row (the card's line says what Equip will do; the pick is remembered);
 - a row the current character wears carries an «equipped» pill;
@@ -399,6 +400,9 @@ def _classes():
                 else:
                     self._missing(p, box)
                 p.restore()
+                # the name over the picture's bottom - before the ring, so the
+                # shade never dims the outline
+                self._paint_name(p, rect, row.label, chosen)
                 if chosen:
                     self._stroke(p, box, radius, "accent", max(1.5, 2 * k))
                 elif lit:
@@ -407,8 +411,12 @@ def _classes():
                     self._stroke(p, box, radius, "line", max(1.0, k))
 
                 if row.key in self.worn:
+                    # above the name's strip (2026-10-08: the name lies over
+                    # the square's bottom now)
                     pad = int(4 * k)
-                    tag = QtCore.QRectF(box.left() + pad, box.bottom() - pad - int(16 * k),
+                    nh = look.name_rect(rect, k)[3]
+                    tag = QtCore.QRectF(box.left() + pad,
+                                        box.bottom() - nh - pad - int(16 * k),
                                         box.width() - 2 * pad, int(16 * k))
                     p.setPen(Qt.NoPen)
                     p.setBrush(colour("ok_tint"))
@@ -416,15 +424,33 @@ def _classes():
                     p.setFont(font(10.5 * k, bold=True))
                     p.setPen(colour("ok"))
                     p.drawText(tag, Qt.AlignCenter, WORN_TEXT)
-
-                nx, ny, nw, nh = look.name_rect(rect, k)
-                name_font = font(11.5 * k, bold=chosen)
-                p.setFont(name_font)
-                p.setPen(colour("text" if chosen else "text2"))
-                text = QtGui.QFontMetrics(name_font).elidedText(row.label, Qt.ElideRight, int(nw))
-                p.drawText(QtCore.QRect(int(nx), int(ny), int(nw), int(nh)),
-                           Qt.AlignHCenter | Qt.AlignVCenter, text)
             p.end()
+
+        def _paint_name(self, p, rect, label, chosen):
+            """The name over the picture's bottom, on a shade fading in from
+            the picture (2026-10-08, the compact hub: no strip under the
+            square), cut to the tile's rounded shape - the portraits' own."""
+            k = self.k
+            nx, ny, nw, nh = look.name_rect(rect, k)
+            radius = look.RADIUS * k
+            shape = QtGui.QPainterPath()
+            shape.addRoundedRect(QtCore.QRectF(*rect), radius, radius)
+            shade = QtGui.QLinearGradient(nx, ny, nx, ny + nh)
+            shade.setColorAt(0.0, QtGui.QColor(0, 0, 0, 0))
+            shade.setColorAt(1.0, QtGui.QColor(0, 0, 0, 190))
+            p.save()
+            p.setClipPath(shape, Qt.IntersectClip)
+            p.setPen(Qt.NoPen)
+            p.setBrush(shade)
+            p.drawRect(QtCore.QRectF(nx, ny, nw, nh))
+            p.restore()
+            name_font = font(10 * k, bold=chosen)
+            p.setFont(name_font)
+            p.setPen(colour("text" if chosen else "text2"))
+            text = QtGui.QFontMetrics(name_font).elidedText(
+                label, Qt.ElideRight, int(nw - 6 * k))      # clear of the ring
+            p.drawText(QtCore.QRect(int(nx), int(ny), int(nw), int(nh)),
+                       Qt.AlignHCenter | Qt.AlignVCenter, text)
 
     _CLASSES.update(ArmorGrid=ArmorGrid, Keeper=maya_chargrid._classes()["Keeper"], qt=q)
     return _CLASSES

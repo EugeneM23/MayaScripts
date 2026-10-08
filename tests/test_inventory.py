@@ -21,6 +21,7 @@ try:
 except Exception:                                            # noqa: BLE001
     QT = None
 
+import maya_charlook as charlook
 import maya_inventory as inv
 import maya_invlook as look
 from maya_scenesetup import catalog
@@ -285,19 +286,25 @@ class Channels(PanelCase):
         self.panel.refresh(force="R")
         self.assertEqual(field.text(), "1.5")
 
-    def test_the_short_names_where_the_nice_ones_do_not_fit(self):
-        """Measured with the panel's own font: offscreen Qt has no family
-        and draws wide, so the size is set here rather than assumed."""
-        small = QT.QtGui.QFont()
-        small.setPixelSize(5)
-        self.panel.field_font = small
-        self.panel._place_fields()
-        self.assertEqual(self.panel.short, {"R": False, "L": False})
-        big = QT.QtGui.QFont()
-        big.setPixelSize(40)
-        self.panel.field_font = big
-        self.panel._place_fields()
-        self.assertEqual(self.panel.short, {"R": True, "L": True})
+    def test_the_short_names_whatever_the_font(self):
+        """2026-10-08, the compact hub: the hand cards always show tx .. rz,
+        so the label column is the widest SHORT name and the value field takes
+        the rest - at any font. Measured with the panel's own font: offscreen
+        Qt has no family and draws wide, so the size is set here."""
+        for px in (5, 40):
+            font = QT.QtGui.QFont()
+            font.setPixelSize(px)
+            self.panel.field_font = font
+            self.panel._place_fields()
+            self.assertEqual(self.panel.short, {"R": True, "L": True}, px)
+            widest = max(QT.QtGui.QFontMetrics(font).horizontalAdvance(c)
+                         for c in look.CHANNELS)
+            gap = int(round(look.ROW_GAP * self.panel.k))
+            for side in ("R", "L"):
+                self.assertEqual(self.panel.label_w[side], widest, (px, side))
+                row = self.rects["row_%s_tx" % side]
+                geo = self.panel.field(side, "tx").geometry()
+                self.assertEqual(geo.x(), row[0] + widest + gap, (px, side))
 
 
 @unittest.skipIf(QT is None, "no Qt")
@@ -481,14 +488,37 @@ class Tiles(PanelCase):
             self.assertGreater(turned.width(), pixmap.width(), key)
 
     def test_a_held_weapon_wears_the_equipped_pill(self):
+        """Over the name's strip (2026-10-08), which lies in the square's
+        bottom: the pill's middle is `NAME_H` + 8 above the bottom edge."""
         import maya_hubstyle
         image = self.image()
         x, y, w, h = self.panel.tile_of("LongSword_02")      # in the right hand
-        pill = image.pixelColor(int(x + 8), int(y + h - 8))
+        up = charlook.name_rect((x, y, w, h), self.panel.k)[3] + 8
+        pill = image.pixelColor(int(x + 8), int(y + h - up))
         self.assertEqual(pill.name(), maya_hubstyle.TOKENS["ok_tint"])
         x, y, w, h = self.panel.tile_of("Spear_01")          # nobody holds it
-        self.assertNotEqual(image.pixelColor(int(x + 8), int(y + h - 8)).name(),
+        self.assertNotEqual(image.pixelColor(int(x + 8), int(y + h - up)).name(),
                             maya_hubstyle.TOKENS["ok_tint"])
+
+    def test_the_name_lies_over_the_squares_bottom_on_a_shade(self):
+        """2026-10-08: no strip under the tile - the name is drawn over the
+        picture's bottom, on a shade that fades in from the picture."""
+        import maya_hubstyle
+        self.panel.turned = {}                  # no icon in the way of the pixels
+        self.panel.holding = {}
+        image = self.image()
+        x, y, w, h = self.panel.tile_of("Spear_01")
+        nx, ny, nw, nh = charlook.name_rect((x, y, w, h), self.panel.k)
+        self.assertEqual(ny + nh, y + h)
+        field = QT.QtGui.QColor(maya_hubstyle.TOKENS["field"])
+
+        def luma(px, py):
+            c = image.pixelColor(int(px), int(py))
+            return c.red() + c.green() + c.blue()
+        above = luma(x + 4, ny - 3)                          # over the strip
+        self.assertEqual(image.pixelColor(int(x + 4), int(ny - 3)).name(), field.name())
+        self.assertLess(luma(x + 4, y + h - 4), 0.7 * above)      # the strip's foot is shaded
+        self.assertLess(luma(x + 4, y + h - 4), luma(x + 4, ny + 1))   # and it deepens
 
     def test_a_hand_dragged_over_the_tiles_says_back_to_the_inventory(self):
         start = self.rects["well_R"][:2]

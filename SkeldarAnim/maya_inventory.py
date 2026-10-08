@@ -21,8 +21,9 @@ the classic one:
   X/Y/Z, a value typed and Enter applies that hand's six (Esc puts back);
 - the TILES - the catalog, every weapon always there, one square each
   (the portraits' and the armor's geometry, `maya_charlook`), the icon laid
-  across it, the name under it, an «equipped» pill on what the character
-  holds (2026-10-01, the evening: «уберем функционал сетчатого инвентаря ...
+  across it, the name over its bottom on a shade (2026-10-08, the compact
+  hub; it was a strip under the square), an «equipped» pill above the name
+  on what the character holds (2026-10-01, the evening: «уберем функционал сетчатого инвентаря ...
   перемещать по сетке не нужно. Пусть все будет конссистентно» - the cell
   grid, its rearranging, Sort and the remembered layout are gone);
 - the RIGHT BUTTON on a weapon - a tile or a hand card - offers Open scene:
@@ -59,7 +60,6 @@ THROTTLE_MS = 33
 SLOT_LABEL = {"R": "Right hand", "L": "Left hand"}
 EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
 CHANNEL_PX = 9.5           # the channel names' and values' font, logical px
-VALUE_SAMPLE = "-179.51"   # the value a field must have room for
 
 #  The panels standing, by the placeholder they are laid over.
 _PANELS = {}
@@ -327,7 +327,7 @@ def _classes():
             self.status_text = ""
             self.root, self.holding, self.grips = None, {}, {}
             self.picked_key, self.picked_side = None, "R"
-            self.short = {"R": False, "L": False}
+            self.short = {"R": True, "L": True}      # always, since 2026-10-08
             self.field_font = font(CHANNEL_PX * self.k)
             self.setStyleSheet(field_sheet(self.k))
             self.fields = {}
@@ -377,13 +377,16 @@ def _classes():
             QtWidgets.QWidget.resizeEvent(self, event)
 
         def _split(self, column_w):
+            """(short, label width, value width) of a channel row: always the
+            SHORT names (tx ... rz) since the compact hub (2026-10-08) - the
+            label column is the widest of them in the panel's font and the
+            value field takes the rest, so `short` is True whatever the font
+            (`look.split_row`, which chose between nice and short by width, is
+            no longer asked)."""
             metrics = QtGui.QFontMetrics(self.field_font)
-            nice = max(metrics.horizontalAdvance(look.NICE[c])
-                       for c in look.CHANNELS)
             short = max(metrics.horizontalAdvance(c) for c in look.CHANNELS)
-            value_min = metrics.horizontalAdvance(VALUE_SAMPLE) + int(6 * self.k)
-            return look.split_row(column_w, nice, short, value_min,
-                                  int(round(look.ROW_GAP * self.k)))
+            gap = int(round(look.ROW_GAP * self.k))
+            return True, short, max(0, column_w - short - gap)
 
         def _place_fields(self):
             rects = self.rects()
@@ -810,6 +813,27 @@ def _classes():
                 p.setFont(font(10 * k))
                 p.setPen(colour("muted"))
                 p.drawText(box, Qt.AlignCenter | Qt.TextWordWrap, key)
+            # the name over the picture's bottom, on a shade fading in from the
+            # picture (2026-10-08, the compact hub: no strip under the square),
+            # cut to the tile's rounded shape and drawn before the ring so the
+            # shade never dims the outline
+            nx, ny, nw, nh = charlook.name_rect(rect, k)
+            shade = QtGui.QLinearGradient(nx, ny, nx, ny + nh)
+            shade.setColorAt(0.0, QtGui.QColor(0, 0, 0, 0))
+            shade.setColorAt(1.0, QtGui.QColor(0, 0, 0, 190))
+            p.save()
+            p.setClipPath(shape, Qt.IntersectClip)
+            p.setPen(Qt.NoPen)
+            p.setBrush(shade)
+            p.drawRect(QtCore.QRectF(nx, ny, nw, nh))
+            p.restore()
+            name_font = font(10 * k, bold=chosen)
+            p.setFont(name_font)
+            p.setPen(colour("text" if chosen else "text2"))
+            text = QtGui.QFontMetrics(name_font).elidedText(
+                self._label(key), Qt.ElideRight, int(nw - 6 * k))   # clear of the ring
+            p.drawText(QtCore.QRect(int(nx), int(ny), int(nw), int(nh)),
+                       Qt.AlignHCenter | Qt.AlignVCenter, text)
             width = max(1.5, 2 * k) if chosen else max(1.0, k)
             edge = "accent" if chosen else ("text2" if lit else "line")
             p.setPen(QtGui.QPen(colour(edge), width))
@@ -817,8 +841,10 @@ def _classes():
             half = width / 2.0
             p.drawRoundedRect(box.adjusted(half, half, -half, -half), radius, radius)
             if worn:
+                # above the name's strip, which lies in the square's bottom
                 pad = int(4 * k)
-                tag = QtCore.QRectF(box.left() + pad, box.bottom() - pad - int(16 * k),
+                tag = QtCore.QRectF(box.left() + pad,
+                                    box.bottom() - nh - pad - int(16 * k),
                                     box.width() - 2 * pad, int(16 * k))
                 p.setPen(Qt.NoPen)
                 p.setBrush(colour("ok_tint"))
@@ -826,14 +852,6 @@ def _classes():
                 p.setFont(font(10.5 * k, bold=True))
                 p.setPen(colour("ok"))
                 p.drawText(tag, Qt.AlignCenter, look.WORN_TEXT)
-            nx, ny, nw, nh = charlook.name_rect(rect, k)
-            name_font = font(11.5 * k, bold=chosen)
-            p.setFont(name_font)
-            p.setPen(colour("text" if chosen else "text2"))
-            text = QtGui.QFontMetrics(name_font).elidedText(
-                self._label(key), Qt.ElideRight, int(nw))
-            p.drawText(QtCore.QRect(int(nx), int(ny), int(nw), int(nh)),
-                       Qt.AlignHCenter | Qt.AlignVCenter, text)
 
         def paintEvent(self, _event):                        # noqa: N802
             k = self.k

@@ -85,6 +85,58 @@ class Grid(unittest.TestCase):
         self.assertEqual(len(self.grid.rects()), count)
         self.assertEqual(self.grid.height_for(330), look.grid(330, count)[3])
 
+    def test_the_card_holds_every_model_in_one_row_at_the_docks_width(self):
+        """2026-10-08, the compact hub: five a row, and the grid is as tall as
+        its squares - the name lies over them."""
+        count = len(catalog.MODELS)
+        cols, cell, rects, height = look.grid(330, count)
+        self.assertEqual(cols, count)
+        self.assertEqual(self.grid.height_for(330), cell)
+        self.assertEqual(len({r[1] for r in self.grid.rects()}), 1)
+
+    def render(self):
+        image = QT.QtGui.QImage(self.grid.size(), QT.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        self.grid.render(image)
+        return image
+
+    def test_the_name_lies_over_the_portraits_bottom_on_a_shade(self):
+        """2026-10-08: no strip under the portrait - the name is drawn over the
+        picture's bottom on a shade that fades in from the picture."""
+        import maya_hubstyle
+        self.grid.pixmaps = {}                 # no picture in the way of the pixels
+        image = self.render()
+        x, y, w, h = self.grid.rects()[self.keys().index("Creep")]
+        nx, ny, nw, nh = look.name_rect((x, y, w, h), self.grid.k)
+        self.assertEqual(ny + nh, y + h)
+
+        def luma(px, py):
+            c = image.pixelColor(int(px), int(py))
+            return c.red() + c.green() + c.blue()
+        self.assertEqual(image.pixelColor(x + 4, ny - 3).name(),
+                         maya_hubstyle.TOKENS["field"])
+        self.assertLess(luma(x + 4, y + h - 4), 0.7 * luma(x + 4, ny - 3))
+        self.assertLess(luma(x + 4, y + h - 4), luma(x + 4, ny + 1))
+
+    def test_the_no_rig_tag_sits_above_the_name(self):
+        """2026-10-08: the tag on a dimmed portrait moved up by the name's
+        height, so the name is never drawn on it."""
+        import maya_hubstyle
+        self.grid.pixmaps = {}
+        image = self.render()
+        x, y, w, h = self.grid.rects()[self.keys().index("UE4_Mannequin")]   # no rig
+        nx, ny, nw, nh = look.name_rect((x, y, w, h), self.grid.k)
+        pad = int(4 * self.grid.k)
+        tag_mid = y + h - nh - pad - int(8 * self.grid.k)
+        self.assertEqual(image.pixelColor(x + pad + 2, tag_mid).name(),
+                         maya_hubstyle.TOKENS["status"])
+        # the strip itself holds the shade, not the pill's colour
+        self.assertNotEqual(image.pixelColor(x + pad + 2, ny + nh // 2).name(),
+                            maya_hubstyle.TOKENS["status"])
+
+    def keys(self):
+        return [m.key for m in self.grid.models]
+
     def test_the_auto_card_is_picked_in_both_kinds(self):
         """2026-10-02: the «?» card has no row, and is pickable all the same."""
         for kind in catalog.KINDS:
@@ -321,6 +373,21 @@ class FireOnHover(unittest.TestCase):
         self.assertEqual(self.grid.fx, {})
         self.assertEqual(self.grid._hover, "Creep")
 
+    def test_a_burning_card_keeps_its_name_over_its_bottom(self):
+        """2026-10-08: the name is over the picture, so the fire's own paint
+        (the grown, burning card) lays the same shade under it - the fire
+        rising from the bottom would otherwise wash the name out."""
+        self.burn("Creep", 0.5)
+        x, y, w, h = self.box("Creep")
+
+        def foot(image):
+            c = image.pixelColor(x + 6, y + h - 4)         # left of the name's letters
+            return c.red() + c.green() + c.blue()
+        with_name = foot(self.render(self.grid))
+        self.grid._paint_name = lambda *args, **kwargs: None      # the name off
+        without = foot(self.render(self.grid))
+        self.assertLess(with_name, 0.8 * without, (with_name, without))
+
     def test_the_unknown_card_burns_as_mannys_does(self):
         """The «?» card burns orange (2026-10-02, «так же как и карточка
         менни»): flame-orange where it was the dark field."""
@@ -384,8 +451,10 @@ class FireOnHover(unittest.TestCase):
         for _ in range(60):
             self.grid.advance(1.0 / 60)
         hot = self.render(self.grid)
-        # the Orc's shoulders fill the card: less fire shows, and it is green
-        self.assertGreater(self.count(hot, self.box("Orc_D"), green), 15)
+        # the Orc's shoulders fill the card: less fire shows, and it is green.
+        # (The card is a 64 px square now, 0.64 of the old area, and the name's
+        # shade darkens the flames' base: 7 samples of green against 0 cold.)
+        self.assertGreater(self.count(hot, self.box("Orc_D"), green), 3)
 
     def test_a_drag_puts_the_fire_out(self):
         self.burn("Creep", 0.3)

@@ -25,6 +25,10 @@ portraits' and the armor's own geometry (`maya_charlook.grid`) - one square
 per catalog row, its name under it. Nothing is rearranged, sorted or
 remembered any more.
 
+And since 2026-10-08, the compact hub: the name lies OVER the square's
+bottom (no strip under it), the hand cards' rows are 15 px and their
+channels are always the Channel Box's short names (tx ... rz).
+
 Everything is in LOGICAL px; the panel multiplies by the display scale
 (trap 98 - Qt pixels are physical here).
 """
@@ -45,8 +49,8 @@ PAD = 4                   # inside a card
 GAP = 8                   # between the hands and the tiles
 HAND_GAP = 6              # between the two hands
 HAND_MAX = 230            # a hand card's width at most (a wide classic hub)
-NAME_H = 20               # "Right hand" over a card
-ROW_H = 19                # one channel row
+NAME_H = 16               # "Right hand" over a card (compact hub, 2026-10-08; was 20)
+ROW_H = 15                # one channel row (was 19)
 ROW_GAP = 3               # between a row's name and its value
 TURN = 45                 # degrees an icon is turned to lie across its tile
 GHOST = maya_charlook.GHOST
@@ -78,10 +82,13 @@ def icon_path(key):
 
 # ---------------------------------------------------------------- channels
 
-def channel_names(short):
-    """{channel: the name its row shows}: the Channel Box's nice names, or its
-    SHORT ones (tx ... rz) - its own option for a narrow box."""
-    return dict((c, c if short else NICE[c]) for c in CHANNELS)
+def channel_names(short=True):
+    """{channel: the name its row shows}: the Channel Box's SHORT names
+    (tx ... rz - its own option for a narrow box), ALWAYS since the compact
+    hub (2026-10-08: the rows are 15 px and the hand cards narrow; the nice
+    names, `NICE`, stood only where they fitted). `short` is kept for the
+    callers that still pass what `split_row` said; it changes nothing."""
+    return dict((c, c) for c in CHANNELS)
 
 
 def channel_text(value):

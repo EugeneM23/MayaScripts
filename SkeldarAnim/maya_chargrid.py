@@ -768,6 +768,10 @@ def _classes():
                 self._missing(p, box)
             p.restore()
 
+            # the name over the picture's bottom - before the ring, so the
+            # shade never dims the outline
+            self._paint_name(p, rect, model.label, state, absent)
+
             if state == "selected":
                 self._stroke(p, box, radius, "accent", max(1.5, 2 * k))
             elif state == "selected_absent":
@@ -779,24 +783,45 @@ def _classes():
                 self._stroke(p, box, radius, "line", max(1.0, k))
 
             if absent:
+                # above the name's strip (2026-10-08: the name lies over the
+                # square's bottom now)
                 pad = int(4 * k)
+                nh = look.name_rect(rect, k)[3]
                 tag = QtCore.QRectF(box.left() + pad,
-                                    box.bottom() - pad - int(16 * k),
+                                    box.bottom() - nh - pad - int(16 * k),
                                     box.width() - 2 * pad, int(16 * k))
                 p.setPen(Qt.NoPen)
                 p.setBrush(colour("status"))
                 p.drawRoundedRect(tag, 4 * k, 4 * k)
-                p.setFont(font(10.5 * k))
+                tag_font = font(9.5 * k)
+                p.setFont(tag_font)
                 p.setPen(colour("faint"))
-                p.drawText(tag, Qt.AlignCenter, look.tag_text(self.kind))
-
-            self._paint_name(p, rect, model.label, state, absent)
+                p.drawText(tag, Qt.AlignCenter,
+                           QtGui.QFontMetrics(tag_font).elidedText(
+                               look.tag_text(self.kind), Qt.ElideRight,
+                               int(tag.width())))
 
         def _paint_name(self, p, rect, label, state, absent, hot=0.0,
                         flame=None):
+            """The name over the picture's bottom, on a shade fading in from
+            the picture (2026-10-08, the compact hub: five tiles a row, no
+            strip under the square). The shade is cut to the tile's rounded
+            shape; whoever calls draws the ring after it."""
             k = self.k
             nx, ny, nw, nh = look.name_rect(rect, k)
-            name_font = font(11.5 * k, bold=state == "selected" or hot > 0.5)
+            radius = look.RADIUS * k
+            shape = QtGui.QPainterPath()
+            shape.addRoundedRect(QtCore.QRectF(*rect), radius, radius)
+            shade = QtGui.QLinearGradient(nx, ny, nx, ny + nh)
+            shade.setColorAt(0.0, QtGui.QColor(0, 0, 0, 0))
+            shade.setColorAt(1.0, QtGui.QColor(0, 0, 0, 190))
+            p.save()
+            p.setClipPath(shape, Qt.IntersectClip)
+            p.setPen(Qt.NoPen)
+            p.setBrush(shade)
+            p.drawRect(QtCore.QRectF(nx, ny, nw, nh))
+            p.restore()
+            name_font = font(10 * k, bold=state == "selected" or hot > 0.5)
             p.setFont(name_font)
             if state == "selected":
                 pen = colour("text")
@@ -808,7 +833,7 @@ def _classes():
                 pen = mix(pen, flame.ring, hot * 0.85)
             p.setPen(pen)
             text = QtGui.QFontMetrics(name_font).elidedText(
-                label, Qt.ElideRight, int(nw))
+                label, Qt.ElideRight, int(nw - 6 * k))      # clear of the ring
             p.drawText(QtCore.QRect(int(nx), int(ny), int(nw), int(nh)),
                        Qt.AlignHCenter | Qt.AlignVCenter, text)
 
@@ -978,6 +1003,10 @@ def _classes():
                 self._paint_sparks(p, box, fx, flame, front=True)
             p.restore()
 
+            # the name over the bottom, under the ring (2026-10-08: it lies
+            # inside the square, so it is part of the grown card)
+            self._paint_name(p, rect, model.label, state, False, hot, flame)
+
             # the ring, hot
             if selected:
                 ring, width = colour("accent"), max(1.5, 2 * k)
@@ -993,7 +1022,6 @@ def _classes():
             half = width / 2.0
             p.drawRoundedRect(box.adjusted(half, half, -half, -half),
                               radius, radius)
-            self._paint_name(p, rect, model.label, state, False, hot, flame)
 
             # the sparks that left the card fly on
             if fx.sparks.alive():

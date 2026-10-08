@@ -136,6 +136,39 @@ class Grid(unittest.TestCase):
                      if plain.pixel(x, y) != pilled.pixel(x, y))
         self.assertGreater(differ, 20)
 
+    def test_the_name_lies_over_the_squares_bottom_on_a_shade(self):
+        """2026-10-08: no strip under the tile - the name over the picture's
+        bottom, on a shade that fades in from the picture."""
+        import maya_hubstyle
+        import maya_charlook as look
+        self.grid.pixmaps = {}                 # no icon in the way of the pixels
+        image = self.render()
+        x, y, w, h = self.grid.rects()[0]
+        nx, ny, nw, nh = look.name_rect((x, y, w, h), self.grid.k)
+        self.assertEqual(ny + nh, y + h)
+
+        def luma(px, py):
+            c = image.pixelColor(int(px), int(py))
+            return c.red() + c.green() + c.blue()
+        self.assertEqual(image.pixelColor(x + 4, ny - 3).name(),
+                         maya_hubstyle.TOKENS["field"])
+        self.assertLess(luma(x + 4, y + h - 4), 0.7 * luma(x + 4, ny - 3))
+        self.assertLess(luma(x + 4, y + h - 4), luma(x + 4, ny + 1))
+
+    def test_the_worn_pill_sits_above_the_name(self):
+        import maya_hubstyle
+        import maya_charlook as look
+        self.grid.pixmaps = {}
+        self.scene.worn_keys = {"Tech_Limb"}
+        self.grid.refresh()
+        image = self.render()
+        x, y, w, h = self.grid.rects()[0]
+        nh = look.name_rect((x, y, w, h), self.grid.k)[3]
+        pad = int(4 * self.grid.k)
+        mid = y + h - nh - pad - int(8 * self.grid.k)
+        self.assertEqual(image.pixelColor(x + pad + 2, mid).name(),
+                         maya_hubstyle.TOKENS["ok_tint"])
+
     def test_the_selected_tile_is_lit(self):
         plain = self.render()
         self.grid.set_selected("Tech_Limb")

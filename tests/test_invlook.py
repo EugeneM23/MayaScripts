@@ -123,11 +123,22 @@ class Channels(unittest.TestCase):
         self.assertIsNone(look.parse_channel(""))
         self.assertIsNone(look.parse_channel(None))
 
-    def test_the_names_nice_and_short(self):
-        self.assertEqual(look.channel_names(False)["tx"], "Translate X")
-        self.assertEqual(look.channel_names(False)["rz"], "Rotate Z")
-        self.assertEqual(look.channel_names(True),
-                         dict((c, c) for c in look.CHANNELS))
+    def test_compact_hand_rows(self):
+        self.assertEqual((look.ROW_H, look.NAME_H), (15, 16))
+
+    def test_channel_names_are_always_short(self):
+        """2026-10-08, the compact hub: whatever split_row would say, the hand
+        cards show tx .. rz - the Channel Box's own short names."""
+        short = dict((c, c) for c in look.CHANNELS)
+        self.assertEqual(look.channel_names(False), short)
+        self.assertEqual(look.channel_names(True), short)
+        self.assertEqual(look.channel_names(), short)
+
+    def test_a_hand_card_is_its_name_the_six_rows_and_the_padding(self):
+        r = look.panel(338, COUNT)
+        self.assertEqual(r["hand_R"][3],
+                         look.NAME_H + len(look.CHANNELS) * look.ROW_H + look.PAD)
+        self.assertEqual(r["row_R_ty"][3], look.ROW_H)
 
     def test_a_row_takes_the_nice_names_where_they_fit(self):
         self.assertEqual(look.split_row(100, 55, 14, 40), (False, 55, 42))
@@ -150,7 +161,10 @@ class Hits(unittest.TestCase):
         for index, key in enumerate(self.KEYS):
             tile = self.rects["tiles"][index]
             self.assertEqual(self.at(tile), ("tile", key))
-            self.assertEqual(self.at(tile, 3, tile[3] + 5), ("tile", key))   # the name
+            # the name lies over the square's bottom (2026-10-08)
+            nx, ny, _nw, nh = maya_charlook.name_rect(tile)
+            self.assertEqual(look.hit(self.rects, self.KEYS, nx + 3, ny + nh // 2),
+                             ("tile", key), key)
 
     def test_a_hand_card_is_its_slot_all_over(self):
         for side in ("R", "L"):
