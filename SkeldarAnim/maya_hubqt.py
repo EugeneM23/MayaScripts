@@ -317,7 +317,10 @@ def _frame_class():
     подсветки»). A full repaint of a card costs 1.5 ms (UE Bridge, measured),
     so the whole light - the face's tint too - can fade. Since 2026-10-08 it
     also paints its group's colour as a `stripe` down its left edge (the
-    group labels are gone from the compact skin), under the light."""
+    group labels are gone from the compact skin), OVER the light: the light's
+    face and its 2 px ring reach the edge and, painted after them, a lit
+    card (level 1, or mid-flash) would show no stripe at all - every card
+    shows its group (2026-10-08, the review of the first build)."""
     if "frame" not in _CLASSES:
         q = qt()
 
@@ -332,10 +335,10 @@ def _frame_class():
 
             def paintEvent(self, event):                   # noqa: N802
                 super(CardFrame, self).paintEvent(event)
-                if self.stripe:
-                    paint_stripe(self, self.stripe, self.scale)
                 if self.level > 0.002 or self.flash > 0.002:
                     paint_light(self, self.level, self.flash, self.scale)
+                if self.stripe:
+                    paint_stripe(self, self.stripe, self.scale)
 
         _CLASSES["frame"] = CardFrame
     return _CLASSES["frame"]
@@ -343,7 +346,9 @@ def _frame_class():
 
 def paint_stripe(widget, colour, scale):
     """The card's group as a bar down its left edge (2026-10-08: the group
-    labels are gone in the compact skin), clipped by the rounded face."""
+    labels are gone in the compact skin), clipped by the rounded face. Drawn
+    last, over the card's light, so a lit card keeps it (the light's ring
+    covers those 3 px)."""
     q = qt()
     QtCore, QtGui = q.QtCore, q.QtGui
     radius = float(hubstyle.px(8, scale))

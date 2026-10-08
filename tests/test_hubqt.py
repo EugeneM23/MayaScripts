@@ -424,6 +424,29 @@ class Cards(SeamsMixin, unittest.TestCase):
         frame.render(image)
         self.assertNotEqual(image.pixelColor(1, middle).name(), "#7fa9e6")
 
+    def test_a_lit_card_keeps_its_stripe(self):
+        """Review of the first build: the light's face and 2 px ring reach the
+        edge, and a stripe painted BEFORE them vanished on a lit card. Every
+        card shows its group, lit, flashing or idle."""
+        from PySide6 import QtGui
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        frame = card.frame
+        image = QtGui.QImage(200, 100, QtGui.QImage.Format_ARGB32)
+        for level, flash in ((1.0, 0.0), (0.5, 0.0), (0.0, 1.0), (1.0, 1.0),
+                             (0.5, 0.5)):
+            frame.level, frame.flash = level, flash
+            image.fill(0)
+            frame.render(image)
+            middle = max(1, frame.height() // 2)
+            for x in (0, 1, 2):
+                self.assertEqual(image.pixelColor(x, middle).name(),
+                                 "#7fa9e6", (level, flash, x))
+            #  the bar is 3 px: past it the card's own light shows
+            self.assertNotEqual(image.pixelColor(4, middle).name(),
+                                "#7fa9e6", (level, flash))
+        frame.level = frame.flash = 0.0
+
     def test_compact_card_margins(self):
         card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
                                   "#7fa9e6", "#23324a")
