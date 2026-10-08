@@ -1595,6 +1595,57 @@ class AnimOptions(AnimCase):
         self.assertEqual(self.scene.calls("select_objects"),
                          [("select_objects", self.walk, options)])
 
+    def apply_in_view(self, scale):
+        """(Apply's bottom, the side viewport's height) in physical px, a window at the
+        default size (`INITIAL_WIDTH` x `INITIAL_HEIGHT` logical, so x `scale` physical) with
+        the animation card picked."""
+        scene = FakeScene(self.root, os.path.join(self.tmp, "trash"))
+        scene.scale = lambda: scale
+        win = pw.make_window(scene)
+        self.addCleanup(win.deleteLater)
+        win.resize(int(pw.INITIAL_WIDTH * scale), int(pw.INITIAL_HEIGHT * scale))
+        win.move(3000, 3000)
+        win.show()
+        self.pump()
+        win.pick(self.walk)
+        self.pump()
+        viewport = win.findChild(QT.QtWidgets.QWidget, "skeldarPoseSideViewport")
+        bottom = win.apply_button.mapTo(viewport, QT.QtCore.QPoint(
+            0, win.apply_button.height())).y()
+        return bottom, viewport.height(), win
+
+    def test_apply_is_in_view_at_the_default_size(self):
+        """The final review (M5): at the window's default size the options block stood above
+        Apply and pushed it below the fold for every animation card. The block stands under
+        Apply / Mirror / Blend / Select objects now, two options to a row: Apply is in view
+        at 1000 x 640 logical, at a scale of 1.0 and 1.5."""
+        for scale in (1.0, 1.5):
+            bottom, height, win = self.apply_in_view(scale)
+            self.assertTrue(win.anim_options.isVisible(), scale)
+            self.assertLessEqual(bottom, height, "scale %s: Apply's bottom %d, the viewport %d"
+                                 % (scale, bottom, height))
+            # (whether the block fits the panel's WIDTH is the GUI verify's: offscreen Qt has
+            # no font family, its fallback draws wide - trap 117)
+            # and the block itself lies below what it configures
+            for widget in (win.apply_button, win.mirror, win.blend, win.select_button):
+                self.assertLess(widget.mapTo(win, QT.QtCore.QPoint(0, 0)).y(),
+                                win.anim_options.mapTo(win, QT.QtCore.QPoint(0, 0)).y(),
+                                widget.objectName())
+
+    def test_two_options_to_a_row(self):
+        self.win.pick(self.walk)
+        self.pump()
+
+        def top(widget):
+            return widget.mapTo(self.win, QT.QtCore.QPoint(0, 0)).y()
+
+        def middle(widget):
+            return widget.mapTo(self.win, QT.QtCore.QPoint(0, widget.height() // 2)).y()
+
+        self.assertEqual(top(self.win.at_current), top(self.win.connect_box))
+        keys_track = self.win.keys_buttons["every"].parentWidget()
+        self.assertLessEqual(abs(middle(keys_track) - middle(self.win.in_place)), 2)
+
     def test_a_card_not_picked_is_pasted_whole_with_the_options_shown(self):
         self.win.pick(self.walk)
         self.win.paste_buttons["merge"].click()

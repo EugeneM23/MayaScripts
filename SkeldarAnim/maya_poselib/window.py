@@ -8,8 +8,9 @@ uiScript carrying the plugin path - the hub's way) holds one Qt root in the hub'
 
     header     «Pose Library», the library path (muted), ⋮ (Library folder..., Open in
                Explorer, Refresh)
-    toolbar    search (every term in name, folder or character), sort (Name / Newest /
-               Character), the card size, + Save pose (the window's one primary)
+    toolbar    search (every term in name, folder or character, or a type word), the type
+               filter, sort (Name / Newest / Character), the card size, + Save (the window's
+               one primary)
     splitter   the FOLDER TREE (its own rows: New folder, Rename, Delete, Show in Explorer; a
                card dropped on a folder moves there) | the CARD GRID (`cardgrid`: one painted
                canvas, `look.grid` lays it out, only the cards the viewport shows are painted,
@@ -66,9 +67,11 @@ answers a rig's nodes without walking their ancestors (0.05 s for those 187).
     how many frames and preview cells it takes (`save_frames_text`);
   - the details of a picked animation card LOOP ITS PREVIEW in the big picture (a `PLAY_MS`
     timer running only while the window shows one; `canvas.preview_frame`) and show the PASTE
-    OPTIONS block: Paste (Replace / Replace all / Insert / Merge), At current time, Range (the
+    OPTIONS block - under Apply, Mirror, Blend and Select objects, two options to a row, so
+    Apply stays in view at the default size (the final review, M5): Paste (Replace / Replace
+    all / Insert / Merge), At current time + Connect, Range (the
     card's own frames, put back when another card is picked - a press on the picked card, to
-    drag it, keeps it), Connect, Keys (Every frame / Source keys), In place. Each but the range
+    drag it, keeps it), Keys (Every frame / Source keys) + In place. Each but the range
     is remembered (an optionVar never written is its `animdata.Options` default - never the 0
     Maya answers for a missing one). Every press of an animation card - Apply, the drops, the
     blend, Select objects - hands the scene `options` (`options(path)`: the range only for the
@@ -144,7 +147,7 @@ EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
 NO_PICK = "pick a card first"
 CANCELLED = cardgrid.CANCELLED
 BLEND_CANCELLED = "blend cancelled - every value back"
-OBJECTS_DRAG = "an objects pose: select its objects and press Apply"
+OBJECTS_DRAG = "an objects card: select its objects and press Apply"
 OBJECTS_TARGET = "onto the selected objects, else the ones it was saved from"
 NOT_A_CHARACTER = "the selection holds no character - select any part of one"
 NO_CHARACTER = "no character in the scene"
@@ -369,8 +372,9 @@ def regions_arg(initial, checked):
 def scene_aim(kind, label, target):
     """The caption's aim (`look.drop_caption`) for a card of `kind` from `label` (its source's
     catalog label) over the scene's `target` (`Scene.target`: kind "character" with root and
-    label, "floor" with point, or "none" with text). An objects pose has no character to go
-    onto and no source to add: always "none", saying how it is applied. Pure."""
+    label, "floor" with point, or "none" with text). An objects card (a pose or an
+    animation) has no character to go onto and no source to add: always "none", saying how it
+    is applied (`OBJECTS_DRAG`). Pure."""
     if kind == "objects":
         return {"kind": "none", "text": OBJECTS_DRAG}
     target = target or {}
@@ -1298,11 +1302,10 @@ def _classes():
             column.addWidget(self.info)
             self.target_line = self._label("", "note", "skeldarPoseTarget", wrap=True)
             column.addWidget(self.target_line)
-            column.addStretch(1)
-            self.anim_options = self._build_options()
-            self.anim_options.setVisible(False)
-            column.addWidget(self.anim_options)
 
+            #  Apply first, the options block BELOW what it configures (the final review, M5:
+            #  above Apply it pushed Apply below the fold of the default window for every
+            #  animation card - 602 px down a 541 px side panel at a scale of 1.0)
             self.apply_button = self._button("Apply", "primary", "check", "skeldarPoseApply")
             self.apply_button.setToolTip(APPLY_TIPS[False])
             self.apply_button.clicked.connect(lambda: self._press_apply())
@@ -1338,11 +1341,16 @@ def _classes():
             self.select_button.setToolTip("Select what the card would key on the target")
             self.select_button.clicked.connect(lambda: self._press_select())
             column.addWidget(self.select_button)
+            self.anim_options = self._build_options()
+            self.anim_options.setVisible(False)
+            column.addWidget(self.anim_options)
+            column.addStretch(1)
             return page
 
         def _build_options(self):
-            """The paste options of an animation card (shown while one is picked): Paste,
-            At current time, Range, Connect, Keys, In place - Studio Library's, in an inset."""
+            """The paste options of an animation card (shown while one is picked, under Apply,
+            Mirror, Blend and Select objects): Paste, At current time + Connect, Range, Keys +
+            In place - Studio Library's, in an inset, two options to a row (M5)."""
             s = self.px
             frame = QtWidgets.QFrame()
             frame.setObjectName("skeldarPoseAnimOptions")
@@ -1364,7 +1372,19 @@ def _classes():
                 "At current time", "skeldarPoseAtCurrent",
                 "The clip starts at the current frame; off: at its own source frames",
                 AT_CURRENT_VAR)
-            column.addWidget(self.at_current)
+            #  `connect_box`, never `connect`: PySide6 looks a signal's connect up on the
+            #  object that owns it, so a `self.connect` attribute broke every
+            #  `self.<signal>.connect(...)` of the window («QCheckBox object is not callable»)
+            self.connect_box = self._check(
+                "Connect", "skeldarPoseConnect",
+                "Every pasted channel moved so its first pasted value is the value it shows "
+                "at the paste frame", CONNECT_VAR)
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(8))
+            row.addWidget(self.at_current)
+            row.addWidget(self.connect_box)
+            row.addStretch(1)
+            column.addLayout(row)
             row = QtWidgets.QHBoxLayout()
             row.setSpacing(s(6))
             row.addWidget(self._label("Range", "context"))
@@ -1376,25 +1396,20 @@ def _classes():
             row.addWidget(self._label("-", "context"))
             row.addWidget(self.range_end, 1)
             column.addLayout(row)
-            #  `connect_box`, never `connect`: PySide6 looks a signal's connect up on the
-            #  object that owns it, so a `self.connect` attribute broke every
-            #  `self.<signal>.connect(...)` of the window («QCheckBox object is not callable»)
-            self.connect_box = self._check(
-                "Connect", "skeldarPoseConnect",
-                "Every pasted channel moved so its first pasted value is the value it shows "
-                "at the paste frame", CONNECT_VAR)
-            column.addWidget(self.connect_box)
             column.addWidget(self._label("Keys", "context"))
             track, self.keys_buttons = self._segments(
                 "skeldarPoseKeys_", KEY_LABELS, lambda key: self._remember(KEYS_VAR, key))
             self.keys_buttons["every"].setToolTip("A key on every frame - exact")
             self.keys_buttons["source"].setToolTip(
                 "Keys only where the source had keys - the curves interpolate between them")
-            column.addWidget(track)
             self.in_place = self._check(
                 "In place", "skeldarPoseInPlace",
                 "Root / Main untouched: the clip's travel is not carried", IN_PLACE_VAR)
-            column.addWidget(self.in_place)
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(8))
+            row.addWidget(track, 1)
+            row.addWidget(self.in_place)
+            column.addLayout(row)
             return frame
 
         def _build_save(self):
