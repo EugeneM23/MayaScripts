@@ -1069,7 +1069,7 @@ In `maya_invlook.py`: `ROW_H = 15`, `NAME_H = 16`, and the short-names function 
                 and c[2].get("numberOfColumns") == 4]
         self.assertTrue(rows)
         labels = [c[2].get("label") for c in self.fake.calls if c[0] == "button"]
-        self.assertIn("Camera Setup", labels + [None])   # classic label kept
+        self.assertIn("Camera", labels)       # the classic build's label
 
     def test_no_heading_in_the_skin(self):
         # build again with skinning on: no "heading" mark at all
