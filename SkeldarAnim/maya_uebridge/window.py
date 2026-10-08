@@ -63,6 +63,13 @@ _LIST = "ueAnimBridgeList"
 _SEARCH = "ueAnimBridgeSearch"
 _STATUS = "mayaSceneSetupCharacterStatus"
 _HEADER = "ueAnimBridgeHeader"
+#  2026-10-08 («сделаем его компактным»): the editor line is hidden in the
+#  skin - its text is the project dropdown's tooltip, and the state shows as a
+#  dot before the dropdown (● connected, ○ not); under the list a grip sets
+#  how many rows it shows.
+_DOT = "ueAnimBridgeDot"
+_LIST_GRIP = "ueAnimBridgeListGrip"
+DOT_ON, DOT_OFF = "●", "○"
 _HEADING = "ueAnimBridgeHeading"     # «Connect», the block's title (2026-10-02)
 _TIMELINE = "ueAnimBridgeTimeline"
 _PROJECT = "ueAnimBridgeProject"
@@ -147,14 +154,37 @@ def temp_folder():
 
 # ---------------------------------------------------------------- ui state
 
+def search_hint(count):
+    """The search field's placeholder: how many animations the source holds
+    (2026-10-08: the editor line is a tooltip in the compact skin, so the
+    count the line used to carry moved here). Pure."""
+    return ("search {0} animations".format(count) if count
+            else "search name or folder")
+
+
 def _status(text):
+    """The card's one line, and the hub's message line too (the skin hides
+    the card's own and shows what `hubstyle.tell` carries)."""
     if cmds.text(_STATUS, exists=True):
         cmds.text(_STATUS, edit=True, label=text)
+    hubstyle.tell(_STATUS, text)
 
 
 def _header(text):
+    """The editor line: its own text (shown in the classic hub, hidden in the
+    skin), the project dropdown's tooltip, and the dot before it (● connected,
+    ○ not). The dropdown and the dot are written without asking `exists`
+    first - a card built without them (a headless session) just skips."""
     if cmds.text(_HEADER, exists=True):
         cmds.text(_HEADER, edit=True, label=text)
+    for edit in (lambda: cmds.optionMenu(_PROJECT, edit=True, annotation=text),
+                 lambda: cmds.text(_DOT, edit=True,
+                                   label=DOT_ON if text == "connected"
+                                   else DOT_OFF, annotation=text)):
+        try:
+            edit()
+        except (RuntimeError, TypeError, ValueError):
+            pass
 
 
 def _run(action, busy=None):
@@ -234,6 +264,13 @@ def _repopulate(quiet=False):
                if 0 < i <= len(previous))
 
     _STATE["filtered"] = shown
+    #  the placeholder says how many animations the source holds (the skin
+    #  has no editor line to carry the count)
+    try:
+        cmds.textField(_SEARCH, edit=True,
+                       placeholderText=search_hint(len(_STATE["records"])))
+    except (RuntimeError, TypeError, ValueError):
+        pass
     cmds.textScrollList(_LIST, edit=True, removeAll=True)
     for record in shown:
         cmds.textScrollList(_LIST, edit=True, append=records.format_row(record))
@@ -617,6 +654,11 @@ TARGET_SEGMENTS = (
      "Animation Setup says - takes the clip; several picked stand in a square "
      "about the scene's zero, one per animation."),
 )
+
+#  The segment's label where the full one is too wide for the one-row Import
+#  line (2026-10-08, variant B: «Onto selected» is «Onto sel.» in both hubs;
+#  the tooltip above says the rest). Keyed by TARGETS' values.
+SHORT_TARGET = {"onto": "Onto sel."}
 
 
 def mode_for(kind, target):
@@ -1101,21 +1143,33 @@ def build_rows():
     explanation is their tooltip), Import the card's one primary action,
     the two exports a row under it. The editor line is the card's CONTEXT
     now - the character line is its subtitle.
+
+    2026-10-08 («сделаем его компактным», variant B): the block stands on
+    fewer rows. The skin has no «Connect» heading; the editor line is hidden
+    there and its text is the project dropdown's tooltip, with a dot before
+    the dropdown (● connected, ○ not); the search placeholder counts the
+    animations (`search_hint`); the list shows ten rows by default and a grip
+    under it moves that (`hubstyle.grip`); and ONE row holds [Onto sel. |
+    New] [timeline] [Import] [FBX] [uasset] - the timeline box a clock chip,
+    the FBX export an icon in the skin.
     """
     #  2026-10-02: ONE block set into the card - its own background, a
     #  hairline round it, padded («раздел с подключением ... визуально как-то
     #  отделить») - holding everything of the connection; the card's status
     #  line stays outside it. The skin paints it by its role ("inset"); the
     #  classic hub gives the column a background of its own.
-    inset = cmds.columnLayout(_INSET, adjustableColumn=True, rowSpacing=4,
-                              columnAttach=("both", 6),
+    inset = cmds.columnLayout(_INSET, adjustableColumn=True,
+                              rowSpacing=hubstyle.pick(3, 4),
+                              columnAttach=("both", hubstyle.pick(0, 6)),
                               **hubstyle.pick({}, {"backgroundColor":
                                                    INSET_CLASSIC_BG}))
     hubstyle.mark(inset, "inset", layout=True)
     #  the block's title (2026-10-01 «UE Connect»; «Connect» since it reaches
-    #  Unity and a folder too)
-    hubstyle.mark(cmds.text(_HEADING, label="Connect", align="left",
-                            font="boldLabelFont"), "heading")
+    #  Unity and a folder too) - the classic hub's only: the compact skin's
+    #  inset says it by standing apart (2026-10-08)
+    if not hubstyle.skinning():
+        hubstyle.mark(cmds.text(_HEADING, label="Connect", align="left",
+                                font="boldLabelFont"), "heading")
     #  where the animations come from
     from maya_uebridge import sources
     segments = cmds.rowLayout(numberOfColumns=len(sources.SOURCES),
@@ -1136,17 +1190,23 @@ def build_rows():
     for source in sources.SOURCES:
         hubstyle.mark(cmds.iconTextRadioButton(
             source_button(source), style="textOnly",
-            label=sources.LABELS[source], height=22,
+            label=sources.LABELS[source],
+            height=hubstyle.height("segment", 22),
             select=source == remembered, annotation=tips[source],
             onCommand=lambda *_a, s=source: _run(lambda: _source_changed(s))),
             "segment")
     cmds.setParent("..")
-    #  two lines tall: a wrapped label keeps the one-line height it was
+    #  the editor line: shown in the classic hub, hidden in the skin (its
+    #  text is the dropdown's tooltip and the dot's state, `_header`).
+    #  Two lines tall: a wrapped label keeps the one-line height it was
     #  given and clips the rest (measured in the hub, 2026-09-17).
     hubstyle.mark(cmds.text(_HEADER, label=editor_line(False), align="left",
                             wordWrap=True, height=36), "context")
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "left", 4)])
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3),
+                                 (3, "left", 3)])
+    hubstyle.mark(cmds.text(_DOT, label=DOT_OFF, width=12, align="center",
+                            annotation=editor_line(False)), "dot")
     cmds.optionMenu(
         _PROJECT, annotation="Unreal: the running editor to read from. Unity: "
                              "the project. Folder: the folder - Browse... "
@@ -1155,14 +1215,15 @@ def build_rows():
                                       busy="switching..."))
     hubstyle.mark(cmds.button(
         label=hubstyle.tool_label("Refresh"),
-        width=hubstyle.tool_width(90), height=24,
+        width=hubstyle.tool_width(90), height=hubstyle.height("field", 24),
         annotation="Read the animations again: from the open editor, or a "
                    "scan of the project / folder",
         command=lambda *_: _run(refresh, busy=_refresh_busy())),
         "tool", "refresh")
     cmds.setParent("..")
 
-    cmds.textField(_SEARCH, placeholderText="search name or folder",
+    cmds.textField(_SEARCH, placeholderText=search_hint(0),
+                   height=hubstyle.height("field", 24),
                    textChangedCommand=lambda *_: _run(_repopulate))
 
     cmds.textScrollList(
@@ -1180,10 +1241,17 @@ def build_rows():
                    "the scene's zero for the button, about the point for a "
                    "drop.",
         doubleClickCommand=lambda *_: _run(import_selected, busy=_import_busy()))
+    #  under the list its height grip (2026-10-08): the skin turns this 8 px
+    #  placeholder into a grip and shows the list's remembered rows (ten by
+    #  default); the classic hub keeps the list's pixel height and the
+    #  placeholder is a quiet gap
+    hubstyle.grip(cmds.separator(_LIST_GRIP, height=8, style="none"), _LIST)
 
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
-                   columnAttach=[(1, "left", 0), (2, "both", 4)])
-    cmds.text(label="Import", align="left")
+    #  [Onto sel. | New] [clock] [Import] [FBX] [uasset] - one row (variant B)
+    cmds.rowLayout(numberOfColumns=5, adjustableColumn=3,
+                   columnAttach=[(1, "left", 0), (2, "left", 3),
+                                 (3, "both", 3), (4, "left", 3),
+                                 (5, "left", 3)])
     segments = cmds.rowLayout(numberOfColumns=len(TARGETS),
                               columnAttach=[(i + 1, "both", 1)
                                             for i in range(len(TARGETS))])
@@ -1191,31 +1259,35 @@ def build_rows():
     cmds.iconTextRadioCollection(_MODE)
     for target, label, note in TARGET_SEGMENTS:
         hubstyle.mark(cmds.iconTextRadioButton(
-            target_button(target), style="textOnly", label=label, height=22,
+            target_button(target), style="textOnly",
+            label=SHORT_TARGET.get(target, label),
+            height=hubstyle.height("segment", 22),
             select=target == TARGETS[0], annotation=note), "segment")
     cmds.setParent("..")
-    cmds.setParent("..")
-    cmds.checkBox(_TIMELINE, label="set timeline to clip range", value=True)
-
+    #  a clock pill in the skin, the word «timeline» in the classic hub
+    hubstyle.mark(cmds.checkBox(
+        _TIMELINE, label=hubstyle.pick("", "timeline"), value=True,
+        annotation="set the timeline to the clip's range"), "chip", "clock")
     hubstyle.mark(cmds.button(
-        label="Import Animation", height=32,
+        label=hubstyle.pick("Import", "Import Animation"),
+        height=hubstyle.height("button", 32),
         annotation="Import the selected animation(s) from the source onto the "
                    "character Animation Setup and the Import row say",
         command=lambda *_: _run(import_selected,
                                 busy=_import_busy())),
         "primary", "download")
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 4)])
     hubstyle.mark(cmds.button(
-        label="Export FBX...", height=28,
-        annotation="Write the scene skeleton's animation to an FBX of your "
-                   "choosing (selection, else the rig, else the only "
-                   "skeleton), baked on export.",
+        label=hubstyle.pick("", "FBX..."),
+        height=hubstyle.height("button", 28), width=hubstyle.pick(26, 50),
+        annotation="Export FBX... - Write the scene skeleton's animation to "
+                   "an FBX of your choosing (selection, else the rig, else "
+                   "the only skeleton), baked on export.",
         command=lambda *_: _run(export_fbx_selected,
                                 busy="writing the fbx...")),
         "secondary", "upload")
     hubstyle.mark(cmds.button(
-        _UASSET, label="Export to uasset", height=28, width=130,
+        _UASSET, label="uasset", height=hubstyle.height("button", 28),
+        width=hubstyle.pick(52, 56),
         annotation="Overwrite the selected AnimSequence with the scene's "
                    "animation. Asks first. Does NOT touch Perforce: the "
                    "uasset is written on disk with no changelist behind it, "

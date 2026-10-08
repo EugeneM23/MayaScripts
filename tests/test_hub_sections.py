@@ -137,12 +137,108 @@ class SceneSetup(unittest.TestCase):
         self.assertNotIn("label", menus[0][2])
 
     def test_characters_has_a_camera_setup_button(self):
-        """2026-09-18: the retarget's camera step, by hand, on camera_root."""
+        """2026-09-18: the retarget's camera step, by hand, on camera_root.
+        2026-10-08: the classic hub's button reads «Camera» (the skin's is an
+        icon), its tooltip still says Camera Setup."""
         labels = [c[2].get("label") for c in self.fake.calls if c[0] == "button"]
-        self.assertIn("Camera Setup", labels)
-        self.assertLess(labels.index("+ Import"), labels.index("Camera Setup"))
+        self.assertIn("Camera", labels)
+        self.assertLess(labels.index("+ Import"), labels.index("Camera"))
+        camera = [c for c in self.fake.calls if c[0] == "button"
+                  and c[2].get("label") == "Camera"][0]
+        self.assertTrue(camera[2]["annotation"].startswith("Camera Setup: "))
         for name in (scenesetup._WEAPONS_BOUND, scenesetup._STATUS):
             self.assertNotIn(name, self.after_characters, name)
+
+    def _skin_build(self):
+        """The Characters card built once more with the skin's arrangement
+        (`set_skinning(True)`): (the fake, its marks)."""
+        fake = FakeUiCmds()
+        scenesetup.cmds = fake
+        uebridge.cmds = fake
+        maya_hubstyle.take_marks()
+        maya_hubstyle.set_skinning(True)
+        try:
+            scenesetup.build_characters_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        return fake, maya_hubstyle.take_marks()
+
+    def test_compact_top_row_is_kind_import_delete_camera(self):
+        """2026-10-08, variant B: [Rig | Skeleton] [+ Import] [Delete]
+        [Camera] are ONE row of four, ahead of the portraits."""
+        rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"
+                and c[2].get("numberOfColumns") == 4]
+        self.assertEqual(len(rows), 1)
+        portraits = [i for i, c in enumerate(self.fake.calls)
+                     if c[0] == "columnLayout" and c[1] == (scenesetup._PORTRAITS,)][0]
+        inside = self.fake.calls[rows[0]:portraits]
+        self.assertEqual([c[2]["label"] for c in inside if c[0] == "button"],
+                         ["+ Import", "Delete", "Camera"])
+        kind = [c[1][0] for c in inside if c[0] == "iconTextRadioButton"]
+        self.assertEqual(kind, [scenesetup.kind_segment("rig"),
+                                scenesetup.kind_segment("skeleton")])
+        #  the segments' own row and the top row: two closes, nothing else
+        self.assertEqual(len([c for c in inside if c[0] == "setParent"]), 2)
+        self.assertEqual(self.fake.calls[rows[0]][2]["adjustableColumn"], 1)
+
+    def test_the_skin_arrangement_is_icons_and_the_compact_heights(self):
+        fake, marks = self._skin_build()
+        buttons = [c[2] for c in fake.calls if c[0] == "button"
+                   and not c[2].get("edit") and "label" in c[2]]
+        self.assertEqual([b["label"] for b in buttons[:3]], ["Import", "", ""])
+        #  + Import, Delete, Camera, then the bridge's Refresh (a field-high
+        #  tool button), Import, FBX, uasset
+        self.assertEqual([b["height"] for b in buttons],
+                         [24, 24, 24, 20, 24, 24, 24])
+        roles = [(m.role, m.icon) for m in marks if m.role in (
+            "primary", "danger", "secondary") and m.icon]
+        self.assertEqual(roles[:3], [("primary", "plus"), ("danger", "trash"),
+                                     ("secondary", "camera")])
+
+    def test_no_heading_in_the_skin(self):
+        """2026-10-08: the compact card says nothing twice - Characters and
+        Connect keep their headings in the classic hub only."""
+        fake, marks = self._skin_build()
+        self.assertFalse([m for m in marks if m.role == "heading"])
+        texts = [c[1][0] for c in fake.calls if c[0] == "text" and c[1]
+                 and not c[2].get("edit")]
+        self.assertNotIn(scenesetup._CHARACTERS_HEADING, texts)
+        self.assertNotIn(uebridge._HEADING, texts)
+
+    def test_the_animation_list_has_a_grip(self):
+        """2026-10-08: ten rows, a height grip under the list (the skin's);
+        the classic list keeps LIST_HEIGHT and gets none applied."""
+        marks = self._marks()
+        self.assertEqual(marks[uebridge._LIST_GRIP].role, "grip")
+        self.assertEqual(marks[uebridge._LIST_GRIP].target, uebridge._LIST)
+        calls = [c[0] for c in self.fake.calls]
+        lists = [i for i, c in enumerate(self.fake.calls)
+                 if c[0] == "textScrollList" and c[1] == (uebridge._LIST,)
+                 and not c[2].get("edit") and not c[2].get("query")]
+        grip = [i for i, c in enumerate(self.fake.calls)
+                if c[0] == "separator" and c[1] == (uebridge._LIST_GRIP,)]
+        self.assertEqual(len(grip), 1)
+        self.assertEqual(grip[0], lists[0] + 1)
+        self.assertEqual(self.fake.calls[grip[0]][2]["height"], 8)
+        self.assertIn("separator", calls)
+
+    def test_the_status_writers_tell_the_hub(self):
+        """2026-10-08: a status writer still writes its own control and
+        tells the hub's one message line too."""
+        heard = []
+
+        def listener(control, text, viewport=False):
+            heard.append((control, text))
+        maya_hubstyle.listen(listener)
+        try:
+            scenesetup._status("hello", scenesetup._CHARACTER_STATUS)
+            scenesetup._status("world")
+            uebridge._status("bridge says")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertIn((scenesetup._CHARACTER_STATUS, "hello"), heard)
+        self.assertIn((scenesetup._STATUS, "world"), heard)
+        self.assertIn((uebridge._STATUS, "bridge says"), heard)
 
     def _weapons_calls(self):
         start = [i for i, c in enumerate(self.fake.calls) if c[0] == "text"
@@ -231,7 +327,7 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(roles["+ Import"], ("primary", "plus"))
         self.assertEqual(roles["Import Animation"], ("primary", "download"))
         self.assertNotIn("Add Character", roles)
-        self.assertEqual(roles["Camera Setup"], ("secondary", "camera"))
+        self.assertEqual(roles["Camera"], ("secondary", "camera"))
         #  the Inventory card: Equip (orange) + Unequip in each section
         inventory = [(label, role, icon) for label, role, icon, _i in self._buttons()
                      if label in ("Equip", "Unequip")]
@@ -243,18 +339,24 @@ class SceneSetup(unittest.TestCase):
                      if role == "primary"]
         self.assertEqual(primaries, ["+ Import", "Import Animation", "Equip", "Equip"])
 
-    def test_the_bridge_rows_follow_camera_setup_and_the_card_has_one_line(self):
+    def test_the_bridge_rows_follow_the_portraits_and_the_card_has_one_line(self):
         """2026-10-01 («UE bridge и character ... объеденить в одно окно»):
-        who on top, the animations under them, one status line last."""
+        who on top, the animations under them, one status line last. Since
+        2026-10-08: the top row (kind, Import, Delete, Camera), the
+        portraits, the Connect block, the line."""
         index = self._created_index()
         lists = [i for i, c in enumerate(self.fake.calls)
                  if c[0] == "textScrollList" and c[1] == (uebridge._LIST,)
                  and not c[2].get("edit") and not c[2].get("query")]
         line = [i for i, c in enumerate(self.fake.calls) if c[0] == "text"
                 and c[1] == (scenesetup._CHARACTER_STATUS,) and not c[2].get("edit")]
+        portraits = [i for i, c in enumerate(self.fake.calls)
+                     if c[0] == "columnLayout" and c[1] == (scenesetup._PORTRAITS,)]
         self.assertEqual(len(lists), 1)
         self.assertEqual(len(line), 1)
-        self.assertLess(index["Camera Setup"], lists[0])
+        self.assertEqual(len(portraits), 1)
+        self.assertLess(index["Camera"], portraits[0])
+        self.assertLess(portraits[0], lists[0])
         self.assertLess(index["+ Import"], lists[0])
         self.assertLess(lists[0], index["Import Animation"])
         self.assertLess(index["Import Animation"], line[0])
@@ -285,8 +387,12 @@ class SceneSetup(unittest.TestCase):
         self.assertEqual(uebridge.HUB_SECTION, scenesetup.HUB_SECTION)
 
     def test_the_editor_line_is_context_the_character_line_the_subtitle(self):
+        """2026-10-08: the editor line stays a `context` line (the skin hides
+        it: its text is the dropdown's tooltip and the dot's state); the dot
+        before the dropdown is a `dot`."""
         marks = self._marks()
         self.assertEqual(marks[uebridge._HEADER].role, "context")
+        self.assertEqual(marks[uebridge._DOT].role, "dot")
         subtitles = [m.name for m in self.marks if m.role == "subtitle"]
         self.assertEqual(subtitles, [scenesetup._BOUND, scenesetup._WEAPONS_BOUND])
 
@@ -328,7 +434,11 @@ class SceneSetup(unittest.TestCase):
         self.assertLess(row, delete)
         between = [c for c in self.fake.calls[add:delete] if c[0] == "setParent"]
         self.assertEqual(between, [])
-        self.assertLess(delete, index["Camera Setup"])
+        self.assertLess(delete, index["Camera"])
+        #  ... and Camera too: one row of three buttons (2026-10-08)
+        between = [c for c in self.fake.calls[delete:index["Camera"]]
+                   if c[0] == "setParent"]
+        self.assertEqual(between, [])
         self.assertEqual(self._button_roles()["Delete"], ("danger", "trash"))
         pressed = []
         saved = (scenesetup.delete_characters, scenesetup._run)
@@ -362,7 +472,9 @@ class SceneSetup(unittest.TestCase):
 
     def test_the_sections_have_headings(self):
         """2026-10-01: «Пусть все будет консистентно» - Characters and UE
-        Connect in Animation Setup; Inventory's sections are its TABS."""
+        Connect in Animation Setup; Inventory's sections are its TABS. The
+        CLASSIC hub only since 2026-10-08 (the skin: no headings at all, see
+        `test_no_heading_in_the_skin`)."""
         heads = [(c[1][0], c[2]["label"]) for c in self.fake.calls
                  if c[0] == "text" and c[1] and not c[2].get("edit")
                  and self._marks().get(c[1][0]) is not None
@@ -688,9 +800,14 @@ class UeBridge(unittest.TestCase):
                           if c[0] == "formLayout"])
         lists = [c for c in self.fake.calls if c[0] == "textScrollList"
                  and not c[2].get("edit") and not c[2].get("query")]
+        #  the classic list keeps its pixel height; the skin shows 10 rows by
+        #  its grip (2026-10-08), which `_LIST_GRIP` marks
         self.assertEqual(lists[0][2].get("height"), uebridge.LIST_HEIGHT)
         self.assertGreaterEqual(uebridge.LIST_HEIGHT, 200)
         self.assertTrue(lists[0][2].get("allowMultiSelection"))
+        grips = [m for m in self.marks if m.role == "grip"]
+        self.assertEqual([(m.name, m.target) for m in grips],
+                         [(uebridge._LIST_GRIP, uebridge._LIST)])
 
     def test_the_import_target_is_two_short_segments(self):
         """2026-10-01, «Слить»: the card's [Rig | Skeleton] says what, these
@@ -700,8 +817,9 @@ class UeBridge(unittest.TestCase):
         segments = [c for c in self.fake.calls if c[0] == "iconTextRadioButton"
                     and c[1][0].startswith(uebridge._MODE)
                     and not c[2].get("edit")]
+        #  2026-10-08: «Onto sel.» in both hubs (the tooltip says the rest)
         self.assertEqual([c[2]["label"] for c in segments],
-                         ["Onto selected", "New"])
+                         ["Onto sel.", "New"])
         self.assertEqual([c[1][0] for c in segments],
                          [uebridge.target_button(t) for t in uebridge.TARGETS])
         self.assertEqual([c[2]["select"] for c in segments], [True, False])
@@ -719,8 +837,46 @@ class UeBridge(unittest.TestCase):
                   and not c[2].get("edit")]
         self.assertIn("Import Animation", labels)
         self.assertNotIn("Import", labels)
-        self.assertIn("Export FBX...", labels)
-        self.assertIn("Export to uasset", labels)
+        #  2026-10-08: the two exports share the Import row; the classic hub
+        #  spells «FBX...» and «uasset», the tooltips say Export
+        self.assertIn("FBX...", labels)
+        self.assertIn("uasset", labels)
+        fbx = [c for c in self.fake.calls if c[0] == "button"
+               and c[2].get("label") == "FBX..."][0]
+        self.assertTrue(fbx[2]["annotation"].startswith("Export FBX... - "))
+
+    def test_the_import_row_is_one_row_of_five(self):
+        """2026-10-08, variant B: [Onto sel. | New] [timeline] [Import]
+        [FBX] [uasset] on one row - the exports no longer take a row of their
+        own."""
+        rows = [i for i, c in enumerate(self.fake.calls) if c[0] == "rowLayout"
+                and c[2].get("numberOfColumns") == 5]
+        self.assertEqual(len(rows), 1)
+        inside = self.fake.calls[rows[0]:]
+        order = [c[1][0] if c[1] else c[2].get("label") for c in inside
+                 if (c[0] in ("iconTextRadioButton", "checkBox", "button")
+                     and not (c[2].get("edit") or c[2].get("exists")
+                              or c[2].get("query")))]
+        self.assertEqual(order, [uebridge.target_button("onto"),
+                                 uebridge.target_button("new"),
+                                 uebridge._TIMELINE, "Import Animation",
+                                 "FBX...", uebridge._UASSET])
+        #  the five columns close once for the segments' own row and once for
+        #  the row, then the Connect block
+        self.assertEqual(len([c for c in inside if c[0] == "setParent"]), 3)
+        self.assertEqual(self.fake.calls[rows[0]][2]["adjustableColumn"], 3)
+
+    def test_the_timeline_box_is_a_clock_chip(self):
+        """The skin draws the checkbox as a pill with a clock; the classic
+        hub keeps a word."""
+        marks = dict((m.name, m) for m in self.marks)
+        self.assertEqual((marks[uebridge._TIMELINE].role,
+                          marks[uebridge._TIMELINE].icon), ("chip", "clock"))
+        box = [c for c in self.fake.calls if c[0] == "checkBox"][0]
+        self.assertEqual(box[1], (uebridge._TIMELINE,))
+        self.assertEqual(box[2]["label"], "timeline")
+        self.assertTrue(box[2]["value"])
+        self.assertIn("timeline", box[2]["annotation"])
 
     def test_the_editor_line_is_context_and_the_rows_build_no_status(self):
         marks = dict((m.name, m) for m in self.marks)
@@ -744,8 +900,9 @@ class UeBridge(unittest.TestCase):
         self.assertIn("press Refresh to read", uebridge.editor_line(False, 0))
 
     def test_the_named_controls_exist(self):
-        for name in (uebridge._LIST, uebridge._SEARCH,
-                     uebridge._HEADER, uebridge._TIMELINE, uebridge._PROJECT):
+        for name in (uebridge._LIST, uebridge._SEARCH, uebridge._DOT,
+                     uebridge._HEADER, uebridge._TIMELINE, uebridge._PROJECT,
+                     uebridge._LIST_GRIP):
             self.assertIn(name, self.fake.children, name)
         self.assertIn(("iconTextRadioCollection", (uebridge._MODE,), {}),
                       self.fake.calls)

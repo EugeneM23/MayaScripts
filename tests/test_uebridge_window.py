@@ -176,8 +176,12 @@ class NoPerforce(unittest.TestCase):
 
     def test_the_three_buttons_and_two_targets(self):
         src = self._source()
-        for label in ('label="Export FBX..."', 'label="Export to uasset"',
-                      'label="Import Animation"', '"Onto selected"', '"New"'):
+        #  2026-10-08: one row of [Onto sel. | New] [timeline] [Import] [FBX]
+        #  [uasset] - the classic hub's labels are the short ones, the
+        #  tooltips keep «Export FBX...» and the long «Import Animation»
+        for label in ('label=hubstyle.pick("", "FBX...")', 'label="uasset"',
+                      '"Import Animation")', '"Onto selected"', '"New"',
+                      'Export FBX... - '):
             self.assertIn(label, src, label)
         self.assertTrue(callable(window.export_fbx_selected))
         self.assertTrue(callable(window.export_uasset_selected))
@@ -724,6 +728,80 @@ class AutoCard(unittest.TestCase):
                                                  label="Manny_Rig1"))
         self.assertEqual(self.calls, [("export", "A_Jump", False),
                                       ("press", "A_Jump", "rig", "Manny_Rig1")])
+
+
+class CompactRows(unittest.TestCase):
+    """2026-10-08, the compact card: the editor line is the project
+    dropdown's tooltip and the dot before it (the skin hides the line), the
+    search field says how many animations the source holds."""
+
+    def setUp(self):
+        from tests.uifakes import FakeUiCmds
+        self.fake = FakeUiCmds()
+        saved = window.cmds, dict(window._STATE)
+        window.cmds = self.fake
+
+        def put_back():
+            window.cmds = saved[0]
+            window._STATE.clear()
+            window._STATE.update(saved[1])
+        self.addCleanup(put_back)
+
+    def _edits(self, kind):
+        return [c for c in self.fake.calls if c[0] == kind and c[2].get("edit")]
+
+    def test_the_header_line_goes_to_the_dropdown_tooltip_and_the_dot(self):
+        window._header(window.editor_line(True))
+        menus = self._edits("optionMenu")
+        self.assertTrue([c for c in menus if c[1] == (window._PROJECT,)
+                         and c[2].get("annotation") == "connected"])
+        dots = [c for c in self._edits("text") if c[1] and c[1][0] == window._DOT]
+        self.assertEqual([c[2]["label"] for c in dots], [window.DOT_ON])
+        self.assertEqual(dots[0][2]["annotation"], "connected")
+
+    def test_not_connected_is_the_open_dot_and_its_own_line_as_tooltip(self):
+        text = window.editor_line(False, 619)
+        window._header(text)
+        dots = [c for c in self._edits("text") if c[1] and c[1][0] == window._DOT]
+        self.assertEqual([c[2]["label"] for c in dots], [window.DOT_OFF])
+        self.assertEqual(self._edits("optionMenu")[-1][2]["annotation"], text)
+        self.assertEqual((window.DOT_ON, window.DOT_OFF), ("●", "○"))
+
+    def test_a_header_before_the_controls_exist_is_quiet(self):
+        """The real commands raise for a control that is not built (a hotkey
+        refresh before the card opened): the line must not."""
+        def boom(*args, **kwargs):
+            if kwargs.get("exists"):
+                return False
+            raise RuntimeError("Object not found")
+        window.cmds = types.SimpleNamespace(text=boom, optionMenu=boom)
+        window._header("connected")
+
+    def test_the_search_placeholder_counts_the_animations(self):
+        self.assertEqual(window.search_hint(619), "search 619 animations")
+        self.assertEqual(window.search_hint(1), "search 1 animations")
+        self.assertEqual(window.search_hint(0), "search name or folder")
+
+    def test_a_repopulate_rewrites_the_placeholder_from_the_source(self):
+        found = records.parse_payload({"assets": [
+            {"name": "A_Jump", "package": "/Game/A_Jump"},
+            {"name": "A_Walk", "package": "/Game/A_Walk"}]})
+        window._STATE["records"] = found
+        window._STATE["filtered"] = []
+        window._repopulate(quiet=True)
+        edits = [c for c in self._edits("textField") if c[1] == (window._SEARCH,)]
+        self.assertEqual([c[2]["placeholderText"] for c in edits],
+                         ["search 2 animations"])
+
+    def test_the_status_tells_the_hub_even_with_no_control(self):
+        heard = []
+
+        def listener(control, text, viewport=False):
+            heard.append((control, text))
+        window.hubstyle.listen(listener)
+        self.addCleanup(window.hubstyle.unlisten, listener)
+        window._status("importing...")
+        self.assertEqual(heard, [(window._STATUS, "importing...")])
 
 
 class ProjectLabel(unittest.TestCase):

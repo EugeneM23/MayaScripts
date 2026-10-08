@@ -231,8 +231,13 @@ def _held_entry(weapon, entry):
 
 def _status(message, control=_STATUS):
     """The Weapons section's line by default; character presses name
-    theirs. Two sections, two lines (2026-09-17)."""
+    theirs. Two sections, two lines (2026-09-17).
+
+    2026-10-08: the line is also TOLD to the hub (`hubstyle.tell`) - the skin
+    hides the card's own line and shows the text on its one message line;
+    the classic hub listens to nothing and keeps the line in the card."""
     cmds.text(control, edit=True, label=message)
+    hubstyle.tell(control, message)
 
 
 def _attached(entry, key=None):
@@ -943,7 +948,7 @@ def _kind_row(kind):
     for each in catalog.KINDS:
         hubstyle.mark(cmds.iconTextRadioButton(
             kind_segment(each), style="textOnly", label=KIND_LABEL[each],
-            height=22, select=each == kind,
+            height=hubstyle.height("segment", 22), select=each == kind,
             annotation=("The portraits bring the AdvancedSkeleton rig - what "
                         "the UE Bridge retargets onto" if each == "rig" else
                         "The portraits bring the bare skeleton"),
@@ -1024,26 +1029,36 @@ def build_characters_panel():
     makes as well as what Add does. The same evening the card is called
     Animation Setup, Add Character is «+ Import» and orange again, and the
     bridge's Import is «Import Animation» - two primaries, one per half.
+
+    2026-10-08 («сделаем его компактным», variant B): the card's controls
+    stand on fewer rows. [Rig | Skeleton], + Import, Delete and Camera Setup
+    are ONE row of four (the last two icons in the skin, words in the classic
+    hub, their tooltips saying what they are), the portraits follow, then
+    the Connect block. The skin has no «Characters» heading (the card's title
+    says it) and no status line of its own: `_status` tells the hub, which
+    shows the text on its one message line.
     """
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
 
     hubstyle.mark(cmds.text(_BOUND, label="", align="left"), "subtitle")
-    heading(_CHARACTERS_HEADING, "Characters")
+    #  the compact skin has no headings (2026-10-08): the card says it
+    if not hubstyle.skinning():
+        heading(_CHARACTERS_HEADING, "Characters")
 
     model, kind = remembered_choice()
+    #  [Rig | Skeleton] [+ Import] [Delete] [Camera Setup] on one row
+    #  (2026-10-08, variant B); Delete and Camera Setup are icons in the skin
+    cmds.rowLayout(numberOfColumns=4, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "left", 3),
+                                 (3, "left", 3), (4, "left", 3)])
     _kind_row(kind)
-    cmds.columnLayout(_PORTRAITS, adjustableColumn=True)
-    cmds.setParent("..")
-    if not _attach_grid(model, kind):
-        _character_dropdown()
-
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "left", 4)])
     #  «Add Character на + Import (Вернем кнопке оранжевый цвет)»: the card's
     #  first primary again; the skin draws the plus, the classic hub spells it.
     hubstyle.mark(cmds.button(
-        label=hubstyle.pick("Import", "+ Import"), height=32,
+        label=hubstyle.pick("Import", "+ Import"),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(84, 90),
         annotation="Import the picked rig or skeleton into this scene, at "
                    "the origin -- or drag its portrait into a viewport to "
                    "stand it where it lands. As many as you like, each rig "
@@ -1051,7 +1066,8 @@ def build_characters_panel():
         command=lambda *_args: _run(add_character, _CHARACTER_STATUS)),
         "primary", "plus")
     hubstyle.mark(cmds.button(
-        label="Delete", height=32, width=hubstyle.pick(96, 80),
+        label=hubstyle.pick("", "Delete"),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 64),
         annotation="Delete the characters the selection belongs to - select "
                    "any part of each: a control, a bone, a mesh, its weapon - "
                    "with everything of theirs: weapons, armor, camera, centre "
@@ -1059,15 +1075,23 @@ def build_characters_panel():
                    "them back.",
         command=lambda *_args: _run(delete_characters, _CHARACTER_STATUS)),
         "danger", "trash")
-    cmds.setParent("..")
     hubstyle.mark(cmds.button(
-        label="Camera Setup", height=26,
-        annotation="A camera on the character's camera_root, the bone's "
-                   "animation baked onto it, the bone driven by the camera "
-                   "from then on - what the retarget does at its end. A "
-                   "second press bakes the bone back and removes the camera.",
+        label=hubstyle.pick("", "Camera"),
+        height=hubstyle.height("button", 32), width=hubstyle.pick(26, 64),
+        annotation="Camera Setup: A camera on the character's camera_root, "
+                   "the bone's animation baked onto it, the bone driven by "
+                   "the camera from then on - what the retarget does at its "
+                   "end. A second press bakes the bone back and removes the "
+                   "camera.",
         command=lambda *_args: _run(camera_setup, _CHARACTER_STATUS)),
         "secondary", "camera")
+    cmds.setParent("..")
+
+    cmds.columnLayout(_PORTRAITS, adjustableColumn=True)
+    cmds.setParent("..")
+    if not _attach_grid(model, kind):
+        _character_dropdown()
+
     _bridge_rows()
     hubstyle.mark(cmds.text(_CHARACTER_STATUS, label="", align="left",
                             wordWrap=True, height=36), "status")
