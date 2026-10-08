@@ -49,13 +49,28 @@ FKX and its IKX joint stand in one frame (<= 3e-6 deg), and
   hinge in the plane, AS's own switch has the same limit, and a retargeted
   UE take carries the forearm's pronation there. It is measured and said.
 
-Every euler is the one nearest the frame before (trap 108); a whole-take
+Every euler is the one nearest the key before (trap 108); a whole-take
 channel that comes out constant collapses to a plain value; the blend is
 unkeyed at 0 / 10 over a whole take and keyed stepped around a range. The
 result is MEASURED on the deformation joints against their samples - the
 joints' places, the hand's turn, the arm's roll - and said.
 
-Spec: docs/superpowers/specs/2026-09-30-connections-fkik-switch-design.md
+## Keys where the arm has keys (2026-10-08)
+
+«если на ФК руке 3 ключа то и на ИК тоже должно быть 3 ключа и наоборот».
+The switch keys only the frames that something moving the SHOWN arm is
+keyed on: every time curve upstream of the source chain's world matrices
+(`driving_curves`: the arm's own controls, and what it hangs on - clavicle,
+spine, pelvis, Main, an animation layer, a constraint's weights), over a
+range its keys inside plus the range's two ends (`key_frames`); the new
+keys take the source keys' tangent types (`tangents_at`). Nothing keyed
+over the whole take: the arm stands still, one plain value. Between keys
+each chain interpolates its own way; the measure is at the keys. Hand ->
+Weapon still switches on every frame (`every_frame`): a proxy baked on
+every frame follows it anyway.
+
+Spec: docs/superpowers/specs/2026-09-30-connections-fkik-switch-design.md,
+docs/superpowers/specs/2026-10-08-fkik-keys-only-design.md
 """
 
 import math
@@ -89,6 +104,32 @@ CONSTANT = 1e-6
 TOLERANCE_CM = 0.05                  # "kept" below these, "moved" above: the pole's
                                      # nudge leaves an IK elbow 0.02-0.05 cm off
 TOLERANCE_DEG = 0.05
+KEY_TOLERANCE = 1e-4                 # key times closer than this (frames) are one key
+TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
+
+
+def _names(pairs, axes="XYZ"):
+    """Long and short names of compound attributes and their children."""
+    out = set()
+    for long_name, short in pairs:
+        out.update((long_name, short))
+        for axis in axes:
+            out.update((long_name + axis, short + axis.lower()))
+    return out
+
+
+# what moves a transform's matrix: its own channels (a joint's included)
+MATRIX_INPUTS = frozenset(
+    _names((("translate", "t"), ("rotate", "r"), ("scale", "s"), ("rotateAxis", "ra"),
+            ("jointOrient", "jo"), ("rotatePivot", "rp"), ("rotatePivotTranslate", "rpt"),
+            ("scalePivot", "sp"), ("scalePivotTranslate", "spt"), ("inverseScale", "is")))
+    | _names((("shear", "sh"),), axes=("XY", "XZ", "YZ"))
+    | {"rotateOrder", "ro", "offsetParentMatrix", "opm", "segmentScaleCompensate", "ssc"})
+# what a constraint or a matrix node reads off a transform: its matrices and channels
+MATRIX_OUTPUTS = MATRIX_INPUTS | frozenset(
+    ("worldMatrix", "wm", "worldInverseMatrix", "wim", "parentMatrix", "pm",
+     "parentInverseMatrix", "pim", "matrix", "m", "inverseMatrix", "im", "xformMatrix", "xm",
+     "dagLocalMatrix", "dlm", "dagLocalInverseMatrix", "dlim"))
 
 ARM_LABEL = "Arm_{0}"
 ALREADY = "%s is already %s"
@@ -131,6 +172,92 @@ def blend_keys(start, end, target):
         keys.append((end, target, True))
     keys.append((end + 1, None, False))
     return keys
+
+
+def key_frames(times, span, tolerance=KEY_TOLERANCE):
+    """The frames a keys-only switch keys: every key time once over a whole
+    take; over a range the key times inside it plus its first and last
+    frame (the blend steps there). Pure."""
+    start, end, ranged = span
+    pool = sorted(float(t) for t in times)
+    if ranged:
+        pool = sorted([float(start), float(end)] +
+                      [t for t in pool if start - tolerance <= t <= end + tolerance])
+    out = []
+    for t in pool:
+        if not out or t - out[-1] > tolerance:
+            out.append(t)
+    return out
+
+
+def tangent_for(own, every):
+    """(in, out) tangent types for a new key from the source keys' pairs:
+    the arm's own controls' when there are any, else every curve's; a type
+    where all agree, never `fixed` (its angle is the other curve's), else
+    None - Maya's default. Pure."""
+    pool = own or every
+    out = []
+    for i in (0, 1):
+        kinds = set(pair[i] for pair in pool)
+        kind = kinds.pop() if len(kinds) == 1 else None
+        out.append(None if kind == "fixed" else kind)
+    return tuple(out)
+
+
+def _pairs_on(keys, frame, tolerance):
+    return [(i, o) for curve in keys for t, i, o in curve if abs(t - frame) <= tolerance]
+
+
+def _pairs_inside(keys, frame, tolerance):
+    """A frame no source key stands on lies in each curve's segment after
+    its key before: that key's out type is the segment's."""
+    out = []
+    for curve in keys:
+        before = [o for t, _i, o in curve if t < frame - tolerance]
+        if before:
+            out.append((None, before[-1]))
+    return out
+
+
+def tangents_at(own, every, frame, tolerance=KEY_TOLERANCE):
+    """(in, out) types for a new key at `frame` from the source curves' keys
+    ([[(time, in, out)], ...], the arm's own and every walked curve): the
+    keys ON the frame, else - a range's end - the segments it lies in. Pure."""
+    on_own, on_every = _pairs_on(own, frame, tolerance), _pairs_on(every, frame, tolerance)
+    if on_own or on_every:
+        return tangent_for(on_own, on_every)
+    return tangent_for(_pairs_inside(own, frame, tolerance),
+                       _pairs_inside(every, frame, tolerance))
+
+
+def attr_root(plug):
+    """`node.worldMatrix[0]` -> worldMatrix, `node.translate.translateX` ->
+    translate, a bare attribute name -> itself. Pure."""
+    attr = plug.split(".", 1)[1] if "." in plug else plug
+    return attr.split(".")[0].split("[")[0]
+
+
+def moves_matrix(attr):
+    """Whether a transform's input `attr` moves its matrix. Pure."""
+    return attr_root(attr) in MATRIX_INPUTS
+
+
+def matrix_output(attr):
+    """Whether reading a transform's `attr` reads where it stands (its matrices,
+    its channels) rather than a value of its own. Pure."""
+    return attr_root(attr) in MATRIX_OUTPUTS
+
+
+def sources(arm, mode):
+    """What the arm shows in `mode` (FK / IK / None for a mixed take): (the
+    DAG nodes whose world matrices it is, plugs read beside them, the arm's
+    own controls - whose keys decide tangents first). Pure."""
+    fk_nodes, ik_nodes = list(arm.fkx), list(arm.ikx) + [arm.ik, arm.pole]
+    if mode == FK:
+        return fk_nodes, [], list(arm.fk)
+    if mode == IK:
+        return ik_nodes, [], [arm.ik, arm.pole]
+    return fk_nodes + ik_nodes, [arm.blend], list(arm.fk) + [arm.ik, arm.pole]
 
 
 def local_channels(local, rotate_order, previous):
@@ -254,11 +381,29 @@ def measure(before, after):
     return Measure(cm, cm_at, hand, roll, roll_at)
 
 
-def switched_message(side, mode, span, m, notes):
-    """What the press did, measured (`Measure`). Pure."""
+def _frame_text(t):
+    t = float(t)
+    return str(int(t)) if t == int(t) else ("%.3f" % t).rstrip("0").rstrip(".")
+
+
+def switched_message(side, mode, span, m, notes, keys=None):
+    """What the press did, measured (`Measure`); `keys` the frames keyed by a
+    keys-only switch (None: every frame of the span). Pure."""
     start, end, ranged = span
-    where = ("over the range %d..%d" if ranged else "over %d..%d") % (start, end)
-    text = "%s to %s %s" % (ARM_LABEL.format(side), mode, where)
+    label = ARM_LABEL.format(side)
+    if keys is None:
+        where = ("over the range %d..%d" if ranged else "over %d..%d") % (start, end)
+        text = "%s to %s %s" % (label, mode, where)
+    elif not keys:
+        text = "%s to %s, no keys - nothing keyed moves the arm" % (label, mode)
+    else:
+        count = "%d key%s" % (len(keys), "" if len(keys) == 1 else "s")
+        if ranged:
+            text = "%s to %s over the range %d..%d on %s" % (label, mode, start, end, count)
+        else:
+            frames = _frame_text(keys[0]) if len(keys) == 1 else "%s..%s" % (
+                _frame_text(keys[0]), _frame_text(keys[-1]))
+            text = "%s to %s on %s (%s)" % (label, mode, count, frames)
     held = m.cm <= TOLERANCE_CM and m.hand <= TOLERANCE_DEG
     if held and m.roll <= TOLERANCE_DEG:
         text += " - the arm kept to %.4f cm, %.3f deg" % (m.cm, max(m.hand, m.roll))
@@ -408,6 +553,99 @@ def refusal(arm, mode, span, ignore=()):
     return ""
 
 
+def driving_curves(nodes, plugs=()):
+    """Every time curve that can move the world matrices of `nodes` (and the
+    values of `plugs`): a transform's matrix inputs and its parent, the IK
+    handles a joint starts, a compute node's (DG, constraint, shape, handle)
+    every input and its parent, a transform's own attribute read by
+    something (`IKArm.Lenght1`, a follow) - that attribute's input. Driven
+    keys are not time: their driver is followed. A set of curve names."""
+    curves = set()
+    seen = set()
+    long_of = {}
+    type_of = {}
+
+    def full(node):
+        if node not in long_of:
+            found = cmds.ls(node, long=True) or [node]
+            long_of[node] = found[0]
+        return long_of[node]
+
+    def kind(node):
+        if node not in type_of:
+            type_of[node] = cmds.nodeType(node)
+        return type_of[node]
+
+    todo = [("dag", full(n)) for n in nodes] + [("plug", p) for p in plugs]
+
+    def take(source):
+        node = source.split(".", 1)[0]
+        t = kind(node)
+        if t in TIME_CURVES:
+            curves.add(node)
+        elif t in ("transform", "joint"):
+            todo.append(("dag", full(node)) if matrix_output(source) else ("plug", source))
+        else:
+            todo.append(("all", full(node)))
+
+    while todo:
+        how, item = todo.pop()
+        if (how, item) in seen:
+            continue
+        seen.add((how, item))
+        if how == "plug":
+            for source in cmds.listConnections(item, source=True, destination=False,
+                                               plugs=True) or []:
+                take(source)
+            continue
+        node = item
+        if how == "dag" and kind(node) not in ("transform", "joint"):
+            how = "all"
+        parent = _parent(node) if cmds.objectType(node, isAType="dagNode") else None
+        if parent:
+            todo.append(("dag", parent))
+        pairs = cmds.listConnections(node, source=True, destination=False, connections=True,
+                                     plugs=True) or []
+        for dest, source in zip(pairs[0::2], pairs[1::2]):
+            if how == "all" or moves_matrix(dest):
+                take(source)
+        if how == "dag" and kind(node) == "joint":
+            for handle in cmds.listConnections(node + ".message", source=False, destination=True,
+                                               type="ikHandle") or []:
+                todo.append(("all", full(handle)))
+    return curves
+
+
+def _keys_of(curve):
+    """[(time, in type, out type)] of a curve's keys."""
+    times = cmds.keyframe(curve, query=True, timeChange=True) or []
+    ins = cmds.keyTangent(curve, query=True, inTangentType=True) or [None] * len(times)
+    outs = cmds.keyTangent(curve, query=True, outTangentType=True) or [None] * len(times)
+    return list(zip(times, ins, outs))
+
+
+def key_plan(arm, span):
+    """(frames to sample, frames keyed, {frame: (in, out) tangent types}) of
+    a keys-only switch: the keys of what moves the arm it shows."""
+    nodes, plugs, own = sources(arm, mode_of(blend_values(arm)))
+    curves = driving_curves(nodes, plugs)
+    table = dict((curve, _keys_of(curve)) for curve in curves)
+    own_set = set(_long(node) for node in own)
+    mine = [table[c] for c in curves
+            if own_set & set(_long(node) for node in cmds.listConnections(
+                c + ".output", source=False, destination=True) or [])]
+    every = list(table.values())
+    keys = key_frames([t for curve in every for t, _i, _o in curve], span)
+    tangents = dict((frame, tangents_at(mine, every, frame)) for frame in keys)
+    frames = keys or [cmds.currentTime(query=True)]
+    return frames, keys, tangents
+
+
+def _long(node):
+    found = cmds.ls(node, long=True) if node else None   # never ls() of nothing: that lists all
+    return found[0] if found else node
+
+
 def _world(node):
     return om.MMatrix(cmds.getAttr(node + ".worldMatrix[0]"))
 
@@ -433,9 +671,10 @@ def _reset_solve(arm):
     return notes
 
 
-def _write(plug, frames, values, span, locked):
-    """Keys for `plug` over the span; a whole take's constant channel becomes
-    a plain value."""
+def _write(plug, frames, values, span, locked, tangents=None):
+    """Keys for `plug` on the frames; a whole take's constant channel becomes
+    a plain value. `tangents` {frame: (in, out)}: a type None is Maya's
+    default."""
     if locked:
         return
     start, end, ranged = span
@@ -449,7 +688,16 @@ def _write(plug, frames, values, span, locked):
             return
     node, channel = plug.rsplit(".", 1)
     for frame, value in zip(frames, values):
-        cmds.setKeyframe(node, attribute=channel, time=frame, value=value)
+        flags = {}
+        in_type, out_type = (tangents or {}).get(frame, (None, None))
+        if in_type:
+            flags["inTangentType"] = in_type
+        if out_type:
+            flags["outTangentType"] = out_type
+        try:
+            cmds.setKeyframe(node, attribute=channel, time=frame, value=value, **flags)
+        except (RuntimeError, TypeError):                    # a type this key cannot take
+            cmds.setKeyframe(node, attribute=channel, time=frame, value=value)
 
 
 def _write_blend(arm, mode, span):
@@ -567,12 +815,17 @@ def _to_ik(arm, frames, samples, span):
     return values, ""
 
 
-def switch(arm, mode, span):
-    """Bring `arm` to `mode` over `span` keeping what it shows. The caller
-    has checked `refusal` and holds the undo chunk. Returns the status."""
+def switch(arm, mode, span, every_frame=False):
+    """Bring `arm` to `mode` over `span` keeping what it shows - on the
+    frames something moving it is keyed on (`key_plan`), or on every frame
+    of the span (`every_frame`). The caller has checked `refusal` and holds
+    the undo chunk. Returns the status."""
     start, end, ranged = span
-    frames = list(range(start, end + 1))
     now = cmds.currentTime(query=True)
+    if every_frame:
+        frames, keys, tangents = list(range(start, end + 1)), None, {}
+    else:
+        frames, keys, tangents = key_plan(arm, span)
     auto = cmds.autoKeyframe(query=True, state=True)
     cmds.autoKeyframe(state=False)
     _suspend(True)
@@ -597,7 +850,7 @@ def switch(arm, mode, span):
             maya_ikmatch.keep(arm.ikx[0])        # its rest, for the next retarget's reset
         for (node, channel), series in values.items():
             plug = node + "." + channel
-            _write(plug, frames, series, span, cmds.getAttr(plug, lock=True))
+            _write(plug, frames, series, span, cmds.getAttr(plug, lock=True), tangents)
         _write_blend(arm, mode, span)
         after = {}
         for frame in frames:
@@ -608,7 +861,7 @@ def switch(arm, mode, span):
         _goto(now)
         cmds.autoKeyframe(state=auto)
         _suspend(False)
-    return switched_message(arm.side, mode, span, moved, notes)
+    return switched_message(arm.side, mode, span, moved, notes, keys)
 
 
 def _suspend(on):

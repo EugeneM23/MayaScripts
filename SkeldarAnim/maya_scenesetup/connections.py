@@ -688,10 +688,12 @@ def _follow(rig, side, target, span):
     """The hand's IK control onto a proxy inside the weapon. An arm not in
     IK over the whole take is switched first, keeping what it shows (before
     2026-09-30 the blend was only set to 10 over whatever the IK held, and
-    an FK arm edited after the retarget jumped). Returns the switch's note,
-    or ''."""
+    an FK arm edited after the retarget jumped). On every frame, not only
+    the keys (2026-10-08): the proxy is baked on every frame anyway, and
+    between keys an IK hand would take its own path. Returns the switch's
+    note, or ''."""
     arm = _not_ik(rig, side)
-    note = fkik.switch(arm, fkik.IK, _whole(arm)) if arm else ""
+    note = fkik.switch(arm, fkik.IK, _whole(arm), every_frame=True) if arm else ""
     attach_to_proxy(_control(rig, side), target, span,
                     maya_rigs.node(rig, PROXY_NAME.format(side)),
                     "%s:%s" % (rig.namespace, side))

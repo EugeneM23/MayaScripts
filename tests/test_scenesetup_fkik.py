@@ -65,6 +65,106 @@ class Span(unittest.TestCase):
         self.assertEqual(fkik.span_for(None, (0.4, 88.792)), (0, 89, False))
 
 
+class KeyFrames(unittest.TestCase):
+    """Keys-only (2026-10-08): the frames something that moves the arm is
+    keyed on, never every frame of the take."""
+
+    def test_the_whole_take_is_every_key_time_once(self):
+        self.assertEqual(fkik.key_frames([24.0, 0.0, 12.0, 12.0, 6.0], (0, 120, False)),
+                         [0.0, 6.0, 12.0, 24.0])
+
+    def test_keys_outside_the_playback_range_count_over_the_whole_take(self):
+        self.assertEqual(fkik.key_frames([-5.0, 130.0], (0, 120, False)), [-5.0, 130.0])
+
+    def test_a_fraction_of_a_frame_apart_is_one_key(self):
+        self.assertEqual(fkik.key_frames([10.0, 10.00001, 10.5], (0, 20, False)), [10.0, 10.5])
+
+    def test_nothing_keyed_is_no_frame(self):
+        self.assertEqual(fkik.key_frames([], (0, 120, False)), [])
+
+    def test_a_range_is_its_keys_and_its_two_ends(self):
+        """The blend steps on the range's ends: the new mode must stand on the
+        shown pose there whatever the keys."""
+        self.assertEqual(fkik.key_frames([0.0, 6.0, 12.0, 24.0, 40.0], (10, 30, True)),
+                         [10.0, 12.0, 24.0, 30.0])
+
+    def test_a_key_on_a_ranges_end_is_not_doubled(self):
+        self.assertEqual(fkik.key_frames([10.0, 30.0], (10, 30, True)), [10.0, 30.0])
+
+    def test_a_one_frame_range(self):
+        self.assertEqual(fkik.key_frames([], (7, 7, True)), [7.0])
+
+
+class Tangents(unittest.TestCase):
+
+    def test_the_arms_own_keys_decide(self):
+        own = [("clamped", "step"), ("clamped", "step")]
+        every = own + [("auto", "auto")]
+        self.assertEqual(fkik.tangent_for(own, every), ("clamped", "step"))
+
+    def test_with_no_own_key_on_the_frame_every_curve_decides(self):
+        self.assertEqual(fkik.tangent_for([], [("linear", "linear")] * 3), ("linear", "linear"))
+
+    def test_a_type_is_used_only_where_they_agree(self):
+        self.assertEqual(fkik.tangent_for([("auto", "step"), ("linear", "step")], []),
+                         (None, "step"))
+
+    def test_fixed_never_crosses_over(self):
+        """A fixed tangent's angle belongs to the other curve."""
+        self.assertEqual(fkik.tangent_for([("fixed", "fixed")], []), (None, None))
+
+    def test_nothing_on_the_frame_is_mayas_default(self):
+        self.assertEqual(fkik.tangent_for([], []), (None, None))
+
+
+class Walk(unittest.TestCase):
+    """What the upstream walk follows on a transform: what moves its matrix."""
+
+    def test_the_transform_channels_long_and_short(self):
+        for attr in ("translateX", "rotate", "rz", "jointOrientY", "rotateAxis",
+                     "rotatePivotTranslate", "offsetParentMatrix", "scaleZ", "shearXY",
+                     "inverseScale", "rotateOrder"):
+            self.assertTrue(fkik.moves_matrix(attr), attr)
+
+    def test_a_custom_attribute_or_visibility_is_not(self):
+        for attr in ("Lenght1", "FKIKBlend", "follow", "visibility", "v", "swivel"):
+            self.assertFalse(fkik.moves_matrix(attr), attr)
+
+    def test_an_indexed_or_child_plug_reads_its_root(self):
+        self.assertEqual(fkik.attr_root("node.worldMatrix[0]"), "worldMatrix")
+        self.assertEqual(fkik.attr_root("|a|b.translate.translateX"), "translate")
+        self.assertTrue(fkik.matrix_output("worldMatrix"))
+        self.assertTrue(fkik.matrix_output("parentMatrix"))
+        self.assertTrue(fkik.matrix_output("translateY"))
+        self.assertFalse(fkik.matrix_output("Lenght2"))
+
+
+class Sources(unittest.TestCase):
+    """The nodes the walk starts from: what the arm shows."""
+
+    def setUp(self):
+        self.arm = fkik.Limb("R", "|FKIKArm_R.FKIKBlend", ["d0", "d1", "d2"],
+                             ["fk0", "fk1", "fk2"], ["fkx0", "fkx1", "fkx2"],
+                             ["ikx0", "ikx1", "ikx2"], "ik", "pole", "align", "rp", (1, 1))
+
+    def test_an_fk_arm_is_its_fkx_chain(self):
+        nodes, plugs, own = fkik.sources(self.arm, fkik.FK)
+        self.assertEqual(nodes, ["fkx0", "fkx1", "fkx2"])
+        self.assertEqual(plugs, [])
+        self.assertEqual(own, ["fk0", "fk1", "fk2"])
+
+    def test_an_ik_arm_is_its_ikx_chain_the_control_and_the_pole(self):
+        nodes, plugs, own = fkik.sources(self.arm, fkik.IK)
+        self.assertEqual(nodes, ["ikx0", "ikx1", "ikx2", "ik", "pole"])
+        self.assertEqual(own, ["ik", "pole"])
+
+    def test_a_mixed_take_is_both_and_the_blend(self):
+        nodes, plugs, own = fkik.sources(self.arm, None)
+        self.assertEqual(nodes, ["fkx0", "fkx1", "fkx2", "ikx0", "ikx1", "ikx2", "ik", "pole"])
+        self.assertEqual(plugs, ["|FKIKArm_R.FKIKBlend"])
+        self.assertEqual(own, ["fk0", "fk1", "fk2", "ik", "pole"])
+
+
 class BlendKeys(unittest.TestCase):
 
     def test_a_range_is_stepped_in_and_out(self):
@@ -225,6 +325,32 @@ class Messages(unittest.TestCase):
         self.assertIn("hand and elbow kept to 0.004 cm", text)
         self.assertIn("the FK forearm twist is lost, up to 59 deg at frame 32", text)
         self.assertIn("(an IK elbow does not twist)", text)
+
+    def test_keys_only_names_how_many_keys(self):
+        held = fkik.Measure(0.0, None, 0.0, 0.0, None)
+        text = fkik.switched_message("R", fkik.IK, (0, 120, False), held, [],
+                                     keys=[0.0, 6.0, 12.0, 24.0])
+        self.assertIn("Arm_R to IK on 4 keys (0..24)", text)
+        self.assertIn("the arm kept", text)
+        text = fkik.switched_message("L", fkik.FK, (0, 120, False), held, [], keys=[12.0])
+        self.assertIn("Arm_L to FK on 1 key (12)", text)
+
+    def test_keys_only_in_a_range(self):
+        text = fkik.switched_message("R", fkik.IK, (30, 50, True),
+                                     fkik.Measure(0.0, None, 0.0, 0.0, None), [],
+                                     keys=[30.0, 41.0, 50.0])
+        self.assertIn("Arm_R to IK over the range 30..50 on 3 keys", text)
+
+    def test_nothing_keyed_is_said(self):
+        text = fkik.switched_message("R", fkik.IK, (0, 120, False),
+                                     fkik.Measure(0.0, None, 0.0, 0.0, None), [], keys=[])
+        self.assertIn("Arm_R to IK, no keys - nothing keyed moves the arm", text)
+
+    def test_a_fraction_of_a_frame_is_shown_as_it_is(self):
+        text = fkik.switched_message("R", fkik.IK, (0, 10, False),
+                                     fkik.Measure(0.0, None, 0.0, 0.0, None), [],
+                                     keys=[2.5, 8.0])
+        self.assertIn("on 2 keys (2.5..8)", text)
 
     def test_a_moved_arm_is_said_with_the_number(self):
         text = fkik.switched_message("R", fkik.IK, (0, 10, False),

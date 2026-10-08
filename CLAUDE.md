@@ -6763,8 +6763,9 @@ none of it since 2026-09-07 (`vendor_bake`).
   is lost, up to 59 deg at frame 32 (an IK elbow does not twist)»).
 - **A range** (`timeControl -rangeArray`, end exclusive, through `overrig.slider_selection`): the blend
   keyed `a-1` (inserted, shape kept) / `a` / `b` target / `b+1` (inserted), stepped out of `a-1` and `b`;
-  the target controls' keys outside the range kept. **The whole take**: playback ∪ every involved
-  control's keys, the blend unkeyed, a constant channel collapsed to a value. autoKey off, one undo chunk.
+  the target controls' keys outside the range kept. **The whole take**: the blend unkeyed, a constant
+  channel collapsed to a value. autoKey off, one undo chunk. **Which frames are keyed: only the keys
+  (2026-10-08, below)** - the first build keyed every frame of playback ∪ the controls' keys.
 - **The card**: two rows at the top, `Arm_R [FK | IK]`, `Arm_L [FK | IK]` - `iconTextCheckBox`es
   (`QmayaIconTextCheckBox`, a QPushButton, so the skin's segment style lights it), not radios: a radio
   does not fire on the lit segment (a range inside a take in that mode) and a mixed take must light
@@ -6782,6 +6783,39 @@ none of it since 2026-09-07 (`vendor_bake`).
 
 Not built: legs (toes, heel roll, IKToes), scale, an IK stretched to a longer FK arm, hotkey rows
 (`maya_hotkeys.py` held another session's uncommitted work, and nobody asked).
+
+**…keys where the arm has keys, not on every frame** (2026-10-08, the animator: «если на ФК руке 3 ключа то
+и на ИК тоже должно быть 3 ключа и наоборот. Нужно избавится от запекания лишних ключей»; asked, both the
+recommendation: the arm's keys **and the keys of what it hangs on**, the tangents **as the source keys'**).
+Spec `docs/superpowers/specs/2026-10-08-fkik-keys-only-design.md`.
+- **Which frames** (`fkik.key_plan`): every time curve upstream of what the arm SHOWS (`sources`: the FKX
+  chain, or the IKX chain + IK control + pole, or both + the blend in a mixed take), walked by
+  `driving_curves` - a transform's matrix inputs (`MATRIX_INPUTS`, long and short names) and its parent; a
+  compute node's (DG, constraint, shape, ikHandle) every input and parent; a joint's ikHandles (the solver
+  sets IKX rotations with no DG connection, so they are found through `joint.message`); a transform's own
+  attribute read by something (`IKArm.Lenght1`, a follow) that attribute's input; a driven key's driver.
+  So the arm's own keys, the clavicle's, the spine's, the pelvis's, Main's, an animation layer's, a
+  constraint weight's count; the other arm, the legs, the fingers, a visibility do not (nothing of them is
+  upstream). The IK hand lives in Main's space and does not ride the body: a body key on a frame the arm
+  has none is a frame the shown hand changes course, so it is keyed too.
+- `key_frames` (pure): the whole take - every key time once (1e-4 frames apart is one key); a range - its
+  keys plus its two ends (the blend steps there). Nothing keyed over the whole take - one sample at the
+  current frame, plain values, «Arm_R to IK, no keys - nothing keyed moves the arm».
+- `tangents_at` / `tangent_for` (pure): the in/out types of the keys ON the frame - the arm's own controls'
+  first, else every walked curve's - where they agree, never `fixed`; a range's end inside a segment takes
+  the out type of the key before; else Maya's default. Stepped blocking stays stepped and then matches on
+  every frame.
+- The measure walks the keys only; the line: «Arm_R to IK on 5 keys (0..24) - the arm kept to ...».
+  **Between keys each chain interpolates its own way** (FK rotations against an IK hand's path): measured
+  9.9 cm / 12° mid-way between auto keys 10 frames apart with a 30° elbow change - the cost of the ask.
+- **Hand -> Weapon still switches on every frame** (`switch(..., every_frame=True)` in `_follow`): the
+  proxy is baked on every frame anyway.
+Proof: `docs/superpowers/plans/verify_fkik_keys.py` **14/14 standalone** (Manny stepped blocking: the arm
+on 0/12/24, the clavicle on 6, Main on 18, the other arm / a leg / a finger on 3/9/15/21 - IK keyed on exactly
+0, 6, 12, 18, 24, stepped, every frame kept, back to FK the same; Creep auto: a range 8..32 → 8, 10, 20, 25,
+30, 32, auto/linear as the source, the mixed take → 10 keys, a layer key counted; nothing keyed → plain
+values); `verify_fkik_switch.py` **63/63** again (a retargeted take is keyed on every frame: «on 61 keys»);
+4651 unit tests.
 
 126. **AdvancedSkeleton's deformation arm joints are NOT the FK/IK blend.** Their orient constraint's
      `offsetX` is driven by the twist network (`twistAdditionElbow_R_output1DUC1.o ->
