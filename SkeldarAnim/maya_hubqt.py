@@ -1873,6 +1873,166 @@ def _spread(row, scale=1.0):
     return len(buttons)
 
 
+# --------------------------------------------------------------- the lists
+
+#  A list's frame and padding, logical px, added to its rows' height
+LIST_FRAME = 8
+
+
+def list_widget(name):
+    """The QListWidget under textScrollList `name` (Maya's textScrollList IS
+    one - maya_uebridge.listdrag), or None."""
+    q = qt()
+    if q is None:
+        return None
+    import maya.OpenMayaUI as omui
+    ptr = omui.MQtUtil.findControl(name)
+    if not ptr:
+        return None
+    widget = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QListWidget)
+    if not hasattr(widget, "sizeHintForRow"):
+        #  a QWidget wrapper cached at this address (trap 96): wrap afresh
+        q.shiboken.invalidate(widget)
+        widget = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QListWidget)
+    if not (q.shiboken.isValid(widget)
+            and widget.inherits("QAbstractItemView")):
+        return None
+    return widget
+
+
+def list_row_px(name):
+    """One row of list `name` in physical px (0 when the list is not
+    there)."""
+    widget = list_widget(name)
+    if widget is None:
+        return 0
+    if widget.count():
+        size = widget.sizeHintForRow(0)
+        if size > 0:
+            return size
+    return widget.fontMetrics().lineSpacing() + 4
+
+
+def set_list_height(name, logical):
+    """The list's height in LOGICAL units (a cmds height)."""
+    import maya.cmds as cmds
+    if cmds.textScrollList(name, exists=True):
+        cmds.textScrollList(name, edit=True, height=int(logical))
+
+
+def optionvar_get(name):
+    import maya.cmds as cmds
+    if cmds.optionVar(exists=name):
+        return cmds.optionVar(query=name)
+    return None
+
+
+def optionvar_set(name, value):
+    import maya.cmds as cmds
+    cmds.optionVar(intValue=(name, int(value)))
+
+
+def apply_list_rows(name, rows, scale):
+    """List `name` shows `rows` rows; answers its logical height. The
+    seams (`list_row_px`, `set_list_height`) are looked up when this runs,
+    so a test's replacement takes effect."""
+    row = list_row_px(name) / float(scale or 1.0)
+    height = hubstyle.list_height(hubstyle.clamp_rows(rows), row or 16,
+                                  LIST_FRAME)
+    set_list_height(name, height)
+    return height
+
+
+def remembered_rows(name):
+    """The rows list `name` was left showing, else the default."""
+    saved = optionvar_get(hubstyle.LIST_VAR.format(name))
+    try:
+        return hubstyle.clamp_rows(int(saved)) if saved else hubstyle.LIST_ROWS
+    except (TypeError, ValueError):
+        return hubstyle.LIST_ROWS
+
+
+def _global_y(event):
+    """The cursor's global y, physical px (Qt6, else Qt5)."""
+    if hasattr(event, "globalPosition"):
+        return event.globalPosition().y()
+    return event.globalPos().y()
+
+
+def _grip_class():
+    """The height grip under a list (2026-10-08): three dots on an 8 px bar,
+    the vertical resize cursor; a drag moves the list by whole rows (5..40),
+    the release remembers. `press/drag/release` take GLOBAL y (physical px)
+    so the tests can drive them without a mouse."""
+    if "grip" not in _CLASSES:
+        q = qt()
+        QtCore, QtGui, QtWidgets = q.QtCore, q.QtGui, q.QtWidgets
+
+        class ListGrip(QtWidgets.QWidget):
+
+            def __init__(self, list_name, scale, parent=None):
+                super(ListGrip, self).__init__(parent)
+                self.list_name, self.scale = list_name, float(scale or 1.0)
+                self.rows = remembered_rows(list_name)
+                self._start = None
+                #  a plain QWidget paints no stylesheet background unless
+                #  asked to (the hover face the stylesheet gives a grip)
+                self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+                self.setProperty("skRole", "grip")
+                self.setCursor(QtCore.Qt.SizeVerCursor)
+                self.setToolTip("Drag to show more or fewer rows")
+
+            def press(self, gy):
+                self._start = (gy, self.rows)
+
+            def drag(self, gy):
+                if self._start is None:
+                    return
+                y0, rows0 = self._start
+                row = list_row_px(self.list_name) or 16
+                rows = hubstyle.rows_after_drag(rows0, gy - y0, row)
+                if rows != self.rows:
+                    self.rows = rows
+                    apply_list_rows(self.list_name, rows, self.scale)
+
+            def release(self):
+                if self._start is not None:
+                    optionvar_set(hubstyle.LIST_VAR.format(self.list_name),
+                                  self.rows)
+                self._start = None
+
+            def mousePressEvent(self, event):              # noqa: N802
+                if event.button() == QtCore.Qt.LeftButton:
+                    self.press(_global_y(event))
+                    event.accept()
+                else:
+                    event.ignore()
+
+            def mouseMoveEvent(self, event):               # noqa: N802
+                self.drag(_global_y(event))
+
+            def mouseReleaseEvent(self, event):            # noqa: N802
+                self.release()
+
+            def paintEvent(self, event):                   # noqa: N802
+                super(ListGrip, self).paintEvent(event)
+                painter = QtGui.QPainter(self)
+                try:
+                    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+                    painter.setPen(QtCore.Qt.NoPen)
+                    painter.setBrush(QtGui.QColor(hubstyle.TOKENS["faint"]))
+                    r = max(1.0, 1.2 * self.scale)
+                    cx, cy = self.width() / 2.0, self.height() / 2.0
+                    for dx in (-5, 0, 5):
+                        painter.drawEllipse(QtCore.QPointF(
+                            cx + dx * self.scale, cy), r, r)
+                finally:
+                    painter.end()
+
+        _CLASSES["grip"] = ListGrip
+    return _CLASSES["grip"]
+
+
 def apply_marks(marks, card, scale):
     """Turn a builder's marks into the skin: properties, icons, swatches,
     subtitles moved into `card`'s header. Returns how many were applied."""
@@ -1918,6 +2078,33 @@ def _apply_mark(mark, card, scale, size):
             if child.objectName() in ("slider", "color"):
                 child.setVisible(False)
         widget.setProperty("skRole", "swatchonly")
+        return True
+    #  The compact roles (2026-10-08): what a card no longer shows in its
+    #  body. A status keeps its control - its writer still sets the text - and
+    #  the card owns it, so the status relay (hubstyle.tell) carries that
+    #  text to the hub's one message line; a note is the header's tooltip; a
+    #  context line is shown elsewhere by its writer.
+    if mark.role == "status":
+        widget.setVisible(False)
+        widget.setMaximumHeight(0)
+        card.status_controls.add(mark.name)
+        return True
+    if mark.role == "note":
+        card.add_hint(widget.property("text") or "")
+        widget.setVisible(False)
+        return True
+    if mark.role == "context":
+        widget.setVisible(False)
+        return True
+    if mark.role == "grip":
+        #  the placeholder under a list becomes its height grip, kept over
+        #  it; the list shows its remembered rows (else 10)
+        cover = _grip_class()(mark.target, scale, widget)
+        cover.setObjectName(mark.name + "_grip")
+        widget.installEventFilter(_fill_class()(cover, cover))
+        cover.setGeometry(widget.rect())
+        cover.show()
+        apply_list_rows(mark.target, cover.rows, scale)
         return True
     widget.setProperty("skRole", mark.role)
     if mark.role == "inset":

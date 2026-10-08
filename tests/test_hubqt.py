@@ -11,7 +11,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import maya_hubqt as hubqt
 import maya_hubstyle as style
@@ -783,6 +783,205 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
         self.assertEqual(hubqt.apply_marks(
             [style.Mark("gone", "primary", None, False, None)], self.card,
             1.0), 0)
+
+    #  2026-10-08, the compact hub: a section's status, hint and context
+    #  lines leave its body (spec: the status reaches the message line
+    #  through the relay, the hint is the header's tooltip)
+
+    def test_a_status_is_hidden_and_owned_by_its_card(self):
+        card = self.skin.add_card("com", "Center of Mass", "target",
+                                  "#7fa9e6", "#23324a")
+        label = self.control(QtWidgets.QLabel, "skeldarComStatus", card.body)
+        hubqt.apply_marks([style.Mark("skeldarComStatus", "status", None,
+                                      False, None)], card, 1.0)
+        self.assertTrue(label.isHidden())
+        self.assertEqual(label.maximumHeight(), 0)
+        self.assertIn("skeldarComStatus", card.status_controls)
+
+    def test_a_status_counts_as_applied(self):
+        card = self.skin.add_card("com", "Center of Mass", "target",
+                                  "#7fa9e6", "#23324a")
+        self.control(QtWidgets.QLabel, "skeldarComStatus", card.body)
+        self.assertEqual(hubqt.apply_marks(
+            [style.Mark("skeldarComStatus", "status", None, False, None)],
+            card, 1.0), 1)
+
+    def test_a_note_becomes_the_header_tooltip(self):
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        label = self.control(QtWidgets.QLabel, "hint1", card.body)
+        label.setText("Select the clip's skeleton")
+        hubqt.apply_marks([style.Mark("hint1", "note", None, False, None)],
+                          card, 1.0)
+        self.assertTrue(label.isHidden())
+        self.assertEqual(card.header.toolTip(), "Select the clip's skeleton")
+
+    def test_two_notes_share_the_tooltip(self):
+        card = self.skin.add_card("retarget", "Retarget", "arrows-exchange",
+                                  "#7fa9e6", "#23324a")
+        for name, text in (("hint1", "First"), ("hint2", "Second")):
+            self.control(QtWidgets.QLabel, name, card.body).setText(text)
+        hubqt.apply_marks([style.Mark("hint1", "note", None, False, None),
+                           style.Mark("hint2", "note", None, False, None)],
+                          card, 1.0)
+        self.assertEqual(card.header.toolTip(), "First\nSecond")
+
+    def test_a_context_line_is_hidden(self):
+        card = self.skin.add_card("characters", "Animation Setup", "user",
+                                  "#f0a26b", "#4a3322")
+        label = self.control(QtWidgets.QLabel, "ueAnimBridgeHeader", card.body)
+        hubqt.apply_marks([style.Mark("ueAnimBridgeHeader", "context", None,
+                                      False, None)], card, 1.0)
+        self.assertTrue(label.isHidden())
+
+    def test_a_dot_is_just_its_property(self):
+        card = self.skin.add_card("characters", "Animation Setup", "user",
+                                  "#f0a26b", "#4a3322")
+        label = self.control(QtWidgets.QLabel, "stateDot", card.body)
+        hubqt.apply_marks([style.Mark("stateDot", "dot", None, False, None)],
+                          card, 1.0)
+        self.assertEqual(label.property("skRole"), "dot")
+        self.assertFalse(label.isHidden())
+
+
+class ListGrip(SeamsMixin, unittest.TestCase):
+    """2026-10-08: a list shows 10 rows and its grip changes that."""
+
+    def setUp(self):
+        super(ListGrip, self).setUp()
+        self.vars, self.heights = {}, []
+        self.saved_seams = (hubqt.list_row_px, hubqt.set_list_height,
+                            hubqt.optionvar_get, hubqt.optionvar_set)
+        hubqt.list_row_px = lambda name: 16
+        hubqt.set_list_height = lambda name, h: self.heights.append((name, h))
+        hubqt.optionvar_get = lambda name: self.vars.get(name)
+        hubqt.optionvar_set = lambda name, v: self.vars.__setitem__(name, v)
+        self.card = self.skin.add_card("shared", "Shared", "send", "#f0a26b",
+                                       "#4a3322")
+        self.placeholder = self.control(QtWidgets.QFrame, "theGrip",
+                                        self.card.body)
+        self.placeholder.resize(200, 8)
+
+    def tearDown(self):
+        (hubqt.list_row_px, hubqt.set_list_height, hubqt.optionvar_get,
+         hubqt.optionvar_set) = self.saved_seams
+        super(ListGrip, self).tearDown()
+
+    def _apply(self):
+        hubqt.apply_marks([style.Mark("theGrip", "grip", None, False, None,
+                                      "theList")], self.card, 1.0)
+        return self.placeholder.findChild(QtWidgets.QWidget, "theGrip_grip")
+
+    def test_ten_rows_by_default(self):
+        grip = self._apply()
+        self.assertIsNotNone(grip)
+        self.assertEqual(self.heights[-1][0], "theList")
+        self.assertEqual(self.heights[-1][1],
+                         style.list_height(10, 16, hubqt.LIST_FRAME))
+
+    def test_the_remembered_rows(self):
+        self.vars[style.LIST_VAR.format("theList")] = 25
+        self._apply()
+        self.assertEqual(self.heights[-1][1],
+                         style.list_height(25, 16, hubqt.LIST_FRAME))
+
+    def test_a_remembered_value_out_of_range_is_clamped(self):
+        self.vars[style.LIST_VAR.format("theList")] = 500
+        self._apply()
+        self.assertEqual(self.heights[-1][1],
+                         style.list_height(40, 16, hubqt.LIST_FRAME))
+
+    def test_a_remembered_value_that_is_not_a_number_is_the_default(self):
+        self.vars[style.LIST_VAR.format("theList")] = "many"
+        self._apply()
+        self.assertEqual(self.heights[-1][1],
+                         style.list_height(10, 16, hubqt.LIST_FRAME))
+
+    def test_a_drag_changes_whole_rows_and_is_remembered_on_release(self):
+        grip = self._apply()
+        grip.press(100)
+        grip.drag(100 + 16 * 3)
+        self.assertEqual(self.heights[-1][1],
+                         style.list_height(13, 16, hubqt.LIST_FRAME))
+        self.assertIsNone(self.vars.get(style.LIST_VAR.format("theList")))
+        grip.release()
+        self.assertEqual(self.vars[style.LIST_VAR.format("theList")], 13)
+
+    def test_a_drag_up_shows_fewer_rows(self):
+        grip = self._apply()
+        grip.press(100)
+        grip.drag(100 - 16 * 2)
+        grip.release()
+        self.assertEqual(self.vars[style.LIST_VAR.format("theList")], 8)
+
+    def test_a_drag_clamps(self):
+        grip = self._apply()
+        grip.press(100)
+        grip.drag(-5000)
+        grip.release()
+        self.assertEqual(self.vars[style.LIST_VAR.format("theList")], 5)
+
+    def test_a_drag_clamps_at_the_top_too(self):
+        grip = self._apply()
+        grip.press(100)
+        grip.drag(100 + 16 * 500)
+        grip.release()
+        self.assertEqual(self.vars[style.LIST_VAR.format("theList")], 40)
+
+    def test_a_move_without_a_press_does_nothing(self):
+        grip = self._apply()
+        before = len(self.heights)
+        grip.drag(500)
+        grip.release()
+        self.assertEqual(len(self.heights), before)
+        self.assertEqual(self.vars, {})
+
+    def test_the_second_drag_starts_from_the_first_one_s_rows(self):
+        grip = self._apply()
+        grip.press(100)
+        grip.drag(100 + 16 * 3)
+        grip.release()
+        grip.press(300)
+        grip.drag(300 + 16 * 2)
+        grip.release()
+        self.assertEqual(self.vars[style.LIST_VAR.format("theList")], 15)
+
+    def test_the_grip_follows_its_placeholder(self):
+        grip = self._apply()
+        self.assertEqual(grip.geometry(), self.placeholder.rect())
+        self.placeholder.resize(300, 8)
+        QtWidgets.QApplication.sendEvent(
+            self.placeholder,
+            QtGui.QResizeEvent(QtCore.QSize(300, 8), QtCore.QSize(200, 8)))
+        self.assertEqual(grip.geometry().width(), 300)
+
+    def test_the_grip_is_drawn_and_has_its_role(self):
+        grip = self._apply()
+        self.assertEqual(grip.property("skRole"), "grip")
+        self.assertTrue(grip.testAttribute(QtCore.Qt.WA_StyledBackground))
+        self.assertEqual(grip.cursor().shape(), QtCore.Qt.SizeVerCursor)
+        grip.resize(200, 8)
+        image = QtGui.QImage(200, 8, QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        grip.render(image)                 # paintEvent must not raise
+
+    def test_a_real_mouse_press_move_release(self):
+        """The event handlers, not only press/drag/release: global y."""
+        grip = self._apply()
+        grip.resize(200, 8)
+
+        def event(kind, gy):
+            return QtGui.QMouseEvent(
+                kind, QtCore.QPointF(10, 4), QtCore.QPointF(10, gy),
+                QtCore.Qt.LeftButton, QtCore.Qt.LeftButton,
+                QtCore.Qt.NoModifier)
+        QtWidgets.QApplication.sendEvent(
+            grip, event(QtCore.QEvent.MouseButtonPress, 100))
+        QtWidgets.QApplication.sendEvent(
+            grip, event(QtCore.QEvent.MouseMove, 100 + 16 * 4))
+        QtWidgets.QApplication.sendEvent(
+            grip, event(QtCore.QEvent.MouseButtonRelease, 100 + 16 * 4))
+        self.assertEqual(self.vars[style.LIST_VAR.format("theList")], 14)
 
 
 class Icons(unittest.TestCase):
