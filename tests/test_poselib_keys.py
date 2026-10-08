@@ -824,6 +824,7 @@ class TweakCmds(object):
         self.links, self.types, self.values = links, types, dict(values)
         self.uuids = dict(uuids or {})
         self.log, self.auto = [], True
+        self.switches = []             # every `autoKeyframe -state` set: a step on Maya's undo
 
     def ls(self, *args, **kw):
         if kw.get("type"):
@@ -854,6 +855,7 @@ class TweakCmds(object):
     def autoKeyframe(self, query=False, state=None):
         if query:
             return self.auto
+        self.switches.append(state)
         self.auto = state
 
 
@@ -942,6 +944,50 @@ class Tweaks(Restoring):
         self.assertEqual(fake.values["prop.translateX"], 40.0)
         self.assertEqual([p for _s, p, _v, _a in fake.log], ["prop.translateX"])
         self.assertIn(("rig:FKSpine1_M.rotateX", 25.0), calls)
+        self.assertEqual(fake.switches, [False, True])     # autoKey off around the setAttr only
+
+    # task 10's verify (2026-10-08): `autoKeyframe -state` is a step on Maya's undo queue even
+    # when it sets the state autoKey already has (measured, mayapy 2027) - and a press's walk
+    # restores AFTER its chunk closed, so the restore's two switches were the animator's next
+    # two Ctrl+Z: the paste stood after one Ctrl+Z, and with autoKey on the second turned it
+    # OFF. The API road keys nothing (measured: an MPlug set with autoKey on made no key, a
+    # setAttr did), so only a plug the API cannot reach is set with autoKey switched off.
+
+    def test_a_restore_through_the_api_never_switches_auto_key(self):
+        fake = TweakCmds(**self.SCENE)
+        keys.cmds = fake
+        calls = self.api()
+        tweaks = keys.Tweaks()
+        for plug in fake.values:
+            fake.values[plug] = 0.0
+        back = tweaks.restore(skip=["rig:FKWrist_L.rotateX"])
+        self.assertEqual(sorted(back), ["prop.translateX", "rig:FKSpine1_M.rotateX"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(fake.switches, [])
+        self.assertTrue(fake.auto)
+
+    def test_only_what_the_press_keyed_moved_switches_nothing(self):
+        # the press's own keys show new values: moved, skipped - nothing to set back
+        fake = TweakCmds(**self.SCENE)
+        keys.cmds = fake
+        self.api()
+        tweaks = keys.Tweaks()
+        fake.values["rig:FKWrist_L.rotateX"] = 3.0
+        self.assertEqual(tweaks.restore(skip=["rig:FKWrist_L.rotateX"]), [])
+        self.assertEqual((fake.switches, fake.log), ([], []))
+
+    def test_a_set_attr_with_auto_key_off_switches_nothing(self):
+        fake = TweakCmds(**self.SCENE)
+        fake.auto = False
+        keys.cmds = fake
+        self.api(fail=("prop.translateX",))
+        tweaks = keys.Tweaks()
+        for plug in fake.values:
+            fake.values[plug] = 0.0
+        tweaks.restore()
+        self.assertEqual(fake.values["prop.translateX"], 40.0)
+        self.assertEqual(fake.switches, [])
+        self.assertFalse(fake.auto)
 
 
 # ------------------------------------------------------------------ layer curves (2026-10-03)

@@ -827,32 +827,51 @@ class Tweaks(object):
         """Every captured plug that moved, set back to what it showed - but those `skip` names
         (any spelling of the node): the plugs a press keyed. The plugs set back.
 
-        UNRECORDED (`_set_quiet`, through the API): a restore puts back what an evaluation threw
+        UNRECORDED (`_api_set`, through the API): a restore puts back what an evaluation threw
         away, it is no step of the press. Through `setAttr` it was recorded in the press's
         chunk, and one Ctrl+Z of the press replayed it backwards - every tweak the evaluation
         manager's switch had thrown away and the restore had put back went with the undo, in
         the GUI's default parallel evaluation (fix round 2, measured: 25 / 40 after the press,
         0 / 0 after one Ctrl+Z). Not `undoInfo -stateWithoutFlush` around it: the restore runs
-        inside the press's chunk, which that would break (trap 145)."""
+        inside the press's chunk, which that would break (trap 145).
+
+        And autoKey is switched ONLY around a `setAttr` (a plug the API cannot reach - an
+        ambiguous name, an odd attribute type: recorded, but the tweak is back), and only when
+        it is on. `autoKeyframe -state` is a step on the undo queue even when it sets the state
+        autoKey already has (task 10's verify, measured in mayapy 2027), and a press's walk
+        restores AFTER its chunk closed: switched around every restore, the switches were the
+        animator's next two Ctrl+Z - the paste still standing after one, autoKey turned OFF by
+        the second. An API set keys nothing with autoKey on (measured; a `setAttr` keyed)."""
         moved = self.moved()
         if not moved:
             return []
         skipped = set(filter(None, (_identity(p) for p in skip or ())))
-        auto = cmds.autoKeyframe(query=True, state=True)
-        cmds.autoKeyframe(state=False)
-        back = []
-        try:
-            for plug in moved:
-                if skipped and _identity(plug) in skipped:
-                    continue
+        todo = [plug for plug in moved if not (skipped and _identity(plug) in skipped)]
+        done, loud = set(), []
+        for plug in todo:
+            if _api_ready():
                 try:
-                    _set_quiet(plug, self.values[plug])
-                    back.append(plug)
-                except RuntimeError:
+                    _api_set(plug, self.values[plug])
+                    done.add(plug)
+                    continue
+                except (RuntimeError, TypeError, ValueError):
                     pass
-        finally:
-            cmds.autoKeyframe(state=auto)
-        return back
+            loud.append(plug)
+        if loud:
+            auto = cmds.autoKeyframe(query=True, state=True)
+            if auto:
+                cmds.autoKeyframe(state=False)
+            try:
+                for plug in loud:
+                    try:
+                        cmds.setAttr(plug, self.values[plug])
+                        done.add(plug)
+                    except RuntimeError:
+                        pass
+            finally:
+                if auto:
+                    cmds.autoKeyframe(state=auto)
+        return [plug for plug in todo if plug in done]
 
 
 def _api_set(plug, value):
@@ -895,16 +914,3 @@ def _api_ready():
     """Is the scene Maya's own - `cmds` the real `maya.cmds`? A test's fake scene has no plug
     for the API to set, and an API call with no Maya session up crashes the interpreter."""
     return getattr(cmds, "__name__", None) == "maya.cmds"
-
-
-def _set_quiet(plug, value):
-    """`plug` back to `value` without a step on the undo queue (`_api_set`); a plug the API
-    cannot reach (an ambiguous name, an odd attribute type) through `setAttr` - recorded, but
-    the tweak is back. Raises RuntimeError only when neither can set it."""
-    if _api_ready():
-        try:
-            _api_set(plug, value)
-            return
-        except (RuntimeError, TypeError, ValueError):
-            pass
-    cmds.setAttr(plug, value)
