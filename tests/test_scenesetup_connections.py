@@ -14,6 +14,7 @@ import os
 import unittest
 
 import maya_hub
+import maya_hubstyle as style
 import maya_rig_retarget
 from maya_scenesetup import connections as cx
 
@@ -306,7 +307,8 @@ class Panel(unittest.TestCase):
         #  убираем») - the header, the two FK/IK rows (2026-09-30), the
         #  chooser's label (2026-09-29), the three row labels and the status
         self.assertIn("Acts on", labels)
-        self.assertEqual(labels[1:3], ["Arm_R", "Arm_L"])
+        #  (2026-10-08: both arms on one row, written "Arm R" / "Arm L")
+        self.assertEqual(labels[1:3], ["Arm R", "Arm L"])
         self.assertEqual(len(labels), 8)
 
     def test_every_row_starts_on_its_first_choice(self):
@@ -324,7 +326,8 @@ class Panel(unittest.TestCase):
             for mode in ("FK", "IK"):
                 self.assertEqual(self.marks[cx.fkik_box(side, mode)].role, "segment")
         self.assertTrue(all(m.layout for m in segment_rows))
-        self.assertEqual(self.marks[cx.HEADER].role, "context")
+        #  the scene's state line is the card's subtitle (2026-10-08)
+        self.assertEqual(self.marks[cx.HEADER].role, "subtitle")
         self.assertEqual(self.marks[cx.STATUS].role, "status")
         roles = [(m.role, m.icon) for m in self.marks.values()
                  if m.role in ("primary", "tool", "secondary")]
@@ -447,6 +450,203 @@ class Panel(unittest.TestCase):
         self.assertEqual((value("R", "FK"), value("R", "IK")), (False, True))
         self.assertEqual((value("L", "FK"), value("L", "IK")), (False, False))
         self.assertEqual(asked, [])
+
+    #  --- the compact arrangement (2026-10-08, variant B) ---
+
+    def _made(self, kind, **match):
+        """The creation calls (no edit/query/exists) of `kind` whose kwargs
+        hold `match`, with their position in the fake's call list."""
+        return [(i, c) for i, c in enumerate(self.fake.calls)
+                if c[0] == kind and not (c[2].get("edit") or c[2].get("e")
+                                         or c[2].get("query") or c[2].get("q")
+                                         or c[2].get("exists"))
+                and all(c[2].get(k) == v for k, v in match.items())]
+
+    def _inside(self, start):
+        """The calls between the layout created at `start` and the setParent
+        that closes it (nested layouts included)."""
+        depth, out = 1, []
+        for call in self.fake.calls[start + 1:]:
+            if call[0] == "rowLayout" and not (
+                    call[2].get("edit") or call[2].get("exists")):
+                depth += 1
+            elif call[0] == "setParent" and call[1] == ("..",):
+                depth -= 1
+                if not depth:
+                    return out
+            out.append(call)
+        return out
+
+    def test_both_arms_share_one_row(self):
+        rows = self._made("rowLayout", numberOfColumns=4)
+        self.assertEqual(len(rows), 1)
+        index, call = rows[0]
+        self.assertEqual(call[2]["adjustableColumn"], 2)
+        inside = self._inside(index)
+        self.assertEqual([c[2]["label"] for c in inside if c[0] == "text"],
+                         ["Arm R", "Arm L"])
+        boxes = [c[1][0] for c in inside if c[0] == "iconTextCheckBox"]
+        self.assertEqual(boxes, [cx.fkik_box(side, mode)
+                                 for side in ("R", "L")
+                                 for mode in ("FK", "IK")])
+
+    def test_the_chooser_row_is_named_and_starts_hidden(self):
+        rows = self._made("rowLayout", numberOfColumns=2, adjustableColumn=2)
+        chooser = [(i, c) for i, c in rows if c[1] == (cx.CHOOSER_ROW,)]
+        self.assertEqual(len(chooser), 1)
+        index, call = chooser[0]
+        self.assertIs(call[2]["manage"], False)
+        self.assertEqual(call[2]["columnWidth2"], (64, 110))
+        self.assertEqual([c[2]["label"] for c in self._inside(index)
+                          if c[0] == "text"], ["Acts on"])
+
+    def test_the_chooser_row_shows_only_for_two_weapons(self):
+        fake = FakeUiCmds()
+        saved = cx.cmds
+        cx.cmds = fake
+        try:
+            cx._set_chooser(["|a"], "|a")
+            cx._set_chooser(["|a", "|b"], "|a")
+        finally:
+            cx.cmds = saved
+        manages = [c[2]["manage"] for c in fake.calls
+                   if c[0] == "rowLayout" and c[1] and c[1][0] == cx.CHOOSER_ROW
+                   and "manage" in c[2]]
+        self.assertEqual(manages, [False, True])
+
+    def test_no_weapon_hides_the_chooser_row_too(self):
+        fake = FakeUiCmds()
+        saved = cx.cmds
+        cx.cmds = fake
+        try:
+            cx._set_chooser([], None)
+        finally:
+            cx.cmds = saved
+        manages = [c[2]["manage"] for c in fake.calls
+                   if c[0] == "rowLayout" and "manage" in c[2]]
+        self.assertEqual(manages, [False])
+
+    def test_apply_all_bake_and_release_share_a_row(self):
+        rows = self._made("rowLayout", numberOfColumns=3, adjustableColumn=1)
+        self.assertEqual(len(rows), 1)
+        index, _call = rows[0]
+        buttons = [c for c in self._inside(index) if c[0] == "button"]
+        self.assertEqual([b[2]["label"] for b in buttons],
+                         ["Apply all", "BakeAcross", "Release"])
+        #  and their marks stay what they were: the section's one primary,
+        #  then the two secondaries
+        roles = [(m.role, m.icon) for m in self.marks.values()
+                 if m.role in ("primary", "secondary")]
+        self.assertEqual(sorted(roles), [("primary", "check"),
+                                         ("secondary", "link"),
+                                         ("secondary", "unlink")])
+
+    def test_the_status_tells_the_hub(self):
+        heard = []
+        listener = lambda control, text, viewport: heard.append((control, text))
+        style.listen(listener)
+        try:
+            cx._status("linked")
+        finally:
+            style.unlisten(listener)
+        self.assertIn((cx.STATUS, "linked"), heard)
+
+    def test_the_status_of_a_card_that_is_not_open_tells_nothing(self):
+        heard = []
+        listener = lambda control, text, viewport: heard.append((control, text))
+        saved = cx.cmds
+        cx.cmds = FakeUiCmds()          # no control answers `exists`
+        style.listen(listener)
+        try:
+            self.assertEqual(cx._status("linked"), "linked")
+        finally:
+            style.unlisten(listener)
+            cx.cmds = saved
+        self.assertEqual(heard, [])
+
+
+class PanelCompact(unittest.TestCase):
+    """The same panel built for the skin and for the classic hub
+    (2026-10-08): the skin's heights and gaps, the classic numbers kept."""
+
+    def _build(self, skin):
+        fake = FakeMenuCmds()
+        real = (cx.cmds, cx.refresh)
+        cx.cmds, cx.refresh = fake, (lambda *a: "")
+        style.take_marks()
+        style.set_skinning(skin)
+        try:
+            cx.build_panel()
+        finally:
+            style.set_skinning(False)
+            cx.cmds, cx.refresh = real
+        return fake, style.take_marks()
+
+    @staticmethod
+    def _by_label(fake, kind="button"):
+        return dict((c[2]["label"], c[2]) for c in fake.calls
+                    if c[0] == kind and "label" in c[2]
+                    and not (c[2].get("edit") or c[2].get("e")))
+
+    def test_the_skin_is_tight(self):
+        fake, _marks = self._build(True)
+        self.assertEqual(fake.column["rowSpacing"], 3)
+        header = [c[2] for c in fake.calls
+                  if c[0] == "text" and c[1] == (cx.HEADER,)][0]
+        self.assertEqual((header["height"], header["wordWrap"]), (18, False))
+        for kind in ("iconTextRadioButton", "iconTextCheckBox"):
+            heights = [c[2]["height"] for c in fake.calls
+                       if c[0] == kind and "height" in c[2]]
+            self.assertTrue(heights)
+            self.assertEqual(set(heights), {22}, kind)
+        buttons = [c[2] for c in fake.calls if c[0] == "button"]
+        apply_rows, apply_all, bake, release = (
+            buttons[:3], buttons[3], buttons[4], buttons[5])
+        for button in apply_rows:                  # icon only, small
+            self.assertEqual((button["label"], button["width"],
+                              button["height"]), ("", 30, 22))
+        self.assertEqual(apply_all["height"], 24)
+        self.assertEqual((bake["height"], release["height"]), (24, 24))
+        self.assertEqual(release["width"], 78)
+
+    def test_the_skin_narrows_the_label_column(self):
+        fake, _marks = self._build(True)
+        widths = [c[2]["columnWidth3"] for c in fake.calls
+                  if c[0] == "rowLayout" and "columnWidth3" in c[2]]
+        self.assertEqual(widths, [(48, 110, 30)] * 3)
+        chooser = [c[2] for c in fake.calls if c[0] == "rowLayout"
+                   and c[1] == (cx.CHOOSER_ROW,)][0]
+        self.assertEqual(chooser["columnWidth2"], (48, 110))
+
+    def test_the_classic_hub_keeps_its_numbers(self):
+        fake, _marks = self._build(False)
+        self.assertEqual(fake.column["rowSpacing"], 6)
+        header = [c[2] for c in fake.calls
+                  if c[0] == "text" and c[1] == (cx.HEADER,)][0]
+        self.assertEqual((header["height"], header["wordWrap"]), (36, True))
+        by = self._by_label(fake)
+        self.assertEqual(by["Apply"]["height"], 24)
+        self.assertEqual(by["Apply"]["width"], 66)
+        self.assertEqual(by["Apply all"]["height"], 32)
+        self.assertEqual(by["BakeAcross"]["height"], 28)
+        self.assertEqual(by["Release"]["width"], 90)
+        widths = [c[2]["columnWidth3"] for c in fake.calls
+                  if c[0] == "rowLayout" and "columnWidth3" in c[2]]
+        self.assertEqual(widths, [(64, 110, 66)] * 3)
+
+    def test_both_builds_keep_every_control_and_the_roles(self):
+        for skin in (True, False):
+            fake, marks = self._build(skin)
+            by_name = dict((m.name, m) for m in marks)
+            #  a layout is named, not marked
+            self.assertTrue([c for c in fake.calls if c[0] == "rowLayout"
+                             and c[1] == (cx.CHOOSER_ROW,)], skin)
+            for name in (cx.HEADER, cx.STATUS, cx.chooser_segment(0),
+                         cx.chooser_segment(1), cx.fkik_box("R", "FK"),
+                         cx.fkik_box("L", "IK")):
+                self.assertIn(name, fake.children, (skin, name))
+            self.assertEqual(by_name[cx.HEADER].role, "subtitle", skin)
+            self.assertEqual(by_name[cx.STATUS].role, "status", skin)
 
 
 class SwitchArm(unittest.TestCase):

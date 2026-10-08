@@ -63,6 +63,9 @@ HUB_SECTION = "shared"
 AUTHOR_FIELD = "skeldarShareAuthor"
 FILE_NAME_FIELD = "skeldarShareFileName"
 LIST = "skeldarShareList"
+#  the placeholder under the list the skin turns into its height grip
+#  (2026-10-08)
+LIST_GRIP = "skeldarShareListGrip"
 STATUS = "skeldarShareStatus"
 SUBTITLE = "skeldarShareSubtitle"
 
@@ -895,13 +898,19 @@ def _deleted(done, refused):
 # ---------------------------------------------------------------------- UI
 
 def _status(message, **_kwargs):
-    """The section's status line (the hub's message line without one)."""
+    """The section's status line (the hub's message line without one).
+
+    2026-10-08: a line written is also TOLD to the hub (`hubstyle.tell`) -
+    the skin hides the card's own line and shows the text on its one message
+    line; the classic hub listens to nothing and keeps the line in the card."""
     print("SkeldarAnim shared: " + message)
     shown = False
     try:
         if cmds.text(STATUS, exists=True):
             cmds.text(STATUS, edit=True, label=message)
             shown = True
+            import maya_hubstyle   # stdlib
+            maya_hubstyle.tell(STATUS, message)
     except Exception:                                        # noqa: BLE001
         pass
     hub = sys.modules.get("maya_hub")
@@ -1001,35 +1010,59 @@ def _run(action):
 def build_panel():
     """The author, the upload's name, Send scene / Send file..., the list
     (several rows can be picked), Open / Import / Save to... / Delete, a
-    status line (the hub's section). Starts listening."""
+    status line (the hub's section). Starts listening.
+
+    2026-10-08 (the compact hub): in the skin the author and the name share
+    one row with no labels (their placeholders say which is which), the
+    list's height is the grip's under it, Save to... joins Delete as an icon
+    alone, the heights and gaps come from `hubstyle`; the classic hub keeps
+    its two labelled rows."""
     import maya_hubstyle as hubstyle   # stdlib
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label="connecting...", align="left"),
                   "subtitle")
-    for field, label, text, hint, command in (
-            (AUTHOR_FIELD, "Author", sender_name(),
-             "your name, as your colleagues see it", _author_changed),
-            (FILE_NAME_FIELD, "Name", "", "empty: the scene's own name", None)):
+    if hubstyle.skinning():
+        #  author and name on one row, no labels: the placeholders say which
         cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
-                       columnAttach=[(1, "left", 0), (2, "both", 4)])
-        cmds.text(label=label, align="left", width=hubstyle.pick(64, 60))
-        if command is None:
-            cmds.textField(field, text=text, placeholderText=hint)
-        else:
-            cmds.textField(field, text=text, placeholderText=hint,
-                           changeCommand=command)
+                       columnWidth2=(110, 200),
+                       columnAttach=[(1, "both", 0), (2, "both", 3)])
+        cmds.textField(AUTHOR_FIELD, text=sender_name(),
+                       placeholderText="author",
+                       height=hubstyle.height("field", 24),
+                       annotation="your name, as your colleagues see it",
+                       changeCommand=_author_changed)
+        cmds.textField(FILE_NAME_FIELD, text="",
+                       placeholderText="name (empty: the scene's)",
+                       height=hubstyle.height("field", 24))
         cmds.setParent("..")
+    else:
+        for field, label, text, hint, command in (
+                (AUTHOR_FIELD, "Author", sender_name(),
+                 "your name, as your colleagues see it", _author_changed),
+                (FILE_NAME_FIELD, "Name", "",
+                 "empty: the scene's own name", None)):
+            cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                           columnAttach=[(1, "left", 0), (2, "both", 4)])
+            cmds.text(label=label, align="left", width=hubstyle.pick(64, 60))
+            if command is None:
+                cmds.textField(field, text=text, placeholderText=hint)
+            else:
+                cmds.textField(field, text=text, placeholderText=hint,
+                               changeCommand=command)
+            cmds.setParent("..")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 4)])
+                   columnAttach=[(1, "both", 0), (2, "both", 3)])
     hubstyle.mark(cmds.button(
-        label="Send scene", height=32,
+        label="Send scene", height=hubstyle.height("button", 32),
         annotation="A copy of the open scene to everybody: it appears in "
                    "their list at once and downloads by itself. Your file "
                    "is not touched.",
         command=lambda *_: _run(send_scene)), "primary", "send")
     hubstyle.mark(cmds.button(
-        label="Send file...", height=32, width=hubstyle.pick(120, 110),
+        label="Send file...", height=hubstyle.height("button", 32),
+        width=hubstyle.pick(104, 110),
         annotation="Pick a .ma, .mb or .fbx and send it to everybody",
         command=lambda *_: _run(send_file)), "secondary", "upload")
     cmds.setParent("..")
@@ -1039,27 +1072,36 @@ def build_panel():
         selectCommand=lambda *_: _run(_selected),
         doubleClickCommand=lambda *_: _run(open_selected),
         deleteKeyCommand=lambda *_: _run(delete_selected))
+    #  under the list its height grip (2026-10-08): the skin turns this 8 px
+    #  placeholder into a grip and shows the list's remembered rows; the
+    #  classic hub keeps the list's pixel height and the placeholder is a
+    #  quiet gap
+    hubstyle.grip(cmds.separator(LIST_GRIP, height=8, style="none"), LIST)
     cmds.rowLayout(numberOfColumns=4, adjustableColumn=1,
                    columnAttach=[(1, "both", 0), (2, "both", 4),
                                  (3, "both", 4), (4, "both", 4)])
     hubstyle.mark(cmds.button(
-        label="Open", height=28,
+        label="Open", height=hubstyle.height("button", 28),
         annotation="Open the picked file (script nodes are not run)",
         command=lambda *_: _run(open_selected)), "secondary", "download")
     hubstyle.mark(cmds.button(
-        label="Import", height=28, width=hubstyle.pick(84, 80),
+        label="Import", height=hubstyle.height("button", 28),
+        width=hubstyle.pick(84, 80),
         annotation="Import the picked file into the open scene (an FBX "
                    "arrives as its own skeleton, in a namespace)",
         command=lambda *_: _run(import_selected)), "secondary", "transfer-in")
+    #  Save to... and Delete are icons alone in the skin: two more words do
+    #  not fit the 360 px dock beside Open and Import.
     hubstyle.mark(cmds.button(
-        label="Save to...", height=28, width=hubstyle.pick(94, 90),
+        label=hubstyle.pick("", "Save to..."),
+        height=hubstyle.height("button", 28),
+        width=hubstyle.pick(26, 90),
         annotation="Save a copy of the picked file where you choose",
         command=lambda *_: _run(save_selected)), "secondary", "folder")
-    #  The trash alone in the skin: a fourth word does not fit the 360 px
-    #  dock beside the other three.
     hubstyle.mark(cmds.button(
-        label=hubstyle.pick("", "Delete"), height=28,
-        width=hubstyle.pick(38, 64),
+        label=hubstyle.pick("", "Delete"),
+        height=hubstyle.height("button", 28),
+        width=hubstyle.pick(26, 64),
         annotation="Delete the picked files from everybody's list and "
                    "disks (the Delete key too). The hosts keep a file until "
                    "it expires.",

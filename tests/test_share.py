@@ -757,6 +757,84 @@ class Panel(_Base):
     def test_it_starts_listening(self):
         self.assertEqual(self.listened, [True])
 
+    def test_the_list_has_a_height_grip(self):
+        """2026-10-08: an 8 px placeholder right under the list, marked as
+        that list's grip (the skin draws it and keeps the rows; the classic
+        hub keeps the pixel height and the placeholder is a quiet gap)."""
+        grips = [m for m in self.marks if m.role == "grip"]
+        self.assertEqual([(m.name, m.target) for m in grips],
+                         [(share.LIST_GRIP, share.LIST)])
+        self.assertEqual(share.LIST_GRIP, "skeldarShareListGrip")
+        order = [c[1][0] for c in self.fake.calls
+                 if c[0] in ("textScrollList", "separator") and c[1]
+                 and c[1][0] in (share.LIST, share.LIST_GRIP)
+                 and not (c[2].get("edit") or c[2].get("e")
+                          or c[2].get("query") or c[2].get("q")
+                          or c[2].get("exists"))]
+        self.assertEqual(order, [share.LIST, share.LIST_GRIP])
+        made = [c[2] for c in self.fake.calls
+                if c[0] == "separator" and c[1] == (share.LIST_GRIP,)][0]
+        self.assertEqual((made["height"], made["style"]), (8, "none"))
+        self.assertEqual([c[2]["height"] for c in self.fake.calls
+                          if c[0] == "textScrollList"
+                          and c[1] == (share.LIST,) and "height" in c[2]],
+                         [share.LIST_HEIGHT])
+
+    def test_the_classic_hub_keeps_the_two_labelled_rows(self):
+        rows = [c for c in self.fake.calls if c[0] == "rowLayout"
+                and c[2].get("numberOfColumns") == 2
+                and c[2].get("adjustableColumn") == 2]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([c[2]["label"] for c in self.fake.calls
+                          if c[0] == "text" and c[2].get("label") in
+                          ("Author", "Name")], ["Author", "Name"])
+        fields = dict((c[1][0], c[2]) for c in self.fake.calls
+                      if c[0] == "textField" and c[1])
+        self.assertEqual(fields[share.AUTHOR_FIELD]["placeholderText"],
+                         "your name, as your colleagues see it")
+        self.assertEqual(fields[share.FILE_NAME_FIELD]["placeholderText"],
+                         "empty: the scene's own name")
+
+    def test_the_classic_numbers(self):
+        buttons = dict((c[2]["label"], c[2]) for c in self.fake.calls
+                       if c[0] == "button" and c[2].get("label"))
+        self.assertEqual(buttons["Send scene"]["height"], 32)
+        self.assertEqual((buttons["Send file..."]["height"],
+                          buttons["Send file..."]["width"]), (32, 110))
+        for label in ("Open", "Import", "Save to...", "Delete"):
+            self.assertEqual(buttons[label]["height"], 28, label)
+        self.assertEqual((buttons["Save to..."]["width"],
+                          buttons["Delete"]["width"]), (90, 64))
+        self.assertEqual(self.fake.column["rowSpacing"], 6)
+
+    def test_the_status_tells_the_hub(self):
+        """2026-10-08: the line is told to the hub where it was written (the
+        skin hides the card's own line and shows the hub's)."""
+        heard = []
+        listener = lambda control, text, viewport: heard.append((control, text))
+        plain = self.fake.text
+        self.fake.text = lambda *a, **kw: (
+            True if kw.get("exists") else plain(*a, **kw))
+        maya_hubstyle.listen(listener)
+        try:
+            self.saved_status("sent")
+        finally:
+            maya_hubstyle.unlisten(listener)
+        self.assertEqual(heard, [(share.STATUS, "sent")])
+
+    def test_a_status_with_no_line_goes_to_the_hubs_message_line_only(self):
+        heard, said = [], []
+        listener = lambda control, text, viewport: heard.append((control, text))
+        saved_say = maya_hub.say
+        maya_hub.say = lambda message, state=None: said.append(message)
+        maya_hubstyle.listen(listener)
+        try:
+            self.saved_status("sent")           # `exists` answers False
+        finally:
+            maya_hubstyle.unlisten(listener)
+            maya_hub.say = saved_say
+        self.assertEqual((heard, said), ([], ["sent"]))
+
     def test_show_window_asks_the_hub(self):
         asked = []
         saved = maya_hub.show
@@ -766,6 +844,100 @@ class Panel(_Base):
         finally:
             maya_hub.show = saved
         self.assertEqual(asked, ["shared"])
+
+
+class PanelSkin(_Base):
+    """The panel built for the skin (2026-10-08): the compact numbers, author
+    and name on one row without labels, the icon-only Save to... and Delete."""
+
+    def setUp(self):
+        _Base.setUp(self)
+        maya_hubstyle.take_marks()
+        self.saved_listen = share.listen
+        share.listen = lambda: None
+        maya_hubstyle.set_skinning(True)
+        try:
+            share.build_panel()
+        finally:
+            maya_hubstyle.set_skinning(False)
+        self.marks = maya_hubstyle.take_marks()
+
+    def tearDown(self):
+        share.listen = self.saved_listen
+        _Base.tearDown(self)
+
+    def _row_of(self, name):
+        """The creation calls inside the rowLayout that holds control `name`
+        (the nearest enclosing one), and the row's own call."""
+        depth_stack = []
+        for call in self.fake.calls:
+            if call[0] == "rowLayout" and not (call[2].get("edit")
+                                               or call[2].get("exists")):
+                depth_stack.append([call, []])
+            elif call[0] == "setParent" and call[1] == ("..",):
+                if depth_stack:
+                    row = depth_stack.pop()
+                    if any(c[1] == (name,) for c in row[1]):
+                        return row
+            elif depth_stack:
+                depth_stack[-1][1].append(call)
+        return None
+
+    def test_author_and_name_share_one_row_without_labels(self):
+        row, inside = self._row_of(share.AUTHOR_FIELD)
+        self.assertEqual(row[2]["numberOfColumns"], 2)
+        self.assertEqual(row[2]["adjustableColumn"], 2)
+        self.assertEqual(row[2]["columnWidth2"], (110, 200))
+        self.assertEqual([c[1][0] for c in inside if c[0] == "textField"],
+                         [share.AUTHOR_FIELD, share.FILE_NAME_FIELD])
+        self.assertEqual([c for c in inside if c[0] == "text"], [])
+        labels = [c[2].get("label") for c in self.fake.calls
+                  if c[0] == "text"]
+        self.assertNotIn("Author", labels)
+        self.assertNotIn("Name", labels)
+
+    def test_the_placeholders_say_which_is_which(self):
+        fields = dict((c[1][0], c[2]) for c in self.fake.calls
+                      if c[0] == "textField" and c[1])
+        self.assertEqual(fields[share.AUTHOR_FIELD]["placeholderText"],
+                         "author")
+        self.assertEqual(fields[share.AUTHOR_FIELD]["annotation"],
+                         "your name, as your colleagues see it")
+        self.assertTrue(callable(fields[share.AUTHOR_FIELD]["changeCommand"]))
+        self.assertEqual(fields[share.FILE_NAME_FIELD]["placeholderText"],
+                         "name (empty: the scene's)")
+        self.assertNotIn("changeCommand", fields[share.FILE_NAME_FIELD])
+        for field in fields.values():
+            self.assertEqual(field["height"], 20)
+        self.assertEqual(self.fake.fields[share.AUTHOR_FIELD],
+                         share.sender_name())
+        self.assertEqual(self.fake.fields[share.FILE_NAME_FIELD], "")
+
+    def test_the_compact_numbers(self):
+        buttons = dict((c[2]["label"], c[2]) for c in self.fake.calls
+                       if c[0] == "button" and "label" in c[2])
+        self.assertEqual(buttons["Send scene"]["height"], 24)
+        self.assertEqual((buttons["Send file..."]["height"],
+                          buttons["Send file..."]["width"]), (24, 104))
+        for label in ("Open", "Import"):
+            self.assertEqual(buttons[label]["height"], 24, label)
+        #  Save to... and Delete are icons alone: their label is empty
+        icons = [c[2] for c in self.fake.calls
+                 if c[0] == "button" and c[2].get("label") == ""]
+        self.assertEqual([(b["width"], b["height"]) for b in icons],
+                         [(26, 24), (26, 24)])
+        self.assertEqual(self.fake.column["rowSpacing"], 3)
+
+    def test_the_roles_and_the_grip_are_the_same(self):
+        by_role = {}
+        for mark in self.marks:
+            by_role.setdefault(mark.role, []).append(mark)
+        self.assertEqual(len(by_role["primary"]), 1)
+        self.assertEqual(len(by_role["danger"]), 1)
+        self.assertEqual([(m.name, m.target) for m in by_role["grip"]],
+                         [(share.LIST_GRIP, share.LIST)])
+        self.assertEqual(by_role["subtitle"][0].name, share.SUBTITLE)
+        self.assertEqual(by_role["status"][0].name, share.STATUS)
 
 
 class Registered(unittest.TestCase):

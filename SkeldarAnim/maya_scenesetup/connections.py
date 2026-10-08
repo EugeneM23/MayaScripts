@@ -115,6 +115,9 @@ ROW_LABEL = {"R": "Hand_R", "L": "Hand_L", "W": "Weapon"}
 # Which of two weapons the rows act on (2026-09-29): a segment row above them,
 # its pick kept by UUID (a rename or a re-parent keeps it).
 CHOOSER = "skeldarConnectionsWeapon"
+# the row holding the chooser: shown only while two weapons stand (2026-10-08,
+# the compact hub - with one weapon the chooser had nothing to choose)
+CHOOSER_ROW = "skeldarConnectionsChooserRow"
 _PICKED = {"uuid": None, "selection": None}
 NO_SLOT = "-"
 FREE, WORLD, WEAPON = "Free", "World", "Weapon"
@@ -1011,8 +1014,12 @@ def switch_arm(side, mode, rig=None, highlight=None):
 # ------------------------------------------------------------------ panel
 
 def _status(text):
+    """The card's status line - and the hub's message line too (2026-10-08):
+    the skin hides the card's own line and shows what `hubstyle.tell` carries;
+    the classic hub listens to nothing and keeps the line in the card."""
     if cmds.control(STATUS, exists=True):
         cmds.text(STATUS, edit=True, label=text)
+        hubstyle.tell(STATUS, text)
     return text
 
 
@@ -1076,7 +1083,8 @@ def _side_of(rig, bones, weapon):
 def _set_chooser(weapons, chosen, sides=()):
     """The chooser's two segments: the weapons' labels (`sides` names each
     one's hand, for two of one kind), an empty slot "-" and disabled, the
-    chosen one selected."""
+    chosen one selected. Its row is shown only while two weapons stand
+    (2026-10-08, the compact hub: one weapon has nothing to choose)."""
     sides = list(sides) + [None] * (len(weapons) - len(sides))
     labels = labels_for([(weapon_label(weapon), side)
                          for weapon, side in zip(weapons[:2], sides)])
@@ -1090,6 +1098,10 @@ def _set_chooser(weapons, chosen, sides=()):
                                  enable=present)
         if present and _same(weapons[index], chosen):
             cmds.iconTextRadioButton(name, edit=True, select=True)
+    try:
+        cmds.rowLayout(CHOOSER_ROW, edit=True, manage=len(labels) > 1)
+    except (RuntimeError, TypeError, ValueError):
+        pass
 
 
 def _chooser_picked(index):
@@ -1247,28 +1259,39 @@ def _press_disconnect(*_args):
 
 
 def build_panel():
-    """A context line, three parent rows - label, segments, Apply - then
-    Apply all, Bake across / Release, the status. 2026-09-28 (the skin):
-    segments in place of the dropdowns, Apply all the section's one
-    primary action."""
-    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=6,
+    """The scene's state line (the card's subtitle in the skin), Arm R / Arm L
+    FK|IK on one row, the "Acts on" chooser (a row shown only while two
+    weapons stand), three parent rows - label, segments, Apply - then Apply
+    all with BakeAcross and Release on one row, the status. 2026-09-28 (the
+    skin): segments in place of the dropdowns, Apply all the section's one
+    primary action. 2026-10-08 (the compact hub): the arrangement above, the
+    heights and gaps from `hubstyle`, the status told to the hub's one
+    message line."""
+    column = cmds.columnLayout(adjustableColumn=True,
+                               rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
-    hubstyle.mark(cmds.text(HEADER, label="", align="left", wordWrap=True,
-                            height=36), "context")
+    #  the scene's state line is the card's subtitle in the skin (one line,
+    #  elided); the classic hub keeps its two wrapped lines in the body
+    hubstyle.mark(cmds.text(HEADER, label="", align="left",
+                            wordWrap=hubstyle.pick(False, True),
+                            height=hubstyle.pick(18, 36)), "subtitle")
     #  FK / IK per arm (2026-09-30): check boxes, not radios - a radio does
     #  not fire on the lit segment (a range inside a take of that mode), and
-    #  a mixed take lights neither. A press switches at once.
+    #  a mixed take lights neither. A press switches at once. Both arms on
+    #  one row, Arm R [FK|IK]  Arm L [FK|IK] (2026-10-08).
+    cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3),
+                                 (3, "left", 6), (4, "both", 3)])
     for side in SIDES[::-1]:
-        cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
-                       columnWidth2=(64, 110),
-                       columnAttach=[(1, "left", 0), (2, "both", 4)])
-        cmds.text(label=ARM_ROW.format(side), font="boldLabelFont")
+        cmds.text(label=ARM_ROW.format(side).replace("_", " "),
+                  font="boldLabelFont")
         segments = cmds.rowLayout(numberOfColumns=2,
                                   columnAttach=[(1, "both", 1), (2, "both", 1)])
         hubstyle.mark(segments, "segments", layout=True)
         for mode in fkik.MODES:
             hubstyle.mark(cmds.iconTextCheckBox(
-                fkik_box(side, mode), style="textOnly", label=mode, height=22,
+                fkik_box(side, mode), style="textOnly", label=mode,
+                height=hubstyle.height("segment", 22),
                 value=False,
                 annotation="{0} to {1} - over the highlighted range, else the "
                            "whole take; the arm keeps what it shows".format(
@@ -1276,14 +1299,16 @@ def build_panel():
                 onCommand=_press_fkik(side, mode),
                 offCommand=_press_fkik(side, mode)), "segment")
         cmds.setParent("..")
-        cmds.setParent("..")
+    cmds.setParent("..")
     #  Which of two weapons the rows act on (2026-09-29): the selection names
     #  one too. Two fixed segments - labels written by refresh, an empty slot
     #  disabled - rather than rows that come and go, which the skin's
-    #  segment tracks would not follow.
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
-                   columnWidth2=(64, 110),
-                   columnAttach=[(1, "left", 0), (2, "both", 4)])
+    #  segment tracks would not follow. 2026-10-08: the whole row is managed
+    #  off until two weapons stand (`_set_chooser`).
+    cmds.rowLayout(CHOOSER_ROW, numberOfColumns=2, adjustableColumn=2,
+                   columnWidth2=(hubstyle.pick(48, 64), 110),
+                   columnAttach=[(1, "left", 0), (2, "both", 3)],
+                   manage=False)
     cmds.text(label="Acts on", font="boldLabelFont")
     chooser = cmds.rowLayout(numberOfColumns=2,
                              columnAttach=[(1, "both", 1), (2, "both", 1)])
@@ -1291,7 +1316,8 @@ def build_panel():
     cmds.iconTextRadioCollection(CHOOSER)
     for index in (0, 1):
         hubstyle.mark(cmds.iconTextRadioButton(
-            chooser_segment(index), style="textOnly", label=NO_SLOT, height=22,
+            chooser_segment(index), style="textOnly", label=NO_SLOT,
+            height=hubstyle.height("segment", 22),
             select=index == 0, enable=index == 0,
             annotation="the weapon the rows below act on - or select it",
             onCommand=_chooser_picked(index)), "segment")
@@ -1299,7 +1325,8 @@ def build_panel():
     cmds.setParent("..")
     for row, choices in _ROWS:
         cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
-                       columnWidth3=(64, 110, hubstyle.tool_width(66)),
+                       columnWidth3=(hubstyle.pick(48, 64), 110,
+                                     hubstyle.tool_width(66)),
                        columnAlign3=("left", "left", "center"),
                        columnAttach=[(1, "left", 0), (2, "both", 4),
                                      (3, "right", 0)])
@@ -1312,7 +1339,8 @@ def build_panel():
         for index, choice in enumerate(choices):
             hubstyle.mark(cmds.iconTextRadioButton(
                 segment_name(row, choice), style="textOnly",
-                label=SEGMENT_LABEL.get(choice, choice), height=22,
+                label=SEGMENT_LABEL.get(choice, choice),
+                height=hubstyle.height("segment", 22),
                 select=index == 0,
                 annotation="the parent of {0}: {1}".format(ROW_LABEL[row],
                                                            choice),
@@ -1320,24 +1348,29 @@ def build_panel():
         cmds.setParent("..")
         hubstyle.mark(cmds.button(
             label=hubstyle.tool_label("Apply"),
-            width=hubstyle.tool_width(66), height=24,
+            width=hubstyle.tool_width(66),
+            height=hubstyle.height("small", 24),
             annotation="apply this row's parent only",
             command=_press_row(row)), "tool", "check")
         cmds.setParent("..")
+    #  Apply all, BakeAcross and Release on one row (2026-10-08)
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 3),
+                                 (3, "both", 3)])
     hubstyle.mark(cmds.button(
-        label="Apply all", height=32, backgroundColor=(0.45, 0.70, 0.50),
+        label="Apply all", height=hubstyle.height("button", 32),
+        backgroundColor=(0.45, 0.70, 0.50),
         annotation="bring the scene to all three parents",
         command=_press_apply_all), "primary", "check")
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1,
-                   columnAttach=[(1, "both", 0), (2, "both", 4)])
     hubstyle.mark(cmds.button(
-        label="BakeAcross", height=28,
+        label="BakeAcross", height=hubstyle.height("button", 28),
         annotation="Select the objects, then the parent LAST: each object "
                    "rides a proxy locator inside the parent with its own "
                    "track baked onto it, and is hidden. Key the proxies.",
         command=_press_bake_across), "secondary", "link")
     hubstyle.mark(cmds.button(
-        label="Release", height=28, width=110,
+        label="Release", height=hubstyle.height("button", 28),
+        width=hubstyle.pick(78, 90),
         annotation="Selected objects (or their proxies) baked where the "
                    "proxies carried them, proxies removed, objects shown "
                    "again",
