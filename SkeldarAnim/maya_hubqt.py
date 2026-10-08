@@ -154,8 +154,15 @@ def destroy_roots(control):
     the control beside the new one -- two sets of controls with the same
     names, and `find` styling the old set. Found by objectName, never by
     module state. Returns how many were deleted."""
+    return destroy_roots_in(host_widget(control))
+
+
+def destroy_roots_in(host):
+    """Delete every skin root standing in widget `host`, NOW: the
+    workspaceControl's (`destroy_roots`), or the edge panel's slot
+    (2026-10-08, a widget of ours that no Maya name reaches). Returns how
+    many were deleted."""
     q = qt()
-    host = host_widget(control)
     if host is None:
         return 0
     roots = [w for w in host.findChildren(q.QtWidgets.QWidget)
@@ -1437,6 +1444,11 @@ class Skin(object):
         if not on:
             self.pin.setChecked(False)
         self.paint_edge(on)
+
+    def paint_pin(self, on):
+        """The 📌 shows `on` (no callback: `clicked` is the press's alone) -
+        a rebuilt edge panel keeps the pin it had (maya_hub.rebuild)."""
+        self.pin.setChecked(bool(on))
 
     def paint_hotkeys(self, active):
         self.hotkeys.setChecked(bool(active))

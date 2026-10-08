@@ -108,6 +108,11 @@ class Payload(unittest.TestCase):
     def test_the_viewport_studio_ships(self):
         self.assertIn("maya_vpstudio.py", install.payload())
 
+    def test_the_edge_panel_ships(self):
+        """2026-10-08: the hub's second home, its rules and its windows."""
+        self.assertIn("maya_edgerules.py", install.payload())
+        self.assertIn("maya_hubedge.py", install.payload())
+
     def test_the_colour_palette_ships(self):
         self.assertIn("maya_colour.py", install.payload())
 
@@ -822,10 +827,18 @@ class InstallOrder(unittest.TestCase):
         self.purged = []
         install.purge_modules = lambda: self.order.append("purge") or \
             list(self.purged)
+        #  no edge panel standing unless a test says so (the real question
+        #  asks the test process's QApplication)
+        self.saved_edge = getattr(install, "_edge_standing", None)
+        install._edge_standing = lambda: False
 
     def tearDown(self):
         (install._cmds, install.copy_payload, install.write_version,
          install._build_shelf, install.purge_modules) = self.saved
+        if self.saved_edge is None:
+            install.__dict__.pop("_edge_standing", None)
+        else:
+            install._edge_standing = self.saved_edge
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_the_purge_comes_before_the_shelf_loads_the_flags(self):
@@ -889,6 +902,53 @@ class RebuildsTheOpenHub(unittest.TestCase):
         self.purged = ["maya_hub", "maya_scenesetup.catalog"]
         install.install(os.path.join(PLUGIN, "install.py"))
         self.assertIn("hub is rebuilt", self.fake.dialogs[0])
+
+    def test_an_edge_panel_is_rebuilt_too(self):
+        """2026-10-08: the hub's other home - no workspaceControl stands, the
+        edge panel's host window does; the fresh maya_hub.rebuild() knows
+        which home it is."""
+        install._edge_standing = lambda: True
+        self.purged = ["maya_hub"]
+        install.install(os.path.join(PLUGIN, "install.py"))
+        self.assertEqual(len(self.fake.deferred), 1)
+        self.assertEqual(self.fake.deferred_flags, [{"lowestPriority": True}])
+        self.assertIn("hub is rebuilt", self.fake.dialogs[0])
+
+
+class EdgeStanding(unittest.TestCase):
+    """The installer asks Qt, by name, whether the hub's edge panel stands:
+    nothing of ours is importable while it runs (it purged our modules)."""
+
+    def setUp(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6 import QtWidgets
+        self.QtWidgets = QtWidgets
+        self.app = (QtWidgets.QApplication.instance()
+                    or QtWidgets.QApplication([]))
+
+    def test_the_host_window_by_its_name(self):
+        from PySide6 import QtCore
+        import shiboken6
+        host = self.QtWidgets.QWidget(None, QtCore.Qt.Tool)
+        host.setObjectName("skeldarAnimHubEdge")
+        try:
+            self.assertTrue(install._edge_standing())
+        finally:
+            shiboken6.delete(host)
+        self.assertFalse(install._edge_standing())
+
+    def test_another_window_is_not_it(self):
+        import shiboken6
+        other = self.QtWidgets.QWidget()
+        other.setObjectName("skeldarAnimHubEdgeSensor")
+        try:
+            self.assertFalse(install._edge_standing())
+        finally:
+            shiboken6.delete(other)
+
+    def test_the_name_is_maya_hubedge_s(self):
+        import maya_hubedge
+        self.assertEqual(install.HUB_EDGE, maya_hubedge.HOST)
 
 
 class RebuildsTheOpenPoseLibrary(unittest.TestCase):

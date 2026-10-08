@@ -21,6 +21,16 @@ the frameLayout accordion of 2026-09-17, every section in it.
     import maya_hub; maya_hub.show()            # the SkeldarAnim shelf button
     maya_hub.show("colour")                      # what Colour's button does
 
+And its second home (2026-10-08, the animator: «когда я подношу мышку к
+левому краю экрана то появляется наша полка когда убираю то полка
+скрывается»): ⋮ -> Edge panel (off by default, remembered) builds the skin
+into `maya_hubedge`'s panel at the screen's left edge instead of the dock -
+the dock's control is deleted, `show(key)` slides the panel out on that card
+and holds it, `start()` is the startup plug-in's call (the panel waiting,
+hidden), and a card's status while the panel is hidden is also Maya's
+viewport message. Only the skin lives there: Classic look takes the hub back
+to the dock.
+
 Every tool builds its controls with `build_panel()` into whatever layout is
 current; this module supplies the layout. The tools are imported lazily
 inside `build()` and import this module lazily inside their `show_window`,
@@ -38,7 +48,8 @@ Two facts the shape rests on:
   this file's own location - the hotkey runTimeCommands' pattern.
 
 Specs: docs/superpowers/specs/2026-09-17-skeldar-hub-design.md,
-       docs/superpowers/specs/2026-09-28-hub-skin-design.md
+       docs/superpowers/specs/2026-09-28-hub-skin-design.md,
+       docs/superpowers/specs/2026-10-08-hub-compact-and-edge-panel-design.md
 """
 
 import collections
@@ -47,6 +58,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_edgerules as edgerules
 import maya_hubstyle as hubstyle
 
 CONTROL = "skeldarAnimHub"
@@ -55,6 +67,7 @@ SCROLL = "skeldarAnimHubScroll"
 COLUMN = "skeldarAnimHubColumn"
 OPTIONVAR = "skeldarAnimHub_collapsed_{0}"
 CLASSIC_VAR = "skeldarAnimHub_classic"     # 1: the classic hub even with Qt
+EDGE_VAR = edgerules.EDGE_VAR              # 1: the hub in the edge panel
 NEW_LOOK_BUTTON = "skeldarAnimHubNewLook"
 
 INITIAL_WIDTH = 500
@@ -203,6 +216,18 @@ def classic_asked():
     return False
 
 
+def edge_on():
+    """The hub lives in the edge panel (⋮ -> Edge panel; off by default, so
+    a colleague keeps the dock until they turn it on) - only with the skin,
+    and not after the skin failed there in this module object's session
+    (`_EDGE_FAILED`)."""
+    if _EDGE_FAILED or classic_asked() or not _qt_available():
+        return False
+    if cmds.optionVar(exists=EDGE_VAR):
+        return bool(cmds.optionVar(query=EDGE_VAR))
+    return False
+
+
 # ------------------------------------------------------------------- build
 
 def plugin_root():
@@ -220,6 +245,13 @@ def _hubqt():
     """The Qt layer, imported only when a hub is built (a seam for tests)."""
     import maya_hubqt
     return maya_hubqt
+
+
+def _hubedge():
+    """The edge panel's Qt (maya_hubedge), imported only when the edge panel
+    is asked about (a seam for tests)."""
+    import maya_hubedge
+    return maya_hubedge
 
 
 def _qt_available():
@@ -281,9 +313,15 @@ def _build_section(sec):
 #  hub counts as ours from the start.
 _BUILT_HERE = False
 
-#  The skin standing in the control, built by this module object (a
-#  maya_hubqt.Skin), or None while the hub is classic.
+#  The skin standing in the control - or in the edge panel's slot - built by
+#  this module object (a maya_hubqt.Skin), or None while the hub is classic.
 _SKIN = None
+
+#  The skin failed to build in the edge panel (2026-10-08): the hub stays in
+#  the dock for the rest of this module object's session, or the uiScript,
+#  start() and show() would hand it back and forth to each other. ⋮ -> Edge
+#  panel (set_edge(True)) tries again; an install brings a fresh module.
+_EDGE_FAILED = False
 
 
 def _build_classic():
@@ -317,14 +355,31 @@ def _callbacks():
         "hover": _hover_sound,
         "sounds": set_sounds,
         "animations": set_animations,
+        #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel
+        "pin": _press_pin,
+        "edge": set_edge,
     }
 
 
 def _told(key, text, viewport):
     """A card's status reached the message line (maya_hubqt.Skin._told,
-    2026-10-08). The edge panel adds a viewport message while it is hidden
-    (Task 11); until then there is nothing to add."""
-    return None
+    2026-10-08). While the edge panel is hidden nobody sees that line - an
+    import by drag finishing after the panel slid away - so the status's
+    first line is also Maya's viewport message for 3 s, unless its writer
+    showed one itself (`viewport`: the Retarget button does). Docked, or
+    with the panel out, nothing to add."""
+    if not text or viewport:
+        return None
+    current = edge()
+    if current is None or current.shown:
+        return None
+    try:
+        cmds.inViewMessage(assistMessage=text.splitlines()[0],
+                           position="topCenter", fade=True,
+                           fadeStayTime=3000)
+    except Exception:                                        # noqa: BLE001
+        pass
+    return text
 
 
 def _dress_header(skin):
@@ -348,6 +403,16 @@ def _dress_header(skin):
         print(traceback.format_exc())
     _dress_sounds(skin)
     _dress_animations(skin)
+    _dress_edge(skin)
+
+
+def _dress_edge(skin):
+    """The menu's Edge panel row = the mode (2026-10-08). The 📌 shows once
+    the skin stands in the edge panel (`Skin.set_edge_mode`, _ensure_edge)."""
+    try:
+        skin.paint_edge(edge_on())
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
 
 
 def _dress_sounds(skin):
@@ -376,15 +441,20 @@ def _dress_animations(skin):
         print(traceback.format_exc())
 
 
-def _build_skin():
-    """The skinned hub. Deleted whole if any of it fails, then re-raised."""
+def _build_skin(host=None):
+    """The skinned hub - into the workspaceControl, or into `host` (the edge
+    panel's slot, 2026-10-08). Deleted whole if any of it fails, then
+    re-raised."""
     qt = _hubqt()
     scale = _scale()
     #  a skin an older module object built (an install purges the modules,
     #  not the widgets) goes first, or its controls answer to our names
-    qt.destroy_roots(CONTROL)
-    skin = qt.Skin(qt.host_widget(CONTROL), scale=scale,
-                   callbacks=_callbacks())
+    if host is None:
+        qt.destroy_roots(CONTROL)
+        host = qt.host_widget(CONTROL)
+    else:
+        qt.destroy_roots_in(host)
+    skin = qt.Skin(host, scale=scale, callbacks=_callbacks())
     hubstyle.set_skinning(True)
     try:
         for sec in card_sections():
@@ -422,6 +492,14 @@ def _arrow(qt):
 def build():
     """The uiScript body: the hub inside the workspaceControl."""
     global _BUILT_HERE, _SKIN
+    if edge_on():
+        #  A docked control Maya restored from an older workspace while the
+        #  hub lives at the edge now (2026-10-08): nothing is built in it -
+        #  deferred, the control goes and the edge panel waits. Before
+        #  anything touches _SKIN: it may be the edge panel's, standing.
+        cmds.evalDeferred(_drop_dock_for_edge, lowestPriority=True)
+        _BUILT_HERE = True
+        return CONTROL
     if cmds.workspaceControl(CONTROL, exists=True):
         cmds.setParent(CONTROL)
     hubstyle.take_marks()
@@ -449,11 +527,29 @@ def is_skinned():
 
 def rebuild():
     """The hub rebuilt inside the standing control -- where it is docked
-    survives, which deleting and recreating the control would not."""
+    survives, which deleting and recreating the control would not.
+
+    In edge mode (2026-10-08) the edge panel is rebuilt instead: a new Edge
+    (an install brings a new maya_hubedge; the width lives in its optionVar)
+    holding a new skin (`_rebuild_edge`). An edge panel standing while the
+    hub lives in the dock (⋮ -> Classic look pressed in it) goes, and the
+    dock opens. Callers defer it: it deletes what may hold the press."""
     global _SKIN
+    if edge_on():
+        return _rebuild_edge()
+    if edge() is not None:
+        stop()
+        if not cmds.workspaceControl(CONTROL, exists=True):
+            return show()
     if _SKIN is not None:
         _SKIN.destroy()
         _SKIN = None
+    _delete_classic()
+    return build()
+
+
+def _delete_classic():
+    """The classic accordion deleted, its collapse memory kept."""
     if cmds.scrollLayout(SCROLL, exists=True):
         #  Deleting the classic frames runs their collapseCommand (measured
         #  2026-09-28: every section came back remembered collapsed after a
@@ -462,7 +558,6 @@ def rebuild():
         cmds.deleteUI(SCROLL)
         for key, value in memory.items():
             remember(key, value)
-    return build()
 
 
 def set_classic(on):
@@ -471,6 +566,253 @@ def set_classic(on):
     cmds.optionVar(intValue=(CLASSIC_VAR, int(bool(on))))
     cmds.evalDeferred(rebuild, lowestPriority=True)
     return bool(on)
+
+
+# --------------------------------------------------------------- the edge
+
+#  The edge panel (2026-10-08): maya_hubedge's windows at the screen's left
+#  edge, the skin in their slot. Its Edge object lives on `sys` (an install
+#  purges our modules; maya_hubedge.state()), found by `edge()`.
+#
+#  Edge.destroy() deletes its windows NOW, and with them the slot and every
+#  control of ours in it. So nothing here destroys the edge panel on a path
+#  that can start from a control inside it without deferring first (the
+#  ⋮ switch, Classic look, a show() meeting a panel an older module built),
+#  and the skin is always destroyed BEFORE its Edge.
+
+def edge():
+    """The Edge standing (maya_hubedge.state()), alive, or None."""
+    try:
+        current = _hubedge().state().get("edge")
+    except Exception:                                        # noqa: BLE001
+        return None
+    return current if current is not None and current.alive() else None
+
+
+def _skin_at(current):
+    """This module object's skin stands in Edge `current`'s slot."""
+    return is_skinned() and getattr(_SKIN, "host", None) is current.slot
+
+
+def _edge_width():
+    """The panel's logical width, as the animator's grip left it."""
+    if cmds.optionVar(exists=edgerules.WIDTH_VAR):
+        return cmds.optionVar(query=edgerules.WIDTH_VAR)
+    return edgerules.WIDTH
+
+
+def _save_edge_width(width):
+    """The grip released (Edge.on_width): remembered for the next panel."""
+    cmds.optionVar(intValue=(edgerules.WIDTH_VAR, int(width)))
+
+
+def _ensure_edge():
+    """The edge panel built (hidden) with the skin in it; the Edge. One
+    standing with this module object's skin in it is the answer as it is.
+
+    Any other goes first, found by name (an older module object's
+    included); then a new Edge, registered on maya_hubedge.state(), and the
+    skin in its slot. A skin that fails to build there takes its Edge with
+    it, keeps the hub in the dock for this session (`_EDGE_FAILED`) and is
+    re-raised."""
+    global _SKIN, _BUILT_HERE, _EDGE_FAILED
+    current = edge()
+    if current is not None and _skin_at(current):
+        return current
+    he = _hubedge()
+    if _SKIN is not None:
+        #  the skin first: the windows destroy_all deletes may hold its root
+        _SKIN.destroy()
+        _SKIN = None
+    he.destroy_all()
+    current = he.Edge(scale=_scale(), width=_edge_width(),
+                      on_width=_save_edge_width)
+    he.state()["edge"] = current
+    try:
+        _SKIN = _build_skin(host=current.slot)
+        _SKIN.set_edge_mode(True)
+    except Exception:
+        print("SkeldarAnim: the hub's skin failed in the edge panel - the "
+              "hub stays docked for this session")
+        print(traceback.format_exc())
+        if _SKIN is not None:
+            _SKIN.destroy()
+            _SKIN = None
+        current.destroy()
+        he.state()["edge"] = None
+        _EDGE_FAILED = True
+        raise
+    _BUILT_HERE = True
+    return current
+
+
+def start():
+    """The startup plug-in's call: in edge mode the panel waits at the edge,
+    hidden; docked, nothing. Never raises (a skin failing there is printed
+    by `_ensure_edge`; the shelf button then opens the dock). The Edge, or
+    None."""
+    if not edge_on():
+        return None
+    try:
+        return _ensure_edge()
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def stop():
+    """The plug-in unloaded (and every switch away from the edge): the edge
+    panel goes - the skin standing in it first. True when one stood."""
+    global _SKIN
+    current = edge()
+    if current is None:
+        return False
+    if _SKIN is not None and getattr(_SKIN, "host", None) is current.slot:
+        _SKIN.destroy()
+        _SKIN = None
+    current.destroy()
+    _hubedge().state()["edge"] = None
+    return True
+
+
+def set_edge(on):
+    """⋮ -> Edge panel: switched, remembered. Deferred: the press comes from
+    inside the hub the switch rebuilds elsewhere. Refused (False) without
+    the skin - the classic hub does not live at the edge (the spec's "not
+    built"). Turning it on tries again after a skin that failed there."""
+    global _EDGE_FAILED
+    if on and (classic_asked() or not _qt_available()):
+        #  ASCII: printed, and a cp1252 stdout cannot encode the menu's mark
+        message = "The edge panel needs the new look (Classic look is on)"
+        print("SkeldarAnim: " + message)
+        say(message)
+        return False
+    if on:
+        _EDGE_FAILED = False
+    cmds.optionVar(intValue=(EDGE_VAR, int(bool(on))))
+    cmds.evalDeferred(lambda: _switch_edge(bool(on)), lowestPriority=True)
+    return bool(on)
+
+
+def _switch_edge(on):
+    """The deferred half of `set_edge`. The last press wins: a switch whose
+    mode was turned back before it ran does nothing."""
+    if on:
+        if not edge_on():
+            return None
+        #  2026-10-08 (the spec): the docked hub closes, the panel is built
+        #  and slides out once, so the animator sees where the hub went
+        _drop_dock()
+        stop()
+        try:
+            current = _ensure_edge()
+        except Exception:                                    # noqa: BLE001
+            return show()                   # the dock: edge_on() is False
+        current.reveal(hold=True)
+        return current
+    if edge_on():
+        return None
+    #  the edge panel goes and the dock opens as `show()` does - not where
+    #  it was docked: that control was deleted while the panel stood
+    stop()
+    return show()
+
+
+def _drop_dock():
+    """The docked hub goes: its skin (or its classic accordion, the
+    collapse memory kept) and its control."""
+    global _SKIN
+    if _SKIN is not None:
+        _SKIN.destroy()
+        _SKIN = None
+    _delete_classic()
+    if cmds.workspaceControl(CONTROL, exists=True):
+        cmds.deleteUI(CONTROL)
+
+
+def _drop_dock_for_edge():
+    """Deferred from `build()`: the control Maya restored goes and the edge
+    panel waits. The edge first - a skin failing there leaves the hub in the
+    control Maya restored, built now. With the mode turned off meanwhile the
+    control gets the hub `build()` did not put in it."""
+    if not edge_on():
+        if cmds.workspaceControl(CONTROL, exists=True):
+            return rebuild()
+        return None
+    try:
+        _ensure_edge()
+    except Exception:                                        # noqa: BLE001
+        if cmds.workspaceControl(CONTROL, exists=True):
+            return rebuild()
+        return None
+    if cmds.workspaceControl(CONTROL, exists=True):
+        cmds.deleteUI(CONTROL)
+    return CONTROL
+
+
+def _rebuild_edge():
+    """`rebuild()` in edge mode: the edge panel (and a dock the hub leaves,
+    the classic one after ⋮ -> Switch to the new look) gone, a new one
+    built. One that was out comes out again - the animator was working in
+    it (an install from the Update card) - and the pin, per session, stays;
+    the hub arriving from the dock slides out as a switch does."""
+    current = edge()
+    shown = bool(current is not None and current.shown)
+    pinned = bool(current is not None and getattr(current, "pinned", False))
+    from_dock = bool(cmds.workspaceControl(CONTROL, exists=True))
+    if from_dock:
+        _drop_dock()
+    stop()
+    try:
+        current = _ensure_edge()
+    except Exception:                                        # noqa: BLE001
+        return show()                       # the dock: edge_on() is False
+    if pinned:
+        current.set_pinned(True)
+        _SKIN.paint_pin(True)
+    if shown or from_dock:
+        current.reveal(hold=True)
+    return CONTROL
+
+
+def _press_pin(on):
+    """The header's 📌: a pinned panel stays out (maya_hubedge.Edge)."""
+    current = edge()
+    if current is not None:
+        current.set_pinned(on)
+    return bool(on)
+
+
+def _show_edge(key):
+    """`show(key)` in edge mode: the panel out on section `key`, held until
+    the cursor has been in it and left, or a press lands outside it. A
+    panel an older module object built (an install purged our modules and
+    nothing rebuilt it yet) is rebuilt first, DEFERRED - the call may come
+    from a control inside it. The Edge, or None when the skin failed there
+    (the caller opens the dock)."""
+    current = edge()
+    if current is not None and not _skin_at(current):
+        cmds.evalDeferred(lambda: _rebuild_then_show(key),
+                          lowestPriority=True)
+        return current
+    try:
+        current = _ensure_edge()
+    except Exception:                                        # noqa: BLE001
+        return None
+    current.reveal(hold=True)
+    if key:
+        expand(key)
+    return current
+
+
+def _rebuild_then_show(key):
+    rebuild()
+    return show(key)
+
+
+def _leave_edge_then_show(key):
+    """Deferred from `show()` docked with an edge panel still standing."""
+    stop()
+    return show(key)
 
 
 # ------------------------------------------------------------------ header
@@ -550,7 +892,10 @@ def _press_hotkey_editor():
 # -------------------------------------------------------------------- show
 
 def is_open():
-    return bool(cmds.workspaceControl(CONTROL, exists=True))
+    """The hub stands: docked, or in the edge panel (2026-10-08) - out or
+    waiting hidden."""
+    return (bool(cmds.workspaceControl(CONTROL, exists=True))
+            or edge() is not None)
 
 
 def _close_legacy_windows():
@@ -561,9 +906,22 @@ def _close_legacy_windows():
 
 def show(key=None):
     """Open the hub (or raise it) and, given a section key, expand that
-    section. The shelf button and every tool's `show_window`."""
+    section. The shelf button and every tool's `show_window`.
+
+    In edge mode (2026-10-08) the edge panel slides out on that section and
+    stays until visited (`_show_edge`). Docked with an edge panel still
+    standing (a switch on its way), the panel goes first - deferred, the
+    call may come from a control inside it - or two skins would answer to
+    the controls' names (trap 102's shape)."""
     _close_legacy_windows()
-    if is_open():
+    if edge_on():
+        if _show_edge(key) is not None:
+            return CONTROL
+    elif edge() is not None:
+        cmds.evalDeferred(lambda: _leave_edge_then_show(key),
+                          lowestPriority=True)
+        return CONTROL
+    if cmds.workspaceControl(CONTROL, exists=True):
         if not _BUILT_HERE:
             rebuild()
         cmds.workspaceControl(CONTROL, edit=True, restore=True)

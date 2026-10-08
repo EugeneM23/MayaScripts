@@ -98,6 +98,18 @@ class TheShell(SeamsMixin, unittest.TestCase):
         self.assertEqual(hubqt.destroy_roots("hubControl"), 0)
         self.assertEqual(hubqt.destroy_roots("nothing"), 0)
 
+    def test_destroy_roots_in_takes_every_skin_in_a_widget(self):
+        """2026-10-08: the edge panel's slot is a widget of ours, no Maya
+        control - its roots are found the same way, by name."""
+        slot = QtWidgets.QWidget()
+        QtWidgets.QVBoxLayout(slot)
+        old = hubqt.Skin(slot, scale=1.0)
+        self.assertEqual(hubqt.destroy_roots_in(slot), 1)
+        self.assertFalse(old.alive())
+        self.assertEqual(hubqt.destroy_roots_in(slot), 0)
+        self.assertEqual(hubqt.destroy_roots_in(None), 0)
+        slot.deleteLater()
+
     def test_the_scroll_area_never_scrolls_sideways(self):
         self.assertEqual(self.skin.scroll.horizontalScrollBarPolicy(),
                          QtCore.Qt.ScrollBarAlwaysOff)
@@ -315,6 +327,18 @@ class HeaderState(SeamsMixin, unittest.TestCase):
         self.assertTrue(self.skin.pin.isHidden())
         self.assertFalse(self.skin.pin.isChecked())
         self.assertFalse(self.skin.edge_action.isChecked())
+
+    def test_paint_pin_checks_the_pin_without_a_callback(self):
+        """A rebuilt edge panel keeps its pin (maya_hub.rebuild): painted,
+        never pressed."""
+        self.calls_pin = []
+        self.skin.cb["pin"] = lambda on: self.calls_pin.append(on)
+        self.skin.set_edge_mode(True)
+        self.skin.paint_pin(True)
+        self.assertTrue(self.skin.pin.isChecked())
+        self.skin.paint_pin(False)
+        self.assertFalse(self.skin.pin.isChecked())
+        self.assertEqual(self.calls_pin, [])
 
     def test_the_edge_row_calls_back_with_its_state(self):
         seen = []

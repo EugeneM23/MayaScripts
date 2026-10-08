@@ -424,8 +424,12 @@ class FakeSkin(object):
 
     def __init__(self, layout, scale=1.0, callbacks=None):
         self.layout = layout
+        self.host = layout                  # maya_hubqt.Skin keeps its host
         self.scale = scale
         self.callbacks = callbacks
+        self.edge_mode = None               # set_edge_mode (the edge panel)
+        self.edge_painted = []              # paint_edge, as asked
+        self.pins = []                      # paint_pin, as asked
         self.cards = {}
         self.jumps = []
         self.groups = []
@@ -481,6 +485,16 @@ class FakeSkin(object):
     def set_active(self, key):
         self.active = key
 
+    def set_edge_mode(self, on):
+        self.edge_mode = bool(on)
+        self.edge_painted.append(bool(on))
+
+    def paint_edge(self, on):
+        self.edge_painted.append(bool(on))
+
+    def paint_pin(self, on):
+        self.pins.append(bool(on))
+
     def alive(self):
         return self._alive
 
@@ -494,6 +508,9 @@ def _fake_qt(available=True):
     module.host_widget = lambda control: "widget of " + control
     module.destroyed = []
     module.destroy_roots = lambda control: module.destroyed.append(control)
+    #  the roots in a given host (the edge panel's slot)
+    module.destroyed_in = []
+    module.destroy_roots_in = lambda host: module.destroyed_in.append(host)
     module.Skin = FakeSkin
     module.applied = []
     module.apply_marks = lambda marks, card, scale: module.applied.append(
@@ -736,8 +753,8 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertNotIn("version", hub._SKIN.callbacks)
 
     def test_told_is_a_quiet_callback(self):
-        """A card's status reached the message line: the hub has nothing to
-        add until the edge panel does (a stub, never an error)."""
+        """A card's status reached the message line: with no edge panel
+        standing the hub has nothing to add (never an error)."""
         hub.build()
         callbacks = hub._SKIN.callbacks
         self.assertIn("told", callbacks)
@@ -855,6 +872,425 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertFalse(first.alive())
         self.assertTrue(hub._SKIN.alive())
         self.assertIsNot(hub._SKIN, first)
+
+
+# ----------------------------------------------------------- the edge panel
+
+class FakeEdge(object):
+    """maya_hubedge.Edge as maya_hub drives it: what was asked of it."""
+
+    def __init__(self, scale=1.0, parent=None, width=360, motion=None,
+                 on_width=None, **_seams):
+        self.scale, self.width, self.on_width = scale, width, on_width
+        self.slot = object()                # the skin's host, one per edge
+        self.shown = False
+        self.pinned = False
+        self.reveals = []                   # reveal(hold) as asked
+        self.concealed = 0
+        self.destroyed = False
+
+    @property
+    def revealed_with_hold(self):
+        return True in self.reveals
+
+    def reveal(self, hold=False):
+        self.reveals.append(bool(hold))
+        self.shown = True
+
+    def conceal(self):
+        self.concealed += 1
+        self.shown = False
+
+    def set_pinned(self, on):
+        self.pinned = bool(on)
+
+    def alive(self):
+        return not self.destroyed
+
+    def destroy(self):
+        self.destroyed = True
+        self.shown = False
+
+
+def _fake_hubedge(edges):
+    """A maya_hubedge whose Edge records every panel made into `edges`; its
+    state() is the module's own dict (the real one lives on `sys`)."""
+    module = types.ModuleType("maya_hubedge_fake")
+    st = {"edge": None}
+    module.state = lambda: st
+
+    def make(*args, **kwargs):
+        edge = FakeEdge(*args, **kwargs)
+        edges.append(edge)
+        return edge
+    module.Edge = make
+
+    def destroy_all():
+        """Every host found by name and deleted, an older module's too."""
+        count = 0
+        for edge in edges:
+            if not edge.destroyed:
+                edge.destroyed = True
+                count += 1
+        if st["edge"] is not None and not st["edge"].alive():
+            st["edge"] = None
+        return count
+    module.destroy_all = destroy_all
+    return module
+
+
+class EdgeMode(FakeToolsMixin, unittest.TestCase):
+    """2026-10-08 (the animator: «когда я подношу мышку к левому краю экрана
+    то появляется наша полка когда убираю то полка скрывается»): ⋮ -> Edge
+    panel puts the skinned hub into maya_hubedge's panel instead of the
+    dock; `show(key)` reveals it and holds it; a status while it is hidden
+    is Maya's viewport message too."""
+
+    def setUp(self):
+        self.real = (hub.cmds, hub._hubqt, hub._dress_header, hub._hubedge)
+        self.fake = FakeUiCmds(dpi=1.5)
+        hub.cmds = self.fake
+        self.qt = _fake_qt()
+        hub._hubqt = lambda: self.qt
+        hub._dress_header = lambda skin: None
+        self.edges = []
+        self.he = _fake_hubedge(self.edges)
+        hub._hubedge = lambda: self.he
+        FakeSkin.fail_finish = False
+        hub._SKIN = None
+        hub._EDGE_FAILED = False
+        self.install_fakes()
+
+    def tearDown(self):
+        hub.cmds, hub._hubqt, hub._dress_header, hub._hubedge = self.real
+        FakeSkin.fail_finish = False
+        hub._SKIN = None
+        hub._EDGE_FAILED = False
+        self.remove_fakes()
+
+    def viewport_messages(self):
+        return [c for c in self.fake.calls if c[0] == "inViewMessage"]
+
+    # --------------------------------------------------- the switch
+
+    def test_edge_mode_is_off_by_default(self):
+        self.assertFalse(hub.edge_on())
+
+    def test_the_variable_is_the_rules(self):
+        import maya_edgerules
+        self.assertEqual(hub.EDGE_VAR, maya_edgerules.EDGE_VAR)
+        self.assertEqual(hub.EDGE_VAR, "skeldarAnimHub_edge")
+
+    def test_set_edge_on_drops_the_dock_and_builds_the_edge(self):
+        self.fake.workspace[hub.CONTROL] = {}
+        hub.set_edge(True)
+        self.assertEqual(self.fake.optionvars[hub.EDGE_VAR], 1)
+        self.fake.run_deferred()
+        self.assertIn(hub.CONTROL, self.fake.deleted)
+        self.assertTrue(self.edges[-1].revealed_with_hold)
+
+    def test_set_edge_is_deferred(self):
+        """The press comes from the menu, inside the hub it deletes (⋮)."""
+        self.fake.workspace[hub.CONTROL] = {}
+        hub.set_edge(True)
+        self.assertEqual(self.edges, [])
+        self.assertNotIn(hub.CONTROL, self.fake.deleted)
+
+    def test_set_edge_off_destroys_the_edge_and_opens_the_dock(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        hub.set_edge(False)
+        self.fake.run_deferred()
+        self.assertTrue(self.edges[-1].destroyed)
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+
+    def test_the_last_press_wins(self):
+        """On, then off before the first switch ran: the dock, no edge."""
+        hub.set_edge(True)
+        hub.set_edge(False)
+        self.fake.run_deferred()
+        self.assertEqual(self.edges, [])
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+
+    def test_edge_mode_needs_the_skin(self):
+        self.fake.optionvars[hub.CLASSIC_VAR] = 1
+        self.assertFalse(hub.set_edge(True))
+        self.assertNotEqual(self.fake.optionvars.get(hub.EDGE_VAR), 1)
+
+    def test_and_qt(self):
+        self.qt.available = lambda: False
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.assertFalse(hub.edge_on())
+        self.assertFalse(hub.set_edge(True))
+
+    def test_the_menu_row_shows_the_mode(self):
+        skin = FakeSkin(None)
+        hub._dress_edge(skin)
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub._dress_edge(skin)
+        self.assertEqual(skin.edge_painted, [False, True])
+
+    def test_the_pin_and_the_switch_are_the_header_s(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        callbacks = hub._SKIN.callbacks
+        callbacks["pin"](True)
+        self.assertTrue(self.edges[-1].pinned)
+        callbacks["pin"](False)
+        self.assertFalse(self.edges[-1].pinned)
+        self.assertIs(callbacks["edge"], hub.set_edge)
+
+    # --------------------------------------------------- the build
+
+    def test_start_does_nothing_in_dock_mode(self):
+        hub.start()
+        self.assertEqual(self.edges, [])
+
+    def test_start_builds_the_skin_into_the_edge_hidden(self):
+        """The startup plug-in's call: the panel waits at the edge."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        edge = hub.start()
+        self.assertIs(edge, self.edges[-1])
+        self.assertIs(self.he.state()["edge"], edge)
+        self.assertEqual(edge.reveals, [])               # hidden
+        self.assertTrue(hub.is_skinned())
+        self.assertIs(hub._SKIN.layout, edge.slot)
+        self.assertTrue(hub._SKIN.edge_mode)
+        self.assertEqual(hub._SKIN.scale, 1.5)
+        self.assertEqual(self.qt.destroyed, [])          # not the control's
+        self.assertEqual(self.qt.destroyed_in, [edge.slot])
+        for sec in hub.card_sections():
+            self.assertEqual(self.built(sec.key), 1, sec.key)
+        self.assertNotIn(hub.CONTROL, self.fake.workspace)
+
+    def test_start_twice_is_one_edge(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        first = hub.start()
+        self.assertIs(hub.start(), first)
+        self.assertEqual(len(self.edges), 1)
+        self.assertEqual(self.built("characters"), 1)
+
+    def test_the_width_is_remembered_and_reused(self):
+        import maya_edgerules
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        edge = hub.start()
+        self.assertEqual(edge.width, maya_edgerules.WIDTH)
+        edge.on_width(512)                              # the grip released
+        self.assertEqual(self.fake.optionvars[maya_edgerules.WIDTH_VAR], 512)
+        hub.rebuild()
+        self.assertEqual(self.edges[-1].width, 512)
+
+    def test_is_open_while_the_edge_stands(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.assertFalse(hub.is_open())
+        hub.start()
+        self.assertTrue(hub.is_open())
+        hub.stop()
+        self.assertFalse(hub.is_open())
+        self.assertIsNone(hub.edge())
+
+    def test_stop_destroys_the_skin_then_the_edge(self):
+        """The skin's root first: the edge's destroy deletes its slot and
+        whatever still stands in it."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        log = []
+        skin, edge = hub._SKIN, self.edges[-1]
+        skin_destroy, edge_destroy = skin.destroy, edge.destroy
+        skin.destroy = lambda: (log.append("skin"), skin_destroy())
+        edge.destroy = lambda: (log.append("edge"), edge_destroy())
+        hub.stop()
+        self.assertEqual(log, ["skin", "edge"])
+        self.assertIsNone(hub._SKIN)
+        self.assertIsNone(self.he.state()["edge"])
+
+    def test_the_uiscript_in_edge_mode_builds_nothing_in_the_dock(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.workspace[hub.CONTROL] = {}
+        hub.build()
+        self.assertEqual(self.built("characters"), 0)    # not in the dock
+        self.fake.run_deferred()
+        self.assertIn(hub.CONTROL, self.fake.deleted)
+        self.assertEqual(self.built("characters"), 1)    # in the edge
+        self.assertIs(hub._SKIN.layout, self.edges[-1].slot)
+
+    def test_the_uiscript_builds_the_dock_once_the_mode_is_off(self):
+        """Edge mode turned off before the deferred half ran: the control
+        Maya restored is kept and gets the hub build() left out of it."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.workspace[hub.CONTROL] = {}
+        hub.build()
+        self.fake.optionvars[hub.EDGE_VAR] = 0
+        self.fake.run_deferred()
+        self.assertEqual(self.edges, [])
+        self.assertNotIn(hub.CONTROL, self.fake.deleted)
+        self.assertEqual(self.built("characters"), 1)
+        self.assertEqual(hub._SKIN.layout, "widget of " + hub.CONTROL)
+
+    def test_a_skin_failing_at_the_edge_leaves_the_hub_to_the_dock(self):
+        """The dock's fallback for a broken skin is the classic hub; at the
+        edge it is the dock, for the rest of this module object's session -
+        or the uiScript, start() and show() would hand the hub to each
+        other."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        FakeSkin.fail_finish = True
+        self.assertIsNone(hub.start())
+        self.assertTrue(self.edges[-1].destroyed)
+        self.assertIsNone(hub.edge())
+        self.assertFalse(hub.edge_on())
+        hub.show()
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+        self.assertEqual(len(self.edges), 1)             # not tried again
+
+    def test_turning_it_on_again_tries_again(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        FakeSkin.fail_finish = True
+        hub.start()
+        FakeSkin.fail_finish = False
+        hub.set_edge(True)
+        self.fake.run_deferred()
+        self.assertEqual(len(self.edges), 2)
+        self.assertTrue(self.edges[-1].alive())
+        self.assertTrue(self.edges[-1].revealed_with_hold)
+
+    # --------------------------------------------------- show
+
+    def test_show_in_edge_mode_reveals_and_holds(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        hub.show("retarget")
+        self.assertTrue(self.edges[-1].revealed_with_hold)
+        self.assertNotIn(hub.CONTROL, self.fake.workspace)
+
+    def test_show_builds_the_edge_when_none_stands_and_opens_the_card(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.optionvars[hub.OPTIONVAR.format("studio")] = 1
+        hub.show("studio")
+        self.assertEqual(len(self.edges), 1)
+        self.assertEqual(self.edges[-1].reveals, [True])
+        self.assertFalse(hub._SKIN.cards["studio"].collapsed())
+        self.assertEqual(hub._SKIN.active, "studio")
+        self.assertNotIn(hub.CONTROL, self.fake.workspace)
+
+    def test_an_edge_an_older_module_built_is_rebuilt_deferred(self):
+        """An install purges our modules and leaves the panel standing; a
+        show() from inside that panel must not delete it under itself."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        older = FakeEdge()
+        self.edges.append(older)
+        self.he.state()["edge"] = older
+        hub.show("retarget")
+        self.assertFalse(older.destroyed)                # not under the call
+        self.assertEqual(len(self.edges), 1)
+        self.fake.run_deferred()
+        self.assertTrue(older.destroyed)
+        self.assertTrue(self.edges[-1].revealed_with_hold)
+        self.assertIs(hub._SKIN.layout, self.edges[-1].slot)
+
+    def test_show_in_dock_mode_with_an_edge_still_standing_leaves_it_first(self):
+        """A switch off on its way (or Classic look): the edge panel goes
+        before the dock opens - deferred, the call may come from inside it -
+        or two skins would answer to the controls' names (⋮ -> Classic
+        look pressed at the edge is the other way here)."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        edge = self.edges[-1]
+        self.fake.optionvars[hub.EDGE_VAR] = 0
+        hub.show("colour")
+        self.assertFalse(edge.destroyed)
+        self.assertNotIn(hub.CONTROL, self.fake.workspace)
+        self.fake.run_deferred()
+        self.assertTrue(edge.destroyed)
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+
+    # --------------------------------------------------- rebuild
+
+    def test_rebuild_recreates_the_edge_keeping_it_out_and_pinned(self):
+        """After an install the panel is rebuilt from the fresh modules (a new
+        Edge, a new skin): the animator who was working in it keeps it out,
+        and the pin is per session, not per build."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        first = hub.start()
+        old_skin = hub._SKIN
+        first.reveal()
+        hub._press_pin(True)
+        hub.rebuild()
+        self.assertTrue(first.destroyed)
+        self.assertFalse(old_skin.alive())
+        new = self.edges[-1]
+        self.assertIsNot(new, first)
+        self.assertTrue(new.shown)
+        self.assertTrue(new.pinned)
+        self.assertEqual(hub._SKIN.pins, [True])
+        self.assertIs(hub._SKIN.layout, new.slot)
+
+    def test_rebuild_of_a_hidden_edge_stays_hidden(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        hub.rebuild()
+        self.assertEqual(len(self.edges), 2)
+        self.assertEqual(self.edges[-1].reveals, [])
+        self.assertFalse(self.edges[-1].pinned)
+
+    def test_classic_at_the_edge_moves_the_hub_to_the_dock(self):
+        """The classic hub does not live at the edge (the spec's "not
+        built"): ⋮ -> Classic look takes the hub to the dock."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        hub.set_classic(True)
+        self.fake.run_deferred()
+        self.assertTrue(self.edges[-1].destroyed)
+        self.assertIsNone(self.he.state()["edge"])
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+
+    def test_the_new_look_from_the_classic_dock_goes_back_to_the_edge(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.optionvars[hub.CLASSIC_VAR] = 1
+        self.fake.workspace[hub.CONTROL] = {}
+        hub.build()                                     # the classic dock
+        self.assertIn("skeldarHubFrameCharacters", self.fake.frames)
+        hub.set_classic(False)
+        self.fake.run_deferred()
+        self.assertIn(hub.SCROLL, self.fake.deleted)
+        self.assertIn(hub.CONTROL, self.fake.deleted)
+        self.assertEqual(len(self.edges), 1)
+        self.assertTrue(self.edges[-1].revealed_with_hold)
+        self.assertTrue(hub.is_skinned())
+
+    # --------------------------------------------------- the viewport message
+
+    def test_a_status_while_hidden_goes_to_the_viewport(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        self.edges[-1].shown = False
+        hub._told("characters", "Imported A_Jump", False)
+        msgs = self.viewport_messages()
+        self.assertTrue(msgs)
+
+    def test_the_viewport_message_is_the_first_line(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        hub._told("characters", "Imported A_Jump\nonto Manny_Rig", False)
+        kwargs = self.viewport_messages()[0][2]
+        self.assertEqual(kwargs["assistMessage"], "Imported A_Jump")
+        self.assertTrue(kwargs["fade"])
+
+    def test_not_when_shown_or_when_the_writer_showed_it(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        self.edges[-1].shown = True
+        hub._told("characters", "x", False)
+        self.edges[-1].shown = False
+        hub._told("retarget", "y", True)
+        self.assertFalse([c for c in self.fake.calls
+                          if c[0] == "inViewMessage"])
+
+    def test_not_in_the_dock_nor_for_an_empty_line(self):
+        hub._told("characters", "x", False)              # no edge
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        hub._told("characters", "", False)
+        self.assertEqual(self.viewport_messages(), [])
 
 
 class ClassicWithoutQt(FakeToolsMixin, unittest.TestCase):

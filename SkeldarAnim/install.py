@@ -29,6 +29,9 @@ SHELF = "SkeldarAnim"
 HUB_CONTROL = "skeldarAnimHub"
 # The Pose Library's (maya_poselib.window.CONTROL), the same way (2026-10-02).
 POSELIB_CONTROL = "skeldarPoseLibrary"
+# The hub's edge panel host window (maya_hubedge.HOST), the same way
+# (2026-10-08): with the hub at the edge no workspaceControl stands.
+HUB_EDGE = "skeldarAnimHubEdge"
 
 # The payload's library folder (2026-10-02): the animator's own cards saved
 # into the INSTALLED copy must survive the install that replaces it.
@@ -726,6 +729,22 @@ def _cmds():
     return cmds
 
 
+def _edge_standing():
+    """The hub's edge panel stands (2026-10-08): its host window, found by
+    name among Qt's top-level widgets - the hub's module is not asked (the
+    install has just purged it). False without PySide6 (Maya before 2025)
+    or a QApplication (mayapy)."""
+    try:
+        from PySide6 import QtWidgets
+    except ImportError:
+        return False
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return False
+    return any(widget.objectName() == HUB_EDGE
+               for widget in app.topLevelWidgets())
+
+
 def install(dropped=None, quiet=False):
     """Copy the payload, build the shelf, say so.
 
@@ -759,7 +778,11 @@ def install(dropped=None, quiet=False):
     # the new ones once this call has returned -- deferred, as the updater's
     # `_reopen`, so an install run from a hub button never deletes the layout
     # holding that button under itself.
-    hub_open = bool(cmds.workspaceControl(HUB_CONTROL, exists=True))
+    # The edge panel (2026-10-08) is the hub's other home: no workspaceControl
+    # stands then, its host window does, and the fresh maya_hub.rebuild()
+    # knows which home it is rebuilding.
+    hub_open = (bool(cmds.workspaceControl(HUB_CONTROL, exists=True))
+                or _edge_standing())
     target = dest.replace("\\", "/")
     if hub_open:
         cmds.evalDeferred(lambda: rebuild_open_hub(target),
