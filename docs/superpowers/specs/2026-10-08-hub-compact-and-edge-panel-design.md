@@ -244,7 +244,7 @@ Per card, top to bottom, as the mockup shows it:
 - Every control NAME, callback, `refresh`, hotkey row and opener: the work is arrangement, roles, and
   the host.
 - The Pose Library window (its own workspaceControl).
-- The classic hub except the builders' new row arrangement and its 10-row default list heights (no
+- The classic hub except the builders' new row arrangement (its lists keep 300 / 150 px and get no
   grip).
 
 ## Proof
