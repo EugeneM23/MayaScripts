@@ -704,9 +704,20 @@ def start():
     """The startup plug-in's call: in edge mode the panel waits at the edge,
     hidden; docked, nothing. Never raises (a failure is printed by
     `_ensure_edge`; the shelf button then opens the dock, saying why). The
-    Edge, or None."""
+    Edge, or None.
+
+    A panel standing that this module object did not build is left as it
+    is (Task 13, 2026-10-08): an install reloads the plug-in after purging
+    our modules, and the panel the purged maya_hub built may be OUT - the
+    install came from its Update card. The install's own deferred
+    `rebuild_open_hub` rebuilds it keeping it out; rebuilding it here first
+    would put it away hidden under the animator. At Maya's start none
+    stands."""
     if not edge_on():
         return None
+    current = edge()
+    if current is not None and _SKIN is None:
+        return current
     try:
         return _ensure_edge()
     except Exception:                                        # noqa: BLE001

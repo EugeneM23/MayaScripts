@@ -113,6 +113,14 @@ class Payload(unittest.TestCase):
         self.assertIn("maya_edgerules.py", install.payload())
         self.assertIn("maya_hubedge.py", install.payload())
 
+    def test_the_startup_plugin_ships(self):
+        """2026-10-08: the edge panel waiting from Maya's start - the folder
+        is data to Python (no __init__), the plug-in Maya's."""
+        self.assertIn("plug-ins", install.payload())
+        self.assertNotIn("plug-ins", install.module_names())
+        self.assertTrue(os.path.isfile(os.path.join(
+            PLUGIN, "plug-ins", install.STARTUP_PLUGIN + ".py")))
+
     def test_the_colour_palette_ships(self):
         self.assertIn("maya_colour.py", install.payload())
 
@@ -812,6 +820,11 @@ class InstallOrder(unittest.TestCase):
             self.deferred.append(call)
             self.__dict__.setdefault("deferred_flags", []).append(kwargs)
 
+        batch = False
+
+        def about(self, **kwargs):
+            return self.batch
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="skeldar_order_")
         self.order = []
@@ -819,7 +832,7 @@ class InstallOrder(unittest.TestCase):
         self.fake.deferred = []
         self.saved = (install._cmds, install.copy_payload,
                       install.write_version, install._build_shelf,
-                      install.purge_modules)
+                      install.purge_modules, install.register_startup)
         install._cmds = lambda: self.fake
         install.copy_payload = lambda src, dest: self.order.append("copy")
         install.write_version = lambda src, dest: self.order.append("version")
@@ -827,6 +840,12 @@ class InstallOrder(unittest.TestCase):
         self.purged = []
         install.purge_modules = lambda: self.order.append("purge") or \
             list(self.purged)
+        #  the startup plug-in (2026-10-08): recorded, answering a note
+        self.startup_note = ""
+        self.startup_dests = []
+        install.register_startup = lambda dest: (
+            self.order.append("startup"), self.startup_dests.append(dest),
+            self.startup_note)[-1]
         #  no edge panel standing unless a test says so (the real question
         #  asks the test process's QApplication)
         self.saved_edge = getattr(install, "_edge_standing", None)
@@ -834,7 +853,8 @@ class InstallOrder(unittest.TestCase):
 
     def tearDown(self):
         (install._cmds, install.copy_payload, install.write_version,
-         install._build_shelf, install.purge_modules) = self.saved
+         install._build_shelf, install.purge_modules,
+         install.register_startup) = self.saved
         if self.saved_edge is None:
             install.__dict__.pop("_edge_standing", None)
         else:
@@ -843,7 +863,44 @@ class InstallOrder(unittest.TestCase):
 
     def test_the_purge_comes_before_the_shelf_loads_the_flags(self):
         install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
-        self.assertEqual(self.order, ["copy", "version", "purge", "shelf"])
+        self.assertEqual(self.order,
+                         ["copy", "version", "purge", "shelf", "startup"])
+
+    def test_the_startup_plugin_is_registered_from_the_installed_folder(self):
+        """2026-10-08: after the copy and the shelf, AFTER the purge - the
+        plug-in's reload must not stop a maya_hub the install is replacing
+        (the old module would delete the edge panel under an Update press);
+        the fresh start() leaves a standing panel to the install's rebuild."""
+        dest = install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.assertEqual(self.startup_dests, [dest.replace("\\", "/")])
+
+    def test_batch_registers_no_startup_plugin(self):
+        self.fake.batch = True
+        install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        self.assertNotIn("startup", self.order)
+
+    def test_a_registration_that_failed_is_said_in_the_dialog(self):
+        self.startup_note = "startup plug-in not registered: no luck"
+        install.install(os.path.join(PLUGIN, "install.py"))
+        self.assertIn("startup plug-in not registered: no luck",
+                      self.fake.dialogs[0])
+
+    def test_a_quiet_install_prints_it(self):
+        self.startup_note = "startup plug-in not registered: no luck"
+        said = []
+        saved = install._say
+        install._say = said.append
+        try:
+            install.install(os.path.join(PLUGIN, "install.py"), quiet=True)
+        finally:
+            install._say = saved
+        self.assertEqual(self.fake.dialogs, [])
+        self.assertTrue(any("not registered: no luck" in line
+                            for line in said), said)
+
+    def test_a_registered_plugin_adds_nothing_to_the_dialog(self):
+        install.install(os.path.join(PLUGIN, "install.py"))
+        self.assertNotIn("startup plug-in", self.fake.dialogs[0])
 
     def test_a_fresh_install_says_nothing_of_a_previous_version(self):
         install.install(os.path.join(PLUGIN, "install.py"))
@@ -1122,6 +1179,186 @@ class PurgeModules(unittest.TestCase):
 
     def test_nothing_loaded_drops_nothing(self):
         self.assertEqual(install.purge_modules(["maya_overrig"], {}), [])
+
+
+#  MAYA_PLUG_IN_PATH as a scratch-prefs Maya 2027.2 answered it (2026-10-08),
+#  shortened past the two user folders
+MEASURED_PATH = ("C:/tmp_sk13/appdir/2027/plug-ins;C:/tmp_sk13/appdir/plug-ins;"
+                 "C:/Program Files/Autodesk/Maya2027/bin/plug-ins")
+
+
+class StartupFolder(unittest.TestCase):
+    """Where the startup plug-in goes (2026-10-08): a user folder on
+    MAYA_PLUG_IN_PATH - Maya's autoload finds a plug-in there by name at the
+    next start, and loads it without its untrusted-location dialog."""
+
+    def test_the_version_folder_maya_put_on_the_path(self):
+        self.assertEqual(install.startup_folder(
+            MEASURED_PATH, "C:/tmp_sk13/appdir/", "2027"),
+            "C:/tmp_sk13/appdir/2027/plug-ins")
+
+    def test_slashes_and_case_do_not_matter(self):
+        path = ("C:\\Users\\X\\Documents\\maya\\2027\\plug-ins\\;"
+                "C:\\Users\\X\\Documents\\maya\\plug-ins")
+        self.assertEqual(install.startup_folder(
+            path, "c:/users/x/documents/maya", "2027"),
+            "C:/Users/X/Documents/maya/2027/plug-ins")
+
+    def test_another_user_folder_when_the_version_s_is_not_on_it(self):
+        self.assertEqual(install.startup_folder(
+            "C:/u/maya/plug-ins;C:/Program Files/x", "C:/u/maya/", "2027"),
+            "C:/u/maya/plug-ins")
+
+    def test_none_under_the_user_folder_is_none(self):
+        self.assertEqual(install.startup_folder(
+            "C:/Program Files/Autodesk/Maya2027/bin/plug-ins", "C:/u/maya/",
+            "2027"), "")
+        self.assertEqual(install.startup_folder("", "C:/u/maya/", "2027"), "")
+
+    def test_a_folder_beside_the_user_folder_is_not_under_it(self):
+        self.assertEqual(install.startup_folder(
+            "C:/u/maya_old/2027/plug-ins", "C:/u/maya/", "2027"), "")
+
+
+class RegisterStartup(unittest.TestCase):
+    """`register_startup(dest)` copies the plug-in from the installed folder
+    into the user's plug-ins folder, loads it by its full path, sets it to
+    autoload and saves Maya's plug-in prefs (2026-10-08). Never raises: a
+    hub without its edge panel at startup is no reason to fail an install."""
+
+    class FakeCmds(object):
+        def __init__(self, app):
+            self.app = app
+            self.calls = []
+            self.loaded = False
+            self.fail = ""
+
+        def internalVar(self, **kwargs):
+            return self.app
+
+        def about(self, **kwargs):
+            return "2027"
+
+        def pluginInfo(self, *args, **kwargs):
+            if kwargs.get("query"):
+                return self.loaded
+            self.calls.append(("pluginInfo", args, kwargs))
+            if self.fail == "autoload" and kwargs.get("autoload"):
+                raise RuntimeError("autoload refused")
+
+        def loadPlugin(self, path, **kwargs):
+            self.calls.append(("loadPlugin", path, kwargs))
+            if self.fail == "load":
+                raise RuntimeError("load refused")
+            if self.fail == "denied":
+                return None
+            self.loaded = True
+            return [install.STARTUP_PLUGIN]
+
+        def unloadPlugin(self, name, **kwargs):
+            self.calls.append(("unloadPlugin", name, kwargs))
+            self.loaded = False
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="skeldar_startup_")
+        self.app = self.tmp.replace("\\", "/") + "/appdir/"
+        self.dest = os.path.join(self.tmp, "scripts", "SkeldarAnim")
+        os.makedirs(os.path.join(self.dest, "plug-ins"))
+        with open(os.path.join(self.dest, "plug-ins",
+                               install.STARTUP_PLUGIN + ".py"), "w") as h:
+            h.write("# the plug-in\n")
+        self.path = self.app + "2027/plug-ins;" + self.app + "plug-ins"
+        self.target = self.app + "2027/plug-ins/" + install.STARTUP_PLUGIN + ".py"
+        self.fake = self.FakeCmds(self.app)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def register(self):
+        return install.register_startup(self.dest, cmds=self.fake,
+                                        plug_in_path=self.path)
+
+    def test_copied_loaded_by_path_autoloaded_and_saved(self):
+        self.assertEqual(self.register(), "")
+        self.assertTrue(os.path.isfile(self.target))         # the folder made
+        with open(self.target) as h:
+            self.assertEqual(h.read(), "# the plug-in\n")
+        self.assertEqual(self.fake.calls, [
+            ("loadPlugin", self.target, {"quiet": True}),
+            ("pluginInfo", (install.STARTUP_PLUGIN,),
+             {"edit": True, "autoload": True}),
+            ("pluginInfo", (), {"savePluginPrefs": True})])
+
+    def test_a_loaded_plugin_is_unloaded_first(self):
+        """Its uninitializePlugin stops a hub still imported (after the
+        install's purge there is none); the load runs the new copy."""
+        self.fake.loaded = True
+        self.register()
+        self.assertEqual(self.fake.calls[0],
+                         ("unloadPlugin", install.STARTUP_PLUGIN,
+                          {"force": True}))
+        self.assertEqual(self.fake.calls[1][0], "loadPlugin")
+
+    def test_a_second_install_replaces_the_copy(self):
+        self.register()
+        with open(os.path.join(self.dest, "plug-ins",
+                               install.STARTUP_PLUGIN + ".py"), "w") as h:
+            h.write("# the new one\n")
+        self.register()
+        with open(self.target) as h:
+            self.assertEqual(h.read(), "# the new one\n")
+
+    def test_a_load_that_fails_is_a_note(self):
+        self.fake.fail = "load"
+        note = self.register()
+        self.assertIn("startup plug-in not registered", note)
+        self.assertIn("load refused", note)
+
+    def test_a_load_maya_denied_is_a_note_and_no_autoload(self):
+        """A plug-in Maya's untrusted-location dialog was answered Deny for
+        came back None, no error (measured 2026-10-08): said, nothing set."""
+        self.fake.fail = "denied"
+        note = self.register()
+        self.assertIn("startup plug-in not registered", note)
+        self.assertIn("did not load", note)
+        self.assertEqual([c for c in self.fake.calls if c[0] == "pluginInfo"],
+                         [])
+
+    def test_an_autoload_that_fails_is_a_note(self):
+        self.fake.fail = "autoload"
+        note = self.register()
+        self.assertIn("autoload refused", note)
+
+    def test_no_user_plugin_folder_on_the_path_loads_nothing(self):
+        self.path = "C:/Program Files/Autodesk/Maya2027/bin/plug-ins"
+        note = self.register()
+        self.assertIn("MAYA_PLUG_IN_PATH", note)
+        self.assertEqual(self.fake.calls, [])
+
+    def test_a_missing_plugin_file_is_a_note(self):
+        os.remove(os.path.join(self.dest, "plug-ins",
+                               install.STARTUP_PLUGIN + ".py"))
+        note = self.register()
+        self.assertIn("startup plug-in not registered", note)
+        self.assertEqual([c for c in self.fake.calls if c[0] == "loadPlugin"],
+                         [])
+
+    def test_the_path_defaults_to_maya_s(self):
+        saved = os.environ.get("MAYA_PLUG_IN_PATH")
+        os.environ["MAYA_PLUG_IN_PATH"] = self.path
+        try:
+            self.assertEqual(install.register_startup(self.dest,
+                                                      cmds=self.fake), "")
+        finally:
+            if saved is None:
+                os.environ.pop("MAYA_PLUG_IN_PATH", None)
+            else:
+                os.environ["MAYA_PLUG_IN_PATH"] = saved
+        self.assertTrue(os.path.isfile(self.target))
+
+    def test_the_name_is_the_plugin_file_s(self):
+        self.assertTrue(os.path.isfile(os.path.join(
+            PLUGIN, "plug-ins", install.STARTUP_PLUGIN + ".py")))
 
 
 if __name__ == "__main__":

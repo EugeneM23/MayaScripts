@@ -51,6 +51,12 @@ LOCAL_SUFFIX = " (local)"           # a local card put back beside a shipped one
 HALF_WRITTEN = ".part"              # a card file being written (store's atomic writes)
 OS_CLUTTER = frozenset(("thumbs.db", "desktop.ini", ".ds_store"))   # no card's files, lower case
 
+# The startup plug-in (2026-10-08): the payload's plug-ins/ holds it, and
+# `register_startup` copies it into the user's plug-ins folder, where Maya
+# autoloads it at every start (its docstring: why there).
+STARTUP_PLUGIN = "skeldarAnimStartup"
+STARTUP_FOLDER = "plug-ins"
+
 # Which build an installed copy is (2026-09-28, Check update): a build
 # carries this file, and an install from the repository writes its git
 # commit instead. Not a payload row -- the source tree holds none.
@@ -102,6 +108,7 @@ _PAYLOAD = (
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh
     "maya_share.py",            # the section
+    "plug-ins",                 # the startup plug-in: the edge panel from Maya's start (2026-10-08)
     "install.py",
     "README_INSTALL.txt",
 )
@@ -745,6 +752,108 @@ def _edge_standing():
                for widget in app.topLevelWidgets())
 
 
+def _slashed(path):
+    """A path with forward slashes and no trailing one."""
+    return path.replace("\\", "/").rstrip("/")
+
+
+def startup_folder(plug_in_path, user_app_dir, version):
+    """The user's own folder on MAYA_PLUG_IN_PATH the startup plug-in goes
+    into, or "" when there is none. Pure.
+
+    `<userAppDir>/<version>/plug-ins` when it is on the path (Maya puts it
+    first, measured), else the first entry under userAppDir (Maya's
+    version-less `<userAppDir>/plug-ins` comes second). Compared without
+    regard to slashes or case (Windows); answered as the path spells it.
+    """
+    root = _slashed(user_app_dir or "")
+    if not root:
+        return ""
+    under = []
+    for entry in (plug_in_path or "").split(os.pathsep):
+        entry = _slashed(entry.strip())
+        if entry and entry.lower().startswith(root.lower() + "/"):
+            under.append(entry)
+    wanted = "{0}/{1}/{2}".format(root, version, STARTUP_FOLDER).lower()
+    for entry in under:
+        if entry.lower() == wanted:
+            return entry
+    return under[0] if under else ""
+
+
+def register_startup(dest, cmds=None, plug_in_path=None):
+    """The startup plug-in copied from the installed folder `dest` into the
+    user's plug-ins folder, loaded, set to autoload, Maya's plug-in prefs
+    saved (2026-10-08). Answers "" or a note; never raises: a hub without its
+    edge panel at startup is no reason to fail an install.
+
+    Why a COPY in the user's plug-ins folder, loaded by its full path -
+    measured in a disposable Maya 2027.2 (scratch MAYA_APP_DIR) on 2026-10-08:
+
+    - Maya's plug-in prefs keep the FILE NAME, never the folder: `loadPlugin
+      <path>`, `pluginInfo -edit -autoload`, `pluginInfo -savePluginPrefs`
+      wrote `evalDeferred("autoLoadPlugin(\\"\\", \\"skProbe.py\\",
+      \\"skProbe\\")");` into `<MAYA_APP_DIR>/2027/prefs/pluginPrefs.mel`.
+      After a restart a plug-in loaded from a folder NOT on MAYA_PLUG_IN_PATH
+      was not loaded (not found, silently; autoload then read False), while
+      one copied into `<MAYA_APP_DIR>/2027/plug-ins` was (its initializePlugin
+      ran at startup). So the payload's own `plug-ins/` cannot be the place.
+    - MAYA_PLUG_IN_PATH began `<MAYA_APP_DIR>/2027/plug-ins;<MAYA_APP_DIR>/
+      plug-ins;<Maya's own>...` - both user folders on it even when they do
+      not exist (the animator's machine has no `2027/plug-ins` today: the
+      folder is made here).
+    - Maya 2027 loads plug-ins securely: a load from a folder NOT on
+      MAYA_PLUG_IN_PATH put up the modal «Untrusted Plugin Loading - Security
+      Warning» (Allow / Deny / Apply to all plugins in this location) - which
+      would block a quiet install over the command port and ask a colleague
+      at every install; the same dialog came for `<userAppDir>/scripts/
+      SkeldarAnim/plug-ins` (the installed folder's own), and answered Deny
+      the load returned None, no error. From the user plug-ins folder it
+      loaded with no dialog, even with that folder made after Maya started.
+    - By NAME the same plug-in was «not found on MAYA_PLUG_IN_PATH» in that
+      session (the folders are listed at startup): hence the full path.
+    - Maya's loader gives a Python plug-in neither `__file__` nor `__name__`
+      (both read None); `pluginInfo -query -path` answers inside
+      initializePlugin. The plug-in finds the installed SkeldarAnim from
+      there (`skeldarAnimStartup.plugin_dir`).
+
+    The copy goes BEFORE the unload: a missing source leaves a loaded
+    plug-in as it was. Unloading runs its uninitializePlugin, which stops
+    `maya_hub` only while it is imported - `install` calls this after its
+    purge, so an old module never deletes the edge panel under an Update
+    press; the load then defers the FRESH `maya_hub.start()`, which leaves a
+    panel standing to the install's own `rebuild_open_hub`.
+    """
+    if cmds is None:
+        cmds = _cmds()
+    if plug_in_path is None:
+        plug_in_path = os.environ.get("MAYA_PLUG_IN_PATH", "")
+    try:
+        app = cmds.internalVar(userAppDir=True)
+        folder = startup_folder(plug_in_path, app,
+                                str(cmds.about(version=True)))
+        if not folder:
+            return ("startup plug-in not registered: no folder under {0} is"
+                    " on MAYA_PLUG_IN_PATH".format(app))
+        source = os.path.join(dest, STARTUP_FOLDER, STARTUP_PLUGIN + ".py")
+        target = folder + "/" + STARTUP_PLUGIN + ".py"
+        if not os.path.isdir(folder):
+            os.makedirs(folder)
+        shutil.copyfile(source, target)
+        if cmds.pluginInfo(STARTUP_PLUGIN, query=True, loaded=True):
+            cmds.unloadPlugin(STARTUP_PLUGIN, force=True)
+        if not cmds.loadPlugin(target, quiet=True):
+            #  Maya answered None, no error: its untrusted-location dialog
+            #  answered Deny (measured), a security setting refusing it
+            return ("startup plug-in not registered: Maya did not load"
+                    " {0}".format(target))
+        cmds.pluginInfo(STARTUP_PLUGIN, edit=True, autoload=True)
+        cmds.pluginInfo(savePluginPrefs=True)
+        return ""
+    except Exception as error:                               # noqa: BLE001
+        return "startup plug-in not registered: {0}".format(error)
+
+
 def install(dropped=None, quiet=False):
     """Copy the payload, build the shelf, say so.
 
@@ -757,6 +866,10 @@ def install(dropped=None, quiet=False):
     skeldar_features (`features()`), and a purge after dropped that very
     module and told a fresh Maya «the previous version was loaded»
     (2026-09-28, the one-file installer's first run).
+
+    Last, in a GUI Maya, the startup plug-in is registered (2026-10-08,
+    `register_startup`): the hub's edge panel waits at the screen edge from
+    Maya's next start. A registration that failed is said, never raised.
     """
     cmds = _cmds()
     src = os.path.dirname(os.path.abspath(dropped)) if dropped \
@@ -793,6 +906,11 @@ def install(dropped=None, quiet=False):
     if poses_open:
         cmds.evalDeferred(lambda: rebuild_open_poselib(target),
                           lowestPriority=True)
+    # The startup plug-in (2026-10-08): the edge panel waiting from Maya's
+    # start. After the purge (see `register_startup`); a GUI Maya's only.
+    startup = "" if cmds.about(batch=True) else register_startup(target)
+    if startup and quiet:
+        _say("SkeldarAnim: " + startup)
     if not quiet:
         note = ""
         if reloaded:
@@ -812,6 +930,8 @@ def install(dropped=None, quiet=False):
         poses = poses_note(kept)
         if poses:
             note += "\n\n" + poses
+        if startup:
+            note += "\n\n" + startup
         cmds.confirmDialog(
             title="SkeldarAnim",
             message="Installed: shelf {0}, {1} buttons.\n{2}{3}".format(

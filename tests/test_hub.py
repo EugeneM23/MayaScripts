@@ -1074,6 +1074,26 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(len(self.edges), 1)
         self.assertEqual(self.built("characters"), 1)
 
+    def test_start_leaves_a_panel_an_older_module_built(self):
+        """The startup plug-in (2026-10-08): an install reloads it after its
+        purge, and the deferred start() of the FRESH module meets the panel
+        the purged one built - out, if the install came from its Update card.
+        Left as it is: the install's own rebuild_open_hub rebuilds it and
+        keeps it out (`_rebuild_edge`); a start() rebuilding it first would
+        have put it away hidden under the animator."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        older = FakeEdge()
+        older.reveal(hold=True)
+        self.edges.append(older)
+        self.he.state()["edge"] = older
+        self.assertIs(hub.start(), older)
+        self.assertFalse(older.destroyed)
+        self.assertEqual(len(self.edges), 1)
+        self.assertEqual(self.built("characters"), 0)
+        hub.rebuild()                                    # the install's
+        self.assertTrue(older.destroyed)
+        self.assertTrue(self.edges[-1].shown)
+
     def test_the_width_is_remembered_and_reused(self):
         import maya_edgerules
         self.fake.optionvars[hub.EDGE_VAR] = 1
