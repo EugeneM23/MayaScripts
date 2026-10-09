@@ -47,6 +47,7 @@ class SeamsMixin(object):
             "animations": lambda on: self.calls.append(("animations", on)),
             "pin": lambda on: self.calls.append(("pin", on)),
             "edge": lambda on: self.calls.append(("edge", on)),
+            "edge_side": lambda c: self.calls.append(("edge_side", c)),
             "told": lambda *a: None,
         }
         self.skin = hubqt.Skin(self.host_layout, scale=1.0,
@@ -150,11 +151,13 @@ class TheShell(SeamsMixin, unittest.TestCase):
                           "Edge panel", "Classic look"])
         self.skin.paint_sounds(True)
         self.skin.paint_animations(True)
+        #  "Edge panel" is a submenu (2026-10-09): its own row calls nothing
+        self.assertIs(actions[4].menu(), self.skin.edge_menu)
         for action in actions:
             action.trigger()
         self.assertEqual(self.calls,
                          ["check_update", "hotkey_editor", ("sounds", False),
-                          ("animations", False), ("edge", True), "classic"])
+                          ("animations", False), "classic"])
 
     def test_the_sounds_row_is_a_checkbox_painted_without_a_call(self):
         """2026-10-01: «звук наводки на кнопочку», switched in the menu."""
@@ -339,13 +342,15 @@ class HeaderState(SeamsMixin, unittest.TestCase):
         self.assertTrue(self.skin.pin.isHidden())
         self.skin.set_edge_mode(True)
         self.assertFalse(self.skin.pin.isHidden())
-        self.assertTrue(self.skin.edge_action.isChecked())
+        self.assertTrue(self.skin.edge_actions["left"].isChecked())
         self.skin.pin.click()
         self.assertEqual(self.calls_pin, [True])
+        self.skin.set_edge_mode(True, "right")
+        self.assertTrue(self.skin.edge_actions["right"].isChecked())
         self.skin.set_edge_mode(False)
         self.assertTrue(self.skin.pin.isHidden())
         self.assertFalse(self.skin.pin.isChecked())
-        self.assertFalse(self.skin.edge_action.isChecked())
+        self.assertTrue(self.skin.edge_actions["off"].isChecked())
 
     def test_paint_pin_checks_the_pin_without_a_callback(self):
         """A rebuilt edge panel keeps its pin (maya_hub.rebuild): painted,
@@ -359,13 +364,39 @@ class HeaderState(SeamsMixin, unittest.TestCase):
         self.assertFalse(self.skin.pin.isChecked())
         self.assertEqual(self.calls_pin, [])
 
-    def test_the_edge_row_calls_back_with_its_state(self):
+    def test_the_edge_panel_is_a_submenu_of_three(self):
+        """2026-10-09, the animator: «Можем добавить опцию выбора стороны
+        монитора откуда выезжает наша полка?» - Off / Left / Right."""
         seen = []
-        self.skin.cb["edge"] = lambda on: seen.append(on)
-        self.skin.edge_action.trigger()
-        self.assertEqual(seen, [True])
-        self.skin.paint_edge(False)               # painted, no callback
-        self.assertEqual(seen, [True])
+        self.skin.cb["edge_side"] = lambda choice: seen.append(choice)
+        menu = self.skin.edge_menu
+        self.assertEqual(menu.title(), "Edge panel")
+        self.assertEqual(menu.objectName(), "skeldarHubEdgeMenu")
+        self.assertEqual([a.text() for a in menu.actions()],
+                         ["Off", "Left edge", "Right edge"])
+        self.assertEqual(list(self.skin.edge_actions),
+                         ["off", "left", "right"])
+        self.assertTrue(self.skin.edge_actions["off"].isChecked())
+        self.skin.edge_actions["right"].trigger()
+        self.assertEqual([a.isChecked() for a in menu.actions()],
+                         [False, False, True])
+        self.skin.edge_actions["off"].trigger()
+        self.assertEqual(seen, ["right", "off"])
+        #  exclusive: one row checked
+        self.assertEqual([a.isChecked() for a in menu.actions()],
+                         [True, False, False])
+
+    def test_paint_edge_checks_the_row_without_a_call(self):
+        seen = []
+        self.skin.cb["edge_side"] = lambda choice: seen.append(choice)
+        self.skin.paint_edge(True, "right")
+        self.assertTrue(self.skin.edge_actions["right"].isChecked())
+        self.skin.paint_edge(True)
+        self.assertTrue(self.skin.edge_actions["left"].isChecked())
+        self.assertFalse(self.skin.edge_actions["right"].isChecked())
+        self.skin.paint_edge(False, "right")
+        self.assertTrue(self.skin.edge_actions["off"].isChecked())
+        self.assertEqual(seen, [])
 
 
 class Cards(SeamsMixin, unittest.TestCase):

@@ -52,6 +52,11 @@ FALLBACK_MS = 150
 #  sliding (every slide is over within maya_hubmotion.MAX_MS)
 GLIDE_WAIT_S = 0.6
 
+#  ⋮ -> Edge panel ▸ its rows (label, the choice maya_hub.set_edge_side
+#  takes), 2026-10-09
+EDGE_CHOICES = (("Off", "off"), ("Left edge", "left"),
+                ("Right edge", "right"))
+
 
 def qt():
     """PySide6 (Maya 2025+), else PySide2, as one namespace; None without Qt."""
@@ -1293,12 +1298,14 @@ class Skin(object):
             if text is None:
                 self.menu.addSeparator()
                 continue
+            if key == "edge":
+                self._build_edge_menu(text)
+                continue
             action = self.menu.addAction(text)
-            if key in ("sounds", "animations", "edge"):
-                #  a switch (2026-10-01, the hover sound, the card motion;
-                #  2026-10-08, the edge panel): `triggered` carries the new
-                #  state and is not emitted by paint_sounds /
-                #  paint_animations / paint_edge
+            if key in ("sounds", "animations"):
+                #  a switch (2026-10-01, the hover sound, the card motion):
+                #  `triggered` carries the new state and is not emitted by
+                #  paint_sounds / paint_animations
                 action.setCheckable(True)
                 action.triggered.connect(
                     lambda checked=False, k=key: self._call(k, bool(checked)))
@@ -1313,6 +1320,29 @@ class Skin(object):
         row.addWidget(self.pin)
         row.addWidget(self.menu_button)
         return header
+
+    def _build_edge_menu(self, text):
+        """⋮ -> Edge panel ▸ Off / Left edge / Right edge (2026-10-09, «Можем
+        добавить опцию выбора стороны монитора откуда выезжает наша
+        полка?»): three exclusive rows, the standing one checked. A row's
+        `triggered` calls back ("edge_side", choice); `paint_edge` checks a
+        row and calls nothing (setChecked emits no `triggered`)."""
+        q = qt()
+        self.edge_menu = self.menu.addMenu(text)
+        self.edge_menu.setObjectName("skeldarHubEdgeMenu")
+        group_class = (getattr(q.QtGui, "QActionGroup", None)
+                       or q.QtWidgets.QActionGroup)       # Qt6 / Qt5
+        self._edge_group = group_class(self.edge_menu)
+        self._edge_group.setExclusive(True)
+        self.edge_actions = {}
+        for label, choice in EDGE_CHOICES:
+            action = self.edge_menu.addAction(label)
+            action.setCheckable(True)
+            self._edge_group.addAction(action)
+            action.triggered.connect(
+                lambda checked=False, c=choice: self._call("edge_side", c))
+            self.edge_actions[choice] = action
+        self.edge_actions["off"].setChecked(True)
 
     def _build_message(self):
         q = qt()
@@ -1443,16 +1473,19 @@ class Skin(object):
         if state is not None:
             self.set_state(state)
 
-    def paint_edge(self, on):
-        """The menu's Edge panel row shows `on` (no callback)."""
-        self.edge_action.setChecked(bool(on))
+    def paint_edge(self, on, side="left"):
+        """The menu's Edge panel rows show the mode (no callback): Off, or
+        the side the panel stands on."""
+        choice = ("right" if side == "right" else "left") if on else "off"
+        self.edge_actions[choice].setChecked(True)
 
-    def set_edge_mode(self, on):
-        """The hub stands in the edge panel (`on`): the pin is shown."""
+    def set_edge_mode(self, on, side="left"):
+        """The hub stands in the edge panel (`on`, on `side`): the pin is
+        shown."""
         self.pin.setVisible(bool(on))
         if not on:
             self.pin.setChecked(False)
-        self.paint_edge(on)
+        self.paint_edge(on, side)
 
     def paint_pin(self, on):
         """The 📌 shows `on` (no callback: `clicked` is the press's alone) -

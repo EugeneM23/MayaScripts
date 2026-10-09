@@ -609,12 +609,13 @@ class FakeSkin(object):
     def set_active(self, key):
         self.active = key
 
-    def set_edge_mode(self, on):
+    def set_edge_mode(self, on, side="left"):
         self.edge_mode = bool(on)
-        self.edge_painted.append(bool(on))
+        self.edge_side = side
+        self.edge_painted.append((bool(on), side))
 
-    def paint_edge(self, on):
-        self.edge_painted.append(bool(on))
+    def paint_edge(self, on, side="left"):
+        self.edge_painted.append((bool(on), side))
 
     def paint_pin(self, on):
         self.pins.append(bool(on))
@@ -1004,8 +1005,10 @@ class FakeEdge(object):
     """maya_hubedge.Edge as maya_hub drives it: what was asked of it."""
 
     def __init__(self, scale=1.0, parent=None, width=360, motion=None,
-                 on_width=None, **_seams):
+                 on_width=None, side="left", **_seams):
         self.scale, self.width, self.on_width = scale, width, on_width
+        self.side = side
+        self.sides = []                     # set_side(side) as asked
         self.slot = object()                # the skin's host, one per edge
         self.shown = False
         self.pinned = False
@@ -1027,6 +1030,14 @@ class FakeEdge(object):
 
     def set_pinned(self, on):
         self.pinned = bool(on)
+
+    def set_side(self, side):
+        self.sides.append(side)
+        if side == self.side:
+            return False
+        self.side = side
+        self.shown = False
+        return True
 
     def alive(self):
         return not self.destroyed
@@ -1154,7 +1165,7 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         hub._dress_edge(skin)
         self.fake.optionvars[hub.EDGE_VAR] = 1
         hub._dress_edge(skin)
-        self.assertEqual(skin.edge_painted, [False, True])
+        self.assertEqual(skin.edge_painted, [(False, "left"), (True, "left")])
 
     def test_the_pin_and_the_switch_are_the_header_s(self):
         self.fake.optionvars[hub.EDGE_VAR] = 1
@@ -1165,6 +1176,99 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         callbacks["pin"](False)
         self.assertFalse(self.edges[-1].pinned)
         self.assertIs(callbacks["edge"], hub.set_edge)
+        self.assertIs(callbacks["edge_side"], hub.set_edge_side)
+
+    # --------------------------------------------------- the side
+
+    def test_the_side_is_left_by_default_and_remembered(self):
+        """2026-10-09: «Можем добавить опцию выбора стороны монитора
+        откуда выезжает наша полка?» - ⋮ -> Edge panel ▸ Left / Right."""
+        self.assertEqual(hub.SIDE_VAR, "skeldarAnimHub_edgeSide")
+        self.assertEqual(hub.edge_side(), "left")
+        self.fake.optionvars[hub.SIDE_VAR] = "right"
+        self.assertEqual(hub.edge_side(), "right")
+        self.fake.optionvars[hub.SIDE_VAR] = "top"
+        self.assertEqual(hub.edge_side(), "left")
+
+    def test_the_panel_is_built_on_the_remembered_side(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.optionvars[hub.SIDE_VAR] = "right"
+        edge = hub.start()
+        self.assertEqual(edge.side, "right")
+        self.assertTrue(hub._SKIN.edge_mode)
+        self.assertEqual(hub._SKIN.edge_side, "right")
+
+    def test_a_side_picked_while_off_turns_the_mode_on_there(self):
+        self.fake.workspace[hub.CONTROL] = {}
+        self.assertTrue(hub.set_edge_side("right"))
+        self.assertEqual(self.fake.optionvars[hub.SIDE_VAR], "right")
+        self.assertEqual(self.fake.optionvars[hub.EDGE_VAR], 1)
+        self.assertEqual(self.edges, [])                 # deferred
+        self.fake.run_deferred()
+        self.assertIn(hub.CONTROL, self.fake.deleted)
+        self.assertEqual(self.edges[-1].side, "right")
+        self.assertTrue(self.edges[-1].revealed_with_hold)
+
+    def test_the_other_side_moves_the_standing_panel(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        edge = hub.start()
+        self.assertTrue(hub.set_edge_side("right"))
+        self.assertEqual(edge.sides, [])                 # deferred
+        self.fake.run_deferred()
+        self.assertEqual(edge.sides, ["right"])
+        self.assertEqual(edge.side, "right")
+        self.assertTrue(edge.revealed_with_hold)
+        self.assertEqual(len(self.edges), 1)             # the same panel
+        self.assertIs(hub._SKIN.host, edge.slot)
+        self.assertEqual(hub._SKIN.edge_painted[-1], (True, "right"))
+
+    def test_the_same_side_again_changes_nothing(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        edge = hub.start()
+        hub.set_edge_side("left")
+        self.fake.run_deferred()
+        self.assertEqual(edge.sides, ["left"])           # asked, refused
+        self.assertEqual(edge.reveals, [])
+
+    def test_the_last_side_picked_wins(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        edge = hub.start()
+        hub.set_edge_side("right")
+        hub.set_edge_side("left")
+        self.fake.run_deferred()
+        self.assertEqual(edge.side, "left")
+        self.assertEqual(edge.reveals, [])
+
+    def test_off_is_set_edge_false(self):
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.start()
+        self.assertFalse(hub.set_edge_side("off"))
+        self.assertEqual(self.fake.optionvars[hub.EDGE_VAR], 0)
+        self.fake.run_deferred()
+        self.assertTrue(self.edges[-1].destroyed)
+        self.assertIn(hub.CONTROL, self.fake.workspace)
+
+    def test_a_side_needs_the_skin(self):
+        self.fake.optionvars[hub.CLASSIC_VAR] = 1
+        self.assertFalse(hub.set_edge_side("right"))
+        self.assertNotIn(hub.SIDE_VAR, self.fake.optionvars)
+        self.assertNotEqual(self.fake.optionvars.get(hub.EDGE_VAR), 1)
+
+    def test_a_side_with_no_panel_standing_builds_it_there(self):
+        """The mode on but no panel (it failed earlier, or was never
+        built this session): the panel is built on the side and shown."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        hub.set_edge_side("right")
+        self.fake.run_deferred()
+        self.assertEqual(self.edges[-1].side, "right")
+        self.assertTrue(self.edges[-1].revealed_with_hold)
+
+    def test_the_menu_shows_the_side(self):
+        skin = FakeSkin(None)
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.optionvars[hub.SIDE_VAR] = "right"
+        hub._dress_edge(skin)
+        self.assertEqual(skin.edge_painted, [(True, "right")])
 
     # --------------------------------------------------- the build
 

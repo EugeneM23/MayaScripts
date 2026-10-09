@@ -68,6 +68,7 @@ COLUMN = "skeldarAnimHubColumn"
 OPTIONVAR = "skeldarAnimHub_collapsed_{0}"
 CLASSIC_VAR = "skeldarAnimHub_classic"     # 1: the classic hub even with Qt
 EDGE_VAR = edgerules.EDGE_VAR              # 1: the hub in the edge panel
+SIDE_VAR = edgerules.SIDE_VAR              # "left" / "right" (2026-10-09)
 NEW_LOOK_BUTTON = "skeldarAnimHubNewLook"
 # 1: the startup plug-in's registration waits for this hub (install.py's
 # STARTUP_PENDING - named here, pinned equal by a test: the installer is
@@ -366,9 +367,11 @@ def _callbacks():
         "hover": _hover_sound,
         "sounds": set_sounds,
         "animations": set_animations,
-        #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel
+        #  the edge panel (2026-10-08): the header's 📌 and ⋮ -> Edge panel;
+        #  since 2026-10-09 its rows Off / Left edge / Right edge
         "pin": _press_pin,
         "edge": set_edge,
+        "edge_side": set_edge_side,
     }
 
 
@@ -418,10 +421,11 @@ def _dress_header(skin):
 
 
 def _dress_edge(skin):
-    """The menu's Edge panel row = the mode (2026-10-08). The 📌 shows once
-    the skin stands in the edge panel (`Skin.set_edge_mode`, _ensure_edge)."""
+    """The menu's Edge panel rows = the mode and its side (2026-10-08,
+    2026-10-09). The 📌 shows once the skin stands in the edge panel
+    (`Skin.set_edge_mode`, _ensure_edge)."""
     try:
-        skin.paint_edge(edge_on())
+        skin.paint_edge(edge_on(), edge_side())
     except Exception:                                        # noqa: BLE001
         print(traceback.format_exc())
 
@@ -606,6 +610,14 @@ def _skin_at(current):
     return is_skinned() and getattr(_SKIN, "host", None) is current.slot
 
 
+def edge_side():
+    """The edge the panel stands on, as remembered: "left" by default
+    (2026-10-09)."""
+    if cmds.optionVar(exists=SIDE_VAR):
+        return edgerules.side_of(cmds.optionVar(query=SIDE_VAR))
+    return "left"
+
+
 def _edge_width():
     """The panel's logical width, as the animator's grip left it."""
     if cmds.optionVar(exists=edgerules.WIDTH_VAR):
@@ -647,10 +659,10 @@ def _ensure_edge():
         he = _hubedge()
         he.destroy_all()
         current = he.Edge(scale=_scale(), width=_edge_width(),
-                          on_width=_save_edge_width)
+                          on_width=_save_edge_width, side=edge_side())
         he.state()["edge"] = current
         _SKIN = _build_skin(host=current.slot)
-        _SKIN.set_edge_mode(True)
+        _SKIN.set_edge_mode(True, edge_side())
     except Exception as error:
         print("SkeldarAnim: the edge panel could not be built - the hub "
               "stays docked for this session")
@@ -766,6 +778,49 @@ def set_edge(on):
     cmds.optionVar(intValue=(EDGE_VAR, int(bool(on))))
     cmds.evalDeferred(lambda: _switch_edge(bool(on)), lowestPriority=True)
     return bool(on)
+
+
+def set_edge_side(choice):
+    """⋮ -> Edge panel ▸ Off / Left edge / Right edge (2026-10-09, «Можем
+    добавить опцию выбора стороны монитора откуда выезжает наша полка?»).
+    "off" is set_edge(False). A side is remembered, then turns the mode on
+    at it, or - the mode on - moves the standing panel there (deferred, as
+    set_edge: the press comes from the panel's own menu). Refused, as
+    set_edge(True) is, without the new look - nothing remembered."""
+    if choice not in edgerules.SIDES:
+        return set_edge(False)
+    if classic_asked() or not _qt_available():
+        return set_edge(True)                  # refused, and says why
+    cmds.optionVar(stringValue=(SIDE_VAR, edgerules.side_of(choice)))
+    if not edge_on():
+        return set_edge(True)
+    cmds.evalDeferred(_move_edge, lowestPriority=True)
+    return True
+
+
+def _move_edge():
+    """The deferred half of `set_edge_side` with the mode on. The last press
+    wins (the side remembered when this runs): the panel standing moves
+    there and slides out held, so the animator sees where it went; the side
+    it already stands on changes nothing. None standing (it failed earlier,
+    or this session never built it): built on that side and shown the same
+    way; failing, the dock."""
+    if not edge_on():
+        return None
+    side = edge_side()
+    current = edge()
+    if current is not None and _skin_at(current):
+        if current.set_side(side):
+            if _SKIN is not None:
+                _SKIN.paint_edge(True, side)
+            current.reveal(hold=True)
+        return current
+    try:
+        current = _ensure_edge()
+    except Exception:                                        # noqa: BLE001
+        return show()                       # the dock: edge_on() is False
+    current.reveal(hold=True)
+    return current
 
 
 def _switch_edge(on):
