@@ -179,7 +179,14 @@ lower body) carries the clip's travel; a partial card (a hand, an arm) is always
   STEADIED source frame implies (its own turned by the steadied one's difference), never its own: near
   upside down its own is noise, and the body stood turned by the difference, 180 deg at a roll's
   inverted frames (the re-review of the fix wave); a twin, rootless onto rootless, lands on the card at
-  every frame, with the travel and In place;
+  every frame, with the travel and In place. A KNOWN LIMIT (its review, not fixed): onto a NON-twin
+  rootless target whose top joint pairs with a different source bone (a Biped card, `Bip001` on top
+  and `Pelvis` paired, onto a Mixamo `Hips`) the steadied turn is measured on the source's top joint
+  while the target's top follows the paired bone, so near upside down the body can still turn by their
+  heading difference - as it did before the fix wave;
+- the paste's entry frame is the only frame the tweaks come back on when it is the paste's FIRST
+  frame (`Walk.arrive(..., restore=)`): At current time off with the scene standing inside the clip's
+  own range, that frame is a plain move - read with its tweaks it keyed a one-frame spike;
 - mirrored, the travel is reflected across the source root's sagittal plane (`F · L · F`, posemath's
   reflection);
 - In place, a partial card, or a Main the press cannot write (locked, driven by something not ours) →
