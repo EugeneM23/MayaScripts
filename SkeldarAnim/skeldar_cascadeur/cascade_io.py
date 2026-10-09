@@ -33,10 +33,13 @@ def _loader(scene=None):
     return tools.get_tool("FbxSceneLoader").get_fbx_loader(scene or current_scene())
 
 
-def import_clip_new_tab(path):
-    """The FBX into a new scene tab (scene import: skeleton and animation)."""
+def import_clip_onto(character_path, clip_path):
+    """A new scene tab with the character (its mesh and skeleton), and the clip's
+    animation on that skeleton. The character is the scene import, so the clip
+    lands on its joints by name; the clip's own skeleton is not brought in."""
     wrapping.new_scene()
-    _loader(current_scene()).import_scene(path.replace("\\", "/"))
+    _loader(current_scene()).import_scene(character_path.replace("\\", "/"))
+    _loader(current_scene()).import_animation(clip_path.replace("\\", "/"))
 
 
 def export_skeleton(path):

@@ -100,6 +100,34 @@ Window {
             }
         }
 
+        Text {
+            text: "Character - the clip is put on the chosen one"
+            color: "#a8a8a8"
+            font.pixelSize: 12
+        }
+        Row {
+            spacing: 8
+            Repeater {
+                model: bridge.characterNames
+                Rectangle {
+                    width: 140
+                    height: 30
+                    radius: 4
+                    color: modelData === bridge.characterName ? "#3c6e9c" : "#3c3f45"
+                    Text {
+                        anchors.centerIn: parent
+                        text: modelData
+                        color: "#ffffff"
+                        font.pixelSize: 12
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: bridge.pickCharacter(modelData)
+                    }
+                }
+            }
+        }
+
         Rectangle {
             width: root.width - 24
             height: 30

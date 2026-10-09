@@ -14,6 +14,8 @@ import os
 
 from PySide6 import QtCore
 
+from skeldar_cascadeur import characters
+
 VIEW_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.qml")
 
 
@@ -36,6 +38,7 @@ class BridgeModel(QtCore.QObject):
         self._target = ""
         self._author = ""
         self._picked = []
+        self._bridge.choose_character(characters.default())
         self._refresh_target()
 
     # ---- properties the view reads -----------------------------------------
@@ -47,6 +50,15 @@ class BridgeModel(QtCore.QObject):
     def clipNames(self):
         needle = self._filter.lower()
         return [name for name in self._names() if needle in name.lower()]
+
+    @QtCore.Property("QStringList", notify=changed)
+    def characterNames(self):
+        return characters.labels()
+
+    @QtCore.Property(str, notify=changed)
+    def characterName(self):
+        chosen = self._bridge.character
+        return chosen.label if chosen is not None else ""
 
     @QtCore.Property(str, notify=changed)
     def statusText(self):
@@ -66,6 +78,12 @@ class BridgeModel(QtCore.QObject):
     @QtCore.Slot(str)
     def setAuthor(self, text):
         self._author = text or ""
+
+    @QtCore.Slot(str)
+    def pickCharacter(self, label):
+        """The character card the animator clicked: imports go onto it."""
+        self._bridge.choose_character(characters.by_label(label))
+        self.changed.emit()
 
     @QtCore.Slot()
     def refresh(self):

@@ -7,6 +7,7 @@ import tempfile
 import unittest
 
 from skeldar_cascadeur import actions
+from skeldar_cascadeur import characters
 from skeldar_cascadeur import prefs
 from maya_uebridge import records
 
@@ -48,8 +49,8 @@ class FakeCascade(object):
         self.imported = []
         self.exported = []
 
-    def import_clip_new_tab(self, path):
-        self.imported.append(path)
+    def import_clip_onto(self, character_path, clip_path):
+        self.imported.append((character_path, clip_path))
 
     def export_skeleton(self, path):
         with open(path, "wb") as handle:
@@ -115,15 +116,26 @@ class Bridge(unittest.TestCase):
         self.assertEqual([r.name for r in bridge.records], ["A_Jump"])
         self.assertIn("1", text)
 
-    def test_import_exports_then_imports_and_remembers_the_target(self):
+    def test_import_exports_then_imports_onto_the_chosen_character(self):
         bridge = self.make()
         bridge.refresh()
+        bridge.choose_character(characters.default())
         text = bridge.import_clips([clip()])
         self.assertEqual(self.ue.exports, ["A_Jump"])
         self.assertEqual(len(self.cs.imported), 1)
+        character_path, clip_path = self.cs.imported[0]
+        self.assertEqual(character_path, characters.default().path)
+        self.assertTrue(clip_path.endswith("A_Jump.fbx"))
         self.assertEqual(bridge.target.package, "/Game/Anim/A_Jump")
-        self.assertIn("A_Jump", text)
+        self.assertIn("A_Jump on Manny UE5", text)
         self.assertEqual(prefs.get(self.prefs, "target"), "/Game/Anim/A_Jump")
+
+    def test_import_without_a_character_refuses_and_writes_nothing(self):
+        bridge = self.make()
+        text = bridge.import_clips([clip()])
+        self.assertEqual(text, actions.NO_CHARACTER)
+        self.assertEqual(self.ue.exports, [])
+        self.assertEqual(self.cs.imported, [])
 
     def test_export_refused_without_a_target(self):
         bridge = self.make()

@@ -20,8 +20,13 @@ class FakeBridge(object):
     def __init__(self):
         self.records = [clip("A_Jump"), clip("B_Walk")]
         self.target = None
+        self.character = None
         self.calls = []
         self.plan_refusal = ""
+
+    def choose_character(self, character):
+        self.character = character
+        self.calls.append(("character", character.label if character else None))
 
     def refresh(self, project=None):
         self.calls.append("refresh")
@@ -102,7 +107,7 @@ class Model(unittest.TestCase):
         model, bridge, _ = self.make()
         model.importPicked()
         self.assertEqual(model.statusText, "select one or more animations first")
-        self.assertEqual(bridge.calls, [])
+        self.assertEqual([c for c in bridge.calls if c[0] == "import"], [])
 
     def test_export_asks_before_it_writes(self):
         model, bridge, confirm = self.make()
@@ -137,6 +142,17 @@ class Model(unittest.TestCase):
         model.setAuthor("Yevhen")
         model.sendPicked("attack", "")
         self.assertIn(("send", "attack", "Yevhen"), bridge.calls)
+
+    def test_the_default_character_is_chosen_at_start(self):
+        model, bridge, _ = self.make()
+        self.assertEqual(model.characterName, "Manny UE5")
+        self.assertEqual(list(model.characterNames), ["Manny UE5"])
+
+    def test_picking_a_character_card_sets_it_on_the_bridge(self):
+        model, bridge, _ = self.make()
+        model.pickCharacter("Manny UE5")
+        self.assertIn(("character", "Manny UE5"), bridge.calls)
+        self.assertEqual(model.characterName, "Manny UE5")
 
     def test_refresh_reports_the_count(self):
         model, _, _ = self.make()

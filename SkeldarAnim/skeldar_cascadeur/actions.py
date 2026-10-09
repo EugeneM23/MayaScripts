@@ -5,7 +5,7 @@ whole flow is tested with fakes. bridge.py wires the real ports.
 
 Ports:
   unreal   -- module-like: list_clips, export_clip, reimport  (unreal.py)
-  cascade  -- import_clip_new_tab, export_skeleton, skeleton_roots,
+  cascade  -- import_clip_onto, export_skeleton, skeleton_roots,
               animation_frames, scene_fps                     (cascade_io.py)
   share    -- module-like: send                                 (shared.py)
   ask      -- callable(text) -> bool, the confirm dialog
@@ -22,6 +22,7 @@ from skeldar_cascadeur import rules
 
 CANCELLED = "cancelled - nothing changed"
 NO_AUTHOR = "type an author name first - nothing sent"
+NO_CHARACTER = "pick a character card first - nothing imported"
 FALLBACK_NAME = "animation.fbx"
 
 
@@ -59,6 +60,7 @@ class Bridge(object):
         self.records = []
         self.content_dir = ""
         self.target = None
+        self.character = None
         os.makedirs(temp_dir, exist_ok=True)
 
     # ---- the list ---------------------------------------------------------
@@ -71,19 +73,25 @@ class Bridge(object):
 
     # ---- import -----------------------------------------------------------
 
+    def choose_character(self, character):
+        """The card the animator picked (characters.Character), or None."""
+        self.character = character
+
     def import_clips(self, picked, project=None):
-        """Each picked clip: exported from Unreal, imported into a new tab.
-        Returns one status line naming every clip and its frame count."""
+        """Each picked clip: exported from Unreal, put on the chosen character in
+        a new scene tab. Returns one status line naming every clip and its frames."""
+        if self.character is None:
+            return NO_CHARACTER
         lines = []
         for rec in picked:
             try:
                 fbx, _payload = self.unreal.export_clip(rec, self.temp_dir,
                                                         project=project)
-                self.cascade.import_clip_new_tab(fbx)
+                self.cascade.import_clip_onto(self.character.path, fbx)
                 frames = self.cascade.animation_frames()
                 self.target = rec
-                lines.append("{0}: new tab, {1} frames".format(
-                    rules.clip_tab_name(rec.name),
+                lines.append("{0} on {1}: new tab, {2} frames".format(
+                    rules.clip_tab_name(rec.name), self.character.label,
                     "?" if frames is None else frames))
             except Exception as exc:                    # noqa: BLE001
                 lines.append("{0}: {1}".format(rec.name, exc))
