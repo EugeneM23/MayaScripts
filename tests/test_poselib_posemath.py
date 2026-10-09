@@ -1080,6 +1080,102 @@ class SteadyHeading(unittest.TestCase):
         self.assertEqual([s for _y, s in got], [False, False])
 
 
+class SteadyHeadingRootlessTarget(unittest.TestCase):
+    """The re-review of the fix wave (2026-10-09): M3 handed a ROOTLESS target's top joint the
+    steadied ground while `_on_ground` still took off the frame's OWN heading - read near upside
+    down, a 2 deg tilt's half turn. Before M3 the travel's ground carried that same noise and the
+    two cancelled; after it, at the roll's inverted frames the hips, and every bone built on them,
+    were turned about world Y by up to ~180 deg. Rootless onto rootless the skeletons are twins
+    here (the card onto itself, and onto a copy standing elsewhere, turned): every bone is the
+    card's relative to the card's root frame, placed on the target's root world - with the
+    travel (the card carried from its first frame's ground onto where the target stands) and In
+    place (the card on its STEADIED ground, placed where the target stands), mirrored too."""
+
+    TOL = 1e-6
+
+    def setUp(self):
+        self.clip = rolling_clip()
+        self.first = self.clip[0]
+        self.roots = pm.clip_roots(self.first, [bones["mx_pelvis"]["world"]
+                                                for bones in self.clip])
+        self.members = list(self.first)
+
+    def targets(self):
+        return (("itself", self.first),
+                ("elsewhere", rootless(skeleton(place=trs((-40, 0, 75), (0, 70, 0))))))
+
+    def worst(self, target, travel, mirror=False):
+        """(deg, cm, frame, leaf) of the worst bone over the clip - mirrored, every bone's turn
+        and the hips' place: `mirror` reflects the turns and keeps every other bone's place where
+        the card had it (the transfer builds them off the target's own lengths)."""
+        transfer = pm.Transfer(self.first, target, pm.pairs(self.first, target), self.members)
+        self.assertTrue(transfer.align and all(
+            pm.angle(turn, om.MMatrix()) == 0.0 for turn in transfer.align.values()))   # twins
+        place = transfer.place()
+        worst = (0.0, 0.0, None, None)
+        for i, now in enumerate(self.clip):
+            shown = pm.mirror(now, self.members, root_frame=self.roots[i])[0] if mirror else now
+            if travel:
+                root_world = transfer.travel(now, self.first, flip=mirror,
+                                             roots=(self.roots[i], self.roots[0])) * place
+            else:
+                root_world = place
+            out = transfer.frame(shown, root_world=root_world, source_root=self.roots[i])
+            carry = pm.rigid(self.roots[i]).inverse() * root_world
+            for leaf in target:
+                want = pm.matrix(shown[leaf]["world"]) * carry
+                deg = pm.angle(out[leaf], want)
+                cm = (pm.position(out[leaf]) - pm.position(want)).length() \
+                    if not mirror or leaf == "mx_pelvis" else 0.0
+                if max(deg, cm) > max(worst[0], worst[1]):
+                    worst = (deg, cm, i, leaf)
+        return worst
+
+    def test_the_clip_turns_its_hips_upside_down(self):
+        """The fixture can tell: some frames are past the swing limit, so their heading is the
+        steadied one, not their own."""
+        steadied = [s for _yaw, s in pm.steady_yaws(
+            [pm.rotation(self.first["mx_pelvis"]["rest"]).inverse() *
+             pm.rotation(bones["mx_pelvis"]["world"]) for bones in self.clip])]
+        self.assertTrue(any(steadied) and not all(steadied))
+
+    def test_with_the_travel_a_twin_is_exact_at_every_frame(self):
+        for name, target in self.targets():
+            deg, cm, i, leaf = self.worst(target, travel=True)
+            self.assertLess(max(deg, cm), self.TOL, "%s: %g deg, %g cm at frame %s (%s)" % (
+                name, deg, cm, i, leaf))
+
+    def test_in_place_a_twin_is_exact_at_every_frame(self):
+        for name, target in self.targets():
+            deg, cm, i, leaf = self.worst(target, travel=False)
+            self.assertLess(max(deg, cm), self.TOL, "%s: %g deg, %g cm at frame %s (%s)" % (
+                name, deg, cm, i, leaf))
+
+    def test_mirrored_a_twin_is_exact_at_every_frame(self):
+        for name, target in self.targets():
+            for travel in (True, False):
+                deg, cm, i, leaf = self.worst(target, travel=travel, mirror=True)
+                self.assertLess(max(deg, cm), self.TOL,
+                                "%s, travel %s: %g deg, %g cm at frame %s (%s)" % (
+                                    name, travel, deg, cm, i, leaf))
+
+    def test_the_frames_within_the_limit_are_as_they_were(self):
+        """A frame keeping its own heading hands `_on_ground` nothing new: bit for bit what the
+        transfer gave with no `source_root` at all (its own ground, `_ground`)."""
+        for _name, target in self.targets():
+            transfer = pm.Transfer(self.first, target, pm.pairs(self.first, target),
+                                   self.members)
+            place = transfer.place()
+            for i, now in enumerate(self.clip):
+                own = pm._ground(now["mx_pelvis"]["rest"], now["mx_pelvis"]["world"])[0]
+                if pm.flat(own) != pm.flat(self.roots[i]):
+                    continue
+                given = transfer.frame(now, root_world=place, source_root=self.roots[i])
+                plain = transfer.frame(now, root_world=place)
+                for leaf in plain:
+                    same(self, given[leaf], plain[leaf], 0.0, "frame %d %s" % (i, leaf))
+
+
 class Purity(unittest.TestCase):
 
     def test_imports(self):

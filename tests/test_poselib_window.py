@@ -1361,6 +1361,38 @@ class Save(WindowCase):
         self.win.save_confirm.click()
         self.assertEqual(self.scene.calls("save")[0][2], "")
 
+    def test_the_panel_s_own_name_follows_the_folder_the_tree_picks(self):
+        """The re-review of the fix wave (S7's auto name): the panel's free name was chosen for
+        the folder it opened on, and a folder picked in the tree while saving kept it - opened in
+        Hands with «Pose 2» (Hands holds a Pose), moved to Hands/Left, which holds a «Pose 2»:
+        the panel's own name was refused. While the field holds the name the panel gave it (or
+        nothing), a folder change gives it that folder's free one; a name typed over it stays."""
+        store.write(self.root, "Hands", "Pose", card_data("Pose"))
+        store.write(self.root, "Hands/Left", "Pose 2", card_data("Pose 2"))
+        store.write(self.root, "", "Pose", card_data("Pose"))
+        store.write(self.root, "", "Pose 2", card_data("Pose 2"))
+        self.win.refresh()
+        self.open()
+        self.assertEqual(self.win.save_name.text(), "Pose 2")
+        self.win.set_folder("Hands/Left")
+        self.assertEqual(self.win.save_name.text(),
+                         store.unique_name(self.root, "Hands/Left", "Pose"))
+        self.win.tree.setCurrentItem(self.win.folder_item(""))
+        self.assertEqual(self.win.save_name.text(), "Pose 3")
+        self.win.save_name.setText("")                   # emptied: the panel's again
+        self.win.set_folder("Hands")
+        self.assertEqual(self.win.save_name.text(), "Pose 2")
+        self.win.save_name.setText("Grip")               # typed over: the animator's
+        self.win.set_folder("Hands/Left")
+        self.assertEqual(self.win.save_name.text(), "Grip")
+        self.win.save_name.setText("Pose")
+        self.win.set_folder("Hands")
+        self.assertEqual(self.win.save_name.text(), "Pose")   # typed, even a taken one
+        self.win.set_folder("Hands/Left")
+        self.win.save_confirm.click()
+        (_n, name, folder, _r, _s, _a), = self.scene.calls("save")
+        self.assertEqual((name, folder), ("Pose", "Hands/Left"))
+
 
 # ------------------------------------------------------------------ the animation cards
 

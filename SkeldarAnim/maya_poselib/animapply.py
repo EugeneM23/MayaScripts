@@ -38,7 +38,9 @@ prepared once.
    must not read off curves the press rewrites: at Blend < 100 % every planned plug as the take
    stands (the partner of each frame's mix), and the ground a ROOTLESS target that carries no
    travel stands on (`read_ground` - its top joint is a planned member, cut by Replace and keyed
-   every frame: M4); then what every planned plug SHOWED when the press began
+   every frame: M4) - under Insert the take's ground at `a` for every pasted frame
+   (`_ground_time`: the take resumes from there after the clip); then what every planned plug
+   SHOWED when the press began
    (`keys.shown_at_start`: the walk's tweaks reading, else the value);
 4. ONE undo chunk (`UNDO_CHUNK`), autoKey off inside it: FIRST every planned plug set to what it
    showed when the press began (`keys.undo_marks`) - each frame's solve records its temporary
@@ -75,7 +77,8 @@ prepared once.
    was keyed stays, its curves get their state back, the walk never sets the keyed plugs back,
    and the line says what stays (`CANCELLED_KEPT`: the frames keyed, what the mode cut or moved -
    S3). A press that RAISES inside its chunk is undone the same way before the error goes on
-   (`_undo_failed`: half a paste is never left behind - S2).
+   (`_undo_failed`: half a paste is never left behind - S2) - when the chunk recorded a step of
+   the press (`_Steps`): a chunk left empty undoes nothing, never the animator's step before it.
 
 ## The travel («от места персонажа»)
 
@@ -250,6 +253,25 @@ def _shown(plan, now):
     return found[0], found[1]
 
 
+def _ground_time(plan, time):
+    """The frame of the take whose ground a ROOTLESS target pasted In place stands on at pasted
+    frame `time` (read before the ops, `_Target.read_ground`): `time` itself - Replace and Merge
+    leave the take where it is - but under Insert (`("shift", a, n)`) `a`: the take's frames
+    from `a` on move to after the clip, so the clip stands where the take stood at `a`, where
+    the shifted take resumes (the re-review of the fix wave: riding the take's own a..b ground,
+    a target walking 200 cm over the range snapped back 200 cm at b + 1). Pure."""
+    if any(op[0] == "shift" for op in plan.ops):
+        return plan.a
+    return time
+
+
+def _first(plan, time):
+    """Whether pasted frame `time` is the paste's first frame `a` - the one frame a walk coming
+    back to its entry frame sets the animator's tweaks back on (`timewalk.Walk.arrive`): an
+    entry frame in the middle of a paste stays a plain move. Pure."""
+    return abs(float(time) - float(plan.a)) <= 1e-9
+
+
 def _card_refusal(header):
     if not header:
         return ap.NO_CARD
@@ -331,18 +353,31 @@ def _objects_pairs(header, selection):
 
 # ------------------------------------------------------------------ scene state
 
+class _Steps(object):
+    """Has a press's chunk recorded a step of its own yet (`recorded`)? `_chunk` says so once
+    autoKey went off - its first step: `autoKeyframe -state` is on the undo queue even when it
+    sets the state autoKey already has (measured). Until then the chunk holds nothing of the
+    press, and a Ctrl+Z (`_undo_failed`) would undo the ANIMATOR's step before it (the re-review
+    of the fix wave: the autoKey question raising left the chunk empty)."""
+
+    def __init__(self):
+        self.recorded = False
+
+
 @contextlib.contextmanager
-def _chunk():
+def _chunk(steps=None):
     """The block as ONE undo chunk (`UNDO_CHUNK`), autoKey off inside it and put back - closed
     whatever happens, a failing autoKey query included. Every solve's own chunk nests in it, so
-    one Ctrl+Z is the whole paste. Never an empty chunk: `autoKeyframe -state` is a step on the
-    undo queue even when it sets the state autoKey already has (measured), so `_undo_failed`
-    undoes this chunk and never the animator's step before it."""
+    one Ctrl+Z is the whole paste. `steps` (a `_Steps`) is told when the chunk's first step -
+    autoKey off - is recorded: a press undoes its chunk only then, never the animator's step
+    before an empty one."""
     cmds.undoInfo(openChunk=True, chunkName=UNDO_CHUNK)
     auto = None
     try:
         auto = cmds.autoKeyframe(query=True, state=True)
         cmds.autoKeyframe(state=False)
+        if steps is not None:
+            steps.recorded = True
         yield
     finally:
         try:
@@ -355,8 +390,9 @@ def _chunk():
 def _undo_failed(recording, walk=None):
     """A press that RAISED inside its chunk (the chunk closed by then): the chunk undone when
     undo is on - half a paste is never left behind (the final review, S2) - and the walk's
-    tweaks all set back (`walk.restore_all`: nothing it keyed stands). With undo off there is
-    nothing to undo. Never raises over the press's own error."""
+    tweaks all set back (`walk.restore_all`: nothing it keyed stands). With undo off, or a
+    chunk that recorded no step of the press (`_Steps`: the caller passes `recording` False),
+    there is nothing to undo. Never raises over the press's own error."""
     if not recording:
         return
     try:
@@ -370,20 +406,27 @@ def _undo_failed(recording, walk=None):
             traceback.print_exc()
 
 
-def _kept(done, plan, noun):
+def _kept(done, plan, noun, counts=()):
     """CANCELLED_KEPT's line - a press cancelled with undo off keeps what it did, and says what:
-    `done` («frames 12-14», «3 channels») keyed, and what the paste mode did to the keys there
-    (`plan.ops`): Replace cut [a, b], Replace all every key, Insert moved the keys from `a` on
-    (the final review, S3)."""
+    `done` («frames 12-14», «3 channels») keyed, and what the paste mode did to the keys there -
+    each op of `plan.ops` with the keys it really reached (`counts`, one a op, what `_ops`
+    answered: `keys.cut` / `shift` count what a curve lost or moved): Replace cut [a, b],
+    Replace all every key, Insert moved the keys from `a` on (the final review, S3). An op that
+    reached no key is not said - a referenced curve only warns and keeps its keys (the
+    re-review of the fix wave: the line claimed a cut that never happened)."""
     parts = ["%s keyed" % done] if done else ["nothing keyed"]
-    for op in plan.ops:
+    for op, count in zip(plan.ops, list(counts) + [0] * (len(plan.ops) - len(counts))):
+        if not count:
+            continue
+        reached = ap._counted(count, "keys")
         if op[0] == "cut":
-            parts.append("the %s' keys in %s-%s cut" % (noun, _num(op[1]), _num(op[2])))
+            parts.append("%s of the %s in %s-%s cut" % (reached, noun, _num(op[1]),
+                                                         _num(op[2])))
         elif op[0] == "cut_all":
-            parts.append("every key of the %s cut" % noun)
+            parts.append("%s of the %s cut" % (reached, noun))
         elif op[0] == "shift":
-            parts.append("the %s' keys from %s on moved %s later" % (noun, _num(op[1]),
-                                                                       _num(op[2])))
+            parts.append("%s of the %s from %s on moved %s later" % (
+                reached, noun, _num(op[1]), _num(op[2])))
     return CANCELLED_KEPT % ", ".join(parts)
 
 
@@ -438,16 +481,21 @@ def _checked_plan(header, frames, options):
 
 
 def _ops(ops, plugs, layer):
-    """The paste mode's `ops` (`PastePlan.ops`) on the plugs' curves on `layer`."""
+    """The paste mode's `ops` (`PastePlan.ops`) on the plugs' curves on `layer`: [the keys each
+    op really reached] - what `keys.cut` / `shift` answer, the keys a curve lost or moved."""
     if not plugs:
-        return
+        return [0] * len(ops)
+    out = []
     for op in ops:
         if op[0] == "cut":
-            keys.cut(plugs, layer, op[1], op[2])
+            out.append(keys.cut(plugs, layer, op[1], op[2]) or 0)
         elif op[0] == "cut_all":
-            keys.cut(plugs, layer)
+            out.append(keys.cut(plugs, layer) or 0)
         elif op[0] == "shift":
-            keys.shift(plugs, layer, op[1], op[2])
+            out.append(keys.shift(plugs, layer, op[1], op[2]) or 0)
+        else:
+            out.append(0)
+    return out
 
 
 def _dirty(plugs):
@@ -732,30 +780,42 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         if not any(target.plugs for target in targets):
             return _result(targets, header, plan, options, layer, alpha, mirror)
         # BEFORE anything is cut or keyed: the take each frame mixes with (Blend), the ground a
-        # rootless target stands on (M4) - read at every pasted frame
+        # rootless target stands on (M4) - read at every pasted frame, the ground under Insert
+        # at `a` alone (`_ground_time`: the take resumes there after the clip)
         if alpha < 1.0 or any(target.reads_ground for target in targets):
             for _source, _index, time in plan.frames:
-                walk.arrive(time)
+                at = _ground_time(plan, time)
+                if alpha >= 1.0 and at != time:
+                    for target in targets:
+                        if target.reads_ground:
+                            target.grounds[time] = target.grounds.get(at)
+                    continue                     # nothing of this frame to read
+                walk.arrive(time, restore=_first(plan, time))
                 for target in targets:
                     if target.plugs and alpha < 1.0:
                         target.partner[time] = keys.current(target.plugs)
                     if target.reads_ground:
-                        target.read_ground(time)
+                        if at == time:
+                            target.read_ground(time)
+                        else:
+                            target.grounds[time] = target.grounds.get(at)
         planned = OrderedDict()
         for target in targets:
             planned.update((plug, None) for plug in target.plugs)
         began = keys.shown_at_start(walk.tweaks, list(planned))
-        cancelled, keyed = False, []
+        cancelled, keyed, steps = False, [], _Steps()
+        reached = [0] * len(plan.ops)                   # the keys each op really reached
         try:
-            with _chunk():
+            with _chunk(steps):
                 # the chunk's first step: every planned channel set to what it showed when the
                 # press began - undone LAST, so one Ctrl+Z leaves each showing that (M1)
                 keys.undo_marks(began)
                 states = [keys.curve_state(target.plugs, layer) for target in targets]
                 for target in targets:
-                    _ops(plan.ops, target.plugs, layer)
+                    reached = [n + m for n, m in zip(reached, _ops(plan.ops, target.plugs,
+                                                                   layer))]
                 for _source, index, time in plan.frames:
-                    walk.arrive(time)
+                    walk.arrive(time, restore=_first(plan, time))
                     bones = animdata.bones_at(header, frames, index)
                     root = roots.get(index) if roots else None
                     shown = pm.mirror(bones, members, root_frame=root)[0] if mirror else bones
@@ -772,7 +832,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                     for state in states:
                         keys.put_curve_state(state, layer)
         except BaseException:
-            _undo_failed(recording, walk)
+            _undo_failed(recording and steps.recorded, walk)
             raise
         if cancelled:
             if recording:
@@ -780,7 +840,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                 walk.restore_all()
                 return False, CANCELLED
             # undo off: what was keyed stays - and so do the walk's `keyed` (never set back)
-            return False, _kept(_span(keyed), plan, "pasted channels")
+            return False, _kept(_span(keyed), plan, "pasted channels", reached)
     return _result(targets, header, plan, options, layer, alpha, mirror)
 
 
@@ -986,8 +1046,9 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
     if planned:
         recording = bool(cmds.undoInfo(query=True, state=True))
         plugs = list(planned)
+        steps, reached = _Steps(), []
         try:
-            with _chunk():
+            with _chunk(steps):
                 state = keys.curve_state(plugs, layer)
                 if layer is None:
                     # keyed with its tangents, a weighted card curve keeps its weights: the
@@ -995,7 +1056,7 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
                     for plug, saved in state.items():
                         if plug in planned and planned[plug][1]:
                             state[plug] = dict(saved, weighted=True)
-                _ops(plan.ops, plugs, layer)
+                reached = _ops(plan.ops, plugs, layer)
                 for plug, (stored, weighted) in planned.items():
                     written = keys.write_keys(plug, stored, layer, weighted,
                                               tangents=layer is None)
@@ -1014,13 +1075,13 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
                 if not cancelled or not recording:
                     keys.put_curve_state(state, layer)
         except BaseException:
-            _undo_failed(recording)
+            _undo_failed(recording and steps.recorded)
             raise
         if cancelled:
             if recording:
                 cmds.undo()
                 return False, CANCELLED
-            return False, _kept(ap._counted(len(done), "channels"), plan, "channels")
+            return False, _kept(ap._counted(len(done), "channels"), plan, "channels", reached)
     if nodes:
         hidden = keys.layer_note(layer)
         if hidden:

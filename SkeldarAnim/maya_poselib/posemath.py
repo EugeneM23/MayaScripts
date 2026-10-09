@@ -494,7 +494,7 @@ def root_frame(bones, pose_bones=None):
     return _root_frames(bones, root, matrix(pose), not has_root(bones))
 
 
-def _on_ground(turn, point, rest, ground):
+def _on_ground(turn, point, rest, ground, steadied=None):
     """(turn, point) of a rootless TARGET's top joint, so that its ground frame stays where it
     stands: the turn keeps the joint's swing past its rest and takes the ground's heading back
     (`ground` the frame `_ground` read off the joint as it stands now), the point keeps the
@@ -503,10 +503,23 @@ def _on_ground(turn, point, rest, ground):
     rooted target's root does, and a card applied twice lands where it landed once. (A rooted
     card's pelvis turned or offset against its root has nothing else to be on such a target:
     its yaw and its place there are read as the facing and the place, the rootless source's
-    rule the other way round.)"""
+    rule the other way round.)
+
+    `steadied` (a turn about world +Y, `Transfer._steadied`) - the source's root frame this
+    frame was handed carries a heading STEADIED across its clip (`clip_roots`), turned that far
+    from the frame's own: the heading taken off is then the one the steadied frame implies, the
+    joint's own turned by it. Near upside down the joint's own heading is noise (a 2 deg tilt
+    reads as a half turn) and so is the source frame's own; the travel's ground carries the
+    STEADIED one, and taking off the joint's own left the difference on the body - the hips and
+    every bone on them turned about world Y by up to ~180 deg at a roll's inverted frames (the
+    re-review of the fix wave). With it a twin lands on the card at every frame, the travel or
+    In place. None (a pose, a frame keeping its own heading): as it always was."""
     rest_turn = rotation(rest)
     relative = rest_turn.inverse() * rotation(turn)
-    swing = relative * _heading(relative).inverse()
+    heading = _heading(relative)
+    if steadied is not None:
+        heading = heading * rotation(steadied)
+    swing = relative * heading.inverse()
     place = position(ground)
     return rest_turn * swing * rotation(ground), om.MVector(place.x, point.y, place.z)
 
@@ -815,6 +828,22 @@ class Transfer(object):
         return _root_frames(self.source, self.source_root,
                             matrix(bones[self.source_root]["world"]), self.source_rootless)[0]
 
+    def _steadied(self, source, given):
+        """The turn about world +Y from a rootless source's OWN ground heading in `source` (this
+        frame's bones as handed: `_ground` of its top joint's pose) to the heading of `given`,
+        the root frame `clip_roots` steadied for it - None when the two headings agree (a frame
+        within the swing limit keeps its own: `_on_ground` as it always was, bit for bit), and
+        for a source with a root of its own (nothing was steadied). `_on_ground` takes it."""
+        if self.source_root is None or not self.source_rootless or \
+                self.source_root not in source:
+            return None
+        own = _root_frames(source, self.source_root, self._pose(source, self.source_root),
+                           True)[0]
+        delta = _wrapped(_yaw_swing(given)[0] - _yaw_swing(own)[0])
+        if abs(delta) <= EPS:
+            return None
+        return om.MQuaternion(delta, om.MVector(0.0, 1.0, 0.0)).asMatrix()
+
     # -------------------------------------------------------- the transfer
 
     def place(self, target=None):
@@ -882,7 +911,9 @@ class Transfer(object):
         `source_root` (an MMatrix) replaces the SOURCE's root frame for this frame - an
         animation's rootless source hands the one `clip_roots` steadied across its clip, the
         same the travel was read from, so the pelvis relative to it and the root world it rides
-        turn together (the final review, M3)."""
+        turn together (the final review, M3) - and a ROOTLESS target's top joint takes off the
+        heading that steadied frame implies, not its own (`_steadied`, `_on_ground`): near
+        upside down its own heading is noise, and the body stood turned by the difference."""
         source = self.source if source is None else source
         target = self.target if target is None else target
         if self.target_root is None:
@@ -902,9 +933,12 @@ class Transfer(object):
             return pose(s)
 
         # the two root frames as posed: the source's in this frame (`_root_frames`), the target's
-        # where it stands (`place`) and where this frame puts it (`root_world`)
+        # where it stands (`place`) and where this frame puts it (`root_world`); a steadied
+        # source root frame says how far it turned from the frame's own (`_on_ground`)
+        steadied = None
         if source_root is not None:
             source_pose = om.MMatrix(source_root)
+            steadied = self._steadied(source, source_pose)
         elif self.source_root is None:
             source_pose = om.MMatrix()
         else:
@@ -944,7 +978,8 @@ class Transfer(object):
                 t = position(local)
                 point = om.MPoint(t.x, t.y, t.z) * parent_world
             if top:
-                turn, point = _on_ground(turn, point, target[leaf]["rest"], root_world)
+                turn, point = _on_ground(turn, point, target[leaf]["rest"], root_world,
+                                         steadied)
             out[leaf] = _placed(turn, point)
         return out
 

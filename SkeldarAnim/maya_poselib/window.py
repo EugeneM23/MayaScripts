@@ -1648,8 +1648,18 @@ def _classes():
             self._folder = current.data(0, Qt.UserRole) or ""
             if self._save is not None:
                 #  the save panel names the folder the card goes into: it follows the tree
-                #  (the final review, S7 - the line kept naming the folder it opened on)
+                #  (the final review, S7 - the line kept naming the folder it opened on) - and
+                #  so does a name the PANEL gave, the new folder's free one (the re-review: a
+                #  «Pose 2» chosen for the folder it opened on was refused in one holding one);
+                #  a name the animator typed is theirs
                 self.save_folder.setText("in " + folder_text(self._folder))
+                text = self.save_name.text().strip()
+                if not text or text == self._save["auto"]:
+                    auto = store.unique_name(self.root, self._folder,
+                                             SAVE_NAMES[self.save_type()])
+                    self.save_name.setText(auto)
+                    self.save_name.selectAll()
+                    self._save["auto"] = auto
             self._repopulate()
 
         def _sorted(self, _index):

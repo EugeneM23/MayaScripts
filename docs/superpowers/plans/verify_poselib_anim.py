@@ -37,7 +37,11 @@ against the press's own measure.
             fingers on the hand as the card's, Select objects what it keyed and no Main; Main
             dragged by hand off its keys (autoKey off), then a default Apply: the travel from the
             TWEAKED place (the final review's M2) - the control, the walk going to the frame the
-            scene stands on as before the fix, travels from the keyed place 170 cm away.
+            scene stands on as before the fix, travels from the keyed place 170 cm away; RootX_M
+            dragged off its keys, then A's left-leg card at Blend 50 % with Connect (a pre-pass
+            walks the range before the chunk): every channel's first key what it showed, the IK
+            foot included (the re-review of the fix wave) - the control, back on the entry frame
+            a plain time set as before the fix, keys the IK foot 10.8 cm off.
   modes     B carrying a take of its own (keys at 40, 60, 70.5, 80, 100 on EVERY control
             channel), pasted at 60 (24 frames) in each of Replace / Replace all / Insert / Merge,
             once on the base and once with an additive layer carrying a take of its own (the
@@ -100,7 +104,15 @@ against the press's own measure.
             second Mixamo fixture as the TARGET, walking along a take of its own, A's full card
             pasted on it In place with Replace: its ground frame on the take's own at every
             pasted frame (the final review's M4) - the control, the ground read off the curve the
-            press rewrites as before the fix, falls off it.
+            press rewrites as before the fix, falls off it; the same In place with Insert at 60:
+            every pasted frame on the take's ground at 60, where the shifted take resumes at 84
+            (the re-review of the fix wave) - the control, each frame on the take's own ground
+            there as before the fix, rides the walk and snaps back; a Mixamo fixture ROLLING over its
+            Hips (a full turn about X, a 2 deg side tilt, its own heading jumping 165 deg near
+            upside down) carded and pasted onto a rootless twin standing elsewhere, with the
+            travel and In place: every member on the card relative to the target's ground on
+            every frame (the re-review of the fix wave) - the control, the top joint's OWN
+            heading taken off as before the fix, turns the body 180 deg at the inverted frames.
   speed     the seconds a frame of a paste onto a rig and onto a skeleton (< 1.0 on the rig).
   floor     a new scene: `drop_floor` of the full card at (150, 0, 80) - a Manny_Rig added, Main
             on the point at the paste frame, the root travelling from there as the card's, the
@@ -894,6 +906,21 @@ def cards():
     go(0)
 
 
+def leg_card():
+    """A's LEFT-LEG card (the chip «Leg L»), through the disk: its IK foot is a world-space
+    control - it follows the pelvis as it stands."""
+    cards()
+    if "leg" not in CARDS:
+        a = need("A")
+        header, frames, note = animcapture.build_animation([a.rig.main], regions=["Leg L"],
+                                                           start=START, end=END)
+        say("   leg card: %s" % note)
+        read, read_frames, _p = through_disk("Step", header, frames)
+        CARDS["leg"] = (read, read_frames)
+        go(0)
+    return CARDS["leg"]
+
+
 def skeleton_card():
     if "skeleton" in CARDS:
         return
@@ -1165,6 +1192,7 @@ def phase_twin():
          "%s deg (the hand moved up to %s deg)" % (on_card, moved))
     b.wipe()
     tweaked_gates(b, card, span)
+    prepass_tweak_gates(b)
 
 
 @contextlib.contextmanager
@@ -1179,7 +1207,7 @@ def patched(owner, name, value):
         setattr(owner, name, saved)
 
 
-def _walk_always_goes(walk, frame):
+def _walk_always_goes(walk, frame, restore=True):
     """`timewalk.Walk.arrive` before the final review's M2: a `go` even onto the frame the scene
     already stands on (which throws the animator's unkeyed tweaks away)."""
     walk.go(frame)
@@ -1226,6 +1254,82 @@ def tweaked_gates(b, card, span):
          ok_c and ccm.value > 100.0 and kcm.value <= 0.01 and kdeg.value <= 0.01,
          "%s cm off the tweaked place's travel, %s cm / %s deg off the keyed place's" % (
              ccm, kcm, kdeg))
+    b.wipe()
+
+
+def _arrive_as_before(walk, frame, restore=True):
+    """`timewalk.Walk.arrive` before the re-review of the fix wave: back on the entry frame after
+    a move, a plain time set - the tweaks it threw away stay away."""
+    here = walk._here is not None and abs(float(frame) - float(walk._here.value)) <= 1e-9
+    if not walk.moved and here:
+        walk.frame = frame
+        return False
+    walk.go(frame)
+    return True
+
+
+def prepass_tweak_gates(b):
+    """The re-review of the fix wave (M2 only partly fixed): a press that walks the paste range
+    BEFORE its chunk - Blend under 100 % reads the take on every frame (a rootless target its
+    ground) - came back to its first frame `a`, the frame it entered on, through a real time
+    set, which threw the animator's unkeyed tweaks away: frame a was solved against the KEYED
+    scene while the partner and Connect's reference had read the tweaks. B carrying a take on
+    RootX_M (keys at 40 and 100), RootX_M dragged by hand off its keys at 50 (autoKey off), then
+    A's LEFT-LEG card at Blend 50 % with Connect, at 50: every channel's first key is what it
+    showed - the IK foot (world-space: it follows the pelvis as it stands) included. The
+    control: the same press with the walk's arrival back at the entry frame a plain time set
+    (the code before the fix) - the IK foot's first key moves off with the pelvis."""
+    header, frames = leg_card()
+    rootx = b.node("RootX_M")
+    tweak = (("translateX", 20.0), ("translateZ", -12.0))
+
+    def stage():
+        b.wipe()
+        b.place()
+        for t, extra in ((40, 0.0), (100, 15.0)):
+            for attr in TR:
+                plug = rootx + "." + attr
+                cmds.setKeyframe(plug, time=t, value=float(cmds.getAttr(plug)) + extra)
+        evaluate()
+        go(AT)
+        for attr, d in tweak:
+            plug = rootx + "." + attr
+            cmds.setAttr(plug, float(cmds.getAttr(plug)) + d)
+        return values_of(b.plugs)
+
+    def press(control):
+        shown = stage()
+        options = animdata.Options(connect=True)
+        if control:
+            with patched(timewalk.Walk, "arrive", _arrive_as_before):
+                ok, text = animapply.apply(header, frames, selection=b.selection(), alpha=0.5,
+                                           options=options)
+        else:
+            ok, text = animapply.apply(header, frames, selection=b.selection(), alpha=0.5,
+                                       options=options)
+        written = keyed_plugs(b, AT)
+        first, ik = Worst(), Worst()
+        for plug in written:
+            off = abs(key_at(plug, AT) - shown[plug])
+            if plug.endswith(ROT):
+                off = abs((off + 180.0) % 360.0 - 180.0)
+            name = plug.split("|")[-1]
+            first.see(off, name)
+            if "IKLeg_L" in name and plug.endswith(TR):
+                ik.see(off, name)
+        return ok, text, written, first, ik
+
+    ok, text, written, first, ik = press(False)
+    say("   twin, Blend 50 %% + Connect with RootX_M tweaked: %s" % text)
+    gate("twin RootX_M dragged off its keys by hand, the leg card at Blend 50 % with Connect (a "
+         "pre-pass walks the range first): every channel's first key is what it showed, the IK "
+         "foot included", ok and len(written) > 5 and first.value <= 1e-3,
+         "%d written, worst %s (the IK foot %s) | %s" % (len(written), first, ik, text))
+    ok_c, text_c, written_c, first_c, ik_c = press(True)
+    gate("twin the control - back on the entry frame a plain time set (before the fix): frame a "
+         "solved against the keyed pelvis, the IK foot's first key off, the gate above would "
+         "fail", ok_c and ik_c.value > 1.0,
+         "%d written, worst %s, the IK foot %s cm" % (len(written_c), first_c, ik_c))
     b.wipe()
 
 
@@ -2350,6 +2454,7 @@ def phase_mixamo():
              rows, len(members_t), wander))
     b.wipe()
     rootless_target_gates()
+    rolling_target_gates()
 
 
 #  the rootless target's own take (the final review's M4): its Hips keyed walking and turning -
@@ -2431,6 +2536,248 @@ def rootless_target_gates():
          "fix): off the take's own ground, the gate above would fail",
          ok_c and max(off.value, off_deg.value) > 1.0,
          "%s cm, %s deg | %s" % (off, off_deg, text_c))
+    # ---- Insert (the re-review of the fix wave): the take's frames from INSERT_AT on move to
+    # after the clip - every pasted frame stands on the take's ground at INSERT_AT, and the
+    # shifted take resumes there (its key at INSERT_AT lands right after the clip). The control:
+    # each pasted frame on the take's own ground there (before the fix) - the paste rides the
+    # walk and the shifted take snaps it back
+    insert_span = [(INSERT_AT + i, i) for i in range(count)]
+    resume = INSERT_AT + count
+    options = animdata.Options(mode="insert", in_place=True)
+
+    def insert_press(control):
+        grounds = walk_take()
+        ground = grounds[INSERT_AT]
+        go(INSERT_AT)
+        if control:
+            with patched(animapply, "_ground_time", _ground_time_as_before):
+                ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        else:
+            ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        shifted = same_times(curve_keys(top + ".translateX")[0],
+                             [40.0] + [float(t) for t, _i in insert_span] +
+                             [float(f + count) for f, _x, _z, _y in WALK if f >= INSERT_AT])
+        on, on_deg = Worst(), Worst()
+        for t in [t for t, _i in insert_span] + [resume]:
+            go(t)
+            c, d = cm_deg(target_place(ch), ground)
+            on.see(c, "@%g" % t)
+            on_deg.see(d, "@%g" % t)
+        walked = (pm.position(grounds[AT + count - 1]) - pm.position(ground)).length()
+        return ok, text, shifted, on, on_deg, walked
+
+    ok, text, shifted, on, on_deg, walked = insert_press(False)
+    say("   insert onto a walking rootless target: %s" % text)
+    gate("mixamo In place, Insert at %d onto a ROOTLESS target walking along its own take: every "
+         "pasted frame on the take's ground at %d, and so is the shifted take resuming at %d (its "
+         "keys from %d on moved %d later)" % (INSERT_AT, INSERT_AT, resume, INSERT_AT, count),
+         ok and shifted and on.value <= 0.01 and on_deg.value <= 0.01,
+         "%s cm, %s deg; the take walks %.2f cm on from %d | %s" % (on, on_deg, walked,
+                                                                    INSERT_AT, text))
+    ok_c, text_c, shifted_c, off, off_deg, walked = insert_press(True)
+    gate("mixamo the control - under Insert each pasted frame on the take's own ground there "
+         "(before the fix): the paste rides the walk, the shifted take snaps it back at %d, the "
+         "gate above would fail" % resume,
+         ok_c and shifted_c and max(off.value, off_deg.value) > 10.0,
+         "%s cm, %s deg | %s" % (off, off_deg, text_c))
+    ch.wipe()
+    cmds.setAttr(top + ".visibility", False)
+
+
+INSERT_AT = 60                      # an Insert lands on the walk's key at 60 (rootless_target_gates)
+
+
+def _ground_time_as_before(plan, time):
+    """`animapply._ground_time` before the re-review of the fix wave: every pasted frame on the
+    take's own ground there, Insert or not."""
+    return time
+
+
+#  the rolling card (the re-review of the fix wave): its Hips forward a frame, their side tilt
+ROLL_STEP = 4.0
+ROLL_TILT = 2.0
+SWING_LIMIT = 120.0                 # deg off upright past which a heading is noise (computed here)
+ROLL_AT = ((-60.0, 0.0, 90.0), 70.0)   # where the rolling card's target stands, and its turn
+
+
+def rolling_card():
+    """A Mixamo fixture at its own size rolling forward over its Hips: a full turn about world X
+    over the take (0..23), a +-ROLL_TILT deg side tilt about world Z every other frame, no turn
+    about Y, ROLL_STEP cm forward a frame - carded and hidden."""
+    if "roll" in CARDS:
+        return
+    top, _ours = build_mixamo("mxr", 1.0)
+    ch = Char("mxr", top)
+    own = [top + "." + attr for attr in ROT + TR]
+    count = END - START + 1
+    for i in range(count):
+        for plug in own:
+            cmds.setAttr(plug, ch.defaults[plug])
+        tilt = ROLL_TILT if i % 2 else -ROLL_TILT
+        cmds.rotate(360.0 * i / count, 0.0, tilt, top, relative=True, worldSpace=True)
+        cmds.move(0.0, 0.0, ROLL_STEP * i, top, relative=True, worldSpace=True)
+        cmds.setKeyframe(own, time=START + i)
+    evaluate()
+    header, frames, note = animcapture.build_animation([top], start=START, end=END)
+    say("   rolling card: %s" % note)
+    read, read_frames, _p = through_disk("Roll", header, frames)
+    CARDS["roll"] = (read, read_frames)
+    cmds.setAttr(top + ".visibility", False)
+    go(START)
+
+
+def _yaw(turn):
+    """The yaw (radians) of `heading(turn)`."""
+    q = om.MTransformationMatrix(heading(turn)).rotation(asQuaternion=True)
+    return 2.0 * math.atan2(q.y, q.w)
+
+
+def _swing(turn):
+    """How far `turn` tips world +Y off upright (deg): the swing of its swing-twist split."""
+    up = om.MVector(0.0, 1.0, 0.0)
+    return pm.direction_angle(up * pm.rotation(turn), up)
+
+
+def _wrap(a):
+    return a - 2.0 * math.pi * math.floor((a + math.pi) / (2.0 * math.pi))
+
+
+def steadied_grounds(card):
+    """[MMatrix]: the card's GROUND frame on every frame - the floor under its top joint, turned
+    by the joint's heading since its rest (`root_frames`) - the heading held CONTINUOUS across
+    the frames whose joint stands more than SWING_LIMIT deg off upright (there a 2 deg tilt reads
+    as a half turn): such a frame takes the yaw interpolated, the short way, between the nearest
+    frames within the limit on either side (by frame), the nearest one's at an end. Computed here,
+    the spec's rule ("Root motion"), no posemath."""
+    header, frames = card
+    top = pm.root_of(header["bones"])
+    rest = pm.matrix(header["bones"][top]["rest"])
+    worlds = [card_bones(card, i)[top]["world"] for i in range(len(frames["world"]))]
+    turns = [pm.rotation(rest).inverse() * pm.rotation(w) for w in worlds]
+    good = [i for i, turn in enumerate(turns) if _swing(turn) <= SWING_LIMIT]
+    yaw = dict((i, _yaw(turns[i])) for i in good)
+    for before, after in zip(good, good[1:]):
+        yaw[after] = yaw[before] + _wrap(yaw[after] - yaw[before])
+    out = []
+    for i, world in enumerate(worlds):
+        if i not in yaw:
+            lower = [g for g in good if g < i]
+            upper = [g for g in good if g > i]
+            if not lower:
+                y = yaw[upper[0]]
+            elif not upper:
+                y = yaw[lower[-1]]
+            else:
+                a, b = lower[-1], upper[0]
+                y = yaw[a] + (yaw[b] - yaw[a]) * float(i - a) / float(b - a)
+        else:
+            y = yaw[i]
+        at = pm.position(pm.matrix(world))
+        out.append(placed(om.MQuaternion(y, om.MVector(0.0, 1.0, 0.0)).asMatrix(),
+                          (at.x, 0.0, at.z)))
+    return out
+
+
+_ON_GROUND = pm._on_ground
+
+
+def _on_ground_own(turn, point, rest, ground, steadied=None):
+    """`posemath._on_ground` before the re-review of the fix wave: the top joint's OWN heading
+    taken off, whatever the source's root frame was steadied to."""
+    return _ON_GROUND(turn, point, rest, ground)
+
+
+def _body_on(card, ch, members_t, pairs, span, carry_of):
+    """(worst deg, worst cm): every member bone of `ch` at each (t, i) of `span` against the
+    card's partner at frame i carried by `carry_of(i)`, read after a real time change."""
+    deg, cm = Worst(), Worst()
+    bones = ch.bones()
+    for t, i in span:
+        go(t)
+        src = card_bones(card, i)
+        carry = carry_of(i)
+        for leaf in members_t:
+            want = pm.rigid(pm.matrix(src[pairs[leaf]]["world"]) * carry)
+            got = pm.rigid(W(bones[leaf]["path"]))
+            deg.see(pm.angle(got, want), "%s @%g" % (leaf, t))
+            cm.see((pm.position(got) - pm.position(want)).length(), "%s @%g" % (leaf, t))
+    return deg, cm
+
+
+def rolling_target_gates():
+    """The re-review of the fix wave: the final review's M3 steadied a rootless card's root
+    heading across a roll's inverted frames - and a ROOTLESS target's top joint still took off
+    its OWN heading, near upside down a 2 deg tilt read as a half turn, so the body stood turned
+    about world Y by up to ~180 deg there. The rolling card (a Mixamo fixture rolling over its
+    Hips) onto a second fixture at its own size - a twin, rootless - standing at ROLL_AT, pasted
+    at 50: with the travel, every member on the card carried from its ground at its first frame
+    onto the target's ground where it stood (the body travels as the card's); In place, every
+    member on the card's STEADIED ground frame (computed here, `steadied_grounds`) placed on the
+    target's - every frame. The control: the same presses with `_on_ground` taking off the
+    joint's own heading (the code before the fix)."""
+    rolling_card()
+    card = CARDS["roll"]
+    header, frames = card
+    count = END - START + 1
+    span = [(AT + i, i) for i in range(count)]
+    source0 = card_bones(card, 0)
+    top_leaf = pm.root_of(header["bones"])
+    rest = pm.matrix(header["bones"][top_leaf]["rest"])
+    turns = [pm.rotation(rest).inverse() * pm.rotation(card_bones(card, i)[top_leaf]["world"])
+             for i in range(count)]
+    swings = [_swing(turn) for turn in turns]
+    own = [_yaw(turn) for turn in turns]
+    jump = max(abs(_wrap(b - a)) for a, b in zip(own, own[1:]))
+    gate("mixamo the rolling card: rootless, its Hips past %g deg off upright on some frames and "
+         "within it on others, their own heading jumping between two neighbours" % SWING_LIMIT,
+         not pm.has_root(header["bones"]) and max(swings) > 150.0 and min(swings) < 10.0 and
+         math.degrees(jump) > 90.0,
+         "swing %.2f..%.2f deg, %d frames past it; the own heading's worst jump %.2f deg" % (
+             min(swings), max(swings), sum(1 for s in swings if s > SWING_LIMIT),
+             math.degrees(jump)))
+    top, _ours = build_mixamo("mxs", 1.0)
+    (x, y, z), yaw = ROLL_AT
+    cmds.move(x, y, z, top, relative=True, worldSpace=True)
+    cmds.rotate(0.0, yaw, 0.0, top, relative=True, worldSpace=True)
+    evaluate()
+    ch = Char("mxs", top)
+    members_t, pairs, bones = target_members(header, ch, source0)
+    twin = pm.twin(pairs, source0, bones)
+    first_ground = root_frames(source0)[0]
+    steady = steadied_grounds(card)
+
+    def press(options, control):
+        ch.wipe()
+        go(AT)
+        stand = target_place(ch)
+        if control:
+            with patched(pm, "_on_ground", _on_ground_own):
+                ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        else:
+            ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        return ok, text, stand
+
+    for label, options, carry_of in (
+            ("with the travel", animdata.Options(),
+             lambda i, stand: first_ground.inverse() * stand),
+            ("In place", animdata.Options(in_place=True),
+             lambda i, stand: steady[i].inverse() * stand)):
+        ok, text, stand = press(options, False)
+        say("   rolling card %s onto a rootless twin: %s" % (label, text))
+        deg, cm = _body_on(card, ch, members_t, pairs, span,
+                           lambda i, stand=stand, carry_of=carry_of: carry_of(i, stand))
+        gate("mixamo the rolling card %s onto a ROOTLESS twin: every member on the card relative "
+             "to the target's ground, every frame (its Hips upside down included)" % label,
+             ok and twin and len(members_t) > 20 and deg.value <= 0.01 and cm.value <= 0.01,
+             "%s deg, %s cm over %d members, %d frames | %s" % (deg, cm, len(members_t), count,
+                                                                text))
+        ok_c, text_c, stand = press(options, True)
+        deg_c, cm_c = _body_on(card, ch, members_t, pairs, span,
+                               lambda i, stand=stand, carry_of=carry_of: carry_of(i, stand))
+        gate("mixamo the control - %s, the top joint's OWN heading taken off (before the fix): "
+             "the body turned at the inverted frames, the gate above would fail" % label,
+             ok_c and deg_c.value > 90.0,
+             "%s deg, %s cm | %s" % (deg_c, cm_c, text_c))
     ch.wipe()
     cmds.setAttr(top + ".visibility", False)
 

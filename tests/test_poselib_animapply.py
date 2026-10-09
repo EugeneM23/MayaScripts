@@ -92,6 +92,7 @@ class World(object):
 
     def __init__(self):
         self.log = []
+        self.restores = []               # (frame, restore) of every Walk.arrive
         self.frame = 12.0
         self.recording = True
         self.auto = True
@@ -110,6 +111,9 @@ class World(object):
         self.top_member = False          # a skeleton solve writes its top joint (rootless)
         self.fail_at = None              # a solve number that raises
         self.refuse_breakdown = None     # keyframe -edit -breakdown raising
+        self.auto_query_fails = False    # autoKeyframe -q raising (the chunk's first question)
+        self.cut_count = 0               # the keys keys.cut answers it removed (a call)
+        self.shift_count = 0             # the keys keys.shift answers it moved (a call)
 
     def value(self, plug, frame):
         found = self.values.get(plug, 0.0)
@@ -141,6 +145,8 @@ class FakeCmds(object):
 
     def autoKeyframe(self, query=False, state=None):
         if query:
+            if self.world.auto_query_fails:
+                raise RuntimeError("autoKeyframe: no answer")
             return self.world.auto
         self.world.auto = state
         self.world.log.append(("autoKey", state))
@@ -218,11 +224,11 @@ class FakeKeys(object):
 
     def cut(self, plugs, layer, start=None, end=None):
         self.world.log.append(("cut", sorted(plugs), start, end))
-        return 0
+        return self.world.cut_count
 
     def shift(self, plugs, layer, at, by):
         self.world.log.append(("shift", sorted(plugs), at, by))
-        return 0
+        return self.world.shift_count
 
     def curve_state(self, plugs, layer):
         self.world.log.append(("state", sorted(plugs)))
@@ -289,8 +295,10 @@ class FakeWalk(object):
         self.moved = True
         self.world.log.append(("go", frame))
 
-    def arrive(self, frame):
-        """`timewalk.Walk.arrive`: no time set on the frame the walk entered on until it moved."""
+    def arrive(self, frame, restore=True):
+        """`timewalk.Walk.arrive`: no time set on the frame the walk entered on until it moved;
+        `restore` - whether arriving back there sets the entry tweaks back - recorded."""
+        self.world.restores.append((float(frame), bool(restore)))
         if not self.moved and abs(float(frame) - float(self.here)) <= 1e-9:
             self.world.log.append(("arrive", frame))
             return False
@@ -826,6 +834,53 @@ class InPlaceGround(Base):
         self.assertEqual([e[3] for e in frames],
                          [flat(ident(7.0 * t, 0.0, 3.0)) for t in range(12, 18)])
 
+    def test_under_insert_every_pasted_frame_stands_on_the_ground_at_a(self):
+        """The re-review of the fix wave (M4 regressed under Insert): Insert moves the take's
+        frames from `a` on to after the clip, while the grounds were read off the take BEFORE the
+        ops - the paste rode the take's own a..b ground, then the shifted take resumed after it
+        from its frame-a ground: a target walking 200 cm over the range snapped back 200 cm.
+        Under Insert every pasted frame stands on the take's ground at `a`, where the shifted
+        take resumes - read once, the walk going nowhere else for it."""
+        ok, text = self.press(options={"in_place": True, "mode": "insert"})
+        self.assertTrue(ok, text)
+        names = self.world.names()
+        shift = names.index("shift")
+        before = [e for e in self.world.log[:shift] if e[0] == "refresh"]
+        self.assertEqual([e[2] for e in before], [12])
+        self.assertEqual([e for e in self.world.log[:shift] if e[0] == "go"], [])
+        frames = self.world.entries("frame")[1:]
+        self.assertEqual([e[3] for e in frames], [flat(ident(84.0, 0.0, 3.0))] * 6)
+
+    def test_under_insert_a_blend_still_reads_the_take_on_every_frame(self):
+        self.world.values = {SKEL_ROOT + ".translateX": lambda frame: 2.0 * frame}
+        ok, text = self.press(options={"in_place": True, "mode": "insert"}, alpha=0.5)
+        self.assertTrue(ok, text)
+        shift = self.world.names().index("shift")
+        reads = [e[1] for e in self.world.log[:shift] if e[0] == "current"]
+        self.assertEqual(reads, [12, 12, 13, 14, 15, 16, 17])
+        grounds = [e[2] for e in self.world.log[:shift] if e[0] == "refresh"]
+        self.assertEqual(grounds, [12])
+        frames = self.world.entries("frame")[1:]
+        self.assertEqual([e[3] for e in frames], [flat(ident(84.0, 0.0, 3.0))] * 6)
+
+    def test_merge_reads_the_ground_of_every_frame(self):
+        ok, text = self.press(options={"in_place": True, "mode": "merge"})
+        self.assertTrue(ok, text)
+        opened = self.world.names().index("open")
+        before = [e for e in self.world.log[:opened] if e[0] == "refresh"]
+        self.assertEqual([e[2] for e in before], [12, 13, 14, 15, 16, 17])
+        frames = self.world.entries("frame")[1:]
+        self.assertEqual([e[3] for e in frames],
+                         [flat(ident(7.0 * t, 0.0, 3.0)) for t in range(12, 18)])
+
+    def test_the_take_s_frame_a_ground_stands_for(self):
+        plan = animdata.paste_plan(0, 5, None, animdata.Options(mode="insert"), 12)
+        self.assertEqual([aa._ground_time(plan, t) for _s, _i, t in plan.frames], [12] * 6)
+        for mode in ("replace", "replace_all", "merge"):
+            plan = animdata.paste_plan(0, 5, None, animdata.Options(mode=mode), 12)
+            self.assertEqual([aa._ground_time(plan, t) for _s, _i, t in plan.frames],
+                             list(range(12, 18)), mode)
+
     def test_a_target_carrying_the_travel_reads_no_ground(self):
         self.press()
         cut = self.world.names().index("cut")
@@ -966,6 +1021,22 @@ class BlendPress(Base):
         self.assertIn("Walk at 50 % onto Manny_Rig1", text)
         self.assertNotIn("measure", names)                   # a blend lands between: unmeasured
 
+    def test_the_tweaks_come_back_only_on_the_pastes_first_frame(self):
+        """The review of the re-review fixes: `Walk.arrive` sets the entry tweaks back when it
+        comes back to the frame the walk entered on - right for the paste's first frame `a`
+        (the M2 road with a pre-pass), wrong for an entry frame in the MIDDLE of a paste (At
+        current time off, the scene standing inside the clip's own range): that one frame's
+        partner, ground and solve read the tweaks and a spike was keyed there. Every arrive
+        asks for the restore on `a` alone."""
+        self.world.frame = 3.0                     # pasted at 0..5 on its own frames, now 3
+        ok, text = self.press(options={"at_current": False}, alpha=0.5)
+        self.assertTrue(ok, text)
+        asked = dict()
+        for frame, restore in self.world.restores:
+            asked.setdefault(frame, set()).add(restore)
+        self.assertEqual(asked[3.0], {False})      # the entry frame, mid paste: no tweaks back
+        self.assertEqual(asked[0.0], {True})       # the paste's first frame
+
     def test_nothing_at_zero(self):
         ok, text = self.press(alpha=0.0)
         self.assertEqual((ok, text), (False, ap.BLEND_ZERO))
@@ -994,9 +1065,10 @@ class Cancel(Base):
         never sets the keyed plugs back as tweaks (they show their new keys), and the line
         names what stays: the frames keyed and what the mode did to the keys."""
         self.world.recording = False
+        self.world.cut_count = 14
         ok, text = self.press(progress=Progress(cancel_at=2))
         self.assertEqual((ok, text), (False, aa.CANCELLED_KEPT % (
-            "frames 12-13 keyed, the pasted channels' keys in 12-17 cut")))
+            "frames 12-13 keyed, 14 keys of the pasted channels in 12-17 cut")))
         names = self.world.names()
         self.assertNotIn("undo", names)
         self.assertNotIn("restore_all", names)
@@ -1007,13 +1079,25 @@ class Cancel(Base):
 
     def test_with_undo_off_the_line_says_what_each_mode_did(self):
         self.world.recording = False
-        for mode, done in (("replace_all", "every key of the pasted channels cut"),
-                           ("insert", "the pasted channels' keys from 12 on moved 6 later"),
+        self.world.cut_count, self.world.shift_count = 40, 9
+        for mode, done in (("replace_all", "40 keys of the pasted channels cut"),
+                           ("insert", "9 keys of the pasted channels from 12 on moved 6 later"),
                            ("merge", None)):
             self.world.calls = 0
             ok, text = self.press(options={"mode": mode}, progress=Progress(cancel_at=1))
             want = "frame 12 keyed" + (", " + done if done else "")
             self.assertEqual(text, aa.CANCELLED_KEPT % want, mode)
+
+    def test_with_undo_off_a_cut_or_move_that_did_not_happen_is_not_claimed(self):
+        """The re-review of the fix wave: the line said «keys in a-b cut» (or moved) from the
+        plan's ops, even when the curves lost nothing - a REFERENCED curve only warns and keeps
+        its keys, and `keys.cut` / `shift` answer the keys that really went (0 here). It says
+        what the curves lost."""
+        self.world.recording = False
+        for mode in ("replace", "replace_all", "insert"):
+            self.world.calls = 0
+            ok, text = self.press(options={"mode": mode}, progress=Progress(cancel_at=1))
+            self.assertEqual(text, aa.CANCELLED_KEPT % "frame 12 keyed", mode)
 
     def test_an_error_mid_press_undoes_the_half_paste_and_raises(self):
         """The final review (S2): a solve that raised on the third frame left two frames keyed
@@ -1036,6 +1120,19 @@ class Cancel(Base):
             self.press()
         self.assertNotIn("undo", self.world.names())
         self.assertNotIn("restore_all", self.world.names())
+
+    def test_a_chunk_that_recorded_nothing_undoes_nothing(self):
+        """The re-review of the fix wave: when the chunk's first question - autoKey's state -
+        raised, the chunk closed holding no step of the press, and `_undo_failed`'s Ctrl+Z
+        undid the ANIMATOR's step before it. Only what the press recorded is undone: nothing
+        here, the error goes on."""
+        self.world.auto_query_fails = True
+        with self.assertRaises(RuntimeError):
+            self.press()
+        names = self.world.names()
+        self.assertEqual(names[names.index("open"):], ["open", "close", "walked"])
+        self.assertNotIn("undo", names)
+        self.assertNotIn("write", names)
 
 
 class Refusals(Base):
@@ -1265,9 +1362,10 @@ class Objects(Base):
 
     def test_with_undo_off_a_cancel_keeps_the_channels_keyed_and_says_so(self):
         self.world.recording = False
+        self.world.cut_count = 3
         ok, text = aa.apply(self.objects, None, progress=Progress(cancel_at=1))
         self.assertEqual((ok, text), (False, aa.CANCELLED_KEPT % (
-            "1 channel keyed, the channels' keys in 30-40 cut")))
+            "1 channel keyed, 3 keys of the channels in 30-40 cut")))
         names = self.world.names()
         self.assertNotIn("undo", names)
         self.assertIn("restate", names)
@@ -1283,6 +1381,16 @@ class Objects(Base):
             aa.apply(self.objects, None)
         names = self.world.names()
         self.assertEqual(names[-2:], ["close", "undo"])
+
+    def test_an_objects_chunk_that_recorded_nothing_undoes_nothing(self):
+        """The re-review of the fix wave: the objects press undid the animator's step too when
+        the chunk's autoKey question raised before the press recorded anything."""
+        self.world.auto_query_fails = True
+        with self.assertRaises(RuntimeError):
+            aa.apply(self.objects, None)
+        names = self.world.names()
+        self.assertEqual(names[-2:], ["open", "close"])
+        self.assertNotIn("undo", names)
 
     def test_an_objects_card_does_not_go_onto_a_character(self):
         self.assertEqual(aa.apply_onto(self.objects, None, "|root"), (False, ap.OBJECTS_ONTO))
