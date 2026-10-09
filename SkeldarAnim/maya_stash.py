@@ -14,6 +14,9 @@ listed there (`maya_stashstore` is the rules, this is the Maya glue).
   are. Without a typed Name the copy is `<scene>_HHMM`; a taken name gets
   ` (2)`, so a second press never overwrites the first.
 - **Stash file...** copies a picked .ma / .mb / .fbx in the same way.
+- **Stash selection (FBX)** exports the objects selected in the scene as one
+  FBX through the plugin's exporter (2026-10-09). The selection is put back
+  afterwards; the scene is not changed.
 - **Open** opens a stash scene as the scene through `maya_scenesetup.opener.
   open_path` (script nodes off, the ranges read and applied, the vaccine
   swept). The scene open IS the stash file: Ctrl+S writes the draft back.
@@ -39,6 +42,7 @@ import time
 import traceback
 
 import maya.cmds as cmds
+import maya.mel as mel
 
 import maya_sharerecords as records
 import maya_stashstore as store
@@ -163,6 +167,73 @@ def stash_scene(name=None):
     size = os.path.getsize(path)
     return _status("Stashed {0} - {1}. The open scene is untouched.".format(
         target, records.size_text(size)))
+
+
+class ExportFailed(Exception):
+    """The FBX exporter refused or wrote nothing; the message says why."""
+
+
+def _export_fbx(nodes, path):
+    """The objects `nodes` (long names) into one FBX at `path`, through the
+    plugin's own exporter. The scene's selection is put back afterwards, and
+    the scene itself is not changed. Raises ExportFailed."""
+    previous = cmds.ls(selection=True, long=True) or []
+    try:
+        cmds.loadPlugin("fbxmaya", quiet=True)
+    except RuntimeError as exc:
+        raise ExportFailed("the FBX plugin will not load ({0})".format(exc))
+    try:
+        cmds.select(nodes, replace=True)
+        mel.eval("FBXResetExport; FBXExportSmoothingGroups -v true; "
+                 "FBXExportSkins -v true; FBXExportShapes -v true; "
+                 "FBXExportIncludeChildren -v true")
+        mel.eval('FBXExport -f "{0}" -s'.format(path.replace("\\", "/")))
+    except RuntimeError as exc:
+        _remove(path)
+        raise ExportFailed(str(exc).strip() or "the exporter refused")
+    finally:
+        if previous:
+            cmds.select(previous, replace=True)
+        else:
+            cmds.select(clear=True)
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        _remove(path)
+        raise ExportFailed("the exporter wrote nothing")
+
+
+def _remove(path):
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def stash_selection(name=None):
+    """The press: the objects selected in the scene, as one FBX in the stash.
+    Called `name` (else the Name field's text, else the object's own name, or
+    `selection` for several). Nothing in the scene changes."""
+    picked = cmds.ls(selection=True, long=True) or []
+    if not picked:
+        return _status("Select the objects to stash first.")
+    fallback = store.selection_name(picked, time.time())
+    typed = _typed_name() if name is None else name
+    base = records.upload_name(typed, fallback)
+    _makedirs()
+    target = store.unique_name(base, _taken())
+    path = _path(target)
+    try:
+        _export_fbx(picked, path)
+    except ExportFailed as exc:
+        return _status("Could not stash the selection - the FBX export "
+                       "failed: {0}. Nothing was stashed.".format(exc))
+    _clear_name()
+    refresh()
+    count = len(picked)
+    return _status("Stashed {0} from the scene - {1} object{2}, {3}. The "
+                   "scene is untouched.".format(
+                       target, count, "" if count == 1 else "s",
+                       records.size_text(os.path.getsize(path))))
 
 
 def stash_file(path=None, name=None):
@@ -439,6 +510,13 @@ def build_panel():
         width=hubstyle.pick(104, 110),
         annotation="Pick a .ma, .mb or .fbx and copy it into the stash",
         command=lambda *_: _run(stash_file)), "secondary", "plus")
+    cmds.setParent("..")
+    cmds.rowLayout(numberOfColumns=1, adjustableColumn=1)
+    hubstyle.mark(cmds.button(
+        label="Stash selection (FBX)", height=hubstyle.height("button", 28),
+        annotation="The objects selected in the scene, as one FBX in the "
+                   "stash. The scene is not changed.",
+        command=lambda *_: _run(stash_selection)), "secondary", "hand-grab")
     cmds.setParent("..")
     cmds.textScrollList(
         LIST, allowMultiSelection=True, font="fixedWidthFont",

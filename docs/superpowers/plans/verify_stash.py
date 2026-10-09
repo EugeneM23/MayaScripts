@@ -22,6 +22,9 @@ Gates (each prints PASS or FAIL; the exit code is the number of failures):
   8  Save to... copies the file out
   9  Delete removes the file from disk (the batch run has no confirm)
  10  Delete refuses the scene open in this Maya and keeps its file
+ 11  the selected objects arrive as one FBX (re-imported and read back)
+ 12  the scene keeps its name and modified flag through a selection stash
+ 13  a selection stash with nothing selected is refused
 """
 
 import os
@@ -158,6 +161,51 @@ message = stash.delete_names([first])
 gate(10, "Delete refuses the open scene and keeps its file",
      first in stashed() and "scene open in this Maya" in message,
      message[:100])
+
+# -- 11, 12, 13: the scene's own selection, as one FBX (2026-10-09)
+cmds.polyCube(name="stashA")
+cmds.polyCube(name="stashB")
+cmds.select(["stashA", "stashB"], replace=True)
+before_modified = cmds.file(query=True, modified=True)
+before_scene = cmds.file(query=True, sceneName=True)
+message = stash.stash_selection()
+picked_names = sorted(n for n in stashed() if n.startswith("selection_"))
+selection_file = os.path.join(folder(), picked_names[-1]) if picked_names \
+    else ""
+imported = []
+if selection_file and os.path.isfile(selection_file):
+    #  a fresh scene, so the names come back as the file holds them
+    cmds.file(new=True, force=True)
+    imported = cmds.file(selection_file, i=True, returnNewNodes=True,
+                         ignoreVersion=True, prompt=False) or []
+shorts = [n.split("|")[-1].split(":")[-1] for n in imported]
+gate(11, "the selected objects arrive as one FBX",
+     bool(picked_names) and "stashA" in shorts and "stashB" in shorts,
+     "%s | %s" % (picked_names, message[:60]))
+#  the stash itself must leave the flag and the name as they were; read
+#  again in a scene we set up for it (the fresh one above is the import's)
+cmds.file(new=True, force=True)
+cmds.polyCube(name="stashA")
+cmds.select(["stashA"], replace=True)
+before_modified = cmds.file(query=True, modified=True)
+before_scene = cmds.file(query=True, sceneName=True)
+stash.stash_selection()
+gate(12, "the scene keeps its name and modified flag through a stash",
+     cmds.file(query=True, modified=True) == before_modified
+     and cmds.file(query=True, sceneName=True) == before_scene,
+     "modified %s -> %s" % (before_modified,
+                            cmds.file(query=True, modified=True)))
+
+cmds.file(new=True, force=True)
+cmds.polyCube(name="stashC")
+cmds.select(["stashC"], replace=True)
+stash.stash_selection()
+after_pick = cmds.ls(selection=True)
+cmds.select(clear=True)
+message = stash.stash_selection()
+gate(13, "a stash with nothing selected is refused",
+     "Select the objects" in message and after_pick == ["stashC"],
+     message[:80])
 
 shutil.rmtree(SCRATCH, ignore_errors=True)
 print("failures: %d" % len(FAILS))

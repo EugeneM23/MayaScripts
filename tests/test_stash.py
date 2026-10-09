@@ -43,6 +43,9 @@ class _Cmds(FakeUiCmds):
         self.removed = []
         self.imported = []
         self.modified = True
+        self.selection = []
+        self.select_calls = []
+        self.plugin_loads = []
 
     # ------------------------------------------------------- scene and files
     def internalVar(self, **kwargs):
@@ -79,10 +82,25 @@ class _Cmds(FakeUiCmds):
         return name == "sceneConfigurationScriptNode" or name in self.scripts
 
     def ls(self, *args, **kwargs):
+        if kwargs.get("selection"):
+            return list(self.selection)
         if kwargs.get("type") == "script" or "script" in (
                 kwargs.get("type") or []):
             return list(self.scripts)
         return []
+
+    def select(self, *args, **kwargs):
+        self.select_calls.append((args, kwargs))
+        if kwargs.get("clear"):
+            self.selection = []
+        elif args:
+            nodes = args[0] if isinstance(args[0], list) else [args[0]]
+            self.selection = list(nodes)
+        return None
+
+    def loadPlugin(self, *args, **kwargs):
+        self.plugin_loads.append(args)
+        return args[0] if args else None
 
     def lockNode(self, *args, **kwargs):
         return None
@@ -129,6 +147,29 @@ class _Cmds(FakeUiCmds):
         return args[0] if args else None
 
 
+class _Mel(object):
+    """`mel.eval` for the FBX exporter: an export line writes a small FBX at
+    the path it names, unless the test makes the exporter refuse."""
+
+    def __init__(self):
+        self.lines = []
+        self.refuse = None
+        self.write = True
+
+    def eval(self, text):
+        self.lines.append(text)
+        if "FBXExport -f" not in text:
+            return None
+        if self.refuse:
+            raise RuntimeError(self.refuse)
+        if not self.write:
+            return None
+        path = text.split('-f "', 1)[1].split('"', 1)[0]
+        with open(path.replace("/", os.sep), "wb") as out:
+            out.write(b"FBX" * 200)
+        return None
+
+
 class _Base(unittest.TestCase):
 
     def setUp(self):
@@ -136,10 +177,12 @@ class _Base(unittest.TestCase):
             del sys._skeldar_stash
         self.dir = tempfile.mkdtemp(prefix="stash_")
         self.fake = _Cmds(self.dir)
-        self.saved = (stash.cmds, opener.cmds, colour.cmds)
+        self.saved = (stash.cmds, opener.cmds, colour.cmds, stash.mel)
         stash.cmds = self.fake
         opener.cmds = self.fake
         colour.cmds = self.fake
+        self.mel = _Mel()
+        stash.mel = self.mel
         self.statuses = []
         self.saved_status = stash._status
         stash._status = lambda message, **kw: (
@@ -151,7 +194,7 @@ class _Base(unittest.TestCase):
         opener.fbximport.open_file = lambda path: self.opened.append(path)
 
     def tearDown(self):
-        stash.cmds, opener.cmds, colour.cmds = self.saved
+        stash.cmds, opener.cmds, colour.cmds, stash.mel = self.saved
         stash._status = self.saved_status
         opener.fbximport.open_file = self.saved_open_file
         if self.saved_import_clip is not None:
@@ -273,6 +316,78 @@ class Stashing(_Base):
         self.fake.dialog = self.source("pick.mb", b"//Maya")
         stash.stash_file()
         self.assertEqual(os.listdir(self.folder()), ["pick.mb"])
+
+
+class StashingSelection(_Base):
+
+    def test_one_object_is_named_after_it(self):
+        self.fake.selection = ["|Manny_Rig:Main"]
+        message = stash.stash_selection()
+        (name,) = os.listdir(self.folder())
+        self.assertTrue(name.startswith("Main_") and name.endswith(".fbx"),
+                        name)
+        self.assertIn("1 object,", message)
+
+    def test_several_objects_are_one_selection(self):
+        self.fake.selection = ["|Creep_Body", "|Creep_Sword"]
+        message = stash.stash_selection()
+        (name,) = os.listdir(self.folder())
+        self.assertTrue(name.startswith("selection_"), name)
+        self.assertIn("2 objects", message)
+
+    def test_a_typed_name_is_used_and_cleared(self):
+        self.fake.selection = ["|cube"]
+        self.fake.fields[stash.NAME_FIELD] = "blockout"
+        stash.stash_selection()
+        self.assertEqual(os.listdir(self.folder()), ["blockout.fbx"])
+        self.assertEqual(self.fake.fields[stash.NAME_FIELD], "")
+
+    def test_the_exporter_takes_the_selection_as_fbx(self):
+        self.fake.selection = ["|cube"]
+        stash.stash_selection()
+        export = [line for line in self.mel.lines if "FBXExport -f" in line]
+        self.assertEqual(len(export), 1)
+        self.assertIn(" -s", export[0])
+        self.assertNotIn("\\", export[0].split('-f "', 1)[1].split('"')[0])
+        self.assertIn("FBXExportSkins -v true", " ".join(self.mel.lines))
+
+    def test_the_selection_is_the_same_after(self):
+        self.fake.selection = ["|camera1", "|cube"]
+        stash.stash_selection()
+        self.assertEqual(self.fake.selection, ["|camera1", "|cube"])
+
+    def test_nothing_selected_stashes_nothing(self):
+        message = stash.stash_selection()
+        self.assertIn("Select the objects", message)
+        self.assertFalse(os.path.isdir(self.folder()))
+        self.assertEqual(self.mel.lines, [])
+
+    def test_an_exporter_refusal_leaves_no_file(self):
+        self.fake.selection = ["|cube"]
+        self.mel.refuse = "FBXExport: nothing exportable"
+        message = stash.stash_selection()
+        self.assertIn("Could not stash the selection", message)
+        self.assertIn("nothing exportable", message)
+        self.assertEqual(os.listdir(self.folder()) if os.path.isdir(
+            self.folder()) else [], [])
+
+    def test_an_empty_export_is_refused(self):
+        self.fake.selection = ["|cube"]
+        self.mel.write = False
+        message = stash.stash_selection()
+        self.assertIn("wrote nothing", message)
+        self.assertEqual(os.listdir(self.folder()) if os.path.isdir(
+            self.folder()) else [], [])
+
+    def test_the_scene_is_not_saved_or_renamed(self):
+        self.fake.selection = ["|cube"]
+        stash.stash_selection()
+        self.assertEqual(self.fake.file_calls, [])
+
+    def test_the_fbx_plugin_is_loaded_first(self):
+        self.fake.selection = ["|cube"]
+        stash.stash_selection()
+        self.assertEqual(self.fake.plugin_loads, [("fbxmaya",)])
 
 
 class Listing(_Base):

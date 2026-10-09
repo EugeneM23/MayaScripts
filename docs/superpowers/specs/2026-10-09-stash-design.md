@@ -133,3 +133,23 @@ rows are kept by path across a rebuild.
   scratch `MAYA_APP_DIR`, a real stash of the open scene, a real open and
   import, a real delete, the working scene's name and modified flag checked
   before and after. Written and run in a disposable Maya if time allows.
+
+## Addendum (2026-10-09): stash the scene's selection as FBX
+
+The animator: «нужно добавить возможность закидывать в сташ разные объекты
+из сцены (давай пока только в формате fbx)».
+
+- **Stash selection (FBX)** is a button under the Stash scene / Stash file
+  row. It takes the objects selected in the scene (meshes, rig parts,
+  skeletons, weapons, cameras: whatever is picked) and writes them as one
+  FBX into the stash, through the plugin's exporter (`FBXExport -s`,
+  smoothing groups, skins, shapes and children on).
+- Name: the typed Name, else the object's own name (`Main_HHMM.fbx`), or
+  `selection_HHMM.fbx` for several. Taken names get ` (2)` as before.
+- The scene's selection is put back after the export; the scene is not
+  saved, renamed or otherwise changed. Nothing selected is refused by name.
+- An exporter refusal or an empty file leaves no file behind and says why.
+- **Not built, by choice:** dragging objects from the viewport onto the
+  card. That needs a drag started in Maya's viewport and the card on the
+  other end of it; the button covers the same use first. Other formats
+  (.ma/.mb of a selection) are not offered yet.

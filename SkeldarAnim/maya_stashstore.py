@@ -71,6 +71,23 @@ def draft_name(scene_path, now):
                                ext)
 
 
+def short_name(node):
+    """A scene node's own name: `|Manny_Rig:Main|hand` -> `hand`, and the
+    namespace goes (`Manny_Rig:Main` -> `Main`). Pure."""
+    leaf = (node or "").split("|")[-1]
+    return leaf.split(":")[-1] or "selection"
+
+
+def selection_name(nodes, now):
+    """The FBX an object stash is called when no name is typed: the one
+    object's own name, or `selection` for several, with the time of the
+    stash (`Main_1432.fbx`, `selection_1432.fbx`)."""
+    shorts = [short_name(n) for n in nodes]
+    base = shorts[0] if len(shorts) == 1 else "selection"
+    return "{0}_{1}.fbx".format(base, time.strftime("%H%M",
+                                                   time.localtime(now)))
+
+
 def entries(names_and_stats):
     """The items among `(name, size, mtime)` triples, newest first, as dicts
     {"name", "kind", "bytes", "mtime"}. Anything that is not an item is

@@ -75,6 +75,28 @@ class DraftName(unittest.TestCase):
                          "rig_" + stamp + ".mb")
 
 
+class SelectionNames(unittest.TestCase):
+
+    def test_a_namespace_and_the_path_go(self):
+        self.assertEqual(store.short_name("|Manny_Rig:Main|hand_r"), "hand_r")
+        self.assertEqual(store.short_name("Manny_Rig:Main"), "Main")
+
+    def test_a_plain_name_stays(self):
+        self.assertEqual(store.short_name("|cube1"), "cube1")
+
+    def test_one_object_names_the_file_after_it(self):
+        now = 1786000000.0
+        stamp = time.strftime("%H%M", time.localtime(now))
+        self.assertEqual(store.selection_name(["|Rig:Main"], now),
+                         "Main_" + stamp + ".fbx")
+
+    def test_several_objects_are_called_selection(self):
+        now = 1786000000.0
+        stamp = time.strftime("%H%M", time.localtime(now))
+        self.assertEqual(store.selection_name(["|a", "|b"], now),
+                         "selection_" + stamp + ".fbx")
+
+
 class Listing(unittest.TestCase):
 
     def test_items_only_newest_first(self):
