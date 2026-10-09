@@ -8834,6 +8834,24 @@ drawn on top; a scroll; animations off at once; a real `capture.thumbnail` 640 x
 `verify_poselib_gui.py` 47/47 on the first build (its save gate now asks for `capture.THUMB_SIZE`); 4629
 unit tests.
 
+**The grid keeps one gap and one margin at every width** (2026-10-09, the animator: «отступы между
+карточками плавают в зависимости от размера окна, это не верно давай сделаем их константными. Так же
+нужно добавить отступы от краев окна интерфейса»):
+- `look.grid` keeps `GAP` (8) between cards and rows and `MARGIN` (10) from all four edges. Until then
+  the leftover width went into the gaps and the cards stood on the pane's edges.
+- As many columns fit as cards of the slider's size do, and the cards of those columns share the room,
+  like the hub's portrait grid. A card is at least the slider's size, less than one column more, and
+  never past `CELL_MAX`. The room's last few px (fewer than the columns), and what `CELL_MAX` leaves,
+  stay on the right.
+- A card's place is a function of the width and its column, so a Save moves nobody.
+- The card side now follows the pane by a px or two. So a picture is read at the next
+  `cardgrid.CACHE_STEP` (8 px) and drawn into the card: dragging the splitter re-reads nothing.
+
+Proof: unit tests — the gap and the margin at every pixel width from 60 to 1500 at three scales, the
+slider as the least size, a resize reading no picture again; 5550 in all. An offscreen render of the
+canvas at 300–640 px read the gaps 8 and the edges 10 (13 on the right at 640: 3 px five cards cannot
+share). Not seen in a GUI Maya (the animator's live checks).
+
 ## The Pose Library: animation cards, Studio Library's paste modes, previews on hover (2026-10-03/09)
 
 The animator: «теперь давай добавим возможность сохранять анимации. Все правила которые работают для поз

@@ -133,6 +133,18 @@ def zoom_side(side):
     return int(round(side * look.ZOOM))
 
 
+#  The cards of a row share the pane's width (look.grid, 2026-10-09), so their side changes by
+#  a px or two as the pane is dragged; a card's picture is read at the next CACHE_STEP and
+#  drawn into the card, so a resize does not read every picture on screen again
+CACHE_STEP = 8
+
+
+def cache_side(side):
+    """The side a card's picture is read and kept at: `side` up to the next CACHE_STEP."""
+    side = max(1, int(side))
+    return -(-side // CACHE_STEP) * CACHE_STEP
+
+
 _CLASSES = {}
 
 
@@ -237,11 +249,12 @@ def _classes():
             """The grid laid out for `width` px, the canvas at least `least_height` tall (it
             paints the viewport's background below the last row)."""
             _cols, self._rects, height = look.grid(width, len(self.cards), self.cell, self.k)
-            #  the cache holds the sizes in use: the cards' (a pane narrower than a card
-            #  shrinks them, so a dragged splitter would otherwise leave a size per pixel),
-            #  twice those (the card under the mouse), the details' and the ghost's
-            sides = set(rect[2] for rect in self._rects)
-            sides.update([zoom_side(side) for side in sides])
+            #  the cache holds the sizes in use: the cards' at their CACHE_STEP (the cards
+            #  follow the pane's width, so a dragged splitter would otherwise leave a size per
+            #  pixel), twice those (the card under the mouse), the details' and the ghost's
+            grid = set(rect[2] for rect in self._rects)
+            sides = set(cache_side(side) for side in grid)
+            sides.update(cache_side(zoom_side(side)) for side in grid)
             sides.update((self.panel.thumb_side(), int(look.GHOST * self.k)))
             for key in [key for key in self.pixmaps if key[1] not in sides]:
                 del self.pixmaps[key]
@@ -833,8 +846,8 @@ def _classes():
             p.save()
             p.setClipPath(shape)
             if not self._draw_playing(p, card, box):
-                picture = self.thumb(card.thumbnail,
-                                     zoom_side(rect[2]) if lifted > 0 else rect[2])
+                picture = self.thumb(card.thumbnail, cache_side(
+                    zoom_side(rect[2]) if lifted > 0 else rect[2]))
                 if picture is not None and not picture.isNull():
                     p.drawPixmap(box, picture, QtCore.QRectF(picture.rect()))
                 else:

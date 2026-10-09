@@ -288,6 +288,19 @@ the hub's way), Qt inside, the hub's stylesheet and tokens:
 The hub gets a **Pose Library** card in Animation (one line and **Open Pose Library**); a hotkey row
 `window.poses`. No shelf button (the house rule).
 
+**The grid's spacing, 2026-10-09** (the animator: «отступы между карточками плавают в зависимости от
+размера окна, это не верно давай сделаем их константными. Так же нужно добавить отступы от краев
+окна интерфейса»). The first build spread the leftover width into the gaps and stood the cards on
+the pane's edges. Now `look.grid` keeps `GAP` (8) between cards, columns and rows alike, and
+`MARGIN` (10) from all four edges, at every width. As many columns fit as cards of the slider's
+size do; the cards of those columns share the room, the way the hub's portrait grid does. So a card
+is at least the slider's size and less than one column more, and never past `CELL_MAX`. The room's
+last few px (fewer than the columns), and whatever `CELL_MAX` leaves, stay on the right. A card's
+place is still a function of the width and its column, so a Save moves nobody. Since the card side
+now follows the pane by a px or two, the canvas reads a picture at the next `cardgrid.CACHE_STEP`
+(8 px) and draws it into the card, so dragging the splitter does not read every picture on screen
+again.
+
 ## The install
 
 `poses/` is a payload row. `install.copy_payload` no longer loses local poses: the installed

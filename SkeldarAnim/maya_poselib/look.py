@@ -27,8 +27,9 @@ import re
 CELL_MIN = 72           # a card is at least this wide (the card-size slider's low end) ...
 CELL_MAX = 200          # ... and at most this
 CELL_DEFAULT = 112      # what the slider starts at
-GAP = 8                 # between rows, and the least between columns
-NAME_H = 34             # the strip under a card: its name and, under it, the character chip
+GAP = 8                 # between cards, columns and rows alike, whatever the width
+MARGIN = 10             # between the cards and the pane's edges, on every side
+NAME_H = 34            # the strip under a card: its name and, under it, the character chip
 GHOST = 96              # the thumbnail riding the cursor during a drag
 THROTTLE_MS = 33        # the drag's caption is re-read at most this often
 
@@ -76,26 +77,33 @@ def _px(value, scale):
 def grid(width, count, cell, scale=1.0):
     """(columns, rects, height) for `count` cards in `width` physical px.
 
-    A card is a square of `cell` (the slider's value, clamped to CELL_MIN..CELL_MAX) times
-    `scale`, with a NAME_H strip under it; `rects` are the squares, `(x, y, w, h)`. As many
-    columns as fit (n cards need n * cell + (n - 1) * GAP), never more than `count` and never
-    fewer than one. The row is SPREAD over the columns that FIT: the cards keep the size the
-    slider says and the extra width goes into the gaps between those columns, so the first
-    card touches the left edge and the last card of a full row the right one. Because the
-    spread is over the columns that fit and not over the cards there are, a card's x is a
+    The gaps are the GAP and the edges the MARGIN whatever the width (2026-10-09, the
+    animator: «отступы между карточками плавают в зависимости от размера окна, это не верно
+    давай сделаем их константными. Так же нужно добавить отступы от краев окна интерфейса»;
+    until then the extra width went into the gaps and the cards touched the edges). A card is
+    a square with a NAME_H strip under it; `rects` are the squares, `(x, y, w, h)`. The room
+    is the width less a MARGIN each side. As many columns fit as cards of the slider's size
+    `cell` (clamped to CELL_MIN..CELL_MAX, times `scale`) do, GAP apart, and the cards of
+    those columns share the room - the hub's portrait grid does the same - so a card is at
+    least the slider's size and less than one column more, never past CELL_MAX (the room's
+    last few px, fewer than the columns, and whatever CELL_MAX leaves, stay on the right).
+    The columns are the ones that FIT, not the cards there are, so a card's place is a
     function of the width and its column alone: the cards already in the library do not move
-    when another is saved, and a short row (fewer cards than fit) simply stops where its
-    cards end, in the same places a full row would put them. A single column (only one fits)
-    is centred; a pane narrower than a card shrinks the card rather than clip it; a width of
-    0 (not laid out yet) is one column at the left. A short last row keeps the columns.
-    `height` is every row with its name strip plus the gaps between rows. Pure."""
+    when another is saved, and a short row stops where its cards end. Never more columns than
+    cards, never fewer than one; a pane narrower than a card shrinks the card rather than clip
+    it; a width of 0 (not laid out yet) is one column of the slider's size. A short last row
+    keeps the columns. `height` is every row with its name strip, the gaps between rows and a
+    MARGIN above and below. Pure."""
     k = float(scale or 1.0)
-    gap, name = _px(GAP, k), _px(NAME_H, k)
+    gap, name, pad = _px(GAP, k), _px(NAME_H, k), _px(MARGIN, k)
     width = int(round(width or 0))
     side = max(1, _px(max(CELL_MIN, min(CELL_MAX, cell)), k))
     if width > 0:
-        side = min(side, width)
-        fit = (width + gap) // (side + gap)
+        room = max(1, width - 2 * pad)
+        side = min(side, room)
+        fit = max(1, (room + gap) // (side + gap))
+        # the `fit` columns share the room, in whole px so every gap is exactly `gap`
+        side = max(side, min(_px(CELL_MAX, k), (room - (fit - 1) * gap) // fit))
     else:
         fit = 1
     cols = max(1, min(count, fit))
@@ -105,18 +113,8 @@ def grid(width, count, cell, scale=1.0):
     rects = []
     for index in range(count):
         row, col = divmod(index, cols)
-        if fit > 1:
-            # Column c of the `fit` columns stands at c * (width - side) / (fit - 1), rounded
-            # half up, in integers so no float or half-to-even rounding is involved. The step
-            # between columns is at least side + gap (fit columns fit, so width - side >=
-            # (fit - 1) * (side + gap)) and floor(a + n) = floor(a) + n for a whole n, so
-            # neighbouring columns stay at least side + gap apart; the last column lands on
-            # width - side, the pane's right edge. A function of width and column only.
-            x = (2 * col * (width - side) + (fit - 1)) // (2 * (fit - 1))
-        else:
-            x = max(0, (width - side) // 2)
-        rects.append((x, row * (side + name + gap), side, side))
-    return cols, rects, rows * (side + name) + (rows - 1) * gap
+        rects.append((pad + col * (side + gap), pad + row * (side + name + gap), side, side))
+    return cols, rects, 2 * pad + rows * (side + name) + (rows - 1) * gap
 
 
 def name_rect(rect, scale=1.0):

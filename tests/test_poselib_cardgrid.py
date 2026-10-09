@@ -209,6 +209,33 @@ class Cache(CanvasCase):
         self.assertEqual((first.width(), first.height()), (64, 64))
         self.assertIsNot(self.canvas.thumb(cards[0].thumbnail, 32), first)
 
+    def test_a_resize_by_a_few_px_reads_no_picture_again(self):
+        """Since 2026-10-09 the cards of a row share the pane's width, so a pane widened by a
+        few px makes every card a px or two larger. The pictures are kept in CACHE_STEP steps
+        and drawn into the card, so dragging the pane reads nothing again."""
+        cards = self.images(8)
+        self.canvas.set_cards(cards)
+        self.canvas.fit(500, 400)
+        self.render()
+        before = dict(self.canvas.pixmaps)
+        self.assertTrue(before)
+        sides = set()
+        for width in range(500, 520):
+            self.canvas.fit(width, 400)
+            self.render()
+            sides.add(self.canvas.rects()[0][2])
+        self.assertGreater(len(sides), 2)               # the cards did change size
+        self.assertEqual(set(self.canvas.pixmaps), set(before))
+        for key, picture in before.items():
+            self.assertIs(self.canvas.pixmaps[key], picture)
+
+    def test_the_cache_side_is_the_next_step(self):
+        step = cardgrid.CACHE_STEP
+        self.assertEqual(cardgrid.cache_side(1), step)
+        self.assertEqual(cardgrid.cache_side(step), step)
+        self.assertEqual(cardgrid.cache_side(step + 1), 2 * step)
+        self.assertEqual(cardgrid.cache_side(114), 120)
+
     def test_no_thumbnail_is_none(self):
         self.assertIsNone(self.canvas.thumb("", 64))
         self.assertIsNone(self.canvas.thumb(self.tmp + "/nothing.jpg", 64))
@@ -401,11 +428,10 @@ class HoverZoom(CanvasCase):
         self.animations = False
         self.hover(self.centre(1))
         self.render()
-        side = self.canvas.rects()[1][2]
-        self.assertIn((self.cards[1].thumbnail, int(round(side * look.ZOOM))),
-                      self.canvas.pixmaps)
+        side = cardgrid.cache_side(int(round(self.canvas.rects()[1][2] * look.ZOOM)))
+        self.assertIn((self.cards[1].thumbnail, side), self.canvas.pixmaps)
         self.canvas.fit(500, 600)               # the layout keeps that size in the cache
-        self.assertIn(int(round(side * look.ZOOM)), set(key[1] for key in self.canvas.pixmaps))
+        self.assertIn(side, set(key[1] for key in self.canvas.pixmaps))
 
     def test_the_card_under_the_mouse_is_read_off_the_grid_never_off_the_grown_card(self):
         # 2026-10-03, the animator: «принимала решение ... всегда на основе границ изначальной
