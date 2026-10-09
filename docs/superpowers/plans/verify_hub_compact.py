@@ -46,7 +46,8 @@ phase in ONE send, the hub's root deaf to the real mouse first.
     picture   gate 6: hub_compact.png, every card open, the dock's width
     classic   ⋮ -> Classic look (deferred)
     classic2  the classic hub at the same width: every section open, its
-              rows within the viewport (the classic watch items),
+              rows within the viewport and no text clipped (the classic
+              watch items: the tab row, Retarget's, CoM's),
               hub_compact_classic.png; the skin asked back (deferred)
     restore   Interface animations as found; the scene left as it is (a
               disposable Maya)
@@ -847,23 +848,31 @@ def phase_watch(build):
     for name in LISTS:
         lw = maya_hubqt.list_widget(name)
         empty = not lw.count()
+        #  what an empty list is sized from (measured on a throwaway list
+        #  since 2026-10-09; the font's lineSpacing + 4 before), its height
+        empty_row = maya_hubqt.list_row_px(name) if empty else None
+        guess = lw.fontMetrics().lineSpacing() + 4
+        height_empty = lw.height()
         #  an empty list's first rows arriving (a refresh after the build)
         added = ensure_rows(name)
         turn(4)
         lw = maya_hubqt.list_widget(name)
-        fallback = lw.fontMetrics().lineSpacing() + 4
         real = lw.sizeHintForRow(0) if lw.count() else None
         info.append("%s: %s at the build%s" % (
             name, "empty" if empty else "filled",
             ", %d rows arrived" % added if added else ""))
         rows, row, vh = shown_rows(name)
-        info.append("%s: fallback %d, real row %s, shows %d" % (
-            name, fallback, real, rows))
+        info.append("%s: empty row %s (the old guess %d), real row %s, "
+                    "height empty %d / filled %d, shows %d" % (
+                        name, empty_row, guess, real, height_empty,
+                        lw.height(), rows))
         if lw.count() and rows != hubstyle().LIST_ROWS:
-            bad.append(name)
+            bad.append("%s shows %d rows" % (name, rows))
+        if empty and (empty_row != real or height_empty != lw.height()):
+            bad.append("%s jumped when its first rows came" % name)
         drop_rows(name, added)
-    gate("W3", "the 10 rows hold once the list fills (fallback row vs real)",
-         not bad, "; ".join(info))
+    gate("W3", "the 10 rows hold once the list fills, and an empty list "
+         "stands at that height already", not bad, "; ".join(info + bad))
 
     # Task 5: the hand rows, the tiles' names, the pill
     import maya_invlook as look
@@ -1151,6 +1160,64 @@ def phase_classic(build):
     print("Classic look asked (deferred); classic2 measures it")
 
 
+def _classic_texts():
+    """The classic hub's texts against their widgets (gate C3): a button's,
+    a segment's or a label's words wider than its contents, a check box
+    asking more than it has. And the three classic rows the reviewers asked
+    to see (task-14-watch.md): each one's right edge against its section's.
+    Answers (texts examined, clipped, the rows)."""
+    Q = q()
+    W = Q.QtWidgets
+    h = hub()
+    examined, clipped = 0, []
+    frames = {}
+    for sec in h.SECTIONS:
+        frame = hubqt().find(sec.frame, layout=True)
+        if frame is None:
+            continue
+        frames[sec.key] = frame
+        for w in frame.findChildren(W.QWidget):
+            if not visible_in(w, frame):
+                continue
+            if isinstance(w, W.QAbstractButton):
+                text = w.text()
+            elif isinstance(w, W.QLabel) and not w.wordWrap():
+                text = w.text()
+            else:
+                continue
+            if not text or not text.strip():
+                continue
+            examined += 1
+            if isinstance(w, (W.QCheckBox, W.QRadioButton)):
+                need, have = w.sizeHint().width(), w.width() + 1
+            else:
+                need = w.fontMetrics().horizontalAdvance(text)
+                have = w.contentsRect().width()
+            if need > have:
+                clipped.append("%s: %s %r needs %d of %d" % (
+                    sec.key, name_of(w), text[:24], need, have))
+    from maya_scenesetup import window as sw
+    import maya_rig_retarget as rr
+    from maya_com import panel as com
+    rows = []
+    for label, key, name, up in (
+            ("the tab row", "weapons", sw.tab_segment("weapon"), 2),
+            ("Retarget's row", "retarget", rr.bones_button("auto"), 2),
+            ("CoM's chips row", "com", com.TRAIL, 1)):
+        widget = hubqt().find(name)
+        frame = frames.get(key)
+        for _ in range(up):
+            widget = None if widget is None else widget.parentWidget()
+        if widget is None or frame is None:
+            clipped.append("%s not found" % label)
+            continue
+        x, _y, ww, _hh = rect_in(widget, frame)
+        rows.append("%s right %d of %d" % (label, x + ww, frame.width()))
+        if x + ww > frame.width():
+            clipped.append("%s past its section" % label)
+    return examined, clipped, rows
+
+
 def phase_classic2(build, deferred=True):
     Q = q()
     W = Q.QtWidgets
@@ -1188,6 +1255,14 @@ def phase_classic2(build, deferred=True):
          not over and minimum <= vp.width() and not scroll_h.isVisible(),
          "viewport %s, content minimum %d, h-scroll %s; %s" % (
              width, minimum, scroll_h.isVisible(), "; ".join(over[:12])))
+    examined, clipped, rows = _classic_texts()
+    gate("C3", "the classic hub at the dock's width: no button's, "
+         "segment's, check box's or label's text clipped (the watch: the "
+         "tab row's Equip / Unequip at 80, Retarget's Bones row, CoM's five "
+         "columns)", examined and not clipped,
+         "%d texts; %s%s" % (examined, "; ".join(rows),
+                             (" | CLIPPED " + "; ".join(clipped[:12]))
+                             if clipped else ""))
     root = area
     path = picture_path(PNG_CLASSIC, build)
     size = _stitch(root, area, path)
