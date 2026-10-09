@@ -6,8 +6,8 @@ import QtQuick
 Window {
     id: root
     visible: true
-    width: 460
-    height: 640
+    width: 500
+    height: 1000
     title: "SkeldarAnim - Bridge"
     color: "#2b2d31"
 
@@ -68,7 +68,7 @@ Window {
         ListView {
             id: list
             width: root.width - 24
-            height: 300
+            height: 280
             clip: true
             model: bridge.clipNames
             delegate: Rectangle {
