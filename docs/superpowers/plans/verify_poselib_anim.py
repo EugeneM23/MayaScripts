@@ -100,7 +100,12 @@ against the press's own measure.
             second Mixamo fixture as the TARGET, walking along a take of its own, A's full card
             pasted on it In place with Replace: its ground frame on the take's own at every
             pasted frame (the final review's M4) - the control, the ground read off the curve the
-            press rewrites as before the fix, falls off it.
+            press rewrites as before the fix, falls off it; a Mixamo fixture ROLLING over its
+            Hips (a full turn about X, a 2 deg side tilt, its own heading jumping 165 deg near
+            upside down) carded and pasted onto a rootless twin standing elsewhere, with the
+            travel and In place: every member on the card relative to the target's ground on
+            every frame (the re-review of the fix wave) - the control, the top joint's OWN
+            heading taken off as before the fix, turns the body 180 deg at the inverted frames.
   speed     the seconds a frame of a paste onto a rig and onto a skeleton (< 1.0 on the rig).
   floor     a new scene: `drop_floor` of the full card at (150, 0, 80) - a Manny_Rig added, Main
             on the point at the paste frame, the root travelling from there as the card's, the
@@ -2350,6 +2355,7 @@ def phase_mixamo():
              rows, len(members_t), wander))
     b.wipe()
     rootless_target_gates()
+    rolling_target_gates()
 
 
 #  the rootless target's own take (the final review's M4): its Hips keyed walking and turning -
@@ -2431,6 +2437,195 @@ def rootless_target_gates():
          "fix): off the take's own ground, the gate above would fail",
          ok_c and max(off.value, off_deg.value) > 1.0,
          "%s cm, %s deg | %s" % (off, off_deg, text_c))
+    ch.wipe()
+    cmds.setAttr(top + ".visibility", False)
+
+
+#  the rolling card (the re-review of the fix wave): its Hips forward a frame, their side tilt
+ROLL_STEP = 4.0
+ROLL_TILT = 2.0
+SWING_LIMIT = 120.0                 # deg off upright past which a heading is noise (computed here)
+ROLL_AT = ((-60.0, 0.0, 90.0), 70.0)   # where the rolling card's target stands, and its turn
+
+
+def rolling_card():
+    """A Mixamo fixture at its own size rolling forward over its Hips: a full turn about world X
+    over the take (0..23), a +-ROLL_TILT deg side tilt about world Z every other frame, no turn
+    about Y, ROLL_STEP cm forward a frame - carded and hidden."""
+    if "roll" in CARDS:
+        return
+    top, _ours = build_mixamo("mxr", 1.0)
+    ch = Char("mxr", top)
+    own = [top + "." + attr for attr in ROT + TR]
+    count = END - START + 1
+    for i in range(count):
+        for plug in own:
+            cmds.setAttr(plug, ch.defaults[plug])
+        tilt = ROLL_TILT if i % 2 else -ROLL_TILT
+        cmds.rotate(360.0 * i / count, 0.0, tilt, top, relative=True, worldSpace=True)
+        cmds.move(0.0, 0.0, ROLL_STEP * i, top, relative=True, worldSpace=True)
+        cmds.setKeyframe(own, time=START + i)
+    evaluate()
+    header, frames, note = animcapture.build_animation([top], start=START, end=END)
+    say("   rolling card: %s" % note)
+    read, read_frames, _p = through_disk("Roll", header, frames)
+    CARDS["roll"] = (read, read_frames)
+    cmds.setAttr(top + ".visibility", False)
+    go(START)
+
+
+def _yaw(turn):
+    """The yaw (radians) of `heading(turn)`."""
+    q = om.MTransformationMatrix(heading(turn)).rotation(asQuaternion=True)
+    return 2.0 * math.atan2(q.y, q.w)
+
+
+def _swing(turn):
+    """How far `turn` tips world +Y off upright (deg): the swing of its swing-twist split."""
+    up = om.MVector(0.0, 1.0, 0.0)
+    return pm.direction_angle(up * pm.rotation(turn), up)
+
+
+def _wrap(a):
+    return a - 2.0 * math.pi * math.floor((a + math.pi) / (2.0 * math.pi))
+
+
+def steadied_grounds(card):
+    """[MMatrix]: the card's GROUND frame on every frame - the floor under its top joint, turned
+    by the joint's heading since its rest (`root_frames`) - the heading held CONTINUOUS across
+    the frames whose joint stands more than SWING_LIMIT deg off upright (there a 2 deg tilt reads
+    as a half turn): such a frame takes the yaw interpolated, the short way, between the nearest
+    frames within the limit on either side (by frame), the nearest one's at an end. Computed here,
+    the spec's rule ("Root motion"), no posemath."""
+    header, frames = card
+    top = pm.root_of(header["bones"])
+    rest = pm.matrix(header["bones"][top]["rest"])
+    worlds = [card_bones(card, i)[top]["world"] for i in range(len(frames["world"]))]
+    turns = [pm.rotation(rest).inverse() * pm.rotation(w) for w in worlds]
+    good = [i for i, turn in enumerate(turns) if _swing(turn) <= SWING_LIMIT]
+    yaw = dict((i, _yaw(turns[i])) for i in good)
+    for before, after in zip(good, good[1:]):
+        yaw[after] = yaw[before] + _wrap(yaw[after] - yaw[before])
+    out = []
+    for i, world in enumerate(worlds):
+        if i not in yaw:
+            lower = [g for g in good if g < i]
+            upper = [g for g in good if g > i]
+            if not lower:
+                y = yaw[upper[0]]
+            elif not upper:
+                y = yaw[lower[-1]]
+            else:
+                a, b = lower[-1], upper[0]
+                y = yaw[a] + (yaw[b] - yaw[a]) * float(i - a) / float(b - a)
+        else:
+            y = yaw[i]
+        at = pm.position(pm.matrix(world))
+        out.append(placed(om.MQuaternion(y, om.MVector(0.0, 1.0, 0.0)).asMatrix(),
+                          (at.x, 0.0, at.z)))
+    return out
+
+
+_ON_GROUND = pm._on_ground
+
+
+def _on_ground_own(turn, point, rest, ground, steadied=None):
+    """`posemath._on_ground` before the re-review of the fix wave: the top joint's OWN heading
+    taken off, whatever the source's root frame was steadied to."""
+    return _ON_GROUND(turn, point, rest, ground)
+
+
+def _body_on(card, ch, members_t, pairs, span, carry_of):
+    """(worst deg, worst cm): every member bone of `ch` at each (t, i) of `span` against the
+    card's partner at frame i carried by `carry_of(i)`, read after a real time change."""
+    deg, cm = Worst(), Worst()
+    bones = ch.bones()
+    for t, i in span:
+        go(t)
+        src = card_bones(card, i)
+        carry = carry_of(i)
+        for leaf in members_t:
+            want = pm.rigid(pm.matrix(src[pairs[leaf]]["world"]) * carry)
+            got = pm.rigid(W(bones[leaf]["path"]))
+            deg.see(pm.angle(got, want), "%s @%g" % (leaf, t))
+            cm.see((pm.position(got) - pm.position(want)).length(), "%s @%g" % (leaf, t))
+    return deg, cm
+
+
+def rolling_target_gates():
+    """The re-review of the fix wave: the final review's M3 steadied a rootless card's root
+    heading across a roll's inverted frames - and a ROOTLESS target's top joint still took off
+    its OWN heading, near upside down a 2 deg tilt read as a half turn, so the body stood turned
+    about world Y by up to ~180 deg there. The rolling card (a Mixamo fixture rolling over its
+    Hips) onto a second fixture at its own size - a twin, rootless - standing at ROLL_AT, pasted
+    at 50: with the travel, every member on the card carried from its ground at its first frame
+    onto the target's ground where it stood (the body travels as the card's); In place, every
+    member on the card's STEADIED ground frame (computed here, `steadied_grounds`) placed on the
+    target's - every frame. The control: the same presses with `_on_ground` taking off the
+    joint's own heading (the code before the fix)."""
+    rolling_card()
+    card = CARDS["roll"]
+    header, frames = card
+    count = END - START + 1
+    span = [(AT + i, i) for i in range(count)]
+    source0 = card_bones(card, 0)
+    top_leaf = pm.root_of(header["bones"])
+    rest = pm.matrix(header["bones"][top_leaf]["rest"])
+    turns = [pm.rotation(rest).inverse() * pm.rotation(card_bones(card, i)[top_leaf]["world"])
+             for i in range(count)]
+    swings = [_swing(turn) for turn in turns]
+    own = [_yaw(turn) for turn in turns]
+    jump = max(abs(_wrap(b - a)) for a, b in zip(own, own[1:]))
+    gate("mixamo the rolling card: rootless, its Hips past %g deg off upright on some frames and "
+         "within it on others, their own heading jumping between two neighbours" % SWING_LIMIT,
+         not pm.has_root(header["bones"]) and max(swings) > 150.0 and min(swings) < 10.0 and
+         math.degrees(jump) > 90.0,
+         "swing %.2f..%.2f deg, %d frames past it; the own heading's worst jump %.2f deg" % (
+             min(swings), max(swings), sum(1 for s in swings if s > SWING_LIMIT),
+             math.degrees(jump)))
+    top, _ours = build_mixamo("mxs", 1.0)
+    (x, y, z), yaw = ROLL_AT
+    cmds.move(x, y, z, top, relative=True, worldSpace=True)
+    cmds.rotate(0.0, yaw, 0.0, top, relative=True, worldSpace=True)
+    evaluate()
+    ch = Char("mxs", top)
+    members_t, pairs, bones = target_members(header, ch, source0)
+    twin = pm.twin(pairs, source0, bones)
+    first_ground = root_frames(source0)[0]
+    steady = steadied_grounds(card)
+
+    def press(options, control):
+        ch.wipe()
+        go(AT)
+        stand = target_place(ch)
+        if control:
+            with patched(pm, "_on_ground", _on_ground_own):
+                ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        else:
+            ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        return ok, text, stand
+
+    for label, options, carry_of in (
+            ("with the travel", animdata.Options(),
+             lambda i, stand: first_ground.inverse() * stand),
+            ("In place", animdata.Options(in_place=True),
+             lambda i, stand: steady[i].inverse() * stand)):
+        ok, text, stand = press(options, False)
+        say("   rolling card %s onto a rootless twin: %s" % (label, text))
+        deg, cm = _body_on(card, ch, members_t, pairs, span,
+                           lambda i, stand=stand, carry_of=carry_of: carry_of(i, stand))
+        gate("mixamo the rolling card %s onto a ROOTLESS twin: every member on the card relative "
+             "to the target's ground, every frame (its Hips upside down included)" % label,
+             ok and twin and len(members_t) > 20 and deg.value <= 0.01 and cm.value <= 0.01,
+             "%s deg, %s cm over %d members, %d frames | %s" % (deg, cm, len(members_t), count,
+                                                                text))
+        ok_c, text_c, stand = press(options, True)
+        deg_c, cm_c = _body_on(card, ch, members_t, pairs, span,
+                               lambda i, stand=stand, carry_of=carry_of: carry_of(i, stand))
+        gate("mixamo the control - %s, the top joint's OWN heading taken off (before the fix): "
+             "the body turned at the inverted frames, the gate above would fail" % label,
+             ok_c and deg_c.value > 90.0,
+             "%s deg, %s cm | %s" % (deg_c, cm_c, text_c))
     ch.wipe()
     cmds.setAttr(top + ".visibility", False)
 
