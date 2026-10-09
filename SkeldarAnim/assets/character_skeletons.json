@@ -1672,7 +1672,7 @@ null,
 "file": "Manny_Skeleton.ma",
 "kind": "skeleton",
 "model": "Manny",
-"sha1": "a2449398a5e5c1d6ddfb4975119ae33d01f47053"
+"sha1": "ae179c30624a7ff72d8647480d7db6b7a89b296e"
 },
 "Manny_Rig": {
 "bones": {
@@ -2238,7 +2238,7 @@ null,
 "file": "Manny_Rig.ma",
 "kind": "rig",
 "model": "Manny",
-"sha1": "43cf990ec61d6067ba5c921ca8287af1506e09a4"
+"sha1": "0fb11db4a701ec31dd5cdc31aaadf8bd31a55070"
 },
 "Orc_D_Rig": {
 "bones": {
