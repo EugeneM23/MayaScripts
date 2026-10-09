@@ -231,6 +231,29 @@ class WalkOrder(Rebound):
         times = [entry for entry in self.log if entry[0] == "time"]
         self.assertEqual(times, [("time", 13), ("time", 12.0), ("time", 12.0)])
 
+    def test_arriving_back_at_the_entry_frame_sets_its_tweaks_back(self):
+        """The re-review of the fix wave (M2 only partly fixed): a press whose pre-pass walked
+        the paste range (Blend under 100 %, a rootless target's ground) came back to its first
+        frame - the frame it entered on - through a real `go`, which threw every unkeyed tweak
+        away: frame a's solve read the KEYED scene while the partner, Connect's reference and the
+        place had read the tweaks. Arriving back at the entry frame after a move sets the tweaks
+        captured on entry back (`Tweaks.restore`, unrecorded) - but the plugs the press keyed;
+        anywhere else a move is only a move."""
+        with timewalk.Walk(fresh=True) as walk:
+            self.assertFalse(walk.arrive(12.0))           # not moved yet: nothing to set back
+            self.assertTrue(walk.arrive(13))
+            self.assertNotIn(("restore", ()), self.log)
+            walk.keyed.append("a.tx")
+            del self.log[:]
+            self.assertTrue(walk.arrive(12))              # back on the entry frame
+            self.assertEqual(self.log, [("time", 12), ("restore", ("a.tx",))])
+            del self.log[:]
+            self.assertTrue(walk.arrive(14))
+            self.assertEqual(self.log, [("time", 14)])
+            del self.log[:]
+            walk.go(12.0)                                 # a plain go is a move, nothing more
+            self.assertEqual(self.log, [("time", 12.0)])
+
     def test_arrive_elsewhere_goes(self):
         with timewalk.Walk(fresh=True) as walk:
             self.assertTrue(walk.arrive(40))

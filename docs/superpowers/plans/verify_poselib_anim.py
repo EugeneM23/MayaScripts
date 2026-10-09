@@ -37,7 +37,11 @@ against the press's own measure.
             fingers on the hand as the card's, Select objects what it keyed and no Main; Main
             dragged by hand off its keys (autoKey off), then a default Apply: the travel from the
             TWEAKED place (the final review's M2) - the control, the walk going to the frame the
-            scene stands on as before the fix, travels from the keyed place 170 cm away.
+            scene stands on as before the fix, travels from the keyed place 170 cm away; RootX_M
+            dragged off its keys, then A's left-leg card at Blend 50 % with Connect (a pre-pass
+            walks the range before the chunk): every channel's first key what it showed, the IK
+            foot included (the re-review of the fix wave) - the control, back on the entry frame
+            a plain time set as before the fix, keys the IK foot 10.8 cm off.
   modes     B carrying a take of its own (keys at 40, 60, 70.5, 80, 100 on EVERY control
             channel), pasted at 60 (24 frames) in each of Replace / Replace all / Insert / Merge,
             once on the base and once with an additive layer carrying a take of its own (the
@@ -899,6 +903,21 @@ def cards():
     go(0)
 
 
+def leg_card():
+    """A's LEFT-LEG card (the chip «Leg L»), through the disk: its IK foot is a world-space
+    control - it follows the pelvis as it stands."""
+    cards()
+    if "leg" not in CARDS:
+        a = need("A")
+        header, frames, note = animcapture.build_animation([a.rig.main], regions=["Leg L"],
+                                                           start=START, end=END)
+        say("   leg card: %s" % note)
+        read, read_frames, _p = through_disk("Step", header, frames)
+        CARDS["leg"] = (read, read_frames)
+        go(0)
+    return CARDS["leg"]
+
+
 def skeleton_card():
     if "skeleton" in CARDS:
         return
@@ -1170,6 +1189,7 @@ def phase_twin():
          "%s deg (the hand moved up to %s deg)" % (on_card, moved))
     b.wipe()
     tweaked_gates(b, card, span)
+    prepass_tweak_gates(b)
 
 
 @contextlib.contextmanager
@@ -1231,6 +1251,82 @@ def tweaked_gates(b, card, span):
          ok_c and ccm.value > 100.0 and kcm.value <= 0.01 and kdeg.value <= 0.01,
          "%s cm off the tweaked place's travel, %s cm / %s deg off the keyed place's" % (
              ccm, kcm, kdeg))
+    b.wipe()
+
+
+def _arrive_as_before(walk, frame):
+    """`timewalk.Walk.arrive` before the re-review of the fix wave: back on the entry frame after
+    a move, a plain time set - the tweaks it threw away stay away."""
+    here = walk._here is not None and abs(float(frame) - float(walk._here.value)) <= 1e-9
+    if not walk.moved and here:
+        walk.frame = frame
+        return False
+    walk.go(frame)
+    return True
+
+
+def prepass_tweak_gates(b):
+    """The re-review of the fix wave (M2 only partly fixed): a press that walks the paste range
+    BEFORE its chunk - Blend under 100 % reads the take on every frame (a rootless target its
+    ground) - came back to its first frame `a`, the frame it entered on, through a real time
+    set, which threw the animator's unkeyed tweaks away: frame a was solved against the KEYED
+    scene while the partner and Connect's reference had read the tweaks. B carrying a take on
+    RootX_M (keys at 40 and 100), RootX_M dragged by hand off its keys at 50 (autoKey off), then
+    A's LEFT-LEG card at Blend 50 % with Connect, at 50: every channel's first key is what it
+    showed - the IK foot (world-space: it follows the pelvis as it stands) included. The
+    control: the same press with the walk's arrival back at the entry frame a plain time set
+    (the code before the fix) - the IK foot's first key moves off with the pelvis."""
+    header, frames = leg_card()
+    rootx = b.node("RootX_M")
+    tweak = (("translateX", 20.0), ("translateZ", -12.0))
+
+    def stage():
+        b.wipe()
+        b.place()
+        for t, extra in ((40, 0.0), (100, 15.0)):
+            for attr in TR:
+                plug = rootx + "." + attr
+                cmds.setKeyframe(plug, time=t, value=float(cmds.getAttr(plug)) + extra)
+        evaluate()
+        go(AT)
+        for attr, d in tweak:
+            plug = rootx + "." + attr
+            cmds.setAttr(plug, float(cmds.getAttr(plug)) + d)
+        return values_of(b.plugs)
+
+    def press(control):
+        shown = stage()
+        options = animdata.Options(connect=True)
+        if control:
+            with patched(timewalk.Walk, "arrive", _arrive_as_before):
+                ok, text = animapply.apply(header, frames, selection=b.selection(), alpha=0.5,
+                                           options=options)
+        else:
+            ok, text = animapply.apply(header, frames, selection=b.selection(), alpha=0.5,
+                                       options=options)
+        written = keyed_plugs(b, AT)
+        first, ik = Worst(), Worst()
+        for plug in written:
+            off = abs(key_at(plug, AT) - shown[plug])
+            if plug.endswith(ROT):
+                off = abs((off + 180.0) % 360.0 - 180.0)
+            name = plug.split("|")[-1]
+            first.see(off, name)
+            if "IKLeg_L" in name and plug.endswith(TR):
+                ik.see(off, name)
+        return ok, text, written, first, ik
+
+    ok, text, written, first, ik = press(False)
+    say("   twin, Blend 50 %% + Connect with RootX_M tweaked: %s" % text)
+    gate("twin RootX_M dragged off its keys by hand, the leg card at Blend 50 % with Connect (a "
+         "pre-pass walks the range first): every channel's first key is what it showed, the IK "
+         "foot included", ok and len(written) > 5 and first.value <= 1e-3,
+         "%d written, worst %s (the IK foot %s) | %s" % (len(written), first, ik, text))
+    ok_c, text_c, written_c, first_c, ik_c = press(True)
+    gate("twin the control - back on the entry frame a plain time set (before the fix): frame a "
+         "solved against the keyed pelvis, the IK foot's first key off, the gate above would "
+         "fail", ok_c and ik_c.value > 1.0,
+         "%d written, worst %s, the IK foot %s cm" % (len(written_c), first_c, ik_c))
     b.wipe()
 
 

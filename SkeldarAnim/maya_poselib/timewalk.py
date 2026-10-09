@@ -104,12 +104,22 @@ class Walk(object):
         as 2.8), so a press pasting at the current frame reads what the animator SEES there -
         the tweaks the entry set back after its own evaluation switch (the final review, M2:
         Main dragged by hand to place a walk was keyed where its curve stood). True when it
-        went."""
-        if not self.moved and self._here is not None and \
-                abs(float(frame) - float(self._here.value)) <= 1e-9:
+        went.
+
+        Back on the ENTRY frame after a move, the tweaks the walk captured on entry are set
+        back once it stands there (`Tweaks.restore`, unrecorded) - but `keyed`, the plugs the
+        press keyed: the entry frame reads as the animator sees it on every road. A press whose
+        pre-pass walked the paste range (Blend under 100 %, a rootless target's ground) came
+        back to its first frame through a real time set, and frame a was solved against the
+        keyed scene while its partner, Connect's reference and the place had read the tweaks
+        (the re-review of the fix wave)."""
+        here = self._here is not None and abs(float(frame) - float(self._here.value)) <= 1e-9
+        if not self.moved and here:
             self.frame = frame
             return False
         self.go(frame)
+        if here and self.tweaks is not None:
+            self.tweaks.restore(self.keyed)
         return True
 
     def restore_all(self):
