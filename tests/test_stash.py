@@ -420,6 +420,139 @@ class Listing(_Base):
         self.assertEqual(stash.selected_names(), [stash.state()["rows"][1]])
 
 
+class _Timer(object):
+    """A QTimer as `maya_stash.watch` drives it."""
+
+    made = []
+
+    def __init__(self):
+        self.interval = None
+        self.slots = []
+        self.running = False
+        self.stopped = False
+        _Timer.made.append(self)
+
+    def setInterval(self, ms):
+        self.interval = ms
+
+    @property
+    def timeout(self):
+        timer = self
+
+        class _Signal(object):
+            def connect(self, slot):
+                timer.slots.append(slot)
+        return _Signal()
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running, self.stopped = False, True
+
+
+class Watching(_Base):
+    """The animator (2026-10-09): «если в одной мае закинул что-то в сташ то
+    во второй мае мой сташ не обновляется». Two Mayas share one stash folder
+    (`<userAppDir>/SkeldarStash`), and a list read only on build and after
+    this Maya's own presses never saw what the other one wrote. The open
+    section polls the folder and re-lists it when it changed."""
+
+    def setUp(self):
+        _Base.setUp(self)
+        _Timer.made = []
+        self.saved_timer = stash._timer_class
+        stash._timer_class = lambda: _Timer
+
+    def tearDown(self):
+        stash._timer_class = self.saved_timer
+        _Base.tearDown(self)
+
+    def counting(self):
+        calls = []
+        real = stash.refresh
+        stash.refresh = lambda: calls.append(1) or real()
+        self.addCleanup(setattr, stash, "refresh", real)
+        return calls
+
+    def test_a_file_another_maya_stashed_is_listed_on_the_next_poll(self):
+        self.stashed("mine.ma")
+        stash.refresh()
+        self.stashed("theirs.fbx")                  # the other Maya's press
+        stash.poll()
+        self.assertIn("theirs.fbx", stash.state()["rows"])
+
+    def test_a_file_deleted_elsewhere_leaves_the_list(self):
+        self.stashed("a.ma")
+        gone = self.stashed("b.ma")
+        stash.refresh()
+        os.remove(gone)
+        stash.poll()
+        self.assertEqual(stash.state()["rows"], ["a.ma"])
+
+    def test_a_file_rewritten_elsewhere_is_listed_again(self):
+        path = self.stashed("draft.ma")
+        stash.refresh()
+        calls = self.counting()
+        with open(path, "ab") as out:
+            out.write(b"y" * 50)                    # Ctrl+S on the draft there
+        os.utime(path, (time.time() + 60, time.time() + 60))
+        stash.poll()
+        self.assertEqual(len(calls), 1)
+
+    def test_a_poll_with_nothing_changed_lists_nothing_again(self):
+        self.stashed("a.ma")
+        stash.refresh()
+        calls = self.counting()
+        stash.poll()
+        stash.poll()
+        self.assertEqual(calls, [])                 # the picked rows, the scroll left alone
+
+    def test_the_folder_made_by_the_other_maya_is_seen(self):
+        stash.refresh()                             # no folder yet: nothing
+        self.stashed("first.ma")
+        stash.poll()
+        self.assertEqual(stash.state()["rows"], ["first.ma"])
+
+    def test_the_built_panel_watches_and_a_rebuild_replaces_the_watch(self):
+        stash.build_panel()
+        first = _Timer.made[-1]
+        self.assertTrue(first.running)
+        self.assertEqual(first.interval, stash.POLL_MS)
+        self.assertEqual(len(first.slots), 1)
+        stash.build_panel()                         # a hub rebuild, an install
+        second = _Timer.made[-1]
+        self.assertIsNot(first, second)
+        self.assertTrue(first.stopped)
+        self.assertTrue(second.running)
+
+    def test_the_poll_stops_with_the_panel_gone(self):
+        stash.build_panel()
+        timer = _Timer.made[-1]
+        self.fake.list_up = False                   # the hub closed and deleted
+        stash.poll()
+        self.assertTrue(timer.stopped)
+        self.assertIsNone(stash.state().get("timer"))
+
+    def test_a_folder_that_cannot_be_read_stops_the_watch_with_one_line(self):
+        stash.build_panel()
+        timer = _Timer.made[-1]
+        saved = stash.scan
+
+        def broken():
+            raise OSError("denied")
+        stash.scan = broken
+        self.addCleanup(setattr, stash, "scan", saved)
+        timer.slots[0]()                            # the timer fires
+        self.assertTrue(timer.stopped)
+        self.assertEqual(len([s for s in self.statuses if "denied" in s]), 1)
+
+    def test_no_qt_no_watch(self):
+        stash._timer_class = lambda: None
+        stash.build_panel()                         # lists once, as before
+        self.assertIsNone(stash.state().get("timer"))
+
+
 class Acting(_Base):
 
     def setUp(self):

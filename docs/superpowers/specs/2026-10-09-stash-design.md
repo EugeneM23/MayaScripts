@@ -100,6 +100,18 @@ Top to bottom, the same shape as Shared so the two read alike:
 The list is rebuilt from the folder on build and after every action. Picked
 rows are kept by path across a rebuild.
 
+**Two Mayas share the folder** (the animator, the same day: «если в одной мае
+закинул что-то в сташ то во второй мае мой сташ не обновляется»): every Maya
+of the same user lists `<userAppDir>/SkeldarStash/`, and a list read only on
+build and after its own presses never saw what the other one stashed,
+deleted or saved over. The built section polls the folder every `POLL_MS`
+(1.5 s, a Qt timer on `sys._skeldar_stash`): a listdir and a stat a file,
+compared with the last listing's names, sizes and times; the list is rebuilt
+only when they changed, so the picked rows and the scroll stay put. A hub
+rebuild replaces the timer with one wired to the fresh module; the panel gone,
+the timer stops; a folder that cannot be read stops it with one status line.
+Without Qt the section lists as before.
+
 ## Edge cases
 
 - An empty Name on Stash scene of an untitled scene: `untitled_HHMM.ma`.

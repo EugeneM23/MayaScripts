@@ -55,6 +55,10 @@ LIST_GRIP = "skeldarStashListGrip"
 STATUS = "skeldarStashStatus"
 SUBTITLE = "skeldarStashSubtitle"
 LIST_HEIGHT = 150
+#  how often the open section looks at the folder for what ANOTHER Maya wrote
+#  (2026-10-09: «в одной мае закинул что-то в сташ ... во второй мае мой сташ
+#  не обновляется»): a listdir and a stat a file, re-listed only on a change
+POLL_MS = 1500
 
 
 # ------------------------------------------------------------------ state
@@ -436,12 +440,18 @@ def _status(message, **_kwargs):
     return message
 
 
+def _signature(items):
+    """What a listing says about the folder: the names, sizes and times."""
+    return tuple((item["name"], item["bytes"], item["mtime"]) for item in items)
+
+
 def refresh():
     """The list from the folder, keeping the picked rows by name."""
     if not cmds.textScrollList(LIST, exists=True):
         return
     keep = selected_names()
     items = scan()
+    state()["seen"] = _signature(items)
     now = time.time()
     names = [item["name"] for item in items]
     cmds.textScrollList(LIST, edit=True, removeAll=True)
@@ -453,6 +463,69 @@ def refresh():
     if again:
         cmds.textScrollList(LIST, edit=True, selectIndexedItem=again)
     refresh_subtitle()
+
+
+def poll():
+    """One look at the folder: re-listed when anything in it changed - an item
+    another Maya stashed, deleted or saved over (the two share the folder) -
+    and left alone otherwise, so the picked rows and the scroll stay. The
+    panel gone (the hub deleted), the watch stops."""
+    if not cmds.textScrollList(LIST, exists=True):
+        unwatch()
+        return False
+    if _signature(scan()) == state().get("seen"):
+        return False
+    refresh()
+    return True
+
+
+def _timer_class():
+    """Qt's QTimer, or None where Qt cannot be imported (the section then lists
+    on build and after its own presses only). A seam for the tests."""
+    try:
+        from PySide6 import QtCore
+    except ImportError:
+        return None
+    return QtCore.QTimer
+
+
+def unwatch():
+    """The section's watch stopped and let go."""
+    st = state()
+    timer = st.pop("timer", None)
+    if timer is not None:
+        try:
+            timer.stop()
+        except Exception:                                    # noqa: BLE001
+            pass                    # a Qt object already deleted: nothing runs
+
+
+def watch():
+    """Poll the folder every POLL_MS while the section stands. One timer per
+    Maya session, on `sys` (trap 111): a rebuild - a hub rebuilt after an
+    install, with this module imported afresh - stops the old one and starts
+    one wired to THIS module's `poll`."""
+    unwatch()
+    timer_class = _timer_class()
+    if timer_class is None:
+        return None
+    timer = timer_class()
+    timer.setInterval(POLL_MS)
+    timer.timeout.connect(_tick)
+    timer.start()
+    state()["timer"] = timer
+    return timer
+
+
+def _tick():
+    """The timer's call: a poll, and a folder that cannot be read stops the
+    watch with ONE line rather than a traceback every POLL_MS."""
+    try:
+        poll()
+    except Exception as exc:                                 # noqa: BLE001
+        unwatch()
+        _status("The stash folder could not be read ({0}) - the list now "
+                "updates on this Maya's own presses only".format(exc))
 
 
 def refresh_subtitle():
@@ -484,7 +557,8 @@ def _run(action):
 def build_panel():
     """The Name field, Stash scene / Stash file..., the list (several rows
     can be picked), Open / Import / icons for Save to..., Show folder and
-    Delete, a status line. Lists the folder once; nothing listens.
+    Delete, a status line. Lists the folder, then watches it (`watch`): what
+    another Maya stashes shows up here too.
 
     The compact skin and the classic hub share one arrangement: the skin's
     labels are the placeholders' and the icons' (hubstyle.pick)."""
@@ -565,6 +639,7 @@ def build_panel():
     cmds.setParent("..")
     state()["rows"] = []
     refresh()
+    watch()
     return None
 
 
