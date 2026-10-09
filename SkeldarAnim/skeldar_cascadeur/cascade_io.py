@@ -66,6 +66,16 @@ def animation_frames():
     return domain.get_animation_size()
 
 
+def confirm(text, on_yes):
+    """Cascadeur's own two-button dialog. `on_yes` runs only on Overwrite; the
+    call returns at once (the dialog is asynchronous, the view never blocks)."""
+    import csc.view
+    buttons = [csc.view.DialogButton("Overwrite", on_yes),
+               csc.view.DialogButton(csc.view.StandardButton.Cancel)]
+    csc.view.DialogManager.instance().show_buttons_dialog(
+        "Export to uasset", text, buttons)
+
+
 def scene_fps():
     """None: the probe found no call that reads the scene's frame rate (the
     loader has no fps attribute, the scene exposes only the current frame).

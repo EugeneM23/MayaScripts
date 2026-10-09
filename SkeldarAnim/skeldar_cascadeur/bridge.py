@@ -1,17 +1,21 @@
 """Scripts > SkeldarAnim > Bridge in Cascadeur.
 
 Cascadeur's action discovery (python_actions_rule.get_action_info) reads
-`name`, `description` and `run` from this module. `run(scene)` opens the
-window once; a second press raises it. The window and the Cascadeur side are
-imported only when the window opens, so discovery at Cascadeur's start stays
-light and cannot fail on PySide6.
+`name`, `description` and `run` from this module. `run(scene)` opens the QML
+window once; a second press raises it. The view, the model and the Cascadeur
+side are imported only when the window opens, so discovery at Cascadeur's start
+stays light.
+
+The window is QML on a QQmlApplicationEngine, not QtWidgets: Cascadeur is a
+QGuiApplication, and a QWidget there aborted the process (2026-10-09).
 """
 
 import os
 import sys
 import tempfile
 
-HOLDER = "_skeldar_cascadeur_bridge"
+ENGINE = "_skeldar_cascadeur_engine"
+MODEL = "_skeldar_cascadeur_model"
 
 
 def name():
@@ -25,34 +29,38 @@ def description():
 
 def wire(temp_dir=None):
     """The bridge object with the real ports (Unreal, Cascadeur, Shared)."""
-    from PySide6 import QtWidgets
     from skeldar_cascadeur import actions
     from skeldar_cascadeur import cascade_io
     from skeldar_cascadeur import prefs
     from skeldar_cascadeur import shared
     from skeldar_cascadeur import unreal
 
-    def ask(text):
-        answer = QtWidgets.QMessageBox.question(
-            None, "SkeldarAnim - Bridge", text,
-            QtWidgets.QMessageBox.Ok | QtWidgets.QMessageBox.Cancel)
-        return answer == QtWidgets.QMessageBox.Ok
-
     folder = temp_dir or os.path.join(tempfile.gettempdir(), "skeldar_cascadeur")
+    # `ask` is only used by Bridge.export_to_uasset (synchronous callers); the
+    # window goes through plan_export and cascade_io.confirm instead.
     return actions.Bridge(unreal, cascade_io, shared, prefs.default_path(),
-                          folder, ask)
+                          folder, lambda text: False)
 
 
 def run(scene):
     """Open the bridge window, or raise the one already open."""
+    from PySide6 import QtCore, QtQml
+    from skeldar_cascadeur import cascade_io
     from skeldar_cascadeur import window
 
-    existing = getattr(sys, HOLDER, None)
-    if existing is not None and existing.isVisible():
-        existing.raise_()
-        existing.activateWindow()
-        return existing
-    win = window.BridgeWindow(wire())
-    setattr(sys, HOLDER, win)
-    win.show()
-    return win
+    engine = getattr(sys, ENGINE, None)
+    if engine is not None and engine.rootObjects():
+        root = engine.rootObjects()[0]
+        root.setProperty("visible", True)
+        root.requestActivate()
+        return root
+
+    model = window.BridgeModel(wire(), cascade_io.confirm)
+    engine = QtQml.QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("bridge", model)
+    engine.load(QtCore.QUrl.fromLocalFile(window.VIEW_FILE))
+    if not engine.rootObjects():
+        raise RuntimeError("the bridge view did not load: " + window.VIEW_FILE)
+    setattr(sys, ENGINE, engine)
+    setattr(sys, MODEL, model)
+    return engine.rootObjects()[0]

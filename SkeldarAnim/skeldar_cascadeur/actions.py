@@ -25,6 +25,17 @@ NO_AUTHOR = "type an author name first - nothing sent"
 FALLBACK_NAME = "animation.fbx"
 
 
+class ExportPlan(object):
+    """What a confirmed write-back will do: the clip, its uasset, the flag state
+    and the dialog's text. Built by Bridge.plan_export; holds no port."""
+
+    def __init__(self, record, uasset, read_only, confirm_text):
+        self.record = record
+        self.uasset = uasset
+        self.read_only = read_only
+        self.confirm_text = confirm_text
+
+
 def _machine():
     try:
         return socket.gethostname()
@@ -81,8 +92,10 @@ class Bridge(object):
 
     # ---- export to uasset -------------------------------------------------
 
-    def export_to_uasset(self, record=None, project=None):
-        """The scene's skeleton animation back into the picked clip's uasset."""
+    def plan_export(self, record=None):
+        """Every check of the write-back, and no write. Returns (refusal, plan):
+        a refusal names what did not change; a plan carries the confirm text
+        for the dialog and is passed to run_export once the animator says yes."""
         rec = record or self.target
         package = rec.package if rec is not None else ""
         uasset = (records.uasset_path_of(package, self.content_dir)
@@ -90,17 +103,19 @@ class Bridge(object):
         problem = rules.export_refusal(package, uasset,
                                        bool(uasset) and os.path.isfile(uasset))
         if problem:
-            return problem
+            return problem, None
         problem = rules.skeleton_problem(self.cascade.skeleton_roots())
         if problem:
-            return problem
-
+            return problem, None
         read_only = uasset_core.is_read_only(uasset)
-        if not self.ask(self._confirm_text(rec, read_only)):
-            return CANCELLED
+        plan = ExportPlan(rec, uasset, read_only, self._confirm_text(rec, read_only))
+        return "", plan
 
-        # The export first, into a temp file: a failed export leaves the
-        # uasset exactly as it was, flag included.
+    def run_export(self, plan, project=None):
+        """The write-back after the confirm. The export goes first, into a temp
+        file: a failed export leaves the uasset exactly as it was, flag included."""
+        rec, uasset, read_only = plan.record, plan.uasset, plan.read_only
+        package = rec.package
         fbx = uasset_core.fbx_staging_path(rec.name, self.temp_dir)
         try:
             self.cascade.export_skeleton(fbx)
@@ -121,6 +136,15 @@ class Bridge(object):
             rules.fps_problem(self.cascade.scene_fps()),
             ("editor: " + str(payload.get("error"))) if payload.get("error") else "",
         ])
+
+    def export_to_uasset(self, record=None, project=None):
+        """plan, confirm through `ask`, run. For callers that can block (tests)."""
+        refusal, plan = self.plan_export(record)
+        if refusal:
+            return refusal
+        if not self.ask(plan.confirm_text):
+            return CANCELLED
+        return self.run_export(plan, project=project)
 
     def _confirm_text(self, rec, read_only):
         lines = ["Overwrite the animation in {0}?".format(rec.name), "",

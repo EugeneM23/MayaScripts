@@ -2651,3 +2651,23 @@ Do not push. Do not publish a release.
 - `rules` names (`skeleton_problem`, `export_refusal`, `fps_problem`, `frame_range_outward`, `clip_tab_name`, `join_status`, `NO_SKELETON`, `NO_TARGET`) — Task 1 defines them; Task 7 uses them.
 - `bridge.name/description/run/wire` — Task 9 defines them; Task 12 calls `bridge.run(scene)` and `bridge.wire(OUT)`.
 - `installer.install(source_zip, install_dir, settings_path, progress)` and `settings_edit(text, install_dir, package)` — Task 10 defines them; Task 12 calls `install(source_zip=...)`.
+
+---
+
+## Revision after the first live run (2026-10-09)
+
+- **The window is QML, not QtWidgets.** The live run aborted the animator's
+  Cascadeur (Qt6Core fast-fail 0xc0000409, event log 15:32:45): Cascadeur runs as a
+  QGuiApplication, and a QWidget there kills the process. Tasks 8 and 9 are built as:
+  `window.py` = `BridgeModel` (QtCore only), `view.qml` = a top-level `Window` in plain
+  QtQuick, `bridge.run` = a `QQmlApplicationEngine` held on `sys`.
+- **Confirm is Cascadeur's own dialog.** `cascade_io.confirm(text, on_yes)` calls
+  `csc.view.DialogManager.show_buttons_dialog`; it is asynchronous. `Bridge.plan_export`
+  checks everything and writes nothing; `Bridge.run_export(plan)` runs after the yes.
+- **A blocked FBX export is a status line, not a silent success.** `cascade_io.export_skeleton`
+  raises `EXPORT_BLOCKED` when no file appears (the licence refusal arrives as a message).
+  `Bridge` returns it instead of writing to Unreal or Shared.
+- **The installer checks `settings.json` before it copies the plugin**, and refuses a
+  read-only file (live: the animator's `settings.json` is read-only).
+- The probe answers are in `cascadeur_probe_results.md`: `of_type` is not used for roots,
+  `scene_fps` is None, export needs a licence that allows FBX.

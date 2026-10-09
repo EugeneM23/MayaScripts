@@ -182,6 +182,27 @@ class Bridge(unittest.TestCase):
         bridge.send_to_shared("A", "Yevhen")
         self.assertEqual(prefs.get(self.prefs, "author"), "Yevhen")
 
+    def test_plan_writes_nothing_and_names_the_asset(self):
+        bridge = self.with_target(self.make())
+        refusal, plan = bridge.plan_export()
+        self.assertEqual(refusal, "")
+        self.assertIn("/Game/Anim/A_Jump", plan.confirm_text)
+        self.assertEqual(self.ue.reimports, [])
+        self.assertEqual(self.cs.exported, [])
+
+    def test_plan_refusal_has_no_plan(self):
+        bridge = self.make()
+        refusal, plan = bridge.plan_export()
+        self.assertIn("no Unreal animation", refusal)
+        self.assertIsNone(plan)
+
+    def test_run_after_plan_writes_back(self):
+        bridge = self.with_target(self.make())
+        _refusal, plan = bridge.plan_export()
+        text = bridge.run_export(plan)
+        self.assertEqual(len(self.ue.reimports), 1)
+        self.assertIn("reimported", text)
+
     def test_a_blocked_export_stops_the_write_back(self):
         class Blocked(FakeCascade):
             def export_skeleton(self, path):

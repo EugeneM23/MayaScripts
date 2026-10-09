@@ -1,120 +1,119 @@
-"""The Cascadeur bridge window. Plain PySide6 widgets; every button calls the
-bridge object (actions.Bridge), which holds the logic and is tested without Qt.
+"""The Cascadeur bridge window: a QML view over a Python model.
 
+Why QML and not QtWidgets: Cascadeur runs as a QGuiApplication. Creating a
+QWidget inside it aborted the whole process (live, 2026-10-09: Qt6Core fast-fail
+0xc0000409). Cascadeur's own Python dialogs are QML for the same reason.
+
+BridgeModel holds the state the view shows and answers its calls. It imports no
+csc and no QtWidgets, so the tests exercise it without Cascadeur.
 Module-level functions here are NOT named `run` or `name`: Cascadeur's action
 discovery treats a module with `run` as a menu action (only bridge.py is one).
 """
 
-from PySide6 import QtCore, QtWidgets
+import os
+
+from PySide6 import QtCore
+
+VIEW_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "view.qml")
 
 
-class BridgeWindow(QtWidgets.QWidget):
+class BridgeModel(QtCore.QObject):
+    """What the QML view shows, and the calls it makes.
 
-    def __init__(self, bridge, parent=None):
+    `confirm(text, on_yes)` shows Cascadeur's own dialog and calls `on_yes`
+    only when the animator says yes. It is injected (bridge.py wires it to
+    csc.view.DialogManager; tests pass a fake).
+    """
+
+    changed = QtCore.Signal()
+
+    def __init__(self, bridge, confirm, parent=None):
         super().__init__(parent)
-        self.bridge = bridge
-        self.setObjectName("skeldarCascadeurBridge")
-        self.setWindowTitle("SkeldarAnim - Bridge")
-        self.resize(460, 620)
+        self._bridge = bridge
+        self._confirm = confirm
+        self._filter = ""
+        self._status = ""
+        self._target = ""
+        self._author = ""
+        self._picked = []
+        self._refresh_target()
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(QtWidgets.QLabel("Unreal animations"))
+    # ---- properties the view reads -----------------------------------------
 
-        row = QtWidgets.QHBoxLayout()
-        self.search = QtWidgets.QLineEdit()
-        self.search.setPlaceholderText("search")
-        self.search.textChanged.connect(self._filter)
-        row.addWidget(self.search, 1)
-        self.refresh_button = QtWidgets.QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self.refresh)
-        row.addWidget(self.refresh_button)
-        layout.addLayout(row)
+    def _names(self):
+        return [rec.name for rec in self._bridge.records]
 
-        self.list = QtWidgets.QListWidget()
-        self.list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        layout.addWidget(self.list, 1)
+    @QtCore.Property("QStringList", notify=changed)
+    def clipNames(self):
+        needle = self._filter.lower()
+        return [name for name in self._names() if needle in name.lower()]
 
-        self.import_button = QtWidgets.QPushButton("Import into Cascadeur")
-        self.import_button.clicked.connect(self.import_selected)
-        layout.addWidget(self.import_button)
+    @QtCore.Property(str, notify=changed)
+    def statusText(self):
+        return self._status
 
-        layout.addWidget(QtWidgets.QLabel("Cascadeur scene"))
-        self.export_button = QtWidgets.QPushButton("Export to uasset")
-        self.export_button.clicked.connect(self.export_selected)
-        layout.addWidget(self.export_button)
+    @QtCore.Property(str, notify=changed)
+    def targetText(self):
+        return self._target
 
-        self.author = QtWidgets.QLineEdit()
-        self.author.setPlaceholderText("author")
-        self.name = QtWidgets.QLineEdit()
-        self.name.setPlaceholderText("name of the upload")
-        layout.addWidget(self.author)
-        layout.addWidget(self.name)
-        self.send_button = QtWidgets.QPushButton("Send to Shared")
-        self.send_button.clicked.connect(self.send_selected)
-        layout.addWidget(self.send_button)
+    # ---- slots the view calls ----------------------------------------------
 
-        self.target = QtWidgets.QLabel("")
-        layout.addWidget(self.target)
-        self.status = QtWidgets.QLabel("")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+    @QtCore.Slot(str)
+    def setFilter(self, text):
+        self._filter = text or ""
+        self.changed.emit()
 
-        self.populate()
-        self._show_target()
+    @QtCore.Slot(str)
+    def setAuthor(self, text):
+        self._author = text or ""
 
-    # ---- the list ---------------------------------------------------------
-
-    def populate(self):
-        self.list.clear()
-        for rec in self.bridge.records:
-            item = QtWidgets.QListWidgetItem(rec.name)
-            item.setData(QtCore.Qt.UserRole, rec.package)
-            self.list.addItem(item)
-        self._filter(self.search.text())
-
-    def visible_names(self):
-        return [self.list.item(i).text() for i in range(self.list.count())
-                if not self.list.item(i).isHidden()]
-
-    def _filter(self, text):
-        needle = (text or "").lower()
-        for i in range(self.list.count()):
-            item = self.list.item(i)
-            item.setHidden(needle not in item.text().lower())
-
-    def _picked(self):
-        by_name = {rec.name: rec for rec in self.bridge.records}
-        return [by_name[item.text()] for item in self.list.selectedItems()
-                if item.text() in by_name]
-
-    # ---- the buttons ------------------------------------------------------
-
+    @QtCore.Slot()
     def refresh(self):
-        self._say(self.bridge.refresh())
-        self.populate()
+        self._say(self._bridge.refresh())
+        self.changed.emit()
 
-    def import_selected(self):
-        picked = self._picked()
+    @QtCore.Slot("QStringList")
+    def pick(self, names):
+        """The names the animator has selected in the list."""
+        self._picked = list(names or [])
+
+    @QtCore.Slot()
+    def importPicked(self):
+        picked = [rec for rec in self._bridge.records if rec.name in self._picked]
         if not picked:
-            return self._say("select one or more animations first")
-        self._say(self.bridge.import_clips(picked))
-        self._show_target()
+            self._say("select one or more animations first")
+            return
+        self._say(self._bridge.import_clips(picked))
+        self._refresh_target()
 
-    def export_selected(self):
-        picked = self._picked()
+    @QtCore.Slot()
+    def exportPicked(self):
+        picked = [rec for rec in self._bridge.records if rec.name in self._picked]
         record = picked[0] if len(picked) == 1 else None
-        self._say(self.bridge.export_to_uasset(record))
-        self._show_target()
+        refusal, plan = self._bridge.plan_export(record)
+        if refusal:
+            self._say(refusal)
+            return
 
-    def send_selected(self):
-        self._say(self.bridge.send_to_shared(self.name.text(), self.author.text()))
+        def on_yes():
+            self._say(self._bridge.run_export(plan))
+            self._refresh_target()
+            self.changed.emit()
 
-    # ---- helpers ----------------------------------------------------------
+        self._confirm(plan.confirm_text, on_yes)
+
+    @QtCore.Slot(str, str)
+    def sendPicked(self, typed_name, author):
+        self._say(self._bridge.send_to_shared(typed_name, author or self._author))
+
+    # ---- helpers -----------------------------------------------------------
 
     def _say(self, text):
-        self.status.setText(text)
+        self._status = text
+        self.changed.emit()
 
-    def _show_target(self):
-        rec = getattr(self.bridge, "target", None)
-        self.target.setText("Write-back target: {0}".format(
-            rec.package if rec is not None else "none - import a clip first"))
+    def _refresh_target(self):
+        rec = getattr(self._bridge, "target", None)
+        self._target = ("Write-back target: " + rec.package) if rec is not None \
+            else "Write-back target: none - import a clip first"
+        self.changed.emit()
