@@ -473,5 +473,117 @@ class Slide(unittest.TestCase):
             edge.destroy()
 
 
+class Frame(unittest.TestCase):
+    """2026-10-09, the animator: «сперва появляется фоновая рамка и вот она
+    появляется сильно резко я хочу что бы она выезжала анимацией плавно ...
+    А потом выезжала основная панель»: the host shows only its `frame`, which
+    slides out first; the hub follows; the frame leaves with the hub."""
+
+    def _edge(self, motion=True):
+        _app()
+        return hubedge.Edge(scale=1.0, motion=lambda: motion,
+                            work_area=lambda: (0, 0, 800, 600),
+                            cursor=lambda: (0, 10), buttons=lambda: False,
+                            app_active=lambda: True)
+
+    def _run(self, edge, sample, until=None):
+        seen = []
+        loop_until = QtCore.QDeadlineTimer(3000)
+        while edge.sliding() and not loop_until.hasExpired():
+            QtWidgets.QApplication.processEvents()
+            seen.append(sample())
+            if until is not None and until():
+                break
+        return seen
+
+    def test_the_frame_slides_out_first_then_the_hub(self):
+        edge = self._edge()
+        try:
+            w = edge.host.width()
+            edge.reveal()
+            self.assertLess(edge.frame, w)                 # not whole at once
+            seen = self._run(edge, lambda: (edge.frame, edge.slot.x()))
+            frames = [f for f, _x in seen]
+            self.assertEqual(frames, sorted(frames))
+            growing = [x for f, x in seen if f < w]
+            self.assertTrue(growing)                       # a frame phase ran
+            self.assertTrue(all(x == -w for x in growing))  # the hub waited
+            self.assertTrue([x for f, x in seen if -w < x < 0])  # then slid
+            self.assertEqual((edge.frame, edge.slot.x()), (w, 0))
+            self.assertTrue(edge.host.mask().isEmpty())   # at rest: all of it
+        finally:
+            edge.destroy()
+
+    def test_the_window_shows_only_its_frame(self):
+        edge = self._edge()
+        try:
+            w = edge.host.width()
+            edge.reveal()
+            self._run(edge, lambda: None,
+                      until=lambda: 0 < edge.frame < w // 2)
+            self.assertTrue(edge.sliding())
+            shown = edge.host.mask().boundingRect()
+            self.assertEqual((shown.x(), shown.width()), (0, edge.frame))
+            self.assertEqual(shown.height(), edge.host.height())
+        finally:
+            edge.destroy()
+
+    def test_the_frame_leaves_with_the_hub(self):
+        edge = self._edge()
+        try:
+            w = edge.host.width()
+            edge.reveal()
+            self._run(edge, lambda: None)
+            edge.conceal()
+            seen = self._run(edge, lambda: (edge.frame, edge.slot.x()))
+            self.assertTrue(seen)
+            for frame, x in seen:
+                self.assertLessEqual(abs(frame - (w + x)), 1)
+            self.assertEqual(edge.frame, 0)
+            self.assertFalse(edge.host.isVisible())
+        finally:
+            edge.destroy()
+
+    def test_a_reveal_turned_back_in_its_frame_phase_takes_the_frame_back(self):
+        edge = self._edge()
+        try:
+            w = edge.host.width()
+            edge.reveal()
+            self._run(edge, lambda: None, until=lambda: edge.frame > w // 3)
+            self.assertEqual(edge.slot.x(), -w)            # still the frame phase
+            stood = edge.frame
+            edge.conceal()
+            frames = [stood] + [f for f in self._run(edge, lambda: edge.frame)]
+            self.assertEqual(frames, sorted(frames, reverse=True))
+            self.assertEqual(edge.frame, 0)
+            self.assertFalse(edge.host.isVisible())
+            self.assertTrue(edge.sensor.isVisible())
+        finally:
+            edge.destroy()
+
+    def test_without_motion_the_frame_is_whole_at_once(self):
+        edge = self._edge(motion=False)
+        try:
+            edge.reveal()
+            self.assertFalse(edge.sliding())
+            self.assertEqual(edge.frame, edge.host.width())
+            self.assertTrue(edge.host.mask().isEmpty())
+            edge.conceal()
+            self.assertEqual(edge.frame, 0)
+            self.assertFalse(edge.host.isVisible())
+        finally:
+            edge.destroy()
+
+    def test_a_width_change_out_keeps_the_frame_whole(self):
+        edge = self._edge(motion=False)
+        try:
+            edge.reveal()
+            edge.set_width(500, save=False)
+            self.assertEqual(edge.frame, edge.host.width())
+            self.assertTrue(edge.host.mask().isEmpty())
+        finally:
+            edge.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()

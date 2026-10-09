@@ -97,6 +97,12 @@ class Slide(unittest.TestCase):
         # ease-out in: more than half way at half time
         self.assertGreater(rules.slide_x(0.5, 100, True), -50)
 
+    def test_the_frame_then_the_hub_half_again_as_slow(self):
+        # 2026-10-09 («Скорость выезда панели можно замедлить на 50%»): the
+        # frame slides out, then the hub, each 1.5 x the first build's 180
+        self.assertEqual((rules.FRAME_MS, rules.IN_MS), (270, 270))
+        self.assertEqual(rules.OUT_MS, 150)
+
 
 class Contains(unittest.TestCase):
 

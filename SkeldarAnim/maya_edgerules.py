@@ -19,7 +19,11 @@ WIDTH, MIN_WIDTH, MAX_WIDTH = 360, 280, 700     # logical px (the dock's 360)
 DWELL_MS = 100
 HIDE_MS = 350           # after the cursor left
 RETRY_MS = 150          # a postponed hide asks again this often
-IN_MS, OUT_MS = 180, 150
+#  Out: the panel's frame slides out (FRAME_MS), then the hub inside it
+#  (IN_MS); back: the two together (OUT_MS). 2026-10-09 («фоновая рамка ...
+#  появляется сильно резко ... Скорость выезда панели можно замедлить на
+#  50%»): the frame had popped up whole; each phase is 1.5 x the first 180.
+FRAME_MS, IN_MS, OUT_MS = 270, 270, 150
 SENSOR_PX = 2           # physical px: the strip at the screen's left edge
 GRIP_PX = 5             # logical px: the width grip on the panel's right
 

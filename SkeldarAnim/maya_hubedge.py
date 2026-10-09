@@ -10,7 +10,11 @@ never above another application, gone with Maya minimized):
             inside the host - no window crosses into a monitor on the
             left, nothing is laid out again per frame. The host paints the
             hub's `panel` colour and a 1 px `inset_line` down its right edge;
-            the slot stops short of that line, so it always shows. The spec's
+            the slot stops short of that line, so it always shows. Only its
+            FRAME shows (a window mask): out, the frame slides first and the
+            slot follows; back, both go together (2026-10-09, «фоновая рамка
+            ... появляется сильно резко»: the host had popped up whole and
+            the hub slid inside it). The spec's
             "soft shadow" is NOT drawn: a shadow wants a translucent
             top-level, and a translucent top-level holding Maya's own widgets
             is untried here (every Maya control would be composited through
@@ -213,12 +217,15 @@ def _classes():
                 self.edge._fit_slot()
 
             def paintEvent(self, event):                   # noqa: N802
+                #  only the frame shows (the window's mask); its line on
+                #  the frame's right edge, so it slides out with it
+                frame = max(1, min(self.width(), self.edge.frame))
                 painter = QtGui.QPainter(self)
                 try:
-                    painter.fillRect(self.rect(), QtGui.QColor(
+                    painter.fillRect(0, 0, frame, self.height(), QtGui.QColor(
                         hubstyle.TOKENS["panel"]))
                     line = self.edge._line()
-                    painter.fillRect(self.width() - line, 0, line,
+                    painter.fillRect(frame - line, 0, line,
                                      self.height(), QtGui.QColor(
                                          hubstyle.TOKENS["inset_line"]))
                 finally:
@@ -323,6 +330,9 @@ class Edge(object):
         #  reveal begins - the host's first resize event arrives on its
         #  show(), and a slot put at 0 there would leave nothing to slide.
         self._rest_out = False
+        #  how much of the host shows, physical px from the screen edge: the
+        #  frame slides out before the hub and leaves with it (2026-10-09)
+        self._frame = 0
         self._watching = False
         self.slot = self.grip = None
         if parent is None:
@@ -424,10 +434,34 @@ class Edge(object):
             x = slot.x()
         else:
             x = 0 if self._rest_out else -w
+            self._set_frame(w if self._rest_out else 0)
         slot.setGeometry(x, 0, max(1, w - self._line()), h)
         if grip is not None and hubqt._valid(grip):
             g = hubstyle.px(rules.GRIP_PX, self.scale)
             grip.setGeometry(w - g, 0, g, h)
+
+    @property
+    def frame(self):
+        """How much of the host shows, physical px from the screen edge."""
+        return self._frame
+
+    def _set_frame(self, px):
+        """Show `px` of the host from its left: a window mask (Qt never
+        paints the rest), none once it is all of it. A mask of nothing is no
+        mask at all to Qt, so the least is one pixel - the host is hidden at
+        rest anyway."""
+        host = self.host
+        if not hubqt._valid(host):
+            return
+        w = host.width()
+        px = int(max(0, min(w, round(px))))
+        self._frame = px
+        if px >= w:
+            host.clearMask()
+        else:
+            q = hubqt.qt()
+            host.setMask(q.QtGui.QRegion(0, 0, max(1, px), host.height()))
+        host.update()
 
     # ------------------------------------------------------------ in, out
 
@@ -474,44 +508,73 @@ class Edge(object):
         self._slide(False)
 
     def _slide(self, showing):
+        """Out: the frame first, then the hub inside it (2026-10-09: the
+        frame had popped up whole and the hub slid in it). Back: the hub and
+        the frame together - no empty frame is left standing. Each phase
+        starts from where it stands, so a turn back part way never jumps."""
         self._stop_anim()
         width = max(1, self.host.width())
-        start = self.slot.x()
-        end = 0 if showing else -width
         try:
             moving = bool(self.motion())
         except Exception:                                    # noqa: BLE001
             moving = False
-        if not moving or start == end:
+        if not moving:
             self._slide_done(showing)
             return
+        hub_out = self.slot.x() > -width
+        if showing and not hub_out and self._frame < width:
+            self._animate(rules.FRAME_MS, width, True, self._frame, width,
+                          self._set_frame, lambda: self._slide(True))
+            return
+        if not showing and not hub_out:
+            #  only the frame was out: a reveal turned back in its first phase
+            self._animate(rules.OUT_MS, width, False, self._frame, 0,
+                          self._set_frame, lambda: self._slide_done(False))
+            return
+        if showing:
+            self._set_frame(width)
+        start = self.slot.x()
+        end = 0 if showing else -width
+        if start == end:
+            self._slide_done(showing)
+            return
+        self._animate(rules.IN_MS if showing else rules.OUT_MS, width,
+                      showing, start, end,
+                      lambda x: self._move_slot(x, width, showing),
+                      lambda: self._slide_done(showing))
+
+    def _animate(self, full, width, showing, start, end, step, done):
+        """`step(value)` from `start` to `end` with the rules' easing
+        (slide_x), over the rules' time for the whole width shortened for a
+        part of it; `done()` at the end."""
         q = hubqt.qt()
         anim = q.QtCore.QVariantAnimation(self.host)
         anim.setStartValue(0.0)
         anim.setEndValue(1.0)
-        full = rules.IN_MS if showing else rules.OUT_MS
-        #  the rules' time for the whole width, shortened for a slide that
-        #  turns back part way
         anim.setDuration(max(1, int(round(
             full * abs(end - start) / float(width)))))
-        anim.valueChanged.connect(
-            lambda t: self._slide_step(t, width, showing, start))
-        anim.finished.connect(lambda: self._slide_done(showing))
+        anim.valueChanged.connect(lambda t: step(
+            start + (end - start) * self._eased(t, width, showing)))
+        anim.finished.connect(done)
         self._anim = anim
         anim.start()
 
-    def _slide_step(self, t, width, showing, start):
-        """The slot at progress `t`: the rules' easing (slide_x) carried
-        from `start` - exactly slide_x when the slide starts at rest."""
-        if not hubqt._valid(self.slot):
-            return
+    @staticmethod
+    def _eased(t, width, showing):
+        """The rules' easing as a fraction 0..1 of the way: exactly slide_x
+        when a phase starts at rest."""
         full = rules.slide_x(t, width, showing)
         if showing:
-            frac = (full + width) / float(width)      # -width..0 -> 0..1
-        else:
-            frac = -full / float(width)               # 0..-width -> 0..1
-        end = 0 if showing else -width
-        self.slot.move(int(round(start + (end - start) * frac)), 0)
+            return (full + width) / float(width)      # -width..0 -> 0..1
+        return -full / float(width)                   # 0..-width -> 0..1
+
+    def _move_slot(self, x, width, showing):
+        if not hubqt._valid(self.slot):
+            return
+        x = int(round(x))
+        self.slot.move(x, 0)
+        if not showing:
+            self._set_frame(width + x)                # the frame leaves with it
 
     def _slide_done(self, showing):
         self._stop_anim()
