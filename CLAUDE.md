@@ -8833,3 +8833,144 @@ drawn on top; a scroll; animations off at once; a real `capture.thumbnail` 640 x
 `test_poselib_look` (`zoom_rect`, `zoom_at`, `Zoom`) and `test_poselib_cardgrid.HoverZoom`;
 `verify_poselib_gui.py` 47/47 on the first build (its save gate now asks for `capture.THUMB_SIZE`); 4629
 unit tests.
+
+## The Pose Library: animation cards, Studio Library's paste modes, previews on hover (2026-10-03/09)
+
+The animator: «теперь давай добавим возможность сохранять анимации. Все правила которые работают для поз
+должны работать и для анимаций. Так же мы должны уметь выбирать способ вставки анимации как в studio
+library. Карточки с сохраненной анимацией должны проигрывать превью этой анимации». Asked, all three the
+recommendation: the clip's travel is carried **from where the character stands** (an «In place» box for
+the pose rule); keys **on every frame** by default, «Source keys» as an option; the preview **plays on
+hover**, the picked card's big picture loops. Then «Дальше делай все сам». Spec
+`docs/superpowers/specs/2026-10-03-pose-library-animation-design.md`, plan beside it. Built in the worktree
+`C:/!!!Work/MayaScripts-poseanim` (branch `feature/pose-animation`) by subagent waves, every task reviewed.
+
+- **A card** is `<Name>.anim/` beside the `.pose` cards, in the same library and catalogs
+  (`store.CARD_SUFFIXES`; a name is free only when neither suffix holds it): `anim.json` — the HEADER
+  (the pose card's fields with `format: skeldar.anim`, `start`, `end`, `frames`, `key_times`, the bones
+  STATIC only — parent, canonical, rest, rotateOrder — `members`, `regions`, `preview` grid), read by
+  every listing; `frames.json.gz` — every bone's world on every frame as a quaternion + translation
+  (`animdata.encode`, scale dropped) plus a rig's eight drives, read only by Apply/Blend/Update
+  (`store.read_frames`, one cached entry); `thumbnail.jpg`; `preview.jpg` — a SPRITE SHEET of up to 60
+  cells (every `step`-th frame), 320 px each, `ceil(sqrt(n))` to a row. The main file is written last; a
+  replace keeps the files it is not given. An objects card keeps its curves in the header (keys with their
+  tangents, cut to the range on a duplicate; a fed channel sampled in one time walk). The install keeps an
+  `.anim` folder as one card unit exactly as a `.pose` one (`install.CARD_SUFFIXES`, `free_card`,
+  `_rename_inside` by suffix).
+- **Save** (`animcapture.build_animation`): the pose rules (one character → its bones; else objects),
+  the static half read once at the current frame, the per-frame half in ONE time walk
+  (`timewalk.Walk`: `MAnimControl.setCurrentTime` under `refresh -suspend`, the tweaks read first and put
+  back, the time back); `key_times` from every time curve feeding the character's nodes (through
+  animBlendNodes). The preview (`animcapture.preview`): the thumbnail's flags and settle, then ONE
+  playblast of the sheet's frames, painted with Qt. A Save is no step on the undo queue; a cancel writes
+  nothing; a preview that cannot be made (or raises) saves the card without one and says why.
+- **Apply** (`animapply`), per target, in this order: the layer refusals; `animdata.paste_plan` (Replace /
+  Replace all / Insert / Merge — Maya's `pasteKey` meanings, Insert moving the keys at or after the paste
+  frame by the clip's length — At current time, a Range, Source keys); under ONE `Walk(fresh=True)` (one
+  DG switch): the structure once (`posemath.Transfer`, the alignment fixed on the FIRST pasted frame so a
+  non-twin cannot jitter; `rigsolve.Solver`; the pairing, scale, members), a dry solve at the paste frame
+  (the plugs, the Connect offsets, the seed); a Blend partner read per frame; the mode's cut / shift on the
+  ACTIVE layer's curves (`keys.curve_for`: `animLayer -q -findCurveForPlug`, falling back to the plug's own
+  curve on the base), the curves' infinity and weighting saved (`keys.curve_state`) and given back after
+  (`put_curve_state`) because **Maya deletes a curve a cut empties**; then per frame: the target re-read
+  (`scene.refresh_world`), the card's frame decoded (`animdata.bones_at`, mirrored per frame), the travel
+  (`Transfer.travel`: `Q·F·L·F·Q⁻¹`, scaled, reflected when mirrored) onto the root frame read at the
+  paste frame, solved with the PREVIOUS frame's values as the euler seeds, Connect, the mix, keyed at that
+  frame on the layer, measured. Main (rig) / the root joint (skeleton) carry the travel when the card holds
+  the pelvis and all six channels are writable — else the pose rule and the line says so. One undo chunk;
+  Esc undoes it whole. Floor drops add the source character there first (`apply.drop_floor(..., onto=)`).
+- **The window**: a type filter [All | Poses | Animations], «+ Save» with [Pose | Animation] and a range
+  (the slider's highlight, else playback; a name already taken in the folder is refused before the walk),
+  an options block UNDER Apply / Mirror / Blend / Select objects, two to a row (Paste segments, At current
+  time + Connect, Range, Keys + In place; remembered in `skeldarPoseLibrary*` optionVars, a missing one is
+  its default) passed to every press of an animation card and never to a pose card; a «▶ 24» badge; the
+  animation card under the mouse plays its sheet at the clip's own rate (`look.play_cell`) after a 150 ms
+  dwell (a sweep decodes nothing), the picked card's big picture loops (resting at a 500 ms beat while Maya
+  is minimised); «Replace thumbnail and preview» and Update write the card AT ITS PATH
+  (`store.replace`), so a card renamed in Explorer is not doubled; a card just saved is shown (the type
+  filter goes to All), or the line says the search hides it.
+- **The final review's fix wave** (four lenses, three skeptics a finding): **an undo mark** — the press's
+  first recorded step sets every planned plug to what it SHOWED when the press began
+  (`keys.shown_at_start` / `undo_marks`), undone last, because Ctrl+Z replays the solve's temporary sets at
+  other frames backwards (trap 215); **the walk ARRIVES** at the paste frame (`Walk.arrive`: no time set
+  on the frame the scene stands on, trap 206) — Main dragged by hand to place the walk is where the travel
+  starts, and coming back to that frame after a pre-pass (Blend < 100 %, a rootless target's grounds) it
+  puts the entry tweaks back - on the paste's FIRST frame only (`arrive(..., restore=)`: an entry frame
+  mid-paste read with its tweaks keyed a one-frame spike); **a rootless clip's heading steadied** past 120° of swing
+  (`posemath.steady_yaws`, `clip_roots`; trap 216) — and a rootless TARGET takes off the same steadied
+  heading it is given (`Transfer._steadied`), or its body turned up to 180° at the inverted frames (the
+  first fix did exactly that; a second review caught it); **In place onto a rootless target reads its
+  ground before the ops** (its top joint is a member the press rewrites) — at every pasted frame under
+  Replace / Merge, at `a` under Insert (where the shifted take resumes); an exception inside the chunk
+  undoes it, and only what the press recorded; a cancel with undo off keeps and names, with true counts,
+  what it keyed and cut; breakdowns land as breakdowns; Esc during the preview's playblast writes nothing;
+  `keys.cut` / `shift` count what a curve really lost (a referenced curve changes nothing); the save
+  panel's auto name follows the folder picked while saving.
+
+Proof: `verify_poselib_anim.py` **113/113 mayapy standalone** (capture exact; a twin rig 0.0011 deg, the
+travel 0.000000 cm over 134 cm; the four modes on the base and on an additive layer, deg and cm; Connect
+bound to twice the solve's own measured dependence, Source keys, a sub-range; Creep_Rig / Orc_D_Rig 0.018
+deg pointing; mirror, the pelvis offset with an unmirrored control; Blend halfway 0.0009 deg; objects
+tangents 1.3e-15; one Ctrl+Z with autoKey ON; Mixamo travel; the floor drop on the point 0.000000 cm; and
+the fix wave's three, each with the pre-fix code patched in as its control: a hand-dragged Main 0.000000
+against 170 cm, one Ctrl+Z after Merge / Replace off the current frame 0 of 1408 channels off against 180
+off (34.95° on `FKHead_M`), In place onto a walking Mixamo target 0.000000 against 12.69 cm; and the
+second review's: a Mixamo roll over its hips onto a rootless twin, with the travel and In place, 0.000000°
+against 180°, Insert In place onto the walking target 0.000000 against 75.39 cm, a left-leg Blend 50 % over
+a hand-dragged RootX_M every first key as shown against 10.78 cm);
+`verify_poselib_anim_gui.py` **75/75 in a disposable GUI Maya** (port 7051) BEFORE the fix wave: the save's
+5×5 sheet whose cells each match their own frame, hover playback 17 cells in 0.76 s at 2.3 ms a paint, the
+options read back, Insert onto a second rig, a drag onto the floor, Replace onto a third, one Ctrl+Z with
+autoKey on under the parallel EM; pictures `poselib_anim_*.png`. **Its post-fix version (Apply in view at
+the default size, the dwell, a sweep decoding nothing) has NOT run** — the animator keeps the live checks.
+Speed: **0.18-0.25 s a frame onto a rig** (0.197 in the GUI), 0.04-0.07 onto a skeleton, 0.03-0.05 to
+save. The pose library's own verifies stayed green (apply 117/117, solve 109/109); 5459 unit tests on
+the merge.
+An intermediate build went out at the animator's ask before the second review's fixes (`d35cc13`).
+
+Limits, measured and stated: a non-twin cannot follow a card whose child wanders in its parent's frame
+(Manny_Rig's neck_02 against the head, 0.32 deg); a mirrored paste onto a non-twin carries the card's own
+first-frame left/right asymmetry (0.29 deg at the neck); a rig solve depends on its start pose by 0.0012 deg;
+a rolled clip onto a NON-twin rootless target whose top joint pairs with another source bone (a Biped's
+`Bip001` over its `Pelvis`, onto Mixamo's `Hips`) can still turn near upside down by those two bones'
+heading difference (found by the last review, as it was before the fix wave);
+pasted frame for frame across frame rates (the line says so). Not built: retiming, several clips at once,
+sub-frame keys, the IK spine, bone translations below the pelvis.
+
+210. **Maya deletes an animCurve that a cut empties** — plain, base or layer curve alike (`objExists`
+     False after `cutKey`). The plug keeps whatever the DG last evaluated and the next `setKeyframe`
+     makes a NEW curve with Maya's defaults: a Replace that empties a cycled channel loses its infinity
+     and its weighting. Read the curve's settings before the cut, give them back after the keys.
+211. **`animLayer -q -findCurveForPlug` answers a LIST, None for a plug the layer holds but has no keys
+     for yet, None on BaseAnimation for a plug keyed plainly in a layered scene, and RAISES with no layers
+     at all** («A single anim layer node must be specified»). And `setInfinity` on a curve NODE sets
+     nothing (its flags are `-preInfinite/-postInfinite`, its query answers None): write the curve's own
+     `preInfinity` / `postInfinity` attributes.
+212. **A `cmds.autoKeyframe` switch is a step on the undo queue even when it sets the state autoKey
+     already has** — so a tweak restore after a press's chunk took the animator's Ctrl+Z (one undo left 192
+     curves changed, the second turned autoKey off). `MAnimControl.setAutoKeyMode` is no step and
+     `autoKeyframe -q` reads what it set. And with autoKey ON an `MPlug` set of a keyed channel does not hold
+     — the tweak restore turns autoKey off through the API around its sets.
+213. **A floating Qt window hidden with its minimised Maya gets no hideEvent**: `isVisible` stays True,
+     `isExposed` False, Win32 `IsWindowVisible` False — a 33 ms timer drew on for nothing. Ask Windows from
+     the widget's own `effectiveWinId()`; a `windowHandle()` wrapper of a Maya widget came back DEAD on the
+     first tick after a rebuild (trap 96's family).
+214. **`getAttr(plug, time=)` read a prop held by an IK hand 1.25e-4 cm off** when consecutive context reads
+     carried the chain's state from one to the next (trap 69's family): an objects card's fed channels are
+     read in one real time walk.
+215. **Ctrl+Z replays every recorded step of a press, the ones at OTHER frames too.** A paste walks the
+     frames and its solve sets channels temporarily at each one, inside the press's chunk; undoing the
+     chunk replays those sets backwards, so a channel the press did not cut or move (Merge, or Replace
+     with no key inside the pasted range) ended holding what it was set to at the FIRST pasted frame -
+     180 channels of a rig showed frame 0's pose at frame 100 after one Ctrl+Z (`FKHead_M` 34.95° off),
+     until the next key or autoKey wrote it in. Every gate had pasted at the current frame. Make the
+     chunk's FIRST recorded step a set of every planned plug to the value it showed when the press
+     began: the last thing the undo undoes puts that value back.
+216. **A swing-twist heading is ill-conditioned near upside down.** A rootless clip's travel read each
+     frame's heading off its top joint's yaw; a hips forward roll (360° about X, ±2° of side tilt, no
+     turn) read -7.5, 15.1, **180.0**, -15.1, 7.5 at the inverted frames, and Main was keyed spinning
+     while the pelvis stayed exact - a gate on the bones could not see it. Past 120° of swing the yaw
+     is taken from the frames on either side (`posemath.steady_yaws`). And the noise had been cancelling
+     itself: a rootless TARGET took off its own per-frame heading and put the ground's back, so steadying
+     only the ground turned a twin's whole body by the difference (180° at frame 12, measured). Whatever
+     a frame's heading is replaced by, it must be replaced by on both sides of the transfer.
