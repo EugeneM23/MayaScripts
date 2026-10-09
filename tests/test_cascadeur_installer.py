@@ -119,6 +119,18 @@ class Install(unittest.TestCase):
                               settings_path=self.settings)
         self.assertTrue(os.path.isfile(os.path.join(self.target, "my_notes.txt")))
 
+    def test_a_read_only_settings_file_is_refused_before_anything_is_copied(self):
+        import stat
+        os.chmod(self.settings, stat.S_IREAD)
+        try:
+            with self.assertRaises(installer.SetupError) as caught:
+                installer.install(source_zip=self.zip, install_dir=self.target,
+                                  settings_path=self.settings)
+            self.assertIn("read-only", str(caught.exception))
+            self.assertFalse(os.path.exists(self.target))
+        finally:
+            os.chmod(self.settings, stat.S_IWRITE | stat.S_IREAD)
+
     def test_refuses_when_the_settings_file_is_missing(self):
         with self.assertRaises(installer.SetupError):
             installer.install(source_zip=self.zip, install_dir=self.target,

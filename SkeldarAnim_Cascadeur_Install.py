@@ -148,6 +148,9 @@ def install(source_zip=None, install_dir=None, settings_path=None, progress=None
     with open(settings_path, "r", encoding="utf-8") as handle:
         current = handle.read()
     new_text, changed = settings_edit(current, install_dir, PACKAGE)
+    if changed and not os.access(settings_path, os.W_OK):
+        raise SetupError("{0} is read-only - nothing changed. Clear its "
+                         "read-only flag and run this again".format(settings_path))
 
     work = tempfile.mkdtemp(prefix="skeldar_cascade_install_")
     try:
@@ -161,13 +164,19 @@ def install(source_zip=None, install_dir=None, settings_path=None, progress=None
                 raise SetupError("; ".join(problems) + " - nothing changed")
             zipped.extractall(os.path.join(work, "unpacked"))
         source = os.path.join(work, "unpacked", TOP)
+        # The settings first: if they cannot be written, the plugin folder is
+        # not touched either.
+        if changed:
+            try:
+                _backup(settings_path)
+                with open(settings_path, "w", encoding="utf-8") as handle:
+                    handle.write(new_text)
+            except OSError as exc:
+                raise SetupError("could not write {0} ({1}) - nothing changed"
+                                 .format(settings_path, exc))
         if os.path.isdir(install_dir):
             shutil.rmtree(install_dir)
         shutil.copytree(source, install_dir)
-        if changed:
-            _backup(settings_path)
-            with open(settings_path, "w", encoding="utf-8") as handle:
-                handle.write(new_text)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
