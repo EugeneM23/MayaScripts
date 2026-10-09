@@ -77,7 +77,8 @@ prepared once.
    was keyed stays, its curves get their state back, the walk never sets the keyed plugs back,
    and the line says what stays (`CANCELLED_KEPT`: the frames keyed, what the mode cut or moved -
    S3). A press that RAISES inside its chunk is undone the same way before the error goes on
-   (`_undo_failed`: half a paste is never left behind - S2).
+   (`_undo_failed`: half a paste is never left behind - S2) - when the chunk recorded a step of
+   the press (`_Steps`): a chunk left empty undoes nothing, never the animator's step before it.
 
 ## The travel («от места персонажа»)
 
@@ -345,18 +346,31 @@ def _objects_pairs(header, selection):
 
 # ------------------------------------------------------------------ scene state
 
+class _Steps(object):
+    """Has a press's chunk recorded a step of its own yet (`recorded`)? `_chunk` says so once
+    autoKey went off - its first step: `autoKeyframe -state` is on the undo queue even when it
+    sets the state autoKey already has (measured). Until then the chunk holds nothing of the
+    press, and a Ctrl+Z (`_undo_failed`) would undo the ANIMATOR's step before it (the re-review
+    of the fix wave: the autoKey question raising left the chunk empty)."""
+
+    def __init__(self):
+        self.recorded = False
+
+
 @contextlib.contextmanager
-def _chunk():
+def _chunk(steps=None):
     """The block as ONE undo chunk (`UNDO_CHUNK`), autoKey off inside it and put back - closed
     whatever happens, a failing autoKey query included. Every solve's own chunk nests in it, so
-    one Ctrl+Z is the whole paste. Never an empty chunk: `autoKeyframe -state` is a step on the
-    undo queue even when it sets the state autoKey already has (measured), so `_undo_failed`
-    undoes this chunk and never the animator's step before it."""
+    one Ctrl+Z is the whole paste. `steps` (a `_Steps`) is told when the chunk's first step -
+    autoKey off - is recorded: a press undoes its chunk only then, never the animator's step
+    before an empty one."""
     cmds.undoInfo(openChunk=True, chunkName=UNDO_CHUNK)
     auto = None
     try:
         auto = cmds.autoKeyframe(query=True, state=True)
         cmds.autoKeyframe(state=False)
+        if steps is not None:
+            steps.recorded = True
         yield
     finally:
         try:
@@ -369,8 +383,9 @@ def _chunk():
 def _undo_failed(recording, walk=None):
     """A press that RAISED inside its chunk (the chunk closed by then): the chunk undone when
     undo is on - half a paste is never left behind (the final review, S2) - and the walk's
-    tweaks all set back (`walk.restore_all`: nothing it keyed stands). With undo off there is
-    nothing to undo. Never raises over the press's own error."""
+    tweaks all set back (`walk.restore_all`: nothing it keyed stands). With undo off, or a
+    chunk that recorded no step of the press (`_Steps`: the caller passes `recording` False),
+    there is nothing to undo. Never raises over the press's own error."""
     if not recording:
         return
     try:
@@ -769,9 +784,9 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         for target in targets:
             planned.update((plug, None) for plug in target.plugs)
         began = keys.shown_at_start(walk.tweaks, list(planned))
-        cancelled, keyed = False, []
+        cancelled, keyed, steps = False, [], _Steps()
         try:
-            with _chunk():
+            with _chunk(steps):
                 # the chunk's first step: every planned channel set to what it showed when the
                 # press began - undone LAST, so one Ctrl+Z leaves each showing that (M1)
                 keys.undo_marks(began)
@@ -796,7 +811,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                     for state in states:
                         keys.put_curve_state(state, layer)
         except BaseException:
-            _undo_failed(recording, walk)
+            _undo_failed(recording and steps.recorded, walk)
             raise
         if cancelled:
             if recording:
@@ -1010,8 +1025,9 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
     if planned:
         recording = bool(cmds.undoInfo(query=True, state=True))
         plugs = list(planned)
+        steps = _Steps()
         try:
-            with _chunk():
+            with _chunk(steps):
                 state = keys.curve_state(plugs, layer)
                 if layer is None:
                     # keyed with its tangents, a weighted card curve keeps its weights: the
@@ -1038,7 +1054,7 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
                 if not cancelled or not recording:
                     keys.put_curve_state(state, layer)
         except BaseException:
-            _undo_failed(recording)
+            _undo_failed(recording and steps.recorded)
             raise
         if cancelled:
             if recording:

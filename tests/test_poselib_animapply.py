@@ -110,6 +110,7 @@ class World(object):
         self.top_member = False          # a skeleton solve writes its top joint (rootless)
         self.fail_at = None              # a solve number that raises
         self.refuse_breakdown = None     # keyframe -edit -breakdown raising
+        self.auto_query_fails = False    # autoKeyframe -q raising (the chunk's first question)
 
     def value(self, plug, frame):
         found = self.values.get(plug, 0.0)
@@ -141,6 +142,8 @@ class FakeCmds(object):
 
     def autoKeyframe(self, query=False, state=None):
         if query:
+            if self.world.auto_query_fails:
+                raise RuntimeError("autoKeyframe: no answer")
             return self.world.auto
         self.world.auto = state
         self.world.log.append(("autoKey", state))
@@ -1084,6 +1087,19 @@ class Cancel(Base):
         self.assertNotIn("undo", self.world.names())
         self.assertNotIn("restore_all", self.world.names())
 
+    def test_a_chunk_that_recorded_nothing_undoes_nothing(self):
+        """The re-review of the fix wave: when the chunk's first question - autoKey's state -
+        raised, the chunk closed holding no step of the press, and `_undo_failed`'s Ctrl+Z
+        undid the ANIMATOR's step before it. Only what the press recorded is undone: nothing
+        here, the error goes on."""
+        self.world.auto_query_fails = True
+        with self.assertRaises(RuntimeError):
+            self.press()
+        names = self.world.names()
+        self.assertEqual(names[names.index("open"):], ["open", "close", "walked"])
+        self.assertNotIn("undo", names)
+        self.assertNotIn("write", names)
+
 
 class Refusals(Base):
 
@@ -1330,6 +1346,16 @@ class Objects(Base):
             aa.apply(self.objects, None)
         names = self.world.names()
         self.assertEqual(names[-2:], ["close", "undo"])
+
+    def test_an_objects_chunk_that_recorded_nothing_undoes_nothing(self):
+        """The re-review of the fix wave: the objects press undid the animator's step too when
+        the chunk's autoKey question raised before the press recorded anything."""
+        self.world.auto_query_fails = True
+        with self.assertRaises(RuntimeError):
+            aa.apply(self.objects, None)
+        names = self.world.names()
+        self.assertEqual(names[-2:], ["open", "close"])
+        self.assertNotIn("undo", names)
 
     def test_an_objects_card_does_not_go_onto_a_character(self):
         self.assertEqual(aa.apply_onto(self.objects, None, "|root"), (False, ap.OBJECTS_ONTO))
