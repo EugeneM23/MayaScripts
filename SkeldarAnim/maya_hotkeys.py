@@ -822,6 +822,10 @@ _OURS = (
      "Open the Shared section: send the scene or an FBX to everybody, open "
      "what they sent",
      partial(_show, "maya_share", "show_window")),
+    ("window.stash", "Windows", "Stash",
+     "Open the Stash section: drafts and intermediate files kept on this "
+     "machine, open or import them again",
+     partial(_show, "maya_stash", "show_window")),
     ("window.com", "Windows", "Center of Mass",
      "Open the Center of Mass section: the CoM point, its trail, the CoM "
      "tool",

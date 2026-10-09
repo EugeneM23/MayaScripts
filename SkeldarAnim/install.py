@@ -124,6 +124,8 @@ _PAYLOAD = (
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh
     "maya_share.py",            # the section
+    "maya_stashstore.py",       # Stash (2026-10-09): the local folder's rules, pure
+    "maya_stash.py",            # the Stash section: drafts on this machine
     "plug-ins",                 # the startup plug-in: the edge panel from Maya's start (2026-10-08)
     "install.py",
     "README_INSTALL.txt",

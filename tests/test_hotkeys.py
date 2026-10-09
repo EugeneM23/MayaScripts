@@ -477,8 +477,8 @@ class OurRows(unittest.TestCase):
                 if not row[0].startswith("overrig.")]
         #  + window.inventory (2026-09-29), + graph.overlay (2026-09-30),
         #  + window.shared (2026-09-30), + window.com (2026-10-01), + window.armor (2026-10-01)
-        #  + window.poses (2026-10-02)
-        self.assertEqual(len(ours), 37)
+        #  + window.poses (2026-10-02), + window.stash (2026-10-09)
+        self.assertEqual(len(ours), 38)
 
     def test_the_pose_library_row(self):
         """The Pose Library's window (2026-10-02): an opener like the hub's sections."""
@@ -507,7 +507,7 @@ class OurRows(unittest.TestCase):
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
                           "window.poses", "window.scenesetup", "window.shared",
-                          "window.uebridge", "window.weapons"])
+                          "window.stash", "window.uebridge", "window.weapons"])
 
     def test_the_picker_rows(self):
         self.assertEqual(sorted(self._keys("picker.")),
@@ -639,8 +639,9 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 13)
+        self.assertEqual(len(names), 14)
         self.assertIn("maya_hub", names)
+        self.assertIn("maya_stash", names)
         self.assertIn("maya_poselib.window", names)
         self.assertIn("maya_scenesetup.armorpanel", names)
         self.assertIn("maya_com.panel", names)

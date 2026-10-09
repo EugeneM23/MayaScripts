@@ -120,6 +120,10 @@ SECTIONS = (
     Section("shared", "Shared", "maya_share",
             "build_panel", "skeldarHubFrameShared",
             "scene", "send"),
+    #  2026-10-09: the local shelf of drafts - the same list, nothing sent.
+    Section("stash", "Stash", "maya_stash",
+            "build_panel", "skeldarHubFrameStash",
+            "scene", "archive"),
     Section("retarget", "Retarget", "maya_rig_retarget",
             "build_panel", "skeldarHubFrameRetarget",
             "animation", "arrows-exchange"),

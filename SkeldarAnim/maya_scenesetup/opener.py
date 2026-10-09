@@ -123,12 +123,18 @@ def _clean():
     return (" (" + "; ".join(notes) + ")") if notes else ""
 
 
-def open_asset(path, label):
-    """Open the plugin's `path` as the scene; returns what the line says."""
-    if not path or not os.path.isfile(path):
-        return missing_message(label, path)
+def open_path(path):
+    """Open `path` as the scene, whatever folder it is in (2026-10-09: Stash
+    opens its drafts this way too). Returns (opened, note): `opened` is False
+    when the animator cancelled Maya's «save changes?»; `note` names what
+    needed a fix on the way in (the vaccine, a missing image), else "".
+
+    The scene is the file on disk: the relink wrote attributes, and an FBX
+    comes in as an import into a new scene, which Maya reads as a change
+    (measured 2026-09-30 on every catalog weapon) - the next Open scene would
+    ask to save an untouched file."""
     if not save_changes():
-        return CANCELLED
+        return False, ""
     note = ""
     if character.is_fbx(path):
         fbximport.open_file(path)
@@ -137,9 +143,15 @@ def open_asset(path, label):
                   ignoreVersion=True, prompt=False)
         restore_playback()
         note = _clean()
-    # The scene is the file on disk: the relink wrote attributes, and an FBX
-    # comes in as an import into a new scene, which Maya reads as a change
-    # (measured 2026-09-30 on every catalog weapon) - the next Open scene
-    # would ask to save an untouched file.
     cmds.file(modified=False)
+    return True, note
+
+
+def open_asset(path, label):
+    """Open the plugin's `path` as the scene; returns what the line says."""
+    if not path or not os.path.isfile(path):
+        return missing_message(label, path)
+    opened, note = open_path(path)
+    if not opened:
+        return CANCELLED
     return opened_message(label, path, note)
