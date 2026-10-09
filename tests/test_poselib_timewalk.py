@@ -254,6 +254,15 @@ class WalkOrder(Rebound):
             walk.go(12.0)                                 # a plain go is a move, nothing more
             self.assertEqual(self.log, [("time", 12.0)])
 
+    def test_an_arrive_without_restore_is_a_plain_move(self):
+        """An entry frame in the middle of a paste (At current time off): back there after a
+        move, `restore=False` sets no tweak back - only the paste's first frame asks for it."""
+        with timewalk.Walk(fresh=True) as walk:
+            self.assertTrue(walk.arrive(13))
+            del self.log[:]
+            self.assertTrue(walk.arrive(12, restore=False))
+            self.assertEqual(self.log, [("time", 12)])
+
     def test_arrive_elsewhere_goes(self):
         with timewalk.Walk(fresh=True) as walk:
             self.assertTrue(walk.arrive(40))

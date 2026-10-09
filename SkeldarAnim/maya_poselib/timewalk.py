@@ -97,7 +97,7 @@ class Walk(object):
         self.frame = frame
         self.moved = True
 
-    def arrive(self, frame):
+    def arrive(self, frame, restore=True):
         """`go(frame)` - unless the walk has not moved yet and the scene already stands on
         `frame`: a `setCurrentTime` to the frame the scene stands on re-evaluates every time
         curve and throws away the animator's unkeyed tweaks (measured: a tweak of 77 read back
@@ -112,13 +112,16 @@ class Walk(object):
         pre-pass walked the paste range (Blend under 100 %, a rootless target's ground) came
         back to its first frame through a real time set, and frame a was solved against the
         keyed scene while its partner, Connect's reference and the place had read the tweaks
-        (the re-review of the fix wave)."""
+        (the re-review of the fix wave). `restore=False` keeps that a plain move: a press asks
+        for it only on its paste's FIRST frame - an entry frame in the middle of a paste (At
+        current time off, the scene standing inside the clip's range) read the tweaks on that
+        one frame alone, and a spike was keyed there (the review of those fixes)."""
         here = self._here is not None and abs(float(frame) - float(self._here.value)) <= 1e-9
         if not self.moved and here:
             self.frame = frame
             return False
         self.go(frame)
-        if here and self.tweaks is not None:
+        if here and restore and self.tweaks is not None:
             self.tweaks.restore(self.keyed)
         return True
 

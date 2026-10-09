@@ -92,6 +92,7 @@ class World(object):
 
     def __init__(self):
         self.log = []
+        self.restores = []               # (frame, restore) of every Walk.arrive
         self.frame = 12.0
         self.recording = True
         self.auto = True
@@ -294,8 +295,10 @@ class FakeWalk(object):
         self.moved = True
         self.world.log.append(("go", frame))
 
-    def arrive(self, frame):
-        """`timewalk.Walk.arrive`: no time set on the frame the walk entered on until it moved."""
+    def arrive(self, frame, restore=True):
+        """`timewalk.Walk.arrive`: no time set on the frame the walk entered on until it moved;
+        `restore` - whether arriving back there sets the entry tweaks back - recorded."""
+        self.world.restores.append((float(frame), bool(restore)))
         if not self.moved and abs(float(frame) - float(self.here)) <= 1e-9:
             self.world.log.append(("arrive", frame))
             return False
@@ -1017,6 +1020,22 @@ class BlendPress(Base):
                                    places=12)
         self.assertIn("Walk at 50 % onto Manny_Rig1", text)
         self.assertNotIn("measure", names)                   # a blend lands between: unmeasured
+
+    def test_the_tweaks_come_back_only_on_the_pastes_first_frame(self):
+        """The review of the re-review fixes: `Walk.arrive` sets the entry tweaks back when it
+        comes back to the frame the walk entered on - right for the paste's first frame `a`
+        (the M2 road with a pre-pass), wrong for an entry frame in the MIDDLE of a paste (At
+        current time off, the scene standing inside the clip's own range): that one frame's
+        partner, ground and solve read the tweaks and a spike was keyed there. Every arrive
+        asks for the restore on `a` alone."""
+        self.world.frame = 3.0                     # pasted at 0..5 on its own frames, now 3
+        ok, text = self.press(options={"at_current": False}, alpha=0.5)
+        self.assertTrue(ok, text)
+        asked = dict()
+        for frame, restore in self.world.restores:
+            asked.setdefault(frame, set()).add(restore)
+        self.assertEqual(asked[3.0], {False})      # the entry frame, mid paste: no tweaks back
+        self.assertEqual(asked[0.0], {True})       # the paste's first frame
 
     def test_nothing_at_zero(self):
         ok, text = self.press(alpha=0.0)

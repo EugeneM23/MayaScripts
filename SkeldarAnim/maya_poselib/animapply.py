@@ -265,6 +265,13 @@ def _ground_time(plan, time):
     return time
 
 
+def _first(plan, time):
+    """Whether pasted frame `time` is the paste's first frame `a` - the one frame a walk coming
+    back to its entry frame sets the animator's tweaks back on (`timewalk.Walk.arrive`): an
+    entry frame in the middle of a paste stays a plain move. Pure."""
+    return abs(float(time) - float(plan.a)) <= 1e-9
+
+
 def _card_refusal(header):
     if not header:
         return ap.NO_CARD
@@ -783,7 +790,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                         if target.reads_ground:
                             target.grounds[time] = target.grounds.get(at)
                     continue                     # nothing of this frame to read
-                walk.arrive(time)
+                walk.arrive(time, restore=_first(plan, time))
                 for target in targets:
                     if target.plugs and alpha < 1.0:
                         target.partner[time] = keys.current(target.plugs)
@@ -808,7 +815,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                     reached = [n + m for n, m in zip(reached, _ops(plan.ops, target.plugs,
                                                                    layer))]
                 for _source, index, time in plan.frames:
-                    walk.arrive(time)
+                    walk.arrive(time, restore=_first(plan, time))
                     bones = animdata.bones_at(header, frames, index)
                     root = roots.get(index) if roots else None
                     shown = pm.mirror(bones, members, root_frame=root)[0] if mirror else bones
