@@ -69,6 +69,10 @@ OPTIONVAR = "skeldarAnimHub_collapsed_{0}"
 CLASSIC_VAR = "skeldarAnimHub_classic"     # 1: the classic hub even with Qt
 EDGE_VAR = edgerules.EDGE_VAR              # 1: the hub in the edge panel
 NEW_LOOK_BUTTON = "skeldarAnimHubNewLook"
+# 1: the startup plug-in's registration waits for this hub (install.py's
+# STARTUP_PENDING - named here, pinned equal by a test: the installer is
+# loaded only when it is 1). Task 13b, 2026-10-09.
+STARTUP_PENDING_VAR = "skeldarAnimStartupPending"
 
 INITIAL_WIDTH = 500
 INITIAL_HEIGHT = 900
@@ -495,6 +499,7 @@ def _arrow(qt):
 def build():
     """The uiScript body: the hub inside the workspaceControl."""
     global _BUILT_HERE, _SKIN
+    _register_pending_startup()
     if edge_on():
         #  A docked control Maya restored from an older workspace while the
         #  hub lives at the edge now (2026-10-08): nothing is built in it -
@@ -973,6 +978,70 @@ def _close_legacy_windows():
             cmds.deleteUI(name)
 
 
+# ------------------------------------------------- the pending registration
+
+#  Task 13b (2026-10-09): Maya trusts the user's plug-ins folder only when it
+#  stood at its start, and a first install that made that folder would have
+#  raised Maya's modal «Untrusted Plugin Loading» at the plug-in's load. So
+#  that install only copies the plug-in and leaves STARTUP_PENDING_VAR at 1
+#  (install.register_startup), and the first hub built or shown in a LATER
+#  session registers it - silently (the animator: «Без окна, на сессию
+#  позже»). The load runs the plug-in's initializePlugin, which defers
+#  `start()`: that meets the hub this very show() built and keeps it as it
+#  is (`start` / `_ensure_edge` find the standing edge; docked, it does
+#  nothing). One completion queued at a time: show() creating the control
+#  runs the uiScript's build() in the same turn.
+_STARTUP_QUEUED = False
+
+
+def _register_pending_startup():
+    """A pending registration queued (deferred, lowest priority - never
+    inside the press or the build the load could disturb). Only the mark is
+    asked here; the installer is loaded when it is 1. True when queued."""
+    global _STARTUP_QUEUED
+    if _STARTUP_QUEUED:
+        return False
+    try:
+        if not cmds.optionVar(query=STARTUP_PENDING_VAR):
+            return False
+    except Exception:                                        # noqa: BLE001
+        return False
+    _STARTUP_QUEUED = True
+    cmds.evalDeferred(_complete_pending_startup, lowestPriority=True)
+    return True
+
+
+def _complete_pending_startup():
+    """The deferred half: install.py's `complete_startup` (None: nothing to
+    do now - the install's own session, say; "": registered; a note: Maya
+    refused, the mark stays and the next hub tries again). A failure is one
+    printed line, never raised."""
+    global _STARTUP_QUEUED
+    _STARTUP_QUEUED = False
+    try:
+        note = _installer().complete_startup()
+    except Exception as error:                               # noqa: BLE001
+        note = "startup plug-in not registered: {0}".format(error)
+    if note:
+        print("SkeldarAnim: {0} - tried again the next time the hub "
+              "opens".format(note))
+    return note
+
+
+def _installer():
+    """This folder's install.py, loaded by path under a name of its own (as
+    the Update card and the one-file installer load theirs): `import
+    install` could find somebody else's install.py on sys.path, or a module
+    a verify left. Not put into sys.modules."""
+    import importlib.util
+    path = os.path.join(plugin_root(), "install.py")
+    spec = importlib.util.spec_from_file_location("skeldar_hub_installer",
+                                                  path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def show(key=None):
     """Open the hub (or raise it) and, given a section key, expand that
     section. The shelf button and every tool's `show_window`.
@@ -981,8 +1050,12 @@ def show(key=None):
     stays until visited (`_show_edge`). Docked with an edge panel still
     standing (a switch on its way), the panel goes first - deferred, the
     call may come from a control inside it - or two skins would answer to
-    the controls' names (trap 102's shape)."""
+    the controls' names (trap 102's shape).
+
+    A startup plug-in the install left pending (Task 13b) is registered,
+    deferred, from here and from `build()` (`_register_pending_startup`)."""
     _close_legacy_windows()
+    _register_pending_startup()
     if edge_on():
         if _show_edge(key) is not None:
             return CONTROL

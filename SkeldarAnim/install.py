@@ -56,6 +56,18 @@ OS_CLUTTER = frozenset(("thumbs.db", "desktop.ini", ".ds_store"))   # no card's 
 # autoloads it at every start (its docstring: why there).
 STARTUP_PLUGIN = "skeldarAnimStartup"
 STARTUP_FOLDER = "plug-ins"
+# Task 13b (2026-10-09): a registration left for the next session - the
+# install had to MAKE the user's plug-ins folder, and Maya trusts it only from
+# its next start. 1 = the first hub of a later session finishes it
+# (`complete_startup`; maya_hub.STARTUP_PENDING_VAR is this name, pinned).
+STARTUP_PENDING = "skeldarAnimStartupPending"
+# ...and the folder this Maya session made, on `sys`: an install's module is
+# purged, and loaded under other names (the Update card's, the one-file
+# installer's), so the mark lives on the one object every copy shares.
+STARTUP_MADE_MARK = "_skeldar_startup_folder_made"
+STARTUP_PENDING_NOTE = ("the edge panel starts with Maya from the next session"
+                        " on (the first open of the hub there registers its"
+                        " startup plug-in)")
 
 # Which build an installed copy is (2026-09-28, Check update): a build
 # carries this file, and an install from the repository writes its git
@@ -781,11 +793,115 @@ def startup_folder(plug_in_path, user_app_dir, version):
     return under[0] if under else ""
 
 
-def register_startup(dest, cmds=None, plug_in_path=None):
+def made_this_session(folder, marked, born, started):
+    """The user's plug-ins folder was made in THIS Maya session, so Maya does
+    not trust it yet (Task 13b, 2026-10-09; `register_startup`). Pure.
+
+    `marked` is the installer's mark on `sys` (the folder an install of this
+    session made - compared without regard to slashes or case); `born` the
+    folder's creation time and `started` this process's, both seconds since
+    the epoch or None: a folder born after the process started was made
+    meanwhile by somebody else (the animator, another tool). Without the
+    times only the mark decides."""
+    if marked and _slashed(marked).lower() == _slashed(folder).lower():
+        return True
+    return born is not None and started is not None and born >= started
+
+
+def process_start():
+    """When this process started, in seconds since the epoch, or None (not
+    Windows, or the call failed). Windows' GetProcessTimes, through its own
+    kernel32 handle - restypes set on the shared `ctypes.windll` would reach
+    every other caller in Maya."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel.GetProcessTimes.argtypes = (
+            (wintypes.HANDLE,) + (ctypes.POINTER(wintypes.FILETIME),) * 4)
+        kernel.GetProcessTimes.restype = wintypes.BOOL
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel.GetProcessTimes(kernel.GetCurrentProcess(),
+                                      *[ctypes.byref(t) for t in times]):
+            return None
+        ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+        #  100 ns ticks since 1601-01-01
+        return ticks / 1e7 - 11644473600.0
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _born(path):
+    """A folder's creation time (seconds since the epoch), or None."""
+    try:
+        status = os.stat(path)
+    except OSError:
+        return None
+    born = getattr(status, "st_birthtime", None)
+    if born is None and os.name == "nt":
+        born = status.st_ctime                  # creation time on Windows
+    return born
+
+
+def _made_this_session(folder, session_start):
+    """`made_this_session` asked of the scene: the `sys` mark, the folder's
+    birth, `session_start` (None: this process's start)."""
+    if session_start is None:
+        session_start = process_start()
+    return made_this_session(folder, getattr(sys, STARTUP_MADE_MARK, None),
+                             _born(folder), session_start)
+
+
+def _save_prefs(cmds):
+    """Maya's general prefs (the optionVars) written now: Maya writes them at
+    a normal exit only, and a crash - or a verify's kill - would lose the
+    pending mark with them. Never raises."""
+    try:
+        cmds.savePrefs(general=True)
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
+def _clear_pending(cmds):
+    """The pending mark removed (and the prefs saved), when there is one."""
+    if cmds.optionVar(exists=STARTUP_PENDING):
+        cmds.optionVar(remove=STARTUP_PENDING)
+        _save_prefs(cmds)
+
+
+def _load_and_autoload(cmds, target):
+    """The plug-in at `target` loaded (unless it is), set to autoload, the
+    plug-in prefs saved; "" or a note. Raises what Maya raises."""
+    if not cmds.pluginInfo(STARTUP_PLUGIN, query=True, loaded=True):
+        if not cmds.loadPlugin(target, quiet=True):
+            #  Maya answered None, no error: its untrusted-location dialog
+            #  answered Deny (measured), a security setting refusing it
+            return ("startup plug-in not registered: Maya did not load"
+                    " {0}".format(target))
+    cmds.pluginInfo(STARTUP_PLUGIN, edit=True, autoload=True)
+    cmds.pluginInfo(savePluginPrefs=True)
+    _clear_pending(cmds)
+    return ""
+
+
+def register_startup(dest, cmds=None, plug_in_path=None, session_start=None):
     """The startup plug-in copied from the installed folder `dest` into the
     user's plug-ins folder, loaded, set to autoload, Maya's plug-in prefs
-    saved (2026-10-08). Answers "" or a note; never raises: a hub without its
-    edge panel at startup is no reason to fail an install.
+    saved (2026-10-08) - when that folder stood at this Maya's start. Answers
+    "" or a note; never raises: a hub without its edge panel at startup is no
+    reason to fail an install.
+
+    A folder this Maya session made (now, or by an earlier install of this
+    session - `STARTUP_MADE_MARK` on `sys` -, or born after this process
+    started) is NOT loaded from (Task 13b, 2026-10-09, below): the copy is
+    made, `STARTUP_PENDING` set to 1 and the prefs saved at once, and the
+    note says the edge panel starts with Maya from the next session on; the
+    first hub built or shown in a later session finishes the registration
+    (`complete_startup`, from `maya_hub`). `session_start` is for the tests
+    (None: this process's start).
 
     Why a COPY in the user's plug-ins folder, loaded by its full path -
     measured in a disposable Maya 2027.2 (scratch MAYA_APP_DIR) on 2026-10-08:
@@ -808,14 +924,41 @@ def register_startup(dest, cmds=None, plug_in_path=None):
       would block a quiet install over the command port and ask a colleague
       at every install; the same dialog came for `<userAppDir>/scripts/
       SkeldarAnim/plug-ins` (the installed folder's own), and answered Deny
-      the load returned None, no error. From the user plug-ins folder it
-      loaded with no dialog, even with that folder made after Maya started.
+      the load returned None, no error.
     - By NAME the same plug-in was «not found on MAYA_PLUG_IN_PATH» in that
       session (the folders are listed at startup): hence the full path.
     - Maya's loader gives a Python plug-in neither `__file__` nor `__name__`
       (both read None); `pluginInfo -query -path` answers inside
       initializePlugin. The plug-in finds the installed SkeldarAnim from
       there (`skeldarAnimStartup.plugin_dir`).
+
+    The user plug-ins folder is trusted only when it stood at Maya's START
+    (Task 13b). Task 13 recorded «no dialog, even with that folder made after
+    Maya started» - wrong: Task 14's fresh disposable Maya (2026-10-08, no
+    `2027/plug-ins` at its start) put up the same modal «Untrusted Plugin
+    Loading» (Location: <MAYA_APP_DIR>/2027/plug-ins) at the first
+    install's load by full path, blocking the command port's runner until
+    Allow was pressed; after a restart (the folder now standing) the plug-in
+    autoloaded with no dialog. The animator's machine had no `2027/plug-ins`
+    that day, so every colleague's first install would have met it. The
+    animator chose «Без окна, на сессию позже»: the session that makes the
+    folder only copies and marks; the next one registers. Measured in a
+    disposable Maya 2027.2 whose scratch MAYA_APP_DIR had no `2027/plug-ins`
+    at its start (Task 13b, 2026-10-09; the path listed it all the same):
+    `install(quiet=True)` answered over the port in 0.5 s, no dialog - the
+    folder made, the plug-in copied, not loaded, the mark 1 and already in
+    `userPrefs.mel` (`-iv "skeldarAnimStartupPending" 1`; a kill writes no
+    prefs); a second `register_startup` and the hub opened in that session
+    loaded nothing. Killed and relaunched: not loaded at startup, the mark
+    1; `maya_hub.show()` -> one deferred turn later loaded from
+    `<MAYA_APP_DIR>/2027/plug-ins`, autoload True, `pluginPrefs.mel`
+    holding `autoLoadPlugin(\\"\\", \\"skeldarAnimStartup.py\\", ...)`, the
+    mark gone, no dialog. Edge mode on, relaunched: the plug-in autoloaded
+    and the edge panel waited hidden (its sensor shown), nothing pressed; a
+    re-install in that session loaded at once (""), no dialog. Maya's own
+    trust settings are optionVars (`TrustCenterPathOption` 1,
+    `TrustCenterPathAction` 1, `SafeModeAllowedlistPaths` []) with no list
+    of trusted folders to ask - hence the inference from the folder's age.
 
     The copy goes BEFORE the unload: a missing source leaves a loaded
     plug-in as it was. Unloading runs its uninitializePlugin, which stops
@@ -839,17 +982,49 @@ def register_startup(dest, cmds=None, plug_in_path=None):
         target = folder + "/" + STARTUP_PLUGIN + ".py"
         if not os.path.isdir(folder):
             os.makedirs(folder)
+            setattr(sys, STARTUP_MADE_MARK, folder)
         shutil.copyfile(source, target)
+        if _made_this_session(folder, session_start):
+            #  Maya would ask (its modal security dialog): the next session
+            cmds.optionVar(intValue=(STARTUP_PENDING, 1))
+            _save_prefs(cmds)
+            return STARTUP_PENDING_NOTE
         if cmds.pluginInfo(STARTUP_PLUGIN, query=True, loaded=True):
             cmds.unloadPlugin(STARTUP_PLUGIN, force=True)
-        if not cmds.loadPlugin(target, quiet=True):
-            #  Maya answered None, no error: its untrusted-location dialog
-            #  answered Deny (measured), a security setting refusing it
-            return ("startup plug-in not registered: Maya did not load"
-                    " {0}".format(target))
-        cmds.pluginInfo(STARTUP_PLUGIN, edit=True, autoload=True)
-        cmds.pluginInfo(savePluginPrefs=True)
-        return ""
+        return _load_and_autoload(cmds, target)
+    except Exception as error:                               # noqa: BLE001
+        return "startup plug-in not registered: {0}".format(error)
+
+
+def complete_startup(cmds=None, plug_in_path=None, session_start=None):
+    """A registration `register_startup` left pending, finished: the copy in
+    the user's plug-ins folder loaded by its full path, set to autoload, the
+    plug-in prefs saved, `STARTUP_PENDING` removed (Task 13b, 2026-10-09).
+    `maya_hub` calls it, deferred, the first time the hub is built or shown
+    while the mark is 1 - silently: Maya trusts the folder from the session
+    after the one that made it, so no dialog comes.
+
+    None when there is nothing to do NOW: no mark (or 0), the folder made in
+    this session (`sys` mark, or born after this process started - the
+    install's own session), the copy gone (a re-install brings it and the
+    mark back). "" when registered. A note when Maya refused or raised: the
+    mark stays and the next hub tries again. Never raises."""
+    if cmds is None:
+        cmds = _cmds()
+    if plug_in_path is None:
+        plug_in_path = os.environ.get("MAYA_PLUG_IN_PATH", "")
+    try:
+        if not cmds.optionVar(query=STARTUP_PENDING):
+            return None
+        app = cmds.internalVar(userAppDir=True)
+        folder = startup_folder(plug_in_path, app,
+                                str(cmds.about(version=True)))
+        target = folder + "/" + STARTUP_PLUGIN + ".py"
+        if not folder or not os.path.isfile(target):
+            return None
+        if _made_this_session(folder, session_start):
+            return None
+        return _load_and_autoload(cmds, target)
     except Exception as error:                               # noqa: BLE001
         return "startup plug-in not registered: {0}".format(error)
 
@@ -869,7 +1044,9 @@ def install(dropped=None, quiet=False):
 
     Last, in a GUI Maya, the startup plug-in is registered (2026-10-08,
     `register_startup`): the hub's edge panel waits at the screen edge from
-    Maya's next start. A registration that failed is said, never raised.
+    Maya's next start. A registration that failed is said, never raised; one
+    left for the next session (the user's plug-ins folder made now - Task
+    13b) is said too, and no dialog of Maya's comes.
     """
     cmds = _cmds()
     src = os.path.dirname(os.path.abspath(dropped)) if dropped \

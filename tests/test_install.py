@@ -1220,44 +1220,114 @@ class StartupFolder(unittest.TestCase):
             "C:/u/maya_old/2027/plug-ins", "C:/u/maya/", "2027"), "")
 
 
-class RegisterStartup(unittest.TestCase):
-    """`register_startup(dest)` copies the plug-in from the installed folder
-    into the user's plug-ins folder, loads it by its full path, sets it to
-    autoload and saves Maya's plug-in prefs (2026-10-08). Never raises: a
-    hub without its edge panel at startup is no reason to fail an install."""
+class MadeThisSession(unittest.TestCase):
+    """Task 13b (2026-10-09): Maya trusts the user's plug-ins folder only
+    when it stood at Maya's start - a load from it in the session that made
+    it raised the modal «Untrusted Plugin Loading». Made this session = the
+    installer's mark on `sys`, or a folder born after this process started.
+    Pure."""
 
-    class FakeCmds(object):
-        def __init__(self, app):
-            self.app = app
-            self.calls = []
-            self.loaded = False
-            self.fail = ""
+    def test_the_installer_s_mark_is_this_session(self):
+        self.assertTrue(install.made_this_session(
+            "C:/u/maya/2027/plug-ins", "C:/u/maya/2027/plug-ins", 10.0, 100.0))
 
-        def internalVar(self, **kwargs):
-            return self.app
+    def test_the_mark_ignores_slashes_and_case(self):
+        self.assertTrue(install.made_this_session(
+            "C:\\U\\Maya\\2027\\plug-ins\\", "c:/u/maya/2027/plug-ins",
+            None, None))
 
-        def about(self, **kwargs):
-            return "2027"
+    def test_another_folder_s_mark_is_not_this_one(self):
+        self.assertFalse(install.made_this_session(
+            "C:/u/maya/2027/plug-ins", "C:/u/maya/plug-ins", 10.0, 100.0))
 
-        def pluginInfo(self, *args, **kwargs):
-            if kwargs.get("query"):
-                return self.loaded
-            self.calls.append(("pluginInfo", args, kwargs))
-            if self.fail == "autoload" and kwargs.get("autoload"):
-                raise RuntimeError("autoload refused")
+    def test_born_after_the_process_started_is_this_session(self):
+        """Made by somebody else meanwhile (the animator, another tool):
+        Maya did not see it at its start either."""
+        self.assertTrue(install.made_this_session(
+            "C:/u/maya/2027/plug-ins", None, 150.0, 100.0))
 
-        def loadPlugin(self, path, **kwargs):
-            self.calls.append(("loadPlugin", path, kwargs))
-            if self.fail == "load":
-                raise RuntimeError("load refused")
-            if self.fail == "denied":
-                return None
-            self.loaded = True
-            return [install.STARTUP_PLUGIN]
+    def test_born_before_the_process_started_is_not(self):
+        self.assertFalse(install.made_this_session(
+            "C:/u/maya/2027/plug-ins", None, 50.0, 100.0))
 
-        def unloadPlugin(self, name, **kwargs):
-            self.calls.append(("unloadPlugin", name, kwargs))
-            self.loaded = False
+    def test_without_the_times_only_the_mark_decides(self):
+        self.assertFalse(install.made_this_session(
+            "C:/u/maya/2027/plug-ins", None, None, 100.0))
+        self.assertFalse(install.made_this_session(
+            "C:/u/maya/2027/plug-ins", None, 150.0, None))
+
+    def test_this_process_started_before_now(self):
+        """The real call (Windows' GetProcessTimes): this test's own process
+        started in the past, and not before the year 2026."""
+        import time
+        started = install.process_start()
+        if os.name != "nt":
+            self.skipTest("the process start is read on Windows only")
+        self.assertIsNotNone(started)
+        self.assertLess(started, time.time())
+        self.assertGreater(started, 1767225600.0)            # 2026-01-01
+
+
+class _StartupCmds(object):
+    """maya.cmds as `register_startup` / `complete_startup` drive it."""
+
+    def __init__(self, app):
+        self.app = app
+        self.calls = []
+        self.loaded = False
+        self.fail = ""
+        self.optionvars = {}
+
+    def internalVar(self, **kwargs):
+        return self.app
+
+    def about(self, **kwargs):
+        return "2027"
+
+    def pluginInfo(self, *args, **kwargs):
+        if kwargs.get("query"):
+            return self.loaded
+        self.calls.append(("pluginInfo", args, kwargs))
+        if self.fail == "autoload" and kwargs.get("autoload"):
+            raise RuntimeError("autoload refused")
+
+    def loadPlugin(self, path, **kwargs):
+        self.calls.append(("loadPlugin", path, kwargs))
+        if self.fail == "load":
+            raise RuntimeError("load refused")
+        if self.fail == "denied":
+            return None
+        self.loaded = True
+        return [install.STARTUP_PLUGIN]
+
+    def unloadPlugin(self, name, **kwargs):
+        self.calls.append(("unloadPlugin", name, kwargs))
+        self.loaded = False
+
+    def optionVar(self, **kwargs):
+        if "exists" in kwargs:
+            return kwargs["exists"] in self.optionvars
+        if "query" in kwargs:
+            return self.optionvars.get(kwargs["query"], 0)
+        if "remove" in kwargs:
+            self.calls.append(("optionVar", "remove", kwargs["remove"]))
+            self.optionvars.pop(kwargs["remove"], None)
+            return None
+        name, value = kwargs["intValue"]
+        self.calls.append(("optionVar", name, value))
+        self.optionvars[name] = value
+        return None
+
+    def savePrefs(self, **kwargs):
+        self.calls.append(("savePrefs", kwargs))
+
+    def loads(self):
+        return [c for c in self.calls if c[0] == "loadPlugin"]
+
+
+class _StartupFolder(unittest.TestCase):
+    """A scratch userAppDir with an installed SkeldarAnim holding the plug-in,
+    and the installer's `sys` mark kept apart from the real one."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="skeldar_startup_")
@@ -1268,19 +1338,54 @@ class RegisterStartup(unittest.TestCase):
                                install.STARTUP_PLUGIN + ".py"), "w") as h:
             h.write("# the plug-in\n")
         self.path = self.app + "2027/plug-ins;" + self.app + "plug-ins"
-        self.target = self.app + "2027/plug-ins/" + install.STARTUP_PLUGIN + ".py"
-        self.fake = self.FakeCmds(self.app)
+        self.folder = self.app + "2027/plug-ins"
+        self.target = self.folder + "/" + install.STARTUP_PLUGIN + ".py"
+        self.fake = _StartupCmds(self.app)
+        self.saved_mark = getattr(sys, install.STARTUP_MADE_MARK, None)
+        if hasattr(sys, install.STARTUP_MADE_MARK):
+            delattr(sys, install.STARTUP_MADE_MARK)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
+        if self.saved_mark is None:
+            if hasattr(sys, install.STARTUP_MADE_MARK):
+                delattr(sys, install.STARTUP_MADE_MARK)
+        else:
+            setattr(sys, install.STARTUP_MADE_MARK, self.saved_mark)
 
-    def register(self):
+    def existed_at_start(self):
+        """The user's plug-ins folder stood when this "Maya session" began:
+        made here, and the session said to have started an hour later."""
+        os.makedirs(self.folder)
+        return time_now() + 3600.0
+
+    def made_now(self):
+        """This "session" started an hour ago: a folder made now is newer."""
+        return time_now() - 3600.0
+
+
+def time_now():
+    import time
+    return time.time()
+
+
+class RegisterStartup(_StartupFolder):
+    """`register_startup(dest)` copies the plug-in from the installed folder
+    into the user's plug-ins folder, loads it by its full path, sets it to
+    autoload and saves Maya's plug-in prefs (2026-10-08) - when that folder
+    stood at Maya's start. One made in this session is not trusted by Maya
+    yet (its modal security dialog, measured 2026-10-09): copied, not
+    loaded, marked pending for the next session's first hub (Task 13b, the
+    animator: «Без окна, на сессию позже»). Never raises: a hub without its
+    edge panel at startup is no reason to fail an install."""
+
+    def register(self, started):
         return install.register_startup(self.dest, cmds=self.fake,
-                                        plug_in_path=self.path)
+                                        plug_in_path=self.path,
+                                        session_start=started)
 
     def test_copied_loaded_by_path_autoloaded_and_saved(self):
-        self.assertEqual(self.register(), "")
-        self.assertTrue(os.path.isfile(self.target))         # the folder made
+        self.assertEqual(self.register(self.existed_at_start()), "")
         with open(self.target) as h:
             self.assertEqual(h.read(), "# the plug-in\n")
         self.assertEqual(self.fake.calls, [
@@ -1288,29 +1393,93 @@ class RegisterStartup(unittest.TestCase):
             ("pluginInfo", (install.STARTUP_PLUGIN,),
              {"edit": True, "autoload": True}),
             ("pluginInfo", (), {"savePluginPrefs": True})])
+        self.assertNotIn(install.STARTUP_PENDING, self.fake.optionvars)
+
+    def test_a_folder_made_now_is_copied_not_loaded_and_pending(self):
+        note = self.register(self.made_now())
+        self.assertTrue(os.path.isfile(self.target))         # the folder made
+        with open(self.target) as h:
+            self.assertEqual(h.read(), "# the plug-in\n")
+        self.assertEqual(self.fake.loads(), [])
+        self.assertEqual([c for c in self.fake.calls if c[0] == "pluginInfo"],
+                         [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+        self.assertIn("next", note)
+        self.assertIn("hub", note)
+        self.assertNotIn("not registered", note)             # no failure
+
+    def test_the_pending_mark_is_saved_at_once(self):
+        """A Maya that crashes (or is killed) before it exits writes no
+        prefs: the mark would be lost with them."""
+        self.register(self.made_now())
+        self.assertIn(("savePrefs", {"general": True}), self.fake.calls)
+        self.assertLess(
+            self.fake.calls.index(("optionVar", install.STARTUP_PENDING, 1)),
+            self.fake.calls.index(("savePrefs", {"general": True})))
+
+    def test_the_folder_made_is_marked_on_sys(self):
+        self.register(self.made_now())
+        self.assertEqual(getattr(sys, install.STARTUP_MADE_MARK),
+                         self.folder)
+
+    def test_a_second_install_this_session_still_does_not_load(self):
+        """The mark on `sys` survives the purge and any module name the
+        installer is loaded under (the Update card's, the one-file
+        installer's) - and the folder exists by now. Even a "session" said
+        to have started later than the folder was born."""
+        self.register(self.made_now())
+        with open(os.path.join(self.dest, "plug-ins",
+                               install.STARTUP_PLUGIN + ".py"), "w") as h:
+            h.write("# the new one\n")
+        note = self.register(time_now() + 3600.0)
+        with open(self.target) as h:
+            self.assertEqual(h.read(), "# the new one\n")    # replaced
+        self.assertEqual(self.fake.loads(), [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+        self.assertIn("next", note)
+
+    def test_a_folder_somebody_made_this_session_is_not_loaded_either(self):
+        """No mark of ours - born after this process started."""
+        os.makedirs(self.folder)
+        self.register(self.made_now())
+        self.assertEqual(self.fake.loads(), [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
+    def test_a_registration_clears_a_pending_mark(self):
+        """A re-install before the next session's hub opened."""
+        self.fake.optionvars[install.STARTUP_PENDING] = 1
+        self.assertEqual(self.register(self.existed_at_start()), "")
+        self.assertNotIn(install.STARTUP_PENDING, self.fake.optionvars)
+        self.assertIn(("savePrefs", {"general": True}), self.fake.calls)
+
+    def test_no_pending_mark_no_prefs_saved(self):
+        """An ordinary re-install writes the plug-in prefs, not the rest."""
+        self.register(self.existed_at_start())
+        self.assertNotIn("savePrefs", [c[0] for c in self.fake.calls])
 
     def test_a_loaded_plugin_is_unloaded_first(self):
         """Its uninitializePlugin stops a hub still imported (after the
         install's purge there is none); the load runs the new copy."""
         self.fake.loaded = True
-        self.register()
+        self.register(self.existed_at_start())
         self.assertEqual(self.fake.calls[0],
                          ("unloadPlugin", install.STARTUP_PLUGIN,
                           {"force": True}))
         self.assertEqual(self.fake.calls[1][0], "loadPlugin")
 
     def test_a_second_install_replaces_the_copy(self):
-        self.register()
+        started = self.existed_at_start()
+        self.register(started)
         with open(os.path.join(self.dest, "plug-ins",
                                install.STARTUP_PLUGIN + ".py"), "w") as h:
             h.write("# the new one\n")
-        self.register()
+        self.register(started)
         with open(self.target) as h:
             self.assertEqual(h.read(), "# the new one\n")
 
     def test_a_load_that_fails_is_a_note(self):
         self.fake.fail = "load"
-        note = self.register()
+        note = self.register(self.existed_at_start())
         self.assertIn("startup plug-in not registered", note)
         self.assertIn("load refused", note)
 
@@ -1318,7 +1487,7 @@ class RegisterStartup(unittest.TestCase):
         """A plug-in Maya's untrusted-location dialog was answered Deny for
         came back None, no error (measured 2026-10-08): said, nothing set."""
         self.fake.fail = "denied"
-        note = self.register()
+        note = self.register(self.existed_at_start())
         self.assertIn("startup plug-in not registered", note)
         self.assertIn("did not load", note)
         self.assertEqual([c for c in self.fake.calls if c[0] == "pluginInfo"],
@@ -1326,29 +1495,29 @@ class RegisterStartup(unittest.TestCase):
 
     def test_an_autoload_that_fails_is_a_note(self):
         self.fake.fail = "autoload"
-        note = self.register()
+        note = self.register(self.existed_at_start())
         self.assertIn("autoload refused", note)
 
     def test_no_user_plugin_folder_on_the_path_loads_nothing(self):
         self.path = "C:/Program Files/Autodesk/Maya2027/bin/plug-ins"
-        note = self.register()
+        note = self.register(self.existed_at_start())
         self.assertIn("MAYA_PLUG_IN_PATH", note)
         self.assertEqual(self.fake.calls, [])
 
     def test_a_missing_plugin_file_is_a_note(self):
         os.remove(os.path.join(self.dest, "plug-ins",
                                install.STARTUP_PLUGIN + ".py"))
-        note = self.register()
+        note = self.register(self.existed_at_start())
         self.assertIn("startup plug-in not registered", note)
-        self.assertEqual([c for c in self.fake.calls if c[0] == "loadPlugin"],
-                         [])
+        self.assertEqual(self.fake.loads(), [])
 
     def test_the_path_defaults_to_maya_s(self):
+        started = self.existed_at_start()
         saved = os.environ.get("MAYA_PLUG_IN_PATH")
         os.environ["MAYA_PLUG_IN_PATH"] = self.path
         try:
-            self.assertEqual(install.register_startup(self.dest,
-                                                      cmds=self.fake), "")
+            self.assertEqual(install.register_startup(
+                self.dest, cmds=self.fake, session_start=started), "")
         finally:
             if saved is None:
                 os.environ.pop("MAYA_PLUG_IN_PATH", None)
@@ -1356,9 +1525,122 @@ class RegisterStartup(unittest.TestCase):
                 os.environ["MAYA_PLUG_IN_PATH"] = saved
         self.assertTrue(os.path.isfile(self.target))
 
+    def test_the_session_start_defaults_to_this_process_s(self):
+        """No `session_start`: the real process start - and the test's
+        folder, made just now, is newer than this process."""
+        if install.process_start() is None:
+            self.skipTest("the process start is read on Windows only")
+        os.makedirs(self.folder)
+        install.register_startup(self.dest, cmds=self.fake,
+                                 plug_in_path=self.path)
+        self.assertEqual(self.fake.loads(), [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
     def test_the_name_is_the_plugin_file_s(self):
         self.assertTrue(os.path.isfile(os.path.join(
             PLUGIN, "plug-ins", install.STARTUP_PLUGIN + ".py")))
+
+
+class CompleteStartup(_StartupFolder):
+    """`complete_startup()` (Task 13b, 2026-10-09): a registration the
+    install left pending finished - silently - the first time the hub is
+    built or shown in a LATER session, when Maya trusts the folder: loaded by
+    its full path, autoload, the plug-in prefs saved, the mark cleared. None
+    when there is nothing to do now; "" when registered; a note when it
+    failed (the mark stays: the next hub tries again)."""
+
+    def setUp(self):
+        _StartupFolder.setUp(self)
+        os.makedirs(self.folder)
+        shutil.copyfile(os.path.join(self.dest, "plug-ins",
+                                     install.STARTUP_PLUGIN + ".py"),
+                        self.target)
+        self.fake.optionvars[install.STARTUP_PENDING] = 1
+        self.later = time_now() + 3600.0     # this session began after the copy
+
+    def complete(self, started=None):
+        return install.complete_startup(
+            cmds=self.fake, plug_in_path=self.path,
+            session_start=self.later if started is None else started)
+
+    def test_loaded_autoloaded_saved_and_the_mark_cleared(self):
+        self.assertEqual(self.complete(), "")
+        self.assertEqual(self.fake.calls[:3], [
+            ("loadPlugin", self.target, {"quiet": True}),
+            ("pluginInfo", (install.STARTUP_PLUGIN,),
+             {"edit": True, "autoload": True}),
+            ("pluginInfo", (), {"savePluginPrefs": True})])
+        self.assertNotIn(install.STARTUP_PENDING, self.fake.optionvars)
+        self.assertEqual(self.fake.calls[-1], ("savePrefs", {"general": True}))
+
+    def test_nothing_pending_nothing_done(self):
+        del self.fake.optionvars[install.STARTUP_PENDING]
+        self.assertIsNone(self.complete())
+        self.assertEqual(self.fake.calls, [])
+
+    def test_a_pending_mark_of_zero_is_nothing(self):
+        self.fake.optionvars[install.STARTUP_PENDING] = 0
+        self.assertIsNone(self.complete())
+        self.assertEqual(self.fake.calls, [])
+
+    def test_not_in_the_session_that_made_the_folder(self):
+        """The install's own session: the second hub open there would raise
+        the very dialog the install stepped around."""
+        setattr(sys, install.STARTUP_MADE_MARK, self.folder)
+        self.assertIsNone(self.complete())
+        self.assertEqual(self.fake.loads(), [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
+    def test_not_when_the_folder_is_newer_than_this_session(self):
+        self.assertIsNone(self.complete(started=time_now() - 3600.0))
+        self.assertEqual(self.fake.loads(), [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
+    def test_not_when_the_copy_is_gone(self):
+        os.remove(self.target)
+        self.assertIsNone(self.complete())
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
+    def test_a_failed_load_keeps_the_mark(self):
+        self.fake.fail = "load"
+        note = self.complete()
+        self.assertIn("startup plug-in not registered", note)
+        self.assertIn("load refused", note)
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
+    def test_a_denied_load_keeps_the_mark_and_sets_no_autoload(self):
+        self.fake.fail = "denied"
+        note = self.complete()
+        self.assertIn("did not load", note)
+        self.assertEqual([c for c in self.fake.calls if c[0] == "pluginInfo"],
+                         [])
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
+    def test_a_failed_autoload_keeps_the_mark(self):
+        self.fake.fail = "autoload"
+        self.assertIn("autoload refused", self.complete())
+        self.assertEqual(self.fake.optionvars[install.STARTUP_PENDING], 1)
+
+    def test_already_loaded_is_not_loaded_again(self):
+        """Loaded by hand in the Plug-in Manager meanwhile: autoload set."""
+        self.fake.loaded = True
+        self.assertEqual(self.complete(), "")
+        self.assertEqual(self.fake.loads(), [])
+        self.assertNotIn(install.STARTUP_PENDING, self.fake.optionvars)
+        self.assertIn(("pluginInfo", (install.STARTUP_PLUGIN,),
+                       {"edit": True, "autoload": True}), self.fake.calls)
+
+    def test_never_raises(self):
+        class Broken(_StartupCmds):
+            def internalVar(self, **kwargs):
+                raise RuntimeError("no user folder")
+        self.fake = Broken(self.app)
+        self.fake.optionvars[install.STARTUP_PENDING] = 1
+        self.assertIn("no user folder", self.complete())
+
+    def test_the_pending_name(self):
+        self.assertEqual(install.STARTUP_PENDING, "skeldarAnimStartupPending")
 
 
 if __name__ == "__main__":

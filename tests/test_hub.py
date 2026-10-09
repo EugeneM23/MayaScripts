@@ -5,6 +5,7 @@ Spec: docs/superpowers/specs/2026-09-17-skeldar-hub-design.md
 
 import contextlib
 import io
+import os
 import sys
 import types
 import unittest
@@ -186,6 +187,125 @@ class TheInstallerKnowsTheControl(unittest.TestCase):
     def test_the_installer_s_name_is_the_hub_s(self):
         import install
         self.assertEqual(install.HUB_CONTROL, hub.CONTROL)
+
+
+class PendingStartup(FakeToolsMixin, unittest.TestCase):
+    """Task 13b (2026-10-09): an install that had to MAKE the user's plug-ins
+    folder leaves the startup plug-in unloaded (Maya's «Untrusted Plugin
+    Loading» dialog otherwise - Maya trusts that folder from its next start)
+    and marks it pending. The first time the hub is built or shown in a
+    later session the registration is finished - deferred, silently - by the
+    installer's `complete_startup`; the mark is asked here first, so a hub
+    with nothing pending loads no installer at all."""
+
+    def setUp(self):
+        self.real = (hub.cmds, hub._installer)
+        self.fake = FakeUiCmds()
+        hub.cmds = self.fake
+        self.completed = []
+        self.note = ""
+
+        def complete_startup():
+            self.completed.append(True)
+            return self.note
+        self.installer = types.SimpleNamespace(complete_startup=complete_startup)
+        hub._installer = lambda: self.installer
+        hub._STARTUP_QUEUED = False
+        self.install_fakes()
+
+    def tearDown(self):
+        hub.cmds, hub._installer = self.real
+        hub._STARTUP_QUEUED = False
+        self.remove_fakes()
+
+    def pending(self):
+        self.fake.optionvars[hub.STARTUP_PENDING_VAR] = 1
+
+    def test_the_name_is_the_installer_s(self):
+        import install
+        self.assertEqual(hub.STARTUP_PENDING_VAR, install.STARTUP_PENDING)
+
+    def test_nothing_pending_nothing_queued(self):
+        hub.show()
+        hub.build()
+        self.assertEqual(self.fake.deferred, [])
+        self.assertEqual(self.completed, [])
+
+    def test_a_mark_of_zero_is_nothing_pending(self):
+        self.fake.optionvars[hub.STARTUP_PENDING_VAR] = 0
+        hub.show()
+        self.assertEqual(self.fake.deferred, [])
+
+    def test_show_finishes_it_deferred(self):
+        self.pending()
+        hub.show()
+        self.assertEqual(self.completed, [])            # never inside show()
+        self.fake.run_deferred()
+        self.assertEqual(self.completed, [True])
+
+    def test_build_finishes_it_too(self):
+        """The uiScript: a docked hub Maya restored at the start."""
+        self.pending()
+        hub.build()
+        self.assertEqual(self.completed, [])
+        self.fake.run_deferred()
+        self.assertEqual(self.completed, [True])
+
+    def test_show_and_its_build_queue_it_once(self):
+        """show() creating the control runs the uiScript's build() in the
+        same turn: one completion queued, not two."""
+        self.pending()
+        hub.show()
+        hub.build()
+        self.fake.run_deferred()
+        self.assertEqual(self.completed, [True])
+
+    def test_a_failure_is_one_printed_line_and_tried_again_next_time(self):
+        self.pending()
+        self.note = "startup plug-in not registered: load refused"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hub.show()
+            self.fake.run_deferred()
+        lines = [line for line in out.getvalue().splitlines() if line]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("load refused", lines[0])
+        hub.show()                                      # the mark still 1
+        self.fake.run_deferred()
+        self.assertEqual(self.completed, [True, True])
+
+    def test_success_prints_nothing(self):
+        self.pending()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hub.show()
+            self.fake.run_deferred()
+        self.assertEqual(out.getvalue(), "")
+
+    def test_an_installer_that_raises_is_printed_never_raised(self):
+        self.pending()
+
+        def broken():
+            raise ImportError("no install.py here")
+        hub._installer = broken
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hub.show()
+            self.fake.run_deferred()
+        self.assertIn("no install.py here", out.getvalue())
+        self.assertEqual(len(out.getvalue().strip().splitlines()), 1)
+
+    def test_the_installer_is_this_folder_s_install_py(self):
+        """Loaded by path under a name of its own (the Update card's and the
+        one-file installer's way): `import install` could find somebody
+        else's install.py on sys.path, or a stale module."""
+        before = set(sys.modules)
+        module = self.real[1]()
+        self.assertTrue(callable(module.complete_startup))
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(module.__file__)),
+            os.path.normcase(os.path.join(hub.plugin_root(), "install.py")))
+        self.assertEqual(set(sys.modules) - before, set())
 
 
 class TheUiScript(unittest.TestCase):
@@ -1093,6 +1213,39 @@ class EdgeMode(FakeToolsMixin, unittest.TestCase):
         hub.rebuild()                                    # the install's
         self.assertTrue(older.destroyed)
         self.assertTrue(self.edges[-1].shown)
+
+    def test_a_pending_registration_s_start_keeps_the_panel_show_built(self):
+        """Task 13b (2026-10-09): the first show() of a later session opens
+        the edge panel AND finishes the pending registration, whose load runs
+        the plug-in's initializePlugin - its deferred maya_hub.start() meets
+        the panel show() built: one edge, still out, one skin."""
+        self.fake.optionvars[hub.EDGE_VAR] = 1
+        self.fake.optionvars[hub.STARTUP_PENDING_VAR] = 1
+        starts = []
+
+        def complete_startup():
+            #  loadPlugin -> initializePlugin -> executeDeferred(_start)
+            self.fake.deferred.append(lambda: starts.append(hub.start()))
+            return ""
+        saved = hub._installer
+        hub._installer = lambda: types.SimpleNamespace(
+            complete_startup=complete_startup)
+        hub._STARTUP_QUEUED = False
+        try:
+            hub.show("colour")
+            shown, skin = self.edges[-1], hub._SKIN
+            self.assertLessEqual(self._drain(), 3)
+        finally:
+            hub._installer = saved
+            hub._STARTUP_QUEUED = False
+        self.assertEqual(starts, [shown])                 # the plug-in's start ran
+        self.assertEqual(len(self.edges), 1)
+        self.assertIs(hub.edge(), shown)
+        self.assertFalse(shown.destroyed)
+        self.assertTrue(shown.shown)
+        self.assertEqual(shown.concealed, 0)
+        self.assertIs(hub._SKIN, skin)
+        self.assertEqual(self.built("characters"), 1)
 
     def test_the_width_is_remembered_and_reused(self):
         import maya_edgerules

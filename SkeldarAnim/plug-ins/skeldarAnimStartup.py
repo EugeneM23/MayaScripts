@@ -5,7 +5,12 @@ first second (the brainstorm's «Панель сразу ждёт у края»)
 plug-in at startup because the installer copies it into the user's
 plug-ins folder (`<userAppDir>/<version>/plug-ins`), loads it and sets it
 to autoload (`install.register_startup` - its docstring has what was
-measured); in a GUI Maya it defers `maya_hub.start()`, which builds the
+measured). When the install had to make that folder, Maya would ask before
+loading from it (its «Untrusted Plugin Loading» dialog) until its next
+start: then the first hub opened in the next session loads it and sets the
+autoload (`install.complete_startup`, Task 13b, 2026-10-09), and it starts
+with Maya from the session after. In a GUI Maya it defers
+`maya_hub.start()`, which builds the
 edge panel hidden when ⋮ -> Edge panel is on and does nothing otherwise.
 It registers no node and no command. Unloading it removes the edge panel.
 
