@@ -167,11 +167,19 @@ lower body) carries the clip's travel; a partial card (a hand, an arm) is always
   frame, `P` is what the animator SEES there: the walk sets no time on the frame the scene already
   stands on (`Walk.arrive` — a same-frame time set throws every unkeyed tweak away), so Main dragged
   by hand off its keys to place the walk is where the travel starts, not where its keys stood (the
-  final review, M2);
+  final review, M2); and back on that frame after the walk has moved — a pre-pass (step 3 of the
+  press) — the tweaks the walk captured on entry are set back (unrecorded, the keyed plugs aside), so
+  frame `a` reads as the animator sees it on every road (the re-review of the fix wave: at Blend 50 %
+  with Connect, frame `a` was solved against the keyed pelvis and an IK foot's first key landed 10.8
+  cm off what it showed);
 - every frame's transfer runs with `W_t(i)` as the target's root frame (the pelvis relative to it, as
   for a pose); a skeleton's root joint is written to it (translate + rotate), a rig's **Main** to
   `O⁻¹ · W_t(i)` (`O` = the game root in Main, sampled at the paste frame, constant), a rootless
-  target's top joint keeps the moving ground (`_on_ground` with `W_t(i)`);
+  target's top joint keeps the moving ground (`_on_ground` with `W_t(i)`) — taking off the heading the
+  STEADIED source frame implies (its own turned by the steadied one's difference), never its own: near
+  upside down its own is noise, and the body stood turned by the difference, 180 deg at a roll's
+  inverted frames (the re-review of the fix wave); a twin, rootless onto rootless, lands on the card at
+  every frame, with the travel and In place;
 - mirrored, the travel is reflected across the source root's sagittal plane (`F · L · F`, posemath's
   reflection);
 - In place, a partial card, or a Main the press cannot write (locked, driven by something not ours) →
@@ -181,7 +189,10 @@ lower body) carries the clip's travel; a partial card (a hand, an arm) is always
 - In place on a ROOTLESS target its ground still moves under it — the take's — but its top joint is a
   planned member (Replace cuts its curve, every frame keys it), so that ground is read at every pasted
   frame BEFORE the cut and the keys, and handed to each frame's transfer (the final review, M4: read
-  off the curve the press was rewriting, a walking target's ground fell 12.7 cm off the take's).
+  off the curve the press was rewriting, a walking target's ground fell 12.7 cm off the take's). Under
+  **Insert** every pasted frame stands on the take's ground at `a`, where the shifted take resumes
+  after the clip (the re-review of the fix wave: riding the take's own `a..b` ground, the paste was
+  snapped back by the walk at `b + 1` — 75 cm on the verify's walking target).
 
 **Per frame** (character): the pose's transfer and solve, with
 - the pairing, scale, twin decision, member lists, drive choice and the rigs' structure computed ONCE
@@ -222,8 +233,11 @@ keyed; the time put back):
 7. one progress window; Cancel undoes the press's own chunk (everything back) and says so. With undo
    OFF nothing can be undone: what was keyed stays, its curves get their infinity and weighting back,
    the tweaks are never set back over it, and the line names the frames keyed and what the mode cut or
-   moved (S3). A press that RAISES inside its chunk is undone the same way before the error goes on —
-   half a paste is never left behind (S2).
+   moved (S3) — the keys the curves really lost or moved, counted; an op that reached none (a
+   referenced curve warns and keeps its keys) is not claimed (the re-review of the fix wave). A press
+   that RAISES inside its chunk is undone the same way before the error goes on — half a paste is
+   never left behind (S2) — once the chunk recorded a step of the press: a chunk left empty (its
+   autoKey question raising) undoes nothing, never the animator's step before it.
 
 **Objects**: the pose's pairing (selection by path / name / order, a character part never an object);
 per channel the stored keys shifted to the paste frame (cut to the range), Connect and Blend applied to
@@ -268,10 +282,12 @@ the travel would be carried.
   window's default size (1000 x 640 logical) for every animation card — Apply's bottom 602 px down a
   541 px side panel at a scale of 1.0 (the final review, M5);
 - a Save: a name a card of either type holds in the folder refused at once (above); the save panel's
-  folder line follows the tree while it is open; the card just saved shown and picked — a type filter
-  that would hide it switched to All (remembered) and said so («the type filter shows All, so the new
-  card can be seen»), a search that hides it kept (it is the animator's) and the line says so («the
-  new card is hidden by the search - clear it to see the card») (S7, S11);
+  folder line follows the tree while it is open, and so does a name the PANEL gave — the new folder's
+  free one (a name the animator typed stays; the re-review of the fix wave: «Pose 2», chosen for the
+  folder it opened on, was refused in one holding a «Pose 2»); the card just saved shown and picked
+  — a type filter that would hide it switched to All (remembered) and said so («the type filter shows
+  All, so the new card can be seen»), a search that hides it kept (it is the animator's) and the line
+  says so («the new card is hidden by the search - clear it to see the card») (S7, S11);
 - the right button rows are the pose card's (Replace thumbnail → «Replace thumbnail and preview» on an
   animation card);
 - the playback costs only the hovered card and the details picture: one 33 ms timer in each, running
