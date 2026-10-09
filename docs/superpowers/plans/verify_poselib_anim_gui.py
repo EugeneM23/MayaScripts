@@ -1,5 +1,12 @@
 """The Pose Library's ANIMATION cards, live, in a DISPOSABLE GUI Maya (2026-10-08).
 
+NOT RUN in this form: brought up to date after the final review's fix wave (2026-10-09 - the
+paste options under Apply two to a row (M5), the hover's 150 ms dwell (S9)) and given two gates
+of its own - Apply in view at the window's default size (`details`), a quick sweep across
+animation cards decoding no sheet while a dwell on one plays it (`hover`) - and only
+`py_compile`d since: the live checks are the animator's («все живые проверки оставляй мне»).
+Its last live run (5382e59, 75/75) was of the version before the fix wave.
+
 What only a GUI Maya can prove: the preview sheet made from a real playblast, the playback on
 hover and in the details, the window's widgets driven by real Qt events, the progress window,
 the drops, undo with autoKey on under the GUI's parallel evaluation manager, the per-frame cost
@@ -32,15 +39,24 @@ send runs one PHASE through `verify_poselib_anim_gui_run.py`, sent by
               card painted as a pose); + Save opens as the last save was; a pose card saved
               through the window (the Pose segment); the type filter: Animations lists the
               animation only, Poses the pose only; the search knows the type word
-    hover     sent mouse moves onto the card: the canvas plays its sheet - many cells drawn in
-              ~0.7 s, two renders 200 ms apart drawing cells ~6 apart (30 fps) with different
-              pixels (two renders at a frozen clock: identical, the control); a frame's repaint
-              timed; the window photographed hovered; a Leave stops the timer and the drawing
+    hover     sent mouse moves onto the card: nothing plays until the mouse RESTED there
+              `cardgrid.DWELL_MS` (S9: the dwell timer running, no play timer), then the canvas
+              plays its sheet - many cells drawn in ~0.7 s, two renders 200 ms apart drawing cells
+              ~6 apart (30 fps) with different pixels (two renders at a frozen clock: identical,
+              the control); a frame's repaint timed; the window photographed hovered; a Leave
+              stops the timer and the drawing; four copies of the card written (`store.write`)
+              and swept across with moves SWEEP_MS apart, then a Leave: no sheet decoded, nothing
+              played - and a dwell of DWELL_MS + 100 ms on one of them plays it, its sheet
+              decoded once (the decoder counted); the copies removed
     details   the card picked by a click: the details picture changes over time (a pose card's
-              does not: the control), the options block shown (hidden for a pose); the defaults
-              read back, then Insert, At current time off, Connect on, Source keys, In place on
-              and the range 5..15 CLICKED / set - `options()` and the remembered optionVars read
-              back exactly that; the details photographed (the side panel scrolled to the block)
+              does not: the control), the options block shown (hidden for a pose); the window
+              at its DEFAULT size (`INITIAL_WIDTH` x `INITIAL_HEIGHT` logical at the scale the
+              Maya runs at), the side panel unscrolled: Apply in view, the options block under
+              it (M5: two to a row - At current time + Connect, Keys + In place), photographed,
+              the window's size put back; the defaults read back, then Insert, At current time
+              off, Connect on, Source keys, In place on and the range 5..15 CLICKED / set -
+              `options()` and the remembered optionVars read back exactly that; the details
+              photographed (the side panel scrolled to the block)
     apply     back to the defaults but Insert, B carrying a take of its own (keys at 30, 40, 50,
               70 on its FK controls, RootX_M and Main at its place), the time at 40, a part of B
               selected (the window's line follows), Apply CLICKED: every channel the paste keyed
@@ -139,6 +155,8 @@ TOL_CM = 0.05                      # holds 0.01): bones relative to their root, 
 SPREAD_MIN = 6.0                   # a cell's grey-level standard deviation: a blank one is ~0
 SAMPLE = 4                         # every 4th pixel each way when an image is measured
 CHANGED = 16                       # grey levels: a pixel changed by more moved (not JPG noise)
+SWEEP = 4                          # the hover phase's copies of the card, swept across ...
+SWEEP_MS = 40                      # ... a move onto each this far apart (well under the dwell)
 
 
 def say(*parts):
@@ -1320,7 +1338,7 @@ def phase_list():
 # ------------------------------------------------------------------ hover
 
 def phase_hover():
-    from maya_poselib import look
+    from maya_poselib import cardgrid, look
     show_maya()
     raise_window()
     walk = card_paths()[0]
@@ -1346,6 +1364,10 @@ def phase_hover():
     fps = look.fps_of(header.get("fps"))
     try:
         mouse(cv, "move", card_centre(cv, index))
+        # S9: nothing plays (nothing is decoded) before the mouse rested there DWELL_MS
+        waiting = cv.dwell_timer.isActive() and cv._playing is None and \
+            not cv.play_timer.isActive()
+        pump(cardgrid.DWELL_MS + 80)
         on = cv.play_timer.isActive()
         playing = cv._playing == walk
         t0 = time.time()
@@ -1360,9 +1382,11 @@ def phase_hover():
         hovered = [d for d in drawn if d[1] == walk and d[0] >= t0]
         cells = sorted(set(look.play_cell(d[2], info["frames"], info["step"], fps)
                            for d in hovered))
-        gate("hover a move onto the card: its play timer runs and it plays",
-             on and playing and cv.play_timer.interval() == look.PLAY_MS,
-             "timer %s at %d ms, playing %s" % (on, cv.play_timer.interval(), playing))
+        gate("hover a move onto the card: it waits its %d ms dwell (the dwell timer running, "
+             "nothing playing), then its play timer runs and it plays" % cardgrid.DWELL_MS,
+             waiting and on and playing and cv.play_timer.interval() == look.PLAY_MS,
+             "waiting first %s; then timer %s at %d ms, playing %s" % (
+                 waiting, on, cv.play_timer.interval(), playing))
         span = time.time() - t0
         expected = min(info["frames"], int(span * fps / info["step"]))
         gate("hover many different cells drawn while hovered (the clip's own rate)",
@@ -1418,6 +1442,99 @@ def phase_hover():
                  cv.play_timer.isActive(), cv._playing, len(drawn) - after))
     finally:
         del cv._draw_playing
+    sweep_gates()
+
+
+def _sweep_copies():
+    """SWEEP copies of the Walk card written into the run's library the window's way
+    (`store.write`: its header, frames, still and sheet) - none of them decoded yet - and the
+    window's listing read again: their paths."""
+    import shutil
+    from maya_poselib import store
+    root = library_root()
+    walk = card_paths()[0]
+    header, frames = store.read(walk), store.read_frames(walk)
+    paths = []
+    for n in range(1, SWEEP + 1):
+        name = "Sweep%d" % n
+        old = root + "/" + name + store.ANIM_SUFFIX
+        if os.path.isdir(old):
+            shutil.rmtree(old)
+        paths.append(store.write(root, "", name, header, frames=frames,
+                                 thumbnail=walk + "/" + store.THUMB_FILE,
+                                 preview=walk + "/" + store.PREVIEW_FILE).replace("\\", "/"))
+    win = window()
+    win.set_folder("")
+    combo = child("skeldarPoseType", qt().QtWidgets.QComboBox)
+    combo.setCurrentIndex(combo.findData("all"))
+    child("skeldarPoseSearch", qt().QtWidgets.QLineEdit).setText("")
+    win.refresh()
+    settle()
+    return paths
+
+
+def sweep_gates():
+    """The final review's S9, live: a sweep of the mouse across a row of animation cards decoded
+    each card's 2560 px sheet as the mouse came onto it - 27-33 ms on the GUI thread a card,
+    measured - and the sweep stuttered. Now a card plays only once the mouse RESTED on it
+    `DWELL_MS`. SWEEP fresh copies of the card (none decoded), the mouse moved across them
+    SWEEP_MS apart, then a Leave: no sheet decoded (the decoder `_load_sheet` counted), nothing
+    played. Then the mouse onto one copy for DWELL_MS + 100 ms: it plays, its sheet decoded once.
+    The copies are removed after (a `list` phase run again counts the cards)."""
+    import shutil
+    from maya_poselib import cardgrid
+    paths = _sweep_copies()
+    cv = canvas()
+    loads, moves = [], []
+    real_load = cv._load_sheet
+
+    def counting(path, image):
+        loads.append(path)
+        return real_load(path, image)
+
+    cv._load_sheet = counting
+    try:
+        held = [p for p in paths if p in cv.sheets]
+        indices = [card_index(cv, p) for p in paths]
+        leave(cv)
+        pump(300)
+        for index in indices:
+            if index is None:
+                continue
+            mouse(cv, "move", card_centre(cv, index))
+            moves.append(time.time())
+            pump(SWEEP_MS)
+        leave(cv)
+        settle()
+        pump(cardgrid.DWELL_MS + 100)            # long past every dwell the sweep started
+        swept = [p for p in loads if p in paths]
+        gaps = [1000.0 * (b - a) for a, b in zip(moves, moves[1:])]
+        gate("hover a sweep across %d animation cards %d ms apart, then a Leave: no sheet "
+             "decoded, nothing played (S9)" % (SWEEP, SWEEP_MS),
+             None not in indices and not held and not swept and cv._playing is None and
+             not cv.play_timer.isActive() and gaps and max(gaps) < cardgrid.DWELL_MS,
+             "%d decoded %s, playing %s; the moves %s ms apart (the dwell %d)" % (
+                 len(swept), [os.path.basename(p) for p in swept], cv._playing,
+                 ", ".join("%.0f" % g for g in gaps), cardgrid.DWELL_MS))
+        target = paths[1]
+        mouse(cv, "move", card_centre(cv, card_index(cv, target)))
+        pump(cardgrid.DWELL_MS + 100)
+        played = cv._playing == target and cv.play_timer.isActive()
+        decoded = [p for p in loads if p in paths]
+        gate("hover a dwell of %d ms on one of them: it plays, its sheet decoded once"
+             % (cardgrid.DWELL_MS + 100), played and decoded == [target],
+             "playing %s, decoded %s" % (cv._playing, [os.path.basename(p) for p in decoded]))
+        leave(cv)
+        settle()
+    finally:
+        del cv._load_sheet
+        for path in paths:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+        win = window()
+        if win is not None:
+            win.refresh()
+        settle()
 
 
 # ------------------------------------------------------------------ details
@@ -1477,6 +1594,7 @@ def phase_details():
     gate("details the options block shown for the animation, hidden for the pose",
          child("skeldarPoseAnimOptions").isVisible() and not pose_options,
          "pose %s" % pose_options)
+    default_size_gate()
     defaults = {"mode": "replace", "at_current": True, "start": float(START),
                 "end": float(END), "connect": False, "keys": "every", "in_place": False}
     read = window().options()
@@ -1509,6 +1627,70 @@ def phase_details():
     side.verticalScrollBar().setValue(0)
     gate("details the details with the options photographed (DWM)", shot is not None,
          "%s" % (shot,))
+
+
+def default_size_gate():
+    """The final review's M5, live: at the window's default size the options block stood above
+    Apply and pushed it below the fold for every animation card (Apply's bottom 602 px down a
+    541 px side panel at a scale of 1.0, measured offscreen). The floating window resized so the
+    Pose Library is `INITIAL_WIDTH` x `INITIAL_HEIGHT` logical at the scale this Maya runs at
+    (`mayaDpiSetting -realScaleValue`: Qt's px are physical here, trap 98), the side panel
+    scrolled to its top: Apply whole inside the side viewport, the options block below Apply,
+    At current time beside Connect and Keys beside In place (two to a row); photographed; the
+    window's size put back."""
+    from maya_poselib import window as w
+    q = qt()
+    top, win = top_level(), window()
+    if top is None or win is None:
+        return gate("details at the default size: Apply in view", False, "no floating window")
+    scale = float(cmds.mayaDpiSetting(query=True, realScaleValue=True) or 1.0)
+    want = (int(round(w.INITIAL_WIDTH * scale)), int(round(w.INITIAL_HEIGHT * scale)))
+    was = top.size()
+    try:
+        for _ in range(3):                   # the chrome is what the top adds to the library
+            chrome = (top.width() - window().width(), top.height() - window().height())
+            top.resize(want[0] + chrome[0], want[1] + chrome[1])
+            settle(6)
+            if (window().width(), window().height()) == want:
+                break
+        size = (window().width(), window().height())
+        side = child("skeldarPoseSideScroll", q.QtWidgets.QScrollArea)
+        side.verticalScrollBar().setValue(0)
+        settle(6)
+        viewport = child("skeldarPoseSideViewport")
+        apply_ = child("skeldarPoseApply", q.QtWidgets.QAbstractButton)
+        block = child("skeldarPoseAnimOptions")
+
+        def y_in(widget, at=0):
+            return widget.mapTo(viewport, q.QtCore.QPoint(0, at)).y()
+
+        def mid(widget):
+            return widget.mapTo(win, q.QtCore.QPoint(0, widget.height() // 2)).y()
+
+        apply_top, apply_bottom = y_in(apply_), y_in(apply_, apply_.height())
+        # the unit test's reading (test_two_options_to_a_row): the two checks share a top, the
+        # Keys segments' track and In place a middle
+        rows = (y_in(child("skeldarPoseAtCurrent")) == y_in(child("skeldarPoseConnect")) and
+                abs(mid(child("skeldarPoseKeys_every").parentWidget()) -
+                    mid(child("skeldarPoseInPlace"))) <= 2)
+        raise_window()
+        shot = _dwm(SHOTS + "/poselib_anim_default_size.png")
+        gate("details at the window's DEFAULT size (%dx%d logical, x%.2f this Maya's scale), "
+             "the side panel unscrolled: Apply in view, the options under it two to a row (M5)"
+             % (w.INITIAL_WIDTH, w.INITIAL_HEIGHT, scale),
+             abs(size[0] - want[0]) <= 2 and abs(size[1] - want[1]) <= 2 and
+             side.verticalScrollBar().value() == 0 and apply_.isVisible() and
+             0 <= apply_top and apply_bottom <= viewport.height() and
+             block.isVisible() and y_in(block) > apply_top and rows,
+             "the library %dx%d px (wanted %dx%d); Apply %d..%d in a %d px side viewport, the "
+             "block from %d; two to a row %s; photographed %s" % (
+                 size[0], size[1], want[0], want[1], apply_top, apply_bottom,
+                 viewport.height(), y_in(block), rows, shot))
+    finally:
+        top = top_level()
+        if top is not None:
+            top.resize(was)
+        settle()
 
 
 # ------------------------------------------------------------------ apply
@@ -2082,7 +2264,7 @@ def phase_minimised():
     (a beat every PLAY_HIDDEN_MS, nothing drawn) and play again once Maya is back. Before the
     fix (2026-10-08) they ticked on at 33 ms, 0.8 ms each, drawing cells nobody saw."""
     import ctypes
-    from maya_poselib import look
+    from maya_poselib import cardgrid, look
     from maya_poselib import window as w
     show_maya()
     # built again IN PLACE (`rebuild`, the plugin's own road) only when the module loaded now is
@@ -2136,7 +2318,7 @@ def phase_minimised():
         pump(600)
         shown = reading(600)
         mouse(cv, "move", card_centre(cv, card_index(cv, walk)))        # the card hovered too
-        pump(100)
+        pump(cardgrid.DWELL_MS + 100)            # ... and playing: past its dwell (S9)
         reset()
         maya_window().showMinimized()
         pump(1200)
