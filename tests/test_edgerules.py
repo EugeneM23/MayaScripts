@@ -97,11 +97,40 @@ class Slide(unittest.TestCase):
         # ease-out in: more than half way at half time
         self.assertGreater(rules.slide_x(0.5, 100, True), -50)
 
-    def test_the_frame_then_the_hub_half_again_as_slow(self):
-        # 2026-10-09 («Скорость выезда панели можно замедлить на 50%»): the
-        # frame slides out, then the hub, each 1.5 x the first build's 180
-        self.assertEqual((rules.FRAME_MS, rules.IN_MS), (270, 270))
+    def test_a_quick_frame_and_the_hub_close_behind(self):
+        # 2026-10-09: the hub 1.5 x the first build's 180 («замедлить на
+        # 50%»); then «уменьшим задержку между выездами частей и увеличим
+        # скорость выезда фоновой подложки»: the frame 150, the hub 80 after it
+        self.assertEqual((rules.FRAME_MS, rules.HUB_DELAY_MS, rules.IN_MS),
+                         (150, 80, 270))
         self.assertEqual(rules.OUT_MS, 150)
+        self.assertEqual(rules.reveal_ms(), 80 + 270)
+
+
+class RevealAt(unittest.TestCase):
+    """The frame and the hub along one reveal from rest."""
+
+    def test_the_ends(self):
+        self.assertEqual(rules.reveal_at(0, 540), (0, -540))
+        self.assertEqual(rules.reveal_at(rules.reveal_ms(), 540), (540, 0))
+
+    def test_the_frame_is_out_by_its_time(self):
+        self.assertEqual(rules.reveal_at(rules.FRAME_MS, 540)[0], 540)
+
+    def test_the_hub_waits_its_delay(self):
+        self.assertEqual(rules.reveal_at(rules.HUB_DELAY_MS, 540)[1], -540)
+        self.assertGreater(rules.reveal_at(rules.HUB_DELAY_MS + 20, 540)[1],
+                           -540)
+
+    def test_the_frame_always_leads_the_hub(self):
+        for ms in range(0, rules.reveal_ms() + 1, 5):
+            frame, x = rules.reveal_at(ms, 540)
+            self.assertGreaterEqual(frame, 540 + x, ms)
+
+    def test_both_only_come_out(self):
+        steps = [rules.reveal_at(ms, 540)
+                 for ms in range(0, rules.reveal_ms() + 1, 5)]
+        self.assertEqual(steps, sorted(steps))
 
 
 class Contains(unittest.TestCase):

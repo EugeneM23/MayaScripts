@@ -11,10 +11,11 @@ never above another application, gone with Maya minimized):
             left, nothing is laid out again per frame. The host paints the
             hub's `panel` colour and a 1 px `inset_line` down its right edge;
             the slot stops short of that line, so it always shows. Only its
-            FRAME shows (a window mask): out, the frame slides first and the
-            slot follows; back, both go together (2026-10-09, «фоновая рамка
-            ... появляется сильно резко»: the host had popped up whole and
-            the hub slid inside it). The spec's
+            FRAME shows (a window mask): out, the frame leads and the slot
+            follows close behind it (rules.reveal_at); back, both go
+            together (2026-10-09, «фоновая рамка ... появляется сильно
+            резко»: the host had popped up whole and the hub slid inside
+            it). The spec's
             "soft shadow" is NOT drawn: a shadow wants a translucent
             top-level, and a translucent top-level holding Maya's own widgets
             is untried here (every Maya control would be composited through
@@ -522,7 +523,14 @@ class Edge(object):
             self._slide_done(showing)
             return
         hub_out = self.slot.x() > -width
+        if showing and not hub_out and self._frame <= 0:
+            #  from rest: one timeline, the frame leading, the hub close
+            #  behind it (rules.reveal_at)
+            self._reveal_from_rest(width)
+            return
         if showing and not hub_out and self._frame < width:
+            #  a frame part way out (a hide turned back): it finishes, then
+            #  the hub
             self._animate(rules.FRAME_MS, width, True, self._frame, width,
                           self._set_frame, lambda: self._slide(True))
             return
@@ -542,6 +550,25 @@ class Edge(object):
                       showing, start, end,
                       lambda x: self._move_slot(x, width, showing),
                       lambda: self._slide_done(showing))
+
+    def _reveal_from_rest(self, width):
+        q = hubqt.qt()
+        total = rules.reveal_ms()
+        anim = q.QtCore.QVariantAnimation(self.host)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(total)
+
+        def step(t):
+            if not hubqt._valid(self.slot):
+                return
+            frame, x = rules.reveal_at(t * total, width)
+            self._set_frame(frame)
+            self.slot.move(x, 0)
+        anim.valueChanged.connect(step)
+        anim.finished.connect(lambda: self._slide_done(True))
+        self._anim = anim
+        anim.start()
 
     def _animate(self, full, width, showing, start, end, step, done):
         """`step(value)` from `start` to `end` with the rules' easing

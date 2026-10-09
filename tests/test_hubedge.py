@@ -496,7 +496,7 @@ class Frame(unittest.TestCase):
                 break
         return seen
 
-    def test_the_frame_slides_out_first_then_the_hub(self):
+    def test_the_frame_leads_and_the_hub_follows_close_behind(self):
         edge = self._edge()
         try:
             w = edge.host.width()
@@ -505,10 +505,15 @@ class Frame(unittest.TestCase):
             seen = self._run(edge, lambda: (edge.frame, edge.slot.x()))
             frames = [f for f, _x in seen]
             self.assertEqual(frames, sorted(frames))
-            growing = [x for f, x in seen if f < w]
-            self.assertTrue(growing)                       # a frame phase ran
-            self.assertTrue(all(x == -w for x in growing))  # the hub waited
-            self.assertTrue([x for f, x in seen if -w < x < 0])  # then slid
+            #  the frame starts alone ...
+            early = [x for f, x in seen if f < w // 2]
+            self.assertTrue(early)
+            self.assertTrue(all(x == -w for x in early))
+            #  ... the hub comes out while the frame is still coming
+            self.assertTrue([x for f, x in seen if f < w and x > -w])
+            #  and never runs ahead of it
+            for frame, x in seen:
+                self.assertGreaterEqual(frame, w + x - 1)
             self.assertEqual((edge.frame, edge.slot.x()), (w, 0))
             self.assertTrue(edge.host.mask().isEmpty())   # at rest: all of it
         finally:
