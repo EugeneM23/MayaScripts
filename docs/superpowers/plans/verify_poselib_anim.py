@@ -34,7 +34,10 @@ against the press's own measure.
             `apply_onto`, B's root naming it): Main's keys key for key, the root unmoved, the
             members on the card; the hand card: Main and the arm's controls key for key, the
             arm's bones where they stood on every frame, the hand on its forearm's drive and the
-            fingers on the hand as the card's, Select objects what it keyed and no Main.
+            fingers on the hand as the card's, Select objects what it keyed and no Main; Main
+            dragged by hand off its keys (autoKey off), then a default Apply: the travel from the
+            TWEAKED place (the final review's M2) - the control, the walk going to the frame the
+            scene stands on as before the fix, travels from the keyed place 170 cm away.
   modes     B carrying a take of its own (keys at 40, 60, 70.5, 80, 100 on EVERY control
             channel), pasted at 60 (24 frames) in each of Replace / Replace all / Insert / Merge,
             once on the base and once with an additive layer carrying a take of its own (the
@@ -45,9 +48,10 @@ against the press's own measure.
   options   At current time off: keys on 0..23; a sub-range 5..9 at 50: keys on 50..54, B on
             A's 5..9 and its root travelling from frame 5; Connect: the first keyed value of
             every channel is what it showed (Main aside: the travel is placed), every later key
-            the plain paste's plus that constant - to the solver's tolerance: a frame's solve
-            samples the rig as it stands there, and the plain paste itself from two starting
-            poses differs by 0.0012 deg (measured here every run) -, and the line carries no
+            the plain paste's plus that constant - to twice the solve's own dependence on the
+            pose it starts from (a floor of 1e-4): a frame's solve samples the rig as it stands
+            there, and the plain paste itself from two starting poses differs by 0.0012 deg
+            (measured here every run, degrees and centimetres apart) -, and the line carries no
             «worst» while the pose stands 5+ deg off the card (a measure would have read it) and
             the plain paste's does; Source keys: keys only on the card's key times moved to 50,
             the pose on the card there.
@@ -84,11 +88,19 @@ against the press's own measure.
             Ctrl+Z takes the marker back; Esc on the third frame (a progress that cancels):
             «cancelled», every curve key for key, the tweaks standing, and the next Ctrl+Z the
             animator's step; a Save with autoKey on: no curve touched, the tweaks standing, the
-            next Ctrl+Z the animator's step.
+            next Ctrl+Z the animator's step; pasted OFF the current frame (At current time off
+            standing at 90 - Merge, and Replace onto channels with no key in 0..23 -, and Merge
+            at 89.5): ONE Ctrl+Z, every channel read at the current frame what it showed before
+            the press (the final review's M1) - the control, the press with no undo mark as before
+            the fix, leaves them on the first pasted frame's values.
   mixamo    the skeleton_conventions Mixamo fixture built at 0.85 of its size (so the bodies
             differ), its Hips travelling and turning: onto Manny_Rig - the root on the Hips'
             ground travel (the floor under them, turned by their heading) carried and SCALED by
-            the bodies' size (computed, and != 1), the members pointing where the card's do.
+            the bodies' size (computed, and != 1), the members pointing where the card's do; a
+            second Mixamo fixture as the TARGET, walking along a take of its own, A's full card
+            pasted on it In place with Replace: its ground frame on the take's own at every
+            pasted frame (the final review's M4) - the control, the ground read off the curve the
+            press rewrites as before the fix, falls off it.
   speed     the seconds a frame of a paste onto a rig and onto a skeleton (< 1.0 on the rig).
   floor     a new scene: `drop_floor` of the full card at (150, 0, 80) - a Manny_Rig added, Main
             on the point at the paste frame, the root travelling from there as the card's, the
@@ -105,6 +117,7 @@ its `cmds.undo()` takes the Ctrl+Z. The undo gates read right after the press.
 Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md
 """
 
+import contextlib
 import io
 import math
 import os
@@ -143,6 +156,7 @@ from maya_scenesetup import catalog, character  # noqa: E402
 from maya_uebridge import skeletonimport  # noqa: E402
 
 from maya_poselib import animapply, animcapture, animdata, keys, rigsolve, scene, store  # noqa
+from maya_poselib import timewalk  # noqa: E402
 from maya_poselib import posemath as pm  # noqa: E402
 
 PHASES = [p.strip() for p in os.environ.get(
@@ -1150,6 +1164,69 @@ def phase_twin():
          "the card's, every frame", on_card.value <= 0.01 and moved.value > 1.0,
          "%s deg (the hand moved up to %s deg)" % (on_card, moved))
     b.wipe()
+    tweaked_gates(b, card, span)
+
+
+@contextlib.contextmanager
+def patched(owner, name, value):
+    """`owner.name` replaced by `value` for the block and put back - a positive control runs the
+    code as it was before a fix (the final review's M1 / M2 / M4)."""
+    saved = getattr(owner, name)
+    setattr(owner, name, value)
+    try:
+        yield
+    finally:
+        setattr(owner, name, saved)
+
+
+def _walk_always_goes(walk, frame):
+    """`timewalk.Walk.arrive` before the final review's M2: a `go` even onto the frame the scene
+    already stands on (which throws the animator's unkeyed tweaks away)."""
+    walk.go(frame)
+    return True
+
+
+def tweaked_gates(b, card, span):
+    """The final review's M2: Main dragged by hand off its keys (autoKey off - an unkeyed tweak)
+    to place the walk, then a DEFAULT Apply (At current time on: the paste on the frame the scene
+    stands on) - the travel starts from the TWEAKED place, Main keyed from there. The control:
+    the same press with the walk going to the paste frame although the scene stands there (the
+    code before the fix) - its travel starts where Main's keys stand, 170 cm away."""
+    header, frames = card
+    scale = body_scale(header["bones"], b.bones())
+    tweak = (("translateX", 150.0), ("translateZ", 80.0), ("rotateY", 25.0))
+
+    def stage():
+        b.wipe()
+        b.place(keyed=(40, 100))
+        go(AT)
+        keyed = target_place(b)
+        for attr, d in tweak:
+            plug = b.rig.main + "." + attr
+            cmds.setAttr(plug, float(cmds.getAttr(plug)) + d)
+        return keyed, target_place(b)
+
+    keyed, tweaked = stage()
+    apart = (pm.position(tweaked) - pm.position(keyed)).length()
+    ok, text = animapply.apply(header, frames, selection=b.selection())
+    say("   twin, Main tweaked off its keys: %s" % text)
+    rcm, rdeg = root_rows(b, card, span, 0, tweaked, scale)
+    gate("twin Main dragged off its keys by hand, a default Apply: the travel starts from the "
+         "TWEAKED place, every frame", ok and rcm.value <= 0.01 and rdeg.value <= 0.01 and
+         apart > 100.0,
+         "%s cm, %s deg off the travel from the tweaked place (%.2f cm from the keyed one) | %s"
+         % (rcm, rdeg, apart, text))
+    _k, tweaked = stage()
+    with patched(timewalk.Walk, "arrive", _walk_always_goes):
+        ok_c, text_c = animapply.apply(header, frames, selection=b.selection())
+    ccm, cdeg = root_rows(b, card, span, 0, tweaked, scale)
+    kcm, kdeg = root_rows(b, card, span, 0, keyed, scale)
+    gate("twin the control - the walk going to the frame it stands on (before the fix): the "
+         "travel from the KEYED place, the gate above would fail",
+         ok_c and ccm.value > 100.0 and kcm.value <= 0.01 and kdeg.value <= 0.01,
+         "%s cm off the tweaked place's travel, %s cm / %s deg off the keyed place's" % (
+             ccm, kcm, kdeg))
+    b.wipe()
 
 
 # ------------------------------------------------------------------ modes
@@ -1254,8 +1331,8 @@ def phase_modes():
                                        len(base_moved), take_ok, text))
             deg, cm = paste_rows(b, card, [(a_, 0), (a_ + 11, 11), (b_, count - 1)],
                                  members_t)
-            gate("modes %s: the pose on the card at 60 / 71 / 83" % label, deg.value <= 0.01,
-                 "%s deg, %s cm" % (deg, cm))
+            gate("modes %s: the pose on the card at 60 / 71 / 83" % label,
+                 deg.value <= 0.01 and cm.value <= 0.01, "%s deg, %s cm" % (deg, cm))
             if layered:
                 cmds.delete(layer)
             b.wipe()
@@ -1329,13 +1406,15 @@ def phase_options():
     ok, plain_text = animapply.apply(header, frames, selection=b.selection())
     plain_written = keyed_plugs(b, AT)
     plain = dict((p, curve_keys(p)) for p in plain_written)
-    dependence = Worst()
+    dependence, dependence_cm = Worst(), Worst()
     for plug, (times, values) in plain.items():
         if plug in from_build:
             for v, w in zip(values, from_build[plug][1]):
                 # a rotation's euler may come back a whole turn away from another start
-                d = abs((v - w + 180.0) % 360.0 - 180.0) if plug.endswith(ROT) else abs(v - w)
-                dependence.see(d, plug.split("|")[-1])
+                if plug.endswith(ROT):
+                    dependence.see(abs((v - w + 180.0) % 360.0 - 180.0), plug.split("|")[-1])
+                else:
+                    dependence_cm.see(abs(v - w), plug.split("|")[-1])
     cmds.undo()
     left = keyed_plugs(b, AT)
     go(AT)
@@ -1364,14 +1443,17 @@ def phase_options():
              len(written), first, len(left)))
     # each frame's solve samples the rig as it stands there, and the connected take stands off
     # the plain one by the offsets: the keys agree to the solve's own dependence on the pose it
-    # starts from (`dependence`, the plain paste from two poses) - the solver's tolerance
-    # (rigsolve.TOL_DEG / TOL_CM: a solve lands every member within it) bounds both
+    # starts from (`dependence`, the plain paste from two poses, measured this run) - tied to
+    # it, twice it with a floor of 1e-4 (the final review, S16: the solver's whole tolerance,
+    # 0.01, would let a Connect off by 25x the measured dependence pass)
+    bound, bound_cm = max(2.0 * dependence.value, 1e-4), max(2.0 * dependence_cm.value, 1e-4)
     gate("options Connect: every later key the plain paste's plus one constant per channel "
-         "(within the solve's tolerance)",
-         steady.value <= rigsolve.TOL_DEG and steady_cm.value <= rigsolve.TOL_CM and
-         dependence.value <= rigsolve.TOL_DEG,
-         "worst %s deg, %s cm over %d channels; the plain paste itself from the build pose vs "
-         "from this pose: %s" % (steady, steady_cm, len(plain), dependence))
+         "(within twice the solve's own dependence on its start)",
+         steady.value <= bound and steady_cm.value <= bound_cm and
+         dependence.value <= rigsolve.TOL_DEG and dependence_cm.value <= rigsolve.TOL_CM,
+         "worst %s deg (bound %.6f), %s cm (bound %.6f) over %d channels; the plain paste "
+         "itself from the build pose vs from this pose: %s deg, %s cm" % (
+             steady, bound, steady_cm, bound_cm, len(plain), dependence, dependence_cm))
     gate("options Connect: no «worst» said, while the pasted pose stands off the card's first "
          "frame (a measure against the transfer would read that) and the plain paste is measured",
          "worst" not in text and off.value > 5.0 and "worst" in plain_text,
@@ -1508,7 +1590,7 @@ def phase_mirror():
     flip, axis = reflection(rests)
     members = [m for m in header["members"] if not pm.is_twist(m) and m != root]
     game = b.game()
-    on_parent, pelvis_off = Worst(), Worst()
+    on_parent, pelvis_off, pelvis_ctl = Worst(), Worst(), Worst()
     control = Worst()
     for t, i in span:
         go(t)
@@ -1551,11 +1633,13 @@ def phase_mirror():
         got = (pm.position(W(game["pelvis"])) - pm.position(g_root)) * \
             pm.rotation(g_root).inverse()
         pelvis_off.see((got - d * flip).length(), "@%g" % t)
+        pelvis_ctl.see((got - d).length(), "@%g" % t)          # unmirrored: the control
     gate("mirror every member on its parent the mirror of the card's opposite, every frame",
          ok and on_parent.value <= 0.01 and control.value > 1.0,
          "%s deg; unmirrored it would read %s deg" % (on_parent, control))
-    gate("mirror the pelvis's offset from the root mirrored", pelvis_off.value <= 0.01,
-         "%s cm" % pelvis_off)
+    gate("mirror the pelvis's offset from the root mirrored", pelvis_off.value <= 0.01 and
+         pelvis_ctl.value > 1.0, "%s cm; unmirrored it would read %s cm" % (pelvis_off,
+                                                                            pelvis_ctl))
     rcm, rdeg = root_rows(b, card, span, 0, place, 1.0, flip)
     first = card_bones(card, 0)
     s0 = root_frames(first)[0]
@@ -1899,6 +1983,7 @@ def held_gates():
     held = locator("animHeld")
     cmds.parentConstraint(a.game()["hand_l"], held, maintainOffset=False)
     blend = a.node("FKIKArm_L") + ".FKIKBlend"
+    blend_was = float(cmds.getAttr(blend))         # given back as it was, never a literal 0
     ik = a.node("IKArm_L")
     base = cmds.getAttr(ik + ".translate")[0]
     for f, d in ((0, 0.0), (12, 25.0), (23, -15.0)):
@@ -1949,7 +2034,7 @@ def held_gates():
     gate("objects the held prop's and the layered channel's card pasted at 30 onto two free "
          "locators: their values on every frame", ok and pasted.value <= 1e-6,
          "worst %s | %s" % (pasted, text))
-    cmds.setAttr(blend, 0)
+    cmds.setAttr(blend, blend_was)
     cmds.cutKey(ik, attribute=list(TR), clear=True)
     for attr, value in zip(TR, base):
         cmds.setAttr(ik + "." + attr, value)
@@ -2064,6 +2149,70 @@ def phase_undo():
     for made in (prop, marker):
         cmds.delete(made)
     evaluate()
+    b.wipe()
+    undo_mark_gates(b, (header, frames))
+
+
+def _no_marks(values):
+    """`keys.undo_marks` before the final review's M1: the press's chunk opened with no mark."""
+    return []
+
+
+def undo_mark_gates(b, card):
+    """The final review's M1: a paste OFF the current frame - At current time off (the clip on
+    its own frames 0..23 while the scene stands at 90), Merge, and Replace onto channels with no
+    key in 0..23 (B's take keys 40 / 60 / 70.5 / 80 / 100), and Merge at a fractional current
+    time (89.5: the paste at 90) - then ONE Ctrl+Z right after the press (no time change between:
+    it would take the undo): every one of B's channels, read at the current frame with no time
+    change, shows what it showed before the press, and every curve is back key for key. Each
+    frame's solve records its temporary sets at frames that are not the current one; undone
+    backwards they used to leave every planned channel on the first pasted frame's value. The
+    control: the same Merge with the chunk opened by no mark (the code before the fix)."""
+    header, frames = card
+
+    def press(options, now, marks=True):
+        b.wipe()
+        b.place()
+        key_take(b, TAKE)
+        go(now)
+        before = values_of(b.plugs)
+        curves = curve_state()
+        if marks:
+            ok, text = animapply.apply(header, frames, selection=b.selection(), options=options)
+        else:
+            with patched(keys, "undo_marks", _no_marks):
+                ok, text = animapply.apply(header, frames, selection=b.selection(),
+                                           options=options)
+        written = len(keyed_plugs(b, animdata._frame(now) if options.at_current else START + 1))
+        cmds.undo()
+        shown = values_of(b.plugs)                    # the current frame, no time change
+        changed, gone, new = curves_same(curves, curve_state())
+        off, count = Worst(), 0
+        for plug, value in before.items():
+            d = abs(shown[plug] - value)
+            off.see(d, plug.split("|")[-1])
+            count += d > 1e-6
+        return ok, text, written, off, count, (len(changed), len(gone), len(new))
+
+    for label, options, now in (
+            ("Merge, At current time off", animdata.Options(mode="merge", at_current=False), 90.0),
+            ("Replace onto channels with no key in 0..23, At current time off",
+             animdata.Options(mode="replace", at_current=False), 90.0),
+            ("Merge at a fractional current time (the paste at 90)",
+             animdata.Options(mode="merge"), 89.5)):
+        ok, text, written, off, count, curves = press(options, now)
+        say("   undo mark, %s: %s" % (label, text))
+        gate("undo %s at %g, ONE Ctrl+Z: every channel shows what it showed before the press, "
+             "every curve key for key" % (label, now),
+             ok and written > 50 and off.value <= 1e-6 and curves == (0, 0, 0),
+             "%d keyed; worst %s over %d channels, %d off; curves changed / gone / new %s" % (
+                 written, off, len(b.plugs), count, curves))
+    ok, text, written, off, count, curves = press(
+        animdata.Options(mode="merge", at_current=False), 90.0, marks=False)
+    gate("undo the control - Merge off the current frame with no undo mark (before the fix): "
+         "the channels left on the first pasted frame's values, the gate above would fail",
+         ok and written > 50 and off.value > 1.0 and count > 50,
+         "worst %s, %d channels off | %s" % (off, count, text))
     b.wipe()
 
 
@@ -2200,6 +2349,90 @@ def phase_mixamo():
          "%s deg over %d members (the card's children wander %s deg)" % (
              rows, len(members_t), wander))
     b.wipe()
+    rootless_target_gates()
+
+
+#  the rootless target's own take (the final review's M4): its Hips keyed walking and turning -
+#  (frame, x, z, yaw about world Y) from its rest
+WALK = ((40, 0.0, 0.0, 0.0), (60, 35.0, 50.0, 15.0), (80, 60.0, 110.0, 35.0),
+        (100, 95.0, 160.0, 50.0))
+
+
+def _ground_unread(target, time):
+    """`animapply._Target.read_ground` before the final review's M4: nothing read before the
+    ops, so each frame reads the ground off the top joint as the rewritten curve stands."""
+    return None
+
+
+def rootless_target_gates():
+    """The final review's M4: a ROOTLESS target (the Mixamo fixture at its own size, a second
+    one) walking along a take of its own - its Hips keyed walking and turning (WALK) - and A's
+    full card pasted on it In place with Replace at 50: its ground frame (the floor under the
+    Hips, turned by their heading - computed here, `root_frames`) on the take's own at every
+    pasted frame, the take's read frame by frame before the press. Its Hips are a planned
+    member: Replace cut their keys in 50..73 and every frame keyed them, so a ground read off
+    them as they stand reads the curve the press is rewriting. The control: the same press with
+    nothing read before the ops (the code before the fix)."""
+    cards()
+    card = CARDS["full"]
+    header, frames = card
+    count = END - START + 1
+    span = [(AT + i, i) for i in range(count)]
+    top, _ours = build_mixamo("mxw", 1.0)
+    ch = Char("mxw", top)
+    own = [top + "." + attr for attr in ROT + TR]
+
+    def walk_take():
+        ch.wipe()
+        for f, x, z, yaw in WALK:
+            for plug in own:
+                cmds.setAttr(plug, ch.defaults[plug])
+            cmds.rotate(0, yaw, 0, top, relative=True, worldSpace=True)
+            cmds.move(x, 2.0 * math.sin(0.1 * f), z, top, relative=True, worldSpace=True)
+            cmds.setKeyframe(own, time=f)
+        evaluate()
+        grounds = {}
+        for t, _i in span:
+            go(t)
+            grounds[t] = target_place(ch)
+        go(AT)
+        return grounds
+
+    grounds = walk_take()
+    travelled = (pm.position(grounds[AT + count - 1]) - pm.position(grounds[AT])).length()
+    turned = pm.angle(grounds[AT + count - 1], grounds[AT])
+    options = animdata.Options(mode="replace", in_place=True)
+    ok, text = animapply.apply(header, frames, selection=[top], options=options)
+    say("   in place onto a walking rootless target: %s" % text)
+    cut = same_times(curve_keys(top + ".translateX")[0],
+                     [40.0] + [float(AT + i) for i in range(count)] + [80.0, 100.0])
+    on, on_deg = Worst(), Worst()
+    for t, _i in span:
+        go(t)
+        c, d = cm_deg(target_place(ch), grounds[t])
+        on.see(c, "@%g" % t)
+        on_deg.see(d, "@%g" % t)
+    gate("mixamo In place, Replace onto a ROOTLESS target walking along its own take: its ground "
+         "on the take's own at every pasted frame (its Hips keyed 50..73, the take's 60 cut)",
+         ok and cut and on.value <= 0.01 and on_deg.value <= 0.01 and travelled > 50.0 and
+         turned > 10.0,
+         "%s cm, %s deg; the take's ground travels %.2f cm and turns %.2f deg over the paste | %s"
+         % (on, on_deg, travelled, turned, text))
+    grounds = walk_take()
+    with patched(animapply._Target, "read_ground", _ground_unread):
+        ok_c, text_c = animapply.apply(header, frames, selection=[top], options=options)
+    off, off_deg = Worst(), Worst()
+    for t, _i in span:
+        go(t)
+        c, d = cm_deg(target_place(ch), grounds[t])
+        off.see(c, "@%g" % t)
+        off_deg.see(d, "@%g" % t)
+    gate("mixamo the control - the ground read off the curve the press rewrites (before the "
+         "fix): off the take's own ground, the gate above would fail",
+         ok_c and max(off.value, off_deg.value) > 1.0,
+         "%s cm, %s deg | %s" % (off, off_deg, text_c))
+    ch.wipe()
+    cmds.setAttr(top + ".visibility", False)
 
 
 # ------------------------------------------------------------------ speed
