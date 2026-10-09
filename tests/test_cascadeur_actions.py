@@ -182,6 +182,26 @@ class Bridge(unittest.TestCase):
         bridge.send_to_shared("A", "Yevhen")
         self.assertEqual(prefs.get(self.prefs, "author"), "Yevhen")
 
+    def test_a_blocked_export_stops_the_write_back(self):
+        class Blocked(FakeCascade):
+            def export_skeleton(self, path):
+                raise RuntimeError("licence does not allow FBX export")
+        self.cs = Blocked()
+        bridge = self.with_target(self.make())
+        text = bridge.export_to_uasset()
+        self.assertIn("licence", text)
+        self.assertEqual(self.ue.reimports, [])
+
+    def test_a_blocked_export_stops_the_send(self):
+        class Blocked(FakeCascade):
+            def export_skeleton(self, path):
+                raise RuntimeError("licence does not allow FBX export")
+        self.cs = Blocked()
+        bridge = self.make()
+        text = bridge.send_to_shared("A", "Yevhen")
+        self.assertIn("licence", text)
+        self.assertEqual(self.share.sent, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -102,7 +102,10 @@ class Bridge(object):
         # The export first, into a temp file: a failed export leaves the
         # uasset exactly as it was, flag included.
         fbx = uasset_core.fbx_staging_path(rec.name, self.temp_dir)
-        self.cascade.export_skeleton(fbx)
+        try:
+            self.cascade.export_skeleton(fbx)
+        except Exception as exc:                        # noqa: BLE001
+            return "{0} - {1}".format(CANCELLED, exc)
         if read_only:
             failure = uasset_core.clear_read_only(uasset)
             if failure:
@@ -144,7 +147,10 @@ class Bridge(object):
             return problem
         name = sharerecords.upload_name(typed_name, FALLBACK_NAME)
         fbx = os.path.join(self.temp_dir, name)
-        self.cascade.export_skeleton(fbx)
+        try:
+            self.cascade.export_skeleton(fbx)
+        except Exception as exc:                        # noqa: BLE001
+            return "nothing sent - {0}".format(exc)
         self._remember_author(author)
         ready = self.share.send(fbx, name, author, self.machine, now=self.now)
         return "sent {0} to everybody ({1} zipped)".format(

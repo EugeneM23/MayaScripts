@@ -6,13 +6,17 @@ pycsc/general/wrapping.py. Task 0's live probe confirms the lookups marked
 PROBE below; docs/superpowers/plans/cascadeur_probe_results.md records them.
 """
 
+import os
+
 import csc
 import csc.app
 from pycsc.general import wrapping
 
-# PROBE: the object-type name Cascadeur's scene query uses for a skeleton's
-# joints. Task 0 writes the confirmed value into cascadeur_probe_results.md.
-JOINT_TYPE = "joint"
+# What Cascadeur says when its licence cannot write FBX (probe, 2026-10-09:
+# the free and trial builds write .CASC only, and export_joints writes nothing).
+EXPORT_BLOCKED = ("Cascadeur wrote no FBX - its licence does not allow FBX "
+                  "export (free and trial builds write .CASC only). Nothing "
+                  "was written to Unreal or Shared.")
 
 
 def _app():
@@ -36,34 +40,34 @@ def import_clip_new_tab(path):
 
 
 def export_skeleton(path):
-    """The current scene's joints and their animation into `path` (bones only)."""
+    """The current scene's joints and their animation into `path` (bones only).
+
+    Raises RuntimeError with EXPORT_BLOCKED when no file was written: the
+    licence refusal arrives as a message, not as an exception.
+    """
+    if os.path.exists(path):
+        os.remove(path)
     _loader().export_joints(path.replace("\\", "/"))
+    if not os.path.isfile(path):
+        raise RuntimeError(EXPORT_BLOCKED)
 
 
 def skeleton_roots():
-    """Names of the root joints in the current scene.
-
-    PROBE: the domain-scene query below is the shape the probe tries first;
-    if the probe recorded a different chain, change this function to it.
-    """
+    """Names of the scene's root objects (probe: get_scene_objects with
+    only_roots=True and no type filter found the rig's 'root'; a type filter
+    of 'joint' or 'bone' found nothing)."""
     domain = wrapping.get_current_scene().domain_scene()
-    return [obj.name for obj in domain.get_scene_objects(only_roots=True,
-                                                         of_type=JOINT_TYPE)]
+    return [obj.name for obj in domain.get_scene_objects(only_roots=True)]
 
 
 def animation_frames():
-    """The animation's frame count, or None when it cannot be read.
-
-    PROBE: get_animation_size() is the call the stubs name; the probe confirms it.
-    """
+    """The animation's frame count (probe: a 37-frame clip reads 38)."""
     domain = wrapping.get_current_scene().domain_scene()
     return domain.get_animation_size()
 
 
 def scene_fps():
-    """The scene's frame rate, or None when no call reads it.
-
-    PROBE: the stubs expose no scene fps getter; if the probe found one, return
-    it here. Until then None means the fps warning is skipped (rules.fps_problem).
-    """
+    """None: the probe found no call that reads the scene's frame rate (the
+    loader has no fps attribute, the scene exposes only the current frame).
+    rules.fps_problem treats None as unknown and says nothing."""
     return None
