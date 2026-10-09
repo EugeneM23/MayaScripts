@@ -84,6 +84,7 @@ LOG_LENGTH = 30
 _PAYLOAD = (
     "maya_overrig",
     "maya_uebridge",
+    "skeldar_cascadeur",        # the Cascadeur bridge (2026-10-09)
     "maya_scenesetup",
     "maya_overshoot.py",
     "maya_hotkeys.py",

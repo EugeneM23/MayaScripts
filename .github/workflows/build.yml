@@ -17,6 +17,7 @@ on:
     paths:
       - "SkeldarAnim/**"
       - "SkeldarAnim_Install.py"
+      - "SkeldarAnim_Cascadeur_Install.py"
       - "make_build.py"
       - ".github/workflows/build.yml"
   workflow_dispatch:
@@ -85,7 +86,7 @@ jobs:
           SHORT: ${{ steps.known.outputs.short }}
         run: |
           tag="build-$(date -u +%Y%m%d-%H%M%S)-$SHORT"
-          gh release create "$tag" dist/SkeldarAnim.zip dist/version.json SkeldarAnim_Install.py \
+          gh release create "$tag" dist/SkeldarAnim.zip dist/version.json SkeldarAnim_Install.py SkeldarAnim_Cascadeur_Install.py \
             --target "$GITHUB_SHA" \
             --title "SkeldarAnim $(date -u +%Y-%m-%d) $SHORT" \
             --notes-file dist/notes.md \
@@ -99,7 +100,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           latest=$(gh release view --json tagName --jq .tagName)
-          gh release upload "$latest" SkeldarAnim_Install.py --clobber
+          gh release upload "$latest" SkeldarAnim_Install.py SkeldarAnim_Cascadeur_Install.py --clobber
 
       - name: Prune
         if: steps.known.outputs.skip != '1'
