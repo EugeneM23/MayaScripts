@@ -1207,7 +1207,7 @@ def patched(owner, name, value):
         setattr(owner, name, saved)
 
 
-def _walk_always_goes(walk, frame):
+def _walk_always_goes(walk, frame, restore=True):
     """`timewalk.Walk.arrive` before the final review's M2: a `go` even onto the frame the scene
     already stands on (which throws the animator's unkeyed tweaks away)."""
     walk.go(frame)
@@ -1257,7 +1257,7 @@ def tweaked_gates(b, card, span):
     b.wipe()
 
 
-def _arrive_as_before(walk, frame):
+def _arrive_as_before(walk, frame, restore=True):
     """`timewalk.Walk.arrive` before the re-review of the fix wave: back on the entry frame after
     a move, a plain time set - the tweaks it threw away stay away."""
     here = walk._here is not None and abs(float(frame) - float(walk._here.value)) <= 1e-9
