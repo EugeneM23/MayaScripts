@@ -50,6 +50,9 @@ and catalogs:
 Write order: the frames, the thumbnail and the preview first, `anim.json` LAST (each through `.part` +
 `os.replace`) — a reader sees `anim.json` only when the card is whole. A replace keeps every file it is
 not given (Update from selection keeps the still and the preview; Replace thumbnail gives both again).
+A known limit: the swaps are one `os.replace` after another, so a replace that fails BETWEEN two of
+them (a disk pulled away) keeps the files it had swapped already — new frames under the old header;
+a write that fails while STAGING leaves an existing card as it was.
 
 `store`:
 - `CARD_SUFFIXES = (".pose", ".anim")`; a name is free in a folder only when NEITHER suffix exists
@@ -59,10 +62,17 @@ not given (Update from selection keeps the still and the preview; Replace thumbn
   construction keeps working;
 - `read(path)` answers the header (`anim.json` or `pose.json`); `read_frames(path)` the decoded data
   (cached by path + mtime, one entry);
-- `filter_cards` hay gains the type word (`pose` / `animation`); a type filter (`all | pose | anim`)
-  beside the search;
+- `filter_cards` hay gains the type word, matched only as a WHOLE term (`pose` / `poses`, `anim` /
+  `animation` / `animations` — «po» typed on the way to a name matched every pose before, S14); a
+  type filter (`all | pose | anim`) beside the search;
+- a header whose `start`, `end` or `frames` is no finite number (JSON's NaN, Infinity), or whose
+  `key_times` is no list of finite numbers, is a broken card - never a pick that raises half way
+  (S12);
 - rename / move / remove / trash / folders handle both suffixes; an older build sees an `.anim` folder
-  as a catalog and never applies it.
+  as a catalog and never applies it — but it can WRITE INTO it: a pose moved or saved «into» that
+  catalog lands inside the `.anim` folder. Nothing is deleted, but the newer build then lists only the
+  animation (a card folder holds no cards), the pose hidden inside it until it is moved out by hand. An
+  older build cannot be changed; the risk lasts as long as builds before this one are installed.
 
 The install (`install.keep_local`, `free_card`, `_rename_inside`, `poses_walk`, `card_files`) treats an
 `.anim` folder as one card unit exactly as a `.pose` one (its main file `anim.json`), and
@@ -102,11 +112,18 @@ The press runs under a cancellable progress window; Cancel writes nothing.
 
 **Update from selection** on an animation card reads the card's OWN range again (members from the
 selection, as for a pose) and keeps the thumbnail and the preview; **Replace thumbnail** on an
-animation card takes the still and the preview again.
+animation card takes the still and the preview again. Both write into the card's folder BY ITS PATH
+(`store.replace`), never by a name made again: a card renamed in Explorer to a name `safe_name`
+changes came back from a write by name as a stray new card (the final review).
+
+A name a card of EITHER type already holds in the folder is refused at once, the panel kept — never
+after an animation's walk and preview (the final review, S7). Esc during the preview's playblast
+cancels the save too: nothing written (S1).
 
 ## Apply — the options
 
-The details of an animation card add an options block (each remembered, `skeldarPoseLibrary<Name>`):
+The details of an animation card add an options block under Apply (each remembered,
+`skeldarPoseLibrary<Name>`; its place: "The window"):
 
 | option | values | default | what |
 |---|---|---|---|
@@ -133,12 +150,24 @@ Other layers' curves are never cut or moved. A channel the target has no curve f
 **Root motion** («от места персонажа»): a character card whose members hold the PELVIS (a whole or
 lower body) carries the clip's travel; a partial card (a hand, an arm) is always in place.
 - the source's root frame per frame `R_s(i)` — its root bone, or, rootless, its ground frame (the pose
-  rule: the floor under the top joint, turned by its heading);
+  rule: the floor under the top joint, turned by its heading) with the heading kept CONTINUOUS across
+  the clip (`posemath.clip_roots` / `steady_yaws`): a frame whose top joint swings more than 120 deg
+  off upright (`SWING_LIMIT` — the hips upside down in a roll, where the yaw of a 2 deg tilt reads as
+  a half turn) takes the yaw interpolated the short way round between the nearest frames within it
+  (held at the clip's ends). The travel, the transfer's pelvis offset and the mirror plane all read
+  those frames: a hips forward roll (360 deg about X over 24 frames, a ±2 deg side tilt, no turn)
+  keyed the target's root yaw -4, -15, 180, -6 deg at four frames in a row; steadied, the roll's
+  heading stays within 3.5 deg (the final review, M3). A pose, and every frame within the limit,
+  read exactly the pose rule;
 - the travel relative to the first pasted frame `L(i) = R_s(i) · R_s(0)⁻¹`, carried into the target's
   root axes through the two rests (`L_t = Q · L · Q⁻¹`, `Q` the rotation of posemath's `root_offset`),
   its translation scaled by the two bodies' size (`scale_between`);
 - the target's root frame at the paste frame `P` — its root as it stands at frame `a`, BEFORE the paste
-  (rootless: its ground frame there) — and per frame `W_t(i) = L_t(i) · P`;
+  (rootless: its ground frame there) — and per frame `W_t(i) = L_t(i) · P`. Pasted at the current
+  frame, `P` is what the animator SEES there: the walk sets no time on the frame the scene already
+  stands on (`Walk.arrive` — a same-frame time set throws every unkeyed tweak away), so Main dragged
+  by hand off its keys to place the walk is where the travel starts, not where its keys stood (the
+  final review, M2);
 - every frame's transfer runs with `W_t(i)` as the target's root frame (the pelvis relative to it, as
   for a pose); a skeleton's root joint is written to it (translate + rotate), a rig's **Main** to
   `O⁻¹ · W_t(i)` (`O` = the game root in Main, sampled at the paste frame, constant), a rootless
@@ -146,7 +175,13 @@ lower body) carries the clip's travel; a partial card (a hand, an arm) is always
 - mirrored, the travel is reflected across the source root's sagittal plane (`F · L · F`, posemath's
   reflection);
 - In place, a partial card, or a Main the press cannot write (locked, driven by something not ours) →
-  the pose rule: never written, named when it was asked.
+  the pose rule: never written, named when it was asked. A skeleton's root joint, and a rootless
+  skeleton's top joint, carry the travel under the same rule: all six rotate / translate channels or
+  no travel (S6);
+- In place on a ROOTLESS target its ground still moves under it — the take's — but its top joint is a
+  planned member (Replace cuts its curve, every frame keys it), so that ground is read at every pasted
+  frame BEFORE the cut and the keys, and handed to each frame's transfer (the final review, M4: read
+  off the curve the press was rewriting, a walking target's ground fell 12.7 cm off the take's).
 
 **Per frame** (character): the pose's transfer and solve, with
 - the pairing, scale, twin decision, member lists, drive choice and the rigs' structure computed ONCE
@@ -170,17 +205,35 @@ keyed; the time put back):
 2. targets — the pose rules (the selection's characters; nothing selected: the only one); per target
    the plan: pairs, scale, members, which plugs (a dry solve at the paste frame), the paste frame's
    values (for Connect and the seed), the root place `P`;
-3. Blend < 100 %: one walk reading every planned plug over `[a, b]` as it stands (the partner of the mix
-   per frame);
-4. the paste mode's cut / move on the planned plugs' active-layer curves;
-5. the walk: per frame transfer, solve, Connect offset, mix, key, measure;
-6. one progress window; Cancel undoes the press's own chunk (everything back) and says so.
+3. BEFORE anything is cut or keyed, one walk over `[a, b]` (when there is anything to read) reading
+   what later frames must not read off curves the press rewrites: at Blend < 100 % every planned plug
+   as it stands (the partner of the mix per frame); the ground of a rootless target that carries no
+   travel (M4, above); then what every planned plug SHOWED when the press began (the tweaks read at
+   the walk's entry, else its value);
+4. the chunk's FIRST step: every planned plug set to what it showed when the press began
+   (`keys.undo_marks` — set unrecorded, then through a recorded `setAttr`), undone LAST. Each frame's
+   solve records its temporary sets and their restores in the chunk at frames that are not the current
+   one, and a Ctrl+Z replays them backwards: without the mark one Ctrl+Z of a paste OFF the current
+   frame (At current time off, a fractional current time) left every planned channel showing the
+   first pasted frame's value where nothing re-evaluated it — Merge always, Replace onto a channel with
+   no key inside `[a, b]` (measured: 180 channels, up to 34.9 deg; the final review, M1);
+5. the paste mode's cut / move on the planned plugs' active-layer curves;
+6. the walk: per frame transfer, solve, Connect offset, mix, key, measure;
+7. one progress window; Cancel undoes the press's own chunk (everything back) and says so. With undo
+   OFF nothing can be undone: what was keyed stays, its curves get their infinity and weighting back,
+   the tweaks are never set back over it, and the line names the frames keyed and what the mode cut or
+   moved (S3). A press that RAISES inside its chunk is undone the same way before the error goes on —
+   half a paste is never left behind (S2).
 
 **Objects**: the pose's pairing (selection by path / name / order, a character part never an object);
 per channel the stored keys shifted to the paste frame (cut to the range), Connect and Blend applied to
 their values, keyed with their tangent types (and angles / weights where no layer is involved —
-on a layer the tangents are the layer curve's and only their types travel); a static attribute keyed
-once at `a`. The paste modes as above.
+on a layer the tangents are the layer curve's and only their types travel), a stored breakdown key
+landing as a breakdown again (S4); a static attribute keyed once at `a`. The paste modes as above.
+An objects **Blend** mixes the key VALUES at the clip's own key times with what the channel showed at
+each of those times, and keeps the clip's tangents (its fixed slopes): the take's motion BETWEEN the
+clip's key times is no part of the mix — a take keyed densely between two of the clip's keys is not
+followed there.
 
 **Time units**: frame for frame. A card saved at another rate than the scene's is pasted frame for
 frame (its timing in seconds changes) and the line says so.
@@ -203,16 +256,28 @@ the travel would be carried.
   `skeldarPoseLibraryType`), sort, size, **+ Save**;
 - an animation card draws a small badge on its picture — a play triangle and its frame count — and
   **plays on hover**: the card under the mouse (grown twice its size) draws its sheet's cells in a loop
-  at the clip's own rate (`step / fps` seconds a cell; `fps` from the unit string), from the first cell
-  each time the mouse comes onto it; a card without a preview shows its still;
+  at the clip's own rate (`step / fps` seconds a cell; `fps` from the unit string), from the first cell,
+  once the mouse has RESTED on it `DWELL_MS` (150 ms, a single-shot timer): a sheet takes 27-33 ms to
+  decode on the GUI thread (measured live), and a sweep across a row of clips decoded every one and
+  stuttered — a sweep now decodes none (the final review, S9); a card without a preview shows its
+  still;
 - the details of a picked animation card loop its preview in the big picture, and list: «48 frames
-  (0-47) · 30 fps · 12 keys», the bones and regions, author and date, the scene; then the options block,
-  **Apply**, **Mirror**, **Blend**, **Select objects**;
+  (0-47) · 30 fps · 12 keys», the bones and regions, author and date, the scene; then **Apply**,
+  **Mirror**, **Blend**, **Select objects**, and UNDER them the options block, two options to a row
+  (At current time + Connect, Keys + In place): above Apply it pushed Apply below the fold of the
+  window's default size (1000 x 640 logical) for every animation card — Apply's bottom 602 px down a
+  541 px side panel at a scale of 1.0 (the final review, M5);
+- a Save: a name a card of either type holds in the folder refused at once (above); the save panel's
+  folder line follows the tree while it is open; the card just saved shown and picked — a type filter
+  that would hide it switched to All (remembered) and said so («the type filter shows All, so the new
+  card can be seen»), a search that hides it kept (it is the animator's) and the line says so («the
+  new card is hidden by the search - clear it to see the card») (S7, S11);
 - the right button rows are the pose card's (Replace thumbnail → «Replace thumbnail and preview» on an
   animation card);
 - the playback costs only the hovered card and the details picture: one 33 ms timer in each, running
-  only while something plays; the sheet decoded once per card (a small cache) and each cell drawn
-  straight from it, scaled at paint time.
+  only while something plays; the sheet decoded once per card (a small cache), only after the dwell,
+  and each cell drawn straight from it, scaled at paint time. A closed library lets its decoded
+  sheets go with it (S8).
 
 The status line: «Walk onto Manny_Rig1: 73 controls keyed over frames 12-59 (48 frames, replace) on
 AnimLayer1 - worst 0.003 deg at frame 31 | notes».
