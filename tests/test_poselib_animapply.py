@@ -111,6 +111,8 @@ class World(object):
         self.fail_at = None              # a solve number that raises
         self.refuse_breakdown = None     # keyframe -edit -breakdown raising
         self.auto_query_fails = False    # autoKeyframe -q raising (the chunk's first question)
+        self.cut_count = 0               # the keys keys.cut answers it removed (a call)
+        self.shift_count = 0             # the keys keys.shift answers it moved (a call)
 
     def value(self, plug, frame):
         found = self.values.get(plug, 0.0)
@@ -221,11 +223,11 @@ class FakeKeys(object):
 
     def cut(self, plugs, layer, start=None, end=None):
         self.world.log.append(("cut", sorted(plugs), start, end))
-        return 0
+        return self.world.cut_count
 
     def shift(self, plugs, layer, at, by):
         self.world.log.append(("shift", sorted(plugs), at, by))
-        return 0
+        return self.world.shift_count
 
     def curve_state(self, plugs, layer):
         self.world.log.append(("state", sorted(plugs)))
@@ -1044,9 +1046,10 @@ class Cancel(Base):
         never sets the keyed plugs back as tweaks (they show their new keys), and the line
         names what stays: the frames keyed and what the mode did to the keys."""
         self.world.recording = False
+        self.world.cut_count = 14
         ok, text = self.press(progress=Progress(cancel_at=2))
         self.assertEqual((ok, text), (False, aa.CANCELLED_KEPT % (
-            "frames 12-13 keyed, the pasted channels' keys in 12-17 cut")))
+            "frames 12-13 keyed, 14 keys of the pasted channels in 12-17 cut")))
         names = self.world.names()
         self.assertNotIn("undo", names)
         self.assertNotIn("restore_all", names)
@@ -1057,13 +1060,25 @@ class Cancel(Base):
 
     def test_with_undo_off_the_line_says_what_each_mode_did(self):
         self.world.recording = False
-        for mode, done in (("replace_all", "every key of the pasted channels cut"),
-                           ("insert", "the pasted channels' keys from 12 on moved 6 later"),
+        self.world.cut_count, self.world.shift_count = 40, 9
+        for mode, done in (("replace_all", "40 keys of the pasted channels cut"),
+                           ("insert", "9 keys of the pasted channels from 12 on moved 6 later"),
                            ("merge", None)):
             self.world.calls = 0
             ok, text = self.press(options={"mode": mode}, progress=Progress(cancel_at=1))
             want = "frame 12 keyed" + (", " + done if done else "")
             self.assertEqual(text, aa.CANCELLED_KEPT % want, mode)
+
+    def test_with_undo_off_a_cut_or_move_that_did_not_happen_is_not_claimed(self):
+        """The re-review of the fix wave: the line said «keys in a-b cut» (or moved) from the
+        plan's ops, even when the curves lost nothing - a REFERENCED curve only warns and keeps
+        its keys, and `keys.cut` / `shift` answer the keys that really went (0 here). It says
+        what the curves lost."""
+        self.world.recording = False
+        for mode in ("replace", "replace_all", "insert"):
+            self.world.calls = 0
+            ok, text = self.press(options={"mode": mode}, progress=Progress(cancel_at=1))
+            self.assertEqual(text, aa.CANCELLED_KEPT % "frame 12 keyed", mode)
 
     def test_an_error_mid_press_undoes_the_half_paste_and_raises(self):
         """The final review (S2): a solve that raised on the third frame left two frames keyed
@@ -1328,9 +1343,10 @@ class Objects(Base):
 
     def test_with_undo_off_a_cancel_keeps_the_channels_keyed_and_says_so(self):
         self.world.recording = False
+        self.world.cut_count = 3
         ok, text = aa.apply(self.objects, None, progress=Progress(cancel_at=1))
         self.assertEqual((ok, text), (False, aa.CANCELLED_KEPT % (
-            "1 channel keyed, the channels' keys in 30-40 cut")))
+            "1 channel keyed, 3 keys of the channels in 30-40 cut")))
         names = self.world.names()
         self.assertNotIn("undo", names)
         self.assertIn("restate", names)

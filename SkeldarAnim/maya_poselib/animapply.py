@@ -399,20 +399,27 @@ def _undo_failed(recording, walk=None):
             traceback.print_exc()
 
 
-def _kept(done, plan, noun):
+def _kept(done, plan, noun, counts=()):
     """CANCELLED_KEPT's line - a press cancelled with undo off keeps what it did, and says what:
-    `done` («frames 12-14», «3 channels») keyed, and what the paste mode did to the keys there
-    (`plan.ops`): Replace cut [a, b], Replace all every key, Insert moved the keys from `a` on
-    (the final review, S3)."""
+    `done` («frames 12-14», «3 channels») keyed, and what the paste mode did to the keys there -
+    each op of `plan.ops` with the keys it really reached (`counts`, one a op, what `_ops`
+    answered: `keys.cut` / `shift` count what a curve lost or moved): Replace cut [a, b],
+    Replace all every key, Insert moved the keys from `a` on (the final review, S3). An op that
+    reached no key is not said - a referenced curve only warns and keeps its keys (the
+    re-review of the fix wave: the line claimed a cut that never happened)."""
     parts = ["%s keyed" % done] if done else ["nothing keyed"]
-    for op in plan.ops:
+    for op, count in zip(plan.ops, list(counts) + [0] * (len(plan.ops) - len(counts))):
+        if not count:
+            continue
+        reached = ap._counted(count, "keys")
         if op[0] == "cut":
-            parts.append("the %s' keys in %s-%s cut" % (noun, _num(op[1]), _num(op[2])))
+            parts.append("%s of the %s in %s-%s cut" % (reached, noun, _num(op[1]),
+                                                         _num(op[2])))
         elif op[0] == "cut_all":
-            parts.append("every key of the %s cut" % noun)
+            parts.append("%s of the %s cut" % (reached, noun))
         elif op[0] == "shift":
-            parts.append("the %s' keys from %s on moved %s later" % (noun, _num(op[1]),
-                                                                       _num(op[2])))
+            parts.append("%s of the %s from %s on moved %s later" % (
+                reached, noun, _num(op[1]), _num(op[2])))
     return CANCELLED_KEPT % ", ".join(parts)
 
 
@@ -467,16 +474,21 @@ def _checked_plan(header, frames, options):
 
 
 def _ops(ops, plugs, layer):
-    """The paste mode's `ops` (`PastePlan.ops`) on the plugs' curves on `layer`."""
+    """The paste mode's `ops` (`PastePlan.ops`) on the plugs' curves on `layer`: [the keys each
+    op really reached] - what `keys.cut` / `shift` answer, the keys a curve lost or moved."""
     if not plugs:
-        return
+        return [0] * len(ops)
+    out = []
     for op in ops:
         if op[0] == "cut":
-            keys.cut(plugs, layer, op[1], op[2])
+            out.append(keys.cut(plugs, layer, op[1], op[2]) or 0)
         elif op[0] == "cut_all":
-            keys.cut(plugs, layer)
+            out.append(keys.cut(plugs, layer) or 0)
         elif op[0] == "shift":
-            keys.shift(plugs, layer, op[1], op[2])
+            out.append(keys.shift(plugs, layer, op[1], op[2]) or 0)
+        else:
+            out.append(0)
+    return out
 
 
 def _dirty(plugs):
@@ -785,6 +797,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
             planned.update((plug, None) for plug in target.plugs)
         began = keys.shown_at_start(walk.tweaks, list(planned))
         cancelled, keyed, steps = False, [], _Steps()
+        reached = [0] * len(plan.ops)                   # the keys each op really reached
         try:
             with _chunk(steps):
                 # the chunk's first step: every planned channel set to what it showed when the
@@ -792,7 +805,8 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                 keys.undo_marks(began)
                 states = [keys.curve_state(target.plugs, layer) for target in targets]
                 for target in targets:
-                    _ops(plan.ops, target.plugs, layer)
+                    reached = [n + m for n, m in zip(reached, _ops(plan.ops, target.plugs,
+                                                                   layer))]
                 for _source, index, time in plan.frames:
                     walk.arrive(time)
                     bones = animdata.bones_at(header, frames, index)
@@ -819,7 +833,7 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
                 walk.restore_all()
                 return False, CANCELLED
             # undo off: what was keyed stays - and so do the walk's `keyed` (never set back)
-            return False, _kept(_span(keyed), plan, "pasted channels")
+            return False, _kept(_span(keyed), plan, "pasted channels", reached)
     return _result(targets, header, plan, options, layer, alpha, mirror)
 
 
@@ -1025,7 +1039,7 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
     if planned:
         recording = bool(cmds.undoInfo(query=True, state=True))
         plugs = list(planned)
-        steps = _Steps()
+        steps, reached = _Steps(), []
         try:
             with _chunk(steps):
                 state = keys.curve_state(plugs, layer)
@@ -1035,7 +1049,7 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
                     for plug, saved in state.items():
                         if plug in planned and planned[plug][1]:
                             state[plug] = dict(saved, weighted=True)
-                _ops(plan.ops, plugs, layer)
+                reached = _ops(plan.ops, plugs, layer)
                 for plug, (stored, weighted) in planned.items():
                     written = keys.write_keys(plug, stored, layer, weighted,
                                               tangents=layer is None)
@@ -1060,7 +1074,7 @@ def _press_objects(header, selection=None, alpha=1.0, options=None, progress=Non
             if recording:
                 cmds.undo()
                 return False, CANCELLED
-            return False, _kept(ap._counted(len(done), "channels"), plan, "channels")
+            return False, _kept(ap._counted(len(done), "channels"), plan, "channels", reached)
     if nodes:
         hidden = keys.layer_note(layer)
         if hidden:
