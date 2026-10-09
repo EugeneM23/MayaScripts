@@ -590,5 +590,181 @@ class Frame(unittest.TestCase):
             edge.destroy()
 
 
+class RightSide(unittest.TestCase):
+    """2026-10-09, the animator: «Можем добавить опцию выбора стороны
+    монитора откуда выезжает наша полка?» - the right edge, mirrored. The
+    offset and the frame still count from the screen edge inward."""
+
+    AREA = (100, 20, 1600, 900)          # x 100..1700
+
+    def _edge(self, motion=False, side="right"):
+        _app()
+        self.point = (1699, 300)
+        self.widths = []
+        return hubedge.Edge(scale=1.0, width=360, side=side,
+                            motion=lambda: motion,
+                            on_width=self.widths.append,
+                            work_area=lambda: self.AREA,
+                            cursor=lambda: self.point,
+                            buttons=lambda: False,
+                            app_active=lambda: True)
+
+    def _run(self, edge, sample):
+        seen = []
+        loop_until = QtCore.QDeadlineTimer(3000)
+        while edge.sliding() and not loop_until.hasExpired():
+            QtWidgets.QApplication.processEvents()
+            seen.append(sample())
+        return seen
+
+    def test_the_left_is_the_default(self):
+        edge = self._edge(side=None)
+        try:
+            self.assertEqual(edge.side, "left")
+            self.assertEqual(edge.host.x(), 100)
+            self.assertEqual(edge.offset, edge.slot.x())
+            edge.reveal()
+            self.assertEqual((edge.offset, edge.slot.x()), (0, 0))
+        finally:
+            edge.destroy()
+
+    def test_the_windows_stand_on_the_right_edge(self):
+        edge = self._edge()
+        try:
+            self.assertEqual(edge.side, "right")
+            self.assertEqual(edge.host.geometry().getRect(),
+                             (1340, 20, 360, 900))
+            self.assertEqual(edge.sensor.geometry().getRect(),
+                             (1700 - rules.SENSOR_PX, 20, rules.SENSOR_PX,
+                              900))
+            #  hidden, the slot waits off the right edge
+            self.assertEqual(edge.offset, -360)
+            self.assertEqual(edge.slot.x(), 361)
+        finally:
+            edge.destroy()
+
+    def test_a_dwell_on_the_right_edge_reveals(self):
+        edge = self._edge()
+        try:
+            edge.sensor_entered()
+            edge.dwell_done()
+            self.assertTrue(edge.shown)
+            self.assertEqual(edge.offset, 0)
+            #  the slot stops short of the line on the panel's left
+            self.assertEqual(edge.slot.geometry().getRect(),
+                             (1, 0, 359, 900))
+            self.assertEqual(edge.grip.geometry().getRect(),
+                             (0, 0, rules.GRIP_PX, 900))
+            self.assertTrue(edge.host.mask().isEmpty())
+        finally:
+            edge.destroy()
+
+    def test_the_left_edge_does_not_reveal_it(self):
+        edge = self._edge()
+        try:
+            self.point = (100, 300)
+            edge.sensor_entered()
+            edge.dwell_done()
+            self.assertFalse(edge.shown)
+        finally:
+            edge.destroy()
+
+    def test_dragging_the_grip_left_widens(self):
+        edge = self._edge()
+        try:
+            edge.reveal()
+            edge.grip.press(1340)
+            edge.grip.drag(1240)
+            self.assertEqual(edge.host.geometry().getRect(),
+                             (1240, 20, 460, 900))
+            edge.grip.drag(1400)                       # back right: narrower
+            self.assertEqual(edge.host.geometry().getRect(),
+                             (1400, 20, 300, 900))
+            edge.grip.drag(1500)
+            self.assertEqual(edge.host.width(), rules.MIN_WIDTH)
+            edge.grip.release()
+            self.assertEqual(self.widths, [rules.MIN_WIDTH])
+            self.assertEqual(edge.host.geometry().right(), 1699)
+            self.assertEqual(edge.grip.x(), 0)
+            self.assertEqual(edge.offset, 0)
+        finally:
+            edge.destroy()
+
+    def test_the_frame_grows_from_the_right_and_the_hub_comes_in_after(self):
+        edge = self._edge(motion=True)
+        try:
+            w = edge.host.width()
+            edge.reveal()
+            seen = self._run(edge, lambda: (
+                edge.frame, edge.offset, edge.slot.x(),
+                edge.host.mask().boundingRect().getRect()))
+            self.assertTrue(seen)
+            for frame, offset, x, mask in seen:
+                if frame < w:
+                    #  only the frame's right part shows
+                    self.assertEqual((mask[0], mask[2]),
+                                     (w - max(1, frame), max(1, frame)))
+                self.assertGreaterEqual(frame, w + offset - 1)
+                self.assertEqual(x, 1 - offset)
+            xs = [x for _f, _o, x, _m in seen]
+            self.assertEqual(xs, sorted(xs, reverse=True))   # leftward
+            self.assertTrue([x for f, _o, x, _m in seen if f < w
+                             and x < w + 1])   # the hub in before the frame
+            self.assertEqual((edge.frame, edge.offset), (w, 0))
+            self.assertTrue(edge.host.mask().isEmpty())
+        finally:
+            edge.destroy()
+
+    def test_it_goes_back_off_the_right_edge(self):
+        edge = self._edge(motion=True)
+        try:
+            w = edge.host.width()
+            edge.reveal()
+            self._run(edge, lambda: None)
+            edge.conceal()
+            seen = self._run(edge, lambda: (edge.frame, edge.offset))
+            self.assertTrue(seen)
+            for frame, offset in seen:
+                self.assertLessEqual(abs(frame - (w + offset)), 1)
+            self.assertEqual((edge.frame, edge.offset), (0, -w))
+            self.assertFalse(edge.host.isVisible())
+            self.assertTrue(edge.sensor.isVisible())
+        finally:
+            edge.destroy()
+
+    def test_set_side_moves_a_standing_panel(self):
+        edge = self._edge(side="left")
+        try:
+            edge.reveal(hold=True)
+            self.assertTrue(edge.set_side("right"))
+            self.assertEqual(edge.side, "right")
+            self.assertFalse(edge.shown)
+            self.assertFalse(edge.hold.held)
+            self.assertFalse(edge.host.isVisible())
+            self.assertTrue(edge.sensor.isVisible())
+            self.assertEqual(edge.host.geometry().getRect(),
+                             (1340, 20, 360, 900))
+            self.assertEqual(edge.sensor.x(), 1700 - rules.SENSOR_PX)
+            self.assertEqual((edge.offset, edge.frame), (-360, 0))
+            edge.reveal()
+            self.assertEqual(edge.slot.x(), 1)
+            #  the same side again: nothing
+            self.assertFalse(edge.set_side("right"))
+            self.assertTrue(edge.shown)
+        finally:
+            edge.destroy()
+
+    def test_set_side_stops_a_slide(self):
+        edge = self._edge(motion=True, side="left")
+        try:
+            edge.reveal()
+            self.assertTrue(edge.sliding())
+            edge.set_side("right")
+            self.assertFalse(edge.sliding())
+            self.assertEqual((edge.offset, edge.frame), (-360, 0))
+        finally:
+            edge.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()

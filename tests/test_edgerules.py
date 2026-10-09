@@ -31,6 +31,73 @@ class Width(unittest.TestCase):
                          (0, 0, 2, 1528))
 
 
+class Sides(unittest.TestCase):
+    """2026-10-09, the animator: «Можем добавить опцию выбора стороны
+    монитора откуда выезжает наша полка?» - left or right."""
+
+    def test_the_variable_and_the_sides(self):
+        self.assertEqual(rules.SIDE_VAR, "skeldarAnimHub_edgeSide")
+        self.assertEqual(rules.SIDES, ("left", "right"))
+
+    def test_side_of_reads_right_or_left(self):
+        self.assertEqual(rules.side_of("right"), "right")
+        self.assertEqual(rules.side_of(" Right "), "right")
+        for value in ("left", None, "", "top", 0, 1):
+            self.assertEqual(rules.side_of(value), "left")
+
+    def test_the_panel_on_the_right_edge(self):
+        self.assertEqual(rules.panel_rect((0, 0, 2560, 1528), 360, 1.5,
+                                          "right"), (2020, 0, 540, 1528))
+        self.assertEqual(rules.panel_rect((2560, 40, 1280, 2000), 400, 1.0,
+                                          "right"), (3440, 40, 400, 2000))
+        self.assertEqual(rules.panel_rect((0, 0, 300, 800), 700, 1.0,
+                                          "right"), (0, 0, 300, 800))
+
+    def test_the_sensor_on_the_right_edge(self):
+        self.assertEqual(rules.sensor_rect((0, 0, 2560, 1528), "right"),
+                         (2558, 0, 2, 1528))
+
+    def test_the_left_is_the_default(self):
+        area = (100, 20, 1600, 900)
+        self.assertEqual(rules.panel_rect(area, 360, 1.0),
+                         rules.panel_rect(area, 360, 1.0, "left"))
+        self.assertEqual(rules.sensor_rect(area),
+                         rules.sensor_rect(area, "left"))
+
+
+class LocalGeometry(unittest.TestCase):
+    """Offsets and frames count from the screen edge inward; the host's own
+    x depends on the side."""
+
+    def test_the_slot(self):
+        self.assertEqual(rules.slot_x(-540, 1), -540)
+        self.assertEqual(rules.slot_x(0, 1), 0)
+        self.assertEqual(rules.slot_x(-540, 1, "right"), 541)
+        self.assertEqual(rules.slot_x(0, 1, "right"), 1)
+        for side in rules.SIDES:
+            for offset in (-540, -200, 0):
+                x = rules.slot_x(offset, 1, side)
+                self.assertEqual(rules.offset_of(x, 1, side), offset)
+
+    def test_the_frame_shown(self):
+        self.assertEqual(rules.frame_span(100, 540), (0, 100))
+        self.assertEqual(rules.frame_span(100, 540, "right"), (440, 100))
+        self.assertEqual(rules.frame_span(540, 540, "right"), (0, 540))
+
+    def test_the_line_on_the_frame_s_inner_edge(self):
+        self.assertEqual(rules.line_x(100, 540, 2), 98)
+        self.assertEqual(rules.line_x(100, 540, 2, "right"), 440)
+
+    def test_the_grip_on_the_panel_s_inner_side(self):
+        self.assertEqual(rules.grip_x(540, 5), 535)
+        self.assertEqual(rules.grip_x(540, 5, "right"), 0)
+
+    def test_a_grip_drag_inward_widens(self):
+        self.assertEqual(rules.dragged_width(360, 100, 1.0), 460)
+        self.assertEqual(rules.dragged_width(360, -100, 1.0, "right"), 460)
+        self.assertEqual(rules.dragged_width(360, 150, 1.5, "right"), 260)
+
+
 class Reveal(unittest.TestCase):
 
     def test_only_with_edge_on_hidden_no_button_and_maya_active(self):

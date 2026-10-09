@@ -1,16 +1,23 @@
-"""maya_hubedge - the hub as a panel sliding out of the left screen edge.
+"""maya_hubedge - the hub as a panel sliding out of a screen edge.
 
 2026-10-08 (the animator: «когда я подношу мышку к левому краю экрана то
-появляется наша полка когда убираю то полка скрывается»). Three windows of
-ours, each a frameless Qt.Tool owned by Maya's main window (so above Maya,
-never above another application, gone with Maya minimized):
+появляется наша полка когда убираю то полка скрывается»); since 2026-10-09
+the left OR the right edge («Можем добавить опцию выбора стороны монитора
+откуда выезжает наша полка?» - `side`, `set_side`). Every quantity the
+controller keeps counts from the screen edge inward - the slot's OFFSET
+(-width off the edge, 0 out) and the FRAME; maya_edgerules turns them into
+host-local x for the side, so the left side's numbers are the right side's
+too. Three windows of ours, each a frameless Qt.Tool owned by Maya's main
+window (so above Maya, never above another application, gone with Maya
+minimized):
 
-    host    the panel: the work area's left edge, its full height; holds
+    host    the panel: the work area's chosen edge, its full height; holds
             the SLOT, which holds the Skin's root. A slide moves the SLOT
-            inside the host - no window crosses into a monitor on the
-            left, nothing is laid out again per frame. The host paints the
-            hub's `panel` colour and a 1 px `inset_line` down its right edge;
-            the slot stops short of that line, so it always shows. Only its
+            inside the host - no window crosses into a monitor beside it,
+            nothing is laid out again per frame. The host paints the hub's
+            `panel` colour and a 1 px `inset_line` down its inner edge (the
+            right on the left side, the left on the right side); the slot
+            stops short of that line, so it always shows. Only its
             FRAME shows (a window mask): out, the frame leads and the slot
             follows close behind it (rules.reveal_at); back, both go
             together (2026-10-09, «фоновая рамка ... появляется сильно
@@ -24,8 +31,9 @@ never above another application, gone with Maya minimized):
             it layered and it still takes the mouse (CLAUDE.md trap 110;
             the Graph Overlay's ghost measured alpha 1 hit-testable).
             Shown only while the panel is hidden.
-    grip    5 logical px on the host's right: drag the width (a child of the
-            host, painting nothing - the host's line is under it).
+    grip    5 logical px on the host's inner side: drag the width inward to
+            widen (a child of the host, painting nothing - the host's line
+            is under it).
 
 Every decision is maya_edgerules'. The cursor, the buttons, the work area
 and whether Maya is the active application come through constructor seams,
@@ -219,22 +227,26 @@ def _classes():
 
             def paintEvent(self, event):                   # noqa: N802
                 #  only the frame shows (the window's mask); its line on
-                #  the frame's right edge, so it slides out with it
+                #  the frame's inner edge, so it slides out with it
+                side = self.edge.side
                 frame = max(1, min(self.width(), self.edge.frame))
+                fx, fw = rules.frame_span(frame, self.width(), side)
                 painter = QtGui.QPainter(self)
                 try:
-                    painter.fillRect(0, 0, frame, self.height(), QtGui.QColor(
+                    painter.fillRect(fx, 0, fw, self.height(), QtGui.QColor(
                         hubstyle.TOKENS["panel"]))
                     line = self.edge._line()
-                    painter.fillRect(frame - line, 0, line,
-                                     self.height(), QtGui.QColor(
-                                         hubstyle.TOKENS["inset_line"]))
+                    painter.fillRect(
+                        rules.line_x(frame, self.width(), line, side), 0,
+                        line, self.height(),
+                        QtGui.QColor(hubstyle.TOKENS["inset_line"]))
                 finally:
                     painter.end()
 
         class WidthGrip(QtWidgets.QWidget):
-            """The host's right edge: a drag sets the panel's width, the
-            release remembers it. `press/drag/release` take GLOBAL x
+            """The host's inner edge (its right on the left side, its left on
+            the right side): a drag inward widens the panel, the release
+            remembers the width. `press/drag/release` take GLOBAL x
             (physical px), so the tests drive them without a mouse."""
 
             def __init__(self, edge, parent=None):
@@ -251,8 +263,9 @@ def _classes():
                 if self._start is None:
                     return
                 x0, width0 = self._start
-                self.edge.set_width(width0 + (gx - x0) / self.edge.scale,
-                                    save=False)
+                self.edge.set_width(
+                    rules.dragged_width(width0, gx - x0, self.edge.scale,
+                                        self.edge.side), save=False)
 
             def release(self):
                 if self._start is not None:
@@ -304,18 +317,20 @@ class Edge(object):
     `scale` is the display scale (Qt px are physical in Maya); `width` the
     panel's logical width; `motion()` whether it slides (default: the hub's
     Interface animations); `on_width(width)` is called when a drag of the
-    grip ends (the caller remembers it). The seams: `work_area()` ->
-    (x, y, w, h), `cursor()` -> (x, y), `buttons()` -> bool, `app_active()`
-    -> bool, all physical px, default Qt's."""
+    grip ends (the caller remembers it); `side` the screen edge it stands
+    on, "left" or "right" (2026-10-09; `set_side` moves it). The seams:
+    `work_area()` -> (x, y, w, h), `cursor()` -> (x, y), `buttons()` ->
+    bool, `app_active()` -> bool, all physical px, default Qt's."""
 
     def __init__(self, scale=1.0, parent=None, width=rules.WIDTH,
                  motion=None, on_width=None, work_area=None, cursor=None,
-                 buttons=None, app_active=None):
+                 buttons=None, app_active=None, side="left"):
         q = hubqt.qt()
         QtCore, QtWidgets = q.QtCore, q.QtWidgets
         classes = _classes()
         self.scale = float(scale or 1.0)
         self.width = rules.clamp_width(width)
+        self.side = rules.side_of(side)
         self.motion = motion or hubmotion.enabled
         self.on_width = on_width
         self._work_area = work_area
@@ -405,41 +420,55 @@ class Edge(object):
         return self.host.geometry().getRect()
 
     def _line(self):
-        """The host's right line, physical px (1 logical)."""
+        """The host's inner line, physical px (1 logical)."""
         return hubstyle.px(1, self.scale)
+
+    @property
+    def offset(self):
+        """The slot's offset from the screen edge, physical px: -the host's
+        width off the edge, 0 out - the same numbers on either side
+        (rules.slot_x turns it into the slot's x)."""
+        return rules.offset_of(self.slot.x(), self._line(), self.side)
+
+    def _put_slot(self, offset):
+        self.slot.move(rules.slot_x(int(round(offset)), self._line(),
+                                    self.side), 0)
 
     # ------------------------------------------------------------ geometry
 
     def place(self):
-        """The windows' geometry from the work area: the host on its left
-        edge, its full height, the sensor over that edge."""
+        """The windows' geometry from the work area: the host on its
+        `side` edge, its full height, the sensor over that edge."""
         if not self.alive():
             return
         area = self.work_area()
-        x, y, w, h = rules.panel_rect(area, self.width, self.scale)
+        x, y, w, h = rules.panel_rect(area, self.width, self.scale,
+                                      self.side)
         self.host.setGeometry(x, y, w, h)
-        sx, sy, sw, sh = rules.sensor_rect(area)
+        sx, sy, sw, sh = rules.sensor_rect(area, self.side)
         self.sensor.setGeometry(sx, sy, sw, sh)
         self._fit_slot()
 
     def _fit_slot(self):
-        """The slot over the host (short of its line) - at 0 out, off the
-        edge in, where the slide has it while one runs - and the grip on
-        the host's right."""
+        """The slot over the host (short of its line) - out (offset 0), off
+        the edge in, where the slide has it while one runs - and the grip
+        on the host's inner side."""
         host, slot, grip = self.host, self.slot, self.grip
         if not (hubqt._valid(host) and slot is not None
                 and hubqt._valid(slot)):
             return
         w, h = host.width(), host.height()
+        line = self._line()
         if self._anim is not None:
-            x = slot.x()
+            offset = self.offset
         else:
-            x = 0 if self._rest_out else -w
+            offset = 0 if self._rest_out else -w
             self._set_frame(w if self._rest_out else 0)
-        slot.setGeometry(x, 0, max(1, w - self._line()), h)
+        slot.setGeometry(rules.slot_x(offset, line, self.side), 0,
+                         max(1, w - line), h)
         if grip is not None and hubqt._valid(grip):
             g = hubstyle.px(rules.GRIP_PX, self.scale)
-            grip.setGeometry(w - g, 0, g, h)
+            grip.setGeometry(rules.grip_x(w, g, self.side), 0, g, h)
 
     @property
     def frame(self):
@@ -447,10 +476,10 @@ class Edge(object):
         return self._frame
 
     def _set_frame(self, px):
-        """Show `px` of the host from its left: a window mask (Qt never
-        paints the rest), none once it is all of it. A mask of nothing is no
-        mask at all to Qt, so the least is one pixel - the host is hidden at
-        rest anyway."""
+        """Show `px` of the host from the screen edge: a window mask (Qt
+        never paints the rest), none once it is all of it. A mask of nothing
+        is no mask at all to Qt, so the least is one pixel - the host is
+        hidden at rest anyway."""
         host = self.host
         if not hubqt._valid(host):
             return
@@ -461,7 +490,8 @@ class Edge(object):
             host.clearMask()
         else:
             q = hubqt.qt()
-            host.setMask(q.QtGui.QRegion(0, 0, max(1, px), host.height()))
+            fx, fw = rules.frame_span(max(1, px), w, self.side)
+            host.setMask(q.QtGui.QRegion(fx, 0, fw, host.height()))
         host.update()
 
     # ------------------------------------------------------------ in, out
@@ -522,7 +552,7 @@ class Edge(object):
         if not moving:
             self._slide_done(showing)
             return
-        hub_out = self.slot.x() > -width
+        hub_out = self.offset > -width
         if showing and not hub_out and self._frame <= 0:
             #  from rest: one timeline, the frame leading, the hub close
             #  behind it (rules.reveal_at)
@@ -541,7 +571,7 @@ class Edge(object):
             return
         if showing:
             self._set_frame(width)
-        start = self.slot.x()
+        start = self.offset
         end = 0 if showing else -width
         if start == end:
             self._slide_done(showing)
@@ -562,9 +592,9 @@ class Edge(object):
         def step(t):
             if not hubqt._valid(self.slot):
                 return
-            frame, x = rules.reveal_at(t * total, width)
+            frame, offset = rules.reveal_at(t * total, width)
             self._set_frame(frame)
-            self.slot.move(x, 0)
+            self._put_slot(offset)
         anim.valueChanged.connect(step)
         anim.finished.connect(lambda: self._slide_done(True))
         self._anim = anim
@@ -595,13 +625,13 @@ class Edge(object):
             return (full + width) / float(width)      # -width..0 -> 0..1
         return -full / float(width)                   # 0..-width -> 0..1
 
-    def _move_slot(self, x, width, showing):
+    def _move_slot(self, offset, width, showing):
         if not hubqt._valid(self.slot):
             return
-        x = int(round(x))
-        self.slot.move(x, 0)
+        offset = int(round(offset))
+        self._put_slot(offset)
         if not showing:
-            self._set_frame(width + x)                # the frame leaves with it
+            self._set_frame(width + offset)           # the frame leaves with it
 
     def _slide_done(self, showing):
         self._stop_anim()
@@ -638,8 +668,8 @@ class Edge(object):
         if not self.alive():
             return
         area = self.work_area()
-        if not rules.contains(rules.sensor_rect(area), self.cursor(),
-                              margin=1):
+        if not rules.contains(rules.sensor_rect(area, self.side),
+                              self.cursor(), margin=1):
             return
         if rules.may_reveal(True, self._shown, self.buttons(),
                             self.app_active()):
@@ -714,6 +744,29 @@ class Edge(object):
         self.pinned = bool(on)
         if not on and self._shown and self.alive():
             self.hide.start()
+
+    def set_side(self, side):
+        """Stand on `side` from now on (2026-10-09, ⋮ -> Edge panel ▸ Left
+        edge / Right edge). A new side: any slide stops, the panel goes at
+        once (no slide back across the screen), the windows stand at the new
+        edge with the slot off it and the sensor up - the caller reveals it
+        there. True when it moved; the side it already stands on, False."""
+        side = rules.side_of(side)
+        if side == self.side or not self.alive():
+            return False
+        self._stop_anim()
+        for timer in (self.dwell, self.hide, self.retry):
+            timer.stop()
+        self._shown = False
+        self._rest_out = False
+        self.hold = rules.Hold()
+        self._sync_watch()
+        self.side = side
+        self.host.hide()
+        self.place()
+        self.sensor.show()
+        self.sensor.raise_()
+        return True
 
     def set_width(self, logical, save=True):
         """The panel's logical width, clamped and laid out; `save` (the end
