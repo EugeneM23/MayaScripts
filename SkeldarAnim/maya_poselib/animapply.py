@@ -38,7 +38,9 @@ prepared once.
    must not read off curves the press rewrites: at Blend < 100 % every planned plug as the take
    stands (the partner of each frame's mix), and the ground a ROOTLESS target that carries no
    travel stands on (`read_ground` - its top joint is a planned member, cut by Replace and keyed
-   every frame: M4); then what every planned plug SHOWED when the press began
+   every frame: M4) - under Insert the take's ground at `a` for every pasted frame
+   (`_ground_time`: the take resumes from there after the clip); then what every planned plug
+   SHOWED when the press began
    (`keys.shown_at_start`: the walk's tweaks reading, else the value);
 4. ONE undo chunk (`UNDO_CHUNK`), autoKey off inside it: FIRST every planned plug set to what it
    showed when the press began (`keys.undo_marks`) - each frame's solve records its temporary
@@ -248,6 +250,18 @@ def _shown(plan, now):
     else:
         found = plan.frames[0]
     return found[0], found[1]
+
+
+def _ground_time(plan, time):
+    """The frame of the take whose ground a ROOTLESS target pasted In place stands on at pasted
+    frame `time` (read before the ops, `_Target.read_ground`): `time` itself - Replace and Merge
+    leave the take where it is - but under Insert (`("shift", a, n)`) `a`: the take's frames
+    from `a` on move to after the clip, so the clip stands where the take stood at `a`, where
+    the shifted take resumes (the re-review of the fix wave: riding the take's own a..b ground,
+    a target walking 200 cm over the range snapped back 200 cm at b + 1). Pure."""
+    if any(op[0] == "shift" for op in plan.ops):
+        return plan.a
+    return time
 
 
 def _card_refusal(header):
@@ -732,15 +746,25 @@ def _press_refs(header, frames, refs, mirror=False, alpha=1.0, options=None, pro
         if not any(target.plugs for target in targets):
             return _result(targets, header, plan, options, layer, alpha, mirror)
         # BEFORE anything is cut or keyed: the take each frame mixes with (Blend), the ground a
-        # rootless target stands on (M4) - read at every pasted frame
+        # rootless target stands on (M4) - read at every pasted frame, the ground under Insert
+        # at `a` alone (`_ground_time`: the take resumes there after the clip)
         if alpha < 1.0 or any(target.reads_ground for target in targets):
             for _source, _index, time in plan.frames:
+                at = _ground_time(plan, time)
+                if alpha >= 1.0 and at != time:
+                    for target in targets:
+                        if target.reads_ground:
+                            target.grounds[time] = target.grounds.get(at)
+                    continue                     # nothing of this frame to read
                 walk.arrive(time)
                 for target in targets:
                     if target.plugs and alpha < 1.0:
                         target.partner[time] = keys.current(target.plugs)
                     if target.reads_ground:
-                        target.read_ground(time)
+                        if at == time:
+                            target.read_ground(time)
+                        else:
+                            target.grounds[time] = target.grounds.get(at)
         planned = OrderedDict()
         for target in targets:
             planned.update((plug, None) for plug in target.plugs)

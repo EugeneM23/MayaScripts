@@ -104,7 +104,10 @@ against the press's own measure.
             second Mixamo fixture as the TARGET, walking along a take of its own, A's full card
             pasted on it In place with Replace: its ground frame on the take's own at every
             pasted frame (the final review's M4) - the control, the ground read off the curve the
-            press rewrites as before the fix, falls off it; a Mixamo fixture ROLLING over its
+            press rewrites as before the fix, falls off it; the same In place with Insert at 60:
+            every pasted frame on the take's ground at 60, where the shifted take resumes at 84
+            (the re-review of the fix wave) - the control, each frame on the take's own ground
+            there as before the fix, rides the walk and snaps back; a Mixamo fixture ROLLING over its
             Hips (a full turn about X, a 2 deg side tilt, its own heading jumping 165 deg near
             upside down) carded and pasted onto a rootless twin standing elsewhere, with the
             travel and In place: every member on the card relative to the target's ground on
@@ -2533,8 +2536,61 @@ def rootless_target_gates():
          "fix): off the take's own ground, the gate above would fail",
          ok_c and max(off.value, off_deg.value) > 1.0,
          "%s cm, %s deg | %s" % (off, off_deg, text_c))
+    # ---- Insert (the re-review of the fix wave): the take's frames from INSERT_AT on move to
+    # after the clip - every pasted frame stands on the take's ground at INSERT_AT, and the
+    # shifted take resumes there (its key at INSERT_AT lands right after the clip). The control:
+    # each pasted frame on the take's own ground there (before the fix) - the paste rides the
+    # walk and the shifted take snaps it back
+    insert_span = [(INSERT_AT + i, i) for i in range(count)]
+    resume = INSERT_AT + count
+    options = animdata.Options(mode="insert", in_place=True)
+
+    def insert_press(control):
+        grounds = walk_take()
+        ground = grounds[INSERT_AT]
+        go(INSERT_AT)
+        if control:
+            with patched(animapply, "_ground_time", _ground_time_as_before):
+                ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        else:
+            ok, text = animapply.apply(header, frames, selection=[top], options=options)
+        shifted = same_times(curve_keys(top + ".translateX")[0],
+                             [40.0] + [float(t) for t, _i in insert_span] +
+                             [float(f + count) for f, _x, _z, _y in WALK if f >= INSERT_AT])
+        on, on_deg = Worst(), Worst()
+        for t in [t for t, _i in insert_span] + [resume]:
+            go(t)
+            c, d = cm_deg(target_place(ch), ground)
+            on.see(c, "@%g" % t)
+            on_deg.see(d, "@%g" % t)
+        walked = (pm.position(grounds[AT + count - 1]) - pm.position(ground)).length()
+        return ok, text, shifted, on, on_deg, walked
+
+    ok, text, shifted, on, on_deg, walked = insert_press(False)
+    say("   insert onto a walking rootless target: %s" % text)
+    gate("mixamo In place, Insert at %d onto a ROOTLESS target walking along its own take: every "
+         "pasted frame on the take's ground at %d, and so is the shifted take resuming at %d (its "
+         "keys from %d on moved %d later)" % (INSERT_AT, INSERT_AT, resume, INSERT_AT, count),
+         ok and shifted and on.value <= 0.01 and on_deg.value <= 0.01,
+         "%s cm, %s deg; the take walks %.2f cm on from %d | %s" % (on, on_deg, walked,
+                                                                    INSERT_AT, text))
+    ok_c, text_c, shifted_c, off, off_deg, walked = insert_press(True)
+    gate("mixamo the control - under Insert each pasted frame on the take's own ground there "
+         "(before the fix): the paste rides the walk, the shifted take snaps it back at %d, the "
+         "gate above would fail" % resume,
+         ok_c and shifted_c and max(off.value, off_deg.value) > 10.0,
+         "%s cm, %s deg | %s" % (off, off_deg, text_c))
     ch.wipe()
     cmds.setAttr(top + ".visibility", False)
+
+
+INSERT_AT = 60                      # an Insert lands on the walk's key at 60 (rootless_target_gates)
+
+
+def _ground_time_as_before(plan, time):
+    """`animapply._ground_time` before the re-review of the fix wave: every pasted frame on the
+    take's own ground there, Insert or not."""
+    return time
 
 
 #  the rolling card (the re-review of the fix wave): its Hips forward a frame, their side tilt

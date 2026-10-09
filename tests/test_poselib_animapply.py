@@ -826,6 +826,53 @@ class InPlaceGround(Base):
         self.assertEqual([e[3] for e in frames],
                          [flat(ident(7.0 * t, 0.0, 3.0)) for t in range(12, 18)])
 
+    def test_under_insert_every_pasted_frame_stands_on_the_ground_at_a(self):
+        """The re-review of the fix wave (M4 regressed under Insert): Insert moves the take's
+        frames from `a` on to after the clip, while the grounds were read off the take BEFORE the
+        ops - the paste rode the take's own a..b ground, then the shifted take resumed after it
+        from its frame-a ground: a target walking 200 cm over the range snapped back 200 cm.
+        Under Insert every pasted frame stands on the take's ground at `a`, where the shifted
+        take resumes - read once, the walk going nowhere else for it."""
+        ok, text = self.press(options={"in_place": True, "mode": "insert"})
+        self.assertTrue(ok, text)
+        names = self.world.names()
+        shift = names.index("shift")
+        before = [e for e in self.world.log[:shift] if e[0] == "refresh"]
+        self.assertEqual([e[2] for e in before], [12])
+        self.assertEqual([e for e in self.world.log[:shift] if e[0] == "go"], [])
+        frames = self.world.entries("frame")[1:]
+        self.assertEqual([e[3] for e in frames], [flat(ident(84.0, 0.0, 3.0))] * 6)
+
+    def test_under_insert_a_blend_still_reads_the_take_on_every_frame(self):
+        self.world.values = {SKEL_ROOT + ".translateX": lambda frame: 2.0 * frame}
+        ok, text = self.press(options={"in_place": True, "mode": "insert"}, alpha=0.5)
+        self.assertTrue(ok, text)
+        shift = self.world.names().index("shift")
+        reads = [e[1] for e in self.world.log[:shift] if e[0] == "current"]
+        self.assertEqual(reads, [12, 12, 13, 14, 15, 16, 17])
+        grounds = [e[2] for e in self.world.log[:shift] if e[0] == "refresh"]
+        self.assertEqual(grounds, [12])
+        frames = self.world.entries("frame")[1:]
+        self.assertEqual([e[3] for e in frames], [flat(ident(84.0, 0.0, 3.0))] * 6)
+
+    def test_merge_reads_the_ground_of_every_frame(self):
+        ok, text = self.press(options={"in_place": True, "mode": "merge"})
+        self.assertTrue(ok, text)
+        opened = self.world.names().index("open")
+        before = [e for e in self.world.log[:opened] if e[0] == "refresh"]
+        self.assertEqual([e[2] for e in before], [12, 13, 14, 15, 16, 17])
+        frames = self.world.entries("frame")[1:]
+        self.assertEqual([e[3] for e in frames],
+                         [flat(ident(7.0 * t, 0.0, 3.0)) for t in range(12, 18)])
+
+    def test_the_take_s_frame_a_ground_stands_for(self):
+        plan = animdata.paste_plan(0, 5, None, animdata.Options(mode="insert"), 12)
+        self.assertEqual([aa._ground_time(plan, t) for _s, _i, t in plan.frames], [12] * 6)
+        for mode in ("replace", "replace_all", "merge"):
+            plan = animdata.paste_plan(0, 5, None, animdata.Options(mode=mode), 12)
+            self.assertEqual([aa._ground_time(plan, t) for _s, _i, t in plan.frames],
+                             list(range(12, 18)), mode)
+
     def test_a_target_carrying_the_travel_reads_no_ground(self):
         self.press()
         cut = self.world.names().index("cut")
