@@ -1,15 +1,26 @@
 """maya_poselib.store - the pose library on disk. Stdlib only.
 
-A CARD is a folder `<Name>.pose/` holding `pose.json` (the pose) and `thumbnail.jpg`; a CATALOG
-is a plain folder, nested as deep as the animator likes. Files, not a database: a colleague
-receives the library with the build and the animator commits it from the repo. The library root
-is the optionVar `skeldarPoseLibraryRoot` when it names a folder, else `<plugin>/poses/`.
+Two kinds of CARD, side by side in the same library and catalogs:
+  - a POSE, a folder `<Name>.pose/` holding `pose.json` (the pose) and `thumbnail.jpg`;
+  - an ANIMATION (2026-10-03), a folder `<Name>.anim/` (Studio Library's suffix) holding
+    `anim.json` (the HEADER - small, read by every listing), `frames.json.gz` (the per-frame
+    data, gzip of compact JSON - read only by Apply, Blend and Update, `read_frames`),
+    `thumbnail.jpg` (the still) and `preview.jpg` (the sprite sheet a card plays on hover).
+A CATALOG is a plain folder, nested as deep as the animator likes. Files, not a database: a
+colleague receives the library with the build and the animator commits it from the repo. The
+library root is the optionVar `skeldarPoseLibraryRoot` when it names a folder, else
+`<plugin>/poses/`.
 
 The rules this module keeps, so the window above it can be simple:
   - every path it returns uses "/" (Windows takes both; the cards, the tree and the details
     text then compare equal);
-  - a card is written ATOMICALLY (`pose.json.part`, then `os.replace`) and a card that fails
-    half way is not left behind, so a reader never sees a half file;
+  - a card is written ATOMICALLY (each file through `<file>.part`, then `os.replace`), its
+    main file (`pose.json` / `anim.json`) LAST, so a reader never sees a new card before it
+    is whole; a write that fails while STAGING leaves an existing card as it was and a new
+    one not at all (the swaps that follow happen one by one, so a replace failing between
+    two of them keeps the files already swapped);
+  - a NEW card's name is free in a folder only when NEITHER suffix holds it, so a pose and an
+    animation never share a name there through `write`;
   - nothing is deleted: `remove` moves a card or a folder into a trash folder, stamped;
   - a card that cannot be read is REPORTED (`cards` returns it in `broken`), never raised, so
     one bad file from a colleague's merge does not blank the library;
@@ -17,25 +28,36 @@ The rules this module keeps, so the window above it can be simple:
     skips (`.git`, `_trash...`) and names that would read as a card are refused up front.
 
 No `maya`, no Qt, no clock but `time` for stamps: the pure halves (`safe_name`, `filter_cards`,
-`sort_cards`) are plain tests.
+`sort_cards`, `of_type`) are plain tests.
 
-Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md
+Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md,
+      docs/superpowers/specs/2026-10-03-pose-library-animation-design.md
 """
 
+import gzip
 import json
+import math
 import os
 import re
 import shutil
 import time
+import zlib
 from collections import namedtuple
 
 ROOT_VAR = "skeldarPoseLibraryRoot"   # the optionVar holding the library folder
 CARD_SUFFIX = ".pose"
+ANIM_SUFFIX = ".anim"
+CARD_SUFFIXES = (CARD_SUFFIX, ANIM_SUFFIX)
 POSE_FILE = "pose.json"
+ANIM_FILE = "anim.json"               # an animation card's header
+FRAMES_FILE = "frames.json.gz"        # an animation card's per-frame data
 THUMB_FILE = "thumbnail.jpg"
+PREVIEW_FILE = "preview.jpg"          # an animation card's sprite sheet
 FORMAT = "skeldar.pose"
+ANIM_FORMAT = "skeldar.anim"
 VERSION = 1
 SORTS = ("name", "newest", "character")
+TYPES = ("all", "pose", "anim")       # the window's type filter (`of_type`)
 
 NAME_MAX = 80                         # a card's or a folder's name, before its suffix
 TRASH_PREFIX = "_trash"               # folders starting with this (or ".") are never listed
@@ -48,8 +70,14 @@ _DEVICES = set(["CON", "PRN", "AUX", "NUL"]
 
 #  What the grid and the details show of a card, read once per refresh: `label` is the source
 #  character's catalog label ("Manny [rig]") or "objects"; `count` the bones (or objects) the
-#  pose holds; `thumbnail` the image's path or "" when the card has none.
-Card = namedtuple("Card", "path folder name created author label kind count regions thumbnail")
+#  card holds; `thumbnail` the image's path or "" when the card has none. The last six are an
+#  animation's (2026-10-03) and DEFAULTED, so every positional construction of the ten above
+#  keeps working: `type` "pose" | "anim", `frames` the clip's frame count (0 for a pose),
+#  `preview` the sprite sheet's path or "", `fps` the time unit string ("ntsc"), `start` /
+#  `end` the source frames.
+Card = namedtuple("Card", "path folder name created author label kind count regions thumbnail "
+                          "type frames preview fps start end",
+                  defaults=("pose", 0, "", "", 0.0, 0.0))
 
 
 # ---------------------------------------------------------------- paths and names
@@ -96,8 +124,40 @@ def safe_name(text, fallback="Pose"):
 
 
 def _is_card(name):
-    """True for a folder name that is a card (`Fist.pose`)."""
-    return name.lower().endswith(CARD_SUFFIX)
+    """True for a folder name that is a card of either type (`Fist.pose`, `Walk.anim`)."""
+    return name.lower().endswith(CARD_SUFFIXES)
+
+
+def card_suffix(path):
+    """The card suffix of the card folder at `path`: ".anim" for an animation, else ".pose" (a
+    trailing slash and either slash style are fine)."""
+    return ANIM_SUFFIX if _fwd(path).lower().endswith(ANIM_SUFFIX) else CARD_SUFFIX
+
+
+def is_anim(path):
+    """True when `path` is an animation card (`<Name>.anim`)."""
+    return card_suffix(path) == ANIM_SUFFIX
+
+
+def _main_file(path):
+    """The card's main file name - the one written last and read by every listing."""
+    return ANIM_FILE if is_anim(path) else POSE_FILE
+
+
+def _format_of(path):
+    """The `format` the card's main file must carry."""
+    return ANIM_FORMAT if is_anim(path) else FORMAT
+
+
+def _stem(name):
+    """A card folder's name without its suffix (`Walk.anim` -> `Walk`)."""
+    return name[:-len(card_suffix(name))] if _is_card(name) else name
+
+
+def _taken(here, name):
+    """True when the folder `here` already holds a card called `name` of EITHER type - a pose
+    and an animation never share a name in one folder."""
+    return any(os.path.exists(here + "/" + name + suffix) for suffix in CARD_SUFFIXES)
 
 
 def _hidden(name):
@@ -110,7 +170,7 @@ def _folder_name(name):
     """A catalog's own name, safe - or ValueError when the library could not list it again."""
     leaf = safe_name(name, fallback="Folder")
     if _is_card(leaf):
-        raise ValueError("a folder cannot end with %s" % CARD_SUFFIX)
+        raise ValueError("a folder cannot end with %s" % " or ".join(CARD_SUFFIXES))
     if _hidden(leaf):
         raise ValueError("a name cannot start with %s" % TRASH_PREFIX)
     return leaf
@@ -143,17 +203,18 @@ def _iso(stamp):
 
 
 def unique_name(root, folder, name):
-    """`name` made safe and free in `folder`: "Fist", then "Fist 2", "Fist 3" ..."""
+    """`name` made safe and free in `folder`: "Fist", then "Fist 2", "Fist 3" ... - free of
+    BOTH types, so a pose and an animation never share a name."""
     folder = _clean_folder(folder)
     base = safe_name(name)
     here = _abs(root, folder)
-    if not os.path.exists(here + "/" + base + CARD_SUFFIX):
+    if not _taken(here, base):
         return base
     number = 2
     while True:
         suffix = " %d" % number
         candidate = base[:NAME_MAX - len(suffix)].rstrip(". ") + suffix
-        if not os.path.exists(here + "/" + candidate + CARD_SUFFIX):
+        if not _taken(here, candidate):
             return candidate
         number += 1
 
@@ -192,25 +253,95 @@ def folders(root):
 # ---------------------------------------------------------------- reading cards
 
 def read(path):
-    """The pose dict of the card at `path`. ValueError when the file is missing, is not JSON or
-    is not one of ours - the caller shows the animator which card, nothing else breaks."""
-    target = _fwd(path) + "/" + POSE_FILE
+    """The main dict of the card at `path` - a pose card's pose, an animation card's HEADER (its
+    frames stay in `frames.json.gz`, `read_frames`). ValueError when the file is missing, is not
+    JSON or is not one of ours (an `.anim` folder must carry `skeldar.anim`, a `.pose` one
+    `skeldar.pose`) - the caller shows the animator which card, nothing else breaks."""
+    target = _fwd(path) + "/" + _main_file(path)
+    expected = _format_of(path)
     try:
         with open(target, encoding="utf-8-sig") as handle:
             data = json.load(handle)
     except OSError as exc:
         raise ValueError("%s: cannot be read (%s)" % (target, exc))
     except ValueError as exc:       # a JSON error, or bytes that are not UTF-8
-        raise ValueError("%s: not a pose file (%s)" % (target, exc))
-    if not isinstance(data, dict) or data.get("format") != FORMAT:
-        raise ValueError("%s: not a %s file" % (target, FORMAT))
+        raise ValueError("%s: not a %s file (%s)" % (target, expected, exc))
+    if not isinstance(data, dict) or data.get("format") != expected:
+        raise ValueError("%s: not a %s file" % (target, expected))
     return data
+
+
+#  `read_frames`' cache: ONE entry, {(path, mtime_ns, size): data}. An Apply, a Blend preview and
+#  an Update read the same card's frames again and again; a library of many clips must not keep
+#  every one of them in memory.
+_FRAMES = {}
+
+
+def read_frames(path):
+    """The per-frame data of the animation card at `path`: {"bones": [leaf...], "world":
+    [[q7 per bone] per frame], "drive": {leaf: [[q7] per frame]}} decoded from its
+    `frames.json.gz` - `drive` always there, {} when the file holds none (a skeleton's clip).
+    Cached - one entry, keyed by the file's path, time and size, so a card written again is
+    read again; the answer is the cached object, read it, never change it. ValueError when the
+    file is missing, is not gzip JSON or is not that shape."""
+    target = _fwd(path) + "/" + FRAMES_FILE
+    try:
+        stat = os.stat(target)
+    except OSError as exc:
+        raise ValueError("%s: cannot be read (%s)" % (target, exc))
+    key = (os.path.normcase(os.path.abspath(target)), stat.st_mtime_ns, stat.st_size)
+    if key in _FRAMES:
+        return _FRAMES[key]
+    try:
+        with gzip.open(target, "rt", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, EOFError, zlib.error, ValueError) as exc:
+        #  not gzip, cut short, a damaged stream, not JSON
+        raise ValueError("%s: not an animation's frames (%s)" % (target, exc))
+    if not (isinstance(data, dict) and isinstance(data.get("bones"), list)
+            and isinstance(data.get("world"), list)
+            and isinstance(data.get("drive", {}), dict)):
+        raise ValueError("%s: not an animation's frames" % target)
+    data.setdefault("drive", {})       # a skeleton's clip carries none: the answer always does
+    _FRAMES.clear()
+    _FRAMES[key] = data
+    return data
+
+
+def _finite(value):
+    """`value` as a float, ValueError when it is no FINITE number: JSON's NaN and Infinity read as
+    floats, and `float()` lets both pass (the final review: a card with `"start": NaN` listed,
+    and its pick raised half way)."""
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("%r is no finite number" % (value,))
+    return number
+
+
+def _key_times(value):
+    """A header's `key_times` checked: absent (None) or a list of finite numbers - a string, a
+    number or a list holding anything else is ValueError (the paste plan iterates and rounds
+    them)."""
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ValueError("key_times is no list")
+    for time_ in value:
+        if isinstance(time_, bool) or not isinstance(time_, (int, float)):
+            raise ValueError("key_times holds %r" % (time_,))
+        _finite(time_)
 
 
 def _card(path, folder, name):
     """The `Card` for the card folder at `path` (ValueError when it cannot be read). The name is
-    the FOLDER's: the card is addressed by its path, so a rename done in Explorer shows at once."""
+    the FOLDER's: the card is addressed by its path, so a rename done in Explorer shows at once.
+    An animation's header adds its frame count, range, time unit and preview sheet; a number
+    there that is no number - JSON's Infinity or NaN, an integer too long for a float - makes
+    the card unreadable (an OverflowError or a ValueError of `int` / `float`, `_finite` for the
+    range), never an error out of `cards()`; so do `key_times` that are no list of numbers
+    (`_key_times`)."""
     data = read(path)
+    anim = is_anim(path)
     try:
         kind = str(data.get("kind") or "character")
         if kind == "character":
@@ -222,11 +353,21 @@ def _card(path, folder, name):
         created = str(data.get("created") or _iso(os.path.getmtime(path)))
         regions = [str(region) for region in (data.get("regions") or [])]
         author = str(data.get("author") or "")
-    except (AttributeError, TypeError, OSError) as exc:
+        if anim:
+            frames = int(data.get("frames") or 0)
+            start = _finite(data.get("start") or 0.0)
+            end = _finite(data.get("end") or 0.0)
+            fps = str(data.get("fps") or "")
+            _key_times(data.get("key_times"))
+    except (AttributeError, TypeError, ValueError, OverflowError, OSError) as exc:
         raise ValueError("%s: unreadable fields (%s)" % (path, exc))
     image = path + "/" + THUMB_FILE
-    return Card(path, folder, name, created, author, label, kind, count, regions,
-                image if os.path.isfile(image) else "")
+    thumbnail = image if os.path.isfile(image) else ""
+    if not anim:
+        return Card(path, folder, name, created, author, label, kind, count, regions, thumbnail)
+    sheet = path + "/" + PREVIEW_FILE
+    return Card(path, folder, name, created, author, label, kind, count, regions, thumbnail,
+                "anim", frames, sheet if os.path.isfile(sheet) else "", fps, start, end)
 
 
 def cards(root, folder="", recursive=True):
@@ -238,7 +379,7 @@ def cards(root, folder="", recursive=True):
         for name in names:
             path = _abs(root, rel) + "/" + name
             try:
-                found.append(_card(path, rel, name[:-len(CARD_SUFFIX)]))
+                found.append(_card(path, rel, _stem(name)))
             except ValueError:
                 broken.append(path)
     found.sort(key=lambda card: (card.folder.lower(), card.name.lower()))
@@ -247,14 +388,27 @@ def cards(root, folder="", recursive=True):
 
 # ---------------------------------------------------------------- writing cards
 
+def _dump_json(part, data):
+    """`data` as compact JSON into the file `part`. Compact on purpose - this is machine data
+    (hundreds of floats a bone), not a file to read."""
+    with open(part, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, separators=(",", ":"))
+
+
+def _dump_frames(part, frames):
+    """`frames` as compact JSON, gzipped, into the file `part` (level 6: zlib's own default -
+    nearly level 9's size on float text, in a fraction of its time)."""
+    with gzip.open(part, "wt", encoding="utf-8", compresslevel=6) as handle:
+        json.dump(frames, handle, ensure_ascii=False, separators=(",", ":"))
+
+
 def _write_json(card, data):
-    """`data` into `card`'s pose.json: written whole to a `.part` file, then swapped in. Compact
-    on purpose - this is machine data (hundreds of floats a bone), not a file to read."""
-    target = card + "/" + POSE_FILE
+    """`data` into `card`'s main file (`pose.json` / `anim.json`): written whole to a `.part`
+    file, then swapped in."""
+    target = card + "/" + _main_file(card)
     part = target + ".part"
     try:
-        with open(part, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, separators=(",", ":"))
+        _dump_json(part, data)
         os.replace(part, target)
     except BaseException:
         try:
@@ -278,40 +432,116 @@ def _copy_atomic(source, target):
         raise
 
 
-def write(root, folder, name, data, thumbnail=None, replace=False):
-    """Write a card `<name>.pose` into `folder` of the library and answer its path. `data` is
+def write(root, folder, name, data, thumbnail=None, replace=False, frames=None, preview=None):
+    """Write a card into `folder` of the library and answer its path: `<name>.anim` when
+    `data["format"]` is `ANIM_FORMAT` (an animation's header), else `<name>.pose`. `data` is
     copied (the caller's dict is not touched) and gets the card's own `name` (the safe one, so
-    the file and the card always agree) and, if missing, `format` / `version`. `thumbnail` is
-    the path of an image to copy in. An existing card is refused unless `replace` - then its
-    pose is swapped and its thumbnail kept unless a new one is given. A card that fails half
-    way is removed again."""
+    the file and the card always agree) and, if missing, `format` / `version`. `thumbnail` and
+    `preview` are paths of images to copy in, `frames` an animation's per-frame data (written
+    as `frames.json.gz`); a pose card given either of the last two is refused before anything
+    is written.
+
+    A NEW card's name is taken when a card of EITHER type wears it: refused. An existing card
+    of the same type is refused unless `replace` - then what is given is swapped in and every
+    file NOT given (the still, the preview, the frames) is kept. A replace never asks the
+    other suffix: the install keeps local cards card by card, so a local `Walk.pose` can stand
+    beside a shipped `Walk.anim`, and Update from selection replaces it. Every file is staged
+    as `<file>.part` first and only then swapped in, the main file LAST: a reader sees a new
+    card's main file only when the card is whole, and a write that fails while STAGING leaves
+    an existing card as it was and removes a new one again. The swaps are one `os.replace`
+    after another, so a replace that fails between two of them (a disk pulled away) keeps the
+    files it had swapped already."""
     folder = _clean_folder(folder)
     name = safe_name(name)
     if _hidden(name):
         raise ValueError("a name cannot start with %s" % TRASH_PREFIX)
-    card = _abs(root, folder) + "/" + name + CARD_SUFFIX
+    anim = data.get("format") == ANIM_FORMAT
+    if not anim and (frames is not None or preview):
+        raise ValueError("a pose card takes no frames and no preview")
+    here = _abs(root, folder)
+    suffix, other = (ANIM_SUFFIX, CARD_SUFFIX) if anim else (CARD_SUFFIX, ANIM_SUFFIX)
+    card = here + "/" + name + suffix
     existed = os.path.isdir(card)
-    if existed and not replace:
+    if (existed and not replace) or (not existed and os.path.exists(here + "/" + name + other)):
         raise ValueError("%s already exists in %s" % (name, folder or "the library"))
     data = dict(data)
     data.setdefault("format", FORMAT)
     data.setdefault("version", VERSION)
     data["name"] = name
     os.makedirs(card, exist_ok=True)
+    _swap_in(card, data, frames, thumbnail, preview, existed)
+    return card
+
+
+def _swap_in(card, data, frames, thumbnail, preview, existed):
+    """`write`'s staging and swaps into the card folder `card`: every file given staged as
+    `<file>.part` (the frames, the still, the preview, the main file LAST), then each swapped in
+    with `os.replace`. A failure while staging removes the parts (and, `existed` False, the new
+    card folder) and goes on."""
+    staged = []                         # (part, target), in the order they are swapped in
+
+    def stage(file_name, writer):
+        target = card + "/" + file_name
+        staged.append((target + ".part", target))   # before writing: a half part is cleaned
+        writer(target + ".part")
+
     try:
+        if frames is not None:
+            stage(FRAMES_FILE, lambda part: _dump_frames(part, frames))
         if thumbnail:
-            _copy_atomic(thumbnail, card + "/" + THUMB_FILE)
-        _write_json(card, data)         # last: a reader sees pose.json only when the card is whole
+            stage(THUMB_FILE, lambda part: shutil.copy2(thumbnail, part))
+        if preview:
+            stage(PREVIEW_FILE, lambda part: shutil.copy2(preview, part))
+        stage(_main_file(card), lambda part: _dump_json(part, data))   # last: the card is whole
+        for part, target in staged:
+            os.replace(part, target)
     except BaseException:
+        for part, _target in staged:
+            try:
+                os.remove(part)
+            except OSError:
+                pass
         if not existed:
             shutil.rmtree(card, ignore_errors=True)
         raise
+
+
+def replace(path, data, frames=None, thumbnail=None, preview=None):
+    """Write `data` back into the EXISTING card folder at `path` (either type) - Update from
+    selection and Replace thumbnail address the card they act on by its path, never by a name
+    made again: a card renamed in Explorer to a name `safe_name` changes («Walk. ») came back
+    from a write by name as a stray new card (the final review). `write`'s staging rules
+    (`_swap_in`): every file given swapped in, the main file last, every file NOT given kept;
+    `data` copied, its `name` the folder's own and `format` / `version` set. ValueError - before
+    anything is written - for no card folder at `path`, `data` of the other type, or a pose
+    card given frames or a preview. Answers the path (forward slashes)."""
+    card = _fwd(path)
+    if not _is_card(os.path.basename(card)) or not os.path.isdir(card):
+        raise ValueError("%s: no card to replace" % card)
+    anim = is_anim(card)
+    if (data or {}).get("format", FORMAT) != _format_of(card):
+        raise ValueError("%s: not a %s card's data" % (card, "animation" if anim else "pose"))
+    if not anim and (frames is not None or preview):
+        raise ValueError("a pose card takes no frames and no preview")
+    data = dict(data)
+    data.setdefault("version", VERSION)
+    data["format"] = _format_of(card)
+    data["name"] = _stem(os.path.basename(card))
+    _swap_in(card, data, frames, thumbnail, preview, True)
     return card
 
 
 def set_thumbnail(path, image):
     """Replace the thumbnail of the card at `path` with the image file `image`."""
     _copy_atomic(image, _fwd(path) + "/" + THUMB_FILE)
+
+
+def set_preview(path, image):
+    """Replace the preview sheet of the animation card at `path` with the image file `image`
+    (Replace thumbnail on an animation takes both again). ValueError for a pose card."""
+    if not is_anim(path):
+        raise ValueError("%s: a pose card has no preview" % _fwd(path))
+    _copy_atomic(image, _fwd(path) + "/" + PREVIEW_FILE)
 
 
 def _rename_dir(old, new):
@@ -326,16 +556,26 @@ def _rename_dir(old, new):
     os.rename(old, new)
 
 
+def _other_suffix(suffix):
+    """The other card type's suffix."""
+    return CARD_SUFFIX if suffix == ANIM_SUFFIX else ANIM_SUFFIX
+
+
 def rename(path, name):
-    """Rename the card at `path` to `name` (made safe): the folder AND the `name` inside the
-    file. ValueError for a taken name (or an unreadable card, before anything moves). Answers
-    the new path."""
+    """Rename the card at `path` (either type, its suffix kept) to `name` (made safe): the folder
+    AND the `name` inside its main file. ValueError for a name a card of either type holds there
+    (or an unreadable card, before anything moves). Answers the new path."""
     path = _fwd(path)
     new = safe_name(name)
     if _hidden(new):
         raise ValueError("a name cannot start with %s" % TRASH_PREFIX)
     data = read(path)
-    target = _fwd(os.path.dirname(path)) + "/" + new + CARD_SUFFIX
+    suffix = card_suffix(path)
+    parent = _fwd(os.path.dirname(path))
+    target = parent + "/" + new + suffix
+    clash = parent + "/" + new + _other_suffix(suffix)
+    if not _same(path, target) and os.path.exists(clash):
+        raise ValueError("%s already exists" % os.path.basename(clash))
     _rename_dir(path, target)
     data["name"] = new
     _write_json(target, data)
@@ -343,19 +583,20 @@ def rename(path, name):
 
 
 def move(path, root, folder):
-    """Move the card at `path` into the catalog `folder` of the library `root` (which must
-    exist); ValueError when a card of that name is already there. Answers the new path."""
+    """Move the card at `path` (either type) into the catalog `folder` of the library `root`
+    (which must exist); ValueError when a card of that name - of either type - is already
+    there. Answers the new path."""
     path = _fwd(path)
     folder = _clean_folder(folder)
     where = _abs(root, folder)
     if not os.path.isdir(where):
         raise ValueError("no folder %r in the library" % (folder,))
-    target = where + "/" + os.path.basename(path)
+    leaf = os.path.basename(path)
+    target = where + "/" + leaf
     if _same(path, target):
         return target
-    if os.path.exists(target):
-        raise ValueError("%s already has %s" % (folder or "the library",
-                                                os.path.basename(path)[:-len(CARD_SUFFIX)]))
+    if os.path.exists(target) or _taken(where, _stem(leaf)):
+        raise ValueError("%s already has %s" % (folder or "the library", _stem(leaf)))
     shutil.move(path, target)
     return target
 
@@ -368,13 +609,14 @@ def trash_dir(user_app_dir):
 
 def remove(path, trash):
     """Delete the card (or catalog) at `path` the safe way: moved into `trash` under a name
-    stamped with the time (`20261002_181530_Fist.pose`), so a mistake is a move back. Answers
-    where it went."""
+    stamped with the time (`20261002_181530_Fist.pose`, `..._Walk.anim`), so a mistake is a move
+    back; a second removal of one name in that second takes `_2`, the card's own suffix kept.
+    Answers where it went."""
     path = _fwd(path)
     trash = _fwd(trash)
     os.makedirs(trash, exist_ok=True)
     base = "%s_%s" % (time.strftime("%Y%m%d_%H%M%S"), os.path.basename(path))
-    stem, suffix = (base[:-len(CARD_SUFFIX)], CARD_SUFFIX) if _is_card(base) else (base, "")
+    stem, suffix = (_stem(base), base[len(_stem(base)):]) if _is_card(base) else (base, "")
     target = trash + "/" + base
     number = 2
     while os.path.exists(target):       # two removals of one name in a second
@@ -419,18 +661,37 @@ def rename_folder(root, rel, name):
 
 # ---------------------------------------------------------------- search and sort
 
+#  A search term naming a card's TYPE, as a whole term only (the final review: «po» or «anim»
+#  typed on the way to a name matched every card of that type through its type word)
+TYPE_WORDS = {"pose": ("pose", "poses"), "anim": ("anim", "animation", "animations")}
+
+
 def filter_cards(cards, query):
     """The cards matching `query`: every whitespace-separated term must occur, case-insensitively,
-    in the card's name, folder or character label ("fist creep" narrows to Creep's fists)."""
+    in the card's name, folder or character label - or BE its type word (`TYPE_WORDS`: «pose» /
+    «poses», «anim» / «animation» / «animations», whole terms only) ("fist creep" narrows to
+    Creep's fists, "walk animation" to the walks that are clips; «po» matches «Point», never
+    every pose)."""
     terms = (query or "").lower().split()
     if not terms:
         return list(cards)
     kept = []
     for card in cards:
+        words = TYPE_WORDS["anim" if card.type == "anim" else "pose"]
         hay = ("%s %s %s" % (card.name, card.folder, card.label)).lower()
-        if all(term in hay for term in terms):
+        if all(term in hay or term in words for term in terms):
             kept.append(card)
     return kept
+
+
+def of_type(cards, type_name):
+    """The cards of one of `TYPES`: `all` every card, `pose` the poses, `anim` the animations
+    (the window's type filter, beside the search). ValueError for another name."""
+    if type_name not in TYPES:
+        raise ValueError("a type of %s, not %r" % (", ".join(TYPES), type_name))
+    if type_name == "all":
+        return list(cards)
+    return [card for card in cards if card.type == type_name]
 
 
 def sort_cards(cards, key):

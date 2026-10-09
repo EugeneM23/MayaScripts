@@ -686,6 +686,29 @@ def skeleton(ref, notes=None):
     return bones, result.convention
 
 
+def refresh_world(ref, bones):
+    """A NEW `{leaf: bone}` - `skeleton`'s, the same leaves and static fields (path, parent,
+    canonical, rest, rotateOrder, jointOrient, rotateAxis) - with each bone's `world` read again
+    as it stands now and, on a rig, the unrolled bones' `drive` (`rigsolve.drive_matrices`). The
+    per-frame target read of an animation's walk (2026-10-03): what follows a bone the card does
+    not hold plays the take under it, frame by frame, while the rest - the recognise, the binds -
+    is the skeleton's and was read once. `bones` is not changed."""
+    out = {}
+    for name, bone in bones.items():
+        fresh = dict(bone)
+        fresh["world"] = [float(v) for v in cmds.getAttr(bone["path"] + ".worldMatrix[0]")]
+        out[name] = fresh
+    if ref.kind == "rig" and ref.rig is not None:
+        from maya_poselib import rigsolve
+        drives = rigsolve.drive_matrices(ref.rig)
+        for name, fresh in out.items():
+            if name in drives:
+                fresh["drive"] = posemath.flat(drives[name])
+            else:
+                fresh.pop("drive", None)         # never a drive of another frame
+    return out
+
+
 def bone_path(ref, name):
     """The long path of the character's bone with leaf `name` (the first in `skeleton`'s order),
     or None."""

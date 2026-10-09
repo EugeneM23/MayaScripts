@@ -12,7 +12,13 @@ Sizes are physical px. The constants are LOGICAL and every function multiplies t
 (`mayaDpiSetting -q -realScaleValue`; trap 98: Qt pixels are physical here), rounding each
 size once so the grid, the hit test and the culling agree to the pixel.
 
-Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md
+The animation cards (2026-10-03, «Карточки с сохраненной анимацией должны проигрывать превью
+этой анимации»): which frames the preview sheet holds and where each cell stands in it, which
+cell plays after so many milliseconds at the clip's own rate, the badge on the card, and what the
+details panel and the status line of a paste say.
+
+Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md,
+      docs/superpowers/specs/2026-10-03-pose-library-animation-design.md
 """
 
 import math
@@ -36,6 +42,27 @@ ZOOM_IN_MS = 140
 ZOOM_OUT_MS = 180
 ZOOM_MIN_MS = 40        # a zoom turned back near its end still takes a moment
 DOT = "·"          # the middle dot the plugin's captions separate with
+
+#  The animation cards: a scene's time unit as frames per second (Maya's `currentUnit -time`
+#  names; «23.976fps»-style names are read off the string, anything else plays at NTSC's 30);
+#  the preview sheet holds at most PREVIEW_MAX cells of PREVIEW_SIZE px; a playing card or
+#  details picture redraws every PLAY_MS
+FPS = {"game": 15.0, "film": 24.0, "pal": 25.0, "ntsc": 30.0, "show": 48.0, "palf": 50.0,
+       "ntscf": 60.0}
+_FALLBACK_FPS = 30.0
+PREVIEW_MAX = 60
+PREVIEW_SIZE = 320
+PLAY_MS = 33
+BADGE = "▶"        # the play triangle before an animation card's frame count
+
+#  The worst of a paste is said as a pose's is (apply.SHOW_DEG / SHOW_CM / DEG_PLACES; this
+#  module imports no sibling, so the numbers are repeated): an angle or a place smaller than
+#  0.0005 is not worth a word, an angle is said to 4 decimals
+SHOW_DEG = 0.0005
+SHOW_CM = 0.0005
+DEG_PLACES = 4
+
+_ANIM_FORMAT = "skeldar.anim"   # store.ANIM_FORMAT: an animation card's header, read alone
 
 OFF_WINDOW = "release off the window to apply"
 NO_TARGET = "no target"
@@ -226,6 +253,64 @@ class Zoom(object):
         return self.level(now) > 0.0 or self.target > 0.0
 
 
+def fps_of(unit):
+    """Frames per second of a scene's time unit as `currentUnit -q -time` names it: one of FPS,
+    or a «<n>fps» string («23.976fps», «120fps»); anything else - an unknown name, nothing at
+    all, a rate that is no rate - plays at 30, NTSC's, the Atone project's. Pure."""
+    text = str(unit or "").strip().lower()
+    if text in FPS:
+        return FPS[text]
+    match = re.match(r"^(\d+(?:\.\d+)?)fps$", text)
+    if match and float(match.group(1)) > 0:
+        return float(match.group(1))
+    return _FALLBACK_FPS
+
+
+def preview_frames(start, end, most=PREVIEW_MAX):
+    """(frames, step): the source frames the preview sheet holds for the clip `start`..`end`
+    (whole frames). Every frame while the clip has at most `most`; a longer one every `step`-th
+    (`step = ceil(count / most)`), `start` first and none past `end` - so a sheet never holds
+    more than `most` cells, and a cell stands for `step` frames when it plays. An empty range
+    (`end` before `start`) holds nothing. Pure."""
+    start, end = int(round(start)), int(round(end))
+    if end < start:
+        return [], 1
+    step = max(1, int(math.ceil((end - start + 1) / float(max(1, most)))))
+    return list(range(start, end + 1, step)), step
+
+
+def sheet_columns(count):
+    """How many cells of the sheet stand in a row: `ceil(sqrt(count))`, so the sheet is as near
+    a square as it can be (48 cells: 7 to a row); at least one. Pure."""
+    return max(1, int(math.ceil(math.sqrt(max(0, count)))))
+
+
+def sheet_cell(index, columns, size):
+    """(x, y, size, size): the cell `index` of a sheet of `columns` cells to a row, each `size`
+    px square, left to right and top to bottom - where the saver paints a frame and the card
+    reads it back. Pure."""
+    row, col = divmod(int(index), max(1, int(columns)))
+    return (col * size, row * size, size, size)
+
+
+def play_cell(elapsed_ms, cells, step, fps):
+    """The cell a preview of `cells` cells shows `elapsed_ms` after it started, looping at the
+    clip's own rate: a cell stands for `step` source frames, so it holds `step / fps` seconds.
+    Computed as `elapsed * fps / (1000 * step)` - the product, not a division by the period
+    (33.33... ms does not divide 1000 ms into exactly 30 in floats). One cell or less is the
+    first cell; a rate that is no rate stands still. Pure."""
+    if cells <= 1 or fps <= 0 or step <= 0:
+        return 0
+    return int(max(0.0, float(elapsed_ms)) * fps / (1000.0 * step)) % int(cells)
+
+
+def badge_text(frames):
+    """What the badge on an animation card's picture reads: the play triangle and the frame
+    count («▶ 48»); nothing for a clip of fewer than two frames (it does not play). Pure."""
+    frames = int(frames or 0)
+    return "%s %d" % (BADGE, frames) if frames >= 2 else ""
+
+
 def drop_caption(name, aim):
     """(text, good): what the ghost says over `aim` while the card `name` is dragged. `good`
     is whether a release there does something. The aim is the window's own reading of the
@@ -291,20 +376,59 @@ def _when(created):
     return text
 
 
+def _is_anim(card, data):
+    """Whether `card` / `data` is an animation card: the listing says so (`type`), or, with no
+    listing, the header does (its `format`)."""
+    if card is not None:
+        return getattr(card, "type", "pose") == "anim"
+    return data.get("format") == _ANIM_FORMAT
+
+
+def _clip_line(card, data):
+    """An animation card's second line, «48 frames (0-47) · 30 fps · 12 keys»: the count and
+    the source frames (one frame reads «1 frame (5)»), the rate of its unit, and how many key
+    times the source had in the range - that part only when it had any. A part the card does
+    not know is left out."""
+    parts = []
+    count = int(_field(data, card, "frames", 0) or 0)
+    if count > 0:
+        start, end = _field(data, card, "start", 0.0), _field(data, card, "end", 0.0)
+        span = _num(start) if start == end else "%s-%s" % (_num(start), _num(end))
+        parts.append("%s (%s)" % (_counted(count, "frames"), span))
+    unit = _field(data, card, "fps", "")
+    if unit:
+        parts.append("%s fps" % _num(fps_of(unit)))
+    key_times = data.get("key_times") or []
+    if key_times:
+        parts.append(_counted(len(key_times), "keys"))
+    return (" %s " % DOT).join(parts)
+
+
 def details(card, data):
-    """The lines of the details panel for `card` (a `store.Card`) and `data` (its `pose.json`,
-    or None before it is read - the card's listing stands in). Lines that would be empty are
-    left out:
+    """The lines of the details panel for `card` (a `store.Card`) and `data` (its `pose.json` /
+    `anim.json`, or None before it is read - the card's listing stands in). Lines that would be
+    empty are left out:
 
         Manny [rig]
         3 bones · Hand L, Arm L            (an objects pose: «2 objects»)
         Eugene · 2026-10-02 18:00
         frame 12 · shot_010.ma
 
+    An animation card says what the clip is before what it moves, and where it came from
+    without a frame (it is a range):
+
+        Manny [rig]
+        48 frames (0-47) · 30 fps · 12 keys
+        3 bones · Hand L, Arm L
+        Eugene · 2026-10-03 12:00
+        shot_010.ma
+
     Pure."""
     data = data if isinstance(data, dict) else {}
     if card is None and not data:
         return []
+    anim = _is_anim(card, data)
+    clip = _clip_line(card, data) if anim else ""
     if (data.get("kind") or getattr(card, "kind", "")) == "objects":
         label = "Objects"
         objects = data.get("objects")
@@ -324,11 +448,11 @@ def details(card, data):
            if part]
     frame, scene = data.get("frame"), data.get("scene") or ""
     where = []
-    if isinstance(frame, (int, float)):
+    if isinstance(frame, (int, float)) and not anim:
         where.append("frame " + _num(frame))
     if scene:
         where.append(str(scene).replace("\\", "/").rsplit("/", 1)[-1])
-    return [line for line in (label, second, (" %s " % DOT).join(who),
+    return [line for line in (label, clip, second, (" %s " % DOT).join(who),
                               (" %s " % DOT).join(where)) if line]
 
 
@@ -365,3 +489,71 @@ def status_line(applied):
         shown = "<0.001" if 0 < worst < 0.001 else _num(worst)
         text += " - worst %s %s" % (shown, applied.get("worst_unit") or "deg")
     return " | ".join([text] + [note for note in applied.get("notes") or [] if note])
+
+
+def anim_status(status):
+    """The status line after an animation card was pasted, from the summary of one target - a
+    mapping or a namedtuple with these fields - or a list of them (one per character, joined
+    with « | »):
+
+        name, target        the card, and the character it went onto
+        count, noun         how many nodes took keys («controls», «bones»: the plural)
+        layer               the layer the keys went on («» without layers)
+        a, b, frames        the paste range (target frames) and how many frames it holds
+        mode                the paste mode («replace», «replace_all», «insert», «merge»)
+        worst, worst_frame  (deg, cm) of the worst frame measured, and which frame that was
+        notes               [str], each said after a « | »
+        alpha, mirror       the blend (1.0 whole) and whether the clip was mirrored
+
+    reads «Walk mirrored at 50 % onto Manny_Rig1: 73 controls keyed over frames 12-59 (48
+    frames, replace) on AnimLayer1 - worst 0.003 deg / 0.02 cm at frame 31 | note». The worst
+    is said as `apply._line` says a pose's: the angle to DEG_PLACES decimals, each of the angle
+    and the place only when it reaches SHOW_DEG / SHOW_CM, neither - no «worst» at all. A
+    one-frame paste reads «at frame 12»; nothing keyed reads «Walk onto Manny_Rig1: nothing
+    keyed» (with its notes). What is missing is left out. Pure."""
+    if isinstance(status, list) or (isinstance(status, tuple)
+                                    and not hasattr(status, "_asdict")):
+        return " | ".join(text for text in (anim_status(one) for one in status) if text)
+    if not status:
+        return ""
+    get = (status._asdict() if hasattr(status, "_asdict") else status).get
+    head = get("name") or "Animation"
+    if get("mirror"):
+        head += " mirrored"
+    alpha = get("alpha")
+    if alpha is not None and alpha < 1.0:
+        head += " at %s %%" % _num(alpha * 100.0, 1)
+    target = get("target")
+    text = ("%s onto %s" % (head, target)) if target else head
+    if not get("count"):
+        text += ": nothing keyed"
+    else:
+        text += ": %s keyed" % _counted(get("count"), get("noun") or "channels")
+        a, b = get("a"), get("b")
+        if a is not None and b is not None:
+            text += (" at frame %s" % _num(a) if a == b
+                     else " over frames %s-%s" % (_num(a), _num(b)))
+        paste = []
+        if get("frames") is not None:
+            paste.append(_counted(get("frames"), "frames"))
+        if get("mode"):
+            paste.append(str(get("mode")).replace("_", " "))
+        if paste:
+            text += " (%s)" % ", ".join(paste)
+        if get("layer"):
+            text += " on " + get("layer")
+        worst = get("worst")
+        if worst is not None:
+            words = []
+            if worst[0] >= SHOW_DEG:
+                words.append("%s deg" % _num(worst[0], DEG_PLACES))
+            if worst[1] >= SHOW_CM:
+                words.append("%s cm" % _num(worst[1]))
+            if words:
+                text += " - worst " + " / ".join(words)
+                if get("worst_frame") is not None:
+                    text += " at frame " + _num(get("worst_frame"))
+    for note in get("notes") or ():
+        if note:
+            text += " | " + note
+    return text

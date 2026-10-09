@@ -715,6 +715,371 @@ class Names(unittest.TestCase):
         self.assertFalse(pm.is_twist("upperarm_l"))
 
 
+# ---------------------------------------------------------------- an animation: one Transfer,
+# many frames (2026-10-03). The alignment is read once, off the FIRST pasted frame; each frame
+# carries its own pose and the target's root frame where the clip's travel puts it.
+# Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md
+
+def same(test, a, b, tol, what=""):
+    """Every element of two matrices within `tol`."""
+    a, b = pm.matrix(a), pm.matrix(b)
+    worst = max(abs(a[i] - b[i]) for i in range(16))
+    test.assertLessEqual(worst, tol, "%s: %g" % (what, worst))
+
+
+def with_helper(bones, local=trs((5, 0, 3), (0, 25, 0))):
+    """A copy with `ik_foot_root` - an export helper, no member, no partner - under the root."""
+    out = dict((leaf, dict(bone)) for leaf, bone in bones.items())
+    root = bones["root"]
+    out["ik_foot_root"] = {"parent": "root", "canonical": None,
+                           "rest": pm.flat(local * pm.matrix(root["rest"])),
+                           "world": pm.flat(local * pm.matrix(root["world"]))}
+    return out
+
+
+def root_moved(bones, place):
+    """A copy whose root bone stands on `place` (its world only: what `travel` reads)."""
+    out = dict((leaf, dict(bone)) for leaf, bone in bones.items())
+    out[pm.root_of(bones)]["world"] = pm.flat(place)
+    return out
+
+
+class TransferFrames(unittest.TestCase):
+
+    def fixtures(self):
+        """(source, target, members, scale): a twin, a ×1.2 non-twin, a source with no root."""
+        twin_s = skeleton(POSE)
+        twin_t = skeleton(place=trs((300, 0, -50), (0, 90, 0)))
+        big_s = standing(POSE, off={"calf_l": (0.0, 0.0, 0.5)})
+        big_t = skeleton(scale=1.2)
+        mx_s = rootless(skeleton(TILTED, place=trs((120, 0, -36), (0, 90, 0))))
+        mx_t = skeleton(place=trs((-40, 0, 75), (0, 70, 0)))
+        return ((twin_s, twin_t, [b for b in twin_s if b != "root"], 1.0),
+                (big_s, big_t, [b for b in big_s if b != "root"],
+                 pm.scale_between(big_s, big_t, pm.pairs(big_s, big_t))),
+                (mx_s, mx_t, list(mx_s), 1.0))
+
+    def test_targets_equals_a_transfers_frame(self):
+        for source, target, members, scale in self.fixtures():
+            pairs = pm.pairs(source, target)
+            want = pm.targets(source, target, pairs, members, scale=scale)
+            got = pm.Transfer(source, target, pairs, members, scale=scale).frame()
+            self.assertEqual(sorted(got), sorted(want))
+            for leaf in want:
+                same(self, got[leaf], want[leaf], 1e-12, leaf)
+
+    def test_frame_takes_another_pose_with_the_alignment_of_the_first(self):
+        # the calf stands 0.5 cm off its bind in the first frame: the thigh's alignment reads it
+        first = standing(POSE, off={"calf_l": (0.0, 0.0, 0.5)})
+        target = skeleton(scale=1.2)                             # no twin: 20 % longer
+        pairs = pm.pairs(first, target)
+        self.assertFalse(pm.twin(pairs, first, target))
+        members = [b for b in first if b != "root"]
+        scale = pm.scale_between(first, target, pairs)
+        transfer = pm.Transfer(first, target, pairs, members, scale=scale)
+        aligned = pm.alignments(pairs, first, target)
+        for leaf in aligned:
+            same(self, transfer.align[leaf], aligned[leaf], 0.0, leaf)
+        second_pose = {"pelvis": (0, -20, 0), "spine_01": (-10, 5, 0), "upperarm_l": (10, -30, 60),
+                       "thigh_l": (20, 10, -5), "calf_l": (-60, 0, 0), "hand_l": (0, 40, 0)}
+        # the same translations as the first: `targets` reads the same alignment off it
+        alike = standing(second_pose, off={"calf_l": (0.0, 0.0, 0.5)})
+        want = pm.targets(alike, target, pairs, members, scale=scale)
+        got = transfer.frame(alike)
+        for leaf in want:
+            same(self, got[leaf], want[leaf], 1e-9, leaf)
+        # other translations: the frame's own alignment differs, the transfer keeps the first's
+        moved = standing(second_pose, off={"calf_l": (0.0, 0.0, -0.5)})
+        own = pm.alignments(pairs, moved, target)
+        self.assertGreater(pm.angle(own["thigh_l"], transfer.align["thigh_l"]), 1.0)
+        out = transfer.frame(moved)
+        for leaf, above in (("calf_l", "thigh_l"), ("lowerarm_l", "upperarm_l"),
+                            ("spine_01", "pelvis")):
+            o_t = pm.rigid(target[leaf]["rest"]) * transfer.align[leaf] * \
+                pm.rigid(moved[leaf]["rest"]).inverse()
+            o_tp = pm.rigid(target[above]["rest"]) * transfer.align[above] * \
+                pm.rigid(moved[above]["rest"]).inverse()
+            wanted = o_t * pm.rotation(moved[leaf]["world"]) * \
+                pm.rotation(moved[above]["world"]).inverse() * o_tp.inverse()
+            got_turn = pm.rotation(out[leaf]) * pm.rotation(out[above]).inverse()
+            self.assertLess(pm.angle(got_turn, pm.rotation(wanted)), 1e-9, leaf)
+
+    def test_root_world_moves_the_root_and_carries_its_children(self):
+        source = skeleton(POSE)
+        target = with_helper(skeleton(place=trs((300, 0, -50), (0, 90, 0))))
+        pairs = pm.pairs(source, target)
+        self.assertNotIn("ik_foot_root", pairs)
+        members = [b for b in source if b != "root"]
+        transfer = pm.Transfer(source, target, pairs, members)
+        here = trs((40, 0, -25), (0, 60, 0))
+        out = transfer.frame(root_world=here)
+        same(self, out["root"], here, 1e-12, "root")
+        local = pm.matrix(target["ik_foot_root"]["world"]) * \
+            pm.matrix(target["root"]["world"]).inverse()
+        same(self, out["ik_foot_root"], local * here, 1e-9, "ik_foot_root")
+        # the pelvis 95 cm over the new root (a twin: the card's offset, unscaled)
+        want = pm.position(here) + om.MVector(0, 95, 0) * pm.rotation(here)
+        self.assertLess((pm.position(out["pelvis"]) - want).length(), 1e-9)
+        # the members ride the new root as the card's ride its own (at the origin)
+        for leaf in ("pelvis", "upperarm_l", "hand_l", "calf_l"):
+            same(self, out[leaf], pm.matrix(source[leaf]["world"]) * here, 1e-9, leaf)
+        # without it the root keeps where it stands
+        same(self, transfer.frame()["root"], target["root"]["world"], 1e-12, "standing")
+
+    def test_root_world_on_a_rootless_target_is_its_ground(self):
+        card = skeleton(TILTED)
+        target = rootless(skeleton(place=trs((-40, 0, 75), (0, 70, 0))))
+        pairs = pm.pairs(card, target)
+        transfer = pm.Transfer(card, target, pairs, [b for b in card if b != "root"])
+        here = trs((10, 0, 20), (0, -30, 0))
+        out = transfer.frame(root_world=here)
+        hips = pm.position(out["mx_pelvis"])
+        self.assertAlmostEqual(hips.x, 10.0, 9)
+        self.assertAlmostEqual(hips.z, 20.0, 9)
+        ground = pm._ground(target["mx_pelvis"]["rest"], out["mx_pelvis"])[0]
+        same(self, ground, here, 1e-9, "the ground frame")
+        # the body the card's, carried from its root onto the new ground
+        for leaf in ("mx_spine_01", "mx_upperarm_l", "mx_thigh_l"):
+            same(self, out[leaf], pm.matrix(card[leaf[3:]]["world"]) * here, 1e-9, leaf)
+
+    def test_place(self):
+        source = skeleton(POSE)
+        target = skeleton(place=trs((300, 0, -50), (0, 90, 0)))
+        transfer = pm.Transfer(source, target, pm.pairs(source, target), ["upperarm_l"])
+        same(self, transfer.place(), target["root"]["world"], 0.0, "rooted")
+        other = skeleton(place=trs((5, 0, 6), (0, 10, 0)))
+        same(self, transfer.place(other), other["root"]["world"], 0.0, "another target")
+        bare = rootless(skeleton(TILTED, place=trs((-40, 0, 75), (0, 70, 0))))
+        transfer = pm.Transfer(source, bare, pm.pairs(source, bare), ["upperarm_l"])
+        want = pm._ground(bare["mx_pelvis"]["rest"], bare["mx_pelvis"]["world"])[0]
+        same(self, transfer.place(), want, 0.0, "rootless")
+
+    def test_root_frame(self):
+        bones = skeleton(place=trs((5, 0, 6), (0, 10, 0)))
+        pose, rest = pm.root_frame(bones)
+        same(self, pose, bones["root"]["world"], 0.0, "pose")
+        same(self, rest, bones["root"]["rest"], 0.0, "rest")
+        other = skeleton(place=trs((-7, 0, 1)))
+        same(self, pm.root_frame(bones, other)[0], other["root"]["world"], 0.0, "another pose")
+        bare = rootless(skeleton(TILTED, place=trs((-40, 0, 75), (0, 70, 0))))
+        want = pm._ground(bare["mx_pelvis"]["rest"], bare["mx_pelvis"]["world"])
+        got = pm.root_frame(bare)
+        same(self, got[0], want[0], 0.0, "ground")
+        same(self, got[1], want[1], 0.0, "ground rest")
+
+
+class Travel(unittest.TestCase):
+
+    def transfer(self, source, target=None, scale=1.0):
+        target = skeleton() if target is None else target
+        pairs = pm.pairs(source, target)
+        return pm.Transfer(source, target, pairs, [b for b in source if b != "root"], scale=scale)
+
+    def test_travel_on_a_twin_is_the_root_motion(self):
+        first, now = skeleton(), skeleton(place=trs((10, 0, 20), (0, 30, 0)))
+        got = self.transfer(first).travel(now, first)
+        want = pm.rigid(now["root"]["world"]) * pm.rigid(first["root"]["world"]).inverse()
+        same(self, got, want, 1e-12)
+        # from a first frame that stands elsewhere too
+        start = skeleton(place=trs((-3, 0, 4), (0, -15, 0)))
+        got = self.transfer(first).travel(now, start)
+        want = pm.rigid(now["root"]["world"]) * pm.rigid(start["root"]["world"]).inverse()
+        same(self, got, want, 1e-12)
+
+    def test_travel_is_carried_through_the_root_axes_and_scaled(self):
+        # a UE target: its root rests turned -90 about X (Z up), the card's at identity
+        target = skeleton()
+        ue = pm.flat(trs(r=(-90, 0, 0)))
+        target["root"] = dict(target["root"], rest=ue, world=ue)
+        first, now = skeleton(), skeleton(place=trs((10, 0, 20), (0, 30, 0)))
+        got = self.transfer(first, target, scale=2.0).travel(now, first)
+        q = trs(r=(-90, 0, 0))
+        motion = pm.rigid(now["root"]["world"])
+        self.assertLess(pm.angle(got, q * pm.rotation(motion) * q.inverse()), 1e-9)
+        want = pm.position(motion) * q.inverse() * 2.0
+        self.assertLess((pm.position(got) - want).length(), 1e-9)
+        # the card's 20 cm forward (+Z) is the UE root's -Y, its 10 cm to the side +X - doubled
+        self.assertAlmostEqual(pm.position(got).y, -40.0, 9)
+        self.assertAlmostEqual(pm.position(got).x, 20.0, 9)
+        self.assertAlmostEqual(pm.position(got).z, 0.0, 9)
+
+    def test_travel_mirrored_reflects_the_sideways_step(self):
+        first = skeleton()
+        transfer = self.transfer(first)
+        side = transfer.travel(skeleton(place=trs((10, 0, 0))), first, flip=True)
+        self.assertLess((pm.position(side) - om.MVector(-10, 0, 0)).length(), 1e-9)
+        ahead = transfer.travel(skeleton(place=trs((0, 0, 10))), first, flip=True)
+        self.assertLess((pm.position(ahead) - om.MVector(0, 0, 10)).length(), 1e-9)
+        turn = transfer.travel(skeleton(place=trs(r=(0, 30, 0))), first, flip=True)
+        self.assertLess(pm.angle(turn, trs(r=(0, -30, 0))), 1e-9)
+        # unflipped: as it was
+        turn = transfer.travel(skeleton(place=trs(r=(0, 30, 0))), first)
+        self.assertLess(pm.angle(turn, trs(r=(0, 30, 0))), 1e-9)
+
+    def test_travel_mirrored_is_reflected_in_its_own_axes_then_carried(self):
+        """`Q · (F · L · F) · Q⁻¹`, never `F · (Q · L · Q⁻¹) · F`: told apart only when Q does not
+        commute with F, and F is read in the source root's REST frame - so the source's root rests
+        turned 40 about Y (the whole skeleton with it: its left-right axis is +X in the root's
+        axes, not in the world's), the target's 70 (Q a 30 turn about Y), and the step tilts as
+        it turns. The expectation is built from plain matrices, no posemath."""
+        source = skeleton(rest_locals={"root": (0, 40, 0)})
+        target = skeleton(rest_locals={"root": (0, 70, 0)})
+        transfer = self.transfer(source, target, scale=1.5)
+        first_place = trs((3, 0, -4), (0, 25, 0))
+        step = trs((10, 2, 20), (12, 30, -8))          # the motion in the first frame's root axes
+        got = transfer.travel(root_moved(source, step * first_place),
+                              root_moved(source, first_place), flip=True)
+        f = om.MMatrix([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])   # across +X
+        q = trs(r=(0, 30, 0))
+        want = q * f * step * f * q.inverse()
+        self.assertLess(pm.angle(got, want), 1e-9)
+        t = om.MVector(10, 2, 20) * f * q.inverse() * 1.5
+        self.assertLess((pm.position(got) - t).length(), 1e-9)
+        # the wrong order lands elsewhere, both turn and place: the fixture can tell
+        wrong = f * q * step * q.inverse() * f
+        self.assertGreater(pm.angle(wrong, want), 1.0)
+        self.assertGreater((pm.position(wrong) * 1.5 - t).length(), 1.0)
+
+    def test_travel_of_a_rootless_source_is_its_ground_motion(self):
+        source = rootless(skeleton())
+        first = root_moved(source, trs((5, 90, 0)))
+        now = root_moved(source, trs((15, 95, 10), (0, 20, 0)))
+        got = self.transfer(first).travel(now, first)
+        self.assertLess((pm.position(got) - om.MVector(10, 0, 10)).length(), 1e-9)
+        self.assertLess(pm.angle(got, trs(r=(0, 20, 0))), 1e-9)
+
+
+def yaw_of(m):
+    """The yaw (degrees) of a turn about world +Y."""
+    return math.degrees(pm._yaw_swing(m)[0])
+
+
+def rolling_clip(frames=24, tilt=2.0, step=4.0):
+    """A rootless clip (Mixamo's shape) rolling forward over its hips: a full turn about X over
+    `frames`, a +-`tilt` deg side tilt (about Z) every other frame, no turn about Y at all, the
+    hips moving `step` cm forward a frame. [bones per frame], frames + 1 of them."""
+    out = []
+    for i in range(frames + 1):
+        roll = 360.0 * i / frames
+        side = tilt if i % 2 else -tilt
+        out.append(rootless(skeleton({"pelvis": (roll, 0, side)},
+                                     place=trs((0, 0, step * i)))))
+    return out
+
+
+class SteadyHeading(unittest.TestCase):
+    """The final review's M3: a rootless card's travel read each frame's heading off its top
+    joint's swing-twist yaw, which is ill-conditioned near upside down - a hips forward roll
+    (360 deg about X, a 2 deg side tilt, no turn) keyed Main spinning -4, -15, 180, -6, -7 deg
+    at frames 10-14. `clip_roots` steadies the heading across the inverted span, for the travel
+    and the pelvis's offset together; the pose road (`targets`) is untouched."""
+
+    def setUp(self):
+        self.clip = rolling_clip()
+        self.top = "mx_pelvis"
+        self.worlds = [bones[self.top]["world"] for bones in self.clip]
+        self.target = skeleton()
+        self.pairs = pm.pairs(self.clip[0], self.target)
+        self.members = list(self.clip[0])
+        self.transfer = pm.Transfer(self.clip[0], self.target, self.pairs, self.members)
+
+    def test_a_frame_s_own_heading_spins_at_the_inverted_frames(self):
+        """The fixture can tell: read frame by frame, the root's yaw jumps by more than 90 deg
+        between two neighbours somewhere in the roll (the control)."""
+        yaws = [yaw_of(self.transfer.travel(now, self.clip[0])) for now in self.clip]
+        jumps = [abs(pm._wrapped(math.radians(b - a))) for a, b in zip(yaws, yaws[1:])]
+        self.assertGreater(math.degrees(max(jumps)), 90.0)
+
+    def test_the_steadied_travel_never_turns(self):
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        for i, now in enumerate(self.clip):
+            got = self.transfer.travel(now, self.clip[0], roots=(roots[i], roots[0]))
+            self.assertLess(abs(yaw_of(got)), 8.0, "frame %d: %.3f deg" % (i, yaw_of(got)))
+            # the travel's place is the ground under the hips, as before
+            want = om.MVector(0, 0, 4.0 * i)
+            self.assertLess((pm.position(got) - want).length(), 1e-6, i)
+
+    def test_the_steadied_heading_is_a_frame_s_own_where_the_hips_stand(self):
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        rest = pm.matrix(self.clip[0][self.top]["rest"])
+        for i, bones in enumerate(self.clip):
+            yaw, swing = pm._yaw_swing(pm.rotation(rest).inverse() *
+                                       pm.rotation(bones[self.top]["world"]))
+            if swing <= pm.SWING_LIMIT:
+                own = pm._ground(rest, bones[self.top]["world"])[0]
+                same(self, roots[i], own, 0.0, "frame %d" % i)
+
+    def test_the_pelvis_is_the_card_s_either_way(self):
+        """The pelvis stood exact under the spinning root (the two headings cancelled): handed the
+        steadied root frame for both its offset and its root world, it stands where it did."""
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        for i, now in enumerate(self.clip):
+            raw = self.transfer.frame(now, root_world=self.transfer.travel(now, self.clip[0]))
+            got = self.transfer.frame(now, root_world=self.transfer.travel(
+                now, self.clip[0], roots=(roots[i], roots[0])), source_root=roots[i])
+            self.assertLess(pm.angle(got["pelvis"], raw["pelvis"]), 1e-6, i)
+            self.assertLess((pm.position(got["pelvis"]) -
+                             pm.position(raw["pelvis"])).length(), 1e-6, i)
+
+    def mirrored_pelvis(self, i, steady_mirror):
+        """The target pelvis for frame i of the clip MIRRORED, the travel and the pelvis offset
+        on `clip_roots`' frames - the mirror plane too when `steady_mirror`, else the frame's
+        own heading's."""
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        now, first = self.clip[i], self.clip[0]
+        shown = pm.mirror(now, self.members,
+                          root_frame=roots[i] if steady_mirror else None)[0]
+        travel = self.transfer.travel(now, first, flip=True, roots=(roots[i], roots[0]))
+        return self.transfer.frame(shown, root_world=travel, source_root=roots[i])["pelvis"]
+
+    def test_mirrored_it_is_the_reflection_of_the_unmirrored_every_frame(self):
+        """Mirrored, the roll is the same roll with its side tilt the other way: the target's
+        pelvis the unmirrored one's reflected across the target's sagittal plane, on every frame
+        - the mirror plane turns with the heading, so with the travel steadied it must be the
+        steadied one too (the frame's own heading for the plane: the control, twice the
+        heading's noise off near upside down)."""
+        roots = pm.clip_roots(self.clip[0], self.worlds)
+        f = om.MMatrix([-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+        worst = {True: 0.0, False: 0.0}
+        for i, now in enumerate(self.clip):
+            plain = self.transfer.frame(now, root_world=self.transfer.travel(
+                now, self.clip[0], roots=(roots[i], roots[0])), source_root=roots[i])["pelvis"]
+            want = f * pm.rotation(plain) * f
+            for steady in (True, False):
+                worst[steady] = max(worst[steady],
+                                    pm.angle(self.mirrored_pelvis(i, steady), want))
+        self.assertLess(worst[True], 1e-6)
+        self.assertGreater(worst[False], 5.0)
+
+    def test_mirror_without_a_root_frame_is_as_it_was(self):
+        for bones in self.clip[::5]:
+            plain = pm.mirror(bones, self.members)[0]
+            own = pm._ground(bones[self.top]["rest"], bones[self.top]["world"])[0]
+            given = pm.mirror(bones, self.members, root_frame=own)[0]
+            for leaf in plain:
+                same(self, given[leaf]["world"], plain[leaf]["world"], 0.0, leaf)
+
+    def test_a_rooted_clip_s_roots_are_its_root_bone_s(self):
+        clip = [skeleton(place=trs((0, 0, 5.0 * i), (0, 20.0 * i, 0))) for i in range(4)]
+        roots = pm.clip_roots(clip[0], [bones["root"]["world"] for bones in clip])
+        for i, bones in enumerate(clip):
+            same(self, roots[i], bones["root"]["world"], 0.0, i)
+
+    def test_steady_yaws_interpolates_the_short_way_and_holds_at_the_ends(self):
+        turn = lambda yaw, roll=0.0: trs(r=(roll, yaw, 0))       # noqa: E731
+        # 170 -> (inverted) -> -170: the short way passes 180, never 0
+        got = pm.steady_yaws([turn(170), turn(0, 180), turn(-170)])
+        self.assertEqual([s for _y, s in got], [False, True, False])
+        self.assertAlmostEqual(abs(pm._wrapped(got[1][0])), math.pi, 9)
+        # inverted at the start and the end: the nearest frame's
+        got = pm.steady_yaws([turn(0, 179), turn(30), turn(50), turn(0, 181)])
+        self.assertAlmostEqual(math.degrees(got[0][0]), 30.0, 9)
+        self.assertAlmostEqual(math.degrees(got[3][0]), 50.0, 9)
+        # nothing within the limit: every frame its own
+        got = pm.steady_yaws([turn(0, 170), turn(0, 190)])
+        self.assertEqual([s for _y, s in got], [False, False])
+
+
 class Purity(unittest.TestCase):
 
     def test_imports(self):

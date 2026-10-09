@@ -5,7 +5,14 @@ Esc) and the slider; the save panel; the folder tree's rows; the hub card and th
 workspaceControl half on a recording `cmds`. Every scene call goes to a FakeScene, so no Maya
 scene is touched - the scene half is verify_poselib_apply.py's, the live window Task 10's.
 
-Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window")
+The animation cards (2026-10-03): the type filter, + Save with Pose / Animation and a range, the
+paste options of a picked clip (remembered, passed with every press), the details looping the
+preview, the rows of an animation card; and the real `Scene`'s animation half - Save, Update,
+Replace thumbnail and preview, the presses dispatched to `animapply` under a progress window -
+over fake capture and apply modules and a temp library on the disk.
+
+Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window"),
+      docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("The window")
 """
 import os
 import shutil
@@ -24,10 +31,17 @@ except Exception:                                            # noqa: BLE001
     QT = None
 
 import maya_hubstyle as hubstyle
+import maya_poselib
+from maya_poselib import animdata
+from maya_poselib import cardgrid
 from maya_poselib import look
 from maya_poselib import store
 from maya_poselib import window as pw
 from tests.uifakes import FakeUiCmds
+
+#  An animation card's frames file as the window hands it on (the press reads it, not the window)
+#  - as `store.read_frames` answers it: `drive` always there, {} for a skeleton's clip
+FRAMES = {"bones": ["root"], "world": [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]], "drive": {}}
 
 
 def card_data(name, label="Manny [rig]", created="2026-10-02T18:00:00", kind="character",
@@ -52,6 +66,44 @@ def write_jpg(path, colour="#3366aa", side=64):
     return path
 
 
+def anim_data(name, start=10.0, end=57.0, label="Manny [rig]", created="2026-10-03T12:00:00",
+              preview=None, kind="character"):
+    """An animation card's header as the window reads it - the clip's frames and its preview
+    sheet's grid; the bones are the press's business."""
+    data = {"format": store.ANIM_FORMAT, "version": store.VERSION, "kind": kind, "name": name,
+            "created": created, "author": "Eugene", "scene": "walk_010.ma", "fps": "ntsc",
+            "start": float(start), "end": float(end), "frames": int(round(end - start)) + 1,
+            "key_times": [float(start), float(end)], "objects": []}
+    if kind == "character":
+        data.update(character={"label": label, "key": "Manny_Rig", "model": "Manny",
+                               "kind": "rig"},
+                    bones={}, members=["pelvis", "spine_01"], regions=["Pelvis", "Spine"],
+                    rig_source=True)
+    else:
+        data["objects"] = [{"name": "pCube1", "path": "|pCube1",
+                            "attrs": {"translateX": {"static": 1.0},
+                                      "translateY": {"static": 2.0}}}]
+    if preview is not None:
+        data["preview"] = preview
+    return data
+
+
+def write_sheet(path, colours, size=32):
+    """A preview sheet of one flat colour per cell, laid out as the saver lays its cells
+    (`look.sheet_cell`); answers the header's `preview` dict for it."""
+    columns = look.sheet_columns(len(colours))
+    rows = -(-len(colours) // columns)
+    image = QT.QtGui.QImage(columns * size, rows * size, QT.QtGui.QImage.Format_RGB32)
+    image.fill(QT.QtGui.QColor("#000000"))
+    painter = QT.QtGui.QPainter(image)
+    for index, colour in enumerate(colours):
+        x, y, w, h = look.sheet_cell(index, columns, size)
+        painter.fillRect(x, y, w, h, QT.QtGui.QColor(colour))
+    painter.end()
+    image.save(path, "JPG", 95)
+    return {"frames": len(colours), "columns": columns, "size": size, "step": 1}
+
+
 class FakeScene(object):
     """What the window asks of Maya, recorded."""
 
@@ -67,6 +119,8 @@ class FakeScene(object):
         self.targets = ("onto Manny_Rig1", True)
         self.refusal = ""
         self.callback = None
+        self.range = (10, 20)
+        self.preview_text = "new thumbnail and preview"
 
     def calls(self, name):
         return [entry for entry in self.log if entry[0] == name]
@@ -98,9 +152,18 @@ class FakeScene(object):
         self.reads = getattr(self, "reads", 0) + 1
         return self.targets
 
-    def save(self, name, folder, regions, snapshot_path):
-        self.log.append(("save", name, folder, regions, snapshot_path))
-        path = store.write(self.root, folder, name, card_data(name), thumbnail=snapshot_path)
+    def anim_range(self):
+        self.log.append(("anim_range",))
+        return self.range
+
+    def save(self, name, folder, regions, snapshot_path, anim=None):
+        self.log.append(("save", name, folder, regions, snapshot_path, anim))
+        if anim is None:
+            path = store.write(self.root, folder, name, card_data(name), thumbnail=snapshot_path)
+        else:
+            path = store.write(self.root, folder, name,
+                               anim_data(name, anim["start"], anim["end"]),
+                               thumbnail=snapshot_path, frames=FRAMES)
         return path, "saved " + name
 
     def snapshot(self, path):
@@ -112,24 +175,28 @@ class FakeScene(object):
         self.log.append(("update", path))
         return True, "updated"
 
-    def apply(self, path, mirror):
-        self.log.append(("apply", path, mirror))
+    def replace_preview(self, path):
+        self.log.append(("replace_preview", path))
+        return self.preview_text
+
+    def apply(self, path, mirror, options=None):
+        self.log.append(("apply", path, mirror, options))
         return True, "applied"
 
-    def apply_onto(self, path, root, mirror):
-        self.log.append(("apply_onto", path, root, mirror))
+    def apply_onto(self, path, root, mirror, options=None):
+        self.log.append(("apply_onto", path, root, mirror, options))
         return True, "applied onto " + root
 
-    def drop_floor(self, path, point, mirror):
-        self.log.append(("drop_floor", path, point, mirror))
+    def drop_floor(self, path, point, mirror, options=None):
+        self.log.append(("drop_floor", path, point, mirror, options))
         return True, "added on the floor"
 
-    def select_objects(self, path):
-        self.log.append(("select_objects", path))
+    def select_objects(self, path, options=None):
+        self.log.append(("select_objects", path, options))
         return True, "selected"
 
-    def blend_start(self, path, mirror):
-        self.log.append(("blend_start", path, mirror))
+    def blend_start(self, path, mirror, options=None):
+        self.log.append(("blend_start", path, mirror, options))
         return self.refusal
 
     def blend_set(self, alpha):
@@ -278,6 +345,61 @@ class Pure(unittest.TestCase):
         self.assertEqual((pw.CONTROL, pw.LABEL, pw.ROOT),
                          ("skeldarPoseLibrary", "Pose Library", "skeldarPoseLibraryRoot"))
         self.assertEqual((pw.INITIAL_WIDTH, pw.INITIAL_HEIGHT), (1000, 640))
+        self.assertEqual(pw.NOTE, "Poses and animations of bones - onto any rig or skeleton.")
+        self.assertEqual(pw.EMPTY_LIBRARY,
+                         "Nothing saved yet - select a character and press Save")
+
+    def test_what_the_window_remembers(self):
+        self.assertEqual((pw.TYPE_VAR, pw.SAVE_TYPE_VAR, pw.PASTE_VAR, pw.AT_CURRENT_VAR,
+                          pw.CONNECT_VAR, pw.KEYS_VAR, pw.IN_PLACE_VAR),
+                         ("skeldarPoseLibraryType", "skeldarPoseLibrarySaveType",
+                          "skeldarPoseLibraryPaste", "skeldarPoseLibraryAtCurrent",
+                          "skeldarPoseLibraryConnect", "skeldarPoseLibraryKeys",
+                          "skeldarPoseLibraryInPlace"))
+
+    # -- the animation cards (2026-10-03)
+
+    def test_the_cards_shown_are_narrowed_by_type(self):
+        cards = [store.Card("/l/A.pose", "", "A", "2026-10-01", "", "Manny [rig]",
+                            "character", 1, [], ""),
+                 store.Card("/l/W.anim", "", "W", "2026-10-02", "", "Manny [rig]",
+                            "character", 1, [], "", "anim", 48, "", "ntsc", 0.0, 47.0)]
+        names = lambda found: [card.name for card in found]          # noqa: E731
+        self.assertEqual(names(pw.shown_cards(cards, "", "", "name")), ["A", "W"])
+        self.assertEqual(names(pw.shown_cards(cards, "", "", "name", "all")), ["A", "W"])
+        self.assertEqual(names(pw.shown_cards(cards, "", "", "name", "pose")), ["A"])
+        self.assertEqual(names(pw.shown_cards(cards, "", "", "name", "anim")), ["W"])
+        self.assertEqual(names(pw.shown_cards(cards, "", "", "name", "clips")), ["A", "W"])
+        self.assertEqual(names(pw.shown_cards(cards, "", "manny", "name", "anim")), ["W"])
+
+    def test_the_save_panel_says_how_many_frames_and_preview_cells(self):
+        self.assertEqual(pw.save_frames_text(0, 47), "48 frames · 48 preview cells")
+        self.assertEqual(pw.save_frames_text(5, 5), "1 frame · 1 preview cell")
+        # a clip longer than look.PREVIEW_MAX keeps every step-th frame in its preview
+        self.assertEqual(pw.save_frames_text(0, 99), "100 frames · 50 preview cells")
+        self.assertEqual(pw.save_frames_text(10, 9), pw.NO_RANGE)
+
+    def test_a_press_steps_once_per_pasted_frame(self):
+        header = anim_data("Walk", 10, 57)
+        self.assertEqual(pw.press_steps(header, None, 100.0), 48)
+        self.assertEqual(pw.press_steps(header, {"start": 20, "end": 29}, 0.0), 10)
+        self.assertEqual(pw.press_steps(header, animdata.Options(start=20.0, end=29.0), 0.0), 10)
+        self.assertEqual(pw.press_steps(header, {"keys": "source"}, 0.0), 2)   # 10 and 57
+        self.assertEqual(pw.press_steps(header, {"start": 80}, 0.0), 1)        # refused anyway
+        # an objects card steps once per channel it pastes
+        self.assertEqual(pw.press_steps(anim_data("Cubes", 0, 9, kind="objects"), None, 0.0), 2)
+
+    def test_the_options_remembered(self):
+        self.assertEqual(pw.remembered_options({}.get), animdata.Options())
+        saved = {pw.PASTE_VAR: "merge", pw.AT_CURRENT_VAR: 0, pw.CONNECT_VAR: 1,
+                 pw.KEYS_VAR: "source", pw.IN_PLACE_VAR: 1}
+        self.assertEqual(pw.remembered_options(saved.get),
+                         animdata.Options(mode="merge", at_current=False, connect=True,
+                                          keys="source", in_place=True))
+        # a value from another build is made valid, never handed on
+        odd = {pw.PASTE_VAR: "paste_over", pw.KEYS_VAR: "some", pw.AT_CURRENT_VAR: "off"}
+        self.assertEqual(pw.remembered_options(odd.get),
+                         animdata.Options(at_current=False))
 
 
 # ------------------------------------------------------------- the cmds half
@@ -331,7 +453,8 @@ class Workspace(unittest.TestCase):
         self.assertIn("books", maya_hubicons.ICONS)
         self.assertFalse(hasattr(pw, "_open_icon"))      # the folder fallback is gone
         texts = [c for c in self.cmds.calls if c[0] == "text"]
-        self.assertEqual(texts[0][2]["label"], "Poses of bones - onto any rig or skeleton.")
+        self.assertEqual(texts[0][2]["label"],
+                         "Poses and animations of bones - onto any rig or skeleton.")
         buttons = [c for c in self.cmds.calls if c[0] == "button"]
         self.assertEqual(buttons[0][2]["label"], "Open Pose Library")
 
@@ -403,9 +526,9 @@ class WindowCase(unittest.TestCase):
         for _ in range(3):
             self.app.processEvents()
 
-    def names(self):
-        return [os.path.basename(path)[:-len(store.CARD_SUFFIX)]
-                for path in self.win.cards_shown()]
+    def names(self, win=None):
+        return [os.path.basename(path)[:-len(store.card_suffix(path))]
+                for path in (win or self.win).cards_shown()]
 
     def card_point(self, path, local=False):
         canvas = self.win.canvas
@@ -561,7 +684,7 @@ class Details(WindowCase):
         self.win.mirror.setChecked(True)
         self.win.apply_button.click()
         self.assertEqual(self.scene.calls("apply"),
-                         [("apply", self.fist, False), ("apply", self.fist, True)])
+                         [("apply", self.fist, False, None), ("apply", self.fist, True, None)])
         self.assertEqual(self.win.status.text(), "applied")
 
     def test_apply_follows_the_selection(self):
@@ -621,7 +744,7 @@ class Details(WindowCase):
     def test_select_objects(self):
         self.win.pick(self.idle)
         self.win.select_button.click()
-        self.assertEqual(self.scene.calls("select_objects"), [("select_objects", self.idle)])
+        self.assertEqual(self.scene.calls("select_objects"), [("select_objects", self.idle, None)])
 
     def test_a_scene_failure_lands_on_the_status_line(self):
         def boom(path, mirror):
@@ -653,7 +776,7 @@ class Drops(WindowCase):
     def test_over_a_character_the_card_goes_onto_it(self):
         self.win.drop_at(-2000, 40, self.fist)
         self.assertEqual(self.scene.calls("apply_onto"),
-                         [("apply_onto", self.fist, "|Manny_Rig1:root", False)])
+                         [("apply_onto", self.fist, "|Manny_Rig1:root", False, None)])
 
     def test_over_the_floor_the_source_is_added_one_idle_later(self):
         self.scene.aim = dict(kind="floor", point=(150.0, 0.0, -60.0))
@@ -662,7 +785,7 @@ class Drops(WindowCase):
         self.assertEqual(len(self.deferred), 1)
         self.deferred.pop()()
         self.assertEqual(self.scene.calls("drop_floor"),
-                         [("drop_floor", self.fist, (150.0, 0.0, -60.0), False)])
+                         [("drop_floor", self.fist, (150.0, 0.0, -60.0), False, None)])
 
     def test_inside_the_window_nothing(self):
         centre = self.win.details_page.mapToGlobal(self.win.details_page.rect().center())
@@ -730,7 +853,7 @@ class Drops(WindowCase):
         self.assertEqual(self.win.picked, self.wave)
         self.assertIsNone(canvas._drag)
         self.mouse(canvas, "double", point, QT.QtCore.Qt.LeftButton)
-        self.assertEqual(self.scene.calls("apply"), [("apply", self.wave, False)])
+        self.assertEqual(self.scene.calls("apply"), [("apply", self.wave, False, None)])
 
     def test_an_objects_card_names_no_character(self):
         cubes = store.write(self.root, "", "Cubes", card_data("Cubes", kind="objects"))
@@ -755,7 +878,7 @@ class Menus(WindowCase):
     def test_apply_mirrored_from_the_menu(self):
         rows = dict(row for row in self.win.context_actions(self.fist) if row)
         rows["Apply mirrored"]()
-        self.assertEqual(self.scene.calls("apply"), [("apply", self.fist, True)])
+        self.assertEqual(self.scene.calls("apply"), [("apply", self.fist, True, None)])
 
     def test_rename_from_the_menu(self):
         self.win.ask_text = lambda title, label, text: "Punch"
@@ -844,7 +967,8 @@ class Blend(WindowCase):
         self.assertEqual(self.scene.calls("blend_start"), [])
         self.middle("move", start + QT.QtCore.QPoint(100, 0))
         self.middle("move", start + QT.QtCore.QPoint(300, 0))
-        self.assertEqual(self.scene.calls("blend_start"), [("blend_start", self.fist, False)])
+        self.assertEqual(self.scene.calls("blend_start"),
+                         [("blend_start", self.fist, False, None)])
         self.assertEqual(self.scene.calls("blend_set"), [("blend_set", 0.5), ("blend_set", 1.0)])
         self.middle("release", start + QT.QtCore.QPoint(300, 0), QT.QtCore.Qt.NoButton)
         self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
@@ -955,7 +1079,8 @@ class Blend(WindowCase):
         slider.setSliderPosition(40)                 # sliderMoved, valueChanged
         slider.setSliderPosition(70)
         slider.setSliderDown(False)                  # sliderReleased
-        self.assertEqual(self.scene.calls("blend_start"), [("blend_start", self.fist, False)])
+        self.assertEqual(self.scene.calls("blend_start"),
+                         [("blend_start", self.fist, False, None)])
         self.assertEqual(self.scene.calls("blend_set"), [("blend_set", 0.4), ("blend_set", 0.7)])
         self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
         self.assertEqual(slider.value(), 0)
@@ -1037,7 +1162,7 @@ class Blend(WindowCase):
         self.assertTrue(20 <= value <= 45, value)    # the handle jumped under the press ...
         self.assertLessEqual(abs(slider.handle_rect().center().x() - int(x)), 1)  # centred
         self.assertTrue(slider.isSliderDown())
-        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
                                               ("blend_set", value / 100.0)])
         self.slider_mouse("release", x)
         self.assertEqual(self.blend_calls()[2:], [("blend_finish",)])
@@ -1056,7 +1181,7 @@ class Blend(WindowCase):
             self.app.processEvents()
             time.sleep(0.01)
         self.assertEqual(slider.sliderPosition(), value)
-        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
                                               ("blend_set", value / 100.0)])
         self.slider_mouse("release", x)
         self.assertEqual(self.blend_calls()[2:], [("blend_finish",)])
@@ -1090,7 +1215,7 @@ class Blend(WindowCase):
         self.assertGreater(moved, 0)
         self.assertEqual(self.scene.calls("blend_finish"), [])
         self.slider_mouse("release", slider.width() * 0.6)
-        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
                                               ("blend_set", moved / 100.0), ("blend_finish",)])
         self.assertEqual(slider.value(), 0)
 
@@ -1133,7 +1258,7 @@ class Blend(WindowCase):
         slider.setSliderPosition(20)                 # up: the label only
         self.assertEqual(self.blend_calls(), [])
         slider.setSliderDown(True)                   # sliderPressed
-        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False),
+        self.assertEqual(self.blend_calls(), [("blend_start", self.fist, False, None),
                                               ("blend_set", 0.2)])
         slider.setSliderDown(False)                  # sliderReleased
         self.assertEqual(self.blend_calls()[-1], ("blend_finish",))
@@ -1168,8 +1293,8 @@ class Save(WindowCase):
         self.open()
         self.win.save_name.setText("Grip")
         self.win.save_confirm.click()
-        (_name, name, folder, regions, snap), = self.scene.calls("save")
-        self.assertEqual((name, folder, regions), ("Grip", "Hands", None))
+        (_name, name, folder, regions, snap, anim), = self.scene.calls("save")
+        self.assertEqual((name, folder, regions, anim), ("Grip", "Hands", None, None))
         self.assertTrue(snap and snap.endswith(".jpg"))
         path = self.root + "/Hands/Grip.pose"
         self.assertTrue(os.path.isfile(path + "/" + store.THUMB_FILE))
@@ -1208,6 +1333,1051 @@ class Save(WindowCase):
         self.win.save_confirm.click()
         self.assertTrue(self.win.saving())
         self.assertEqual(self.win.status.text(), "pick one character for a pose")
+
+    def test_a_taken_name_is_refused_before_the_scene_is_asked(self):
+        """The final review (S7): a name a card holds in the folder was refused only by the
+        disk write - after an animation's walk and preview. Refused at once now, the panel
+        kept; a name that `safe_name` makes the taken one counts too (either type)."""
+        self.open()
+        for typed in ("Fist", " Fist. ", "fist"):
+            self.win.save_name.setText(typed)
+            self.win.save_confirm.click()
+            self.assertEqual(self.scene.calls("save"), [], typed)
+            self.assertTrue(self.win.saving())
+            self.assertEqual(self.win.status.text(),
+                             pw.NAME_TAKEN % (store.safe_name(typed), "Library / Hands"), typed)
+        self.win.save_name.setText("Fist 2")
+        self.win.save_confirm.click()
+        self.assertEqual(len(self.scene.calls("save")), 1)
+
+    def test_the_panel_names_the_folder_the_tree_picks_while_saving(self):
+        self.open()
+        self.assertIn("Library / Hands", self.win.save_folder.text())
+        self.win.set_folder("Hands/Left")
+        self.assertEqual(self.win.save_folder.text(), "in Library / Hands / Left")
+        self.win.tree.setCurrentItem(self.win.folder_item(""))
+        self.assertEqual(self.win.save_folder.text(), "in Library")
+        self.win.save_name.setText("Fist")              # free in the library itself
+        self.win.save_confirm.click()
+        self.assertEqual(self.scene.calls("save")[0][2], "")
+
+
+# ------------------------------------------------------------------ the animation cards
+
+class AnimCase(WindowCase):
+    """The library above plus an animation card:
+
+        Walk   (Library)      Manny [rig]  48 frames 10-57, a green still and a preview sheet
+                                           of two cells - red, then blue
+    """
+
+    RED, BLUE, GREEN = "#d02020", "#2040d0", "#20a040"
+
+    def setUp(self):
+        WindowCase.setUp(self)
+        sheet = os.path.join(self.tmp, "sheet.jpg")
+        info = write_sheet(sheet, (self.RED, self.BLUE))
+        still = write_jpg(os.path.join(self.tmp, "still.jpg"), self.GREEN)
+        self.walk = store.write(self.root, "", "Walk", anim_data("Walk", preview=info), still,
+                                frames=FRAMES, preview=sheet)
+        self.win.refresh()
+
+    def rows(self, path):
+        return dict(row for row in self.win.context_actions(path) if row)
+
+    def window(self):
+        """A second window over the same scene - what the next session opens."""
+        win = pw.make_window(self.scene)
+        self.addCleanup(win.deleteLater)
+        return win
+
+
+class TypeFilter(AnimCase):
+
+    def test_the_type_filter_shows_one_type_and_is_remembered(self):
+        self.assertEqual(self.names(), ["Fist", "Idle", "Walk", "Wave"])
+        types = self.win.type_filter
+        self.assertEqual(types.objectName(), "skeldarPoseType")
+        self.assertEqual([types.itemText(i) for i in range(types.count())],
+                         ["All", "Poses", "Animations"])
+        types.setCurrentIndex(2)
+        self.assertEqual(self.names(), ["Walk"])
+        self.assertEqual(self.scene.options[pw.TYPE_VAR], "anim")
+        types.setCurrentIndex(1)
+        self.assertEqual(self.names(), ["Fist", "Idle", "Wave"])
+        self.assertEqual(self.scene.options[pw.TYPE_VAR], "pose")
+        win = self.window()
+        self.assertEqual(win.type_filter.currentData(), "pose")
+        self.assertEqual(self.names(win), ["Fist", "Idle", "Wave"])
+
+    def test_a_type_with_nothing_says_no_card_matches(self):
+        shutil.rmtree(self.walk)
+        self.win.refresh()
+        self.win.type_filter.setCurrentIndex(2)
+        self.assertEqual(self.names(), [])
+        self.assertEqual(self.win.canvas.empty_text, pw.EMPTY_SEARCH)
+
+    def test_an_unknown_remembered_type_is_all(self):
+        self.scene.options[pw.TYPE_VAR] = "clips"
+        self.assertEqual(self.window().type_filter.currentData(), "all")
+
+    def test_an_empty_library_says_save(self):
+        for path in (self.fist, self.wave, self.idle, self.walk):
+            shutil.rmtree(path)
+        self.win.refresh()
+        self.assertEqual(self.win.canvas.empty_text,
+                         "Nothing saved yet - select a character and press Save")
+
+
+class SaveAnimation(AnimCase):
+
+    def open(self):
+        self.win.save_button.click()
+
+    def test_save_opens_the_panel_with_pose_lit(self):
+        self.assertEqual(self.win.save_button.text(), "Save")
+        self.open()
+        self.assertTrue(self.win.saving())
+        self.assertEqual(self.win.save_types["pose"].objectName(), "skeldarPoseSaveType_pose")
+        self.assertEqual(self.win.save_types["anim"].objectName(), "skeldarPoseSaveType_anim")
+        self.assertTrue(self.win.save_types["pose"].isChecked())
+        self.assertFalse(self.win.save_types["anim"].isChecked())
+        self.assertFalse(self.win.save_start.isVisible())
+        self.assertFalse(self.win.save_frames.isVisible())
+        self.assertEqual(self.win.save_name.text(), "Pose")
+        self.assertEqual(self.scene.calls("anim_range"), [])
+
+    def test_lighting_animation_shows_the_range_the_scene_reads(self):
+        self.open()
+        self.win.save_types["anim"].click()
+        self.assertTrue(self.win.save_types["anim"].isChecked())
+        self.assertFalse(self.win.save_types["pose"].isChecked())
+        self.assertTrue(self.win.save_start.isVisible())
+        self.assertEqual(self.win.save_start.objectName(), "skeldarPoseSaveStart")
+        self.assertEqual(self.win.save_end.objectName(), "skeldarPoseSaveEnd")
+        self.assertEqual((self.win.save_start.value(), self.win.save_end.value()), (10, 20))
+        self.assertEqual(self.win.save_frames.objectName(), "skeldarPoseSaveFrames")
+        self.assertEqual(self.win.save_frames.text(), "11 frames · 11 preview cells")
+        self.assertEqual(self.win.save_name.text(), "Anim")
+        self.assertEqual(self.scene.options[pw.SAVE_TYPE_VAR], "anim")
+
+    def test_save_hands_the_scene_the_range(self):
+        self.open()
+        self.win.save_types["anim"].click()
+        self.win.save_confirm.click()
+        (_save, name, folder, regions, snap, anim), = self.scene.calls("save")
+        self.assertEqual((name, folder, regions, anim),
+                         ("Anim", "", None, {"start": 10, "end": 20}))
+        self.assertTrue(snap and snap.endswith(".jpg"))
+        path = self.root + "/Anim.anim"
+        self.assertFalse(self.win.saving())
+        self.assertEqual(self.win.picked, path)
+        self.assertIn(path, self.win.cards_shown())
+
+    def test_a_typed_range_is_said_and_saved(self):
+        self.open()
+        self.win.save_types["anim"].click()
+        self.win.save_end.setValue(109)
+        self.assertEqual(self.win.save_frames.text(), "100 frames · 50 preview cells")
+        self.win.save_start.setValue(110)
+        self.assertEqual(self.win.save_frames.text(), pw.NO_RANGE)
+        self.win.save_start.setValue(5)
+        self.win.save_confirm.click()
+        self.assertEqual(self.scene.calls("save")[0][5], {"start": 5, "end": 109})
+
+    def test_the_type_is_remembered_and_a_typed_name_kept(self):
+        self.open()
+        self.win.save_name.setText("Run")
+        self.win.save_types["anim"].click()
+        self.assertEqual(self.win.save_name.text(), "Run")          # typed: the animator's
+        self.win.save_cancel.click()
+        self.open()
+        self.assertTrue(self.win.save_types["anim"].isChecked())
+        self.assertTrue(self.win.save_start.isVisible())
+        self.assertEqual(self.win.save_name.text(), "Anim")
+        self.win.save_types["pose"].click()
+        self.assertEqual(self.win.save_name.text(), "Pose")         # the panel's own: follows
+        self.assertFalse(self.win.save_start.isVisible())
+        self.assertEqual(self.scene.options[pw.SAVE_TYPE_VAR], "pose")
+
+    def test_a_free_name_beside_either_type(self):
+        store.write(self.root, "", "Anim", card_data("Anim"))       # a POSE called Anim
+        self.win.refresh()
+        self.open()
+        self.win.save_types["anim"].click()
+        self.assertEqual(self.win.save_name.text(), "Anim 2")
+
+    def test_a_pose_save_hands_the_scene_no_range(self):
+        self.open()
+        self.win.save_confirm.click()
+        self.assertIsNone(self.scene.calls("save")[0][5])
+        self.assertEqual(self.win.picked, self.root + "/Pose.pose")
+
+    def test_a_card_the_type_filter_would_hide_shows_all(self):
+        """The final review (S11): an animation saved while the type filter shows Poses landed
+        out of sight - a save that seemed to do nothing. The filter switches to All."""
+        self.win.type_filter.setCurrentIndex(1)                     # Poses
+        self.open()
+        self.win.save_types["anim"].click()
+        self.win.save_confirm.click()
+        path = self.root + "/Anim.anim"
+        self.assertIn(path, self.win.cards_shown())
+        self.assertEqual(self.win.type_filter.currentData(), "all")
+        self.assertEqual(self.scene.options[pw.TYPE_VAR], "all")
+        self.assertTrue(self.win.status.text().endswith(pw.SHOWN_ALL))
+        # one the filter shows anyway: the filter left alone, nothing said
+        self.win.type_filter.setCurrentIndex(2)                     # Animations
+        self.open()
+        self.win.save_types["anim"].click()
+        self.win.save_confirm.click()
+        self.assertEqual(self.win.type_filter.currentData(), "anim")
+        self.assertEqual(self.win.status.text(), "saved Anim 2")
+
+    def test_a_card_the_search_hides_is_said(self):
+        self.win.search.setText("zzz")
+        self.open()
+        self.win.save_confirm.click()
+        path = self.root + "/Pose.pose"
+        self.assertTrue(os.path.isdir(path))
+        self.assertNotIn(path, self.win.cards_shown())
+        self.assertEqual(self.win.search.text(), "zzz")              # the animator's: kept
+        self.assertTrue(self.win.status.text().endswith(pw.HIDDEN_BY_SEARCH))
+        self.assertEqual(self.win.picked, path)
+
+
+class AnimOptions(AnimCase):
+
+    WHOLE = {"mode": "replace", "at_current": True, "start": 10.0, "end": 57.0,
+             "connect": False, "keys": "every", "in_place": False}
+
+    def set_every_option(self, win=None):
+        win = win or self.win
+        win.paste_buttons["insert"].click()
+        win.at_current.click()                       # off
+        win.connect_box.click()                      # on
+        win.keys_buttons["source"].click()
+        win.in_place.click()                         # on
+        win.range_start.setValue(12)
+        win.range_end.setValue(30)
+
+    def test_picking_an_animation_shows_its_options_and_its_range(self):
+        self.assertFalse(self.win.anim_options.isVisible())
+        self.win.pick(self.walk)
+        self.assertEqual(self.win.anim_options.objectName(), "skeldarPoseAnimOptions")
+        self.assertTrue(self.win.anim_options.isVisible())
+        self.assertEqual((self.win.range_start.value(), self.win.range_end.value()), (10, 57))
+        self.assertIn("48 frames (10-57)", self.win.info.text())
+        self.win.pick(self.fist)
+        self.assertFalse(self.win.anim_options.isVisible())
+
+    def test_the_widgets_are_named(self):
+        names = [self.win.paste_buttons[mode].objectName() for mode in animdata.MODES]
+        self.assertEqual(names, ["skeldarPosePaste_replace", "skeldarPosePaste_replace_all",
+                                 "skeldarPosePaste_insert", "skeldarPosePaste_merge"])
+        self.assertEqual([self.win.paste_buttons[m].text() for m in animdata.MODES],
+                         ["Replace", "Replace all", "Insert", "Merge"])
+        self.assertEqual([self.win.keys_buttons[k].objectName() for k in ("every", "source")],
+                         ["skeldarPoseKeys_every", "skeldarPoseKeys_source"])
+        win = self.win
+        self.assertEqual((win.at_current.objectName(), win.connect_box.objectName(),
+                          win.in_place.objectName(), win.range_start.objectName(),
+                          win.range_end.objectName()),
+                         ("skeldarPoseAtCurrent", "skeldarPoseConnect", "skeldarPoseInPlace",
+                          "skeldarPoseRangeStart", "skeldarPoseRangeEnd"))
+
+    def test_the_frame_fields_wear_the_hubs_field(self):
+        self.win.pick(self.walk)
+        box = self.win.range_start
+        image = QT.QtGui.QImage(box.size(), QT.QtGui.QImage.Format_ARGB32)
+        image.fill(0)
+        box.render(image)
+        self.assertEqual(image.pixelColor(box.width() // 4, box.height() // 2).name(),
+                         hubstyle.TOKENS["field"])                  # not Maya's own spin box
+
+    def test_the_options_start_at_their_defaults(self):
+        self.win.pick(self.walk)
+        self.assertEqual(self.win.options(), self.WHOLE)
+        self.assertTrue(self.win.paste_buttons["replace"].isChecked())
+        self.assertTrue(self.win.keys_buttons["every"].isChecked())
+        self.assertEqual(self.scene.options, {})                     # nothing written yet
+
+    def test_apply_passes_every_option(self):
+        self.win.pick(self.walk)
+        self.set_every_option()
+        self.win.apply_button.click()
+        self.assertEqual(self.scene.calls("apply"),
+                         [("apply", self.walk, False,
+                           {"mode": "insert", "at_current": False, "start": 12.0, "end": 30.0,
+                            "connect": True, "keys": "source", "in_place": True})])
+
+    def test_a_pose_card_hides_the_block_and_passes_no_options(self):
+        self.win.pick(self.walk)
+        self.win.pick(self.fist)
+        self.assertFalse(self.win.anim_options.isVisible())
+        self.win.apply_button.click()
+        self.assertEqual(self.scene.calls("apply"), [("apply", self.fist, False, None)])
+
+    def test_the_options_are_remembered_across_a_new_window(self):
+        self.win.pick(self.walk)
+        self.set_every_option()
+        self.assertEqual((self.scene.options[pw.PASTE_VAR], self.scene.options[pw.AT_CURRENT_VAR],
+                          self.scene.options[pw.CONNECT_VAR], self.scene.options[pw.KEYS_VAR],
+                          self.scene.options[pw.IN_PLACE_VAR]), ("insert", 0, 1, "source", 1))
+        win = self.window()
+        win.pick(self.walk)
+        # the range is the card's own again: it is not remembered
+        self.assertEqual(win.options(), {"mode": "insert", "at_current": False, "start": 10.0,
+                                         "end": 57.0, "connect": True, "keys": "source",
+                                         "in_place": True})
+
+    def test_an_option_turned_off_stays_off_and_one_never_written_is_its_default(self):
+        self.scene.options[pw.AT_CURRENT_VAR] = 0
+        self.scene.options[pw.PASTE_VAR] = "paste_over"               # another build's
+        win = self.window()
+        win.pick(self.walk)
+        self.assertEqual(win.options(), dict(self.WHOLE, at_current=False))
+        self.assertTrue(win.paste_buttons["replace"].isChecked())
+
+    def test_the_range_is_the_card_s_and_resets_when_another_card_is_picked(self):
+        self.win.pick(self.walk)
+        self.win.range_start.setValue(0)
+        self.win.range_end.setValue(99)
+        self.assertEqual((self.win.range_start.value(), self.win.range_end.value()), (10, 57))
+        self.win.range_start.setValue(20)
+        self.win.range_end.setValue(30)
+        self.win.pick(self.walk)            # the same card again - a press to drag it: kept
+        self.assertEqual((self.win.range_start.value(), self.win.range_end.value()), (20, 30))
+        self.win.pick(self.fist)
+        self.win.pick(self.walk)
+        self.assertEqual((self.win.range_start.value(), self.win.range_end.value()), (10, 57))
+
+    def test_drops_pass_the_options(self):
+        self.win.pick(self.walk)
+        self.set_every_option()
+        options = self.win.options()
+        self.win.drop_at(-2000, 40, self.walk)
+        self.assertEqual(self.scene.calls("apply_onto"),
+                         [("apply_onto", self.walk, "|Manny_Rig1:root", False, options)])
+        self.scene.aim = dict(kind="floor", point=(150.0, 0.0, -60.0))
+        self.win.drop_at(-2000, 40, self.walk)
+        self.deferred.pop()()
+        self.assertEqual(self.scene.calls("drop_floor"),
+                         [("drop_floor", self.walk, (150.0, 0.0, -60.0), False, options)])
+
+    def test_the_blend_and_select_objects_pass_the_options(self):
+        self.win.pick(self.walk)
+        options = self.win.options()
+        self.win.mirror.setChecked(True)
+        self.assertEqual(self.win.blend_drag(self.walk, 100), 0.5)
+        self.win.blend_release()
+        self.assertEqual(self.scene.calls("blend_start"),
+                         [("blend_start", self.walk, True, options)])
+        self.win.select_button.click()
+        self.assertEqual(self.scene.calls("select_objects"),
+                         [("select_objects", self.walk, options)])
+
+    def apply_in_view(self, scale):
+        """(Apply's bottom, the side viewport's height) in physical px, a window at the
+        default size (`INITIAL_WIDTH` x `INITIAL_HEIGHT` logical, so x `scale` physical) with
+        the animation card picked."""
+        scene = FakeScene(self.root, os.path.join(self.tmp, "trash"))
+        scene.scale = lambda: scale
+        win = pw.make_window(scene)
+        self.addCleanup(win.deleteLater)
+        win.resize(int(pw.INITIAL_WIDTH * scale), int(pw.INITIAL_HEIGHT * scale))
+        win.move(3000, 3000)
+        win.show()
+        self.pump()
+        win.pick(self.walk)
+        self.pump()
+        viewport = win.findChild(QT.QtWidgets.QWidget, "skeldarPoseSideViewport")
+        bottom = win.apply_button.mapTo(viewport, QT.QtCore.QPoint(
+            0, win.apply_button.height())).y()
+        return bottom, viewport.height(), win
+
+    def test_apply_is_in_view_at_the_default_size(self):
+        """The final review (M5): at the window's default size the options block stood above
+        Apply and pushed it below the fold for every animation card. The block stands under
+        Apply / Mirror / Blend / Select objects now, two options to a row: Apply is in view
+        at 1000 x 640 logical, at a scale of 1.0 and 1.5."""
+        for scale in (1.0, 1.5):
+            bottom, height, win = self.apply_in_view(scale)
+            self.assertTrue(win.anim_options.isVisible(), scale)
+            self.assertLessEqual(bottom, height, "scale %s: Apply's bottom %d, the viewport %d"
+                                 % (scale, bottom, height))
+            # (whether the block fits the panel's WIDTH is the GUI verify's: offscreen Qt has
+            # no font family, its fallback draws wide - trap 117)
+            # and the block itself lies below what it configures
+            for widget in (win.apply_button, win.mirror, win.blend, win.select_button):
+                self.assertLess(widget.mapTo(win, QT.QtCore.QPoint(0, 0)).y(),
+                                win.anim_options.mapTo(win, QT.QtCore.QPoint(0, 0)).y(),
+                                widget.objectName())
+
+    def test_two_options_to_a_row(self):
+        self.win.pick(self.walk)
+        self.pump()
+
+        def top(widget):
+            return widget.mapTo(self.win, QT.QtCore.QPoint(0, 0)).y()
+
+        def middle(widget):
+            return widget.mapTo(self.win, QT.QtCore.QPoint(0, widget.height() // 2)).y()
+
+        self.assertEqual(top(self.win.at_current), top(self.win.connect_box))
+        keys_track = self.win.keys_buttons["every"].parentWidget()
+        self.assertLessEqual(abs(middle(keys_track) - middle(self.win.in_place)), 2)
+
+    def test_a_card_not_picked_is_pasted_whole_with_the_options_shown(self):
+        self.win.pick(self.walk)
+        self.win.paste_buttons["merge"].click()
+        self.win.range_start.setValue(30)
+        self.win.pick(self.fist)
+        self.rows(self.walk)["Apply"]()
+        (_apply, path, mirror, options), = self.scene.calls("apply")
+        self.assertEqual((path, mirror), (self.walk, False))
+        self.assertEqual(options, dict(self.WHOLE, mode="merge", start=None, end=None))
+
+
+class AnimMenus(AnimCase):
+
+    def test_the_right_button_rows_of_an_animation_card(self):
+        labels = [row[0] for row in self.win.context_actions(self.walk) if row]
+        self.assertEqual(labels, ["Apply", "Apply mirrored", "Select objects", "Rename...",
+                                  "Move to...", "Replace thumbnail and preview",
+                                  "Update from selection", "Show in Explorer", "Delete"])
+
+    def test_replace_thumbnail_and_preview_asks_the_scene(self):
+        self.assertIsNotNone(self.win.canvas.sheet(self.win._card(self.walk)))
+        self.rows(self.walk)["Replace thumbnail and preview"]()
+        self.assertEqual(self.scene.calls("replace_preview"), [("replace_preview", self.walk)])
+        self.assertEqual(self.scene.calls("snapshot"), [])          # not the pose's road
+        self.assertEqual(self.win.status.text(), "new thumbnail and preview")
+        self.assertNotIn(self.walk, self.win.canvas.sheets)         # the old sheet dropped
+
+    def test_a_pose_card_keeps_its_replace_thumbnail(self):
+        labels = [row[0] for row in self.win.context_actions(self.fist) if row]
+        self.assertIn("Replace thumbnail", labels)
+        self.assertNotIn("Replace thumbnail and preview", labels)
+        self.rows(self.fist)["Replace thumbnail"]()
+        self.assertEqual(self.scene.calls("replace_preview"), [])
+        self.assertEqual(len(self.scene.calls("snapshot")), 1)
+
+    def test_a_failed_replace_lands_on_the_status_line(self):
+        def boom(path):
+            raise RuntimeError("no model panel")
+        self.scene.replace_preview = boom
+        self.rows(self.walk)["Replace thumbnail and preview"]()
+        self.assertIn("no model panel", self.win.status.text())
+
+    def test_the_dialogs_name_what_the_card_is(self):
+        for path, noun in ((self.walk, "animation"), (self.fist, "pose")):
+            titles = []
+            self.win.ask_text = lambda title, label, text, seen=titles: seen.append(title)
+            self.win.ask_item = lambda title, label, items, seen=titles: seen.append(title)
+            self.win.confirm = lambda title, text, seen=titles: seen.append(title) or False
+            rows = self.rows(path)
+            for label in ("Rename...", "Move to...", "Update from selection", "Delete"):
+                rows[label]()
+            self.assertEqual(titles, ["Rename " + noun, "Move " + noun, "Update " + noun,
+                                      "Delete " + noun])
+        self.assertEqual(self.scene.calls("update"), [])            # every dialog said no
+
+    def test_a_renamed_animation_keeps_its_type(self):
+        self.win.ask_text = lambda title, label, text: "Run"
+        self.rows(self.walk)["Rename..."]()
+        renamed = self.root + "/Run.anim"
+        self.assertTrue(os.path.isdir(renamed))
+        self.assertEqual(self.win.picked, renamed)
+        self.assertEqual(self.win.status.text(), "renamed to Run")
+
+    def test_update_from_selection_says_the_still_and_the_preview_are_kept(self):
+        asked = []
+        self.win.confirm = lambda title, text: asked.append((title, text)) or True
+        self.rows(self.walk)["Update from selection"]()
+        self.assertEqual(self.scene.calls("update"), [("update", self.walk)])
+        title, text = asked[0]
+        self.assertEqual(title, "Update animation")
+        self.assertIn("10-57", text)
+        self.assertIn("thumbnail and preview are kept", text)
+
+
+class LongPress(AnimCase):
+    """The final review (S10): a paste started from a RELEASE - a blend let go, a card dropped
+    on a character - runs for seconds under a progress window, and the window losing the focus
+    to it read the drag or the blend still standing: cancelled the session and said «let go
+    elsewhere» over a paste that went on. Each ends before its press now."""
+
+    def lose_focus(self):
+        self.win.isActiveWindow = lambda: False
+        self.win.changeEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.ActivationChange))
+
+    def test_a_blend_release_ends_the_session_before_the_paste(self):
+        seen = []
+
+        def finish():
+            self.lose_focus()                    # the progress window takes the focus
+            seen.append(self.win.status.text())
+            self.scene.log.append(("blend_finish",))
+            return "Walk at 50 % onto Manny_Rig1"
+        self.scene.blend_finish = finish
+        self.win.pick(self.walk)
+        self.assertEqual(self.win.blend_drag(self.walk, 100), 0.5)
+        self.win.blend_release()
+        self.assertEqual(self.scene.calls("blend_finish"), [("blend_finish",)])
+        self.assertEqual(self.scene.calls("blend_cancel"), [])
+        self.assertNotIn(cardgrid.LOST_BLEND, seen)
+        self.assertNotIn(("say", cardgrid.LOST_BLEND), self.scene.log)
+        self.assertEqual(self.win.status.text(), "Walk at 50 % onto Manny_Rig1")
+        self.assertFalse(self.win.blending())
+
+    def test_a_drop_ends_the_drag_before_the_paste(self):
+        Qt = QT.QtCore.Qt
+        said = []
+
+        def onto(path, root, mirror, options=None):
+            self.lose_focus()
+            said.append(self.win.status.text())
+            self.scene.log.append(("apply_onto", path))
+            return True, "Walk onto Manny_Rig1"
+        self.scene.apply_onto = onto
+        canvas = self.win.canvas
+        local = self.card_point(self.walk, local=True)
+        self.mouse(canvas, "press", local, Qt.LeftButton)
+        far = local + QT.QtCore.QPoint(-3000, 0)
+        self.mouse(canvas, "move", far, Qt.NoButton, Qt.LeftButton)
+        self.assertIsNotNone(canvas._drag)
+        self.mouse(canvas, "release", far, Qt.LeftButton)
+        self.assertIsNone(canvas._drag)
+        self.assertEqual(self.scene.calls("apply_onto"), [("apply_onto", self.walk)])
+        self.assertNotIn(cardgrid.LOST_DRAG, said)
+        self.assertNotIn(("say", cardgrid.LOST_DRAG), self.scene.log)
+        self.assertEqual(self.win.status.text(), "Walk onto Manny_Rig1")
+
+
+class LetGo(AnimCase):
+    """The final review (S8): the module kept the window it built in `_WINDOW` after the window
+    was destroyed, and the dead wrapper kept its grid's decoded preview sheets alive."""
+
+    def setUp(self):
+        AnimCase.setUp(self)
+        saved = list(pw._WINDOW)
+        self.addCleanup(lambda: pw._WINDOW.__setitem__(slice(None), saved))
+
+    def kept(self):
+        win = pw.make_window(self.scene)
+        pw._keep(win)
+        return win
+
+    def test_a_destroyed_window_is_let_go(self):
+        win = self.kept()
+        win.pick(self.walk)
+        self.assertIsNotNone(win.canvas.sheet(win._card(self.walk)))      # a sheet decoded
+        self.assertEqual(pw._WINDOW, [win])
+        QT.shiboken.delete(win)
+        self.assertEqual(pw._WINDOW, [])
+
+    def test_only_the_destroyed_one_is_let_go(self):
+        first = self.kept()
+        second = self.kept()
+        self.addCleanup(second.deleteLater)
+        QT.shiboken.delete(first)
+        self.assertEqual(pw._WINDOW, [second])
+        self.assertIs(pw.live(), second)
+
+
+class DetailsPlayback(AnimCase):
+    """The details picture of a picked animation card loops its preview."""
+
+    def setUp(self):
+        AnimCase.setUp(self)
+        self.now = 0
+        self.win._clock_ms = lambda: self.now
+
+    def centre(self):
+        image = self.win.thumb.pixmap().toImage()
+        return image.pixelColor(image.width() // 2, image.height() // 2)
+
+    def test_the_details_loop_the_preview_and_stop_on_unpick(self):
+        self.win.pick(self.walk)
+        self.assertTrue(self.win.play_timer.isActive())
+        self.assertEqual(self.win.play_timer.interval(), look.PLAY_MS)
+        self.assertGreater(self.centre().red(), 150)                 # cell 0 at once
+        self.assertEqual(self.win.thumb.pixmap().width(), self.win.thumb_side())
+        self.now = 100                                               # 3 frames at 30 fps
+        self.win._play_tick()
+        self.assertGreater(self.centre().blue(), 150)                # cell 1
+        self.now = 200                                               # 6 frames: round again
+        self.win._play_tick()
+        self.assertGreater(self.centre().red(), 150)
+        self.win.unpick()
+        self.assertFalse(self.win.play_timer.isActive())
+
+    def test_a_pose_pick_stops_it(self):
+        self.win.pick(self.walk)
+        self.win.pick(self.fist)
+        self.assertFalse(self.win.play_timer.isActive())
+
+    def test_a_hidden_window_does_not_play(self):
+        self.win.pick(self.walk)
+        self.win.hide()
+        self.assertFalse(self.win.play_timer.isActive())
+        self.win.show()
+        self.assertTrue(self.win.play_timer.isActive())
+
+    def test_the_save_panel_stops_it(self):
+        self.win.pick(self.walk)
+        self.win.save_button.click()
+        self.assertFalse(self.win.play_timer.isActive())
+        self.win.save_cancel.click()
+        self.assertTrue(self.win.play_timer.isActive())
+
+    def test_off_the_screen_it_rests_and_plays_again_when_exposed(self):
+        """A floating Pose Library whose Maya is minimised is hidden by Windows while Qt still
+        calls it visible (measured in a GUI Maya, 2026-10-08: isVisible True, isExposed False,
+        IsWindowVisible False) - no hideEvent comes. Its details then draw nothing and the
+        timer slows to PLAY_HIDDEN_MS; exposed again, it plays at PLAY_MS from where the clock
+        is."""
+        self.win.pick(self.walk)
+        before = self.win.thumb.pixmap().cacheKey()
+        self.win._on_screen = lambda: False
+        self.now = 100                                               # cell 1 is due ...
+        self.win._play_tick()
+        self.assertEqual(self.win.thumb.pixmap().cacheKey(), before)  # ... and not drawn
+        self.assertEqual(self.win.play_timer.interval(), pw.PLAY_HIDDEN_MS)
+        self.assertTrue(self.win.play_timer.isActive())
+        self.win._on_screen = lambda: True
+        self.win._play_tick()
+        self.assertGreater(self.centre().blue(), 150)                # cell 1 drawn
+        self.assertEqual(self.win.play_timer.interval(), look.PLAY_MS)
+
+    def test_offscreen_qt_counts_as_on_the_screen(self):
+        """No native window to ask (the offscreen platform the tests run on): on the screen."""
+        self.win.pick(self.walk)
+        self.assertTrue(self.win._on_screen())
+
+    def test_a_native_window_is_seen_while_its_root_is_shown_and_not_minimised(self):
+        """`native_shown` asks Windows from a plain handle (no wrapper of a Maya widget - trap
+        135): the root window of `hwnd` visible and not minimised. A floating window whose Maya
+        is minimised is HIDDEN (measured: IsWindowVisible False); a docked one stands in a
+        minimised Maya (IsIconic True); a handle Windows does not know counts as seen."""
+
+        class User32(object):
+            def __init__(self, known=True, root=7, visible=True, iconic=False):
+                self.known, self.root, self.visible, self.iconic = known, root, visible, iconic
+                self.asked = []
+
+            def IsWindow(self, hwnd):                                # noqa: N802
+                return self.known
+
+            def GetAncestor(self, hwnd, flag):                       # noqa: N802
+                self.asked.append((hwnd, flag))
+                return self.root
+
+            def IsWindowVisible(self, hwnd):                         # noqa: N802
+                return self.visible if hwnd == self.root or not self.root else True
+
+            def IsIconic(self, hwnd):                                # noqa: N802
+                return self.iconic if hwnd == self.root or not self.root else False
+
+        seen = User32()
+        self.assertTrue(pw.native_shown(42, seen))
+        self.assertEqual(seen.asked, [(42, pw.GA_ROOT)])
+        self.assertFalse(pw.native_shown(42, User32(visible=False)))    # hidden with its owner
+        self.assertFalse(pw.native_shown(42, User32(iconic=True)))      # docked, Maya minimised
+        self.assertTrue(pw.native_shown(42, User32(known=False, visible=False)))
+        self.assertTrue(pw.native_shown(0, User32(visible=False)))      # no handle at all
+        self.assertFalse(pw.native_shown(42, User32(root=0, visible=False)))  # its own root
+
+    def test_a_refresh_keeps_the_decoded_sheets(self):
+        """A sheet decoded is about 23 MB of pixels and its cache already checks the file's time
+        and size: a plain refresh (Refresh, a save, a rename) keeps it - only the card whose
+        preview was replaced drops it (Task 9's review, minor 3)."""
+        picture = self.win.canvas.sheet(self.win._card(self.walk))[0]
+        self.win.refresh()
+        self.assertIn(self.walk, self.win.canvas.sheets)
+        self.assertIs(self.win.canvas.sheet(self.win._card(self.walk))[0], picture)
+        self.win.replace_preview(self.walk)
+        self.assertIsNot(self.win.canvas.sheet(self.win._card(self.walk))[0], picture)
+
+    def test_an_animation_without_a_preview_shows_its_still(self):
+        still = write_jpg(os.path.join(self.tmp, "run.jpg"), self.GREEN)
+        run = store.write(self.root, "", "Run", anim_data("Run"), still, frames=FRAMES)
+        self.win.refresh()
+        self.win.pick(run)
+        self.assertFalse(self.win.play_timer.isActive())
+        self.assertGreater(self.centre().green(), 120)
+
+
+# ------------------------------------------------------------------ the real Scene
+
+class FakeProgress(object):
+    """timewalk.Progress, recorded."""
+
+    log = None
+    answers = ()
+
+    def __init__(self, title, total):
+        self.title, self.total = title, total
+        FakeProgress.log.append(("progress", title, total))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        FakeProgress.log.append(("progress_end", self.title))
+        return False
+
+    def step(self, text=""):
+        return True
+
+
+class FakeModules(object):
+    """The modules the real Scene imports late - `animapply`, `animcapture`, `apply`,
+    `capture`, `timewalk` - as attributes standing in for them on the package, recording
+    every call into one log."""
+
+    def __init__(self, test):
+        self.test = test
+        self.log = []
+        FakeProgress.log = self.log
+        self.built = None             # what build_animation answers; None: a card of 7 frames
+        self.previewed = None         # what preview answers; None: a sheet is painted
+        self.preview_error = None     # an exception preview raises instead of answering
+        self.colour = "#c08020"
+
+    # --- animcapture
+
+    def default_range(self):
+        return (3, 9)
+
+    def build_animation(self, selection=None, regions=None, start=None, end=None,
+                        progress=None):
+        self.log.append(("build_animation", regions, start, end, progress is not None))
+        if self.built is not None:
+            return self.built
+        header = anim_data("Anim", start, end)
+        return header, {"bones": ["root"], "world": [[0, 0, 0, 1, 0, 0, float(n)]
+                                                      for n in range(end - start + 1)]}, \
+            "Manny_Rig: %d frames" % (end - start + 1)
+
+    def preview(self, sheet_path, start, end, progress=None):
+        self.log.append(("preview", start, end, progress is not None))
+        if self.preview_error is not None:
+            raise self.preview_error
+        if self.previewed is not None:
+            return self.previewed
+        info = write_sheet(sheet_path, (self.colour, "#202020"))
+        return True, "preview from modelPanel4: 2 cells", info
+
+    # --- capture
+
+    def thumbnail(self, path):
+        self.log.append(("thumbnail",))
+        write_jpg(path, self.colour)
+        return True, "thumbnail from modelPanel4"
+
+    def build_pose(self, selection=None, regions=None, frame=None):
+        self.log.append(("build_pose", regions))
+        return card_data("Pose"), "a pose"
+
+    # --- the presses
+
+    def install(self):
+        import types
+        ap = types.SimpleNamespace(apply=self._press("animapply.apply"),
+                                   apply_onto=self._press("animapply.apply_onto"),
+                                   drop_floor=self._press("animapply.drop_floor"),
+                                   select_objects=self._select("animapply.select_objects"),
+                                   Blend=self._blend("animapply"))
+        pose = types.SimpleNamespace(apply=self._press("apply.apply"),
+                                     apply_onto=self._press("apply.apply_onto"),
+                                     drop_floor=self._press("apply.drop_floor"),
+                                     select_objects=self._select("apply.select_objects"),
+                                     Blend=self._blend("apply"))
+        capture = types.SimpleNamespace(thumbnail=self.thumbnail, build_pose=self.build_pose)
+        animcapture = types.SimpleNamespace(default_range=self.default_range,
+                                            build_animation=self.build_animation,
+                                            preview=self.preview,
+                                            CANCELLED="cancelled - nothing saved")
+        timewalk = types.SimpleNamespace(Progress=FakeProgress)
+        for name, fake in (("animapply", ap), ("apply", pose), ("capture", capture),
+                           ("animcapture", animcapture), ("timewalk", timewalk)):
+            had = name in maya_poselib.__dict__
+            saved = maya_poselib.__dict__.get(name)
+            setattr(maya_poselib, name, fake)
+            if had:
+                self.test.addCleanup(setattr, maya_poselib, name, saved)
+            else:
+                self.test.addCleanup(delattr, maya_poselib, name)
+
+    def _press(self, name):
+        def press(data, *args, **kwargs):
+            frames = None
+            if name.startswith("animapply"):
+                frames, args = args[0], args[1:]
+            self.log.append((name, data.get("name"), frames, args,
+                             dict((k, v) for k, v in kwargs.items() if k != "progress"),
+                             kwargs.get("progress") is not None))
+            return True, name + " done"
+        return press
+
+    def _select(self, name):
+        def select(data, selection=None, options=None):
+            self.log.append((name, data.get("name"), options))
+            return True, "selected"
+        return select
+
+    def _blend(self, owner):
+        log = self.log
+
+        class Blend(object):
+            def start(self, data, *args, **kwargs):
+                log.append((owner + ".Blend.start", data.get("name"), args, kwargs))
+                return ""
+
+            def set(self, alpha):
+                log.append((owner + ".Blend.set", alpha))
+
+            def finish(self, progress=None):
+                log.append((owner + ".Blend.finish", progress is not None))
+                return "blended"
+
+            def cancel(self):
+                log.append((owner + ".Blend.cancel",))
+        return Blend
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class RealScene(unittest.TestCase):
+    """The real `Scene`'s animation half over a temp library, its late imports standing in."""
+
+    def setUp(self):
+        self.app = QT.QtWidgets.QApplication.instance() or QT.QtWidgets.QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="skeldar_poselib_scene_")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.root = os.path.join(self.tmp, "poses").replace("\\", "/")
+        os.makedirs(self.root)
+        self.fakes = FakeModules(self)
+        self.fakes.install()
+        saved = pw._current_time
+        pw._current_time = lambda: 100.0
+        self.addCleanup(setattr, pw, "_current_time", saved)
+        self.scene = pw.Scene()
+        self.scene.library = lambda: self.root
+        self.fist = store.write(self.root, "", "Fist", card_data("Fist"))
+        sheet = os.path.join(self.tmp, "sheet.jpg")
+        info = write_sheet(sheet, ("#d02020", "#2040d0"))
+        still = write_jpg(os.path.join(self.tmp, "still.jpg"), "#20a040")
+        self.walk = store.write(self.root, "", "Walk", anim_data("Walk", preview=info), still,
+                                frames=FRAMES, preview=sheet)
+        self.snapshot = write_jpg(os.path.join(self.tmp, "snap.jpg"), "#3060c0")
+
+    def logged(self, prefix):
+        return [entry for entry in self.fakes.log if entry[0].startswith(prefix)]
+
+    def colour(self, path):
+        """The image's colour a quarter in from its left, half way down - in a two-cell sheet,
+        the first cell's."""
+        image = QT.QtGui.QImage(path)
+        return image.pixelColor(image.width() // 4, image.height() // 2).name()
+
+    def assertColour(self, path, expected):                 # noqa: N802
+        """`path`'s colour (`colour`) is `expected` but for what a JPG makes of it."""
+        seen, wanted = QT.QtGui.QColor(self.colour(path)), QT.QtGui.QColor(expected)
+        self.assertTrue(all(abs(a - b) <= 12 for a, b in zip(seen.getRgb()[:3],
+                                                              wanted.getRgb()[:3])),
+                        "%s: %s, not %s" % (os.path.basename(path), seen.name(), expected))
+
+    # --- the presses
+
+    def test_a_pose_card_takes_the_pose_road(self):
+        self.assertEqual(self.scene.apply(self.fist, True), (True, "apply.apply done"))
+        self.assertEqual(self.logged("apply."),
+                         [("apply.apply", "Fist", None, (), {"mirror": True}, False)])
+        self.assertEqual(self.logged("progress"), [])
+
+    def test_an_animation_card_is_pasted_with_its_frames_under_a_progress_window(self):
+        options = {"mode": "insert", "start": 20.0, "end": 29.0}
+        ok, text = self.scene.apply(self.walk, True, options)
+        self.assertEqual((ok, text), (True, "animapply.apply done"))
+        (name, card, frames, args, kwargs, progressed), = self.logged("animapply.")
+        self.assertEqual((name, card, args), ("animapply.apply", "Walk", ()))
+        self.assertEqual(frames, FRAMES)
+        self.assertEqual(kwargs, {"mirror": True, "options": options})
+        self.assertTrue(progressed)
+        self.assertEqual(self.logged("progress"),
+                         [("progress", "Pasting Walk", 10), ("progress_end", "Pasting Walk")])
+
+    def test_the_drops_and_select_objects_dispatch_too(self):
+        options = {"mode": "merge"}
+        self.scene.apply_onto(self.walk, "|Manny_Rig1:root", False, options)
+        self.scene.drop_floor(self.walk, (150.0, 0.0, -60.0), True, options)
+        self.scene.select_objects(self.walk, options)
+        self.scene.apply_onto(self.fist, "|Manny_Rig1:root", False)
+        self.scene.select_objects(self.fist)
+        self.assertEqual(
+            [entry[:2] + entry[3:5] for entry in self.logged("animapply.")[:2]],
+            [("animapply.apply_onto", "Walk", ("|Manny_Rig1:root",),
+              {"mirror": False, "options": options}),
+             ("animapply.drop_floor", "Walk", ((150.0, 0.0, -60.0),),
+              {"mirror": True, "options": options})])
+        self.assertEqual(self.logged("animapply.select_objects"),
+                         [("animapply.select_objects", "Walk", options)])
+        self.assertEqual([entry[0] for entry in self.logged("apply.")],
+                         ["apply.apply_onto", "apply.select_objects"])
+
+    def test_a_card_whose_frames_cannot_be_read_hands_the_press_none(self):
+        os.remove(self.walk + "/" + store.FRAMES_FILE)
+        self.scene.apply(self.walk, False)
+        self.assertIsNone(self.logged("animapply.apply")[0][2])
+
+    def test_an_animation_blend_finishes_under_a_progress_window(self):
+        options = {"mode": "replace"}
+        self.assertEqual(self.scene.blend_start(self.walk, False, options), "")
+        self.scene.blend_set(0.5)
+        self.assertEqual(self.scene.blend_finish(), "blended")
+        self.assertEqual(self.logged("animapply.Blend"),
+                         [("animapply.Blend.start", "Walk", (FRAMES,),
+                           {"mirror": False, "options": options}),
+                          ("animapply.Blend.set", 0.5), ("animapply.Blend.finish", True)])
+        self.assertEqual(self.logged("progress")[0], ("progress", "Pasting Walk", 48))
+        # a pose's blend is the pose's, with no progress window
+        self.scene.blend_start(self.fist, True)
+        self.scene.blend_finish()
+        self.assertEqual(self.logged("apply.Blend")[-1], ("apply.Blend.finish", False))
+
+    # --- Save, Update, Replace thumbnail and preview
+
+    def test_save_an_animation_writes_its_frames_still_and_preview(self):
+        path, text = self.scene.save("Run", "", None, self.snapshot, anim={"start": 3, "end": 9})
+        self.assertEqual(path, self.root + "/Run.anim")
+        self.assertEqual(self.logged("build_animation"), [("build_animation", None, 3, 9, True)])
+        self.assertEqual(self.logged("preview"), [("preview", 3, 9, True)])
+        # one progress window: a step a frame read, a step a preview cell painted
+        self.assertEqual(self.logged("progress"),
+                         [("progress", "Saving Run", 14), ("progress_end", "Saving Run")])
+        header = store.read(path)
+        self.assertEqual(header["preview"], {"frames": 2, "columns": 2, "size": 32, "step": 1})
+        self.assertEqual(len(store.read_frames(path)["world"]), 7)
+        for name in (store.THUMB_FILE, store.PREVIEW_FILE):
+            self.assertTrue(os.path.isfile(path + "/" + name), name)
+        self.assertTrue(text.startswith("saved Run in Library - Manny_Rig: 7 frames"), text)
+        self.assertIn("preview from modelPanel4", text)
+        self.assertEqual([n for n in os.listdir(tempfile.gettempdir())
+                          if n.startswith("skeldar_anim_sheet_%d" % os.getpid())], [])
+
+    def test_a_save_without_a_preview_says_why_and_keeps_the_card(self):
+        self.fakes.previewed = (False, "no viewport for a preview", None)
+        path, text = self.scene.save("Run", "", None, None, anim={"start": 3, "end": 9})
+        self.assertNotIn("preview", store.read(path))
+        self.assertFalse(os.path.isfile(path + "/" + store.PREVIEW_FILE))
+        self.assertFalse(os.path.isfile(path + "/" + store.THUMB_FILE))
+        self.assertIn("saved without a preview: no viewport for a preview", text)
+
+    def test_a_preview_that_raises_still_saves_the_card(self):
+        """The frames were walked already: an exception out of the preview (a playblast Maya
+        refused) saves the card without one, and says why - the spec's «a preview that cannot be
+        made still saves the card» (Task 9's review, minor 2)."""
+        self.fakes.preview_error = RuntimeError("Maya command error")
+        path, text = self.scene.save("Run", "", None, self.snapshot, anim={"start": 3, "end": 9})
+        self.assertEqual(path, self.root + "/Run.anim")
+        self.assertNotIn("preview", store.read(path))
+        self.assertEqual(len(store.read_frames(path)["world"]), 7)
+        self.assertTrue(os.path.isfile(path + "/" + store.THUMB_FILE))
+        self.assertFalse(os.path.isfile(path + "/" + store.PREVIEW_FILE))
+        self.assertTrue(text.endswith("saved without a preview: RuntimeError: Maya command "
+                                      "error"), text)
+        self.assertEqual(self.logged("progress"),
+                         [("progress", "Saving Run", 14), ("progress_end", "Saving Run")])
+        self.assertEqual([n for n in os.listdir(tempfile.gettempdir())
+                          if n.startswith("skeldar_anim_sheet_%d" % os.getpid())], [])
+
+    def test_a_cancelled_save_writes_nothing(self):
+        for built, previewed in (((None, None, "cancelled - nothing saved"), None),
+                                 (None, (False, "cancelled - nothing saved", None))):
+            self.fakes.built, self.fakes.previewed = built, previewed
+            path, text = self.scene.save("Run", "", None, self.snapshot,
+                                         anim={"start": 3, "end": 9})
+            self.assertEqual((path, text), (None, "cancelled - nothing saved"))
+            self.assertFalse(os.path.exists(self.root + "/Run.anim"))
+
+    def test_a_pose_save_is_the_pose_s(self):
+        path, text = self.scene.save("Grip", "", None, self.snapshot)
+        self.assertEqual(path, self.root + "/Grip.pose")
+        self.assertEqual(text, "saved Grip in Library - a pose")
+        self.assertEqual(self.logged("progress"), [])
+
+    def test_the_range_is_animcapture_s(self):
+        self.assertEqual(self.scene.anim_range(), (3, 9))
+
+    def test_update_an_animation_reads_its_own_range_and_keeps_the_still_and_preview(self):
+        still = self.colour(self.walk + "/" + store.THUMB_FILE)
+        before = store.read(self.walk)["preview"]
+        ok, text = self.scene.update(self.walk)
+        self.assertTrue(ok)
+        self.assertEqual(self.logged("build_animation"), [("build_animation", None, 10, 57, True)])
+        self.assertEqual(self.logged("progress")[0], ("progress", "Updating Walk", 48))
+        header = store.read(self.walk)
+        self.assertEqual(header["name"], "Walk")
+        self.assertEqual(header["preview"], before)
+        self.assertEqual(len(store.read_frames(self.walk)["world"]), 48)
+        self.assertEqual(self.colour(self.walk + "/" + store.THUMB_FILE), still)
+        self.assertEqual(text, "Walk updated from the selection over frames 10-57 - "
+                               "Manny_Rig: 48 frames")
+
+    def test_replace_thumbnail_and_preview_takes_both_again(self):
+        text = self.scene.replace_preview(self.walk)
+        self.assertEqual(self.logged("preview"), [("preview", 10, 57, True)])
+        self.assertEqual(self.logged("progress")[0], ("progress", "Previewing Walk", 48))
+        self.assertColour(self.walk + "/" + store.THUMB_FILE, self.fakes.colour)
+        self.assertColour(self.walk + "/" + store.PREVIEW_FILE, self.fakes.colour)
+        self.assertEqual(store.read(self.walk)["preview"]["frames"], 2)
+        self.assertEqual(len(store.read_frames(self.walk)["world"]), 1)        # kept
+        self.assertEqual(text, "new thumbnail and preview - thumbnail from modelPanel4 | "
+                               "preview from modelPanel4: 2 cells")
+
+    def test_a_cancelled_preview_changes_nothing(self):
+        still = self.colour(self.walk + "/" + store.THUMB_FILE)
+        self.fakes.previewed = (False, "cancelled - nothing saved", None)
+        self.assertEqual(self.scene.replace_preview(self.walk), "cancelled - nothing changed")
+        self.assertEqual(self.colour(self.walk + "/" + store.THUMB_FILE), still)
+
+    def test_a_preview_that_cannot_be_made_keeps_the_old_one(self):
+        before = store.read(self.walk)["preview"]
+        sheet = self.colour(self.walk + "/" + store.PREVIEW_FILE)
+        self.fakes.previewed = (False, "no viewport for a preview", None)
+        text = self.scene.replace_preview(self.walk)
+        self.assertColour(self.walk + "/" + store.THUMB_FILE, self.fakes.colour)
+        self.assertEqual(self.colour(self.walk + "/" + store.PREVIEW_FILE), sheet)
+        self.assertEqual(store.read(self.walk)["preview"], before)
+        self.assertEqual(text, "new thumbnail - thumbnail from modelPanel4 | the preview "
+                               "kept: no viewport for a preview")
+
+    def test_replace_on_a_pose_card_is_the_thumbnail_alone(self):
+        text = self.scene.replace_preview(self.fist)
+        self.assertColour(self.fist + "/" + store.THUMB_FILE, self.fakes.colour)
+        self.assertEqual(self.logged("preview"), [])
+        self.assertEqual(text, "new thumbnail - thumbnail from modelPanel4")
+
+    def test_update_and_replace_write_into_a_card_renamed_in_explorer(self):
+        """The final review (S13): Update and Replace thumbnail and preview wrote back BY NAME -
+        `store.write(parent, "", name)`, the name made safe again - so a card renamed in
+        Explorer to a name `safe_name` changes («Walk. », «Fist. ») came back as a stray new
+        card beside it. Both write into the card at its path now (`store.replace`)."""
+        walk = self.root + "/Walk. .anim"
+        fist = self.root + "/Fist. .pose"
+        os.rename(self.walk, walk)
+        os.rename(self.fist, fist)
+        before = sorted(os.listdir(self.root))
+        ok, _text = self.scene.update(walk)
+        self.assertTrue(ok)
+        ok, _text = self.scene.update(fist)
+        self.assertTrue(ok)
+        self.scene.replace_preview(walk)
+        self.assertEqual(sorted(os.listdir(self.root)), before)
+        self.assertEqual(len(store.read_frames(walk)["world"]), 48)        # the update's
+        self.assertColour(walk + "/" + store.PREVIEW_FILE, self.fakes.colour)  # the replace's
+        self.assertEqual(store.read(fist)["name"], "Fist. ")
 
 
 if __name__ == "__main__":

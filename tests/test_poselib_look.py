@@ -17,8 +17,16 @@ from maya_poselib import look
 PLUGIN = os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "SkeldarAnim")
 
-# store.Card's fields (Task 1); look must not import store, so the test builds its own
-Card = namedtuple("Card", "path folder name created author label kind count regions thumbnail")
+# store.Card's fields (Task 1); look must not import store, so the test builds its own - with
+# the animation card's six fields and their defaults (2026-10-03), as store.Card has them
+Card = namedtuple("Card", "path folder name created author label kind count regions thumbnail "
+                          "type frames preview fps start end",
+                  defaults=("pose", 0, "", "", 0.0, 0.0))
+
+# a card of the listing, every field given: the animation tests build theirs from it
+BASE = dict(path="p/Walk.anim", folder="", name="Walk", created="2026-10-03T12:00:00",
+            author="E", label="Manny [rig]", kind="character", count=2, regions=["Spine"],
+            thumbnail="")
 
 
 def _tile(rect, scale=1.0):
@@ -663,6 +671,169 @@ class Zoom(unittest.TestCase):
         zoom.to(1.0, 0)
         zoom.to(1.0, 50)
         self.assertEqual(zoom.t0, 0)
+
+
+class Animation(unittest.TestCase):
+    """The animation cards (2026-10-03): the clip's rate, the preview sheet and which of its
+    cells plays, the badge, the details and the status line of a paste."""
+
+    def test_fps_of_the_units(self):
+        self.assertEqual(look.fps_of("ntsc"), 30.0)
+        self.assertEqual(look.fps_of("film"), 24.0)
+        self.assertAlmostEqual(look.fps_of("23.976fps"), 23.976)
+        self.assertEqual(look.fps_of("bogus"), 30.0)
+
+    def test_every_named_unit(self):
+        self.assertEqual(look.FPS, {"game": 15.0, "film": 24.0, "pal": 25.0, "ntsc": 30.0,
+                                    "show": 48.0, "palf": 50.0, "ntscf": 60.0})
+        for unit, fps in look.FPS.items():
+            self.assertEqual(look.fps_of(unit), fps, unit)
+        self.assertEqual(look.fps_of("120fps"), 120.0)
+        for nothing in ("", None, "0fps", "fps", "-5fps"):
+            self.assertEqual(look.fps_of(nothing), 30.0, nothing)
+
+    def test_preview_frames_and_step(self):
+        self.assertEqual(look.preview_frames(0, 47), (list(range(48)), 1))
+        frames, step = look.preview_frames(0, 199)
+        self.assertEqual(step, 4)
+        self.assertEqual(frames[:3], [0, 4, 8])
+        self.assertLessEqual(len(frames), 60)
+        self.assertEqual(look.preview_frames(5, 5), ([5], 1))
+
+    def test_preview_frames_stay_inside_the_range(self):
+        self.assertEqual((look.PREVIEW_MAX, look.PREVIEW_SIZE), (60, 320))
+        for start, end in ((0, 59), (0, 60), (10, 250), (-20, 17), (3, 1000)):
+            frames, step = look.preview_frames(start, end)
+            self.assertEqual(frames[0], start)
+            self.assertLessEqual(frames[-1], end)
+            self.assertLessEqual(len(frames), look.PREVIEW_MAX, (start, end))
+            self.assertEqual(frames, list(range(start, end + 1, step)))
+        self.assertEqual(look.preview_frames(0, 9, most=4), ([0, 3, 6, 9], 3))
+
+    def test_sheet_geometry(self):
+        self.assertEqual(look.sheet_columns(48), 7)
+        self.assertEqual(look.sheet_columns(1), 1)
+        self.assertEqual(look.sheet_columns(0), 1)
+        self.assertEqual(look.sheet_columns(49), 7)
+        self.assertEqual(look.sheet_columns(50), 8)
+        self.assertEqual(look.sheet_cell(8, 7, 320), (320, 320, 320, 320))
+        self.assertEqual(look.sheet_cell(0, 7, 320), (0, 0, 320, 320))
+        self.assertEqual(look.sheet_cell(6, 7, 320), (1920, 0, 320, 320))
+
+    def test_play_cell_runs_at_the_clips_rate(self):
+        self.assertEqual(look.play_cell(0, 48, 1, 30.0), 0)
+        self.assertEqual(look.play_cell(1000, 48, 1, 30.0), 30)
+        self.assertEqual(look.play_cell(1000, 48, 4, 30.0), 7)
+        self.assertEqual(look.play_cell(1700, 48, 1, 30.0), 3)      # 51 % 48
+        self.assertEqual(look.play_cell(999, 1, 1, 30.0), 0)
+        self.assertEqual(look.PLAY_MS, 33)
+
+    def test_badge(self):
+        self.assertEqual(look.badge_text(48), "\u25b6 48")
+        self.assertEqual(look.badge_text(2), "\u25b6 2")
+        self.assertEqual(look.badge_text(1), "")
+        self.assertEqual(look.badge_text(0), "")
+
+    def test_details_of_an_animation(self):
+        card = Card(**dict(BASE, type="anim", frames=48, fps="ntsc", start=0.0, end=47.0))
+        data = {"kind": "character", "character": {"label": "Manny [rig]"}, "members": ["a", "b"],
+                "regions": ["Spine"], "frames": 48, "start": 0.0, "end": 47.0, "fps": "ntsc",
+                "key_times": [0, 12, 47], "author": "E", "created": "2026-10-03T12:00:00",
+                "scene": "C:/x/shot.ma"}
+        lines = look.details(card, data)
+        self.assertEqual(lines[0], "Manny [rig]")
+        self.assertEqual(lines[1], "48 frames (0-47) \u00b7 30 fps \u00b7 3 keys")
+        self.assertEqual(lines[2], "2 bones \u00b7 Spine")
+        self.assertIn("shot.ma", lines[-1])
+        self.assertNotIn("frame ", lines[-1])
+        self.assertEqual(lines, ["Manny [rig]", "48 frames (0-47) \u00b7 30 fps \u00b7 3 keys",
+                                 "2 bones \u00b7 Spine", "E \u00b7 2026-10-03 12:00", "shot.ma"])
+
+    def test_an_animation_without_key_times_says_no_keys(self):
+        card = Card(**dict(BASE, type="anim", frames=48, fps="film", start=0.0, end=47.0))
+        data = {"kind": "character", "members": ["a"], "frames": 48, "start": 0.0, "end": 47.0,
+                "fps": "film", "key_times": [], "scene": "shot.ma"}
+        self.assertEqual(look.details(card, data)[1], "48 frames (0-47) \u00b7 24 fps")
+
+    def test_the_listing_stands_in_for_an_animation_not_read_yet(self):
+        card = Card(**dict(BASE, type="anim", frames=48, fps="ntsc", start=12.0, end=59.0))
+        self.assertEqual(look.details(card, None),
+                         ["Manny [rig]", "48 frames (12-59) \u00b7 30 fps", "2 bones \u00b7 Spine",
+                          "E \u00b7 2026-10-03 12:00"])
+
+    def test_an_objects_animation(self):
+        card = Card(**dict(BASE, kind="objects", label="objects", count=1, regions=[],
+                           type="anim", frames=10, fps="ntsc", start=1.0, end=10.0))
+        data = {"kind": "objects", "frames": 10, "start": 1.0, "end": 10.0, "fps": "ntsc",
+                "objects": [{"name": "pCube1", "path": "|pCube1", "attrs": {}}],
+                "scene": "cubes.ma", "frame": 4}
+        self.assertEqual(look.details(card, data),
+                         ["Objects", "10 frames (1-10) \u00b7 30 fps", "1 object",
+                          "E \u00b7 2026-10-03 12:00", "cubes.ma"])
+
+    def test_one_frame_and_one_key(self):
+        card = Card(**dict(BASE, type="anim", frames=1, fps="ntsc", start=5.0, end=5.0))
+        data = {"kind": "character", "members": ["a"], "frames": 1, "start": 5.0, "end": 5.0,
+                "fps": "ntsc", "key_times": [5.0]}
+        self.assertEqual(look.details(card, data)[1], "1 frame (5) \u00b7 30 fps \u00b7 1 key")
+
+    def test_a_pose_card_reads_as_it_did(self):
+        card = Card(**dict(BASE, path="p/Fist.pose"))
+        data = {"kind": "character", "members": ["a", "b"], "regions": ["Spine"], "frame": 12.0,
+                "scene": "shot.ma", "author": "E", "created": "2026-10-03T12:00:00"}
+        self.assertEqual(look.details(card, data),
+                         ["Manny [rig]", "2 bones \u00b7 Spine", "E \u00b7 2026-10-03 12:00",
+                          "frame 12 \u00b7 shot.ma"])
+
+    FULL = {"name": "Walk", "target": "Manny_Rig1", "count": 73, "noun": "controls",
+            "layer": "AnimLayer1", "a": 12, "b": 59, "frames": 48, "mode": "replace",
+            "worst": (0.003, 0.0), "worst_frame": 31, "notes": ["n1"], "alpha": 1.0,
+            "mirror": False}
+
+    def test_anim_status(self):
+        text = look.anim_status({"name": "Walk", "target": "Manny_Rig1", "count": 73,
+                                 "noun": "controls", "layer": "AnimLayer1", "a": 12, "b": 59,
+                                 "frames": 48, "mode": "replace", "worst": (0.003, 0.0),
+                                 "worst_frame": 31, "notes": ["n1"], "alpha": 1.0, "mirror": False})
+        self.assertEqual(text, "Walk onto Manny_Rig1: 73 controls keyed over frames 12-59 "
+                               "(48 frames, replace) on AnimLayer1 - worst 0.003 deg at frame 31 | n1")
+
+    def test_anim_status_mirrored_blended_in_degrees_and_centimetres(self):
+        status = dict(self.FULL, mirror=True, alpha=0.5, worst=(0.00071, 0.02), notes=[],
+                      layer="", mode="insert")
+        self.assertEqual(look.anim_status(status),
+                         "Walk mirrored at 50 % onto Manny_Rig1: 73 controls keyed over frames "
+                         "12-59 (48 frames, insert) - worst 0.0007 deg / 0.02 cm at frame 31")
+
+    def test_a_worst_too_small_to_say_is_left_out(self):
+        status = dict(self.FULL, worst=(0.0004, 0.0001), notes=[])
+        self.assertTrue(look.anim_status(status).endswith("(48 frames, replace) on AnimLayer1"))
+        status = dict(self.FULL, worst=None, notes=[])
+        self.assertTrue(look.anim_status(status).endswith("on AnimLayer1"))
+        status = dict(self.FULL, worst_frame=None, notes=[])
+        self.assertTrue(look.anim_status(status).endswith("- worst 0.003 deg"))
+
+    def test_nothing_keyed(self):
+        status = dict(self.FULL, count=0)
+        self.assertEqual(look.anim_status(status), "Walk onto Manny_Rig1: nothing keyed | n1")
+
+    def test_the_paste_modes_read_as_words(self):
+        status = dict(self.FULL, mode="replace_all", notes=[], worst=None, layer="")
+        self.assertTrue(look.anim_status(status).endswith("(48 frames, replace all)"))
+
+    def test_one_control_on_one_frame(self):
+        status = dict(self.FULL, count=1, a=12, b=12, frames=1, notes=[], worst=None, layer="")
+        self.assertEqual(look.anim_status(status),
+                         "Walk onto Manny_Rig1: 1 control keyed at frame 12 (1 frame, replace)")
+
+    def test_several_targets_and_a_result_tuple(self):
+        Result = namedtuple("Result", sorted(self.FULL))
+        second = Result(**dict(self.FULL, target="Manny_Rig2", notes=[]))
+        text = look.anim_status([dict(self.FULL, notes=[]), second])
+        self.assertEqual(text.count(" | "), 1)
+        self.assertTrue(text.split(" | ")[1].startswith("Walk onto Manny_Rig2: 73 controls"))
+        self.assertEqual(look.anim_status(None), "")
+        self.assertEqual(look.anim_status([]), "")
 
 
 class Boundary(unittest.TestCase):

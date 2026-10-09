@@ -874,11 +874,15 @@ def _rebuild(data, point):
     return root, " - ".join([REBUILT % (namespace, x, z)] + notes)
 
 
-def drop_floor(data, point, mirror=False):
+def drop_floor(data, point, mirror=False, onto=None):
     """(ok, text): the card's source character added at the floor `point` (x, y, z) and the pose
     applied onto it. Its catalog row (`character.key`) through Add Character, else - a native
     skeleton - rebuilt bones only from the card; a card with neither is refused. The animator's
-    selection is put back; the pose is its own undo step (the import flushed the queue)."""
+    selection is put back; the pose is its own undo step (the import flushed the queue).
+
+    `onto(root)`, when given, is the press made onto the character just added in place of
+    `apply_onto(data, root, mirror)` - an animation card's (`animapply.drop_floor`: the same road
+    to a new character, then the clip pasted onto it, its travel starting from the point)."""
     if data and data.get("kind") == "objects":
         return False, OBJECTS_ONTO
     if not data:
@@ -898,7 +902,7 @@ def drop_floor(data, point, mirror=False):
     if root is None:
         return False, line
     _reselect(selection)
-    ok, text = apply_onto(data, root, mirror)
+    ok, text = onto(root) if onto is not None else apply_onto(data, root, mirror)
     return ok, line + " | " + text
 
 

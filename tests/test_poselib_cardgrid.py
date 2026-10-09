@@ -3,7 +3,12 @@
 cache, the hit test, and the mouse - a click, a drag past the start distance, the middle-drag
 blend, Esc - against a fake panel standing in for the window.
 
-Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window")
+The animation cards (2026-10-03): the badge, the preview sheet decoded once and kept (the last
+few), the cell playing at a time, and the card under the mouse playing its sheet - a timer
+running only then.
+
+Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window"),
+      docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("The window")
 """
 import os
 import shutil
@@ -18,6 +23,7 @@ try:
 except Exception:                                            # noqa: BLE001
     QT = None
 
+import maya_hubstyle as hubstyle
 from maya_poselib import cardgrid
 from maya_poselib import look
 from maya_poselib import store
@@ -497,6 +503,329 @@ class HoverZoom(CanvasCase):
         (_x, gy, _w, gh), z = self.canvas.shown(1)
         self.assertTrue(1.0 < z < look.ZOOM)
         self.assertTrue(0 <= gy and gy + gh <= 200)
+
+
+# ------------------------------------------------------------------ the animation cards
+
+FRAMES = {"bones": ["root"], "world": [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]}
+
+
+class SheetInfo(unittest.TestCase):
+
+    def test_the_grid_a_header_names_is_read_as_whole_numbers(self):
+        self.assertEqual(cardgrid.sheet_info({"frames": 48, "columns": 7, "size": 320,
+                                              "step": 1}),
+                         {"frames": 48, "columns": 7, "size": 320, "step": 1})
+        self.assertEqual(cardgrid.sheet_info({"frames": 60.0, "columns": 8, "size": 320,
+                                              "step": 2, "extra": "kept out"}),
+                         {"frames": 60, "columns": 8, "size": 320, "step": 2})
+
+    def test_a_grid_that_is_none_is_none(self):
+        for raw in (None, [], "sheet", {"frames": 48, "columns": 7, "size": 320},
+                    {"frames": 0, "columns": 7, "size": 320, "step": 1},
+                    {"frames": 48, "columns": "seven", "size": 320, "step": 1},
+                    {"frames": 48, "columns": 7, "size": -1, "step": 1},
+                    {"frames": float("nan"), "columns": 7, "size": 320, "step": 1},
+                    {"frames": True, "columns": 7, "size": 320, "step": 1}):
+            self.assertIsNone(cardgrid.sheet_info(raw), raw)
+
+
+@unittest.skipIf(QT is None, "no Qt")
+class AnimCards(CanvasCase):
+    """Animation cards written into a temp library: Walk with a still and a sheet of two cells,
+    red then blue; a pose card beside it."""
+
+    RED, BLUE, GREEN = "#d02020", "#2040d0", "#20a040"
+
+    def setUp(self):
+        CanvasCase.setUp(self)
+        self.animations = False                     # the zoom at once: one paint shows it
+        original = cardgrid._animations
+        cardgrid._animations = lambda: self.animations
+        self.addCleanup(setattr, cardgrid, "_animations", original)
+        self.now = 0
+        self.canvas._now = lambda: self.now
+        self.root = os.path.join(self.tmp, "lib").replace("\\", "/")
+        os.makedirs(self.root)
+        self.walk = self.write_anim("Walk")
+        self.fist = self.write_pose("Fist")
+
+    def image(self, name, colour, side=64):
+        path = os.path.join(self.tmp, name).replace("\\", "/")
+        image = QT.QtGui.QImage(side, side, QT.QtGui.QImage.Format_RGB32)
+        image.fill(QT.QtGui.QColor(colour))
+        image.save(path, "JPG", 95)
+        return path
+
+    def sheet(self, name, colours, size=32):
+        columns = look.sheet_columns(len(colours))
+        rows = -(-len(colours) // columns)
+        path = os.path.join(self.tmp, name).replace("\\", "/")
+        image = QT.QtGui.QImage(columns * size, rows * size, QT.QtGui.QImage.Format_RGB32)
+        image.fill(QT.QtGui.QColor("#000000"))
+        painter = QT.QtGui.QPainter(image)
+        for index, colour in enumerate(colours):
+            x, y, w, h = look.sheet_cell(index, columns, size)
+            painter.fillRect(x, y, w, h, QT.QtGui.QColor(colour))
+        painter.end()
+        image.save(path, "JPG", 95)
+        return path, {"frames": len(colours), "columns": columns, "size": size, "step": 1}
+
+    def header(self, name, preview=None, frames=48):
+        data = {"format": store.ANIM_FORMAT, "version": store.VERSION, "kind": "character",
+                "name": name, "created": "2026-10-03T12:00:00", "author": "Eugene",
+                "fps": "ntsc", "start": 0.0, "end": float(frames - 1), "frames": frames,
+                "character": {"label": "Manny [rig]"}, "bones": {}, "members": ["pelvis"],
+                "regions": ["Pelvis"], "objects": []}
+        if preview is not None:
+            data["preview"] = preview
+        return data
+
+    def write_anim(self, name, colours=None, still=True, frames=48):
+        colours = colours or (self.RED, self.BLUE)
+        sheet, info = self.sheet(name + "_sheet.jpg", colours) if colours != "none" \
+            else (None, None)
+        thumbnail = self.image(name + "_still.jpg", self.GREEN) if still else None
+        path = store.write(self.root, "", name, self.header(name, info, frames), thumbnail,
+                           frames=FRAMES, preview=sheet)
+        return self.card_of(path)
+
+    def write_pose(self, name):
+        data = {"format": store.FORMAT, "version": store.VERSION, "kind": "character",
+                "name": name, "character": {"label": "Manny [rig]"}, "bones": {},
+                "members": ["hand_l"], "regions": ["Hand L"], "objects": []}
+        path = store.write(self.root, "", name, data, self.image(name + ".jpg", self.GREEN))
+        return self.card_of(path)
+
+    def card_of(self, path):
+        found, _broken = store.cards(self.root)
+        return next(one for one in found if one.path == path)
+
+    def show(self, *cards):
+        self.canvas.set_cards(list(cards))
+        self.canvas.fit(500, 600)
+
+    def hover(self, index, dwell=True):
+        """The mouse onto card `index` - and resting there (the dwell's timer fired) unless
+        `dwell` is False."""
+        self.mouse("move", self.centre(index), QT.QtCore.Qt.NoButton, QT.QtCore.Qt.NoButton)
+        if dwell and self.canvas.dwell_timer.isActive():
+            self.canvas.dwell_timer.stop()
+            self.canvas._dwelt()
+
+    def square_colour(self, index):
+        """The colour at the middle of the card's square as it is drawn now (grown or not)."""
+        (x, y, w, _h), _z = self.canvas.shown(index)
+        return self.render().pixelColor(int(x + w / 2), int(y + w / 2))
+
+    # --- the badge
+
+    def test_an_animation_card_paints_its_badge(self):
+        bare = self.write_anim("Bare", still=False)
+        plain = QT.QtGui.QColor(hubstyle.TOKENS["card"])
+
+        def inked(card):
+            self.show(card)
+            image = self.render()
+            x, y, w, h = self.canvas.rects()[0]
+            count = 0
+            for px in range(x + w // 2, x + w - 8):
+                for py in range(y + 3 * h // 4, y + h - 8):
+                    seen = image.pixelColor(px, py)
+                    if max(abs(seen.red() - plain.red()), abs(seen.green() - plain.green()),
+                           abs(seen.blue() - plain.blue())) > 8:
+                        count += 1
+            return count
+
+        self.assertGreater(inked(bare), 20)                       # «▶ 48» in its pill ...
+        self.assertEqual(inked(bare._replace(type="pose")), 0)     # ... and nothing on a pose
+        self.assertEqual(inked(bare._replace(frames=1)), 0)        # a clip of one frame
+
+    # --- the sheet
+
+    def test_the_sheet_is_decoded_once_and_carries_its_grid(self):
+        loaded = self.canvas.sheet(self.walk)
+        self.assertIsNotNone(loaded)
+        picture, info = loaded
+        self.assertEqual((picture.width(), picture.height()), (64, 32))
+        self.assertEqual(info, {"frames": 2, "columns": 2, "size": 32, "step": 1})
+        self.assertIs(self.canvas.sheet(self.walk)[0], picture)
+
+    def test_no_sheet_for_a_pose_a_clip_without_one_or_a_broken_one(self):
+        self.assertIsNone(self.canvas.sheet(self.fist))
+        self.assertIsNone(self.canvas.sheet(self.write_anim("Bare", colours="none")))
+        short = self.write_anim("Short")
+        data = store.read(short.path)
+        data["preview"] = {"frames": 2, "columns": 4, "size": 32, "step": 1}   # wider than it
+        store.write(self.root, "", "Short", data, replace=True)
+        self.assertIsNone(self.canvas.sheet(self.card_of(short.path)))
+
+    def test_the_last_six_sheets_are_kept(self):
+        cards = [self.write_anim("A%d" % n) for n in range(7)]
+        for one in cards:
+            self.assertIsNotNone(self.canvas.sheet(one))
+        self.assertEqual(list(self.canvas.sheets), [one.path for one in cards[1:]])
+        self.canvas.sheet(cards[1])                                 # used: the newest now
+        self.canvas.sheet(cards[0])                                 # read again ...
+        self.assertNotIn(cards[2].path, self.canvas.sheets)         # ... the oldest goes
+        self.assertEqual(len(self.canvas.sheets), cardgrid.SHEETS)
+
+    def test_a_sheet_written_again_is_read_again(self):
+        first = self.canvas.sheet(self.walk)[0]
+        sheet, info = self.sheet("again.jpg", (self.BLUE, self.RED, self.GREEN))
+        data = store.read(self.walk.path)
+        data["preview"] = info
+        store.write(self.root, "", "Walk", data, preview=sheet, replace=True)
+        picture, read = self.canvas.sheet(self.card_of(self.walk.path))
+        self.assertIsNot(picture, first)
+        self.assertEqual(read["frames"], 3)
+
+    def test_forget_drops_the_sheet(self):
+        other = self.write_anim("Run")
+        self.canvas.sheet(self.walk)
+        self.canvas.sheet(other)
+        self.canvas.forget(self.walk.path)
+        self.assertEqual(list(self.canvas.sheets), [other.path])
+
+    def test_forgetting_everything_keeps_the_decoded_sheets(self):
+        """The window's plain refresh (`forget()`) drops every scaled thumbnail and keeps every
+        decoded sheet - about 23 MB of pixels each, and their cache already checks the file's
+        time and size, so a sheet written again is read again anyway (Task 9's review, minor
+        3); `forget(path)` still drops that card's."""
+        other = self.write_anim("Run")
+        held = self.canvas.sheet(self.walk)[0]
+        self.canvas.sheet(other)
+        self.canvas.thumb(self.walk.thumbnail, 64)
+        self.canvas.forget()
+        self.assertEqual(self.canvas.pixmaps, {})
+        self.assertEqual(list(self.canvas.sheets), [self.walk.path, other.path])
+        self.assertIs(self.canvas.sheet(self.walk)[0], held)
+        self.canvas.forget(other.path)
+        self.assertEqual(list(self.canvas.sheets), [self.walk.path])
+
+    def test_the_frame_playing_at_a_time(self):
+        first = self.canvas.preview_frame(self.walk, 0, 40)
+        self.assertEqual((first.width(), first.height()), (40, 40))
+        self.assertGreater(first.toImage().pixelColor(20, 20).red(), 150)
+        later = self.canvas.preview_frame(self.walk, 100, 40)        # 3 frames at 30 fps
+        self.assertGreater(later.toImage().pixelColor(20, 20).blue(), 150)
+        self.assertIsNone(self.canvas.preview_frame(self.fist, 0, 40))
+
+    # --- playing under the mouse
+
+    def test_the_card_under_the_mouse_plays_its_sheet(self):
+        self.show(self.walk, self.fist)
+        self.hover(0)
+        self.assertGreater(self.square_colour(0).red(), 150)        # cell 0
+        self.now = 100
+        self.assertGreater(self.square_colour(0).blue(), 150)       # cell 1
+        self.hover(1)                                               # the pose card ...
+        still = self.square_colour(1)
+        self.now = 200
+        self.assertEqual(self.square_colour(1), still)              # ... does not change
+        self.assertGreater(still.green(), 120)
+
+    def test_a_card_not_under_the_mouse_shows_its_still(self):
+        self.show(self.walk, self.fist)
+        self.assertGreater(self.square_colour(0).green(), 120)
+        self.hover(1)
+        self.now = 100
+        self.assertGreater(self.square_colour(0).green(), 120)
+
+    def test_it_plays_from_the_first_cell_each_time_the_mouse_comes(self):
+        self.show(self.walk, self.fist)
+        self.hover(0)
+        self.now = 100
+        self.canvas.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.now = 1100
+        self.hover(0)
+        self.assertGreater(self.square_colour(0).red(), 150)
+
+    def test_the_play_timer_runs_only_while_an_animation_card_is_under_the_mouse(self):
+        self.show(self.walk, self.fist, self.write_anim("Bare", colours="none"))
+        timer = self.canvas.play_timer
+        self.assertFalse(timer.isActive())
+        self.hover(0)
+        self.assertTrue(timer.isActive())
+        self.assertEqual(timer.interval(), look.PLAY_MS)
+        self.hover(1)                                               # a pose card
+        self.assertFalse(timer.isActive())
+        self.hover(2)                                               # a clip with no sheet
+        self.assertFalse(timer.isActive())
+        self.hover(0)
+        self.canvas.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.assertFalse(timer.isActive())
+
+    def test_a_drag_stops_it(self):
+        self.show(self.walk, self.fist)
+        point = self.centre(0)
+        self.hover(0)
+        self.mouse("press", point, QT.QtCore.Qt.LeftButton)
+        far = point + QT.QtCore.QPoint(-3000, 0)
+        self.mouse("move", far, QT.QtCore.Qt.NoButton, QT.QtCore.Qt.LeftButton)
+        self.assertIsNotNone(self.canvas._drag)
+        self.assertFalse(self.canvas.play_timer.isActive())
+        self.mouse("release", far, QT.QtCore.Qt.LeftButton)
+
+    def test_hiding_the_canvas_stops_it(self):
+        self.show(self.walk, self.fist)
+        self.hover(0)
+        self.assertTrue(self.canvas.play_timer.isActive())
+        self.canvas.hideEvent(QT.QtGui.QHideEvent())                # no Leave comes with it
+        self.assertFalse(self.canvas.play_timer.isActive())
+        self.assertIsNone(self.canvas._hover)
+        self.assertGreater(self.square_colour(0).green(), 120)      # the still again
+        self.hover(0)                                               # shown, the mouse back
+        self.assertTrue(self.canvas.play_timer.isActive())
+
+    def test_a_tick_repaints_the_playing_card_only(self):
+        self.show(self.walk, self.fist)
+        self.hover(0)
+        dirtied = []
+        self.canvas._dirty = dirtied.append
+        self.canvas._play_tick()
+        self.assertEqual(dirtied, [self.walk.path])
+
+    def test_it_plays_only_after_the_mouse_rests_and_a_sweep_decodes_nothing(self):
+        """The final review (S9): a sheet decoded the moment the mouse came onto a card (27-33
+        ms on the GUI thread, measured live), so a sweep across a row of clips stuttered. A card
+        plays once the mouse rested on it `DWELL_MS`: a sweep decodes nothing."""
+        cards = [self.walk] + [self.write_anim("Clip%d" % n) for n in range(3)]
+        self.show(*cards)
+        self.assertEqual(cardgrid.DWELL_MS, 150)
+        timer = self.canvas.dwell_timer
+        self.assertTrue(timer.isSingleShot())
+        self.assertEqual(timer.interval(), cardgrid.DWELL_MS)
+        for index in range(len(cards)):                          # the sweep
+            self.hover(index, dwell=False)
+            self.assertTrue(timer.isActive(), index)
+            self.assertFalse(self.canvas.play_timer.isActive(), index)
+        self.assertEqual(list(self.canvas.sheets), [])           # nothing decoded
+        self.assertGreater(self.square_colour(3).green(), 120)   # the still while it waits
+        timer.stop()
+        self.canvas._dwelt()                                     # it rested on the last one
+        self.assertEqual(list(self.canvas.sheets), [cards[3].path])
+        self.assertTrue(self.canvas.play_timer.isActive())
+        self.assertGreater(self.square_colour(3).red(), 150)     # cell 0
+
+    def test_a_dwell_that_ends_off_its_card_plays_nothing(self):
+        self.show(self.walk, self.fist)
+        self.hover(0, dwell=False)
+        self.canvas.leaveEvent(QT.QtCore.QEvent(QT.QtCore.QEvent.Leave))
+        self.assertFalse(self.canvas.dwell_timer.isActive())
+        self.canvas._dwelt()
+        self.assertFalse(self.canvas.play_timer.isActive())
+        self.assertEqual(list(self.canvas.sheets), [])
+
+    def test_a_reread_keeps_it_playing_from_where_it_was(self):
+        self.show(self.walk, self.fist)
+        self.hover(0)
+        self.now = 100
+        self.canvas.set_cards([self.fist, self.walk])
+        self.assertTrue(self.canvas.play_timer.isActive())
+        self.assertGreater(self.square_colour(1).blue(), 150)       # still cell 1, not cell 0
+        self.canvas.set_cards([self.fist])
+        self.assertFalse(self.canvas.play_timer.isActive())
 
 
 if __name__ == "__main__":

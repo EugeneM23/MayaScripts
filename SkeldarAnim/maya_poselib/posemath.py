@@ -24,6 +24,9 @@ holds it, with the roll AdvancedSkeleton moves into the twist joints put back (t
   RELATIVE TO ITS NEAREST PAIRED ANCESTOR, carried through the two rests, so a hand pose lands
   on the arm as it stands and a full pose on a character standing elsewhere keeps its place and
   facing; lengths are the target's, only the pelvis takes the pose's offset from the root;
+- `Transfer` the same prepared once and run per frame (an animation card, 2026-10-03): the
+  alignment read off the first pasted frame, each frame's pose onto the target as that frame
+  finds it, its root frame moved by the clip's `travel`;
 - `mirror` reflects a pose across the source's sagittal plane, `blend` mixes two matrices.
 
 The solvers (`skelsolve`, `rigsolve`) turn the targets into channel values; nothing here
@@ -69,6 +72,12 @@ ROOT = "root"              # the canonical name of a root standing at the floor 
 # `their_floor` for such a source (maya_skeletonmap.size_ratio)
 FLOOR = 0.0
 EPS = 1e-9
+# degrees: a top joint turned further than this off upright (its swing in the swing-twist split
+# about +Y) has an ill-conditioned heading - near upside down a 2 deg side tilt reads as up to a
+# half turn of yaw. An ANIMATION's rootless travel holds its heading steady across such frames
+# (`steady_yaws`, the final review's M3: a hips forward roll keyed Main spinning -4, -15, 180,
+# -6, -7 deg at frames 10-14); a pose reads its one frame as it is
+SWING_LIMIT = 120.0
 
 _ARM = ("clavicle", "upperarm", "lowerarm")
 _HAND = ("hand",) + skelmap.FINGERS
@@ -390,14 +399,99 @@ def _ground(rest, pose):
             _placed(om.MMatrix(), om.MVector(at_rest.x, FLOOR, at_rest.z)))
 
 
+def _yaw_swing(turn):
+    """(yaw in radians, swing in degrees) of a world-space turn's swing-twist split about +Y
+    (`_heading`'s): the yaw the twist's angle, the swing how far the turn tips the bone off
+    upright - 0 standing, 180 upside down."""
+    q = _quaternion(turn)
+    size = math.hypot(q.y, q.w)
+    yaw = 2.0 * math.atan2(q.y, q.w) if size >= EPS else 0.0
+    return yaw, math.degrees(2.0 * math.acos(min(1.0, size)))
+
+
+def _wrapped(angle):
+    """`angle` (radians) brought into (-pi, pi]."""
+    return angle - 2.0 * math.pi * math.ceil((angle - math.pi) / (2.0 * math.pi))
+
+
+def steady_yaws(turns, limit=SWING_LIMIT):
+    """[(yaw in radians, steadied)]: the heading of each of `turns` (one clip's rest-to-pose turns
+    of a rootless skeleton's top joint, in time order), kept CONTINUOUS for an animation (the
+    final review, M3). A turn whose swing is within `limit` keeps its own yaw (`steadied`
+    False); one past it - the hips upside down in a roll, where the yaw of a small tilt reads as
+    a half turn - takes the yaw interpolated, the short way round, between the nearest frames on
+    either side within the limit (by frame index), the nearest one's when it has a side with
+    none. A clip with no turn within the limit keeps every yaw its own. Pure."""
+    read = [_yaw_swing(turn) for turn in turns]
+    good = [i for i, (_yaw, swing) in enumerate(read) if swing <= limit]
+    if not good:
+        return [(yaw, False) for yaw, _swing in read]
+    unwrapped = {good[0]: read[good[0]][0]}
+    for before, after in zip(good, good[1:]):
+        unwrapped[after] = unwrapped[before] + _wrapped(read[after][0] - read[before][0])
+    out = []
+    for i, (yaw, _swing) in enumerate(read):
+        if i in unwrapped:
+            out.append((yaw, False))
+            continue
+        lower = [g for g in good if g < i]
+        upper = [g for g in good if g > i]
+        if not lower:
+            out.append((unwrapped[upper[0]], True))
+        elif not upper:
+            out.append((unwrapped[lower[-1]], True))
+        else:
+            a, b = lower[-1], upper[0]
+            share = float(i - a) / float(b - a)
+            out.append((unwrapped[a] + (unwrapped[b] - unwrapped[a]) * share, True))
+    return out
+
+
+def clip_roots(first, worlds, limit=SWING_LIMIT):
+    """[om.MMatrix]: a clip's SOURCE ROOT FRAME in each frame - `worlds` its root bone's world
+    (`root_of(first)`, 16 floats or a matrix) per frame in time order, `first` one frame's bones
+    (the rests). A source with a root of its own (`has_root`): each world as it is. A rootless
+    one: each frame's ground frame (`_ground`: the floor under its top joint, turned by its
+    heading), the heading kept continuous across the clip (`steady_yaws`) - the travel, the
+    pelvis offset and, through both, Main / the root take a roll over the hips as no turn at all.
+    A frame keeping its own yaw is `_ground`'s exactly. Pure."""
+    root = root_of(first)
+    if root is None:
+        return [om.MMatrix() for _world in worlds]
+    if has_root(first):
+        return [matrix(world) for world in worlds]
+    rest = matrix(first[root]["rest"])
+    turns = [rotation(rest).inverse() * rotation(matrix(world)) for world in worlds]
+    out = []
+    for world, turn, (yaw, steadied) in zip(worlds, turns, steady_yaws(turns, limit)):
+        at = position(matrix(world))
+        heading = om.MQuaternion(yaw, om.MVector(0.0, 1.0, 0.0)).asMatrix() if steadied \
+            else _heading(turn)
+        out.append(_placed(heading, om.MVector(at.x, FLOOR, at.z)))
+    return out
+
+
 def _root_frames(bones, root, pose, rootless):
     """(pose frame, rest frame) of a skeleton's root for `pose` (the root bone's world or
     drive): the root bone's own, else - a skeleton with no root of its own - its ground frame
-    (`_ground`). The one place `targets`, `mirror` and `scale_between` read a root from."""
+    (`_ground`). The one place `Transfer`, `mirror`, `scale_between` and `root_frame` read a
+    root from."""
     rest = matrix(bones[root]["rest"])
     if rootless:
         return _ground(rest, pose)
     return matrix(pose), rest
+
+
+def root_frame(bones, pose_bones=None):
+    """(pose frame, rest frame) of a whole skeleton's ROOT FRAME (`_root_frames`): its root bone
+    (`root_of`) when it has one of its own (`has_root`), else its ground frame (`_ground`); the
+    pose read off `pose_bones` - the same skeleton in another pose, an animation's frame
+    (default `bones` itself) - from the root bone's `world`. Identity twice for no bones."""
+    root = root_of(bones)
+    if root is None:
+        return om.MMatrix(), om.MMatrix()
+    pose = (bones if pose_bones is None else pose_bones)[root]["world"]
+    return _root_frames(bones, root, matrix(pose), not has_root(bones))
 
 
 def _on_ground(turn, point, rest, ground):
@@ -617,131 +711,279 @@ def drive_bones(source, target, pairs, use_drive=False):
 
 def targets(source, target, pairs, members, use_drive=False, scale=1.0, pelvis="pelvis"):
     """{target leaf: om.MMatrix}: where EVERY target bone stands for the source's pose
-    (unchanged bones at their current world).
+    (unchanged bones at their current world) - a pose card's transfer: one `Transfer`, its one
+    frame. The rule is `Transfer.frame`'s."""
+    return Transfer(source, target, pairs, members, use_drive, scale, pelvis).frame()
 
-    `P[s]` is `source[s]["drive"]` for the bones `drive_bones` names (every one that has one
-    when `use_drive` - the target is a rig - else those whose roll the target's own twist bones
-    cannot take), else its `world`; the target stands in `T_now[x]` = its own `drive` when
-    `use_drive` and it has one (a rig read by
-    `scene.skeleton` carries the four unrolled limb bones' drives), else its `world` - so a hand
-    that is no member, under a forearm that is, keeps the place it has on the forearm's DRIVE
-    chain, the relation the rig holds rigid (on the unrolled bone it turns with the forearm's
-    roll: 60 deg of it came out on the hand). A skeleton's bone without a drive plays its
-    drive: the bone with its roll, the drive's very definition.
-    Parents first, a target bone `t` that is a member's partner (`pairs[t] in members`), with
-    `tp` its nearest paired ancestor, `s = pairs[t]`, `sp = pairs[tp]`, takes the rotation
 
-        O_t  = rigid(T_rest[t]) · A[t] · rigid(S_rest[s])⁻¹
-        O_tp = rigid(T_rest[tp]) · A[tp] · rigid(S_rest[sp])⁻¹
-        R_t  = rotation(O_t · rotation(P[s]) · rotation(P[sp])⁻¹ · O_tp⁻¹ · rotation(W[tp]))
+class Transfer(object):
+    """A card's transfer onto one target, prepared ONCE and run per frame (2026-10-03, the
+    animation cards: «от места персонажа»).
 
-    `W[tp]` being `tp`'s RESULT (its target when solved, else where it followed to). Every other
-    bone follows its parent rigidly, `W[x] = (T_now[x] · T_now[parent]⁻¹) · W[parent]`, so a
-    non-member between two members, and every descendant, moves with what moved. Positions:
-    every bone keeps its own local translation, `local_translation(t) · W[parent]`. The PELVIS
-    (the target bone playing `pelvis`, paired with a member) takes the pose's offset from the
-    source's ROOT FRAME into the target's, scaled:
+    A clip of a few hundred frames must not pair, align, order and look its ancestors up again
+    on every frame - and its rest alignment must be ONE: read off each frame (a non-twin's is
+    read where the bones' children stand) it would make the clip jitter, and a mirrored clip
+    would align its mirrored rotations against unmirrored positions. So `__init__` reads every
+    structural thing off the `source` and `target` it is given - for an animation the FIRST
+    pasted frame's bones - and `frame` runs `targets`' rule for any frame's pose, the target
+    standing as that frame finds it, its root frame where the clip's travel puts it (`place`,
+    `travel`).
 
-        d_local = (pos(P[s_pelvis]) - pos(P_root)) · rotation(P_root)⁻¹
-        d_t     = d_local · rotation(O_root)⁻¹ · scale
-        pos     = pos(T_root) + d_t · rotation(T_root)
+    Spec: docs/superpowers/specs/2026-10-03-pose-library-animation-design.md"""
 
-    A ROOT FRAME is a skeleton's root (`has_root`: its top joint standing at the floor), else its
-    GROUND frame (`_ground`: the rest floor under its top joint, turned by its heading) - for a
-    source (Mixamo's Hips, Biped's centre of mass) as for a target. Read literally on a source
-    with none the rule held the pelvis relative to ITSELF, its offset zero, on the target's
-    root; with the centre of mass for a root it stood the pelvis 96 cm into the floor. `O_root
-    = rigid(T_root_rest) · rigid(P_root_rest)⁻¹`. A target's root frame keeps where it stands:
-    its root keeps its current world (never written), and with no root of its own its top joint
-    - a member like any other when its partner is one (Mixamo's Hips: the card's pelvis turn and
-    height, 15.8 deg and every bone with it lost on a twin before the final review) - is put on
-    `_on_ground`, so its ground frame reads the same after: the character stays where it stands
-    and faces."""
-    members = set(members or ())
-    align = alignments(pairs, source, target)
-    target_root = root_of(target)
-    if target_root is None:
-        return {}
-    rooted = has_root(target)
-    target_pelvis = _find(target, pelvis)
-    now = dict((leaf, matrix(bone["drive"] if use_drive and bone.get("drive") else bone["world"]))
-               for leaf, bone in target.items())
-    drives = drive_bones(source, target, pairs, use_drive)
-
-    def pose(s):
-        bone = source[s]
-        return matrix(bone["drive"] if s in drives else bone["world"])
-
-    # the two root frames: (pose / now, rest) - the source's (`_root_frames`), the target's
-    source_root = root_of(source)
-    if source_root is None:
-        source_frame = (om.MMatrix(), om.MMatrix())
-    else:
-        source_frame = _root_frames(source, source_root, pose(source_root),
-                                    not has_root(source))
-    if rooted:
-        root_world, root_rest = om.MMatrix(now[target_root]), matrix(target[target_root]["rest"])
-    else:
-        root_world, root_rest = _ground(target[target_root]["rest"], now[target_root])
-    root_offset = rigid(root_rest) * rigid(source_frame[1]).inverse()
-
-    def is_frame(leaf):
-        return leaf is None or (rooted and leaf == target_root)
-
-    def frame(leaf):
-        """(P, S_rest) of a target bone's partner - for the ROOT FRAME (`None`, or the target's
-        own root) the source's root frame."""
-        if is_frame(leaf):
-            return source_frame
-        s = pairs.get(leaf)
-        if s not in source:
-            return om.MMatrix(), om.MMatrix()
-        return pose(s), matrix(source[s]["rest"])
-
-    def offset(leaf):
-        """O: the target's rest against its partner's, through the alignment."""
-        if is_frame(leaf):
-            return root_offset
-        rest = frame(leaf)[1]
-        return rigid(target[leaf]["rest"]) * align.get(leaf, om.MMatrix()) * rigid(rest).inverse()
-
-    anchor = target_root if rooted else None
-    out = {}
-    for leaf in _ordered(target):
-        parent = target[leaf].get("parent")
-        top = parent not in target
-        if (rooted and leaf == target_root) or (top and leaf != target_root):
-            out[leaf] = om.MMatrix(now[leaf])
-            continue
-        parent_now = root_world if top else now[parent]
-        parent_world = root_world if top else out[parent]
-        local = now[leaf] * parent_now.inverse()
-        s = pairs.get(leaf)
-        if s not in members or s not in source:
-            out[leaf] = local * parent_world
-            continue
-        above = _paired_ancestor(target, leaf, pairs, source, anchor)
-        above_world = out[above] if above is not None else root_world
-        turn = rotation(offset(leaf) * rotation(pose(s)) * rotation(frame(above)[0]).inverse()
-                        * offset(above).inverse() * rotation(above_world))
-        if leaf == target_pelvis:
-            root_pose = source_frame[0]
-            d_local = (position(pose(s)) - position(root_pose)) * rotation(root_pose).inverse()
-            d_t = d_local * rotation(root_offset).inverse() * scale
-            point = position(root_world) + d_t * rotation(root_world)
+    def __init__(self, source, target, pairs, members, use_drive=False, scale=1.0,
+                 pelvis="pelvis"):
+        """Everything `targets` computes before its loop, once: the alignment (read off `source`
+        AS GIVEN - for an animation the FIRST pasted frame's bones), the target root, `rooted`,
+        the target pelvis, `drive_bones`, the root offset, the order, each member's paired
+        ancestor."""
+        self.source, self.target, self.pairs = source, target, pairs
+        self.members = set(members or ())
+        self.use_drive, self.scale = use_drive, scale
+        self.align = alignments(pairs, source, target)
+        self.target_root = root_of(target)
+        self.rooted = has_root(target)
+        self.target_pelvis = _find(target, pelvis)
+        self.drives = drive_bones(source, target, pairs, use_drive)
+        self.order = _ordered(target)
+        # the two root frames' rests (`_root_frames`: a root bone's, else the ground's) - a rest
+        # does not change from frame to frame, the poses are read per frame
+        self.source_root = root_of(source)
+        self.source_rootless = not has_root(source)
+        if self.source_root is None:
+            self.source_rest_frame = om.MMatrix()
         else:
-            t = position(local)
-            point = om.MPoint(t.x, t.y, t.z) * parent_world
-        if top:
-            turn, point = _on_ground(turn, point, target[leaf]["rest"], root_world)
-        out[leaf] = _placed(turn, point)
-    return out
+            self.source_rest_frame = _root_frames(
+                source, self.source_root, self._pose(source, self.source_root),
+                self.source_rootless)[1]
+        if self.target_root is None:
+            self.root_rest = om.MMatrix()
+        elif self.rooted:
+            self.root_rest = matrix(target[self.target_root]["rest"])
+        else:
+            self.root_rest = _ground(target[self.target_root]["rest"],
+                                     self._stands(target[self.target_root]))[1]
+        self.root_offset = rigid(self.root_rest) * rigid(self.source_rest_frame).inverse()
+        # the source's sagittal reflection, in its root's rest frame (`mirror`'s): `travel`'s flip
+        self.flip = _reflection(source, rotation(self.source_rest_frame))
+        anchor = self.target_root if self.rooted else None
+        self.above = dict((leaf, _paired_ancestor(target, leaf, pairs, source, anchor))
+                          for leaf in self.order)
+        self._offsets = {}
+
+    # -------------------------------------------------------- reading the two skeletons
+
+    def _pose(self, source, s):
+        """`P[s]`: the source bone's drive when `drive_bones` named it, else its world."""
+        bone = source[s]
+        return matrix(bone["drive"] if s in self.drives else bone["world"])
+
+    def _stands(self, bone):
+        """`T_now`: a target bone's drive when the target is a rig and it has one, else its
+        world."""
+        return matrix(bone["drive"] if self.use_drive and bone.get("drive") else bone["world"])
+
+    def _is_frame(self, leaf):
+        """Is the bone the ROOT FRAME: no bone (a rootless target's ground), or the target's own
+        root?"""
+        return leaf is None or (self.rooted and leaf == self.target_root)
+
+    def _offset(self, leaf):
+        """O: the target's rest against its partner's, through the alignment - for the ROOT
+        FRAME the two root frames' (`root_offset`). Rests only: computed once per bone."""
+        if self._is_frame(leaf):
+            return self.root_offset
+        if leaf not in self._offsets:
+            s = self.pairs.get(leaf)
+            rest = matrix(self.source[s]["rest"]) if s in self.source else om.MMatrix()
+            self._offsets[leaf] = rigid(self.target[leaf]["rest"]) * \
+                self.align.get(leaf, om.MMatrix()) * rigid(rest).inverse()
+        return self._offsets[leaf]
+
+    def _root_place(self, target, root_now):
+        """The target's root frame for its root bone standing as `root_now`: the bone itself, or
+        - rootless - the ground under it (`_ground`)."""
+        if self.rooted:
+            return om.MMatrix(root_now)
+        return _ground(target[self.target_root]["rest"], root_now)[0]
+
+    def _source_root_pose(self, bones):
+        """The source's root frame in `bones` (the card's skeleton in one frame's pose): its root
+        bone's world - never its drive - or, rootless, its ground frame."""
+        if self.source_root is None:
+            return om.MMatrix()
+        return _root_frames(self.source, self.source_root,
+                            matrix(bones[self.source_root]["world"]), self.source_rootless)[0]
+
+    # -------------------------------------------------------- the transfer
+
+    def place(self, target=None):
+        """The target's root frame as it stands (`target`'s world, default the one given to
+        `__init__`): its root bone's world, or - rootless - its ground frame (`_ground`).
+        Identity for a target with no bones."""
+        target = self.target if target is None else target
+        if self.target_root is None:
+            return om.MMatrix()
+        return self._root_place(target, self._stands(target[self.target_root]))
+
+    def frame(self, source=None, target=None, root_world=None, source_root=None):
+        """{target leaf: om.MMatrix}: where EVERY target bone stands for the source's pose
+        (unchanged bones at their current world).
+
+        `P[s]` is `source[s]["drive"]` for the bones `drive_bones` names (every one that has one
+        when `use_drive` - the target is a rig - else those whose roll the target's own twist
+        bones cannot take), else its `world`; the target stands in `T_now[x]` = its own `drive`
+        when `use_drive` and it has one (a rig read by `scene.skeleton` carries the four unrolled
+        limb bones' drives), else its `world` - so a hand that is no member, under a forearm that
+        is, keeps the place it has on the forearm's DRIVE chain, the relation the rig holds rigid
+        (on the unrolled bone it turns with the forearm's roll: 60 deg of it came out on the
+        hand). A skeleton's bone without a drive plays its drive: the bone with its roll, the
+        drive's very definition.
+        Parents first, a target bone `t` that is a member's partner (`pairs[t] in members`), with
+        `tp` its nearest paired ancestor, `s = pairs[t]`, `sp = pairs[tp]`, takes the rotation
+
+            O_t  = rigid(T_rest[t]) · A[t] · rigid(S_rest[s])⁻¹
+            O_tp = rigid(T_rest[tp]) · A[tp] · rigid(S_rest[sp])⁻¹
+            R_t  = rotation(O_t · rotation(P[s]) · rotation(P[sp])⁻¹ · O_tp⁻¹ · rotation(W[tp]))
+
+        `W[tp]` being `tp`'s RESULT (its target when solved, else where it followed to). Every
+        other bone follows its parent rigidly, `W[x] = (T_now[x] · T_now[parent]⁻¹) ·
+        W[parent]`, so a non-member between two members, and every descendant, moves with what
+        moved. Positions: every bone keeps its own local translation, `local_translation(t) ·
+        W[parent]`. The PELVIS (the target bone playing `pelvis`, paired with a member) takes the
+        pose's offset from the source's ROOT FRAME into the target's, scaled:
+
+            d_local = (pos(P[s_pelvis]) - pos(P_root)) · rotation(P_root)⁻¹
+            d_t     = d_local · rotation(O_root)⁻¹ · scale
+            pos     = pos(T_root) + d_t · rotation(T_root)
+
+        A ROOT FRAME is a skeleton's root (`has_root`: its top joint standing at the floor), else
+        its GROUND frame (`_ground`: the rest floor under its top joint, turned by its heading) -
+        for a source (Mixamo's Hips, Biped's centre of mass) as for a target. Read literally on a
+        source with none the rule held the pelvis relative to ITSELF, its offset zero, on the
+        target's root; with the centre of mass for a root it stood the pelvis 96 cm into the
+        floor. `O_root = rigid(T_root_rest) · rigid(P_root_rest)⁻¹`. A target's root frame keeps
+        where it stands: its root keeps its current world (never written), and with no root of
+        its own its top joint - a member like any other when its partner is one (Mixamo's Hips:
+        the card's pelvis turn and height, 15.8 deg and every bone with it lost on a twin before
+        the final review) - is put on `_on_ground`, so its ground frame reads the same after: the
+        character stays where it stands and faces.
+
+        Per frame (an animation card): `source` is that frame's bones (the card's rests, the
+        frame's `world` / `drive`; default the one given to `__init__`) and `target` the target
+        as it stands at that frame (default the one given) - the alignment, the offsets, the
+        drive choice and the paired ancestors stay what `__init__` read. `root_world` (an
+        MMatrix) replaces the target's ROOT FRAME for this frame - where the clip's travel puts
+        it (`travel` · `place`): a rooted target's root bone stands on it and every bone hung
+        off the root rides it (a helper such as `ik_foot_root`, no member, keeps its local on
+        it), the pelvis takes the card's offset from it; a rootless target's top joint keeps it
+        as its ground (`_on_ground`). Every local is still read against where the target stands
+        (`place`), so a bone the card does not hold keeps its own place on what carries it.
+        `source_root` (an MMatrix) replaces the SOURCE's root frame for this frame - an
+        animation's rootless source hands the one `clip_roots` steadied across its clip, the
+        same the travel was read from, so the pelvis relative to it and the root world it rides
+        turn together (the final review, M3)."""
+        source = self.source if source is None else source
+        target = self.target if target is None else target
+        if self.target_root is None:
+            return {}
+        now = dict((leaf, self._stands(bone)) for leaf, bone in target.items())
+
+        def pose(s):
+            return self._pose(source, s)
+
+        def partner(leaf):
+            """P of a target bone's partner - for the ROOT FRAME the source's root frame."""
+            if self._is_frame(leaf):
+                return source_pose
+            s = self.pairs.get(leaf)
+            if s not in source:
+                return om.MMatrix()
+            return pose(s)
+
+        # the two root frames as posed: the source's in this frame (`_root_frames`), the target's
+        # where it stands (`place`) and where this frame puts it (`root_world`)
+        if source_root is not None:
+            source_pose = om.MMatrix(source_root)
+        elif self.source_root is None:
+            source_pose = om.MMatrix()
+        else:
+            source_pose = _root_frames(source, self.source_root, pose(self.source_root),
+                                       self.source_rootless)[0]
+        place = self._root_place(target, now[self.target_root])
+        root_world = place if root_world is None else om.MMatrix(root_world)
+
+        out = {}
+        for leaf in self.order:
+            parent = target[leaf].get("parent")
+            top = parent not in target
+            if self.rooted and leaf == self.target_root:
+                out[leaf] = om.MMatrix(root_world)
+                continue
+            if top and leaf != self.target_root:
+                out[leaf] = om.MMatrix(now[leaf])
+                continue
+            parent_now = place if top else now[parent]
+            parent_world = root_world if top else out[parent]
+            local = now[leaf] * parent_now.inverse()
+            s = self.pairs.get(leaf)
+            if s not in self.members or s not in source:
+                out[leaf] = local * parent_world
+                continue
+            above = self.above[leaf]
+            above_world = out[above] if above is not None else root_world
+            turn = rotation(self._offset(leaf) * rotation(pose(s)) *
+                            rotation(partner(above)).inverse() *
+                            self._offset(above).inverse() * rotation(above_world))
+            if leaf == self.target_pelvis:
+                d_local = (position(pose(s)) - position(source_pose)) * \
+                    rotation(source_pose).inverse()
+                d_t = d_local * rotation(self.root_offset).inverse() * self.scale
+                point = position(root_world) + d_t * rotation(root_world)
+            else:
+                t = position(local)
+                point = om.MPoint(t.x, t.y, t.z) * parent_world
+            if top:
+                turn, point = _on_ground(turn, point, target[leaf]["rest"], root_world)
+            out[leaf] = _placed(turn, point)
+        return out
+
+    def travel(self, source_now, source_first, flip=False, roots=None):
+        """L_t: the source's root-frame motion from `source_first` to `source_now` (bone dicts,
+        unmirrored), `L = rigid(R_now) · rigid(R_first)⁻¹`, reflected across the source root's
+        sagittal plane when `flip` (`F · L · F`, `F = _reflection(source, rest root turn)`),
+        carried into the target's root axes `Q · L · Q⁻¹` (`Q = rotation(root_offset)`), its
+        translation scaled by `scale`. The target's root frame at that frame is `L_t · place`.
+
+        `L` is the motion in the source root's own axes (row vectors: `R_now = L · R_first`), so
+        a step forward stays a step forward on a target whose root faces elsewhere, and a UE root
+        resting turned -90 X (Z up) under a card's Y-up root takes the card's +Z step as its -Y.
+        A source with no root of its own moves by its ground frame: the floor under its top
+        joint, turned by its heading - the hips' bob and sway stay the pose's (`frame`'s pelvis
+        offset), never the travel's. `roots` - (R_now, R_first) as MMatrix - replaces the two
+        source root frames: an animation hands `clip_roots`' steadied ones, so a roll over the
+        hips (where a frame's own heading reads a 2 deg tilt as a half turn) carries no spin
+        (the final review, M3)."""
+        if roots is not None:
+            now, first = om.MMatrix(roots[0]), om.MMatrix(roots[1])
+        else:
+            now = self._source_root_pose(source_now)
+            first = self._source_root_pose(source_first)
+        motion = rigid(now) * rigid(first).inverse()
+        if flip:
+            motion = self.flip * motion * self.flip
+        q = rotation(self.root_offset)
+        carried = q * motion * q.inverse()
+        return _placed(rotation(carried), position(carried) * self.scale)
 
 
 # ---------------------------------------------------------------- mirror
 
-def mirror(source, members):
+def mirror(source, members, root_frame=None):
     """(new_source, new_members): the pose reflected left ↔ right, in the source root's frame.
+    `root_frame` (an MMatrix) replaces the pose's root frame - an animation's rootless source
+    hands the one `clip_roots` steadied across its clip (the final review, M3: near upside down
+    a frame's own heading is noise, and the mirror plane turns with it).
 
     `l` = normalised (the left upper arm's, else the left thigh's, rest position − its
     opposite's) in root-local coordinates (root-local +X when neither pair is there), `F = I −
@@ -770,8 +1012,9 @@ def mirror(source, members):
         if not any(key in bone for bone in source.values()):
             continue
         pose = dict((x, matrix(b.get(key) or b["world"])) for x, b in source.items())
-        root_frame = _root_frames(source, root, pose[root], rootless)[0]
-        root_turn, root_place = rotation(root_frame), position(root_frame)
+        frame = om.MMatrix(root_frame) if root_frame is not None else \
+            _root_frames(source, root, pose[root], rootless)[0]
+        root_turn, root_place = rotation(frame), position(frame)
         delta = dict((x, rest[x].inverse() * (rotation(pose[x]) * root_turn.inverse()))
                      for x in source)
         for leaf, bone in source.items():

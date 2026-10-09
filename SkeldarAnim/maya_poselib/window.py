@@ -8,8 +8,9 @@ uiScript carrying the plugin path - the hub's way) holds one Qt root in the hub'
 
     header     «Pose Library», the library path (muted), ⋮ (Library folder..., Open in
                Explorer, Refresh)
-    toolbar    search (every term in name, folder or character), sort (Name / Newest /
-               Character), the card size, + Save pose (the window's one primary)
+    toolbar    search (every term in name, folder or character, or a type word), the type
+               filter, sort (Name / Newest / Character), the card size, + Save (the window's
+               one primary)
     splitter   the FOLDER TREE (its own rows: New folder, Rename, Delete, Show in Explorer; a
                card dropped on a folder moves there) | the CARD GRID (`cardgrid`: one painted
                canvas, `look.grid` lays it out, only the cards the viewport shows are painted,
@@ -55,13 +56,47 @@ docked tab reads when it shows again: with a rig's 187 controls selected it cost
 the save panel open, on every change and every click (the final review); `scene.resolve` now
 answers a rig's nodes without walking their ancestors (0.05 s for those 187).
 
-Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window")
+**Animation cards** (2026-10-03, the animator: «теперь давай добавим возможность сохранять
+анимации. Все правила которые работают для поз должны работать и для анимаций. Так же мы должны
+уметь выбирать способ вставки анимации как в studio library»):
+
+  - the toolbar's TYPE FILTER (All / Poses / Animations, remembered) beside the search, and
+    + Save (was + Save pose) opening the save panel with `[Pose | Animation]` segments
+    (remembered); Animation adds Start / End - the time slider's highlight, else the playback
+    range (`Scene.anim_range`), read when Animation is first lit in a panel - and a line saying
+    how many frames and preview cells it takes (`save_frames_text`);
+  - the details of a picked animation card LOOP ITS PREVIEW in the big picture (a `PLAY_MS`
+    timer running only while the window shows one; `canvas.preview_frame`) and show the PASTE
+    OPTIONS block - under Apply, Mirror, Blend and Select objects, two options to a row, so
+    Apply stays in view at the default size (the final review, M5): Paste (Replace / Replace
+    all / Insert / Merge), At current time + Connect, Range (the
+    card's own frames, put back when another card is picked - a press on the picked card, to
+    drag it, keeps it), Keys (Every frame / Source keys) + In place. Each but the range
+    is remembered (an optionVar never written is its `animdata.Options` default - never the 0
+    Maya answers for a missing one). Every press of an animation card - Apply, the drops, the
+    blend, Select objects - hands the scene `options` (`options(path)`: the range only for the
+    picked card, the whole clip for another); a pose card's presses are the pose's, unchanged;
+  - an animation card's right-button rows are a pose card's with «Replace thumbnail and
+    preview» (`Scene.replace_preview`) in place of «Replace thumbnail».
+
+`Scene` dispatches on the card's suffix (`store.is_anim`): an animation goes to `animapply`
+with its frames (`store.read_frames`; a file that cannot be read hands the press None, which
+refuses with «save it again»), under ONE cancellable progress window (`timewalk.Progress`, a
+step per pasted frame - `press_steps`); Save, Update and the new preview to `animcapture`
+under one too.
+
+Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("The window"),
+      docs/superpowers/specs/2026-10-03-pose-library-animation-design.md ("Save", "Apply -
+      the options", "The window")
 """
 
+import functools
+import math
 import os
 import tempfile
 import traceback
 
+from maya_poselib import animdata
 from maya_poselib import cardgrid
 from maya_poselib import look
 from maya_poselib import store
@@ -77,7 +112,7 @@ SCROLL_NAME = cardgrid.SCROLL_NAME
 TREE_NAME = "skeldarPoseFolders"
 
 #  The hub card (build_panel).
-NOTE = "Poses of bones - onto any rig or skeleton."
+NOTE = "Poses and animations of bones - onto any rig or skeleton."
 NOTE_NAME = "skeldarPoseLibraryNote"
 OPEN_BUTTON = "skeldarPoseLibraryOpen"
 OPEN_LABEL = "Open Pose Library"
@@ -86,7 +121,26 @@ OPEN_LABEL = "Open Pose Library"
 SORT_VAR = "skeldarPoseLibrarySort"
 SIZE_VAR = "skeldarPoseLibraryCardSize"
 SORT_LABELS = (("Name", "name"), ("Newest", "newest"), ("Character", "character"))
+TYPE_VAR = "skeldarPoseLibraryType"            # the type filter: store.TYPES
+TYPE_LABELS = (("All", "all"), ("Poses", "pose"), ("Animations", "anim"))
+SAVE_TYPE_VAR = "skeldarPoseLibrarySaveType"   # the save panel's segments: "pose" | "anim"
+SAVE_TYPES = (("pose", "Pose"), ("anim", "Animation"))
+SAVE_NAMES = {"pose": "Pose", "anim": "Anim"}  # a new card's name before the animator types one
+#  The paste options of an animation card (animdata.Options), each but the range remembered
+PASTE_VAR = "skeldarPoseLibraryPaste"
+AT_CURRENT_VAR = "skeldarPoseLibraryAtCurrent"
+CONNECT_VAR = "skeldarPoseLibraryConnect"
+KEYS_VAR = "skeldarPoseLibraryKeys"
+IN_PLACE_VAR = "skeldarPoseLibraryInPlace"
+KEY_LABELS = (("every", "Every frame"), ("source", "Source keys"))
+FRAME_LIMIT = 1000000                # a Start / End spin box's reach, either way
 
+#  The details' playback beat while its window is off the screen - a floating Pose Library whose
+#  Maya is minimised: Windows hides it with no hideEvent, Qt still says visible (measured in a GUI
+#  Maya, 2026-10-08: each 33 ms tick then copied, scaled and set a cell nobody saw, 0.8 ms
+#  each) - slow enough to cost nothing, quick enough to play again when the window comes back
+PLAY_HIDDEN_MS = 500
+GA_ROOT = 2                          # GetAncestor: the root window of a child's chain
 BLEND_SPAN = 200                     # logical px of a middle drag from 0 to 100 %
 FOLLOW_MS = 120                      # the selection's reading, coalesced
 EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
@@ -94,15 +148,31 @@ EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
 NO_PICK = "pick a card first"
 CANCELLED = cardgrid.CANCELLED
 BLEND_CANCELLED = "blend cancelled - every value back"
-OBJECTS_DRAG = "an objects pose: select its objects and press Apply"
+OBJECTS_DRAG = "an objects card: select its objects and press Apply"
 OBJECTS_TARGET = "onto the selected objects, else the ones it was saved from"
 NOT_A_CHARACTER = "the selection holds no character - select any part of one"
 NO_CHARACTER = "no character in the scene"
 MANY = "%d characters in the scene (%s) - select any part of the one you mean"
 GONE = "the card is gone - Refresh"
 SEARCH_HINT = "search name, folder, character"
-EMPTY_LIBRARY = "No poses yet - select a character and press Save pose"
+EMPTY_LIBRARY = "Nothing saved yet - select a character and press Save"
 EMPTY_SEARCH = "No card matches"
+NO_RANGE = "End is before Start - no frame to save"
+NAME_TAKEN = "%s is taken in %s - type another name, or pick another folder"
+SHOWN_ALL = "the type filter shows All, so the new card can be seen"
+HIDDEN_BY_SEARCH = "the new card is hidden by the search - clear it to see the card"
+PREVIEW_CANCELLED = "cancelled - nothing changed"
+PREVIEW_KEPT = "the preview kept: %s"
+NO_PREVIEW = "saved without a preview: %s"
+APPLY_TIPS = {False: "Key the pose on the current frame, on the active animation layer, onto "
+                     "the selected characters",
+              True: "Paste the animation with the options above, on the active animation "
+                    "layer, onto the selected characters"}
+PASTE_TIPS = {"replace": "The keys inside the paste range cut, then the clip keyed",
+              "replace_all": "Every key of the pasted channels cut, then the clip keyed",
+              "insert": "Every key from the paste frame on moved later by the clip's length, "
+                        "the clip keyed into the gap",
+              "merge": "The clip keyed over what is there - a key between its frames stays"}
 
 
 def _last_line(error_text):
@@ -115,10 +185,79 @@ def _counted(count, noun):
     return "%d %s%s" % (count, noun, "" if count == 1 else "s")
 
 
+def _remove(path):
+    """The file at `path` gone, if it was there (a temporary snapshot or sheet)."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def _cmds():
     """`maya.cmds`, imported when first needed (a seam: the tests hand in a recording one)."""
     import maya.cmds as cmds
     return cmds
+
+
+def _current_time():
+    """The scene's current frame - where a paste starts, so how many frames it walks. A seam."""
+    return float(_cmds().currentTime(query=True))
+
+
+def _whole(value):
+    """A frame as a whole frame, rounded half UP - `animdata`'s rule: Python's round() goes to
+    even, and 12.5 must not land on 12 while 13.5 lands on 14."""
+    return int(math.floor(float(value) + 0.5))
+
+
+def _name_of(path):
+    """A card's name: its folder's, without the card's own suffix (`.pose` or `.anim`)."""
+    base = os.path.basename(path.replace("\\", "/").rstrip("/"))
+    return base[:-len(store.card_suffix(base))]
+
+
+def _noun(path):
+    """What the card at `path` is, as a dialog's title names it: "animation" or "pose"."""
+    return "animation" if store.is_anim(path) else "pose"
+
+
+def native_shown(hwnd, user32):
+    """Whether the native window `hwnd` (a WId as an int) can be seen, asked of Windows
+    (`user32`, `ctypes`' or a test's): its ROOT window (GetAncestor GA_ROOT; the window itself
+    when it is one) visible and not minimised. A floating Pose Library whose Maya is minimised is
+    HIDDEN with its owner (measured 2026-10-08: IsWindowVisible False, Qt still saying visible);
+    a docked one stands in Maya's own window, minimised (IsIconic). No handle, or one Windows
+    does not know (offscreen Qt), counts as seen - nothing to ask."""
+    if not hwnd or not user32.IsWindow(hwnd):
+        return True
+    root = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+    return bool(user32.IsWindowVisible(root)) and not bool(user32.IsIconic(root))
+
+
+_USER32 = []
+
+
+def _user32():
+    """Windows' user32 with the four calls `native_shown` makes typed for 64-bit handles (a
+    WinDLL of its own: `ctypes.windll.user32`, which other code shares, is left as it is), or
+    None off Windows. A seam."""
+    if not _USER32:
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32")
+            user32.IsWindow.argtypes = [wintypes.HWND]
+            user32.IsWindow.restype = wintypes.BOOL
+            user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            user32.GetAncestor.restype = wintypes.HWND
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
+            user32.IsWindowVisible.restype = wintypes.BOOL
+            user32.IsIconic.argtypes = [wintypes.HWND]
+            user32.IsIconic.restype = wintypes.BOOL
+        except (ImportError, AttributeError, OSError):
+            user32 = None
+        _USER32.append(user32)
+    return _USER32[0]
 
 
 def defer(fn):
@@ -155,12 +294,66 @@ def in_folder(card_folder, folder):
     return here == folder or here.startswith(folder + "/")
 
 
-def shown_cards(cards, folder, query, sort):
-    """The cards the grid shows: those in `folder` (`in_folder`) matching `query`
+def shown_cards(cards, folder, query, sort, type_name="all"):
+    """The cards the grid shows: those in `folder` (`in_folder`) of the type filter's
+    `type_name` (`store.of_type`: all, pose, anim; anything else is all) matching `query`
     (`store.filter_cards`), ordered by `sort` (`store.SORTS`; anything else is by name). Pure."""
     kept = [card for card in cards if in_folder(card.folder, folder)]
+    kept = store.of_type(kept, type_name if type_name in store.TYPES else "all")
     kept = store.filter_cards(kept, query)
     return store.sort_cards(kept, sort if sort in store.SORTS else "name")
+
+
+def save_frames_text(start, end):
+    """What the save panel says an animation over `start`..`end` (whole frames) takes: «48
+    frames · 48 preview cells» - every frame read, at most `look.PREVIEW_MAX` of them blasted
+    into the preview (a longer clip every step-th: «100 frames · 50 preview cells»); `NO_RANGE`
+    when End stands before Start. Pure."""
+    start, end = _whole(start), _whole(end)
+    if end < start:
+        return NO_RANGE
+    cells = len(look.preview_frames(start, end)[0])
+    return "%s %s %s" % (_counted(end - start + 1, "frame"), look.DOT,
+                         _counted(cells, "preview cell"))
+
+
+def _as_options(options):
+    """`animdata.Options` of what a press is handed - None the defaults, an `Options` as it is,
+    a mapping (the window's) made valid (`animapply._options`' rule)."""
+    if options is None:
+        return animdata.Options()
+    if isinstance(options, animdata.Options):
+        return options
+    return animdata.options_from(options)
+
+
+def press_steps(header, options, current):
+    """How many steps the progress window of an animation press takes - what the press steps:
+    a character card one per pasted frame (`animdata.paste_plan` of `options` at the frame
+    `current`), an objects card at most one per channel it holds; at least one (a press the plan
+    refuses steps none, and says why). Pure."""
+    header = header or {}
+    if header.get("kind") == "objects":
+        channels = sum(len((record or {}).get("attrs") or {})
+                       for record in header.get("objects") or ())
+        return max(1, channels)
+    try:
+        plan = animdata.paste_plan(header.get("start", 0.0), header.get("end", 0.0),
+                                   header.get("key_times"), _as_options(options), current)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, len(plan.frames))
+
+
+def remembered_options(read):
+    """The paste options the block starts with (`animdata.Options`; the range is the card's,
+    never remembered): `read(name)` answers an optionVar's value, None for one never written -
+    a missing optionVar is its default (At current time on), never the 0 Maya answers for it.
+    `animdata.options_from` makes every value valid: a mode from another build is Replace.
+    Pure."""
+    return animdata.options_from({"mode": read(PASTE_VAR), "at_current": read(AT_CURRENT_VAR),
+                                  "connect": read(CONNECT_VAR), "keys": read(KEYS_VAR),
+                                  "in_place": read(IN_PLACE_VAR)})
 
 
 def folder_text(rel):
@@ -183,8 +376,9 @@ def regions_arg(initial, checked):
 def scene_aim(kind, label, target):
     """The caption's aim (`look.drop_caption`) for a card of `kind` from `label` (its source's
     catalog label) over the scene's `target` (`Scene.target`: kind "character" with root and
-    label, "floor" with point, or "none" with text). An objects pose has no character to go
-    onto and no source to add: always "none", saying how it is applied. Pure."""
+    label, "floor" with point, or "none" with text). An objects card (a pose or an
+    animation) has no character to go onto and no source to add: always "none", saying how it
+    is applied (`OBJECTS_DRAG`). Pure."""
     if kind == "objects":
         return {"kind": "none", "text": OBJECTS_DRAG}
     target = target or {}
@@ -251,6 +445,7 @@ class Scene(object):
 
     def __init__(self):
         self._blend = None
+        self._blend_card = None     # (path, header, options) while an animation's blend stands
 
     # ---------------------------------------------------------- settings
 
@@ -357,10 +552,19 @@ class Scene(object):
 
     # ---------------------------------------------------------- save
 
-    def save(self, name, folder, regions, snapshot_path):
-        """(path, text): the selection's pose written as the card `name` into `folder`, the
-        snapshot as its thumbnail; (None, why) when the selection makes no pose or the name is
-        taken."""
+    def anim_range(self):
+        """(start, end) whole frames an animation saves by default: the time slider's highlight
+        when the animator dragged one, else the playback range (`animcapture.default_range`)."""
+        from maya_poselib import animcapture
+        return animcapture.default_range()
+
+    def save(self, name, folder, regions, snapshot_path, anim=None):
+        """(path, text): the selection written as the card `name` into `folder`, the snapshot as
+        its thumbnail - a pose, or with `anim` ({"start", "end"}: whole source frames) an
+        animation over that range (`_save_animation`); (None, why) when the selection makes no
+        card, the name is taken, or the animator cancelled."""
+        if anim is not None:
+            return self._save_animation(name, folder, regions, snapshot_path, anim)
         from maya_poselib import capture
         data, note = capture.build_pose(regions=regions)
         if data is None:
@@ -370,8 +574,57 @@ class Scene(object):
             path = store.write(self.library(), folder, name, data, thumbnail=thumbnail)
         except (ValueError, OSError) as exc:
             return None, str(exc)
-        saved = os.path.basename(path)[:-len(store.CARD_SUFFIX)]
-        return path, "saved %s in %s - %s" % (saved, folder_text(folder), note)
+        return path, "saved %s in %s - %s" % (_name_of(path), folder_text(folder), note)
+
+    def _sheet_path(self):
+        """Where a preview sheet is painted before the card takes it (one per Maya)."""
+        return os.path.join(tempfile.gettempdir(), "skeldar_anim_sheet_%d.jpg"
+                            % os.getpid()).replace("\\", "/")
+
+    def _save_animation(self, name, folder, regions, snapshot_path, anim):
+        """An animation card of the selection over `anim`'s range, in ONE progress window (a
+        step a frame read, a step a preview cell painted): its header and frames
+        (`animcapture.build_animation`), then its preview sheet (`animcapture.preview`) painted
+        into a temporary file, then the card written - the frames, the still, the sheet, the
+        header last (`store.write`). A cancel in either step writes nothing; a preview that
+        cannot be made (batch, no viewport, a playblast that failed) saves the card without
+        one and the line says why - a preview that raises too, its error's last line the why
+        (the frames are read by then, and a Save must not lose them over the picture)."""
+        from maya_poselib import animcapture
+        from maya_poselib import timewalk
+        start, end = _whole(anim.get("start")), _whole(anim.get("end"))
+        cells = len(look.preview_frames(start, end)[0])
+        sheet = self._sheet_path()
+        _remove(sheet)
+        try:
+            with timewalk.Progress("Saving %s" % name, max(0, end - start + 1) + cells) \
+                    as progress:
+                header, frames, note = animcapture.build_animation(
+                    regions=regions, start=start, end=end, progress=progress)
+                if header is None:
+                    return None, note
+                #  the frames are walked: a preview that RAISES (a playblast Maya refused) is
+                #  one that cannot be made - the card saved without it, the line saying why
+                try:
+                    made, said, info = animcapture.preview(sheet, start, end, progress)
+                except Exception:                            # noqa: BLE001
+                    traceback.print_exc()
+                    made, said, info = False, _last_line(traceback.format_exc()), None
+            if not made and said == animcapture.CANCELLED:
+                return None, said
+            if made:
+                header["preview"] = info
+            thumbnail = snapshot_path if snapshot_path and os.path.isfile(snapshot_path) \
+                else None
+            try:
+                path = store.write(self.library(), folder, name, header, thumbnail=thumbnail,
+                                   frames=frames, preview=sheet if made else None)
+            except (ValueError, OSError) as exc:
+                return None, str(exc)
+        finally:
+            _remove(sheet)
+        text = "saved %s in %s - %s" % (_name_of(path), folder_text(folder), note)
+        return path, text + " | " + (said if made else NO_PREVIEW % said)
 
     def snapshot(self, path):
         from maya_poselib import capture
@@ -379,43 +632,161 @@ class Scene(object):
 
     def update(self, path):
         """(ok, text): the card at `path` re-made from the selection, its name and thumbnail
-        kept."""
-        from maya_poselib import capture
-        data, note = capture.build_pose()
-        if data is None:
+        kept - an animation over its OWN range again, its preview kept too (the sheet and the
+        grid its header names: the range is the one it was painted over). Written into the card
+        AT ITS PATH (`store.replace`): a card renamed in Explorer to a name `safe_name` would
+        change came back by name as a stray new card (the final review)."""
+        name = _name_of(path)
+        if not store.is_anim(path):
+            from maya_poselib import capture
+            data, note = capture.build_pose()
+            if data is None:
+                return False, note
+            store.replace(path, data)
+            return True, "%s updated from the selection - %s" % (name, note)
+        from maya_poselib import animcapture
+        from maya_poselib import timewalk
+        old = store.read(path)
+        start, end = _whole(old.get("start") or 0.0), _whole(old.get("end") or 0.0)
+        with timewalk.Progress("Updating %s" % name, max(1, end - start + 1)) as progress:
+            header, frames, note = animcapture.build_animation(start=start, end=end,
+                                                               progress=progress)
+        if header is None:
             return False, note
-        parent, base = os.path.split(path.rstrip("/"))
-        name = base[:-len(store.CARD_SUFFIX)]
-        store.write(parent, "", name, data, replace=True)
-        return True, "%s updated from the selection - %s" % (name, note)
+        if "preview" in old:
+            header["preview"] = old["preview"]
+        store.replace(path, header, frames=frames)
+        return True, "%s updated from the selection over frames %d-%d - %s" % (
+            name, start, end, note)
+
+    def replace_preview(self, path):
+        """The line: the card at `path` given its still again (the viewport now) and - an
+        animation - its preview again over its own range, in one progress window (a step a
+        cell). Written together into the card at its path (`store.replace`, the header last,
+        with the new sheet's grid); a cancel writes nothing; a preview that cannot be made keeps
+        the old one and says why; no still keeps the old one."""
+        image = os.path.join(tempfile.gettempdir(), "skeldar_pose_snapshot_%d_replace.jpg"
+                             % os.getpid()).replace("\\", "/")
+        sheet = self._sheet_path()
+        _remove(image)
+        _remove(sheet)
+        try:
+            shot, shot_text = self.snapshot(image)
+            shot = shot and os.path.isfile(image)
+            if not store.is_anim(path):
+                if not shot:
+                    return shot_text
+                store.set_thumbnail(path, image)
+                return "new thumbnail - " + shot_text
+            from maya_poselib import animcapture
+            from maya_poselib import timewalk
+            header = store.read(path)
+            start, end = _whole(header.get("start") or 0.0), _whole(header.get("end") or 0.0)
+            cells = len(look.preview_frames(start, end)[0])
+            with timewalk.Progress("Previewing %s" % _name_of(path), cells) as progress:
+                made, said, info = animcapture.preview(sheet, start, end, progress)
+            if not made and said == animcapture.CANCELLED:
+                return PREVIEW_CANCELLED
+            if made:
+                header["preview"] = info
+                store.replace(path, header, thumbnail=image if shot else None, preview=sheet)
+            elif shot:
+                store.set_thumbnail(path, image)
+        finally:
+            _remove(image)
+            _remove(sheet)
+        if made:
+            head = "new thumbnail and preview" if shot else "new preview"
+            return "%s - %s | %s" % (head, shot_text if shot else "the still kept: "
+                                     + shot_text, said)
+        if shot:
+            return "new thumbnail - %s | %s" % (shot_text, PREVIEW_KEPT % said)
+        return "%s | %s" % (shot_text, PREVIEW_KEPT % said)
 
     # ---------------------------------------------------------- apply
 
-    def apply(self, path, mirror):
+    def _frames(self, path, header):
+        """The frames an animation press hands on: a character card's decoded
+        `frames.json.gz`, or None - an objects card holds none, and a file that cannot be read
+        lets the press refuse with its own words («the card has no frames - save it again»)."""
+        if (header or {}).get("kind") == "objects":
+            return None
+        try:
+            return store.read_frames(path)
+        except ValueError:
+            return None
+
+    def _paste(self, press, path, options):
+        """`press(header, frames, progress)` - an `animapply` press of the animation card at
+        `path` - run in ONE progress window, a step a pasted frame (`press_steps`); its
+        (ok, text)."""
+        from maya_poselib import timewalk
+        header = store.read(path)
+        frames = self._frames(path, header)
+        steps = press_steps(header, options, _current_time())
+        with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
+            return press(header, frames, progress)
+
+    def apply(self, path, mirror, options=None):
+        """The card at `path` onto the selection: a pose (`apply.apply`), or an animation
+        pasted with `options` (`animapply.apply`)."""
+        if store.is_anim(path):
+            from maya_poselib import animapply
+            return self._paste(lambda header, frames, progress: animapply.apply(
+                header, frames, mirror=mirror, options=options, progress=progress),
+                path, options)
         from maya_poselib import apply
         return apply.apply(store.read(path), mirror=mirror)
 
-    def apply_onto(self, path, root, mirror):
+    def apply_onto(self, path, root, mirror, options=None):
+        """The card at `path` onto the character of `root` (a drop on it in a viewport)."""
+        if store.is_anim(path):
+            from maya_poselib import animapply
+            return self._paste(lambda header, frames, progress: animapply.apply_onto(
+                header, frames, root, mirror=mirror, options=options, progress=progress),
+                path, options)
         from maya_poselib import apply
         return apply.apply_onto(store.read(path), root, mirror=mirror)
 
-    def drop_floor(self, path, point, mirror):
+    def drop_floor(self, path, point, mirror, options=None):
+        """The card's source character added at the floor `point`, then the card onto it."""
+        if store.is_anim(path):
+            from maya_poselib import animapply
+            return self._paste(lambda header, frames, progress: animapply.drop_floor(
+                header, frames, point, mirror=mirror, options=options, progress=progress),
+                path, options)
         from maya_poselib import apply
         return apply.drop_floor(store.read(path), point, mirror=mirror)
 
-    def select_objects(self, path):
+    def select_objects(self, path, options=None):
+        """What a press of the card at `path` would key, selected (an animation's: plus Main
+        or the root when its travel would be carried - `options`' In place)."""
+        if store.is_anim(path):
+            from maya_poselib import animapply
+            return animapply.select_objects(store.read(path), options=options)
         from maya_poselib import apply
         return apply.select_objects(store.read(path))
 
-    def blend_start(self, path, mirror):
-        """'' when a blend session stands for the card at `path`, else why not."""
-        from maya_poselib import apply
+    def blend_start(self, path, mirror, options=None):
+        """'' when a blend session stands for the card at `path`, else why not. An animation
+        card's session (`animapply.Blend`) previews one frame and pastes the whole range on
+        release (`blend_finish`)."""
         self.blend_cancel()
-        session = apply.Blend()
-        refusal = session.start(store.read(path), mirror=mirror)
+        if store.is_anim(path):
+            from maya_poselib import animapply
+            header = store.read(path)
+            session = animapply.Blend()
+            refusal = session.start(header, self._frames(path, header), mirror=mirror,
+                                    options=options)
+            card = (path, header, options)
+        else:
+            from maya_poselib import apply
+            session = apply.Blend()
+            refusal = session.start(store.read(path), mirror=mirror)
+            card = None
         if refusal:
             return refusal
-        self._blend = session
+        self._blend, self._blend_card = session, card
         return ""
 
     def blend_set(self, alpha):
@@ -423,11 +794,23 @@ class Scene(object):
             self._blend.set(alpha)
 
     def blend_finish(self):
-        session, self._blend = self._blend, None
-        return session.finish() if session is not None else ""
+        """The blend keyed where it stands - an animation card's whole range pasted at that
+        weight, in one progress window."""
+        session, card = self._blend, self._blend_card
+        self._blend = self._blend_card = None
+        if session is None:
+            return ""
+        if card is None:
+            return session.finish()
+        from maya_poselib import timewalk
+        path, header, options = card
+        steps = press_steps(header, options, _current_time())
+        with timewalk.Progress("Pasting %s" % _name_of(path), steps) as progress:
+            return session.finish(progress)
 
     def blend_cancel(self):
         session, self._blend = self._blend, None
+        self._blend_card = None
         if session is not None:
             session.cancel()
 
@@ -604,6 +987,29 @@ def _classes():
                 return
             QtWidgets.QSlider.mouseReleaseEvent(self, event)
 
+    # ---------------------------------------------------------- a frame field
+
+    class FrameBox(QtWidgets.QSpinBox):
+        """A whole frame (Start / End, the paste's Range): typed, or stepped with the arrow
+        keys - no arrow buttons, a field of the hub's - and under the wheel only once it has
+        the focus. A wheel turned over the side panel scrolls the panel: a range moved by a
+        scroll that passed over the field would paste or save other frames (the Blend
+        slider's lesson, review finding 1)."""
+
+        def __init__(self, name, parent=None):
+            QtWidgets.QSpinBox.__init__(self, parent)
+            self.setObjectName(name)
+            self.setButtonSymbols(QtWidgets.QAbstractSpinBox.NoButtons)
+            self.setFocusPolicy(Qt.StrongFocus)
+            self.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.setRange(-FRAME_LIMIT, FRAME_LIMIT)
+
+        def wheelEvent(self, event):                         # noqa: N802
+            if not self.hasFocus():
+                event.ignore()
+                return
+            QtWidgets.QSpinBox.wheelEvent(self, event)
+
     # ---------------------------------------------------------- the window
 
     class PoseWindow(QtWidgets.QWidget):
@@ -627,12 +1033,22 @@ def _classes():
             self.scroll = None
             self._targets = None            # the last `apply_targets` reading, None: unknown
             self._stale = False             # the selection changed while the window was hidden
+            self._range_for = None          # (path, start, end) the Range boxes were set for
+            self._play_path = None          # the animation card the details picture plays ...
+            self._play_t0 = 0               # ... and when it began (`_clock_ms`)
             self.follow_timer = QtCore.QTimer(self)
             self.follow_timer.setObjectName("skeldarPoseFollow")
             self.follow_timer.setSingleShot(True)
             self.follow_timer.setInterval(FOLLOW_MS)
             self.follow_timer.timeout.connect(self.follow)
+            self._play_clock = QtCore.QElapsedTimer()
+            self._play_clock.start()
+            self.play_timer = QtCore.QTimer(self)
+            self.play_timer.setObjectName("skeldarPosePlay")
+            self.play_timer.setInterval(look.PLAY_MS)
+            self.play_timer.timeout.connect(self._play_tick)
             self._build()
+            self._load_options()
             self.setStyleSheet(sheet(self.k))
             try:
                 jobs = scene.watch(self._queue_follow)
@@ -675,6 +1091,44 @@ def _classes():
                 label.setProperty("skRole", role)
             label.setWordWrap(wrap)
             return label
+
+        def _segments(self, prefix, choices, picked, columns=None):
+            """(track, {key: button}): the hub's segments - a `segments` track holding one
+            checkable `segment` button per (key, text) of `choices`, `columns` to a row (all in
+            one by default), one lit at a time (an exclusive QButtonGroup). Each is named
+            `prefix + key`; a CLICK on one calls `picked(key)` (lighting one from code
+            does not)."""
+            s = self.px
+            track = QtWidgets.QWidget()
+            track.setProperty("skRole", "segments")
+            track.setAttribute(Qt.WA_StyledBackground, True)
+            grid = QtWidgets.QGridLayout(track)
+            grid.setContentsMargins(s(2), s(2), s(2), s(2))
+            grid.setSpacing(s(2))
+            group = QtWidgets.QButtonGroup(track)
+            group.setExclusive(True)
+            columns = columns or len(choices)
+            buttons = {}
+            for index, (key, text) in enumerate(choices):
+                button = QtWidgets.QPushButton(text)
+                button.setObjectName(prefix + key)
+                button.setProperty("skRole", "segment")
+                button.setCheckable(True)
+                button.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                     QtWidgets.QSizePolicy.Preferred)
+                group.addButton(button)
+                grid.addWidget(button, index // columns, index % columns)
+                button.clicked.connect(lambda _checked=False, k=key: picked(k))
+                buttons[key] = button
+            return track, buttons
+
+        def _check(self, text, name, tip, var):
+            """A remembered option's checkbox: a click writes it to `var` (1 / 0)."""
+            box = QtWidgets.QCheckBox(text)
+            box.setObjectName(name)
+            box.setToolTip(tip)
+            box.clicked.connect(lambda checked=False, v=var: self._remember(v, int(bool(checked))))
+            return box
 
         def _build(self):
             s = self.px
@@ -753,6 +1207,18 @@ def _classes():
             self.search.textChanged.connect(lambda _t: self._repopulate())
             row.addWidget(self.search, 1)
 
+            self.type_filter = QtWidgets.QComboBox()
+            self.type_filter.setObjectName("skeldarPoseType")
+            self.type_filter.setToolTip("Show every card, the poses or the animations")
+            for text, key in TYPE_LABELS:
+                self.type_filter.addItem(text, key)
+            remembered = self.scene.option(TYPE_VAR, "all")
+            types = [key for _text, key in TYPE_LABELS]
+            self.type_filter.setCurrentIndex(types.index(remembered) if remembered in types
+                                             else 0)
+            self.type_filter.currentIndexChanged.connect(self._typed)
+            row.addWidget(self.type_filter)
+
             self.sort = QtWidgets.QComboBox()
             self.sort.setObjectName("skeldarPoseSort")
             for text, key in SORT_LABELS:
@@ -776,9 +1242,9 @@ def _classes():
             self.size.valueChanged.connect(self._sized)
             row.addWidget(self.size)
 
-            self.save_button = self._button("Save pose", "primary", "plus", "skeldarPoseSave")
-            self.save_button.setToolTip("Save the selection's pose as a card in the folder "
-                                        "picked in the tree")
+            self.save_button = self._button("Save", "primary", "plus", "skeldarPoseSave")
+            self.save_button.setToolTip("Save the selection's pose or animation as a card in "
+                                        "the folder picked in the tree")
             self.save_button.clicked.connect(lambda: self._run(self.open_save))
             row.addWidget(self.save_button)
             return row
@@ -840,11 +1306,12 @@ def _classes():
             column.addWidget(self.info)
             self.target_line = self._label("", "note", "skeldarPoseTarget", wrap=True)
             column.addWidget(self.target_line)
-            column.addStretch(1)
 
+            #  Apply first, the options block BELOW what it configures (the final review, M5:
+            #  above Apply it pushed Apply below the fold of the default window for every
+            #  animation card - 602 px down a 541 px side panel at a scale of 1.0)
             self.apply_button = self._button("Apply", "primary", "check", "skeldarPoseApply")
-            self.apply_button.setToolTip("Key the pose on the current frame, on the active "
-                                         "animation layer, onto the selected characters")
+            self.apply_button.setToolTip(APPLY_TIPS[False])
             self.apply_button.clicked.connect(lambda: self._press_apply())
             column.addWidget(self.apply_button)
             self.mirror = QtWidgets.QCheckBox("Mirror")
@@ -875,10 +1342,79 @@ def _classes():
 
             self.select_button = self._button("Select objects", "secondary", "target",
                                               "skeldarPoseSelect")
-            self.select_button.setToolTip("Select what the pose would key on the target")
+            self.select_button.setToolTip("Select what the card would key on the target")
             self.select_button.clicked.connect(lambda: self._press_select())
             column.addWidget(self.select_button)
+            self.anim_options = self._build_options()
+            self.anim_options.setVisible(False)
+            column.addWidget(self.anim_options)
+            column.addStretch(1)
             return page
+
+        def _build_options(self):
+            """The paste options of an animation card (shown while one is picked, under Apply,
+            Mirror, Blend and Select objects): Paste, At current time + Connect, Range, Keys +
+            In place - Studio Library's, in an inset, two options to a row (M5)."""
+            s = self.px
+            frame = QtWidgets.QFrame()
+            frame.setObjectName("skeldarPoseAnimOptions")
+            frame.setProperty("skRole", "inset")
+            frame.setAttribute(Qt.WA_StyledBackground, True)
+            column = QtWidgets.QVBoxLayout(frame)
+            column.setContentsMargins(s(8), s(8), s(8), s(8))
+            column.setSpacing(s(4))
+            column.addWidget(self._label("Paste", "context"))
+            #  two to a row: «Replace all» beside three more does not fit a 250 px side panel
+            track, self.paste_buttons = self._segments(
+                "skeldarPosePaste_", [(mode, animdata.MODE_LABELS[mode])
+                                      for mode in animdata.MODES],
+                lambda mode: self._remember(PASTE_VAR, mode), columns=2)
+            for mode, tip in PASTE_TIPS.items():
+                self.paste_buttons[mode].setToolTip(tip)
+            column.addWidget(track)
+            self.at_current = self._check(
+                "At current time", "skeldarPoseAtCurrent",
+                "The clip starts at the current frame; off: at its own source frames",
+                AT_CURRENT_VAR)
+            #  `connect_box`, never `connect`: PySide6 looks a signal's connect up on the
+            #  object that owns it, so a `self.connect` attribute broke every
+            #  `self.<signal>.connect(...)` of the window («QCheckBox object is not callable»)
+            self.connect_box = self._check(
+                "Connect", "skeldarPoseConnect",
+                "Every pasted channel moved so its first pasted value is the value it shows "
+                "at the paste frame", CONNECT_VAR)
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(8))
+            row.addWidget(self.at_current)
+            row.addWidget(self.connect_box)
+            row.addStretch(1)
+            column.addLayout(row)
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(6))
+            row.addWidget(self._label("Range", "context"))
+            self.range_start = FrameBox("skeldarPoseRangeStart")
+            self.range_end = FrameBox("skeldarPoseRangeEnd")
+            for box in (self.range_start, self.range_end):
+                box.setToolTip("A part of the clip, in its own source frames")
+            row.addWidget(self.range_start, 1)
+            row.addWidget(self._label("-", "context"))
+            row.addWidget(self.range_end, 1)
+            column.addLayout(row)
+            column.addWidget(self._label("Keys", "context"))
+            track, self.keys_buttons = self._segments(
+                "skeldarPoseKeys_", KEY_LABELS, lambda key: self._remember(KEYS_VAR, key))
+            self.keys_buttons["every"].setToolTip("A key on every frame - exact")
+            self.keys_buttons["source"].setToolTip(
+                "Keys only where the source had keys - the curves interpolate between them")
+            self.in_place = self._check(
+                "In place", "skeldarPoseInPlace",
+                "Root / Main untouched: the clip's travel is not carried", IN_PLACE_VAR)
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(8))
+            row.addWidget(track, 1)
+            row.addWidget(self.in_place)
+            column.addLayout(row)
+            return frame
 
         def _build_save(self):
             s = self.px
@@ -887,7 +1423,14 @@ def _classes():
             column = QtWidgets.QVBoxLayout(page)
             column.setContentsMargins(s(10), s(10), s(10), s(10))
             column.setSpacing(s(6))
-            column.addWidget(self._label("Save pose", "heading"))
+            self.save_heading = self._label("Save pose", "heading")
+            column.addWidget(self.save_heading)
+            track, self.save_types = self._segments(
+                "skeldarPoseSaveType_", SAVE_TYPES,
+                lambda kind: self._run(lambda: self._save_type_picked(kind)))
+            self.save_types["pose"].setToolTip("The selection at the current frame")
+            self.save_types["anim"].setToolTip("The selection over the frames below")
+            column.addWidget(track)
             self.save_name = QtWidgets.QLineEdit()
             self.save_name.setObjectName("skeldarPoseSaveName")
             self.save_name.returnPressed.connect(lambda: self._run(self.do_save))
@@ -897,6 +1440,31 @@ def _classes():
             self.save_character = self._label("", "context", "skeldarPoseSaveCharacter",
                                               wrap=True)
             column.addWidget(self.save_character)
+
+            #  an animation's frames: the slider's highlight, else the playback range, when
+            #  Animation is first lit in this panel - and what they take
+            self.save_anim = QtWidgets.QWidget()
+            self.save_anim.setObjectName("skeldarPoseSaveRange")
+            frames = QtWidgets.QVBoxLayout(self.save_anim)
+            frames.setContentsMargins(0, 0, 0, 0)
+            frames.setSpacing(s(4))
+            row = QtWidgets.QHBoxLayout()
+            row.setSpacing(s(6))
+            row.addWidget(self._label("Frames", "context"))
+            self.save_start = FrameBox("skeldarPoseSaveStart")
+            self.save_end = FrameBox("skeldarPoseSaveEnd")
+            self.save_start.setToolTip("The first frame saved")
+            self.save_end.setToolTip("The last frame saved")
+            for box in (self.save_start, self.save_end):
+                box.valueChanged.connect(lambda _value: self._save_frames_changed())
+            row.addWidget(self.save_start, 1)
+            row.addWidget(self._label("-", "context"))
+            row.addWidget(self.save_end, 1)
+            frames.addLayout(row)
+            self.save_frames = self._label("", "note", "skeldarPoseSaveFrames", wrap=True)
+            frames.addWidget(self.save_frames)
+            self.save_anim.setVisible(False)
+            column.addWidget(self.save_anim)
 
             chips = QtWidgets.QGridLayout()
             chips.setSpacing(s(4))
@@ -1009,7 +1577,7 @@ def _classes():
             if self._folder and self._folder not in folders:
                 self._folder = ""
             self._fill_tree(folders)
-            self.canvas.forget()
+            self.canvas.forget()            # the thumbnails; a decoded sheet checks its file
             self._repopulate()
             if self.picked and not self._card(self.picked):
                 self.unpick()
@@ -1078,10 +1646,18 @@ def _classes():
             if self._building_tree or current is None:
                 return
             self._folder = current.data(0, Qt.UserRole) or ""
+            if self._save is not None:
+                #  the save panel names the folder the card goes into: it follows the tree
+                #  (the final review, S7 - the line kept naming the folder it opened on)
+                self.save_folder.setText("in " + folder_text(self._folder))
             self._repopulate()
 
         def _sorted(self, _index):
             self.scene.set_option(SORT_VAR, self.sort.currentData())
+            self._repopulate()
+
+        def _typed(self, _index):
+            self.scene.set_option(TYPE_VAR, self.type_filter.currentData())
             self._repopulate()
 
         def _sized(self, value):
@@ -1090,7 +1666,7 @@ def _classes():
 
         def _repopulate(self):
             shown = shown_cards(self.all_cards, self._folder, self.search.text(),
-                                self.sort.currentData())
+                                self.sort.currentData(), self.type_filter.currentData())
             empty = ""
             if not shown:
                 empty = EMPTY_LIBRARY if not self.all_cards else EMPTY_SEARCH
@@ -1108,8 +1684,9 @@ def _classes():
         # ------------------------------------------------------ the pick
 
         def pick(self, path):
-            """Pick the card at `path`: the grid lights it, the details show it. False for a
-            path the library does not hold."""
+            """Pick the card at `path`: the grid lights it, the details show it - an animation
+            card with its paste options and its preview looping. False for a path the library
+            does not hold."""
             card = self._card(path)
             if card is None:
                 return False
@@ -1129,7 +1706,12 @@ def _classes():
             else:
                 self.thumb.setPixmap(QtGui.QPixmap())
                 self.thumb.setText("no thumbnail")
+            anim = card.type == "anim"
+            self.anim_options.setVisible(anim)
+            self._reset_range(card)
+            self.apply_button.setToolTip(APPLY_TIPS[anim])
             self.show_targets()
+            self._sync_play()
             return True
 
         def unpick(self):
@@ -1140,7 +1722,153 @@ def _classes():
             self.info.setText("pick a card")
             self.thumb.setPixmap(QtGui.QPixmap())
             self.thumb.setText("")
+            self.anim_options.setVisible(False)
+            self._reset_range(None)
             self.show_targets()
+            self._sync_play()
+
+        # ------------------------------------------------------ an animation's options
+
+        def _remember(self, var, value):
+            """An option the animator changed, written for the next session."""
+            try:
+                self.scene.set_option(var, value)
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
+
+        def _load_options(self):
+            """The options block as the animator left it (`remembered_options`): lit from code,
+            so nothing is written back."""
+            try:
+                opts = remembered_options(lambda name: self.scene.option(name, None))
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
+                opts = animdata.Options()
+            self.paste_buttons[opts.mode].setChecked(True)
+            self.keys_buttons[opts.keys].setChecked(True)
+            self.at_current.setChecked(opts.at_current)
+            self.connect_box.setChecked(opts.connect)
+            self.in_place.setChecked(opts.in_place)
+
+        def _lit(self, buttons, default):
+            return next((key for key, button in buttons.items() if button.isChecked()),
+                        default)
+
+        def options(self, path=None):
+            """The paste options the block shows, as an animation press takes them: {mode,
+            at_current, start, end, connect, keys, in_place}. The range is the Range boxes' for
+            the PICKED card (`path` None or the picked card's); any other card is pasted whole
+            (None, None) - a right-button row over a card not picked."""
+            start = end = None
+            target = path or self.picked
+            if target and target == self.picked and self._range_for is not None \
+                    and self._range_for[0] == target:
+                start = float(self.range_start.value())
+                end = float(self.range_end.value())
+            return {"mode": self._lit(self.paste_buttons, "replace"),
+                    "at_current": self.at_current.isChecked(), "start": start, "end": end,
+                    "connect": self.connect_box.isChecked(),
+                    "keys": self._lit(self.keys_buttons, "every"),
+                    "in_place": self.in_place.isChecked()}
+
+        def _extra(self, path):
+            """What a press of the card at `path` hands the scene beyond a pose's arguments:
+            an animation card's `options`; nothing for a pose card - its road unchanged."""
+            if path and store.is_anim(path):
+                return {"options": self.options(path)}
+            return {}
+
+        def _reset_range(self, card):
+            """The Range boxes on `card`'s own frames, both held inside them - when ANOTHER
+            card is picked (or this one's frames changed): every press on a card picks it, and
+            a press on the picked card (to drag it or blend it) keeps what was typed. A pose
+            card, or none, leaves them unset."""
+            if card is None or card.type != "anim":
+                self._range_for = None
+                return
+            start, end = _whole(card.start), _whole(card.end)
+            key = (card.path, start, end)
+            if self._range_for == key:
+                return
+            self._range_for = key
+            for box, value in ((self.range_start, start), (self.range_end, end)):
+                box.setRange(start, max(start, end))
+                box.setValue(value)
+
+        # ------------------------------------------------------ the details' preview
+
+        def _clock_ms(self):
+            """Milliseconds on the details' play clock (a seam the tests replace)."""
+            return self._play_clock.elapsed()
+
+        def _sync_play(self):
+            """The details picture loops the picked animation card's preview while the details
+            show (the window visible, no save panel over them) and the card's sheet can be read
+            (`canvas.sheet`) - from its first cell when the card is picked anew; anything else
+            stops the timer, and the still stays."""
+            card = self._card(self.picked) if self.picked else None
+            plays = (card is not None and card.type == "anim" and self._save is None
+                     and self.isVisible() and self.canvas.sheet(card) is not None)
+            if not plays:
+                self.play_timer.stop()
+                self._play_path = None
+                return
+            if self._play_path != card.path:
+                self._play_path = card.path
+                self._play_t0 = self._clock_ms()
+            self._play_tick()
+            if not self.play_timer.isActive():
+                self.play_timer.start()
+
+        def _on_screen(self):
+            """Whether the window can be seen (`native_shown`). `isVisible()` is not enough:
+            Windows hides a floating window with its minimised Maya and Qt sends no hideEvent
+            (measured: isVisible True, isExposed False, Win32 IsWindowVisible False). Asked of
+            Windows from `effectiveWinId()` - an int, the native window this widget draws into,
+            which (unlike `winId()`) does not make the widget native - and never through a
+            wrapper of Maya's own widgets: the first version asked `self.window()
+            .windowHandle().isExposed()` on every tick, and right after the control was built
+            again PySide handed back the DEAD QWindow wrapper cached at a recycled address
+            («Internal C++ object (QWindow) already deleted», in this timer slot - trap 96's
+            family; trap 135's says a stale wrapper of a Maya object can crash instead). Off
+            Windows, or with no native window to ask (offscreen Qt), it counts as on the
+            screen: the details play as they did before. A seam the tests replace."""
+            if QtGui.QGuiApplication.platformName() != "windows":
+                return True
+            user32 = _user32()
+            if user32 is None:
+                return True
+            try:
+                hwnd = int(self.effectiveWinId())
+            except (RuntimeError, TypeError, ValueError):
+                return True
+            return native_shown(hwnd, user32)
+
+        def _play_tick(self):
+            """The cell of the picked card's preview playing now, in the details picture -
+            nothing while the window is off the screen (`_on_screen`): the timer then beats
+            every PLAY_HIDDEN_MS until it is back, and plays at `look.PLAY_MS` again, from
+            where the clock stands."""
+            card = self._card(self._play_path) if self._play_path else None
+            if card is None:
+                self.play_timer.stop()
+                self._play_path = None
+                return
+            if not self._on_screen():
+                if self.play_timer.interval() != PLAY_HIDDEN_MS:
+                    self.play_timer.setInterval(PLAY_HIDDEN_MS)
+                return
+            if self.play_timer.interval() != look.PLAY_MS:
+                self.play_timer.setInterval(look.PLAY_MS)
+            picture = self.canvas.preview_frame(card, self._clock_ms() - self._play_t0,
+                                                self.thumb_side())
+            if picture is not None and not picture.isNull():
+                self.thumb.setPixmap(picture)
+
+        def hideEvent(self, event):                          # noqa: N802
+            QtWidgets.QWidget.hideEvent(self, event)
+            self.play_timer.stop()
+            self._play_path = None
 
         def _queue_follow(self, *_args):
             """The scriptJob's callback: the reading coalesced (a marquee fires many) - and
@@ -1161,6 +1889,7 @@ def _classes():
             if self._stale:
                 self._stale = False
                 self.follow_timer.start()
+            self._sync_play()
 
         def _read_targets(self):
             try:
@@ -1213,9 +1942,11 @@ def _classes():
             return self.apply_card(self.picked)
 
         def apply_card(self, path, mirror=None):
-            """Apply the card at `path` to the selection (`mirror` None: the checkbox)."""
+            """Apply the card at `path` to the selection (`mirror` None: the checkbox) - an
+            animation with the options block's options."""
             mirror = self.mirror.isChecked() if mirror is None else bool(mirror)
-            return self._act(lambda: self.scene.apply(path, mirror))
+            extra = self._extra(path)
+            return self._act(lambda: self.scene.apply(path, mirror, **extra))
 
         def _press_select(self):
             if not self.picked:
@@ -1223,7 +1954,8 @@ def _classes():
             return self.select_card(self.picked)
 
         def select_card(self, path):
-            return self._act(lambda: self.scene.select_objects(path))
+            extra = self._extra(path)
+            return self._act(lambda: self.scene.select_objects(path, **extra))
 
         # ------------------------------------------------------ drops
 
@@ -1266,11 +1998,12 @@ def _classes():
             aim = self.aim(gx, gy, path, snap)
             kind = aim.get("kind")
             mirror = self.mirror.isChecked()
+            extra = self._extra(path)            # an animation's options, read at the release
             if kind == "folder":
                 return self._run(lambda: self.move_card(path, aim["folder"]))
             if kind == "character":
                 root = aim["root"]
-                return self._act(lambda: self.scene.apply_onto(path, root, mirror))
+                return self._act(lambda: self.scene.apply_onto(path, root, mirror, **extra))
             if kind == "floor":
                 point = aim.get("point")
                 card = self._card(path)
@@ -1280,7 +2013,7 @@ def _classes():
                     #  one idle later the window may be gone (closed, rebuilt): the drop
                     #  still happens, and only a standing window shows its line
                     try:
-                        result = scene.drop_floor(path, point, mirror)
+                        result = scene.drop_floor(path, point, mirror, **extra)
                     except Exception:                        # noqa: BLE001
                         traceback.print_exc()
                         result = _last_line(traceback.format_exc())
@@ -1313,7 +2046,8 @@ def _classes():
                     return True
                 self.blend_cancel()
             try:
-                refusal = self.scene.blend_start(path, self.mirror.isChecked())
+                refusal = self.scene.blend_start(path, self.mirror.isChecked(),
+                                                 **self._extra(path))
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 refusal = _last_line(traceback.format_exc())
@@ -1356,15 +2090,19 @@ def _classes():
             return alpha
 
         def blend_release(self):
-            """The blend keyed where it stands (the middle button or the slider let go)."""
+            """The blend keyed where it stands (the middle button or the slider let go). The
+            session ends HERE, before the press: an animation's blend pastes its whole range
+            for seconds under a progress window, and the window losing the focus to it read
+            the session still standing - cancelled it and said «let go elsewhere» over a paste
+            that went on (the final review, S10)."""
             if self._blend is None:
                 return ""
+            self._blend_end()
             try:
                 text = self.scene.blend_finish()
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 text = _last_line(traceback.format_exc())
-            self._blend_end()
             return self.say(text or "")
 
         def blend_cancel(self):
@@ -1461,17 +2199,58 @@ def _classes():
             if self._save is not None:
                 self._save["touched"] = True
 
+        def save_type(self):
+            """What the save panel saves: "anim" while Animation is lit, else "pose"."""
+            return "anim" if self.save_types["anim"].isChecked() else "pose"
+
+        def _save_type_picked(self, kind):
+            """A click on Pose or Animation: remembered, and the panel follows."""
+            self._remember(SAVE_TYPE_VAR, kind)
+            self._light_save_type(kind)
+            return self.status.text()
+
+        def _light_save_type(self, kind):
+            """The save panel as a `kind` card ("pose" | "anim"): its segment lit, the heading,
+            the frames row shown for an animation - Start / End read from the scene
+            (`anim_range`) the first time it shows in this panel - and a name the PANEL made
+            swapped for the other type's free one (a name the animator typed is theirs)."""
+            kind = kind if kind in SAVE_NAMES else "pose"
+            self.save_types[kind].setChecked(True)
+            self.save_heading.setText("Save animation" if kind == "anim" else "Save pose")
+            self.save_anim.setVisible(kind == "anim")
+            if self._save is None:
+                return
+            if kind == "anim" and not self._save["ranged"]:
+                self._save["ranged"] = True
+                start, end = self.scene.anim_range()
+                self.save_start.setValue(_whole(start))
+                self.save_end.setValue(_whole(end))
+            text = self.save_name.text().strip()
+            if not text or text == self._save["auto"]:
+                auto = store.unique_name(self.root, self._folder, SAVE_NAMES[kind])
+                self.save_name.setText(auto)
+                self.save_name.selectAll()
+                self._save["auto"] = auto
+            self._save_frames_changed()
+
+        def _save_frames_changed(self):
+            self.save_frames.setText(save_frames_text(self.save_start.value(),
+                                                      self.save_end.value()))
+
         def open_save(self):
-            """+ Save pose: the save panel in the details' place, a free name in the picked
-            folder, the chips lit from the selection, a first snapshot taken."""
-            self._save = dict(initial=None, snapshot=self._snapshot_path(), touched=False)
-            self.save_name.setText(store.unique_name(self.root, self._folder, "Pose"))
-            self.save_name.selectAll()
+            """+ Save: the save panel in the details' place - lit as the last save was (Pose
+            or Animation), a free name in the picked folder, the chips lit from the selection,
+            a first snapshot taken."""
+            self._save = dict(initial=None, snapshot=self._snapshot_path(), touched=False,
+                              auto=None, ranged=False)
+            self.save_name.setText("")
+            self._light_save_type(self.scene.option(SAVE_TYPE_VAR, "pose"))
             self.save_folder.setText("in " + folder_text(self._folder))
             self.save_character.setText(self.scene.selection_label())
             self._light_chips(self.scene.selection_regions())
             self.save_thumb.setPixmap(QtGui.QPixmap())
             self.side.setCurrentWidget(self.save_page)
+            self._sync_play()
             self.take_snapshot()
             self.save_name.setFocus()
             return self.status.text()
@@ -1495,18 +2274,36 @@ def _classes():
             return self.say(text)
 
         def do_save(self):
-            """Save: the card written; the panel closed and the card picked - or the panel
-            kept, the line saying why not."""
+            """Save: the card written - a pose, or an animation over Start..End; the panel
+            closed and the card picked - or the panel kept, the line saying why not."""
             if self._save is None:
                 return ""
-            name = self.save_name.text().strip() or "Pose"
+            kind = self.save_type()
+            name = self.save_name.text().strip() or SAVE_NAMES[kind]
             checked = [region for region, chip in self.chips.items() if chip.isChecked()]
             regions = regions_arg(self._save["initial"], checked)
             snapshot = self._save["snapshot"]
+            snapshot = snapshot if os.path.isfile(snapshot) else None
             folder = self._folder
+            anim = None
+            if kind == "anim":
+                anim = {"start": self.save_start.value(), "end": self.save_end.value()}
+                if anim["end"] < anim["start"]:
+                    return self.say(NO_RANGE)
+            #  a name a card of either type holds in the folder is refused NOW - asked after
+            #  the save had walked the frames and blasted the preview, it lost all of that
+            #  (the final review, S7)
             try:
-                path, text = self.scene.save(name, folder, regions,
-                                             snapshot if os.path.isfile(snapshot) else None)
+                taken = store.unique_name(self.root, folder, name) != store.safe_name(name)
+            except ValueError:
+                taken = False
+            if taken:
+                return self.say(NAME_TAKEN % (store.safe_name(name), folder_text(folder)))
+            try:
+                if anim is None:
+                    path, text = self.scene.save(name, folder, regions, snapshot)
+                else:
+                    path, text = self.scene.save(name, folder, regions, snapshot, anim=anim)
             except Exception:                                # noqa: BLE001
                 traceback.print_exc()
                 path, text = None, _last_line(traceback.format_exc())
@@ -1514,27 +2311,51 @@ def _classes():
                 return self.say(text)
             self.close_save()
             self.refresh()
-            self.pick(path.replace("\\", "/").rstrip("/"))
+            path = path.replace("\\", "/").rstrip("/")
+            text = self._show_saved(path, text)
+            self.pick(path)
             return self.say(text)
+
+        def _show_saved(self, path, text):
+            """The card just saved made visible: a type filter that would hide it is switched
+            to All; one the SEARCH hides is said - the animator typed it (the final review,
+            S11: a new card hidden by either looked like a save that did nothing). The line."""
+            if path in self.cards_shown():
+                return text
+            card = self._card(path)
+            if card is not None and self.type_filter.currentData() not in ("all", card.type):
+                self.type_filter.setCurrentIndex(0)                   # All (remembered)
+                if path in self.cards_shown():
+                    return text + " | " + SHOWN_ALL
+            if path not in self.cards_shown():
+                return text + " | " + HIDDEN_BY_SEARCH
+            return text
 
         def close_save(self):
             """Cancel (or after a save): the details back, the snapshot file gone."""
             if self._save is not None:
-                try:
-                    os.remove(self._save["snapshot"])
-                except OSError:
-                    pass
+                _remove(self._save["snapshot"])
             self._save = None
             self.side.setCurrentWidget(self.details_page)
+            self._sync_play()
             return ""
 
         # ------------------------------------------------------ a card's rows
 
         def context_actions(self, path):
             """What the right button offers over the card at `path` (rows for
-            `maya_hubqt.run_menu`: (label, callable), None a separator); [] off every card."""
+            `maya_hubqt.run_menu`: (label, callable), None a separator); [] off every card. An
+            animation card's are a pose card's with «Replace thumbnail and preview» - the still
+            AND the preview sheet taken again (`replace_preview`) - in place of «Replace
+            thumbnail»."""
             if not path or self._card(path) is None:
                 return []
+            if store.is_anim(path):
+                replace = ("Replace thumbnail and preview",
+                           lambda: self._run(lambda: self.replace_preview(path)))
+            else:
+                replace = ("Replace thumbnail",
+                           lambda: self._run(lambda: self.replace_thumbnail(path)))
             return [
                 ("Apply", lambda: self.apply_card(path, mirror=False)),
                 ("Apply mirrored", lambda: self.apply_card(path, mirror=True)),
@@ -1542,7 +2363,7 @@ def _classes():
                 None,
                 ("Rename...", lambda: self._run(lambda: self.rename_card(path))),
                 ("Move to...", lambda: self._run(lambda: self.move_card(path))),
-                ("Replace thumbnail", lambda: self._run(lambda: self.replace_thumbnail(path))),
+                replace,
                 ("Update from selection", lambda: self._run(lambda: self.update_card(path))),
                 ("Show in Explorer", lambda: self._run(lambda: self.scene.reveal(path))),
                 None,
@@ -1553,13 +2374,13 @@ def _classes():
             card = self._card(path)
             if card is None:
                 return self.say(GONE)
-            name = self.ask_text("Rename pose", "Name", card.name)
+            name = self.ask_text("Rename " + _noun(path), "Name", card.name)
             if not name or name.strip() == card.name:
                 return ""
             new = store.rename(path, name)
             self.refresh()
             self.pick(new)
-            return self.say("renamed to %s" % os.path.basename(new)[:-len(store.CARD_SUFFIX)])
+            return self.say("renamed to %s" % _name_of(new))
 
         def move_card(self, path, folder=None):
             """The card into catalog `folder` (asked when None)."""
@@ -1568,7 +2389,7 @@ def _classes():
                 return self.say(GONE)
             if folder is None:
                 choices = ["Library"] + store.folders(self.root)
-                picked = self.ask_item("Move pose", "Folder", choices)
+                picked = self.ask_item("Move " + _noun(path), "Folder", choices)
                 if picked is None:
                     return ""
                 folder = "" if picked == "Library" else picked
@@ -1596,12 +2417,36 @@ def _classes():
             self.refresh()
             return self.say("new thumbnail - " + text if text else "new thumbnail")
 
+        def replace_preview(self, path):
+            """«Replace thumbnail and preview» on an animation card: the still and the preview
+            sheet taken again over the card's own range (`Scene.replace_preview`, in its
+            progress window); the grid and the details read both again - the canvas drops the
+            card's decoded sheet - even after a failure, which may have written one of them."""
+            if self._card(path) is None:
+                return self.say(GONE)
+            try:
+                text = self.scene.replace_preview(path)
+            except Exception:                                # noqa: BLE001
+                traceback.print_exc()
+                text = _last_line(traceback.format_exc())
+            self.canvas.forget(path)
+            self.refresh()
+            return self.say(text or "")
+
         def update_card(self, path):
+            """Update from selection: the card made again from the selection - a pose at the
+            current frame, an animation over its OWN range - its still (and preview) kept."""
             card = self._card(path)
             if card is None:
                 return self.say(GONE)
-            if not self.confirm("Update pose", "Replace %s with the selection's pose? Its "
-                                "thumbnail is kept." % card.name):
+            if card.type == "anim":
+                question = ("Replace %s with the selection's animation over frames %d-%d? Its "
+                            "thumbnail and preview are kept." % (card.name, _whole(card.start),
+                                                                 _whole(card.end)))
+            else:
+                question = ("Replace %s with the selection's pose? Its thumbnail is kept."
+                            % card.name)
+            if not self.confirm("Update " + _noun(path), question):
                 return ""
             text = self._act(lambda: self.scene.update(path))
             self.refresh()
@@ -1612,7 +2457,8 @@ def _classes():
             if card is None:
                 return self.say(GONE)
             trash = self.scene.trash()
-            if not self.confirm("Delete pose", "Delete %s? It goes to the trash folder:\n%s"
+            if not self.confirm("Delete " + _noun(path),
+                                "Delete %s? It goes to the trash folder:\n%s"
                                 % (card.name, trash)):
                 return ""
             store.remove(path, trash)
@@ -1708,13 +2554,16 @@ QPushButton[skRole="chip"]:hover {{ color: {text}; }}
 QPushButton[skRole="chip"]:checked {{ background: {accent_tint}; color: {accent_text}; }}
 QPushButton[skRole="chip"]:disabled {{ color: {faint}; background: {field}; }}
 QLabel[skRole="thumb"] {{ background: {field}; border-radius: {r6}px; color: {faint}; }}
+QSpinBox {{ background: {field}; border: {b1}px solid {field}; border-radius: {r6}px;
+    padding: {p2}px {p6}px; color: {text}; selection-background-color: {accent_tint}; }}
+QSpinBox:focus {{ border: {b1}px solid {accent}; }}
 """
 
 
 def sheet(scale=1.0):
     """The window's stylesheet: the hub's own (its tokens, roles and dropdown arrow) plus the
     rules for what only this window has - its root, the tree, the grid's well, the side panel,
-    the chips as buttons."""
+    the chips as buttons, the frame fields (Start / End, Range) as the hub's fields."""
     import maya_hubqt
     import maya_hubstyle as hubstyle
     try:
@@ -1723,6 +2572,7 @@ def sheet(scale=1.0):
         arrow = None
     values = dict(hubstyle.TOKENS)
     values.update(ROOT=ROOT, TREE=TREE_NAME, SCROLL=SCROLL_NAME)
+    values["b1"] = hubstyle.px(1, scale)
     for n in (2, 3, 4, 6, 8, 10):
         values["p%d" % n] = hubstyle.px(n, scale)
         values["r%d" % n] = hubstyle.px(n, scale)
@@ -1771,6 +2621,23 @@ def live():
     return None
 
 
+def _keep(window):
+    """`window` is the one standing (`live`): kept in `_WINDOW` until it is DESTROYED - then let
+    go (`_window_gone`). Held after its death, the dead wrapper kept every decoded preview sheet
+    of its grid alive, ~23 MB a card, until the next build (the final review, S8). The slot is a
+    module-level function given the window's id, never the window: a closure over it would keep
+    it alive just the same."""
+    del _WINDOW[:]
+    _WINDOW.append(window)
+    window.destroyed.connect(functools.partial(_window_gone, id(window)))
+
+
+def _window_gone(key, *_args):
+    """The window whose id is `key` is destroyed: let go of it - and only of it (a window built
+    since stands)."""
+    _WINDOW[:] = [window for window in _WINDOW if id(window) != key]
+
+
 def destroy_roots(host):
     """Delete every Pose Library root standing in `host` NOW - found by objectName, never by
     module state: after an install the fresh module does not know the root an older one built
@@ -1806,8 +2673,7 @@ def build():
         layout = q.QtWidgets.QVBoxLayout(host)
         layout.setContentsMargins(0, 0, 0, 0)
     layout.addWidget(window)
-    del _WINDOW[:]
-    _WINDOW.append(window)
+    _keep(window)
     _BUILT_HERE = True
     return CONTROL
 

@@ -9,6 +9,11 @@ log / exp and the Newton step the neck's in-between is solved with, and the meas
 The scene halves are proved in mayapy standalone on the shipped rigs (the task's scratch proof,
 then verify_poselib_solve.py).
 
+For the animation cards (2026-10-03): a frame's eulers seeded with the previous frame's values
+(`seed`, both solvers), a skeleton's own root written for the travel (`root=True`), and the rig's
+`Solver` - the structure built once, `solve(rig, wanted, members)` its one-frame case, Main turned
+and moved onto the game root's target before RootX_M when asked (`main=True`).
+
 Spec: docs/superpowers/specs/2026-10-02-pose-library-design.md ("Onto a skeleton", "Onto a rig").
 """
 
@@ -544,6 +549,421 @@ class FreshMode(unittest.TestCase):
         self.assertLess(log.index(("restore", [])), log.index(("sample",)))
         back = len(log) - 1 - log[::-1].index(("em", "parallel"))
         self.assertEqual(log[back + 1], ("restore", []))
+
+
+class Writable(object):
+    """A stand-in for `keys`: `writable` answers "locked" for the plugs in `locked` (held, not
+    copied - a test may lock a plug after the fake is installed)."""
+
+    def __init__(self, locked=()):
+        self.locked = locked
+
+    def writable(self, plug):
+        return (False, "locked") if plug in self.locked else (True, "")
+
+
+class SkeletonCmds(object):
+    """The `cmds` reads `skelsolve.solve` makes: a joint's parentMatrix / worldMatrix (identity
+    unless given) and a channel's current value (0 unless given)."""
+
+    def __init__(self, parents=None, values=None):
+        self.parents = parents or {}
+        self.values = values or {}
+        self.read = []
+
+    def getAttr(self, plug, **kwargs):
+        self.read.append(plug)
+        node, attr = plug.rsplit(".", 1)
+        if attr == "parentMatrix[0]":
+            return list(self.parents.get(node, om.MMatrix()))
+        if attr == "worldMatrix[0]":
+            return list(om.MMatrix())
+        return self.values.get(plug, 0.0)
+
+
+class SkeletonFake(unittest.TestCase):
+    """`skelsolve` with its `cmds` and `keys` rebound (`skelsolve.cmds = fake`)."""
+
+    def setUp(self):
+        self.saved = skelsolve.cmds, skelsolve.keys
+
+    def tearDown(self):
+        skelsolve.cmds, skelsolve.keys = self.saved
+
+    def use(self, cmds, locked=()):
+        skelsolve.cmds = cmds
+        skelsolve.keys = Writable(locked)
+
+
+class Seed(SkeletonFake):
+    """A frame series seeds each frame's eulers with the PREVIOUS frame's solved values (trap
+    108): the seed replaces what the channel shows now as the nearest-euler reference - a
+    channel the walk has not keyed yet reads 0 while the previous frame stood at 360."""
+
+    BONES = {"hips": {"path": "|hips", "parent": None, "canonical": None,
+                      "world": list(om.MMatrix()), "rotateOrder": 0,
+                      "jointOrient": (0.0, 0.0, 0.0), "rotateAxis": (0.0, 0.0, 0.0)}}
+
+    def solve(self, seed=None):
+        self.use(SkeletonCmds())
+        wanted = {"hips": euler((10.0, 0.0, 0.0))}
+        ref = type("Ref", (), {"root": None})()
+        return skelsolve.solve(ref, self.BONES, wanted, ["hips"], seed=seed)
+
+    def test_without_a_seed_the_nearest_to_what_the_channel_shows(self):
+        self.assertAlmostEqual(self.solve().values["|hips.rotateX"], 10.0, places=6)
+
+    def test_the_seed_is_the_reference(self):
+        seed = {"|hips.rotateX": 360.0, "|hips.rotateY": 0.0, "|hips.rotateZ": 0.0}
+        values = self.solve(seed).values
+        self.assertAlmostEqual(values["|hips.rotateX"], 370.0, places=6)
+        self.assertAlmostEqual(values["|hips.rotateY"], 0.0, places=6)
+
+    def test_a_seed_that_names_other_plugs_changes_nothing(self):
+        values = self.solve({"|other.rotateX": 360.0}).values
+        self.assertAlmostEqual(values["|hips.rotateX"], 10.0, places=6)
+
+
+class RootWritten(SkeletonFake):
+    """An animation's travel: with `root=True` a skeleton's own root joint is written to its
+    target - rotate and translate, against its DAG parent (`local = wanted[root] .
+    parentMatrix^-1`); without it the root is never written (the pose rule)."""
+
+    ROOT, PELVIS = "|grp|root", "|grp|root|pelvis"
+    GROUP = placed(om.MMatrix(), (0.0, 0.0, 2.0))   # the root's DAG parent, 2 cm along Z
+
+    def bones(self):
+        bone = {"world": list(om.MMatrix()), "rotateOrder": 0,
+                "jointOrient": (0.0, 0.0, 0.0), "rotateAxis": (0.0, 0.0, 0.0)}
+        return {"root": dict(bone, path=self.ROOT, parent=None, canonical="root"),
+                "pelvis": dict(bone, path=self.PELVIS, parent="root", canonical="pelvis")}
+
+    def solve(self, root, locked=()):
+        self.use(SkeletonCmds(parents={self.ROOT: self.GROUP}), locked)
+        root_at = placed(euler((0.0, 30.0, 0.0)), (5.0, 0.0, 7.0))
+        wanted = {"root": root_at, "pelvis": placed(euler((0, 0, 15)), (0, 96, 0)) * root_at}
+        ref = type("Ref", (), {"root": self.ROOT})()
+        return skelsolve.solve(ref, self.bones(), wanted, ["pelvis"], root=root)
+
+    def test_without_root_the_root_is_never_written(self):
+        solution = self.solve(root=False)
+        self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".")])
+        self.assertAlmostEqual(solution.values[self.PELVIS + ".rotateZ"], 15.0, places=6)
+
+    def test_with_root_its_rotate_and_translate_reach_the_target(self):
+        values = self.solve(root=True).values
+        self.assertAlmostEqual(values[self.ROOT + ".rotateY"], 30.0, places=6)
+        self.assertAlmostEqual(values[self.ROOT + ".rotateX"], 0.0, places=6)
+        got = [values[self.ROOT + "." + ch] for ch in skelsolve.TRANSLATE]
+        for g, w in zip(got, (5.0, 0.0, 5.0)):        # 7 along Z less the group's 2
+            self.assertAlmostEqual(g, w, places=6)
+        # the pelvis as before, against the root's target
+        self.assertAlmostEqual(values[self.PELVIS + ".rotateZ"], 15.0, places=6)
+
+    def test_a_root_not_in_wanted_is_not_written(self):
+        self.use(SkeletonCmds())
+        ref = type("Ref", (), {"root": self.ROOT})()
+        solution = skelsolve.solve(ref, self.bones(), {"pelvis": om.MMatrix()}, ["pelvis"],
+                                   root=True)
+        self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".")])
+
+    def test_a_locked_root_translate_keeps_the_whole_root(self):
+        # all six channels or none, like rigsolve's Main: a root turned but not moved would carry
+        # half the travel
+        solution = self.solve(root=True, locked=[self.ROOT + ".translateX"])
+        self.assertIn("root", solution.skipped)
+        self.assertIn("translateX locked", solution.skipped["root"])
+        self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".")])
+        # the body below solves as the pose rule has it: the pelvis against the root's target
+        self.assertAlmostEqual(solution.values[self.PELVIS + ".rotateZ"], 15.0, places=6)
+
+    def test_a_locked_root_rotate_keeps_the_whole_root(self):
+        # ... and a root moved but not turned would carry the other half
+        solution = self.solve(root=True, locked=[self.ROOT + ".rotateY"])
+        self.assertIn("rotateY locked", solution.skipped["root"])
+        self.assertFalse([p for p in solution.values if p.startswith(self.ROOT + ".")])
+        self.assertAlmostEqual(solution.values[self.PELVIS + ".rotateZ"], 15.0, places=6)
+
+
+# a Manny_Rig's structure as data: the game root and pelvis, a left hand
+STRUCTURE_RIG = rigsolve.maya_rigs.Rig("Manny_Rig", "Manny_Rig:ControlSet", "Manny_Rig:Main",
+                                       "|chr|Manny_Rig:Group", "|chr|Manny_Rig:root", "|chr")
+MAIN_PATH = "|chr|Manny_Rig:Group|Manny_Rig:Main"
+ROOTX_PATH = "|chr|Manny_Rig:Group|Manny_Rig:RootX_M"
+STRUCTURE_GAME = {"root": "|chr|Manny_Rig:root", "pelvis": "|chr|Manny_Rig:root|Manny_Rig:pelvis",
+                  "hand_l": "|chr|Manny_Rig:root|Manny_Rig:pelvis|Manny_Rig:hand_l"}
+STRUCTURE_BASES = {
+    "pelvis": rigsolve.Base("pelvis", "Root", "_M", ROOTX_PATH, None, None, "|Root_M", None),
+    "hand_l": rigsolve.Base("hand_l", "Wrist", "_L", "|FKWrist_L", "|FKWrist_L|FKXWrist_L",
+                            "|IKXWrist_L", "|Wrist_L", "arm"),
+}
+
+
+class StructureCmds(RecordingCmds):
+    """RecordingCmds that also resolves a rig node to its long path (`Main` under the group)."""
+
+    def ls(self, name, long=False, **kwargs):
+        return [MAIN_PATH] if name == STRUCTURE_RIG.main else []
+
+
+class StructureFake(unittest.TestCase):
+    """`rigsolve` with the rig's structure as data: `bases` / `game_bones` stubbed (and counted),
+    the job's scene steps - the samples, the levels, the measure, every control turned or moved -
+    logged instead of run; the passes themselves run."""
+
+    def setUp(self):
+        from unittest import mock
+        self.fake = StructureCmds()
+        self.log = self.fake.log
+        self.counts = {"bases": 0, "game_bones": 0}
+        log, counts = self.log, self.counts
+
+        def bases(rig):
+            counts["bases"] += 1
+            return dict(STRUCTURE_BASES)
+
+        def game_bones(rig):
+            counts["game_bones"] += 1
+            return dict(STRUCTURE_GAME)
+
+        def sample(job):
+            log.append(("sample", tuple(job.members), tuple(sorted(job.wanted))))
+            job.root_offset = om.MMatrix()
+            job.main_offset = self.offset
+
+        def plan_levels(job):
+            log.append(("levels",))
+            job.levels, job.ends = [], {}
+
+        def turn(job, node, world):
+            log.append(("turn", node, tuple(om.MMatrix(world))))
+            return True
+
+        def move(job, node, point):
+            log.append(("move", node, (point.x, point.y, point.z)))
+            return True
+
+        self.offset = om.MMatrix()
+        self.locked = set()
+        patches = [mock.patch.object(rigsolve, "cmds", self.fake),
+                   mock.patch.object(rigsolve, "keys", Writable(self.locked)),
+                   mock.patch.object(rigsolve, "bases", bases),
+                   mock.patch.object(rigsolve, "game_bones", game_bones),
+                   mock.patch.object(rigsolve._Job, "sample", sample),
+                   mock.patch.object(rigsolve._Job, "plan_levels", plan_levels),
+                   mock.patch.object(rigsolve._Job, "rows", lambda job: []),
+                   mock.patch.object(rigsolve._Job, "_turn", turn),
+                   mock.patch.object(rigsolve._Job, "_move", move)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+
+class SolverIsSolve(StructureFake):
+    """`solve(rig, wanted, members)` is `Solver(rig, members).solve(wanted)`: the structure - the
+    game bones, the bases, the member filter, the limbs, the held bones - built ONCE per Solver,
+    each `.solve` one frame's samples, targets and writes."""
+
+    WANTED = {"pelvis": om.MMatrix(), "hand_l": om.MMatrix()}
+
+    def test_the_same_calls_either_way(self):
+        rigsolve.solve(STRUCTURE_RIG, self.WANTED, ["hand_l", "pelvis"])
+        once = list(self.log)
+        del self.log[:]
+        rigsolve.Solver(STRUCTURE_RIG, ["hand_l", "pelvis"]).solve(self.WANTED)
+        self.assertEqual(self.log, once)
+        self.assertIn(("sample", ("hand_l", "pelvis"), ("hand_l", "pelvis")), once)
+        self.assertIn(ROOTX_PATH, [entry[1] for entry in once if entry[0] == "turn"])
+
+    def test_the_structure_is_built_once(self):
+        solver = rigsolve.Solver(STRUCTURE_RIG, ["hand_l", "pelvis"])
+        solver.solve(self.WANTED)
+        solver.solve(self.WANTED)
+        self.assertEqual(self.counts, {"bases": 1, "game_bones": 1})
+        self.assertEqual(sum(1 for entry in self.log if entry[0] == "sample"), 2)
+        self.assertEqual(sum(1 for entry in self.log if entry == ("open", rigsolve.UNDO_CHUNK)),
+                         2)
+
+    def test_controls_for_is_the_solver_s(self):
+        self.assertEqual(rigsolve.controls_for(STRUCTURE_RIG, ["pelvis"]), [ROOTX_PATH])
+        self.assertEqual(rigsolve.Solver(STRUCTURE_RIG, ["pelvis"]).controls(), [ROOTX_PATH])
+
+    def test_controls_with_main_put_main_first(self):
+        self.assertEqual(rigsolve.controls_for(STRUCTURE_RIG, ["pelvis"], main=True),
+                         [MAIN_PATH, ROOTX_PATH])
+
+
+class MainFirst(StructureFake):
+    """The travel on a rig: Main turned and moved onto `O^-1 . wanted[root]` (O the game root in
+    Main, sampled each frame) BEFORE RootX_M, which then solves against the moved Main - and only
+    when the Solver was asked (`main=True`) and the frame's wanted holds the root."""
+
+    ROOT_AT = placed(euler((0.0, 40.0, 0.0)), (120.0, 0.0, -30.0))
+
+    @property
+    def writes(self):
+        return [entry for entry in self.log if entry[0] in ("turn", "move")]
+
+    def solve(self, main, wanted=None):
+        wanted = dict({"root": self.ROOT_AT, "pelvis": om.MMatrix()}, **(wanted or {}))
+        return rigsolve.Solver(STRUCTURE_RIG, ["pelvis"], main=main).solve(wanted)
+
+    def test_main_before_rootx(self):
+        self.offset = placed(om.MMatrix(), (0.0, 0.0, 3.0))       # the game root 3 cm off Main
+        self.solve(main=True)
+        self.assertEqual([(w[0], w[1]) for w in self.writes],
+                         [("turn", MAIN_PATH), ("move", MAIN_PATH),
+                          ("turn", ROOTX_PATH), ("move", ROOTX_PATH)])
+        aim = self.offset.inverse() * self.ROOT_AT
+        self.assertLess(angle(om.MMatrix(self.writes[0][2]), aim), 1e-9)
+        self.assertLess((om.MVector(*self.writes[1][2]) -
+                         om.MVector(aim[12], aim[13], aim[14])).length(), 1e-9)
+
+    def test_without_main_no_main_write(self):
+        self.solve(main=False)
+        self.assertEqual([w[1] for w in self.writes], [ROOTX_PATH, ROOTX_PATH])
+
+    def test_without_the_root_in_wanted_no_main_write(self):
+        rigsolve.Solver(STRUCTURE_RIG, ["pelvis"], main=True).solve({"pelvis": om.MMatrix()})
+        self.assertNotIn(MAIN_PATH, [w[1] for w in self.writes])
+
+    def test_a_main_that_is_not_writable_is_kept_and_named(self):
+        self.locked.add(MAIN_PATH + ".translateY")
+        solution = self.solve(main=True)
+        self.assertNotIn(MAIN_PATH, [w[1] for w in self.writes])
+        self.assertIn(rigsolve.MAIN_KEPT % "translateY locked", solution.notes)
+        self.assertEqual(rigsolve.MAIN_KEPT,
+                         "Main kept where it stands (%s) - the travel is not carried")
+
+
+class MainSampleCmds(StructureCmds):
+    """StructureCmds answering what the REAL `_Job.sample` and `_Job._main` read of Main and the
+    game root: their world matrices, Main's parent (the identity), rotate order, axis and
+    channels; every `setAttr` lands in `values`."""
+
+    def __init__(self, worlds, values):
+        StructureCmds.__init__(self)
+        self.worlds, self.values = worlds, dict(values)
+
+    def getAttr(self, plug, **kwargs):
+        node, attr = plug.rsplit(".", 1)
+        if attr == "worldMatrix[0]":
+            return list(self.worlds[node])
+        if attr == "parentMatrix[0]":
+            return list(om.MMatrix())
+        if attr == "rotateOrder":
+            return 0
+        if attr in ("rotateAxis", "rotate"):
+            return [tuple(self.values.get("%s.%s%s" % (node, attr, axis), 0.0)
+                          for axis in "XYZ")]
+        return self.values.get(plug, 0.0)
+
+    def setAttr(self, plug, value):
+        self.values[plug] = value
+
+
+class MainSampled(unittest.TestCase):
+    """The REAL `_Job.sample` reads the game root's offset in Main, `O = rigid(G_root) .
+    rigid(Main)^-1` (row vectors: the root stands at `G = O . Main`), and `_main` turns and moves
+    Main onto `O^-1 . wanted[root]`. Main turned about Y and the game root turned about X in it
+    (a UE root, Z up) do not commute, so a product the wrong way round (`Main^-1 . G`, or
+    `wanted . O^-1`) lands Main elsewhere - `MainFirst` stubs `sample` and could not see it."""
+
+    MAIN = placed(euler((0.0, 40.0, 0.0)), (120.0, 0.0, -30.0))
+    OFFSET = placed(euler((-90.0, 0.0, 0.0)), (0.0, 0.0, 3.0))       # the game root in Main
+
+    def setUp(self):
+        from unittest import mock
+        values = {MAIN_PATH + ".rotateY": 40.0, MAIN_PATH + ".translateX": 120.0,
+                  MAIN_PATH + ".translateY": 0.0, MAIN_PATH + ".translateZ": -30.0}
+        self.fake = MainSampleCmds({MAIN_PATH: self.MAIN,
+                                    STRUCTURE_GAME["root"]: self.OFFSET * self.MAIN}, values)
+        patches = [mock.patch.object(rigsolve, "cmds", self.fake),
+                   mock.patch.object(rigsolve, "keys", Writable()),
+                   mock.patch.object(rigsolve, "bases", lambda rig: {}),
+                   mock.patch.object(rigsolve, "game_bones", lambda rig: dict(STRUCTURE_GAME))]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def job(self, wanted):
+        return rigsolve._Job(rigsolve.Solver(STRUCTURE_RIG, [], main=True), wanted)
+
+    def test_the_offset_is_the_game_root_in_main(self):
+        job = self.job({"root": om.MMatrix()})
+        job.sample()
+        worst = max(abs(job.main_offset[i] - self.OFFSET[i]) for i in range(16))
+        self.assertLess(worst, 1e-9)
+        # the other order is no small difference here: the fixture tells the two apart
+        other = self.MAIN.inverse() * (self.OFFSET * self.MAIN)
+        self.assertGreater(max(abs(other[i] - self.OFFSET[i]) for i in range(16)), 0.5)
+
+    def test_main_lands_where_the_game_root_stands_on_its_target(self):
+        # the root's target is where it would stand under Main turned 70 at (40, 0, 75)
+        moved = placed(euler((0.0, 70.0, 0.0)), (40.0, 0.0, 75.0))
+        job = self.job({"root": self.OFFSET * moved})
+        job.sample()
+        job._main()
+        self.assertNotIn("main", job.notes)
+        got = [self.fake.values[MAIN_PATH + "." + channel]
+               for channel in rigsolve.ROTATE + rigsolve.TRANSLATE]
+        for value, want in zip(got, (0.0, 70.0, 0.0, 40.0, 0.0, 75.0)):
+            self.assertAlmostEqual(value, want, places=6)
+
+
+class RigSeedCmds(object):
+    """The reads `_Job._remember` makes on one control, counting the rotate reads."""
+
+    def __init__(self):
+        self.rotate_reads = 0
+
+    def getAttr(self, plug, **kwargs):
+        if plug.endswith(".rotateOrder"):
+            return 2
+        if plug.endswith(".rotateAxis"):
+            return [(0.0, 0.0, 0.0)]
+        if plug.endswith(".rotate"):
+            self.rotate_reads += 1
+            return [(0.0, 0.0, 0.0)]
+        raise AssertionError(plug)
+
+    def ls(self, path, **kwargs):
+        return [path.split("|")[-1]]
+
+
+class RigSeed(unittest.TestCase):
+    """A rig's control takes its nearest-euler reference from the seed (the previous frame's
+    Solution.values, spelled by the control's short name) when the seed names all three rotate
+    channels; else from what the control shows."""
+
+    def setUp(self):
+        self.fake = RigSeedCmds()
+        self.saved = rigsolve.cmds
+        rigsolve.cmds = self.fake
+
+    def tearDown(self):
+        rigsolve.cmds = self.saved
+
+    def job(self, seed):
+        job = object.__new__(rigsolve._Job)
+        job.order, job.axis, job.rest_rotate = {}, {}, {}
+        job.seed = seed
+        job.spelled = {}
+        return job
+
+    def test_the_seed_names_the_control(self):
+        job = self.job({"FKWrist_L.rotateX": 360.0, "FKWrist_L.rotateY": 10.0,
+                        "FKWrist_L.rotateZ": -720.0})
+        job._remember("|g|FKWrist_L")
+        self.assertEqual(job.rest_rotate["|g|FKWrist_L"], (360.0, 10.0, -720.0))
+        self.assertEqual(job.order["|g|FKWrist_L"], 2)
+        self.assertEqual(self.fake.rotate_reads, 0)
+
+    def test_a_partial_seed_reads_the_control(self):
+        job = self.job({"FKWrist_L.rotateX": 360.0})
+        job._remember("|g|FKWrist_L")
+        self.assertEqual(job.rest_rotate["|g|FKWrist_L"], (0.0, 0.0, 0.0))
+        self.assertEqual(self.fake.rotate_reads, 1)
 
 
 class Shared(unittest.TestCase):

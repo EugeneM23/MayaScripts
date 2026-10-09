@@ -648,5 +648,89 @@ class Rests(unittest.TestCase):
         self.assertEqual(scene.rests(self.PATHS, {}, now), now)
 
 
+class WorldCmds(object):
+    """`getAttr(<path>.worldMatrix[0])` answering each joint's NEW world; any other read fails -
+    a per-frame refresh reads the worlds and nothing else."""
+
+    def __init__(self, worlds):
+        self.worlds = worlds
+        self.read = []
+
+    def getAttr(self, plug, **kwargs):
+        self.read.append(plug)
+        path, attr = plug.rsplit(".", 1)
+        if attr != "worldMatrix[0]":
+            raise AssertionError("refresh_world read %s" % plug)
+        return list(self.worlds[path])
+
+
+class RefreshWorld(unittest.TestCase):
+    """`scene.refresh_world`: the per-frame target read of an animation's walk - a NEW bones
+    dict, the same leaves and the same static fields (path, parent, canonical, rest, rotate
+    order, orient, axis), each bone's `world` read again and, on a rig, the unrolled bones'
+    `drive` (`rigsolve.drive_matrices`); nothing else read (no recognize, no binds)."""
+
+    ROOT, ARM = "|chr|r:root", "|chr|r:root|r:upperarm_l"
+
+    def bones(self, rig=True):
+        """`scene.skeleton`'s bones: on a rig the unrolled upper arm carries its drive, on a
+        skeleton no bone carries one."""
+        static = {"rotateOrder": 0, "jointOrient": [0.0, 0.0, 0.0], "rotateAxis": [0.0, 0.0, 0.0]}
+        arm = dict(static, path=self.ARM, parent="root", canonical="upperarm_l",
+                   rest=_at(20, 140, 0), world=_at(20, 140, 0))
+        if rig:
+            arm["drive"] = _at(20, 140, 0, 5.0)
+        return {"root": dict(static, path=self.ROOT, parent=None, canonical="root",
+                             rest=_at(0, 0, 0), world=_at(0, 0, 0)),
+                "upperarm_l": arm}
+
+    def setUp(self):
+        from maya_poselib import rigsolve
+        self.rigsolve = rigsolve
+        self.saved = scene.cmds, rigsolve.drive_matrices
+        self.fake = WorldCmds({self.ROOT: _at(50, 0, 10, 30.0), self.ARM: _at(60, 140, 0, 30.0)})
+        scene.cmds = self.fake
+        self.drives = []
+
+        def drive_matrices(rig):
+            self.drives.append(rig)
+            return {"upperarm_l": _at(60, 140, 0, 45.0)}
+
+        rigsolve.drive_matrices = drive_matrices
+
+    def tearDown(self):
+        scene.cmds, self.rigsolve.drive_matrices = self.saved
+
+    def test_a_skeleton_s_worlds_are_read_again(self):
+        bones = self.bones(rig=False)
+        import copy
+        before = copy.deepcopy(bones)
+        out = scene.refresh_world(SKELETON._replace(root=self.ROOT), bones)
+        self.assertEqual(bones, before)                       # the input untouched
+        self.assertIsNot(out, bones)
+        self.assertEqual(sorted(out), sorted(bones))
+        self.assertEqual(out["root"]["world"], _at(50, 0, 10, 30.0))
+        self.assertEqual(out["upperarm_l"]["world"], _at(60, 140, 0, 30.0))
+        for name in bones:
+            for field in ("path", "parent", "canonical", "rest", "rotateOrder", "jointOrient",
+                          "rotateAxis"):
+                self.assertEqual(out[name][field], bones[name][field], (name, field))
+        # a skeleton plays its bones' worlds: no drive is asked for and none appears
+        self.assertEqual(self.drives, [])
+        self.assertEqual([name for name in out if "drive" in out[name]], [])
+        self.assertEqual(sorted(self.fake.read),
+                         sorted([self.ROOT + ".worldMatrix[0]", self.ARM + ".worldMatrix[0]"]))
+
+    def test_a_rig_s_drives_are_read_again(self):
+        bones = self.bones()
+        rig = object()
+        out = scene.refresh_world(RIG._replace(rig=rig, root=self.ROOT), bones)
+        self.assertEqual(self.drives, [rig])
+        self.assertEqual(out["upperarm_l"]["drive"], _at(60, 140, 0, 45.0))
+        self.assertEqual(bones["upperarm_l"]["drive"], _at(20, 140, 0, 5.0))
+        self.assertNotIn("drive", out["root"])
+        self.assertEqual(out["upperarm_l"]["rest"], _at(20, 140, 0))
+
+
 if __name__ == "__main__":
     unittest.main()
