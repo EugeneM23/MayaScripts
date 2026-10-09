@@ -206,64 +206,91 @@ def wrap(name, cls, layout=False):
 
 
 def classic_scroll():
-    """The classic hub's scroll area (Maya's scrollLayout)."""
+    """The classic hub's scroll area (inside Maya's scrollLayout), found
+    AFRESH on every call and never kept: a wrapper of a Maya-owned widget
+    held past that widget's deletion is not "already deleted" - it reads
+    freed memory (traps 135, 148). Callers hold what this answers only
+    between two turns of the event loop and find it again after each.
+
+    Maya's scrollLayout holds a QmayaScrollArea, found with `findChildren`
+    on the layout's widget. A wrapper `findChildren` answers is TIED to the
+    parent's wrapper: measured 2026-10-09, dropping the layout's wrapper
+    marked the scroll area's dead (`isValid` False, the next call «Internal
+    C++ object (QScrollArea) already deleted») - why the first version kept
+    both in a module list, across turns and rebuilds. So the address is
+    read while the parent's wrapper stands, the tied wrapper invalidated
+    (shiboken's own bookkeeping only; the widget is untouched) and the
+    scroll area wrapped afresh from that address - a wrapper of its own,
+    valid as long as the caller holds it, which is never across a turn."""
     Q = q()
     widget = hubqt().find(hub().SCROLL, layout=True)
     if widget is None:
         return None
     if widget.inherits("QAbstractScrollArea"):
         return wrap(hub().SCROLL, Q.QtWidgets.QScrollArea, layout=True)
-    #  Maya's scrollLayout holds a QmayaScrollArea; a classic hub rebuilt in
-    #  the same place hands back the previous one's DEAD wrapper by address
-    #  (trap 96): dropped, then found afresh
-    for _attempt in range(4):
-        children = widget.findChildren(Q.QtWidgets.QScrollArea)
-        alive = []
-        for child in children:
-            try:
-                child.viewport().width()           # answers, or is dead
-                alive.append(child)
-            except RuntimeError:
-                Q.shiboken.invalidate(child)
-        if alive:
-            _KEEP[:] = [widget] + children
-            return alive[0]
-        widget = hubqt().find(hub().SCROLL, layout=True)
-    return None
+    children = widget.findChildren(Q.QtWidgets.QScrollArea)
+    if not children:
+        return None
+    address = int(Q.shiboken.getCppPointer(children[0])[0])
+    for child in children:
+        Q.shiboken.invalidate(child)
+    del children, widget
+    area = Q.shiboken.wrapInstance(address, Q.QtWidgets.QScrollArea)
+    return area if Q.shiboken.isValid(area) else None
 
 
-_KEEP = []
-
-
-def viewport():
-    if hub().is_skinned():
-        return skin().scroll.viewport()
+def classic_parts():
+    """`_stitch`'s finder for the classic hub: (the widget photographed, its
+    scroll area) - the scroll area both, found afresh."""
     area = classic_scroll()
-    return None if area is None else area.viewport()
+    if area is None:
+        raise RuntimeError("no classic hub standing")
+    return area, area
+
+
+def skin_parts():
+    """`_stitch`'s finder for the skin: (its root, its scroll area), found
+    afresh (a rebuild deletes both)."""
+    s = skin()
+    return s.root, s.scroll
+
+
+def viewport_width():
+    """The scroll viewport's width (the skin's, else the classic hub's), read
+    while its scroll area's wrapper stands - a viewport's wrapper is tied to
+    it like a found child (`classic_scroll`) - and nothing kept."""
+    if hub().is_skinned():
+        return skin().scroll.viewport().width()
+    area = classic_scroll()
+    return None if area is None else area.viewport().width()
 
 
 def fit_width(target=DOCK):
     """The floating hub's window resized until the scroll viewport is
-    `target` physical px wide; the window as tall as the screen allows."""
+    `target` physical px wide; the window as tall as the screen allows.
+    The window and the viewport are found again after every turn of the
+    event loop, never held across one (traps 135, 148)."""
     win = window()
     if win.objectName() == "MayaWindow":
         raise RuntimeError("the hub is docked - float it first (trap 150)")
-    avail = win.screen().availableGeometry()
+    avail = win.screen().availableGeometry()        # a QRect: a copy
     height = max(600, avail.height() - 160)
     win.move(avail.x() + 80, avail.y() + 60)
+    del win
     for _ in range(14):
-        vp = viewport()
-        if vp is None:
+        width = viewport_width()
+        if width is None:
             turn(4)
             continue
-        delta = target - vp.width()
-        if delta == 0 and window().height() == height:
-            break
+        delta = target - width
         win = window()
+        if delta == 0 and win.height() == height:
+            del win
+            break
         win.resize(win.width() + delta, height)
+        del win
         turn(6)
-    vp = viewport()
-    return None if vp is None else vp.width()
+    return viewport_width()
 
 
 def open_every_card():
@@ -282,6 +309,43 @@ def deaf(on=True):
     s = hub()._SKIN
     if s is not None and s.alive():
         s.root.setAttribute(q().QtCore.Qt.WA_TransparentForMouseEvents, on)
+
+
+def deaf_classic(on=True):
+    """The classic hub deaf too, while it is measured and photographed: a
+    click on «Switch to the new look» (or a section's header) in the middle
+    of the stitch would delete what is being scrolled. The attribute goes on
+    Maya's scrollLayout widget - every control of the classic hub is under
+    it, and Qt keeps the mouse from a widget's children too; the widget dies
+    with the classic hub, so the skin built after it hears again. Found
+    afresh and dropped at once."""
+    widget = hubqt().find(hub().SCROLL, layout=True)
+    if widget is not None:
+        widget.setAttribute(q().QtCore.Qt.WA_TransparentForMouseEvents, on)
+        return True
+    return False
+
+
+def _classic_deaf():
+    """Whether the classic hub is deaf now: the attribute on its scrollLayout
+    AND Qt's own hit test (`childAt` on the hub's window, the routing a real
+    click takes) over «Switch to the new look» answering nothing of the
+    classic hub. Measured both ways 2026-10-09: hearing it answered that
+    button, deaf the workspaceControl around it. (`QApplication.widgetAt`
+    answered None for both - no use as a control.) Read, not kept."""
+    Q = q()
+    widget = hubqt().find(hub().SCROLL, layout=True)
+    if widget is None or not widget.testAttribute(
+            Q.QtCore.Qt.WA_TransparentForMouseEvents):
+        return False
+    buttons = [b for b in widget.findChildren(Q.QtWidgets.QAbstractButton)
+               if "new look" in b.text() and b.isVisible()]
+    if not buttons:
+        return False
+    centre = buttons[0].mapToGlobal(buttons[0].rect().center())
+    top = window()
+    hit = top.childAt(top.mapFromGlobal(centre))
+    return hit is None or not widget.isAncestorOf(hit)
 
 
 def prepare():
@@ -412,7 +476,7 @@ def phase_heights(build):
     prepare()
     turn(6)
     closed, heights, used, over = card_heights()
-    vp = viewport().width()
+    vp = viewport_width()
     data = {"build": build, "viewport": vp, "scale": scale(),
             "cards": heights, "content": used, "above_scroll": over,
             "closed": closed}
@@ -470,11 +534,74 @@ def _text_need(widget):
 
 
 def phase_cards(build):
+    """Gate 1. Each step a function of its own: the widgets it walks are its
+    locals and die with it, before the next turn of the event loop (traps
+    135, 148 - never a wrapper held across one)."""
     prepare()
+    _cards_fit()
+    _repaint_headers()
+    turn(6)
+    lines, bad = _subtitle_lines()
+    #  and one made too long on purpose (the CoM line, put back after): the
+    #  first build drew it cut mid-letter under the chevron
+    name = "skeldarComSubtitle"
+    was = cmds.text(name, query=True, label=True)
+    long_text = ("no character - select a control, a bone or a CoM handle "
+                 "of the character whose centre of mass you want")
+    cmds.text(name, edit=True, label=long_text)
+    _repaint_headers("com")
+    turn(6)
+    elided, tip = _elided_and_tip(name)
+    cmds.text(name, edit=True, label=was)
+    turn(4)
+    lines.append("a long CoM line: elided %s, tooltip whole %s" % (
+        elided, tip == long_text))
+    if not (elided and tip == long_text):
+        bad.append("the long CoM line: elided %s, tooltip %r" % (elided, tip))
+    gate("1e", "a header line too long for its card is elided, its tooltip "
+         "the whole text", not bad and lines, "; ".join(bad or lines))
+
+
+def _repaint_headers(key=None):
+    """Every card's header (or `key`'s) asked to paint again."""
+    for each, card in skin().cards.items():
+        if key is None or each == key:
+            card.header.update()
+
+
+def _elided_and_tip(name):
+    label = hubqt().find(name)
+    return bool(label.property("skElided")), label.toolTip()
+
+
+def _subtitle_lines():
+    """The moved subtitles: elided at the card's width, the whole text their
+    tooltip (the spec); every one painted since this send's layout."""
+    W = q().QtWidgets
+    lines, bad = [], []
+    for key, card in skin().cards.items():
+        for label in card.subtitle_slot.findChildren(W.QWidget):
+            #  a property: Maya's labels come back as QWidget wrappers
+            text = label.property("text") or ""
+            if not text or not label.isVisible():
+                continue
+            long_ = label.fontMetrics().horizontalAdvance(text) > \
+                label.contentsRect().width()
+            elided = bool(label.property("skElided"))
+            lines.append("%s %s%s" % (key, "elided" if elided else "fits",
+                                      "" if long_ == elided else " WRONG"))
+            if long_ != elided or (long_ and label.toolTip() != text):
+                bad.append("%s: %r long %s elided %s tip %r" % (
+                    key, text, long_, elided, label.toolTip()))
+    return lines, bad
+
+
+def _cards_fit():
+    """Gates 1a-1d, no turn of the event loop inside."""
     Q = q()
     W = Q.QtWidgets
     s = skin()
-    vp = viewport().width()
+    vp = viewport_width()
     minimum = s.content.minimumSizeHint().width()
     gate("1a", "the content's minimum width within the viewport",
          minimum <= vp, "minimum %d, viewport %d" % (minimum, vp))
@@ -510,47 +637,6 @@ def phase_cards(build):
          % (ROW_MAX, limit), not tall, "; ".join(tall))
     gate("1d", "no button's or label's text clipped", not clipped,
          "; ".join(clipped[:16]))
-
-    # the moved subtitles: elided at the card's width, the whole text their
-    # tooltip (the spec); every one painted since this send's layout
-    for card in s.cards.values():
-        card.header.update()
-    turn(6)
-    lines, bad = [], []
-    for key, card in s.cards.items():
-        for label in card.subtitle_slot.findChildren(W.QWidget):
-            #  a property: Maya's labels come back as QWidget wrappers
-            text = label.property("text") or ""
-            if not text or not label.isVisible():
-                continue
-            long_ = label.fontMetrics().horizontalAdvance(text) > \
-                label.contentsRect().width()
-            elided = bool(label.property("skElided"))
-            lines.append("%s %s%s" % (key, "elided" if elided else "fits",
-                                      "" if long_ == elided else " WRONG"))
-            if long_ != elided or (long_ and label.toolTip() != text):
-                bad.append("%s: %r long %s elided %s tip %r" % (
-                    key, text, long_, elided, label.toolTip()))
-    # and one made too long on purpose (the CoM line, put back after): the
-    # first build drew it cut mid-letter under the chevron
-    name = "skeldarComSubtitle"
-    was = cmds.text(name, query=True, label=True)
-    long_text = ("no character - select a control, a bone or a CoM handle "
-                 "of the character whose centre of mass you want")
-    cmds.text(name, edit=True, label=long_text)
-    s.cards["com"].header.update()
-    turn(6)
-    label = hubqt().find(name)
-    elided = bool(label.property("skElided"))
-    tip = label.toolTip()
-    cmds.text(name, edit=True, label=was)
-    turn(4)
-    lines.append("a long CoM line: elided %s, tooltip whole %s" % (
-        elided, tip == long_text))
-    if not (elided and tip == long_text):
-        bad.append("the long CoM line: elided %s, tooltip %r" % (elided, tip))
-    gate("1e", "a header line too long for its card is elided, its tooltip "
-         "the whole text", not bad and lines, "; ".join(bad or lines))
 
 
 #  Rows that are not rows: the lists, the tiles' placeholders (a grid of
@@ -621,8 +707,7 @@ def phase_relay(build):
     prepare()
     bad, seen = [], []
     for n, (key, dotted, call) in enumerate(WRITERS):
-        s = skin()
-        before = dict((k, c.frame.height()) for k, c in s.cards.items())
+        before = _heights_now()
         text = "verify relay %d: %s via %s" % (n, key, dotted)
         try:
             call(_module(dotted), text)
@@ -630,26 +715,36 @@ def phase_relay(build):
             bad.append("%s: %s raised %r" % (key, dotted, error))
             continue
         turn(4)
-        s = skin()
-        card = s.cards[key]
-        shown = s.message_text.text()
-        icon_ok = (s._message_source == key and s.message_icon.isVisible()
-                   and _image_bytes(s.message_icon.pixmap()) == _image_bytes(
-                       hubqt().pixmap(card.icon_name, card.colour, px(14))))
-        after = dict((k, c.frame.height()) for k, c in s.cards.items())
-        moved = dict((k, (before[k], after[k])) for k in after
-                     if after[k] != before[k])
-        ok = (shown == text and s.message.isVisible() and icon_ok
-              and not moved)
+        ok, problem = _relay_read(key, dotted, text, before)
         seen.append("%s:%s" % (key, "ok" if ok else "BAD"))
         if not ok:
-            bad.append("%s via %s: shown %r, source %r, icon %s, cards moved "
-                       "%s" % (key, dotted, shown, s._message_source, icon_ok,
-                               moved))
+            bad.append(problem)
     skin().say("")
     turn(4)
     gate(3, "each writer's status on the hub's line with its card's icon, "
          "no card resized", not bad, "; ".join(bad) or ", ".join(seen))
+
+
+def _heights_now():
+    """Every card's height, as values."""
+    return dict((k, c.frame.height()) for k, c in skin().cards.items())
+
+
+def _relay_read(key, dotted, text, before):
+    """After a writer's turn: the hub's line, its icon, the cards' heights -
+    read from the skin found afresh. (ok, what was wrong)."""
+    s = skin()
+    card = s.cards[key]
+    shown = s.message_text.text()
+    icon_ok = (s._message_source == key and s.message_icon.isVisible()
+               and _image_bytes(s.message_icon.pixmap()) == _image_bytes(
+                   hubqt().pixmap(card.icon_name, card.colour, px(14))))
+    after = _heights_now()
+    moved = dict((k, (before[k], after[k])) for k in after
+                 if after[k] != before[k])
+    ok = shown == text and s.message.isVisible() and icon_ok and not moved
+    return ok, ("%s via %s: shown %r, source %r, icon %s, cards moved %s" % (
+        key, dotted, shown, s._message_source, icon_ok, moved))
 
 
 HINTS = (
@@ -715,6 +810,16 @@ def shown_rows(list_name):
     return (vh // row if row else 0), row, vh
 
 
+def _grip_drag(list_name, dy):
+    """A synthetic drag of the list's grip by `dy` physical px: press, move,
+    release, the grip found here and dropped with this function - before the
+    caller turns the event loop."""
+    grip = grip_of(list_name)
+    grip.press(1000)
+    grip.drag(1000 + dy)
+    grip.release()
+
+
 def phase_grips(build):
     prepare()
     h = hubstyle()
@@ -735,15 +840,11 @@ def phase_grips(build):
 
     bad = []
     name = LISTS[0]
-    grip = grip_of(name)
-    if grip is None:
+    if grip_of(name) is None:
         gate("5b", "a grip drag +3 rows -> 13, remembered", False, "no grip")
         return
     _rows, row, _vh = shown_rows(name)
-    y0 = 1000
-    grip.press(y0)
-    grip.drag(y0 + 3 * row)
-    grip.release()
+    _grip_drag(name, 3 * row)
     turn(6)
     rows, row, vh = shown_rows(name)
     var = h.LIST_VAR.format(name)
@@ -768,10 +869,7 @@ def phase_grips2(build):
          rows == 13 and grip_of(name).rows == 13,
          "shown %d (row %d, viewport %d), grip %s" % (rows, row, vh,
                                                       grip_of(name).rows))
-    grip = grip_of(name)
-    grip.press(1000)
-    grip.drag(1000 - 9999)
-    grip.release()
+    _grip_drag(name, -9999)
     turn(6)
     rows, row, vh = shown_rows(name)
     var = h.LIST_VAR.format(name)
@@ -811,7 +909,10 @@ def _segment_rows(card_key):
     return out
 
 
-def _segments_report(card_key, top):
+def _segments_report(card_key):
+    """The card's segment tracks, read from the skin found afresh; answers
+    values only."""
+    top = skin().cards[card_key].frame
     bad, info = [], []
     for track, cover, buttons in _segment_rows(card_key):
         #  judged by its ROW: Maya hides a track it gives no width (a
@@ -835,46 +936,65 @@ def _segments_report(card_key, top):
 
 
 def phase_watch(build):
+    """The reviewers' watch list (task-14-watch.md). Each item a function of
+    its own: the widgets it reads are its locals, found after the last turn
+    of the event loop and dropped with it (traps 135, 148)."""
     prepare()
-    Q = q()
-    W = Q.QtWidgets
-    s = skin()
-    k = scale()
+    _watch_lists()
+    _watch_inventory()
+    # Task 6: the nested segments in Animation Setup's 4- and 5-column rows
+    bad, info = _segments_report("characters")
+    gate("W6", "Animation Setup's segments stand over their tracks, every "
+         "segment its text's width", not bad, "; ".join(info + bad))
+    _watch_connections()
+    _watch_look()
 
-    # Task 3: the lists' 10 rows from a real row, not the fallback
+
+def _list_state(name):
+    """List `name` as values: (rows, its row px - measured on a throwaway
+    list when empty since 2026-10-09 -, the font's old guess, height)."""
     import maya_hubqt
-    info = []
-    bad = []
+    lw = maya_hubqt.list_widget(name)
+    count = lw.count()
+    real = lw.sizeHintForRow(0) if count else None
+    return (count, real if count else maya_hubqt.list_row_px(name),
+            lw.fontMetrics().lineSpacing() + 4, lw.height())
+
+
+def _watch_lists():
+    """Task 3: the lists' 10 rows from a real row, not the fallback; and an
+    empty list already at the height its rows will give it."""
+    info, bad = [], []
     for name in LISTS:
-        lw = maya_hubqt.list_widget(name)
-        empty = not lw.count()
-        #  what an empty list is sized from (measured on a throwaway list
-        #  since 2026-10-09; the font's lineSpacing + 4 before), its height
-        empty_row = maya_hubqt.list_row_px(name) if empty else None
-        guess = lw.fontMetrics().lineSpacing() + 4
-        height_empty = lw.height()
+        count, empty_row, guess, height_empty = _list_state(name)
+        empty = not count
         #  an empty list's first rows arriving (a refresh after the build)
         added = ensure_rows(name)
         turn(4)
-        lw = maya_hubqt.list_widget(name)
-        real = lw.sizeHintForRow(0) if lw.count() else None
+        count, real, _guess, height_filled = _list_state(name)
         info.append("%s: %s at the build%s" % (
             name, "empty" if empty else "filled",
             ", %d rows arrived" % added if added else ""))
-        rows, row, vh = shown_rows(name)
+        rows, _row, _vh = shown_rows(name)
         info.append("%s: empty row %s (the old guess %d), real row %s, "
                     "height empty %d / filled %d, shows %d" % (
-                        name, empty_row, guess, real, height_empty,
-                        lw.height(), rows))
-        if lw.count() and rows != hubstyle().LIST_ROWS:
+                        name, empty_row if empty else None, guess, real,
+                        height_empty, height_filled, rows))
+        if count and rows != hubstyle().LIST_ROWS:
             bad.append("%s shows %d rows" % (name, rows))
-        if empty and (empty_row != real or height_empty != lw.height()):
+        if empty and (empty_row != real or height_empty != height_filled):
             bad.append("%s jumped when its first rows came" % name)
         drop_rows(name, added)
     gate("W3", "the 10 rows hold once the list fills, and an empty list "
          "stands at that height already", not bad, "; ".join(info + bad))
 
-    # Task 5: the hand rows, the tiles' names, the pill
+
+def _watch_inventory():
+    """Task 5: the hand rows, the tiles' names, the pill. No turn inside."""
+    Q = q()
+    W = Q.QtWidgets
+    s = skin()
+    k = scale()
     import maya_invlook as look
     panel = s.cards["weapons"].frame.findChild(W.QWidget,
                                                "skeldarInventoryPanel")
@@ -939,13 +1059,26 @@ def phase_watch(build):
     gate("W5", "the hand rows, the tiles' names and the pill fit", not bad,
          "; ".join(detail + bad))
 
-    # Task 6: the nested segments in Animation Setup's 4- and 5-column rows
-    bad, info = _segments_report("characters", s.cards["characters"].frame)
-    gate("W6", "Animation Setup's segments stand over their tracks, every "
-         "segment its text's width", not bad, "; ".join(info + bad))
 
-    # Task 8: Connections - the chooser row (shown for two weapons), the Arm
-    # row's halves, BakeAcross and the labels unclipped (gate 1d covers them)
+def _arm_widths(cx):
+    """Connections' Arm R / Arm L tracks' widths, as values."""
+    arm = {}
+    for side in ("R", "L"):
+        box = hubqt().find(cx.fkik_box(side, "FK"))
+        if box is not None and box.parentWidget() is not None:
+            arm[side] = box.parentWidget().parentWidget().width()
+    return arm
+
+
+def _chooser_shown(cx):
+    row = hubqt().find(cx.CHOOSER_ROW, layout=True)
+    return row is not None and row.isVisible()
+
+
+def _watch_connections():
+    """Task 8: Connections - the chooser row (shown for two weapons), the Arm
+    row's halves, BakeAcross and the labels unclipped (gate 1d covers them).
+    Every widget read after the chooser's turn, by the helpers."""
     from maya_scenesetup import connections as cx
     weapons = [n for n in cmds.ls(type="transform", long=True) or []
                if cmds.attributeQuery("mayaWeapon", node=n, exists=True)]
@@ -954,12 +1087,8 @@ def phase_watch(build):
         cx._set_chooser(weapons[:2], weapons[0])
         turn(8)
         shown_chooser = True
-    bad, info = _segments_report("connections", s.cards["connections"].frame)
-    arm = {}
-    for side in ("R", "L"):
-        box = hubqt().find(cx.fkik_box(side, "FK"))
-        if box is not None and box.parentWidget() is not None:
-            arm[side] = box.parentWidget().parentWidget().width()
+    bad, info = _segments_report("connections")
+    arm = _arm_widths(cx)
     ratio = (min(arm.values()) / float(max(arm.values()))
              if len(arm) == 2 and max(arm.values()) else 0.0)
     info.append("Arm R / Arm L tracks %s (ratio %.2f); chooser shown: %s"
@@ -967,8 +1096,7 @@ def phase_watch(build):
     if ratio < 0.75:
         bad.append("the two arms' [FK | IK] are lopsided: %s" % arm)
     if shown_chooser:
-        row = hubqt().find(cx.CHOOSER_ROW, layout=True)
-        if row is None or not row.isVisible():
+        if not _chooser_shown(cx):
             bad.append("the chooser row is not shown for two weapons")
         cx._set_chooser([], None)
         turn(4)
@@ -976,7 +1104,13 @@ def phase_watch(build):
          "the arms' halves about equal, the chooser row's segments shown",
          not bad and shown_chooser, "; ".join(info + bad))
 
-    # Task 9: Studio's chips flow inside their layout; the 8 swatches
+
+def _watch_look():
+    """Task 9: Studio's chips flow inside their layout; the 8 swatches. No
+    turn inside."""
+    Q = q()
+    W = Q.QtWidgets
+    s = skin()
     bad, info = [], []
     frame = s.cards["studio"].frame
     flows = [w for w in frame.findChildren(W.QWidget)
@@ -1034,14 +1168,16 @@ def phase_scene(build):
 
 # ---------------------------------------------------------------- pictures
 
-def _capture(win):
-    """DWM's copy of top-level `win` as a QImage (PrintWindow,
-    PW_RENDERFULLCONTENT) and its window rect's origin."""
+def _capture(window_id):
+    """DWM's copy of the top-level window `window_id` (its HWND, an int) as
+    a QImage (PrintWindow, PW_RENDERFULLCONTENT) and its window rect's
+    origin. An int, not the window's wrapper: PrintWindow calls into the
+    window on this thread, and nothing Maya-owned is held over it."""
     import ctypes
     from ctypes import wintypes as wt
     Q = q()
     user32, gdi = ctypes.windll.user32, ctypes.windll.gdi32
-    hwnd = wt.HWND(int(win.winId()))
+    hwnd = wt.HWND(int(window_id))
     rect = wt.RECT()
     user32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(wt.RECT)]
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
@@ -1093,65 +1229,85 @@ def _capture(win):
     return image, Q.QtCore.QPoint(rect.left, rect.top)
 
 
-def _stitch(top_widget, area, path):
-    """A tall picture of `top_widget` (the hub's root) with `area` (its
-    scroll area) scrolled through: the part above the scroll once, then the
-    viewport slice by slice. Saved to `path`; its size answered."""
+def _scroll_to(find, value):
+    """The scroll area `find` answers scrolled to `value`; its wrappers
+    dropped before the caller turns the event loop."""
+    _top, area = find()
+    area.verticalScrollBar().setValue(value)
+
+
+def _stitch(find, path):
+    """A tall picture of the hub with its scroll area scrolled through: the
+    part above the scroll once, then the viewport slice by slice. Saved to
+    `path`; its size answered.
+
+    `find` answers (the widget photographed, its scroll area) and is asked
+    AGAIN after every turn of the event loop: nothing Maya-owned - the
+    classic hub's scroll area, the floating window - is held across one
+    (the review of 2026-10-09; traps 135, 148). Between two turns only
+    values are kept: the geometry as ints and QPoints, the window as its
+    HWND."""
     Q = q()
-    bar = area.verticalScrollBar()
-    bar.setValue(0)
+    zero = Q.QtCore.QPoint(0, 0)
+    _scroll_to(find, 0)
     turn(10)
-    win = top_widget.window()
+    top, area = find()
     vp = area.viewport()
-    origin = top_widget.mapToGlobal(Q.QtCore.QPoint(0, 0))
-    vtop = vp.mapToGlobal(Q.QtCore.QPoint(0, 0))
-    width = top_widget.width()
+    vtop = vp.mapToGlobal(zero)
+    origin = top.mapToGlobal(zero)
+    width = top.width()
     above = vtop.y() - origin.y()
     view_h = vp.height()
-    total = above + bar.maximum() + view_h
-    below = origin.y() + top_widget.height() - (vtop.y() + view_h)
+    total = above + area.verticalScrollBar().maximum() + view_h
+    below = origin.y() + top.height() - (vtop.y() + view_h)
+    del top, area, vp
     canvas = Q.QtGui.QImage(width, total + max(0, below),
                             Q.QtGui.QImage.Format_RGB32)
     canvas.fill(Q.QtGui.QColor("#1f2023"))
     painter = Q.QtGui.QPainter(canvas)
     value = 0
     first = True
-    while True:
-        bar.setValue(value)
-        turn(10)
-        image, at = _capture(win)
-        if image is None:
-            painter.end()
-            raise RuntimeError("PrintWindow failed")
-        ox, oy = origin.x() - at.x(), origin.y() - at.y()
-        if first:
-            painter.drawImage(0, 0, image.copy(ox, oy, width, above))
-            first = False
-        got = bar.value()
-        painter.drawImage(0, above + got,
-                          image.copy(ox, oy + above, width, view_h))
-        if got >= bar.maximum():
-            if below > 0:
-                painter.drawImage(0, above + got + view_h, image.copy(
-                    ox, oy + above + view_h, width, below))
-            break
-        value = got + view_h - 40
-    painter.end()
-    bar.setValue(0)
+    try:
+        while True:
+            _scroll_to(find, value)
+            turn(10)
+            top, area = find()
+            bar = area.verticalScrollBar()
+            got, maximum = bar.value(), bar.maximum()
+            origin = top.mapToGlobal(zero)      # the window may have moved
+            window_id = int(top.window().winId())
+            del top, area, bar
+            image, at = _capture(window_id)
+            if image is None:
+                raise RuntimeError("PrintWindow failed")
+            ox, oy = origin.x() - at.x(), origin.y() - at.y()
+            if first:
+                painter.drawImage(0, 0, image.copy(ox, oy, width, above))
+                first = False
+            painter.drawImage(0, above + got,
+                              image.copy(ox, oy + above, width, view_h))
+            if got >= maximum:
+                if below > 0:
+                    painter.drawImage(0, above + got + view_h, image.copy(
+                        ox, oy + above + view_h, width, below))
+                break
+            value = got + view_h - 40
+    finally:
+        painter.end()
+    _scroll_to(find, 0)
     canvas.save(path)
     return canvas.width(), canvas.height()
 
 
 def phase_picture(build):
     prepare()
-    s = skin()
-    s.say("")
+    skin().say("")
     turn(6)
     path = picture_path(PNG, build)
-    size = _stitch(s.root, s.scroll, path)
+    size = _stitch(skin_parts, path)
     closed, _heights, used, _over = card_heights()
     gate(6, "the picture: every card open at the dock's width",
-         os.path.isfile(path) and not closed and viewport().width() == DOCK,
+         os.path.isfile(path) and not closed and viewport_width() == DOCK,
          "%s %dx%d (content %d)" % (path, size[0], size[1], used))
 
 
@@ -1219,22 +1375,42 @@ def _classic_texts():
 
 
 def phase_classic2(build, deferred=True):
-    Q = q()
-    W = Q.QtWidgets
+    """The classic hub measured and photographed, deaf to the real mouse
+    the whole time (`deaf_classic`); a failure part-way gives it its ears
+    back. Every Maya-owned widget is found again after each turn of the
+    event loop (`classic_scroll`, `_stitch`'s finder)."""
     h = hub()
-    turn(10)
+    if h.is_skinned():
+        turn(10)                       # the deferred switch (`classic`)
     if h.is_skinned():
         raise RuntimeError("the hub is still skinned")
+    deaf_classic(True)
+    try:
+        _classic2(build, h)
+    except Exception:
+        deaf_classic(False)
+        raise
+    if deferred:
+        h.set_classic(False)
+        print("the skin asked back (deferred)")
+
+
+def _classic2(build, h):
+    Q = q()
+    W = Q.QtWidgets
     for sec in h.SECTIONS:
         if cmds.frameLayout(sec.frame, exists=True):
             cmds.frameLayout(sec.frame, edit=True, collapse=False)
     turn(10)
     width = fit_width()
     turn(10)
+    deaf_classic(True)                 # idempotent; the widget found again
     area = classic_scroll()
-    vp = area.viewport()
+    vp_width = area.viewport().width()
     content = area.widget()
     minimum = content.minimumSizeHint().width() if content else -1
+    h_scroll = area.horizontalScrollBar().isVisible()
+    del area, content
     over = []
     for sec in h.SECTIONS:
         frame = hubqt().find(sec.frame, layout=True)
@@ -1248,13 +1424,12 @@ def phase_classic2(build, deferred=True):
             if x + ww > fw + 1:
                 over.append("%s: %s %s right %d > %d" % (
                     sec.key, name_of(w), ui_type(w), x + ww, fw))
-    scroll_h = area.horizontalScrollBar()
     gate("C1", "the classic hub at the dock's width: no horizontal scroll, "
          "no control past its section (the classic watch items: the tab "
          "row, Retarget's row, CoM's row)",
-         not over and minimum <= vp.width() and not scroll_h.isVisible(),
+         not over and minimum <= vp_width and not h_scroll,
          "viewport %s, content minimum %d, h-scroll %s; %s" % (
-             width, minimum, scroll_h.isVisible(), "; ".join(over[:12])))
+             width, minimum, h_scroll, "; ".join(over[:12])))
     examined, clipped, rows = _classic_texts()
     gate("C3", "the classic hub at the dock's width: no button's, "
          "segment's, check box's or label's text clipped (the watch: the "
@@ -1263,14 +1438,12 @@ def phase_classic2(build, deferred=True):
          "%d texts; %s%s" % (examined, "; ".join(rows),
                              (" | CLIPPED " + "; ".join(clipped[:12]))
                              if clipped else ""))
-    root = area
     path = picture_path(PNG_CLASSIC, build)
-    size = _stitch(root, area, path)
-    gate("C2", "the classic picture", os.path.isfile(path),
-         "%s %dx%d" % (path, size[0], size[1]))
-    if deferred:
-        h.set_classic(False)
-        print("the skin asked back (deferred)")
+    deafened = _classic_deaf()
+    size = _stitch(classic_parts, path)
+    gate("C2", "the classic picture, the classic hub deaf to the real mouse "
+         "while it was taken", os.path.isfile(path) and deafened,
+         "%s %dx%d, deaf %s" % (path, size[0], size[1], deafened))
 
 
 def phase_restore(build):
