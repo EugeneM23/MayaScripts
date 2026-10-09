@@ -110,12 +110,23 @@ Window {
             Repeater {
                 model: bridge.characterNames
                 Rectangle {
-                    width: 140
-                    height: 30
-                    radius: 4
+                    width: 96
+                    height: 128
+                    radius: 6
                     color: modelData === bridge.characterName ? "#3c6e9c" : "#3c3f45"
+                    Image {
+                        x: 4
+                        y: 4
+                        width: 88
+                        height: 88
+                        source: bridge.characterPortraits[index]
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                    }
                     Text {
-                        anchors.centerIn: parent
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 6
                         text: modelData
                         color: "#ffffff"
                         font.pixelSize: 12

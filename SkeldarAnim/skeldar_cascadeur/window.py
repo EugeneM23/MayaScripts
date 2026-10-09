@@ -55,6 +55,12 @@ class BridgeModel(QtCore.QObject):
     def characterNames(self):
         return characters.labels()
 
+    @QtCore.Property("QStringList", notify=changed)
+    def characterPortraits(self):
+        """File URLs of the cards' pictures, in the same order as characterNames."""
+        return [QtCore.QUrl.fromLocalFile(c.portrait).toString()
+                for c in characters.CHARACTERS]
+
     @QtCore.Property(str, notify=changed)
     def characterName(self):
         chosen = self._bridge.character

@@ -12,6 +12,10 @@ class Catalog(unittest.TestCase):
         for character in characters.CHARACTERS:
             self.assertTrue(os.path.isfile(character.path), character.path)
 
+    def test_every_character_has_its_portrait_on_disk(self):
+        for character in characters.CHARACTERS:
+            self.assertTrue(os.path.isfile(character.portrait), character.portrait)
+
     def test_labels_are_unique_and_match_the_rows(self):
         labels = characters.labels()
         self.assertEqual(len(labels), len(set(labels)))

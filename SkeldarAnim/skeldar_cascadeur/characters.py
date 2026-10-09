@@ -8,13 +8,19 @@ make_cascadeur_character.py says why a UE export needs the flattening step).
 import os
 from collections import namedtuple
 
-Character = namedtuple("Character", "key label path")
+Character = namedtuple("Character", "key label path portrait")
 
 PLUGIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(PLUGIN, "assets", "Cascadeur")
+PORTRAITS = os.path.join(PLUGIN, "assets", "character_portraits")
 
+# The portraits are the Maya build's own (assets/character_portraits, rendered by
+# docs/superpowers/plans/make_character_portraits.py): the same character, one
+# picture per model.
 CHARACTERS = (
-    Character("manny_ue5", "Manny UE5", os.path.join(ASSETS, "Manny_UE5.fbx")),
+    Character("manny_ue5", "Manny UE5",
+              os.path.join(ASSETS, "Manny_UE5.fbx"),
+              os.path.join(PORTRAITS, "Manny.png")),
 )
 
 
