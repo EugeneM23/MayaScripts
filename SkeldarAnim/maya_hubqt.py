@@ -2049,9 +2049,11 @@ def _spread(row, scale=1.0):
 
 #  A list's frame and padding, logical px, added to its rows' height:
 #  measured live 2026-10-08 (verify_hub_compact) as the list's height less
-#  its viewport's - 18 px at 150 % on both lists, the frame, the
-#  stylesheet's padding and Maya's own margins. The first guess, 8, left
-#  the Shared list showing 9 rows.
+#  its viewport's - 18 px at 150 % on both lists. The first guess, 8, left
+#  the Shared list showing 9 rows. Measured again 2026-10-09: the frame is
+#  6 px and the other 12 the horizontal scrollbar a list of wide rows shows
+#  (the Shared list's columns) - with it the viewport holds exactly the 10
+#  rows (210 px), without it 10 rows and 12 px of an 11th (222).
 LIST_FRAME = 12
 
 
@@ -2086,7 +2088,37 @@ def list_row_px(name):
         size = widget.sizeHintForRow(0)
         if size > 0:
             return size
+    size = _probe_row(widget)
+    if size > 0:
+        return size
     return widget.fontMetrics().lineSpacing() + 4
+
+
+def _probe_row(widget):
+    """The row an EMPTY list would show: a throwaway list of the same font,
+    a child of it (so the hub's stylesheet reaches it too), one row in it,
+    measured and dropped - Maya's own list is never touched. Measured live
+    2026-10-09: the font's lineSpacing + 4 guessed 24 px against the real
+    21, so a fresh Maya's lists stood 30 px taller than their 10 rows until
+    the first rows came and they jumped back; the probe answers 21. 0 when
+    it cannot."""
+    q = qt()
+    probe = None
+    try:
+        probe = q.QtWidgets.QListWidget(widget)
+        probe.setVisible(False)
+        probe.setFont(widget.font())
+        probe.addItem("Xg")
+        return int(probe.sizeHintForRow(0))
+    except Exception:                                        # noqa: BLE001
+        return 0
+    finally:
+        if probe is not None:
+            try:
+                probe.setParent(None)
+                q.shiboken.delete(probe)
+            except Exception:                                # noqa: BLE001
+                pass
 
 
 def set_list_height(name, logical):
@@ -2163,11 +2195,13 @@ def _grip_class():
                 self._watch_first_rows()
 
             def _watch_first_rows(self):
-                """An EMPTY list is sized from a fallback row - nothing to
-                measure - and the animation list is empty when its card is
-                built (its rows come from a refresh): 24 px against the real
-                21, and it showed 11 rows once filled (live, 2026-10-08). So
-                its first rows size it again from the real row, once."""
+                """An EMPTY list was sized from a guessed row - 24 px against
+                the real 21, and the animation list (empty when its card is
+                built, its rows come from a refresh) showed 11 rows once
+                filled (live, 2026-10-08). The empty row is measured on a
+                throwaway list since (`_probe_row`); its first rows still
+                size it again from the real row, once - the same height
+                unless the probe could not answer."""
                 try:
                     widget = list_widget(self.list_name)
                     if widget is None or widget.count():
@@ -2177,6 +2211,12 @@ def _grip_class():
                     pass
 
             def _first_rows(self, *_args):
+                """On the event loop's next turn, not at the signal: Maya's
+                textScrollList inserts a row and fills it after, and at the
+                first row's rowsInserted its height read 20 px against 21
+                one turn later (live, 2026-10-09) - sized then, the list
+                stood 8 px under its 10 rows. The timer is the grip's child:
+                a grip deleted meanwhile takes it along."""
                 try:
                     widget = list_widget(self.list_name)
                     if widget is not None:
@@ -2184,6 +2224,13 @@ def _grip_class():
                             self._first_rows)
                 except (RuntimeError, TypeError):
                     pass
+                timer = QtCore.QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._size_again)
+                timer.timeout.connect(timer.deleteLater)
+                timer.start(0)
+
+            def _size_again(self):
                 apply_list_rows(self.list_name, self.rows, self.scale)
 
             def press(self, gy):

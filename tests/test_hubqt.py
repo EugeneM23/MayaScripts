@@ -1168,11 +1168,35 @@ class ListGrip(SeamsMixin, unittest.TestCase):
                              style.list_height(10, 24, hubqt.LIST_FRAME))
             hubqt.list_row_px = lambda name: 21        # the real row, filled
             listed.addItems(["A_Jump", "A_Run_Fwd"])
+            QtWidgets.QApplication.processEvents()
             self.assertEqual(self.heights[-1][1],
                              style.list_height(10, 21, hubqt.LIST_FRAME))
             count = len(self.heights)
             listed.addItems(["more"])                  # once
+            QtWidgets.QApplication.processEvents()
             self.assertEqual(len(self.heights), count)
+        finally:
+            hubqt.list_widget = saved
+            listed.deleteLater()
+
+    def test_the_first_rows_are_measured_once_they_are_in(self):
+        """Live (2026-10-09): Maya's textScrollList inserts a row, then
+        fills it - at the first row's rowsInserted its height read 20 px
+        (21 one turn later), and the re-size shrank the list 8 px under its
+        10 rows. The re-size waits for the event loop's next turn."""
+        saved = hubqt.list_widget
+        listed = QtWidgets.QListWidget()
+        hubqt.list_widget = lambda name: listed if name == "theList" else None
+        row = [21]
+        hubqt.list_row_px = lambda name: row[0]
+        try:
+            self._apply()
+            row[0] = 20                                # inserted, not filled
+            listed.addItems(["A_Jump"])
+            row[0] = 21                                # filled
+            QtWidgets.QApplication.processEvents()
+            self.assertEqual(self.heights[-1][1],
+                             style.list_height(10, 21, hubqt.LIST_FRAME))
         finally:
             hubqt.list_widget = saved
             listed.deleteLater()
@@ -1190,6 +1214,34 @@ class ListGrip(SeamsMixin, unittest.TestCase):
         finally:
             hubqt.list_widget = saved
             listed.deleteLater()
+
+    def test_an_empty_list_s_row_is_measured_not_guessed(self):
+        """Live (2026-10-09, verify_hub_compact): an empty list's row was
+        the font's lineSpacing + 4 - 24 px against the real 21 - so a fresh
+        Maya's lists stood 30 px taller than 10 rows until rows arrived and
+        jumped back. A throwaway list of the same font, one row in it,
+        answers the real row (21 there too)."""
+        saved = hubqt.list_row_px, hubqt.list_widget
+        hubqt.list_row_px = self.saved_seams[0]         # the real one
+        empty, filled = QtWidgets.QListWidget(), QtWidgets.QListWidget()
+        for widget in (empty, filled):
+            font = widget.font()
+            font.setPixelSize(18)
+            widget.setFont(font)
+        filled.addItems(["A_Jump"])
+        hubqt.list_widget = lambda name: empty
+        try:
+            row = hubqt.list_row_px("theList")
+            self.assertEqual(row, filled.sizeHintForRow(0))
+            self.assertNotEqual(row, empty.fontMetrics().lineSpacing() + 4)
+            self.assertEqual(empty.count(), 0)          # left as it was
+            self.assertEqual(
+                [c for c in empty.children()
+                 if isinstance(c, QtWidgets.QListWidget)], [])
+        finally:
+            hubqt.list_row_px, hubqt.list_widget = saved
+            empty.deleteLater()
+            filled.deleteLater()
 
     def test_the_frame_is_what_a_styled_list_takes_round_its_rows(self):
         """Measured live 2026-10-08: the list's height less its viewport's
