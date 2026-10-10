@@ -6781,8 +6781,8 @@ none of it since 2026-09-07 (`vendor_bake`).
 - **The cost is the rig's evaluation**: 14 ms a frame on Manny live, two walks (sample, measure) - 1.35–2.2
   s for 61 frames; `refresh -suspend` saved nothing (trap 127).
 
-Not built: legs (toes, heel roll, IKToes), scale, an IK stretched to a longer FK arm, hotkey rows
-(`maya_hotkeys.py` held another session's uncommitted work, and nobody asked).
+Not built then: legs (built 2026-10-10 with the spine, below), scale, an IK stretched to a longer FK arm,
+hotkey rows (`maya_hotkeys.py` held another session's uncommitted work, and nobody asked).
 
 **…keys where the arm has keys, not on every frame** (2026-10-08, the animator: «если на ФК руке 3 ключа то
 и на ИК тоже должно быть 3 ключа и наоборот. Нужно избавится от запекания лишних ключей»; asked, both the
@@ -6828,6 +6828,49 @@ values); `verify_fkik_switch.py` **63/63** again (a retargeted take is keyed on 
      the full update, measured in parallel AND with the evaluation manager off. A frame walk that reads
      a rig needs the full update (14 ms a frame on Manny live), and `refresh -suspend` does not make it
      cheaper - the cost is evaluation, not drawing.
+
+**…and the legs and the spine** (2026-10-10, «Давай во вкладку conections добавим переключение FK IK для
+ног и спины»; after the push: «При переключении с ФК на ИК спины у нас ломается анимация. При использовании
+стандартного переключения в advanced skeleton все работает корректно»). Spec
+`docs/superpowers/specs/2026-10-10-legs-spine-fkik-design.md` — read its addendum. Rows `Leg R / Leg L`
+under the arms and `Spine` under the legs, the same `[FK | IK]` presses, keys only.
+- **A leg** (`fkik`, `kind=LEG`) is the arm's switch with the toes as a fourth joint. The toes' IK
+  control is fitted per frame (`_fit_toes`: its rest frame is the FK control's - the wrist's fixed
+  relation read 177° off). The pole stands on the shown knee's bend side and is placed after the IK
+  control is written (a leg's pole rides it, `followLeg`: placed before, 31 cm off). Not held: the knee's
+  roll, ~84° in the IK knee's own frame when bent (said on the line).
+- **The spine** (`fkikspine`): an ikSpline on five CVs, locators under `IKSpine1_M`, `IKcvSpine1..3_M`,
+  `IKSpine3_M`; its joints sit ON the curve, not on the CVs, so to IK is a FIT. One Levenberg-Marquardt
+  step per frame (`fkik.gauss_newton_step`, the damping raised and the step retried when it does not
+  help). The unknowns are the CV controls' translates and the rotates of `IKSpine1_M`, `IKSpine3_M` and
+  the mid `IKSpine2_M`. The targets are the shown Spine1..4 AND the root, places and turns, the root's
+  residual ×100. To FK, `FKRoot_M` goes onto the IK root where the two part (the hip moved in IK). Then
+  every FK spine control takes its place and turn (the IK spine stretches, `IKSpine3_M.stretchy` 10).
+  Spine5's piece is measured against the shown Spine4: its parent `FKParentConstraintToSpine4_M` hangs
+  under the DEFORM Spine4. The line: «the root and legs kept to 0.0000 cm».
+- **AdvancedSkeleton's own switch** (`asAlignFKIK`, read and run in mayapy on the same take). It puts
+  `IKSpine1_M` on the root exactly («since it affect legs») and the spine on a rebuilt curve («Target
+  might not fully Align»): the root 0.0000, the spine 0.42-0.81 cm / 3.3-5.3° off. Its IK2FK keys `.t`
+  and `.r` of every FK spine control, `FKRoot_M` included.
+
+Proof: `verify_fkik_spine_take.py`, a UE clip retargeted through the button and pressed through
+Connections, the game skeleton and the skin's vertices on every frame, Manny / Creep / Orc D.
+- Keyed on every frame, **36/36**: the root, the pelvis and both legs **0.0000 cm**, both ways and after
+  a 3 cm IK hip edit. The spine 0.013 / 0.037 (0.51° at one Creep frame, the spline's twist) / 0.011 cm.
+- Keyed every 8 frames, **45/45**: between keys the spine stays within 0.12 cm.
+- Also: `verify_fkik_spine.py` 14/14 on all three, `verify_fkik_legs.py` 12/12, the unit suite.
+
+217. **The spline's hip control IS the IK root, and the spine's blend blends the root.** `Root_M` reads
+     `FKXRoot_M` and `IKXRoot_M` through the SPINE's FKIKBlend, and `IKXRoot_M` follows `IKSpine1_M`
+     1:1, place and turn. The first spine switch fitted the spline to Spine1..4 alone; it moved and turned
+     `IKSpine1_M` and took the root, the pelvis and both legs with it. Measured on a retargeted take: the
+     root 0.39 cm / 1.16°, the feet 2 cm, on every frame. Every gate was green, because every gate
+     measured the spine; one even required keys on `IKSpine1_M`, which encoded the bug. A switch's verify
+     measures everything the switched blend reaches, and the skin.
+218. **With the root held, the spline's start twist is gone, and `IKSpine2_M` gives it back.**
+     `IKSpine1_M`'s turn carries the root 1:1. The mid control twists the middle and leaves the root
+     alone (rotateY +10 turns IKX1..3 by 5, 10, 5°). Fitting without it, the Orc D's strongly bent spine
+     rolled 2.6° off; with it 0.41°. Probe which control moves what before choosing a fit's unknowns.
 
 ## Shared: scenes and FBX between colleagues, one press (2026-09-30)
 

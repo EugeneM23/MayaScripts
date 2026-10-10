@@ -149,6 +149,105 @@ class Spine(unittest.TestCase):
         self.assertEqual(sorted(set(node for node, _ch in turns)),
                          sorted([fkikspine.CV_CONTROLS[0], fkikspine.CV_CONTROLS[-1]]))
 
+    def test_the_mid_control_adds_its_turns_to_the_fit(self):
+        # 2026-10-10: IKSpine2_M twists the middle and leaves the root alone; with the
+        # root held it is the fit's start twist
+        sp = fkikspine.Spine("blend", [], [], [], [], list(fkikspine.CV_CONTROLS), "M",
+                             fkik.SPINE, mid=fkikspine.MID_CONTROL)
+        plugs = fkikspine._cv_plugs(sp)
+        self.assertEqual(len(plugs), 15 + 6 + 3)
+        self.assertEqual([ch for node, ch in plugs if node == fkikspine.MID_CONTROL],
+                         list(fkik.ROTATE))
+        self.assertEqual(fkikspine._ik_controls(sp)[-1], fkikspine.MID_CONTROL)
+
+    def test_a_rig_without_the_mid_control_fits_without_it(self):
+        sp = fkikspine.Spine("blend", [], [], [], [], list(fkikspine.CV_CONTROLS), "M",
+                             fkik.SPINE)
+        self.assertEqual(fkikspine._ik_controls(sp), list(fkikspine.CV_CONTROLS))
+
+    def test_the_root_nodes_are_part_of_the_spine(self):
+        # 2026-10-10: the IK root is the spline's hip control; the first switch moved it
+        # and the root, the pelvis and both legs with it
+        sp = fkikspine.Spine("blend", [], [], [], [], [], "M", fkik.SPINE)
+        self.assertIsNone(sp.root_ik)
+        named = fkikspine.Spine("blend", [], [], [], [], [], "M", fkik.SPINE,
+                                "fkx_root", "ikx_root", "fk_root_ctl")
+        self.assertEqual((named.root_fk, named.root_ik, named.root_ctl),
+                         ("fkx_root", "ikx_root", "fk_root_ctl"))
+        self.assertEqual((fkikspine.ROOT_FK, fkikspine.ROOT_IK, fkikspine.ROOT_CONTROL),
+                         ("FKXRoot_M", "IKXRoot_M", "FKRoot_M"))
+
+
+def moved(x, y=0.0, z=0.0, degrees=0.0):
+    m = om.MTransformationMatrix(turn_z(degrees))
+    m.setTranslation(om.MVector(x, y, z), om.MSpace.kTransform)
+    return m.asMatrix()
+
+
+class RootsApart(unittest.TestCase):
+    def test_roots_in_one_place_are_not_apart(self):
+        shown = {0: moved(1.0, 2.0, 3.0, 10.0), 1: moved(2.0, 2.0, 3.0, 12.0)}
+        fk = {0: moved(1.0, 2.0, 3.0, 10.0), 1: moved(2.0, 2.0, 3.0, 12.0)}
+        self.assertFalse(fkikspine.roots_apart(shown, fk))
+
+    def test_a_root_moved_on_one_frame_is_apart(self):
+        shown = {0: moved(0.0), 1: moved(3.0)}           # the hip control moved in IK
+        fk = {0: moved(0.0), 1: moved(0.0)}
+        self.assertTrue(fkikspine.roots_apart(shown, fk))
+
+    def test_a_root_turned_alone_is_apart(self):
+        self.assertTrue(fkikspine.roots_apart({0: moved(0.0, degrees=1.0)}, {0: moved(0.0)}))
+
+    def test_float_noise_is_not_apart(self):
+        shown = {0: moved(1e-5, degrees=1e-5)}
+        self.assertFalse(fkikspine.roots_apart(shown, {0: moved(0.0)}))
+
+    def test_the_tolerance_is_the_callers(self):
+        shown, fk = {0: moved(0.5)}, {0: moved(0.0)}
+        self.assertTrue(fkikspine.roots_apart(shown, fk))
+        self.assertFalse(fkikspine.roots_apart(shown, fk, cm=1.0))
+
+
+class RootInTheFit(unittest.TestCase):
+    def test_the_roots_six_entries_count_the_weight(self):
+        residual = [1.0] * 6 + [2.0] * 12              # the root, then two spine joints
+        out = fkikspine.weighted(residual, weight=100.0)
+        self.assertEqual(out[:6], [100.0] * 6)
+        self.assertEqual(out[6:], [2.0] * 12)
+        self.assertEqual(len(out), 18)
+
+    def test_the_root_outweighs_a_spine_joint(self):
+        self.assertGreaterEqual(fkikspine.ROOT_WEIGHT, 10.0)
+
+
+class RootNote(unittest.TestCase):
+    def test_a_root_that_stayed_is_said_kept(self):
+        before = {0: moved(1.0), 1: moved(2.0, degrees=5.0)}
+        text = fkikspine.root_note(before, dict(before))
+        self.assertTrue(text.startswith("the root and legs kept to 0.0000 cm"), text)
+
+    def test_a_root_that_moved_is_said_with_its_frame(self):
+        before = {0: moved(0.0), 7: moved(0.0)}
+        after = {0: moved(0.0), 7: moved(2.0)}
+        text = fkikspine.root_note(before, after)
+        self.assertIn("the root MOVED 2.000 cm", text)
+        self.assertIn("(frame 7)", text)
+        self.assertIn("the legs with it", text)
+
+    def test_a_turn_alone_is_a_move(self):
+        text = fkikspine.root_note({3: moved(0.0)}, {3: moved(0.0, degrees=1.0)})
+        self.assertIn("MOVED", text)
+
+
+class FkChainPieces(unittest.TestCase):
+    def test_under_needs_the_separator(self):
+        self.assertTrue(fkikspine._under("|a|FKXSpine1_M|FKOffsetSpine2_M", "|a|FKXSpine1_M"))
+        self.assertFalse(fkikspine._under("|a|FKXSpine1_M_extra", "|a|FKXSpine1_M"))
+        # Spine5's parent hangs under FKParentConstraintToSpine4_M, not under FKXSpine4_M
+        self.assertFalse(fkikspine._under(
+            "|r|FKSystem|FKParentConstraintToSpine4_M|FKOffsetSpine5_M|FKExtraSpine5_M",
+            "|r|FKSystem|FKOffsetRoot_M|FKXSpine4_M"))
+
 
 if __name__ == "__main__":
     unittest.main()

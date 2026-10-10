@@ -94,3 +94,64 @@ To FK: the FK controls take the shown joints (`fkik.fk_locals`, as the limbs).
   the spine's row, nine segment rows).
 - `tests/test_scenesetup_legs_spine.py` (new).
 - `docs/superpowers/plans/verify_fkik_legs.py`, `verify_fkik_spine.py` (new).
+- `docs/superpowers/plans/verify_fkik_spine_take.py` (the addendum's).
+
+## Addendum, the same day: the spine switch moved the legs
+
+The animator, after the push: «При переключении с ФК на ИК спины у нас ломается анимация. При
+использовании стандартного переключения в advanced skeleton все работает корректно».
+
+**Measured** on `LongSword_Attack_Right_Heavy_3P` retargeted onto Manny_Rig (mayapy, every
+frame): the spine stood where the FK spine stood, but the **root moved 0.39 cm and 1.16 deg, the
+feet 2 cm, on every frame**, the skin up to 2.1 cm. `Root_M` is blended by the SPINE blend - it
+reads `FKXRoot_M` and `IKXRoot_M` - and `IKXRoot_M` follows `IKSpine1_M`: the spline's hip control
+IS the IK root. The fit turned and moved `IKSpine1_M` to place the spine and took the root, the
+pelvis and both legs with it. `verify_fkik_spine.py` measured Spine1..5 alone and passed.
+
+**AdvancedSkeleton's own switch** (`asAlignFKIK`, read in `AdvancedSkeleton.mel` 6.797): FK2IK on
+a spline puts `IKSpine1_M` on the root exactly ("also IKSpine1_M to be oriented, since it affect
+legs") and the other IK controls on a curve rebuilt through the chain, and prints "Target might
+not fully Align". Run on the same take in mayapy (every 6th frame): **root and legs 0.0000 cm,
+the spine 0.42-0.81 cm and 3.3-5.3 deg off**. IK2FK sets `.t` and `.r` of every FK control of the
+chain, `FKRoot_M` included, from the IKX joints, and its bake keys both.
+
+**The fix** (`fkikspine`):
+
+1. The IK root is in the fit: `IKXRoot_M` is fitted to the shown root with IKX1..4, its residual
+   counted `ROOT_WEIGHT` (100) times - where the spline cannot reach the FK spine (the Creep at
+   one frame), the spine gives, never the root. Unweighted, the Creep's root gave 0.017 cm and
+   0.094 deg there.
+2. To FK, the FK spine controls take places AND turns, as AS's switch and our limbs: the IK
+   spine stretches (`IKSpine3_M.stretchy` 10). Turns alone, after the hip control was moved 3 cm
+   in IK, left every spine joint 0.30 cm off (the same 0.30 on all five: the FK spine's base).
+3. To FK, when the IK root stands off the FK root (the hip moved in IK), `FKRoot_M` is put on it
+   first (`_root_to_fk`); roots within 0.005 cm / 0.01 deg get no FK root keys.
+4. Spine5's FK parent hangs under the DEFORM Spine4 (`FKParentConstraintToSpine4_M`): its piece of
+   the FK chain is measured against the joint the spine shows (0.0000 against the deform Spine4;
+   against FKX4 in IK 0.0045 cm / 0.014 deg on an unedited take, more on an edited one).
+5. The status line says how far the deform root moved: «the root and legs kept to 0.0000 cm», or
+   «the root MOVED ... - the legs with it».
+6. The mid control `IKSpine2_M`'s rotates join the fit. With the root held, `IKSpine1_M`'s turn
+   (which carries the root 1:1) is no longer free, and the spine lost its start twist: on the Orc
+   D's strong synthetic bend Spine2 rolled 2.6 deg off and the top 1.6 deg / 0.32 cm. `IKSpine2_M`
+   twists the middle and leaves the root alone (measured: rotateY +10 turns IKX1..3 by 5, 10, 5
+   deg, the root 0); with it the same pose lands within 0.41 deg of roll, the top 0.30 deg /
+   0.012 cm - closer than the root-free first build (0.46 deg, 0.086 cm), and the root held.
+
+**Measured after** - `verify_fkik_spine_take.py` (mayapy, the take retargeted through the button,
+the switch pressed through Connections, the game skeleton and the skinned meshes' vertices on
+every frame), Manny_Rig, Creep_Rig, Orc_D_Rig:
+
+- keyed on every frame, **36/36**: FK -> IK the root, the pelvis and both legs **0.0000 cm,
+  0.0000 deg on every frame** on all three; the spine 0.013 cm / 0.041 deg (Manny), 0.011 / 0.033
+  (Orc D), 0.037 cm / 0.513 deg at one frame (the Creep - the spline's twist: its joints roll as
+  the controls share it, the FK spine does not); the skin's worst vertex 0.124 / 0.041 / 0.234
+  cm. IK -> FK back to the take; IK -> FK after the hip control moved 3 cm: the FK root follows,
+  the root and the legs stay where IK put them (0.0000), the spine 0.0000;
+- keyed every 8 frames, **45/45**: the same at the keys; between them each chain interpolates its
+  own way, the spine up to 0.12 cm / 0.48 deg (the keys-only cost, 2026-10-08); the root and the
+  legs 0.0000 on every frame.
+- `verify_fkik_spine.py` (synthetic, now gating the root both ways and over a range) **14/14** on
+  Manny, Creep and Orc D; `verify_fkik_legs.py` 12/12; the unit suite green.
+
+AS's switch and ours now hold the root alike; ours keeps the spine 30-60 times closer.

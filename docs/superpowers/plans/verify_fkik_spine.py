@@ -11,7 +11,9 @@ Gates (the switch keys the source's keys only, so it is judged at the keys):
 - the refusal is empty and the blend reads FK;
 - FK -> IK: the blended joints Spine1..4 stand where the FK spine stood (the spline fit, within
   FIT_GATE_CM); Spine4 and Spine5 do not move (they follow the FK chain whatever the blend);
-- the blend reads IK and the CV controls carry keys;
+- the blend reads IK and the spline's controls carry keys;
+- the root (Root_M: the pelvis and both legs hang from it) does not move, either way - the
+  spline's hip control IS the IK root (the addendum: the first switch moved it, the feet 2 cm);
 - IK -> FK over the whole take brings the spine back to its FK pose;
 - a range FK -> IK keeps the blended joints at its keys.
 The orientation of the spline's joints is not fitted: its turn is measured and printed.
@@ -48,6 +50,7 @@ LAST = 24
 GATE_KEYS = (0, 12, 24)
 FIT_GATE_CM = 0.5
 TOLERANCE_CM = 0.05
+ROOT_CM, ROOT_DEG = 0.001, 0.001
 FAILS = []
 COUNT = [0]
 
@@ -79,6 +82,13 @@ def sample(frames, joints):
         cmds.currentTime(frame, update=True)
         out[frame] = [world(j) for j in joints]
     return out
+
+
+def root_moved(before, after):
+    """The worst move of a single joint across the frames: (cm, deg)."""
+    cm = max((pos(before[f][0]) - pos(after[f][0])).length() for f in before)
+    deg = max(fkik.angle(before[f][0], after[f][0]) for f in before)
+    return cm, deg
 
 
 def pick_swing(leaf):
@@ -129,7 +139,9 @@ def main():
     span = (0, LAST, False)
     frames = list(range(0, LAST + 1))
     joints = [node(j) for j in DEFORM]
+    root = [node("Root_M")]
     before = sample(frames, joints)
+    root_before = sample(frames, root)
     gate(fkik.mode_of(fkik.blend_values(sp)) == fkik.FK, "the spine starts in FK")
     gate(fkikspine.refusal(sp, fkik.IK, span) == "", "FK -> IK is not refused")
 
@@ -157,8 +169,12 @@ def main():
          % blended_cm)
     gate(top_cm <= TOLERANCE_CM,
          "Spine5 does not move - the top follows the FK chain, which follows Spine4 (%.4f cm)" % top_cm)
-    ik_keys = cmds.keyframe(node("IKSpine1_M"), query=True, timeChange=True) or []
-    gate(len(ik_keys) > 0, "the spline controls carry keys (%d)" % len(ik_keys))
+    ik_keys = sum(len(cmds.keyframe(c, query=True, timeChange=True) or []) for c in sp.cv)
+    gate(ik_keys > 0, "the spline controls carry keys (%d)" % ik_keys)
+    cm, deg = root_moved(root_before, sample(frames, root))
+    gate(cm <= ROOT_CM and deg <= ROOT_DEG,
+         "FK -> IK: the root - the pelvis and the legs - does not move, every frame (%.5f cm, "
+         "%.5f deg)" % (cm, deg))
 
     back = fkikspine.switch(sp, fkik.FK, span)
     print("   ", back)
@@ -167,6 +183,9 @@ def main():
     m2 = fkik.measure(at(GATE_KEYS, before), at(GATE_KEYS, again))
     print("    IK->FK at the keys: %.4f cm, %.3f deg" % (m2.cm, m2.hand))
     gate(m2.cm <= TOLERANCE_CM, "IK -> FK brings the spine back to its FK pose (%.4f cm)" % m2.cm)
+    cm, deg = root_moved(root_before, sample(frames, root))
+    gate(cm <= ROOT_CM and deg <= ROOT_DEG,
+         "IK -> FK: the root does not move, every frame (%.5f cm, %.5f deg)" % (cm, deg))
 
     for leaf in POSED:
         cmds.cutKey(node(leaf), clear=True)
@@ -174,12 +193,16 @@ def main():
     span2 = (0, 12, True)
     frames2 = list(range(0, 13))
     before2 = sample(frames2, joints)
+    root_before2 = sample(frames2, root)
     fkikspine.switch(sp, fkik.IK, span2)
     after2 = sample(frames2, joints)
     worst = max((pos(before2[f][j]) - pos(after2[f][j])).length()
                 for f in (0, 12) for j in range(4))
     gate(worst <= FIT_GATE_CM, "a range FK -> IK keeps the blended joints at the keys (%.4f cm)"
          % worst)
+    cm, deg = root_moved(root_before2, sample(frames2, root))
+    gate(cm <= ROOT_CM and deg <= ROOT_DEG,
+         "a range FK -> IK: the root does not move, every frame (%.5f cm, %.5f deg)" % (cm, deg))
 
 
 try:
