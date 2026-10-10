@@ -125,7 +125,6 @@ _PAYLOAD = (
     "maya_poselib",             # the Pose Library (2026-10-02)
     "poses",                    # its shipped library; local cards survive an install
     "maya_update.py",
-    "maya_voice",               # Voice rooms and screen share (2026-10-10)
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh
     "maya_share.py",            # the section
