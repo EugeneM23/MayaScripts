@@ -125,3 +125,20 @@ Qt-bound modules (imported lazily, the rest of the package does not need them):
 2. The screen grab rate through Qt. The 6 fps cap is a guess until measured.
 3. Cloudflare limits on message size and the WebSocket hibernation behaviour
    are taken from the docs, not from a live run.
+
+## Addendum: what the headless spike measured (2026-10-10)
+
+Run in mayapy, offscreen, `docs/superpowers/plans/voice_spike_headless.py`:
+
+- Devices: one microphone (Realtek Microphone Array) and one output (Realtek
+  Speakers) are present.
+- Neither device accepts our format (16 kHz, mono, Int16) as it is. Both prefer
+  **48 kHz, two channels, Float32**. So the client converts: `pcm.py` handles
+  Float32 as well as Int16, and the rate ratio (3) must be whole. Without the
+  Float32 path, the panel would have refused the microphone on this machine.
+- A JPEG grab of the primary screen came back in 9 ms and decodes; the offscreen
+  platform reports an 800x800 screen, so the size is not the studio's.
+
+The client picks the device's own format for both directions and sizes the
+speaker's packets in that format (`Speaker.packet_size`), so a full buffer is
+measured in the right bytes.
