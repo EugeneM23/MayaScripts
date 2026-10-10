@@ -1,4 +1,4 @@
-"""The Graph Editor on the viewport, invisible, in a frameless host of ours.
+"""The Graph Editor in a window of its own, its background see-through.
 
 The panel is Maya's OWN `graphEditor1`, borrowed for as long as the mode is
 on and put back where it lived (its dock, its window, or unparented) when it
@@ -9,37 +9,31 @@ toolbar, the menus and the hotkeys reach them; in a panel of our own the
 Stacked View button switched the animator's Graph Editor instead (read off
 the button: `GraphEditorStackedView` = `graphEditorSetViewMode
 graphEditor1GraphEd 1`). Borrowed, every one of them acts on the Graph
-Editor over the viewport, with the animator's own settings. Without a
-graphEditor1 (or with `borrow=False`) a `scriptedPanel` of our own stands
-in. It goes into the host with the hub skin's `setParent(fullName(layout))`.
-Measured on this construction:
+Editor with the animator's own settings.
+
+2026-10-02 (the animator: «нужен стандартный граф эдитор только с
+прозрачным фоном»): the panel lies in a standard window of ours - a title
+bar to move it by, borders to resize it, the menu bar, toolbar and channel
+list where Maya puts them - not on the whole viewport. Measured on this
+construction:
 
 - the curve area is `TanimCurveCanvas`, a QOpenGLWindow named
-  `<panel>GraphEdImpl` inside a QWindowContainer - a native child HWND;
-- by default (`chrome=True`, the animator's call the same day: the channel
-  list and the tools are the Graph Editor) the WHOLE panel lies on the
-  viewport - menu bar, toolbar, channel list, curve area - and the glass
-  shows the chrome - cut band by band around the curve area
-  (`geometry.chrome_bands`) out of DWM's copy of the host window
-  (`winstyle.capture`) - and the curve area keyed;
-- without it the menu bar goes with `menuBarVisible=False`, the toolbar is
-  the panel's one frameLayout (the parent of its `QadskFrameLayoutFrame`)
-  unmanaged, the channel list the QSplitter's other side sized 0, handle
-  width 0; then the canvas sits (5, 3) into the host with 8x6 of border,
-  and the host placed by `geometry.host_rect` puts it on the viewport
-  pixel for pixel.
+  `<panel>GraphEdImpl` inside a QWindowContainer - a native child HWND,
+  which cannot be made transparent (the canvas clears opaque whatever the
+  background alpha);
+- the window is made invisible by Qt's OWN window opacity, 1/255 - never by
+  setting WS_EX_LAYERED behind Qt's back (Qt rewrote such a style and the
+  "invisible" graph stood grey over the viewport, measured 2026-09-30). At
+  1/255 it still renders and takes every click, key and drag, title bar
+  included;
+- what shows is the glass (`glass.py`): DWM's copy of the WHOLE window,
+  title bar and borders included (`winstyle.capture`), with the curve area's
+  frames keyed out (`keying.py`) where the curve area is - so the background
+  goes and the curves, the grid, the chrome stay as Maya draws them.
 
 PySide hands the canvas back as a QPaintDeviceWindow; the cached wrapper is
 invalidated and the pointer wrapped as the QOpenGLWindow it is, which is
 what reaches `grabFramebuffer()` and `frameSwapped`.
-
-The ghost is made invisible by Qt's OWN window opacity, 1/255 - never by
-setting WS_EX_LAYERED behind Qt's back: measured live 2026-09-30, Qt
-rewrote the style of a window it thought opaque and dropped the bit (the
-style read 0xa0), so the "invisible" Graph Editor stood grey over the
-viewport and the follow timer's re-assertions made it redraw ~40 times a
-second. With `setWindowOpacity` Qt keeps it layered itself (0x80080,
-alpha 1, no redraws at rest).
 """
 
 import maya.cmds as cmds
@@ -57,10 +51,9 @@ LIST_TICKS = 20     # follow ticks (2 s) the list is looked after, then left
 HOST = "skeldarGraphOverlayHost"
 LAYOUT = "skeldarGraphOverlayLayout"
 PANE = "skeldarGraphOverlayPane"
-LABEL = "Graph Overlay"
+LABEL = "Graph Editor"
 CANVAS_CLASS = "TanimCurveCanvas"
 CONTAINER_CLASS = "QWindowContainer"
-FRAME_CLASS = "QadskFrameLayoutFrame"
 GHOST_OPACITY = winstyle.GHOST_ALPHA / 255.0
 GLASS_NAME = "skeldarGraphOverlayGlass"      # glass.NAME, not imported here
 
@@ -122,24 +115,20 @@ def delete_leftovers():
 
 
 class Ghost(object):
-    """The panel, its host, and the canvas wrapper, held together."""
+    """The panel, its window, and the canvas wrapper, held together."""
 
-    def __init__(self, parent, rect, chrome=True, borrow=True):
-        """`chrome`: the whole Graph Editor on `rect` - menu bar, toolbar,
-        channel list and the curve area (2026-09-30, the animator: «я не
-        могу выделить отдельно каналы для редактирования кривых и нет
-        остальных инструментов»). False: the curve area alone on `rect`,
-        everything else hidden - the first build's shape. `borrow`: Maya's
-        own graphEditor1 rather than a panel of ours (see the module)."""
+    def __init__(self, parent, rect, borrow=True):
+        """`rect` is the window's frame on screen (global pixels). `borrow`:
+        Maya's own graphEditor1 rather than a panel of ours (see the
+        module)."""
         delete_leftovers()
-        self.chrome = bool(chrome)
         self.borrowed = False
         self.home = None            # where the borrowed panel lived
         self.list_sizes = None      # its splitter's sizes, when we opened it
         self._list_ticks = 0
-        host = QtWidgets.QWidget(parent, QtCore.Qt.Tool
-                                 | QtCore.Qt.FramelessWindowHint)
+        host = QtWidgets.QWidget(parent, QtCore.Qt.Tool)
         host.setObjectName(HOST)
+        host.setWindowTitle(LABEL)
         host.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
         layout = QtWidgets.QVBoxLayout(host)
         layout.setObjectName(LAYOUT)
@@ -167,15 +156,43 @@ class Ghost(object):
             cmds.setParent(previous)
         except Exception:                                     # noqa: BLE001
             pass
-        if self.chrome:
-            self.open_channel_list()
-        else:
-            self.hide_chrome()
+        # The frame's insets exist only once the window is shown.
+        self.place(rect)
+        self.open_channel_list()
+
+    # ------------------------------------------------------------ the window
+
+    def frame_rect(self):
+        """The window's rectangle WITH its title bar and borders, global."""
+        g = self.host.frameGeometry()
+        return (g.x(), g.y(), g.width(), g.height())
+
+    def showing(self):
+        """On screen: shown, not minimised, and exposed. A minimised Maya
+        sends no hide event to a floating window, so `isVisible` alone
+        answers True for it (measured 2026-10-01); the window handle is asked
+        afresh - a held one can be a dead wrapper (trap 96)."""
+        if not self.host.isVisible() or self.host.isMinimized():
+            return False
+        handle = self.host.windowHandle()
+        return handle is not None and handle.isExposed()
+
+    def place(self, rect):
+        """The window's FRAME on `rect` (global): the client area is set
+        inside it by the insets the window has, measured as it stands."""
+        frame, inner = self.host.frameGeometry(), self.host.geometry()
+        left, top = inner.x() - frame.x(), inner.y() - frame.y()
+        right = (frame.x() + frame.width()) - (inner.x() + inner.width())
+        bottom = (frame.y() + frame.height()) - (inner.y() + inner.height())
+        x, y, w, h = [int(v) for v in rect]
+        self.host.setGeometry(x + left, y + top,
+                              max(1, w - left - right),
+                              max(1, h - top - bottom))
 
     # ------------------------------------------------------------ the chrome
 
     def chrome_widgets(self):
-        """Every widget of the host but the curve area's container - the
+        """Every widget of the window but the curve area's container - the
         ones whose repaints mean the chrome changed."""
         try:
             widgets = self.host.findChildren(QtWidgets.QWidget)
@@ -190,36 +207,38 @@ class Ghost(object):
                 continue
         return found
 
-    def canvas_offset(self):
-        """The curve area's top-left inside the host, (0, 0) when unknown."""
+    def canvas_in_frame(self):
+        """The curve area as (x, y, width, height) inside the window's frame,
+        or None when Maya has no curve area to show."""
         canvas = self.canvas_rect()
         if canvas is None:
-            return (0, 0)
-        corner = self.host.mapToGlobal(QtCore.QPoint(0, 0))
-        return (canvas[0] - corner.x(), canvas[1] - corner.y())
+            return None
+        fx, fy = self.frame_rect()[:2]
+        return (canvas[0] - fx, canvas[1] - fy, canvas[2], canvas[3])
+
+    def canvas_offset(self):
+        """The curve area's top-left inside the frame, (0, 0) when unknown."""
+        inside = self.canvas_in_frame()
+        return (inside[0], inside[1]) if inside is not None else (0, 0)
 
     def chrome_pieces(self):
-        """The chrome as [(QImage, x, y), ...] in host coordinates, cut
-        band by band around the curve area out of ONE capture of the host
-        window from DWM (`winstyle.capture`) - never `QWidget.grab()`, which
-        re-renders Maya's widgets (it crashed Maya once, re-rendering the
-        channel list right after the panel was re-parented). [] when the
+        """The window's chrome as [(QImage, x, y), ...] in frame coordinates,
+        cut band by band around the curve area out of ONE capture of the
+        whole window from DWM (`winstyle.capture`) - never `QWidget.grab()`,
+        which re-renders Maya's widgets (it crashed Maya once, re-rendering
+        the channel list right after the panel was re-parented). [] when the
         capture fails."""
-        if not self.chrome:
+        inside = self.canvas_in_frame()
+        if inside is None:
             return []
-        canvas = self.canvas_rect()
-        if canvas is None:
-            return []
-        width, height = self.host.width(), self.host.height()
+        _x, _y, width, height = self.frame_rect()
         data = winstyle.capture(self.hwnd(), width, height)
         if data is None:
             return []
         whole = QtGui.QImage(data, width, height, width * 4,
                              QtGui.QImage.Format_RGB32).copy()
-        x, y = self.canvas_offset()
         pieces = []
-        for band in geometry.chrome_bands((width, height),
-                                          (x, y, canvas[2], canvas[3])):
+        for band in geometry.chrome_bands((width, height), inside):
             piece = whole.copy(QtCore.QRect(*band)).convertToFormat(
                 QtGui.QImage.Format_ARGB32)
             pieces.append((piece, band[0], band[1]))
@@ -241,7 +260,7 @@ class Ghost(object):
         seconds because the borrowed panel shut it once more itself while it
         finished laying out; after that a list the animator shuts stays
         shut. What it was is kept for `give_back`."""
-        if not self.chrome or self._list_ticks >= LIST_TICKS:
+        if self._list_ticks >= LIST_TICKS:
             return False
         self._list_ticks += 1
         split, index = self._splitter()
@@ -264,39 +283,6 @@ class Ghost(object):
         wanted[index] = max(1, total - want)
         split.setSizes(wanted)
         return True
-
-    def hide_chrome(self):
-        """Menu bar, toolbar and channel list out; idempotent."""
-        try:
-            if cmds.scriptedPanel(self.panel, query=True,
-                                  menuBarVisible=True):
-                cmds.scriptedPanel(self.panel, edit=True,
-                                   menuBarVisible=False)
-        except Exception:                                     # noqa: BLE001
-            pass
-        panel_widget = _widget(self.panel)
-        if panel_widget is None:
-            return
-        for frame in panel_widget.findChildren(QtWidgets.QWidget):
-            try:
-                if frame.metaObject().className() != FRAME_CLASS:
-                    continue
-                name = _full_name(frame.parentWidget())
-            except RuntimeError:
-                continue
-            if cmds.frameLayout(name, exists=True) and \
-                    cmds.frameLayout(name, query=True, manage=True):
-                cmds.frameLayout(name, edit=True, manage=False)
-        port = _widget(self.panel + "GraphEd")
-        split = port.parentWidget() if port is not None else None
-        if isinstance(split, QtWidgets.QSplitter):
-            if split.handleWidth():
-                split.setHandleWidth(0)
-            index, sizes = split.indexOf(port), split.sizes()
-            wanted = [sum(sizes) if i == index else 0
-                      for i in range(len(sizes))]
-            if sizes != wanted:
-                split.setSizes(wanted)
 
     # ------------------------------------------------------------ the canvas
 
@@ -363,34 +349,8 @@ class Ghost(object):
         self.host.setWindowOpacity(GHOST_OPACITY)
         return True
 
-    def host_rect(self):
-        g = self.host.geometry()
-        return (g.x(), g.y(), g.width(), g.height())
-
-    def place(self, target):
-        """With the chrome: the host on `target`. Without it: the host moved
-        so its canvas lands on `target` (it converges in the next layout
-        pass when the size changed)."""
-        if self.chrome:
-            if self.host_rect() != tuple(target):
-                self.host.setGeometry(*[int(v) for v in target])
-            return
-        self.hide_chrome()
-        canvas = self.canvas_rect()
-        if canvas is None:
-            self.host.setGeometry(*[int(v) for v in target])
-            return
-        wanted = geometry.host_rect(target, self.host_rect(), canvas)
-        if wanted != self.host_rect():
-            self.host.setGeometry(*wanted)
-
-    def aligned(self, target):
-        if self.chrome:
-            return self.host_rect() == tuple(target)
-        return self.canvas_rect() == tuple(target)
-
     def alive(self):
-        """The host stands and the panel is still in it. A borrowed
+        """The window stands and the panel is still in it. A borrowed
         graphEditor1 can be taken back by Maya itself (the Graph Editor
         opened meanwhile re-parents it into its own window) - the mode
         then ends."""

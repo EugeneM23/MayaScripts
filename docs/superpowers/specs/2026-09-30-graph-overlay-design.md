@@ -202,3 +202,27 @@ The glass shows the chrome opaque from a DWM copy of the host window (`PrintWind
 `graphEditor1`, borrowed and given back, because 55 of Maya's runtime commands name it outright. The
 channel list opens at its own minimum. Proof: the verify's 26 gates, six on/off cycles among them, in a
 disposable Maya. CLAUDE.md traps 134-139 hold the details.
+
+## Addendum 3 — a standard window, not the viewport (2026-10-02)
+
+The animator, after using the overlay: «он совершенно бесполезный ... граф эдитор часто все перекрывает»;
+asked what is wrong: «Нужен другой вид»; asked what view: «Нужен стандартный граф эдитор только с
+прозрачным фоном». The canvas cannot take alpha (measured), so the transparency stays the keyed glass.
+What changed is the window the glass sits on:
+
+- The Graph Editor lies in a standard window of ours (`Qt.Tool` with its title bar and borders), not on the
+  whole viewport. Its menus, toolbar and channel list stay as Maya draws them: the `chrome` switch is gone.
+- The window is moved and resized as any window. Its close button leaves the mode.
+- The glass covers the window's FRAME: `winstyle.capture` takes the whole window, so the title bar and the
+  borders come from DWM opaque, the curve area's frames keyed. `canvas_in_frame` and `chrome_bands` count in
+  frame coordinates.
+- The window's own move, resize, show and hide are followed at once by an event filter (`_sync_glass`); the
+  follow timer only keeps alt, Maya's focus and the channel list.
+- It opens where the animator left it (`skeldarGraphOverlayRect`, remembered on every change, put back when
+  that still shows on a screen - `geometry.on_some_screen`); with nothing remembered, in the lower right of
+  the viewport at 60 % by 50 % (`geometry.default_rect`). The figure in the middle of the viewport stays
+  uncovered by default.
+
+Proof: unit tests, 204 in the graph overlay and hub suites under mayapy (`_start_rect`, `_sync_glass`, the
+default place, `on_some_screen`). **Not run live**: the window, the glass over a moved frame, the close
+button and the alt camera are for the animator to try in their Maya (their rule for live checks, 2026-10-09).

@@ -8,8 +8,8 @@ the background colour, and its colour stays exactly as Maya drew it.
 
 Straight alpha: `alpha = table[max over channels |P - K|]`, the table rising
 from 0 to 255 over `SOFT` levels. The background is 0; a curve, a key, a
-number, the time marker are opaque; the grid (23 levels off the default
-background) about 82 %. An anti-aliased curve pixel keeps the K it was
+number, the time marker and the grid (23 levels off the default background)
+are opaque. An anti-aliased curve pixel keeps the K it was
 blended with - which is how the curve looks in the Graph Editor itself.
 
 The background is TWO tones (measured on the animator's Graph Editor,
@@ -27,7 +27,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-SOFT = 28          # levels off the background at which a pixel is opaque
+SOFT = 6           # levels off the background at which a pixel is opaque
+# 2026-10-10: 28 faded the grid and the thin curves that stand near the
+# background tone (the grid, 23 levels off, came out 82 % opaque - the
+# animator's screenshot against the standard Graph Editor). Six keeps the
+# flat background out and every line of the grid whole.
 BANDS = 4          # horizontal bands keyed side by side
 SAMPLE_STEP = 7    # every 7th pixel both ways finds the background
 BACKGROUND_SHARE = 0.05   # a colour covering this much of a frame is one

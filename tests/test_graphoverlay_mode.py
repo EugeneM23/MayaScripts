@@ -28,7 +28,7 @@ class Refusals(unittest.TestCase):
                                   return_value=None), \
                 mock.patch.object(viewport, "gl_rect", return_value=None):
             self.assertEqual(mode.enable(),
-                             "Graph Overlay: no viewport to lie on")
+                             "Graph Overlay: no viewport to open it over")
         self.assertFalse(mode.is_on())
 
 
@@ -137,8 +137,12 @@ class TheChrome(unittest.TestCase):
     def setUp(self):
         mode.reset_state()
 
-    def test_the_menus_toolbar_and_channel_list_are_on_by_default(self):
-        self.assertTrue(mode.CHROME)
+    def test_the_standard_window_always_carries_its_chrome(self):
+        """2026-10-02: the Graph Editor in a window of its own, its menus,
+        toolbar and channel list as Maya draws them - there is no chrome
+        switch any more, and the place is remembered in one option."""
+        self.assertFalse(hasattr(mode, "CHROME"))
+        self.assertEqual(mode.RECT_OPTION, "skeldarGraphOverlayRect")
 
     def test_maya_s_own_graph_editor_is_borrowed(self):
         """55 of Maya's runtime commands name graphEditor1GraphEd outright;
@@ -152,6 +156,92 @@ class TheChrome(unittest.TestCase):
         self.assertGreaterEqual(mode.CHROME_SETTLE_S, 0.3)
         self.assertTrue(hasattr(mode._STATE, "chrome_after"))
         self.assertTrue(hasattr(mode._STATE, "canvas_pointer"))
+
+
+class TheWindow(unittest.TestCase):
+    """The Graph Editor in a window of its own (2026-10-02): where it opens,
+    and the glass following its frame."""
+
+    def setUp(self):
+        mode.reset_state()
+
+    def tearDown(self):
+        mode.reset_state()
+
+    def test_it_opens_where_the_animator_left_it(self):
+        with mock.patch.object(mode, "_remembered",
+                               return_value=(100, 100, 600, 400)), \
+                mock.patch.object(mode, "_screens",
+                                  return_value=[(0, 0, 1920, 1080)]):
+            self.assertEqual(mode._start_rect(viewport), (100, 100, 600, 400))
+
+    def test_nothing_remembered_opens_in_the_viewport_corner(self):
+        with mock.patch.object(mode, "_remembered", return_value=None), \
+                mock.patch.object(mode, "_screens", return_value=[]), \
+                mock.patch.object(viewport, "active_panel",
+                                  return_value="modelPanel4"), \
+                mock.patch.object(viewport, "gl_rect",
+                                  return_value=(0, 0, 1000, 800)):
+            self.assertEqual(mode._start_rect(viewport),
+                             (388, 388, 600, 400))
+
+    def test_a_remembered_place_off_every_screen_is_not_used(self):
+        with mock.patch.object(mode, "_remembered",
+                               return_value=(9000, 100, 600, 400)), \
+                mock.patch.object(mode, "_screens",
+                                  return_value=[(0, 0, 1920, 1080)]), \
+                mock.patch.object(viewport, "active_panel",
+                                  return_value=None), \
+                mock.patch.object(viewport, "gl_rect", return_value=None):
+            self.assertIsNone(mode._start_rect(viewport))
+
+    def _on(self, showing, active=True, visible=False, rect=None):
+        ghost, glass = mock.Mock(), mock.Mock()
+        ghost.showing.return_value = showing
+        ghost.frame_rect.return_value = rect
+        glass.isVisible.return_value = visible
+        mode._STATE.ghost, mode._STATE.glass = ghost, glass
+        mode._STATE.active = active
+        return ghost, glass
+
+    def test_a_window_not_on_screen_hides_the_glass(self):
+        _ghost, glass = self._on(showing=False, visible=True)
+        mode._sync_glass()
+        glass.hide.assert_called_once_with()
+        glass.place.assert_not_called()
+
+    def test_maya_behind_another_program_hides_the_glass(self):
+        _ghost, glass = self._on(showing=True, active=False, visible=True,
+                                 rect=(10, 20, 600, 400))
+        mode._sync_glass()
+        glass.hide.assert_called_once_with()
+
+    def test_the_glass_takes_the_frame_and_the_place_is_remembered(self):
+        _ghost, glass = self._on(showing=True, rect=(10, 20, 600, 400))
+        with mock.patch.object(mode, "_remember") as remember, \
+                mock.patch.object(mode, "_on_chrome_paint") as chrome:
+            mode._sync_glass()
+        glass.place.assert_called_once_with((10, 20, 600, 400))
+        remember.assert_called_once_with((10, 20, 600, 400))
+        chrome.assert_called_once_with()          # a new size: a new picture
+
+    def test_a_move_alone_takes_no_new_chrome_picture(self):
+        _ghost, glass = self._on(showing=True, visible=True,
+                                 rect=(50, 60, 600, 400))
+        mode._STATE.rect = (10, 20, 600, 400)
+        with mock.patch.object(mode, "_remember"), \
+                mock.patch.object(mode, "_on_chrome_paint") as chrome:
+            mode._sync_glass()
+        glass.place.assert_called_once_with((50, 60, 600, 400))
+        chrome.assert_not_called()
+
+    def test_nothing_moved_does_nothing(self):
+        _ghost, glass = self._on(showing=True, visible=True,
+                                 rect=(10, 20, 600, 400))
+        mode._STATE.rect = (10, 20, 600, 400)
+        mode._sync_glass()
+        glass.place.assert_not_called()
+        glass.hide.assert_not_called()
 
 
 class NoGrabOfMayaWidgets(unittest.TestCase):
@@ -191,8 +281,12 @@ class NoGrabOfMayaWidgets(unittest.TestCase):
 
 class TheHint(unittest.TestCase):
 
-    def test_it_names_the_camera_and_the_key(self):
-        self.assertIn("alt+mouse: camera", mode.HINT)
+    def test_it_names_the_frame_keys_and_the_leave_key(self):
+        """2026-10-10: no camera in the mode - the hint names only what the
+        standard Graph Editor does with F / A and what alt+c does."""
+        self.assertIn("alt+c", mode.HINT)
+        self.assertIn("F / A", mode.HINT)
+        self.assertNotIn("camera", mode.HINT)
         self.assertIn("alt+c", mode.HINT)
 
 

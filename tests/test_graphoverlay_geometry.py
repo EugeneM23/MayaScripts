@@ -5,20 +5,51 @@ import unittest
 from maya_graphoverlay import geometry
 
 
-class HostRect(unittest.TestCase):
+class DefaultRect(unittest.TestCase):
+    """The window's first place: the lower right of the viewport, a share of
+    its size, never smaller than a usable graph (2026-10-02)."""
 
-    def test_the_measured_case_lands_the_canvas_on_the_viewport(self):
-        """2026-09-30: host (300, 250, 900, 560), canvas (305, 253, 892,
-        554), viewport (462, 374, 861, 500) - and the canvas came out on the
-        viewport pixel for pixel."""
-        self.assertEqual(geometry.host_rect((462, 374, 861, 500),
-                                            (300, 250, 900, 560),
-                                            (305, 253, 892, 554)),
-                         (457, 371, 869, 506))
+    def test_a_share_of_the_viewport_in_its_lower_right(self):
+        self.assertEqual(geometry.default_rect((0, 0, 1000, 800)),
+                         (1000 - 600 - 12, 800 - 400 - 12, 600, 400))
 
-    def test_already_aligned_is_a_fixed_point(self):
-        host, canvas = (457, 371, 869, 506), (462, 374, 861, 500)
-        self.assertEqual(geometry.host_rect(canvas, host, canvas), host)
+    def test_never_smaller_than_a_usable_graph(self):
+        left, top, w, h = geometry.default_rect((100, 100, 400, 300))
+        self.assertEqual((w, h), (400, 300))      # the viewport is the limit
+        self.assertEqual((left, top), (100, 100))
+
+    def test_a_small_viewport_keeps_the_window_on_it(self):
+        left, top, w, h = geometry.default_rect((200, 50, 600, 260))
+        self.assertGreaterEqual(left, 200)
+        self.assertGreaterEqual(top, 50)
+        self.assertLessEqual(left + w, 200 + 600)
+        self.assertLessEqual(top + h, 50 + 260)
+
+
+class OnSomeScreen(unittest.TestCase):
+    """A remembered window on a monitor that is gone is put back on screen."""
+
+    SCREENS = [(0, 0, 1920, 1080), (1920, 0, 1920, 1080)]
+
+    def test_a_window_on_a_screen_is_kept(self):
+        self.assertTrue(geometry.on_some_screen((100, 100, 500, 400),
+                                                self.SCREENS))
+
+    def test_a_window_on_the_second_screen_is_kept(self):
+        self.assertTrue(geometry.on_some_screen((2000, 100, 500, 400),
+                                                self.SCREENS))
+
+    def test_a_window_on_no_screen_is_not(self):
+        self.assertFalse(geometry.on_some_screen((5000, 100, 500, 400),
+                                                 self.SCREENS))
+
+    def test_a_sliver_at_the_edge_does_not_count(self):
+        self.assertFalse(geometry.on_some_screen((1910, 100, 500, 400),
+                                                 [(0, 0, 1920, 1080)]))
+
+    def test_nothing_remembered_is_not_on_screen(self):
+        self.assertFalse(geometry.on_some_screen(None, self.SCREENS))
+        self.assertFalse(geometry.on_some_screen((0, 0, 0, 0), self.SCREENS))
 
 
 class ChromeBands(unittest.TestCase):
@@ -50,19 +81,6 @@ class Usable(unittest.TestCase):
         self.assertFalse(geometry.usable(None))
         self.assertFalse(geometry.usable((0, 0, 0, 10)))
         self.assertFalse(geometry.usable((0, 0, 10, 0)))
-
-
-class LetThrough(unittest.TestCase):
-
-    def test_alt_is_the_camera(self):
-        self.assertTrue(geometry.let_through(True, True, True))
-
-    def test_without_alt_the_graph_takes_the_click(self):
-        self.assertFalse(geometry.let_through(False, True, True))
-
-    def test_maya_behind_or_no_viewport(self):
-        self.assertTrue(geometry.let_through(False, False, True))
-        self.assertTrue(geometry.let_through(False, True, False))
 
 
 class DueIn(unittest.TestCase):

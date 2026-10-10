@@ -8,8 +8,8 @@
   `layered_alpha` is how the mode checks it.
 * CLICK-THROUGH - WS_EX_TRANSPARENT on a layered window: the OS hit-tests
   straight through it (the Curve Overlay measured it, 2026-09-05). The
-  glass carries it for good; the ghost while alt is held, so the click
-  reaches the viewport and Maya's camera.
+  glass carries it for good; the window never does - it takes every click
+  as the standard Graph Editor does (the camera is not the mode's).
 
 `argtypes`/`restype` are declared because a handle truncates on 64-bit
 otherwise (CLAUDE.md trap 26). Off Windows everything answers something
@@ -23,7 +23,6 @@ GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
 WS_EX_TRANSPARENT = 0x00000020
 LWA_ALPHA = 0x00000002
-VK_MENU = 0x12
 GHOST_ALPHA = 1
 # NOSIZE | NOMOVE | NOZORDER | NOACTIVATE | FRAMECHANGED
 _SWP_REFRESH = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
@@ -216,14 +215,6 @@ def set_click_through(hwnd, on):
 def is_click_through(hwnd):
     style = exstyle(hwnd)
     return bool(style & WS_EX_LAYERED) and bool(style & WS_EX_TRANSPARENT)
-
-
-def alt_down():
-    """Whether alt is held right now, whoever has the keyboard."""
-    user32 = _user32()
-    if user32 is None:
-        return False
-    return bool(user32.GetAsyncKeyState(VK_MENU) & 0x8000)
 
 
 def window_at(x, y):

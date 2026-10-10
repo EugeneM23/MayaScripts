@@ -29,9 +29,6 @@ class OnThisMachine(unittest.TestCase):
     def test_windows_is_here(self):
         self.assertTrue(winstyle.available())
 
-    def test_alt_answers_a_bool(self):
-        self.assertIn(winstyle.alt_down(), (True, False))
-
     def test_the_ghost_is_one_level_of_alpha(self):
         self.assertEqual(winstyle.GHOST_ALPHA, 1)
 

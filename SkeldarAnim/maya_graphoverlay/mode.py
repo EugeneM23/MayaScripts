@@ -1,26 +1,28 @@
-"""Graph Overlay: Maya's own Graph Editor over the viewport, background out.
+"""Graph Overlay: Maya's own Graph Editor in a window of its own, background out.
 
-The animator (2026-09-30): «мне нужен граф эдитор с прозрачным фоном» -
-shape Б, a mode on a key, the curve area on the whole viewport; alt+mouse
-is the camera («1, камеры»). Maya's drawing cannot be made transparent (the
-canvas clears opaque whatever the background alpha, measured), so:
+The animator (2026-10-02): «нужен стандартный граф эдитор только с
+прозрачным фоном». Maya's canvas cannot be made transparent (it clears
+opaque whatever the background alpha, measured), so:
 
-- the GHOST (`ghost.py`): a Graph Editor panel of ours, chrome hidden, its
-  canvas on the viewport pixel for pixel, invisible at a layered alpha of
-  1 - it still renders and takes every click and key;
+- the WINDOW (`ghost.py`): Maya's own Graph Editor, borrowed, in a standard
+  window of ours - title bar, borders, the menus and the channel list as
+  Maya draws them - invisible at a layered alpha of 1: it still renders and
+  takes every click, key and drag;
 - the GLASS (`glass.py`): a click-through translucent window on the same
-  rectangle showing the ghost's frames with the flat background keyed out
-  (`keying.py`) - grabbed on every `frameSwapped`, coalesced, at most every
-  `MIN_UPDATE_S`;
-- a 30 ms alt poll: held, the ghost lets the mouse through to the viewport
-  and Maya's camera takes it; released, the graph takes it again;
-- a 10 Hz follow timer: the viewport moved, the two follow it; Maya behind
-  another program or no viewport, the glass hides and the ghost lets
-  clicks through; our panel gone, the mode ends.
+  frame, showing DWM's copy of the window with the curve area's flat
+  background keyed out (`keying.py`) - grabbed on every `frameSwapped`,
+  coalesced, at most every `MIN_UPDATE_S`;
+- the window's own move, resize and close are followed at once (an event
+  filter), the glass moves with it; the place is remembered;
+- a 10 Hz follow timer: Maya behind another program or minimised, the glass
+  hides; the window closed or our panel gone, the mode ends. The window
+  takes every click and drag as the standard Graph Editor does - nothing
+  of the mode reaches the viewport's camera or its selection.
 
     import maya_graphoverlay; maya_graphoverlay.toggle()      # alt+c
 
-Spec: docs/superpowers/specs/2026-09-30-graph-overlay-design.md
+Spec: docs/superpowers/specs/2026-09-30-graph-overlay-design.md (its
+addendum of 2026-10-02 replaces the viewport-sized window with this one).
 """
 
 import sys
@@ -37,7 +39,6 @@ STATUS = "skeldarGraphOverlayStatus"
 BUTTON = "skeldarGraphOverlayButton"
 
 FOLLOW_MS = 100
-ALT_MS = 30
 MIN_UPDATE_S = 0.015
 MIN_CHROME_S = 0.03
 # The chrome is first captured this long after switching on: the borrowed
@@ -45,23 +46,20 @@ MIN_CHROME_S = 0.03
 CHROME_SETTLE_S = 0.5
 MOST_TONES = 3      # background tones learnt over a session of frames
 TONE_SPREAD = 24    # levels a later tone may stand from the first
-# The whole Graph Editor on the viewport - menus, toolbar, channel list -
-# with only the curve area see-through (2026-09-30, the animator: «я не могу
-# выделить отдельно каналы для редактирования кривых и нет остальных
-# инструментов»). False is the first build: the curve area alone.
-CHROME = True
 # Maya's own graphEditor1 borrowed rather than a panel of ours: 55 of Maya's
 # runtime commands name it outright (the view modes, Copy/Paste keys,
 # infinity, frame all...) and the toolbar, menus and hotkeys reach them.
 BORROW = True
 REWATCH_TICKS = 10  # follow ticks between looks for new chrome widgets
+# The window's frame as the animator left it: "x,y,width,height" (global).
+RECT_OPTION = "skeldarGraphOverlayRect"
 
-HINT = "alt+mouse: camera  |  F / A: frame the graph  |  alt+c: leave"
-PANEL_HINT = "The Graph Editor over the viewport, see-through (alt+c)"
-PANEL_NOTE = ("Maya's own Graph Editor lies on the viewport with its "
-              "background taken out: every click and key is the Graph "
-              "Editor's. Hold alt for the camera; select objects in the "
-              "outliner or the channel box, or leave the mode.")
+HINT = "F / A: frame the graph  |  alt+c: leave"
+PANEL_HINT = "The Graph Editor in its own window, background see-through"
+PANEL_NOTE = ("Maya's own Graph Editor in a window of its own: move and "
+              "resize it like any window. Its background is see-through, so "
+              "the viewport shows through the graph. Closing the window "
+              "leaves the mode.")
 
 
 class _State(object):
@@ -73,13 +71,12 @@ class _State(object):
         self.ghost = None
         self.glass = None
         self.canvas = None
-        self.model_panel = None
+        self.frame_watch = None         # the window's own event filter
         self.timers = []
         self.jobs = []
         self.rect = None
         self.placed = False
         self.active = True
-        self.through = None
         self.keys = []
         self.table = None
         self.pending = False
@@ -149,19 +146,19 @@ def enable():
     from maya_graphoverlay import viewport, winstyle
     if not winstyle.available():
         return "Graph Overlay needs Windows"
-    panel = viewport.active_panel()
-    rect = viewport.gl_rect(panel)
-    if not geometry.usable(rect):
-        return "Graph Overlay: no viewport to lie on"
+    rect = _start_rect(viewport)
+    if rect is None:
+        return "Graph Overlay: no viewport to open it over"
     from maya_graphoverlay import ghost, glass, keying
     parent = viewport.maya_main_window()
     reset_state()                   # whatever an older copy left in it
     try:
-        _STATE.model_panel = panel
-        _STATE.ghost = ghost.Ghost(parent, rect, chrome=CHROME, borrow=BORROW)
+        _STATE.ghost = ghost.Ghost(parent, rect, borrow=BORROW)
         _STATE.glass = glass.Glass(parent)
-        _STATE.glass.place(rect)
-        _STATE.rect, _STATE.placed = rect, True
+        _STATE.placed = _STATE.ghost.showing()
+        _STATE.rect = _STATE.ghost.frame_rect()
+        _STATE.glass.place(_STATE.rect)
+        _remember(_STATE.rect)
         _STATE.table = keying.alpha_table()
         if not _POOL:
             _POOL.append(keying.make_pool())
@@ -169,6 +166,7 @@ def enable():
         _STATE.chrome_after = time.perf_counter() + CHROME_SETTLE_S
         _watch_chrome()
         _on_chrome_paint()
+        _watch_frame()
         _start_timers()
         _install_jobs()
     except Exception:
@@ -176,6 +174,49 @@ def enable():
         disable()
         raise
     return "Graph Overlay ON  -  " + HINT
+
+
+def _start_rect(viewport):
+    """Where the window opens: the place the animator left it, while that
+    still shows on a screen; else the default in the viewport's lower right.
+    None when there is no viewport to size the default from."""
+    saved = _remembered()
+    if geometry.on_some_screen(saved, _screens()):
+        return saved
+    view = viewport.gl_rect(viewport.active_panel())
+    if not geometry.usable(view):
+        return None
+    return geometry.default_rect(view)
+
+
+def _screens():
+    try:
+        from PySide6 import QtGui
+        return [(s.geometry().x(), s.geometry().y(), s.geometry().width(),
+                 s.geometry().height())
+                for s in QtGui.QGuiApplication.screens()]
+    except Exception:                                         # noqa: BLE001
+        return []
+
+
+def _remembered():
+    """The window's frame the animator left, or None."""
+    try:
+        if not cmds.optionVar(exists=RECT_OPTION):
+            return None
+        parts = [int(v) for v in
+                 str(cmds.optionVar(query=RECT_OPTION)).split(",")]
+    except Exception:                                         # noqa: BLE001
+        return None
+    return tuple(parts) if len(parts) == 4 else None
+
+
+def _remember(rect):
+    try:
+        cmds.optionVar(stringValue=(RECT_OPTION,
+                                    ",".join(str(int(v)) for v in rect)))
+    except Exception:                                         # noqa: BLE001
+        pass
 
 
 def disable():
@@ -199,6 +240,11 @@ def disable():
         if _STATE.watch is not None:
             try:
                 _STATE.watch.deleteLater()      # Qt drops it from every widget
+            except RuntimeError:
+                pass
+        if _STATE.frame_watch is not None:
+            try:
+                _STATE.frame_watch.deleteLater()
             except RuntimeError:
                 pass
         if _STATE.glass is not None:
@@ -309,7 +355,7 @@ def _make_watch():
 
 def _watch_chrome():
     """Put the filter on every chrome widget it is not on yet."""
-    if not is_on() or not _STATE.ghost.chrome:
+    if not is_on():
         return 0
     import shiboken6
     if _STATE.watch is not None:
@@ -335,7 +381,7 @@ def _watch_chrome():
 
 def _on_chrome_paint():
     """The chrome repainted: a new picture of it, now or when it is due."""
-    if not is_on() or _STATE.chrome_pending or not _STATE.ghost.chrome:
+    if not is_on() or _STATE.chrome_pending:
         return
     _STATE.chrome_pending = True
     from PySide6 import QtCore
@@ -364,9 +410,67 @@ def _update_chrome():
 
 # ---------------------------------------------------------------- following
 
+def _sync_glass():
+    """The glass on the window's frame: shown while the window stands on
+    screen and Maya is in front, hidden otherwise. The place is remembered
+    when it changes, and the chrome picture taken again when the size does."""
+    if not is_on() or _STATE.closing:
+        return
+    ghost_, glass_ = _STATE.ghost, _STATE.glass
+    _STATE.placed = ghost_.showing()
+    if not (_STATE.placed and _STATE.active):
+        if glass_.isVisible():
+            glass_.hide()
+        return
+    rect = ghost_.frame_rect()
+    if rect == _STATE.rect and glass_.isVisible():
+        return
+    previous, _STATE.rect = _STATE.rect, rect
+    glass_.place(rect)
+    _remember(rect)
+    if previous is None or previous[2:] != rect[2:]:
+        _on_chrome_paint()
+
+
+def _make_frame_watch():
+    """The window's own event filter: its move, resize, show and hide are
+    followed at once, not on the next follow tick - a tick would leave the
+    glass a beat behind a drag. Its close leaves the mode: the window's X is
+    the way out, as the Graph Editor's own window's would be."""
+    from PySide6 import QtCore
+
+    class FrameWatch(QtCore.QObject):
+
+        def eventFilter(self, watched, event):
+            try:
+                kind = event.type()
+                if kind in (QtCore.QEvent.Move, QtCore.QEvent.Resize,
+                            QtCore.QEvent.Show, QtCore.QEvent.Hide,
+                            QtCore.QEvent.WindowStateChange):
+                    _sync_glass()
+                elif kind == QtCore.QEvent.Close:
+                    QtCore.QTimer.singleShot(0, _leave_from_window)
+            except Exception:                                 # noqa: BLE001
+                traceback.print_exc()
+            return False
+
+    return FrameWatch()
+
+
+def _watch_frame():
+    if _STATE.frame_watch is None:
+        _STATE.frame_watch = _make_frame_watch()
+    _STATE.ghost.host.installEventFilter(_STATE.frame_watch)
+
+
+def _leave_from_window():
+    if is_on() and not _STATE.closing:
+        _show(disable() + " - the window was closed")
+
+
 def _start_timers():
     from PySide6 import QtCore
-    for interval, slot in ((FOLLOW_MS, _follow), (ALT_MS, _alt_tick)):
+    for interval, slot in ((FOLLOW_MS, _follow),):
         timer = QtCore.QTimer()
         timer.setInterval(interval)
         timer.timeout.connect(slot)
@@ -394,28 +498,16 @@ def _follow():
 
 
 def _follow_once():
-    from maya_graphoverlay import viewport, winstyle
+    from maya_graphoverlay import viewport
     ghost_, glass_ = _STATE.ghost, _STATE.glass
     if not ghost_.alive():
         why = (" - the Graph Editor was opened in its own window"
                if ghost_.borrowed else " - its Graph Editor panel was deleted")
         _show(disable() + why)
         return
-    if not viewport.visible(_STATE.model_panel):
-        _STATE.model_panel = viewport.active_panel()
-    rect = viewport.gl_rect(_STATE.model_panel)
     _STATE.active = viewport.maya_active()
-    _STATE.placed = geometry.usable(rect)
-    if not (_STATE.active and _STATE.placed):
-        if glass_.isVisible():
-            glass_.hide()
-    else:
-        if rect != _STATE.rect or not glass_.isVisible():
-            _STATE.rect = rect
-            glass_.place(rect)
-        if not ghost_.aligned(rect):
-            ghost_.place(rect)
-            _on_chrome_paint()
+    _sync_glass()
+    if _STATE.placed and _STATE.active:
         ghost_.open_channel_list()          # once, when laid out
         glass_.keep_click_through()
     ghost_.keep_invisible()
@@ -426,31 +518,6 @@ def _follow_once():
     _STATE.ticks += 1
     if _STATE.ticks % REWATCH_TICKS == 0:
         _watch_chrome()
-    _poll_alt()
-
-
-def _alt_tick():
-    try:
-        _poll_alt()
-    except Exception:                                         # noqa: BLE001
-        traceback.print_exc()
-
-
-def _poll_alt(alt=None):
-    """Compared with the window's REAL style, never a remembered one: Qt
-    rewrites the styles of its windows (measured - it dropped our
-    WS_EX_TRANSPARENT when the opacity was set), so a cached "already
-    through" can be a lie."""
-    if not is_on() or _STATE.closing:
-        return
-    from maya_graphoverlay import winstyle
-    if alt is None:
-        alt = winstyle.alt_down()
-    through = geometry.let_through(alt, _STATE.active, _STATE.placed)
-    hwnd = _STATE.ghost.hwnd()
-    if winstyle.is_click_through(hwnd) != through:
-        winstyle.set_click_through(hwnd, through)
-    _STATE.through = through
 
 
 def _install_jobs():
@@ -488,12 +555,18 @@ def button_label():
     return "Graph Overlay: ON" if is_on() else "Graph Overlay: OFF"
 
 
+def _each_card(fn):
+    fn()
+
+
 def _paint_button():
-    try:
-        if cmds.control(BUTTON, exists=True):
-            cmds.button(BUTTON, edit=True, label=button_label())
-    except Exception:                                         # noqa: BLE001
-        pass
+    def paint():
+        try:
+            if cmds.control(BUTTON, exists=True):
+                cmds.button(BUTTON, edit=True, label=button_label())
+        except Exception:                                     # noqa: BLE001
+            pass
+    _each_card(paint)
 
 
 def _show(text):
@@ -501,11 +574,14 @@ def _show(text):
     whole of it in the Script Editor."""
     print(text)
     first = text.splitlines()[0] if text.strip() else ""
-    try:
-        if cmds.control(STATUS, exists=True):
-            cmds.text(STATUS, edit=True, label=first)
-    except Exception:                                         # noqa: BLE001
-        pass
+
+    def line():
+        try:
+            if cmds.control(STATUS, exists=True):
+                cmds.text(STATUS, edit=True, label=first)
+        except Exception:                                     # noqa: BLE001
+            pass
+    _each_card(line)
     _paint_button()
     try:
         cmds.inViewMessage(assistMessage=first, position="midCenterTop",
