@@ -6051,6 +6051,22 @@ it) — driving each mesh's visibility through a `condition`. The asset: 17.7 MB
 vertex to 0.0 cm; 21: the 3P's materials, no eye — 13243 / 20016 / 106; 22: the switch both ways, not
 keyable, untouched by the retarget). A scene with an Orc D added before this has no 1P: re-add it.
 
+**…and the 1P alone as an FBX** (the same day: «Отэкспортируй отдельный файл орка для 1p только с новым
+мешем»): `export_orc_d_1p_fbx.py` (mayapy, the shape of `export_creep_skeleton_fbx.py`) →
+`Animations/Rigs/Characters/Orc_D_1P.fbx`, 9.0 MB: the rig's constraints off the skeleton, the bones
+re-seated at the bind (4.3e-14), `Orc_D_1P` out of the Geometry group made visible (`Main.view` hides it
+by default), the 3P and `Group` deleted; our layout (`Armature` -90 X over `root`), 30 fps, 95 bones, the
+one mesh with its three materials under plain names (`Orc_D_Body_Mat`, `Orc_D_Cloth_Mat`,
+`Orc_D_ClothCut_Mat`) and their five images EMBEDDED. Read back from a copy in a temp folder (the importer
+extracts embedded images into a `.fbm` beside the file it reads): the header, the tree, each image in
+the file byte for byte, nothing of the rig or the 3P or our markers; imported, every vertex where the
+asset has it to 9.9e-5 cm, weights and uvs exact, faces per material 13243 / 20016 / 106, colour, normal
+map (bump2d, tangent space) and the cut wired back. **Unreal's mesh is split along its normal seams: all
+5345 hard edges of the 3P/1P are BORDER edges, every interior edge smooth**, and the importer brings
+every border back hard — the 1P's 8 neck borders (interior in the 3P, smooth-flagged) came back hard,
+which shades nothing; the check compares interior edges and counts borders. A playblast in a
+disposable Maya shows it as Add Character's Orc D shows it, headless.
+
 90. **A duplicate of a deformed mesh carries its source's COMPONENT TAGS** — `gtag[i].gtagnm`
     naming the SOURCE's deformers (`srcD:skinCluster1`), written into the saved `.ma`. The asset's
     banned-word check caught the namespace. `removeMultiInstance` every `gtag` on the copy before
