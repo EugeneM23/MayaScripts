@@ -80,8 +80,18 @@ class Payload(unittest.TestCase):
                 os.path.exists(os.path.join(REPO, name)), name)
 
     def test_the_dev_only_folders_stay_out(self):
-        for name in ("tests", "docs", "archive", "maya_retarget.py"):
+        for name in ("tests", "docs", "sources", "make_build.py"):
             self.assertNotIn(name, install.payload())
+
+    def test_voice_left_the_plugin(self):
+        """2026-10-10: «Давай пока откажимся от живой комуникации в плагине
+        и уберем ее из проекта» -- the Voice section (rooms, screen share)
+        and its server are gone, from the payload and from the repo."""
+        self.assertNotIn("maya_voice", install.payload())
+        self.assertNotIn("maya_voice", install.module_names())
+        self.assertFalse(os.path.exists(os.path.join(PLUGIN, "maya_voice")))
+        self.assertFalse(os.path.exists(os.path.join(
+            os.path.dirname(PLUGIN), "voice_server")))
 
     def test_the_installer_ships_itself(self):
         """A colleague repairs the shelf by re-dragging install.py from
@@ -130,13 +140,11 @@ class Payload(unittest.TestCase):
 
     def test_the_curve_overlay_left_the_plugin(self):
         """2026-09-08: «уберем не только из полки но и из плагина в
-        целом» -- it lives in archive/ now, and ships nowhere."""
+        целом» -- it ships nowhere (the archive/ that held it went in the
+        2026-10-10 cleanup; it lives in git history, last at f65be61)."""
         self.assertNotIn("maya_curveview", install.payload())
         self.assertNotIn("maya_curveview", install.module_names())
         self.assertFalse(os.path.exists(os.path.join(PLUGIN, "maya_curveview")))
-        self.assertTrue(os.path.isfile(os.path.join(
-            os.path.dirname(PLUGIN), "archive", "maya_curveview",
-            "maya_curveview", "tool.py")))
 
     def test_overshoot_still_ships_behind_its_flag(self):
         """Off the shelf, not out of the plugin (the picker's precedent)."""
@@ -154,9 +162,8 @@ class Payload(unittest.TestCase):
 
     def test_the_workshop_tools_stay_out_of_the_plugin_folder(self):
         """The point of the SkeldarAnim/ split: if it ships it is in
-        there, and the standalone tools are not."""
-        for name in ("maya_skelfit.py", "maya_meltmorph.py",
-                     "make_build.py", "tests"):
+        there, and the workshop's tools are not."""
+        for name in ("make_build.py", "tests", "docs", "sources"):
             self.assertFalse(
                 os.path.exists(os.path.join(PLUGIN, name)), name)
 

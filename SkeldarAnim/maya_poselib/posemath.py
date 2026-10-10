@@ -48,7 +48,7 @@ import maya_skeletonmap as skelmap
 
 # never members on their own, and paired only by leaf (on the UE road)
 HELPERS = ("ik_", "weapon_", "camera_", "interaction", "center_of_mass")
-# a UE4 target under a UE5 source: the same bones, fewer of them (maya_retarget's map,
+# a UE4 target under a UE5 source: the same bones, fewer of them (the UE4 spine map,
 # skeletonimport.pair_bones') - {target: source}
 UE4_SPINE = {"spine_01": "spine_02", "spine_02": "spine_04", "spine_03": "spine_05"}
 # the card's text, in this order

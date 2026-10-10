@@ -64,7 +64,7 @@ def skeleton_entry_for(chosen, model=None):
 def pair_bones(source_leaves, target_leaves):
     """{target bone: the clip's bone} by leaf name, for the bones both carry.
     A UE4-schema target under a UE5 clip (no spine_04/05 where the clip has
-    them) takes `maya_retarget`'s spine map - the same bones, fewer of them."""
+    them) takes the UE4 spine map - the same bones, fewer of them."""
     source = set(source_leaves or [])
     target = list(target_leaves or [])
     ue4 = ("spine_05" in source and "spine_05" not in target

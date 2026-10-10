@@ -201,8 +201,8 @@ def default_character():
     """The Manny SKELETON.
 
     `character_path()` with no argument has always meant Manny_Skeleton.ma,
-    and `maya_skelfit`, `verify_add_character.py` and three test modules
-    ask it that way -- so this keeps answering the skeleton even though the
+    and `verify_add_character.py` and three test modules ask it that
+    way -- so this keeps answering the skeleton even though the
     rig is row 0 and the dropdown's default since 2026-09-07.
     """
     return character_by_key("Manny")
@@ -230,8 +230,8 @@ def character_file(entry):
 def character_path(entry=None):
     """The working character scene. No argument still means Manny.
 
-    Deliberately: `maya_skelfit`, `verify_add_character.py` and three test
-    modules ask this question and none of them is about the dropdown.
+    Deliberately: `verify_add_character.py` and three test modules ask
+    this question and none of them is about the dropdown.
     """
     return character_file(entry or default_character())
 

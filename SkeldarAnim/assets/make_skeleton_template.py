@@ -5,10 +5,11 @@ Run under mayapy (there is no system Python on this machine):
     & 'C:\\Program Files\\Autodesk\\Maya2027\\bin\\mayapy.exe' assets/make_skeleton_template.py
 
 Reads the shipped character scene next to this file and writes
-manny_skeleton_template.json beside it.  The JSON is the single source the
-skeleton builder (maya_skelfit.py) consumes: joint hierarchy, every
-orientation channel verbatim, world transforms for the fit math, and the
-skin influence lists of the shipped meshes.  The scene is IMPORTED, never
+manny_skeleton_template.json beside it: joint hierarchy, every orientation
+channel verbatim, world transforms, and the skin influence lists of the
+shipped meshes (the retarget reads a UE5 clip's rest pose from it).  The
+mesh landmarks the old skeleton builder (maya_skelfit.py, removed
+2026-10-10) needed are no longer written.  The scene is IMPORTED, never
 opened -- import does not execute script nodes (the shipped copy has the
 "vaccine" lines cut, but the habit stays).
 """
@@ -54,15 +55,6 @@ def weight_stats(shape, skin, influence_names):
         real_max = max(real_max, live)
     weighted = [influence_names[i] for i in range(count) if carries[i]]
     return weighted, real_max
-
-
-def body_points(cmds, transform):
-    """World position of every vertex, one API call for the whole mesh."""
-    import maya.api.OpenMaya as om
-    sel = om.MSelectionList()
-    sel.add(transform)
-    fn = om.MFnMesh(sel.getDagPath(0))
-    return [[p.x, p.y, p.z] for p in fn.getPoints(om.MSpace.kWorld)]
 
 
 def main():
@@ -131,17 +123,9 @@ def main():
             "measured_max_influences": real_max,
         }
 
-    # landmarks come from the SAME function the fit uses on a target mesh,
-    # so fitting Manny's mesh onto itself is exact by construction
-    sys.path.insert(0, os.path.dirname(HERE))
-    import maya_skelfit
-    body = max(meshes, key=lambda n: meshes[n]["vertices"])
-    landmarks = maya_skelfit.mesh_landmarks(body_points(cmds, body))
-
     data = {
         "source_scene": os.path.basename(SCENE),
         "linear_unit": cmds.currentUnit(q=True, linear=True),
-        "landmarks": landmarks,
         "joints": entries,
         "meshes": meshes,
     }

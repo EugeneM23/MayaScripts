@@ -68,7 +68,7 @@ class PairBones(unittest.TestCase):
                          {"pelvis": "pelvis", "hand_r": "hand_r"})
 
     def test_a_ue4_target_under_a_ue5_clip_maps_the_spine(self):
-        """maya_retarget's map: the same bone, a different count."""
+        """The UE4 spine map: the same bone, a different count."""
         ue5 = ["pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05"]
         ue4 = ["pelvis", "spine_01", "spine_02", "spine_03"]
         self.assertEqual(si.pair_bones(ue5, ue4), {"pelvis": "pelvis", "spine_01": "spine_02",

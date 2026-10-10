@@ -351,8 +351,8 @@ class CharacterTable(unittest.TestCase):
             self.assertNotIn("\\", path)
 
     def test_character_path_with_no_argument_still_means_manny(self):
-        """maya_skelfit, verify_add_character and three test modules ask
-        this question and none of them is about the dropdown."""
+        """verify_add_character and three test modules ask this question
+        and none of them is about the dropdown."""
         self.assertEqual(catalog.character_path(),
                          catalog.character_file(
                              catalog.character_by_key("Manny")))

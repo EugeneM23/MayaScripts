@@ -13,7 +13,7 @@ name: build
 
 on:
   push:
-    branches: [feature/overrig-picker]
+    branches: [main]      # the one branch since 2026-10-10 (was feature/overrig-picker)
     paths:
       - "SkeldarAnim/**"
       - "SkeldarAnim_Install.py"
