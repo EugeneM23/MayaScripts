@@ -9,24 +9,51 @@ they do not go wrong again.
 **The repo root is the workshop. `SkeldarAnim/` is the plugin.** That split
 landed 2026-09-01 ("изолируем нашу полку как отдельный плагин чтобы ты тут не
 путался куда какие скрипты") and it is the first thing to know: if it is in
-`SkeldarAnim/`, a colleague receives it; if it is at the root, it is ours.
+`SkeldarAnim/`, a colleague receives it; if it is at the root, it builds,
+tests or rebuilds what ships — nothing else lives there.
 
 ```
-MayaScripts/                  the workshop
+MayaScripts/                  the workshop (one branch: main)
 ├── SkeldarAnim/              THE PLUGIN -- this, and only this, ships
 │   ├── install.py  README_INSTALL.txt  skeldar_features.py
-│   ├── maya_overrig/  maya_uebridge/  maya_scenesetup/
+│   ├── maya_hub*.py  maya_uebridge/  maya_scenesetup/  maya_poselib/  ...
 │   ├── maya_rigs.py  maya_asretarget.py  maya_pmretarget.py  maya_rig_retarget.py
-│   ├── maya_hotkeys.py  maya_vpstudio.py  maya_colour.py  maya_overshoot.py
-│   └── icons/  assets/  overrig/
+│   └── icons/  assets/  overrig/  poses/  plug-ins/
 ├── sources/                  what the assets are REBUILT from -- never ships
-│   ├── weapons/  orc/  creep/  manny/  README.md
+│   ├── weapons/  orc/  creep/  manny/  armor/  README.md
 │   └── AdvancedSkeleton/     local only, .gitignore (its licence)
 ├── make_build.py             dev tool: builds the zip from SkeldarAnim/
-├── .github/workflows/        every plugin push -> a release (Check update)
-├── maya_skelfit.py  maya_meltmorph.py  maya_retarget.py  ...
-└── tests/  docs/  archive/  CLAUDE.md
+├── SkeldarAnim_Install.py  SkeldarAnim_Cascadeur_Install.py   one-file installers (release assets)
+├── .github/workflows/        every push to main touching the plugin -> a release (Check update)
+└── tests/  docs/  CLAUDE.md
 ```
+
+**The cleanup, 2026-10-10** (the animator: «Давай пока откажимся от живой
+комуникации в плагине и уберем ее из проекта. Потом давай сделаем чистку
+удалим из проекта все что не входит в сборку, все старые скрипты нам не нужны.
+Наведем порядок на гит хабе сольем все в одну ветку … Позы можно удалить»;
+asked, they kept `tests/`, `sources/` and `docs/` whole):
+
+- **Voice is gone** — the hub's Voice section (group voice rooms, screen
+  share; `SkeldarAnim/maya_voice/`, the Cloudflare Worker `voice_server/`,
+  its tests, spec and plan), built and released the same morning (618a9ee,
+  3d54714), reverted out by `54a8ccb`. Shared and Stash stay. The server was
+  never deployed from here (no Node on this machine).
+- **The standalone root tools are gone**: `maya_skelfit` and `maya_meltmorph`
+  with their project skills (`manny-skeleton`, `melt-morph`), `maya_retarget`
+  (Manny → the protective suit), `maya_anim_batch_export` / `_headcam`,
+  `maya_bonemelt` / `bonemorph` / `bonewave`, `maya_center_of_mass` (superseded
+  by `maya_com`), `maya_geobones` / `geobonesrig` + `geobones_groups.json`,
+  `maya_meshsnap`, `maya_shake`, `maya_skin_weight_helper`, and `archive/`
+  (the superseded rig tools and the Curve Overlay). Their sections left this
+  file; their verify scripts and specs stay in `docs/` as history. Everything
+  is in git: the parent of the cleanup commit `283f0dd` holds them all.
+- **One branch, `main`.** `feature/overrig-picker` (where everything was
+  built) and every feature / worktree branch were merged into it and deleted,
+  locally and on GitHub; the worktrees beside the repo went with them. CI
+  builds on a push to `main`. Work goes straight onto `main` now.
+- The Pose Library's test cards left `SkeldarAnim/poses/` (only `.gitkeep`
+  ships; the installer still keeps a colleague's local cards).
 
 **Nothing outside the repository is needed since 2026-09-28** («все нужные
 файлы для работы нашего плагина давай перенесем в папку плагина»). The
@@ -52,7 +79,8 @@ tests; `verify_spear03_weapon.py` 19/19 and
 AdvancedSkeleton pipeline, OverRig and the picker are switched OFF, and
 since 2026-09-08 a scene may hold MANY rigs (each in its own namespace),
 Retarget and Bake are ONE button, Overshoot is off the shelf and the Curve
-Overlay is out of the plugin (`archive/maya_curveview`).**
+Overlay is out of the plugin (in git history only since the 2026-10-10
+cleanup).**
 Everything below about OverRig, the Rig Picker, Connect Arms, Add Aim and
 Camera Setup as a button describes code that is still in the repo and the
 payload, and still tested, but not on the shelf; two flags bring it back.
@@ -62,17 +90,11 @@ payload, and still tested, but not on the shelf; two flags bring it back.
 `tests/__init__.py` puts the plugin folder on `sys.path` (discovery gives the
 repo root), `make_build.py` derives its OUTPUT dir from its own location so
 the zip still lands beside the repository, and every dev entry point and
-verify plan now says `.../MayaScripts/SkeldarAnim`. The standalone root tools
-deliberately stayed put: they never shipped, and moving them would break the
-paths written into both project skills and a dozen verify scripts for nothing.
-`maya_skelfit.py` resolves `assets/` inside the plugin folder (Manny is shared
-with Add Character), with the old spelling as a fallback.
+verify plan now says `.../MayaScripts/SkeldarAnim`. (The standalone root
+tools that stayed at the root then were removed in the 2026-10-10 cleanup.)
 
-Two conventions inside, unchanged:
+One convention inside:
 
-- **Root-level `maya_*.py`** — standalone single-file tools, pure `maya.cmds`, no
-  Qt, no package. Leave that style alone when touching them. Tools the packages
-  superseded live in `archive/` (moved 2026-08-17; its README says why each).
 - **`SkeldarAnim/maya_overrig/`** — a Python wrapper around the **OverRig** MEL
   toolset. This is the active work. It uses Qt and is a package, deliberately
   breaking the flat convention; see
@@ -199,7 +221,7 @@ never disagree. Scene Setup's header reads «Character: root (rig)».
 **Scene Setup**: `catalog.Character` gained `kind`; rows «Manny [rig]»
 (row 0, the dropdown's default, `default_rig()`), «Manny UE5 [skeleton]»
 (`default_character()` — `character_path()` with no argument still means
-`Manny_Skeleton.ma`, `maya_skelfit` asks it that way), «UE4 Mannequin
+`Manny_Skeleton.ma`), «UE4 Mannequin
 [skeleton]». **As many rigs as the animator likes since 2026-09-08**, each in its own
 namespace (`RIG_PRESENT` is gone; `character.rig_present` now means "at
 least one" — see the many-rigs section). Connect Arms,
@@ -356,9 +378,9 @@ selected rig **0.000006**, source kept, holder gone; the legacy rig's
 **The removals.** Overshoot went the way the picker went: `OVERSHOOT =
 False` in `skeldar_features` gates its shelf row and its six hotkey rows
 (the window and the five shapes); the module ships. The Curve Overlay left
-the plugin as asked — `archive/maya_curveview/` holds the package, its six
-test modules and `verify_curveview.py` (last shipped at commit `f65be61`;
-its section below is history) — and `alt+c` is given back through
+the plugin as asked — the package, its six
+test modules and `verify_curveview.py` went to `archive/` (last shipped at commit `f65be61`;
+`archive/` itself and the section about it left in the 2026-10-10 cleanup) — and `alt+c` is given back through
 `RELEASED_KEYS` on `DEFAULT_KEYS_VERSION` 5, only while it still holds our
 command; `name_command` is a pure spelling, so a released row needs no
 table entry. `bake.png` and `curveview.png` and their drawers are gone;
@@ -813,7 +835,7 @@ Manny/UE4 Mannequin, the Orc, the studio's Perforce host in this file, all
 of history. The private road (read-only token) was offered and declined.
 The visibility flip is theirs; nothing here does it.
 
-- **CI**: `.github/workflows/build.yml`, on push to `feature/overrig-picker`
+- **CI**: `.github/workflows/build.yml`, on push to `main` (`feature/overrig-picker` until 2026-10-10)
   touching `SkeldarAnim/**`, `make_build.py` or the workflow (+
   `workflow_dispatch`): `python3 make_build.py --out dist/SkeldarAnim.zip
   --version-out dist/version.json` (stdlib — the runner's python is
@@ -1401,7 +1423,7 @@ Use Maya's interpreter, and never `pip install` into the Maya tree.
 ```
 
 Qt tests run headless with `$env:QT_QPA_PLATFORM = 'offscreen'` (PySide6 6.8.3 /
-Qt 6.8.3 ship with Maya 2027). 2041 tests at time of writing, all passing.
+Qt 6.8.3 ship with Maya 2027). 5804 tests after the 2026-10-10 cleanup, all passing, about a minute.
 
 Discovery runs from the REPO ROOT (`-t .`), and `tests/__init__.py` is what
 puts `SkeldarAnim/` on `sys.path` — so a test spawning a Maya-free subprocess
@@ -2624,37 +2646,6 @@ C_parent` construction rather than a measurement.
     just removed — count the selection before the cut.
 
 
-## Retargeting Manny onto other skeletons
-
-`maya_retarget.py` (root level, standalone, no Qt) drives the referenced
-`Mesh_protective_suit` skeleton from `SKM_Manny_Simple`. Design:
-`docs/superpowers/specs/2026-08-15-manny-to-suit-retarget-design.md`, proof:
-`docs/superpowers/plans/verify_retarget.py` (**21/21 green**).
-
-- The suit is **UE4-schema**, Manny **UE5-schema**, and the difference is
-  purely subtractive: all 67 suit joints have an exact name twin in Manny,
-  which has 26 extra. So the map is derived from the scene, not hardcoded.
-- **Matching the spine by name is wrong.** The suit hangs clavicles and neck
-  on `spine_03`, Manny on `spine_05` — the same bone. `SPINE_MAP` pairs
-  `spine_01→spine_02`, `spine_02→spine_04`, `spine_03→spine_05`, which drops
-  the rest-pose error from 3.5/14.1/5.9° to 0.00/2.75/0.65°.
-- **Hybrid offset policy** (the user's call): body on `maintainOffset=True`
-  so the suit keeps its own silhouette — its clavicle genuinely runs 7 cm
-  further back than Manny's, and that 24° is shape, not an axis artifact —
-  and the 30 finger bones on `maintainOffset=False`, because there the 29°
-  mean gap is *pose* (Manny is an FPS rig resting around a grip) and an
-  offset would leave the suit's fingers idling. `finger_mode` flips it.
-- **Never `parentConstraint` anything carrying the 145 cm side offset.** A
-  parent constraint stores its offset in the source's space, so Manny
-  turning on the spot swings the suit through an arc around him instead of
-  turning it in place, and the world-constrained bones tear off. Pelvis and
-  the two ik roots use `point` + `orient`. `set_side_offset(0)` overlays the
-  two characters by rewriting the point constraints' `offsetX`, keeping each
-  bone's own Y/Z rest delta.
-- Accepted limits: feet do not land in Manny's footprints (calf ratio 0.952,
-  foot 1.168 — inherent to a rotation-only transfer), metacarpal travel is
-  dropped, and the suit has no root joint, so a UE export would need one.
-
 ## `maya_uebridge` — animations out of a running Unreal editor
 
 A window listing every `AnimSequence` in the project the animator has open,
@@ -3404,7 +3395,7 @@ button is filled from it. The choice is remembered in
 `mayaSceneSetup_character`; **Manny is row 0 and the default**, so anyone
 who never opens the list has exactly the old behaviour.
 `character_path()` with no argument still means Manny — deliberately, since
-`maya_skelfit`, `verify_add_character.py` and three test modules ask that
+`verify_add_character.py` and three test modules ask that
 question and none of them is about the dropdown.
 
 **Row two is `assets/UE4_Mannequin.fbx`** — 1.0 MB, **68 joints, 2 meshes**,
@@ -4107,78 +4098,6 @@ hazards closed as well: GO asks once before discarding a modified scene, and an
 empty name suffix pointed at the source folder is refused (`clip.FBX` and
 `clip.fbx` are one file on Windows).
 
-## `maya_anim_batch_export` — a folder of clips, one camera placement
-
-Root-level standalone (`cmds` only, no Qt, no package), window **Anim Batch
-Export Tool**: pick an input folder and every `.ma`/`.mb`/`.fbx` in it is
-opened, put through a few operations and re-exported into an output folder.
-The operations are the `camera_root` placement, Clean scene (delete everything
-outside the `root` hierarchy, strip namespaces), Snap root keys to whole
-frames, and an optional bake on export; the timeline is set from the `root`
-hierarchy's own key range **last**, after everything that could move it.
-
-```python
-import sys, importlib
-_p = "C:/!!!Work/MayaScripts"
-if _p not in sys.path:
-    sys.path.insert(0, _p)
-import maya_anim_batch_export
-importlib.reload(maya_anim_batch_export)
-```
-
-The `reload` is not developer convenience: the module ends with a module-level
-`show_ui()` call, so a second plain `import` finds it in `sys.modules` and no
-window opens.
-
-**`camera_root` goes to a typed XYZ vector** (2026-09-02, the animator's ask:
-«не по одной оси а мог ставить кость в указаный вектор по 3 координатам»).
-`op_set_camera_position(position)` deletes every animCurve on `camera_root`
-and writes all three coordinates in `objectSpace` — the numbers are
-translateX/Y/Z as the Channel Box shows them, so copying a placement out of an
-open scene is a matter of reading three numbers off the screen. Nothing is
-read out of the clip any more, which retires the read-before-delete ordering
-bug commit `1e01e4f` existed to fix. The predecessor typed one axis and
-inherited the other two from the file. No per-axis toggles and no "pick from
-scene" button — both offered and declined; the curve deletion stays total
-(rotation and scale go with translation), which is the tool's own long-
-standing behaviour. Spec:
-`docs/superpowers/specs/2026-09-02-camera-root-vector-design.md`.
-
-**Trap 33 bit this tool too, and it cost a whole live run** (2026-09-02).
-The FBX import MODE is one global setting for the entire Maya session,
-`cmds.file(open=True)` inherits it, and any import from Unreal leaves it on
-`exmerge` — where the importer matches names against what is already in the
-scene and creates **nothing**. Measured: a clip opens with **0 joints** under
-`exmerge` against 94 under `add` or `merge`. So the batch cleaned, placed and
-exported an *empty scene* over all fourteen files — **8 KB each, holding the
-four default cameras and nothing else** — counted every one as a success, and
-the only symptom the animator had was «открываю fbx файл а он пустой».
-`open_file` now sets the mode and puts back whatever it found (the animator is
-working in that session), and `export_file` **refuses a scene with no `root`**
-instead of writing 8 KB of nothing, with `run_on_folder` counting the refusal
-as a failure. Both halves were needed: the mode is why the files were empty,
-the missing guard is why nobody was told.
-
-**Its proof runs in its own mayapy session, never through the bridge** — the
-tool starts every file with `cmds.file(new=True, force=True)`, so a bridge run
-would discard the animator's open scene. Same rule and same reason as
-`root_offset_batch_tool`. `verify_anim_batch_camera.py` — **green 2026-09-02,
-0 of 23 gates failed** — copies two real `AS_DownState_*.FBX` clips into a
-temp sandbox, runs the whole batch **under a forced `exmerge`** and measures
-the files that land on DISK: 94 joints in each export, the vector exact to
-0.000000000 on all three axes, no curve left on `camera_root`, and the `root`
-key range unchanged (0..91 and 0..81). Forcing the hostile mode is the point —
-a fresh mayapy starts on `merge`, and the first version of this proof passed
-while the tool was broken in the animator's session. Its vector has three
-distinct non-zero coordinates on purpose, so an axis dropped, transposed or
-inherited from the clip cannot pass.
-
-Two measured facts any headless run of this tool needs: in mayapy batch
-`cmds.window()` returns `False` while `columnLayout`/`checkBox` still succeed,
-and **every UI query answers `False`** — so `get_ui_settings()` hands back a
-dict of `False`, and a headless run must build the settings dict by hand and
-call `run_on_folder(settings)`, never `run_tool()`.
-
 ## `maya_overshoot` — the stop of a move, on any pose
 
 **Off the shelf since 2026-09-08** («уберем с нашей полки оверлапер»),
@@ -4553,375 +4472,6 @@ control (it fires after every press and would discard the colour just
 dialled — `maya_scenesetup.window`'s swatch lesson), and a refusal opens
 no undo chunk, since an empty chunk eats the animator's previous undo step.
 
-## `maya_curveview` — Curve Overlay: the graph editor over the viewport (ARCHIVED 2026-09-08)
-
-**Out of the plugin since 2026-09-08** at the animator's ask («уберем не
-только из полки но и из плагина в целом»): the package, its six test
-modules and `verify_curveview.py` live in `archive/maya_curveview/`, last
-shipped at commit `f65be61`. The section below is kept as the record of
-what was measured building it; nothing in it is on the shelf or in the
-payload.
-
-The **ninth** shelf button (2026-09-05), a package
-(`SkeldarAnim/maya_curveview/`) — the animator's ask: «сделать свой кастомный
-граф эдитор в мая… кривые рисовались прямо поверх вьюпорта, так чтобы я мог
-двигать кривую прямо во вьюпорте… какой-то режим превращал мой вьюпорт в граф
-эдитор с прозрачным фоном». Spec:
-`docs/superpowers/specs/2026-09-05-viewport-curve-overlay-design.md` — **read
-its ADDENDUM**, which reverses three of the main text's decisions the same
-day. Proof: `docs/superpowers/plans/verify_curveview.py` — **green live
-2026-09-05, 0 of 44 gates failed**, 1943 unit tests.
-
-```python
-import sys; sys.path.append(r"C:/!!!Work/MayaScripts/SkeldarAnim")
-import maya_curveview; maya_curveview.toggle()
-```
-
-One press turns the whole viewport into a graph editor with no background:
-the selected control's curves are drawn over the live picture, keys as
-squares on the keys, and the character stays visible underneath. **The point
-is the feedback loop, not the screen space** — «Хочу править кривые и сразу
-же смотреть на результат».
-
-**The architecture was chosen from five live probes, not from an opinion
-about Qt**, and every one of these is measured:
-
-- **`QmayaGLWidget` is a NATIVE Windows window** (inside a `QStackedWidget`
-  inside two `QmayaLayoutWidget`s). A native child window composites above
-  every non-native sibling, so a child overlay **cannot paint over the
-  viewport at all** — and Maya's own layout owns the panel, which gave a
-  child overlay a height of **zero** with `paintEvent` running 0 times.
-- **A frameless translucent TOP-LEVEL window does composite**, with real
-  alpha over live GL: the character, the grid, the manipulator arrows and
-  Maya's own `Focal Length / 10.4 fps` HUD all read through it.
-- **Qt's `WA_TransparentForMouseEvents` does NOT pass the mouse through a
-  top-level window** — under the overlay there was no marquee and no camera
-  orbit. It is a Qt-internal routing flag: it forwards an event to the widget
-  below **inside the same window**, and Qt forwards nothing across a
-  native-window boundary. The Windows recipe is
-  **`WS_EX_LAYERED | WS_EX_TRANSPARENT`** through ctypes, applied **after
-  `show()`** (re-parenting recreates the native window and loses it) — and
-  `alt`+LMB then orbits the camera straight through the overlay.
-- **`cmds.draggerContext` runs its command as PYTHON, not MEL.** A MEL-style
-  `python("...")` answered `NameError: name 'python' is not defined`, which
-  was itself the proof that the callback fires.
-- **`draggerContext(space="screen")` reports `[x, y, 0.0]` viewport-local
-  with Y from the BOTTOM** — `qt_y = height − y`, confirmed by drawing both
-  readings and watching which followed the cursor. `button` is `1` for LMB,
-  `modifier` is a **string** (`'none'`), and `alt` never arrives: all 1725
-  drag events of a recorded session carried `'none'` while the animator was
-  orbiting.
-- **~860 events per drag**, about one per pixel of travel.
-
-So input is an ordinary Maya context — which is the whole reason the camera
-still works, since `alt`+mouse is taken upstream in Maya's own event
-dispatch — and the overlay is a pure painter the OS hit-tests straight
-through. The rejected alternatives are in the spec: a `MPxContext` +
-`MUIDrawManager` plugin (the fallback, its one unknown never closed), and a
-Qt overlay handling its own mouse (dead on the measurement above).
-
-| Module | Responsibility | May import |
-|---|---|---|
-| `mapping.py` | **all the arithmetic**: time/value ↔ pixels, the Y flip, autoframe, normalise, hit-testing, marquee, grid step, tangent geometry, the modifier table, the throttle decision | **stdlib only** |
-| `curves.py` | which curves are drawn (the channel-box rule), plugs → animCurves, sampling | `maya.cmds` |
-| `edits.py` | the undo chunk, the relative key move, tangents, insert/delete, the throttled time follow | `maya.cmds` |
-| `overlay.py` | the window: translucency, click-through, painting | **Qt + ctypes only, never `maya.cmds`** |
-| `viewport.py` | the active model panel's GL widget and its global rect | `maya.cmds`, Qt |
-| `tool.py` | the dragger context, the gestures, entering and leaving the mode | `maya.cmds` + all the above |
-
-Both boundaries are enforced by subprocess tests, as `bodymap`'s is.
-
-**The gestures.** LMB **works on keys, and selects objects when it caught
-none** — a click with nothing under it click-selects in the scene, a marquee
-that caught no key box-selects, and both halves are reachable with no modal
-switch. MMB drags the selected keys, or a tangent handle when the press
-landed on one: the Graph Editor's own division of labour, which the animator
-already has in his hands. `alt`+anything is the camera, natively.
-
-**Key selection is MAYA's**, not a private set: a key picked in the overlay
-is picked in the Graph Editor too, `cmds.keyframe(edit=True,
-relative=True, animation="keys")` moves "the selected keys" with no list to
-pass, and undo needs no bookkeeping of ours.
-
-**What is drawn, and the fix that only LOOKING found.** No selection means
-nothing at all. A selected control means the channels picked in the channel
-box; with nothing picked there it means the **TRANSFORM** channels, widening
-to everything animated only when the node has no animated transform channel
-(so a rig gizmo animated on custom attributes still shows). The reason is
-measured: the most animated transform in the animator's own scene is a UE
-clip's `root` with **141 animated channels** — `Pose_0..9`, `MoveData_*`,
-`DisableLegIK` and about 130 pose drivers, which **trap 40** is the record of:
-the game's data, not animation anybody poses. Drawn together they crushed the
-real root motion into a flat band. `MAX_CURVES` (12) is the backstop behind
-that and **names the count** rather than silently drawing twelve of a hundred.
-A custom attribute is still one channel-box click away.
-
-The same look found there was **no value axis at all** — the shape of a curve
-read and its magnitude did not, which is half a graph editor. Horizontal lines
-come from `mapping.value_lines`, which has **no floor of 1** unlike the frame
-grid (a rotation living between 0 and 0.5 still needs lines), with the zero
-line brighter and a short label at the left edge. They are skipped when
-normalised, where one shared value line would be a lie — `Scene` carries the
-flag for exactly that.
-
-**How that was looked at, since a screen grab cannot be trusted here:** the
-picture is a composite of a real one-frame `playblast` (exactly what the
-viewport renders) and the overlay's own `render()` into a `QImage` (exactly
-what it paints), alpha-blended. Both halves are the real thing and it does
-not care which window is in front — which a screen grab does, and the
-animator is usually reading somewhere else.
-
-Load-bearing details, each measured or paid for elsewhere:
-
-- **The drag sends the DIFFERENCE from what it has already applied**, never
-  the running total — snapping the time to whole frames on a total would
-  re-round every one of ~860 events and drift. A test walks 200 events to
-  +37 frames and asserts they sum to exactly 37.
-- **Sampling evaluates the animCURVE NODE** (`cmds.keyframe(curve,
-  query=True, eval=True, time=(t, t))`), never the driven plug: a plug
-  sample pulls a whole rig evaluation, which on the animator's scene is
-  10 fps per sample.
-- **The Y window is fitted to the SAMPLES as well as the keys**, because a
-  curve overshoots between its keys and that overshoot is the shape being
-  looked at.
-- **Time follows the dragged key, throttled to ~20 Hz**, with one guaranteed
-  evaluation on release. One gate governs both the evaluation and the
-  repaint, since a repaint needs a re-sample anyway.
-- **There is no pan and no zoom.** X is the playback range — so the curve's
-  time lines up under the time slider — and Y autofits. That is what leaves
-  every camera gesture to the camera, and it removes a whole subsystem.
-  `normalise` (one Y window per curve) is a toggle for channels of different
-  magnitudes; the default is the shared axis, as the Graph Editor's is.
-- **The viewport is followed by a 10 Hz QTimer, not an event filter.** Maya
-  destroys and rebuilds those widgets on a layout change, so a filter dies
-  with them; a timer comparing the rectangle covers the window move,
-  Ctrl+Space, the layout switch, a monitor with another DPI **and** the
-  focus change in one mechanism.
-- **Changing the tool leaves the mode** (a scriptJob on `ToolChanged`).
-  Press W and the context is no longer ours, so an overlay still hanging
-  there lies: curves are drawn and nothing can grab them. That is exactly
-  what happened between two probes.
-- `selectKey(clear=True)` is wrapped — **trap 43**: it RAISES when nothing
-  is selected, which is exactly the case with nothing to clear.
-
-**`MGlobal.selectFromScreen`'s CLICK form of `kXORWithList` is a NO-OP**, and
-this is the bug the live run found. Measured from both starting states: from
-an empty selection it selects nothing, from a held one it changes nothing —
-while the **box** form of the same value toggles correctly. So shift-click
-silently did nothing, which is the worst kind of wrong: the animator
-shift-clicks, sees no change, and blames their own aim. The pick is now
-always `kReplaceList` — the one value measured to behave identically in both
-forms — and the modifier is applied afterwards through `cmds.select(...
-add/toggle/deselect)`. Gate 29b keeps the quirk itself measured, so a Maya
-that fixes it will announce itself.
-
-**`cutKey(clear=True)` answers 0 even when it worked**, so the status line
-read "Deleted 0 key(s)" over keys it had just removed. Counted before the cut.
-
-Two harness facts this feature paid for, both of which will bite the next
-live run:
-
-- **Maya's pick runs through the viewport's own DRAW pass**, so a node that
-  has never been drawn cannot be found: an unrefreshed locator at screen
-  centre picked nothing at all under every adjustment, which reads exactly
-  like a broken adjustment table and cost a whole probe round. Trap 14's
-  family. Real use always has a drawn viewport; a verify run must ask for
-  one with `cmds.refresh()`.
-- **The Qt event loop does not turn while a bridge script holds the main
-  thread**, so a window it just created has never been exposed and
-  `repaint()` is a **no-op** — `paint_count` stayed 0 while the window was
-  up and correct. `render()` into a `QImage` forces `paintEvent`
-  synchronously, and the gate counts the non-zero bytes it left (164067 of
-  7874460) rather than trusting that it ran.
-
-Stated costs, not hidden: the overlay sits above Maya's own panels, so a
-menu opened over the viewport gets curve lines drawn across it (reduced by
-hiding on focus loss, not removed); **Windows only**, since click-through is
-the Win32 ex-style; one viewport at a time, the active model panel; and
-**`playblast` never sees the overlay** — it is an OS window, not part of the
-viewport render, so reviews come out clean of curves.
-
-Not built: weighted-tangent dragging, curve cycling/infinity display, the
-Dope Sheet's key grid, retiming tools. Hotkeys: `alt+c` toggles the mode,
-and three more rows (insert a key at the current frame, delete the selected
-keys, normalise on/off) are in `maya_hotkeys` waiting to be bound.
-
-## `maya_skelfit` — a Manny-schema skeleton fitted to a humanoid mesh, and the skin
-
-Root-level standalone (2026-08-27), driven by the project skill
-**`.claude/skills/manny-skeleton/SKILL.md`** — the user activates it when a
-character needs a skeleton and a skin; the skill is the workflow (probe →
-build → placement checkpoint with screenshots → user drags joints →
-finalize → voxel bind → pose-test checkpoint), the tool is the math. Design:
-`docs/superpowers/specs/2026-08-27-skeleton-skin-skill-design.md`. Proof:
-`docs/superpowers/plans/verify_skelfit.py` — **green live 2026-08-27, 0 of
-21 gates failed** in the Manny-mesh scene (identity fit worst 0.037 cm,
-symmetry exact, orientations worst 0.048°, weights sum 1.000000000,
-lone-elbow isolation 0.000000, finalize mirroring a dragged hand to
-0.000000). **Its cleanup deletes the skeleton and rebuilds — never run it
-after the user has adjusted joints.**
-
-```python
-import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
-import maya_skelfit
-maya_skelfit.build()      # fit + create, refuses over existing joints
-maya_skelfit.finalize()   # mirror the user-edited side, re-solve orients
-maya_skelfit.bind()       # geodesic voxel skin
-```
-
-**The template is measured, never assumed**:
-`assets/manny_skeleton_template.json`, extracted from the shipped
-`assets/Manny_Skeleton.ma` by `assets/make_skeleton_template.py` (mayapy;
-IMPORTS the scene — import never executes script nodes). 93 joints;
-`jointOrient` non-zero only on `root`, `rotateAxis` zero everywhere, bind
-orientation in the ROTATE channels (the CLAUDE.md fact, confirmed by
-extraction), rotateOrder xyz and ssc off on all 93. Landmarks (ground,
-height, arm tips) are computed from Manny's own mesh by the SAME
-`mesh_landmarks` the fit applies to a target mesh, so the identity case is
-exact by construction. Facts that cost a debugging round each: **Manny's
-own skeleton is asymmetric** (calves differ by 0.068 cm — symmetrize
-splits the difference, tests compare with delta 0.05); **`weapon_l/r` are
-deliberately asymmetric** attachment points (never symmetrized);
-**`ik_hand_gun` has no side suffix and sits on the RIGHT hand** — the ik
-helpers are followers snapped onto their targets (`IK_FOLLOWS`, measured
-6e-6 off their targets in the template), and a midline rule would have
-pinned it to x=0.
-
-**The skin rides the twist bones.** Measured on Manny's own skin:
-`thigh_l/r`, `upperarm_l/r` and `spine_05` carry ZERO weight — those
-segments deform through their twist children — and the true per-vertex
-maximum is 8 influences while the skinCluster's `maxInfluences` attr
-claims 5 (the attr lies). `bind_influences` therefore hands the voxel
-bind the template's **weighted** list (74 of 93): `ik_foot_l` stands
-exactly on the foot and would steal its weights, and weighting `upperarm`
-instead of its twists would break what the twist rig and every UE clip
-assume.
-
-**Binding is two commands, and the second needs a GPU.**
-`skinCluster(bindMethod=3)` alone leaves closest-distance weights; the
-voxel weighting is `geomBind -bm 3 -gvp 256 true`, which fails in batch
-mayapy with "Unable to create an offscreen OpenGL buffer" (measured). A
-geomBind failure is reported loudly by `bind()` — fallback weights on the
-mesh must never pass as voxel-bound.
-
-**The orientation solver is hierarchical**: a joint inherits its parent's
-full swing and adds only the minimal aim correction, so a subtree swung
-without roll about its root bone (the fit's own arm re-aim, a user
-dragging a hand) keeps its template LOCAL channels exactly; leaves and
-zero-length bones inherit the swing whole; `root` keeps its channels
-verbatim and is never re-aimed. Trap 31 in full form here: the template
-stores unwound eulers (428° on ik_hand_gun) AND alternate euler triples
-(pelvis reads (x,y,z) vs (x±180, −y±180, z±180)) — every test compares
-composed rotations, never channel values.
-
-The fit itself is deliberately modest: uniform height scale about the
-ground plane, each arm chain rigidly swung about its shoulder toward the
-measured arm tip (centroid of the vertices within 2% of the x-span of the
-side's extreme — assumes the widest point per side IS the arm, so
-pauldrons/shields mislead it and the placement checkpoint is the
-corrective), exact symmetrization. Everything else lands proportionally
-and the user's adjustment pass fixes the rest — that was the user's
-chosen workflow («авто + моя правка»). `finalize()` detects the edited
-side against a snapshot stored on `root.skelfitReference` at build time,
-mirrors it, pins template-midline joints to x=0, cuts accidental autoKey
-keys (pre-bind, keys on the skeleton are noise), and re-solves every
-orientation. **Placement is final once the skin is on** — a post-bind fix
-is unbind → adjust → finalize → re-bind, which the skill spells out.
-
-Not built (v1, deliberate): FBX skeletal-mesh export to UE, copy-weights
-from Manny as an alternative first pass, leg re-aim, weight-painting UI.
-Test scene note: the animator's test mesh `Skin_3p` IS Manny's own body
-mesh (48705 verts), which is what makes the identity gates exact.
-
-## `maya_meltmorph` — one mesh flowing into another, baked to Alembic
-
-Root-level standalone (2026-08-31), driven by the project skill
-**`.claude/skills/melt-morph/SKILL.md`**. Built for
-`AS_TechLimb_MeltMorph_1P_01.ma`: a first-person techno-limb flowing into a
-crossbow as a wave from the fingers to the elbow over 20 frames. Design:
-`docs/superpowers/specs/2026-08-31-melt-morph-design.md`.
-
-```python
-import sys; sys.path.append(r"C:/!!!Work/MayaScripts")
-import maya_meltmorph as mm
-mm.probe()                          # read-only; BORDER EDGES is the headline
-mm.prepare(shape)                   # hidden closed duplicate, polyCloseBorder
-mm.build(source, target, axis="z", start="max")
-mm.calibrate()                      # the part of the sweep that isn't dead
-mm.key_range(0, 20)
-mm.bake(0, 20)                      # versioned alembic + gpu cache, verified
-```
-
-**It is a level-set blend, not a morph.** Two `mesh_to_level_set` into
-`merge_volumes` in `AlphaBlendLevelSet` mode (`level_set_mode = 3`), whose
-`alpha` takes a **field**: `plane_field(normal=axis)` → `scale_field(W on that
-axis)` gives `(p·n − F)/W`, so 0 at the front and 1 one band-width behind it.
-Topology changes freely every frame — that is what reads as liquid, and it is
-why blendshapes are out (a fixed-topology route was built and measured; it
-crumples wherever a feature TRAVELS across the surface, see the spec).
-`scale_field` DIVIDES, so the plane sits at `(F − W/2)/W` — hence `set_front()`
-rather than writing the attribute by hand. The front is a published float3
-input, so retiming the melt is retiming one animCurve on
-`meltGraphShape.front_pos.z`.
-
-**Live-verified 2026-08-31**: the module rebuilt the hand-authored graph and
-reproduced it exactly — frame 0 at 24068 verts / area 1473.408 (pure arm) and
-frame 20 at 23680 / 1452.721 (pure ballista), both MATCH, with every frame in
-between changing. `calibrate()` independently found the live window
-86.14 → 26.56 where the hand-tuned guess had been 88 → 30. The Alembic is
-lossless: identical counts on all 21 frames, areas to three decimals, worst
-closest-point distance **0.000000000**.
-
-Decisions and traps, each paid for:
-
-- **Open meshes are closed in Maya, never bridged by `min_hole_radius`.** Both
-  sources were open (1226 border edges on the hand, 296 on the ballista) and a
-  solid voxelisation of an open mesh leaks and returns NOTHING. `min_hole_radius
-  = 6` did close the hand into one clean shell — and **welded the fingers into a
-  mitten**, because a radius that caps a sleeve also caps finger gaps.
-  `prepare()` runs `polyCloseBorder` on a hidden duplicate (1226 → 0, one face
-  per loop) and the voxeliser runs at radius 0.
-- **Keep the closing and smoothing small.** `iterations 2 × deviation 3`
-  (0.9 cm at a 0.3 cm voxel) turned the fist into a smooth club; 1 × 1 keeps the
-  knuckles. `smooth_deviation` is in VOXELS — world size is `deviation ×
-  detail_size`, so 1 is nearly a no-op, which reads as "smoothing does nothing".
-- **The sweep must be calibrated.** An SDF alpha blend shows nothing until the
-  incoming shape's negative distance beats the outgoing shape's positive one, so
-  a naive sweep has dead frames at both ends (measured: 97 → 22 left frames 0–3
-  and 18–20 byte-identical). `calibrate()` walks the span and reports the live
-  range; `key_range()` defaults to it.
-- **The end frame is a SOFTENED target, not the target mesh** — the crossbow's
-  spike came ~7 cm short, the limb span ~5 cm. A cut to the real model pops;
-  cross-fade 2–3 frames or lower `detail_size`.
-- **Never verify a bake vertex-i against vertex-i.** The contour is
-  multithreaded and its vertex ORDER is not stable between evaluations: that
-  comparison reported 167 cm of error on bit-identical geometry. `bake()`
-  compares counts, area, bbox and closest-point distance.
-- **Alembics are versioned, never overwritten** (`_v001`, `_v002`, …). Once
-  Maya has READ an alembic this session it keeps an internal archive handle and
-  `AbcExport` refuses with a bare "Can't write to file" — measured with no
-  `AlembicNode`/`gpuCache`/`cacheFile` left in the scene at all, and with plain
-  `open(path, "r+b")` from inside that same Maya succeeding. There is nothing to
-  delete; a new name sidesteps it.
-- **Playback speed cannot be measured over the bridge.** The live graph, the
-  Alembic mesh and a GPU cache all timed 0.35–0.38 s/frame — and so did an
-  **empty viewport**. The floor is the harness (a port round trip plus a forced
-  redraw per frame). What baking really buys: no Bifrost dependency, no
-  recompute on any edit, no JIT stall on the first frame after a change, and a
-  portable file. The lever for real playback weight is `mesh_scale` (mean 47322
-  faces/frame at scale 1).
-
-Bifrost scripting facts live in the spec's table — `addNode` spelling, fan-in
-child ports, the `volume_to_mesh` node that compiles clean and outputs an empty
-mesh, float3 defaults that only take the **brace** form `"{0,0,1}"`. Every one
-of them fails silently. The authoritative sources are on disk: port names in
-`$BIFROST_LOCATION/resources/<pack>/docs/ENU/*.md`, graph structure in the
-shipped example graphs' JSON under `$BIFROST_LOCATION/resources/graphs/*/*.json`.
-
-Not built: a curved or noisy wave front (`fractal_noise_field` + `warp_field`
-are the pieces), the cross-fade to the real target, and fixed-topology output
-for UE morph targets.
-
 ## `install.py` — the SkeldarAnim shelf, drag-and-drop
 
 **`SkeldarAnim/` is the distribution folder** (it was the repo root until
@@ -5292,9 +4842,14 @@ is one flag each whenever it is asked for.
   in `install._PYTHON_BUTTONS`, no `draw_*` in `icons/make_icons.py`. The
   eight buttons and ten icons that exist stay as they are (the animator
   kept them in the brainstorm); the rule is about what gets added.
-- Branch `feature/overrig-picker`, remote `github.com/EugeneM23/MayaScripts`.
-  `main` is untouched. Git identity is set **repo-locally** (`EugeneM`,
+- **One branch: `main`** (since 2026-10-10; until then everything was built on
+  `feature/overrig-picker`, which is merged and deleted), remote
+  `github.com/EugeneM23/MayaScripts`. A push to `main` that touches the plugin
+  is a release. Git identity is set **repo-locally** (`EugeneM`,
   `johnyanimation@gmail.com`) because the global `.gitconfig` does not exist.
+- **Nothing at the root that does not build, test or rebuild the plugin**
+  (2026-10-10). A one-off script belongs in `docs/superpowers/plans/` with its
+  spec, never as a loose `maya_*.py` beside the plugin.
 - Work goes through brainstorm → spec → plan → TDD, with specs in
   `docs/superpowers/specs/` and plans in `docs/superpowers/plans/`. Read the specs
   for the reasoning behind any decision; they record why, not just what.
@@ -5417,7 +4972,7 @@ twist bones expect.
 ## `maya_asretarget` — a clip on a second UE5 skeleton onto the AS rig (2026-09-04)
 
 Root-level standalone (`cmds` + `maya.api.OpenMaya`, no Qt, no package), the
-sibling of `maya_retarget.py` — that one drives another skeleton FROM Manny,
+sibling of the old `maya_retarget.py` (removed 2026-10-10) — that one drove another skeleton FROM Manny,
 this one drives the AdvancedSkeleton rig FROM another skeleton. The animator's
 ask: «я импортирую в сцену анимацию с аналогичного скелета… наш ретаргет
 привязан к этим костям. Потом я сам иду в настройки андванцед скелетона и делаю
@@ -7285,7 +6840,7 @@ camera's right); after the push, «всегда располагать наши 
   0.90 for a 3P clip against Manny, because 3P clips animate bone translations and scale (trap 152). A twin takes
   every bone's world matrix (`parentConstraint`, no offset): exact; another body every bone's world orientation,
   its own lengths kept, root and pelvis placed too, its `ik_*` helpers at rest (the Creep's `ik_hand_gun` stands at
-  zero with `ik_hand_r` 110 cm under it); a UE4 target takes `maya_retarget`'s spine map; baked
+  zero with `ik_hand_r` 110 cm under it); a UE4 target takes the UE4 spine map; baked
   (`bakeResults -simulation`), the constraints deleted. The ghost: «A_Jump · a new Manny UE5 [skeleton] · floor
   (100, -50)»; the status «ShortSword_Attack_Thrust_3P onto Manny UE5 [skeleton] root: 91 bones exact, frames 0-36
   | not in the clip: camera_bone, camera_root | standing at floor (100, -50)».
