@@ -88,6 +88,12 @@ whole take, keeping what the arm shows (`fkik`); the lit segment is the mode
 read from the rig, none when the blend is mixed. FK on a hand that rides the
 weapon releases it first (baked where its proxy carried it).
 
+The legs (`Leg_R`, `Leg_L`) have a row of their own under the arms, and the spine
+one row under the legs (2026-10-10, `fkikspine`). The same press keeps what the
+limb shows; the spine's fit and the legs' toes and pole are in
+docs/superpowers/specs/2026-10-10-legs-spine-fkik-design.md, with the limits it
+measured (the knee's roll is not held).
+
 Spec: docs/superpowers/specs/2026-09-18-connections-design.md (addendum)
 """
 
@@ -103,6 +109,7 @@ from maya_scenesetup import attach
 from maya_scenesetup import bonedrive
 from maya_scenesetup import catalog
 from maya_scenesetup import fkik
+from maya_scenesetup import fkikspine
 from maya_scenesetup import skeleton
 from maya_scenesetup import weaponspace
 
@@ -140,7 +147,8 @@ WEAPON_BONE = {"R": "weapon_r", "L": "weapon_l"}
 IK_CONTROL = "IKArm_{0}"
 # the FK / IK rows (2026-09-30): two check boxes a row, either press switches
 FKIK_BOX = "skeldarConnectionsFKIK_{0}_{1}"
-ARM_ROW = "Arm_{0}"
+FKIK_BOX_LEG = "skeldarConnectionsFKIKLeg_{0}_{1}"
+FKIK_BOX_SPINE = "skeldarConnectionsFKIKSpine_{0}"
 #  The skin's Arm L column, logical px (2026-10-08): about half the row at the
 #  animator's 360 px dock. Maya's rowLayout has ONE adjustable column, so Arm
 #  R's [FK | IK] took the row and Arm L's stood at its texts' width (live:
@@ -372,7 +380,7 @@ def _control(rig, side):
 
 
 def _blend_plug(rig, side):
-    paths = cmds.ls(maya_rigs.node(rig, fkik.FKIK_NODE.format(fkik.LIMB, side)),
+    paths = cmds.ls(maya_rigs.node(rig, fkik.FKIK_NODE.format(fkik.ARM, side)),
                     long=True) or []
     return (paths[0] + "." + fkik.BLEND_ATTR) if paths else None
 
@@ -977,34 +985,63 @@ def _highlight():
 
 
 def switch_arm(side, mode, rig=None, highlight=None):
-    """The arm on `side` to FK or IK over the highlighted range, else the
-    whole take, keeping what it shows (`fkik.switch`). FK on a hand that
-    rides a weapon releases it first (over the whole take - the link is the
-    take's). `highlight` overrides the slider (a verify has none). One undo
-    chunk; refusals before anything moves."""
+    """The arm on `side` to FK or IK (see `switch_limb`)."""
+    return switch_limb(side, mode, rig=rig, highlight=highlight, kind=fkik.ARM)
+
+
+def switch_spine(mode, rig=None, highlight=None):
+    """The spine to FK or IK over the highlighted range, else the whole take,
+    keeping what it shows (`fkikspine`). One undo chunk; refusals before anything
+    moves."""
     rig, refusal = _rig(rig)
     if rig is None:
         return refusal
     if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
         return RETARGETING
-    arm, text = fkik.limb(rig, side)
-    if arm is None:
+    sp, text = fkikspine.spine(rig)
+    if sp is None:
         return text
     span = fkik.span_for(_highlight() if highlight is None else highlight or None,
+                         fkikspine.whole_take(sp))
+    text = fkikspine.refusal(sp, mode, span)
+    if text:
+        return text
+    cmds.undoInfo(openChunk=True, chunkName="Connections: Spine to %s" % mode)
+    try:
+        return fkikspine.switch(sp, mode, span)
+    finally:
+        cmds.undoInfo(closeChunk=True)
+
+
+def switch_limb(side, mode, rig=None, highlight=None, kind=fkik.ARM):
+    """The arm (or, kind=LEG, the leg) on `side` to FK or IK over the highlighted
+    range, else the whole take, keeping what it shows (`fkik.switch`). FK on a
+    hand that rides a weapon releases it first (over the whole take - the link is
+    the take's; arms only, a weapon is never on a leg). `highlight` overrides the
+    slider (a verify has none). One undo chunk; refusals before anything moves."""
+    rig, refusal = _rig(rig)
+    if rig is None:
+        return refusal
+    if cmds.objExists(maya_rigs.node(rig, "MoCapConstraints")):
+        return RETARGETING
+    # an arm asks for `limb(rig, side)` as it always has (the kind defaults to it)
+    arm, text = fkik.limb(rig, side) if kind == fkik.ARM else fkik.limb(rig, side, kind)
+    if arm is None:
+        return text
+    label = fkik.LABEL[kind].format(side)
+    span = fkik.span_for(_highlight() if highlight is None else highlight or None,
                          fkik.whole_take(arm))
-    rides = following(rig, side)
+    rides = following(rig, side) if kind == fkik.ARM else None
     if rides and mode == fkik.IK:
         if fkik.mode_of(fkik.blend_values(arm)) == fkik.IK:
-            return fkik.ALREADY % (fkik.ARM_LABEL.format(side), "IK (it follows %s)"
-                                   % weapon_label(rides))
+            return fkik.ALREADY % (label, "IK (it follows %s)" % weapon_label(rides))
         return "%s follows %s - set it Free first" % (ROW_LABEL[side],
                                                       weapon_label(rides))
     text = fkik.refusal(arm, mode, span)
     if text:
         return text
     notes = []
-    cmds.undoInfo(openChunk=True, chunkName="Connections: %s to %s"
-                  % (fkik.ARM_LABEL.format(side), mode))
+    cmds.undoInfo(openChunk=True, chunkName="Connections: %s to %s" % (label, mode))
     try:
         if rides:
             sweep_orphans()
@@ -1052,16 +1089,17 @@ def header_text(rig, weapon, scheme, others="", arms=""):
     return text + ("; also " + others if others else "") + tail
 
 
-def arms_text(modes):
-    """«Arm_R mixed FK/IK» for each arm whose blend is keyed between the two
-    ({side: mode or None}, an arm the rig lacks left out). Pure."""
-    mixed = [ARM_ROW.format(side) for side in ("R", "L")
+def arms_text(modes, kind=fkik.ARM):
+    """«Arm_R mixed FK/IK» for each limb of `kind` whose blend is keyed between
+    the two ({side: mode or None}, a limb the rig lacks left out). Pure."""
+    mixed = [fkik.LABEL[kind].format(side) for side in ("R", "L")
              if side in modes and modes[side] is None]
     return ", ".join(mixed) + " mixed FK/IK (keyed)" if mixed else ""
 
 
-def fkik_box(side, mode):
-    return FKIK_BOX.format(side, mode)
+def fkik_box(side, mode, kind=fkik.ARM):
+    """The check box of `side` in `mode` for the limb `kind`."""
+    return (FKIK_BOX_LEG if kind == fkik.LEG else FKIK_BOX).format(side, mode)
 
 
 def where_text(label, scheme):
@@ -1165,18 +1203,54 @@ def refresh(*_args):
     _set_menus(menus_from_scheme(scheme))
     modes = _arm_modes(rig)
     _set_fkik(modes)
+    leg_modes = _limb_modes(rig, fkik.LEG)
+    _set_fkik(leg_modes, fkik.LEG)
+    spine_mode, spine_mixed = _spine_state(rig)
+    _set_spine(spine_mode)
     others = "; ".join(where_text(weapon_label(w), read_scheme(rig, bones, w))
                        for w in weapons if not _same(w, weapon))
-    text = header_text(rig, weapon, scheme, others, arms_text(modes))
+    mixed = ", ".join(part for part in (arms_text(modes), arms_text(leg_modes, fkik.LEG),
+                                        "Spine mixed FK/IK (keyed)" if spine_mixed else "")
+                      if part)
+    text = header_text(rig, weapon, scheme, others, mixed)
     cmds.text(HEADER, edit=True, label=text)
     return text
 
 
 def _arm_modes(rig):
     """{side: FK / IK / None (mixed)} for each arm the rig has."""
+    return _limb_modes(rig, fkik.ARM)
+
+
+def _spine_state(rig):
+    """(FK / IK / None, mixed) for the spine: mixed when its blend is keyed
+    between the two; (None, False) with no spine."""
+    sp = fkikspine.spine(rig)[0] if rig else None
+    if sp is None:
+        return None, False
+    mode = fkik.mode_of(fkik.blend_values(sp))
+    return mode, mode is None
+
+
+def _set_spine(mode):
+    """Light the spine's mode, neither when mixed or missing (quiet, as the limbs)."""
+    _FKIK_QUIET["on"] = True
+    try:
+        for m in fkik.MODES:
+            name = FKIK_BOX_SPINE.format(m)
+            if cmds.iconTextCheckBox(name, exists=True):
+                cmds.iconTextCheckBox(name, edit=True, value=mode == m)
+    finally:
+        _FKIK_QUIET["on"] = False
+
+
+def _limb_modes(rig, kind):
+    """{side: FK / IK / None (mixed)} for each limb of `kind` the rig has."""
     modes = {}
     for side in SIDES:
-        arm = fkik.limb(rig, side)[0] if rig else None
+        if not rig:
+            break
+        arm = (fkik.limb(rig, side) if kind == fkik.ARM else fkik.limb(rig, side, kind))[0]
         if arm:
             modes[side] = fkik.mode_of(fkik.blend_values(arm))
     return modes
@@ -1185,15 +1259,15 @@ def _arm_modes(rig):
 _FKIK_QUIET = {"on": False}
 
 
-def _set_fkik(modes):
-    """Light each arm's mode, neither when mixed or missing. Quiet: a box's
+def _set_fkik(modes, kind=fkik.ARM):
+    """Light each limb's mode, neither when mixed or missing. Quiet: a box's
     own command must not fire from here (trap 116 - an edit ran a radio's
     onCommand in one hub build)."""
     _FKIK_QUIET["on"] = True
     try:
         for side in SIDES:
             for mode in fkik.MODES:
-                name = fkik_box(side, mode)
+                name = fkik_box(side, mode, kind)
                 if cmds.iconTextCheckBox(name, exists=True):
                     cmds.iconTextCheckBox(name, edit=True,
                                           value=modes.get(side) == mode)
@@ -1245,13 +1319,24 @@ def _press_release_across(*_args):
     return _run(lambda: release_across())
 
 
-def _press_fkik(side, mode):
-    """Either press of a box - lighting it or not - switches the arm; the
+def _press_fkik(side, mode, kind=fkik.ARM):
+    """Either press of a box - lighting it or not - switches the limb; the
     refresh after it lights what IS."""
     def go(*_args):
         if _FKIK_QUIET["on"]:
             return None
-        return _run(lambda: switch_arm(side, mode))
+        if kind == fkik.ARM:
+            return _run(lambda: switch_arm(side, mode))
+        return _run(lambda: switch_limb(side, mode, kind=kind))
+    return go
+
+
+def _press_spine(mode):
+    """Either press of the spine's boxes switches it (quiet while lighting)."""
+    def go(*_args):
+        if _FKIK_QUIET["on"]:
+            return None
+        return _run(lambda: switch_spine(mode))
     return go
 
 
@@ -1261,6 +1346,57 @@ def _press_connect(*_args):
 
 def _press_disconnect(*_args):
     return _run(lambda: disconnect())
+
+
+def _fkik_row(kind):
+    """One row of FK | IK check boxes per side of `kind` (arms or legs): Arm R
+    [FK|IK]  Arm L [FK|IK]. The skin's segments leave their tracks for a row of
+    ours, so the right-hand track is as wide as its column is given
+    (ARM_L_WIDTH); the classic hub's track holds its buttons and sizes itself."""
+    cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3),
+                                 (3, "left", 6), (4, "both", 3)],
+                   **hubstyle.pick({"columnWidth": [(4, ARM_L_WIDTH)]}, {}))
+    for side in SIDES[::-1]:
+        cmds.text(label=fkik.LABEL[kind].format(side).replace("_", " "),
+                  font="boldLabelFont")
+        segments = cmds.rowLayout(numberOfColumns=2,
+                                  columnAttach=[(1, "both", 1), (2, "both", 1)])
+        hubstyle.mark(segments, "segments", layout=True)
+        noun = "leg" if kind == fkik.LEG else "arm"
+        for mode in fkik.MODES:
+            hubstyle.mark(cmds.iconTextCheckBox(
+                fkik_box(side, mode, kind), style="textOnly", label=mode,
+                height=hubstyle.height("segment", 22),
+                value=False,
+                annotation="{0} to {1} - over the highlighted range, else the "
+                           "whole take; the {2} keeps what it shows".format(
+                               fkik.LABEL[kind].format(side), mode, noun),
+                onCommand=_press_fkik(side, mode, kind),
+                offCommand=_press_fkik(side, mode, kind)), "segment")
+        cmds.setParent("..")
+    cmds.setParent("..")
+
+
+def _spine_row():
+    """The spine's FK | IK, one pair under the legs (2026-10-10): Spine [FK|IK]. Two
+    columns - the spine is one, so it has no second side to share a row with."""
+    cmds.rowLayout(numberOfColumns=2, columnAttach=[(1, "left", 0), (2, "both", 3)],
+                   **hubstyle.pick({"columnWidth": [(2, ARM_L_WIDTH)]}, {}))
+    cmds.text(label="Spine", font="boldLabelFont")
+    segments = cmds.rowLayout(numberOfColumns=2,
+                              columnAttach=[(1, "both", 1), (2, "both", 1)])
+    hubstyle.mark(segments, "segments", layout=True)
+    for mode in fkik.MODES:
+        hubstyle.mark(cmds.iconTextCheckBox(
+            FKIK_BOX_SPINE.format(mode), style="textOnly", label=mode,
+            height=hubstyle.height("segment", 22),
+            value=False,
+            annotation="Spine to {0} - over the highlighted range, else the whole take; "
+                       "the spine keeps what it shows".format(mode),
+            onCommand=_press_spine(mode), offCommand=_press_spine(mode)), "segment")
+    cmds.setParent("..")
+    cmds.setParent("..")
 
 
 def build_panel():
@@ -1287,28 +1423,10 @@ def build_panel():
     #  the skin's segments leave their tracks for a row of ours, so Arm L's
     #  track is as wide as its column is given: about half (ARM_L_WIDTH);
     #  the classic hub's track holds its buttons and sizes itself
-    cmds.rowLayout(numberOfColumns=4, adjustableColumn=2,
-                   columnAttach=[(1, "left", 0), (2, "both", 3),
-                                 (3, "left", 6), (4, "both", 3)],
-                   **hubstyle.pick({"columnWidth": [(4, ARM_L_WIDTH)]}, {}))
-    for side in SIDES[::-1]:
-        cmds.text(label=ARM_ROW.format(side).replace("_", " "),
-                  font="boldLabelFont")
-        segments = cmds.rowLayout(numberOfColumns=2,
-                                  columnAttach=[(1, "both", 1), (2, "both", 1)])
-        hubstyle.mark(segments, "segments", layout=True)
-        for mode in fkik.MODES:
-            hubstyle.mark(cmds.iconTextCheckBox(
-                fkik_box(side, mode), style="textOnly", label=mode,
-                height=hubstyle.height("segment", 22),
-                value=False,
-                annotation="{0} to {1} - over the highlighted range, else the "
-                           "whole take; the arm keeps what it shows".format(
-                               ARM_ROW.format(side), mode),
-                onCommand=_press_fkik(side, mode),
-                offCommand=_press_fkik(side, mode)), "segment")
-        cmds.setParent("..")
-    cmds.setParent("..")
+    _fkik_row(fkik.ARM)
+    #  the legs (2026-10-10): the same row under the arms, one per leg
+    _fkik_row(fkik.LEG)
+    _spine_row()
     #  Which of two weapons the rows act on (2026-09-29): the selection names
     #  one too. Two fixed segments - labels written by refresh, an empty slot
     #  disabled - rather than rows that come and go, which the skin's

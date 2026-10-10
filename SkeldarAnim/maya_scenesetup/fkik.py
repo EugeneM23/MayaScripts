@@ -69,6 +69,14 @@ each chain interpolates its own way; the measure is at the keys. Hand ->
 Weapon still switches on every frame (`every_frame`): a proxy baked on
 every frame follows it anyway.
 
+## Legs (2026-10-10)
+
+A leg is the same limb with the toes as a fourth joint (`kind=LEG`, `Limb.tip`: the
+toes IK control). The toes are fitted, the pole sits on the shown knee's bend side and
+is read after the IK control is written. The spine has its own module (`fkikspine`).
+The knee's roll is not held (measured 84 deg with the places exact) - the spec has the
+numbers: docs/superpowers/specs/2026-10-10-legs-spine-fkik-design.md
+
 Spec: docs/superpowers/specs/2026-09-30-connections-fkik-switch-design.md,
 docs/superpowers/specs/2026-10-08-fkik-keys-only-design.md
 """
@@ -85,12 +93,17 @@ import maya_rigs
 FK, IK = "FK", "IK"
 MODES = (FK, IK)
 BLEND = {FK: 0.0, IK: 10.0}
-LIMB = "Arm"
-FKIK_NODE = "FKIK{0}_{1}"            # FKIKArm_R
+ARM, LEG, SPINE = "Arm", "Leg", "Spine"
+KINDS = (ARM, LEG)                   # the limbs with a blend per side; the spine is its own (`fkikspine`)
+FKIK_NODE = "FKIK{0}_{1}"            # FKIKArm_R, FKIKLeg_R
 BLEND_ATTR = "FKIKBlend"
-IK_CONTROL = "IK{0}_{1}"             # IKArm_R
-POLE = "Pole{0}_{1}"                 # PoleArm_R
-ALIGN = "AlignIKTo{0}_{1}"           # AlignIKToWrist_R
+IK_CONTROL = "IK{0}_{1}"             # IKArm_R, IKLeg_R
+POLE = "Pole{0}_{1}"                 # PoleArm_R, PoleLeg_R
+ALIGN = "AlignIKTo{0}_{1}"           # AlignIKToWrist_R, AlignIKToAnkle_R
+# a leg's toes: the fourth joint of the chain, and its own IK control (`Limb.tip`)
+TOES = "Toes"
+TOES_IK = "IKToes_{0}"
+TOES_ALIGN = "AlignIKToToes_{0}"
 TRANSLATE = ("translateX", "translateY", "translateZ")
 ROTATE = ("rotateX", "rotateY", "rotateZ")
 CHANNELS = TRANSLATE + ROTATE
@@ -98,13 +111,22 @@ CHANNELS = TRANSLATE + ROTATE
 # are not among them since 2026-10-02 - they are the source's (`maya_ikmatch`)
 IK_SOLVE = ("swivel", "antiPop", "stretchy")
 LENGHTS = maya_ikmatch.LENGHTS
-POLE_SOLVE = ("followArm", "lock")
+POLE_SOLVE = {ARM: ("followArm", "lock"), LEG: ("followLeg", "lock")}
 NUDGE = 0.002                        # of the limb's length (maya_pmretarget)
 CONSTANT = 1e-6
 TOLERANCE_CM = 0.05                  # "kept" below these, "moved" above: the pole's
                                      # nudge leaves an IK elbow 0.02-0.05 cm off
 TOLERANCE_DEG = 0.05
 KEY_TOLERANCE = 1e-4                 # key times closer than this (frames) are one key
+TIP_TOLERANCE = math.radians(0.01)   # the toes solve stops once within this
+TIP_STEP = 0.25                      # deg: the probe that measures the toes' sensitivity
+TIP_TRIES = 6                        # Newton steps a frame may take
+# the fits (a leg's pole, the spine's spline): one residual of places and turns
+FIT_STEP = 0.05                      # the probe of a control's sensitivity (cm, or deg)
+FIT_TOLERANCE = 0.005                # stop once the residual's RMS is this small
+FIT_TRIES = 8                        # Gauss-Newton steps a frame may take
+FIT_DAMP = 1e-3                      # Levenberg damping on JtJ
+ORIENT_WEIGHT = 30.0                 # cm per radian of turn in a residual (a bone's length)
 TIME_CURVES = ("animCurveTL", "animCurveTA", "animCurveTT", "animCurveTU")
 
 
@@ -131,17 +153,33 @@ MATRIX_OUTPUTS = MATRIX_INPUTS | frozenset(
      "parentInverseMatrix", "pim", "matrix", "m", "inverseMatrix", "im", "xformMatrix", "xm",
      "dagLocalMatrix", "dlm", "dagLocalInverseMatrix", "dlim"))
 
-ARM_LABEL = "Arm_{0}"
+LABEL = {ARM: "Arm_{0}", LEG: "Leg_{0}", SPINE: "Spine"}
+# the words the message uses for each kind: what the limb is, its end, what is kept, what is
+# lost in the roll and why (an IK elbow is a hinge; a leg's knee frame is the IK knee's own)
+ROLL_WORDS = {
+    ARM: {"what": "arm", "end": "hand", "kept": "hand and elbow",
+          "lost": "the FK forearm twist is lost", "why": "an IK elbow does not twist"},
+    LEG: {"what": "leg", "end": "foot", "kept": "hip, knee, ankle and toes",
+          "lost": "the knee's roll differs", "why": "the IK knee's frame is its own"},
+    SPINE: {"what": "spine", "end": "top", "kept": "the spine's joints",
+            "lost": "the spine's roll differs", "why": "the IK spine is a spline"},
+}
 ALREADY = "%s is already %s"
 MISSING = "%s: %s not found on %s"
 DRIVEN = "%s: %s is driven by %s - not a key the switch can rewrite"
 SOLVE_IN_RANGE = ("%s: %s not at the default - switch the whole take (no "
                   "highlight) to reset it, or zero it first")
-NO_POLE_SIDE = "%s: the IK pole stands on the arm's line - no bend plane to read"
+NO_POLE_SIDE = "%s: the IK pole stands on the limb's line - no bend plane to read"
 
+# kind   -- ARM or LEG; `LABEL[kind]` names it in the messages
+# deform, fk, fkx, ikx -- one entry per joint of the chain: three for an arm (shoulder,
+#           elbow, wrist), four for a leg (hip, knee, ankle, toes)
+# tip    -- a leg's toes IK control and its align (`Tip`), None for an arm
 # root_parent -- what the IK chain's root joint stands in (IKXOffset<Shoulder>);
-# units       -- the IK segments' rest lengths behind Lenght1/2 (`maya_ikmatch.unit_of`)
-Limb = namedtuple("Limb", "side blend deform fk fkx ikx ik pole align root_parent units")
+# units  -- the IK segments' rest lengths behind Lenght1/2 (`maya_ikmatch.unit_of`)
+Limb = namedtuple("Limb", "side blend deform fk fkx ikx ik pole align root_parent units "
+                          "kind tip", defaults=(ARM, None))
+Tip = namedtuple("Tip", "ik align")
 
 
 # ------------------------------------------------------------------- pure
@@ -252,12 +290,22 @@ def sources(arm, mode):
     """What the arm shows in `mode` (FK / IK / None for a mixed take): (the
     DAG nodes whose world matrices it is, plugs read beside them, the arm's
     own controls - whose keys decide tangents first). Pure."""
-    fk_nodes, ik_nodes = list(arm.fkx), list(arm.ikx) + [arm.ik, arm.pole]
+    ik_own = _ik_controls(arm)
+    fk_nodes, ik_nodes = list(arm.fkx), list(arm.ikx) + ik_own
     if mode == FK:
         return fk_nodes, [], list(arm.fk)
     if mode == IK:
-        return ik_nodes, [], [arm.ik, arm.pole]
-    return fk_nodes + ik_nodes, [arm.blend], list(arm.fk) + [arm.ik, arm.pole]
+        return ik_nodes, [], ik_own
+    return fk_nodes + ik_nodes, [arm.blend], list(arm.fk) + ik_own
+
+
+def _ik_controls(arm):
+    """The IK controls of a limb: the end control, the pole and - a leg's -
+    the toes control."""
+    out = [arm.ik, arm.pole]
+    if arm.tip:
+        out.append(arm.tip.ik)
+    return out
 
 
 def local_channels(local, rotate_order, previous):
@@ -284,6 +332,75 @@ def fk_locals(shown, parent, chain, fkx_in_ctrl):
     return out
 
 
+def rotation_vector(target, current):
+    """The world rotation (radians, as a vector) that turns `current` onto
+    `target` - both matrices. Pure."""
+    q = (om.MTransformationMatrix(target).rotation(asQuaternion=True) *
+         om.MTransformationMatrix(current).rotation(asQuaternion=True).inverse())
+    if q.w < 0:
+        q = om.MQuaternion(-q.x, -q.y, -q.z, -q.w)
+    w = max(-1.0, min(1.0, q.w))
+    s = math.sqrt(max(0.0, 1.0 - w * w))
+    if s < 1e-9:
+        return om.MVector(2.0 * q.x, 2.0 * q.y, 2.0 * q.z)
+    return om.MVector(q.x, q.y, q.z) * (2.0 * math.acos(w) / s)
+
+
+def solve3(columns, rhs):
+    """The x with x0*columns[0] + x1*columns[1] + x2*columns[2] = rhs (3-vectors),
+    by Cramer's rule; None when the columns are degenerate. Pure."""
+    def det(a, b, c):
+        return (a.x * (b.y * c.z - b.z * c.y) - b.x * (a.y * c.z - a.z * c.y)
+                + c.x * (a.y * b.z - a.z * b.y))
+    d = det(*columns)
+    if abs(d) < 1e-12:
+        return None
+    return [det(*[rhs if j == i else columns[j] for j in range(3)]) / d for i in range(3)]
+
+
+def solve_linear(a, b):
+    """x with a x = b, Gaussian elimination with partial pivoting; None when
+    singular. Pure."""
+    n = len(b)
+    m = [list(row) + [b[i]] for i, row in enumerate(a)]
+    for col in range(n):
+        pivot = max(range(col, n), key=lambda r: abs(m[r][col]))
+        if abs(m[pivot][col]) < 1e-18:
+            return None
+        m[col], m[pivot] = m[pivot], m[col]
+        for r in range(col + 1, n):
+            f = m[r][col] / m[col][col]
+            if f:
+                for c in range(col, n + 1):
+                    m[r][c] -= f * m[col][c]
+    x = [0.0] * n
+    for r in range(n - 1, -1, -1):
+        x[r] = (m[r][n] - sum(m[r][c] * x[c] for c in range(r + 1, n))) / m[r][r]
+    return x
+
+
+def gauss_newton_step(jacobian, residual, damp=FIT_DAMP):
+    """The step dx minimising |residual + J dx|^2 with Levenberg damping:
+    (JtJ + damp I) dx = -Jt r. `jacobian` is a list of rows (one per residual).
+    None when the system is singular. Pure."""
+    n = len(jacobian[0])
+    jtj = [[sum(row[i] * row[j] for row in jacobian) + (damp if i == j else 0.0)
+            for j in range(n)] for i in range(n)]
+    jtr = [sum(row[i] * residual[k] for k, row in enumerate(jacobian)) for i in range(n)]
+    return solve_linear(jtj, [-v for v in jtr])
+
+
+def joint_residual(matrices, targets):
+    """A fit's residual for a chain of joints: each joint's place (cm) and its turn
+    (ORIENT_WEIGHT cm per radian) against its target matrix. Pure over the matrices."""
+    out = []
+    for current, goal in zip(matrices, targets):
+        d = position(current) - position(goal)
+        turn = rotation_vector(goal, current) * ORIENT_WEIGHT
+        out.extend([d.x, d.y, d.z, turn.x, turn.y, turn.z])
+    return out
+
+
 def _on_line(s, e, w):
     upper, lower = (s - e).length(), (e - w).length()
     length = upper + lower
@@ -301,6 +418,26 @@ def pole_side(pole, s, e, w, elbow_rotation):
         if side.length() > 1e-6 * length:
             return side.normal() * elbow_rotation.inverse()
     return None
+
+
+def bend_side(s, e, w):
+    """The shown knee's own bend: its offset from the hip-ankle line, perpendicular
+    to it, as a unit vector - None while the leg is straight (no bend to read).
+    Pure."""
+    base, length = _on_line(s, e, w)
+    line = (w - s).normal()
+    side = (e - base) - line * ((e - base) * line)
+    if side.length() <= 1e-6 * length:
+        return None
+    return side.normal()
+
+
+def pole_on_side(s, e, w, bend):
+    """The pole exactly on the bend side: a limb out from the hip-ankle line at the
+    knee's share, along `bend` (unit, from `bend_side`). The IK plane then holds the
+    shown knee. Pure."""
+    base, length = _on_line(s, e, w)
+    return base + bend * length
 
 
 def pole_point(s, e, w, elbow_rotation, side_local, nudge=NUDGE):
@@ -361,10 +498,10 @@ Measure = namedtuple("Measure", "cm cm_frame hand roll roll_frame")
 
 
 def measure(before, after):
-    """How far the shown arm moved: {frame: [shoulder, elbow, wrist]}
-    matrices before and after -> the joints' places (worst cm, at), the
-    hand's turn (deg), the arm's roll - the shoulder's and elbow's turn
-    (worst deg, at). Pure."""
+    """How far the shown limb moved: {frame: [joint matrices]} before and after
+    -> the joints' places (worst cm, at), the end's turn (deg; the wrist, the
+    ankle and toes of a leg - the third joint on), the limb's roll - the
+    upper joints' turn (worst deg, at). Pure."""
     cm = hand = roll = 0.0
     cm_at = roll_at = None
     for frame in sorted(before):
@@ -374,7 +511,7 @@ def measure(before, after):
             if d > cm:
                 cm, cm_at = d, frame
             turn = angle(a, b)
-            if i == 2:
+            if i >= 2:
                 hand = max(hand, turn)
             elif turn > roll:
                 roll, roll_at = turn, frame
@@ -386,11 +523,11 @@ def _frame_text(t):
     return str(int(t)) if t == int(t) else ("%.3f" % t).rstrip("0").rstrip(".")
 
 
-def switched_message(side, mode, span, m, notes, keys=None):
+def switched_message(side, mode, span, m, notes, keys=None, kind=ARM):
     """What the press did, measured (`Measure`); `keys` the frames keyed by a
     keys-only switch (None: every frame of the span). Pure."""
     start, end, ranged = span
-    label = ARM_LABEL.format(side)
+    label = LABEL[kind].format(side)
     if keys is None:
         where = ("over the range %d..%d" if ranged else "over %d..%d") % (start, end)
         text = "%s to %s %s" % (label, mode, where)
@@ -405,15 +542,16 @@ def switched_message(side, mode, span, m, notes, keys=None):
                 _frame_text(keys[0]), _frame_text(keys[-1]))
             text = "%s to %s on %s (%s)" % (label, mode, count, frames)
     held = m.cm <= TOLERANCE_CM and m.hand <= TOLERANCE_DEG
+    words = ROLL_WORDS[kind]
     if held and m.roll <= TOLERANCE_DEG:
-        text += " - the arm kept to %.4f cm, %.3f deg" % (m.cm, max(m.hand, m.roll))
+        text += " - the %s kept to %.4f cm, %.3f deg" % (words["what"], m.cm,
+                                                          max(m.hand, m.roll))
     elif held:
-        text += (" - hand and elbow kept to %.3f cm; the FK forearm twist is lost, "
-                 "up to %g deg at frame %s (an IK elbow does not twist)" % (
-                     m.cm, round(m.roll), m.roll_frame))
+        text += (" - %s kept to %.3f cm; %s, up to %g deg at frame %s (%s)" % (
+            words["kept"], m.cm, words["lost"], round(m.roll), m.roll_frame, words["why"]))
     else:
-        text += " - the arm moved up to %.2f cm (frame %s), the hand %g deg" % (
-            m.cm, m.cm_frame, round(m.hand, 3))
+        text += " - the %s moved up to %.2f cm (frame %s), the %s %g deg" % (
+            words["what"], m.cm, m.cm_frame, words["end"], round(m.hand, 3))
     return text + "".join("; " + note for note in notes)
 
 
@@ -424,23 +562,28 @@ def _one(rig, leaf):
     return paths[0] if len(paths) == 1 else None
 
 
-def limb(rig, side):
-    """The arm's nodes on `rig` (side "R"/"L"), or (None, refusal)."""
+def limb(rig, side, kind=ARM):
+    """The arm's (or, kind=LEG, the leg's) nodes on `rig` (side "R"/"L"), or
+    (None, refusal)."""
     suffix = "_" + side
-    label = ARM_LABEL.format(side)
-    blend_node = _one(rig, FKIK_NODE.format(LIMB, side))
+    label = LABEL[kind].format(side)
+    blend_node = _one(rig, FKIK_NODE.format(kind, side))
     if not blend_node:
-        return None, MISSING % (label, FKIK_NODE.format(LIMB, side), maya_rigs.label(rig))
+        return None, MISSING % (label, FKIK_NODE.format(kind, side), maya_rigs.label(rig))
     joints = [cmds.getAttr(blend_node + "." + attr)
               for attr in ("startJoint", "middleJoint", "endJoint")]
+    chain = joints + [TOES] if kind == LEG else joints
     found = {}
-    for key, leaves in (("deform", [j + suffix for j in joints]),
-                        ("fk", ["FK" + j + suffix for j in joints]),
-                        ("fkx", ["FKX" + j + suffix for j in joints]),
-                        ("ikx", ["IKX" + j + suffix for j in joints]),
-                        ("ik", [IK_CONTROL.format(LIMB, side)]),
-                        ("pole", [POLE.format(LIMB, side)]),
-                        ("align", [ALIGN.format(joints[2], side)])):
+    checks = [("deform", [j + suffix for j in chain]),
+              ("fk", ["FK" + j + suffix for j in chain]),
+              ("fkx", ["FKX" + j + suffix for j in chain]),
+              ("ikx", ["IKX" + j + suffix for j in chain]),
+              ("ik", [IK_CONTROL.format(kind, side)]),
+              ("pole", [POLE.format(kind, side)]),
+              ("align", [ALIGN.format(joints[2], side)])]
+    if kind == LEG:
+        checks.append(("tip", [TOES_IK.format(side), TOES_ALIGN.format(side)]))
+    for key, leaves in checks:
         nodes = []
         for leaf in leaves:
             path = _one(rig, leaf)
@@ -453,9 +596,10 @@ def limb(rig, side):
         return None, MISSING % (label, "the parent of " + found["ikx"][0].split("|")[-1],
                                 maya_rigs.label(rig))
     units = tuple(maya_ikmatch.unit_of(found["ik"][0], attr) for attr in LENGHTS)
+    tip = Tip(found["tip"][0], found["tip"][1]) if kind == LEG else None
     return Limb(side, blend_node + "." + BLEND_ATTR, found["deform"], found["fk"],
                 found["fkx"], found["ikx"], found["ik"][0], found["pole"][0],
-                found["align"][0], root_parent, units), ""
+                found["align"][0], root_parent, units, kind, tip), ""
 
 
 def _inputs(plug):
@@ -500,14 +644,17 @@ def targets(arm, mode):
     """(node, channels) the switch keys."""
     if mode == FK:
         return [(node, CHANNELS) for node in arm.fk]
-    return [(arm.ik, CHANNELS + lenghts(arm)), (arm.pole, TRANSLATE),
-            (arm.ikx[0], TRANSLATE)]
+    out = [(arm.ik, CHANNELS + lenghts(arm)), (arm.pole, TRANSLATE),
+           (arm.ikx[0], TRANSLATE)]
+    if arm.tip:
+        out.append((arm.tip.ik, ROTATE))
+    return out
 
 
 def whole_take(arm):
     """Playback range and the keys of every control involved, unsnapped."""
     keys = []
-    for node in arm.fk + [arm.ik, arm.pole, arm.ikx[0], arm.blend.split(".")[0]]:
+    for node in arm.fk + _ik_controls(arm) + [arm.ikx[0], arm.blend.split(".")[0]]:
         keys.extend(cmds.keyframe(node, query=True, timeChange=True) or [])
     start = cmds.playbackOptions(query=True, min=True)
     end = cmds.playbackOptions(query=True, max=True)
@@ -518,7 +665,7 @@ def whole_take(arm):
 
 def _solve_attrs(arm):
     out = {}
-    for node, names in ((arm.ik, IK_SOLVE), (arm.pole, POLE_SOLVE)):
+    for node, names in ((arm.ik, IK_SOLVE), (arm.pole, POLE_SOLVE[arm.kind])):
         for name in names:
             if not cmds.attributeQuery(name, node=node, exists=True):
                 continue
@@ -532,7 +679,7 @@ def _solve_attrs(arm):
 
 def refusal(arm, mode, span, ignore=()):
     """Why `arm` may not be switched to `mode` over `span`, or ''."""
-    label = ARM_LABEL.format(arm.side)
+    label = LABEL[arm.kind].format(arm.side)
     driver = _foreign(arm.blend)
     if driver:
         return DRIVEN % (label, arm.blend.split("|")[-1], driver)
@@ -671,6 +818,15 @@ def _reset_solve(arm):
     return notes
 
 
+def _unkey(plug, span):
+    """The plug's keys in the span cut (the whole take when not ranged)."""
+    start, end, ranged = span
+    if ranged:
+        cmds.cutKey(plug, time=(start, end), clear=True)
+    else:
+        cmds.cutKey(plug, clear=True)
+
+
 def _write(plug, frames, values, span, locked, tangents=None):
     """Keys for `plug` on the frames; a whole take's constant channel becomes
     a plain value. `tangents` {frame: (in, out)}: a type None is Maya's
@@ -745,7 +901,7 @@ def _sample(arm, frames):
     for frame in frames:
         _goto(frame)
         if "side" not in s:
-            a, b, c = (position(_world(j)) for j in arm.ikx)
+            a, b, c = (position(_world(j)) for j in arm.ikx[:3])
             s["side"] = pole_side(position(_world(arm.pole)), a, b, c,
                                   rotation_only(_world(arm.ikx[1])))
         weight = cmds.getAttr(arm.blend) / BLEND[IK]
@@ -754,7 +910,7 @@ def _sample(arm, frames):
         s["deform"][frame] = [_world(node) for node in arm.deform]
         s["fk_parent"][frame] = _world(extras[0])
         s["chain"][frame] = [None] + [_world(extras[i]) * _world(arm.fkx[i - 1]).inverse()
-                                      for i in (1, 2)]
+                                      for i in range(1, len(extras))]
         s["ik_parent"][frame] = _world(ik_parent)
         s["pole_parent"][frame] = _world(pole_parent)
         s["root_parent"][frame] = _world(arm.root_parent)
@@ -780,19 +936,16 @@ def _to_fk(arm, frames, samples, span):
 
 
 def _to_ik(arm, frames, samples, span):
-    """The IK control on the shown wrist, the pole on the shown plane."""
-    side = samples["side"]
-    if side is None:
-        return None, NO_POLE_SIDE % ARM_LABEL.format(arm.side)
+    """The IK control on the shown wrist, and the chain's root and lengths. The pole
+    is `_pole_values`' - it needs the IK control written first."""
     k = _world(arm.align) * _world(arm.fkx[2]).inverse()
     order = cmds.getAttr(arm.ik + ".rotateOrder")
     seed = frames[0] - 1 if span[2] else frames[0]
     previous = _seed(arm.ik, ROTATE, seed)
     values = dict(((arm.ik, ch), []) for ch in CHANNELS + lenghts(arm))
-    values.update(((arm.pole, ch), []) for ch in TRANSLATE)
     values.update(((arm.ikx[0], ch), []) for ch in TRANSLATE)
     for frame in frames:
-        d_s, d_e, d_w = samples["shown"][frame]
+        d_s, d_e, d_w = samples["shown"][frame][:3]
         # the chain's shape: its root on the shown shoulder, its two segments the shown ones
         root_parent = samples["root_parent"][frame]
         for ch, v in zip(TRANSLATE, maya_ikmatch.local_point(position(d_s), root_parent)):
@@ -807,12 +960,99 @@ def _to_ik(arm, frames, samples, span):
         previous = r
         for ch, v in zip(CHANNELS, t + r):
             values[(arm.ik, ch)].append(v)
-        point = pole_point(position(d_s), position(d_e), position(d_w),
-                           rotation_only(d_e), side)
+    return values, ""
+
+
+def _pole_refusal(arm, frames, samples):
+    """Why no pole can stand on the shown plane, or '' - checked before anything is
+    written. An arm needs the rest pole off the line; a leg needs either that or a
+    bend on every frame. Pure."""
+    if samples["side"] is not None:
+        return ""
+    for frame in frames:
+        d_s, d_e, d_w = samples["shown"][frame][:3]
+        if arm.kind != LEG or bend_side(position(d_s), position(d_e), position(d_w)) is None:
+            return NO_POLE_SIDE % LABEL[arm.kind].format(arm.side)
+    return ""
+
+
+def _pole_values(arm, frames, samples):
+    """The pole's translate on the shown plane, frame by frame. The pole's parent
+    must be read AFTER the IK control is written (a leg's pole rides the IK leg,
+    `followLeg`: measured 2026-10-10, the pole 31 cm off when read before) - the
+    caller does that. `_pole_refusal` has passed before this runs: every frame has a
+    bend side, or the rest pole stands off the line. Returns {(pole, channel): [values]}."""
+    side = samples["side"]
+    values = dict(((arm.pole, ch), []) for ch in TRANSLATE)
+    for frame in frames:
+        d_s, d_e, d_w = samples["shown"][frame][:3]
+        bend = bend_side(position(d_s), position(d_e), position(d_w)) if arm.kind == LEG \
+            else None
+        if bend is not None:
+            # a leg's knee bends about its own hinge: the bend side of the shown knee THIS
+            # frame, not the rest pole's carried through the knee's turn (that plane turns
+            # with the bend and misplaces the knee - measured 2026-10-10). The pole stands
+            # exactly on that side, so the knee is in the shown plane.
+            point = pole_on_side(position(d_s), position(d_e), position(d_w), bend)
+        else:
+            point = pole_point(position(d_s), position(d_e), position(d_w),
+                               rotation_only(d_e), side)
         p = om.MPoint(point) * samples["pole_parent"][frame].inverse()
         for ch, v in zip(TRANSLATE, (p.x, p.y, p.z)):
             values[(arm.pole, ch)].append(v)
-    return values, ""
+    return values
+
+
+def _set_rotate(node, angles):
+    for ch, value in zip(ROTATE, angles):
+        cmds.setAttr(node + "." + ch, value)
+
+
+def _fit_toes(arm, frames, samples, span):
+    """The toes' IK control, frame by frame: the three rotate channels that turn
+    the IK toes joint (`Limb.tip`'s chain end, IKXToes) onto the shown toes.
+
+    The toes are not a wrist: a toes control's rest frame is its FK control's,
+    not the toes joint's, so no fixed relation holds (measured 2026-10-10: the
+    rest pose read 177 deg off). The rotation is found the way the rig makes it:
+    each frame, the joint's orientation read from the evaluated scene, the
+    sensitivity of that orientation to each channel probed by a small step, and
+    a Newton step - a few evaluations a frame. The control's own keys are cut
+    first (a keyed channel does not take a setAttr), the values come back as
+    keys in the caller. Returns ({(control, channel): [values]}, worst error
+    in degrees)."""
+    tip = arm.tip
+    joint = arm.ikx[3]
+    seed = frames[0] - 1 if span[2] else frames[0]
+    angles = list(_seed(tip.ik, ROTATE, seed))
+    out = dict(((tip.ik, ch), []) for ch in ROTATE)
+    worst = 0.0
+    for frame in frames:
+        _goto(frame)
+        target = samples["shown"][frame][3]
+        for _ in range(TIP_TRIES):
+            _set_rotate(tip.ik, angles)
+            current = _world(joint)
+            error = rotation_vector(target, current)
+            if error.length() <= TIP_TOLERANCE:
+                break
+            columns = []
+            for i in range(3):
+                probe = list(angles)
+                probe[i] += TIP_STEP
+                _set_rotate(tip.ik, probe)
+                # radians of turn per degree of channel: the probe moved TIP_STEP degrees
+                columns.append(rotation_vector(_world(joint), current) / TIP_STEP)
+            delta = solve3(columns, error)
+            if delta is None:
+                break
+            angles = [a + d for a, d in zip(angles, delta)]
+        _set_rotate(tip.ik, angles)
+        residual = rotation_vector(target, _world(joint)).length()
+        worst = max(worst, math.degrees(residual))
+        for ch, value in zip(ROTATE, angles):
+            out[(tip.ik, ch)].append(value)
+    return out, worst
 
 
 def switch(arm, mode, span, every_frame=False):
@@ -837,21 +1077,41 @@ def switch(arm, mode, span, every_frame=False):
         else:
             if not ranged:
                 notes.extend(_reset_solve(arm))
-            if any(".followArm " in note for note in notes):
-                # the pole's parent rode the IK control: read it again
-                pole_parent = _parent(arm.pole)
-                for frame in frames:
-                    _goto(frame)
-                    samples["pole_parent"][frame] = _world(pole_parent)
+            refusal = _pole_refusal(arm, frames, samples)
+            if refusal:
+                return refusal
             values, text = _to_ik(arm, frames, samples, span)
-            if values is None:
-                return text
         if mode == IK:
             maya_ikmatch.keep(arm.ikx[0])        # its rest, for the next retarget's reset
         for (node, channel), series in values.items():
             plug = node + "." + channel
             _write(plug, frames, series, span, cmds.getAttr(plug, lock=True), tangents)
         _write_blend(arm, mode, span)
+        if mode == IK:
+            # the pole after the IK control: its parent may ride the control (a leg's
+            # followLeg), so it is read now, on the frames as they stand
+            pole_parent = _parent(arm.pole)
+            for frame in frames:
+                _goto(frame)
+                samples["pole_parent"][frame] = _world(pole_parent)
+            pole = _pole_values(arm, frames, samples)
+            for (node, channel), series in pole.items():
+                plug = node + "." + channel
+                _write(plug, frames, series, span, cmds.getAttr(plug, lock=True), tangents)
+        if mode == IK and arm.tip:
+            # the toes need the IK chain as it now stands, frame by frame (see _fit_toes)
+            for ch in ROTATE:
+                _unkey(arm.tip.ik + "." + ch, span)
+            before_mode = (cmds.evaluationManager(query=True, mode=True) or ["parallel"])[0]
+            cmds.evaluationManager(mode="off")
+            try:
+                fit, worst = _fit_toes(arm, frames, samples, span)
+            finally:
+                cmds.evaluationManager(mode=before_mode)
+            for (node, channel), series in fit.items():
+                plug = node + "." + channel
+                _write(plug, frames, series, span, cmds.getAttr(plug, lock=True), tangents)
+            notes.append("toes solved to %.3f deg" % worst)
         after = {}
         for frame in frames:
             _goto(frame)
@@ -861,7 +1121,7 @@ def switch(arm, mode, span, every_frame=False):
         _goto(now)
         cmds.autoKeyframe(state=auto)
         _suspend(False)
-    return switched_message(arm.side, mode, span, moved, notes, keys)
+    return switched_message(arm.side, mode, span, moved, notes, keys, kind=arm.kind)
 
 
 def _suspend(on):

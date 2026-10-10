@@ -303,13 +303,13 @@ class Panel(unittest.TestCase):
                   if c[0] == "text" and not c[2].get("edit")]
         for wanted in ("Hand_R", "Hand_L", "Weapon"):
             self.assertIn(wanted, labels)
-        #  no description paragraph (the animator: «весь текст описания
-        #  убираем») - the header, the two FK/IK rows (2026-09-30), the
+        #  no description paragraph (the animator: Â«Ð²ÐµÑÑŒ Ñ‚ÐµÐºÑÑ‚ Ð¾Ð¿Ð¸ÑÐ°Ð½Ð¸Ñ
+        #  ÑƒÐ±Ð¸Ñ€Ð°ÐµÐ¼Â») - the header, the two FK/IK rows (2026-09-30), the
         #  chooser's label (2026-09-29), the three row labels and the status
         self.assertIn("Acts on", labels)
         #  (2026-10-08: both arms on one row, written "Arm R" / "Arm L")
         self.assertEqual(labels[1:3], ["Arm R", "Arm L"])
-        self.assertEqual(len(labels), 8)
+        self.assertEqual(len(labels), 11)           # + the legs' two labels and the spine (2026-10-10)
 
     def test_every_row_starts_on_its_first_choice(self):
         self.assertEqual(cx.menus(), {"R": "Free", "L": "Free", "W": "World"})
@@ -321,7 +321,7 @@ class Panel(unittest.TestCase):
                                  "segment")
         segment_rows = [m for m in self.marks.values()
                         if m.role == "segments"]
-        self.assertEqual(len(segment_rows), 6)      # the chooser's, FK/IK's too
+        self.assertEqual(len(segment_rows), 9)      # the chooser's, FK/IK's too, legs' and the spine's too
         for side in ("R", "L"):
             for mode in ("FK", "IK"):
                 self.assertEqual(self.marks[cx.fkik_box(side, mode)].role, "segment")
@@ -478,8 +478,9 @@ class Panel(unittest.TestCase):
         return out
 
     def test_both_arms_share_one_row(self):
+        #  the arms' row, then the legs' row under it (2026-10-10)
         rows = self._made("rowLayout", numberOfColumns=4)
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), 2)
         index, call = rows[0]
         self.assertEqual(call[2]["adjustableColumn"], 2)
         inside = self._inside(index)
@@ -489,6 +490,18 @@ class Panel(unittest.TestCase):
         self.assertEqual(boxes, [cx.fkik_box(side, mode)
                                  for side in ("R", "L")
                                  for mode in ("FK", "IK")])
+
+    def test_both_legs_share_a_row_of_their_own(self):
+        index, _call = self._made("rowLayout", numberOfColumns=4)[1]
+        inside = self._inside(index)
+        self.assertEqual([c[2]["label"] for c in inside if c[0] == "text"],
+                         ["Leg R", "Leg L"])
+        boxes = [c[1][0] for c in inside if c[0] == "iconTextCheckBox"]
+        self.assertEqual(boxes, [cx.fkik_box(side, mode, cx.fkik.LEG)
+                                 for side in ("R", "L")
+                                 for mode in ("FK", "IK")])
+        self.assertTrue(all(name.startswith("skeldarConnectionsFKIKLeg_")
+                            for name in boxes))
 
     def test_the_chooser_row_is_named_and_starts_hidden(self):
         rows = self._made("rowLayout", numberOfColumns=2, adjustableColumn=2)
@@ -813,7 +826,7 @@ class Boundaries(unittest.TestCase):
         self.assertIn("attributeQuery(MARKER", self._source())
 
     def test_the_weapon_hangs_in_the_hands_space_never_in_the_skeleton(self):
-        """2026-09-24, «не нарушали иерархию нашего скелета»: a hold is the
+        """2026-09-24, Â«Ð½Ðµ Ð½Ð°Ñ€ÑƒÑˆÐ°Ð»Ð¸ Ð¸ÐµÑ€Ð°Ñ€Ñ…Ð¸ÑŽ Ð½Ð°ÑˆÐµÐ³Ð¾ ÑÐºÐµÐ»ÐµÑ‚Ð°Â»: a hold is the
         weapon in the space that follows the hand (weaponspace), re-baked by
         OverRig's parent_in into THAT -- never parent_in onto the hand bone --
         and which hand holds is read through the space."""
