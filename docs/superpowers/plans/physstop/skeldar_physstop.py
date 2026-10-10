@@ -17,14 +17,15 @@ import math
 
 # The cube's rule, fitted by calibrate_physstop.py against cube_reference.json.
 ZETA = 0.30          # damping of every swing at weight 1
-K_TILT = 44.83       # deg of tilt per object height per frame of speed, at overlap 1
+K_TILT = 47.10       # deg of tilt per object height per frame of speed, at overlap 1
 K_SINK = 0.526       # sink, in heights, per object height per frame of speed, at weight 1
-K_SWAY = 0.212       # sway, in heights, per object height per frame of speed, at sway 1
+K_SWAY = 0.217       # sway, in heights, per object height per frame of speed, at sway 1
 SWAY_RATE = 0.75     # the sway's frequency against the other springs'
 K_YAW = 51.9         # deg of yaw per object height of sway
 
-TILT_LIMIT = 80.0    # deg: the tilt's drive saturates here (tanh), whatever the speed
-DRIFT_LIMIT = 0.5    # heights: the sink's and the sway's drives saturate here
+TILT_LIMIT = 40.0    # deg: the tilt's drive saturates here (tanh) - a small object flying far stays sane
+SINK_LIMIT = 0.5     # heights: the sink's drive saturates here
+SWAY_LIMIT = 0.25    # heights: the sway's drive saturates here (the yaw follows it)
 SUBSTEPS = 16        # integration steps per frame
 SETTLE_SHARE = 0.02  # settled when every component stays within this share of its own peak
 FADE_SHARE = 0.3     # the last share of the settle fades every residual to 0
@@ -149,9 +150,9 @@ def simulate(path, end, reach, lateral, given, zeta):
                 speed = abs(v)
                 _step(tilt, TILT_LIMIT * math.tanh(K_TILT * given["overlap"] * ahead / TILT_LIMIT),
                       omega, zeta, dt)
-                _step(sink, DRIFT_LIMIT * math.tanh(K_SINK * given["weight"] * speed * reach / DRIFT_LIMIT),
+                _step(sink, SINK_LIMIT * math.tanh(K_SINK * given["weight"] * speed * reach / SINK_LIMIT),
                       omega, zeta, dt)
-                _step(sway, DRIFT_LIMIT * math.tanh(K_SWAY * given["sway"] * abs(ahead) / DRIFT_LIMIT),
+                _step(sway, SWAY_LIMIT * math.tanh(K_SWAY * given["sway"] * abs(ahead) / SWAY_LIMIT),
                       slow, zeta, dt)
             t = f
         out.append((f, path.at(f)[0], tilt[0], sink[0], sway[0]))
@@ -310,6 +311,259 @@ def channel_frames(transition, pose_a, pose_b, order, fixed, parent_at, bottom, 
         world = world * secondary(base, heading, row.tilt, row.yaw, row.sink, row.sway)
         t, r = channels_from_local(world * parent.inverse(), order, fixed, turn)
         out.append((row.t, t, r))
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------
+# 3. The scene (maya.cmds)
+# ---------------------------------------------------------------------------------------------------------
+
+CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ")
+MARKER = "skeldarPhysStop"
+FOREVER = 1e7
+
+
+class Refusal(Exception):
+    pass
+
+
+def _cmds():
+    import maya.cmds as cmds
+    return cmds
+
+
+def _short(node):
+    return node.split("|")[-1]
+
+
+def key_times(node):
+    """Every key time on translate/rotate, merged."""
+    cmds = _cmds()
+    times = set()
+    for ch in CHANNELS:
+        for t in cmds.keyframe(node + "." + ch, query=True, timeChange=True) or []:
+            times.add(round(t, 4))
+    return sorted(times)
+
+
+def remembered(node):
+    """What this script wrote on the node last (JSON on its MARKER attribute), or None."""
+    cmds = _cmds()
+    if not cmds.attributeQuery(MARKER, node=node, exists=True):
+        return None
+    try:
+        return json.loads(cmds.getAttr(node + "." + MARKER) or "")
+    except ValueError:
+        return None
+
+
+def source(node):
+    """(t_a, t_b, b_time): the keys the transition runs between, and where pose B is read. A transition
+    this script wrote (the marker, its last key unmoved) is re-run from its own keys, B read at its end -
+    so editing that last key edits pose B; otherwise the last two key times."""
+    times = key_times(node)
+    memo = remembered(node)
+    if memo and times and abs(times[-1] - memo["tE"]) < 1e-3:
+        return float(memo["tA"]), float(memo["tB"]), float(memo["tE"])
+    if len(times) < 2:
+        raise Refusal("%s: needs two keys on translate/rotate - has %d" % (_short(node), len(times)))
+    t_a, t_b = times[-2], times[-1]
+    if t_b - t_a < 1.0 - 1e-6:
+        raise Refusal("%s: the last two keys are less than a frame apart" % _short(node))
+    return t_a, t_b, t_b
+
+
+def pose_at(node, t):
+    """(translate, rotate) of the node's channels at frame t, read off their curves."""
+    cmds = _cmds()
+    values = [cmds.getAttr(node + "." + ch, time=t) for ch in CHANNELS]
+    return tuple(values[:3]), tuple(values[3:])
+
+
+def blocked(node):
+    """Channels this script must not write: locked, or driven by anything but a plain curve."""
+    cmds = _cmds()
+    out = []
+    for ch in CHANNELS:
+        plug = node + "." + ch
+        if cmds.getAttr(plug, lock=True):
+            out.append(ch)
+            continue
+        src = cmds.listConnections(plug, source=True, destination=False, skipConversionNodes=True) or []
+        if src and not cmds.ls(src[0], type="animCurve"):
+            out.append(ch)
+    return out
+
+
+def fixed_parts(node):
+    """The transform's parts this script never writes (scale, shear, pivots, rotate axis) and its order."""
+    cmds = _cmds()
+    fixed = {name: tuple(cmds.getAttr(node + "." + name)[0]) for name in IDENTITY_FIXED}
+    return fixed, cmds.getAttr(node + ".rotateOrder")
+
+
+def object_box(node):
+    """The object-space box of every visible shape under the node (corners carried in), or None."""
+    cmds = _cmds()
+    om = _om()
+    inverse = om.MMatrix(cmds.getAttr(node + ".worldInverseMatrix[0]"))
+    low, high = [float("inf")] * 3, [float("-inf")] * 3
+    for shape in cmds.listRelatives(node, allDescendents=True, fullPath=True, type="shape") or []:
+        if cmds.getAttr(shape + ".intermediateObject"):
+            continue
+        owner = cmds.listRelatives(shape, parent=True, fullPath=True)[0]
+        into = om.MMatrix(cmds.getAttr(owner + ".worldMatrix[0]")) * inverse
+        a = cmds.getAttr(shape + ".boundingBoxMin")[0]
+        b = cmds.getAttr(shape + ".boundingBoxMax")[0]
+        for corner in ((x, y, z) for x in (a[0], b[0]) for y in (a[1], b[1]) for z in (a[2], b[2])):
+            p = om.MPoint(corner) * into
+            for i, v in enumerate((p.x, p.y, p.z)):
+                low[i], high[i] = min(low[i], v), max(high[i], v)
+    return (tuple(low), tuple(high)) if low[0] <= high[0] else None
+
+
+class Plan(object):
+    """What a press writes on one node: the keys A and B, the transition, every frame's channels."""
+
+    def __init__(self, node, t_a, t_b, transition, frames, height, notes):
+        self.node, self.t_a, self.t_b = node, t_a, t_b
+        self.transition, self.frames, self.height, self.notes = transition, frames, height, notes
+
+
+def plan(node, given=None, axis="Auto"):
+    """Everything a press writes on `node`, computed, nothing touched."""
+    cmds = _cmds()
+    om = _om()
+    if cmds.referenceQuery(node, isNodeReferenced=True):
+        raise Refusal("%s: referenced - not touched" % _short(node))
+    t_a, t_b, b_time = source(node)
+    pose_a, pose_b = pose_at(node, t_a), pose_at(node, b_time)
+    fixed, order = fixed_parts(node)
+
+    def parent_at(t):
+        return om.MMatrix(cmds.getAttr(node + ".parentMatrix[0]", time=t))
+
+    world_a = local_matrix(pose_a[0], pose_a[1], order, fixed) * parent_at(t_a)
+    world_b = local_matrix(pose_b[0], pose_b[1], order, fixed) * parent_at(t_b)
+    rows = tuple(tuple(world_b.getElement(i, j) for j in range(3)) for i in range(3))
+    index, sign = up_axis(rows, axis)
+    notes = []
+    box = object_box(node)
+    if box:
+        bottom, height = bottom_and_height(box[0], box[1], index, sign, rows)
+    else:
+        bottom, height = fixed["rotatePivot"], 0.0
+    if height < 1e-6:
+        height = FALLBACK_HEIGHT
+        notes.append("no geometry - its pivot taken as the bottom, %g cm as the height" % FALLBACK_HEIGHT)
+    up = om.MVector(UP)
+    travel = om.MPoint(bottom) * world_b - om.MPoint(bottom) * world_a
+    flat = travel - up * (travel * up)
+    heading = flat.normal() if flat.length() > 1e-4 else None
+    if heading is None and travel.length() > 1e-4:
+        notes.append("no horizontal travel - no overlap or sway")
+    transition = solve(t_a, t_b, travel.length() / height, flat.length() / height, height, given)
+    if transition.clamped:
+        notes.append("overshoot held to %.1f %% - a slow move cannot arrive faster" % (100 * transition.overshoot))
+    frames = channel_frames(transition, pose_a, pose_b, order, fixed, parent_at, bottom, heading)
+    return Plan(node, t_a, t_b, transition, frames, height, notes)
+
+
+def _write(p, skip, axis):
+    """Keys on every frame of the plan; the A key kept (its out tangent made auto), the marker set."""
+    cmds = _cmds()
+    for i, ch in enumerate(CHANNELS):
+        if ch in skip:
+            continue
+        values = [f[1][i] if i < 3 else f[2][i - 3] for f in p.frames]
+        if not cmds.keyframe(p.node + "." + ch, query=True, time=(p.t_a, p.t_a)):
+            cmds.setKeyframe(p.node, attribute=ch, time=p.t_a, value=values[0])
+        cmds.keyTangent(p.node, attribute=ch, time=(p.t_a, p.t_a), outTangentType="auto")
+        cmds.cutKey(p.node, attribute=ch, time=(p.t_a + 1e-3, FOREVER), clear=True)
+        for f, v in zip(p.frames[1:], values[1:]):
+            cmds.setKeyframe(p.node, attribute=ch, time=f[0], value=v,
+                             inTangentType="auto", outTangentType="auto")
+    if not cmds.attributeQuery(MARKER, node=p.node, exists=True):
+        cmds.addAttr(p.node, longName=MARKER, dataType="string")
+    memo = {"tA": p.t_a, "tB": p.t_b, "tE": p.transition.end, "params": p.transition.params, "axis": axis}
+    cmds.setAttr(p.node + "." + MARKER, json.dumps(memo), type="string")
+
+
+def describe(p, skip):
+    tr = p.transition
+    text = "%s: frames %g-%g, tilt up to %.1f deg, sink %.2f cm, sway %.2f cm, settles %g frames after B" % (
+        _short(p.node), p.t_a, tr.end, tr.peak_tilt, tr.peak_sink, tr.peak_sway, tr.end - p.t_b)
+    notes = list(p.notes)
+    if skip:
+        notes.append("not written (locked or driven): %s" % ", ".join(skip))
+    return text + ("" if not notes else " | " + "; ".join(notes))
+
+
+class _Chunk(object):
+    """One undo step for a press."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        _cmds().undoInfo(openChunk=True, chunkName=self.name)
+
+    def __exit__(self, *exc):
+        _cmds().undoInfo(closeChunk=True)
+        return False
+
+
+def apply(nodes, given=None, axis="Auto"):
+    """Build the transition on every node; one undo step. Returns one line per node."""
+    lines = []
+    with _Chunk("skeldarPhysStop"):
+        for node in nodes:
+            try:
+                p = plan(node, given, axis)
+                skip = blocked(node)
+                if len(skip) == len(CHANNELS):
+                    raise Refusal("%s: every translate/rotate channel is locked or driven" % _short(node))
+                _write(p, skip, axis)
+                lines.append(describe(p, skip))
+            except Refusal as refusal:
+                lines.append(str(refusal))
+    return lines
+
+
+def restore(nodes):
+    """Back to the two keys the transition was built from; the marker removed."""
+    cmds = _cmds()
+    lines = []
+    with _Chunk("skeldarPhysStopRestore"):
+        for node in nodes:
+            memo = remembered(node)
+            times = key_times(node)
+            if not memo or not times or abs(times[-1] - memo["tE"]) > 1e-3:
+                lines.append("%s: no transition of this script to restore" % _short(node))
+                continue
+            pose_b = pose_at(node, memo["tE"])
+            skip = blocked(node)
+            for i, ch in enumerate(CHANNELS):
+                if ch in skip:
+                    continue
+                cmds.cutKey(node, attribute=ch, time=(memo["tA"] + 1e-3, FOREVER), clear=True)
+                value = pose_b[0][i] if i < 3 else pose_b[1][i - 3]
+                cmds.setKeyframe(node, attribute=ch, time=memo["tB"], value=value,
+                                 inTangentType="auto", outTangentType="auto")
+            cmds.deleteAttr(node + "." + MARKER)
+            lines.append("%s: back to its keys at %g and %g" % (_short(node), memo["tA"], memo["tB"]))
+    return lines
+
+
+def selected():
+    """The selected transforms (a selected shape names its transform), in selection order."""
+    cmds = _cmds()
+    out = []
+    for node in cmds.ls(selection=True, long=True) or []:
+        if cmds.objectType(node, isAType="shape"):
+            node = cmds.listRelatives(node, parent=True, fullPath=True)[0]
+        if cmds.objectType(node, isAType="transform") and node not in out:
+            out.append(node)
     return out
 
 
