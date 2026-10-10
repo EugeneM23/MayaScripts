@@ -23,6 +23,8 @@ callbacks before it registers its own.
 import sys
 import time
 
+import maya_hubcopy as hubcopy
+
 from maya_com import frames
 
 SLICE_MS = 40.0
@@ -385,13 +387,17 @@ def start():
     st["callbacks"] = [
         oma.MAnimMessage.addAnimCurveEditedCallback(_on_curves),
     ]
-    st["jobs"] = [
-        cmds.scriptJob(event=["playbackRangeChanged", _on_range]),
-        cmds.scriptJob(event=["playbackRangeSliderChanged", _on_range]),
-        cmds.scriptJob(event=["timeChanged", _on_time]),
-        cmds.scriptJob(event=["SceneOpened", rescan]),
-        cmds.scriptJob(event=["NewSceneOpened", rescan]),
-    ]
+    #  The engine is the scene's, not a card's (2026-10-09): its jobs are made
+    #  in the root scope even when a popup copy's build starts it - a copy that
+    #  closed would otherwise take the hub's time changes with its own jobs.
+    with hubcopy.entered(None):
+        st["jobs"] = [
+            cmds.scriptJob(event=["playbackRangeChanged", _on_range]),
+            cmds.scriptJob(event=["playbackRangeSliderChanged", _on_range]),
+            cmds.scriptJob(event=["timeChanged", _on_time]),
+            cmds.scriptJob(event=["SceneOpened", rescan]),
+            cmds.scriptJob(event=["NewSceneOpened", rescan]),
+        ]
     st["running"] = True
     rescan()
 

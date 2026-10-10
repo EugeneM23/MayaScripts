@@ -41,6 +41,7 @@ import math
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 
 
@@ -1550,10 +1551,18 @@ def _remember(options):
 
 
 def _status(text):
-    """Fixed width: a long message must not stretch the window."""
+    """Fixed width: a long message must not stretch the window. The line of every
+    card shows it (2026-10-09: the studio is the scene's, one look for all the
+    cards); the hub's message line is told from the press's own card only."""
     short = text if len(text) <= STATUS_WIDTH else text[:STATUS_WIDTH - 1] + "…"
+
+    def line():
+        if cmds.control(STATUS, exists=True):
+            cmds.text(STATUS, edit=True, label=short)
+    for scope in [None] + hubcopy.instances("studio"):
+        with hubcopy.entered(scope):
+            line()
     if cmds.control(STATUS, exists=True):
-        cmds.text(STATUS, edit=True, label=short)
         #  2026-10-08: the skin's one message line carries the whole text;
         #  the heads-up below already shows it in the viewport
         hubstyle.tell(STATUS, text, viewport=True)

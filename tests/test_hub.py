@@ -307,7 +307,15 @@ class PendingStartup(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(
             os.path.normcase(os.path.abspath(module.__file__)),
             os.path.normcase(os.path.join(hub.plugin_root(), "install.py")))
-        self.assertEqual(set(sys.modules) - before, set())
+        #  Loading it puts none of OUR modules into sys.modules by name (the
+        #  stdlib modules install.py imports at its top may be new: 2026-10-09,
+        #  this assertion failed alone for json, subprocess, tempfile, ...)
+        added = set(sys.modules) - before
+        ours = sorted(m for m in added
+                      if m.split(".")[0] in ("install", "skeldar_hub_installer",
+                                             "skeldar_features")
+                      or m.startswith("maya_"))
+        self.assertEqual(ours, [])
 
 
 class TheUiScript(unittest.TestCase):

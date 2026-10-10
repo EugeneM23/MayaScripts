@@ -19,6 +19,7 @@ import sys
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
 from maya_com import dragmath, network
 
 CONTEXT = "skeldarComContext"
@@ -358,8 +359,11 @@ def start():
     """The two scriptJobs that put the tool on and take it off."""
     stop()
     st = _state()
-    st["jobs"] = [cmds.scriptJob(event=["SelectionChanged", on_selection]),
-                  cmds.scriptJob(event=["ToolChanged", on_tool])]
+    #  the tool is the scene's (2026-10-09): its jobs are the root's, whichever
+    #  card's build started them - a popup copy's close must not take them
+    with hubcopy.entered(None):
+        st["jobs"] = [cmds.scriptJob(event=["SelectionChanged", on_selection]),
+                      cmds.scriptJob(event=["ToolChanged", on_tool])]
     st["plans"] = {}
 
 

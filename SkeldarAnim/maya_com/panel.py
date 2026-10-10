@@ -10,6 +10,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_com import drag, engine, network
 
@@ -21,7 +22,9 @@ FLOOR = "skeldarComFloor"
 RANGE = "skeldarComRange"
 RANGE_SEG = ("skeldarComRangePlayback", "skeldarComRangeAround")
 AROUND = "skeldarComAround"
-JOB = []
+#  The refresh job of each card standing: '' the hub's, a popup copy's tag its
+#  own (2026-10-09) - a copy's start killed the hub's job before.
+JOB = {}
 
 
 # ------------------------------------------------------------------- pure
@@ -268,22 +271,32 @@ def build_panel():
     return column
 
 
+def _card_key():
+    """The JOB key of the card the call is in: '' for the hub, the copy's tag."""
+    scope = hubcopy.current()
+    return "" if scope is None else scope.tag
+
+
 def start():
-    """The engine, the tool's switching and the panel's own refresh."""
+    """The engine, the tool's switching and this card's own refresh (2026-10-09:
+    the refresh job is per card - closing a popup kills only its own)."""
     try:
         engine.start()
         drag.start()
     except Exception:
         print(traceback.format_exc())
-    for job in JOB:
+    standing = set(scope.tag for scope in hubcopy.live())
+    for key in [k for k in JOB if k and k not in standing]:
+        del JOB[key]
+    old = JOB.pop(_card_key(), None)
+    if old is not None:
         try:
-            if cmds.scriptJob(exists=job):
-                cmds.scriptJob(kill=job, force=True)
+            if cmds.scriptJob(exists=old):
+                cmds.scriptJob(kill=old, force=True)
         except Exception:
             pass
-    del JOB[:]
-    JOB.append(cmds.scriptJob(event=["SelectionChanged", refresh],
-                              parent=STATUS))
+    JOB[_card_key()] = cmds.scriptJob(event=["SelectionChanged", refresh],
+                                      parent=STATUS)
 
 
 def is_open():

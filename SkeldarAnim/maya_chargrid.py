@@ -56,6 +56,7 @@ import time
 import traceback
 
 import maya_charlook as look
+import maya_hubcopy as hubcopy
 
 OBJECT_NAME = "skeldarCharacterGrid"
 GHOST_NAME = "skeldarCharacterGhost"
@@ -63,8 +64,77 @@ FIRE_NAME = "skeldarCharacterFire"      # the overlay drawing the burning cards
 FIRE_MS = 16                            # the fire's frame while it burns
 HUB_CONTROL = "skeldarAnimHub"          # maya_hub.CONTROL, the workspaceControl
 
-#  The grids standing, by the placeholder they are laid over.
+#  The grids standing, by the placeholder they are laid over - by the name the
+#  placeholder answers to in the scope that asks (`_key`), 2026-10-09.
 _GRIDS = {}
+
+
+def _named(base, scope):
+    """`base` outside a section popup; inside one, `base` tagged with the copy's
+    scope (2026-10-09, H2): the hub's grid and a popup's grid, their overlay and
+    their ghost, never share a Qt object name."""
+    return base if scope is None else "{0}_{1}".format(base, scope.tag)
+
+
+def scoped_name(name):
+    """`name` for a Qt object of ours, tagged with the copy it is made in
+    (2026-10-09, H2): two copies never share an object name. The hub's is
+    `name` itself."""
+    scope = hubcopy.current()
+    return name if scope is None else "{0}_{1}".format(name, scope.tag)
+
+def _key(placeholder):
+    """The registry key of `placeholder` (2026-10-09, H1): the name a copy's own
+    control answers to inside the copy, so a popup's grid never takes the hub's
+    entry. Outside a copy the name itself."""
+    return hubcopy.resolve(placeholder)
+
+
+def run_in(scope, fn, *args, **kwargs):
+    """`fn` run inside `scope` (2026-10-09, H3): a Qt event calls the grid, and a
+    callback of a Qt object is not a cmds command, so the names it writes must be
+    the copy's own. A closed copy runs nothing - its names are gone, and a call
+    would reach the hub's controls. No scope: `fn` as it is."""
+    if scope is None:
+        return fn(*args, **kwargs)
+    if not scope.alive:
+        return None
+    with hubcopy.entered(scope):
+        return fn(*args, **kwargs)
+
+
+class ScopedScene(object):
+    """A grid's scene (`Scene()` in Maya, a fake in the tests) with every call of
+    it run in the scope the grid was made in (2026-10-09, H3): the grid's mouse
+    and drag code calls the scene from Qt, outside any command. Attributes read
+    through as they are (a test may replace one after the grid is made)."""
+
+    def __init__(self, scene, scope):
+        self._scene = scene
+        self._scope = scope
+
+    def __getattr__(self, name):
+        attr = getattr(self._scene, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args, **kwargs):
+            return run_in(self._scope, attr, *args, **kwargs)
+        return call
+
+
+def _prune():
+    """Drop the grids whose windows are gone (2026-10-09, H1: a closed copy's
+    grid is never read again, so it leaves the registry when the next grid is
+    laid). Needs Qt, which `attach` has already."""
+    q = _classes()["qt"]
+    for key, grid in list(_GRIDS.items()):
+        try:
+            alive = q.shiboken.isValid(grid)
+        except Exception:                                    # noqa: BLE001
+            alive = False
+        if not alive:
+            _GRIDS.pop(key, None)
 
 
 def _animations():
@@ -270,9 +340,9 @@ def _classes():
         mouse goes straight through it to the grid (in-window, so Qt's flag
         does it). `origin` is where the grid's (0, 0) stands in it."""
 
-        def __init__(self, content, grid):
+        def __init__(self, content, grid, name=FIRE_NAME):
             QtWidgets.QWidget.__init__(self, content)
-            self.setObjectName(FIRE_NAME)
+            self.setObjectName(name)              # per copy (2026-10-09, H2)
             self.setAttribute(Qt.WA_TransparentForMouseEvents)
             self.setAttribute(Qt.WA_NoSystemBackground)
             self.setFocusPolicy(Qt.NoFocus)
@@ -319,7 +389,10 @@ def _classes():
 
         def __init__(self, scene, parent=None, kind="rig", selected=None):
             QtWidgets.QWidget.__init__(self, parent)
-            self.setObjectName(OBJECT_NAME)
+            self.setObjectName(scoped_name(OBJECT_NAME))
+            #  the fire overlay's name, read here: its own event calls it from Qt,
+            #  outside the copy's scope (2026-10-09, H2)
+            self._fire_name = scoped_name(FIRE_NAME)
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
             self.models = list(catalog.MODELS)
@@ -696,7 +769,7 @@ def _classes():
             if overlay is None or not same(overlay.parentWidget(), content):
                 if overlay is not None:
                     overlay.deleteLater()
-                overlay = FireOverlay(content, self)
+                overlay = FireOverlay(content, self, name=self._fire_name)
                 self.destroyed.connect(overlay.deleteLater)
                 self.overlay = overlay
             rects = self.rects()
@@ -1086,20 +1159,25 @@ def attach(placeholder, scene=None, kind="rig", selected=None):
     host = maya_hubqt.find(placeholder, layout=True)
     if host is None:
         return None
+    _prune()
     classes = _classes()
-    grid = classes["PortraitGrid"](scene or Scene(), host, kind, selected)
+    #  the scene is called from Qt events (a click, a drag): its calls run in
+    #  the scope the grid was laid in (H3, 2026-10-09)
+    scene = hubcopy.bind(scene or Scene())
+    grid = classes["PortraitGrid"](scene, host, kind, selected)
     grid._host = host                    # the wrapper lives as long as the grid
     grid._keeper = classes["Keeper"](grid, grid)
     host.installEventFilter(grid._keeper)
     grid.fit(host)
     grid.show()
-    _GRIDS[placeholder] = grid
+    _GRIDS[_key(placeholder)] = grid
     return grid
 
 
 def live(placeholder):
-    """The grid standing over `placeholder`, or None."""
-    grid = _GRIDS.get(placeholder)
+    """The grid standing over `placeholder` in the scope that asks, or None."""
+    key = _key(placeholder)
+    grid = _GRIDS.get(key)
     if grid is None:
         return None
     try:
@@ -1108,5 +1186,5 @@ def live(placeholder):
             return grid
     except Exception:                                        # noqa: BLE001
         pass
-    _GRIDS.pop(placeholder, None)
+    _GRIDS.pop(key, None)
     return None

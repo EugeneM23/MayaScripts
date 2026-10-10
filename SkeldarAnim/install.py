@@ -100,6 +100,9 @@ _PAYLOAD = (
     "maya_hubglow.py",          # its controls glowing under the mouse (2026-10-02)
     "maya_edgerules.py",        # the edge panel's rules (2026-10-08)
     "maya_hubedge.py",          # the edge panel's windows (2026-10-08)
+    "maya_hubcopy.py",          # a section's second build: the scope its names live in (2026-10-09)
+    "maya_hubpop_rules.py",     # where a section's popup stands in its viewport (2026-10-09)
+    "maya_hubpop.py",           # a section's popup over the active viewport (2026-10-09)
     "maya_invlook.py",          # the weapon inventory's look (2026-09-29)
     "maya_inventory.py",        # the weapon inventory: the Weapons card
     "maya_charlook.py",         # the Characters portrait grid's look (2026-09-30)
@@ -1047,6 +1050,22 @@ def complete_startup(cmds=None, plug_in_path=None, session_start=None):
         return "startup plug-in not registered: {0}".format(error)
 
 
+def _destroy_popups():
+    """The section popups an older module object opened, destroyed NOW
+    (2026-10-09; maya_hubpop.destroy_all, the popups remembered for the
+    next hub build). Never raises: an install must finish whatever the
+    popups did. The count, or 0."""
+    old = sys.modules.get("maya_hubpop")
+    if old is None:
+        return 0
+    try:
+        return int(old.destroy_all(forget=False))
+    except Exception:                                    # noqa: BLE001
+        import traceback
+        print(traceback.format_exc())
+        return 0
+
+
 def install(dropped=None, quiet=False):
     """Copy the payload, build the shelf, say so.
 
@@ -1075,6 +1094,10 @@ def install(dropped=None, quiet=False):
     if not same_place(src, dest):
         kept = copy_payload(src, dest)
         write_version(src, dest)
+    #  The section popups (2026-10-09) hold the OLD modules' windows and
+    #  callbacks: destroyed before the purge, remembered - the hub built
+    #  from the new modules brings them back (maya_hubpop.adopt).
+    _destroy_popups()
     reloaded = purge_modules()
     _build_shelf(dest.replace("\\", "/"))
     buttons = len(button_specs(dest))

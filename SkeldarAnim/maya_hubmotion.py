@@ -56,6 +56,14 @@ LIGHT_MIN_MS = 40
 GLOW_IN_MS = 110
 GLOW_OUT_MS = 220
 
+#  The section popups (2026-10-09, «открытие и закрытие поапа должно быть с
+#  плавной анимацией»): a popup opens fading in and rising POPUP_SLIDE logical
+#  px into its place (POPUP_OPEN_MS), and shuts fading out (POPUP_CLOSE_MS);
+#  its roll-up slides like a card's (duration()).
+POPUP_OPEN_MS = 220
+POPUP_CLOSE_MS = 170
+POPUP_SLIDE = 10
+
 
 def _cmds():
     import maya.cmds as cmds

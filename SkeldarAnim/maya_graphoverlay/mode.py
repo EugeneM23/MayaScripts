@@ -31,6 +31,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_graphoverlay import geometry
 
@@ -521,10 +522,13 @@ def _follow_once():
 
 
 def _install_jobs():
+    #  The overlay is the scene's, not a card's (2026-10-09): its scene jobs are
+    #  made in the root scope, so a popup copy's close does not take them.
     for event in ("SceneOpened", "NewSceneOpened"):
         try:
-            _STATE.jobs.append(cmds.scriptJob(event=[event, _on_scene],
-                                              killWithScene=False))
+            with hubcopy.entered(None):
+                _STATE.jobs.append(cmds.scriptJob(event=[event, _on_scene],
+                                                  killWithScene=False))
         except Exception:                                     # noqa: BLE001
             pass
 
@@ -556,7 +560,11 @@ def button_label():
 
 
 def _each_card(fn):
-    fn()
+    """`fn()` in the hub's card and in each popup copy's (2026-10-09): the mode
+    is one, so its button and its line read the same in every card."""
+    for scope in [None] + hubcopy.instances("graphoverlay"):
+        with hubcopy.entered(scope):
+            fn()
 
 
 def _paint_button():

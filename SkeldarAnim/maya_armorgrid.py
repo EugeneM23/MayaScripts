@@ -26,6 +26,7 @@ import os
 import traceback
 
 import maya_charlook as look
+import maya_hubcopy as hubcopy
 
 OBJECT_NAME = "skeldarArmorGrid"
 GHOST_NAME = "skeldarArmorGhost"
@@ -35,6 +36,31 @@ OPEN_SCENE = look.OPEN_SCENE
 
 #  The grids standing, by the placeholder they are laid over.
 _GRIDS = {}
+
+
+def scoped_name(name):
+    """`name` for a Qt object of ours, tagged with the copy it is made in
+    (2026-10-09, H2): two copies never share an object name. The hub's is
+    `name` itself."""
+    scope = hubcopy.current()
+    return name if scope is None else "{0}_{1}".format(name, scope.tag)
+
+def _key(placeholder):
+    """The registry key of `placeholder` in the scope that asks (2026-10-09, H1):
+    a popup's tiles never take the hub's entry."""
+    return hubcopy.resolve(placeholder)
+
+
+def _prune():
+    """Drop the grids whose windows are gone (a closed copy's are never read again)."""
+    q = _classes()["qt"]
+    for key, grid in list(_GRIDS.items()):
+        try:
+            alive = q.shiboken.isValid(grid)
+        except Exception:                                    # noqa: BLE001
+            alive = False
+        if not alive:
+            _GRIDS.pop(key, None)
 
 
 def _last_line(error_text):
@@ -123,7 +149,7 @@ def _classes():
 
         def __init__(self, scene, parent=None, selected=None):
             QtWidgets.QWidget.__init__(self, parent)
-            self.setObjectName(OBJECT_NAME)
+            self.setObjectName(scoped_name(OBJECT_NAME))
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
             self.rows = list(catalog.ARMOR)
@@ -472,20 +498,25 @@ def attach(placeholder, scene=None, selected=None):
     host = maya_hubqt.find(placeholder, layout=True)
     if host is None:
         return None
+    _prune()
     classes = _classes()
-    grid = classes["ArmorGrid"](scene or Scene(), host, selected)
+    #  the scene is called from Qt events (a drag, a click): its calls run in the
+    #  scope the tiles were laid in (H3, 2026-10-09)
+    scene = hubcopy.bind(scene or Scene())
+    grid = classes["ArmorGrid"](scene, host, selected)
     grid._host = host                    # the wrapper lives as long as the grid
     grid._keeper = classes["Keeper"](grid, grid)
     host.installEventFilter(grid._keeper)
     grid.fit(host)
     grid.show()
-    _GRIDS[placeholder] = grid
+    _GRIDS[_key(placeholder)] = grid
     return grid
 
 
 def live(placeholder):
-    """The tiles standing over `placeholder`, or None."""
-    grid = _GRIDS.get(placeholder)
+    """The tiles standing over `placeholder` in the scope that asks, or None."""
+    key = _key(placeholder)
+    grid = _GRIDS.get(key)
     if grid is None:
         return None
     try:
@@ -493,5 +524,5 @@ def live(placeholder):
             return grid
     except Exception:                                        # noqa: BLE001
         pass
-    _GRIDS.pop(placeholder, None)
+    _GRIDS.pop(key, None)
     return None

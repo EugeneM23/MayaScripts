@@ -35,6 +35,7 @@ import collections
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_scenesetup import colour as colouring
 
@@ -321,10 +322,26 @@ STATUS = "skeldarColourStatus"
 COLUMNS = 4
 
 
+def _standing(name):
+    """Whether control `name` stands in THIS panel (2026-10-09, the popups).
+
+    `cmds.control` is not a creator, so a popup's copy asking for a name it
+    did not make is answered by the HUB's control of that name (maya_hubcopy
+    passes an unknown name through): its status would then write the hub's
+    line. Measured with a fake cmds: `cmds.text(name, exists=True)` does not
+    do that, `cmds.control(name, exists=True)` does. So a copy asks through
+    the name it made, and only that.
+    """
+    if hubcopy.current() is None:
+        return bool(cmds.control(name, exists=True))
+    return (hubcopy.resolve(name) != name
+            and bool(cmds.control(name, exists=True)))
+
+
 def _status(text):
     """Fixed width, so a long message cannot stretch the window."""
     short = text if len(text) <= STATUS_WIDTH else text[:STATUS_WIDTH - 1] + "…"
-    if cmds.control(STATUS, exists=True):
+    if _standing(STATUS):
         cmds.text(STATUS, edit=True, label=short)
         #  2026-10-08: the skin's one message line carries the whole text;
         #  the heads-up below already shows it in the viewport
@@ -350,17 +367,31 @@ def refresh(*_args):
     nothing else -- the lesson `maya_scenesetup.window` paid for with its
     swatch.
     """
-    if not cmds.control(TAKEN, exists=True):
+    if not _standing(TAKEN):
         return ""
     message = taken_message(scene_colours())
     cmds.text(TAKEN, edit=True, label=message)
     return message
 
 
+def refresh_all(*_args):
+    """The taken line of the hub's card AND of every popup copy (2026-10-09).
+
+    A press in any of them changes what all of them show, and no scriptJob
+    of ours refreshes this line. Each one is asked in its own scope: the
+    hub's in the hub's names, every copy's in the copy's.
+    """
+    with hubcopy.entered(None):
+        refresh()
+    for scope in hubcopy.instances(HUB_SECTION):
+        with hubcopy.entered(scope):
+            refresh()
+
+
 def _press(rgb):
     def go(*_args):
         _run(lambda: _status(paint(rgb)))
-        refresh()
+        refresh_all()
     return go
 
 
@@ -369,17 +400,17 @@ def _press_custom(*_args):
         rgb = cmds.colorSliderGrp(CUSTOM, query=True, rgbValue=True)
         return _status(paint(tuple(rgb)))
     _run(go)
-    refresh()
+    refresh_all()
 
 
 def _press_free(*_args):
     _run(lambda: _status(paint_free()))
-    refresh()
+    refresh_all()
 
 
 def is_open():
     """True while our section is built in the hub (read by maya_hotkeys)."""
-    return bool(cmds.control(STATUS, exists=True))
+    return _standing(STATUS)
 
 
 def show_window():

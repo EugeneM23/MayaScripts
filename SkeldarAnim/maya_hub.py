@@ -363,6 +363,9 @@ def _callbacks():
         "classic": lambda: set_classic(True),
         "jump": focus,
         "toggled": remember,
+        #  a card's popout button (2026-10-09): the section's copy in the
+        #  viewport opens or closes (maya_hubpop)
+        "popout": _press_popout,
         "told": _told,
         "hover": _hover_sound,
         "sounds": set_sounds,
@@ -418,6 +421,18 @@ def _dress_header(skin):
     _dress_sounds(skin)
     _dress_animations(skin)
     _dress_edge(skin)
+    _dress_popped(skin)
+
+
+def _dress_popped(skin):
+    """A new skin lights the popout buttons of the popups standing (2026-10-09:
+    the hub closed and reopened while a popup stayed up over the viewport)."""
+    try:
+        import maya_hubpop
+        for key in maya_hubpop.open_keys():
+            skin.set_popped(key, True)
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
 
 
 def _dress_edge(skin):
@@ -508,6 +523,11 @@ def build():
     """The uiScript body: the hub inside the workspaceControl."""
     global _BUILT_HERE, _SKIN
     _register_pending_startup()
+    if not _BUILT_HERE:
+        #  A fresh module object (Maya's start, an install): the popups an
+        #  older one opened are destroyed, the remembered ones come back
+        #  deferred (maya_hubpop.adopt, 2026-10-09).
+        _adopt_popups()
     if edge_on():
         #  A docked control Maya restored from an older workspace while the
         #  hub lives at the edge now (2026-10-08): nothing is built in it -
@@ -736,6 +756,11 @@ def start():
     stands."""
     if not edge_on():
         return None
+    #  The popups remembered open come back at Maya's start (2026-10-09): in
+    #  edge mode the startup call builds the panel, not `build()` - which is
+    #  where a docked hub restores them.
+    if not _BUILT_HERE:
+        _adopt_popups()
     current = edge()
     if current is not None and _SKIN is None:
         return current
@@ -972,6 +997,38 @@ def _press_hotkeys():
     if message:
         say(message)
     return message
+
+
+def _press_popout(key):
+    """A card's popout button (2026-10-09): the section's copy in the active
+    viewport opens or closes (maya_hubpop). The card's button is lit while
+    its popup stands (`paint_popped`, told by maya_hubpop itself)."""
+    import maya_hubpop
+    try:
+        return maya_hubpop.toggle(key)
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+        say("The popup could not be opened - the Script Editor has the "
+            "details")
+        return False
+
+
+def _adopt_popups():
+    """The popups of an older module object destroyed, the remembered ones
+    restored (deferred). Never raises: the hub builds whatever happens."""
+    try:
+        import maya_hubpop
+        maya_hubpop.adopt()
+    except Exception:                                        # noqa: BLE001
+        print(traceback.format_exc())
+
+
+def paint_popped(key, on):
+    """The card's popout button lit or dark (maya_hubpop told us the popup
+    of section `key` opened or closed)."""
+    if is_skinned():
+        _SKIN.set_popped(key, on)
+    return bool(on)
 
 
 def _press_update():

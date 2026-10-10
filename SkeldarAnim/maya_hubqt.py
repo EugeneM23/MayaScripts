@@ -34,6 +34,7 @@ import time
 import types
 import zlib
 
+import maya_hubcopy as hubcopy
 import maya_hubicons as hubicons
 import maya_hubmotion as hubmotion
 import maya_hubstyle as hubstyle
@@ -102,9 +103,11 @@ def available():
 # ------------------------------------------------------------------- seams
 
 def find(name, layout=False):
-    """The QWidget of Maya control (or layout) `name`, or None."""
+    """The QWidget of Maya control (or layout) `name`, or None. Inside a
+    section popup's scope (maya_hubcopy) the name is the copy's own."""
     import maya.OpenMayaUI as omui
     q = qt()
+    name = hubcopy.resolve(name)
     ptr = (omui.MQtUtil.findLayout(name) if layout
            else omui.MQtUtil.findControl(name))
     if not ptr and not layout:
@@ -792,10 +795,11 @@ class Card(object):
     off screen, or with `animate` False the old instant show / hide."""
 
     def __init__(self, key, label, icon_name, colour, chip, scale,
-                 collapsed=False, on_toggle=None, motion=None):
+                 collapsed=False, on_toggle=None, motion=None, on_popout=None):
         q = qt()
         w = q.QtWidgets
         self.key = key
+        self.label = label
         self.scale = scale
         #  What a section's status line says about its card (2026-10-08): the
         #  icon and colour go to the message line when this card said
@@ -861,9 +865,25 @@ class Card(object):
         sub.setObjectName("skeldarHubCardSubLayout_" + key)
         sub.setContentsMargins(0, 0, 0, 0)
         self.chevron = _named(w.QLabel(), "skeldarHubCardChevron_" + key)
+        #  the section's popup (2026-10-09, «кнопочка прямо на разделе перед
+        #  стрелочкой раскрытия»): before the chevron, lit while it stands
+        self.popout = _named(w.QToolButton(), "skeldarHubCardPopout_" + key,
+                             "popout")
+        self.popout.setIcon(icon("picture-in-picture",
+                                 hubstyle.TOKENS["muted"], s(14)))
+        self.popout.setIconSize(q.QtCore.QSize(s(14), s(14)))
+        self.popout.setAutoRaise(True)
+        self.popout.setFixedSize(s(20), s(18))
+        self.popout.setCursor(q.QtCore.Qt.PointingHandCursor)
+        self.popout.setToolTip("Open {0} in the viewport - a copy that stays "
+                               "over the viewport window".format(label))
+        if on_popout is not None:
+            self.popout.clicked.connect(
+                lambda *_a, k=key: on_popout(k))
         row.addWidget(chip_label)
         row.addWidget(title)
         row.addWidget(self.subtitle_slot, 1)
+        row.addWidget(self.popout)
         row.addWidget(self.chevron)
 
         self.body = _named(w.QWidget(), "skeldarHubBody_" + key)
@@ -889,6 +909,17 @@ class Card(object):
 
     def collapsed(self):
         return bool(self._collapsed)
+
+    def set_popped(self, on):
+        """The popout button lit while this section's popup stands
+        (maya_hubpop, 2026-10-09): accent-coloured, a property the stylesheet
+        may also style, repainted."""
+        colour = hubstyle.TOKENS["accent"] if on else hubstyle.TOKENS["muted"]
+        self.popout.setProperty("skPopped", bool(on))
+        self.popout.setIcon(icon("picture-in-picture", colour,
+                                 hubstyle.px(14, self.scale)))
+        repolish(self.popout)
+        return bool(on)
 
     def sliding(self):
         """A slide is under way."""
@@ -1390,10 +1421,18 @@ class Skin(object):
         card = Card(key, label, icon_name, colour, chip, self.scale,
                     collapsed=collapsed,
                     on_toggle=lambda k, c: self._call("toggled", k, c),
-                    motion=lambda: self.animations)
+                    motion=lambda: self.animations,
+                    on_popout=lambda k: self._call("popout", k))
         self.column.insertWidget(self.column.count() - 1, card.frame)
         self.cards[key] = card
         return card
+
+    def set_popped(self, key, on):
+        """The section's popout button lit or not (its popup stands or not)."""
+        card = self.cards.get(key)
+        if card is not None and self.alive():
+            card.set_popped(on)
+        return bool(on)
 
     def add_jump(self, key, label, icon_name, colour):
         q = qt()
@@ -2097,7 +2136,7 @@ def list_widget(name):
     if q is None:
         return None
     import maya.OpenMayaUI as omui
-    ptr = omui.MQtUtil.findControl(name)
+    ptr = omui.MQtUtil.findControl(hubcopy.resolve(name))
     if not ptr:
         return None
     widget = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QListWidget)
@@ -2369,6 +2408,11 @@ def _apply_mark(mark, card, scale, size):
     #  text to the hub's one message line; a note is the header's tooltip; a
     #  context line is shown elsewhere by its writer.
     if mark.role == "status":
+        #  A popup (2026-10-09) has no message line of its own to relay to:
+        #  its status line stays where the section put it.
+        if getattr(card, "keeps_text", False):
+            card.status_controls.add(_leaf(mark.name))
+            return True
         widget.setVisible(False)
         widget.setMaximumHeight(0)
         #  by its LEAF: `cmds.text(...)` answers the full path, which is
@@ -2381,6 +2425,8 @@ def _apply_mark(mark, card, scale, size):
         widget.setVisible(False)
         return True
     if mark.role == "context":
+        if getattr(card, "keeps_text", False):
+            return True                     # a popup shows its context line
         widget.setVisible(False)
         return True
     if mark.role == "grip":

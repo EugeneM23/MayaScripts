@@ -33,6 +33,8 @@ Spec: docs/superpowers/specs/2026-09-28-hub-skin-design.md
 
 import collections
 
+import maya_hubcopy
+
 # ------------------------------------------------------------------ tokens
 
 TOKENS = {
@@ -71,6 +73,9 @@ TOKENS = {
 
 #  The objectNames the stylesheet scopes by (hubqt names its widgets so).
 ROOT = "skeldarAnimHubRoot"
+#  a section's popup window's root: "skeldarAnimPopupRoot_<tag>" (maya_hubpop,
+#  2026-10-09) - matched by prefix
+POPUP_ROOT = "skeldarAnimPopupRoot"
 HUB_CONTROL = "skeldarAnimHub"          # maya_hub.CONTROL, the workspaceControl
 CONTENT = "skeldarHubContent"
 VIEWPORT = "skeldarHubViewport"
@@ -230,7 +235,12 @@ def unlisten(fn):
 def tell(control, text, viewport=False):
     """Section status control `control` now says `text`. `viewport`: the
     writer shows it in the viewport itself (an inViewMessage), so the edge
-    panel need not. Never raises; answers `text`."""
+    panel need not. Never raises; answers `text`.
+
+    Inside a section popup (2026-10-09) the control is the copy's own, and
+    its name is what the listeners get - so a copy's line is not the hub's
+    card's (the hub's relay matches by name)."""
+    control = maya_hubcopy.resolve(control)
     for fn in list(_LISTENERS):
         try:
             fn(control, text, viewport)
@@ -344,9 +354,11 @@ def hex_of(rgb):
 
 def over_hub(names, control=HUB_CONTROL):
     """Whether a point whose widget ancestry carries `names` (objectNames,
-    innermost first) lies on the hub itself: a drag released there does
-    nothing (maya_hubqt.on_hub)."""
-    return any(name in (ROOT, control) for name in names or ())
+    innermost first) lies on the hub itself - or on one of its section popups
+    (2026-10-09, `POPUP_ROOT`): a drag released there does nothing
+    (maya_hubqt.on_hub)."""
+    return any(name in (ROOT, control) or name.startswith(POPUP_ROOT)
+               for name in names or ())
 
 
 def px(value, scale):

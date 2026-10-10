@@ -49,6 +49,7 @@ import os
 import traceback
 
 import maya_charlook as charlook
+import maya_hubcopy as hubcopy
 import maya_invlook as look
 
 PLACEHOLDER = "mayaSceneSetupInventory"         # window._INVENTORY
@@ -61,8 +62,36 @@ SLOT_LABEL = {"R": "Right hand", "L": "Left hand"}
 EVENTS = ("SelectionChanged", "Undo", "Redo", "SceneOpened", "NewSceneOpened")
 CHANNEL_PX = 9.5           # the channel names' and values' font, logical px
 
-#  The panels standing, by the placeholder they are laid over.
+#  The panels standing, by the placeholder they are laid over - by the name
+#  the placeholder answers to in the scope that asks (`_key`, 2026-10-09): a
+#  popup's panel never takes the hub's entry (the live break of 2026-10-09).
 _PANELS = {}
+
+
+def scoped_name(name):
+    """`name` for a Qt object of ours, tagged with the copy it is made in
+    (2026-10-09, H2): two copies never share an object name. The hub's is
+    `name` itself."""
+    scope = hubcopy.current()
+    return name if scope is None else "{0}_{1}".format(name, scope.tag)
+
+def _key(placeholder):
+    """The registry key of `placeholder`: the name a copy's own control answers
+    to inside the copy, and the placeholder itself outside one."""
+    return hubcopy.resolve(placeholder)
+
+
+def _prune():
+    """Drop the panels whose windows are gone: a closed copy's panel is never
+    read again, so it leaves the registry the next time one is laid."""
+    q = _classes()["qt"]
+    for key, panel in list(_PANELS.items()):
+        try:
+            alive = q.shiboken.isValid(panel)
+        except Exception:                                    # noqa: BLE001
+            alive = False
+        if not alive:
+            _PANELS.pop(key, None)
 
 
 def _last_line(error_text):
@@ -309,7 +338,7 @@ def _classes():
 
         def __init__(self, scene, parent=None):
             QtWidgets.QWidget.__init__(self, parent)
-            self.setObjectName(OBJECT_NAME)
+            self.setObjectName(scoped_name(OBJECT_NAME))
             self.scene = scene
             self.k = float(scene.scale() or 1.0)
             self.keys = [e.key for e in catalog.WEAPONS]
@@ -921,20 +950,25 @@ def attach(placeholder=PLACEHOLDER, scene=None):
     if host is None:
         return None
     close_windows()
+    _prune()
     classes = _classes()
-    panel = classes["InventoryPanel"](scene or Scene(placeholder), host)
+    #  the scene is called from Qt events (a drag, a click), outside any
+    #  command: its calls run in the scope the panel was laid in (H3)
+    scene = hubcopy.bind(scene or Scene(placeholder))
+    panel = classes["InventoryPanel"](scene, host)
     panel._host = host                   # the wrapper lives as long as the panel
     panel._keeper = classes["Keeper"](panel, panel)
     host.installEventFilter(panel._keeper)
     panel.fit(host)
     panel.show()
-    _PANELS[placeholder] = panel
+    _PANELS[_key(placeholder)] = panel
     return panel
 
 
 def live(placeholder=PLACEHOLDER):
-    """The panel standing over `placeholder`, or None."""
-    panel = _PANELS.get(placeholder)
+    """The panel standing over `placeholder` in the scope that asks, or None."""
+    key = _key(placeholder)
+    panel = _PANELS.get(key)
     if panel is None:
         return None
     try:
@@ -943,7 +977,7 @@ def live(placeholder=PLACEHOLDER):
             return panel
     except Exception:                                        # noqa: BLE001
         pass
-    _PANELS.pop(placeholder, None)
+    _PANELS.pop(key, None)
     return None
 
 

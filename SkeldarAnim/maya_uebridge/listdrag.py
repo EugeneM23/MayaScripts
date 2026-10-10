@@ -42,6 +42,8 @@ Spec: docs/superpowers/specs/2026-10-01-uebridge-drag-to-viewport-design.md
 
 import traceback
 
+import maya_hubcopy as hubcopy
+
 GHOST_NAME = "skeldarClipGhost"
 GHOST = 48              # logical px: the icon riding the cursor
 THROTTLE_MS = 33        # the caption is re-read at most this often
@@ -564,6 +566,10 @@ def attach_widget(widget, records_of, scene=None, key=None):
     (the list's name; the widget's address when none)."""
     classes = _classes()
     q = classes["qt"]
+    #  the list's name as the scope that asks knows it (2026-10-09, H1): a popup's
+    #  drag on the same list never detaches the hub's
+    if isinstance(key, str):
+        key = hubcopy.resolve(key)
     key = key or q.shiboken.getCppPointer(widget)[0]
     old = _DRAGS.pop(key, None)
     if old is not None:
@@ -572,7 +578,9 @@ def attach_widget(widget, records_of, scene=None, key=None):
                 old.detach()
         except Exception:                                    # noqa: BLE001
             pass
-    drag = classes["Drag"](widget, records_of, scene or Scene())
+    #  the scene is called from Qt events (a drag): its calls run in the scope
+    #  the drag was attached in (H3)
+    drag = classes["Drag"](widget, records_of, hubcopy.bind(scene or Scene()))
     widget.viewport().installEventFilter(drag)
     widget.installEventFilter(drag)
     _DRAGS[key] = drag
@@ -587,7 +595,7 @@ def attach(list_name, records_of, scene=None):
     if q is None:
         return None
     import maya.OpenMayaUI as omui
-    ptr = omui.MQtUtil.findControl(list_name)
+    ptr = omui.MQtUtil.findControl(hubcopy.resolve(list_name))
     if not ptr:
         return None
     widget = q.shiboken.wrapInstance(int(ptr), q.QtWidgets.QListWidget)

@@ -56,6 +56,7 @@ import maya.cmds as cmds
 import maya.mel as mel
 import maya.utils
 
+import maya_hubcopy as hubcopy
 import maya_sharenet as net
 import maya_sharerecords as records
 
@@ -113,6 +114,55 @@ def state():
               "texts": [], "last_refresh": 0.0}
         sys._skeldar_share = st
     return st
+
+
+# ----------------------------------------------------------------- cards
+#
+#  The section stands in the hub's card and in every popup copy of it
+#  (2026-10-09, maya_hubcopy: a copy is a second build in a scope of its
+#  own). The DATA is one set - the entries, the channel, the transfers - so
+#  every card shows it; what belongs to a card is its list's rows and its
+#  picked rows. The same helpers stand in maya_stash.py.
+
+def cards():
+    """The hub's card (None) and every live popup copy of this section, the
+    oldest first."""
+    return [None] + hubcopy.instances(HUB_SECTION)
+
+
+def each_card(fn):
+    """`fn()` run once in each card's scope, the hub's first; the answers in
+    that order. A result that came from a thread or a listener has no scope
+    of its own, so it reaches every card this way (2026-10-09, H4): the root
+    scope alone refreshed the hub's list and left a copy's stale."""
+    answers = []
+    for scope in cards():
+        with hubcopy.entered(scope):
+            answers.append(fn())
+    return answers
+
+
+def _view():
+    """The rows and texts of the card the call is in. The hub keeps them on
+    the state, as it always did; a popup copy keeps its own (2026-10-09,
+    H7): one cache for two lists would let the hub skip the rewrite of its
+    list because a copy had just written the same text."""
+    st = state()
+    scope = hubcopy.current()
+    if scope is None:
+        return st
+    return st.setdefault("copies", {}).setdefault(
+        scope.tag, {"rows": [], "texts": []})
+
+
+def _prune_views():
+    """The views of copies that closed are dropped (a tag is never reused)."""
+    copies = state().get("copies")
+    if copies:
+        standing = set(scope.tag for scope in hubcopy.live())
+        for tag in list(copies):
+            if tag not in standing:
+                del copies[tag]
 
 
 def _option(name):
@@ -380,7 +430,7 @@ def _sent(ready):
     st["transfers"].pop(ready["id"], None)
     save_history()
     refresh()
-    _status("Sent {0} to everybody - {1} zipped, {2:.0f} s.".format(
+    _say_all("Sent {0} to everybody - {1} zipped, {2:.0f} s.".format(
         ready["name"], records.size_text(ready["zip"]),
         time.time() - ready["sent"]))
 
@@ -397,7 +447,7 @@ def _send_failed(rid, reason):
     save_history()
     refresh()
     name = entry["record"]["name"] if entry else "the file"
-    _status("Sending {0} failed: {1} - nothing was sent.".format(name, reason))
+    _say_all("Sending {0} failed: {1} - nothing was sent.".format(name, reason))
 
 
 # --------------------------------------------------------------- receiving
@@ -469,7 +519,7 @@ def _receive_delete(record, now):
     save_history()
     refresh()
     if shown and record.get("by_machine") != machine_id():
-        _status(records.deleted_text(record) + (
+        _say_all(records.deleted_text(record) + (
             " - your copy stays on this disk: it is the open scene"
             if kept else ""))
     return True
@@ -605,8 +655,8 @@ def _fetched(rid, path):
     st["transfers"].pop(rid, None)
     save_history()
     refresh()
-    if entry is not None and selected_id() == rid:
-        _selected()
+    if entry is not None:
+        each_card(lambda: _refresh_details(rid))
 
 
 def _fetch_failed(rid, reason, path=None):
@@ -618,19 +668,20 @@ def _fetch_failed(rid, reason, path=None):
     refresh()
     entry = st["entries"].get(rid)
     if entry is not None:
-        _status("Downloading {0} failed: {1} - Open tries again.".format(
+        _say_all("Downloading {0} failed: {1} - Open tries again.".format(
             entry["record"]["name"], reason))
 
 
 # ----------------------------------------------------------------- actions
 
 def selected_ids():
-    """The picked rows' ids, top to bottom (the list takes several)."""
+    """The picked rows' ids, top to bottom (the list takes several). The rows
+    are the card's own: the list it is asked about is the card's (2026-10-09)."""
     if not cmds.textScrollList(LIST, exists=True):
         return []
     picked = cmds.textScrollList(LIST, query=True,
                                  selectIndexedItem=True) or []
-    rows = state()["rows"]
+    rows = _view()["rows"]
     return [rows[index - 1] for index in picked if 0 < index <= len(rows)]
 
 
@@ -892,7 +943,7 @@ def _deleted(done, refused):
         parts.append("{0} not deleted: {1} - nothing changed for {2}".format(
             ", ".join(r["name"] for r, _why in refused), refused[0][1],
             "it" if len(refused) == 1 else "them"))
-    return _status(" - ".join(parts))
+    return _say_all(" - ".join(parts))
 
 
 # ---------------------------------------------------------------------- UI
@@ -922,6 +973,14 @@ def _status(message, **_kwargs):
     return message
 
 
+def _say_all(message):
+    """A line with no press behind it - a thread's or a listener's result: the
+    status line of every card says it (2026-10-09, H4). A press answers in its
+    own card through `_status`."""
+    each_card(lambda: _status(message))
+    return message
+
+
 def _labels(now):
     """(ids, row texts) for the list, newest first."""
     st = state()
@@ -945,16 +1004,22 @@ def _label(rid, record, mine_id):
 
 
 def refresh():
-    """The list, keeping the picked rows by id. Only the rows that changed
+    """Every card's list (the hub's and each popup copy's), keeping each one's
+    picked rows by id (2026-10-09, H4: a result from a thread reaches them all)."""
+    return each_card(_refresh_one)
+
+
+def _refresh_one():
+    """This card's list, keeping its picked rows by id. Only the rows that changed
     are rewritten, so a progress tick does not jump the scroll."""
     if not cmds.textScrollList(LIST, exists=True):
         return
-    st = state()
+    view = _view()
     keep = selected_ids()
     ids, texts = _labels(time.time())
-    old = st["texts"]
+    old = view["texts"]
     count = cmds.textScrollList(LIST, query=True, numberOfItems=True) or 0
-    if old and len(old) == len(texts) == count and st["rows"] == ids:
+    if old and len(old) == len(texts) == count and view["rows"] == ids:
         for index, (was, now) in enumerate(zip(old, texts)):
             if was != now:
                 cmds.textScrollList(LIST, edit=True,
@@ -965,7 +1030,7 @@ def refresh():
         cmds.textScrollList(LIST, edit=True, removeAll=True)
         for text in texts:
             cmds.textScrollList(LIST, edit=True, append=text)
-    st["rows"], st["texts"] = ids, texts
+    view["rows"], view["texts"] = ids, texts
     again = [ids.index(rid) + 1 for rid in keep if rid in ids]
     if again:
         cmds.textScrollList(LIST, edit=True, selectIndexedItem=again)
@@ -977,7 +1042,7 @@ def refresh_subtitle():
         return
     st = state()
     cmds.text(SUBTITLE, edit=True,
-              label=records.subtitle(st["online"], len(st["rows"])))
+              label=records.subtitle(st["online"], len(_view()["rows"])))
 
 
 def _selected(*_args):
@@ -994,9 +1059,34 @@ def _selected(*_args):
         _label(ids[0], record, mine_id), time.time()))
 
 
+def _refresh_details(rid):
+    """This card's details line, when its one picked row is `rid` - a file
+    that arrived for it (2026-10-09: each list has its own selection)."""
+    if selected_id() == rid:
+        _selected()
+
+
 def _author_changed(*_args):
     if cmds.textField(AUTHOR_FIELD, exists=True):
         set_sender_name(cmds.textField(AUTHOR_FIELD, query=True, text=True))
+        _show_author_elsewhere()
+
+
+def _show_author_elsewhere():
+    """The other cards' Author field shows the name just typed (2026-10-09,
+    H5/H7): the name is one remembered value - a copy and the hub read it
+    the same way - so a field that still showed the old one would say a
+    name that is not the one sent."""
+    here = hubcopy.current()
+    name = sender_name()
+    for scope in cards():
+        if scope is here:
+            continue
+        with hubcopy.entered(scope):
+            if (cmds.textField(AUTHOR_FIELD, exists=True)
+                    and cmds.textField(AUTHOR_FIELD, query=True,
+                                       text=True) != name):
+                cmds.textField(AUTHOR_FIELD, edit=True, text=name)
 
 
 def _run(action):
@@ -1111,11 +1201,15 @@ def build_panel():
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
                             height=36), "status")
     cmds.setParent("..")
-    st = state()
-    st["texts"], st["rows"] = [], []
+    view = _view()
+    view["texts"], view["rows"] = [], []
     load_history()
     refresh()
-    listen()
+    #  The subscriber is the hub's to start (2026-10-09, H6): a copy's build would
+    #  restart it - a second connection, a gap in what arrives. A copy starts one
+    #  only when none stands (the hub never built, say).
+    if hubcopy.current() is None or state().get("subscriber") is None:
+        listen()
     return column
 
 

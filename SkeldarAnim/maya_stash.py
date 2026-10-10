@@ -44,6 +44,7 @@ import traceback
 import maya.cmds as cmds
 import maya.mel as mel
 
+import maya_hubcopy as hubcopy
 import maya_sharerecords as records
 import maya_stashstore as store
 
@@ -64,13 +65,42 @@ POLL_MS = 1500
 # ------------------------------------------------------------------ state
 
 def state():
-    """The section's state on `sys`: the rows as listed (folder names, in
-    list order). One per Maya session, whatever module object asks."""
+    """The section's state on `sys`: the folder's signature, and each card's
+    rows (below). One per Maya session, whatever module object asks."""
     st = getattr(sys, "_skeldar_stash", None)
     if st is None:
         st = {"rows": []}
         sys._skeldar_stash = st
     return st
+
+
+# The card's rows are the card's own (2026-10-09, as Shared's): the hub's list
+# and each popup copy's list keep their own cache, and every card is refreshed
+# when the folder changes (the timer's poll is not a cmds callback, so it runs
+# in the root scope alone otherwise).
+
+def cards():
+    """The hub's card (None) and every live popup copy of this section."""
+    return [None] + hubcopy.instances("stash")
+
+
+def each_card(fn):
+    """`fn()` run once in each card's scope, the hub's first."""
+    answers = []
+    for scope in cards():
+        with hubcopy.entered(scope):
+            answers.append(fn())
+    return answers
+
+
+def _view():
+    """The rows of the card the call is in: the hub's on the state, a copy's
+    under its own tag (`copies`)."""
+    st = state()
+    scope = hubcopy.current()
+    if scope is None:
+        return st
+    return st.setdefault("copies", {}).setdefault(scope.tag, {"rows": []})
 
 
 def folder():
@@ -135,7 +165,7 @@ def selected_names():
         return []
     picked = cmds.textScrollList(LIST, query=True,
                                  selectIndexedItem=True) or []
-    rows = state()["rows"]
+    rows = _view()["rows"]
     return [rows[index - 1] for index in picked if 0 < index <= len(rows)]
 
 
@@ -446,7 +476,13 @@ def _signature(items):
 
 
 def refresh():
-    """The list from the folder, keeping the picked rows by name."""
+    """Every card's list from the folder (the hub's and each popup copy's), each
+    keeping its picked rows by name."""
+    return each_card(_refresh_one)
+
+
+def _refresh_one():
+    """This card's list from the folder, keeping its picked rows by name."""
     if not cmds.textScrollList(LIST, exists=True):
         return
     keep = selected_names()
@@ -458,7 +494,7 @@ def refresh():
     for item in items:
         cmds.textScrollList(LIST, edit=True,
                             append=store.row_text(item, now))
-    state()["rows"] = names
+    _view()["rows"] = names
     again = [names.index(n) + 1 for n in keep if n in names]
     if again:
         cmds.textScrollList(LIST, edit=True, selectIndexedItem=again)
@@ -531,7 +567,7 @@ def _tick():
 def refresh_subtitle():
     if cmds.text(SUBTITLE, exists=True):
         cmds.text(SUBTITLE, edit=True,
-                  label=store.subtitle(len(state()["rows"])))
+                  label=store.subtitle(len(_view()["rows"])))
 
 
 def _selected(*_args):
@@ -637,9 +673,12 @@ def build_panel():
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
                             height=36), "status")
     cmds.setParent("..")
-    state()["rows"] = []
+    _view()["rows"] = []
     refresh()
-    watch()
+    #  the folder's timer is the hub's to start: a popup copy's build leaves a
+    #  standing one alone (2026-10-09), it restarts nothing (H6)
+    if hubcopy.current() is None or state().get("timer") is None:
+        watch()
     return None
 
 

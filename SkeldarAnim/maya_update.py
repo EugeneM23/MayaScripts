@@ -32,6 +32,8 @@ import zipfile
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
+
 REPO = "EugeneM23/MayaScripts"
 BASE_URL = "https://github.com/{0}/releases/latest/download/".format(REPO)
 ZIP_NAME = "SkeldarAnim.zip"
@@ -350,7 +352,12 @@ def check_update(ask=None):
     finally:
         progress.close()
     try:
-        run_installer(folder)
+        #  2026-10-09: the installer is the hub's business - it purges the
+        #  modules, and rebuilds the hub through its own deferred call. Run
+        #  inside a popup's scope, that call would make the hub's controls
+        #  under the popup's prefix, so it runs in the hub's names.
+        with hubcopy.entered(None):
+            run_installer(folder)
     except Exception as exc:                                 # noqa: BLE001
         print(traceback.format_exc())
         return _status("The installer failed: {0}. The build is unpacked at "
@@ -366,11 +373,18 @@ def check_update(ask=None):
 
 
 def _reopen(message, importer=importlib.import_module):
-    """The hub on Update, from FRESH modules, with the message on its line."""
-    importer("maya_hub").show(HUB_SECTION)
-    fresh = importer("maya_update")
-    fresh.refresh()
-    fresh._status(message, state="new")
+    """The hub on Update, from FRESH modules, with the message on its line.
+
+    2026-10-09: deferred from a press, so it can run inside a popup's scope
+    (`cmds.evalDeferred` keeps the scope that made the call). Showing the hub
+    builds it, and the hub's controls are made under the hub's own names -
+    asked here, not inherited from the press.
+    """
+    with hubcopy.entered(None):
+        importer("maya_hub").show(HUB_SECTION)
+        fresh = importer("maya_update")
+        fresh.refresh()
+        fresh._status(message, state="new")
 
 
 # -------------------------------------------------------------------- UI
@@ -381,6 +395,12 @@ def _status(message, state=None):
     card) the message goes to the hub's header line instead. Only a hub
     already imported is told: a message is no reason to import one."""
     print("SkeldarAnim update: " + message)
+    #  2026-10-09, the popups. A press in a popup's copy writes the copy's
+    #  line (`exists` is asked through the copy's own name - a creation
+    #  command, so a name the copy did not make cannot reach the hub's line).
+    #  Two relays to the hub are deliberate: the header's update jump takes
+    #  the state (ok / new) whichever card checked, and a popup closed before
+    #  its answer leaves the answer on the header's line rather than nowhere.
     shown = False
     try:
         if cmds.text(STATUS, exists=True):
@@ -414,6 +434,22 @@ def refresh():
 
 
 def _press(*_args):
+    """The Check update press: the Update card's button, the hub's menu, a
+    popup's copy of the card (2026-10-09).
+
+    From a popup the check runs at the next idle, not inside the button's own
+    click: an install destroys the open popups (install.py's _destroy_popups)
+    - the one that pressed included - and a widget deleted inside its own
+    clicked signal is a crash waiting to happen. The deferred call keeps the
+    popup's scope (maya_hubcopy wraps it), so the answer is on the popup's line.
+    """
+    if hubcopy.current() is not None:
+        cmds.evalDeferred(_press_now, lowestPriority=True)
+        return
+    _press_now()
+
+
+def _press_now():
     try:
         check_update()
     except Exception as exc:                                 # noqa: BLE001
