@@ -168,6 +168,64 @@ def _hwnd(hwnd):
     return wt.HWND(int(hwnd))
 
 
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+
+def _dwmapi():
+    if "dwmapi" in _LIBS:
+        return _LIBS["dwmapi"]
+    try:
+        dwm = ctypes.WinDLL("dwmapi")
+        from ctypes import wintypes as wt
+    except (AttributeError, OSError, ImportError):
+        _LIBS["dwmapi"] = None
+        return None
+    dwm.DwmGetWindowAttribute.argtypes = [wt.HWND, wt.DWORD, ctypes.c_void_p,
+                                          wt.DWORD]
+    dwm.DwmGetWindowAttribute.restype = ctypes.c_long
+    _LIBS["dwmapi"] = dwm
+    return dwm
+
+
+def _as_rect(rect):
+    return (int(rect.left), int(rect.top),
+            int(rect.right) - int(rect.left), int(rect.bottom) - int(rect.top))
+
+
+def window_rect(hwnd):
+    """The window's rectangle as Windows keeps it, with the invisible resize
+    border and shadow Windows 11 puts round a window: (x, y, w, h) or None.
+    `capture` returns exactly this size."""
+    user32 = _user32()
+    if user32 is None:
+        return None
+    from ctypes import wintypes as wt
+    user32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(wt.RECT)]
+    user32.GetWindowRect.restype = wt.BOOL
+    rect = wt.RECT()
+    if not user32.GetWindowRect(_hwnd(hwnd), ctypes.byref(rect)):
+        return None
+    return _as_rect(rect)
+
+
+def visible_rect(hwnd):
+    """The window as the animator sees it - title bar and borders, without
+    the invisible border and the shadow (DWM's extended frame bounds), as
+    (x, y, w, h) or None when DWM does not say. The black edges round the
+    glass are thought to be that border, captured as black (not yet
+    measured live, 2026-10-10)."""
+    dwm = _dwmapi()
+    if dwm is None:
+        return None
+    from ctypes import wintypes as wt
+    rect = wt.RECT()
+    hr = dwm.DwmGetWindowAttribute(_hwnd(hwnd), DWMWA_EXTENDED_FRAME_BOUNDS,
+                                   ctypes.byref(rect), ctypes.sizeof(rect))
+    if hr != 0:
+        return None
+    return _as_rect(rect)
+
+
 def exstyle(hwnd):
     user32 = _user32()
     if user32 is None:

@@ -126,7 +126,10 @@ class Ghost(object):
         self.home = None            # where the borrowed panel lived
         self.list_sizes = None      # its splitter's sizes, when we opened it
         self._list_ticks = 0
-        host = QtWidgets.QWidget(parent, QtCore.Qt.Tool)
+        # A Window, not a Tool: a tool window has only the close button, and
+        # no maximise and no double-click on its title (measured 2026-10-10 on
+        # the animator's build - the title showed one red button).
+        host = QtWidgets.QWidget(parent, QtCore.Qt.Window)
         host.setObjectName(HOST)
         host.setWindowTitle(LABEL)
         host.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
@@ -163,7 +166,12 @@ class Ghost(object):
     # ------------------------------------------------------------ the window
 
     def frame_rect(self):
-        """The window's rectangle WITH its title bar and borders, global."""
+        """The window as the animator sees it - title bar and borders, global,
+        without Windows' invisible resize border and shadow
+        (`winstyle.visible_rect`); Qt's own frame when DWM does not say."""
+        seen = winstyle.visible_rect(self.hwnd())
+        if seen is not None:
+            return seen
         g = self.host.frameGeometry()
         return (g.x(), g.y(), g.width(), g.height())
 
@@ -180,10 +188,11 @@ class Ghost(object):
     def place(self, rect):
         """The window's FRAME on `rect` (global): the client area is set
         inside it by the insets the window has, measured as it stands."""
-        frame, inner = self.host.frameGeometry(), self.host.geometry()
-        left, top = inner.x() - frame.x(), inner.y() - frame.y()
-        right = (frame.x() + frame.width()) - (inner.x() + inner.width())
-        bottom = (frame.y() + frame.height()) - (inner.y() + inner.height())
+        fx, fy, fw, fh = self.frame_rect()
+        inner = self.host.geometry()
+        left, top = inner.x() - fx, inner.y() - fy
+        right = (fx + fw) - (inner.x() + inner.width())
+        bottom = (fy + fh) - (inner.y() + inner.height())
         x, y, w, h = [int(v) for v in rect]
         self.host.setGeometry(x + left, y + top,
                               max(1, w - left - right),
@@ -231,12 +240,17 @@ class Ghost(object):
         inside = self.canvas_in_frame()
         if inside is None:
             return []
-        _x, _y, width, height = self.frame_rect()
-        data = winstyle.capture(self.hwnd(), width, height)
+        fx, fy, width, height = self.frame_rect()
+        wx, wy, ww, wh = winstyle.window_rect(self.hwnd()) or \
+            (fx, fy, width, height)
+        data = winstyle.capture(self.hwnd(), ww, wh)
         if data is None:
             return []
-        whole = QtGui.QImage(data, width, height, width * 4,
+        # The capture is the whole window, invisible border included; the
+        # chrome is the part the animator sees.
+        whole = QtGui.QImage(data, ww, wh, ww * 4,
                              QtGui.QImage.Format_RGB32).copy()
+        whole = whole.copy(QtCore.QRect(fx - wx, fy - wy, width, height))
         pieces = []
         for band in geometry.chrome_bands((width, height), inside):
             piece = whole.copy(QtCore.QRect(*band)).convertToFormat(
