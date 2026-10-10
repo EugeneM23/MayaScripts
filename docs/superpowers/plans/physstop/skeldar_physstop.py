@@ -16,12 +16,12 @@ import math
 # ---------------------------------------------------------------------------------------------------------
 
 # The cube's rule, fitted by calibrate_physstop.py against cube_reference.json.
-ZETA = 0.32          # damping of every swing at weight 1
-K_TILT = 45.4        # deg of tilt per object height per frame of speed, at overlap 1
-K_SINK = 0.51        # sink, in heights, per object height per frame of speed, at weight 1
-K_SWAY = 0.21        # sway, in heights, per object height per frame of speed, at sway 1
-SWAY_RATE = 0.74     # the sway's frequency against the other springs'
-K_YAW = 52.0         # deg of yaw per object height of sway
+ZETA = 0.30          # damping of every swing at weight 1
+K_TILT = 44.83       # deg of tilt per object height per frame of speed, at overlap 1
+K_SINK = 0.526       # sink, in heights, per object height per frame of speed, at weight 1
+K_SWAY = 0.212       # sway, in heights, per object height per frame of speed, at sway 1
+SWAY_RATE = 0.75     # the sway's frequency against the other springs'
+K_YAW = 51.9         # deg of yaw per object height of sway
 
 TILT_LIMIT = 80.0    # deg: the tilt's drive saturates here (tanh), whatever the speed
 DRIFT_LIMIT = 0.5    # heights: the sink's and the sway's drives saturate here
@@ -31,7 +31,7 @@ FADE_SHARE = 0.3     # the last share of the settle fades every residual to 0
 MAX_TAIL = 400       # frames simulated after B at most
 FALLBACK_HEIGHT = 10.0
 
-DEFAULTS = (("amplitude", 4.5), ("overlap", 1.0), ("weight", 1.0), ("swing", 4.75), ("sway", 1.0))
+DEFAULTS = (("amplitude", 4.5), ("overlap", 1.0), ("weight", 1.0), ("swing", 5.0), ("sway", 1.0))
 RANGES = {
     "amplitude": (0.0, 20.0),   # the first overshoot, % of the path
     "overlap": (0.0, 3.0),      # the top's lag

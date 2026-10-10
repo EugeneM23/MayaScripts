@@ -236,5 +236,87 @@ class TransformTests(unittest.TestCase):
         self.assertEqual([f[0] for f in frames], [r.t for r in tr.rows])
 
 
+def _mul(p, m):
+    return tuple(sum(p[k] * m[k][j] for k in range(4)) for j in range(4))
+
+
+def cube_components(data):
+    """The cube decomposed as the model describes it: the bottom's progress along its path, the long
+    axis's tilt back (minus pose B's own 2.9 deg lean, carried by the path), the bottom's sink and sway
+    (+ = left = -X), the yaw of its local X about world up."""
+    mats = [[m[i * 4:(i + 1) * 4] for i in range(4)] for m in data["wm"]]
+    bottom = [_mul((0, -0.5, 0, 1), m) for m in mats]
+    top = [_mul((0, 0.5, 0, 1), m) for m in mats]
+    height = math.dist(bottom[0][:3], top[0][:3])
+    start, finish = bottom[0][2], bottom[-1][2]
+    travel = [(b[2] - start) / (finish - start) for b in bottom]
+    lean = math.degrees(math.atan2(top[-1][2] - bottom[-1][2], top[-1][1] - bottom[-1][1]))
+    tilt = [math.degrees(math.atan2(t[2] - b[2], t[1] - b[1])) - lean * max(0.0, p)
+            for b, t, p in zip(bottom, top, travel)]
+    sink = [bottom[0][1] - b[1] for b in bottom]
+    sway = [-b[0] for b in bottom]
+    yaw = []
+    for m in mats:
+        x = m[0][:3]
+        yaw.append(math.degrees(math.atan2(-x[2], x[0])))
+    t_b = next(i + (1 - travel[i]) / (travel[i + 1] - travel[i]) for i in range(30)
+               if travel[i] < 1 <= travel[i + 1])
+    return {"travel": travel, "tilt": tilt, "sink": sink, "sway": sway, "yaw": yaw, "t_b": t_b,
+            "reach": abs(finish - start) / height, "height": height}
+
+
+def rms(a, b):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)) / len(a))
+
+
+def model_on_frames(tr, count=31):
+    """The model's components on frames 0..count-1 (B held after the end)."""
+    rows = {r.t: r for r in tr.rows}
+    last = tr.rows[-1]
+    out = {k: [] for k in ("travel", "tilt", "sink", "sway", "yaw")}
+    for f in range(count):
+        r = rows.get(float(f), last)
+        out["travel"].append(r.p)
+        out["tilt"].append(r.tilt)
+        out["sink"].append(r.sink)
+        out["sway"].append(r.sway)
+        out["yaw"].append(r.yaw)
+    return out
+
+
+class CubeTests(unittest.TestCase):
+    """The defaults ARE the cube: the model run between the cube's own A and the frame it passes B."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(FOLDER, "cube_reference.json")) as f:
+            cls.cube = cube_components(json.load(f))
+        c = cls.cube
+        tr = ps.solve(0.0, c["t_b"], c["reach"], c["reach"], c["height"], None)
+        cls.model = model_on_frames(tr)
+        cls.end = tr.end
+
+    def test_the_cube_passes_b_at_frame_nine(self):
+        self.assertAlmostEqual(self.cube["t_b"], 9.1, places=1)
+
+    def test_travel(self):
+        self.assertLess(rms(self.model["travel"], self.cube["travel"]) * 32.36, 0.5)
+
+    def test_tilt(self):
+        self.assertLess(rms(self.model["tilt"], self.cube["tilt"]), 2.5)
+
+    def test_sink(self):
+        self.assertLess(rms(self.model["sink"], self.cube["sink"]), 0.12)
+
+    def test_sway(self):
+        self.assertLess(rms(self.model["sway"], self.cube["sway"]), 0.3)
+
+    def test_yaw(self):
+        self.assertLess(rms(self.model["yaw"], self.cube["yaw"]), 1.2)
+
+    def test_settles_where_the_cube_does(self):
+        self.assertTrue(24 <= self.end <= 36, self.end)
+
+
 if __name__ == "__main__":
     unittest.main()
