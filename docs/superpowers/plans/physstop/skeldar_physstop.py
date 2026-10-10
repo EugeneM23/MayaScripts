@@ -567,5 +567,124 @@ def selected():
     return out
 
 
+# ---------------------------------------------------------------------------------------------------------
+# 4. The window (maya.cmds)
+# ---------------------------------------------------------------------------------------------------------
+
+WINDOW = "skeldarPhysStopWindow"
+STATUS = "skeldarPhysStopStatus"
+AXIS_MENU = "skeldarPhysStopAxis"
+OPTION = "skeldarPhysStop_"
+LABELS = {
+    "amplitude": ("Overshoot %", 0.1, "How far it flies past B on the first swing, % of the path (the cube: 4.5)"),
+    "overlap": ("Overlap", 0.05, "How far the top lags behind the bottom (the cube: 1)"),
+    "weight": ("Weight", 0.05, "Heavier rings longer and sinks deeper (the cube: 1)"),
+    "swing": ("Swing (frames)", 0.25, "Frames of one swing past B and back (the cube: 5)"),
+    "sway": ("Sway", 0.05, "Sideways drift and yaw; + is left of the motion, 0 is off (the cube: 1)"),
+}
+
+
+def _control(name):
+    return OPTION + name + "Slider"
+
+
+def _stored(name, default):
+    cmds = _cmds()
+    key = OPTION + name
+    return cmds.optionVar(q=key) if cmds.optionVar(exists=key) else default
+
+
+def _given():
+    cmds = _cmds()
+    return {name: cmds.floatSliderGrp(_control(name), query=True, value=True) for name, _ in DEFAULTS}
+
+
+def _axis():
+    return _cmds().optionMenu(AXIS_MENU, query=True, value=True)
+
+
+def _remember():
+    cmds = _cmds()
+    for name, value in _given().items():
+        cmds.optionVar(floatValue=(OPTION + name, value))
+    cmds.optionVar(stringValue=(OPTION + "axis", _axis()))
+
+
+def _say(lines):
+    _cmds().text(STATUS, edit=True, label="\n".join(lines))
+
+
+def press_apply(*_):
+    _remember()
+    nodes = selected()
+    if not nodes:
+        _say(["Select objects whose last two keys are the poses to go from and to."])
+        return
+    _say(apply(nodes, _given(), _axis()))
+
+
+def slider_changed(*_):
+    """A released slider re-runs what already carries a transition; anything else waits for Apply."""
+    _remember()
+    nodes = selected()
+    if nodes and all(remembered(n) for n in nodes):
+        _say(apply(nodes, _given(), _axis()))
+    elif nodes:
+        _say(["Press Apply to build the transition."])
+
+
+def press_restore(*_):
+    nodes = selected()
+    _say(restore(nodes) if nodes else ["Select the objects to put back on their two keys."])
+
+
+def press_reset(*_):
+    cmds = _cmds()
+    for name, default in DEFAULTS:
+        cmds.floatSliderGrp(_control(name), edit=True, value=default)
+    cmds.optionMenu(AXIS_MENU, edit=True, value="Auto")
+    slider_changed()
+
+
+def show():
+    """The window: five controls, the up axis, Apply / Restore keys / Reset, a status line."""
+    cmds = _cmds()
+    if cmds.window(WINDOW, exists=True):
+        cmds.deleteUI(WINDOW)
+    if cmds.windowPref(WINDOW, exists=True):
+        cmds.windowPref(WINDOW, remove=True)
+    cmds.window(WINDOW, title="Physical Stop", sizeable=True, widthHeight=(420, 340))
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=4, columnAttach=("both", 8))
+    cmds.text(label="Select objects whose last two keys are the poses to go from and to, then Apply.",
+              align="left", wordWrap=True, height=36)
+    for name, default in DEFAULTS:
+        low, high = RANGES[name]
+        label, step, tip = LABELS[name]
+        cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=low, maxValue=high,
+                            fieldMinValue=low, fieldMaxValue=high, step=step, precision=2,
+                            value=_stored(name, default), columnWidth3=(100, 60, 220),
+                            annotation=tip, changeCommand=slider_changed)
+    cmds.optionMenu(AXIS_MENU, label="Up axis", annotation="The object's axis that points up",
+                    changeCommand=slider_changed)
+    for axis in AXES:
+        cmds.menuItem(label=axis)
+    axis = _stored("axis", "Auto")
+    cmds.optionMenu(AXIS_MENU, edit=True, value=axis if axis in AXES else "Auto")
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach3=("both", "both", "both"))
+    cmds.button(label="Apply", height=30, command=press_apply)
+    cmds.button(label="Restore keys", height=30, command=press_restore)
+    cmds.button(label="Reset", height=30, command=press_reset)
+    cmds.setParent("..")
+    cmds.text(STATUS, label="", align="left", wordWrap=True, height=80)
+    cmds.showWindow(WINDOW)
+
+
+def onMayaDroppedPythonFile(*args):
+    """Maya's viewport drop imports this file once and keeps it: reload it, so a changed file runs."""
+    import importlib
+    import sys
+    importlib.reload(sys.modules[__name__]).show()
+
+
 if __name__ == "__main__":
-    pass
+    show()

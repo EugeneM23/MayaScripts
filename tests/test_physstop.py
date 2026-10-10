@@ -318,5 +318,154 @@ class CubeTests(unittest.TestCase):
         self.assertTrue(24 <= self.end <= 36, self.end)
 
 
+class FakeCmds(object):
+    """Just enough of maya.cmds for the window: records controls, answers queries."""
+
+    def __init__(self):
+        self.values = {}
+        self.vars = {}
+        self.created = []
+        self.selection = []
+
+    def window(self, name, exists=False, **kw):
+        if exists:
+            return False
+        self.created.append(("window", name))
+        return name
+
+    def windowPref(self, name, exists=False, remove=False):
+        return False
+
+    def deleteUI(self, name):
+        pass
+
+    def columnLayout(self, *a, **kw):
+        return "col"
+
+    def rowLayout(self, *a, **kw):
+        return "row"
+
+    def setParent(self, *a):
+        pass
+
+    def showWindow(self, name):
+        self.created.append(("show", name))
+
+    def text(self, name=None, edit=False, label=None, **kw):
+        if edit:
+            self.values[name] = label
+        return name
+
+    def button(self, *a, **kw):
+        self.created.append(("button", kw.get("label")))
+
+    def floatSliderGrp(self, name, query=False, value=None, edit=False, **kw):
+        if query:
+            return self.values[name]
+        self.values[name] = value
+        if not edit:
+            self.created.append(("slider", name, kw.get("changeCommand")))
+        return name
+
+    def optionMenu(self, name, query=False, value=None, edit=False, **kw):
+        if query:
+            return self.values.get(name, "Auto")
+        if value is not None:
+            self.values[name] = value
+        return name
+
+    def menuItem(self, **kw):
+        pass
+
+    def optionVar(self, exists=None, q=None, floatValue=None, stringValue=None):
+        if exists is not None:
+            return exists in self.vars
+        if q is not None:
+            return self.vars[q]
+        name, value = floatValue or stringValue
+        self.vars[name] = value
+
+
+class WindowTests(unittest.TestCase):
+
+    def setUp(self):
+        self.fake = FakeCmds()
+        self.saved = (ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore)
+        self.calls = []
+        ps._cmds = lambda: self.fake
+        ps.apply = lambda nodes, given=None, axis="Auto": self.calls.append((nodes, given, axis)) or ["done"]
+        ps.restore = lambda nodes: self.calls.append(("restore", nodes)) or ["restored"]
+        ps.selected = lambda: list(self.fake.selection)
+        ps.remembered = lambda node: {"tE": 1} if node.endswith("applied") else None
+
+    def tearDown(self):
+        ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore = self.saved
+
+    def test_window_has_the_five_sliders_with_defaults(self):
+        ps.show()
+        sliders = [c[1] for c in self.fake.created if c[0] == "slider"]
+        self.assertEqual(sliders, [ps._control(n) for n, _ in ps.DEFAULTS])
+        for name, default in ps.DEFAULTS:
+            self.assertEqual(self.fake.values[ps._control(name)], default)
+        self.assertEqual([c[1] for c in self.fake.created if c[0] == "button"], ["Apply", "Restore keys", "Reset"])
+
+    def test_remembered_values_come_back(self):
+        self.fake.vars[ps.OPTION + "weight"] = 2.5
+        self.fake.vars[ps.OPTION + "axis"] = "+Z"
+        ps.show()
+        self.assertEqual(self.fake.values[ps._control("weight")], 2.5)
+        self.assertEqual(self.fake.values[ps.AXIS_MENU], "+Z")
+
+    def test_a_stale_axis_falls_back_to_auto(self):
+        self.fake.vars[ps.OPTION + "axis"] = "sideways"
+        ps.show()
+        self.assertEqual(self.fake.values[ps.AXIS_MENU], "Auto")
+
+    def test_apply_reads_the_sliders_and_remembers_them(self):
+        ps.show()
+        self.fake.values[ps._control("overlap")] = 1.7
+        self.fake.selection = ["|cube"]
+        ps.press_apply()
+        nodes, given, axis = self.calls[-1]
+        self.assertEqual(nodes, ["|cube"])
+        self.assertEqual(given["overlap"], 1.7)
+        self.assertEqual(axis, "Auto")
+        self.assertEqual(self.fake.vars[ps.OPTION + "overlap"], 1.7)
+        self.assertEqual(self.fake.values[ps.STATUS], "done")
+
+    def test_a_slider_re_applies_only_what_already_carries_a_transition(self):
+        ps.show()
+        self.fake.selection = ["|cube"]
+        ps.slider_changed()
+        self.assertEqual(self.calls, [])
+        self.assertIn("Apply", self.fake.values[ps.STATUS])
+        self.fake.selection = ["|cube_applied"]
+        ps.slider_changed()
+        self.assertEqual(self.calls[-1][0], ["|cube_applied"])
+
+    def test_nothing_selected_says_so(self):
+        ps.show()
+        ps.press_apply()
+        self.assertEqual(self.calls, [])
+        self.assertIn("Select", self.fake.values[ps.STATUS])
+
+    def test_restore_goes_to_restore(self):
+        ps.show()
+        self.fake.selection = ["|cube_applied"]
+        ps.press_restore()
+        self.assertEqual(self.calls[-1], ("restore", ["|cube_applied"]))
+
+    def test_reset_puts_the_defaults_back(self):
+        ps.show()
+        self.fake.values[ps._control("swing")] = 9.0
+        self.fake.values[ps.AXIS_MENU] = "-X"
+        ps.press_reset()
+        self.assertEqual(self.fake.values[ps._control("swing")], dict(ps.DEFAULTS)["swing"])
+        self.assertEqual(self.fake.values[ps.AXIS_MENU], "Auto")
+
+    def test_the_drop_handler_exists(self):
+        self.assertTrue(callable(ps.onMayaDroppedPythonFile))
+
+
 if __name__ == "__main__":
     unittest.main()
