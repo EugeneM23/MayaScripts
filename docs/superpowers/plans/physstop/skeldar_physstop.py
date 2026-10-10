@@ -199,5 +199,119 @@ def solve(t_a, t_b, reach, lateral, height, given=None):
     return Transition(rows, end, path, given)
 
 
+# ---------------------------------------------------------------------------------------------------------
+# 2. The geometry (maya.api.OpenMaya math only)
+# ---------------------------------------------------------------------------------------------------------
+
+UP = (0.0, 1.0, 0.0)
+AXES = ("Auto", "+X", "-X", "+Y", "-Y", "+Z", "-Z")
+IDENTITY_FIXED = {
+    "scale": (1.0, 1.0, 1.0), "shear": (0.0, 0.0, 0.0), "scalePivot": (0.0, 0.0, 0.0),
+    "scalePivotTranslate": (0.0, 0.0, 0.0), "rotatePivot": (0.0, 0.0, 0.0),
+    "rotatePivotTranslate": (0.0, 0.0, 0.0), "rotateAxis": (0.0, 0.0, 0.0)}
+
+
+def _om():
+    import maya.api.OpenMaya as om
+    return om
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _length(a):
+    return math.sqrt(_dot(a, a))
+
+
+def up_axis(rows, choice="Auto"):
+    """(index, sign) of the object's axis that points up: rows are its three axes in world."""
+    if choice and choice != "Auto":
+        return "XYZ".index(choice[1]), (1.0 if choice[0] == "+" else -1.0)
+    best = max(range(3), key=lambda i: abs(_dot(rows[i], UP)) / max(_length(rows[i]), 1e-12))
+    return best, (1.0 if _dot(rows[best], UP) >= 0.0 else -1.0)
+
+
+def bottom_and_height(box_min, box_max, index, sign, rows):
+    """The bottom point in object space (the box's centre at its low end) and the height in world units."""
+    centre = [(a + b) / 2.0 for a, b in zip(box_min, box_max)]
+    centre[index] = box_min[index] if sign > 0 else box_max[index]
+    return tuple(float(c) for c in centre), (box_max[index] - box_min[index]) * _length(rows[index])
+
+
+def _translation(v):
+    om = _om()
+    return om.MMatrix(((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (v[0], v[1], v[2], 1)))
+
+
+def local_matrix(translate, rotate, order, fixed):
+    """The transform's matrix from its channels, as Maya composes it (pivots, shear, rotate axis)."""
+    om = _om()
+    space = om.MSpace.kTransform
+    tm = om.MTransformationMatrix()
+    tm.setScale(fixed["scale"], space)
+    tm.setShear(fixed["shear"], space)
+    tm.setScalePivot(om.MPoint(fixed["scalePivot"]), space, False)
+    tm.setScalePivotTranslation(om.MVector(fixed["scalePivotTranslate"]), space)
+    tm.setRotatePivot(om.MPoint(fixed["rotatePivot"]), space, False)
+    tm.setRotatePivotTranslation(om.MVector(fixed["rotatePivotTranslate"]), space)
+    tm.setRotationOrientation(
+        om.MEulerRotation([math.radians(a) for a in fixed["rotateAxis"]]).asQuaternion())
+    tm.setRotation(om.MEulerRotation([math.radians(a) for a in rotate], order))
+    tm.setTranslation(om.MVector(translate), space)
+    return tm.asMatrix()
+
+
+def channels_from_local(matrix, order, fixed, near):
+    """translate and rotate (deg, the euler nearest `near`) that give `matrix`, the rest fixed.
+    Maya's matrix is X . R . Tr(rp + rpt + t) with X the part before the rotation, so
+    X^-1 . matrix holds R and rp + rpt + t."""
+    om = _om()
+    pivot = om.MVector(fixed["rotatePivot"]) + om.MVector(fixed["rotatePivotTranslate"])
+    head = local_matrix((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), order, fixed) * _translation(-pivot)
+    tm = om.MTransformationMatrix(head.inverse() * matrix)
+    move = tm.translation(om.MSpace.kTransform) - pivot
+    euler = tm.rotation(asQuaternion=True).asEulerRotation()
+    euler.reorderIt(order)
+    euler = euler.closestSolution(om.MEulerRotation([math.radians(a) for a in near], order))
+    return (move.x, move.y, move.z), tuple(math.degrees(a) for a in (euler.x, euler.y, euler.z))
+
+
+def secondary(bottom, heading, tilt, yaw, sink, sway):
+    """The world motion on top of the path: tilt (deg) about the bottom against `heading`, yaw (deg) about
+    world up through the bottom, sink (cm) down, sway (cm) to the left. No heading: the sink alone."""
+    om = _om()
+    up = om.MVector(UP)
+    spin = om.MMatrix()
+    move = up * -sink
+    if heading is not None:
+        spin = (om.MQuaternion(math.radians(tilt), heading ^ up).asMatrix()
+                * om.MQuaternion(math.radians(yaw), up).asMatrix())
+        move = move + (up ^ heading) * sway
+    b = om.MVector(bottom.x, bottom.y, bottom.z)
+    return _translation(-b) * spin * _translation(b + move)
+
+
+def _lerp(a, b, p):
+    return tuple(x + (y - x) * p for x, y in zip(a, b))
+
+
+def channel_frames(transition, pose_a, pose_b, order, fixed, parent_at, bottom, heading):
+    """Every frame's (t, translate, rotate): the path's pose (channels lerped by p, past B on the
+    overshoot), in world, moved by the secondary motion about its bottom, back into the channels."""
+    om = _om()
+    out = []
+    for row in transition.rows:
+        move = _lerp(pose_a[0], pose_b[0], row.p)
+        turn = _lerp(pose_a[1], pose_b[1], row.p)
+        parent = parent_at(row.t)
+        world = local_matrix(move, turn, order, fixed) * parent
+        base = om.MPoint(bottom) * world
+        world = world * secondary(base, heading, row.tilt, row.yaw, row.sink, row.sway)
+        t, r = channels_from_local(world * parent.inverse(), order, fixed, turn)
+        out.append((row.t, t, r))
+    return out
+
+
 if __name__ == "__main__":
     pass

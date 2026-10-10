@@ -151,5 +151,90 @@ class SolveTests(unittest.TestCase):
         self.assertEqual(tr.end, int(tr.end))
 
 
+try:
+    import maya.api.OpenMaya as om
+except ImportError:   # pragma: no cover
+    om = None
+
+
+def close(a, b, tol=1e-9):
+    return all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+class AxisTests(unittest.TestCase):
+
+    def test_auto_picks_the_axis_nearest_world_up_with_its_sign(self):
+        rows = ((1, 0, 0), (0, 0, -1), (0, 1, 0))          # local Z points up
+        self.assertEqual(ps.up_axis(rows), (2, 1.0))
+        rows = ((1, 0, 0), (0, -1, 0), (0, 0, 1))          # local Y points down
+        self.assertEqual(ps.up_axis(rows), (1, -1.0))
+
+    def test_override(self):
+        self.assertEqual(ps.up_axis(((1, 0, 0), (0, 1, 0), (0, 0, 1)), "-X"), (0, -1.0))
+
+    def test_bottom_is_the_low_end_and_height_is_world(self):
+        rows = ((4.0, 0, 0), (0, 11.0, 0), (0, 0, 3.0))
+        bottom, height = ps.bottom_and_height((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5), 1, 1.0, rows)
+        self.assertEqual(bottom, (0.0, -0.5, 0.0))
+        self.assertAlmostEqual(height, 11.0)
+        bottom, _ = ps.bottom_and_height((-0.5, -0.5, -0.5), (0.5, 0.5, 0.5), 1, -1.0, rows)
+        self.assertEqual(bottom, (0.0, 0.5, 0.0))
+
+
+@unittest.skipIf(om is None, "needs maya.api.OpenMaya")
+class TransformTests(unittest.TestCase):
+
+    FIXED = {
+        "scale": (4.1, 11.6, 3.9), "shear": (0.1, 0.0, 0.05), "scalePivot": (-0.2, 0.3, 0.1),
+        "scalePivotTranslate": (0.05, 0.1, 0.0), "rotatePivot": (0.1, -0.5, 0.2),
+        "rotatePivotTranslate": (0.3, 0.0, -0.1), "rotateAxis": (5.0, -7.0, 12.0)}
+
+    def test_round_trip_in_every_rotate_order(self):
+        for order in range(6):
+            m = ps.local_matrix((1.0, 2.0, -3.0), (10.0, -20.0, 30.0), order, self.FIXED)
+            t, r = ps.channels_from_local(m, order, self.FIXED, (10.0, -20.0, 30.0))
+            self.assertTrue(close(t, (1.0, 2.0, -3.0), 1e-9), (order, t))
+            self.assertTrue(close(r, (10.0, -20.0, 30.0), 1e-9), (order, r))
+
+    def test_euler_stays_near_its_neighbour(self):
+        m = ps.local_matrix((0, 0, 0), (0.0, 370.0, 0.0), 0, ps.IDENTITY_FIXED)
+        _, r = ps.channels_from_local(m, 0, ps.IDENTITY_FIXED, (0.0, 369.0, 0.0))
+        self.assertTrue(close(r, (0.0, 370.0, 0.0), 1e-9), r)
+
+    def test_tilt_moves_the_top_back_against_the_motion(self):
+        heading = om.MVector(0, 0, -1)
+        g = ps.secondary(om.MPoint(0, 0, 0), heading, 30.0, 0.0, 0.0, 0.0)
+        top = om.MPoint(0, 10, 0) * g
+        self.assertAlmostEqual(top.z, 10 * math.sin(math.radians(30)))
+        self.assertAlmostEqual((om.MPoint(0, 0, 0) * g).z, 0.0)   # the bottom stays
+
+    def test_sink_is_down_and_sway_is_left(self):
+        heading = om.MVector(0, 0, -1)                  # facing -Z with Y up, left is -X
+        g = ps.secondary(om.MPoint(0, 0, 0), heading, 0.0, 0.0, 2.0, 1.5)
+        p = om.MPoint(0, 0, 0) * g
+        self.assertTrue(close((p.x, p.y, p.z), (-1.5, -2.0, 0.0), 1e-12))
+
+    def test_yaw_is_about_world_up_through_the_bottom(self):
+        g = ps.secondary(om.MPoint(5, 0, 0), om.MVector(0, 0, -1), 0.0, 90.0, 0.0, 0.0)
+        p = om.MPoint(6, 0, 0) * g
+        self.assertTrue(close((p.x, p.y, p.z), (5.0, 0.0, -1.0), 1e-12))
+
+    def test_no_heading_no_tilt_but_still_a_sink(self):
+        g = ps.secondary(om.MPoint(0, 0, 0), None, 30.0, 20.0, 1.0, 1.0)
+        p = om.MPoint(0, 10, 0) * g
+        self.assertTrue(close((p.x, p.y, p.z), (0.0, 9.0, 0.0), 1e-12))
+
+    def test_channel_frames_start_on_a_and_end_on_b(self):
+        tr = ps.solve(0.0, 9.0, 2.0, 2.0, 10.0, None)
+        pose_a = ((0.0, 5.0, 0.0), (0.0, 0.0, 0.0))
+        pose_b = ((0.0, 5.0, -20.0), (3.0, 0.0, 0.0))
+        parent = om.MMatrix()
+        frames = ps.channel_frames(tr, pose_a, pose_b, 0, ps.IDENTITY_FIXED, lambda t: parent,
+                                   (0.0, -0.5, 0.0), om.MVector(0, 0, -1))
+        self.assertTrue(close(frames[0][1] + frames[0][2], pose_a[0] + pose_a[1], 1e-9))
+        self.assertTrue(close(frames[-1][1] + frames[-1][2], pose_b[0] + pose_b[1], 1e-9))
+        self.assertEqual([f[0] for f in frames], [r.t for r in tr.rows])
+
+
 if __name__ == "__main__":
     unittest.main()
