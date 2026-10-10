@@ -8606,3 +8606,53 @@ sub-frame keys, the IK spine, bone translations below the pelvis.
      itself: a rootless TARGET took off its own per-frame heading and put the ground's back, so steadying
      only the ground turned a twin's whole body by the difference (180° at frame 12, measured). Whatever
      a frame's heading is replaced by, it must be replaced by on both sides of the transfer.
+
+## Physical stop: a pose-to-pose transition that stops like an object (2026-10-10)
+
+The animator, with a cube animated by hand in their open scene: «нужно изучить анимацию кубика и сделать
+математическую модель построения подобных анимаций ... скрипт берет два последних ключа ... амплетудность,
+сила захлеста (отставания) верхней части от нижней, вес ... время овершута ... имитирует физичную остановку
+объектов». **A script SEPARATE from the plugin first** («после того как все настроим вмонтируем его в сам
+плагин»): `docs/superpowers/plans/physstop/skeldar_physstop.py`, one file, dropped into a viewport (or exec'd)
+it opens the window. Nothing in `SkeldarAnim/` changed. Spec
+`docs/superpowers/specs/2026-10-10-physical-stop-design.md` (read its addendum), plan beside the folder.
+
+**What the cube is** (read over the port, nothing written; `physstop/cube_reference.json`): its BOTTOM was
+keyed at extremes with flat tangents (a smoothstep over 10 frames to 0.85 cm past the target, -0.95, +0.32,
+still at f24); its TOP lags like a spring driven by the bottom's velocity (tilt back to 24 deg, -7.4, +7.6);
+it SINKS like the same spring driven by speed (-3.1 cm at f7); it sways left 1.25 cm with 5.7 deg of yaw.
+Overlap and weight are one rule: speed loads springs, braking releases them.
+
+**The model** (answered in the brainstorm: B stays at its key and the settle comes after; "overshoot time" is
+ONE swing, weight is how many; a rigid object; sway a parameter; keys on every frame):
+- the path `p(t)`: `3u^2 - 2u^3 + m(u^3 - u^2)` from A at rest through B at B's key with speed, then
+  `1 + (vB/w) e^(-sigma tau) sin(w tau)`, `w = pi/swing`, `vB` set by the first overshoot; channels lerp by p
+  (eulers too - a 350->370 spin stays a spin);
+- three springs (damped period 2 swings, damping `0.30/weight`) driven by the bottom's speed in object
+  heights per frame: tilt about the bottom against the motion, sink down, sway left (slower, with yaw);
+- the end: every residual within 2 % of its peak, the last 30 % faded, the last key exactly pose B;
+- the geometry: up axis = the local axis nearest world up; bottom = the low end of the shapes' box; the
+  world result decomposed back into translate/rotate through the parent and the transform's own pivots,
+  shear and rotate axis (`X^-1 L = R . Tr(rp + rpt + t)`).
+
+**The script**: Overshoot % 4.5, Overlap 1, Weight 1, Swing 5 frames, Sway 1 (all = the cube), Up axis; Apply
+(one undo), Restore keys, Reset. The source is the last two key times on translate/rotate; a transition it
+wrote is re-run from its own keys (marker `skeldarPhysStop`, JSON), B read at its last key - edit that key to
+edit pose B; a released slider re-applies.
+
+Proof: `tests/test_physstop.py` 43 (the path, the springs, the cube's components within 2.5 deg / 0.12 cm,
+the transform round trip in all six orders with pivots, the window on a fake cmds); `verify_physstop.py`
+**20/20 standalone** (the cube rebuilt from keys at f0/f9: bottom 0.45 cm rms, top 0.65 cm against the
+animator's; a parented pivoted zxy prop composed to 4.4e-16; one undo; Restore); `calibrate_physstop.py`
+refits the constants. **The live try is the animator's** - nothing ran in their Maya but the read.
+
+Not built: a chain, sparse keys, a constrained/IK parent (read per frame with `getAttr(time=)`, trap 69),
+scale between A and B, angular speed as a drive, the plugin and the hub (and `maya_overshoot.py`'s future).
+
+219. **`cmds.xform(node, q=True, boundingBox=True, objectSpace=True)` answers the box in the PARENT's space**
+     (the node's own transform applied): a 1-unit cube scaled 4 x 11 x 3 and turned read -3.98..5.98. The
+     object-space box is the shapes' own `boundingBoxMin/Max` (carried in through their transforms for a
+     group).
+220. **Maya's viewport drop imports a .py by its stem ONCE** (`importlib.import_module`, then
+     `onMayaDroppedPythonFile(obj)`): dropping the file again after editing it runs the OLD code from
+     `sys.modules`. A dropped tool reloads itself in its drop handler.

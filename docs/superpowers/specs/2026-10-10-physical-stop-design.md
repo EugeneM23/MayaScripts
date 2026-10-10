@@ -120,3 +120,19 @@ A chain (each link a spring driven by the one below), sparse keys, a parent that
 (the parent matrix is read per frame with `getAttr(time=)`, trap 69), scale animation between A and B,
 angular speed as a drive (a pure rotation gets the path's overshoot only), integration into the plugin and
 the hub (with `maya_overshoot.py`'s future decided then).
+
+## Addendum - what the build changed (the same day)
+
+- **The fitted numbers** (`calibrate_physstop.py` on the real model): `ZETA` 0.30, `K_TILT` 47.10, `K_SINK`
+  0.526, `K_SWAY` 0.217, `SWAY_RATE` 0.75, `K_YAW` 51.9; the defaults overshoot 4.5 %, **swing 5.0 frames**
+  (not 4.75). Against the cube, rms over frames 0-30: travel 0.37 cm (of 33), tilt 2.0 deg (of 32), sink
+  0.08 cm (of 3.8), sway 0.19 cm (of 1.8), yaw 0.8 deg (of 8); it settles at frame 32 (the cube ~27-30).
+- **The drives saturate** (tanh): the tilt at 40 deg, the sink at 0.5 heights, the sway at 0.25 heights.
+  Speed is measured in object heights per frame (so a scene at any scale behaves alike), which makes a small
+  object flying far very fast in its own heights: a 1 cm cube flying 20 cm in 8 frames tilted 102 deg at
+  the first limit (80 deg); at 40 it peaks at 54.
+- **The clamp is on LONG moves, not short ones**: the arrival slope is held to 3 times the average (else the
+  ease dips on the way), so a slow move asked for a big overshoot delivers less, and says so.
+- The verify (`verify_physstop.py`, 20 gates) rebuilt the cube from keys at f0 and f9: the bottom 0.45 cm
+  rms against the animator's, the top 0.65 cm, the tilt peak 25.7 deg at f7 (the cube 24.1 at f8), the sink
+  -3.08 cm (-3.10).
