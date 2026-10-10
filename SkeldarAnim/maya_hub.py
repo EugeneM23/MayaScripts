@@ -125,6 +125,11 @@ SECTIONS = (
     Section("stash", "Stash", "maya_stash",
             "build_panel", "skeldarHubFrameStash",
             "scene", "archive"),
+    #  2026-10-10: group voice rooms and screen share, through our own server
+    #  (voice_server/). Its own section; Shared and Stash are untouched.
+    Section("voice", "Voice", "maya_voice.window",
+            "build_panel", "skeldarHubFrameVoice",
+            "scene", "mic"),
     Section("retarget", "Retarget", "maya_rig_retarget",
             "build_panel", "skeldarHubFrameRetarget",
             "animation", "arrows-exchange"),

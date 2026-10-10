@@ -1,0 +1,15 @@
+{
+  "name": "skeldar-voice",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Group voice rooms and screen share for the SkeldarAnim Maya plugin.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

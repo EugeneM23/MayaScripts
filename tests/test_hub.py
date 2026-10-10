@@ -91,7 +91,7 @@ class TheTable(unittest.TestCase):
         The Pose Library joined Animation on 2026-10-02, after the Center of Mass."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
-                          "Stash", "Retarget", "Graph Overlay",
+                          "Stash", "Voice", "Retarget", "Graph Overlay",
                           "Center of Mass", "Pose Library",
                           "Studio", "Colour", "Hotkeys", "Update"])
 
@@ -127,7 +127,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual(groups, [
             ("characters", "scene"), ("weapons", "scene"),
             ("connections", "scene"), ("shared", "scene"),
-            ("stash", "scene"),
+            ("stash", "scene"), ("voice", "scene"),
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
             ("poses", "animation"), ("studio", "look"),
@@ -149,7 +149,7 @@ class TheTable(unittest.TestCase):
         (2026-09-28, «раздел с обновлением давай вернём»)."""
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
-                          "stash", "retarget", "graphoverlay", "com", "poses",
+                          "stash", "voice", "retarget", "graphoverlay", "com", "poses",
                           "studio", "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
@@ -159,6 +159,7 @@ class TheTable(unittest.TestCase):
             "connections": ("maya_scenesetup.connections", "build_panel"),
             "shared": ("maya_share", "build_panel"),
             "stash": ("maya_stash", "build_panel"),
+            "voice": ("maya_voice.window", "build_panel"),
             "retarget": ("maya_rig_retarget", "build_panel"),
             "graphoverlay": ("maya_graphoverlay.mode", "build_panel"),
             "com": ("maya_com.panel", "build_panel"),
@@ -689,6 +690,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
         self.assertEqual(hub._SKIN.order, [
             ("card", "characters"), ("card", "weapons"),
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
+            ("card", "voice"),
             ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
             ("card", "poses"), ("card", "studio"), ("card", "colour"),
             ("card", "update")])

@@ -1,0 +1,16 @@
+name = "skeldar-voice"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# One Room object per room name, one Lobby for the whole server.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "Lobby"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room", "Lobby"]
