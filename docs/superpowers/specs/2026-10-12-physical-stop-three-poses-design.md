@@ -49,7 +49,7 @@ geometry (up axis, bottom, the channels back through pivots and the parent).
   Restore keys first; Restore puts its two keys back.
 - **Restore keys**: back to the three keys, the marker removed.
 - **Controls**, renamed and grouped:
-  - **Stop**: **Overshoot, %** (the first swing past B, % of the path; 4.5), **Swing length, fr** (frames of
+  - **Stop**: **Overshoot, %** (the first swing past B, % of the path; 3, see the addendum), **Swing length, fr** (frames of
     one swing; 5), **Weight** (heavier: more swings, deeper sink; 1);
   - **Extras**: **Side sway** (drift aside with a yaw; + is left, 0 off; 1), **Up axis**.
   - optionVars `skeldarPhysStop_overshoot/swing/weight/sway/axis`.
@@ -65,3 +65,21 @@ geometry (up axis, bottom, the channels back through pivots and the parent).
 - `verify_physstop.py`, standalone: the cube rebuilt from its own frames 0, 5 and its final pose at 9,
   against the animator's cube frame by frame; M exact; an arc bent sideways; the overshoot along the arc's
   tangent; re-apply, undo, Restore; a parented pivoted zxy prop; refusals.
+
+## Addendum - what the build measured
+
+- **The constants were fitted again on the three-key model** (`calibrate_physstop.py`, the cube with M at
+  its frame 5, the tilt shape scaled to the cube's lag there): damping 0.32, sink 0.527, sway 0.219 at 0.75
+  of the swing's rate, yaw 51.9; `K_TILT` is no longer fitted (M sets the lag). **The default overshoot is
+  3 %**, not 4.5: with the breakdown carrying the cube's speed into B, 3 % puts the first crest where the
+  cube's is. Residuals against the cube: travel 0.305 cm, tilt 2.34 deg, sink 0.077 cm, sway 0.189 cm, yaw
+  0.81 deg rms.
+- **The lag leaves the sway's yaw out**: on a small object the sway spring saturates and holds a few degrees
+  of yaw at M; the lag is `G` less that yaw, so a breakdown tilted 20 deg back reads exactly 20.0 deg back.
+- **Proof**, `verify_physstop.py` **28/28 standalone**: the cube rebuilt from its frames 0 and 5 and its
+  final pose at 9 - M exact to 3.6e-15, the bottom 0.405 cm and the top 0.602 cm rms against the
+  animator's cube over 32 cm, the tilt peaking at frame 7 at 23.3 deg (the cube: 8, 24.1), the sink -3.30
+  (-3.10); a breakdown 15 cm aside - the bottom on the arc on every frame to 0.0 cm, through M at 6, the
+  overshoot leaving along the arc's tangent at B 0.00 deg off; a breakdown tilted left lagging left; the
+  parented pivoted zxy prop to 4.4e-16 and in its breakdown at 15; a 350 -> 370 spin without a jump; an
+  old two-pose marker refused and restored; re-apply, an edited B, one undo, Restore. 57 unit tests.

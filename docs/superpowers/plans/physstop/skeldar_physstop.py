@@ -19,10 +19,10 @@ import math
 # ---------------------------------------------------------------------------------------------------------
 
 # The cube's rule, fitted by calibrate_physstop.py against cube_reference.json.
-ZETA = 0.30          # damping of every swing at weight 1
+ZETA = 0.32          # damping of every swing at weight 1
 K_TILT = 47.10       # deg of tilt per object height per frame of speed: the lag's SHAPE (the breakdown scales it)
-K_SINK = 0.526       # sink, in heights, per object height per frame of speed, at weight 1
-K_SWAY = 0.217       # sway, in heights, per object height per frame of speed, at sway 1
+K_SINK = 0.527       # sink, in heights, per object height per frame of speed, at weight 1
+K_SWAY = 0.219       # sway, in heights, per object height per frame of speed, at sway 1
 SWAY_RATE = 0.75     # the sway's frequency against the other springs'
 K_YAW = 51.9         # deg of yaw per object height of sway
 
@@ -38,7 +38,7 @@ FALLBACK_HEIGHT = 10.0
 ARC_SAMPLES = 256
 
 # The controls, in the window's order (the cube's values).
-DEFAULTS = (("overshoot", 4.5), ("swing", 5.0), ("weight", 1.0), ("sway", 1.0))
+DEFAULTS = (("overshoot", 3.0), ("swing", 5.0), ("weight", 1.0), ("sway", 1.0))
 RANGES = {
     "overshoot": (0.0, 20.0),   # the first swing past B, % of the path
     "swing": (1.0, 20.0),       # frames of one swing
@@ -808,7 +808,7 @@ OPTION = "skeldarPhysStop_"
 GROUPS = (("Stop", ("overshoot", "swing", "weight")), ("Extras", ("sway",)))
 LABELS = {
     "overshoot": ("Overshoot, %", 0.1,
-                  "How far past B the first swing goes, in % of the path (the cube: 4.5)"),
+                  "How far past B the first swing goes, in % of the path (the cube: 3)"),
     "swing": ("Swing length, fr", 0.25,
               "Frames of one swing past B and back (the cube: 5)"),
     "weight": ("Weight", 0.05,

@@ -161,7 +161,7 @@ class ParamTests(unittest.TestCase):
     def test_defaults_and_clamping(self):
         p = ps.params()
         self.assertEqual(sorted(p), ["overshoot", "sway", "swing", "weight"])
-        self.assertEqual(p, {"overshoot": 4.5, "swing": 5.0, "weight": 1.0, "sway": 1.0})
+        self.assertEqual(p, {"overshoot": 3.0, "swing": 5.0, "weight": 1.0, "sway": 1.0})
         self.assertEqual(ps.params(weight=99.0)["weight"], ps.RANGES["weight"][1])
         self.assertEqual(ps.params(swing=0.0)["swing"], ps.RANGES["swing"][0])
 

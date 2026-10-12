@@ -34,10 +34,11 @@ SCALE = {"travel": 32.36, "tilt": 1.0, "sink": 1.0, "sway": 1.0, "yaw": 1.0}   #
 WEIGHT = {"travel": 1 / 0.3, "tilt": 1 / 2.0, "sink": 1 / 0.15}
 
 
-def run(amplitude, swing):
-    tr = ps.solve(0.0, cube["t_b"], cube["reach"], cube["reach"], cube["height"],
-                  {"amplitude": amplitude, "swing": swing})
-    return {k: np.array(v) for k, v in tests.model_on_frames(tr).items()}, tr.end
+def run(overshoot, swing):
+    """The three-key model on the cube's frames 0 / 5 / the frame it passes B, the tilt shape scaled to
+    the cube's lag at 5 (as a breakdown sets it): tests.cube_model."""
+    model, tr = tests.cube_model(cube, {"overshoot": overshoot, "swing": swing})
+    return {k: np.array(v) for k, v in model.items()}, tr.end
 
 
 def error(model, key):
@@ -56,17 +57,17 @@ best = None
 for zeta, swing, amplitude in itertools.product(np.linspace(0.22, 0.42, 11), np.linspace(4.25, 5.5, 6),
                                                 np.linspace(2.5, 6.5, 9)):
     ps.ZETA = float(zeta)
-    ps.K_TILT, ps.K_SINK = 45.4, 0.51
-    for _ in range(3):                      # the drives saturate softly: iterate the linear rescale
+    ps.K_SINK = 0.51
+    for _ in range(3):                      # the drive saturates softly: iterate the linear rescale
         model, _ = run(amplitude, swing)
-        ps.K_TILT = rescale(model, "tilt", ps.K_TILT)
         ps.K_SINK = rescale(model, "sink", ps.K_SINK)
     model, _ = run(amplitude, swing)
     score = sum(error(model, k) * WEIGHT[k] for k in WEIGHT)
     if best is None or score < best[0]:
-        best = (score, float(zeta), float(swing), float(amplitude), ps.K_TILT, ps.K_SINK)
+        best = (score, float(zeta), float(swing), float(amplitude), ps.K_SINK)
 
-_, ps.ZETA, swing, amplitude, ps.K_TILT, ps.K_SINK = best
+# K_TILT only shapes the lag now (the breakdown scales it), so it keeps its two-pose value.
+_, ps.ZETA, swing, amplitude, ps.K_SINK = best
 sway_best = None
 for rate in np.linspace(0.4, 1.2, 33):
     ps.SWAY_RATE = float(rate)
@@ -91,7 +92,7 @@ print("K_SINK = %.3f" % ps.K_SINK)
 print("K_SWAY = %.3f" % ps.K_SWAY)
 print("SWAY_RATE = %.3f" % ps.SWAY_RATE)
 print("K_YAW = %.1f" % ps.K_YAW)
-print("DEFAULTS amplitude %.2f, swing %.2f" % (amplitude, swing))
+print("DEFAULTS overshoot %.2f, swing %.2f" % (amplitude, swing))
 for k in KEYS:
     print("%-6s rms %.3f   (range %.2f)" % (k, error(model, k), float(np.ptp(TARGET[k])) * SCALE[k]))
 print("settles at frame %d (B passed at %.2f)" % (end, cube["t_b"]))

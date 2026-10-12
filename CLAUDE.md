@@ -8635,19 +8635,56 @@ ONE swing, weight is how many; a rigid object; sway a parameter; keys on every f
   world result decomposed back into translate/rotate through the parent and the transform's own pivots,
   shear and rotate axis (`X^-1 L = R . Tr(rp + rpt + t)`).
 
-**The script**: Overshoot % 4.5, Overlap 1, Weight 1, Swing 5 frames, Sway 1 (all = the cube), Up axis; Apply
-(one undo), Restore keys, Reset. The source is the last two key times on translate/rotate; a transition it
-wrote is re-run from its own keys (marker `skeldarPhysStop`, JSON), B read at its last key - edit that key to
-edit pose B; a released slider re-applies.
+**Three poses since 2026-10-12** (the animator: «давай попробуем сделать не две позы а 3 задача
+промежуточной позы определить арку входа в овершут и силу захлеста ... улучшить найминг парамметров»; asked:
+M is a key hit exactly at its frame, three poses only). Spec
+`docs/superpowers/specs/2026-10-12-physical-stop-three-poses-design.md` (its addendum). **This replaces the
+two-pose source and the Overlap slider above**:
+- **The source** is the last THREE key times on translate/rotate: A (from), M (the breakdown), B (to).
+  Fewer, or two less than a frame apart, is refused by name.
+- **The timing** `p(t)` is a clamped cubic Hermite spline through (tA, 0), (tM, s_M), (tB, 1): at rest at
+  A, `vB` at B, at M the slope that keeps the curvature continuous. The slopes are held to Fritsch-Carlson's
+  `[0, 3 x secant]`, so the object never runs backwards and hits M exactly at its frame. Past B it settles
+  as before.
+- **The arc**: the bottom runs on the parabola through its places at A, M and B, parameterised by the
+  chords; `s` is the arc-length fraction, from a 256-sample table. Past B it runs along the arc's tangent,
+  so the overshoot leaves the way the arc arrived.
+- **The lag is read off M**: `G = W_path(tM)^-1 . W_M`, a rotation about the bottom, less the sway's yaw at
+  M. It is spread in time by the tilt spring's shape, scaled to 1 at M (to its peak where the spring
+  barely bends at M). Its axis is wherever M was posed: back, aside, twisted.
+- **Exactly M**: what is left at M (sink, sway, numerics) is pinned with a smoothstep bump, 0 at A, 1 at
+  M, 0 at B. A, B and the settle are untouched.
+- **The controls**, renamed:
+  - **Stop**: Overshoot, % (3 - refitted on the three-key model), Swing length, fr (5), Weight (1);
+  - **Extras**: Side sway (1, + left), Up axis.
+  The optionVars are `skeldarPhysStop_overshoot/swing/weight/sway/axis`.
+- **Re-apply and Restore**: the marker holds tA, tM, tB, tE. A re-run reads M at tM and B at the last key,
+  so editing those keys edits the poses. Restore keys puts the three keys back. A two-pose marker asks
+  for Restore keys first, and Restore puts its two keys back.
+- **The status line**: «cube: frames 0-31 | breakdown at 5: lag 17.2 deg back, arc bends 2.7 cm | sink
+  3.17 cm, sway 1.35 cm | settles 22 frames after B».
 
-Proof: `tests/test_physstop.py` 43 (the path, the springs, the cube's components within 2.5 deg / 0.12 cm,
-the transform round trip in all six orders with pivots, the window on a fake cmds); `verify_physstop.py`
-**20/20 standalone** (the cube rebuilt from keys at f0/f9: bottom 0.45 cm rms, top 0.65 cm against the
-animator's; a parented pivoted zxy prop composed to 4.4e-16; one undo; Restore); `calibrate_physstop.py`
-refits the constants. **The live try is the animator's** - nothing ran in their Maya but the read.
+Proof:
+- `tests/test_physstop.py`, 57 tests: the spline, the arc, the pin, the cube's components with M at frame
+  5, the composition, the window.
+- `verify_physstop.py`, **28/28 standalone**:
+  - the cube rebuilt from its frames 0 and 5 and its final pose at 9: M exact to 3.6e-15, the bottom
+    0.405 cm and the top 0.602 cm rms against the animator's cube, the tilt peaking at frame 7 at 23.3 deg
+    (the cube: 8, 24.1);
+  - a breakdown 15 cm aside: the bottom on the arc on every frame, the overshoot along its tangent
+    0.00 deg off;
+  - a breakdown tilted left lagging left;
+  - the parented pivoted zxy prop to 4.4e-16;
+  - the spin, the refusals, re-apply, one undo, Restore.
+- `calibrate_physstop.py` refits the constants (damping 0.32, sink 0.527, sway 0.219, yaw 51.9).
 
-Not built: a chain, sparse keys, a constrained/IK parent (read per frame with `getAttr(time=)`, trap 69),
-scale between A and B, angular speed as a drive, the plugin and the hub (and `maya_overshoot.py`'s future).
+**The live try is the animator's**.
+
+Not built:
+- a chain, sparse keys, more than three poses;
+- a constrained/IK parent (read it per frame with `getAttr(time=)`, trap 69);
+- scale between the poses, angular speed as a drive;
+- the plugin and the hub (and `maya_overshoot.py`'s future).
 
 219. **`cmds.xform(node, q=True, boundingBox=True, objectSpace=True)` answers the box in the PARENT's space**
      (the node's own transform applied): a 1-unit cube scaled 4 x 11 x 3 and turned read -3.98..5.98. The
