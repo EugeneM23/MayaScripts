@@ -360,5 +360,164 @@ class RefusalTests(unittest.TestCase):
         self.assertIn("ball_r", str(caught.exception))
 
 
+def positions(result, name, w):
+    return result.worlds[w.index[name], :, 3, :3]
+
+
+def rotations(result, name, w):
+    return result.worlds[w.index[name], :, :3, :3]
+
+
+def local_rot(result, name, w, f):
+    j = w.index[name]
+    return result.worlds[j, f, :3, :3] @ result.worlds[w.parents[j], f, :3, :3].T
+
+
+class IdentityTests(unittest.TestCase):
+
+    def test_the_defaults_give_the_source_back(self):
+        w, c = walk(), clip()
+        r = w.evaluate()
+        self.assertEqual(r.frames, 24)
+        self.assertEqual(r.worlds.shape, c.worlds.shape)
+        self.assertLess(float(np.abs(r.worlds - c.worlds).max()), 1e-6)
+        self.assertEqual(r.info["lowered"], 0.0)
+        self.assertEqual(r.info["short"], 0.0)
+        self.assertIn("24 frames, stride 60.0 cm, 1.50 m/s", wm.describe(r))
+
+
+class StepTests(unittest.TestCase):
+
+    def test_stride_moves_the_footprints_and_keeps_the_stance_foot_still(self):
+        w = walk()
+        r = w.evaluate({"stride": 1.3})
+        foot = positions(r, "foot_l", w)
+        left = w.feet["l"]
+        stance = [left.on + i for i in range(left.length + 1)]
+        self.assertLess(float(np.ptp(foot[stance], axis=0).max()), 1e-9)
+        right = w.feet["r"]
+        mid_l, mid_r = int(round(left.mid)) % 24, int(round(right.mid)) % 24
+        gap = positions(r, "foot_r", w)[mid_r, 2] - foot[mid_l, 2]
+        src = clip().worlds
+        src_gap = src[w.index["foot_r"], mid_r, 3, 2] - src[w.index["foot_l"], mid_l, 3, 2]
+        self.assertAlmostEqual(gap, 1.3 * src_gap, places=6)
+
+    def test_stride_keeps_bone_lengths_and_the_loop(self):
+        w = walk()
+        r = w.evaluate({"stride": 1.3})
+        for side in "lr":
+            hip, knee, ankle = (positions(r, b + "_" + side, w) for b in ("thigh", "calf", "foot"))
+            self.assertLess(float(np.abs(np.linalg.norm(knee - hip, axis=1) - L1).max()), 1e-9)
+            self.assertLess(float(np.abs(np.linalg.norm(ankle - knee, axis=1) - L2).max()), 1e-9)
+        moved = r.worlds[:, -1, 3, :3] - r.worlds[:, 0, 3, :3]
+        self.assertLess(float(np.abs(moved - [0.0, 0.0, 156.0]).max()), 1e-6)
+        self.assertLess(float(np.abs(r.worlds[:, -1, :3, :3] - r.worlds[:, 0, :3, :3]).max()), 1e-9)
+        self.assertAlmostEqual(r.info["stride_cm"], 78.0)
+
+    def test_tempo_resamples_the_cycle(self):
+        w = walk()
+        r = w.evaluate({"tempo": 30})
+        self.assertEqual(r.frames, 30)
+        self.assertEqual(r.worlds.shape[1], 31)
+        moved = r.worlds[:, -1, 3, :3] - r.worlds[:, 0, 3, :3]
+        self.assertLess(float(np.abs(moved - [0.0, 0.0, 120.0]).max()), 1e-6)
+        self.assertAlmostEqual(r.info["speed"], 1.2)
+
+    def test_lift_scales_the_swing_above_the_straight_blend(self):
+        w = walk()
+        r = w.evaluate({"lift": 2.0})
+        src = clip().worlds[w.index["foot_l"], 19, 3, 1]
+        self.assertGreater(src - 8.0, 5.0)
+        self.assertAlmostEqual(positions(r, "foot_l", w)[19, 1] - 8.0, 2.0 * (src - 8.0), places=6)
+
+    def test_width_moves_the_feet_apart(self):
+        w = walk()
+        r = w.evaluate({"width": 10.0})
+        src = clip().worlds
+        mid_l, mid_r = int(round(w.feet["l"].mid)) % 24, int(round(w.feet["r"].mid)) % 24
+        self.assertAlmostEqual(positions(r, "foot_l", w)[mid_l, 0] - src[w.index["foot_l"], mid_l, 3, 0], 5.0)
+        self.assertAlmostEqual(positions(r, "foot_r", w)[mid_r, 0] - src[w.index["foot_r"], mid_r, 3, 0], -5.0)
+
+    def test_a_long_stride_on_a_flat_pelvis_lowers_it_to_reach(self):
+        w = walk()
+        r = w.evaluate({"stride": 1.6, "bob": 0.0})
+        self.assertGreater(r.info["lowered"], 1.0)
+        self.assertLess(r.info["short"], 1e-6)
+        for side in "lr":
+            d = np.linalg.norm(positions(r, "foot_" + side, w) - positions(r, "thigh_" + side, w), axis=1)
+            self.assertLessEqual(float(d.max()), w.reach[side] * (L1 + L2) + 1e-6)
+        self.assertIn("pelvis lowered", wm.describe(r))
+
+    def test_helpers_keep_following(self):
+        w = walk()
+        r = w.evaluate({"stride": 1.2, "arms": 2.0})
+        self.assertLess(float(np.abs(r.worlds[w.index["ik_foot_l"]] - r.worlds[w.index["foot_l"]]).max()), 1e-9)
+        cam = positions(r, "camera_root", w) - positions(r, "root", w)
+        self.assertTrue(np.allclose(cam, [0.0, 160.0, 0.0]))
+
+
+class BodyTests(unittest.TestCase):
+
+    def pelvis(self, r, w):
+        return positions(r, "pelvis", w)
+
+    def test_bob_scales_the_pelvis_about_its_mean(self):
+        w, src = walk(), clip().worlds[1, :24, 3, 1]
+        flat = self.pelvis(walk().evaluate({"bob": 0.0}), w)[:, 1]
+        self.assertLess(float(np.ptp(flat)), 1e-9)
+        r = w.evaluate({"bob": 2.0})
+        dev = self.pelvis(r, w)[:24, 1] - w.pelvis_mean[2] + r.info["lowered"]
+        self.assertTrue(np.allclose(dev, 2.0 * (src - src.mean()), atol=1e-6))
+
+    def test_sway_zero_holds_the_pelvis_on_its_line(self):
+        w = walk()
+        side = self.pelvis(w.evaluate({"sway": 0.0}), w)[:, 0]
+        self.assertLess(float(np.ptp(side)), 1e-9)
+
+    def test_arms_scale_their_local_swing(self):
+        w, c = walk(), clip()
+        still = w.evaluate({"arms": 0.0})
+        firsts = [local_rot(still, "upperarm_l", w, f) for f in range(25)]
+        self.assertLess(max(angle(m @ firsts[0].T) for m in firsts), 1e-6)
+        double = w.evaluate({"arms": 2.0})
+        j = w.index["upperarm_l"]
+        mean = w.lmean[j]
+        for f in (3, 9, 15):
+            src = c.worlds[j, f, :3, :3] @ c.worlds[w.parents[j], f, :3, :3].T
+            self.assertAlmostEqual(angle(local_rot(double, "upperarm_l", w, f) @ mean.T),
+                                   2.0 * angle(src @ mean.T), places=6)
+
+    def test_head_zero_holds_the_head_steady_in_the_world(self):
+        w = walk()
+        heads = rotations(w.evaluate({"head": 0.0}), "head", w)
+        self.assertLess(float(np.abs(heads - heads[0]).max()), 1e-9)
+
+    def test_overlap_delays_the_hand_by_its_share(self):
+        w, c = walk(), clip()
+        r = w.evaluate({"overlap": 2.0})
+        j = w.index["hand_l"]
+        for f in (2, 7, 20):
+            src = c.worlds[j, f - 2, :3, :3] @ c.worlds[w.parents[j], f - 2, :3, :3].T
+            self.assertLess(angle(local_rot(r, "hand_l", w, f) @ src.T), 1e-6)
+
+    def test_weight_sinks_the_low_poses(self):
+        w = walk()
+        src = clip().worlds[1, :24, 3, 1]
+        heavy = self.pelvis(w.evaluate({"weight": 1.0}), w)[:24, 1]
+        self.assertLess(heavy.min(), src.min() - 0.3 * (src.mean() - src.min()))
+
+    def test_exaggeration_zero_stills_the_body_but_not_the_feet(self):
+        w = walk()
+        r = w.evaluate({"exaggeration": 0.0})
+        pel = r.worlds[w.index["pelvis"]]
+        self.assertLess(float(np.abs(pel[:, :3, :3] - pel[0, :3, :3]).max()), 1e-9)
+        self.assertLess(float(np.ptp(pel[:, 3, 1])), 1e-9)
+        spine = [local_rot(r, "spine_02", w, f) for f in range(25)]
+        self.assertLess(max(angle(m @ spine[0].T) for m in spine), 1e-6)
+        left = w.feet["l"]
+        foot = positions(r, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
+        self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
+
+
 if __name__ == "__main__":
     unittest.main()

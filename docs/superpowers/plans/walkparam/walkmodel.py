@@ -416,3 +416,160 @@ class Walk(object):
             if best is not None:
                 follows[h] = (best[1], best[2])
         return follows
+
+    # -- the new cycle --
+    def evaluate(self, given=None):
+        """The cycle rebuilt from knobs (the spec's model); the defaults give the source back."""
+        k = knobs(**(given or {}))
+        P = self.P
+        n = max(int(round(k["tempo"])), 4) if k["tempo"] >= 1.0 else P
+        ctx = {"k": k, "ex": k["exaggeration"], "travel2": self.travel * k["stride"],
+               "lag": max(0.0, k["overlap"] + WEIGHT_LAG * k["weight"]) * P / float(n),
+               "beta": min(max(WEIGHT_WARP * k["weight"], -0.9), 0.9),
+               "phi0": self.low_phase + WEIGHT_WARP_AFTER - 0.25, "delta": 0.0}
+        times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
+        ctx["delta"] = self._lowering(times, ctx)
+        worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
+        short = 0.0
+        for f, (phi, tau) in enumerate(times):
+            worlds[:, f], frame_short = self._frame(phi, tau, ctx)
+            short = max(short, frame_short)
+        flat = ctx["travel2"] - np.dot(ctx["travel2"], self.up) * self.up
+        info = {"frames": n, "stride_cm": float(np.linalg.norm(flat)) / 2.0,
+                "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": ctx["delta"],
+                "short": short, "lag": ctx["lag"] * n / float(P), "knobs": k}
+        return Result(worlds, n, info)
+
+    def foot_target(self, side, tau, stride, width, lift):
+        """The new foot at source time tau: (world rotation, ankle position). Stance: the source's foot
+        moved with its footprint; swing: the source's swing between the new footprints, its lift scaled."""
+        foot, j, P = self.feet[side], self.index["foot_" + side], self.P
+        rot, src = self.wrot(j, tau), self.wpos(j, tau)
+        travel2 = self.travel * stride
+        k = math.floor((tau - foot.on) / P)
+        r = tau - foot.on - k * P
+        sign = 1.0 if side == "l" else -1.0
+        shift = ((travel2 - self.travel) * ((foot.mid + k * P) / P)
+                 + (stride - 1.0) * foot.coords[0] * self.fwd + sign * width / 2.0 * self.side)
+        if r <= foot.length + 1e-9:
+            return rot, src + shift
+        t_off, t_on = foot.on + foot.length + k * P, foot.on + (k + 1) * P
+        p_off, p_on = self.wpos(j, t_off), self.wpos(j, t_on)
+        x, x_off, x_on = (float(np.dot(p, self.fwd)) for p in (src, p_off, p_on))
+        s = (x - x_off) / (x_on - x_off) if abs(x_on - x_off) > 1e-9 else (r - foot.length) / (P - foot.length)
+        print_k = self.wpos(j, foot.mid + k * P)
+        base = (1.0 - s) * (p_off - print_k) + s * (p_on - print_k - self.travel)
+        lift_up = float(np.dot(src - print_k - s * self.travel - base, self.up))
+        return rot, src + shift + s * (travel2 - self.travel) + (lift - 1.0) * lift_up * self.up
+
+    def _body(self, phi, tau, ctx):
+        """The root's and the pelvis's new (rotation, position)."""
+        k, ex = ctx["k"], ctx["ex"]
+        line2 = self.origin + ctx["travel2"] * phi
+        out = {}
+        for name, mean in (("root", self.root_mean), ("pelvis", self.pelvis_mean)):
+            j = self.index[name]
+            dev = periodic_cr(self.pdev[j], tau) @ self.basis.T
+            along = mean[0] + k["stride"] * ex * (dev[0] - mean[0])
+            aside = mean[1] + k["sway"] * ex * (dev[1] - mean[1])
+            if name == "pelvis":
+                v = float(periodic_cr(self.pdev[j], warp(phi, ctx["beta"], ctx["phi0"]) * self.P) @ self.up) - mean[2]
+                height = mean[2] + k["bob"] * ex * shape_bob(v, k["weight"]) - ctx["delta"]
+                rot = self.wrot(j, tau, k["pelvis_rot"] * ex)
+            else:
+                height, rot = dev[2], self.wrot(j, tau)
+            out[name] = (rot, line2 + np.array([along, aside, height]) @ self.basis)
+        return out
+
+    def _lowering(self, times, ctx):
+        """The one drop of the pelvis that lets every frame's legs reach without straightening past the
+        source's straightest (0 when nothing needs it)."""
+        k, drop = ctx["k"], 0.0
+        for phi, tau in times:
+            pelvis_rot, pelvis_pos = self._body(phi, tau, ctx)["pelvis"]
+            for side in SIDES:
+                th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
+                hip = self.lt_at(th, tau) @ pelvis_rot + pelvis_pos
+                ankle = self.foot_target(side, tau, k["stride"], k["width"], k["lift"] * ctx["ex"])[1]
+                limit = self.reach[side] * (np.linalg.norm(self.lt_at(ca, tau)) + np.linalg.norm(self.lt_at(fo, tau)))
+                q = ankle - hip
+                if np.linalg.norm(q) <= limit * (1.0 + 1e-9):
+                    continue
+                qu = float(np.dot(q, self.up))
+                disc = qu * qu - (float(np.dot(q, q)) - limit * limit)
+                if disc >= 0.0:
+                    drop = max(drop, -qu - math.sqrt(disc))
+        return max(drop, 0.0)
+
+    def _frame(self, phi, tau, ctx):
+        """Every joint's new world at one frame (parents first, helpers last); and how far a foot fell short."""
+        k, ex = ctx["k"], ctx["ex"]
+        rots, poss = [None] * len(self.names), [None] * len(self.names)
+        body = self._body(phi, tau, ctx)
+        gains = {"spine": k["spine"] * ex, "arm": k["arms"] * ex}
+        short = 0.0
+        for j in self.order:
+            if rots[j] is not None:
+                continue
+            kind, name, p = self.kind[j], self.names[j], self.parents[j]
+            if kind in ("root", "pelvis"):
+                rots[j], poss[j] = body[name]
+            elif kind == "world":
+                rots[j], poss[j] = self.wrot(j, tau), self.wpos(j, tau) + (ctx["travel2"] - self.travel) * phi
+            elif kind == "leg":
+                short = max(short, self._leg(name[-1], tau, rots, poss, ctx))
+            elif kind == "helper" and j in self.follows:
+                b, rel = self.follows[j]
+                m = rel @ matrix(rots[b], poss[b])
+                rots[j], poss[j] = m[:3, :3], m[3, :3]
+            else:
+                t = tau - self.lag[j] * ctx["lag"]
+                if kind == "head":
+                    rots[j] = self.wrot(j, t, k["head"] * ex)
+                else:
+                    rots[j] = self.lrot_at(j, t, gains.get(kind, 1.0)) @ rots[p]
+                poss[j] = self.lt_at(j, t) @ rots[p] + poss[p]
+        out = np.tile(np.eye(4), (len(self.names), 1, 1))
+        for j in range(len(self.names)):
+            out[j, :3, :3], out[j, 3, :3] = rots[j], poss[j]
+        return out, short
+
+    def _leg(self, side, tau, rots, poss, ctx):
+        """Thigh, calf and foot by IK from the new hip to the new foot; each bone turned by the rotation
+        taking its source (direction, leg plane) onto the new one. Returns how far the foot fell short."""
+        k = ctx["k"]
+        th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
+        pelvis = self.parents[th]
+        hip = self.lt_at(th, tau) @ rots[pelvis] + poss[pelvis]
+        foot_rot, ankle = self.foot_target(side, tau, k["stride"], k["width"], k["lift"] * ctx["ex"])
+        l1, l2 = float(np.linalg.norm(self.lt_at(ca, tau))), float(np.linalg.norm(self.lt_at(fo, tau)))
+        h, kn, a = self.wpos(th, tau), self.wpos(ca, tau), self.wpos(fo, tau)
+        e = _unit(a - h)
+        bend = (kn - h) - np.dot(kn - h, e) * e
+        bend = _unit(bend) if np.linalg.norm(bend) > 1e-6 else _unit(self.fwd - np.dot(self.fwd, e) * e)
+        knee, reached, short = two_bone(hip, ankle, l1, l2, bend, self.reach[side])
+        e2 = _unit(reached - hip)
+        bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
+        n_src, n_new = _unit(np.cross(e, bend)), _unit(np.cross(e2, bend2))
+        rots[th] = self.wrot(th, tau) @ align(_unit(kn - h), n_src, _unit(knee - hip), n_new)
+        rots[ca] = self.wrot(ca, tau) @ align(_unit(a - kn), n_src, _unit(reached - knee), n_new)
+        rots[fo] = foot_rot
+        poss[th], poss[ca], poss[fo] = hip, knee, reached
+        return short
+
+
+class Result(object):
+    """The new cycle: world matrices (J, N+1, 4, 4) in the source's world, N, and what happened."""
+
+    def __init__(self, worlds, frames, info):
+        self.worlds, self.frames, self.info = worlds, frames, info
+
+
+def describe(result):
+    info = result.info
+    text = "%d frames, stride %.1f cm, %.2f m/s" % (info["frames"], info["stride_cm"], info["speed"])
+    if info["lowered"] > 0.005:
+        text += " | pelvis lowered %.1f cm for the reach" % info["lowered"]
+    if info["short"] > 0.005:
+        text += " | a foot falls %.1f cm short of its step" % info["short"]
+    return text
