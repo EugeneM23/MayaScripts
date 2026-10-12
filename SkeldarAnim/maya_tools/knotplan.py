@@ -172,9 +172,18 @@ def decode_span(text):
         return None
 
 
+def influence(samples):
+    """(first, last) frame where `attach` is above zero, from [(frame, value)], or None: what a
+    Bake writes into the object (the animator may have keyed attach since). Pure."""
+    on = [frame for frame, value in samples if value > TOLERANCE]
+    if not on:
+        return None
+    return (float(min(on)), float(max(on)))
+
+
 def attach_keys(span):
     """OverRig's attach keys for a ranged span `[a-1, b]`: 0 at a-1, 1 at a and b-1, 0 at b
-    (flat tangents). None for a whole take: attach stays 1, unkeyed."""
+    (flat tangents). [] for a whole take: attach stays 1, unkeyed."""
     start, end, ranged = span
     if not ranged:
         return []

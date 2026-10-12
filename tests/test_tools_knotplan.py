@@ -126,6 +126,14 @@ class Attach(unittest.TestCase):
     def test_a_whole_take_knot_has_no_attach_keys(self):
         self.assertEqual(plan.attach_keys((0.0, 100.0, False)), [])
 
+    def test_influence_is_where_attach_is_above_zero(self):
+        samples = [(9, 0.0), (10, 1.0), (11, 0.5), (29, 1.0), (30, 0.0)]
+        self.assertEqual(plan.influence(samples), (10.0, 29.0))
+
+    def test_no_influence(self):
+        self.assertIsNone(plan.influence([(0, 0.0), (1, 0.0)]))
+        self.assertIsNone(plan.influence([]))
+
 
 class Channels(unittest.TestCase):
 
