@@ -35,6 +35,7 @@ WEIGHT_BOB_UP = 0.15      # its high half x max(0, 1 - this . weight)
 WEIGHT_WARP = 0.3         # the bob's clock: beta = this . weight
 WEIGHT_WARP_AFTER = 0.05  # slowest this share of a cycle after each low
 WEIGHT_LAG = 1.0          # frames of overlap per unit of weight
+LOWER_BLUR = 0.06         # the reach's drop of the pelvis, smoothed over this share of a cycle (sigma)
 
 
 class Refusal(Exception):
@@ -146,6 +147,24 @@ def periodic_cr(x, tau):
 def warp(phi, beta, phi0):
     """The bob's clock: slowest (slope 1 - beta) a quarter and three quarters of a cycle after phi0."""
     return phi + beta / (4.0 * math.pi) * math.sin(4.0 * math.pi * (phi - phi0))
+
+
+def smooth_cover(need, sigma):
+    """A smooth periodic curve lying over `need` (one value a frame, periodic): `need` widened by its
+    largest neighbour within `sigma` frames (so a narrow peak is not blurred away), blurred with a Gaussian
+    of `sigma` frames, then scaled by the least factor that covers every frame's need."""
+    need = np.asarray(need, float)
+    n = len(need)
+    if n == 0 or need.max() <= 0.0:
+        return np.zeros(n)
+    reach = int(round(sigma))
+    wide = np.max([np.roll(need, s) for s in range(-reach, reach + 1)], axis=0)
+    offsets = np.arange(n)
+    distance = np.minimum(offsets, n - offsets)
+    kernel = np.exp(-0.5 * (distance / max(sigma, 1e-6)) ** 2)
+    blur = np.real(np.fft.ifft(np.fft.fft(wide) * np.fft.fft(kernel / kernel.sum())))
+    wanted = need > 1e-9
+    return np.maximum(blur * float((need[wanted] / np.maximum(blur[wanted], 1e-12)).max()), 0.0)
 
 
 def shape_bob(v, weight):
@@ -426,18 +445,18 @@ class Walk(object):
         ctx = {"k": k, "ex": k["exaggeration"], "travel2": self.travel * k["stride"],
                "lag": max(0.0, k["overlap"] + WEIGHT_LAG * k["weight"]) * P / float(n),
                "beta": min(max(WEIGHT_WARP * k["weight"], -0.9), 0.9),
-               "phi0": self.low_phase + WEIGHT_WARP_AFTER - 0.25, "delta": 0.0}
+               "phi0": self.low_phase + WEIGHT_WARP_AFTER - 0.25}
         times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
-        ctx["delta"] = self._lowering(times, ctx)
+        drop = self._lowering(times, ctx)
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
         short = 0.0
         for f, (phi, tau) in enumerate(times):
-            worlds[:, f], frame_short = self._frame(phi, tau, ctx)
+            worlds[:, f], frame_short = self._frame(phi, tau, ctx, drop[f])
             short = max(short, frame_short)
         flat = ctx["travel2"] - np.dot(ctx["travel2"], self.up) * self.up
         info = {"frames": n, "stride_cm": float(np.linalg.norm(flat)) / 2.0,
-                "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": ctx["delta"],
-                "short": short, "lag": ctx["lag"] * n / float(P), "knobs": k}
+                "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": float(max(drop)),
+                "drop": [float(d) for d in drop], "short": short, "lag": ctx["lag"] * n / float(P), "knobs": k}
         return Result(worlds, n, info)
 
     def foot_target(self, side, tau, stride, width, lift):
@@ -462,8 +481,8 @@ class Walk(object):
         lift_up = float(np.dot(src - print_k - s * self.travel - base, self.up))
         return rot, src + shift + s * (travel2 - self.travel) + (lift - 1.0) * lift_up * self.up
 
-    def _body(self, phi, tau, ctx):
-        """The root's and the pelvis's new (rotation, position)."""
+    def _body(self, phi, tau, ctx, drop=0.0):
+        """The root's and the pelvis's new (rotation, position); the pelvis `drop` cm lower for the reach."""
         k, ex = ctx["k"], ctx["ex"]
         line2 = self.origin + ctx["travel2"] * phi
         out = {}
@@ -474,7 +493,7 @@ class Walk(object):
             aside = mean[1] + k["sway"] * ex * (dev[1] - mean[1])
             if name == "pelvis":
                 v = float(periodic_cr(self.pdev[j], warp(phi, ctx["beta"], ctx["phi0"]) * self.P) @ self.up) - mean[2]
-                height = mean[2] + k["bob"] * ex * shape_bob(v, k["weight"]) - ctx["delta"]
+                height = mean[2] + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
                 rot = self.wrot(j, tau, k["pelvis_rot"] * ex)
             else:
                 height, rot = dev[2], self.wrot(j, tau)
@@ -482,10 +501,12 @@ class Walk(object):
         return out
 
     def _lowering(self, times, ctx):
-        """The one drop of the pelvis that lets every frame's legs reach without straightening past the
-        source's straightest (0 when nothing needs it)."""
-        k, drop = ctx["k"], 0.0
-        for phi, tau in times:
+        """The pelvis's drop on every frame (the last = the first): each frame needs the least drop that lets
+        both legs reach without straightening past the source's straightest; the drop is a smooth periodic
+        curve over those needs (smooth_cover), so a long stride sinks the contacts, not the whole cycle."""
+        k = ctx["k"]
+        need = np.zeros(len(times) - 1)
+        for f, (phi, tau) in enumerate(times[:-1]):
             pelvis_rot, pelvis_pos = self._body(phi, tau, ctx)["pelvis"]
             for side in SIDES:
                 th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
@@ -498,14 +519,15 @@ class Walk(object):
                 qu = float(np.dot(q, self.up))
                 disc = qu * qu - (float(np.dot(q, q)) - limit * limit)
                 if disc >= 0.0:
-                    drop = max(drop, -qu - math.sqrt(disc))
-        return max(drop, 0.0)
+                    need[f] = max(need[f], -qu - math.sqrt(disc))
+        drop = smooth_cover(need, LOWER_BLUR * len(need))
+        return np.append(drop, drop[0])
 
-    def _frame(self, phi, tau, ctx):
+    def _frame(self, phi, tau, ctx, drop=0.0):
         """Every joint's new world at one frame (parents first, helpers last); and how far a foot fell short."""
         k, ex = ctx["k"], ctx["ex"]
         rots, poss = [None] * len(self.names), [None] * len(self.names)
-        body = self._body(phi, tau, ctx)
+        body = self._body(phi, tau, ctx, drop)
         gains = {"spine": k["spine"] * ex, "arm": k["arms"] * ex}
         short = 0.0
         for j in self.order:
@@ -568,8 +590,8 @@ class Result(object):
 def describe(result):
     info = result.info
     text = "%d frames, stride %.1f cm, %.2f m/s" % (info["frames"], info["stride_cm"], info["speed"])
-    if info["lowered"] > 0.005:
-        text += " | pelvis lowered %.1f cm for the reach" % info["lowered"]
+    if info["lowered"] > 0.05:
+        text += " | pelvis lowered up to %.1f cm at the contacts for the reach" % info["lowered"]
     if info["short"] > 0.005:
         text += " | a foot falls %.1f cm short of its step" % info["short"]
     return text

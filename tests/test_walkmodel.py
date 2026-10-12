@@ -110,6 +110,20 @@ class SamplerTests(unittest.TestCase):
         self.assertAlmostEqual(slope(0.85), 0.5, places=4)
         self.assertAlmostEqual(slope(0.1), 1.5, places=4)
 
+    def test_smooth_cover_lies_over_the_need_and_is_periodic(self):
+        need = np.zeros(30)
+        need[5:9] = [1.0, 4.0, 3.0, 0.5]
+        need[20] = 2.0
+        cover = wm.smooth_cover(need, 2.0)
+        self.assertTrue(np.all(cover >= need - 1e-12))
+        self.assertLess(cover[13], 0.5)
+        self.assertLess(cover[0], 0.5)
+        self.assertTrue(np.allclose(wm.smooth_cover(np.roll(need, 7), 2.0), np.roll(cover, 7)))
+        self.assertTrue(np.allclose(wm.smooth_cover(np.zeros(12), 2.0), 0.0))
+        steps = np.abs(np.diff(np.append(cover, cover[0])))
+        self.assertLess(float(steps.max()), float(np.abs(np.diff(np.append(need, need[0]))).max()))
+        self.assertLess(float(cover.max()), 1.25 * float(need.max()))
+
     def test_shape_bob(self):
         self.assertEqual(wm.shape_bob(-2.0, 0.0), -2.0)
         self.assertEqual(wm.shape_bob(3.0, 0.0), 3.0)
@@ -442,6 +456,9 @@ class StepTests(unittest.TestCase):
         w = walk()
         r = w.evaluate({"stride": 1.6, "bob": 0.0})
         self.assertGreater(r.info["lowered"], 1.0)
+        self.assertEqual(len(r.info["drop"]), 25)
+        self.assertAlmostEqual(r.info["lowered"], max(r.info["drop"]))
+        self.assertLess(min(r.info["drop"]), 0.5 * r.info["lowered"])   # deepest at the contacts only
         self.assertLess(r.info["short"], 1e-6)
         for side in "lr":
             d = np.linalg.norm(positions(r, "foot_" + side, w) - positions(r, "thigh_" + side, w), axis=1)
@@ -466,7 +483,7 @@ class BodyTests(unittest.TestCase):
         flat = self.pelvis(walk().evaluate({"bob": 0.0}), w)[:, 1]
         self.assertLess(float(np.ptp(flat)), 1e-9)
         r = w.evaluate({"bob": 2.0})
-        dev = self.pelvis(r, w)[:24, 1] - w.pelvis_mean[2] + r.info["lowered"]
+        dev = self.pelvis(r, w)[:24, 1] - w.pelvis_mean[2] + np.array(r.info["drop"][:24])
         self.assertTrue(np.allclose(dev, 2.0 * (src - src.mean()), atol=1e-6))
 
     def test_sway_zero_holds_the_pelvis_on_its_line(self):
