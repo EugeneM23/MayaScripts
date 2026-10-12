@@ -8888,27 +8888,61 @@ moves a footprint - so **the defaults ARE the source**, by construction.
   (frames 5-11 and 20-25); now 8.9 cm at the contacts and ~0 at the passing poses;
 - helpers keep their rigid relation to their body bone.
 
-**The copy**: `duplicate` of the top (no curves), `<top>_walk`, 100 cm to the character's left (Offset),
-marked `skeldarWalk` = JSON {source UUID, knobs, offset}; every change rewrites its curves in one undo
-chunk - locals from the model's worlds (`R = RA^-1 . L . JO^-1`, the euler nearest the frame before),
-curve nodes through cmds, keys through `MFnAnimCurve.addKeys` (trap 224). The window: Analyse (a bone of
-the source or any node of the copy, which reads its knobs back), the knobs in four groups, Offset, Update /
-Reset / Delete copy, a status line; a released slider updates. 0.3-0.6 s an update.
-
-**Proof**: `tests/test_walkmodel.py` 43 on a synthetic walker (feet planted, legs by IK); `verify_walk.py`
-**23/23 standalone** on Walk_01: the defaults = the source on 93 joints × 32 frames to 0.0002 cm (the
+**The first build keyed a copy** of the cycle beside it (`<top>_walk`); the same day it became the walk onto
+any skeleton (below) and the copy mode went. Its proof, on the model itself: `verify_walk.py` (that day's
+version, in git history) **23/23 standalone** on Walk_01: the defaults = the source on 93 joints × 32 frames to 0.0002 cm (the
 source's own seam); stride 0.7 / 1.3 travel ×0.700 / ×1.300, stance feet as still as the source's, bone
 lengths 1e-5, seam 0; stride 1.6 the legs never straighter than the source's, the pelvis down 29 cm at
 the contacts and 4.7 at the passing pose; tempo 25 / 40 seamless; lift 2 exactly ×2 over the blend; width
 +10.00 cm; bob 0 level, bob 2 exactly twice; sway 0; arms 0 still, arms 2 ×2.00000; head 0 still; overlap 3
 the hand exactly 3 frames late; weight 1 the pelvis 2 cm lower, the knee at contact 45.1 deg against 39.4;
 exaggeration 0 still body, walking feet; one Ctrl+Z; the source's 753 curves untouched. Picture:
-`docs/superpowers/plans/walkparam/walk_sheet.png` (side-view onion skins of six settings). **The window in
-the animator's Maya is theirs to try**; nothing was written there.
+`docs/superpowers/plans/walkparam/walk_sheet.png` (side-view onion skins of six settings).
+`tests/test_walkmodel.py` 43 on a synthetic walker (feet planted, legs by IK).
 
-Not built: an in-place clip, a curved walk, non-UE names, the goblin pose (the next step: replace the
-mean pose), several clips as a style knob, stance duration, removing the source's slide, a redo of an
-update (trap 224).
+**…onto any skeleton** (the same day: «сделаем так что бы я выделил любой скелет и моя походка применилась к
+нему и дальше я мог ее настраивать»; asked: onto the skeleton itself, walks saved to files, any skeleton,
+rigs not yet). Spec `docs/superpowers/specs/2026-10-12-walk-onto-any-skeleton-design.md` (its addendum).
+- **Save walk...** (a bone of a cycle selected): `walkfile.py` writes `walkparam/walks/<name>.walk.gz` (gzip
+  JSON `skeldar.walk` 1: names, parents, worlds per frame, fps, start, and per bone parent / canonical /
+  rest). **git ignores `walks/`** (the animator's data, a public repo). The rest: a skin's bind, else - an
+  unskinned skeleton with Manny's bones (median length within 1 % of `assets/manny_skeleton_template.json`;
+  Walk_01's 93 bones are his to 1.5e-6) - **Manny's bind from the template**, else as it stands (said). The
+  same rule reads a target, so a cycle onto its own skeleton is a twin of itself.
+- **Apply to selection** (any skeleton; a rig refused): `walktarget.Retarget` - per frame the Pose Library's
+  `posemath.Transfer` (pairs by leaf or canonical name, rotations through the two rests, the target's own
+  lengths, the pelvis offset and the travel scaled, from the target's PLACE - stored in the marker, so a
+  re-tune never drifts), then **the legs by IK in the target's lengths onto the walk's ankles mapped as the
+  pelvis is** (a planted foot stays planted at any size), the knee toward the transferred knee, roll kept;
+  the pelvis dropped per frame where the target's legs fall short (`smooth_cover`); the helpers on the bones
+  they follow in the walk (translation x the size). **The size is the legs' ratio** (thigh + calf at rest,
+  both sides averaged): posemath's pelvis-height ratio snaps within 2 % to 1 and left the UE4 Mannequin
+  4.06 cm short at the contacts (now x0.967, 0.89 cm); a twin (posemath.twin AND legs within 1 % - the
+  twin test's median let 6 shortened leg bones of 30 through) is exactly 1. The target is read at its REST,
+  so old animation on it changes nothing; written: rotate curves on every paired bone, the legs, the root
+  frame's bone and the re-placed helpers, translate curves on the root frame's bone, the pelvis and the
+  helpers, every other written bone's translate static at its rest local (old translate curves deleted).
+  Marker on the top joint `skeldarWalk` = JSON {walk, knobs, place, start, version 2}. One undo chunk.
+- **Pick selection** reads a walked skeleton's walk and knobs into the window and makes it the target; a
+  released slider re-keys the target. The window: the walk list + Save walk..., Apply / Pick, Target, the
+  knobs, Reset, the status (the walk, the target, bones paired, the size, stride and speed AT the target's
+  size, the drop, the time). 0.25-0.4 s an apply.
+
+**Proof** (on top of 52 unit tests: the file round trip, onto itself = identity, onto a copy at 0.7, legs 20 %
+shorter, the helpers): `verify_walk.py` **14/14 standalone** - Walk_01 saved resting on Manny's bind; onto
+the plugin's Manny skeleton (a twin): 80 bones on the walk's rotations to 0.0017, every bone but thighs and
+calves to 0.015 cm = the pelvis's 0.0152 drop, thighs and calves to 0.074 cm - **the walk's own left leg
+breathes 0.058 cm** (keyed), a target keeps its lengths; onto the Creep (x1.000), the UE4 Mannequin (x0.967),
+Mixamo `Sweep Fall.fbx` (x1.027, 65 bones) and a Manny shrunk to 0.6 (x0.600): the stance ankle's spread =
+the walk's x the size to 0.05 cm (6.172 -> 5.970 / 6.337 / 3.703), lengths constant to 2e-6, the travel x
+the size, seam 0; re-tuned (stride 1.3) from the stored place with the time at 17 - frame 0's root unmoved;
+Pick reads it back; one Ctrl+Z; the walk's cycle untouched by five applies; onto its own skeleton the cycle
+itself (but the breathing legs). Picture `walkparam/walk_targets.png` (`WALK_SHEET=<png>` renders it).
+**The window in the animator's Maya is theirs to try**; nothing was written there.
+
+Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
+targets, the goblin pose (the next step: replace the mean pose), several clips as a style knob, stance
+duration, removing the source's slide, a redo of an update (trap 224).
 
 224. **`cmds.setAttr(curve + ".ktv[0:n]", ...)` is refused from a script** («should be set with the
      keyframe or setKeyframe command») - only a .ma may write keyTimeValue. The fast road: create the

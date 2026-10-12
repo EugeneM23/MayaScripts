@@ -74,3 +74,17 @@ skeleton with no pairable legs; a walk file of another format; no walk saved.
   Downloads: stance feet still (no worse than the walk's own slide x the size), stride x the size, bone
   lengths unchanged, the seam; knobs re-tune the same skeleton from its stored place; Pick reads the knobs
   back; one Ctrl+Z; a rig refused.
+
+## Addendum (2026-10-12, the build)
+
+- **The size is the legs' ratio, not the pelvis height's.** posemath's `scale_between` (the pelvis over the
+  root, target over source) snaps within 2 % to 1: on the UE4 Mannequin that walked Manny's stride on legs
+  3.3 % shorter, and the pelvis had to drop 4.06 cm at the contacts. A stride is as long as the legs that
+  take it: `Retarget.leg_ratio` (thigh + calf at rest, the two sides averaged) - x0.967 and 0.89 cm there,
+  Mixamo x1.027. A twin is exactly 1: `posemath.twin` AND legs within 1 % (the twin test's median let a body
+  with 6 of 30 bones - its legs - 20 % shorter through as "the same").
+- **A target keeps its own bone lengths**, so a twin is exact but for what the walk itself does to its
+  bones: Walk_01's left leg is keyed 0.058 cm long and short, and Manny's knees stand up to 0.074 cm off
+  the walk's, the pelvis 0.015 cm lower where his rest legs are that much shorter than the walk's frame.
+- The cycle's first frame is stored in the walk file (`start`); the keys land on start..start+N.
+- `verify_walk.py` 14/14 (the numbers in CLAUDE.md's section); `WALK_SHEET=<png>` draws every target.
