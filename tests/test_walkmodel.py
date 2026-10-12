@@ -162,5 +162,203 @@ class KnobTests(unittest.TestCase):
                           "head", "overlap", "weight", "exaggeration"])
 
 
+UP = np.array([0.0, 1.0, 0.0])
+FWD = np.array([0.0, 0.0, 1.0])
+L1, L2 = 48.0, 47.0
+UPPER = ("spine_01", "spine_02", "neck_01", "head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l",
+         "index_01_l", "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "index_01_r")
+BONES = [  # name, parent, local translation (None: the generator places it)
+    ("root", None, None), ("pelvis", "root", None),
+    ("spine_01", "pelvis", (0, 10, 0)), ("spine_02", "spine_01", (0, 15, 0)),
+    ("neck_01", "spine_02", (0, 22, 0)), ("head", "neck_01", (0, 9, 0)),
+    ("clavicle_l", "spine_02", (4, 18, 0)), ("upperarm_l", "clavicle_l", (14, 0, 0)),
+    ("lowerarm_l", "upperarm_l", (28, 0, 0)), ("hand_l", "lowerarm_l", (26, 0, 0)),
+    ("index_01_l", "hand_l", (9, 0, 0)),
+    ("clavicle_r", "spine_02", (-4, 18, 0)), ("upperarm_r", "clavicle_r", (-14, 0, 0)),
+    ("lowerarm_r", "upperarm_r", (-28, 0, 0)), ("hand_r", "lowerarm_r", (-26, 0, 0)),
+    ("index_01_r", "hand_r", (-9, 0, 0)),
+    ("thigh_l", "pelvis", (9, -5, 0)), ("calf_l", "thigh_l", None), ("foot_l", "calf_l", None),
+    ("ball_l", "foot_l", (0, -6, 12)), ("thigh_twist_01_l", "thigh_l", (24, 0, 0)),
+    ("thigh_r", "pelvis", (-9, -5, 0)), ("calf_r", "thigh_r", None), ("foot_r", "calf_r", None),
+    ("ball_r", "foot_r", (0, -6, 12)), ("thigh_twist_01_r", "thigh_r", (24, 0, 0)),
+    ("ik_foot_root", "root", (0, 0, 0)), ("ik_foot_l", "ik_foot_root", None),
+    ("ik_foot_r", "ik_foot_root", None), ("camera_root", "root", (0, 160, 0)),
+]
+
+
+def mat(rot, pos):
+    out = np.eye(4)
+    out[:3, :3] = rot
+    out[3, :3] = pos
+    return out
+
+
+def upper_rot(name, phi):
+    w = 2.0 * math.pi * phi
+    s = math.sin
+    return {
+        "spine_01": rot_y(-4 * s(w)) @ rot_x(2 * s(2 * w)),
+        "spine_02": rot_y(-3 * s(w + 0.3)),
+        "neck_01": rot_x(3 * s(2 * w + 0.5)),
+        "head": rot_y(2 * s(w)),
+        "clavicle_l": rot_z(3 * s(w + 0.4)), "clavicle_r": rot_z(-3 * s(w + 0.4)),
+        "upperarm_l": rot_y(25 * s(w + math.pi)) @ rot_z(-80), "upperarm_r": rot_y(25 * s(w)) @ rot_z(80),
+        "lowerarm_l": rot_z(-10 - 8 * s(w + math.pi)), "lowerarm_r": rot_z(10 + 8 * s(w)),
+        "hand_l": rot_x(5 * s(w)), "hand_r": rot_x(-5 * s(w)),
+        "index_01_l": rot_z(-10 - 5 * s(w)), "index_01_r": rot_z(10 + 5 * s(w)),
+    }[name]
+
+
+def foot_world(side, phi, travel, stance=0.6, lift=10.0):
+    offset, x = (0.0, 10.0) if side == "l" else (0.5, -10.0)
+    rel = phi - offset
+    k = math.floor(rel)
+    r = rel - k
+    step = lambda i: np.array([x, 8.0, travel * (i + offset + stance / 2.0)])
+    if r <= stance:
+        return np.eye(3), step(k)
+    u = (r - stance) / (1.0 - stance)
+    s = u * u * (3.0 - 2.0 * u)
+    return rot_x(-20 * math.sin(math.pi * s)), step(k) * (1 - s) + step(k + 1) * s + UP * lift * math.sin(math.pi * s)
+
+
+def leg(hip, ankle):
+    v = ankle - hip
+    d = np.linalg.norm(v)
+    e = v / d
+    bend = FWD - np.dot(FWD, e) * e
+    bend /= np.linalg.norm(bend)
+    along = (L1 * L1 - L2 * L2 + d * d) / (2 * d)
+    knee = hip + along * e + math.sqrt(L1 * L1 - along * along) * bend
+    n = np.cross(e, bend)
+    n /= np.linalg.norm(n)
+    frame = lambda u: np.stack([u / np.linalg.norm(u), n, np.cross(u / np.linalg.norm(u), n)])
+    return knee, frame(knee - hip), frame(ankle - knee)
+
+
+def synthetic(P=24, travel=120.0):
+    """A walker built the way the model reads one: feet planted in stance, legs by IK, the rest FK."""
+    names = [b[0] for b in BONES]
+    parents = [names.index(b[1]) if b[1] else -1 for b in BONES]
+    local = dict((b[0], b[2]) for b in BONES)
+    worlds = np.zeros((len(names), P + 1, 4, 4))
+    for f in range(P + 1):
+        phi = f / float(P)
+        w = 2.0 * math.pi * phi
+        W = {}
+        W["root"] = mat(np.eye(3), [2 * math.sin(w), 0.0, travel * phi + 2 * math.sin(2 * w)])
+        W["pelvis"] = mat(rot_y(5 * math.sin(w)) @ rot_x(2 * math.sin(2 * w)) @ rot_z(3 * math.sin(w)),
+                          [2 * math.sin(w), 90 + 3 * math.cos(2 * w + 0.3), travel * phi + 2 * math.sin(2 * w)])
+        for name in UPPER:
+            parent = BONES[names.index(name)][1]
+            W[name] = mat(upper_rot(name, phi), local[name]) @ W[parent]
+        for side in "lr":
+            pelvis = W["pelvis"]
+            hip = np.array(local["thigh_" + side], float) @ pelvis[:3, :3] + pelvis[3, :3]
+            foot_rot, ankle = foot_world(side, phi, travel)
+            knee, thigh_rot, calf_rot = leg(hip, ankle)
+            W["thigh_" + side] = mat(thigh_rot, hip)
+            W["calf_" + side] = mat(calf_rot, knee)
+            W["foot_" + side] = mat(foot_rot, ankle)
+            W["ball_" + side] = mat(np.eye(3), local["ball_" + side]) @ W["foot_" + side]
+            W["thigh_twist_01_" + side] = mat(np.eye(3), local["thigh_twist_01_" + side]) @ W["thigh_" + side]
+            W["ik_foot_" + side] = W["foot_" + side].copy()
+        W["ik_foot_root"] = W["root"].copy()
+        W["camera_root"] = mat(np.eye(3), local["camera_root"]) @ W["root"]
+        for j, name in enumerate(names):
+            worlds[j, f] = W[name]
+    return names, parents, worlds
+
+
+_CACHE = {}
+
+
+def clip(**kw):
+    key = tuple(sorted(kw.items()))
+    if key not in _CACHE:
+        _CACHE[key] = synthetic(**kw)
+    names, parents, worlds = _CACHE[key]
+    return wm.Clip(names, parents, worlds.copy(), fps=30.0, up=(0, 1, 0), name="synthetic")
+
+
+def walk(**kw):
+    return wm.analyse(clip(**kw))
+
+
+class AnalysisTests(unittest.TestCase):
+
+    def test_cycle_travel_and_summary(self):
+        w = walk()
+        self.assertEqual(w.P, 24)
+        self.assertTrue(np.allclose(w.travel, [0.0, 0.0, 120.0]))
+        self.assertTrue(np.allclose(w.fwd, FWD) and np.allclose(w.side, [1.0, 0.0, 0.0]))
+        self.assertIn("cycle 24 frames", w.summary())
+        self.assertIn("stride 60.0 cm", w.summary())
+        self.assertIn("1.50 m/s", w.summary())
+
+    def test_the_sampler_gives_the_source_back_on_whole_frames(self):
+        w, c = walk(), clip()
+        for j in range(len(c.names)):
+            for f in (0, 5, 13, 23, 24):
+                self.assertTrue(np.allclose(w.source_world(j, float(f)), c.worlds[j, f], atol=1e-9),
+                                (c.names[j], f))
+
+    def test_stance_is_found_around_mid_stance(self):
+        w = walk()
+        left, right = w.feet["l"], w.feet["r"]
+        self.assertAlmostEqual(left.mid % 24, 7.0, delta=1.0)
+        self.assertAlmostEqual(right.mid % 24, 19.0, delta=1.0)
+        self.assertTrue(10 <= left.length <= 15 and 10 <= right.length <= 15)
+        self.assertAlmostEqual(left.coords[1], 10.0, delta=0.01)    # aside: the left foot +10
+        self.assertAlmostEqual(right.coords[1], -10.0, delta=0.01)
+
+    def test_reach_is_the_straightest_leg(self):
+        w, c = walk(), clip()
+        i = dict((n, k) for k, n in enumerate(c.names))
+        d = np.linalg.norm(c.worlds[i["foot_l"], :, 3, :3] - c.worlds[i["thigh_l"], :, 3, :3], axis=1)
+        self.assertAlmostEqual(w.reach["l"], float(d.max()) / (L1 + L2), places=9)
+
+    def test_kinds_lags_and_helpers(self):
+        w = walk()
+        kind = dict(zip(w.names, w.kind))
+        self.assertEqual([kind[n] for n in ("root", "pelvis", "thigh_l", "spine_02", "head", "upperarm_l",
+                                            "index_01_l", "ball_l", "thigh_twist_01_l", "ik_foot_l")],
+                         ["root", "pelvis", "leg", "spine", "head", "arm", "finger", "local", "local", "helper"])
+        lag = dict(zip(w.names, w.lag))
+        self.assertEqual((lag["spine_01"], lag["hand_l"], lag["index_01_l"], lag["thigh_l"]), (0.2, 1.0, 1.0, 0.0))
+        follows = dict((w.names[h], w.names[b]) for h, (b, rel) in w.follows.items())
+        self.assertEqual(follows["ik_foot_l"], "foot_l")
+        self.assertEqual(follows["camera_root"], "root")
+        order = [w.names[j] for j in w.order]
+        self.assertLess(order.index("pelvis"), order.index("thigh_l"))
+        self.assertLess(order.index("hand_r"), order.index("index_01_r"))
+        self.assertEqual(set(order[-4:]), {"ik_foot_root", "ik_foot_l", "ik_foot_r", "camera_root"})
+
+
+class RefusalTests(unittest.TestCase):
+
+    def test_open_loop(self):
+        c = clip()
+        c.worlds[1:, -1, 3, 0] += 5.0     # the pose, not the travel: the root stays
+        with self.assertRaises(wm.Refusal) as caught:
+            wm.analyse(c)
+        self.assertIn("closed loop", str(caught.exception))
+
+    def test_in_place(self):
+        with self.assertRaises(wm.Refusal) as caught:
+            walk(travel=0.0)
+        self.assertIn("in-place", str(caught.exception))
+
+    def test_missing_leg_bone(self):
+        c = clip()
+        keep = [i for i, n in enumerate(c.names) if n != "ball_r"]
+        remap = dict((old, new) for new, old in enumerate(keep))
+        names = [c.names[i] for i in keep]
+        parents = [remap.get(c.parents[i], -1) for i in keep]
+        with self.assertRaises(wm.Refusal) as caught:
+            wm.analyse(wm.Clip(names, parents, c.worlds[keep]))
+        self.assertIn("ball_r", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

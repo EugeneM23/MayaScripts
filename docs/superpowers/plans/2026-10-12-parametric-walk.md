@@ -604,7 +604,7 @@ class RefusalTests(unittest.TestCase):
 
     def test_open_loop(self):
         c = clip()
-        c.worlds[:, -1, 3, 0] += 5.0
+        c.worlds[1:, -1, 3, 0] += 5.0     # the pose, not the travel: the root stays
         with self.assertRaises(wm.Refusal) as caught:
             wm.analyse(c)
         self.assertIn("closed loop", str(caught.exception))
