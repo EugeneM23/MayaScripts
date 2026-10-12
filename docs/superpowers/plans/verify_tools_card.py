@@ -7,7 +7,7 @@ Written and NOT run by the session that built the card (the live checks are the 
 2026-10-09). Works on a SANDBOX cube it creates and deletes; the scene's own nodes, the frame,
 the selection and autoKey are left as found. The scene half is proven standalone by
 verify_knots.py (82 gates); this proves the card in the hub: it opens on Tools, its buttons are
-Maya's own under the skin, Knot / Knot Offset / Finish offset / Remove pressed through Qt act on
+Maya's own under the skin, Knot / Offset / Finish / Bake / Remove pressed through Qt act on
 the selection, the subtitle and the offset button follow the scene.
 """
 import sys
@@ -55,7 +55,7 @@ def pivot_track(node, frames):
 
 def main():
     import maya_hub
-    from maya_tools import knots, panel
+    from maya_tools import knotplan as plan, knots, panel
     frame = cmds.currentTime(query=True)
     selection = cmds.ls(selection=True, long=True) or []
     auto = cmds.autoKeyframe(query=True, state=True)
@@ -93,12 +93,12 @@ def main():
         cmds.select(cube, replace=True)
         qt_click(panel.OFFSET_BTN)
         gate(knots.waiting() and cmds.button(panel.OFFSET_BTN, query=True, label=True)
-             == "Finish offset", "Knot Offset waits, the button reads Finish offset")
+             == plan.offset_label(True), "Offset waits, the button reads Finish")
         qt_click(panel.OFFSET_BTN)
         mine = [k for k in knots.knots() if knots.source_of(k) == cube]
         gate(len(mine) == 1 and not knots.waiting()
-             and cmds.button(panel.OFFSET_BTN, query=True, label=True) == "Knot Offset",
-             "Finish offset made the knot, the button reads Knot Offset again")
+             and cmds.button(panel.OFFSET_BTN, query=True, label=True) == plan.offset_label(False),
+             "Finish made the knot, the button reads Offset again")
         cmds.select(cube, replace=True)
         qt_click(panel.BAKE_BTN)
         after = pivot_track(cube, frames)

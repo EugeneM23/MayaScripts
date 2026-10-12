@@ -359,7 +359,7 @@ def case_e():
     before = track(prop)
     count = transforms_count()
     line = knots.begin_offset([prop], highlight=None)
-    gate("Finish offset" in line, line)
+    gate("press Finish" in line, line)
     piv = knots.pivots()
     gate(len(piv) == 1 and knots.waiting(), "one pivot waiting")
     piv = piv[0]

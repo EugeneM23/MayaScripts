@@ -311,7 +311,7 @@ def bake_order(pairs):
 
 
 def choose_pivot(named, waiting):
-    """(pivot, refusal) for Finish offset: the selected pivot, else the only one waiting."""
+    """(pivot, refusal) for Finish: the selected pivot, else the only one waiting."""
     if len(named) == 1:
         return named[0], ""
     if len(named) > 1:
@@ -319,7 +319,7 @@ def choose_pivot(named, waiting):
     if len(waiting) == 1:
         return waiting[0], ""
     if not waiting:
-        return None, "no pivot is waiting - press Knot Offset first"
+        return None, "no pivot is waiting - press Offset first"
     return None, "%d pivots are waiting (%s) - select the one to finish" % (
         len(waiting), ", ".join(leaf(p) for p in waiting))
 
@@ -362,7 +362,7 @@ def created_message(label, pairs, span):
 
 def begin_message(name):
     return ("%s: place the pivot - move and turn it, it rides %s while you place it - then press "
-            "Finish offset" % (name, name))
+            "Finish" % (name, name))
 
 
 def finish_message(name, knot, span):
@@ -384,7 +384,8 @@ def removed_message(names, pivots):
 
 
 def offset_label(waiting):
-    return "Finish offset" if waiting else "Knot Offset"
+    """The Offset button's word (2026-10-12, the compact card: short words)."""
+    return "Finish" if waiting else "Offset"
 
 
 def subtitle(knot_count, pivot_count):

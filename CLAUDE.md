@@ -8748,11 +8748,16 @@ Animation, Tabler `tool`); hotkey rows `window.tools` and `tools.knot / knot_off
 double_local / double_world / bake / remove` (`maya_hotkeys._tools`: the presses need no panel and
 report in the viewport when the card is closed). New icons `tool`, `rotate`, `focus-2`, `stack-2`.
 
-**The card**: subtitle («3 knots in the scene, 1 pivot waiting»); **Knots** - Knot (primary),
-Knot Offset (reads **Finish offset** while a pivot waits), Knot Orient; **Double knot** - Local,
-World; **Rotate order** `[Object | XYZ | XZY]` (`skeldarKnotRotateOrder`, default Object: the
-knot takes its object's order); Bake, Remove (danger); the line. A SelectionChanged job per card
-(hub and popup copies) refreshes the subtitle and the offset button.
+**The card** - three rows since the same day («давай сделаем его более компактным ... все
+кнопочки одинаково важные ... сделаем выделение для всех одинаковое»; asked: rows named on the
+left, every button orange, Remove too - it destroys nothing): the subtitle («3 knots in the scene,
+1 pivot waiting»); **Knots** Knot, Offset (reads **Finish** while a pivot waits), Orient;
+**Double** Local, World; **Order** `[Obj | XYZ | XZY]` (`skeldarKnotRotateOrder`, default Obj: the
+knot takes its object's order), Bake, Remove; the line. Every button is `primary` (the hub's
+one-orange-per-card habit is broken here on purpose); the row names are `note`s in one column
+width (`LABEL_W`). A SelectionChanged job per card (hub and popup copies) refreshes the subtitle
+and the Offset button. Not measured live: whether the third row fits the animator's 360 px dock
+(estimated ~310 logical of ~320).
 
 **One set of rules for all five** (OverRig's double knots had no range or attach; ours do):
 - refusals first, for every selected object, by name: nothing selected; riding a knot already (a

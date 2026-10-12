@@ -230,9 +230,9 @@ def _plan_object(obj, kind):
     if constraints_of(obj):
         return None, plan.riding_refusal(name)
     if pending_of(obj):
-        return None, "%s is a waiting pivot - Finish offset or Remove it" % name
+        return None, "%s is a waiting pivot - press Finish, or Remove it" % name
     if kind == "offset" and _waiting_for(obj):
-        return None, "%s already has a pivot waiting - Finish offset or Remove it" % name
+        return None, "%s already has a pivot waiting - press Finish, or Remove it" % name
     refusal = plan.uneven_parent(name, cmds.getAttr(obj + ".parentMatrix[0]"))
     if refusal:
         return None, refusal

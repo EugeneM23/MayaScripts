@@ -310,7 +310,7 @@ class Pivot(unittest.TestCase):
     def test_none_waiting(self):
         pivot, refusal = plan.choose_pivot([], [])
         self.assertIsNone(pivot)
-        self.assertIn("press Knot Offset first", refusal)
+        self.assertIn("press Offset first", refusal)
 
     def test_several_waiting_and_none_selected_refuses_naming_them(self):
         pivot, refusal = plan.choose_pivot([], ["|g|a_pivotSpace|a_pivot", "|g|b_pivotSpace|b_pivot"])
@@ -339,8 +339,8 @@ class Messages(unittest.TestCase):
         self.assertIn("attach", line)
 
     def test_the_offset_button_label(self):
-        self.assertEqual(plan.offset_label(False), "Knot Offset")
-        self.assertEqual(plan.offset_label(True), "Finish offset")
+        self.assertEqual(plan.offset_label(False), "Offset")
+        self.assertEqual(plan.offset_label(True), "Finish")
 
     def test_subtitle(self):
         self.assertEqual(plan.subtitle(0, 0), "no knots in the scene")
@@ -362,7 +362,7 @@ class Messages(unittest.TestCase):
         self.assertIn("Bake", line)
 
     def test_begin_and_finish(self):
-        self.assertIn("Finish offset", plan.begin_message("sword"))
+        self.assertIn("press Finish", plan.begin_message("sword"))
         self.assertIn("sword", plan.finish_message("sword", "sword_knotOffset",
                                                    (0.0, 10.0, False)))
 

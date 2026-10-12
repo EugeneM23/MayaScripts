@@ -1,9 +1,10 @@
 """The hub's Tools card (2026-10-12): OverRig's Knots and Double knot, native.
 
-The animator: «заведем раздел тул и реализуем такие же инструменты». Top down: which knots stand;
-Knots - Knot, Knot Offset (two presses: the button reads Finish offset while a pivot waits), Knot
-Orient; Double knot - Local, World; the knots' rotate order [Object | XYZ | XZY]; Bake and
-Remove; the status line. The presses are module functions reading the remembered rotate order,
+The animator: «заведем раздел тул и реализуем такие же инструменты»; the same day «давай сделаем
+его более компактным ... все кнопочки одинаково важные»: three rows, every button orange -
+Knots: Knot, Offset (two presses: it reads Finish while a pivot waits), Orient; Double: Local,
+World; Order: the knots' rotate order [Obj | XYZ | XZY], Bake, Remove - then the status line; which
+knots stand is the subtitle. The presses are module functions reading the remembered rotate order,
 so the hotkey rows work with the card closed. The scene half is `knots`, the pure half
 `knotplan`.
 
@@ -24,6 +25,7 @@ SUBTITLE = "skeldarToolsSubtitle"
 STATUS = "skeldarToolsStatus"
 KNOTS_HEADING = "skeldarToolsKnotsHeading"
 DOUBLE_HEADING = "skeldarToolsDoubleHeading"
+ORDER_LABEL = "skeldarToolsOrderLabel"
 KNOT_BTN = "skeldarToolsKnot"
 OFFSET_BTN = "skeldarToolsKnotOffset"
 ORIENT_BTN = "skeldarToolsKnotOrient"
@@ -34,19 +36,21 @@ REMOVE_BTN = "skeldarToolsRemove"
 ORDER = "skeldarToolsOrder"
 ORDER_SEG = dict((choice, "skeldarToolsOrder_" + choice) for choice in plan.ORDERS)
 ORDER_VAR = "skeldarKnotRotateOrder"
+#  The rows' name column, logical px: the skin's, the classic hub's.
+LABEL_W = (44, 52)
 #  The refresh job of each card standing: '' the hub's, a popup copy's tag its own (the
 #  2026-10-09 rule: closing a popup kills only its own job).
 JOB = {}
 
 #  OverRig's own explanations, from its buttons' annotations, in the card's words.
 TIPS = {
-    "knot": "Select objects: each one's animation is baked onto a knot (a locator) and the "
+    "knot": "Knot - select objects: each one's animation is baked onto a knot (a locator) and the "
             "object follows it. A highlighted range on the time slider makes the knot work "
             "only there (attach blends it in and out)",
-    "offset": "Select one object: a pivot appears on it - move and turn it where the knot "
-              "should turn the object (it rides the object while you place it), then press "
-              "Finish offset",
-    "orient": "Select objects: the knot rides each object's position and carries only its "
+    "offset": "Knot Offset - select one object: a pivot appears on it - move and turn it where "
+              "the knot should turn the object (it rides the object while you place it), then "
+              "press this button again (it reads Finish)",
+    "orient": "Knot Orient - select objects: the knot rides each object's position and carries only its "
               "rotation; the object keeps its own translation animation",
     "local": "Double knot, local: the outer knot carries the object's whole animation, the "
              "inner one drives it - key the inner to change the animation in the object's own "
@@ -60,7 +64,7 @@ TIPS = {
               "again exactly; a waiting pivot is dropped",
 }
 ORDER_TIPS = {
-    "object": "New knots take their object's rotate order",
+    "object": "New knots take their object's own rotate order",
     "xyz": "New knots rotate in XYZ order",
     "xzy": "New knots rotate in XZY order",
 }
@@ -119,7 +123,7 @@ def knot():
 
 
 def knot_offset():
-    """Knot Offset, or Finish offset while a pivot waits."""
+    """Offset, or Finish while a pivot waits."""
     return _press(lambda: knots.finish_offset() if knots.waiting()
                   else knots.begin_offset(order=order()))
 
@@ -150,63 +154,64 @@ def _order_changed(choice):
 
 # ------------------------------------------------------------------- card
 
-def _heading(name, label):
-    return hubstyle.mark(cmds.text(name, label=label, align="left", font="boldLabelFont"),
-                         "heading")
+def _label(name, text):
+    """A row's name at its left (2026-10-12, the compact card: the headings became these)."""
+    return hubstyle.mark(cmds.text(name, label=text, align="left"), "note")
 
 
-def _button(name, label, role, icon, tip, press):
+def _button(name, label, icon, tip, press):
+    """Every button of the card alike - orange, the animator's ask («все кнопочки одинаково
+    важные ... сделаем выделение для всех одинаковое»)."""
     return hubstyle.mark(cmds.button(name, label=label, annotation=tip,
                                      height=hubstyle.height("button", 28),
-                                     command=lambda *_: press()), role, icon)
+                                     command=lambda *_: press()), "primary", icon)
 
 
 def _row(columns):
-    return cmds.rowLayout(numberOfColumns=columns, adjustableColumn=1,
+    """A row: its name in a column of one width on every row, the buttons at their own widths
+    beside it."""
+    return cmds.rowLayout(numberOfColumns=columns,
+                          columnWidth=[(1, hubstyle.pick(LABEL_W[0], LABEL_W[1]))],
                           columnAttach=[(1, "both", 0)]
                           + [(i, "both", 4) for i in range(2, columns + 1)])
 
 
 def build_panel():
-    """The card into the current layout."""
+    """The card into the current layout: three rows (2026-10-12, «более компактным») - Knots,
+    Double, Order with Bake and Remove - and the line."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
 
-    _heading(KNOTS_HEADING, "Knots")
+    _row(4)
+    _label(KNOTS_HEADING, "Knots")
+    _button(KNOT_BTN, "Knot", "link", TIPS["knot"], knot)
+    _button(OFFSET_BTN, plan.offset_label(False), "focus-2", TIPS["offset"], knot_offset)
+    _button(ORIENT_BTN, "Orient", "rotate", TIPS["orient"], knot_orient)
+    cmds.setParent("..")
+
     _row(3)
-    _button(KNOT_BTN, "Knot", "primary", "link", TIPS["knot"], knot)
-    _button(OFFSET_BTN, plan.offset_label(False), "secondary", "focus-2", TIPS["offset"],
-            knot_offset)
-    _button(ORIENT_BTN, "Knot Orient", "secondary", "rotate", TIPS["orient"], knot_orient)
+    _label(DOUBLE_HEADING, "Double")
+    _button(LOCAL_BTN, "Local", "stack-2", TIPS["local"], double_local)
+    _button(WORLD_BTN, "World", "stack-2", TIPS["world"], double_world)
     cmds.setParent("..")
 
-    _heading(DOUBLE_HEADING, "Double knot")
-    _row(2)
-    _button(LOCAL_BTN, "Local", "secondary", "stack-2", TIPS["local"], double_local)
-    _button(WORLD_BTN, "World", "secondary", "stack-2", TIPS["world"], double_world)
-    cmds.setParent("..")
-
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
-                   columnAttach=[(1, "both", 0), (2, "both", 4)])
-    hubstyle.mark(cmds.text(label="Rotate order", align="left"), "note")
+    _row(4)
+    _label(ORDER_LABEL, "Order")
     segments = cmds.rowLayout(numberOfColumns=3, columnAttach=[(1, "both", 1),
                                                                (2, "both", 1),
                                                                (3, "both", 1)])
     hubstyle.mark(segments, "segments", layout=True)
     cmds.iconTextRadioCollection(ORDER)
     current = order()
-    for choice, label in (("object", "Object"), ("xyz", "XYZ"), ("xzy", "XZY")):
+    for choice, label in (("object", "Obj"), ("xyz", "XYZ"), ("xzy", "XZY")):
         hubstyle.mark(cmds.iconTextRadioButton(
             ORDER_SEG[choice], style="textOnly", label=label,
             height=hubstyle.height("segment", 22), select=choice == current,
             annotation=ORDER_TIPS[choice], onCommand=_order_changed(choice)), "segment")
     cmds.setParent("..")
-    cmds.setParent("..")
-
-    _row(2)
-    _button(BAKE_BTN, "Bake", "secondary", "check", TIPS["bake"], bake)
-    _button(REMOVE_BTN, "Remove", "danger", "trash", TIPS["remove"], remove)
+    _button(BAKE_BTN, "Bake", "check", TIPS["bake"], bake)
+    _button(REMOVE_BTN, "Remove", "trash", TIPS["remove"], remove)
     cmds.setParent("..")
 
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=36),
