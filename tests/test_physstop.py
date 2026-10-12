@@ -160,8 +160,9 @@ class ParamTests(unittest.TestCase):
 
     def test_defaults_and_clamping(self):
         p = ps.params()
-        self.assertEqual(sorted(p), ["overshoot", "sway", "swing", "weight"])
-        self.assertEqual(p, {"overshoot": 3.0, "swing": 5.0, "weight": 1.0, "sway": 1.0})
+        self.assertEqual(sorted(p), ["overshoot", "swing", "weight"])
+        self.assertEqual(p, {"overshoot": 3.0, "swing": 5.0, "weight": 1.0})
+        self.assertEqual(ps.params(sway=2.0, axis="+Z"), p)           # an older memo's extras are ignored
         self.assertEqual(ps.params(weight=99.0)["weight"], ps.RANGES["weight"][1])
         self.assertEqual(ps.params(swing=0.0)["swing"], ps.RANGES["swing"][0])
 
@@ -174,7 +175,7 @@ class ParamTests(unittest.TestCase):
 class SolveTests(unittest.TestCase):
 
     def solve(self, t_m=5.0, s_m=0.5, **given):
-        return ps.solve(0.0, t_m, 9.0, s_m, 32.36 / 11.645, 32.36 / 11.645, 11.645, given)
+        return ps.solve(0.0, t_m, 9.0, s_m, 32.36 / 11.645, given)
 
     def test_rows_cover_a_to_the_end_frame_by_frame(self):
         tr = self.solve()
@@ -191,8 +192,8 @@ class SolveTests(unittest.TestCase):
     def test_ends_exactly_on_b_and_starts_on_a(self):
         tr = self.solve()
         first, last = tr.rows[0], tr.rows[-1]
-        self.assertEqual((first.p, first.tilt, first.sink, first.sway, first.yaw), (0.0, 0.0, 0.0, 0.0, 0.0))
-        self.assertEqual((last.p, last.tilt, last.sink, last.sway, last.yaw), (1.0, 0.0, 0.0, 0.0, 0.0))
+        self.assertEqual((first.p, first.tilt), (0.0, 0.0))
+        self.assertEqual((last.p, last.tilt), (1.0, 0.0))
 
     def test_the_lag_shape_is_one_at_the_breakdown(self):
         tr = self.solve()
@@ -206,25 +207,19 @@ class SolveTests(unittest.TestCase):
         self.assertFalse(tr.readable)
         self.assertAlmostEqual(max(abs(tr.lag_share(r.tilt)) for r in tr.rows), 1.0, places=9)
 
-    def test_signs_it_sinks_down_and_sways_left(self):
-        mid = self.solve().row_at(4.0)
-        self.assertGreater(mid.sink, 0.0)
-        self.assertGreater(mid.sway, 0.0)
-        self.assertGreater(mid.yaw, 0.0)
-        self.assertLess(self.solve(sway=-1.0).row_at(4.0).sway, 0.0)
-
-    def test_controls_scale_what_they_name(self):
-        base = self.solve()
-        self.assertGreater(self.solve(weight=2.0).peak_sink, 1.5 * base.peak_sink)
-        self.assertEqual(self.solve(sway=0.0).peak_sway, 0.0)
+    def test_nothing_but_the_tilt_rides_on_the_path(self):
+        # the breakdown sets how the object comes in: no spring of the model moves the bottom off the arc
+        self.assertEqual(ps.Row.__slots__, ("t", "p", "tilt"))
+        for name in ("K_SINK", "K_SWAY", "K_YAW", "SWAY_RATE", "SINK_LIMIT", "SWAY_LIMIT"):
+            self.assertFalse(hasattr(ps, name), name)
 
     def test_heavier_settles_later(self):
         self.assertGreater(self.solve(weight=2.0).end, self.solve(weight=1.0).end)
         self.assertGreater(self.solve(weight=1.0).end, self.solve(weight=0.5).end)
 
-    def test_no_travel_no_springs(self):
-        tr = ps.solve(0.0, 5.0, 9.0, 0.5, 0.0, 0.0, 10.0, None)
-        self.assertEqual(tr.peak_sink + tr.peak_sway, 0.0)
+    def test_no_travel_no_tilt(self):
+        tr = ps.solve(0.0, 5.0, 9.0, 0.5, 0.0, None)
+        self.assertEqual(tr.peak_tilt, 0.0)
         self.assertFalse(tr.readable)
 
 
@@ -242,8 +237,10 @@ class AxisTests(unittest.TestCase):
         rows = ((1, 0, 0), (0, -1, 0), (0, 0, 1))          # local Y points down
         self.assertEqual(ps.up_axis(rows), (1, -1.0))
 
-    def test_override(self):
-        self.assertEqual(ps.up_axis(((1, 0, 0), (0, 1, 0), (0, 0, 1)), "-X"), (0, -1.0))
+    def test_always_auto(self):
+        self.assertFalse(hasattr(ps, "AXES"))
+        with self.assertRaises(TypeError):
+            ps.up_axis(((1, 0, 0), (0, 1, 0), (0, 0, 1)), "-X")
 
     def test_bottom_is_the_low_end_and_height_is_world(self):
         rows = ((4.0, 0, 0), (0, 11.0, 0), (0, 0, 3.0))
@@ -276,25 +273,11 @@ class TransformTests(unittest.TestCase):
 
     def test_the_lag_turns_the_top_about_the_bottom(self):
         lag = om.MQuaternion(math.radians(30), om.MVector(1, 0, 0))
-        g = ps.secondary(om.MPoint(0, 0, 0), lag, 0.0, 0.0, 0.0, om.MVector(0, 0, -1))
-        top = om.MPoint(0, 10, 0) * g
+        g = ps.secondary(om.MPoint(0, 2, 0), lag)
+        top = om.MPoint(0, 12, 0) * g
         self.assertAlmostEqual(top.z, 10 * math.sin(math.radians(30)))
-        self.assertAlmostEqual((om.MPoint(0, 0, 0) * g).z, 0.0)   # the bottom stays
-
-    def test_sink_is_down_and_sway_is_left(self):
-        g = ps.secondary(om.MPoint(0, 0, 0), om.MQuaternion(), 0.0, 2.0, 1.5, om.MVector(0, 0, -1))
-        p = om.MPoint(0, 0, 0) * g
-        self.assertTrue(close((p.x, p.y, p.z), (-1.5, -2.0, 0.0), 1e-12))
-
-    def test_yaw_is_about_world_up_through_the_bottom(self):
-        g = ps.secondary(om.MPoint(5, 0, 0), om.MQuaternion(), 90.0, 0.0, 0.0, om.MVector(0, 0, -1))
-        p = om.MPoint(6, 0, 0) * g
-        self.assertTrue(close((p.x, p.y, p.z), (5.0, 0.0, -1.0), 1e-12))
-
-    def test_no_heading_no_sway_but_still_a_sink(self):
-        g = ps.secondary(om.MPoint(0, 0, 0), om.MQuaternion(), 0.0, 1.0, 1.0, None)
-        p = om.MPoint(0, 10, 0) * g
-        self.assertTrue(close((p.x, p.y, p.z), (0.0, 9.0, 0.0), 1e-12))
+        bottom = om.MPoint(0, 2, 0) * g
+        self.assertTrue(close((bottom.x, bottom.y, bottom.z), (0.0, 2.0, 0.0), 1e-12))   # the bottom stays
 
     def compose(self, pose_m, t_m=5.0, given=None):
         pose_a = ((0.0, 5.0, 0.0), (0.0, 0.0, 0.0))
@@ -304,12 +287,19 @@ class TransformTests(unittest.TestCase):
         bases = [om.MPoint(bottom) * ps.local_matrix(p[0], p[1], 0, ps.IDENTITY_FIXED) for p in
                  (pose_a, pose_m, pose_b)]
         arc = ps.Arc(*[(b.x, b.y, b.z) for b in bases])
-        reach = arc.length / 1.0
-        tr = ps.solve(0.0, t_m, 9.0, arc.s_m, reach, reach, 1.0, given)
+        tr = ps.solve(0.0, t_m, 9.0, arc.s_m, arc.length / 1.0, given)
         setup = ps.Setup((pose_a, pose_m, pose_b), (0.0, t_m, 9.0), 0, ps.IDENTITY_FIXED,
                          lambda t: parent, bottom, arc, om.MVector(0, 0, -1))
         frames, info = ps.compose(tr, setup)
         return frames, info, (pose_a, pose_m, pose_b)
+
+    def bottoms(self, frames):
+        """{t: the bottom's world point} for every frame written."""
+        out = {}
+        for t, tr, ro in frames:
+            p = om.MPoint(0.0, -0.5, 0.0) * ps.local_matrix(tr, ro, 0, ps.IDENTITY_FIXED)
+            out[t] = (p.x, p.y, p.z)
+        return out
 
     def test_a_m_and_b_are_hit_exactly(self):
         frames, _, (pose_a, pose_m, pose_b) = self.compose(((1.0, 4.8, -10.0), (15.0, 3.0, -2.0)))
@@ -321,22 +311,51 @@ class TransformTests(unittest.TestCase):
     def test_a_breakdown_tilted_back_reads_back(self):
         # moving towards -Z, the top behind the motion is +Z: a +rotateX tilts it back
         # (no sway: its yaw at M is taken out of the lag, and on this 1 cm object it saturates)
-        _, info, _ = self.compose(((0.0, 5.0, -10.0), (20.0, 0.0, 0.0)), given={"sway": 0.0})
+        _, info, _ = self.compose(((0.0, 5.0, -10.0), (20.0, 0.0, 0.0)))
         self.assertAlmostEqual(info["lag_deg"], 20.0, delta=1e-6)
         self.assertEqual(info["lag_dir"], "back")
 
     def test_a_breakdown_tilted_aside_reads_aside(self):
         # rotateZ +20 swings the top towards -X: the left of a motion towards -Z
-        _, info, _ = self.compose(((0.0, 5.0, -10.0), (0.0, 0.0, 20.0)), given={"sway": 0.0})
+        _, info, _ = self.compose(((0.0, 5.0, -10.0), (0.0, 0.0, 20.0)))
         self.assertEqual(info["lag_dir"], "left")
 
     def test_an_untilted_even_breakdown_gives_no_lag_and_a_straight_path(self):
-        frames, info, _ = self.compose(((0.0, 5.0, -10.0), (0.0, 0.0, 0.0)),
-                                       given={"sway": 0.0, "weight": 0.2})
+        frames, info, _ = self.compose(((0.0, 5.0, -10.0), (0.0, 0.0, 0.0)), given={"weight": 0.2})
         self.assertLess(info["lag_deg"], 1e-6)
         self.assertLess(info["bend"], 1e-9)
-        self.assertTrue(all(abs(f[1][0]) < 1e-9 for f in frames))
+        self.assertEqual(info["entry"], "straight in")
+        for t, b in self.bottoms(frames).items():
+            self.assertTrue(close((b[0], b[1]), (0.0, 4.5), 1e-9), (t, b))       # on the line A-B, at its height
         self.assertTrue(all(abs(f[2][0]) < 1e-6 for f in frames))
+
+    def test_a_raised_breakdown_comes_in_from_above(self):
+        # the animator's report: a breakdown raised still came into B from below (a sink spring under the arc)
+        frames, info, _ = self.compose(((0.0, 8.0, -10.0), (0.0, 0.0, 0.0)))
+        self.assertEqual(info["entry"], "arc bends 3.0 cm up")
+        b = self.bottoms(frames)
+        approach = [b[t][1] for t in sorted(b) if 0.0 < t < 9.0]
+        self.assertTrue(all(y > 4.5 for y in approach), approach)                # above B's height all the way
+        self.assertAlmostEqual(b[9.0][1], 4.5, places=9)                          # on B at B's frame
+        after = [b[t][1] for t in sorted(b) if 9.0 < t <= 13.0]
+        self.assertLess(min(after), 4.5)                                          # then on, down past it
+        self.assertLess(after[0], 4.5)
+
+    def test_a_lowered_breakdown_comes_in_from_below(self):
+        frames, info, _ = self.compose(((0.0, 2.0, -10.0), (0.0, 0.0, 0.0)))
+        self.assertEqual(info["entry"], "arc bends 3.0 cm down")
+        b = self.bottoms(frames)
+        approach = [b[t][1] for t in sorted(b) if 0.0 < t < 9.0]
+        self.assertTrue(all(y < 4.5 for y in approach), approach)
+        self.assertAlmostEqual(b[9.0][1], 4.5, places=9)
+        self.assertGreater(b[10.0][1], 4.5)                                       # on up past it
+
+    def test_a_breakdown_aside_comes_in_from_that_side(self):
+        frames, info, _ = self.compose(((-3.0, 5.0, -10.0), (0.0, 0.0, 0.0)))
+        self.assertEqual(info["entry"], "arc bends 3.0 cm left")                  # -X is left of -Z
+        b = self.bottoms(frames)
+        self.assertTrue(all(b[t][0] < 0.0 for t in sorted(b) if 0.0 < t < 9.0))
+        self.assertTrue(all(abs(b[t][1] - 4.5) < 1e-9 for t in b))                # and no sink at all
 
 
 def _mul(p, m):
@@ -365,7 +384,7 @@ def cube_components(data):
     t_b = next(i + (1 - travel[i]) / (travel[i + 1] - travel[i]) for i in range(30)
                if travel[i] < 1 <= travel[i + 1])
     return {"travel": travel, "tilt": tilt, "sink": sink, "sway": sway, "yaw": yaw, "t_b": t_b,
-            "reach": abs(finish - start) / height, "height": height}
+            "reach": abs(finish - start) / height, "height": height, "bottom": [b[:3] for b in bottom]}
 
 
 def rms(a, b):
@@ -376,21 +395,24 @@ CUBE_BREAKDOWN = 5
 
 
 def cube_model(cube, given=None, t_m=CUBE_BREAKDOWN):
-    """The model between the cube's frame 0, its frame t_m and the frame it passes B: its components on
-    frames 0..30, the tilt shape scaled to the cube's lag at t_m (as the breakdown sets it)."""
-    tr = ps.solve(0.0, float(t_m), cube["t_b"], cube["travel"][t_m], cube["reach"], cube["reach"],
-                  cube["height"], given)
+    """The model between the cube's frame 0, its frame t_m and the frame it passes B (its rest place): its
+    components on frames 0..30 - the bottom on the arc through the three, the tilt shape scaled to the
+    cube's lag at t_m (as the breakdown sets it)."""
+    bottom = cube["bottom"]
+    arc = ps.Arc(bottom[0], bottom[t_m], bottom[-1])
+    tr = ps.solve(0.0, float(t_m), cube["t_b"], arc.s_m, arc.length / cube["height"], given)
     rows = {r.t: r for r in tr.rows}
     last = tr.rows[-1]
     scale = cube["tilt"][t_m] / tr.row_at(float(t_m)).tilt
-    out = {k: [] for k in ("travel", "tilt", "sink", "sway", "yaw")}
+    start, finish = bottom[0], bottom[-1]
+    out = {k: [] for k in ("travel", "tilt", "sink", "sway")}
     for f in range(31):
         r = rows.get(float(f), last)
-        out["travel"].append(r.p)
+        x, y, z = arc.at(r.p)
+        out["travel"].append((z - start[2]) / (finish[2] - start[2]))
         out["tilt"].append(r.tilt * scale)
-        out["sink"].append(r.sink)
-        out["sway"].append(r.sway)
-        out["yaw"].append(r.yaw)
+        out["sink"].append(start[1] - y)
+        out["sway"].append(-x)
     return out, tr
 
 
@@ -414,14 +436,13 @@ class CubeTests(unittest.TestCase):
     def test_tilt(self):
         self.assertLess(rms(self.model["tilt"], self.cube["tilt"]), 2.5)
 
-    def test_sink(self):
-        self.assertLess(rms(self.model["sink"], self.cube["sink"]), 0.15)
-
-    def test_sway(self):
-        self.assertLess(rms(self.model["sway"], self.cube["sway"]), 0.3)
-
-    def test_yaw(self):
-        self.assertLess(rms(self.model["yaw"], self.cube["yaw"]), 1.2)
+    def test_height_and_side_from_the_arc(self):
+        # nothing is fitted here: the arc through the cube's own frames 0, 5 and rest. The cube still came
+        # into its place 2 cm low as it passed it; the model is on B's height at B's frame.
+        self.assertLess(rms(self.model["sink"], self.cube["sink"]), 0.8)
+        self.assertLess(rms(self.model["sway"], self.cube["sway"]), 0.45)
+        self.assertAlmostEqual(self.model["sink"][CUBE_BREAKDOWN], self.cube["sink"][CUBE_BREAKDOWN], places=9)
+        self.assertGreater(min(self.model["sink"][1:9]), 0.0)       # it comes in from below, as the cube did
 
     def test_settles_where_the_cube_does(self):
         self.assertTrue(24 <= self.end <= 36, self.end)
@@ -506,7 +527,7 @@ class WindowTests(unittest.TestCase):
         self.saved = (ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore)
         self.calls = []
         ps._cmds = lambda: self.fake
-        ps.apply = lambda nodes, given=None, axis="Auto": self.calls.append((nodes, given, axis)) or ["done"]
+        ps.apply = lambda nodes, given=None: self.calls.append((nodes, given)) or ["done"]
         ps.restore = lambda nodes: self.calls.append(("restore", nodes)) or ["restored"]
         ps.selected = lambda: list(self.fake.selection)
         ps.remembered = lambda node: {"tE": 1} if node.endswith("applied") else None
@@ -514,44 +535,39 @@ class WindowTests(unittest.TestCase):
     def tearDown(self):
         ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore = self.saved
 
-    def test_two_groups_four_sliders_and_the_axis(self):
+    def test_three_sliders_and_nothing_else(self):
         ps.show()
         made = [c for c in self.fake.created if c[0] in ("heading", "slider", "menu")]
-        self.assertEqual([c[0] for c in made],
-                         ["heading", "slider", "slider", "slider", "heading", "slider", "menu"])
-        self.assertEqual([c[2] if c[0] != "heading" else c[1] for c in made],
-                         ["Stop", "Overshoot, %", "Swing length, fr", "Weight", "Extras", "Side sway", "Up axis"])
+        self.assertEqual([c[0] for c in made], ["slider", "slider", "slider"])
+        self.assertEqual([c[2] for c in made], ["Overshoot, %", "Swing length, fr", "Weight"])
         for name, default in ps.DEFAULTS:
             self.assertEqual(self.fake.values[ps._control(name)], default)
         self.assertEqual([c[1] for c in self.fake.created if c[0] == "button"], ["Apply", "Restore keys", "Reset"])
 
-    def test_no_overlap_slider(self):
+    def test_no_overlap_sway_or_axis(self):
         ps.show()
-        self.assertNotIn(ps._control("overlap"), self.fake.values)
-        self.assertNotIn("overlap", ps.params())
+        for name in ("overlap", "sway"):
+            self.assertNotIn(ps._control(name), self.fake.values)
+            self.assertNotIn(name, ps.params())
+        self.assertFalse(hasattr(ps, "AXIS_MENU"))
+        self.assertIn("above, below or the side", ps.INTRO)
 
     def test_remembered_values_come_back(self):
         self.fake.vars[ps.OPTION + "weight"] = 2.5
-        self.fake.vars[ps.OPTION + "axis"] = "+Z"
+        self.fake.vars[ps.OPTION + "axis"] = "+Z"           # left by an older version: ignored
         ps.show()
         self.assertEqual(self.fake.values[ps._control("weight")], 2.5)
-        self.assertEqual(self.fake.values[ps.AXIS_MENU], "+Z")
-
-    def test_a_stale_axis_falls_back_to_auto(self):
-        self.fake.vars[ps.OPTION + "axis"] = "sideways"
-        ps.show()
-        self.assertEqual(self.fake.values[ps.AXIS_MENU], "Auto")
 
     def test_apply_reads_the_sliders_and_remembers_them(self):
         ps.show()
         self.fake.values[ps._control("overshoot")] = 7.0
         self.fake.selection = ["|cube"]
         ps.press_apply()
-        nodes, given, axis = self.calls[-1]
+        nodes, given = self.calls[-1]
         self.assertEqual(nodes, ["|cube"])
-        self.assertEqual(given["overshoot"], 7.0)
-        self.assertEqual(axis, "Auto")
+        self.assertEqual(given, {"overshoot": 7.0, "swing": 5.0, "weight": 1.0})
         self.assertEqual(self.fake.vars[ps.OPTION + "overshoot"], 7.0)
+        self.assertNotIn(ps.OPTION + "axis", self.fake.vars)
         self.assertEqual(self.fake.values[ps.STATUS], "done")
 
     def test_a_slider_re_applies_only_what_already_carries_a_transition(self):
@@ -579,10 +595,8 @@ class WindowTests(unittest.TestCase):
     def test_reset_puts_the_defaults_back(self):
         ps.show()
         self.fake.values[ps._control("swing")] = 9.0
-        self.fake.values[ps.AXIS_MENU] = "-X"
         ps.press_reset()
         self.assertEqual(self.fake.values[ps._control("swing")], dict(ps.DEFAULTS)["swing"])
-        self.assertEqual(self.fake.values[ps.AXIS_MENU], "Auto")
 
     def test_the_drop_handler_exists(self):
         self.assertTrue(callable(ps.onMayaDroppedPythonFile))

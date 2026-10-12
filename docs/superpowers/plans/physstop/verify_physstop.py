@@ -97,13 +97,16 @@ def spread(ours, ref):
 
 
 eb, et = spread(bottom, ref_bottom), spread(top, ref_top)
-gate(eb < 0.8, "the bottom against the cube: rms %.3f cm over frames 0-30 (32 cm of travel)" % eb)
+gate(eb < 1.0, "the bottom against the cube: rms %.3f cm over frames 0-30 (32 cm of travel; the cube still "
+     "came in 2 cm low as it passed its place, the model is on B's height at B's frame)" % eb)
 gate(et < 1.2, "the top against the cube: rms %.3f cm" % et)
 tilts = [math.degrees(math.atan2(t.z - b.z, t.y - b.y)) for b, t in zip(bottom, top)]
 peak = max(range(31), key=lambda f: tilts[f])
 gate(6 <= peak <= 10, "the tilt peaks at frame %d, %.1f deg (the cube: frame 8, 24.1 deg)" % (peak, tilts[peak]))
-sink = min(p.y for p in bottom)
-gate(-3.8 < sink < -2.4, "the bottom sinks to %.2f cm (the cube: -3.10)" % sink)
+low = min(range(31), key=lambda f: bottom[f].y)
+gate(low == 5 and all(p.y < 0.0 for p in bottom[1:9]),
+     "it comes in from below as the cube did, lowest at the breakdown: %.2f cm at %d (the cube: -3.09 at 7)"
+     % (bottom[low].y, low))
 print("   model tilt:", " ".join("%.1f" % t for t in tilts))
 print("   cube  tilt:", " ".join("%.1f" % math.degrees(math.atan2(t[2] - b[2], t[1] - b[1]))
                                for b, t in zip(ref_bottom, ref_top)))
@@ -134,8 +137,8 @@ box = cmds.polyCube(width=2, height=10, depth=2, name="arcBox")[0]
 key(box, 0, (0, 5, 0, 0, 0, 0))
 key(box, 6, (15, 5, -20, 0, 0, 0))
 key(box, 12, (0, 5, -40, 0, 0, 0))
-print(ps.apply([box], {"sway": 0.0, "weight": 0.2})[0])
-p_box = ps.plan(box, {"sway": 0.0, "weight": 0.2})
+print(ps.apply([box], {"weight": 0.2})[0])
+p_box = ps.plan(box, {"weight": 0.2})
 bm = world_point(box, (0, -5, 0), 6)
 gate(abs(bm.x - 15) < 1e-6 and abs(bm.z + 20) < 1e-6, "the bottom passes the breakdown's place at 6: (%.4f, %.4f)"
      % (bm.x, bm.z))
@@ -146,9 +149,9 @@ off_arc = 0.0
 for row in arc_t.rows:
     if row.t <= 12:
         here, there = world_point(box, (0, -5, 0), row.t), the_arc.at(row.p)
-        off_arc = max(off_arc, math.hypot(here.x - there[0], here.z - there[2]))
-gate(off_arc < 1e-6 and b3.x > 1.0, "  ... on the arc every frame to %.1e cm (only the sink is vertical); at 3 it "
-     "already stands %.2f cm aside" % (off_arc, b3.x))
+        off_arc = max(off_arc, math.dist((here.x, here.y, here.z), there))
+gate(off_arc < 1e-6 and b3.x > 1.0, "  ... on the arc every frame to %.1e cm; at 3 it already stands %.2f cm "
+     "aside" % (off_arc, b3.x))
 crest = max((r for r in arc_t.rows if r.t > 12), key=lambda r: r.p)
 bc = world_point(box, (0, -5, 0), crest.t)
 away = om.MVector(bc.x - 0.0, 0.0, bc.z + 40.0)
@@ -163,11 +166,35 @@ side = cmds.polyCube(width=2, height=10, depth=2, name="sideBox")[0]
 key(side, 0, (0, 5, 0, 0, 0, 0))
 key(side, 5, (0, 5, -15, 0, 0, 15))
 key(side, 10, (0, 5, -30, 0, 0, 0))
-line = ps.apply([side], {"sway": 0.0})[0]
+line = ps.apply([side])[0]
 low, high = world_point(side, (0, -5, 0), 4), world_point(side, (0, 5, 0), 4)
 gate("left" in line.split("|")[1] and high.x - low.x < -1.0,
      "a breakdown tilted left lags left: top %.2f cm left of the bottom at 4 (%s)" % (low.x - high.x,
                                                                                    line.split("|")[1].strip()))
+
+# --- The animator's report: a breakdown raised must bring the object in from above, a lowered one from
+# below, a level one straight - on the height of B at B's frame, and then on along the way it came.
+for name, rise, word in (("raised", 6.0, "up"), ("lowered", -6.0, "down"), ("level", 0.0, None)):
+    obj = cmds.polyCube(width=4, height=10, depth=4, name=name)[0]
+    key(obj, 0, (0, 5, 0, 0, 0, 0))
+    key(obj, 5, (0, 5 + rise, -15, 0, 0, 0))
+    key(obj, 10, (0, 5, -30, 0, 0, 0))
+    line = ps.apply([obj])[0]
+    ys = {t: world_point(obj, (0, -5, 0), t).y for t in ps.key_times(obj)}
+    way = [ys[t] for t in sorted(ys) if 0 < t < 10]
+    after = [ys[t] for t in sorted(ys) if 10 < t <= 13]
+    if word is None:
+        ok = all(abs(y) < 1e-6 for y in ys.values()) and "straight in" in line
+        text = "a level breakdown goes straight in: the bottom on the floor every frame to %.1e cm (%s)" % (
+            max(abs(y) for y in ys.values()), line.split("|")[1].strip())
+    else:
+        sign = 1.0 if rise > 0 else -1.0
+        ok = (all(sign * y > 0 for y in way) and abs(ys[10.0]) < 1e-6 and sign * after[0] < 0
+              and ("arc bends 6.0 cm " + word) in line)
+        text = ("a %s breakdown comes in from %s: %+.2f cm at 8, %+.2f at 9, on B's height at 10, %+.2f at 11 (%s)"
+                % (name, "above" if rise > 0 else "below", ys[8.0], ys[9.0], after[0],
+                   line.split("|")[1].strip()))
+    gate(ok, text)
 
 # --- A parented, pivoted, zxy prop: Maya's world matrix is the one the script composed, every frame.
 holder = cmds.group(empty=True, name="holder")

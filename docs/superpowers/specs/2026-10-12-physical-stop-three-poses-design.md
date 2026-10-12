@@ -83,3 +83,27 @@ geometry (up axis, bottom, the channels back through pivots and the parent).
   overshoot leaving along the arc's tangent at B 0.00 deg off; a breakdown tilted left lagging left; the
   parented pivoted zxy prop to 4.4e-16 and in its breakdown at 15; a 350 -> 370 spin without a jump; an
   old two-pose marker refused and restored; re-apply, an edited B, one undo, Restore. 57 unit tests.
+
+## Addendum 2 - nothing moves the bottom off the arc; no axis choice
+
+The animator, after trying it: «Давай избавимся от указания осей. Пусть будет только auto ... если мы в
+промежуточной позе опускаем объект вниз то визуально он заходит снизу но если поднимаем то он все равно
+будет заходить в овершут снизу».
+
+- **Measured**: with M raised 8 cm on a 30 cm move, the bottom was 1.35 cm under B's height at B's frame
+  and 2-3 cm under the arc in the frames before it. The sink spring, driven by speed and pinned only at M,
+  pulled the object down onto B from below whatever M did. The sway spring moved the bottom off the arc
+  sideways the same way.
+- **The rule now**: the bottom runs on the arc through A, M and B on every frame and on along its tangent
+  past B. The sink and sway springs, their constants and the Side sway control are gone. M sets the
+  entry's height and side, as it sets the lag. Weight is how long it rings.
+- **Up axis** is always the object's axis nearest world up; the menu is gone.
+- **The status line** names the entry: «arc bends 6.0 cm up» (down, left, right, combined), or «straight
+  in».
+- **Against the cube**: the bottom is 0.909 cm and the top 1.106 cm rms (0.405 / 0.602 with the sink
+  spring). The cube came into its place still 2 cm low as it passed it; with three poses that dip is M's
+  to set. The tilt and travel fits are unchanged (2.34 deg, 0.316 cm). Refitting the damping and the
+  defaults without the sink moved the score 4 %, at the grid's edge, so 0.32 / 3 % / 5 frames stay.
+- **Proof**: 53 unit tests, including M raised, lowered and aside coming in from above, below and the
+  side. `verify_physstop.py` **31/31 standalone**: M raised 6 cm gives +0.97 cm above B at 9, on B's
+  height at 10 and -0.47 at 11; lowered gives the mirror; level stays on the floor every frame.

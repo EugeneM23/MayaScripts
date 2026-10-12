@@ -8638,8 +8638,8 @@ ONE swing, weight is how many; a rigid object; sway a parameter; keys on every f
 **Three poses since 2026-10-12** (the animator: «давай попробуем сделать не две позы а 3 задача
 промежуточной позы определить арку входа в овершут и силу захлеста ... улучшить найминг парамметров»; asked:
 M is a key hit exactly at its frame, three poses only). Spec
-`docs/superpowers/specs/2026-10-12-physical-stop-three-poses-design.md` (its addendum). **This replaces the
-two-pose source and the Overlap slider above**:
+`docs/superpowers/specs/2026-10-12-physical-stop-three-poses-design.md` (its two addenda). **This replaces the
+two-pose source, the Overlap slider, the sink and sway springs and the Side sway / Up axis controls above**:
 - **The source** is the last THREE key times on translate/rotate: A (from), M (the breakdown), B (to).
   Fewer, or two less than a frame apart, is refused by name.
 - **The timing** `p(t)` is a clamped cubic Hermite spline through (tA, 0), (tM, s_M), (tB, 1): at rest at
@@ -8649,34 +8649,48 @@ two-pose source and the Overlap slider above**:
 - **The arc**: the bottom runs on the parabola through its places at A, M and B, parameterised by the
   chords; `s` is the arc-length fraction, from a 256-sample table. Past B it runs along the arc's tangent,
   so the overshoot leaves the way the arc arrived.
-- **The lag is read off M**: `G = W_path(tM)^-1 . W_M`, a rotation about the bottom, less the sway's yaw at
-  M. It is spread in time by the tilt spring's shape, scaled to 1 at M (to its peak where the spring
-  barely bends at M). Its axis is wherever M was posed: back, aside, twisted.
-- **Exactly M**: what is left at M (sink, sway, numerics) is pinned with a smoothstep bump, 0 at A, 1 at
-  M, 0 at B. A, B and the settle are untouched.
-- **The controls**, renamed:
-  - **Stop**: Overshoot, % (3 - refitted on the three-key model), Swing length, fr (5), Weight (1);
-  - **Extras**: Side sway (1, + left), Up axis.
-  The optionVars are `skeldarPhysStop_overshoot/swing/weight/sway/axis`.
+- **Nothing moves the bottom off the arc** (the same day, after the first try: «если поднимаем то он все
+  равно будет заходить в овершут снизу»). The speed-driven sink spring had held the bottom 1.3-3 cm under the
+  arc right before B, so a raised M still came into B from below. The sink and sway springs are gone:
+  - M sets how the object comes in: raised from above, lowered from below, aside from the side, level
+    straight in;
+  - it stands on B's height at B's frame, then goes on along the arrival (a raised M dips past B and
+    comes back up);
+  - Weight is how long it rings.
+- **The lag is read off M**: `G = W_path(tM)^-1 . W_M`, a rotation about the bottom. It is spread in time
+  by the tilt spring's shape, scaled to 1 at M (to its peak where the spring barely bends at M). Its axis
+  is wherever M was posed: back, aside, twisted.
+- **Exactly M**: what is left at M (numerics, a lag the spring could not carry) is pinned with a smoothstep
+  bump, 0 at A, 1 at M, 0 at B. A, B and the settle are untouched.
+- **The controls**: Overshoot, % (3), Swing length, fr (5), Weight (1). There is no up-axis choice: the
+  object's axis nearest world up is used. The optionVars are `skeldarPhysStop_overshoot/swing/weight`; an
+  older `_sway`/`_axis` and a memo's old keys are ignored.
 - **Re-apply and Restore**: the marker holds tA, tM, tB, tE. A re-run reads M at tM and B at the last key,
   so editing those keys edits the poses. Restore keys puts the three keys back. A two-pose marker asks
   for Restore keys first, and Restore puts its two keys back.
-- **The status line**: «cube: frames 0-31 | breakdown at 5: lag 17.2 deg back, arc bends 2.7 cm | sink
-  3.17 cm, sway 1.35 cm | settles 22 frames after B».
+- **The status line**: «cube: frames 0-28 | breakdown at 5: lag 17.8 deg back, arc bends 2.7 cm down-left
+  | settles 19 frames after B» («straight in» for a level M).
 
 Proof:
-- `tests/test_physstop.py`, 57 tests: the spline, the arc, the pin, the cube's components with M at frame
-  5, the composition, the window.
-- `verify_physstop.py`, **28/28 standalone**:
-  - the cube rebuilt from its frames 0 and 5 and its final pose at 9: M exact to 3.6e-15, the bottom
-    0.405 cm and the top 0.602 cm rms against the animator's cube, the tilt peaking at frame 7 at 23.3 deg
-    (the cube: 8, 24.1);
-  - a breakdown 15 cm aside: the bottom on the arc on every frame, the overshoot along its tangent
+- `tests/test_physstop.py`, 53 tests:
+  - the spline, the arc, the pin, the composition, the window;
+  - M raised, lowered and aside coming in from above, below and the side;
+  - the cube with M at frame 5.
+- `verify_physstop.py`, **31/31 standalone**:
+  - the cube rebuilt from its frames 0 and 5 and its final pose at 9: M exact to 3.6e-15, the tilt
+    peaking at frame 7 at 23.3 deg (the cube: 8, 24.1). The bottom is 0.909 cm rms against the
+    animator's cube and the top 1.106 (0.405 / 0.602 with the sink spring): the cube still came into its
+    place 2 cm low as it passed it, and with three poses that dip is M's to set;
+  - M raised 6 cm: +0.97 cm above B at 9, on B's height at 10, -0.47 at 11. Lowered: the mirror. Level:
+    on the floor every frame;
+  - a breakdown 15 cm aside: the bottom on the arc on every frame in 3D, the overshoot along its tangent
     0.00 deg off;
   - a breakdown tilted left lagging left;
   - the parented pivoted zxy prop to 4.4e-16;
   - the spin, the refusals, re-apply, one undo, Restore.
-- `calibrate_physstop.py` refits the constants (damping 0.32, sink 0.527, sway 0.219, yaw 51.9).
+- `calibrate_physstop.py` prints the fit at the script's constants and the best on its grid. Damping 0.32,
+  3 % and 5 frames are kept: travel 0.316 cm and tilt 2.34 deg rms, against 0.382 / 1.72 for the grid's
+  edge (0.28, 2 %, 5.5 frames).
 
 **The live try is the animator's**.
 
