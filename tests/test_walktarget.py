@@ -56,12 +56,12 @@ class WalkFileTests(unittest.TestCase):
         statics = statics_of(c)
         path = wf.path_for(self.folder, "My walk: 01")
         self.assertTrue(path.endswith("My_walk_01" + wf.SUFFIX))
-        wf.save(path, c, statics)
+        wf.save(path, c, statics, start=5)
         data = wf.load(path)
         self.assertEqual(data["names"], c.names)
         self.assertEqual(data["parents"], c.parents)
         self.assertTrue(np.allclose(data["worlds"], c.worlds))
-        self.assertEqual((data["fps"], data["name"]), (30.0, "synthetic"))
+        self.assertEqual((data["fps"], data["name"], data["start"]), (30.0, "synthetic", 5))
         self.assertEqual(data["statics"]["thigh_l"]["parent"], "pelvis")
         self.assertEqual(wf.names_in(self.folder), ["My_walk_01"])
         back = wf.clip_of(data, wm)
@@ -157,7 +157,8 @@ class RetargetTests(unittest.TestCase):
             for leaf, point in (("calf", knee2), ("foot", ankle2), ("ball", ankle2 + (ball - ankle))):
                 for key in ("rest", "world"):
                     target[leaf + "_" + side][key][12:15] = [float(v) for v in point]
-        rt = wt.Retarget(w, statics_of(c), target)
+        self.assertAlmostEqual(wt.Retarget(w, statics_of(c), target).scale, 0.8, places=9)  # the legs' size
+        rt = wt.Retarget(w, statics_of(c), target, scale=1.0)       # carried at the walk's own size
         frames, info = rt.frames(w.evaluate())
         self.assertEqual(info["scale"], 1.0)
         self.assertGreater(max(info["drop"]), 5.0)

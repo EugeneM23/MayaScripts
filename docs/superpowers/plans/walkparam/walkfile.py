@@ -40,13 +40,14 @@ def names_in(folder):
     return sorted(f[:-len(SUFFIX)] for f in os.listdir(folder) if f.endswith(SUFFIX))
 
 
-def save(path, clip, statics):
-    """`clip` (walkmodel.Clip) and `statics` {leaf: {"parent", "canonical", "rest" (16 floats)}} to `path`."""
+def save(path, clip, statics, start=0):
+    """`clip` (walkmodel.Clip), `statics` {leaf: {"parent", "canonical", "rest" (16 floats)}} and the
+    cycle's first frame `start` to `path`."""
     folder = os.path.dirname(path)
     if folder and not os.path.isdir(folder):
         os.makedirs(folder)
     data = {
-        "format": FORMAT, "version": VERSION, "name": clip.name, "fps": clip.fps,
+        "format": FORMAT, "version": VERSION, "name": clip.name, "fps": clip.fps, "start": int(start),
         "up": [float(v) for v in clip.up], "names": list(clip.names), "parents": list(clip.parents),
         "worlds": [[[round(float(v), 9) for v in m.reshape(16)] for m in joint] for joint in clip.worlds],
         "statics": dict((leaf, {"parent": b.get("parent"), "canonical": b.get("canonical"),
@@ -61,7 +62,7 @@ def save(path, clip, statics):
 
 
 def load(path):
-    """The saved walk as a dict: names, parents, worlds (J, F, 4, 4), fps, up, name, statics."""
+    """The saved walk as a dict: names, parents, worlds (J, F, 4, 4), fps, up, name, start, statics."""
     try:
         with gzip.open(path, "rt", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -72,6 +73,7 @@ def load(path):
                       % (os.path.basename(path), data.get("format"), data.get("version")))
     count = len(data["names"])
     data["worlds"] = np.array(data["worlds"], float).reshape(count, -1, 4, 4)
+    data.setdefault("start", 0)
     return data
 
 

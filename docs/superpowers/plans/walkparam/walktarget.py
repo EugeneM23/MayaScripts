@@ -26,6 +26,7 @@ except NameError:
 
 SIDES = ("l", "r")
 UP = np.array([0.0, 1.0, 0.0])
+LEG_TWIN = 0.01        # legs within 1 % of the walk's, on a twin: carried at the walk's own size
 
 
 def _model():
@@ -61,6 +62,12 @@ def _rot(m):
     return _model().orthonormal(_np(m)[:3, :3])
 
 
+def _leg_lengths(bones, leaves):
+    """(thigh, calf) lengths of a leg at rest: hip to knee, knee to ankle."""
+    th, ca, fo = (_np(bones[leaf]["rest"])[3, :3] for leaf in leaves)
+    return float(np.linalg.norm(ca - th)), float(np.linalg.norm(fo - ca))
+
+
 def at_rest(bones):
     """The skeleton standing at its rest: each bone's `world` its `rest` (a new dict)."""
     out = {}
@@ -78,18 +85,17 @@ class Retarget(object):
 
     `walk` the analysed walk (walkmodel.Walk), `statics` its skeleton {leaf: {parent, canonical, rest}},
     `target` the target {leaf: bone} as it stands (scene.skeleton's), `place` the target's root frame to
-    walk from (16 floats; default: where the target stands)."""
+    walk from (16 floats; default: where the target stands), `scale` the size of the target against the
+    walk's (default: 1 for a twin - posemath.twin, the same body - else `leg_ratio`: a stride is as long
+    as the legs that take it)."""
 
-    def __init__(self, walk, statics, target, place=None):
+    def __init__(self, walk, statics, target, place=None, scale=None):
         self.walk = walk
         self.statics = statics
         self.source = self._bones(walk.clip.worlds[:, 0])
         self.target = at_rest(target)
         self.pairs = pm.pairs(self.source, self.target)
         self.members = set(s for t, s in self.pairs.items() if not pm.is_helper(t))
-        self.scale = pm.scale_between(self.source, self.target, self.pairs)
-        self.transfer = pm.Transfer(self.source, self.target, self.pairs, self.members, scale=self.scale)
-        self.place = om.MMatrix(place) if place is not None else self.transfer.place(target)
         played = {}
         for t, s in self.pairs.items():
             played.setdefault(s, t)
@@ -101,10 +107,18 @@ class Retarget(object):
                 raise Refusal("the target has no %s for the %s leg - a skeleton with two legs only"
                               % (" / ".join(missing), "left" if side == "l" else "right"))
             self.legs[side] = leaves
-            th, ca, fo = leaves
-            rest = lambda leaf: _np(self.target[leaf]["rest"])
-            self.lengths[side] = (float(np.linalg.norm(rest(ca)[3, :3] - rest(th)[3, :3])),
-                                  float(np.linalg.norm(rest(fo)[3, :3] - rest(ca)[3, :3])))
+            self.lengths[side] = _leg_lengths(self.target, leaves)
+        if scale is not None:
+            self.scale = float(scale)
+        else:
+            legs = self.leg_ratio()
+            # the same body (posemath.twin: a median bone and every rest chord alike) on the same legs - the
+            # twin test's median would let 6 changed leg bones of 30 through - is 1: its bind read two ways
+            # (a skin's, the template's) differs in the 5th digit
+            same = pm.twin(self.pairs, self.source, self.target) and abs(legs - 1.0) <= LEG_TWIN
+            self.scale = 1.0 if same else legs
+        self.transfer = pm.Transfer(self.source, self.target, self.pairs, self.members, scale=self.scale)
+        self.place = om.MMatrix(place) if place is not None else self.transfer.place(target)
         self.pelvis = self.transfer.target_pelvis
         self.order = pm._ordered(self.target)
         self.helpers = self._helpers(played)
@@ -112,6 +126,15 @@ class Retarget(object):
         self._solved_legs = set(leaf for leaves in self.legs.values() for leaf in leaves)
 
     # -- reading --
+
+    def leg_ratio(self):
+        """The target's legs (thigh + calf, at rest) against the walk's, the two sides averaged: the size a
+        walk is carried at, so a longer-legged body takes longer steps and stands as high as its legs."""
+        ratios = []
+        for side in SIDES:
+            walk_legs = _leg_lengths(self.statics, ("thigh_" + side, "calf_" + side, "foot_" + side))
+            ratios.append(sum(self.lengths[side]) / max(sum(walk_legs), 1e-9))
+        return float(np.mean(ratios))
 
     def _bones(self, worlds):
         """The walk's skeleton as posemath bones for one frame of worlds (J, 4, 4)."""

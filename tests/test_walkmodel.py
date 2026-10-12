@@ -565,7 +565,7 @@ class WindowTests(unittest.TestCase):
                              (low, high, default))
             self.assertIs(floats[control]["changeCommand"], self.sw.slider_changed)
         labels = [c[2].get("label") for c in self.created("button")]
-        for label in ("Analyse selection", "Update copy", "Reset", "Delete copy"):
+        for label in ("Save walk...", "Apply to selection", "Pick selection", "Reset"):
             self.assertIn(label, labels)
 
     def test_the_window_reads_back_every_knob(self):
@@ -579,7 +579,7 @@ class WindowTests(unittest.TestCase):
         lines = []
         self.sw._say = lines.append
         self.sw.slider_changed()
-        self.assertIn("Analyse", lines[-1])
+        self.assertIn("Apply", lines[-1])
 
 
 if __name__ == "__main__":
