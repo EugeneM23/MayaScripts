@@ -9044,3 +9044,10 @@ the source's slide, a redo of an update (trap 224).
 225. **Row vectors put the relative transform the other way round**: a joint in its pelvis's space is
      `W_joint · W_pelvis^-1`, not `W_pelvis^-1 · W_joint`. A verify gate written the second way read the
      walk's seam as 247 cm on a seamless loop (trap 19's family, from the measuring side).
+226. **A cache kept on `sys` outlives the code that filled it** (trap 111's other side). The walk tool's
+     session cache - kept on `sys` so a re-dropped tool still knows its target - held a `Walk` analysed by
+     the walkmodel loaded before the pose work; the re-dropped tool loaded the new walkmodel, its `apply`
+     called the OLD object's `evaluate(given, pose)`, and Apply to selection died with «Walk.evaluate()
+     takes from 1 to 2 positional arguments but 3 were given» - on the status line, which the next
+     slider then overwrote. Every gate was green: each verify loads the code once. `_state()` now starts
+     the cache afresh when the model module is not the one that filled it (the target survives).

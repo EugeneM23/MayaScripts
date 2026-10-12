@@ -702,6 +702,20 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(sorted(given), sorted(wm.DEFAULTS))
         wm.knobs(**given)
 
+    def test_a_reloaded_tool_forgets_what_its_old_model_read(self):
+        """The session's cache lives on sys (a reload must find the target); the walks in it were analysed by
+        the model the tool loaded then. A dropped-again tool loads a new model, and an old Walk's evaluate()
+        does not take the new one's arguments (measured: 'evaluate() takes from 1 to 2 positional arguments
+        but 3 were given' in the animator's Maya) - the reloaded tool starts the cache afresh, keeps the target."""
+        first = self.sw
+        first._state()["loaded"]["a walk"] = "read by the old model"
+        first._state()["target"] = "the target's uuid"
+        second = load("skeldar_walk")
+        self.assertNotIn("a walk", second._state()["loaded"])
+        self.assertEqual(second._state()["target"], "the target's uuid")
+        second._state()["loaded"]["b walk"] = "read by the new model"
+        self.assertIn("b walk", second._state()["loaded"])
+
     def test_a_slider_with_nothing_analysed_says_so(self):
         self.sw._state()["source"] = None
         lines = []

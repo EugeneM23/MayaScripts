@@ -90,6 +90,11 @@ def _state():
     if state is None or "loaded" not in state:
         state = {"loaded": {}, "target": None}
         sys._skeldar_walk = state
+    if state.get("model") is not wm:
+        # the walks and poses read by a model loaded earlier: their methods are the old code's (a re-dropped
+        # tool loads walkmodel afresh, and an old Walk's evaluate() took no pose) - read them again
+        state["loaded"] = {}
+        state["model"] = wm
     return state
 
 
