@@ -8831,3 +8831,76 @@ OverRig's), default hotkeys.
      -st / -sr), so a turn that needs that channel cannot reach the object - on a zxy prop with rz
      locked, a local X turn of a double knot landed 6.1 deg off while the turns that only change ry
      were exact. A fixture proving a local turn needs every rotate channel free.
+
+## Parametric walk: a walk cycle read once, rebuilt from knobs (2026-10-12)
+
+The animator, with a walk cycle in Maya (bones only, `Desktop/Walk_01.fbx`): «проанализировать эту
+анимацию построить ее математическую модель и затем менять параметрически эту походку? Например делать
+короче шаг или добавить веса амплитудности в шаг» - then «давай попробуем сделать». Asked: the first
+version is **the knobs** (a character pose - the hunched goblin - plugs in later: the model keeps the mean
+pose apart from the motion around it); the result is **a copy beside the source**, re-keyed on every change;
+**all four groups of knobs**; the source's stance-foot slide kept. Spec
+`docs/superpowers/specs/2026-10-12-parametric-walk-design.md` (read its addendum), plan beside it. Like
+the physical stop it is **outside the plugin** first: `docs/superpowers/plans/walkparam/` -
+`walkmodel.py` (numpy only, a test pins it), `skeldar_walk.py` (Maya + the window; drop it into a
+viewport), `verify_walk.py` (mayapy standalone on a temp copy of the Desktop FBX, never committed).
+
+**The clip, measured** (read only over 7001): 93 joints under `|Armature|root`, ntsc, keys on every frame
+0..31, frame 31 = frame 0 moved by the travel (2e-4): a closed loop of two steps; root motion +Z 176.95 cm
+a cycle (stride 88.5 cm, 1.71 m/s), the root exactly under the pelvis; the pelvis bobs 7.7 cm (lows just
+after the contacts) and sways 4 cm; stance L frames 11-24, R 26-9; the stance foot slides ~0.3 cm a frame;
+every helper follows a body bone rigidly. **Fourier decided the model**: the upper body is 4-6 harmonics to
+1 deg, the legs keep 2-4 deg of error at 8 (a contact is a corner) - so legs come from where the feet go,
+through IK, never from their angles.
+
+**The model** (approach A of three; Fourier per channel and blending several walks rejected): everything
+it reads is the source's own data at a phase, and a knob scales a deviation, shifts a sampling time or
+moves a footprint - so **the defaults ARE the source**, by construction.
+- the sampler: every joint's world at a fractional source time (positions minus the travel line, rotations
+  as log-vectors about the joint's chordal mean, periodic Catmull-Rom; exact on whole frames);
+- the travel line `O + T·τ/P`; the new cycle N frames (tempo, whole: a seamless loop), travel `k·T`;
+- root and pelvis: deviations in (fwd, side, up) about their means - surge × stride, sway, bob shaped by
+  the weight on a warped clock; pelvis rotation; upper body local deviations × spine / arms, the head in
+  WORLD (0 holds it steady), overlap = a later sampling time, a share per bone (0.2 spine_01 … 1.0 hand);
+- feet: stance = the source's foot moved with its new footprint (`k·` spacing, ± width); swing = the
+  source's swing between the new footprints, its lift above the straight blend scaled;
+- legs: two-bone IK hip → the new ankle, lengths the source's per frame, the knee toward the source's
+  knee direction, thigh and calf turned by the rotation taking the source's (bone, leg plane) onto the
+  new one (roll kept, identity at the defaults); no knee straighter than the source's straightest;
+- **the reach sinks the pelvis per frame, not for the cycle**: each frame's least drop, a smooth periodic
+  cover over them (`smooth_cover`: widen by the neighbours, Gaussian, scale to cover). Built first as one
+  constant: 8.6 cm of crouch over the whole cycle at stride 1.3, when only the double-support frames need it
+  (frames 5-11 and 20-25); now 8.9 cm at the contacts and ~0 at the passing poses;
+- helpers keep their rigid relation to their body bone.
+
+**The copy**: `duplicate` of the top (no curves), `<top>_walk`, 100 cm to the character's left (Offset),
+marked `skeldarWalk` = JSON {source UUID, knobs, offset}; every change rewrites its curves in one undo
+chunk - locals from the model's worlds (`R = RA^-1 . L . JO^-1`, the euler nearest the frame before),
+curve nodes through cmds, keys through `MFnAnimCurve.addKeys` (trap 224). The window: Analyse (a bone of
+the source or any node of the copy, which reads its knobs back), the knobs in four groups, Offset, Update /
+Reset / Delete copy, a status line; a released slider updates. 0.3-0.6 s an update.
+
+**Proof**: `tests/test_walkmodel.py` 43 on a synthetic walker (feet planted, legs by IK); `verify_walk.py`
+**23/23 standalone** on Walk_01: the defaults = the source on 93 joints × 32 frames to 0.0002 cm (the
+source's own seam); stride 0.7 / 1.3 travel ×0.700 / ×1.300, stance feet as still as the source's, bone
+lengths 1e-5, seam 0; stride 1.6 the legs never straighter than the source's, the pelvis down 29 cm at
+the contacts and 4.7 at the passing pose; tempo 25 / 40 seamless; lift 2 exactly ×2 over the blend; width
++10.00 cm; bob 0 level, bob 2 exactly twice; sway 0; arms 0 still, arms 2 ×2.00000; head 0 still; overlap 3
+the hand exactly 3 frames late; weight 1 the pelvis 2 cm lower, the knee at contact 45.1 deg against 39.4;
+exaggeration 0 still body, walking feet; one Ctrl+Z; the source's 753 curves untouched. Picture:
+`docs/superpowers/plans/walkparam/walk_sheet.png` (side-view onion skins of six settings). **The window in
+the animator's Maya is theirs to try**; nothing was written there.
+
+Not built: an in-place clip, a curved walk, non-UE names, the goblin pose (the next step: replace the
+mean pose), several clips as a style knob, stance duration, removing the source's slide, a redo of an
+update (trap 224).
+
+224. **`cmds.setAttr(curve + ".ktv[0:n]", ...)` is refused from a script** («should be set with the
+     keyframe or setKeyframe command») - only a .ma may write keyTimeValue. The fast road: create the
+     curve node with cmds (undoable) and add its keys with `MFnAnimCurve.addKeys` (times in the UI unit,
+     angles in RADIANS): 540 curves × 32 keys in 0.05 s against 0.8 s by setKeyframe. Ctrl+Z deletes the
+     nodes and puts back any deleted with cmds; a REDO recreates the nodes empty - the keys were never on
+     the queue.
+225. **Row vectors put the relative transform the other way round**: a joint in its pelvis's space is
+     `W_joint · W_pelvis^-1`, not `W_pelvis^-1 · W_joint`. A verify gate written the second way read the
+     walk's seam as 247 cm on a seamless loop (trap 19's family, from the measuring side).

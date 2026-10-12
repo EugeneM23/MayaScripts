@@ -161,3 +161,21 @@ released slider updates the copy. Dropped into a viewport it reloads itself (tra
 
 Not built: an in-place clip, a curved walk, non-UE names, the character pose (the goblin) — the next step,
 replacing the mean pose — several clips (style), stance duration as a knob, removing the source's slide.
+
+## Addendum (2026-10-12, the build)
+
+- **The reach's drop is per frame, not one constant.** Run on Walk_01, the constant drop crouched the
+  whole cycle 8.6 cm at stride 1.3 while only the double-support frames needed any (frames 5-11 and 20-25;
+  0 on the passing poses). Each frame now gets the least drop its legs need, and the pelvis takes a smooth
+  periodic curve over those needs (`smooth_cover`: each frame widened to its neighbours' largest need
+  within sigma, a Gaussian of sigma = 0.06 of a cycle, scaled by the least factor that covers every frame):
+  8.9 cm at the contacts for stride 1.3 (the need 8.6), 29.0 for 1.6, ~0 between. A longer stride sinks the
+  contacts, as a person's does. `Result.info["drop"]` holds it per frame, `"lowered"` its largest.
+- **Keys through `MFnAnimCurve.addKeys`**: `setAttr .ktv` is refused from a script; curve nodes are made
+  and deleted with cmds (Ctrl+Z removes them and restores deleted ones), keys added through the API (540
+  curves in 0.05 s against 0.8 s by setKeyframe). A redo recreates the curves without keys.
+- **Measured on Walk_01** (`verify_walk.py`, 23/23): the defaults on 93 joints × 32 frames to 0.0002 cm
+  (frame 31 against the source's own seam; frames 0-30 to 4e-5, the helpers' rigid-follow residual);
+  every knob as listed in CLAUDE.md's section; an update 0.3-0.6 s. Contacts read L frames 11-24, R 26-9.
+- The window's Tempo is an int slider P/2..2P (field to 4P), set by Analyse; Offset moves the copy along
+  the character's left.
