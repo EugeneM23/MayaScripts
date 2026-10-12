@@ -17,9 +17,12 @@ from maya_tools import knotplan as plan
 
 class Kinds(unittest.TestCase):
 
-    def test_the_five_kinds_in_the_cards_order(self):
+    def test_the_kinds_in_the_cards_order(self):
+        """+ across (2026-10-12, the parent tab): a knot inside the parent."""
         self.assertEqual([k.key for k in plan.KINDS],
-                         ["knot", "offset", "orient", "double_local", "double_world"])
+                         ["knot", "offset", "orient", "double_local", "double_world", "across"])
+        self.assertEqual(plan.kind("across").constraint, "parent")
+        self.assertEqual(plan.kind("across").suffix, "_across")
 
     def test_the_double_knots_have_an_inner_node_the_others_do_not(self):
         for kind in plan.KINDS:
@@ -53,7 +56,8 @@ class Kinds(unittest.TestCase):
         (deletion.OUR_ATTR_PREFIXES) - the knots group in a character group must read as ours."""
         for name in (plan.KIND_MARKER, plan.SOURCE_MARKER, plan.SPAN_MARKER, plan.KEYED_MARKER,
                      plan.OF_MARKER, plan.PENDING_MARKER, plan.PENDING_SPACE_MARKER,
-                     plan.GROUP_MARKER, plan.ORDER_MARKER, plan.INNER_MARKER):
+                     plan.GROUP_MARKER, plan.ORDER_MARKER, plan.INNER_MARKER,
+                     plan.REGISTRY_MARKER):
             self.assertTrue(name.startswith("skeldar"), name)
 
 
@@ -365,6 +369,71 @@ class Messages(unittest.TestCase):
         self.assertIn("press Finish", plan.begin_message("sword"))
         self.assertIn("sword", plan.finish_message("sword", "sword_knotOffset",
                                                    (0.0, 10.0, False)))
+
+
+class ParentTab(unittest.TestCase):
+    """The parent tab (2026-10-12): Inside, World, Swap, Across, Multiple across, Attach 0 / 1."""
+
+    PARENTS = {"|P|X": "|P", "|P|X|Y": "|P|X", "|B": None, "|P": None, "|W": None}
+
+    def test_inside_refusals(self):
+        self.assertEqual(plan.inside_refusal(["|W"], "|B", self.PARENTS.get), "")
+        self.assertIn("already inside", plan.inside_refusal(["|P|X"], "|P", self.PARENTS.get))
+        self.assertIn("lies inside", plan.inside_refusal(["|P|X"], "|P|X|Y", self.PARENTS.get))
+        self.assertIn("is the parent", plan.inside_refusal(["|B"], "|B", self.PARENTS.get))
+
+    def test_world_refusal(self):
+        self.assertEqual(plan.world_refusal(["|P|X"], self.PARENTS.get), "")
+        self.assertIn("already at world level", plan.world_refusal(["|W"], self.PARENTS.get))
+
+    def test_swap_plan_parent_then_child(self):
+        """P > X > Y, X then Y selected: Y goes under P, X under Y."""
+        moves, refusal = plan.swap_plan(["|P|X", "|P|X|Y"], self.PARENTS.get)
+        self.assertEqual(refusal, "")
+        self.assertEqual(moves, [("|P|X", "|P|X|Y"), ("|P|X|Y", "|P")])
+
+    def test_swap_plan_at_world(self):
+        moves, refusal = plan.swap_plan(["|W", "|B"], self.PARENTS.get)
+        self.assertEqual(moves, [("|W", "|B"), ("|B", None)])
+
+    def test_swap_refusals(self):
+        self.assertIn("two", plan.swap_plan(["|W"], self.PARENTS.get)[1])
+        moves, refusal = plan.swap_plan(["|P|X|Y", "|P|X"], self.PARENTS.get)
+        self.assertIsNone(moves)
+        self.assertIn("select the parent first", refusal)
+
+    def test_attach_times(self):
+        self.assertEqual(plan.attach_times((10.0, 30.0), [], 5.0), (10.0, 29.0))
+        self.assertEqual(plan.attach_times(None, [3.0, 8.0, 5.0], 5.0), (3.0, 8.0))
+        self.assertEqual(plan.attach_times(None, [], 12.0), (12.0,))
+        self.assertEqual(plan.attach_times((10.0, 11.0), [4.0], 12.0), (4.0,))
+
+    def test_list_labels(self):
+        self.assertEqual(plan.list_label("Objects", 3), "Objects 3")
+        self.assertEqual(plan.list_label("Targets", 0), "Targets")
+
+    def test_multiple_refusals(self):
+        self.assertIn("remember", plan.multiple_refusal(0, 2, True, True))
+        self.assertIn("must match", plan.multiple_refusal(2, 3, True, True))
+        self.assertIn("Rotate or Translate", plan.multiple_refusal(2, 2, False, False))
+        self.assertEqual(plan.multiple_refusal(2, 2, True, False), "")
+
+    def test_lines_name_the_way_out(self):
+        self.assertIn("Across", plan.rig_part_line("FKShoulder_R", "a control of Manny_Rig"))
+        self.assertIn("locked", plan.locked_line("prop"))
+        self.assertIn("scale", plan.scale_line("prop"))
+        self.assertIn("carrier", plan.uneven_target("prop", "carrier",
+                                                    [1.0, 0, 0, 0, 0, 3.0, 0, 0, 0, 0, 1.0, 0,
+                                                     0, 0, 0, 1.0]))
+        self.assertEqual(plan.uneven_target("prop", "carrier", Parent.IDENTITY), "")
+        line = plan.reparent_message("Inside", ["prop", "cup"], "carrier", (0.0, 40.0, False))
+        self.assertIn("2 objects", line)
+        self.assertIn("carrier", line)
+        self.assertIn("0-40", line)
+        self.assertIn("world level", plan.reparent_message("World", ["prop"], None,
+                                                           (0.0, 40.0, False)))
+        self.assertIn("attach 0", plan.attach_message(0.0, 2, (12.0,)))
+        self.assertIn("10-29", plan.attach_message(1.0, 1, (10.0, 29.0)))
 
 
 class Purity(unittest.TestCase):

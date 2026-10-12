@@ -25,11 +25,13 @@ PENDING_MARKER = "skeldarKnotPending"           # a waiting pivot: its object's 
 PENDING_SPACE_MARKER = "skeldarKnotPendingSpace"  # the space it rides in: the same
 ORDER_MARKER = "skeldarKnotOrder"               # a waiting pivot: the rotate order choice
 INNER_MARKER = "skeldarKnotInner"               # a double knot's inner node: its top's UUID
+REGISTRY_MARKER = "skeldarKnotRegistry"         # the objectSet holding every across knot
 GROUP_MARKER = "skeldarKnotGroup"               # the group knots live in
 ATTACH = "attach"                               # 0..1 on the top node: the object's own <-> the knot
 
 GROUP_IN_CHARACTER = "Knots"
 GROUP_AT_WORLD = "SkeldarKnots"
+REGISTRY_NAME = "SkeldarAcrossKnots"
 
 # -------------------------------------------------------------------- kinds
 
@@ -44,6 +46,8 @@ KINDS = (
          (0.7, 0.5, 1.0), (0.85, 0.75, 1.0), "parent"),
     Kind("double_world", "Double knot World", "_dknotMove", "_dknotRotate",
          (1.0, 0.85, 0.3), (1.0, 0.95, 0.65), "parent"),
+    #  2026-10-12, the parent tab: a knot inside the parent (OverRig's across).
+    Kind("across", "Across", "_across", "", (0.3, 0.85, 0.8), None, "parent"),
 )
 _KINDS = dict((k.key, k) for k in KINDS)
 
@@ -395,3 +399,110 @@ def subtitle(knot_count, pivot_count):
     if pivot_count:
         parts.append("%s waiting" % _plural(pivot_count, "pivot"))
     return ", ".join(parts) if parts else "no knots in the scene"
+
+
+# ------------------------------------------------------------ the parent tab
+
+SWAP_TWO = "Swap takes two or more objects - select the parent first, then its child"
+INSIDE_TWO = "select the objects, then the parent LAST (two or more)"
+ACROSS_TWO = "select the objects, then the one they ride LAST (two or more)"
+ATTACH_NOTHING = "select a knot, or an object riding one, to key its attach"
+
+
+def inside_refusal(children, parent, parent_of):
+    """'' or why Inside cannot put `children` under `parent` (long paths). Pure."""
+    for child in children:
+        name = leaf(child)
+        if child == parent:
+            return "%s is the parent - select the objects, then the parent LAST" % name
+        if parent.startswith(child + "|"):
+            return "the parent %s lies inside %s - a cycle" % (leaf(parent), name)
+        if parent_of(child) == parent:
+            return "%s is already inside %s" % (name, leaf(parent))
+    return ""
+
+
+def world_refusal(nodes, parent_of):
+    for node in nodes:
+        if parent_of(node) is None:
+            return "%s is already at world level" % leaf(node)
+    return ""
+
+
+def swap_plan(paths, parent_of):
+    """(moves, refusal) for Swap, OverRig's rule: after every node went to world level the others
+    go under the LAST selected, and the last under the former parent of the one before it.
+    `moves` [(node, new parent or None)] in that order. Pure."""
+    paths = list(paths)
+    if len(paths) < 2:
+        return None, SWAP_TWO
+    last, before = paths[-1], paths[-2]
+    former = parent_of(before)
+    for node in paths:
+        if former and (former == node or former.startswith(node + "|")):
+            return None, ("%s lies inside %s - select the parent first, then its child"
+                          % (leaf(former), leaf(node)))
+    return [(node, last) for node in paths[:-1]] + [(last, former)], ""
+
+
+def attach_times(highlight, selected_keys, now):
+    """When Attach 0 / 1 keys: the highlight's two ends (a, b-1), else the selected graph keys'
+    first and last time, else the current frame. Pure."""
+    if highlight and highlight[1] - highlight[0] > 1:
+        return (float(highlight[0]), float(highlight[1]) - 1.0)
+    if selected_keys:
+        first, last = float(min(selected_keys)), float(max(selected_keys))
+        return (first,) if first == last else (first, last)
+    return (float(now),)
+
+
+def list_label(word, count):
+    return "%s %d" % (word, count) if count else word
+
+
+def multiple_refusal(objects, targets, rotate, translate):
+    if not objects or not targets:
+        return "remember Objects and Targets first (select, then press each)"
+    if objects != targets:
+        return "Objects %d, Targets %d - they must match, pair by pair" % (objects, targets)
+    if not rotate and not translate:
+        return "turn Rotate or Translate on - the object would follow nothing"
+    return ""
+
+
+def rig_part_line(name, what):
+    return "%s is %s - re-parenting it would break it; use Across" % (name, what)
+
+
+def locked_line(name):
+    return ("%s has locked translate or rotate channels - a re-parent rewrites them all" % name)
+
+
+def scale_line(name):
+    return ("%s has scale keys and its new parent is scaled differently - scale cannot move "
+            "across a re-parent" % name)
+
+
+def uneven_target(name, target, matrix):
+    """'' or why an across knot cannot live inside `target` (its world matrix)."""
+    if not uneven_parent(name, matrix):
+        return ""
+    return ("%s: %s is scaled unevenly, sheared or mirrored - a knot inside it cannot hold the "
+            "object" % (name, target))
+
+
+def reparent_message(verb, names, parent, span):
+    who = names[0] if len(names) == 1 else "%d objects" % len(names)
+    if verb == "World":
+        where = "to world level"
+    elif verb == "Swap":
+        where = "swapped (%s on top)" % parent
+    else:
+        where = "under %s" % parent
+    return "%s: %s moved %s, the motion kept %s" % (verb, who, where, span_words(span))
+
+
+def attach_message(value, count, times):
+    when = ("at %s" % _num(times[0]) if len(times) == 1
+            else "over %s-%s" % (_num(times[0]), _num(times[-1])))
+    return "attach %s keyed on %s %s" % (_num(value), _plural(count, "knot"), when)
