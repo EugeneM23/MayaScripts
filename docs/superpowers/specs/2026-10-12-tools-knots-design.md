@@ -187,3 +187,24 @@ riding a knot (all its knots). Nothing of ours selected: a refusal, never "every
   per press; refusals change nothing; a knot on a knot bakes inward; Delete character takes the
   knots.
 - The card in a live Maya is the animator's check (the GUI verify written, not run - their rule).
+
+## Addendum - what the build measured (2026-10-12)
+
+- **A ranged Bake protects the curve outside the range.** `preserveOutsideKeys` alone kept the
+  outside keys and bent the curve: 0.9 cm between the last outside key and the range (its auto
+  tangent re-aimed at the first baked key), and 5.97 cm on a channel keyed only inside the range
+  (the static key set at creation - its first baked key's value held outside by pre-infinity).
+  Before the bake every driven curve gets a key one frame outside each end (`setKeyframe
+  -insert`, which keeps the shape and pins the neighbours' tangents) and the edge key and its
+  outer neighbour have neighbour-made tangents (spline, clamped, plateau, auto*) pinned to fixed.
+  Outside the range the object then plays exactly what it did, gated at half frames (0.000000).
+- **Bake bakes where `attach` is above zero** (`knotplan.influence`), not the recorded span: the
+  animator may key `attach` after creation. An unkeyed attach above zero is the whole take; an
+  attach zero everywhere bakes nothing and the knot comes off like Remove.
+- After a Bake, a channel we keyed at creation that is still static is cut back (the same rule as
+  Remove), so a whole-take knot on a free channel leaves no constant curve behind.
+- Maya wires the object's `rotateOrder` into the pairBlend it splices, so quaternion
+  interpolation of a partial `attach` is right for any rotate order.
+- A locked channel keeps the object off its knot by exactly what that channel would have carried
+  (skipped, as OverRig skips it): stated, and the verify's local-turn case uses a prop with every
+  rotate free.
