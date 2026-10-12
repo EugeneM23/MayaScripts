@@ -502,6 +502,8 @@ WALK_MENU = "skeldarWalkMenu"
 POSE_MENU = "skeldarWalkPoseMenu"
 PART_LABELS = {"torso": "Torso", "pelvis": "Pelvis", "knees": "Knees", "arms": "Arms", "feet": "Feet"}
 TARGET = "skeldarWalkTarget"
+FORM = "skeldarWalkForm"
+KNOBS_SCROLL = "skeldarWalkKnobs"
 INTRO = ("Save walk: a bone of a walk cycle selected (a closed loop with root motion). Save pose: any "
          "skeleton standing in a character pose. Apply: any skeleton selected - the walk is keyed onto it in "
          "its own proportions, from where it stands; every released slider re-keys it. Pick: read a walked "
@@ -747,15 +749,29 @@ def press_reset(*_):
     _run(act)
 
 
+def _group_control(heading):
+    return "skeldarWalkGroup_" + heading.replace(" ", "")
+
+
+def _collapsed_var(heading):
+    return "skeldarWalk_collapsed_" + heading.replace(" ", "")
+
+
+def _remember_collapse(heading, collapsed):
+    _cmds().optionVar(intValue=(_collapsed_var(heading), 1 if collapsed else 0))
+
+
 def show():
-    """The window: the walks, Save / Apply / Pick, the target, the knobs in four groups, Reset, the status."""
+    """The window: the walks, Save / Apply / Pick and the target on top; the knobs in their groups - each
+    collapsible, remembered - in a scroll between; Reset and the status at the bottom, always in view."""
     cmds = _cmds()
     if cmds.window(WINDOW, exists=True):
         cmds.deleteUI(WINDOW)
     if cmds.windowPref(WINDOW, exists=True):
         cmds.windowPref(WINDOW, remove=True)
-    cmds.window(WINDOW, title="Parametric Walk", sizeable=True, widthHeight=(440, 700))
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=3, columnAttach=("both", 8))
+    cmds.window(WINDOW, title="Parametric Walk", sizeable=True, widthHeight=(470, 760))
+    form = cmds.formLayout(FORM)
+    top = cmds.columnLayout(adjustableColumn=True, rowSpacing=3, columnAttach=("both", 8))
     cmds.text(label=INTRO, align="left", wordWrap=True, height=66)
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach2=("both", "both"))
     cmds.optionMenu(WALK_MENU, label="Walk", changeCommand=walk_changed)
@@ -769,31 +785,51 @@ def show():
     cmds.text(label="Pose takes:", width=72, align="left")
     for part in ALL_PARTS:
         cmds.checkBox(_part_control(part), label=PART_LABELS[part], value=True, changeCommand=slider_changed,
-                      annotation="what of the pose replaces the walk's own (Arms: held - the grip kept, the "
-                                 "swing fading with Pose; Feet: the width and the toes' turn)")
+                      annotation="what of the pose replaces the walk's own (Arms: the mean the walk's swing runs "
+                                 "about - hands holding one thing together hold it; Feet: the width and the toes' "
+                                 "turn)")
     cmds.setParent("..")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach2=("both", "both"))
     cmds.button(label="Apply to selection", height=30, command=press_apply)
     cmds.button(label="Pick selection", height=30, command=press_pick)
     cmds.setParent("..")
     cmds.text(TARGET, label="Target: -", align="left", font="boldLabelFont", height=20)
+    cmds.setParent("..")
+    knobs = cmds.scrollLayout(KNOBS_SCROLL, childResizable=True, horizontalScrollBarThickness=0)
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=2, columnAttach=("both", 4))
     for heading, names in GROUPS:
-        cmds.text(label=heading, font="boldLabelFont", align="left", height=22)
+        var = _collapsed_var(heading)
+        shut = bool(cmds.optionVar(query=var)) if cmds.optionVar(exists=var) else False
+        cmds.frameLayout(_group_control(heading), label=heading, collapsable=True, collapse=shut, marginWidth=4,
+                         marginHeight=3, collapseCommand=lambda h=heading: _remember_collapse(h, True),
+                         expandCommand=lambda h=heading: _remember_collapse(h, False))
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
         for name in names:
             label, tip = LABELS[name]
             if name == "tempo":
                 cmds.intSliderGrp(_control(name), label=label, field=True, minValue=4, maxValue=120,
                                   fieldMinValue=4, fieldMaxValue=400, value=31, columnWidth3=(100, 50, 250),
-                                  annotation=tip, changeCommand=slider_changed)
+                                  adjustableColumn=3, annotation=tip, changeCommand=slider_changed)
             else:
                 low, high = wm.RANGES[name]
                 cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=low, maxValue=high,
                                     fieldMinValue=low, fieldMaxValue=high, value=wm.DEFAULTS[name], step=0.05,
-                                    precision=2, columnWidth3=(100, 50, 250), annotation=tip,
+                                    precision=2, columnWidth3=(100, 50, 250), adjustableColumn=3, annotation=tip,
                                     changeCommand=slider_changed)
+        cmds.setParent("..")
+        cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")
+    bottom = cmds.columnLayout(adjustableColumn=True, rowSpacing=3, columnAttach=("both", 8))
     cmds.button(label="Reset", height=28, command=press_reset)
     cmds.text(STATUS, label="Save a walk, then select a skeleton and Apply.", align="left", wordWrap=True,
               height=96)
+    cmds.setParent("..")
+    cmds.formLayout(form, edit=True,
+                    attachForm=[(top, "top", 4), (top, "left", 0), (top, "right", 0), (knobs, "left", 0),
+                                (knobs, "right", 0), (bottom, "left", 0), (bottom, "right", 0),
+                                (bottom, "bottom", 4)],
+                    attachControl=[(knobs, "top", 4, top), (knobs, "bottom", 4, bottom)])
     cmds.showWindow(WINDOW)
     _fill_walks()
     _fill_poses()

@@ -1413,6 +1413,30 @@ class WindowTests(unittest.TestCase):
         for label in ("Save walk...", "Apply to selection", "Pick selection", "Reset"):
             self.assertIn(label, labels)
 
+    def test_the_knobs_scroll_between_a_fixed_top_and_bottom(self):
+        """Every knob in a scroll (the window outgrows a screen), each group a collapsible frame remembered;
+        Apply / Pick above it, Reset and the status below it - always in view."""
+        from uifakes import made, inside
+        self.fake.optionvars["skeldarWalk_collapsed_Arms"] = 1
+        self.sw.show()
+        (start, scroll), = made(self.fake, "scrollLayout")
+        within = [c for c in inside(self.fake, start)]
+        sliders = [c[1][0] for c in within if c[0] in ("floatSliderGrp", "intSliderGrp")]
+        self.assertEqual(sorted(sliders), sorted(self.sw._control(k) for k in wm.DEFAULTS))
+        frames = dict((c[1][0], c[2]) for c in within if c[0] == "frameLayout")
+        self.assertEqual(sorted(frames), sorted(self.sw._group_control(h) for h, _ in self.sw.GROUPS))
+        self.assertTrue(all(kw["collapsable"] for kw in frames.values()))
+        self.assertTrue(frames[self.sw._group_control("Arms")]["collapse"])
+        self.assertFalse(frames[self.sw._group_control("Step")]["collapse"])
+        frames[self.sw._group_control("Step")]["collapseCommand"]()
+        self.assertEqual(self.fake.optionvars["skeldarWalk_collapsed_Step"], 1)
+        outside = [c for c in self.fake.calls if c not in within]
+        self.assertTrue(any(c[0] == "text" and c[1] and c[1][0] == self.sw.STATUS for c in outside))
+        self.assertTrue(any(c[0] == "button" and c[2].get("label") == "Reset" for c in outside))
+        self.assertTrue(any(c[0] == "button" and c[2].get("label") == "Apply to selection" for c in outside))
+        edits = [c for c in self.fake.calls if c[0] == "formLayout" and c[2].get("edit")]
+        self.assertTrue(edits and any(a[0] == scroll[1][0] for a in edits[0][2]["attachControl"]))
+
     def test_the_window_reads_back_every_knob(self):
         self.sw.show()
         given = self.sw.given_from_window()
