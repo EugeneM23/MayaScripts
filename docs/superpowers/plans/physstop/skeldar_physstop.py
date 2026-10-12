@@ -1,13 +1,16 @@
-"""Physical stop - a pose-to-pose transition that stops like a physical object.
+"""Physical stop - three poses, and the object stops like a physical one.
 
-Select objects whose LAST TWO KEYS are the pose they leave (A) and the pose they come to (B), and press
-Apply: the object leaves A from rest, passes B at B's key with speed, overshoots and settles into B, its top
-lagging behind its bottom, sinking under its weight and swaying aside - a model fitted to the animator's
-cube (docs/superpowers/specs/2026-10-10-physical-stop-design.md).
+Select objects whose LAST THREE KEYS are the pose they leave (A), a breakdown (M) and the pose they come to
+(B), and press Apply. The bottom of the object travels an arc through all three, stands in pose M at M's
+frame, passes B at B's frame with speed, overshoots along the arc and settles into B; its top lags behind as
+far, and in the direction, the breakdown shows; it sinks under its weight and sways aside. A model fitted to
+the animator's cube: docs/superpowers/specs/2026-10-10-physical-stop-design.md and
+2026-10-12-physical-stop-three-poses-design.md.
 
 Drop this file into a Maya viewport to open the window, or exec it in the Script Editor.
 """
 
+import bisect
 import json
 import math
 
@@ -17,7 +20,7 @@ import math
 
 # The cube's rule, fitted by calibrate_physstop.py against cube_reference.json.
 ZETA = 0.30          # damping of every swing at weight 1
-K_TILT = 47.10       # deg of tilt per object height per frame of speed, at overlap 1
+K_TILT = 47.10       # deg of tilt per object height per frame of speed: the lag's SHAPE (the breakdown scales it)
 K_SINK = 0.526       # sink, in heights, per object height per frame of speed, at weight 1
 K_SWAY = 0.217       # sway, in heights, per object height per frame of speed, at sway 1
 SWAY_RATE = 0.75     # the sway's frequency against the other springs'
@@ -26,24 +29,26 @@ K_YAW = 51.9         # deg of yaw per object height of sway
 TILT_LIMIT = 40.0    # deg: the tilt's drive saturates here (tanh) - a small object flying far stays sane
 SINK_LIMIT = 0.5     # heights: the sink's drive saturates here
 SWAY_LIMIT = 0.25    # heights: the sway's drive saturates here (the yaw follows it)
+LAG_READABLE = 0.15  # the tilt spring must bend this share of its peak at M for M's lag to scale it there
 SUBSTEPS = 16        # integration steps per frame
 SETTLE_SHARE = 0.02  # settled when every component stays within this share of its own peak
 FADE_SHARE = 0.3     # the last share of the settle fades every residual to 0
 MAX_TAIL = 400       # frames simulated after B at most
 FALLBACK_HEIGHT = 10.0
+ARC_SAMPLES = 256
 
-DEFAULTS = (("amplitude", 4.5), ("overlap", 1.0), ("weight", 1.0), ("swing", 5.0), ("sway", 1.0))
+# The controls, in the window's order (the cube's values).
+DEFAULTS = (("overshoot", 4.5), ("swing", 5.0), ("weight", 1.0), ("sway", 1.0))
 RANGES = {
-    "amplitude": (0.0, 20.0),   # the first overshoot, % of the path
-    "overlap": (0.0, 3.0),      # the top's lag
-    "weight": (0.2, 5.0),       # how long it rings, how deep it sinks
+    "overshoot": (0.0, 20.0),   # the first swing past B, % of the path
     "swing": (1.0, 20.0),       # frames of one swing
+    "weight": (0.2, 5.0),       # how long it rings, how deep it sinks
     "sway": (-3.0, 3.0),        # sideways drift and yaw; + is left of the motion
 }
 
 
 def params(**given):
-    """The five controls, defaults filled in, each clamped to its range."""
+    """The controls, defaults filled in, each clamped to its range."""
     out = {}
     for name, default in DEFAULTS:
         low, high = RANGES[name]
@@ -57,33 +62,47 @@ def damping(weight):
     return min(0.9, max(0.05, ZETA / max(weight, 1e-6)))
 
 
-class Path(object):
-    """The progress p(t) from A (0) to B (1): an ease that passes B at t_b with speed, then a swing."""
+def _hermite(u, y0, y1, m0, m1, h):
+    """(value, d/dt) of the cubic Hermite segment at u in [0, 1] over h frames."""
+    u2, u3 = u * u, u * u * u
+    value = ((2 * u3 - 3 * u2 + 1) * y0 + (u3 - 2 * u2 + u) * h * m0
+             + (-2 * u3 + 3 * u2) * y1 + (u3 - u2) * h * m1)
+    rate = ((6 * u2 - 6 * u) * y0 + (3 * u2 - 4 * u + 1) * h * m0
+            + (-6 * u2 + 6 * u) * y1 + (3 * u2 - 2 * u) * h * m1) / h
+    return value, rate
 
-    def __init__(self, t_a, t_b, amplitude, swing, zeta):
-        self.t_a = float(t_a)
-        self.t_b = float(t_b)
-        span = self.t_b - self.t_a
+
+class Path(object):
+    """The progress p(t) along the arc: from A (0) at rest, through the breakdown (s_m) at t_m, through B
+    (1) at t_b with speed, then a swing about B that dies. A clamped cubic spline (curvature continuous at
+    the breakdown) whose slopes are held to three times each stretch's average, so it never runs back."""
+
+    def __init__(self, t_a, t_m, t_b, s_m, overshoot, swing, zeta):
+        self.t_a, self.t_m, self.t_b = float(t_a), float(t_m), float(t_b)
+        self.s_m = min(1.0, max(0.0, float(s_m)))
         self.w = math.pi / swing
         self.sigma = zeta * self.w / math.sqrt(1.0 - zeta * zeta)
         tau = math.atan2(self.w, self.sigma) / self.w        # the first crest after B
         crest = math.exp(-self.sigma * tau) * math.sin(self.w * tau)
-        slope = amplitude / 100.0 * self.w / crest * span
-        self.clamped = slope > 3.0                            # past 3 the ease would overshoot on the way
-        self.m = min(slope, 3.0)
-        self.v_b = self.m / span
+        h1, h2 = self.t_m - self.t_a, self.t_b - self.t_m
+        d1, d2 = self.s_m / h1, (1.0 - self.s_m) / h2
+        wanted = overshoot / 100.0 * self.w / crest
+        self.clamped = wanted > 3.0 * d2 + 1e-12
+        self.v_b = max(0.0, min(wanted, 3.0 * d2))
+        v_m = (3.0 * (h2 * d1 + h1 * d2) - h1 * self.v_b) / (2.0 * (h1 + h2))
+        self.v_m = max(0.0, min(v_m, 3.0 * min(d1, d2)))
         self.overshoot = self.v_b / self.w * crest
 
     def at(self, t):
         """(p, dp/dt) at frame t."""
         if t <= self.t_a:
             return 0.0, 0.0
+        if t <= self.t_m:
+            h = self.t_m - self.t_a
+            return _hermite((t - self.t_a) / h, 0.0, self.s_m, 0.0, self.v_m, h)
         if t <= self.t_b:
-            span = self.t_b - self.t_a
-            u = (t - self.t_a) / span
-            p = 3.0 * u * u - 2.0 * u ** 3 + self.m * (u ** 3 - u * u)
-            v = (6.0 * u - 6.0 * u * u + self.m * (3.0 * u * u - 2.0 * u)) / span
-            return p, v
+            h = self.t_b - self.t_m
+            return _hermite((t - self.t_m) / h, self.s_m, 1.0, self.v_m, self.v_b, h)
         if self.v_b == 0.0:
             return 1.0, 0.0
         tau = t - self.t_b
@@ -91,6 +110,104 @@ class Path(object):
         k = self.v_b / self.w
         s, c = math.sin(self.w * tau), math.cos(self.w * tau)
         return 1.0 + k * fade * s, k * fade * (self.w * c - self.sigma * s)
+
+
+def _sub(a, b):
+    return tuple(x - y for x, y in zip(a, b))
+
+
+def _add(a, b):
+    return tuple(x + y for x, y in zip(a, b))
+
+
+def _scaled(a, k):
+    return tuple(x * k for x in a)
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _length(a):
+    return math.sqrt(_dot(a, a))
+
+
+class Arc(object):
+    """The bottom's path: the parabola C(u) = A + u V + u^2 Q through A, the breakdown M (at u = tau, the
+    chords' share) and B, measured along its length; s is the share of that length. Past B it runs on along
+    its tangent there, so the overshoot leaves the way the arc arrived."""
+
+    def __init__(self, a, m, b):
+        self.a, self.m, self.b = (tuple(float(x) for x in p) for p in (a, m, b))
+        e, f = _sub(self.b, self.a), _sub(self.m, self.a)
+        first, second = _length(f), _length(_sub(self.b, self.m))
+        self.tau = first / (first + second) if first + second > 1e-12 else 0.5
+        if 1e-9 < self.tau < 1.0 - 1e-9:
+            self.q = _scaled(_sub(_scaled(e, self.tau), f), 1.0 / (self.tau * (1.0 - self.tau)))
+        else:
+            self.q = (0.0, 0.0, 0.0)
+        self.v = _sub(e, self.q)
+        self.us = [i / float(ARC_SAMPLES) for i in range(ARC_SAMPLES + 1)]
+        points = [self._at_u(u) for u in self.us]
+        run = [0.0]
+        for p0, p1 in zip(points, points[1:]):
+            run.append(run[-1] + _length(_sub(p1, p0)))
+        self.length = run[-1]
+        self.ss = [r / self.length for r in run] if self.length > 1e-12 else list(self.us)
+        self.s_m = self._s_of_u(self.tau)
+        tangent = _add(self.v, _scaled(self.q, 2.0))
+        size = _length(tangent)
+        if size < 1e-12:
+            tangent, size = e, _length(e)
+        self.tangent = _scaled(tangent, 1.0 / size) if size > 1e-12 else (0.0, 0.0, 0.0)
+
+    def _at_u(self, u):
+        return _add(self.a, _add(_scaled(self.v, u), _scaled(self.q, u * u)))
+
+    @staticmethod
+    def _interp(xs, ys, x):
+        i = min(max(bisect.bisect_right(xs, x), 1), len(xs) - 1)
+        x0, x1 = xs[i - 1], xs[i]
+        if x1 - x0 < 1e-15:
+            return ys[i]
+        return ys[i - 1] + (ys[i] - ys[i - 1]) * (x - x0) / (x1 - x0)
+
+    def _s_of_u(self, u):
+        return self._interp(self.us, self.ss, u)
+
+    def at(self, s):
+        """The point at arc share s (past 1: on along the tangent at B)."""
+        if s >= 1.0:
+            return _add(self.b, _scaled(self.tangent, (s - 1.0) * self.length))
+        if s <= 0.0:
+            return self.a
+        if abs(s - self.s_m) < 1e-12:
+            return self.m
+        return self._at_u(self._interp(self.ss, self.us, s))
+
+    def bend(self):
+        """How far the breakdown stands off the straight line A-B."""
+        e = _sub(self.b, self.a)
+        f = _sub(self.m, self.a)
+        size = _length(e)
+        if size < 1e-12:
+            return _length(f)
+        along = _dot(f, e) / size
+        return math.sqrt(max(0.0, _dot(f, f) - along * along))
+
+
+def _smoothstep(u):
+    u = min(1.0, max(0.0, u))
+    return u * u * (3.0 - 2.0 * u)
+
+
+def pin_weight(t, t_a, t_m, t_b):
+    """0 at A, rising smoothly to 1 at the breakdown, falling smoothly to 0 at B, 0 outside."""
+    if t <= t_a or t >= t_b:
+        return 0.0
+    if t <= t_m:
+        return _smoothstep((t - t_a) / (t_m - t_a))
+    return _smoothstep((t_b - t) / (t_b - t_m))
 
 
 class Row(object):
@@ -101,28 +218,51 @@ class Row(object):
 
 
 class Transition(object):
-    """Every frame from A to the settle: the path's progress, the tilt (deg, + = the top behind the
-    motion), the sink (cm, down), the sway (cm, + = left of the motion) and the yaw (deg, about up)."""
+    """Every frame from A to the settle (plus the breakdown's own time): the arc share, the tilt spring
+    (deg - the lag's shape), the sink (cm, down), the sway (cm, + = left of the motion), the yaw (deg)."""
 
     def __init__(self, rows, end, path, given):
         self.rows = rows
         self.end = end
+        self.t_a, self.t_m, self.t_b = path.t_a, path.t_m, path.t_b
         self.overshoot = path.overshoot
         self.clamped = path.clamped
         self.params = given
         self.peak_tilt = max(abs(r.tilt) for r in rows)
         self.peak_sink = max(abs(r.sink) for r in rows)
         self.peak_sway = max(abs(r.sway) for r in rows)
+        peak_row = max(rows, key=lambda r: abs(r.tilt))
+        self.tilt_peak = peak_row.tilt
+        self.tilt_m = self.row_at(self.t_m).tilt
+        self.readable = self.peak_tilt > 1e-9 and abs(self.tilt_m) >= LAG_READABLE * self.peak_tilt
+
+    def row_at(self, t):
+        for row in self.rows:
+            if abs(row.t - t) < 1e-6:
+                return row
+        raise KeyError(t)
+
+    def lag_share(self, tilt):
+        """How much of the breakdown's lag the top carries at a frame whose tilt spring reads `tilt`: 1 at
+        the breakdown - or, where the spring barely bends there, 1 at its peak."""
+        if self.readable:
+            return tilt / self.tilt_m
+        if self.peak_tilt > 1e-9:
+            return tilt / self.tilt_peak
+        return 0.0
 
 
-def _frames(t_a, end):
-    """t_a, then every whole frame after it up to `end`."""
-    out = [float(t_a)]
+def _frames(t_a, end, extras=()):
+    """t_a, every whole frame after it up to `end`, and the extra times in between."""
+    out = {float(t_a)}
     f = math.floor(t_a) + 1
     while f <= end + 1e-9:
-        out.append(float(f))
+        out.add(float(f))
         f += 1
-    return out
+    for x in extras:
+        if t_a < x <= end + 1e-9:
+            out.add(float(x))
+    return sorted(out)
 
 
 def _step(state, drive, omega, zeta, dt):
@@ -132,27 +272,25 @@ def _step(state, drive, omega, zeta, dt):
 
 
 def simulate(path, end, reach, lateral, given, zeta):
-    """(t, p, tilt deg, sink heights, sway heights) on every frame from A to `end`. The bottom's speed in
-    heights per frame drives three springs at rest at A: the tilt by the horizontal speed, the sink by the
-    speed, the sway (slower) by the horizontal speed."""
+    """(t, p, tilt deg, sink heights, sway heights) on every frame from A to `end` and at the breakdown.
+    The bottom's speed along the arc in heights per frame drives three springs at rest at A: the tilt (the
+    lag's shape) and the sink by that speed, the sway (slower) by its horizontal part."""
     omega = path.w / math.sqrt(1.0 - zeta * zeta)
     slow = omega * SWAY_RATE
     tilt, sink, sway = [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]
     out = []
     t = path.t_a
-    for f in _frames(path.t_a, end):
+    for f in _frames(path.t_a, end, (path.t_m,)):
         steps = int(math.ceil((f - t) * SUBSTEPS - 1e-9)) if f > t else 0
         if steps:
             dt = (f - t) / steps
             for i in range(steps):
                 _, v = path.at(t + dt * (i + 0.5))
-                ahead = v * lateral
-                speed = abs(v)
-                _step(tilt, TILT_LIMIT * math.tanh(K_TILT * given["overlap"] * ahead / TILT_LIMIT),
+                speed = v * reach
+                _step(tilt, TILT_LIMIT * math.tanh(K_TILT * speed / TILT_LIMIT), omega, zeta, dt)
+                _step(sink, SINK_LIMIT * math.tanh(K_SINK * given["weight"] * abs(speed) / SINK_LIMIT),
                       omega, zeta, dt)
-                _step(sink, SINK_LIMIT * math.tanh(K_SINK * given["weight"] * speed * reach / SINK_LIMIT),
-                      omega, zeta, dt)
-                _step(sway, SWAY_LIMIT * math.tanh(K_SWAY * given["sway"] * abs(ahead) / SWAY_LIMIT),
+                _step(sway, SWAY_LIMIT * math.tanh(K_SWAY * given["sway"] * abs(v) * lateral / SWAY_LIMIT),
                       slow, zeta, dt)
             t = f
         out.append((f, path.at(f)[0], tilt[0], sink[0], sway[0]))
@@ -171,17 +309,12 @@ def settle_frame(raw, t_b):
     return max(first_after, (last + 1.0) if last is not None else first_after)
 
 
-def _smoothstep(u):
-    u = min(1.0, max(0.0, u))
-    return u * u * (3.0 - 2.0 * u)
-
-
-def solve(t_a, t_b, reach, lateral, height, given=None):
-    """The transition between keys at t_a and t_b. reach: the bottom's travel A->B in object heights;
-    lateral: its horizontal part; height: the object's height in cm."""
+def solve(t_a, t_m, t_b, s_m, reach, lateral, height, given=None):
+    """The transition through keys at t_a, t_m (arc share s_m) and t_b. reach: the arc's length in object
+    heights; lateral: its horizontal part; height: the object's height in cm."""
     given = params(**(given or {}))
     zeta = damping(given["weight"])
-    path = Path(t_a, t_b, given["amplitude"], given["swing"], zeta)
+    path = Path(t_a, t_m, t_b, s_m, given["overshoot"], given["swing"], zeta)
     raw = simulate(path, math.floor(t_b) + MAX_TAIL, reach, lateral, given, zeta)
     end = settle_frame(raw, t_b)
     start = max(t_b, end - max(2.0, FADE_SHARE * (end - t_b)))
@@ -215,14 +348,6 @@ IDENTITY_FIXED = {
 def _om():
     import maya.api.OpenMaya as om
     return om
-
-
-def _dot(a, b):
-    return sum(x * y for x, y in zip(a, b))
-
-
-def _length(a):
-    return math.sqrt(_dot(a, a))
 
 
 def up_axis(rows, choice="Auto"):
@@ -278,16 +403,14 @@ def channels_from_local(matrix, order, fixed, near):
     return (move.x, move.y, move.z), tuple(math.degrees(a) for a in (euler.x, euler.y, euler.z))
 
 
-def secondary(bottom, heading, tilt, yaw, sink, sway):
-    """The world motion on top of the path: tilt (deg) about the bottom against `heading`, yaw (deg) about
-    world up through the bottom, sink (cm) down, sway (cm) to the left. No heading: the sink alone."""
+def secondary(bottom, lag, yaw, sink, sway, heading):
+    """The world motion on top of the path, about the bottom: the lag (a quaternion) and then a yaw (deg)
+    about world up, a sink (cm) down and a sway (cm) to the left of `heading` (none without one)."""
     om = _om()
     up = om.MVector(UP)
-    spin = om.MMatrix()
+    spin = (lag * om.MQuaternion(math.radians(yaw), up)).asMatrix()
     move = up * -sink
     if heading is not None:
-        spin = (om.MQuaternion(math.radians(tilt), heading ^ up).asMatrix()
-                * om.MQuaternion(math.radians(yaw), up).asMatrix())
         move = move + (up ^ heading) * sway
     b = om.MVector(bottom.x, bottom.y, bottom.z)
     return _translation(-b) * spin * _translation(b + move)
@@ -297,21 +420,103 @@ def _lerp(a, b, p):
     return tuple(x + (y - x) * p for x, y in zip(a, b))
 
 
-def channel_frames(transition, pose_a, pose_b, order, fixed, parent_at, bottom, heading):
-    """Every frame's (t, translate, rotate): the path's pose (channels lerped by p, past B on the
-    overshoot), in world, moved by the secondary motion about its bottom, back into the channels."""
+class Setup(object):
+    """One object's three poses (channels) and times, and what places it: rotate order, the fixed parts of
+    its transform, its parent's world matrix at a frame, its bottom (object space), the arc, the heading."""
+
+    def __init__(self, poses, times, order, fixed, parent_at, bottom, arc, heading):
+        self.pose_a, self.pose_m, self.pose_b = poses
+        self.t_a, self.t_m, self.t_b = times
+        self.order, self.fixed, self.parent_at = order, fixed, parent_at
+        self.bottom, self.arc, self.heading = bottom, arc, heading
+
+    def world(self, pose, t):
+        return local_matrix(pose[0], pose[1], self.order, self.fixed) * self.parent_at(t)
+
+
+def path_world(setup, t, p):
+    """The path's own pose at a frame: channels lerped A to B by p, moved so its bottom stands on the arc.
+    Returns the world matrix and the lerped rotate (the euler the frame's keys stay near)."""
     om = _om()
-    out = []
-    for row in transition.rows:
-        move = _lerp(pose_a[0], pose_b[0], row.p)
-        turn = _lerp(pose_a[1], pose_b[1], row.p)
-        parent = parent_at(row.t)
-        world = local_matrix(move, turn, order, fixed) * parent
-        base = om.MPoint(bottom) * world
-        world = world * secondary(base, heading, row.tilt, row.yaw, row.sink, row.sway)
-        t, r = channels_from_local(world * parent.inverse(), order, fixed, turn)
-        out.append((row.t, t, r))
-    return out
+    move = _lerp(setup.pose_a[0], setup.pose_b[0], p)
+    turn = _lerp(setup.pose_a[1], setup.pose_b[1], p)
+    world = local_matrix(move, turn, setup.order, setup.fixed) * setup.parent_at(t)
+    base = om.MPoint(setup.bottom) * world
+    goal = om.MPoint(*setup.arc.at(p))
+    return world * _translation(goal - base), turn
+
+
+def _rotation(matrix):
+    om = _om()
+    return om.MTransformationMatrix(matrix).rotation(asQuaternion=True)
+
+
+def _direction(lag, heading):
+    """Which way the lag swings the top, in words: back / forward / left / right, or both."""
+    om = _om()
+    up = om.MVector(UP)
+    if heading is None:
+        return "aside"
+    moved = up * lag.asMatrix() - up
+    left = up ^ heading
+    along, side = moved * heading, moved * left
+    words = []
+    if abs(along) >= 0.35 * max(abs(along), abs(side)) and abs(along) > 1e-9:
+        words.append("back" if along < 0 else "forward")
+    if abs(side) >= 0.35 * max(abs(along), abs(side)) and abs(side) > 1e-9:
+        words.append("left" if side > 0 else "right")
+    return "-".join(words) if words else "none"
+
+
+def compose(transition, setup):
+    """Every frame's (t, translate, rotate), and what was read off the breakdown. The path's pose, the lag
+    (the breakdown's turn against the path there, less the sway's yaw at it, spread in time by the tilt
+    spring), the yaw, sink and sway about the bottom; then the rest of the way to pose M at M's frame,
+    pinned with a bump that is 0 at A and B. Back into the channels through the parent."""
+    om = _om()
+    up = om.MVector(UP)
+    row_m = transition.row_at(setup.t_m)
+    target_m = setup.world(setup.pose_m, setup.t_m)
+    path_m, _ = path_world(setup, row_m.t, row_m.p)
+    turn_m = _rotation(path_m.inverse() * target_m)
+    lag_m = turn_m * om.MQuaternion(math.radians(row_m.yaw), up).inverse()
+    axis, angle = lag_m.asAxisAngle()
+    if angle > math.pi:
+        axis, angle = -axis, 2.0 * math.pi - angle
+
+    def placed(row):
+        world, turn = path_world(setup, row.t, row.p)
+        base = om.MPoint(setup.bottom) * world
+        share = transition.lag_share(row.tilt)
+        lag = om.MQuaternion(angle * share, axis) if angle > 1e-12 else om.MQuaternion()
+        world = world * secondary(base, lag, row.yaw, row.sink, row.sway, setup.heading)
+        return world, turn
+
+    worlds = [placed(row) for row in transition.rows]
+    world_m = worlds[transition.rows.index(row_m)][0]
+    rest = world_m.inverse() * target_m
+    centre = om.MPoint(setup.bottom) * world_m
+    rest_axis, rest_angle = _rotation(rest).asAxisAngle()
+    rest_move = centre * rest - centre
+
+    frames = []
+    for row, (world, turn) in zip(transition.rows, worlds):
+        weight = pin_weight(row.t, setup.t_a, setup.t_m, setup.t_b)
+        if abs(row.t - setup.t_m) < 1e-6:
+            world, turn = target_m, setup.pose_m[1]
+        elif weight > 0.0:
+            c = om.MVector(om.MPoint(setup.bottom) * world)
+            pin = (_translation(-c) * om.MQuaternion(rest_angle * weight, rest_axis).asMatrix()
+                   * _translation(c + rest_move * weight))
+            world = world * pin
+        if row.t == transition.rows[0].t:
+            turn = setup.pose_a[1]
+        parent = setup.parent_at(row.t)
+        t, r = channels_from_local(world * parent.inverse(), setup.order, setup.fixed, turn)
+        frames.append((row.t, t, r))
+    info = {"lag_deg": math.degrees(angle), "lag_dir": _direction(lag_m, setup.heading),
+            "bend": setup.arc.bend(), "readable": transition.readable}
+    return frames, info
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -357,20 +562,29 @@ def remembered(node):
         return None
 
 
+def _ours(memo, times):
+    """A transition this script wrote, its last key unmoved."""
+    return bool(memo) and bool(times) and abs(times[-1] - memo.get("tE", float("nan"))) < 1e-3
+
+
 def source(node):
-    """(t_a, t_b, b_time): the keys the transition runs between, and where pose B is read. A transition
-    this script wrote (the marker, its last key unmoved) is re-run from its own keys, B read at its end -
-    so editing that last key edits pose B; otherwise the last two key times."""
+    """(t_a, t_m, t_b, b_time): the keys the transition runs through, and where pose B is read. A
+    transition this script wrote is re-run from its own keys - M read at its frame (the key there is pose
+    M), B at the last key, so editing that key edits pose B; otherwise the last three key times."""
     times = key_times(node)
     memo = remembered(node)
-    if memo and times and abs(times[-1] - memo["tE"]) < 1e-3:
-        return float(memo["tA"]), float(memo["tB"]), float(memo["tE"])
-    if len(times) < 2:
-        raise Refusal("%s: needs two keys on translate/rotate - has %d" % (_short(node), len(times)))
-    t_a, t_b = times[-2], times[-1]
-    if t_b - t_a < 1.0 - 1e-6:
-        raise Refusal("%s: the last two keys are less than a frame apart" % _short(node))
-    return t_a, t_b, t_b
+    if _ours(memo, times):
+        if "tM" not in memo:
+            raise Refusal("%s: carries a two-pose transition of an earlier version - Restore keys first"
+                          % _short(node))
+        return float(memo["tA"]), float(memo["tM"]), float(memo["tB"]), float(memo["tE"])
+    if len(times) < 3:
+        raise Refusal("%s: needs three keys on translate/rotate - from, breakdown, to - has %d"
+                      % (_short(node), len(times)))
+    t_a, t_m, t_b = times[-3:]
+    if min(t_m - t_a, t_b - t_m) < 1.0 - 1e-6:
+        raise Refusal("%s: the last three keys are less than a frame apart" % _short(node))
+    return t_a, t_m, t_b, t_b
 
 
 def pose_at(node, t):
@@ -423,11 +637,13 @@ def object_box(node):
 
 
 class Plan(object):
-    """What a press writes on one node: the keys A and B, the transition, every frame's channels."""
+    """What a press writes on one node: the keys, the transition, every frame's channels, what M showed."""
 
-    def __init__(self, node, t_a, t_b, transition, frames, height, notes):
-        self.node, self.t_a, self.t_b = node, t_a, t_b
-        self.transition, self.frames, self.height, self.notes = transition, frames, height, notes
+    def __init__(self, node, times, transition, frames, info, height, notes):
+        self.node = node
+        self.t_a, self.t_m, self.t_b = times
+        self.transition, self.frames, self.info = transition, frames, info
+        self.height, self.notes = height, notes
 
 
 def plan(node, given=None, axis="Auto"):
@@ -436,16 +652,15 @@ def plan(node, given=None, axis="Auto"):
     om = _om()
     if cmds.referenceQuery(node, isNodeReferenced=True):
         raise Refusal("%s: referenced - not touched" % _short(node))
-    t_a, t_b, b_time = source(node)
-    pose_a, pose_b = pose_at(node, t_a), pose_at(node, b_time)
+    t_a, t_m, t_b, b_time = source(node)
+    poses = (pose_at(node, t_a), pose_at(node, t_m), pose_at(node, b_time))
     fixed, order = fixed_parts(node)
 
     def parent_at(t):
         return om.MMatrix(cmds.getAttr(node + ".parentMatrix[0]", time=t))
 
-    world_a = local_matrix(pose_a[0], pose_a[1], order, fixed) * parent_at(t_a)
-    world_b = local_matrix(pose_b[0], pose_b[1], order, fixed) * parent_at(t_b)
-    rows = tuple(tuple(world_b.getElement(i, j) for j in range(3)) for i in range(3))
+    worlds = [local_matrix(p[0], p[1], order, fixed) * parent_at(t) for p, t in zip(poses, (t_a, t_m, t_b))]
+    rows = tuple(tuple(worlds[2].getElement(i, j) for j in range(3)) for i in range(3))
     index, sign = up_axis(rows, axis)
     notes = []
     box = object_box(node)
@@ -456,17 +671,25 @@ def plan(node, given=None, axis="Auto"):
     if height < 1e-6:
         height = FALLBACK_HEIGHT
         notes.append("no geometry - its pivot taken as the bottom, %g cm as the height" % FALLBACK_HEIGHT)
+    bases = [om.MPoint(bottom) * w for w in worlds]
+    arc = Arc(*[(b.x, b.y, b.z) for b in bases])
     up = om.MVector(UP)
-    travel = om.MPoint(bottom) * world_b - om.MPoint(bottom) * world_a
-    flat = travel - up * (travel * up)
+    chord = bases[2] - bases[0]
+    flat = chord - up * (chord * up)
     heading = flat.normal() if flat.length() > 1e-4 else None
-    if heading is None and travel.length() > 1e-4:
-        notes.append("no horizontal travel - no overlap or sway")
-    transition = solve(t_a, t_b, travel.length() / height, flat.length() / height, height, given)
+    reach = arc.length / height
+    lateral = reach * flat.length() / chord.length() if chord.length() > 1e-9 else 0.0
+    if heading is None and arc.length > 1e-4:
+        notes.append("no horizontal travel - no side sway")
+    transition = solve(t_a, t_m, t_b, arc.s_m, reach, lateral, height, given)
     if transition.clamped:
-        notes.append("overshoot held to %.1f %% - a slow move cannot arrive faster" % (100 * transition.overshoot))
-    frames = channel_frames(transition, pose_a, pose_b, order, fixed, parent_at, bottom, heading)
-    return Plan(node, t_a, t_b, transition, frames, height, notes)
+        notes.append("overshoot held to %.1f %% - the last stretch is too slow for more"
+                     % (100 * transition.overshoot))
+    setup = Setup(poses, (t_a, t_m, t_b), order, fixed, parent_at, bottom, arc, heading)
+    frames, info = compose(transition, setup)
+    if info["lag_deg"] > 0.05 and not info["readable"]:
+        notes.append("the breakdown sits where the top barely lags - its lag taken as the peak")
+    return Plan(node, (t_a, t_m, t_b), transition, frames, info, height, notes)
 
 
 def _write(p, skip, axis):
@@ -485,14 +708,17 @@ def _write(p, skip, axis):
                              inTangentType="auto", outTangentType="auto")
     if not cmds.attributeQuery(MARKER, node=p.node, exists=True):
         cmds.addAttr(p.node, longName=MARKER, dataType="string")
-    memo = {"tA": p.t_a, "tB": p.t_b, "tE": p.transition.end, "params": p.transition.params, "axis": axis}
+    memo = {"tA": p.t_a, "tM": p.t_m, "tB": p.t_b, "tE": p.transition.end,
+            "params": p.transition.params, "axis": axis}
     cmds.setAttr(p.node + "." + MARKER, json.dumps(memo), type="string")
 
 
 def describe(p, skip):
-    tr = p.transition
-    text = "%s: frames %g-%g, tilt up to %.1f deg, sink %.2f cm, sway %.2f cm, settles %g frames after B" % (
-        _short(p.node), p.t_a, tr.end, tr.peak_tilt, tr.peak_sink, tr.peak_sway, tr.end - p.t_b)
+    tr, info = p.transition, p.info
+    lag = ("lag %.1f deg %s" % (info["lag_deg"], info["lag_dir"])) if info["lag_deg"] > 0.05 else "no lag"
+    text = ("%s: frames %g-%g | breakdown at %g: %s, arc bends %.1f cm | sink %.2f cm, sway %.2f cm | "
+            "settles %g frames after B" % (_short(p.node), p.t_a, tr.end, p.t_m, lag, info["bend"],
+                                           tr.peak_sink, tr.peak_sway, tr.end - p.t_b))
     notes = list(p.notes)
     if skip:
         notes.append("not written (locked or driven): %s" % ", ".join(skip))
@@ -531,27 +757,31 @@ def apply(nodes, given=None, axis="Auto"):
 
 
 def restore(nodes):
-    """Back to the two keys the transition was built from; the marker removed."""
+    """Back to the keys the transition was built from (A, the breakdown, B); the marker removed."""
     cmds = _cmds()
     lines = []
     with _Chunk("skeldarPhysStopRestore"):
         for node in nodes:
             memo = remembered(node)
-            times = key_times(node)
-            if not memo or not times or abs(times[-1] - memo["tE"]) > 1e-3:
+            if not _ours(memo, key_times(node)):
                 lines.append("%s: no transition of this script to restore" % _short(node))
                 continue
-            pose_b = pose_at(node, memo["tE"])
+            keys = []
+            if "tM" in memo:
+                keys.append((memo["tM"], pose_at(node, memo["tM"])))
+            keys.append((memo["tB"], pose_at(node, memo["tE"])))
             skip = blocked(node)
             for i, ch in enumerate(CHANNELS):
                 if ch in skip:
                     continue
                 cmds.cutKey(node, attribute=ch, time=(memo["tA"] + 1e-3, FOREVER), clear=True)
-                value = pose_b[0][i] if i < 3 else pose_b[1][i - 3]
-                cmds.setKeyframe(node, attribute=ch, time=memo["tB"], value=value,
-                                 inTangentType="auto", outTangentType="auto")
+                for t, pose in keys:
+                    value = pose[0][i] if i < 3 else pose[1][i - 3]
+                    cmds.setKeyframe(node, attribute=ch, time=t, value=value,
+                                     inTangentType="auto", outTangentType="auto")
             cmds.deleteAttr(node + "." + MARKER)
-            lines.append("%s: back to its keys at %g and %g" % (_short(node), memo["tA"], memo["tB"]))
+            lines.append("%s: back to its keys at %s" % (
+                _short(node), ", ".join("%g" % t for t in [memo["tA"]] + [k[0] for k in keys])))
     return lines
 
 
@@ -575,13 +805,19 @@ WINDOW = "skeldarPhysStopWindow"
 STATUS = "skeldarPhysStopStatus"
 AXIS_MENU = "skeldarPhysStopAxis"
 OPTION = "skeldarPhysStop_"
+GROUPS = (("Stop", ("overshoot", "swing", "weight")), ("Extras", ("sway",)))
 LABELS = {
-    "amplitude": ("Overshoot %", 0.1, "How far it flies past B on the first swing, % of the path (the cube: 4.5)"),
-    "overlap": ("Overlap", 0.05, "How far the top lags behind the bottom (the cube: 1)"),
-    "weight": ("Weight", 0.05, "Heavier rings longer and sinks deeper (the cube: 1)"),
-    "swing": ("Swing (frames)", 0.25, "Frames of one swing past B and back (the cube: 5)"),
-    "sway": ("Sway", 0.05, "Sideways drift and yaw; + is left of the motion, 0 is off (the cube: 1)"),
+    "overshoot": ("Overshoot, %", 0.1,
+                  "How far past B the first swing goes, in % of the path (the cube: 4.5)"),
+    "swing": ("Swing length, fr", 0.25,
+              "Frames of one swing past B and back (the cube: 5)"),
+    "weight": ("Weight", 0.05,
+               "Heavier swings more times before it stops, and sinks deeper (the cube: 1)"),
+    "sway": ("Side sway", 0.05,
+             "Drift aside with a turn while it moves; + is left of the motion, 0 is off (the cube: 1)"),
 }
+INTRO = ("Select objects whose last three keys are the poses to go from (A), through (M) and to (B), "
+         "then Apply. The path arcs through M; tilt the object at M to set how far its top lags.")
 
 
 def _control(name):
@@ -618,7 +854,7 @@ def press_apply(*_):
     _remember()
     nodes = selected()
     if not nodes:
-        _say(["Select objects whose last two keys are the poses to go from and to."])
+        _say(["Select objects with three keys: from, breakdown, to."])
         return
     _say(apply(nodes, _given(), _axis()))
 
@@ -635,7 +871,7 @@ def slider_changed(*_):
 
 def press_restore(*_):
     nodes = selected()
-    _say(restore(nodes) if nodes else ["Select the objects to put back on their two keys."])
+    _say(restore(nodes) if nodes else ["Select the objects to put back on their three keys."])
 
 
 def press_reset(*_):
@@ -647,25 +883,27 @@ def press_reset(*_):
 
 
 def show():
-    """The window: five controls, the up axis, Apply / Restore keys / Reset, a status line."""
+    """The window: the Stop and Extras groups, the up axis, Apply / Restore keys / Reset, a status line."""
     cmds = _cmds()
     if cmds.window(WINDOW, exists=True):
         cmds.deleteUI(WINDOW)
     if cmds.windowPref(WINDOW, exists=True):
         cmds.windowPref(WINDOW, remove=True)
-    cmds.window(WINDOW, title="Physical Stop", sizeable=True, widthHeight=(420, 340))
+    cmds.window(WINDOW, title="Physical Stop", sizeable=True, widthHeight=(430, 390))
     cmds.columnLayout(adjustableColumn=True, rowSpacing=4, columnAttach=("both", 8))
-    cmds.text(label="Select objects whose last two keys are the poses to go from and to, then Apply.",
-              align="left", wordWrap=True, height=36)
-    for name, default in DEFAULTS:
-        low, high = RANGES[name]
-        label, step, tip = LABELS[name]
-        cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=low, maxValue=high,
-                            fieldMinValue=low, fieldMaxValue=high, step=step, precision=2,
-                            value=_stored(name, default), columnWidth3=(100, 60, 220),
-                            annotation=tip, changeCommand=slider_changed)
-    cmds.optionMenu(AXIS_MENU, label="Up axis", annotation="The object's axis that points up",
-                    changeCommand=slider_changed)
+    cmds.text(label=INTRO, align="left", wordWrap=True, height=52)
+    defaults = dict(DEFAULTS)
+    for heading, names in GROUPS:
+        cmds.text(label=heading, font="boldLabelFont", align="left", height=22)
+        for name in names:
+            low, high = RANGES[name]
+            label, step, tip = LABELS[name]
+            cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=low, maxValue=high,
+                                fieldMinValue=low, fieldMaxValue=high, step=step, precision=2,
+                                value=_stored(name, defaults[name]), columnWidth3=(110, 60, 210),
+                                annotation=tip, changeCommand=slider_changed)
+    cmds.optionMenu(AXIS_MENU, label="Up axis", annotation="The object's axis that points up (Auto: the one "
+                    "nearest world up at B)", changeCommand=slider_changed)
     for axis in AXES:
         cmds.menuItem(label=axis)
     axis = _stored("axis", "Auto")
@@ -675,7 +913,7 @@ def show():
     cmds.button(label="Restore keys", height=30, command=press_restore)
     cmds.button(label="Reset", height=30, command=press_reset)
     cmds.setParent("..")
-    cmds.text(STATUS, label="", align="left", wordWrap=True, height=80)
+    cmds.text(STATUS, label="", align="left", wordWrap=True, height=96)
     cmds.showWindow(WINDOW)
 
 
