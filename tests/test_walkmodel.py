@@ -1298,6 +1298,14 @@ class ChestTests(unittest.TestCase):
             self.assertTrue(diff < 1e-9 if same else diff > 0.05, (name, diff))
 
 
+def shake(r, w, name, above=6):
+    """How much a joint shakes: its angular velocity (deg a frame, world) above harmonic `above` of the cycle, rms."""
+    R = r.worlds[w.index[name], :, :3, :3]
+    om = np.array([wm.log_rot(wm.orthonormal(R[f + 1]) @ wm.orthonormal(R[f]).T) for f in range(r.frames)])
+    power = (np.abs(np.fft.rfft(om, axis=0)) ** 2).sum(axis=1)
+    return math.degrees(math.sqrt(2.0 * power[above + 1:].sum()) / r.frames)
+
+
 def swing_phase(r, w, a, b):
     """The fore-aft swing of the segment a -> b: (amplitude deg, the frame its first harmonic peaks)."""
     d = r.worlds[w.index[b], :r.frames, 3, :3] - r.worlds[w.index[a], :r.frames, 3, :3]
@@ -1379,6 +1387,41 @@ class ArmTests(unittest.TestCase):
         w = walk()
         r = w.evaluate({"arm_drag": 3.0, "arm_bounce": 0.6, "stance": 2.0})
         self.assertLess(r.info["balance"]["residual"], 0.05)
+
+    def test_the_hand_swings_whole(self):
+        """The hand's inertia acts on the whole hand: its lever reaches its farthest finger joint (index_02, 4 cm
+        past index_01), not the first knuckle."""
+        c = clip()
+        j = c.names.index("index_01_l")
+        tip = np.einsum("ij,fjk->fik", mat(np.eye(3), (4.0, 0.0, 0.0)), c.worlds[j])
+        w = wm.analyse(wm.Clip(c.names + ["index_02_l"], c.parents + [j], np.concatenate([c.worlds, tip[None]]),
+                               fps=30.0, up=(0, 1, 0), name="synthetic"))
+        reach = float(np.linalg.norm(w._hand_lever(w.index["hand_l"])))
+        self.assertGreater(reach, 12.8)
+        self.assertLess(reach, 13.0 + 1e-9)
+        self.assertIsNone(w._hand_lever(w.index["head"]))           # nothing below it is a finger
+
+    def test_frame_noise_in_the_shoulder_does_not_shake_the_arm(self):
+        """The arms feel the body's motion - its bob, sway and twist - not the frames' own noise: the left arm
+        jolted 0.5 cm up and down on alternate frames (a rigid shift, its turns unchanged) swings its hand as
+        smoothly as without the jolt. Taken from every harmonic (as the frames' second difference was), it shook."""
+        c = clip()
+        jolted = c.worlds.copy()
+        arm = [c.names.index(n) for n in ("clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "index_01_l")]
+        for f in range(jolted.shape[1]):
+            jolted[arm, f, 3, 1] += 0.5 if f % 2 else -0.5
+        w = wm.analyse(wm.Clip(c.names, c.parents, jolted, fps=30.0, up=(0, 1, 0), name="synthetic"))
+        knobs = {"arm_drag": 2.0, "arm_bounce": 0.3, "balance": 0.0}
+        calm = shake(w.evaluate(knobs), w, "hand_l")
+        saved = wm.ARM_HARMONICS
+        wm.ARM_HARMONICS = 1000
+        try:
+            shaken = shake(w.evaluate(knobs), w, "hand_l")
+        finally:
+            wm.ARM_HARMONICS = saved
+        smooth = shake(walk().evaluate(knobs), walk(), "hand_l")
+        self.assertLess(calm, smooth + 0.01, (calm, smooth))
+        self.assertGreater(shaken, 2.0 * calm, (shaken, calm))
 
 
 class WindowTests(unittest.TestCase):

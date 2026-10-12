@@ -9270,6 +9270,21 @@ asked: a two-handed grip HOLDS and the weapon sways as one, the overlap is PHYSI
     - drag 3 / bounce 0.6: the forearms 5.9 frames late, bones whole;
     - the sword under drag 3: grip held to 4.4e-5, sword trailing 7.9 cm;
   - picture `walkparam/walk_upper_body.png`.
+- **The goblin's hands and elbows shook** (the same night: «В позе гоблина у них сильное дрожание в захлесте
+  как у кистей так и у локтей»). Rebuilt standalone from the scene's knobs (equal to its keys, 0.0000°): the
+  hands turned 0.6 → 33 → 8 deg a frame in turn, against 4–9 for their target; Arm drag 0 or the pivot term off
+  took it away. Two causes, each measured alone (trap 234):
+  - the shoulder's acceleration was the frames' second difference, so every frame's noise in the shoulder's
+    path pushed the arms: now its first `ARM_HARMONICS` (6) harmonics a cycle, differentiated analytically
+    (`_smooth_accel`) - the body's bob, sway and twist;
+  - the hand's lever was its metacarpals' base (4.2 cm): a 4 cm pendulum, 3× as stiff to its wrist's jolts as a
+    hand. Now its farthest finger joint (`_hand_lever`, 13.4 cm on `asd`).
+  - Above harmonic 8 of the cycle, the hands went from 5.33 / 3.20° rms to 0.55 / 0.82 (the target without
+    drag 0.49 / 0.54); the frame-to-frame turn change from 37 / 22° to 6.6 / 6.9. What is left is the source's
+    own: `asd`'s keyed forearms carry 0.4–0.9° above harmonic 8, and the hand whips it on.
+  - Tests: the hand's lever reaches the farthest finger; a shoulder jolted ±0.5 cm on alternate frames leaves the
+    hand as smooth as without the jolt (taken from every harmonic it shook 2.5× as much). Picture
+    `walkparam/walk_arm_jitter.png`.
 - **Not built**: gravity on the arms, a held weapon swinging with the walk's arm swing, the clavicle under
   inertia, per-arm knobs.
 
@@ -9342,3 +9357,10 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      the residual went from 0.000 to 0.5–0.8 cm, every balance test failing. And computed once before the carry
      it was still 1.4 mm off, because the carry itself moves the shoulders the arms hang from. Fold the effect
      into the solver's loop (the arms recomputed under each round's carry).
+234. **A body that feels its pivot's acceleration feels the frames' noise twice over.** The arms' inertia took
+     the shoulder's acceleration as the second difference of its frames: a 0.3 cm wobble of one frame is a 1.2
+     cm/frame² kick, and the goblin's hands shook 33° a frame while every gate (lags, bones whole, the loop
+     closed) passed. The hand made it worse: its lever was the first finger joint (4.2 cm), and the pendulum
+     term goes as 1/L. Take a driving acceleration from a smooth fit of the path (the cycle's low harmonics),
+     give a limb the lever of its whole mass, and gate the shake itself - a joint's motion above the cycle's
+     low harmonics against its target's.

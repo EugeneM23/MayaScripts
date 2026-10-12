@@ -69,6 +69,7 @@ ARM_SUBSTEPS = 4          # the arms' motion integrated at least this many steps
 ARM_CYCLES = 8            # at most this many cycles run to settle the arms' periodic motion
 ARM_SETTLED = 1e-5        # radians: settled when a cycle's start moves less than this from the last's
 ARM_INERTIA = 1.0         # x the shoulder's (elbow's, wrist's) acceleration felt by the limb below it
+ARM_HARMONICS = 6         # the shoulder's path the arms feel: its first this many harmonics a cycle (the body's motion)
 GRIP_DIST = 30.0          # cm (the walk's size): a pose's hands this near each other hold one thing together
 
 # Foot placement: a planted foot never slides, one foot always on the ground
@@ -1840,6 +1841,33 @@ class Walk(object):
         logs = log_rot(np.swapaxes(rots[:-1], -1, -2) @ rots[1:])
         return rots[f] @ exp_rot(frac[:, None] * logs[f])
 
+    def _hand_lever(self, j):
+        """A hand's lever for its inertia: where its farthest finger joint stands in it (the walk's own, mean
+        over the cycle), or None without fingers. The whole hand swings; its metacarpals' bases (4 cm) made it
+        a stiff little pendulum that shook with every jolt of the wrist."""
+        below, todo = [], [j]
+        while todo:
+            p = todo.pop()
+            kids = [c for c in range(len(self.names)) if self.parents[c] == p and self.kind[c] == "finger"]
+            below += kids
+            todo += kids
+        if not below:
+            return None
+        back = np.swapaxes(self.rot[j], -1, -2)
+        reach = [np.einsum("fi,fij->fj", self.pos[c] - self.pos[j], back).mean(axis=0) for c in below]
+        return max(reach, key=lambda v: float(np.linalg.norm(v)))
+
+    def _smooth_accel(self, path, n, S):
+        """A periodic path's acceleration (per frame squared) at every 1/S frame, of its first ARM_HARMONICS
+        harmonics: (n * S, 3)."""
+        coeffs = np.fft.rfft(path, axis=0) / float(n)
+        u = np.arange(n * S) / float(S)
+        out = np.zeros((n * S, 3))
+        for k in range(1, min(ARM_HARMONICS, (n - 1) // 2) + 1):
+            w = 2.0 * math.pi * k / float(n)
+            out += 2.0 * np.real(np.outer(np.exp(1j * w * u), coeffs[k])) * -(w * w)
+        return out
+
     def _limb_motion(self, kin, n, chain, w0, zeta, S):
         """One arm's chain under inertia: {joint: (n+1, 4, 4) worlds}, the cycles it took."""
         dt = 1.0 / S
@@ -1850,17 +1878,15 @@ class Walk(object):
         # the bones' offsets in their parents (the arm's lengths) and each limb's lever for its inertia
         offset = dict((j, self.lt[j].mean(axis=0)) for j in chain[1:])     # the walk's own: a pose turns
         lever = dict((chain[i], offset[chain[i + 1]]) for i in range(len(chain) - 1))   # bones, not lengthens
-        tip = [c for c in range(len(self.names)) if self.parents[c] == chain[-1] and self.kind[c] == "finger"]
-        if tip:
-            lever[chain[-1]] = max((self.lt[c].mean(axis=0) for c in tip), key=lambda v: float(np.linalg.norm(v)))
-        # the shoulder's acceleration, the travel taken out (it does not accelerate), per substep
+        reach = self._hand_lever(chain[-1])
+        if reach is not None:
+            lever[chain[-1]] = reach
+        # the shoulder's acceleration per substep, the travel taken out (it does not accelerate): of the path's
+        # first ARM_HARMONICS harmonics - the body's bob, sway and twist; a second difference of the frames
+        # would hand the arms the frames' own noise, and the hand (the shortest lever) shook with it
         travel = (kin[top, n, 3, :3] - kin[top, 0, 3, :3]) / float(n)
         path = np.array([kin[top, f, 3, :3] - travel * f for f in range(n)])
-        accel = np.array([path[(f + 1) % n] - 2.0 * path[f] + path[f - 1] for f in range(n)])
-        steps = np.arange(n * S) / float(S)
-        f0 = np.floor(steps).astype(int)
-        frac = (steps - f0)[:, None]
-        a_shoulder = (1.0 - frac) * accel[f0 % n] + frac * accel[(f0 + 1) % n]
+        a_shoulder = self._smooth_accel(path, n, S)
         base_rot = self._resampled(R[base], n, S)
         rel_s = dict((j, self._resampled(rel[j], n, S)) for j in chain)
         levers = [lever.get(j) for j in chain]

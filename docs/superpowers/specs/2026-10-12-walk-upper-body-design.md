@@ -120,6 +120,37 @@ alpha = -w0^2 . err - 2 zeta w0 . omega + 1.5 / L^2 . (lever x -a_pivot)
 - **Picture:** `walkparam/walk_upper_body.png`: the goblin pose at the defaults and at Drag 3 / bounce 0.7, the
   sword at Drag 3; thin, the same without drag.
 
+## Addendum: the goblin's hands and elbows shook
+
+The animator, the same night: «В позе гоблина у них сильное дрожание в захлесте как у кистей так и у локтей».
+
+- **Reproduced standalone** from the knobs in the scene's marker (the rebuild equal to the scene's keys,
+  0.0000°): the hands turned 0.6 → 33 → 8° a frame in turn, against 4–9 for their target. Arm drag 0 took it
+  away, and so did the pivot term alone (`ARM_INERTIA` 0).
+- **Cause 1, the shoulder's acceleration**: it was the second difference of the frames, so a frame's wobble in
+  the shoulder's path was a kick. Now `_smooth_accel` takes the path's first `ARM_HARMONICS` (6) harmonics a cycle
+  and differentiates them analytically at every substep: the body's bob, sway and twist.
+- **Cause 2, the hand's lever**: it was its metacarpals' base, 4.2 cm. The pendulum term goes as 1/L, so the hand
+  was a stiff 4 cm pendulum. Now `_hand_lever` gives its farthest finger joint (13.4 cm on `asd`).
+- **Measured on the goblin**, Arm drag 1.5 / bounce 0.3 (motion above harmonic 8 of the cycle, deg rms;
+  [before, either fix alone, both, no drag]):
+
+  | joint | before | smoothing only | lever only | both | no drag |
+  |---|---|---|---|---|---|
+  | hand_l | 5.33 | 1.56 | 1.83 | 0.55 | 0.49 |
+  | hand_r | 3.20 | 2.43 | 1.25 | 0.82 | 0.54 |
+  | lowerarm_l | 0.66 | 0.20 | 0.66 | 0.20 | 0.57 |
+  | lowerarm_r | 0.50 | 0.33 | 0.50 | 0.33 | 0.94 |
+
+  The frame-to-frame turn change of the hands went from 37 / 22° to 6.6 / 6.9 (the target's 4.2 / 3.9).
+- **What is left is the source's own**: `asd`'s keyed forearms carry 0.4–0.9° above harmonic 8, the drag
+  springs filter it out of the forearms, and the hand whips the rest on. Low-passing the targets as well was
+  tried: a hard cut at the measuring harmonic makes the metric read zero by construction, and a looser one rings
+  between the frames (worse). Not taken.
+- **Tests**: `test_the_hand_swings_whole`; `test_frame_noise_in_the_shoulder_does_not_shake_the_arm` - the left
+  arm jolted ±0.5 cm on alternate frames swings its hand exactly as smoothly as without the jolt (0.131°), while
+  every harmonic (the old way) shook it 2.5× as much. Picture `walkparam/walk_arm_jitter.png`.
+
 ## Not built
 
 - gravity on the arms (the target already holds them; muscles carry the pose);
