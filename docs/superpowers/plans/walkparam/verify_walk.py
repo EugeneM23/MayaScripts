@@ -326,8 +326,8 @@ try:
         top = bones[sorted(bones, key=lambda l: bones[l]["path"].count("|"))[0]]["path"]
         got = worlds([pelvis, top] + legs["l"] + legs["r"], frames)
         scale = info["scale"]
-        # the stance feet: still as the walk's, x the size (at another tempo the new frames inside the stance
-        # sample the same planted stretch: no more slip than the walk's)
+        # the stance feet: as still as the model's own, x the size (Foot placement plants them; without it
+        # they slip as the walk's do)
         spreads = []
         for k, side in enumerate("lr"):
             foot = walk.feet[side]
@@ -335,8 +335,8 @@ try:
             stance = src_stance if n == P else [g for g in range(n + 1)
                                                 if foot.on - 1e-9 <= g * P / float(n) <= src_stance[-1] + 1e-9]
             ankle = got[4 + 3 * k, stance, 3, :3]
-            src_ankle = src["foot_" + side][src_stance, 3, :3]
-            spreads.append((float(np.ptp(ankle, axis=0).max()), scale * float(np.ptp(src_ankle, axis=0).max())))
+            model = result.worlds[walk.index["foot_" + side], stance, 3, :3]
+            spreads.append((float(np.ptp(ankle, axis=0).max()), scale * float(np.ptp(model, axis=0).max())))
         # lengths
         length_err = 0.0
         for k in range(2):
@@ -346,10 +346,10 @@ try:
         moved = float(np.linalg.norm((got[1, n, 3, :3] - got[1, 0, 3, :3]) * [1, 0, 1]))
         stride = (given or {}).get("stride", 1.0)
         seam = float(np.abs((got[:, n] @ np.linalg.inv(got[0, n]))[2:] - (got[:, 0] @ np.linalg.inv(got[0, 0]))[2:]).max())
-        ok = (all((abs(a - b) if n == P else a - b) < 0.05 for a, b in spreads) and length_err < 1e-3 and seam < 2e-3
+        ok = (all(abs(a - b) < 0.05 for a, b in spreads) and length_err < 1e-3 and seam < 2e-3
               and abs(moved - scale * stride * travel) < 0.05 and info["short"] < 1e-3
               and (expect_scale is None or abs(scale - expect_scale) < 0.01))
-        gate(ok, "%s: size x%.3f, %d bones; stance spread L %.3f (walk x size %.3f) R %.3f (%.3f); lengths %.6f; "
+        gate(ok, "%s: size x%.3f, %d bones; stance spread L %.3f (model x size %.3f) R %.3f (%.3f); lengths %.6f; "
              "travel %.2f cm (x%.3f); seam %.5f; drop up to %.4f; %.2f s"
              % (label, scale, len(bones), spreads[0][0], spreads[0][1], spreads[1][0], spreads[1][1],
                 length_err, moved, moved / travel, seam, max(info["drop"]), took))
@@ -436,7 +436,8 @@ try:
         mb = bones_of(manny)
         path = lambda c: mb[leaf_of(mb, c)]["path"]
         cycle = range(start, start + P + 1)
-        held_result = check(manny, "Manny under the two-handed sword x1, every part", {"pose": 1.0},
+        held_result = check(manny, "Manny under the two-handed sword x1, every part (the walk's own feet)",
+                            {"pose": 1.0, "foot_placement": 0.0},
                             expect_scale=1.0, pose="two_handed_sword")[0]
         names_ = ("hand_l", "hand_r", "weapon_r", "weapon_l", "pelvis", "neck_01", "foot_l", "foot_r", "ball_l",
                   "ball_r", "root")
@@ -539,23 +540,34 @@ try:
         com = np.tensordot(np.array([m for _, m in weighed]), w[:, :, 3, :3], axes=(0, 0))
         root = worlds([mb["root"]["path"]], frames)[0][:, 3, :3]
         line = root[0] + np.outer(np.arange(n + 1) / float(n), root[n] - root[0])
-        feet = dict((nm, worlds([mb[nm]["path"]], frames)[0][:n, 3, :3]) for nm in walk.ground)
+        mats = dict((nm, worlds([mb[nm]["path"]], frames)[0][:n]) for nm in walk.ground)
+        feet = dict((nm, m[:, 3, :3]) for nm, m in mats.items())
+        heels = dict((s, feet["foot_" + s] + np.einsum("i,fij->fj", walk.heel_loc[s], mats["foot_" + s][:, :3, :3]))
+                     for s in walk.feet)
         cop = walk.pressure(feet, [f * P / float(n) for f in range(n)])
         dev = ((com - line) @ walk.basis.T)[:n]
         mid = int(round(walk.feet["l"].mid * n / float(P))) % n
         return {"result": result, "dev": dev, "cop": ((cop - line[:n]) @ walk.basis.T)[:, :2], "n": n,
                 "pelvis": ((got[0, :n, 3, :3] - line[:n]) @ walk.basis.T), "frames": frames, "line": line,
-                "feet": feet, "com": com, "mid": mid, "stick": capture(manny, [start + mid])}
+                "feet": feet, "heels": heels, "com": com, "mid": mid, "stick": capture(manny, [start + mid])}
 
     def demeaned(v):
         return v - v.mean(axis=0)
 
     def same_feet(on, off):
-        """How far Balance moves a foot that is down (one in the air may pass nearer the body)."""
-        n = on["n"]
-        down = dict((s, [f for f in range(n) if walk.down(s, f * P / float(n))]) for s in walk.feet)
-        return max(float(np.abs(on["feet"][nm][down[nm[-1]]] - off["feet"][nm][down[nm[-1]]]).max())
-                   for nm in walk.ground)
+        """How far Balance moves a planted foot (the frames the model plants it): a frame, the less moved of its
+        heel and its ball - the point it rolls about (under a carried hip it may roll further over it, never
+        slide; a foot in the air may pass nearer the body)."""
+        n, worst = on["n"], 0.0
+        for s in walk.feet:
+            ball, heel = off["feet"]["ball_" + s], off["heels"][s]
+            planted = off["result"].info["placement"]["planted"][s]
+            for f in range(n):
+                if not planted[f]:
+                    continue
+                worst = max(worst, min(float(np.abs(on["feet"]["ball_" + s][f] - ball[f]).max()),
+                                       float(np.abs(on["heels"][s][f] - heel[f]).max())))
+        return worst
 
     walk0 = keyed_balance("Manny, the walk (its own knobs, Balance 1)", OWN)
     gate(walk0["result"].info["balance"]["carry"] < 1e-6 and
@@ -678,8 +690,9 @@ try:
     spread_l = walk.feet["l"].coords[1] - walk.feet["r"].coords[1]
     if os.path.exists(POSE_FILE):
         prepared = sw.prepared_pose(name, "goblin")
-        result, info, got = check(manny, "Manny, the goblin x1 every part, Stance 0.35",
-                                  {"pose": 1.0, "stance": 0.35}, expect_scale=1.0, pose="goblin")
+        result, info, got = check(manny, "Manny, the goblin x1 every part, Stance 0.35 (the walk's own feet)",
+                                  {"pose": 1.0, "stance": 0.35, "foot_placement": 0.0}, expect_scale=1.0,
+                                  pose="goblin")
         gob = keyed_model(manny, result.frames)
         ml, mr = (int(round(walk.feet[x].mid)) % P for x in "lr")
         apart = float(np.dot(gob[walk.index["foot_l"], ml, 3, :3] - gob[walk.index["foot_r"], mr, 3, :3], walk.side))
@@ -717,6 +730,81 @@ try:
                 errs.append(math.degrees(float(np.linalg.norm(wm.log_rot(wm.orthonormal(now) @ wm.orthonormal(late).T)))))
     gate(errs and max(errs) < 0.05, "Foot lag 2: mid-swing the foot hangs in its calf as the walk's 2 frames earlier, "
          "to %.4f deg over %d frames" % (max(errs) if errs else -1.0, len(errs)))
+
+    # Foot placement (on at the defaults): a foot on the ground never slides, one foot is always down, and the
+    # trailing foot rolls over its ball rather than the pelvis dropping
+    def feet_of(m, n):
+        """A cycle's feet on the keys: per foot (down a frame - its ankle or ball within CONTACT_TOL of its own
+        lowest -, the least of its heel point's and ball's slide along the ground a frame step, how high its
+        heel point stands while its ball is on the ground - 0 elsewhere)."""
+        out = {}
+        flat = lambda v: v - np.outer(v @ walk.up, walk.up)
+        for side in "lr":
+            ankle = m[walk.index["foot_" + side], :n + 1, 3, :3]
+            ball = m[walk.index["ball_" + side], :n + 1, 3, :3]
+            heel = ankle + np.einsum("i,fij->fj", walk.heel_loc[side], m[walk.index["foot_" + side], :n + 1, :3, :3])
+            h = lambda v: v @ walk.up - (v[:n] @ walk.up).min()
+            down = (h(ankle)[:n] <= wm.CONTACT_TOL) | (h(ball)[:n] <= wm.CONTACT_TOL)
+            slide = np.minimum(np.linalg.norm(np.diff(flat(heel), axis=0), axis=1),
+                               np.linalg.norm(np.diff(flat(ball), axis=0), axis=1))
+            on_ball = h(ball)[:n] <= wm.CONTACT_TOL
+            raised = np.where(on_ball, (heel[:n] - ball[:n]) @ walk.up, 0.0)
+            out[side] = (down, slide, raised)
+        return out
+
+    def runs_of(mask):
+        mask = list(mask)
+        if all(mask) or not any(mask):
+            return [len(mask)] if all(mask) else []
+        k = mask.index(False)
+        found, run = [], 0
+        for v in mask[k:] + mask[:k] + [False]:
+            if v:
+                run += 1
+            elif run:
+                found.append(run)
+                run = 0
+        return found
+
+    def placement_numbers(m, n):
+        feet = feet_of(m, n)
+        held = max(float(feet[s][1][feet[s][0] & np.roll(feet[s][0], -1)].max()) for s in "lr")
+        both_move = [f for f in range(n) if feet["l"][1][f] > 0.5 and feet["r"][1][f] > 0.5]
+        both = feet["l"][0] & feet["r"][0]
+        neither = int(np.sum(~feet["l"][0] & ~feet["r"][0]))
+        return feet, held, both_move, runs_of(both), neither
+
+    placed_result = check(manny, "Manny, the defaults (Foot placement 1)", None, expect_scale=1.0)[0]
+    placed = keyed_model(manny, placed_result.frames)
+    _, own_held, own_both, own_runs, own_neither = placement_numbers(runs["own"], P)
+    _, held, both_move, both_runs, neither = placement_numbers(placed, placed_result.frames)
+    gate(held < 0.2 and own_held > 0.5,
+         "Foot placement: a foot on the ground slides at most %.3f cm a frame (heel or ball; the walk's own %.3f)"
+         % (held, own_held))
+    gate(not both_move and own_both and neither == 0 and len(both_runs) == 2 and min(both_runs) >= 2,
+         "Foot placement: no frame where both feet move (the walk's own: %s); both feet down %s frames at the "
+         "steps (the walk's own %s), never neither" % (own_both, both_runs, own_runs))
+    long_free = check(manny, "Manny, stride 1.3, no Foot placement", {"stride": 1.3, "foot_placement": 0.0},
+                      expect_scale=1.0)[0]
+    long_placed = check(manny, "Manny, stride 1.3", {"stride": 1.3}, expect_scale=1.0)[0]
+    lp = keyed_model(manny, long_placed.frames)
+    feet_long, held_long, both_long, runs_long, neither_long = placement_numbers(lp, long_placed.frames)
+    pitch_free = feet_of(keyed_model(manny, long_free.frames), long_free.frames)["l"][2]
+    pitch_long = feet_long["l"][2]
+    gate(held_long < 0.25 and not both_long and neither_long == 0 and min(runs_long) >= 1
+         and long_placed.info["lowered"] <= long_free.info["lowered"] + 0.05,
+         "Foot placement at stride 1.3: slides %.3f cm a frame at most, both down %s frames; the trailing foot rolls "
+         "over its ball, the heel up to %.1f cm over it (without placement %.1f) and the pelvis drops %.2f cm (without "
+         "placement %.2f)" % (held_long, runs_long, pitch_long.max(), pitch_free.max(), long_placed.info["lowered"],
+                              long_free.info["lowered"]))
+    if os.path.exists(POSE_FILE):
+        gob_result = check(manny, "Manny, the goblin x1 every part (Foot placement 1)", {"pose": 1.0},
+                           expect_scale=1.0, pose="goblin")[0]
+        _, held_gob, both_gob, runs_gob, neither_gob = placement_numbers(keyed_model(manny, gob_result.frames),
+                                                                         gob_result.frames)
+        gate(held_gob < 0.25 and not both_gob and neither_gob == 0 and min(runs_gob) >= 1,
+             "Foot placement under the goblin, every part: slides %.3f cm a frame at most, both feet down %s frames "
+             "at the steps, never neither" % (held_gob, runs_gob))
 
     balance_sheet = os.environ.get("WALK_BALANCE_SHEET")
     if balance_sheet:

@@ -9130,9 +9130,57 @@ the swing). Spec `docs/superpowers/specs/2026-10-12-walk-legs-design.md` (read i
     (the walk's 80);
   - it stands 32 cm outside the hip; Leg turn 0.5 brings it to 24.
 
+**…and Foot placement: no slides, one foot always down** (the same day: «Давай реализуем парамметр foot
+placement который будет исключать проскальзования ног. Сейчас у нас есть момент когда двигаются сразу две
+ноги, но так не бывает когда человек идет»; asked: one knob, on by default). Spec
+`docs/superpowers/specs/2026-10-12-walk-foot-placement-design.md`.
+- **Measured on Walk_01**: its stance feet slide up to 0.87 cm a frame (about 6.5 cm a contact), and the
+  left-to-right step has −0.19 frames of double support (a flight): both feet move at frames 7, 8 and 14.
+- **Knob Foot placement** (`foot_placement`, 0..1, default 1, first in the window's Legs group;
+  `own_knobs()` gives 0 = the walk's own feet). The model (`walkmodel.py`):
+  - **contacts by height**: the heel (the ankle) or the ball within `CONTACT_TOL` (1.5 cm) of its own lowest,
+    the longest such stretch; a pivot weight λ from heel (0) to ball (1);
+  - **the lock** (`_locks`, per evaluate, on the foot's own output at 1/16 frame) holds the pivot
+    `(1−λ)·heel + λ·ball` still along the ground. It is zero at the load-weighted mean of the walk's
+    contact, so the mean pressure is unchanged. Across the swing a cubic whose end slopes cancel the pivot's
+    speed, so the foot lifts and lands without sliding;
+  - **each foot on its own clock** (`foot_time`, a periodic monotone C1 cubic): the trailing foot's contact
+    grows (`_growth`) toward `DOUBLE_SUPPORT` 8 % of the cycle per step. The growth is cut back while its
+    leg, rolled over its ball, can't reach the knobs' own hip as well as at the walk's lift-off. It is never
+    below one new frame (no flight). The strike keeps its time; the leg, `down`, the balls and the twists
+    read the foot's time, the hip the body's;
+  - **the roll** (`_rolled`, closed form): a foot mostly on its ball rolls further over it, heel up to 30°,
+    its toes taking the turn back. A foot mostly on its heel rolls back onto it, toes up to 15°. Either
+    rolls as far as its leg needs to reach before the pelvis drops;
+  - **only the lock's contact holds the pelvis down** (`planted`); a foot 1.5–2.5 cm up passes nearer the
+    body;
+  - **Balance's pressure loads the feet on the walk's own timing**: the longer push-off rolls off a foot
+    the weight has left. `info["placement"]` holds on, slide, double support, the planted frames per foot,
+    and a note.
+- **Proof**:
+  - `verify_walk.py` **66/66 standalone**, on Manny's keys:
+    - a foot on the ground slides **0.135 cm a frame** at most (the walk's 0.749);
+    - **no frame with both feet moving** (the walk's 7, 8, 23); both feet down 2 and 3 frames a step;
+    - at stride 1.3, both feet down every step and the pelvis 5.32 cm lower (5.83 without);
+    - under the goblin, slides 0.141 cm.
+  - Balance moves the point a planted foot rolls about by ≤ 0.0001 cm.
+  - Picture `walkparam/walk_feet.png`. 6079 repo tests.
+- **The pelvis drop**, placement 1 against 0:
+
+  | stride | placement 1 | placement 0 |
+  |---|---|---|
+  | defaults | 0.7 | 0.5 |
+  | 1.15 | 0.0 | 1.3 |
+  | 1.3 | 4.5 | 5.5 |
+  | 1.45 | 11.9 | 11.2 |
+  | 1.6 | 21.6 | 18.5 |
+
+- **Seen, not fixed**: the goblin pose (knees) dips the swinging toe to floor height mid-swing (0.8 cm
+  without placement, −0.8 with it).
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
-targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, removing
-the source's slide, a redo of an update (trap 224); for Balance: a held weapon's mass, the target's own masses
+targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an
+update (trap 224); for Balance: a held weapon's mass, the target's own masses
 (its mesh), vertical pendulum vaulting, a CoM trail drawn in the scene; for the legs: a per-frame knee-to-foot
 solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
 
@@ -9172,3 +9220,15 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      a leaning axis, so the chest's counter-turn against the pelvis fell from corr −0.86 to −0.45. Nothing
      failed; it just stopped reading. Re-express the turn so it acts about the world axis it had in the walk
      (`turn @ W_walk @ W_pose^T`, both from chains of mean locals); without a pose the map is the identity.
+230. **Pinning feet and lengthening their contact make the legs reach further, and every place that measured
+     "is it down" with a looser rule turned that into pelvis drop.** The first Foot placement doubled the
+     pelvis drop at stride 1.3 (5.5 → 13.2 cm) and at 1.6 (18.5 → 39). The causes, measured one at a time:
+     - the strike was moved earlier as well as the lift-off made later; the front leg cannot roll much;
+     - the 8 % double support was asked at every stride, where a real walk's double support shortens as
+       the step lengthens;
+     - frames 1.5–2.5 cm up, which the lock had already let go, still counted as down for the reach.
+
+     Another made Balance carry the pelvis 6.6 cm back on every frame: the pressure loaded a foot for its
+     whole lengthened contact. Make the rules agree: the contact that pins is the contact that holds the
+     pelvis and the contact that bears weight. And give the leg its real way to reach, the foot rolling
+     over its ball, before the pelvis drops.

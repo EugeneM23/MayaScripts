@@ -108,7 +108,7 @@ class RetargetTests(unittest.TestCase):
     def test_onto_a_smaller_body_the_steps_shrink_and_the_feet_stay(self):
         w, c = walk(), clip()
         rt = wt.Retarget(w, statics_of(c), target_of(c, scale=0.7, shift=(50.0, 0.0, -20.0)))
-        frames, info = rt.frames(w.evaluate())
+        frames, info = rt.frames(w.evaluate({"foot_placement": 0.0}))     # the walk's own feet: no reach drop
         self.assertAlmostEqual(info["scale"], 0.7, places=9)
         root = worlds(frames, "root")
         self.assertTrue(np.allclose(root[-1, 3, :3] - root[0, 3, :3], [0.0, 0.0, 0.7 * 120.0], atol=1e-6))

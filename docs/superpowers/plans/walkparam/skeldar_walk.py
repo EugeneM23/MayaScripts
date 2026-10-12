@@ -479,7 +479,7 @@ INTRO = ("Save walk: a bone of a walk cycle selected (a closed loop with root mo
 GROUPS = (
     ("Pose", ("pose",)),
     ("Step", ("stride", "tempo", "lift")),
-    ("Legs", ("stance", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex")),
+    ("Legs", ("foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex")),
     ("Pelvis", ("bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list")),
     ("Upper body", ("spine", "arms", "head", "overlap")),
     ("Weight", ("weight", "balance", "exaggeration")),
@@ -490,6 +490,9 @@ LABELS = {
     "stride": ("Stride", "x the step length; the travel follows (a long stride sinks the contacts)"),
     "tempo": ("Tempo (frames)", "frames a cycle of two steps; fewer is faster"),
     "lift": ("Foot lift", "x how high the swinging foot rises above its path"),
+    "foot_placement": ("Foot placement", "1: a planted foot never slides (it rolls heel to ball about a still "
+                                         "point) and one foot is always on the ground - both are down a while at "
+                                         "every step; 0 is the walk's own feet, slides and all"),
     "stance": ("Stance", "x how far apart the feet stand on the ground (the pose's spread included); 0 puts them "
                          "on one line, 1 is the walk with the pose"),
     "swing_out": ("Swing out (cm)", "the swinging foot's path bowed this far out to its side between the steps "
