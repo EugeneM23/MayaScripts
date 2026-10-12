@@ -69,3 +69,15 @@ rest, world}). **The window**: a Pose list ("(none)" + saved poses) beside **Sav
   feet, the bone lengths and the seam are untouched by the pose.
 - The pose's asymmetry shows as the animator chose: the goblin walks leaned to its right with the left knee in
   (`walk_goblin.png`, side and front).
+
+## Addendum 2 (2026-10-12): every part - the two-handed sword
+
+The animator, with a two-handed sword pose in the scene: «для нее возьмем все части тела. Сделай все до конца».
+- **Parts are checkboxes** (Torso, Pelvis, Knees, Arms, Feet), remembered on the walked skeleton.
+- **Arms**: the pose's arm and finger locals; the arms are HELD - their swing scaled by (1 - Pose), the upper
+  arms out of the world-hang mode - because a two-handed grip comes apart under any swing. The weapon bones
+  take the pose's hold; a target reads each helper's relation from the walk's result per frame.
+- **Feet**: the pose's width and each toe's turn about up. The pose's split stance is not a walk.
+- Measured (verify 25/25): the grip still to 0.000000 over the cycle, the pose's to 0.015 cm; the weapon bones
+  on the pose's hold to 0.000000; the feet 32.1 cm apart, the toes -12.1 / -73.5 deg as the pose's; the pelvis
+  85.25 as the pose's.

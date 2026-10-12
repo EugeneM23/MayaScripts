@@ -8967,8 +8967,29 @@ planted under a pose, arms under a spine knob, prepare on a twin and on a 1.25x 
 inward), right -38.5 (-38.2, outward); the stance feet, lengths and seam as at Pose 0. Picture
 `walkparam/walk_goblin.png` (`WALK_POSE_SHEET=<png>`). 6014 repo tests.
 
+**…every part of a pose: the two-handed sword** (the same day: «Это поза с двуручным мечем давай для нее
+возьмем все части тела»). The pose (read only, saved through the tool as `walks/two_handed_sword.wpose.gz`):
+the pelvis at 85.3, both hands to the right in front 21 cm apart on the hilt, `weapon_r` / `weapon_l` keyed on
+the sword (no mesh), the left foot forward and the right back turned 70 deg out.
+- **Pose takes: Torso / Pelvis / Knees / Arms / Feet** - checkboxes (`walkpose.PARTS`, `filtered`),
+  remembered on the walked skeleton (`parts` in the marker), Pick puts them back; the goblin keeps its three.
+- **Arms are HELD**: the pose's arm and finger locals (clavicle to fingertips) and the arm chain's swing
+  scaled by (1 - Pose) - at 1 the arms ride the chest, so a two-handed grip never comes apart; the upper arms
+  leave the world-hang mode when the pose has arms. The weapon bones take the pose's hold
+  (`blend_matrix` of the walk's relation and the pose's), and **walktarget now reads each helper's relation
+  from the walk's result frame by frame** (was the walk's constant one), so a target holds the sword too.
+- **Feet**: the pose's width (its ankles' spread against the walk's footprints, onto the Width knob) and each
+  toe's turn about up (the foot's world rotation, so a planted foot stays planted). The pose's split stance
+  (one foot forward) is no walk and is not taken.
+Proof: 65 unit tests (+ held arms keep the hands' relation, half the swing at 0.5, the feet wider and turned,
+the parts filter, prepare's arms and feet); `verify_walk.py` **25/25** - on Manny under the sword at 1, every
+part: **the left hand in the right's space still to 0.000000 over the cycle**, the pose's grip to 0.015 cm;
+the weapon bones on the pose's hold to 0.000000; the feet 32.1 cm apart (the walk 16.6 + the pose's 15.5),
+toes turned -12.1 / -73.5 deg as the pose's; the pelvis 85.25 as the pose's. Picture `walkparam/walk_sword.png`
+(`WALK_SWORD_SHEET=<png>`). 6027 repo tests.
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
-targets, the pose's arms and feet, a symmetry knob, several clips as a style knob, stance duration, removing
+targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, removing
 the source's slide, a redo of an update (trap 224).
 
 224. **`cmds.setAttr(curve + ".ktv[0:n]", ...)` is refused from a script** («should be set with the
