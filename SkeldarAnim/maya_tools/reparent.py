@@ -1,0 +1,214 @@
+"""The Tools card's re-parenting (2026-10-12): OverRig's inside / world / swap, native.
+
+The animator: «Теперь давай реализуем весь функционал из вкладки parent». Each node that moves in
+the DAG keeps its world motion on every frame: a temporary locator takes its world track, the DAG
+moves, the node is constrained to its locator with no offset (an offset captured after the move
+would read the old curves in the new space) and baked, the locator goes. Always the whole take,
+never a highlight - a re-parent changes the node's space on every frame. Scale is left alone
+(OverRig cut the scale keys and hid scale and visibility; not copied).
+
+Refused before anything changes (asked: «Отказывать для них»): a skeleton bone, a control of an
+AdvancedSkeleton rig, the plugin's own nodes, an object riding a knot, locked or driven translate /
+rotate channels, an uneven new parent, keyed scale under a differently scaled new parent.
+
+Spec: docs/superpowers/specs/2026-10-12-tools-parent-design.md
+"""
+
+import maya.cmds as cmds
+
+from maya_tools import knotplan as plan
+from maya_tools import knots
+
+#  maya_scenesetup.deletion.OUR_ATTR_PREFIXES (a test pins them equal): a node carrying one of
+#  these is the plugin's own - a knot, a pivot, a weapon, armor, a space, a CoM, a label.
+OUR_PREFIXES = ("skeldar", "mayaWeapon", "mayaArmor", "mayaSceneSetup", "rigPicker")
+SCALE = ("sx", "sy", "sz")
+
+
+def _parent_of(path):
+    return knots._parent(path)
+
+
+def _world_scale(path):
+    """The mean length of a node's world axes - 1 for the world itself."""
+    if not path:
+        return 1.0
+    m = cmds.getAttr(path + ".worldMatrix[0]")
+    return sum(sum(v * v for v in m[i * 4:i * 4 + 3]) ** 0.5 for i in range(3)) / 3.0
+
+
+def _rig_part(path, rigs):
+    """'' or what `path` is that must not move in the DAG."""
+    import maya_rigs
+    if cmds.objectType(path, isAType="joint"):
+        return "a skeleton bone"
+    if any(attr.startswith(OUR_PREFIXES) for attr in cmds.listAttr(path, userDefined=True) or []):
+        return "the plugin's own node"
+    rig = maya_rigs.rig_of(path, rigs)
+    if rig is not None:
+        if rig.namespace:
+            if maya_rigs.namespace_of(path) == rig.namespace:
+                return "a control of %s" % maya_rigs.label(rig)
+        elif maya_rigs.under(path, rig.group):
+            return "a control of %s" % maya_rigs.label(rig)
+    return ""
+
+
+def _refusal(node, new_parent, rigs):
+    """'' or why `node` cannot move under `new_parent` (None: world level)."""
+    name = plan.leaf(node)
+    what = _rig_part(node, rigs)
+    if what:
+        return plan.rig_part_line(name, what)
+    if knots.constraints_of(node):
+        return plan.riding_refusal(name)
+    locked, drivers = knots._channels(node, plan.CHANNELS)
+    if any(locked.values()):
+        return plan.locked_line(name)
+    _free, _skipped, refusal = plan.channel_plan(name, locked, drivers)
+    if refusal:
+        return refusal
+    if new_parent:
+        refusal = plan.uneven_parent(name, cmds.getAttr(new_parent + ".worldMatrix[0]"))
+        if refusal:
+            return refusal
+    keyed = any(cmds.listConnections(node + "." + ch, source=True, destination=False,
+                                     type="animCurve") for ch in SCALE)
+    if keyed and abs(_world_scale(_parent_of(node)) - _world_scale(new_parent)) > 1e-6:
+        return plan.scale_line(name)
+    return ""
+
+
+def _take(nodes, parents):
+    """The whole take for the move: playback ∪ animation range ∪ the keys of the moving nodes,
+    their ancestors now and their new parents' chains."""
+    involved = []
+    for node in list(nodes) + [p for p in parents if p]:
+        for n in knots._chain(node):
+            if n not in involved:
+                involved.append(n)
+    keys = cmds.keyframe(involved, query=True, timeChange=True) or []
+    take = plan.take_range((cmds.playbackOptions(query=True, min=True),
+                            cmds.playbackOptions(query=True, max=True)),
+                           (cmds.playbackOptions(query=True, animationStartTime=True),
+                            cmds.playbackOptions(query=True, animationEndTime=True)))
+    return plan.span_for(take, keys, None)
+
+
+def _rebake(nodes, span, operate):
+    """Keep `nodes`' world motion across `operate(uuids)` (the DAG move); the nodes after."""
+    uuids = [knots._uuid(n) for n in nodes]
+    locators, temps = [], []
+    for node in nodes:
+        loc = cmds.spaceLocator(name="skeldarReparent_" + plan.leaf(node))[0]
+        loc = knots._by_uuid(knots._uuid(loc))
+        cmds.setAttr(loc + ".rotateOrder", cmds.getAttr(node + ".rotateOrder"))
+        temps.append(knots._constrain(cmds.parentConstraint, node, loc, maintainOffset=False))
+        locators.append(loc)
+    cmds.bakeResults(locators, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
+                     simulation=True, sampleBy=1, disableImplicitControl=True)
+    cmds.delete([t for t in temps if cmds.objExists(t)])
+    operate(uuids)
+    nodes = [knots._by_uuid(u) for u in uuids]
+    cons = [knots._constrain(cmds.parentConstraint, loc, node, maintainOffset=False)
+            for loc, node in zip(locators, nodes)]
+    cmds.bakeResults(nodes, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
+                     simulation=True, sampleBy=1, preserveOutsideKeys=True,
+                     disableImplicitControl=True)
+    cmds.delete([c for c in cons if cmds.objExists(c)])
+    nodes = [knots._by_uuid(u) for u in uuids]
+    for node in nodes:
+        knots._continuous(node, plan.CHANNELS, span[0], span[1])
+    cmds.delete([loc for loc in locators if cmds.objExists(loc)])
+    return nodes
+
+
+def _to_world(path):
+    if _parent_of(path):
+        cmds.parent(path, world=True)
+
+
+def inside(selection=None):
+    """Inside: the selected objects go under the LAST selected, their motion kept."""
+    nodes = knots._selection(selection)
+    if len(nodes) < 2:
+        return plan.INSIDE_TWO
+    children, parent = nodes[:-1], nodes[-1]
+    refusal = plan.inside_refusal(children, parent, _parent_of)
+    if refusal:
+        return refusal
+    import maya_rigs
+    rigs = maya_rigs.rigs()
+    for child in children:
+        refusal = _refusal(child, parent, rigs)
+        if refusal:
+            return refusal
+    span = _take(children, [parent])
+    parent_uuid = knots._uuid(parent)
+
+    def operate(uuids):
+        for uuid in uuids:
+            cmds.parent(knots._by_uuid(uuid), knots._by_uuid(parent_uuid))
+
+    with knots._press("skeldarInside"):
+        moved = _rebake(children, span, operate)
+        cmds.select(moved, replace=True)
+    return plan.reparent_message("Inside", [plan.leaf(c) for c in children], plan.leaf(parent),
+                                 span)
+
+
+def to_world(selection=None):
+    """World: the selected objects out to world level, their motion kept."""
+    nodes = knots._selection(selection)
+    if not nodes:
+        return "select the objects to take out to world level"
+    refusal = plan.world_refusal(nodes, _parent_of)
+    if refusal:
+        return refusal
+    import maya_rigs
+    rigs = maya_rigs.rigs()
+    for node in nodes:
+        refusal = _refusal(node, None, rigs)
+        if refusal:
+            return refusal
+    span = _take(nodes, [])
+
+    def operate(uuids):
+        for uuid in uuids:
+            _to_world(knots._by_uuid(uuid))
+
+    with knots._press("skeldarWorld"):
+        moved = _rebake(nodes, span, operate)
+        cmds.select(moved, replace=True)
+    return plan.reparent_message("World", [plan.leaf(n) for n in nodes], None, span)
+
+
+def swap(selection=None):
+    """Swap: the others go under the LAST selected and the last takes the place of the one
+    before it (select the parent first, then its child), the motion of every one kept."""
+    nodes = knots._selection(selection)
+    moves, refusal = plan.swap_plan(nodes, _parent_of)
+    if refusal:
+        return refusal
+    import maya_rigs
+    rigs = maya_rigs.rigs()
+    for node, new_parent in moves:
+        refusal = _refusal(node, new_parent, rigs)
+        if refusal:
+            return refusal
+    span = _take(nodes, [p for _n, p in moves])
+    ids = dict((n, knots._uuid(n)) for n in nodes)
+    plan_ids = [(ids[n], knots._uuid(p) if p else None) for n, p in moves]
+
+    def operate(uuids):
+        for uuid in uuids:
+            _to_world(knots._by_uuid(uuid))
+        for node_id, parent_id in plan_ids:
+            if parent_id:
+                cmds.parent(knots._by_uuid(node_id), knots._by_uuid(parent_id))
+
+    with knots._press("skeldarSwap"):
+        moved = _rebake(nodes, span, operate)
+        cmds.select(moved, replace=True)
+    return plan.reparent_message("Swap", [plan.leaf(n) for n in nodes], plan.leaf(nodes[-1]),
+                                 span)

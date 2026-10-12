@@ -94,10 +94,36 @@ def _children(node):
 
 
 def knots():
-    """Every knot of ours: their top nodes, long paths. Read from our groups - the card asks on
-    every selection change, and a walk over every locator in the scene grew with the rigs."""
-    return [child for group in _groups() for child in _children(group)
-            if _has(child, plan.KIND_MARKER)]
+    """Every knot of ours: their top nodes, long paths. Read from our groups and the across
+    registry - the card asks on every selection change, and a walk over every locator in the
+    scene grew with the rigs."""
+    out = [child for group in _groups() for child in _children(group)
+           if _has(child, plan.KIND_MARKER)]
+    registry = _registry()
+    if registry:
+        for member in cmds.ls(cmds.sets(registry, query=True) or [], long=True) or []:
+            if member not in out and _has(member, plan.KIND_MARKER):
+                out.append(member)
+    return out
+
+
+def _registry():
+    """The objectSet every across knot is a member of (an across knot lives inside its parent,
+    not in a Knots group), or None. Maya deletes the set with its last member (trap 18)."""
+    for found in cmds.ls(exactType="objectSet") or []:
+        if _has(found, plan.REGISTRY_MARKER):
+            return found
+    return None
+
+
+def _register(top):
+    registry = _registry()
+    if registry:
+        cmds.sets(top, addElement=registry)
+        return
+    registry = cmds.sets(top, name=plan.REGISTRY_NAME)
+    cmds.addAttr(registry, longName=plan.REGISTRY_MARKER, attributeType="bool",
+                 defaultValue=True)
 
 
 def pivots():
@@ -192,13 +218,21 @@ def _highlight(highlight):
         return None
 
 
-def _span(obj, highlight):
-    """The knot's span: the highlight, else the playback and animation ranges with the keys of
-    the object and of everything above it (a parent's motion moves the object too)."""
-    nodes, path = [], obj
+def _chain(node):
+    out, path = [], node
     while path:
-        nodes.append(path)
+        out.append(path)
         path = _parent(path)
+    return out
+
+
+def _span(obj, highlight, extra=()):
+    """The knot's span: the highlight, else the playback and animation ranges with the keys of
+    the object and of everything above it (a parent's motion moves the object too) - and of
+    `extra` nodes and their ancestors (an across knot's target)."""
+    nodes = _chain(obj)
+    for node in extra:
+        nodes += [n for n in _chain(node) if n not in nodes]
     keys = cmds.keyframe(nodes, query=True, timeChange=True) or []
     take = plan.take_range((cmds.playbackOptions(query=True, min=True),
                             cmds.playbackOptions(query=True, max=True)),
@@ -383,13 +417,13 @@ def _follow(obj, driver, top, constraint, skipped):
 
 
 def _make(kind, obj, group, size, order):
-    """Create kind's nodes for `obj`: (top, driver, [(node, channels to bake)], temporaries,
-    the node to select)."""
+    """Create kind's nodes for `obj` in `group` (a Knots group; for an across knot its target):
+    (top, driver, [(node, channels to bake)], temporaries, the node to select)."""
     k = plan.kind(kind)
     name = plan.leaf(obj)
-    if kind in ("knot", "orient"):
+    if kind in ("knot", "orient", "across"):
         top = _locator(name + k.suffix, group, size, k.colour, order)
-        if kind == "knot":
+        if kind in ("knot", "across"):
             temps = [_constrain(cmds.parentConstraint, obj, top, maintainOffset=False)]
             return top, top, [(top, plan.CHANNELS)], temps, top
         _constrain(cmds.pointConstraint, obj, top, maintainOffset=False)   # kept: it rides
@@ -410,10 +444,10 @@ def _order(obj, choice):
     return plan.rotate_order_index(choice, cmds.getAttr(obj + ".rotateOrder"))
 
 
-def _build(kind, obj, info, highlight, choice):
+def _build(kind, obj, info, highlight, choice, home=None):
     free, skipped, drivers = info
-    span = _span(obj, highlight)
-    top, driver, bakes, temps, selected = _make(kind, obj, _group_for(obj), _size(obj),
+    span = _span(obj, highlight, [home] if home else ())
+    top, driver, bakes, temps, selected = _make(kind, obj, home or _group_for(obj), _size(obj),
                                                 _order(obj, choice))
     for node, channels in bakes:
         _bake_node(node, channels, span)
@@ -423,6 +457,8 @@ def _build(kind, obj, info, highlight, choice):
             cmds.setAttr(top + "." + ch, lock=True)
     keyed = _key_free(obj, free, drivers)
     _mark(top, kind, obj, span, keyed)
+    if kind == "across":
+        _register(top)
     _follow(obj, driver, top, plan.kind(kind).constraint, skipped)
     return top, selected, span
 
@@ -446,6 +482,82 @@ def create(kind, selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
         cmds.select([m[2] for m in made], replace=True)
     pairs = [(plan.leaf(m[0]), m[1].split("|")[-1]) for m in made]
     return plan.created_message(plan.kind(kind).label, pairs, made[0][3])
+
+
+def create_across(pairs, order=plan.ORDER_DEFAULT, highlight=SLIDER, rotate=True,
+                  translate=True):
+    """Across: each object rides a knot inside its target (`pairs` [(object, target)]): the
+    knot baked from the object's world track, its keys in the target's space. Rotate / Translate
+    off leave that half of the object to its own animation (Multiple across). The line."""
+    pairs = [(_long(o), _long(t)) for o, t in pairs]
+    if not pairs or any(not o or not t for o, t in pairs):
+        return plan.ACROSS_TWO
+    if not rotate and not translate:
+        return plan.multiple_refusal(len(pairs), len(pairs), rotate, translate)
+    off = (() if rotate else plan.ROTATE) + (() if translate else plan.TRANSLATE)
+    objects = [o for o, _t in pairs]
+    infos = []
+    for obj, target in pairs:
+        name = plan.leaf(obj)
+        if objects.count(obj) > 1:
+            return "%s is listed twice - one target per object" % name
+        if obj == target:
+            return "%s is its own target - select the objects, then the one they ride LAST" % name
+        if target.startswith(obj + "|"):
+            return "the target %s lies inside %s - a cycle" % (plan.leaf(target), name)
+        info, refusal = _plan_object(obj, "across")
+        if refusal:
+            return refusal
+        refusal = plan.uneven_target(name, plan.leaf(target),
+                                     cmds.getAttr(target + ".worldMatrix[0]"))
+        if refusal:
+            return refusal
+        free, skipped, drivers = info
+        free = [ch for ch in free if ch not in off]
+        skipped = list(skipped) + [ch for ch in off if ch not in skipped]
+        if not free:
+            return "%s has no free channel left to follow" % name
+        infos.append((free, skipped, drivers))
+    highlight = _highlight(highlight)
+    made = []
+    with _press("skeldarAcross"):
+        for (obj, target), info in zip(pairs, infos):
+            made.append((obj,) + _build("across", obj, info, highlight, order, home=target))
+        cmds.select([m[2] for m in made], replace=True)
+    names = [(plan.leaf(m[0]), m[1].split("|")[-1]) for m in made]
+    return plan.created_message("Across", names, made[0][3])
+
+
+def across(selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
+    """The Across button: every selected object rides a knot inside the LAST selected one."""
+    objs = _selection(selection)
+    if len(objs) < 2:
+        return plan.ACROSS_TWO
+    return create_across([(obj, objs[-1]) for obj in objs[:-1]], order, highlight)
+
+
+def set_attach(value, selection=None, highlight=SLIDER):
+    """Attach 0 / 1: the selected knots' `attach` keyed `value` (flat) at the highlight's ends,
+    else the selected graph keys' first and last time, else the current frame."""
+    tops, _waiting = _picked(selection)
+    if not tops:
+        return plan.ATTACH_NOTHING
+    times = plan.attach_times(_highlight(highlight),
+                              cmds.keyframe(query=True, selected=True, timeChange=True) or [],
+                              cmds.currentTime(query=True))
+    done = 0
+    with _press("skeldarKnotAttach"):
+        for top in tops:
+            plug = top + "." + plan.ATTACH
+            if not cmds.objExists(plug):
+                continue
+            if cmds.getAttr(plug, lock=True):
+                cmds.setAttr(plug, lock=False)
+            for time in times:
+                cmds.setKeyframe(top, attribute=plan.ATTACH, time=time, value=value,
+                                 inTangentType="flat", outTangentType="flat")
+            done += 1
+    return plan.attach_message(value, done, times)
 
 
 # ------------------------------------------------------------- Knot Offset
