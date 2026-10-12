@@ -8789,7 +8789,7 @@ and leaves the constraint - so **Bake** is that bake over where `attach` > 0 (`k
 an unkeyed attach above 0 = the whole take), then the constraint's delete; a knot on a knot is
 baked first (`bake_order`).
 
-Proof: `docs/superpowers/plans/verify_knots.py` **82/82 mayapy standalone** (a keyed prop under an
+Proof: `docs/superpowers/plans/verify_knots.py` **90/90 mayapy standalone** (a keyed prop under an
 animated carrier, rotate pivot off its origin, zxy, a locked rz, free unkeyed channels; and a Manny
 rig control): nothing moves at creation (0.000000 cm, 0.000002 deg) for all five; the knot on the
 pivot; Knot +10 tx moves the prop 10 along world X; attach 0 the original; Remove restores every
@@ -8800,7 +8800,15 @@ Double Local's inner rx 30 turns the prop about its own X; Double World's outer 
 tx +5 shifts 5 along world X; refusals change nothing; a knot on a knot bakes inward; on
 Manny_Rig's FKShoulder_R the game bone does not move, the knot in `|Manny_Rig_Character|Knots`,
 Delete character takes it. `tests/test_tools_knotplan.py`, `tests/test_tools_panel.py`; 5934 unit
-tests. **`verify_tools_card.py` (the card in a live Maya, buttons clicked through Qt on a sandbox
+tests. **An independent review then found seven defects, all fixed and gated** (case L): Bake
+euler-filtered the object's WHOLE rotate curves (a key at 300 far outside the knot became -60 - now
+only the bake's own keys are made continuous, `knotplan.continuous_eulers`, from the key before
+them, the other euler solution by the rotate order's middle axis); picking a base knot orphaned the
+knot riding it (now ridden knots bake / go first); a whole-take span ignored the animation range and
+the parents' keys (6.25 cm frozen outside a narrowed playback); an unevenly scaled, sheared or
+mirrored parent drifted 0.4-0.8 cm (now refused, `uneven_parent`); every selection change walked all
+locators (now our groups only); Bake left our static keys when the constraint was gone; deleting a
+knot deleted the animator's nodes parented under it (now moved out to world first). **`verify_tools_card.py` (the card in a live Maya, buttons clicked through Qt on a sandbox
 cube) is written and NOT run** - the live checks are the animator's.
 
 Not built: knots on animation layers, OverRig's "smart object" tab (S_Knot), Knot Offset on
