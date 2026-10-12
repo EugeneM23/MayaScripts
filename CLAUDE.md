@@ -9232,6 +9232,47 @@ placement который будет исключать проскальзова�
   - picture `walkparam/walk_fixes.png` (before / after: the root from above, the left foot's speed, the leg at
     24–31).
 
+**…and the chest and the arms: amplitudes, a pose's arms, the body's inertia** (the same evening, after the
+push: «Точно так же как у нас отрабатывает таз мы должны уметь параметрически изменять анимацию груди и рук … наша
+поза полностью перетирает анимацию рук … захлесты рук … универсально»; a reference on `Creep_Skeleton_Character`;
+asked: a two-handed grip HOLDS and the weapon sways as one, the overlap is PHYSICAL inertia). Spec
+`docs/superpowers/specs/2026-10-12-walk-upper-body-design.md`.
+- **The reference, read only**:
+  - a fast creature gait, 20.2-frame cycle, ~3 m/s;
+  - the arms in a stylised pose (left held out 75°, right back), swinging 20–25°, forearm and hand ×1.3–1.5
+    wider;
+  - the shoulders ±7° in the world.
+  - `asd` reads alike (±6.9 / tilt ±5.1). What generalises is the sizes and how the limbs carry them, not the
+    creature's posture.
+- **Chest twist / Chest sway (deg, defaults 7 / 5)**: the shoulder line's yaw (× the step's gain, as Twist) and
+  tilt, on the walk's own first-harmonic shapes (`_chest`).
+  - Added as a world turn on the top three spine joints (`CHEST_SHARES`);
+  - measured under the current pose first (`_chest_own`, spine and shoulders only, plus one correction), so a
+    bent spine lands within 0.5°;
+  - the head keeps its world turn; `own_knobs()` gives the walk's own.
+- **A pose's arms are a mean, not a hold**: the walk's swing (Arms, and Elbow × the forearm's) runs about them.
+  Only hands that hold one thing together stay held (`grip`: `walkpose.prepare`, hands within `GRIP_DIST` 30 cm).
+- **`_arm_dynamics`**: the frames are the arms' TARGET; each limb follows it through a damped spring and feels its
+  pivot's acceleration (carried down the chain).
+  - Arm drag: `w0 = 2 zeta / drag`. Arm bounce: `zeta = 1 − 0.75 b`.
+  - Integrated to a periodic steady state, the seam spread; children and following helpers are re-attached.
+  - A grip: the right hand carries the held thing through the same spring (travel taken out), the left keeps its
+    hold, two-bone IK for the arms.
+  - Balance carries the arms as they move (recomputed under each round's carry).
+  - New window groups Chest and Arms.
+  - `asd` at the default 1.5 / 0.3: the forearms 2.2 frames late, the wrists ~11 cm off their target; bounce 0.7
+    whips them 1.4–1.6× as far; an evaluate 0.6–0.8 s.
+- **Proof**:
+  - `tests/test_walkmodel.py` 126 (ChestTests, ArmTests; older arm tests name Arm drag 0, the grip fixture carries
+    `grip`);
+  - `verify_walk.py` **70/70 standalone**:
+    - Chest 10/7 → ±12.92/7.00 on Manny's keys;
+    - drag 3 / bounce 0.6: the forearms 5.9 frames late, bones whole;
+    - the sword under drag 3: grip held to 4.4e-5, sword trailing 7.9 cm;
+  - picture `walkparam/walk_upper_body.png`.
+- **Not built**: gravity on the arms, a held weapon swinging with the walk's arm swing, the clavicle under
+  inertia, per-arm knobs.
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an
 update (trap 224); for Balance: a held weapon's mass, the target's own masses
@@ -9296,3 +9337,8 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
 232. **`getAttr(plug, time=t)` does not evaluate an animation layer's blend.** A rotateX keyed +20 on an additive
      layer read the base value through `time=` (11 where the scene showed 31), and the gate reported the layer
      lost while it stood. Measure a layered channel after a real time change (trap 69's family).
+233. **An effect added after a solver's last pass undoes what the solver solved.** The arms' inertia ran after
+     Balance had carried the pelvis to put the centre of mass on its target, and moved 10 % of the body's mass:
+     the residual went from 0.000 to 0.5–0.8 cm, every balance test failing. And computed once before the carry
+     it was still 1.4 mm off, because the carry itself moves the shoulders the arms hang from. Fold the effect
+     into the solver's loop (the arms recomputed under each round's carry).

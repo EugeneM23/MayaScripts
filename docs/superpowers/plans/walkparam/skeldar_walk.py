@@ -511,7 +511,8 @@ GROUPS = (
     ("Step", ("stride", "tempo", "lift")),
     ("Legs", ("foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex")),
     ("Pelvis", ("bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list", "root_sway")),
-    ("Upper body", ("spine", "arms", "head", "overlap")),
+    ("Chest", ("spine", "chest_twist", "chest_sway", "head")),
+    ("Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
     ("Weight", ("weight", "balance", "exaggeration")),
 )
 LABELS = {
@@ -544,10 +545,22 @@ LABELS = {
                                     "about 5; the lower back takes it back, so the chest keeps its own turn"),
     "pelvis_list": ("Hip drop (deg)", "the standing leg's hip this far up, the swinging leg's down, highest just "
                                       "after the foot lands. People: about 4; the lower back takes it back"),
-    "spine": ("Spine", "x the spine's and the neck's motion"),
-    "arms": ("Arms", "x the arms' swing"),
+    "spine": ("Spine", "x the spine's and the neck's motion (Chest twist and sway included)"),
+    "chest_twist": ("Chest twist (deg)", "the shoulders turn this far each way against the hips' turn, at a normal "
+                                         "step (0.8 of the leg); it grows with the step. People: about 7"),
+    "chest_sway": ("Chest sway (deg)", "the shoulder line tilts this far each way over the steps. People: about 5"),
+    "arms": ("Arms", "x the arms' own swing - about a pose's arms too (they are the mean it swings about); "
+                     "hands holding one thing together hold it"),
+    "elbow": ("Elbow", "x the forearm's own swing in the elbow, on top of Arms"),
+    "arm_drag": ("Arm drag (fr)", "the arms trail the body with weight: each limb follows its target through a "
+                                  "spring that feels the shoulder's motion - about this many frames late at the "
+                                  "shoulder, a little more at the hand. A held weapon trails the same way, both "
+                                  "hands on it. 0: the arms exactly as the walk and the pose put them"),
+    "arm_bounce": ("Arm bounce", "how far the arms overshoot as they catch up: 0 settles, 1 whips through (the "
+                                 "forearm swings up to 1.5x as far)"),
     "head": ("Head", "x the head's motion in the world (0 holds it steady)"),
-    "overlap": ("Overlap (fr)", "frames the hands lag the pelvis (the spine and the head less)"),
+    "overlap": ("Overlap (fr)", "frames the hands' own motion runs late against the pelvis (the spine and the head "
+                                "less) - a delay in time; Arm drag is the body's inertia"),
     "weight": ("Weight", "heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
     "balance": ("Balance", "how far the centre of mass follows the feet like a pendulum: wider feet, a slower "
                            "step, a crouch sway it more over the standing foot; a leaning pose takes the hips back "

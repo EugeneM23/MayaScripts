@@ -114,14 +114,17 @@ def prepare(walk, statics, pose_bones, model, target_module):
         walk_toe = walk.wpos(walk.index[ball], mid) - walk.wpos(walk.index["foot_" + side], mid)
         pose_toe = _np(out[ball])[3, :3] - ankle[side]
         toe[side] = _wrapped(_heading(pose_toe, walk) - _heading(walk_toe, walk))
+    # hands this near each other hold one thing together (a two-handed grip): it sways as one, they keep it
+    hands = [_np(out["hand_" + side])[3, :3] for side in SIDES if "hand_" + side in out]
+    grip = len(hands) == 2 and float(np.linalg.norm(hands[0] - hands[1])) < model.GRIP_DIST
     return {"spine": spine, "head": rot("head"), "pelvis": rot("pelvis"), "height": height, "knee_turn": turn,
-            "arms": arms, "weapons": weapons, "width": width, "toe": toe if len(toe) == 2 else {"l": 0.0, "r": 0.0},
+            "arms": arms, "weapons": weapons, "grip": grip, "width": width, "toe": toe if len(toe) == 2 else {"l": 0.0, "r": 0.0},
             "scale": scale}
 
 
 # what each of the window's checkboxes takes from a pose
 PARTS = (("torso", ("spine", "head")), ("pelvis", ("pelvis", "height")), ("knees", ("knee_turn",)),
-         ("arms", ("arms", "weapons")), ("feet", ("width", "toe")))
+         ("arms", ("arms", "weapons", "grip")), ("feet", ("width", "toe")))
 
 
 def filtered(pose, parts):

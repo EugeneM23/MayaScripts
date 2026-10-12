@@ -672,7 +672,9 @@ try:
         return np.degrees(np.arctan2(v @ walk.side, v @ walk.fwd))
 
     runs = {}
-    for label, given in (("own", OWN), ("defaults", None), ("more", {"pelvis_twist": 9.0, "pelvis_list": 7.0})):
+    for label, given in (("own", OWN), ("defaults", None),     # "more" keeps the walk's own chest (Chest twist, sway)
+                         ("more", {"pelvis_twist": 9.0, "pelvis_list": 7.0, "chest_twist": OWN["chest_twist"],
+                                   "chest_sway": OWN["chest_sway"]})):
         result, info, got = check(manny, "Manny, the pelvis - %s" % label, given, expect_scale=1.0)
         runs[label] = keyed_model(manny, result.frames)
     fit = dict((label, walk.pelvis_fit(m)) for label, m in runs.items())
@@ -847,6 +849,68 @@ try:
                                 ("Walk_01 on Manny - front", plain, "front"),
                                 ("the goblin pose x1 - front", goblin, "front")])
         print("        picture: " + pose_sheet)
+    # the upper body on Manny's keys: the chest's degrees, the arms' inertia, a held weapon trailing as one
+    def segment_lengths(m, sides="lr"):
+        worst = 0.0
+        i = walk.index
+        for side in sides:
+            for a, b in (("upperarm_", "lowerarm_"), ("lowerarm_", "hand_")):
+                d = np.linalg.norm(m[i[b + side], :, 3, :3] - m[i[a + side], :, 3, :3], axis=1)
+                worst = max(worst, float(np.ptp(d)))
+        return worst
+
+    def forearm_peak(m, side, n):
+        i = walk.index
+        d = m[i["hand_" + side], :n, 3, :3] - m[i["lowerarm_" + side], :n, 3, :3]
+        d = d / np.linalg.norm(d, axis=1)[:, None]
+        x = np.degrees(np.arcsin(np.clip(d @ walk.fwd, -1, 1)))
+        x = x - x.mean()
+        t = np.arange(n) / float(n)
+        c, s_ = 2.0 / n * float(np.dot(x, np.cos(2 * math.pi * t))), 2.0 / n * float(np.dot(x, np.sin(2 * math.pi * t)))
+        return math.hypot(c, s_), math.atan2(s_, c) / (2.0 * math.pi) * n
+
+    chest_result = sw.apply(manny, name, {"chest_twist": 10.0, "chest_sway": 7.0, "arm_drag": 0.0})[0]
+    keyed = keyed_model(manny, chest_result.frames)
+    got = walk.chest_fit(keyed)
+    want = (10.0 * walk.twist_gain, 7.0)
+    gate(abs(got[0] - want[0]) < 0.3 and abs(got[1] - want[1]) < 0.3,
+         "Chest twist 10 and sway 7 on Manny's keys: the shoulders turn +-%.2f deg (asked %.2f) and tilt +-%.2f (asked "
+         "%.2f)" % (got[0], want[0], got[1], want[1]))
+    plain_arms = keyed_model(manny, sw.apply(manny, name, {"arm_drag": 0.0})[0].frames)
+    drag_result = sw.apply(manny, name, {"arm_drag": 3.0, "arm_bounce": 0.6})[0]
+    dragged = keyed_model(manny, drag_result.frames)
+    n_d = drag_result.frames
+    lates = []
+    for side in "lr":
+        a0, p0 = forearm_peak(plain_arms, side, n_d)
+        a1, p1 = forearm_peak(dragged, side, n_d)
+        lates.append(((p1 - p0 + n_d / 2.0) % n_d - n_d / 2.0, a1 / max(a0, 1e-9)))
+    seam = float(np.abs(dragged[:, n_d, :3, :3] - dragged[:, 0, :3, :3]).max())
+    gate(all(late > 2.0 for late, _ in lates) and segment_lengths(dragged) < 1e-3 and seam < 2e-3,
+         "Arm drag 3, bounce 0.6 on Manny's keys: the forearms swing %s frames late (x%s their swing), the arms' bones "
+         "whole (%.6f), the loop closed (%.5f)" % (", ".join("%.1f" % l for l, _ in lates),
+                                                   ", ".join("%.2f" % a for _, a in lates), segment_lengths(dragged), seam))
+    if os.path.exists(SWORD_FILE):
+        grip_target = keyed_model(manny, sw.apply(manny, name, {"pose": 1.0, "arm_drag": 0.0}, "two_handed_sword")[0].frames)
+        grip_result = sw.apply(manny, name, {"pose": 1.0, "arm_drag": 3.0, "arm_bounce": 0.5}, "two_handed_sword")[0]
+        gripped = keyed_model(manny, grip_result.frames)
+        i = walk.index
+        n_g = grip_result.frames
+        hold = [gripped[i["hand_l"], f] @ np.linalg.inv(gripped[i["hand_r"], f]) for f in range(n_g + 1)]
+        hold0 = [grip_target[i["hand_l"], f] @ np.linalg.inv(grip_target[i["hand_r"], f]) for f in range(n_g + 1)]
+        weapon = [gripped[i["weapon_r"], f] @ np.linalg.inv(gripped[i["hand_r"], f]) for f in range(n_g + 1)] \
+            if "weapon_r" in i else [np.eye(4)]
+        weapon0 = [grip_target[i["weapon_r"], f] @ np.linalg.inv(grip_target[i["hand_r"], f]) for f in range(n_g + 1)] \
+            if "weapon_r" in i else [np.eye(4)]
+        trail = float(np.linalg.norm(gripped[i["hand_r"], :, 3, :3] - grip_target[i["hand_r"], :, 3, :3], axis=1).max())
+        held_err = float(np.abs(np.array(hold) - np.array(hold0)).max())
+        weapon_err = float(np.abs(np.array(weapon) - np.array(weapon0)).max())
+        gate(grip_result.info["arms"]["grip"] and held_err < 1e-3 and weapon_err < 1e-3 and trail > 1.0
+             and segment_lengths(gripped) < 1e-3,
+             "the two-handed sword under Arm drag 3: both hands keep the grip (%.6f) and the sword in it (%.6f), the "
+             "held sword trails up to %.1f cm, the arms reach it whole (%.6f)" % (held_err, weapon_err, trail,
+                                                                                   segment_lengths(gripped)))
+
     # the animator's correction keyed on an animation layer stays on top of every re-key
     bones = bones_of(manny)
     fix_foot = bones[leaf_of(bones, "foot_r")]["path"]

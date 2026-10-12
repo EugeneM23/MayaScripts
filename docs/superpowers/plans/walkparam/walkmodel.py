@@ -31,7 +31,12 @@ KNOBS = (
     ("pelvis_twist", 5.0, -5.0, 15.0),
     ("pelvis_list", 4.0, -5.0, 10.0),
     ("spine", 1.0, 0.0, 3.0),
+    ("chest_twist", 7.0, -5.0, 20.0),
+    ("chest_sway", 5.0, -5.0, 15.0),
     ("arms", 1.0, 0.0, 3.0),
+    ("elbow", 1.0, 0.0, 3.0),
+    ("arm_drag", 1.5, 0.0, 8.0),
+    ("arm_bounce", 0.3, 0.0, 1.0),
     ("head", 1.0, 0.0, 3.0),
     ("overlap", 0.0, 0.0, 6.0),
     ("weight", 0.0, -1.0, 2.0),
@@ -56,6 +61,15 @@ STEP_REF = 0.8            # a normal step, in legs: Twist is the pelvis's twist 
 LIST_PEAK = 0.17          # the standing hip highest this share of a cycle after its heel strike (the norm)
 AIR_STEPS = 64            # a foot's flight found to 1/this of a frame
 COUNTER_SHARES = (0.4, 0.35, 0.25)   # spine_01..03 take the pelvis's added twist and drop back, these shares
+CHEST_SHARES = (0.25, 0.35, 0.4)     # the top three spine joints take the chest's added twist and sway, these shares
+CHEST_STILL = 0.5                    # degrees: a walk's own chest turn below this has no shape of its own
+
+# the arms follow the body with inertia (docs/superpowers/specs/2026-10-12-walk-upper-body-design.md)
+ARM_SUBSTEPS = 4          # the arms' motion integrated at least this many steps a frame
+ARM_CYCLES = 8            # at most this many cycles run to settle the arms' periodic motion
+ARM_SETTLED = 1e-5        # radians: settled when a cycle's start moves less than this from the last's
+ARM_INERTIA = 1.0         # x the shoulder's (elbow's, wrist's) acceleration felt by the limb below it
+GRIP_DIST = 30.0          # cm (the walk's size): a pose's hands this near each other hold one thing together
 
 # Foot placement: a planted foot never slides, one foot always on the ground
 # (docs/superpowers/specs/2026-10-12-walk-foot-placement-design.md)
@@ -137,6 +151,37 @@ def exp_rot(w):
     eye = np.broadcast_to(np.eye(3), k.shape)
     column = eye + np.sin(th) * k + (1.0 - np.cos(th)) * (k @ k)
     return np.swapaxes(np.where(small, eye, column), -1, -2)
+
+
+def _exp3(w):
+    """exp_rot for one rotation vector, in plain floats (the arms' integration takes thousands)."""
+    x, y, z = float(w[0]), float(w[1]), float(w[2])
+    th = math.sqrt(x * x + y * y + z * z)
+    if th < 1e-12:
+        return np.eye(3)
+    x, y, z = x / th, y / th, z / th
+    s, c = math.sin(th), math.cos(th)
+    t = 1.0 - c
+    return np.array([[c + x * x * t, z * s + x * y * t, -y * s + x * z * t],
+                     [-z * s + x * y * t, c + y * y * t, x * s + y * z * t],
+                     [y * s + x * z * t, -x * s + y * z * t, c + z * z * t]])
+
+
+def _log3(r):
+    """log_rot for one rotation, in plain floats."""
+    tr = (float(r[0, 0]) + float(r[1, 1]) + float(r[2, 2]) - 1.0) / 2.0
+    th = math.acos(min(max(tr, -1.0), 1.0))
+    v = np.array([float(r[1, 2]) - float(r[2, 1]), float(r[2, 0]) - float(r[0, 2]), float(r[0, 1]) - float(r[1, 0])])
+    s = math.sin(th)
+    if s > 1e-7:
+        return v * (th / (2.0 * s))
+    if th < 1.0:
+        return v * 0.5
+    return log_rot(r)
+
+
+def _cross3(a, b):
+    return np.array([a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]])
 
 
 def log_rot(r):
@@ -487,6 +532,7 @@ class Walk(object):
         self._masses()
         self._grounds()
         self._legs_and_pelvis()
+        self._chest()
         self._placement()
         self._own_pendulum()
 
@@ -580,6 +626,7 @@ class Walk(object):
             bfs.append(j)
             queue.extend(kids[j])
         self.order = [j for j in bfs if self.kind[j] != "helper"] + [j for j in bfs if self.kind[j] == "helper"]
+        self.forearms = set(j for j, n in enumerate(self.names) if _stem(n) == "lowerarm")
 
     def _contact(self, side):
         P = self.P
@@ -676,9 +723,11 @@ class Walk(object):
 
     def own_knobs(self):
         """The knobs that give this walk back (the defaults are physiological): its own Twist and Hip drop, no
-        Foot placement (its own feet, slides and all) and its root weaving as it does."""
+        Foot placement (its own feet, slides and all), its root weaving as it does, its own Chest twist and
+        sway, and no Arm drag (its arms as they move, without the body's inertia on top)."""
         return {"pelvis_twist": self.own_twist, "pelvis_list": self.own_list, "foot_placement": 0.0,
-                "root_sway": 1.0}
+                "root_sway": 1.0, "chest_twist": self.own_chest_twist, "chest_sway": self.own_chest_sway,
+                "arm_drag": 0.0}
 
     def pelvis_fit(self, worlds):
         """The hip line's twist and drop amplitudes (degrees) in a cycle of world matrices (J, n+1, 4, 4): each
@@ -697,6 +746,107 @@ class Walk(object):
             y, x = y - y.mean(), x - x.mean()
             return float(np.dot(y, x) / np.dot(x, x)) if float(np.dot(x, x)) > 1e-12 else 0.0
         return fit(twist, split), fit(drop, lists)
+
+    def _chest(self):
+        """What the chest's knobs read: the shoulder line's turn about up (twist) and its tilt (sway) in the walk,
+        each's first harmonic - its amplitude (degrees; the twist per step gain, as Twist's) and its shape (a
+        cosine at the walk's own phase; a walk whose chest hardly turns takes the pelvis's shapes, opposite) -
+        and the top spine joints that take the chest's added turn (CHEST_SHARES)."""
+        idx, P = self.index, self.P
+        self.chest_shape, self.own_chest_twist, self.own_chest_sway, self.chest_share = None, 0.0, 0.0, {}
+        if "upperarm_l" not in idx or "upperarm_r" not in idx:
+            return
+        d = self.pos[idx["upperarm_l"]] - self.pos[idx["upperarm_r"]]
+        across = np.linalg.norm(d - np.outer(d @ self.up, self.up), axis=1)
+        yaw = np.degrees(np.arctan2(d @ self.fwd, d @ self.side))
+        tilt = np.degrees(np.arctan2(d @ self.up, across))
+        t = np.arange(P) / float(P)
+
+        def harmonic(x):
+            x = x - x.mean()
+            c = 2.0 / P * float(np.dot(x, np.cos(2.0 * math.pi * t)))
+            s = 2.0 / P * float(np.dot(x, np.sin(2.0 * math.pi * t)))
+            return math.hypot(c, s), math.atan2(s, c)
+        twist, sway = harmonic(yaw), harmonic(tilt)
+        if twist[0] < CHEST_STILL:          # no turn of its own: against the pelvis's twist (the feet's split)
+            twist = (twist[0], harmonic(-np.array([float(periodic_cr(self.split_shape, f)) for f in range(P)]))[1])
+        if sway[0] < CHEST_STILL:
+            sway = (sway[0], harmonic(-self.list_shape)[1])
+        self.chest_shape = (twist[1], sway[1])
+        self.own_chest_twist, self.own_chest_sway = twist[0] / self.twist_gain, sway[0]
+        spine = sorted((int(m.group(1)), j) for j, n in enumerate(self.names)
+                       for m in [re.match(r"spine_(\d+)$", n)] if m and idx["pelvis"] in self._ancestors(j))
+        top = [j for _, j in spine[-len(CHEST_SHARES):]]
+        shares = CHEST_SHARES[-len(top):] if top else ()
+        total = sum(shares)
+        self.chest_share = dict((j, share / total) for j, share in zip(top, shares))
+
+    def chest_shapes(self, tau):
+        """(twist, sway) shapes at source time tau: 1 at the walk's own peak, -1 half a cycle on."""
+        a = 2.0 * math.pi * tau / self.P
+        return math.cos(a - self.chest_shape[0]), math.cos(a - self.chest_shape[1])
+
+    def chest_targets(self, k, ex):
+        """(twist, sway) the shoulders turn each way at these knobs, degrees: Chest twist at a normal step x
+        the step's gain (as Twist's), Chest sway - both x Spine x Exaggeration."""
+        gain = k["spine"] * ex
+        return gain * self.twist_gain * k["chest_twist"] * k["stride"], gain * k["chest_sway"]
+
+    def chest_extra(self, tau, k, ex, own=None):
+        """The chest's added turn at source time tau (a world rotation vector, None when nothing is added): the
+        shoulders brought from their own turn (`own`: (twist, sway) degrees as they stand under these knobs and
+        pose - _chest_own; else the walk's own x Spine) to Chest twist and sway, on their shapes."""
+        if self.chest_shape is None or own == "off":
+            return None
+        target = self.chest_targets(k, ex)
+        if own is None:
+            gain = k["spine"] * ex
+            own = (gain * self.twist_gain * self.own_chest_twist, gain * self.own_chest_sway)
+        twist, sway = target[0] - own[0], target[1] - own[1]
+        if abs(twist) < 1e-9 and abs(sway) < 1e-9:
+            return None
+        a, b = self.chest_shapes(tau)
+        return math.radians(twist) * a * -self.up + math.radians(sway) * b * self.fwd
+
+    def _chest_own(self, times, ctx):
+        """(twist, sway): how far the shoulders turn each way under these knobs and pose with nothing added
+        (a pose's bent spine turns them otherwise than the walk does), the spine and shoulders alone built
+        over the cycle; None without a chest."""
+        if self.chest_shape is None:
+            return None
+        only = set()
+        for name in ("upperarm_l", "upperarm_r"):
+            j = self.index[name]
+            only.update([j] + self._ancestors(j))
+        n = len(times) - 1
+        worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
+        ctx["chest_own"] = "off"
+        for f, (phi, tau) in enumerate(times):
+            worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
+        own = self.chest_fit(worlds)
+        # once more with the turn added: a bent spine does not take a world turn one for one - what it misses
+        # of the target is asked for again
+        ctx["chest_own"] = own
+        for f, (phi, tau) in enumerate(times):
+            worlds[:, f] = self._frame(phi, tau, ctx, 0.0, None, only)[0]
+        got, target = self.chest_fit(worlds), self.chest_targets(ctx["k"], ctx["ex"])
+        ctx["chest_own"] = None
+        return own[0] + got[0] - target[0], own[1] + got[1] - target[1]
+
+    def chest_fit(self, worlds):
+        """The shoulder line's twist and sway amplitudes (degrees) in a cycle of world matrices (J, n+1, 4, 4),
+        each fitted on its shape (least squares, demeaned)."""
+        n = worlds.shape[1] - 1
+        d = worlds[self.index["upperarm_l"], :n, 3, :3] - worlds[self.index["upperarm_r"], :n, 3, :3]
+        across = np.linalg.norm(d - np.outer(d @ self.up, self.up), axis=1)
+        yaw = np.degrees(np.arctan2(d @ self.fwd, d @ self.side))
+        tilt = np.degrees(np.arctan2(d @ self.up, across))
+        shapes = np.array([self.chest_shapes(f * self.P / float(n)) for f in range(n)])
+
+        def fit(y, x):
+            y, x = y - y.mean(), x - x.mean()
+            return float(np.dot(y, x) / np.dot(x, x)) if float(np.dot(x, x)) > 1e-12 else 0.0
+        return fit(yaw, shapes[:, 0]), fit(tilt, shapes[:, 1])
 
     def pelvis_extra(self, tau, k, ex):
         """The pelvis's added turn at source time tau (a world rotation vector, None when nothing is added):
@@ -1370,21 +1520,41 @@ class Walk(object):
         if ctx["placement"] > 0.0:
             ctx["grown"] = self._growth(ctx)
         times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
+        ctx["chest_own"] = self._chest_own(times, ctx)
         drop = self._lowering(times, ctx)
         balance = {"carry": 0.0, "residual": 0.0, "note": self.balance_note if k["balance"] > 0.0 else ""}
         if ctx["balance"] > 0.0:
             only = self._com_joints()
             bases = [self._frame(phi, tau, ctx, drop[f], None, only)[0] for f, (phi, tau) in enumerate(times[:-1])]
+            swinging = k["arm_drag"] > 0.0 and bool(self._arm_chains())
+            still = list(bases)
+
+            def armed(carry):
+                """The bases with the arms' inertia as they move under `carry` (the carry itself not in them:
+                _moved_com adds it) - the carry balances the arms as they move, inertia and all."""
+                frames = np.stack(still + [still[0]], axis=1)
+                frames[:, n, 3, :3] += ctx["travel2"]
+                rigid = self._carry_parts()[0]
+                if carry is not None:
+                    frames[rigid, :, 3, :3] += carry[None]
+                self._arm_dynamics(frames, n, ctx, only)
+                if carry is not None:
+                    frames[rigid, :, 3, :3] -= carry[None]
+                return [frames[:, f] for f in range(n)]
+            if swinging:
+                bases = armed(None)
             target, said = self._balance_target(times, ctx, bases)
             need = said.pop("need")
             balance.update(said)
             caches, first, carry = [dict() for _ in bases], np.array(drop), np.zeros((n + 1, 3))
-            for _ in range(BALANCE_ROUNDS if need >= CARRY_TOL else 0):   # nothing to carry at the defaults     # the carry, then the reach's drop with it, till the drop holds
+            for round_ in range(BALANCE_ROUNDS if need >= CARRY_TOL else 0):   # nothing to carry at the defaults     # the carry, then the reach's drop with it, till the drop holds
                 ctx["carry"] = carry = self._carry(times, ctx, bases, np.array(drop) - first, target, carry, caches)
                 again = self._lowering(times, ctx)
                 settled = float(np.abs(np.array(again) - np.array(drop)).max()) < CARRY_TOL
                 drop = again
-                if settled:
+                if swinging:                  # the arms trail the carried body too: balance them again
+                    bases = armed(carry)
+                if settled and (not swinging or round_ > 0):
                     break
             balance["carry"] = float(np.linalg.norm(carry, axis=1).max()) if ctx["carry"] is not None else 0.0
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
@@ -1393,6 +1563,7 @@ class Walk(object):
             carry = None if ctx["carry"] is None else ctx["carry"][f]
             worlds[:, f], frame_short = self._frame(phi, tau, ctx, drop[f], carry)
             short = max(short, frame_short)
+        arms = self._arm_dynamics(worlds, n, ctx)
         if not self.balance_note:
             line = np.array([self.origin + ctx["travel2"] * phi for phi, _ in times[:-1]])
             dev = (self.com(worlds[:, :n]) - line) @ self.basis.T
@@ -1414,6 +1585,8 @@ class Walk(object):
                                               if not self.placement_note else []))},
                 "pelvis": (k["pelvis_rot"] * ctx["ex"] * k["pelvis_twist"] * k["stride"] * self.twist_gain,
                            k["pelvis_rot"] * ctx["ex"] * k["pelvis_list"]),
+                "chest": self.chest_targets(k, ctx["ex"]) if self.chest_shape is not None else None,
+                "arms": arms,
                 "balance": balance}
         return Result(worlds, n, info)
 
@@ -1539,6 +1712,7 @@ class Walk(object):
         k, ex = ctx["k"], ctx["ex"]
         rots, poss = [None] * len(self.names), [None] * len(self.names)
         body = self._body(phi, tau, ctx, drop, carry)
+        chest = self.chest_extra(tau, k, ex, ctx.get("chest_own"))
         gains = {"spine": k["spine"] * ex, "arm": k["arms"] * ex}
         feet = dict((side, self._clock(side, tau, ctx)) for side in SIDES)
         rolls = {}
@@ -1580,10 +1754,14 @@ class Walk(object):
                         if j in pose.get("spine", {}):
                             centre = toward(centre, pose["spine"][j], a)
                         if "arms" in pose and kind in ("arm", "finger"):
-                            # the pose's arms are HELD: they ride the chest, their swing fades with the pose
+                            # the pose's arms are the mean the walk's swing runs about; hands that hold one
+                            # thing together HOLD it - its swing fades, the thing sways (_arm_dynamics)
                             if j in pose["arms"]:
                                 centre = toward(centre, pose["arms"][j], a)
-                            gain *= 1.0 - a
+                            if pose.get("grip"):
+                                gain *= 1.0 - a
+                    if j in self.forearms:
+                        gain *= k["elbow"]
                     turn = periodic_cr(self.llog[j], t)
                     if j in ctx["spine_map"]:      # about the world axis it turns about in the walk
                         turn = turn @ ctx["spine_map"][j]
@@ -1598,12 +1776,228 @@ class Walk(object):
                         rots[j] = rots[j] @ rolls[self.balls[j]].T
                     if j in self.counter and body["extra"] is not None:
                         rots[j] = rots[j] @ exp_rot(-self.counter[j] * body["extra"])
+                    if j in self.chest_share and chest is not None:
+                        rots[j] = rots[j] @ exp_rot(self.chest_share[j] * chest)
                 poss[j] = self.lt_at(j, t) @ rots[p] + poss[p]
         out = np.tile(np.eye(4), (len(self.names), 1, 1))
         for j in range(len(self.names)):
             if rots[j] is not None:
                 out[j, :3, :3], out[j, 3, :3] = rots[j], poss[j]
         return out, short
+
+    # -- the arms: the body's inertia on top of their motion --
+
+    def _arm_chains(self):
+        """{side: [upperarm, lowerarm, hand] indices} and each chain's parent (the clavicle, else what holds the
+        upper arm); sides missing a joint are left out."""
+        out = {}
+        for side in SIDES:
+            names = ["%s_%s" % (b, side) for b in ("upperarm", "lowerarm", "hand")]
+            if all(n in self.index for n in names):
+                out[side] = [self.index[n] for n in names]
+        return out
+
+    def _arm_dynamics(self, worlds, n, ctx, only=None):
+        """The arms following the body with inertia (in place on `worlds`, (J, n+1, 4, 4)). What the frames
+        give them is their TARGET; each limb (upper arm, forearm, hand) turns toward its target - its own
+        motion on the joint above as that joint actually moves - through a damped spring, and feels the
+        acceleration of the point it hangs from: the arms trail the body's bob, sway and twist and whip through
+        (Arm drag: the spring's delay in frames; Arm bounce: how far it overshoots). Hands that hold one thing
+        together (a pose's grip) keep holding it: the thing sways and trails as one body and the arms reach it
+        by IK. Integrated ARM_SUBSTEPS a frame, cycle after cycle until a cycle starts where the last did, the
+        seam closed. Returns what it did (info["arms"])."""
+        k = ctx["k"]
+        drag, bounce = k["arm_drag"], k["arm_bounce"]
+        chains = self._arm_chains()
+        pose = ctx["pose"]
+        grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
+        out = {"drag": drag, "bounce": bounce, "grip": grip, "cycles": 0}
+        if drag <= 0.0 or not chains:
+            out["drag"] = 0.0
+            return out
+        zeta = 1.0 - 0.75 * bounce
+        w0 = 2.0 * zeta / drag                    # per frame: a damped spring lags 2 zeta / w0 behind its target
+        steps = max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0)))     # w0 dt <= 1/4: the integration stays true
+        kin = worlds.copy()
+        if grip:
+            new, cycles = self._grip_motion(kin, n, chains, w0, zeta, steps)
+        else:
+            new, cycles = {}, 0
+            for side, chain in chains.items():
+                got, used = self._limb_motion(kin, n, chain, w0, zeta, steps)
+                new.update(got)
+                cycles = max(cycles, used)
+        out["cycles"] = cycles
+        self._reattach(worlds, kin, new, only)
+        return out
+
+    def _resampled(self, rots, n, S):
+        """A rotation series (n+1, 3, 3) (the last the first) at every 1/S frame of the cycle, slerped:
+        (n * S, 3, 3)."""
+        steps = np.arange(n * S) / float(S)
+        f = np.floor(steps).astype(int)
+        frac = steps - f
+        logs = log_rot(np.swapaxes(rots[:-1], -1, -2) @ rots[1:])
+        return rots[f] @ exp_rot(frac[:, None] * logs[f])
+
+    def _limb_motion(self, kin, n, chain, w0, zeta, S):
+        """One arm's chain under inertia: {joint: (n+1, 4, 4) worlds}, the cycles it took."""
+        dt = 1.0 / S
+        top, base = chain[0], self.parents[chain[0]]
+        rot = lambda j: np.array([orthonormal(kin[j, f, :3, :3]) for f in range(n + 1)])
+        R = dict((j, rot(j)) for j in chain + [base])
+        rel = dict((j, np.array([R[j][f] @ R[self.parents[j]][f].T for f in range(n + 1)])) for j in chain)
+        # the bones' offsets in their parents (the arm's lengths) and each limb's lever for its inertia
+        offset = dict((j, self.lt[j].mean(axis=0)) for j in chain[1:])     # the walk's own: a pose turns
+        lever = dict((chain[i], offset[chain[i + 1]]) for i in range(len(chain) - 1))   # bones, not lengthens
+        tip = [c for c in range(len(self.names)) if self.parents[c] == chain[-1] and self.kind[c] == "finger"]
+        if tip:
+            lever[chain[-1]] = max((self.lt[c].mean(axis=0) for c in tip), key=lambda v: float(np.linalg.norm(v)))
+        # the shoulder's acceleration, the travel taken out (it does not accelerate), per substep
+        travel = (kin[top, n, 3, :3] - kin[top, 0, 3, :3]) / float(n)
+        path = np.array([kin[top, f, 3, :3] - travel * f for f in range(n)])
+        accel = np.array([path[(f + 1) % n] - 2.0 * path[f] + path[f - 1] for f in range(n)])
+        steps = np.arange(n * S) / float(S)
+        f0 = np.floor(steps).astype(int)
+        frac = (steps - f0)[:, None]
+        a_shoulder = (1.0 - frac) * accel[f0 % n] + frac * accel[(f0 + 1) % n]
+        base_rot = self._resampled(R[base], n, S)
+        rel_s = dict((j, self._resampled(rel[j], n, S)) for j in chain)
+        levers = [lever.get(j) for j in chain]
+        state, spin = [], []
+        parent = base_rot[0]
+        for j in chain:
+            state.append(rel_s[j][0] @ parent)
+            spin.append(np.zeros(3))
+            parent = state[-1]
+        record = np.zeros((len(chain), n, 3, 3))
+        used = 0
+        kk, cc = w0 * w0, 2.0 * zeta * w0
+        for cycle in range(ARM_CYCLES):
+            used = cycle + 1
+            first = [r.copy() for r in state]
+            for step in range(n * S):
+                if step % S == 0:
+                    for i in range(len(chain)):
+                        record[i, step // S] = state[i]
+                parent = base_rot[step]
+                a_pivot = a_shoulder[step]
+                for i, j in enumerate(chain):
+                    Rj, w = state[i], spin[i]
+                    target = rel_s[j][step] @ parent
+                    e = _log3(target.T @ Rj)
+                    alpha = -kk * e - cc * w
+                    r = levers[i] @ Rj if levers[i] is not None else None
+                    if r is not None:
+                        length2 = float(r @ r)
+                        if length2 > 1e-12:
+                            alpha = alpha + 1.5 * ARM_INERTIA / length2 * _cross3(r, -a_pivot)
+                    w = w + alpha * dt
+                    Rj = Rj @ _exp3(w * dt)
+                    state[i], spin[i] = Rj, w
+                    if r is not None:
+                        a_pivot = a_pivot + _cross3(alpha, r) + _cross3(w, _cross3(w, r))
+                    parent = Rj
+            if max(float(np.linalg.norm(_log3(first[i].T @ state[i]))) for i in range(len(chain))) < ARM_SETTLED:
+                break
+        out = {}
+        rots = {}
+        for i, j in enumerate(chain):          # the seam: what the last cycle missed of closing, spread over it
+            miss = _log3(record[i, 0].T @ state[i])
+            series = np.array([record[i, f] @ _exp3(-miss * f / float(n)) for f in range(n)])
+            rots[j] = np.concatenate([series, series[:1]])
+        for i, j in enumerate(chain):
+            m = np.tile(np.eye(4), (n + 1, 1, 1))
+            m[:, :3, :3] = rots[j]
+            if i == 0:
+                m[:, 3, :3] = kin[j, :, 3, :3]
+            else:
+                p = chain[i - 1]
+                m[:, 3, :3] = out[p][:, 3, :3] + np.einsum("i,fij->fj", offset[j], rots[p])
+            out[j] = m
+        return out, used
+
+    def _grip_motion(self, kin, n, chains, w0, zeta, S):
+        """Two hands holding one thing: the right hand carries it - its world turn and place trail their
+        target through the same spring (the travel taken out); the left keeps its hold on the right; both arms
+        reach their hands by IK (the elbows bend the way the frames bend them, the bones keep their lengths)."""
+        dt = 1.0 / S
+        hold = chains["r"][-1]
+        R = np.array([orthonormal(kin[hold, f, :3, :3]) for f in range(n + 1)])
+        travel = (kin[hold, n, 3, :3] - kin[hold, 0, 3, :3]) / float(n)
+        path = np.array([kin[hold, f, 3, :3] - travel * f for f in range(n + 1)])
+        path[n] = path[0]
+        steps = np.arange(n * S) / float(S)
+        f0 = np.floor(steps).astype(int)
+        frac = (steps - f0)[:, None]
+        target_x = (1.0 - frac) * path[f0] + frac * path[f0 + 1]
+        target_r = self._resampled(R, n, S)
+        state_r, w = R[0].copy(), np.zeros(3)
+        x, v = path[0].copy(), np.zeros(3)
+        rec_r, rec_x = np.zeros((n, 3, 3)), np.zeros((n, 3))
+        kk, cc = w0 * w0, 2.0 * zeta * w0
+        used = 0
+        for cycle in range(ARM_CYCLES):
+            used = cycle + 1
+            first = (state_r.copy(), x.copy())
+            for step in range(n * S):
+                if step % S == 0:
+                    rec_r[step // S], rec_x[step // S] = state_r, x
+                e = _log3(target_r[step].T @ state_r)
+                w = w + (-kk * e - cc * w) * dt
+                state_r = state_r @ _exp3(w * dt)
+                v = v + (-kk * (x - target_x[step]) - cc * v) * dt
+                x = x + v * dt
+            if float(np.linalg.norm(_log3(first[0].T @ state_r))) < ARM_SETTLED and \
+                    float(np.linalg.norm(first[1] - x)) < ARM_SETTLED * 100.0:
+                break
+        miss_r, miss_x = _log3(rec_r[0].T @ state_r), x - rec_x[0]
+        held = np.tile(np.eye(4), (n + 1, 1, 1))
+        for f in range(n + 1):
+            g = f % n
+            held[f, :3, :3] = rec_r[g] @ _exp3(-miss_r * g / float(n))
+            held[f, 3, :3] = rec_x[g] - miss_x * g / float(n) + travel * f
+        out = {}
+        for side, chain in chains.items():
+            up_j, low_j, hand_j = chain
+            l1, l2 = (float(np.linalg.norm(self.lt[j].mean(axis=0))) for j in (low_j, hand_j))
+            mu, ml, mh = (np.tile(np.eye(4), (n + 1, 1, 1)) for _ in range(3))
+            for f in range(n + 1):
+                hand = kin[hand_j, f] @ np.linalg.inv(kin[hold, f]) @ held[f]
+                sh, el, wr = kin[up_j, f, 3, :3], kin[low_j, f, 3, :3], kin[hand_j, f, 3, :3]
+                e = _unit(wr - sh)
+                bend = (el - sh) - np.dot(el - sh, e) * e
+                bend = _unit(bend) if np.linalg.norm(bend) > 1e-4 else _any_perpendicular(e)
+                knee, reached, _ = two_bone(sh, hand[3, :3], l1, l2, bend, 1.0)
+                e2 = _unit(reached - sh)
+                bend2 = _unit((knee - sh) - np.dot(knee - sh, e2) * e2)
+                normal, normal2 = _unit(np.cross(e, bend)), _unit(np.cross(e2, bend2))
+                mu[f, :3, :3] = orthonormal(kin[up_j, f, :3, :3]) @ align(_unit(el - sh), normal, _unit(knee - sh), normal2)
+                ml[f, :3, :3] = orthonormal(kin[low_j, f, :3, :3]) @ align(_unit(wr - el), normal,
+                                                                          _unit(reached - knee), normal2)
+                mu[f, 3, :3], ml[f, 3, :3] = sh, knee
+                mh[f, :3, :3], mh[f, 3, :3] = hand[:3, :3], reached
+            out[up_j], out[low_j], out[hand_j] = mu, ml, mh
+        return out, used
+
+    def _reattach(self, worlds, kin, new, only=None):
+        """`new` ({joint: (n+1, 4, 4)}) into `worlds`; every joint hanging off a changed one (its DAG children,
+        the helpers that follow it) carried along as the frames had it on its anchor (of `only`, when given)."""
+        changed = set(new)
+        for j, m in new.items():
+            worlds[j] = m
+        for j in self.order:
+            if j in changed or (only is not None and j not in only):
+                continue
+            p = self.parents[j]
+            anchor = p if p in changed else None
+            if anchor is None and j in self.follows and self.follows[j][0] in changed:
+                anchor = self.follows[j][0]
+            if anchor is None:
+                continue
+            worlds[j] = np.einsum("fij,fjk->fik", np.einsum("fij,fjk->fik", kin[j], np.linalg.inv(kin[anchor])),
+                                  worlds[anchor])
+            changed.add(j)
 
     def _leg_source(self, side, tau, ctx):
         """What a leg's solve takes from the source and the knobs at tau - all of it independent of the hip."""
@@ -1670,6 +2064,13 @@ def describe(result):
         text += " | the swinging foot passes up to %.1f cm nearer the body" % info["swing_in"]
     if "pelvis" in info:
         text += " | pelvis twists +-%.1f deg, the hips +-%.1f" % info["pelvis"]
+    if info.get("chest"):
+        text += " | chest twists +-%.1f deg, sways +-%.1f" % info["chest"]
+    if info.get("arms") and info["arms"].get("drag"):
+        a = info["arms"]
+        text += " | %s %.1f frames behind the body%s" % (
+            "the held weapon trails" if a["grip"] else "the arms trail", a["drag"],
+            ", bouncing" if a["bounce"] > 0.05 else "")
     return text + placement_line(info) + balance_line(info)
 
 

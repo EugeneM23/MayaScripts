@@ -174,7 +174,7 @@ class KnobTests(unittest.TestCase):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
                           "foot_flex", "bob", "sway", "root_sway", "pelvis_rot", "pelvis_twist", "pelvis_list",
-                          "spine", "arms",
+                          "spine", "chest_twist", "chest_sway", "arms", "elbow", "arm_drag", "arm_bounce",
                           "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
         self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
@@ -433,7 +433,8 @@ class IdentityTests(unittest.TestCase):
         """The pelvis's twist and hip drop come from their degree knobs; the walk's own read differently."""
         w, c = walk(), clip()
         own = w.own_knobs()
-        self.assertEqual(sorted(own), ["foot_placement", "pelvis_list", "pelvis_twist", "root_sway"])
+        self.assertEqual(sorted(own), ["arm_drag", "chest_sway", "chest_twist", "foot_placement", "pelvis_list",
+                                       "pelvis_twist", "root_sway"])
         self.assertNotAlmostEqual(own["pelvis_list"], wm.DEFAULTS["pelvis_list"], places=1)
         r = w.evaluate()
         self.assertGreater(float(np.abs(r.worlds - c.worlds).max()), 1e-3)
@@ -595,9 +596,9 @@ class BodyTests(unittest.TestCase):
         """The upper arm hangs and swings in the world: Arms 0 holds it still there, Arms 2 doubles its
         world swing; the forearm stays on it."""
         w, c = walk(), clip()
-        still = rotations(w.evaluate({"arms": 0.0}), "upperarm_l", w)
+        still = rotations(w.evaluate({"arms": 0.0, "arm_drag": 0.0}), "upperarm_l", w)
         self.assertLess(max(angle(m @ still[0].T) for m in still), 1e-6)
-        double = rotations(w.evaluate({"arms": 2.0}), "upperarm_l", w)
+        double = rotations(w.evaluate({"arms": 2.0, "arm_drag": 0.0}), "upperarm_l", w)
         j = w.index["upperarm_l"]
         mean = w.wmean[j]
         for f in (3, 9, 15):
@@ -605,7 +606,7 @@ class BodyTests(unittest.TestCase):
 
     def test_upper_arms_do_not_turn_with_the_chest(self):
         w, c = walk(), clip()
-        r = w.evaluate({"spine": 2.5})
+        r = w.evaluate({"spine": 2.5, "arm_drag": 0.0})
         for name in ("upperarm_l", "upperarm_r"):
             j = w.index[name]
             self.assertLess(float(np.abs(rotations(r, name, w) - c.worlds[j, :, :3, :3]).max()), 1e-9)
@@ -619,7 +620,7 @@ class BodyTests(unittest.TestCase):
 
     def test_overlap_delays_the_hand_by_its_share(self):
         w, c = walk(), clip()
-        r = w.evaluate({"overlap": 2.0})
+        r = w.evaluate({"overlap": 2.0, "arm_drag": 0.0})
         j = w.index["hand_l"]
         for f in (2, 7, 20):
             src = c.worlds[j, f - 2, :3, :3] @ c.worlds[w.parents[j], f - 2, :3, :3].T
@@ -676,7 +677,8 @@ class PelvisTests(unittest.TestCase):
         """The lumbar spine takes the extra back: the top of the spine turns in the world as at the walk's own."""
         w = walk()
         own = w.evaluate(dict(w.own_knobs(), balance=0.0))
-        more = w.evaluate({"pelvis_twist": 12.0, "pelvis_list": 9.0, "balance": 0.0})
+        more = w.evaluate({"pelvis_twist": 12.0, "pelvis_list": 9.0, "balance": 0.0, "arm_drag": 0.0,
+                           "chest_twist": w.own_chest_twist, "chest_sway": w.own_chest_sway})
         chest = w.index["spine_02"]
         self.assertLess(float(np.abs(more.worlds[chest, :, :3, :3] - own.worlds[chest, :, :3, :3]).max()), 1e-9)
         pelvis = w.index["pelvis"]
@@ -941,6 +943,7 @@ class PoseTests(unittest.TestCase):
         the chest keeps counter-turning against the pelvis about the vertical: from the first frame each turns
         in the world exactly as the walk's does."""
         w = walk()
+        w.chest_shape = None            # the chest's turn left alone (ChestTests bring it to Chest twist)
         base = dict(w.own_knobs(), balance=0.0)
         plain, posed = w.evaluate(base), w.evaluate(dict(base, pose=1.0), a_pose(w))
         for name in ("pelvis", "spine_01", "spine_02"):
@@ -965,15 +968,16 @@ def a_grip(w):
     for side, sign in (("l", 1.0), ("r", -1.0)):
         arms[j["upperarm_" + side]] = rot_y(sign * 60.0) @ w.lmean[j["upperarm_" + side]]
         arms[j["lowerarm_" + side]] = rot_z(sign * -70.0) @ w.lmean[j["lowerarm_" + side]]
-    return {"arms": arms}
+    return {"arms": arms, "grip": True}
 
 
 class PosePartsTests(unittest.TestCase):
 
     def test_held_arms_keep_the_hands_together(self):
-        """Arms in the pose at 1: the arms ride the chest, no swing - the two hands keep one relation."""
+        """Arms in the pose at 1, holding: the arms ride the chest, no swing - the two hands keep one relation
+        (with Arm drag too: the held thing trails as one, ArmTests)."""
         w = walk()
-        r = w.evaluate({"pose": 1.0}, a_grip(w))
+        r = w.evaluate({"pose": 1.0, "arm_drag": 0.0}, a_grip(w))
         hands = [r.worlds[w.index["hand_l"], f] @ np.linalg.inv(r.worlds[w.index["hand_r"], f]) for f in range(25)]
         self.assertLess(float(np.abs(np.array(hands) - hands[0]).max()), 1e-9)
         j = w.index["lowerarm_l"]
@@ -984,11 +988,11 @@ class PosePartsTests(unittest.TestCase):
 
     def test_half_held_arms_swing_half(self):
         w = walk()
-        r = w.evaluate({"pose": 0.5, "exaggeration": 1.0}, a_grip(w))
+        r = w.evaluate({"pose": 0.5, "exaggeration": 1.0, "arm_drag": 0.0}, a_grip(w))
         j = w.index["hand_l"]
         mean = w.lmean[j]
         swing = max(angle(local_rot(r, "hand_l", w, f) @ mean.T) for f in range(24))
-        source = max(angle(local_rot(w.evaluate(), "hand_l", w, f) @ mean.T) for f in range(24))
+        source = max(angle(local_rot(w.evaluate({"arm_drag": 0.0}), "hand_l", w, f) @ mean.T) for f in range(24))
         self.assertAlmostEqual(swing, 0.5 * source, places=6)
 
     def test_the_feet_set_wider_and_turn_out(self):
@@ -1260,6 +1264,121 @@ class RollTests(unittest.TestCase):
             rot = r.worlds[w.index["foot_l"], :, :3, :3]
             speed = np.array([angle(rot[i].T @ rot[i + 1]) for i in range(r.frames)])
             self.assertLess(float(np.abs(np.diff(speed)).max()), 7.0, kw)
+
+
+class ChestTests(unittest.TestCase):
+
+    def test_chest_twist_and_sway_are_the_shoulders_turn_in_degrees(self):
+        """The shoulder line turns each way as Chest twist says (x the step's gain, as Twist) and tilts as Chest
+        sway says - under a hunched pose too, which turns the walk's own chest otherwise."""
+        w = walk()
+        for knobs, pose, tol in (({"chest_twist": 12.0, "chest_sway": 8.0}, None, 0.05),
+                                 ({"chest_twist": 3.0, "chest_sway": 1.0}, None, 0.05),
+                                 ({"chest_twist": 12.0, "chest_sway": 8.0, "pose": 1.0}, a_pose(w), 0.5)):
+            r = w.evaluate(dict(knobs, balance=0.0, arm_drag=0.0), pose)
+            twist, sway = w.chest_fit(r.worlds)
+            self.assertAlmostEqual(twist, knobs["chest_twist"] * w.twist_gain, delta=tol)
+            self.assertAlmostEqual(sway, knobs["chest_sway"], delta=tol)
+            self.assertIn("chest twists +-%.1f deg, sways +-%.1f" % (knobs["chest_twist"] * w.twist_gain,
+                                                                    knobs["chest_sway"]), wm.describe(r))
+
+    def test_the_walks_own_chest_is_its_own(self):
+        w, c = walk(), clip()
+        own = w.chest_fit(c.worlds)
+        self.assertAlmostEqual(own[0], w.own_chest_twist * w.twist_gain, places=6)
+        self.assertAlmostEqual(own[1], w.own_chest_sway, places=6)
+
+    def test_the_chest_turns_alone(self):
+        """Chest twist turns the chest, not the pelvis; the head keeps its own turn in the world."""
+        w = walk()
+        a = w.evaluate({"chest_twist": 0.0, "balance": 0.0, "arm_drag": 0.0})
+        b = w.evaluate({"chest_twist": 15.0, "balance": 0.0, "arm_drag": 0.0})
+        for name, same in (("pelvis", True), ("head", True), ("spine_02", False)):
+            diff = float(np.abs(rotations(a, name, w) - rotations(b, name, w)).max())
+            self.assertTrue(diff < 1e-9 if same else diff > 0.05, (name, diff))
+
+
+def swing_phase(r, w, a, b):
+    """The fore-aft swing of the segment a -> b: (amplitude deg, the frame its first harmonic peaks)."""
+    d = r.worlds[w.index[b], :r.frames, 3, :3] - r.worlds[w.index[a], :r.frames, 3, :3]
+    d = d / np.linalg.norm(d, axis=1)[:, None]
+    x = np.degrees(np.arcsin(np.clip(d @ w.fwd, -1.0, 1.0)))
+    x = x - x.mean()
+    t = np.arange(r.frames) / float(r.frames)
+    c, s = 2.0 / r.frames * float(np.dot(x, np.cos(2 * math.pi * t))), 2.0 / r.frames * float(np.dot(x, np.sin(2 * math.pi * t)))
+    return math.hypot(c, s), math.atan2(s, c) / (2.0 * math.pi) * r.frames
+
+
+class ArmTests(unittest.TestCase):
+    """The arms' inertia (Arm drag, Arm bounce): the frames are the target, the limbs follow it with weight."""
+
+    def test_drag_lags_the_arms_and_keeps_them_whole(self):
+        w = walk()
+        target = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        r = w.evaluate({"arm_drag": 2.0, "arm_bounce": 0.0, "balance": 0.0})
+        self.assertGreater(r.info["arms"]["cycles"], 1)
+        for side in "lr":
+            amp0, peak0 = swing_phase(target, w, "lowerarm_" + side, "hand_" + side)
+            amp1, peak1 = swing_phase(r, w, "lowerarm_" + side, "hand_" + side)
+            late = (peak1 - peak0 + 12.0) % 24.0 - 12.0
+            self.assertGreater(late, 1.5, side)          # the hand swings later than its target
+            self.assertLess(late, 6.0, side)
+            for a, b in (("upperarm_", "lowerarm_"), ("lowerarm_", "hand_"), ("hand_", "index_01_")):
+                d = np.linalg.norm(positions(r, b + side, w) - positions(r, a + side, w), axis=1)
+                self.assertLess(float(np.ptp(d)), 1e-9, (side, a, b))
+        moved = r.worlds[:, -1] - r.worlds[:, 0]
+        self.assertLess(float(np.abs(moved[:, :3, :3]).max()), 1e-9)      # the loop closes
+        self.assertLess(float(np.abs(moved[:, 3, :3] - [0.0, 0.0, 120.0]).max()), 1e-6)
+        self.assertIn("the arms trail 2.0 frames behind the body", wm.describe(r))
+
+    def test_bounce_whips_the_forearm_through(self):
+        w = walk()
+        settle = w.evaluate({"arm_drag": 2.0, "arm_bounce": 0.0, "balance": 0.0})
+        whip = w.evaluate({"arm_drag": 2.0, "arm_bounce": 0.8, "balance": 0.0})
+        self.assertGreater(swing_phase(whip, w, "lowerarm_l", "hand_l")[0],
+                           1.15 * swing_phase(settle, w, "lowerarm_l", "hand_l")[0])
+
+    def test_the_body_swings_still_arms(self):
+        """Arms 0 holds the arms' own swing; with drag they still trail the body's own motion (its bob, sway and
+        twist move the shoulders) - against the chest they move, without it they hang still in the world."""
+        w = walk()
+        still = w.evaluate({"arms": 0.0, "arm_drag": 0.0, "balance": 0.0})
+        moved = w.evaluate({"arms": 0.0, "arm_drag": 3.0, "arm_bounce": 0.5, "balance": 0.0})
+        j = w.index["lowerarm_l"]
+        off = float(np.linalg.norm(moved.worlds[w.index["hand_l"], :, 3, :3] - still.worlds[w.index["hand_l"], :, 3, :3],
+                                   axis=1).max())
+        self.assertGreater(off, 0.5)
+
+    def test_drag_zero_is_the_frames(self):
+        w = walk()
+        a, b = w.evaluate({"arm_drag": 0.0}), w.evaluate(dict(w.own_knobs(), pelvis_twist=5.0, pelvis_list=4.0,
+                                                            foot_placement=1.0, root_sway=0.0,
+                                                            chest_twist=7.0, chest_sway=5.0))
+        self.assertLess(float(np.abs(a.worlds - b.worlds).max()), 1e-9)
+        self.assertEqual(a.info["arms"]["drag"], 0.0)
+
+    def test_a_held_thing_trails_as_one(self):
+        """Hands holding one thing together keep their hold through the drag: the thing trails the chest as one
+        body and the arms reach it, their bones whole."""
+        w = walk()
+        target = w.evaluate({"pose": 1.0, "arm_drag": 0.0, "balance": 0.0}, a_grip(w))
+        r = w.evaluate({"pose": 1.0, "arm_drag": 3.0, "arm_bounce": 0.5, "balance": 0.0}, a_grip(w))
+        self.assertTrue(r.info["arms"]["grip"])
+        hands = [r.worlds[w.index["hand_l"], f] @ np.linalg.inv(r.worlds[w.index["hand_r"], f]) for f in range(25)]
+        held = [target.worlds[w.index["hand_l"], f] @ np.linalg.inv(target.worlds[w.index["hand_r"], f]) for f in range(25)]
+        self.assertLess(float(np.abs(np.array(hands) - held[0]).max()), 1e-6)
+        trail = float(np.linalg.norm(positions(r, "hand_r", w) - positions(target, "hand_r", w), axis=1).max())
+        self.assertGreater(trail, 0.3)
+        for side in "lr":
+            for a, b in (("upperarm_", "lowerarm_"), ("lowerarm_", "hand_")):
+                d = np.linalg.norm(positions(r, b + side, w) - positions(r, a + side, w), axis=1)
+                self.assertLess(float(np.ptp(d)), 1e-6, (side, a))
+        self.assertIn("the held weapon trails", wm.describe(r))
+
+    def test_balance_holds_the_centre_with_the_arms_moving(self):
+        w = walk()
+        r = w.evaluate({"arm_drag": 3.0, "arm_bounce": 0.6, "stance": 2.0})
+        self.assertLess(r.info["balance"]["residual"], 0.05)
 
 
 class WindowTests(unittest.TestCase):
