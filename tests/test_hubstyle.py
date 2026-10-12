@@ -98,7 +98,8 @@ class Marks(unittest.TestCase):
         sheet = style.stylesheet()
         styled = [r for r in style.ROLES if '[skRole="%s"]' % r in sheet]
         #  moved or recoloured by the Qt layer rather than styled
-        handled = {"subtitle", "swatchonly", "swatch", "flow"}
+        handled = {"subtitle", "swatchonly", "swatch", "flow",
+                   "fill"}          # 2026-10-12: its buttons spread over it (_spread)
         for role in style.ROLES:
             self.assertTrue(role in styled or role in handled, role)
 

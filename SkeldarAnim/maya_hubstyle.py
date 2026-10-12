@@ -111,6 +111,8 @@ ROLES = (
     "tool",         # a small square icon button beside a field
     "chip",         # a checkBox drawn as a pill, lit when on
     "segments",     # a row layout holding segments (layout=True)
+    "fill",         # a row layout whose buttons share its width equally (layout=True;
+                    # 2026-10-12, the Tools card: «растягивать вместе с интерфейсом»)
     "segment",      # an iconTextRadioButton inside `segments`
     "status",       # the section's status line
     "note",         # a one-line hint

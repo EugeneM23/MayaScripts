@@ -8748,16 +8748,20 @@ Animation, Tabler `tool`); hotkey rows `window.tools` and `tools.knot / knot_off
 double_local / double_world / bake / remove` (`maya_hotkeys._tools`: the presses need no panel and
 report in the viewport when the card is closed). New icons `tool`, `rotate`, `focus-2`, `stack-2`.
 
-**The card** - three rows since the same day («давай сделаем его более компактным ... все
-кнопочки одинаково важные ... сделаем выделение для всех одинаковое»; asked: rows named on the
-left, every button orange, Remove too - it destroys nothing): the subtitle («3 knots in the scene,
-1 pivot waiting»); **Knots** Knot, Offset (reads **Finish** while a pivot waits), Orient;
-**Double** Local, World; **Order** `[Obj | XYZ | XZY]` (`skeldarKnotRotateOrder`, default Obj: the
-knot takes its object's order), Bake, Remove; the line. Every button is `primary` (the hub's
-one-orange-per-card habit is broken here on purpose); the row names are `note`s in one column
-width (`LABEL_W`). A SelectionChanged job per card (hub and popup copies) refreshes the subtitle
-and the Offset button. Not measured live: whether the third row fits the animator's 360 px dock
-(estimated ~310 logical of ~320).
+**The card**, as it stands after two rounds the same day (first «более компактным ... все кнопочки
+одинаково важные ... сделаем выделение для всех одинаковое» - every button orange, Remove too, it
+destroys nothing; then «скомпоновал все хорошо но не красиво. Давай сделаем два под раздела Knots и
+Double knots ... кнопочки ... растягивать вместе с интерфейсом»): the subtitle («3 knots in the
+scene, 1 pivot waiting»); heading **Knots** and one row Knot, Offset (reads **Finish** while a
+pivot waits), Orient; heading **Double knot** and one row Local, World; a small gap; «Rotate order»
+`[Object | XYZ | XZY]` (`skeldarKnotRotateOrder`, default Object: the knot takes its object's
+order); one row Bake, Remove; the line. Every button is `primary` (the hub's one-orange-per-card
+habit is broken here on purpose) and every row of buttons is marked **`fill`** - a new hub role:
+`maya_hubqt._spread(row, scale, "fill")` lays the row's buttons over its whole width with equal
+stretches (the segments' mechanism, trap 97, without the track: no insets, no background, the
+button height, a 4 px gap) so they stretch with the card. The classic hub keeps their own widths. A
+SelectionChanged job per card (hub and popup copies) refreshes the subtitle and the Offset button.
+Not seen live: the stretched rows in the animator's dock (unit-tested offscreen at 320 px).
 
 **One set of rules for all five** (OverRig's double knots had no range or attach; ours do):
 - refusals first, for every selected object, by name: nothing selected; riding a knot already (a
@@ -8836,6 +8840,12 @@ OverRig's), default hotkeys.
      -st / -sr), so a turn that needs that channel cannot reach the object - on a zxy prop with rz
      locked, a local X turn of a double knot landed 6.1 deg off while the turns that only change ry
      were exact. A fixture proving a local turn needs every rotate channel free.
+226. **The skin HIDES a `note`** - it becomes the card header's tooltip (`maya_hubqt._apply_mark`:
+     `card.add_hint(...); widget.setVisible(False)`), like `context` and `status`. The compact Tools
+     card named its rows with `note`s («Knots», «Double», «Order») and in the animator's hub they
+     never showed - three rows of unexplained buttons («скомпоновал все хорошо но не красиво»), while
+     every unit test passed on the fake `cmds`. A label meant to be SEEN carries no role (a plain
+     text) or `heading`; read what a role does in `_apply_mark` before choosing it.
 
 ## Parametric walk: a walk cycle read once, rebuilt from knobs (2026-10-12)
 

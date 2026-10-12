@@ -861,6 +861,52 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
                 + 2 * inset)
         self.assertEqual(row.minimumWidth(), need)
 
+    def test_a_fill_row_s_buttons_share_its_width(self):
+        """2026-10-12, the Tools card («размеры кнопочек должны соответствовать размеру раздела
+        ... растягивать вместе с интерфейсом»): a row marked `fill` lays its buttons over its
+        whole width with equal stretches - the segments' mechanism without the track: the button
+        height, no insets, a button's gap, no background of its own."""
+        for scale in (1.0, 1.5):
+            name = "fillRow%d" % int(scale * 10)
+            row = self.control(QtWidgets.QWidget, name, self.card.body)
+            box = QtWidgets.QHBoxLayout(row)
+            buttons = []
+            for label in ("Knot", "Offset", "Orient"):
+                button = self.control(QtWidgets.QPushButton, name + label, row)
+                button.setText(label)
+                button.setMinimumHeight(40)
+                box.addWidget(button)
+                buttons.append(button)
+            marks = [style.Mark(name, "fill", None, True, None)]
+            marks += [style.Mark(name + label, "primary", "link", False, None)
+                      for label in ("Knot", "Offset", "Orient")]
+            hubqt.apply_marks(marks, self.card, scale)
+            cover = buttons[0].parentWidget()
+            self.assertIs(cover.parentWidget(), row)
+            self.assertEqual(cover.objectName(), name + "_skinFill")
+            layout = cover.layout()
+            self.assertEqual([layout.stretch(i) for i in range(layout.count())], [1, 1, 1])
+            self.assertEqual(layout.contentsMargins().left(), 0)
+            gap = style.px(4, scale)
+            self.assertEqual(layout.spacing(), gap)
+            height = style.px(style.H["button"], scale)
+            self.assertEqual((row.minimumHeight(), row.maximumHeight()), (height, height))
+            for button in buttons:
+                self.assertEqual(button.minimumHeight(), height)
+                self.assertEqual(button.property("skRole"), "primary")
+            self.assertEqual(row.property("skRole"), "fill")
+            self.assertNotIn('skRole="fill"', style.stylesheet(scale))
+            self.assertEqual(row.minimumWidth(),
+                             sum(b.sizeHint().width() for b in buttons) + 2 * gap)
+            row.resize(320, height)
+            QtWidgets.QApplication.sendEvent(
+                row, __import__("PySide6.QtGui", fromlist=["QResizeEvent"])
+                .QResizeEvent(QtCore.QSize(320, height), QtCore.QSize(10, 10)))
+            self.assertEqual(cover.geometry().width(), 320)
+
+    def test_fill_is_a_layout_role(self):
+        self.assertIn("fill", style.ROLES)
+
     def test_a_swatch_is_painted_its_colour(self):
         dot = self.control(QtWidgets.QPushButton, "dot1", self.card.body)
         hubqt.apply_marks([style.Mark("dot1", "swatch", None, False,

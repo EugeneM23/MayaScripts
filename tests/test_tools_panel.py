@@ -125,23 +125,40 @@ class Card(_Base):
         self.assertEqual(names, [
             panel.SUBTITLE, panel.KNOTS_HEADING, panel.KNOT_BTN, panel.OFFSET_BTN,
             panel.ORIENT_BTN, panel.DOUBLE_HEADING, panel.LOCAL_BTN, panel.WORLD_BTN,
-            panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
+            panel.GAP, panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
             panel.ORDER_SEG["xzy"], panel.BAKE_BTN, panel.REMOVE_BTN, panel.STATUS])
 
-    def test_three_rows(self):
-        """2026-10-12, «более компактным»: the headings became each row's name - three rows
-        (Knots, Double, Order with Bake and Remove), the segments' own row inside the third."""
+    def test_two_subsections_their_buttons_stretched(self):
+        """2026-10-12, «два под раздела Knots и Double knots ... кнопочки ... растягивать
+        вместе с интерфейсом»: two headings, and every row of buttons marked `fill` - the skin
+        spreads its buttons over the card's width and they stretch with it."""
         panel.build_panel()
-        rows = [c for c in self.fake.calls if c[0] == "rowLayout"
-                and not c[2].get("edit") and not c[2].get("query")]
-        named = [c for c in rows if c[2].get("columnWidth")]
-        self.assertEqual([c[2]["numberOfColumns"] for c in named], [4, 3, 4])
-        widths = set(c[2]["columnWidth"][0] for c in named)
-        self.assertEqual(len(widths), 1, "every row's name column is one width")
-        self.assertEqual(len(rows), 4)
+        marks = hubstyle.take_marks()
+        roles = dict((m.name, m.role) for m in marks)
+        self.assertEqual(roles[panel.KNOTS_HEADING], "heading")
+        self.assertEqual(roles[panel.DOUBLE_HEADING], "heading")
         self.assertEqual(self.fake.labels[panel.KNOTS_HEADING], "Knots")
-        self.assertEqual(self.fake.labels[panel.DOUBLE_HEADING], "Double")
-        self.assertEqual(self.fake.labels[panel.ORDER_LABEL], "Order")
+        self.assertEqual(self.fake.labels[panel.DOUBLE_HEADING], "Double knot")
+        fills = [m for m in marks if m.role == "fill"]
+        self.assertEqual(len(fills), 3)
+        self.assertTrue(all(m.layout for m in fills))
+        made = [n for n in self.fake.children]
+        rows = [made.index(m.name) for m in fills]
+        buttons = [[made.index(b) for b in group] for group in (
+            (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN),
+            (panel.LOCAL_BTN, panel.WORLD_BTN), (panel.BAKE_BTN, panel.REMOVE_BTN))]
+        ends = rows[1:] + [len(made)]
+        for row, end, group in zip(rows, ends, buttons):
+            self.assertTrue(all(row < b < end for b in group), "the buttons are in their row")
+
+    def test_the_rotate_order_label_is_shown(self):
+        """The skin hides a `note` (it becomes the card header's tooltip) - the compact card's
+        row names never showed. The rotate order's label carries no role: it stays visible."""
+        panel.build_panel()
+        roles = dict((m.name, m.role) for m in hubstyle.take_marks())
+        self.assertNotIn(panel.ORDER_LABEL, roles)
+        self.assertNotIn("note", roles.values())
+        self.assertEqual(self.fake.labels[panel.ORDER_LABEL], "Rotate order")
 
     def test_the_short_words(self):
         panel.build_panel()
@@ -150,7 +167,7 @@ class Card(_Base):
             panel.WORLD_BTN, panel.BAKE_BTN, panel.REMOVE_BTN)],
             ["Knot", "Offset", "Orient", "Local", "World", "Bake", "Remove"])
         self.assertEqual([self.fake.radio[panel.ORDER_SEG[c]]["label"] for c in plan.ORDERS],
-                         ["Obj", "XYZ", "XZY"])
+                         ["Object", "XYZ", "XZY"])
 
     def test_the_roles(self):
         """«все кнопочки одинаково важные ... сделаем выделение для всех одинаковое»: every
@@ -161,11 +178,8 @@ class Card(_Base):
                    panel.WORLD_BTN, panel.BAKE_BTN, panel.REMOVE_BTN)
         self.assertEqual(sorted(n for n, r in roles.items() if r == "primary"), sorted(buttons))
         self.assertNotIn("danger", roles.values())
-        self.assertNotIn("heading", roles.values())
         self.assertEqual(roles[panel.STATUS], "status")
         self.assertEqual(roles[panel.SUBTITLE], "subtitle")
-        for name in (panel.KNOTS_HEADING, panel.DOUBLE_HEADING, panel.ORDER_LABEL):
-            self.assertEqual(roles[name], "note")
         self.assertEqual(sorted(n for n, r in roles.items() if r == "segment"),
                          sorted(panel.ORDER_SEG.values()))
 

@@ -2017,17 +2017,19 @@ def run_menu(parent, point, actions):
     return None
 
 
-def _track_need(cover, inset):
+def _track_need(cover, gap, margin=None):
     """The width a segments track needs to show every segment's text: its
     buttons' size hints (the skin's stylesheet in them once it is set), the
-    gaps between them and the insets round them. 0 without buttons."""
+    gaps between them and the insets round them (`margin`, the gap when
+    None; a `fill` row has none). 0 without buttons."""
     q = qt()
     buttons = [child for child in cover.children()
                if isinstance(child, q.QtWidgets.QAbstractButton)]
     if not buttons:
         return 0
+    margin = gap if margin is None else margin
     return (sum(button.sizeHint().width() for button in buttons)
-            + inset * (len(buttons) - 1) + 2 * inset)
+            + gap * (len(buttons) - 1) + 2 * margin)
 
 
 def _track_class():
@@ -2040,15 +2042,16 @@ def _track_class():
 
         class TrackFit(q.QtCore.QObject):
 
-            def __init__(self, cover, inset, parent=None):
+            def __init__(self, cover, inset, parent=None, margin=None):
                 super(TrackFit, self).__init__(parent)
-                self._cover, self._inset = cover, inset
+                self._cover, self._inset, self._margin = cover, inset, margin
 
             def fit(self):
                 track = self._cover.parentWidget()
                 if track is not None:
                     track.setMinimumWidth(_track_need(self._cover,
-                                                      self._inset))
+                                                      self._inset,
+                                                      self._margin))
 
             def eventFilter(self, obj, event):             # noqa: N802
                 if event.type() == q.QtCore.QEvent.LayoutRequest:
@@ -2062,8 +2065,14 @@ def _track_class():
     return _CLASSES["track"]
 
 
-def _spread(row, scale=1.0):
+def _spread(row, scale=1.0, kind="segments"):
     """The segments of a Maya rowLayout share its width equally.
+
+    `kind` "fill" (2026-10-12, the Tools card: «размеры кнопочек должны
+    соответствовать размеру раздела ... растягивать вместе с интерфейсом»):
+    the same for a row of ordinary buttons - no track round them (no insets,
+    no background: the row's skRole "fill" has no rule), the button height,
+    a button's gap between them.
 
     Measured 2026-09-28: the rowLayout's layout is `QmayaRowLayout` (a
     QHBoxLayout underneath) and it places its children at their own widths
@@ -2093,14 +2102,17 @@ def _spread(row, scale=1.0):
                if isinstance(child, w.QAbstractButton)]
     if not buttons:
         return 0
-    cover = _named(w.QWidget(row), row.objectName() + "_skinSegments")
+    fill = kind == "fill"
+    suffix = "_skinFill" if fill else "_skinSegments"
+    cover = _named(w.QWidget(row), row.objectName() + suffix)
     box = w.QHBoxLayout(cover)
-    box.setObjectName(row.objectName() + "_skinSegmentsLayout")
-    inset = hubstyle.px(2, scale)
-    box.setContentsMargins(inset, inset, inset, inset)
+    box.setObjectName(row.objectName() + suffix + "Layout")
+    inset = hubstyle.px(4 if fill else 2, scale)
+    margin = 0 if fill else inset
+    box.setContentsMargins(margin, margin, margin, margin)
     box.setSpacing(inset)
-    track = hubstyle.px(hubstyle.H["segment"], scale)
-    inner = max(1, track - 2 * inset)
+    track = hubstyle.px(hubstyle.H["button" if fill else "segment"], scale)
+    inner = max(1, track - 2 * margin)
     for button in buttons:
         button.setSizePolicy(w.QSizePolicy.Expanding, w.QSizePolicy.Preferred)
         button.setMinimumHeight(0)
@@ -2109,7 +2121,7 @@ def _spread(row, scale=1.0):
     row.setFixedHeight(track)
     watcher = _fill_class()(cover, cover)
     row.installEventFilter(watcher)
-    fit = _track_class()(cover, inset, cover)
+    fit = _track_class()(cover, inset, cover, margin)
     cover.installEventFilter(fit)
     fit.fit()
     cover.setGeometry(row.rect())
@@ -2375,12 +2387,12 @@ def apply_marks(marks, card, scale):
     #  The segment tracks last: their buttons have their own marks applied
     #  by now, and move into the skin's row with them (_spread).
     for mark in marks:
-        if mark.role != "segments":
+        if mark.role not in ("segments", "fill"):
             continue
         try:
             row = find(mark.name, True)
             if row is not None:
-                _spread(row, scale)
+                _spread(row, scale, mark.role)
         except Exception:                                    # noqa: BLE001
             import traceback
             print(traceback.format_exc())
@@ -2457,9 +2469,9 @@ def _apply_mark(mark, card, scale, size):
         widget.installEventFilter(fit)
         fit.fit(widget)
         return True
-    if mark.role == "segments":
-        #  after the segment marks (they come later in the list): see
-        #  apply_marks
+    if mark.role in ("segments", "fill"):
+        #  after the segment / button marks (they come later in the list):
+        #  see apply_marks
         return True
     if mark.role == "segment":
         widget.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,

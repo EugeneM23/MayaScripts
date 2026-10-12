@@ -1,12 +1,13 @@
 """The hub's Tools card (2026-10-12): OverRig's Knots and Double knot, native.
 
-The animator: «заведем раздел тул и реализуем такие же инструменты»; the same day «давай сделаем
-его более компактным ... все кнопочки одинаково важные»: three rows, every button orange -
-Knots: Knot, Offset (two presses: it reads Finish while a pivot waits), Orient; Double: Local,
-World; Order: the knots' rotate order [Obj | XYZ | XZY], Bake, Remove - then the status line; which
-knots stand is the subtitle. The presses are module functions reading the remembered rotate order,
-so the hotkey rows work with the card closed. The scene half is `knots`, the pure half
-`knotplan`.
+The animator: «заведем раздел тул и реализуем такие же инструменты»; the same day «все кнопочки
+одинаково важные» (every button orange) and «два под раздела Knots и Double knots ... кнопочки ...
+растягивать вместе с интерфейсом»: the subsection Knots - Knot, Offset (two presses: it reads
+Finish while a pivot waits), Orient; the subsection Double knot - Local, World; the buttons of a
+row share the card's width (the skin's `fill`); under them the knots' rotate order
+[Object | XYZ | XZY] and Bake, Remove; the status line; which knots stand is the subtitle. The
+presses are module functions reading the remembered rotate order, so the hotkey rows work with the
+card closed. The scene half is `knots`, the pure half `knotplan`.
 
 Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md
 """
@@ -36,8 +37,7 @@ REMOVE_BTN = "skeldarToolsRemove"
 ORDER = "skeldarToolsOrder"
 ORDER_SEG = dict((choice, "skeldarToolsOrder_" + choice) for choice in plan.ORDERS)
 ORDER_VAR = "skeldarKnotRotateOrder"
-#  The rows' name column, logical px: the skin's, the classic hub's.
-LABEL_W = (44, 52)
+GAP = "skeldarToolsGap"
 #  The refresh job of each card standing: '' the hub's, a popup copy's tag its own (the
 #  2026-10-09 rule: closing a popup kills only its own job).
 JOB = {}
@@ -154,9 +154,10 @@ def _order_changed(choice):
 
 # ------------------------------------------------------------------- card
 
-def _label(name, text):
-    """A row's name at its left (2026-10-12, the compact card: the headings became these)."""
-    return hubstyle.mark(cmds.text(name, label=text, align="left"), "note")
+def _heading(name, label):
+    """A subsection's title (the hub's `heading`: bold, a hairline under it)."""
+    return hubstyle.mark(cmds.text(name, label=label, align="left", font="boldLabelFont"),
+                         "heading")
 
 
 def _button(name, label, icon, tip, press):
@@ -167,49 +168,55 @@ def _button(name, label, icon, tip, press):
                                      command=lambda *_: press()), "primary", icon)
 
 
-def _row(columns):
-    """A row: its name in a column of one width on every row, the buttons at their own widths
-    beside it."""
-    return cmds.rowLayout(numberOfColumns=columns,
-                          columnWidth=[(1, hubstyle.pick(LABEL_W[0], LABEL_W[1]))],
-                          columnAttach=[(1, "both", 0)]
-                          + [(i, "both", 4) for i in range(2, columns + 1)])
+def _fill_row(columns):
+    """A row whose buttons share the card's width and stretch with it (the skin's `fill`; the
+    classic hub keeps their own widths)."""
+    row = cmds.rowLayout(numberOfColumns=columns,
+                         columnAttach=[(1, "both", 0)]
+                         + [(i, "both", 4) for i in range(2, columns + 1)])
+    return hubstyle.mark(row, "fill", layout=True)
 
 
 def build_panel():
-    """The card into the current layout: three rows (2026-10-12, «более компактным») - Knots,
-    Double, Order with Bake and Remove - and the line."""
+    """The card into the current layout: two subsections, Knots and Double knot, their buttons
+    stretched over the card (2026-10-12, «два под раздела ... растягивать вместе с
+    интерфейсом»); under them the knots' rotate order, Bake and Remove; the line."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
 
-    _row(4)
-    _label(KNOTS_HEADING, "Knots")
+    _heading(KNOTS_HEADING, "Knots")
+    _fill_row(3)
     _button(KNOT_BTN, "Knot", "link", TIPS["knot"], knot)
     _button(OFFSET_BTN, plan.offset_label(False), "focus-2", TIPS["offset"], knot_offset)
     _button(ORIENT_BTN, "Orient", "rotate", TIPS["orient"], knot_orient)
     cmds.setParent("..")
 
-    _row(3)
-    _label(DOUBLE_HEADING, "Double")
+    _heading(DOUBLE_HEADING, "Double knot")
+    _fill_row(2)
     _button(LOCAL_BTN, "Local", "stack-2", TIPS["local"], double_local)
     _button(WORLD_BTN, "World", "stack-2", TIPS["world"], double_world)
     cmds.setParent("..")
 
-    _row(4)
-    _label(ORDER_LABEL, "Order")
+    cmds.separator(GAP, style="none", height=hubstyle.pick(4, 6))
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=2,
+                   columnAttach=[(1, "both", 0), (2, "both", 6)])
+    cmds.text(ORDER_LABEL, label="Rotate order", align="left")
     segments = cmds.rowLayout(numberOfColumns=3, columnAttach=[(1, "both", 1),
                                                                (2, "both", 1),
                                                                (3, "both", 1)])
     hubstyle.mark(segments, "segments", layout=True)
     cmds.iconTextRadioCollection(ORDER)
     current = order()
-    for choice, label in (("object", "Obj"), ("xyz", "XYZ"), ("xzy", "XZY")):
+    for choice, label in (("object", "Object"), ("xyz", "XYZ"), ("xzy", "XZY")):
         hubstyle.mark(cmds.iconTextRadioButton(
             ORDER_SEG[choice], style="textOnly", label=label,
             height=hubstyle.height("segment", 22), select=choice == current,
             annotation=ORDER_TIPS[choice], onCommand=_order_changed(choice)), "segment")
     cmds.setParent("..")
+    cmds.setParent("..")
+
+    _fill_row(2)
     _button(BAKE_BTN, "Bake", "check", TIPS["bake"], bake)
     _button(REMOVE_BTN, "Remove", "trash", TIPS["remove"], remove)
     cmds.setParent("..")
