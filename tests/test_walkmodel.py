@@ -536,5 +536,51 @@ class BodyTests(unittest.TestCase):
         self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
 
 
+class WindowTests(unittest.TestCase):
+    """The window's wiring on a recording cmds (the window itself is the animator's to try)."""
+
+    def setUp(self):
+        sys.path.insert(0, HERE)
+        from uifakes import FakeUiCmds
+        self.fake = FakeUiCmds()
+        self.sw = load("skeldar_walk")
+        self.sw._cmds = lambda: self.fake
+
+    def tearDown(self):
+        sys.path.remove(HERE)
+
+    def created(self, command):
+        return [c for c in self.fake.calls if c[0] == command and not (c[2].get("edit") or c[2].get("query"))]
+
+    def test_a_slider_for_every_knob_with_its_range(self):
+        self.sw.show()
+        floats = dict((c[1][0], c[2]) for c in self.created("floatSliderGrp"))
+        ints = dict((c[1][0], c[2]) for c in self.created("intSliderGrp"))
+        for name, default, low, high in wm.KNOBS:
+            control = self.sw._control(name)
+            if name == "tempo":
+                self.assertIn(control, ints)
+                continue
+            self.assertEqual((floats[control]["minValue"], floats[control]["maxValue"], floats[control]["value"]),
+                             (low, high, default))
+            self.assertIs(floats[control]["changeCommand"], self.sw.slider_changed)
+        labels = [c[2].get("label") for c in self.created("button")]
+        for label in ("Analyse selection", "Update copy", "Reset", "Delete copy"):
+            self.assertIn(label, labels)
+
+    def test_the_window_reads_back_every_knob(self):
+        self.sw.show()
+        given = self.sw.given_from_window()
+        self.assertEqual(sorted(given), sorted(wm.DEFAULTS))
+        wm.knobs(**given)
+
+    def test_a_slider_with_nothing_analysed_says_so(self):
+        self.sw._state()["source"] = None
+        lines = []
+        self.sw._say = lines.append
+        self.sw.slider_changed()
+        self.assertIn("Analyse", lines[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

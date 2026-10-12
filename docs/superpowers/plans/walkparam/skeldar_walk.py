@@ -341,3 +341,180 @@ def delete_copies(root):
         with _Chunk("skeldarWalkDelete"):
             _cmds().delete(copies)
     return len(copies)
+
+
+# ---- the window ----
+
+WINDOW = "skeldarWalkWindow"
+STATUS = "skeldarWalkStatus"
+OFFSET = "skeldarWalkOffset"
+INTRO = ("Select any bone of a walk cycle (a closed loop with root motion) and press Analyse. Every released "
+         "slider re-keys a copy beside it; the cycle itself is never touched.")
+GROUPS = (
+    ("Step", ("stride", "tempo", "lift", "width")),
+    ("Pelvis", ("bob", "sway", "pelvis_rot")),
+    ("Upper body", ("spine", "arms", "head", "overlap")),
+    ("Weight", ("weight", "exaggeration")),
+)
+LABELS = {
+    "stride": ("Stride", "x the step length; the travel follows (a long stride sinks the contacts)"),
+    "tempo": ("Tempo (frames)", "frames a cycle of two steps; fewer is faster"),
+    "lift": ("Foot lift", "x how high the swinging foot rises above its path"),
+    "width": ("Width (cm)", "the feet set this much wider apart (negative: narrower)"),
+    "bob": ("Bob", "x the pelvis's up and down"),
+    "sway": ("Sway", "x the pelvis's side to side"),
+    "pelvis_rot": ("Pelvis turn", "x the pelvis's turns and tilts"),
+    "spine": ("Spine", "x the spine's and the neck's motion"),
+    "arms": ("Arms", "x the arms' swing"),
+    "head": ("Head", "x the head's motion in the world (0 holds it steady)"),
+    "overlap": ("Overlap (fr)", "frames the hands lag the pelvis (the spine and the head less)"),
+    "weight": ("Weight", "heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
+    "exaggeration": ("Exaggeration", "x every motion around the mean pose at once (not the stride)"),
+}
+
+
+def _control(name):
+    return "skeldarWalk_" + name
+
+
+def _say(text):
+    cmds = _cmds()
+    if cmds.text(STATUS, exists=True):
+        cmds.text(STATUS, edit=True, label=text)
+    else:
+        print(text)
+
+
+def _run(action):
+    """A press: its line on the status, a refusal or a failure there too (never only the Script Editor)."""
+    try:
+        _say(action())
+    except Refusal as refusal:
+        _say(str(refusal))
+    except Exception as error:   # the status line, not a traceback in a closed editor
+        import traceback
+        traceback.print_exc()
+        _say("failed: %s" % error)
+
+
+def given_from_window():
+    cmds = _cmds()
+    out = {}
+    for name in wm.DEFAULTS:
+        if name == "tempo":
+            out[name] = cmds.intSliderGrp(_control(name), query=True, value=True)
+        else:
+            out[name] = cmds.floatSliderGrp(_control(name), query=True, value=True)
+    return out
+
+
+def offset_from_window():
+    return _cmds().floatFieldGrp(OFFSET, query=True, value1=True)
+
+
+def _set_window(knobs, frames, offset):
+    cmds = _cmds()
+    for name, value in knobs.items():
+        if name == "tempo":
+            cmds.intSliderGrp(_control(name), edit=True, minValue=max(4, frames // 2), maxValue=2 * frames,
+                              fieldMaxValue=4 * frames, value=int(round(value)) if value >= 1 else frames)
+        else:
+            cmds.floatSliderGrp(_control(name), edit=True, value=value)
+    cmds.floatFieldGrp(OFFSET, edit=True, value1=offset)
+
+
+def _source_root():
+    uuid = _state().get("source")
+    found = _cmds().ls(uuid, long=True) if uuid else []
+    if not found:
+        raise Refusal("press Analyse with a bone of the walk cycle selected first")
+    return found[0]
+
+
+def press_analyse(*_):
+    def act():
+        cmds = _cmds()
+        selection = cmds.ls(selection=True, long=True)
+        if not selection:
+            raise Refusal("select any bone of the walk cycle (or of its copy) first")
+        root, copy = source_root_of(selection[0])
+        walk, source = walk_for(root, fresh=True)
+        _state()["source"] = source.uuid
+        copies = copies_of(source.uuid)
+        memo = memo_of(copies[0]) if copies else {}
+        knobs = wm.knobs(**dict((k, v) for k, v in memo.get("knobs", {}).items() if k in wm.DEFAULTS))
+        _set_window(knobs, walk.P, memo.get("offset", DEFAULT_OFFSET))
+        tail = (" | its copy %s: the knobs read back" % _short(copies[0]) if copies
+                else " | turn a knob (or Update copy) to make the copy")
+        return walk.summary() + tail
+    _run(act)
+
+
+def press_update(*_):
+    _run(lambda: update(_source_root(), given_from_window(), offset_from_window())[2])
+
+
+def slider_changed(*_):
+    press_update()
+
+
+def press_reset(*_):
+    def act():
+        root = _source_root()
+        walk, source = walk_for(root)
+        _set_window(dict(wm.DEFAULTS), walk.P, DEFAULT_OFFSET)
+        return update(root, given_from_window(), offset_from_window())[2]
+    _run(act)
+
+
+def press_delete(*_):
+    _run(lambda: "%d copy(ies) deleted" % delete_copies(_source_root()))
+
+
+def show():
+    """The window: Analyse, the knobs in four groups, the offset, Update / Reset / Delete copy, the status."""
+    cmds = _cmds()
+    if cmds.window(WINDOW, exists=True):
+        cmds.deleteUI(WINDOW)
+    if cmds.windowPref(WINDOW, exists=True):
+        cmds.windowPref(WINDOW, remove=True)
+    cmds.window(WINDOW, title="Parametric Walk", sizeable=True, widthHeight=(440, 660))
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=3, columnAttach=("both", 8))
+    cmds.text(label=INTRO, align="left", wordWrap=True, height=52)
+    cmds.button(label="Analyse selection", height=30, command=press_analyse)
+    for heading, names in GROUPS:
+        cmds.text(label=heading, font="boldLabelFont", align="left", height=22)
+        for name in names:
+            label, tip = LABELS[name]
+            if name == "tempo":
+                cmds.intSliderGrp(_control(name), label=label, field=True, minValue=4, maxValue=120,
+                                  fieldMinValue=4, fieldMaxValue=400, value=31, columnWidth3=(100, 50, 250),
+                                  annotation=tip, changeCommand=slider_changed)
+            else:
+                low, high = wm.RANGES[name]
+                cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=low, maxValue=high,
+                                    fieldMinValue=low, fieldMaxValue=high, value=wm.DEFAULTS[name], step=0.05,
+                                    precision=2, columnWidth3=(100, 50, 250), annotation=tip,
+                                    changeCommand=slider_changed)
+    cmds.floatFieldGrp(OFFSET, label="Offset (cm)", value1=DEFAULT_OFFSET, columnWidth2=(100, 60),
+                       annotation="how far to the character's left the copy stands (0: on the source)",
+                       changeCommand=slider_changed)
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach3=("both", "both", "both"))
+    cmds.button(label="Update copy", height=30, command=press_update)
+    cmds.button(label="Reset", height=30, command=press_reset)
+    cmds.button(label="Delete copy", height=30, command=press_delete)
+    cmds.setParent("..")
+    cmds.text(STATUS, label="Select a bone of a walk cycle and press Analyse.", align="left", wordWrap=True,
+              height=96)
+    cmds.showWindow(WINDOW)
+
+
+def onMayaDroppedPythonFile(*args):
+    """Maya's viewport drop imports this file once and keeps it (trap 220): reload it - which reloads the
+    model too - so a changed file runs."""
+    import importlib
+    importlib.reload(sys.modules[__name__]).show()
+
+
+if __name__ == "__main__":
+    show()
