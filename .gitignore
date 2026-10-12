@@ -9,3 +9,6 @@ __pycache__/
 # textures the FBX already embeds.
 sources/AdvancedSkeleton/
 *.fbm/
+
+# the parametric walk: the animator's saved walks (their data, public repo)
+docs/superpowers/plans/walkparam/walks/
