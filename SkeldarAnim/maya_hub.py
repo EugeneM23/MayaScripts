@@ -141,6 +141,10 @@ SECTIONS = (
     Section("poses", "Pose Library", "maya_poselib.window",
             "build_panel", "skeldarHubFramePoses",
             "animation", "books"),
+    #  2026-10-12: OverRig's Knots and Double knot, native - the Tools card.
+    Section("tools", "Tools", "maya_tools.panel",
+            "build_panel", "skeldarHubFrameTools",
+            "animation", "tool"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

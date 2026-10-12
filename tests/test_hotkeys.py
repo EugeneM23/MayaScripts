@@ -478,7 +478,21 @@ class OurRows(unittest.TestCase):
         #  + window.inventory (2026-09-29), + graph.overlay (2026-09-30),
         #  + window.shared (2026-09-30), + window.com (2026-10-01), + window.armor (2026-10-01)
         #  + window.poses (2026-10-02), + window.stash (2026-10-09)
-        self.assertEqual(len(ours), 38)
+        #  + window.tools and the seven tools.* rows (2026-10-12)
+        self.assertEqual(len(ours), 46)
+
+    def test_the_tools_rows(self):
+        """The Tools card (2026-10-12): every button a row, pressing the card's own press -
+        which runs with the card closed and then reports in the viewport."""
+        self.assertEqual(sorted(self._keys("tools.")),
+                         ["tools.bake", "tools.double_local", "tools.double_world",
+                          "tools.knot", "tools.knot_offset", "tools.knot_orient",
+                          "tools.remove"])
+        for key in self._keys("tools."):
+            found = maya_hotkeys.row(key)
+            self.assertEqual(found[1], "SkeldarAnim.Tools")
+            self.assertIs(found[4].func, maya_hotkeys._tools)
+        self.assertEqual(maya_hotkeys.row("tools.knot_offset")[4].args, ("knot_offset",))
 
     def test_the_pose_library_row(self):
         """The Pose Library's window (2026-10-02): an opener like the hub's sections."""
@@ -507,7 +521,8 @@ class OurRows(unittest.TestCase):
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
                           "window.poses", "window.scenesetup", "window.shared",
-                          "window.stash", "window.uebridge", "window.weapons"])
+                          "window.stash", "window.tools", "window.uebridge",
+                          "window.weapons"])
 
     def test_the_picker_rows(self):
         self.assertEqual(sorted(self._keys("picker.")),
@@ -639,8 +654,9 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 14)
+        self.assertEqual(len(names), 15)                 # + maya_tools.panel (2026-10-12)
         self.assertIn("maya_hub", names)
+        self.assertIn("maya_tools.panel", names)
         self.assertIn("maya_stash", names)
         self.assertIn("maya_poselib.window", names)
         self.assertIn("maya_scenesetup.armorpanel", names)

@@ -88,11 +88,12 @@ class TheTable(unittest.TestCase):
         first card - the Scene group above Animation («Characters самой
         первой, Scene выше») - and was named Animation Setup («Раздел
         Character Заменим на Animationsetup»), its key still "characters".
-        The Pose Library joined Animation on 2026-10-02, after the Center of Mass."""
+        The Pose Library joined Animation on 2026-10-02, after the Center of Mass,
+        and Tools (OverRig's knots, native) on 2026-10-12, after the Pose Library."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Stash", "Retarget", "Graph Overlay",
-                          "Center of Mass", "Pose Library",
+                          "Center of Mass", "Pose Library", "Tools",
                           "Studio", "Colour", "Hotkeys", "Update"])
 
     def test_the_pose_library_card(self):
@@ -130,7 +131,7 @@ class TheTable(unittest.TestCase):
             ("stash", "scene"),
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
-            ("poses", "animation"), ("studio", "look"),
+            ("poses", "animation"), ("tools", "animation"), ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
             ("update", "settings")])
         for sec in hub.SECTIONS:
@@ -150,7 +151,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
                           "stash", "retarget", "graphoverlay", "com", "poses",
-                          "studio", "colour", "update"])
+                          "tools", "studio", "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -163,6 +164,7 @@ class TheTable(unittest.TestCase):
             "graphoverlay": ("maya_graphoverlay.mode", "build_panel"),
             "com": ("maya_com.panel", "build_panel"),
             "poses": ("maya_poselib.window", "build_panel"),
+            "tools": ("maya_tools.panel", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
             "colour": ("maya_colour", "build_panel"),
@@ -690,8 +692,8 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("card", "characters"), ("card", "weapons"),
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
             ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
-            ("card", "poses"), ("card", "studio"), ("card", "colour"),
-            ("card", "update")])
+            ("card", "poses"), ("card", "tools"), ("card", "studio"),
+            ("card", "colour"), ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])
 

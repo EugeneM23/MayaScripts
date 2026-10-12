@@ -189,6 +189,20 @@ def _connections(func):
     return getattr(module, func)()
 
 
+def _tools_module():
+    from maya_tools import panel
+    return panel
+
+
+def _tools(func):
+    """Press a Tools card button (2026-10-12). Its presses read the card's remembered rotate
+    order and need no panel, so they run with the card closed - and then say their line in the
+    viewport, where a keypress can be seen."""
+    module = _tools_module()
+    message = getattr(module, func)()
+    return message if module.is_open() else _report(message)
+
+
 def _retarget_module():
     """Lazy: the Retarget shelf button's module."""
     import maya_rig_retarget
@@ -832,6 +846,30 @@ _OURS = (
      partial(_show, "maya_com.panel", "show_window")),
     ("window.poses", "Windows", "Pose Library", "Open the Pose Library",
      partial(_show, "maya_poselib.window", "show_window")),
+    ("window.tools", "Windows", "Tools",
+     "Open the Tools section: knots and double knots",
+     partial(_show, "maya_tools.panel", "show_window")),
+    ("tools.knot", "Tools", "Knot",
+     "The selected objects' animation onto knots they follow",
+     partial(_tools, "knot")),
+    ("tools.knot_offset", "Tools", "Knot Offset",
+     "A pivot to place on the selected object; press again to put the knot there",
+     partial(_tools, "knot_offset")),
+    ("tools.knot_orient", "Tools", "Knot Orient",
+     "Knots that ride the selected objects and carry only their rotation",
+     partial(_tools, "knot_orient")),
+    ("tools.double_local", "Tools", "Double knot Local",
+     "Two knots: the outer carries the animation, the inner drives in the object's own axes",
+     partial(_tools, "double_local")),
+    ("tools.double_world", "Tools", "Double knot World",
+     "Two knots: the outer keeps world axes - turn it to bend the animation in world axes",
+     partial(_tools, "double_world")),
+    ("tools.bake", "Tools", "Bake knots",
+     "The selected knots' objects take what the knots give them; the knots go",
+     partial(_tools, "bake")),
+    ("tools.remove", "Tools", "Remove knots",
+     "The selected knots go; their objects play their own animation again",
+     partial(_tools, "remove")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",
