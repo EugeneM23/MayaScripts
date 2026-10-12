@@ -1,4 +1,5 @@
-"""verify_physstop.py - the physical stop in mayapy standalone (never the animator's scene).
+"""verify_physstop.py - Tail Builder (SkeldarAnim/maya_tailbuilder.py) in mayapy standalone (never the
+animator's scene).
 
 & 'C:/Program Files/Autodesk/Maya2027/bin/mayapy.exe' docs/superpowers/plans/physstop/verify_physstop.py
 
@@ -28,8 +29,8 @@ maya.standalone.initialize()
 import maya.cmds as cmds
 import maya.api.OpenMaya as om
 
-tests = load("physstop_tests", os.path.join(REPO, "tests", "test_physstop.py"))
-ps = load("skeldar_physstop", os.path.join(HERE, "skeldar_physstop.py"))
+tests = load("tailbuilder_tests", os.path.join(REPO, "tests", "test_tailbuilder.py"))
+ps = tests.ps                                   # SkeldarAnim/maya_tailbuilder.py
 with open(os.path.join(HERE, "cube_reference.json")) as f:
     REF = json.load(f)
 FAILED = []

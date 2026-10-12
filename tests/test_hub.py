@@ -89,11 +89,12 @@ class TheTable(unittest.TestCase):
         первой, Scene выше») - and was named Animation Setup («Раздел
         Character Заменим на Animationsetup»), its key still "characters".
         The Pose Library joined Animation on 2026-10-02, after the Center of Mass,
-        and Tools (OverRig's knots, native) on 2026-10-12, after the Pose Library."""
+        and Tools (OverRig's knots, native) on 2026-10-12, after the Pose Library;
+        Tail Builder (the physical stop) the same day, after Tools."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Stash", "Retarget", "Graph Overlay",
-                          "Center of Mass", "Pose Library", "Tools",
+                          "Center of Mass", "Pose Library", "Tools", "Tail Builder",
                           "Studio", "Colour", "Hotkeys", "Update"])
 
     def test_the_pose_library_card(self):
@@ -131,7 +132,8 @@ class TheTable(unittest.TestCase):
             ("stash", "scene"),
             ("retarget", "animation"),
             ("graphoverlay", "animation"), ("com", "animation"),
-            ("poses", "animation"), ("tools", "animation"), ("studio", "look"),
+            ("poses", "animation"), ("tools", "animation"),
+            ("tailbuilder", "animation"), ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
             ("update", "settings")])
         for sec in hub.SECTIONS:
@@ -151,7 +153,7 @@ class TheTable(unittest.TestCase):
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
                           "stash", "retarget", "graphoverlay", "com", "poses",
-                          "tools", "studio", "colour", "update"])
+                          "tools", "tailbuilder", "studio", "colour", "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -165,6 +167,7 @@ class TheTable(unittest.TestCase):
             "com": ("maya_com.panel", "build_panel"),
             "poses": ("maya_poselib.window", "build_panel"),
             "tools": ("maya_tools.panel", "build_panel"),
+            "tailbuilder": ("maya_tailbuilder", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
             "colour": ("maya_colour", "build_panel"),
@@ -692,7 +695,8 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("card", "characters"), ("card", "weapons"),
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
             ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
-            ("card", "poses"), ("card", "tools"), ("card", "studio"),
+            ("card", "poses"), ("card", "tools"), ("card", "tailbuilder"),
+            ("card", "studio"),
             ("card", "colour"), ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])

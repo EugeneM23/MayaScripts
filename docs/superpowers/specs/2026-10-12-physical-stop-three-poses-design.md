@@ -107,3 +107,26 @@ The animator, after trying it: «Давай избавимся от указан
 - **Proof**: 53 unit tests, including M raised, lowered and aside coming in from above, below and the
   side. `verify_physstop.py` **31/31 standalone**: M raised 6 cm gives +0.97 cm above B at 9, on B's
   height at 10 and -0.47 at 11; lowered gives the mirror; level stays on the floor every frame.
+
+## Addendum 3 - in the plugin: the Tail Builder card
+
+The animator, the same evening: «Давай добавим в наш плагин вкладку с этим инструментом ... Tail Builder».
+
+- **The module**: the script moved whole into `SkeldarAnim/maya_tailbuilder.py`. Its window became the hub
+  card's `build_panel`, and the drop-in file is gone, so there is one copy of the model.
+- **The hub**: section `tailbuilder`, label «Tail Builder», in Animation after Tools, icon `wave-sine`.
+  It ships as a payload row.
+- **The card** follows the Tools card's shape:
+  - a subtitle that reads the selection («cube: A at 0, M at 5, B at 10», «a tail 0-28, M at 5, B at 10»,
+    or the refusal);
+  - the three sliders;
+  - Apply (primary, the old intro as its tooltip), Restore keys, Reset;
+  - a status line that also tells the hub's line;
+  - a SelectionChanged job per card, popup copies included.
+- **Hotkey rows**: `window.tailbuilder`, `tailbuilder.apply`, `tailbuilder.restore`. The presses read the
+  remembered values when the card is closed.
+- **Kept names**: the scene marker `skeldarPhysStop` and the optionVars `skeldarPhysStop_*`, so tails
+  already built and values already set carry over.
+- **Proof**: `tests/test_tailbuilder.py` (61, the card on a fake cmds) and the whole suite (5978 tests);
+  `verify_physstop.py` 31/31 standalone on the plugin module. The card in a live Maya is the animator's to
+  see.

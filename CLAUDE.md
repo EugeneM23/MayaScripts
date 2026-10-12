@@ -8607,15 +8607,37 @@ sub-frame keys, the IK spine, bone translations below the pelvis.
      only the ground turned a twin's whole body by the difference (180° at frame 12, measured). Whatever
      a frame's heading is replaced by, it must be replaced by on both sides of the transfer.
 
-## Physical stop: a pose-to-pose transition that stops like an object (2026-10-10)
+## Physical stop: a pose-to-pose transition that stops like an object (2026-10-10) - the Tail Builder card
 
 The animator, with a cube animated by hand in their open scene: «нужно изучить анимацию кубика и сделать
 математическую модель построения подобных анимаций ... скрипт берет два последних ключа ... амплетудность,
 сила захлеста (отставания) верхней части от нижней, вес ... время овершута ... имитирует физичную остановку
 объектов». **A script SEPARATE from the plugin first** («после того как все настроим вмонтируем его в сам
 плагин»): `docs/superpowers/plans/physstop/skeldar_physstop.py`, one file, dropped into a viewport (or exec'd)
-it opens the window. Nothing in `SkeldarAnim/` changed. Spec
-`docs/superpowers/specs/2026-10-10-physical-stop-design.md` (read its addendum), plan beside the folder.
+it opened its window. Spec `docs/superpowers/specs/2026-10-10-physical-stop-design.md` (read its addendum),
+plan beside the folder.
+
+**In the plugin since 2026-10-12: the hub card Tail Builder** («Давай добавим в наш плагин вкладку с этим
+инструментом ... Tail Builder»). The script moved whole (`git mv`) into **`SkeldarAnim/maya_tailbuilder.py`**
+and the drop-in file is gone. Its four layers stay: the model (stdlib), the geometry, the scene, and the
+card (`build_panel`) where the window was.
+- **The hub**: section `tailbuilder` («Tail Builder»), Animation, after Tools, Tabler icon `wave-sine`. It
+  is a payload row.
+- **The card**:
+  - the subtitle follows the selection: «cube: A at 0, M at 5, B at 10», «a tail 0-28, M at 5, B at 10»,
+    or the refusal;
+  - the three sliders;
+  - **Apply** (primary; its tooltip is the old intro), **Restore keys**, **Reset**;
+  - the three-line status, also told to the hub's line;
+  - a SelectionChanged job per card, hub and popup copies alike (the Tools card's pattern).
+- **The presses are module functions**. With the card closed they read the remembered values, so the
+  hotkey rows work: `window.tailbuilder`, `tailbuilder.apply`, `tailbuilder.restore`
+  (`maya_hotkeys._tailbuilder`).
+- **The scene marker `skeldarPhysStop` and the optionVars `skeldarPhysStop_*` keep their names**: tails
+  already in scenes and the values set in the standalone window carry over.
+- The dev tools stay in `docs/superpowers/plans/physstop/` and load the plugin module:
+  `verify_physstop.py` (31/31), `calibrate_physstop.py` and `cube_reference.json`. The tests are
+  `tests/test_tailbuilder.py`, 61 of them, with the card on a fake cmds.
 
 **What the cube is** (read over the port, nothing written; `physstop/cube_reference.json`): its BOTTOM was
 keyed at extremes with flat tangents (a smoothstep over 10 frames to 0.85 cm past the target, -0.95, +0.32,
@@ -8698,7 +8720,7 @@ Not built:
 - a chain, sparse keys, more than three poses;
 - a constrained/IK parent (read it per frame with `getAttr(time=)`, trap 69);
 - scale between the poses, angular speed as a drive;
-- the plugin and the hub (and `maya_overshoot.py`'s future).
+- what becomes of `maya_overshoot.py` (off the shelf since 2026-09-08) beside Tail Builder.
 
 219. **`cmds.xform(node, q=True, boundingBox=True, objectSpace=True)` answers the box in the PARENT's space**
      (the node's own transform applied): a 1-unit cube scaled 4 x 11 x 3 and turned read -3.98..5.98. The

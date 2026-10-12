@@ -1,4 +1,7 @@
-"""Physical stop - three poses, and the object stops like a physical one.
+"""Tail Builder - the hub card that builds a physical stop through three poses (2026-10-12).
+
+The animator: «Давай добавим в наш плагин вкладку с этим инструментом ... Tail Builder» - the physical
+stop, a standalone script until now (docs/superpowers/plans/physstop/, 2026-10-10), moves into the plugin.
 
 Select objects whose LAST THREE KEYS are the pose they leave (A), a breakdown (M) and the pose they come to
 (B), and press Apply. The bottom of the object travels an arc through all three - M sets how it comes in,
@@ -7,12 +10,14 @@ overshoots along the arc and settles into B; its top lags behind as far, and in 
 breakdown shows. A model fitted to the animator's cube: docs/superpowers/specs/2026-10-10-physical-stop-
 design.md and 2026-10-12-physical-stop-three-poses-design.md.
 
-Drop this file into a Maya viewport to open the window, or exec it in the Script Editor.
+Four layers: the model (stdlib), the geometry (OpenMaya math), the scene (cmds), the hub card (cmds and the
+hub's style). maya.cmds and OpenMaya are imported inside functions, so the model is testable anywhere.
 """
 
 import bisect
 import json
 import math
+import traceback
 
 # ---------------------------------------------------------------------------------------------------------
 # 1. The model (stdlib)
@@ -785,11 +790,17 @@ def selected():
 
 
 # ---------------------------------------------------------------------------------------------------------
-# 4. The window (maya.cmds)
+# 4. The hub card (maya.cmds) - Tail Builder
 # ---------------------------------------------------------------------------------------------------------
 
-WINDOW = "skeldarPhysStopWindow"
-STATUS = "skeldarPhysStopStatus"
+HUB_SECTION = "tailbuilder"
+SUBTITLE = "skeldarTailBuilderSubtitle"
+STATUS = "skeldarTailBuilderStatus"
+APPLY_BTN = "skeldarTailBuilderApply"
+RESTORE_BTN = "skeldarTailBuilderRestore"
+RESET_BTN = "skeldarTailBuilderReset"
+#  The sliders' memory keeps the prototype's names (2026-10-10): the values the animator set there come
+#  back in the card.
 OPTION = "skeldarPhysStop_"
 LABELS = {
     "overshoot": ("Overshoot, %", 0.1,
@@ -802,6 +813,14 @@ LABELS = {
 INTRO = ("Select objects whose last three keys are the poses to go from (A), through (M) and to (B), "
          "then Apply. The path arcs through M: raise, lower or move M aside to bring the object in from "
          "above, below or the side; tilt it at M to set how far its top lags.")
+TIPS = {
+    "restore": "Back to the three keys the tail was built from (A, M, B as they are now)",
+    "reset": "The three controls back to the cube's values; a selected tail is built again with them",
+}
+NOTHING = "Select objects with three keys: from, breakdown, to"
+#  The refresh job of each card standing: '' the hub's, a popup copy's tag its own (the 2026-10-09 rule:
+#  closing a popup kills only its own job).
+JOB = {}
 
 
 def _control(name):
@@ -814,85 +833,174 @@ def _stored(name, default):
     return cmds.optionVar(q=key) if cmds.optionVar(exists=key) else default
 
 
-def _given():
+def values():
+    """The three controls: the card's sliders where the card stands (and remembered), else what was
+    remembered - so a hotkey row presses with the card closed."""
     cmds = _cmds()
-    return {name: cmds.floatSliderGrp(_control(name), query=True, value=True) for name, _ in DEFAULTS}
+    out = {}
+    for name, default in DEFAULTS:
+        if cmds.floatSliderGrp(_control(name), exists=True):
+            out[name] = float(cmds.floatSliderGrp(_control(name), query=True, value=True))
+            cmds.optionVar(floatValue=(OPTION + name, out[name]))
+        else:
+            out[name] = float(_stored(name, default))
+    return params(**out)
 
 
-def _remember():
+def selection_line(nodes):
+    """The card's subtitle: what Apply would take."""
+    if not nodes:
+        return NOTHING
+    if len(nodes) > 1:
+        return "%d objects selected" % len(nodes)
+    node = nodes[0]
+    try:
+        t_a, t_m, t_b, b_time = source(node)
+    except Refusal as refusal:
+        return str(refusal)
+    except Exception:                                        # noqa: BLE001
+        return _short(node)
+    if b_time != t_b:
+        return "%s: a tail %g-%g, M at %g, B at %g" % (_short(node), t_a, b_time, t_m, t_b)
+    return "%s: A at %g, M at %g, B at %g" % (_short(node), t_a, t_m, t_b)
+
+
+def status(lines):
+    """The card's line - and the hub's one message line. Answers the text, so a hotkey row can show it
+    when the card is closed."""
+    import maya_hubstyle as hubstyle
     cmds = _cmds()
-    for name, value in _given().items():
-        cmds.optionVar(floatValue=(OPTION + name, value))
+    message = "\n".join(lines) if isinstance(lines, (list, tuple)) else lines
+    if cmds.text(STATUS, exists=True):
+        cmds.text(STATUS, edit=True, label=message)
+        hubstyle.tell(STATUS, message)
+    return message
 
 
-def _say(lines):
-    _cmds().text(STATUS, edit=True, label="\n".join(lines))
+def refresh(*_):
+    """The subtitle, from the selection."""
+    cmds = _cmds()
+    if not cmds.text(SUBTITLE, exists=True):
+        return
+    try:
+        line = selection_line(selected())
+    except Exception:                                        # noqa: BLE001
+        return
+    cmds.text(SUBTITLE, edit=True, label=line)
+
+
+def _press(action):
+    try:
+        lines = action()
+    except Exception as exc:                                 # noqa: BLE001
+        print(traceback.format_exc())
+        lines = ["Tail Builder failed: %s" % exc]
+    refresh()
+    return status(lines)
 
 
 def press_apply(*_):
-    _remember()
-    nodes = selected()
-    if not nodes:
-        _say(["Select objects with three keys: from, breakdown, to."])
-        return
-    _say(apply(nodes, _given()))
+    """Apply: the tail on every selected object."""
+    def run():
+        nodes = selected()
+        return apply(nodes, values()) if nodes else [NOTHING]
+    return _press(run)
 
 
 def slider_changed(*_):
-    """A released slider re-runs what already carries a transition; anything else waits for Apply."""
-    _remember()
-    nodes = selected()
-    if nodes and all(remembered(n) for n in nodes):
-        _say(apply(nodes, _given()))
-    elif nodes:
-        _say(["Press Apply to build the transition."])
+    """A released slider re-runs what already carries a tail; anything else waits for Apply."""
+    def run():
+        given = values()
+        nodes = selected()
+        if nodes and all(remembered(n) for n in nodes):
+            return apply(nodes, given)
+        return ["Press Apply to build the tail."] if nodes else [NOTHING]
+    return _press(run)
 
 
 def press_restore(*_):
-    nodes = selected()
-    _say(restore(nodes) if nodes else ["Select the objects to put back on their three keys."])
+    def run():
+        nodes = selected()
+        return restore(nodes) if nodes else ["Select the objects to put back on their three keys."]
+    return _press(run)
 
 
 def press_reset(*_):
     cmds = _cmds()
     for name, default in DEFAULTS:
-        cmds.floatSliderGrp(_control(name), edit=True, value=default)
-    slider_changed()
+        if cmds.floatSliderGrp(_control(name), exists=True):
+            cmds.floatSliderGrp(_control(name), edit=True, value=default)
+        cmds.optionVar(floatValue=(OPTION + name, default))
+    return slider_changed()
 
 
-def show():
-    """The window: three sliders, Apply / Restore keys / Reset, a status line."""
+def _button(name, label, role, icon, tip, press):
+    import maya_hubstyle as hubstyle
+    return hubstyle.mark(_cmds().button(name, label=label, annotation=tip,
+                                        height=hubstyle.height("button", 28),
+                                        command=lambda *_: press()), role, icon)
+
+
+def build_panel():
+    """The card into the current layout: what the selection holds, the three controls, Apply / Restore
+    keys / Reset, the status line."""
+    import maya_hubstyle as hubstyle
     cmds = _cmds()
-    if cmds.window(WINDOW, exists=True):
-        cmds.deleteUI(WINDOW)
-    if cmds.windowPref(WINDOW, exists=True):
-        cmds.windowPref(WINDOW, remove=True)
-    cmds.window(WINDOW, title="Physical Stop", sizeable=True, widthHeight=(430, 320))
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=4, columnAttach=("both", 8))
-    cmds.text(label=INTRO, align="left", wordWrap=True, height=68)
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+    hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
     defaults = dict(DEFAULTS)
     for name, _ in DEFAULTS:
         low, high = RANGES[name]
         label, step, tip = LABELS[name]
         cmds.floatSliderGrp(_control(name), label=label, field=True, minValue=low, maxValue=high,
                             fieldMinValue=low, fieldMaxValue=high, step=step, precision=2,
-                            value=_stored(name, defaults[name]), columnWidth3=(110, 60, 210),
-                            annotation=tip, changeCommand=slider_changed)
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1, columnAttach3=("both", "both", "both"))
-    cmds.button(label="Apply", height=30, command=press_apply)
-    cmds.button(label="Restore keys", height=30, command=press_restore)
-    cmds.button(label="Reset", height=30, command=press_reset)
+                            value=float(_stored(name, defaults[name])),
+                            columnWidth3=hubstyle.pick((100, 46, 110), (100, 50, 150)), adjustableColumn=3,
+                            height=hubstyle.height("small", 22), annotation=tip,
+                            changeCommand=slider_changed)
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1,
+                   columnAttach=[(1, "both", 0), (2, "both", 4), (3, "both", 4)])
+    _button(APPLY_BTN, "Apply", "primary", "wave-sine", INTRO, press_apply)
+    _button(RESTORE_BTN, "Restore keys", "secondary", "arrow-back-up", TIPS["restore"], press_restore)
+    _button(RESET_BTN, "Reset", "secondary", "refresh", TIPS["reset"], press_reset)
     cmds.setParent("..")
-    cmds.text(STATUS, label="", align="left", wordWrap=True, height=96)
-    cmds.showWindow(WINDOW)
+    hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=54), "status")
+    cmds.setParent("..")
+    start()
+    refresh()
+    return column
 
 
-def onMayaDroppedPythonFile(*args):
-    """Maya's viewport drop imports this file once and keeps it: reload it, so a changed file runs."""
-    import importlib
-    import sys
-    importlib.reload(sys.modules[__name__]).show()
+def _card_key():
+    import maya_hubcopy as hubcopy
+    scope = hubcopy.current()
+    return "" if scope is None else scope.tag
 
 
-if __name__ == "__main__":
-    show()
+def start():
+    """This card's own refresh on every selection change (per card: a popup copy's job dies with the
+    copy and leaves the hub's)."""
+    import maya_hubcopy as hubcopy
+    cmds = _cmds()
+    standing = set(scope.tag for scope in hubcopy.live())
+    for key in [k for k in JOB if k and k not in standing]:
+        del JOB[key]
+    old = JOB.pop(_card_key(), None)
+    if old is not None:
+        try:
+            if cmds.scriptJob(exists=old):
+                cmds.scriptJob(kill=old, force=True)
+        except Exception:                                    # noqa: BLE001
+            pass
+    JOB[_card_key()] = cmds.scriptJob(event=["SelectionChanged", refresh], parent=STATUS)
+
+
+def is_open():
+    return bool(_cmds().text(STATUS, exists=True))
+
+
+def show_window():
+    """The hub, on the Tail Builder section."""
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)

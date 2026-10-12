@@ -145,6 +145,10 @@ SECTIONS = (
     Section("tools", "Tools", "maya_tools.panel",
             "build_panel", "skeldarHubFrameTools",
             "animation", "tool"),
+    #  2026-10-12: the physical stop through three poses, out of its standalone script.
+    Section("tailbuilder", "Tail Builder", "maya_tailbuilder",
+            "build_panel", "skeldarHubFrameTailBuilder",
+            "animation", "wave-sine"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

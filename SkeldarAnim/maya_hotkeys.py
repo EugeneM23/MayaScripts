@@ -203,6 +203,19 @@ def _tools(func):
     return message if module.is_open() else _report(message)
 
 
+def _tailbuilder_module():
+    import maya_tailbuilder
+    return maya_tailbuilder
+
+
+def _tailbuilder(func):
+    """Press a Tail Builder button (2026-10-12). Its presses read the remembered controls when the
+    card is closed, and then say their line in the viewport."""
+    module = _tailbuilder_module()
+    message = getattr(module, func)()
+    return message if module.is_open() else _report(message)
+
+
 def _retarget_module():
     """Lazy: the Retarget shelf button's module."""
     import maya_rig_retarget
@@ -870,6 +883,15 @@ _OURS = (
     ("tools.remove", "Tools", "Remove knots",
      "The selected knots go; their objects play their own animation again",
      partial(_tools, "remove")),
+    ("window.tailbuilder", "Windows", "Tail Builder",
+     "Open the Tail Builder section: a physical stop through three poses",
+     partial(_show, "maya_tailbuilder", "show_window")),
+    ("tailbuilder.apply", "Tail Builder", "Apply Tail Builder",
+     "The selected objects' last three keys (from, breakdown, to) become a physical stop",
+     partial(_tailbuilder, "press_apply")),
+    ("tailbuilder.restore", "Tail Builder", "Restore keys",
+     "The selected objects back on the three keys their tail was built from",
+     partial(_tailbuilder, "press_restore")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",

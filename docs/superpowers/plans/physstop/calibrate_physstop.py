@@ -3,7 +3,7 @@
 & 'C:/Program Files/Autodesk/Maya2027/bin/mayapy.exe' docs/superpowers/plans/physstop/calibrate_physstop.py
 
 Prints the damping and the default overshoot / swing, and the fit per component. The cube is
-cube_reference.json (its world matrix on every frame 0..30); tests/test_physstop.py decomposes it the way
+cube_reference.json (its world matrix on every frame 0..30); tests/test_tailbuilder.py decomposes it the way
 the model describes motion (cube_components) and runs the three-key model on its frames 0 / 5 / the frame it
 passes B (cube_model). The bottom's height and side come from the arc through those three places, so no
 constant moves them: they are reported, not fitted.
@@ -26,7 +26,7 @@ def load(name, path):
     return module
 
 
-tests = load("physstop_tests_fit", os.path.join(REPO, "tests", "test_physstop.py"))
+tests = load("tailbuilder_tests_fit", os.path.join(REPO, "tests", "test_tailbuilder.py"))
 ps = tests.ps
 with open(os.path.join(HERE, "cube_reference.json")) as f:
     cube = tests.cube_components(json.load(f))

@@ -1,24 +1,19 @@
-"""The physical stop: the model, the geometry and the cube it was fitted to."""
+"""Tail Builder (maya_tailbuilder): the physical stop's model, its geometry, the cube it was fitted to, and
+the hub card."""
 
-import importlib.util
 import json
 import math
 import os
+import sys
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+PLUGIN = os.path.join(os.path.dirname(HERE), "SkeldarAnim")
 FOLDER = os.path.join(os.path.dirname(HERE), "docs", "superpowers", "plans", "physstop")
-SCRIPT = os.path.join(FOLDER, "skeldar_physstop.py")
+if PLUGIN not in sys.path:                       # calibrate_physstop.py loads this file by path
+    sys.path.insert(0, PLUGIN)
 
-
-def load():
-    spec = importlib.util.spec_from_file_location("skeldar_physstop_under_test", SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-ps = load()
+import maya_tailbuilder as ps                    # noqa: E402
 
 
 def close(a, b, tol=1e-9):
@@ -449,25 +444,17 @@ class CubeTests(unittest.TestCase):
 
 
 class FakeCmds(object):
-    """Just enough of maya.cmds for the window: records controls, answers queries."""
+    """Just enough of maya.cmds for the hub card: records controls, answers queries."""
 
     def __init__(self):
         self.values = {}
         self.vars = {}
         self.created = []
+        self.texts = set()
+        self.sliders = set()
+        self.jobs = {}
+        self.killed = []
         self.selection = []
-
-    def window(self, name, exists=False, **kw):
-        if exists:
-            return False
-        self.created.append(("window", name))
-        return name
-
-    def windowPref(self, name, exists=False, remove=False):
-        return False
-
-    def deleteUI(self, name):
-        pass
 
     def columnLayout(self, *a, **kw):
         return "col"
@@ -478,38 +465,31 @@ class FakeCmds(object):
     def setParent(self, *a):
         pass
 
-    def showWindow(self, name):
-        self.created.append(("show", name))
-
-    def text(self, name=None, edit=False, label=None, **kw):
+    def text(self, name=None, edit=False, label=None, exists=False, **kw):
+        if exists:
+            return name in self.texts
         if edit:
             self.values[name] = label
-        elif name is None and kw.get("font") == "boldLabelFont":
-            self.created.append(("heading", label))
+            return name
+        self.texts.add(name)
+        self.values[name] = label
+        self.created.append(("text", name, label))
         return name
 
-    def button(self, *a, **kw):
-        self.created.append(("button", kw.get("label")))
+    def button(self, name, label=None, command=None, **kw):
+        self.created.append(("button", name, label, command, kw.get("annotation")))
+        return name
 
-    def floatSliderGrp(self, name, query=False, value=None, edit=False, **kw):
+    def floatSliderGrp(self, name, query=False, value=None, edit=False, exists=False, **kw):
+        if exists:
+            return name in self.sliders
         if query:
             return self.values[name]
         self.values[name] = value
         if not edit:
-            self.created.append(("slider", name, kw.get("label")))
+            self.sliders.add(name)
+            self.created.append(("slider", name, kw.get("label"), kw.get("changeCommand")))
         return name
-
-    def optionMenu(self, name, query=False, value=None, edit=False, **kw):
-        if query:
-            return self.values.get(name, "Auto")
-        if value is not None:
-            self.values[name] = value
-        if not edit:
-            self.created.append(("menu", name, kw.get("label")))
-        return name
-
-    def menuItem(self, **kw):
-        pass
 
     def optionVar(self, exists=None, q=None, floatValue=None, stringValue=None):
         if exists is not None:
@@ -519,13 +499,29 @@ class FakeCmds(object):
         name, value = floatValue or stringValue
         self.vars[name] = value
 
+    def scriptJob(self, event=None, parent=None, exists=None, kill=None, force=False):
+        if exists is not None:
+            return exists in self.jobs
+        if kill is not None:
+            self.killed.append(kill)
+            self.jobs.pop(kill, None)
+            return None
+        number = len(self.jobs) + len(self.killed) + 1
+        self.jobs[number] = (event, parent)
+        return number
 
-class WindowTests(unittest.TestCase):
+
+class CardTests(unittest.TestCase):
+    """The hub's Tail Builder card on a fake cmds: the controls, the presses, the subtitle."""
 
     def setUp(self):
+        import maya_hubstyle
+        self.hubstyle = maya_hubstyle
+        maya_hubstyle.take_marks()
         self.fake = FakeCmds()
-        self.saved = (ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore)
+        self.saved = (ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore, ps.source, dict(ps.JOB))
         self.calls = []
+        ps.JOB.clear()
         ps._cmds = lambda: self.fake
         ps.apply = lambda nodes, given=None: self.calls.append((nodes, given)) or ["done"]
         ps.restore = lambda nodes: self.calls.append(("restore", nodes)) or ["restored"]
@@ -533,45 +529,70 @@ class WindowTests(unittest.TestCase):
         ps.remembered = lambda node: {"tE": 1} if node.endswith("applied") else None
 
     def tearDown(self):
-        ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore = self.saved
+        (ps._cmds, ps.apply, ps.selected, ps.remembered, ps.restore, ps.source, job) = self.saved
+        ps.JOB.clear()
+        ps.JOB.update(job)
+        self.hubstyle.take_marks()
 
-    def test_three_sliders_and_nothing_else(self):
-        ps.show()
-        made = [c for c in self.fake.created if c[0] in ("heading", "slider", "menu")]
-        self.assertEqual([c[0] for c in made], ["slider", "slider", "slider"])
-        self.assertEqual([c[2] for c in made], ["Overshoot, %", "Swing length, fr", "Weight"])
+    def made(self, kind):
+        return [c for c in self.fake.created if c[0] == kind]
+
+    def test_the_card(self):
+        ps.build_panel()
+        self.assertEqual([c[2] for c in self.made("slider")], ["Overshoot, %", "Swing length, fr", "Weight"])
         for name, default in ps.DEFAULTS:
             self.assertEqual(self.fake.values[ps._control(name)], default)
-        self.assertEqual([c[1] for c in self.fake.created if c[0] == "button"], ["Apply", "Restore keys", "Reset"])
+        self.assertEqual([(c[1], c[2]) for c in self.made("button")],
+                         [(ps.APPLY_BTN, "Apply"), (ps.RESTORE_BTN, "Restore keys"), (ps.RESET_BTN, "Reset")])
+        marks = dict((m.name, (m.role, m.icon)) for m in self.hubstyle.take_marks())
+        self.assertEqual(marks[ps.APPLY_BTN], ("primary", "wave-sine"))
+        self.assertEqual(marks[ps.RESTORE_BTN], ("secondary", "arrow-back-up"))
+        self.assertEqual(marks[ps.RESET_BTN], ("secondary", "refresh"))
+        self.assertEqual(marks[ps.SUBTITLE][0], "subtitle")
+        self.assertEqual(marks[ps.STATUS][0], "status")
+        self.assertIn("above, below or the side", self.made("button")[0][4])     # Apply's tooltip says how
+        self.assertTrue(ps.is_open())
 
     def test_no_overlap_sway_or_axis(self):
-        ps.show()
-        for name in ("overlap", "sway"):
+        ps.build_panel()
+        for name in ("overlap", "sway", "axis"):
             self.assertNotIn(ps._control(name), self.fake.values)
             self.assertNotIn(name, ps.params())
         self.assertFalse(hasattr(ps, "AXIS_MENU"))
-        self.assertIn("above, below or the side", ps.INTRO)
+        self.assertFalse(hasattr(ps, "onMayaDroppedPythonFile"))
+
+    def test_the_scene_and_the_memory_keep_the_prototype_s_names(self):
+        # transitions already in the animator's scenes, and the values set in the standalone window
+        self.assertEqual(ps.MARKER, "skeldarPhysStop")
+        self.assertEqual(ps.OPTION, "skeldarPhysStop_")
 
     def test_remembered_values_come_back(self):
         self.fake.vars[ps.OPTION + "weight"] = 2.5
         self.fake.vars[ps.OPTION + "axis"] = "+Z"           # left by an older version: ignored
-        ps.show()
+        ps.build_panel()
         self.assertEqual(self.fake.values[ps._control("weight")], 2.5)
 
     def test_apply_reads_the_sliders_and_remembers_them(self):
-        ps.show()
+        ps.build_panel()
         self.fake.values[ps._control("overshoot")] = 7.0
         self.fake.selection = ["|cube"]
-        ps.press_apply()
+        self.assertEqual(ps.press_apply(), "done")
         nodes, given = self.calls[-1]
         self.assertEqual(nodes, ["|cube"])
         self.assertEqual(given, {"overshoot": 7.0, "swing": 5.0, "weight": 1.0})
         self.assertEqual(self.fake.vars[ps.OPTION + "overshoot"], 7.0)
-        self.assertNotIn(ps.OPTION + "axis", self.fake.vars)
         self.assertEqual(self.fake.values[ps.STATUS], "done")
 
-    def test_a_slider_re_applies_only_what_already_carries_a_transition(self):
-        ps.show()
+    def test_a_press_with_the_card_closed_reads_the_memory(self):
+        # a hotkey row: no sliders standing, the remembered values; the message comes back to say
+        self.fake.vars[ps.OPTION + "swing"] = 8.0
+        self.fake.selection = ["|cube"]
+        self.assertEqual(ps.press_apply(), "done")
+        self.assertEqual(self.calls[-1][1], {"overshoot": 3.0, "swing": 8.0, "weight": 1.0})
+        self.assertFalse(ps.is_open())
+
+    def test_a_slider_re_applies_only_what_already_carries_a_tail(self):
+        ps.build_panel()
         self.fake.selection = ["|cube"]
         ps.slider_changed()
         self.assertEqual(self.calls, [])
@@ -579,27 +600,93 @@ class WindowTests(unittest.TestCase):
         self.fake.selection = ["|cube_applied"]
         ps.slider_changed()
         self.assertEqual(self.calls[-1][0], ["|cube_applied"])
+        sliders = self.made("slider")
+        self.assertTrue(all(c[3] is ps.slider_changed for c in sliders))
 
     def test_nothing_selected_says_so(self):
-        ps.show()
+        ps.build_panel()
         ps.press_apply()
         self.assertEqual(self.calls, [])
         self.assertIn("three keys", self.fake.values[ps.STATUS])
 
+    def test_a_failing_press_says_why(self):
+        ps.build_panel()
+        self.fake.selection = ["|cube"]
+
+        def broken(nodes, given=None):
+            raise RuntimeError("boom")
+        ps.apply = broken
+        self.assertEqual(ps.press_apply(), "Tail Builder failed: boom")
+
     def test_restore_goes_to_restore(self):
-        ps.show()
+        ps.build_panel()
         self.fake.selection = ["|cube_applied"]
-        ps.press_restore()
+        self.assertEqual(ps.press_restore(), "restored")
         self.assertEqual(self.calls[-1], ("restore", ["|cube_applied"]))
 
     def test_reset_puts_the_defaults_back(self):
-        ps.show()
+        ps.build_panel()
         self.fake.values[ps._control("swing")] = 9.0
+        self.fake.vars[ps.OPTION + "swing"] = 9.0
         ps.press_reset()
         self.assertEqual(self.fake.values[ps._control("swing")], dict(ps.DEFAULTS)["swing"])
+        self.assertEqual(self.fake.vars[ps.OPTION + "swing"], dict(ps.DEFAULTS)["swing"])
 
-    def test_the_drop_handler_exists(self):
-        self.assertTrue(callable(ps.onMayaDroppedPythonFile))
+    def test_the_subtitle_says_what_apply_would_take(self):
+        answers = {"|a": (0.0, 5.0, 10.0, 10.0), "|done": (0.0, 5.0, 10.0, 28.0)}
+
+        def source(node):
+            if node not in answers:
+                raise ps.Refusal("two: needs three keys on translate/rotate - from, breakdown, to - has 2")
+            return answers[node]
+        ps.source = source
+        self.assertEqual(ps.selection_line([]), ps.NOTHING)
+        self.assertEqual(ps.selection_line(["|a", "|b"]), "2 objects selected")
+        self.assertEqual(ps.selection_line(["|a"]), "a: A at 0, M at 5, B at 10")
+        self.assertEqual(ps.selection_line(["|done"]), "done: a tail 0-28, M at 5, B at 10")
+        self.assertIn("needs three keys", ps.selection_line(["|two"]))
+        self.fake.selection = ["|a"]
+        ps.build_panel()
+        self.assertEqual(self.fake.values[ps.SUBTITLE], "a: A at 0, M at 5, B at 10")
+
+    def test_one_selection_job_per_card(self):
+        ps.build_panel()
+        first = ps.JOB[""]
+        self.assertEqual(self.fake.jobs[first], (["SelectionChanged", ps.refresh], ps.STATUS))
+        ps.build_panel()
+        self.assertEqual(self.fake.killed, [first])
+        self.assertEqual(len(self.fake.jobs), 1)
+
+
+class HubTests(unittest.TestCase):
+
+    def test_the_section(self):
+        import maya_hub
+        sec = maya_hub.section("tailbuilder")
+        self.assertEqual((sec.label, sec.module, sec.builder, sec.frame, sec.group, sec.icon),
+                         ("Tail Builder", "maya_tailbuilder", "build_panel", "skeldarHubFrameTailBuilder",
+                          "animation", "wave-sine"))
+        keys = [s.key for s in maya_hub.SECTIONS]
+        self.assertEqual(keys.index("tailbuilder"), keys.index("tools") + 1)
+        self.assertEqual(ps.HUB_SECTION, "tailbuilder")
+
+    def test_ships(self):
+        import install
+        self.assertIn("maya_tailbuilder.py", install.payload())
+
+    def test_the_hotkey_rows(self):
+        import maya_hotkeys
+        self.assertEqual(maya_hotkeys.row("window.tailbuilder")[4].args, ("maya_tailbuilder", "show_window"))
+        for key, press in (("tailbuilder.apply", "press_apply"), ("tailbuilder.restore", "press_restore")):
+            found = maya_hotkeys.row(key)
+            self.assertEqual(found[1], "SkeldarAnim.Tail Builder")
+            self.assertIs(found[4].func, maya_hotkeys._tailbuilder)
+            self.assertEqual(found[4].args, (press,))
+            self.assertTrue(callable(getattr(ps, press)))
+
+    def test_the_standalone_script_is_gone(self):
+        # the plugin is its home now: one copy of the model
+        self.assertFalse(os.path.exists(os.path.join(FOLDER, "skeldar_physstop.py")))
 
 
 if __name__ == "__main__":

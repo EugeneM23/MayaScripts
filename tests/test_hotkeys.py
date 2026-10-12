@@ -479,7 +479,8 @@ class OurRows(unittest.TestCase):
         #  + window.shared (2026-09-30), + window.com (2026-10-01), + window.armor (2026-10-01)
         #  + window.poses (2026-10-02), + window.stash (2026-10-09)
         #  + window.tools and the seven tools.* rows (2026-10-12)
-        self.assertEqual(len(ours), 46)
+        #  + window.tailbuilder, tailbuilder.apply / .restore (2026-10-12)
+        self.assertEqual(len(ours), 49)
 
     def test_the_tools_rows(self):
         """The Tools card (2026-10-12): every button a row, pressing the card's own press -
@@ -521,7 +522,8 @@ class OurRows(unittest.TestCase):
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
                           "window.poses", "window.scenesetup", "window.shared",
-                          "window.stash", "window.tools", "window.uebridge",
+                          "window.stash", "window.tailbuilder", "window.tools",
+                          "window.uebridge",
                           "window.weapons"])
 
     def test_the_picker_rows(self):
@@ -654,7 +656,7 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 15)                 # + maya_tools.panel (2026-10-12)
+        self.assertEqual(len(names), 16)                 # + maya_tailbuilder (2026-10-12)
         self.assertIn("maya_hub", names)
         self.assertIn("maya_tools.panel", names)
         self.assertIn("maya_stash", names)
