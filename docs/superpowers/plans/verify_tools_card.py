@@ -108,6 +108,18 @@ def main():
         gate(worst < 1e-3, "the cube plays what it played (%.6f cm)" % worst)
         line = cmds.text(panel.STATUS, query=True, label=True)
         gate(line.startswith("Baked"), "the line: %s" % line)
+
+        target = cmds.polyCube(name="skeldarToolsVerifyTarget")[0]
+        made.append(cmds.ls(target, uuid=True)[0])
+        target = cmds.ls(target, long=True)[0]
+        cmds.select([cube, target], replace=True)
+        qt_click(panel.ACROSS_BTN)
+        mine = [k for k in knots.knots() if knots.source_of(k) == cube]
+        gate(len(mine) == 1 and cmds.listRelatives(mine[0], parent=True, fullPath=True)[0]
+             == target, "Across: a knot inside the target")
+        cmds.select(cube, replace=True)
+        qt_click(panel.REMOVE_BTN)
+        gate(not [k for k in knots.knots() if knots.source_of(k) == cube], "Remove took it")
     finally:
         for uuid in made:
             found = cmds.ls(uuid, long=True)

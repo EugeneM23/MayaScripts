@@ -99,21 +99,64 @@ class _Knots(object):
     def pivots(self):
         return ["p"] * self.pivot_count
 
+    def across(self, order=None):
+        return self._say("across", order)
+
+    def set_attach(self, value):
+        return self._say("set_attach", value)
+
+    def create_across(self, pairs, order=None, rotate=True, translate=True):
+        return self._say("create_across", pairs, order, rotate, translate)
+
+    selection = []
+
+    def _selection(self, _selection):
+        return list(self.selection)
+
+    def _uuid(self, node):
+        return "uuid:" + node
+
+
+class _Reparent(object):
+
+    def __init__(self, knots_stub):
+        self.stub = knots_stub
+
+    def inside(self):
+        return self.stub._say("inside")
+
+    def to_world(self):
+        return self.stub._say("to_world")
+
+    def swap(self):
+        return self.stub._say("swap")
+
 
 class _Base(unittest.TestCase):
 
     def setUp(self):
         self.fake = _Cmds()
         self.stub = _Knots()
-        self.saved = (panel.cmds, panel.knots)
+        self.saved = (panel.cmds, panel.knots, panel.reparent)
         panel.cmds = self.fake
         panel.knots = self.stub
+        panel.reparent = _Reparent(self.stub)
         panel.JOB.clear()
+        import sys
+        self.lists = getattr(sys, "_skeldar_tools_lists", None)
+        sys._skeldar_tools_lists = {"objects": [], "targets": []}
+        self.fake.ls = lambda *a, **k: ([a[0][len("uuid:"):]] if a and isinstance(a[0], str)
+                                        and a[0].startswith("uuid:") else [])
         hubstyle.take_marks()
 
     def tearDown(self):
-        panel.cmds, panel.knots = self.saved
+        panel.cmds, panel.knots, panel.reparent = self.saved
         panel.JOB.clear()
+        import sys
+        if self.lists is None:
+            del sys._skeldar_tools_lists
+        else:
+            sys._skeldar_tools_lists = self.lists
         hubstyle.take_marks()
 
 
@@ -125,8 +168,12 @@ class Card(_Base):
         self.assertEqual(names, [
             panel.SUBTITLE, panel.KNOTS_HEADING, panel.KNOT_BTN, panel.OFFSET_BTN,
             panel.ORIENT_BTN, panel.DOUBLE_HEADING, panel.LOCAL_BTN, panel.WORLD_BTN,
+            panel.PARENT_HEADING, panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN,
+            panel.ACROSS_BTN, panel.MULTI_HEADING, panel.OBJECTS_BTN, panel.TARGETS_BTN,
+            panel.LISTSWAP_BTN, panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.MULTI_BTN,
             panel.GAP, panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
-            panel.ORDER_SEG["xzy"], panel.BAKE_BTN, panel.REMOVE_BTN, panel.STATUS])
+            panel.ORDER_SEG["xzy"], panel.ATTACH_LABEL, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
+            panel.BAKE_BTN, panel.REMOVE_BTN, panel.STATUS])
 
     def test_two_subsections_their_buttons_stretched(self):
         """2026-10-12, «два под раздела Knots и Double knots ... кнопочки ... растягивать
@@ -135,18 +182,25 @@ class Card(_Base):
         panel.build_panel()
         marks = hubstyle.take_marks()
         roles = dict((m.name, m.role) for m in marks)
-        self.assertEqual(roles[panel.KNOTS_HEADING], "heading")
-        self.assertEqual(roles[panel.DOUBLE_HEADING], "heading")
+        for name in (panel.KNOTS_HEADING, panel.DOUBLE_HEADING, panel.PARENT_HEADING,
+                     panel.MULTI_HEADING):
+            self.assertEqual(roles[name], "heading")
         self.assertEqual(self.fake.labels[panel.KNOTS_HEADING], "Knots")
         self.assertEqual(self.fake.labels[panel.DOUBLE_HEADING], "Double knot")
+        self.assertEqual(self.fake.labels[panel.PARENT_HEADING], "Parent")
+        self.assertEqual(self.fake.labels[panel.MULTI_HEADING], "Multiple across")
         fills = [m for m in marks if m.role == "fill"]
-        self.assertEqual(len(fills), 3)
+        self.assertEqual(len(fills), 7)
         self.assertTrue(all(m.layout for m in fills))
         made = [n for n in self.fake.children]
         rows = [made.index(m.name) for m in fills]
         buttons = [[made.index(b) for b in group] for group in (
             (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN),
-            (panel.LOCAL_BTN, panel.WORLD_BTN), (panel.BAKE_BTN, panel.REMOVE_BTN))]
+            (panel.LOCAL_BTN, panel.WORLD_BTN),
+            (panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN, panel.ACROSS_BTN),
+            (panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN),
+            (panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.MULTI_BTN),
+            (panel.ATTACH0_BTN, panel.ATTACH1_BTN), (panel.BAKE_BTN, panel.REMOVE_BTN))]
         ends = rows[1:] + [len(made)]
         for row, end, group in zip(rows, ends, buttons):
             self.assertTrue(all(row < b < end for b in group), "the buttons are in their row")
@@ -175,8 +229,13 @@ class Card(_Base):
         panel.build_panel()
         roles = dict((m.name, m.role) for m in hubstyle.take_marks())
         buttons = (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
-                   panel.WORLD_BTN, panel.BAKE_BTN, panel.REMOVE_BTN)
+                   panel.WORLD_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN,
+                   panel.ACROSS_BTN, panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN,
+                   panel.MULTI_BTN, panel.ATTACH0_BTN, panel.ATTACH1_BTN, panel.BAKE_BTN,
+                   panel.REMOVE_BTN)
         self.assertEqual(sorted(n for n, r in roles.items() if r == "primary"), sorted(buttons))
+        self.assertEqual(sorted(n for n, r in roles.items() if r == "chip"),
+                         sorted((panel.ROTATE_CHIP, panel.TRANSLATE_CHIP)))
         self.assertNotIn("danger", roles.values())
         self.assertEqual(roles[panel.STATUS], "status")
         self.assertEqual(roles[panel.SUBTITLE], "subtitle")
@@ -268,6 +327,61 @@ class Presses(_Base):
         self.assertEqual(self.fake.labels[panel.SUBTITLE], "1 pivot waiting")
 
 
+class ParentTab(_Base):
+    """The parent tab (2026-10-12): Inside, World, Swap, Across, Multiple across, Attach."""
+
+    def test_the_parent_presses(self):
+        panel.inside()
+        panel.to_world()
+        panel.swap()
+        panel.across()
+        panel.attach_0()
+        panel.attach_1()
+        self.assertEqual(self.stub.calls, [("inside",), ("to_world",), ("swap",),
+                                           ("across", "object"), ("set_attach", 0.0),
+                                           ("set_attach", 1.0)])
+
+    def test_the_lists_remember_the_selection_and_swap(self):
+        panel.build_panel()
+        self.stub.selection = ["|a", "|b"]
+        panel.remember_objects()
+        self.assertEqual(self.fake.labels[panel.OBJECTS_BTN], "Objects 2")
+        self.stub.selection = ["|t"]
+        panel.remember_targets()
+        self.assertEqual(self.fake.labels[panel.TARGETS_BTN], "Targets 1")
+        panel.swap_lists()
+        self.assertEqual(self.fake.labels[panel.OBJECTS_BTN], "Objects 1")
+        self.assertEqual(self.fake.labels[panel.TARGETS_BTN], "Targets 2")
+
+    def test_multiple_refuses_lists_of_different_lengths(self):
+        panel.build_panel()
+        self.stub.selection = ["|a", "|b"]
+        panel.remember_objects()
+        self.stub.selection = ["|t"]
+        panel.remember_targets()
+        line = panel.multiple_across()
+        self.assertIn("must match", line)
+        self.assertNotIn("create_across", [c[0] for c in self.stub.calls])
+
+    def test_multiple_pairs_the_lists_with_the_chips(self):
+        panel.build_panel()
+        self.stub.selection = ["|a", "|b"]
+        panel.remember_objects()
+        self.stub.selection = ["|t1", "|t2"]
+        panel.remember_targets()
+        self.fake.optionvars[panel.ROTATE_VAR] = 0
+        panel.multiple_across()
+        self.assertEqual(self.stub.calls[-1],
+                         ("create_across", [("|a", "|t1"), ("|b", "|t2")], "object", False, True))
+
+    def test_the_chips_remember(self):
+        panel.build_panel()
+        command = [c for c in self.fake.calls if c[0] == "checkBox"
+                   and c[1] and c[1][0] == panel.TRANSLATE_CHIP][0][2]["changeCommand"]
+        command(False)
+        self.assertEqual(self.fake.optionvars[panel.TRANSLATE_VAR], 0)
+
+
 class Registration(unittest.TestCase):
 
     def test_the_hub_row(self):
@@ -283,6 +397,12 @@ class Registration(unittest.TestCase):
         for name in ("tool", "rotate", "focus-2", "stack-2"):
             self.assertIn(name, maya_hubicons.ICONS)
             self.assertIn("<path", maya_hubicons.svg(name))
+
+    def test_reparent_knows_our_prefixes(self):
+        """reparent refuses the plugin's own nodes by deletion's prefixes - one list."""
+        from maya_scenesetup import deletion
+        from maya_tools import reparent
+        self.assertEqual(reparent.OUR_PREFIXES, deletion.OUR_ATTR_PREFIXES)
 
     def test_the_package_ships(self):
         import install

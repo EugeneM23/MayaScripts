@@ -8847,6 +8847,49 @@ OverRig's), default hotkeys.
      every unit test passed on the fake `cmds`. A label meant to be SEEN carries no role (a plain
      text) or `heading`; read what a role does in `_apply_mark` before choosing it.
 
+**The parent tab** (the same day: «Теперь давай реализуем весь функционал из вкладки parent»;
+asked, all the recommendation: re-parents refuse rig controls and bones, Across is a knot inside
+the parent with Connections' BakeAcross left as it is, multiple across a block in the card). Spec
+`docs/superpowers/specs/2026-10-12-tools-parent-design.md`, plan beside it. Two subsections more in
+the card - **Parent** [Inside | World | Swap | Across] and **Multiple across** [Objects n | Targets n
+| Swap] / (Rotate) (Translate) [Across] - and an **Attach** [0 | 1] row above Bake / Remove; every
+button orange, every row `fill`.
+- **Inside / World / Swap** (`maya_tools/reparent.py`, OverRig's `apply_Parent_in / _out /
+  apply_Swap_parent`): each moving node keeps its world motion on every frame - a temporary
+  locator takes its world track (`parentConstraint` with NO offset: pivots matched), the DAG
+  moves, the node is constrained back to its locator with no offset (an offset captured after a
+  move reads the old curves in the new space) and baked, the locator goes, only the baked rotate
+  keys made continuous. Always the whole take (playback ∪ animation range ∪ the keys of the moving
+  nodes and of their old and new parents' chains) - OverRig baked only a highlight and left the
+  curves outside it in the old space. Scale is left alone (OverRig cut the scale keys and hid scale
+  and visibility; not copied). Swap is OverRig's rule: all to world, the others under the last
+  selected, the last under the former parent of the one before it (`knotplan.swap_plan`; select the
+  parent first, then its child). Refused before any change: a bone, a control of an AS rig (its
+  namespace, or under its group in the root namespace), the plugin's own nodes (deletion's
+  `OUR_ATTR_PREFIXES`, pinned equal), a knot rider, locked or driven translate / rotate, an uneven
+  new parent, keyed scale under a differently scaled new parent, a cycle, already there.
+- **Across**: a knot kind `across` (`<leaf>_across`, teal) created as a DAG child of the target,
+  baked from the object's world track (its keys in the target's space) - the rest is a knot's:
+  pairBlend, `attach` and a range, Bake / Remove. It lives outside the Knots groups, so every across
+  knot is a member of an objectSet marked `skeldarKnotRegistry` (`SkeldarAcrossKnots`, gone with its
+  last member, trap 18) - `knots()` reads it. A target may be a rig control or a bone (a cup in a
+  hand); the object is refused when it is its own target or the target lies inside it.
+- **Multiple across**: Objects / Targets remember the selection by UUID on `sys` (trap 111) and show
+  their counts; Across pairs them one to one (`knots.create_across`), refused when empty or of
+  different lengths; Rotate / Translate (chips, `skeldarAcrossRotate` / `...Translate`) off skip that
+  half in the follow constraint and do not key it.
+- **Attach 0 / 1** (`knots.set_attach`): the selected knots' attach keyed (flat) at the highlight's
+  ends, else the selected graph keys' first and last time, else the current frame.
+- Hotkey rows `tools.inside / world / swap / across / attach_0 / attach_1`.
+Proof: `verify_parent.py` **42/42 mayapy standalone** - Inside / World / Swap keep every integer
+frame's world track (0.000000 cm), the hierarchy as asked, one undo; ten refusals change nothing (a
+Manny control among them); Across: nothing moves, the knot inside the target and the registry, the
+target's move takes the prop along, Bake keeps it and empties the registry, Remove restores, a range
+rides only inside; Multiple across with Rotate off keeps the prop's own rotation while it follows
+its target's move; Attach at a frame, a highlight, selected keys; a cup riding Manny's FKWrist_R
+goes with Delete character's knot, the cup kept. `verify_knots.py` 90/90 again; 6032 unit tests.
+`verify_tools_card.py` gained an Across press (still not run - the live checks are the animator's).
+
 ## Parametric walk: a walk cycle read once, rebuilt from knobs (2026-10-12)
 
 The animator, with a walk cycle in Maya (bones only, `Desktop/Walk_01.fbx`): «проанализировать эту
