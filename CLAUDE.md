@@ -9178,6 +9178,60 @@ placement который будет исключать проскальзова�
 - **Seen, not fixed**: the goblin pose (knees) dips the swinging toe to floor height mid-swing (0.8 cm
   without placement, −0.8 with it).
 
+**…and four fixes after using it** (the same evening, on `asd` in their scene: «root почему-то смещается и
+откланяется в право … Фут плйсмент вызывает дрожание левой ноги … поза двуручного меча … носок правой ноги и стопа
+в 11 кадре имеют неприродную форму. Нам нужны какие-то инструменты что бы корректировать стопу … в 27 кадре есть
+щелчек ноги»). Spec `docs/superpowers/specs/2026-10-12-walk-fixes-design.md`.
+- **Read first, over the port**: the scene's keys are the window's knobs with no pose (recomputed in the session
+  to 2.7e-5 cm); the marker on `|root` holds an older apply (the sword, Stance 0.13, Swing out −9.06).
+- **The root's drift**:
+  - `asd` itself travels 2.71° right of its root's facing (−8.19 cm a cycle), its body facing the same way;
+  - the transfer carries the travel in the root's axes, so the target drifted;
+  - and its root weaves with the hips, 3.7 cm off the line.
+  - Fix: `walkmodel.straightened` turns a cycle at most `STRAIGHTEN_MAX` (15°) off its root's nearest horizontal
+    axis onto it: every place and every turn but the root's own, about up through the root's first place.
+    `Walk.turned` holds the angle and the summary says it.
+  - And knob **Root sway** (`root_sway`, default 0, group Pelvis): 0 runs the root straight down the line, 1
+    weaves it; `own_knobs()` gives 1.
+- **The jitter and the click: one cause, the roll** (measured at a quarter frame, tempo × 4).
+  - Before: the left foot's speed jumped 11.9° a quarter frame at 28 and its ankle jerked 6.4 cm (the walk's own:
+    under 3.2°, ~1.5 cm).
+  - The least reaching roll leapt between branches (30 → 10.5 → 0° in half a frame at the toe-off, 0 → 12° for a
+    3 mm shortfall at a strike) and stopped dead off the ground. Its axis, `up × flat(ball − ankle)`, flipped as
+    a near-vertical foot passed upright.
+  - Fix, the roll is now:
+    - one signed number a frame (`_roll_need`, `ctx["rolls"]`), every leg solve of the frame taking the same;
+    - turned about the foot's own side (`foot_side`);
+    - a trade (`_roll_cost`: `ROLL_COST` 25 cm² · angle² + a shortfall eased in over `ROLL_SOFT` 1 cm), eased
+      into its cap from 0.6 of it;
+    - blended heel ↔ ball over `ROLL_SENSE`, faded off the ground over the height;
+    - kept under a sole limit (`SOLE_HEEL_UP` 65° / `SOLE_TOES_UP` 30°, eased over `SOLE_EASE` 15°).
+  - Two more:
+    - a foot just off the ground (`_just_off`: the first `SWING_EASE` of its swing) holds the pelvis down no
+      lower than its stance did;
+    - `_growth` tests the lift-off and the swing's start (`GROWTH_SAMPLES`, bisected).
+  - After: the left foot's jump 1.7° and jerk 0.6 cm, the calves ≤ 2.0 cm; double support 1.4 / 2.3 frames
+    (2.5 / 2.4); the drop 0.85 cm (0.66).
+- **The foot under the sword pose**:
+  - Frame 11 is the right foot's push-off, heel up 53° and toes bent 55° on the ball. Without the pose it is 57°
+    and 58°: `asd`'s own steep toe-off.
+  - The pose turns the whole right leg out ~75°, so it reads sideways.
+  - An "unwind to the knee" was built, measured (≤ 9°, the knee turns with the foot) and taken out.
+  - **The tool is animation layers**: `skeldar_walk.base_input` follows a layered channel's blend chain
+    (`animBlendNodeAdditive*`, `inputA*`) and re-keys the BASE layer, so the animator's correction layer (Anim
+    Layer Editor → Create Layer from Selected on the foot and ball, key the fix) stays through every slider move.
+    Until then a layer broke Apply (`connectAttr` onto a driven plug).
+  - A channel driven by anything else is refused by name before anything is written.
+- **Proof**:
+  - `tests/test_walkmodel.py` 105 (RootTests: skewed ±3/7° gives the straight walker back exactly, a strafe left
+    alone, Root sway; RollTests: the roll grows smoothly; the foot's jolt 5.8 / 5.6° against the old 13.2 / 9.5;
+    `base_input`); two older tests now name the walker's own feet;
+  - `test_walktarget.py` green;
+  - `verify_walk.py` **67/67 standalone**: new gate 66, a +20° correction on an animation layer on top of a re-key
+    at stride 1.2;
+  - picture `walkparam/walk_fixes.png` (before / after: the root from above, the left foot's speed, the leg at
+    24–31).
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an
 update (trap 224); for Balance: a held weapon's mass, the target's own masses
@@ -9232,3 +9286,13 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      whole lengthened contact. Make the rules agree: the contact that pins is the contact that holds the
      pelvis and the contact that bears weight. And give the leg its real way to reach, the foot rolling
      over its ball, before the pelvis drops.
+231. **"The least X that satisfies the constraint" leaps when the constraint barely depends on X.** The roll
+     that just lets a leg reach jumped 0 → 12° for a 3 mm shortfall where rolling hardly helped, and between its
+     reachable and nearest branches as the foot turned fast — every frame correct, the animation a jolt. A
+     per-frame choice the eye sees across frames must move smoothly with its inputs: minimise a cost that
+     weighs the effort against the error, and ease every limit in. And a flattened direction is no axis: the
+     roll's axis from `up × flat(ball − ankle)` flipped 180° as the foot passed upright — take the foot's own
+     side, read in its frame.
+232. **`getAttr(plug, time=t)` does not evaluate an animation layer's blend.** A rotateX keyed +20 on an additive
+     layer read the base value through `time=` (11 where the scene showed 31), and the gate reported the layer
+     lost while it stood. Measure a layered channel after a real time change (trap 69's family).

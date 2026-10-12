@@ -847,6 +847,35 @@ try:
                                 ("Walk_01 on Manny - front", plain, "front"),
                                 ("the goblin pose x1 - front", goblin, "front")])
         print("        picture: " + pose_sheet)
+    # the animator's correction keyed on an animation layer stays on top of every re-key
+    bones = bones_of(manny)
+    fix_foot = bones[leaf_of(bones, "foot_r")]["path"]
+    sw.apply(manny, name)
+    cmds.select(fix_foot)
+    fix_layer = cmds.animLayer("FootFix", addSelectedObjects=True)
+    fix_frame = start + 11
+
+    def shown_at(frame):
+        """A layered channel's value as the scene shows it: getAttr(time=) reads the base under a layer's blend
+        (measured: 11 where the scene shows 31) - a real time change."""
+        cmds.currentTime(frame + 1)
+        cmds.currentTime(frame)
+        return cmds.getAttr(fix_foot + ".rotateX")
+    shown = shown_at(fix_frame)
+    cmds.setKeyframe(fix_foot, attribute="rotateX", time=fix_frame, value=shown + 20.0, animLayer=fix_layer)
+    try:
+        sw.apply(manny, name, {"stride": 1.2})
+        rekeyed = True
+    except Exception as error:
+        rekeyed = error
+    base_curve = (cmds.animLayer("BaseAnimation", query=True, findCurveForPlug=fix_foot + ".rotateX") or [None])[0]
+    base_at = cmds.keyframe(base_curve, query=True, eval=True, time=(fix_frame, fix_frame), valueChange=True)[0]
+    after = shown_at(fix_frame)
+    layer_curve = (cmds.animLayer(fix_layer, query=True, findCurveForPlug=fix_foot + ".rotateX") or [None])[0]
+    gate(rekeyed is True and abs(after - base_at - 20.0) < 1e-3 and abs(base_at - shown) > 0.01 and layer_curve,
+         "an animation layer's correction (+20 deg on foot_r at frame %d) stays on top of the re-key (stride 1.2: "
+         "%s): the base re-keyed %.3f -> %.3f, shown %.3f" % (fix_frame, rekeyed, shown, base_at, after))
+    cmds.delete(fix_layer)
     try:
         sw.skeleton_root_of(cmds.createNode("transform", name="empty"))
         gate(False, "an empty transform was taken for a skeleton")

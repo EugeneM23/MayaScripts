@@ -173,7 +173,8 @@ class KnobTests(unittest.TestCase):
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
-                          "foot_flex", "bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list", "spine", "arms",
+                          "foot_flex", "bob", "sway", "root_sway", "pelvis_rot", "pelvis_twist", "pelvis_list",
+                          "spine", "arms",
                           "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
         self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
@@ -432,7 +433,7 @@ class IdentityTests(unittest.TestCase):
         """The pelvis's twist and hip drop come from their degree knobs; the walk's own read differently."""
         w, c = walk(), clip()
         own = w.own_knobs()
-        self.assertEqual(sorted(own), ["foot_placement", "pelvis_list", "pelvis_twist"])
+        self.assertEqual(sorted(own), ["foot_placement", "pelvis_list", "pelvis_twist", "root_sway"])
         self.assertNotAlmostEqual(own["pelvis_list"], wm.DEFAULTS["pelvis_list"], places=1)
         r = w.evaluate()
         self.assertGreater(float(np.abs(r.worlds - c.worlds).max()), 1e-3)
@@ -442,8 +443,9 @@ class IdentityTests(unittest.TestCase):
 class StepTests(unittest.TestCase):
 
     def test_stride_moves_the_footprints_and_keeps_the_stance_foot_still(self):
+        """The walker's own feet (Foot placement may roll a stance foot about its heel or ball: FootPlacementTests)."""
         w = walk()
-        r = w.evaluate({"stride": 1.3})
+        r = w.evaluate({"stride": 1.3, "foot_placement": 0.0})
         foot = positions(r, "foot_l", w)
         left = w.feet["l"]
         stance = [left.on + i for i in range(left.length + 1)]
@@ -557,7 +559,7 @@ class StepTests(unittest.TestCase):
         plain = w.evaluate({"balance": 0.0})
         w.foot_target = far_in_the_air
         r = w.evaluate({"balance": 0.0})
-        self.assertEqual(r.info["lowered"], plain.info["lowered"])
+        self.assertAlmostEqual(r.info["lowered"], plain.info["lowered"], places=9)
         self.assertEqual(r.info["short"], 0.0)
         self.assertGreater(r.info["swing_in"], 10.0)
         self.assertIn("nearer the body", wm.describe(r))
@@ -1115,8 +1117,9 @@ class BalanceTests(unittest.TestCase):
         self.assertIn("balance", wm.describe(wide1))
 
     def test_the_feet_stay_planted_and_the_loop_closes_under_balance(self):
+        """The walker's own feet (Foot placement may roll a stance foot about its heel or ball: FootPlacementTests)."""
         w = walk()
-        r = w.evaluate({"stance": 2.0, "stride": 1.3})
+        r = w.evaluate({"stance": 2.0, "stride": 1.3, "foot_placement": 0.0})
         for side in "lr":
             foot = w.feet[side]
             prints = positions(r, "foot_" + side, w)[[(foot.on + i) % 24 for i in range(foot.length + 1)
@@ -1175,6 +1178,90 @@ class BalanceTests(unittest.TestCase):
         self.assertGreater(r.info["balance"]["carry"], 0.1)
         self.assertLess(r.info["balance"]["residual"], 0.05)
 
+def skewed(degrees):
+    """The synthetic walker turned `degrees` about up through its root's first place - every joint's place and
+    turn but the root's own: it travels that far off its root's facing."""
+    c = clip()
+    w = c.worlds.copy()
+    r = c.names.index("root")
+    centre = w[r, 0, 3, :3].copy()
+    turn = rot_y(degrees)
+    keep = w[r, :, :3, :3].copy()
+    w[:, :, 3, :3] = (w[:, :, 3, :3] - centre) @ turn + centre
+    w[:, :, :3, :3] = w[:, :, :3, :3] @ turn
+    w[r, :, :3, :3] = keep
+    return wm.Clip(c.names, c.parents, w, fps=30.0, up=(0, 1, 0), name="skewed")
+
+
+class RootTests(unittest.TestCase):
+
+    def test_a_walk_travelling_off_its_roots_facing_is_turned_onto_it(self):
+        """A cycle saved a few degrees askew drifts sideways on any skeleton (the target's root faces its own
+        way, the travel is carried in the root's axes): it is turned onto the root's facing - exactly the
+        straight walker again."""
+        straight = walk()
+        for degrees in (3.0, -7.0):
+            w = wm.analyse(skewed(degrees))
+            self.assertAlmostEqual(abs(w.turned), abs(degrees), places=6)
+            self.assertTrue(np.allclose(w.travel, [0.0, 0.0, 120.0], atol=1e-9))
+            self.assertIn("turned %.1f deg onto its root's facing" % w.turned, w.summary())
+            a, b = w.evaluate(w.own_knobs()), straight.evaluate(straight.own_knobs())
+            self.assertLess(float(np.abs(a.worlds - b.worlds).max()), 1e-6, degrees)
+        self.assertEqual(straight.turned, 0.0)
+        self.assertNotIn("turned", straight.summary())
+
+    def test_a_strafe_is_left_as_it_is(self):
+        w = wm.analyse(skewed(40.0))
+        self.assertEqual(w.turned, 0.0)
+
+    def test_the_root_runs_straight_and_root_sway_weaves_it_with_the_hips(self):
+        w, c = walk(), clip()
+        root = w.index["root"]
+        straight = w.evaluate()
+        side = straight.worlds[root, :, 3, 0]
+        self.assertLess(float(np.ptp(side)), 1e-9)
+        own = w.evaluate({"root_sway": 1.0})
+        weave = own.worlds[root, :, 3, 0]
+        self.assertGreater(float(np.ptp(weave)), 3.9)          # the walker's root sways +-2 with its pelvis
+        pelvis = w.index["pelvis"]          # the root sway moves the root only
+        self.assertLess(float(np.abs(own.worlds[pelvis] - straight.worlds[pelvis]).max()), 1e-9)
+
+
+class RollTests(unittest.TestCase):
+
+    def roll_case(self, w, ctx, hip_shift):
+        """The left foot planted at its source mid-contact, the hip moved back by `hip_shift` cm until the leg
+        falls short: (the cost roll over the ball, the least reaching roll of before)."""
+        side, t = "l", 0.5 * sum(w.contact["l"])
+        rot, ankle = w.wrot(w.index["foot_l"], t), w.wpos(w.index["foot_l"], t)
+        hip = w.wpos(w.index["thigh_l"], t) - hip_shift * w.fwd
+        limit = w.reach[side] * (np.linalg.norm(w.lt_at(w.index["calf_l"], t)) +
+                                 np.linalg.norm(w.lt_at(w.index["foot_l"], t)))
+        return w._roll_cost(side, t, rot, ankle, hip, limit, ctx, 1.0)
+
+    def test_the_roll_grows_smoothly_with_the_shortfall(self):
+        """The roll weighs its angle against how far the leg falls short (ROLL_COST): a short leg rolls a
+        little, a shorter one more, never in a leap."""
+        w = walk(stance=0.4, lift=40.0)
+        ctx = {"placement": 1.0}
+        rolls = [self.roll_case(w, ctx, d) for d in np.linspace(0.0, 40.0, 161)]
+        self.assertAlmostEqual(rolls[0], 0.0, places=6)
+        steps = np.abs(np.diff(rolls))
+        self.assertLess(math.degrees(float(steps.max())), 1.0)
+        self.assertTrue(all(b >= a - 1e-9 for a, b in zip(rolls, rolls[1:])))
+
+    def test_a_rolling_foot_turns_without_a_jolt(self):
+        """At a quarter frame the foot's turning speed never leaps: the roll trades its angle against the
+        shortfall smoothly, eases into its limits and fades off the ground (the least reaching roll of before
+        leapt 13.2 deg a quarter frame on this walker at stride 1.3, 9.5 on the sliding one)."""
+        for kw, knobs in (({}, {"tempo": 96, "stride": 1.3}), ({"slip": 6.0}, {"tempo": 96})):
+            w = walk(**kw)
+            r = w.evaluate(knobs)
+            rot = r.worlds[w.index["foot_l"], :, :3, :3]
+            speed = np.array([angle(rot[i].T @ rot[i + 1]) for i in range(r.frames)])
+            self.assertLess(float(np.abs(np.diff(speed)).max()), 7.0, kw)
+
+
 class WindowTests(unittest.TestCase):
     """The window's wiring on a recording cmds (the window itself is the animator's to try)."""
 
@@ -1226,6 +1313,33 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(second._state()["target"], "the target's uuid")
         second._state()["loaded"]["b walk"] = "read by the new model"
         self.assertIn("b walk", second._state()["loaded"])
+
+    def test_the_walk_rekeys_the_base_layer_under_animation_layers(self):
+        """A channel under animation layers (an animator's correction keyed on a layer) is re-keyed at the bottom
+        of its blend chain - the base layer's input - so the layer stays on top; a constrained channel is
+        refused by name (wiring as Maya 2027 makes it, measured)."""
+        wiring = {"j.rotateX": "j_rotate_Fix2.outputX", "j_rotate_Fix2.inputAX": "j_rotate_Fix1.outputX",
+                  "j_rotate_Fix1.inputAX": "j_rotateX.output", "j.translateY": "j_translateY_Fix1.output",
+                  "j_translateY_Fix1.inputA": None, "j.rotateZ": "j_rotateZ.output", "j.rotateY": None,
+                  "j.translateX": "j_parentConstraint1.constraintTranslateX"}
+        kinds = {"j_rotate_Fix2": "animBlendNodeAdditiveRotation", "j_rotate_Fix1": "animBlendNodeAdditiveRotation",
+                 "j_rotateX": "animCurveTA", "j_translateY_Fix1": "animBlendNodeAdditiveDL", "j_rotateZ": "animCurveTA",
+                 "j_parentConstraint1": "parentConstraint"}
+
+        class Wired(object):
+            def listConnections(self, plug, **kw):
+                return [wiring[plug]] if wiring.get(plug) else []
+
+            def nodeType(self, node):
+                return kinds[node]
+        self.sw._cmds = lambda: Wired()
+        self.assertEqual(self.sw.base_input("j.rotateX"), ("j_rotate_Fix1.inputAX", "j_rotateX"))
+        self.assertEqual(self.sw.base_input("j.translateY"), ("j_translateY_Fix1.inputA", None))
+        self.assertEqual(self.sw.base_input("j.rotateZ"), ("j.rotateZ", "j_rotateZ"))
+        self.assertEqual(self.sw.base_input("j.rotateY"), ("j.rotateY", None))
+        with self.assertRaises(self.sw.Refusal) as said:
+            self.sw.base_input("j.translateX")
+        self.assertIn("parentConstraint", str(said.exception))
 
     def test_a_slider_with_nothing_analysed_says_so(self):
         self.sw._state()["source"] = None

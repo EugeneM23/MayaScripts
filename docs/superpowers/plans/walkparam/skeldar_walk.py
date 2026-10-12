@@ -353,23 +353,53 @@ def channel_values(bones, frames, written, translated):
     return out, static
 
 
+_BLEND_INPUT = {"outputX": "inputAX", "outputY": "inputAY", "outputZ": "inputAZ", "output": "inputA"}
+
+
+def base_input(plug):
+    """(the plug the walk's curve drives, the curve standing there or None): the channel itself, or - under
+    animation layers - the base layer's input at the bottom of its blend chain, so a layer the animator keys
+    corrections on stays on top of every re-key. A channel driven by anything else (a constraint, an
+    expression) is refused by name."""
+    cmds = _cmds()
+    dest = plug
+    for _ in range(64):
+        source = cmds.listConnections(dest, source=True, destination=False, plugs=True,
+                                      skipConversionNodes=True) or []
+        if not source:
+            return dest, None
+        node, attr = source[0].split(".", 1)
+        kind = cmds.nodeType(node)
+        if kind.startswith("animCurve"):
+            return dest, node
+        if not kind.startswith("animBlendNode") or attr not in _BLEND_INPUT:
+            raise Refusal("%s is driven by %s (%s) - the walk keys only channels that are free, keyed or under "
+                          "animation layers" % (_short(plug), node, kind))
+        dest = node + "." + _BLEND_INPUT[attr]
+    raise Refusal("%s: an animation layer chain this tool cannot follow" % _short(plug))
+
+
 def write_curves(values, static, start):
     """Each written channel's old curve deleted and a new one keyed on frames start..start+N (auto
     tangents): nodes through cmds (Ctrl+Z removes them and puts deleted ones back), keys through
-    MFnAnimCurve.addKeys (trap 224). A static translate: its curves deleted, the value set."""
+    MFnAnimCurve.addKeys (trap 224). Under animation layers the base layer is what is re-keyed (base_input):
+    the layers above it - an animator's corrections - stay. A static translate: its curves deleted, the value
+    set."""
     cmds, om, oma = _cmds(), _om(), _oma()
     written = 0
+    plans = dict(((path, ch), base_input(path + "." + ch)) for path, channels in values.items() for ch in channels)
+    plans.update(((path, ch), base_input(path + "." + ch)) for path in static for ch in TRANSLATE)
     for path, channels in values.items():
         for ch, vals in channels.items():
             plug = path + "." + ch
-            old = cmds.listConnections(plug, source=True, destination=False, type="animCurve") or []
+            dest, old = plans[(path, ch)]
             if old:
                 cmds.delete(old)
-            if cmds.getAttr(plug, lock=True):
+            if dest == plug and cmds.getAttr(plug, lock=True):
                 cmds.setAttr(plug, lock=False)
             curve = cmds.createNode("animCurveTL" if ch in TRANSLATE else "animCurveTA",
                                     name="%s_%s" % (_short(path).split(":")[-1], ch))
-            cmds.connectAttr(curve + ".output", plug)
+            cmds.connectAttr(curve + ".output", dest)
             times = om.MTimeArray([om.MTime(float(start + f), om.MTime.uiUnit()) for f in range(len(vals))])
             selection = om.MSelectionList()
             selection.add(curve)
@@ -379,12 +409,12 @@ def write_curves(values, static, start):
     for path, value in static.items():
         for ch, v in zip(TRANSLATE, value):
             plug = path + "." + ch
-            old = cmds.listConnections(plug, source=True, destination=False, type="animCurve") or []
+            dest, old = plans[(path, ch)]
             if old:
                 cmds.delete(old)
-            if cmds.getAttr(plug, lock=True):
+            if dest == plug and cmds.getAttr(plug, lock=True):
                 cmds.setAttr(plug, lock=False)
-            cmds.setAttr(plug, v)
+            cmds.setAttr(dest, v)
     return written
 
 
@@ -480,7 +510,7 @@ GROUPS = (
     ("Pose", ("pose",)),
     ("Step", ("stride", "tempo", "lift")),
     ("Legs", ("foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex")),
-    ("Pelvis", ("bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list")),
+    ("Pelvis", ("bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list", "root_sway")),
     ("Upper body", ("spine", "arms", "head", "overlap")),
     ("Weight", ("weight", "balance", "exaggeration")),
 )
@@ -506,6 +536,8 @@ LABELS = {
     "foot_flex": ("Foot flex", "x how far the swinging foot turns in its ankle (and the toes in theirs)"),
     "bob": ("Bob", "x the pelvis's up and down"),
     "sway": ("Sway", "x the pelvis's side to side"),
+    "root_sway": ("Root sway", "0: the root runs straight down the walk's line (what a game's capsule wants); 1 "
+                               "weaves with the hips as the walk does"),
     "pelvis_rot": ("Pelvis motion", "x all the pelvis's turns and tilts (Twist and Hip drop included)"),
     "pelvis_twist": ("Twist (deg)", "the pelvis turns this far each way with the legs, the forward leg's hip "
                                     "forward - at a normal step (0.8 of the leg); it grows with the step. People: "
