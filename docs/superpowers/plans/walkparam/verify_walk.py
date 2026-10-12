@@ -6,7 +6,9 @@ Desktop/Walk_01.fbx (a temp copy) imported and saved as a walk (into a temp walk
 the plugin's Manny skeleton (a twin: the walk itself, moved to where Manny stands), the Creep skeleton, the
 UE4 Mannequin, the animator's Mixamo Sweep Fall.fbx (Downloads, when there) and a Manny shrunk to 0.6:
 stance feet as still as the walk's (x the size), the stride x the size, bone lengths unchanged, the seam;
-re-tuned from its stored place, Pick, one Ctrl+Z; last, onto its own skeleton: the cycle itself.
+re-tuned from its stored place, Pick, one Ctrl+Z; onto its own skeleton: the cycle itself. Last, Balance on
+Manny's keys: the CoM's change the pendulum's on the keyed feet (wider, slower, faster), the goblin's lean and
+the sword's feet carried back over the support (WALK_BALANCE_SHEET draws it).
 """
 import importlib.util
 import math
@@ -168,6 +170,114 @@ def draw_sheet(path, panels):
     image.save(path)
 
 
+def draw_balance(path, walk, tops, figures):
+    """The balance sheet. `tops` (label, Balance 0 run, Balance 1 run): two cycles from above - forward right,
+    the character's left up, sideways x4 - the feet's prints, the pressure (green), the CoM at Balance 0
+    (grey, dashed) and 1 (red). `figures` (label, Balance 0 run, 1 run, 'side' or 'front'): the skeleton at
+    the left foot's mid-stance, its CoM and the CoM's plumb line to the floor, grey against red."""
+    from PySide6 import QtCore, QtGui
+    app = QtGui.QGuiApplication.instance() or QtGui.QGuiApplication([])
+    width, height, cols = 760, 420, 2
+    panels = [("top",) + t for t in tops] + [("figure",) + f for f in figures if f[1] is not None]
+    rows = (len(panels) + 1) // cols
+    image = QtGui.QImage(width * cols, height * rows, QtGui.QImage.Format_RGB32)
+    image.fill(QtGui.QColor(250, 249, 246))
+    painter = QtGui.QPainter(image)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    grey, red, green = QtGui.QColor(120, 120, 120), QtGui.QColor(210, 40, 60), QtGui.QColor(60, 160, 90)
+    fwd, side, up = walk.fwd, walk.side, walk.up
+
+    def pen(colour, w=1.6, dash=False, alpha=255):
+        c = QtGui.QColor(colour)
+        c.setAlpha(alpha)
+        return QtGui.QPen(c, w, QtCore.Qt.DashLine if dash else QtCore.Qt.SolidLine)
+
+    for k, panel in enumerate(panels):
+        ox, oy = (k % cols) * width, (k // cols) * height
+        painter.setPen(QtGui.QColor(30, 30, 30))
+        painter.setFont(QtGui.QFont("Segoe UI", 11))
+        painter.drawText(ox + 14, oy + 22, panel[1])
+        painter.setFont(QtGui.QFont("Segoe UI", 9))
+        if panel[0] == "top":
+            _, label, off, on = panel
+            n, line0 = on["n"], on["line"][0]
+            span = on["line"][n] - line0
+            sx, sy, cx, cy = 2.0, 4.0, ox + 26, oy + height / 2 + 6
+            to = lambda p, cycle=0: QtCore.QPointF(cx + float(np.dot(p - line0 + cycle * span, fwd)) * sx,
+                                                   cy - float(np.dot(p - line0 + cycle * span, side)) * sx * sy)
+            for cycle in (0, 1):
+                for s in walk.feet:
+                    for f in range(n):
+                        tau = f * walk.P / float(n)
+                        if max(float(wm.periodic_cr(walk.ground["foot_" + s], tau)),
+                               float(wm.periodic_cr(walk.ground["ball_" + s], tau))) < 0.5:
+                            continue
+                        painter.setPen(pen(QtGui.QColor(70, 140, 230) if s == "l" else QtGui.QColor(235, 120, 50),
+                                           7, alpha=40))
+                        painter.drawLine(to(on["feet"]["foot_" + s][f], cycle), to(on["feet"]["ball_" + s][f], cycle))
+                cop = [on["line"][f] + on["cop"][f, 0] * fwd + on["cop"][f, 1] * side for f in range(n)]
+                painter.setPen(pen(green, 1.2, alpha=170))
+                painter.drawPolyline([to(p, cycle) for p in cop] + [to(cop[0], cycle + 1)])
+                painter.setPen(pen(grey, 1.6, dash=True))
+                painter.drawPolyline([to(p, cycle) for p in off["com"]])
+                painter.setPen(pen(red, 2.2))
+                painter.drawPolyline([to(p, cycle) for p in on["com"]])
+            painter.setPen(QtGui.QColor(60, 60, 60))
+            painter.drawText(ox + 14, oy + height - 14,
+                             "from above, sideways x4 | grey dashed: Balance 0, sways %.1f cm | red: Balance 1, sways "
+                             "%.1f cm | green: the feet's pressure" % (float(np.ptp(off["dev"][:, 1])),
+                                                                         float(np.ptp(on["dev"][:, 1]))))
+        else:
+            _, label, off, on, view = panel
+            across = fwd if view == "side" else side
+            ground, scale = oy + height - 40, 1.75
+            painter.setPen(pen(QtGui.QColor(190, 190, 190), 1))
+            painter.drawLine(ox + 10, ground, ox + width - 10, ground)
+            for run, colour, cx, name in ((off, grey, ox + width * 0.27, "Balance 0"),
+                                          (on, red, ox + width * 0.73, "Balance 1")):
+                sides, w, pw = run["stick"]
+                f0, n = run["mid"], run["n"]
+                base = run["line"][f0]
+                at = lambda p: cx + float(np.dot(p - base, across)) * scale
+                to = lambda p: QtCore.QPointF(at(p), ground - float(np.dot(p, up)) * scale)
+                prints = []
+                for s in walk.feet:                   # the feet on the ground: heel to toe on the floor
+                    tau = f0 * walk.P / float(n)
+                    if max(float(wm.periodic_cr(walk.ground["foot_" + s], tau)),
+                           float(wm.periodic_cr(walk.ground["ball_" + s], tau))) < 0.5:
+                        continue
+                    a, b = run["feet"]["foot_" + s][f0], run["feet"]["ball_" + s][f0]
+                    xa, xb = at(a), at(b)
+                    prints.append(0.5 * (float(np.dot(a, across)) + float(np.dot(b, across))))
+                    painter.setPen(pen(QtGui.QColor(40, 40, 40), 6, alpha=130))
+                    painter.drawLine(QtCore.QPointF(min(xa, xb) - 5, ground), QtCore.QPointF(max(xa, xb) + 5, ground))
+                half = len(sides)
+                painter.setPen(pen(colour, 2.0))
+                for i in range(half):
+                    painter.drawLine(to(w[half + i, 0, 3, :3]), to(w[i, 0, 3, :3]))
+                com = run["com"][f0]
+                floor = com - np.dot(com, up) * up
+                painter.setPen(pen(colour, 1.2, dash=True))
+                painter.drawLine(to(com), to(floor))
+                painter.setBrush(QtGui.QColor(colour))
+                painter.setPen(pen(colour, 1.0))
+                painter.drawEllipse(to(com), 6, 6)
+                painter.setBrush(QtCore.Qt.NoBrush)
+                painter.setPen(QtGui.QColor(30, 30, 30))
+                ahead = float(np.dot(com, across)) - float(np.mean(prints)) if prints else float("nan")
+                word = ("ahead of" if ahead > 0 else "behind") if view == "side" else ("left of" if ahead > 0 else "right of")
+                painter.drawText(QtCore.QPointF(cx - 120, oy + 50), "%s: the CoM %.1f cm %s the foot" % (
+                    name, abs(ahead), word))
+            painter.setPen(QtGui.QColor(60, 60, 60))
+            pel = lambda run: float(run["pelvis"][:, 0 if view == "side" else 1].mean())
+            moved = pel(on) - pel(off)
+            way = ("back" if moved < 0 else "forward") if view == "side" else ("to its left" if moved > 0 else "to its right")
+            painter.drawText(ox + 14, oy + height - 14, "the left foot's mid-stance | dot: the CoM, dashed: its plumb "
+                             "line, bar: the foot down | the pelvis carried %.1f cm %s" % (abs(moved), way))
+    painter.end()
+    image.save(path)
+
+
 TEMP = tempfile.mkdtemp(prefix="walkverify_")
 sw.WALKS = os.path.join(TEMP, "walks")
 try:
@@ -213,13 +323,16 @@ try:
         top = bones[sorted(bones, key=lambda l: bones[l]["path"].count("|"))[0]]["path"]
         got = worlds([pelvis, top] + legs["l"] + legs["r"], frames)
         scale = info["scale"]
-        # the stance feet: still as the walk's, x the size
+        # the stance feet: still as the walk's, x the size (at another tempo the new frames inside the stance
+        # sample the same planted stretch: no more slip than the walk's)
         spreads = []
         for k, side in enumerate("lr"):
             foot = walk.feet[side]
-            stance = [f for f in (foot.on + i for i in range(foot.length + 1)) if f <= n]
+            src_stance = [f for f in (foot.on + i for i in range(foot.length + 1)) if f <= P]
+            stance = src_stance if n == P else [g for g in range(n + 1)
+                                                if foot.on - 1e-9 <= g * P / float(n) <= src_stance[-1] + 1e-9]
             ankle = got[4 + 3 * k, stance, 3, :3]
-            src_ankle = src["foot_" + side][[f for f in stance], 3, :3]
+            src_ankle = src["foot_" + side][src_stance, 3, :3]
             spreads.append((float(np.ptp(ankle, axis=0).max()), scale * float(np.ptp(src_ankle, axis=0).max())))
         # lengths
         length_err = 0.0
@@ -230,7 +343,7 @@ try:
         moved = float(np.linalg.norm((got[1, n, 3, :3] - got[1, 0, 3, :3]) * [1, 0, 1]))
         stride = (given or {}).get("stride", 1.0)
         seam = float(np.abs((got[:, n] @ np.linalg.inv(got[0, n]))[2:] - (got[:, 0] @ np.linalg.inv(got[0, 0]))[2:]).max())
-        ok = (all(abs(a - b) < 0.05 for a, b in spreads) and length_err < 1e-3 and seam < 2e-3
+        ok = (all((abs(a - b) if n == P else a - b) < 0.05 for a, b in spreads) and length_err < 1e-3 and seam < 2e-3
               and abs(moved - scale * stride * travel) < 0.05 and info["short"] < 1e-3
               and (expect_scale is None or abs(scale - expect_scale) < 0.01))
         gate(ok, "%s: size x%.3f, %d bones; stance spread L %.3f (walk x size %.3f) R %.3f (%.3f); lengths %.6f; "
@@ -319,8 +432,8 @@ try:
         mb = bones_of(manny)
         path = lambda c: mb[leaf_of(mb, c)]["path"]
         cycle = range(start, start + P + 1)
-        check(manny, "Manny under the two-handed sword x1, every part", {"pose": 1.0}, expect_scale=1.0,
-              pose="two_handed_sword")
+        held_result = check(manny, "Manny under the two-handed sword x1, every part", {"pose": 1.0},
+                            expect_scale=1.0, pose="two_handed_sword")[0]
         names_ = ("hand_l", "hand_r", "weapon_r", "weapon_l", "pelvis", "neck_01", "foot_l", "foot_r", "ball_l",
                   "ball_r", "root")
         w = dict(zip(names_, worlds([path(c) for c in names_], cycle)))
@@ -349,9 +462,11 @@ try:
         gate(abs(gap - walk_gap - held["width"]) < 0.1 and all(abs(a - b) < 1.5 for a, b in zip(turned, toe)),
              "the feet: %.1f cm apart (the walk %.1f, the pose's extra %.1f), toes turned %.1f / %.1f deg (the pose "
              "%.1f / %.1f)" % (gap, walk_gap, held["width"], turned[0], turned[1], toe[0], toe[1]))
-        height = float(np.mean(w["pelvis"][:P, 3, 1] - w["root"][:P, 3, 1]))
-        gate(abs(height - held["height"]) < 0.5, "the pelvis at the pose's height: %.2f cm (the pose %.2f)"
-             % (height, held["height"]))
+        sink = np.array(held_result.info["drop"][:P])     # the reach's drop under Balance's carry over the feet
+        height = float(np.mean(w["pelvis"][:P, 3, 1] - w["root"][:P, 3, 1] + sink))
+        gate(abs(height - held["height"]) < 0.5, "the pelvis at the pose's height: %.2f cm (the pose %.2f; the "
+             "reach lowers it up to %.2f cm where Balance carries it over the wide feet)"
+             % (height, held["height"], float(sink.max())))
     else:
         print("        (no %s: the sword gates skipped)" % SWORD_FILE)
 
@@ -402,6 +517,118 @@ try:
     gate(err < 2 * breath + 1e-3 and rest_err < max(info["drop"]) + 1e-3,
          "onto its own skeleton, the cycle itself to %.6f (thighs, calves) and %.6f (every other bone; the pelvis "
          "sinks up to %.4f) | %s" % (err, rest_err, max(info["drop"]), text))
+    # 5. Balance: the centre of mass over the feet, measured on Manny's keys (a twin: the model's names)
+    mb = bones_of(manny)
+    weighed = [(mb[leaf]["path"], walk.mass[j]) for j, leaf in enumerate(walk.names) if walk.mass[j] > 0.0]
+    gate(all(leaf in mb for j, leaf in enumerate(walk.names) if walk.mass[j] > 0.0) and
+         abs(sum(m for _, m in weighed) - 1.0) < 1e-9,
+         "the masses on Manny's bones: %d weighed joints; this walk's body follows its pendulum %.2f forward, %.2f "
+         "sideways (fitted on its own CoM against its feet's pressure)" % (len(weighed), walk.follow[0], walk.follow[1]))
+
+    def keyed_balance(label, given, pose=None, parts=sw.ALL_PARTS):
+        """Applied onto Manny; its keyed CoM, its feet's pressure and its root line's frame, (fwd, side, up)
+        against the root's own straight line, a frame (the seam dropped)."""
+        result, info, got = check(manny, label, given, expect_scale=1.0, pose=pose, parts=parts)
+        n = result.frames
+        frames = range(start, start + n + 1)
+        w = worlds([p for p, _ in weighed], frames)
+        com = np.tensordot(np.array([m for _, m in weighed]), w[:, :, 3, :3], axes=(0, 0))
+        root = worlds([mb["root"]["path"]], frames)[0][:, 3, :3]
+        line = root[0] + np.outer(np.arange(n + 1) / float(n), root[n] - root[0])
+        feet = dict((nm, worlds([mb[nm]["path"]], frames)[0][:n, 3, :3]) for nm in walk.ground)
+        cop = walk.pressure(feet, [f * P / float(n) for f in range(n)])
+        dev = ((com - line) @ walk.basis.T)[:n]
+        mid = int(round(walk.feet["l"].mid * n / float(P))) % n
+        return {"result": result, "dev": dev, "cop": ((cop - line[:n]) @ walk.basis.T)[:, :2], "n": n,
+                "pelvis": ((got[0, :n, 3, :3] - line[:n]) @ walk.basis.T), "frames": frames, "line": line,
+                "feet": feet, "com": com, "mid": mid, "stick": capture(manny, [start + mid])}
+
+    def demeaned(v):
+        return v - v.mean(axis=0)
+
+    def same_feet(on, off):
+        """How far Balance moves a foot that is down (one in the air may pass nearer the body)."""
+        n = on["n"]
+        down = dict((s, [f for f in range(n) if walk.down(s, f * P / float(n))]) for s in walk.feet)
+        return max(float(np.abs(on["feet"][nm][down[nm[-1]]] - off["feet"][nm][down[nm[-1]]]).max())
+                   for nm in walk.ground)
+
+    walk0 = keyed_balance("Manny, the walk (Balance at the defaults)", None)
+    gate(walk0["result"].info["balance"]["carry"] < 1e-6 and
+         float(np.abs(demeaned(walk0["dev"][:, :2]) - demeaned(walk.s_dev[:, :2])).max()) < 0.01,
+         "at the defaults nothing is carried and Manny's CoM is the walk's: %.4f cm (sways %.2f cm)"
+         % (float(np.abs(demeaned(walk0["dev"][:, :2]) - demeaned(walk.s_dev[:, :2])).max()),
+            float(np.ptp(walk0["dev"][:, 1]))))
+
+    def pendulum_gate(label, given):
+        on = keyed_balance("Manny, %s, Balance 1" % label, dict(given, balance=1.0))
+        off = keyed_balance("Manny, %s, Balance 0" % label, dict(given, balance=0.0))
+        n, k = on["n"], on["result"].info["knobs"]
+        h = float(off["dev"][:, 2].mean())
+        l_new = wm.pendulum(on["cop"], n / walk.fps, h)
+        l_src = np.array([wm.periodic_cr(walk.l_dev, f * P / float(n)) for f in range(n)])
+        gain = walk.follow * np.array([k["exaggeration"], k["sway"] * k["exaggeration"]])
+        predicted = gain * (demeaned(l_new) - demeaned(l_src))
+        measured = demeaned(on["dev"][:, :2]) - demeaned(off["dev"][:, :2])
+        miss = float(np.abs(predicted - measured).max())
+        sways = float(np.ptp(on["dev"][:, 1])), float(np.ptp(off["dev"][:, 1]))
+        gate(miss < 0.05 and same_feet(on, off) < 1e-3,
+             "%s: the CoM's change is the pendulum's on the keyed feet to %.4f cm; it sways %.2f cm (Balance 0: "
+             "%.2f, the walk %.2f); the pelvis carried up to %.2f cm, the feet where Balance 0 puts them to %.6f"
+             % (label, miss, sways[0], sways[1], float(np.ptp(walk.s_dev[:, 1])),
+                on["result"].info["balance"]["carry"], same_feet(on, off)))
+        return on, off, sways
+
+    wide = pendulum_gate("the feet 20 cm wider", {"width": 20.0})
+    gate(wide[2][0] > wide[2][1] + 2.0, "wider feet sway the CoM more: %.2f cm against %.2f" % wide[2][:2])
+    slow = pendulum_gate("tempo 45 (slower)", {"tempo": 45})
+    fast = pendulum_gate("tempo 22 (faster)", {"tempo": 22})
+    gate(slow[2][0] > slow[2][1] + 0.2 and fast[2][0] < fast[2][1] - 0.2,
+         "slower sways more (%.2f against %.2f), faster less (%.2f against %.2f)"
+         % (slow[2][0], slow[2][1], fast[2][0], fast[2][1]))
+    long_ = keyed_balance("Manny, stride 1.3, Balance 1", {"stride": 1.3})
+    gate(long_["result"].info["balance"]["residual"] < 0.05 and long_["result"].info["balance"]["carry"] > 0.1,
+         "stride 1.3: Balance takes the pelvis's forward swing over from the stride's guess - carried up to %.2f cm, "
+         "the CoM on its pendulum to %.4f cm" % (long_["result"].info["balance"]["carry"],
+                                                long_["result"].info["balance"]["residual"]))
+
+    posed_on = posed_off = sword_on = sword_off = None
+    if os.path.exists(POSE_FILE):
+        posed_on = keyed_balance("Manny, the goblin x1, Balance 1", {"pose": 1.0, "balance": 1.0}, "goblin",
+                                 ("torso", "pelvis", "knees"))
+        posed_off = keyed_balance("Manny, the goblin x1, Balance 0", {"pose": 1.0, "balance": 0.0}, "goblin",
+                                  ("torso", "pelvis", "knees"))
+        mean = lambda run: run["dev"][:, :2].mean(axis=0)
+        held, leaned, own = mean(posed_on), mean(posed_off), mean(walk0)
+        back = float((posed_on["pelvis"][:, 0] - posed_off["pelvis"][:, 0]).mean())
+        gate(float(np.abs(held - own).max()) < 0.1 and leaned[0] - own[0] > 1.0 and back < -1.0
+             and same_feet(posed_on, posed_off) < 1e-3,
+             "the goblin's lean: at Balance 0 the CoM stands %.2f cm ahead of the walk's (%.2f aside); Balance 1 "
+             "carries the pelvis %.2f cm back and the CoM over the feet again to %.3f cm; the feet unmoved %.6f"
+             % (leaned[0] - own[0], leaned[1] - own[1], -back, float(np.abs(held - own).max()),
+                same_feet(posed_on, posed_off)))
+    if os.path.exists(SWORD_FILE):
+        sword_on = keyed_balance("Manny, the two-handed sword x1, Balance 1", {"pose": 1.0, "balance": 1.0},
+                                 "two_handed_sword")
+        sword_off = keyed_balance("Manny, the two-handed sword x1, Balance 0", {"pose": 1.0, "balance": 0.0},
+                                  "two_handed_sword")
+        want = walk0["dev"][:, :2].mean(axis=0) + (sword_on["cop"].mean(axis=0) - walk0["cop"].mean(axis=0))
+        got_ = sword_on["dev"][:, :2].mean(axis=0)
+        off_ = sword_off["dev"][:, :2].mean(axis=0)
+        gate(float(np.abs(got_ - want).max()) < 0.1,
+             "the sword: the CoM's mean moves with the feet's pressure (the pose's wider, turned feet) to %.3f cm "
+             "- %.2f / %.2f cm (forward / aside) from the walk's, at Balance 0 %.2f / %.2f"
+             % (float(np.abs(got_ - want).max()), *(got_ - walk0["dev"][:, :2].mean(axis=0)),
+                *(off_ - walk0["dev"][:, :2].mean(axis=0))))
+    balance_sheet = os.environ.get("WALK_BALANCE_SHEET")
+    if balance_sheet:
+        draw_balance(balance_sheet, walk, [
+            ("The feet 20 cm wider - the CoM from above", wide[1], wide[0]),
+            ("Tempo 45, slower - the CoM from above", slow[1], slow[0]),
+        ], [("The goblin x1 - from the side", posed_off, posed_on, "side"),
+            ("The two-handed sword x1 - from the front", sword_off, sword_on, "front")])
+        print("        picture: " + balance_sheet)
+
     sheet = os.environ.get("WALK_SHEET")
     cycle = range(start, start + P + 1)
     if sheet:

@@ -439,6 +439,7 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS):
         text += " | the walk itself sinks %.1f cm at the contacts" % result.info["lowered"]
     if info["short"] > 0.05:
         text += " | a foot falls %.1f cm short of its step" % info["short"]
+    text += wm.balance_line(result.info)
     if note:
         text += " | " + note
     return result, info, text + " | %.2f s" % (time.time() - started)
@@ -480,7 +481,7 @@ GROUPS = (
     ("Step", ("stride", "tempo", "lift", "width")),
     ("Pelvis", ("bob", "sway", "pelvis_rot")),
     ("Upper body", ("spine", "arms", "head", "overlap")),
-    ("Weight", ("weight", "exaggeration")),
+    ("Weight", ("weight", "balance", "exaggeration")),
 )
 LABELS = {
     "pose": ("Pose", "how far the pose picked above replaces the walk's own: the spine, the head, the pelvis "
@@ -497,6 +498,10 @@ LABELS = {
     "head": ("Head", "x the head's motion in the world (0 holds it steady)"),
     "overlap": ("Overlap (fr)", "frames the hands lag the pelvis (the spine and the head less)"),
     "weight": ("Weight", "heavier: deeper, longer low poses, a slower rise, more overlap; negative: lighter"),
+    "balance": ("Balance", "how far the centre of mass follows the feet like a pendulum: wider feet, a slower "
+                           "step, a crouch sway it more over the standing foot; a leaning pose takes the hips back "
+                           "over the feet. The source walk's own balance at the defaults; 0 leaves the pelvis to "
+                           "the other knobs alone"),
     "exaggeration": ("Exaggeration", "x every motion around the mean pose at once (not the stride)"),
 }
 

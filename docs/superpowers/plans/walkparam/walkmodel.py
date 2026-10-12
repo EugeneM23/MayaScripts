@@ -26,6 +26,7 @@ KNOBS = (
     ("head", 1.0, 0.0, 3.0),
     ("overlap", 0.0, 0.0, 6.0),
     ("weight", 0.0, -1.0, 2.0),
+    ("balance", 1.0, 0.0, 1.0),
     ("exaggeration", 1.0, 0.0, 2.0),
 )
 DEFAULTS = dict((k[0], k[1]) for k in KNOBS)
@@ -37,6 +38,22 @@ WEIGHT_WARP = 0.3         # the bob's clock: beta = this . weight
 WEIGHT_WARP_AFTER = 0.05  # slowest this share of a cycle after each low
 WEIGHT_LAG = 1.0          # frames of overlap per unit of weight
 LOWER_BLUR = 0.06         # the reach's drop of the pelvis, smoothed over this share of a cycle (sigma)
+
+# the balance: the centre of mass a pendulum over the feet's pressure (the walks are in centimetres - UE's)
+GRAVITY = 981.0            # cm / s^2
+GROUND_TOL = 2.5           # cm: a foot point this near its own lowest is on the ground
+HEEL_SHARE = 0.4           # the heel point: the ankle this share of the foot (ankle to ball) further back
+TOE_SHARE = 0.4            # the toe point: the ball this share of the foot further forward
+FOLLOW_RANGE = (0.25, 1.25)  # how strongly the walk's own CoM follows its pendulum, fitted per axis, clamped
+CARRY_STEPS = 5            # secant steps of the pelvis carry a frame
+CARRY_TOL = 1e-4           # cm: a frame's CoM this near its target is done
+BALANCE_ROUNDS = 4         # the carry and the reach's drop solved in turn at most this often
+# de Leva (1996): % of the body and the centre's share from the proximal joint
+TRUNK_MASS = (11.17, 16.33, 15.96)   # lower, middle, upper trunk: at the thirds of the pelvis..neck_01 chain
+HEAD_MASS = 6.94                     # on the head joint
+LIMB_MASS = (("upperarm", "lowerarm", 2.71, 0.5772), ("lowerarm", "hand", 1.62, 0.4574),
+             ("thigh", "calf", 14.16, 0.4095), ("calf", "foot", 4.33, 0.4459), ("foot", "ball", 1.37, 0.4415))
+HAND_MASS = (0.61, 0.5)              # half way from the wrist to middle_01 (else the hand's fingers' mean)
 
 
 class Refusal(Exception):
@@ -199,6 +216,31 @@ def shape_bob(v, weight):
     return v * max(0.0, 1.0 - WEIGHT_BOB_UP * weight)
 
 
+def pendulum(cop, seconds, height):
+    """The centre of mass of a linear inverted pendulum, x'' = (g / height)(x - p), over one cycle of
+    `seconds`: the pressure p (F samples a cycle, any columns) followed per harmonic k by w^2 / (w^2 + w_k^2),
+    w^2 = g / height, w_k = 2 pi k / seconds - exactly at the mean, less the faster it swings."""
+    cop = np.asarray(cop, float)
+    frames = cop.shape[0]
+    omega2 = GRAVITY / max(float(height), 1e-6)
+    k = np.arange(frames // 2 + 1)
+    gain = omega2 / (omega2 + (2.0 * math.pi * k / float(seconds)) ** 2)
+    return np.fft.irfft(np.fft.rfft(cop, axis=0) * gain.reshape((-1,) + (1,) * (cop.ndim - 1)), n=frames, axis=0)
+
+
+def _fill_periodic(values, known):
+    """Rows of `values` not `known` filled by the periodic straight line between the known around them."""
+    frames = len(values)
+    have = np.nonzero(known)[0]
+    out = np.array(values, float)
+    for i in np.nonzero(~np.asarray(known))[0]:
+        before = have[have < i][-1] if np.any(have < i) else have[-1] - frames
+        after = have[have > i][0] if np.any(have > i) else have[0] + frames
+        u = (i - before) / float(after - before)
+        out[i] = (1.0 - u) * values[before % frames] + u * values[after % frames]
+    return out
+
+
 def two_bone(hip, ankle, l1, l2, bend, reach):
     """The knee of a hip-knee-ankle chain bending toward `bend`, the leg never straighter than
     reach . (l1 + l2). Returns (knee, the ankle it reaches, how far it falls short)."""
@@ -319,6 +361,10 @@ class Walk(object):
         self.pelvis_mean = (self.pdev[self.index["pelvis"]] @ self.basis.T).mean(axis=0)
         bob = self.pdev[self.index["pelvis"]] @ self.up - self.pelvis_mean[2]
         self.low_phase = float(np.argmin(bob)) / P
+        self.balance_note = ""
+        self._masses()
+        self._grounds()
+        self._own_pendulum()
 
     # -- the source, sampled at any source time tau (whole frames exact) --
 
@@ -462,6 +508,191 @@ class Walk(object):
                 follows[h] = (best[1], best[2])
         return follows
 
+    # -- the balance: the centre of mass and the feet's pressure --
+
+    def _masses(self):
+        """`self.mass`: de Leva's table as one weight a joint (each mass point a fixed blend of two joints),
+        summing to 1; the trunk spread along pelvis..neck_01 at its thirds. A walk without that chain gets no
+        masses and `balance_note` says why."""
+        idx, mass = self.index, np.zeros(len(self.names))
+        self.mass = mass
+        if "neck_01" not in idx:
+            self.balance_note = "no neck_01: Balance weighs the trunk from the pelvis to neck_01"
+            return
+        chain = [idx["neck_01"]]
+        while chain[-1] != idx["pelvis"]:
+            if self.parents[chain[-1]] < 0:
+                self.balance_note = "neck_01 is not under the pelvis: Balance weighs the trunk along that chain"
+                return
+            chain.append(self.parents[chain[-1]])
+        chain.reverse()
+        lengths = np.linalg.norm(np.diff(self.pos[chain, 0], axis=0), axis=1)
+        ends = np.concatenate([[0.0], np.cumsum(lengths)])
+        for share, part in zip(TRUNK_MASS, (1.0 / 6.0, 0.5, 5.0 / 6.0)):
+            at = part * ends[-1]
+            i = min(int(np.searchsorted(ends, at, side="right")) - 1, len(lengths) - 1)
+            t = (at - ends[i]) / lengths[i] if lengths[i] > 1e-9 else 0.0
+            mass[chain[i]] += share * (1.0 - t)
+            mass[chain[i + 1]] += share * t
+        mass[idx.get("head", chain[-1])] += HEAD_MASS
+        for side in SIDES:
+            for a, b, share, t in LIMB_MASS:
+                if a + "_" + side in idx and b + "_" + side in idx:
+                    mass[idx[a + "_" + side]] += share * (1.0 - t)
+                    mass[idx[b + "_" + side]] += share * t
+            hand = idx.get("hand_" + side)
+            if hand is not None:
+                share, t = HAND_MASS
+                if "middle_01_" + side in idx:
+                    fingers = [idx["middle_01_" + side]]
+                else:
+                    fingers = [j for j, p in enumerate(self.parents) if p == hand and self.kind[j] == "finger"]
+                mass[hand] += share * (1.0 - t if fingers else 1.0)
+                for j in fingers:
+                    mass[j] += share * t / len(fingers)
+        self.mass = mass / mass.sum()
+
+    def com(self, worlds):
+        """The centre of mass of world matrices (J, F, 4, 4) -> (F, 3), or one frame's (J, 4, 4) -> (3,)."""
+        return np.tensordot(self.mass, np.asarray(worlds)[..., 3, :3], axes=(0, 0))
+
+    def _grounds(self):
+        """Each foot point's ground contact a source frame: 1 at its own lowest, 0 GROUND_TOL above it."""
+        self.ground = {}
+        for side in SIDES:
+            for name in ("foot_" + side, "ball_" + side):
+                h = self.pos[self.index[name]] @ self.up
+                self.ground[name] = np.clip(1.0 - (h - h.min()) / GROUND_TOL, 0.0, 1.0)
+
+    def pressure(self, points, taus):
+        """The centre of pressure (F, 3, on the up = 0 plane through the world) where `points` ({foot_l,
+        ball_l, foot_r, ball_r: (F, 3)}) put the feet at source times `taus`: per foot a heel point and a toe
+        point, each loaded by its source contact at that phase (so a swinging foot never presses); None when
+        no frame has a foot down. A frame between two steps takes the straight line between its neighbours."""
+        frames = len(taus)
+        num, den = np.zeros((frames, 3)), np.zeros(frames)
+        flat = lambda p: np.asarray(p, float) - np.outer(np.asarray(p, float) @ self.up, self.up)
+        for side in SIDES:
+            ankle, ball = flat(points["foot_" + side]), flat(points["ball_" + side])
+            heel, toe = ankle + HEEL_SHARE * (ankle - ball), ball + TOE_SHARE * (ball - ankle)
+            g_heel = np.clip([float(periodic_cr(self.ground["foot_" + side], t)) for t in taus], 0.0, 1.0)
+            g_toe = np.clip([float(periodic_cr(self.ground["ball_" + side], t)) for t in taus], 0.0, 1.0)
+            load = np.maximum(g_heel, g_toe)
+            point = (g_heel[:, None] * heel + g_toe[:, None] * toe) / np.maximum(g_heel + g_toe, 1e-9)[:, None]
+            num += load[:, None] * point
+            den += load
+        known = den > 1e-6
+        if not known.any():
+            return None
+        return _fill_periodic(num / np.maximum(den, 1e-9)[:, None], known)
+
+    def _own_pendulum(self):
+        """The source's CoM, its pressure and its pendulum against its travel line (fwd, side[, up]); how
+        strongly its CoM follows the pendulum per axis (`follow`, fitted, clamped to FOLLOW_RANGE)."""
+        if self.balance_note:
+            return
+        P = self.P
+        cop = self.pressure(dict((n, self.pos[self.index[n]]) for n in self.ground), np.arange(P, dtype=float))
+        if cop is None:
+            self.balance_note = "no foot is ever on the ground: Balance needs a walk's contacts"
+            return
+        line = self.origin + np.outer(np.arange(P) / float(P), self.travel)
+        self.s_dev = np.tensordot(self.mass, self.pdev, axes=(0, 0)) @ self.basis.T
+        self.cop_dev = ((cop - line) @ self.basis.T)[:, :2]
+        self.l_dev = pendulum(self.cop_dev, P / self.fps, self.s_dev[:, 2].mean())
+        follow = []
+        for axis in (0, 1):
+            a = self.s_dev[:, axis] - self.s_dev[:, axis].mean()
+            b = self.l_dev[:, axis] - self.l_dev[:, axis].mean()
+            fit = float(np.dot(a, b) / np.dot(b, b)) if float(np.dot(b, b)) > 1e-12 else 1.0
+            follow.append(min(max(fit, FOLLOW_RANGE[0]), FOLLOW_RANGE[1]))
+        self.follow = np.array(follow)
+
+    def _balance_target(self, times, ctx, bases):
+        """Where the new cycle's centre of mass belongs, a frame (world, 0..n-1): its own (the knobs' walk,
+        nothing carried) moved by Balance x [the pendulum's change (the new pressure and tempo against the
+        source's) about its mean, x the walk's follow, forward x Exaggeration, sideways x Sway x Exaggeration;
+        plus the mean's: the new pressure's mean change minus the CoM's own]."""
+        k, b, n = ctx["k"], ctx["balance"], len(times) - 1
+        worlds = np.swapaxes(np.array(bases), 0, 1)
+        own = self.com(worlds)
+        line = np.array([self.origin + ctx["travel2"] * phi for phi, _ in times[:-1]])
+        m_dev = (own - line) @ self.basis.T
+        taus = [tau for _, tau in times[:-1]]
+        cop = self.pressure(dict((name, worlds[self.index[name], :, 3, :3]) for name in self.ground), taus)
+        cop_dev = ((cop - line) @ self.basis.T)[:, :2]
+        l_new = pendulum(cop_dev, n / self.fps, m_dev[:, 2].mean())
+        l_src = np.array([periodic_cr(self.l_dev, tau) for tau in taus])
+        gain = self.follow * np.array([ctx["ex"], k["sway"] * ctx["ex"]])
+        swing = gain * ((l_new - l_new.mean(axis=0)) - (l_src - l_src.mean(axis=0)))
+        mean = ((cop_dev.mean(axis=0) - self.cop_dev.mean(axis=0))
+                - (m_dev[:, :2].mean(axis=0) - self.s_dev[:, :2].mean(axis=0)))
+        delta = b * (swing + mean)
+        return own + delta @ self.basis[:2], {"source_sway": float(np.ptp(self.s_dev[:, 1])),
+                                              "mean": [float(v) for v in b * mean],
+                                              "need": float(np.abs(delta).max())}
+
+    def _com_joints(self):
+        """The joints a centre of mass needs: every weighed joint and its ancestors."""
+        if getattr(self, "_com_set", None) is None:
+            need = set()
+            for j in np.nonzero(self.mass)[0]:
+                need.add(int(j))
+                need.update(self._ancestors(int(j)))
+            self._com_set = need
+        return self._com_set
+
+    def _carry_parts(self):
+        """The CoM's joints a pelvis carry moves rigidly (the pelvis and the body over it, not the legs), and
+        per leg (thigh, calf, foot, the CoM's joints under the foot)."""
+        if getattr(self, "_parts", None) is None:
+            only, pelvis = self._com_joints(), self.index["pelvis"]
+            legs, in_legs = {}, set()
+            for side in SIDES:
+                th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
+                below = [j for j in only if fo in self._ancestors(j)]
+                legs[side] = (th, ca, fo, below)
+                in_legs.update([th, ca, fo] + below)
+            rigid = [j for j in only if j not in in_legs and (j == pelvis or pelvis in self._ancestors(j))]
+            self._parts = (rigid, legs)
+        return self._parts
+
+    def _moved_com(self, base, tau, ctx, delta, cache):
+        """The centre of mass of a base frame (J, 4, 4) with the pelvis moved by `delta` (world): the body over
+        it moved rigidly, the legs re-solved to the same feet (exactly what the frame itself would give)."""
+        rigid, legs = self._carry_parts()
+        rots, poss = list(base[:, :3, :3]), list(base[:, 3, :3])
+        for j in rigid:
+            poss[j] = poss[j] + delta
+        for side in SIDES:
+            th, ca, fo, below = legs[side]
+            before = poss[fo]
+            self._leg(side, tau, rots, poss, ctx, cache)
+            for j in below:
+                poss[j] = poss[j] + (poss[fo] - before)
+        return np.tensordot(self.mass, np.array(poss), axes=(0, 0))
+
+    def _carry(self, times, ctx, bases, sink, target, start, caches):
+        """The pelvis's horizontal carry a frame putting the frame's CoM on `target` (secant steps), the pelvis
+        `sink` cm lower than in its base frame; from `start`. Returns the carry (n+1, 3), the last the first's."""
+        flat = lambda v: v - np.dot(v, self.up) * self.up
+        out = np.array(start, float)
+        for f, (phi, tau) in enumerate(times[:-1]):
+            s, down = out[f].copy(), -sink[f] * self.up
+            com = self._moved_com(bases[f], tau, ctx, s + down, caches[f])
+            miss, rate = flat(target[f] - com), 0.8
+            for _ in range(CARRY_STEPS):
+                if np.linalg.norm(miss) < CARRY_TOL:
+                    break
+                step = miss / rate
+                s = s + step
+                moved = self._moved_com(bases[f], tau, ctx, s + down, caches[f])
+                rate = min(max(float(np.dot(flat(moved - com), step) / np.dot(step, step)), 0.2), 1.5)
+                com, miss = moved, flat(target[f] - moved)
+            out[f] = s
+        out[-1] = out[0]
+        return out
+
     # -- the new cycle --
     def evaluate(self, given=None, pose=None):
         """The cycle rebuilt from knobs (the spec's model); the defaults give the source back. `pose` (from
@@ -474,19 +705,47 @@ class Walk(object):
                "lag": max(0.0, k["overlap"] + WEIGHT_LAG * k["weight"]) * P / float(n),
                "beta": min(max(WEIGHT_WARP * k["weight"], -0.9), 0.9),
                "phi0": self.low_phase + WEIGHT_WARP_AFTER - 0.25,
-               "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"]}
+               "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"],
+               "balance": 0.0 if self.balance_note else k["balance"], "carry": None}
         ctx["width"] = k["width"] + (ctx["alpha"] * ctx["pose"]["width"] if ctx["pose"] and "width" in ctx["pose"] else 0.0)
         times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
         drop = self._lowering(times, ctx)
+        balance = {"carry": 0.0, "residual": 0.0, "note": self.balance_note if k["balance"] > 0.0 else ""}
+        if ctx["balance"] > 0.0:
+            only = self._com_joints()
+            bases = [self._frame(phi, tau, ctx, drop[f], None, only)[0] for f, (phi, tau) in enumerate(times[:-1])]
+            target, said = self._balance_target(times, ctx, bases)
+            need = said.pop("need")
+            balance.update(said)
+            caches, first, carry = [dict() for _ in bases], np.array(drop), np.zeros((n + 1, 3))
+            for _ in range(BALANCE_ROUNDS if need >= CARRY_TOL else 0):   # nothing to carry at the defaults     # the carry, then the reach's drop with it, till the drop holds
+                ctx["carry"] = carry = self._carry(times, ctx, bases, np.array(drop) - first, target, carry, caches)
+                again = self._lowering(times, ctx)
+                settled = float(np.abs(np.array(again) - np.array(drop)).max()) < CARRY_TOL
+                drop = again
+                if settled:
+                    break
+            balance["carry"] = float(np.linalg.norm(carry, axis=1).max()) if ctx["carry"] is not None else 0.0
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
-        short = 0.0
+        short, ctx["swing_in"] = 0.0, 0.0
         for f, (phi, tau) in enumerate(times):
-            worlds[:, f], frame_short = self._frame(phi, tau, ctx, drop[f])
+            carry = None if ctx["carry"] is None else ctx["carry"][f]
+            worlds[:, f], frame_short = self._frame(phi, tau, ctx, drop[f], carry)
             short = max(short, frame_short)
+        if not self.balance_note:
+            line = np.array([self.origin + ctx["travel2"] * phi for phi, _ in times[:-1]])
+            dev = (self.com(worlds[:, :n]) - line) @ self.basis.T
+            balance["sway"], balance["forward"] = float(np.ptp(dev[:, 1])), float(np.ptp(dev[:, 0]))
+            balance["source_sway"] = float(np.ptp(self.s_dev[:, 1]))
+            balance["follow"] = [float(v) for v in self.follow]
+            if ctx["balance"] > 0.0:
+                balance["residual"] = float(np.abs((self.com(worlds[:, :n]) - target) @ self.basis[:2].T).max())
         flat = ctx["travel2"] - np.dot(ctx["travel2"], self.up) * self.up
         info = {"frames": n, "stride_cm": float(np.linalg.norm(flat)) / 2.0,
                 "speed": float(np.linalg.norm(flat)) / (n / self.fps) / 100.0, "lowered": float(max(drop)),
-                "drop": [float(d) for d in drop], "short": short, "lag": ctx["lag"] * n / float(P), "knobs": k}
+                "drop": [float(d) for d in drop], "short": short, "swing_in": ctx["swing_in"],
+                "lag": ctx["lag"] * n / float(P), "knobs": k,
+                "balance": balance}
         return Result(worlds, n, info)
 
     def foot_target(self, side, tau, stride, width, lift):
@@ -511,15 +770,18 @@ class Walk(object):
         lift_up = float(np.dot(src - print_k - s * self.travel - base, self.up))
         return rot, src + shift + s * (travel2 - self.travel) + (lift - 1.0) * lift_up * self.up
 
-    def _body(self, phi, tau, ctx, drop=0.0):
-        """The root's and the pelvis's new (rotation, position); the pelvis `drop` cm lower for the reach."""
+    def _body(self, phi, tau, ctx, drop=0.0, carry=None):
+        """The root's and the pelvis's new (rotation, position); the pelvis `drop` cm lower for the reach and
+        `carry` (a world vector) along for the balance. Balance takes over the pelvis's forward swing from the
+        stride: it scales by (1 - Balance) x Stride + Balance and the pendulum brings what the step changes."""
         k, ex = ctx["k"], ctx["ex"]
         line2 = self.origin + ctx["travel2"] * phi
         out = {}
         for name, mean in (("root", self.root_mean), ("pelvis", self.pelvis_mean)):
             j = self.index[name]
             dev = periodic_cr(self.pdev[j], tau) @ self.basis.T
-            along = mean[0] + k["stride"] * ex * (dev[0] - mean[0])
+            scale = k["stride"] if name == "root" else (1.0 - ctx["balance"]) * k["stride"] + ctx["balance"]
+            along = mean[0] + scale * ex * (dev[0] - mean[0])
             aside = mean[1] + k["sway"] * ex * (dev[1] - mean[1])
             if name == "pelvis":
                 pose, a = ctx["pose"], ctx["alpha"]
@@ -531,17 +793,30 @@ class Walk(object):
             else:
                 height, rot = dev[2], self.wrot(j, tau)
             out[name] = (rot, line2 + np.array([along, aside, height]) @ self.basis)
+        if carry is not None:
+            rot, pos = out["pelvis"]
+            out["pelvis"] = (rot, pos + carry)
         return out
+
+    def down(self, side, tau):
+        """Whether the foot is on or near the ground at source time tau (its heel or toe within GROUND_TOL of
+        its own lowest in the source)."""
+        return max(float(periodic_cr(self.ground["foot_" + side], tau)),
+                   float(periodic_cr(self.ground["ball_" + side], tau))) > 1e-6
 
     def _lowering(self, times, ctx):
         """The pelvis's drop on every frame (the last = the first): each frame needs the least drop that lets
-        both legs reach without straightening past the source's straightest; the drop is a smooth periodic
-        curve over those needs (smooth_cover), so a long stride sinks the contacts, not the whole cycle."""
+        the legs whose feet are down reach without straightening past the source's straightest (a foot in the
+        air that cannot reach passes closer to the body instead); the drop is a smooth periodic curve over those
+        needs (smooth_cover), so a long stride sinks the contacts, not the whole cycle."""
         k = ctx["k"]
         need = np.zeros(len(times) - 1)
         for f, (phi, tau) in enumerate(times[:-1]):
-            pelvis_rot, pelvis_pos = self._body(phi, tau, ctx)["pelvis"]
+            carry = None if ctx["carry"] is None else ctx["carry"][f]
+            pelvis_rot, pelvis_pos = self._body(phi, tau, ctx, 0.0, carry)["pelvis"]
             for side in SIDES:
+                if not self.down(side, tau):
+                    continue
                 th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
                 hip = self.lt_at(th, tau) @ pelvis_rot + pelvis_pos
                 ankle = self.foot_target(side, tau, k["stride"], ctx["width"], k["lift"] * ctx["ex"])[1]
@@ -556,15 +831,17 @@ class Walk(object):
         drop = smooth_cover(need, LOWER_BLUR * len(need))
         return np.append(drop, drop[0])
 
-    def _frame(self, phi, tau, ctx, drop=0.0):
-        """Every joint's new world at one frame (parents first, helpers last); and how far a foot fell short."""
+    def _frame(self, phi, tau, ctx, drop=0.0, carry=None, only=None):
+        """Every joint's new world at one frame (parents first, helpers last) - or only the joints in `only`
+        (closed under their parents; the rest stay identity); and how far a foot that is down fell short (a
+        foot in the air that cannot reach its path: ctx["swing_in"], the most it passes closer)."""
         k, ex = ctx["k"], ctx["ex"]
         rots, poss = [None] * len(self.names), [None] * len(self.names)
-        body = self._body(phi, tau, ctx, drop)
+        body = self._body(phi, tau, ctx, drop, carry)
         gains = {"spine": k["spine"] * ex, "arm": k["arms"] * ex}
         short = 0.0
         for j in self.order:
-            if rots[j] is not None:
+            if rots[j] is not None or (only is not None and j not in only):
                 continue
             kind, name, p = self.kind[j], self.names[j], self.parents[j]
             if kind in ("root", "pelvis"):
@@ -572,7 +849,11 @@ class Walk(object):
             elif kind == "world":
                 rots[j], poss[j] = self.wrot(j, tau), self.wpos(j, tau) + (ctx["travel2"] - self.travel) * phi
             elif kind == "leg":
-                short = max(short, self._leg(name[-1], tau, rots, poss, ctx))
+                missed = self._leg(name[-1], tau, rots, poss, ctx)
+                if self.down(name[-1], tau):
+                    short = max(short, missed)
+                else:
+                    ctx["swing_in"] = max(ctx.get("swing_in", 0.0), missed)
             elif kind == "helper" and j in self.follows:
                 b, rel = self.follows[j]
                 pose = ctx["pose"]
@@ -603,16 +884,14 @@ class Walk(object):
                 poss[j] = self.lt_at(j, t) @ rots[p] + poss[p]
         out = np.tile(np.eye(4), (len(self.names), 1, 1))
         for j in range(len(self.names)):
-            out[j, :3, :3], out[j, 3, :3] = rots[j], poss[j]
+            if rots[j] is not None:
+                out[j, :3, :3], out[j, 3, :3] = rots[j], poss[j]
         return out, short
 
-    def _leg(self, side, tau, rots, poss, ctx):
-        """Thigh, calf and foot by IK from the new hip to the new foot; each bone turned by the rotation
-        taking its source (direction, leg plane) onto the new one. Returns how far the foot fell short."""
+    def _leg_source(self, side, tau, ctx):
+        """What a leg's solve takes from the source and the knobs at tau - all of it independent of the hip."""
         k = ctx["k"]
         th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
-        pelvis = self.parents[th]
-        hip = self.lt_at(th, tau) @ rots[pelvis] + poss[pelvis]
         foot_rot, ankle = self.foot_target(side, tau, k["stride"], ctx["width"], k["lift"] * ctx["ex"])
         if ctx["pose"] is not None and "toe" in ctx["pose"]:     # the pose's toe-out: the foot turned about up
             foot_rot = foot_rot @ exp_rot(self.up * ctx["alpha"] * ctx["pose"]["toe"][side])
@@ -624,13 +903,30 @@ class Walk(object):
         knee_bend = bend
         if ctx["pose"] is not None and "knee_turn" in ctx["pose"]:   # the pose's knee heading: turned about the leg
             knee_bend = turned_about(bend, -e, ctx["alpha"] * ctx["pose"]["knee_turn"][side])
-        knee, reached, short = two_bone(hip, ankle, l1, l2, knee_bend, self.reach[side])
+        return {"joints": (th, ca, fo), "hip": self.lt_at(th, tau), "foot_rot": foot_rot, "ankle": ankle,
+                "lengths": (l1, l2), "dirs": (_unit(kn - h), _unit(a - kn)), "normal": _unit(np.cross(e, bend)),
+                "bend": knee_bend, "wrot": (self.wrot(th, tau), self.wrot(ca, tau))}
+
+    def _leg(self, side, tau, rots, poss, ctx, cache=None):
+        """Thigh, calf and foot by IK from the new hip to the new foot; each bone turned by the rotation
+        taking its source (direction, leg plane) onto the new one. Returns how far the foot fell short.
+        `cache` ({side: _leg_source}) spares the source half when only the hip moves."""
+        src = None if cache is None else cache.get(side)
+        if src is None:
+            src = self._leg_source(side, tau, ctx)
+            if cache is not None:
+                cache[side] = src
+        th, ca, fo = src["joints"]
+        pelvis = self.parents[th]
+        hip = src["hip"] @ rots[pelvis] + poss[pelvis]
+        knee, reached, short = two_bone(hip, src["ankle"], src["lengths"][0], src["lengths"][1], src["bend"],
+                                        self.reach[side])
         e2 = _unit(reached - hip)
         bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
-        n_src, n_new = _unit(np.cross(e, bend)), _unit(np.cross(e2, bend2))
-        rots[th] = self.wrot(th, tau) @ align(_unit(kn - h), n_src, _unit(knee - hip), n_new)
-        rots[ca] = self.wrot(ca, tau) @ align(_unit(a - kn), n_src, _unit(reached - knee), n_new)
-        rots[fo] = foot_rot
+        n_new = _unit(np.cross(e2, bend2))
+        rots[th] = src["wrot"][0] @ align(src["dirs"][0], src["normal"], _unit(knee - hip), n_new)
+        rots[ca] = src["wrot"][1] @ align(src["dirs"][1], src["normal"], _unit(reached - knee), n_new)
+        rots[fo] = src["foot_rot"]
         poss[th], poss[ca], poss[fo] = hip, knee, reached
         return short
 
@@ -649,4 +945,17 @@ def describe(result):
         text += " | pelvis lowered up to %.1f cm at the contacts for the reach" % info["lowered"]
     if info["short"] > 0.005:
         text += " | a foot falls %.1f cm short of its step" % info["short"]
-    return text
+    if info.get("swing_in", 0.0) > 0.5:
+        text += " | the swinging foot passes up to %.1f cm nearer the body" % info["swing_in"]
+    return text + balance_line(info)
+
+
+def balance_line(info):
+    """What Balance did, for a status line ("" when nothing worth saying)."""
+    balance = info.get("balance") or {}
+    if balance.get("note"):
+        return " | no balance: " + balance["note"]
+    if balance.get("carry", 0.0) > 0.1:
+        return (" | balance: the pelvis carried up to %.1f cm over the feet (the CoM sways %.1f cm, the source's "
+                "%.1f)" % (balance["carry"], balance.get("sway", 0.0), balance.get("source_sway", 0.0)))
+    return ""

@@ -173,8 +173,9 @@ class KnobTests(unittest.TestCase):
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "width", "bob", "sway", "pelvis_rot", "spine", "arms",
-                          "head", "overlap", "weight", "exaggeration"])
+                          "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
+        self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
 
 
 UP = np.array([0.0, 1.0, 0.0])
@@ -466,6 +467,28 @@ class StepTests(unittest.TestCase):
             self.assertLessEqual(float(d.max()), w.reach[side] * (L1 + L2) + 1e-6)
         self.assertIn("pelvis lowered", wm.describe(r))
 
+    def test_a_foot_is_down_in_stance_and_up_in_swing(self):
+        w = walk()
+        left = w.feet["l"]
+        self.assertTrue(w.down("l", left.mid))
+        self.assertFalse(w.down("l", (2 * left.on + left.length + 24) / 2.0))     # mid-swing
+
+    def test_a_foot_in_the_air_passes_nearer_rather_than_lowering_the_pelvis(self):
+        """Only feet that are down hold the pelvis down: a swing path out of reach is cut short instead."""
+        w = walk()
+        target = w.foot_target
+
+        def far_in_the_air(side, tau, *rest):
+            rot, ankle = target(side, tau, *rest)
+            return rot, (ankle if w.down(side, tau) else ankle + 60.0 * w.side * (1.0 if side == "l" else -1.0))
+
+        w.foot_target = far_in_the_air
+        r = w.evaluate({"balance": 0.0})
+        self.assertEqual(r.info["lowered"], 0.0)
+        self.assertEqual(r.info["short"], 0.0)
+        self.assertGreater(r.info["swing_in"], 10.0)
+        self.assertIn("nearer the body", wm.describe(r))
+
     def test_helpers_keep_following(self):
         w = walk()
         r = w.evaluate({"stride": 1.2, "arms": 2.0})
@@ -488,8 +511,9 @@ class BodyTests(unittest.TestCase):
         self.assertTrue(np.allclose(dev, 2.0 * (src - src.mean()), atol=1e-6))
 
     def test_sway_zero_holds_the_pelvis_on_its_line(self):
+        """The knob alone (Balance 0; with Balance the mean's correction may carry the line a constant)."""
         w = walk()
-        side = self.pelvis(w.evaluate({"sway": 0.0}), w)[:, 0]
+        side = self.pelvis(w.evaluate({"sway": 0.0, "balance": 0.0}), w)[:, 0]
         self.assertLess(float(np.ptp(side)), 1e-9)
 
     def test_arms_scale_their_swing_in_the_world(self):
@@ -595,9 +619,10 @@ class PoseTests(unittest.TestCase):
         self.assertTrue(np.allclose(height, 0.5 * (70.0 + w.pelvis_mean[2] + w.origin[1]), atol=1e-6))
 
     def test_the_knees_turn_by_the_pose(self):
+        """The turn alone (Balance 0: Balance carries the hunched pelvis back, tilting the legs' lines)."""
         w = walk()
         pose = a_pose(w)
-        plain, posed = w.evaluate(), w.evaluate({"pose": 1.0}, pose)
+        plain, posed = w.evaluate(), w.evaluate({"pose": 1.0, "balance": 0.0}, pose)
         for side, turn in (("l", 30.0), ("r", -20.0)):
             f = int(round(w.feet[side].mid)) % 24
             self.assertAlmostEqual(knee_heading(posed, w, side, f) - knee_heading(plain, w, side, f), turn, delta=1.0)
@@ -663,6 +688,169 @@ class PosePartsTests(unittest.TestCase):
         foot = positions(r, "ball_l", w)[[left.on + i for i in range(left.length + 1)]]
         self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
 
+
+class MassTests(unittest.TestCase):
+    """de Leva's segment table as one weight a joint: the centre of mass is a weighted sum of joints."""
+
+    def test_the_weights_sum_to_one_and_helpers_weigh_nothing(self):
+        w = walk()
+        self.assertEqual(w.balance_note, "")
+        self.assertAlmostEqual(float(w.mass.sum()), 1.0, places=12)
+        self.assertTrue(np.all(w.mass >= 0.0))
+        for name in ("root", "ik_foot_root", "ik_foot_l", "camera_root", "thigh_twist_01_l"):
+            self.assertEqual(w.mass[w.index[name]], 0.0, name)
+
+    def test_the_legs_weigh_de_levas_share(self):
+        w = walk()
+        legs = sum(w.mass[w.index["%s_%s" % (b, s)]] for s in "lr" for b in ("thigh", "calf", "foot", "ball"))
+        self.assertAlmostEqual(legs, 2 * (14.16 + 4.33 + 1.37) / 100.0, places=9)
+        self.assertAlmostEqual(w.mass[w.index["thigh_l"]], 0.1416 * (1 - 0.4095), places=9)
+        self.assertAlmostEqual(w.mass[w.index["ball_r"]], 0.0137 * 0.4415, places=9)
+        self.assertAlmostEqual(w.mass[w.index["index_01_l"]], 0.0061 * 0.5, places=9)   # the hand's fingers
+
+    def test_the_trunk_spreads_along_the_chain_and_the_head_sits_on_its_joint(self):
+        w = walk()
+        trunk = sum(w.mass[w.index[n]] for n in ("pelvis", "spine_01", "spine_02", "neck_01"))
+        self.assertAlmostEqual(trunk, (11.17 + 16.33 + 15.96) / 100.0, places=9)
+        self.assertAlmostEqual(w.mass[w.index["head"]], 0.0694, places=9)
+
+    def test_the_centre_of_mass_is_the_weighted_joints(self):
+        w, c = walk(), clip()
+        com = w.com(c.worlds)
+        self.assertEqual(com.shape, (25, 3))
+        manual = sum(w.mass[j] * c.worlds[j, 6, 3, :3] for j in range(len(w.names)))
+        self.assertTrue(np.allclose(com[6], manual, atol=1e-12))
+        self.assertTrue(np.allclose(w.com(c.worlds[:, 6]), manual, atol=1e-12))
+        self.assertGreater(com[6, 1], c.worlds[w.index["thigh_l"], 6, 3, 1])
+
+    def test_a_walker_without_a_neck_keeps_its_walk_and_says_why(self):
+        c = clip()
+        names = ["neckbone" if n == "neck_01" else n for n in c.names]
+        w = wm.analyse(wm.Clip(names, c.parents, c.worlds, 30.0, (0, 1, 0), "no neck"))
+        self.assertIn("neck_01", w.balance_note)
+        r, r0 = w.evaluate({"width": 15.0}), w.evaluate({"width": 15.0, "balance": 0.0})
+        self.assertLess(float(np.abs(r.worlds - r0.worlds).max()), 1e-12)
+        self.assertIn("neck_01", wm.describe(r))
+
+
+class PendulumTests(unittest.TestCase):
+    """x'' = (g / h)(x - p) over one cycle: each harmonic of the pressure followed by w^2 / (w^2 + w_k^2)."""
+
+    def test_a_still_pressure_holds_the_centre_over_it(self):
+        cop = np.tile([3.0, -2.0], (20, 1))
+        self.assertTrue(np.allclose(wm.pendulum(cop, 1.0, 90.0), cop, atol=1e-12))
+
+    def test_a_harmonic_follows_by_its_gain_in_phase(self):
+        frames, seconds, height = 30, 1.2, 95.0
+        t = np.arange(frames) / float(frames)
+        omega2 = wm.GRAVITY / height
+        for k in (1, 2, 3):
+            cop = np.stack([5.0 * np.cos(2 * math.pi * k * t), 3.0 * np.sin(2 * math.pi * k * t)], -1)
+            gain = omega2 / (omega2 + (2 * math.pi * k / seconds) ** 2)
+            self.assertTrue(np.allclose(wm.pendulum(cop, seconds, height), gain * cop, atol=1e-9), k)
+
+    def test_lower_and_slower_follow_more(self):
+        t = np.arange(30) / 30.0
+        cop = np.stack([np.zeros(30), 6.0 * np.sin(2 * math.pi * t)], -1)
+        amp = lambda seconds, height: float(np.ptp(wm.pendulum(cop, seconds, height)[:, 1]))
+        self.assertGreater(amp(1.0, 60.0), amp(1.0, 95.0))
+        self.assertGreater(amp(1.5, 95.0), amp(1.0, 95.0))
+        self.assertLess(amp(1.0, 95.0), 12.0)
+
+
+def com_dev(r, w, stride=1.0):
+    """The result's centre of mass against its own travel line, (fwd, side, up) a frame (the seam dropped)."""
+    n = r.frames
+    line = w.origin + np.outer(np.arange(n) / float(n), w.travel * stride)
+    return (w.com(r.worlds)[:n] - line) @ w.basis.T
+
+
+class BalanceTests(unittest.TestCase):
+    """The pendulum on top of the style: what the changes bring, nothing at the defaults."""
+
+    def test_the_source_reads_its_own_pendulum(self):
+        w = walk()
+        self.assertEqual(w.cop_dev.shape, (24, 2))
+        self.assertTrue(all(wm.FOLLOW_RANGE[0] <= f <= wm.FOLLOW_RANGE[1] for f in w.follow))
+        f = int(round(w.feet["l"].mid)) % 24     # mid-stance on the left foot: the pressure under it (+side)
+        self.assertGreater(w.cop_dev[f, 1], 5.0)
+
+    def test_balance_changes_nothing_at_the_defaults(self):
+        w = walk()
+        r1, r0 = w.evaluate({"balance": 1.0}), w.evaluate({"balance": 0.0})
+        self.assertLess(float(np.abs(r1.worlds - r0.worlds).max()), 1e-6)
+        self.assertLess(r1.info["balance"]["carry"], 1e-6)
+
+    def test_wider_feet_sway_the_centre_more_toward_the_standing_foot(self):
+        w = walk()
+        wide1, wide0 = w.evaluate({"width": 20.0}), w.evaluate({"width": 20.0, "balance": 0.0})
+        d1, d0 = com_dev(wide1, w), com_dev(wide0, w)
+        self.assertGreater(float(np.ptp(d1[:, 1])), float(np.ptp(d0[:, 1])) + 1.0)
+        for side, sign in (("l", 1.0), ("r", -1.0)):
+            f = int(round(w.feet[side].mid)) % 24
+            self.assertGreater(sign * (d1[f, 1] - d0[f, 1]), 0.5, side)
+        self.assertLess(wide1.info["balance"]["residual"], 0.05)
+        self.assertGreater(wide1.info["balance"]["carry"], 0.5)
+        self.assertIn("balance", wm.describe(wide1))
+
+    def test_the_feet_stay_planted_and_the_loop_closes_under_balance(self):
+        w = walk()
+        r = w.evaluate({"width": 20.0, "stride": 1.3})
+        for side in "lr":
+            foot = w.feet[side]
+            prints = positions(r, "foot_" + side, w)[[(foot.on + i) % 24 for i in range(foot.length + 1)
+                                                      if foot.on + i < 24]]
+            self.assertLess(float(np.ptp(prints, axis=0).max()), 1e-9, side)
+            hip, knee = positions(r, "thigh_" + side, w), positions(r, "calf_" + side, w)
+            self.assertLess(float(np.abs(np.linalg.norm(knee - hip, axis=1) - L1).max()), 1e-9)
+        moved = r.worlds[:, -1, 3, :3] - r.worlds[:, 0, 3, :3]
+        self.assertLess(float(np.abs(moved - [0.0, 0.0, 156.0]).max()), 1e-6)
+
+    def test_slower_sways_more_faster_less(self):
+        w = walk()
+        for tempo, sign in ((36, 1.0), (16, -1.0)):
+            r1, r0 = w.evaluate({"tempo": tempo}), w.evaluate({"tempo": tempo, "balance": 0.0})
+            more = float(np.ptp(com_dev(r1, w)[:, 1])) - float(np.ptp(com_dev(r0, w)[:, 1]))
+            self.assertGreater(sign * more, 0.2, tempo)
+            self.assertLess(r1.info["balance"]["residual"], 0.05)
+
+    def test_a_leaning_pose_keeps_the_centre_over_the_feet(self):
+        w = walk()
+        pose = a_pose(w)
+        source = float(com_dev(w.evaluate({"balance": 0.0}), w)[:, 0].mean())
+        leaned = w.evaluate({"pose": 1.0, "balance": 0.0}, pose)
+        held = w.evaluate({"pose": 1.0}, pose)
+        self.assertGreater(float(com_dev(leaned, w)[:, 0].mean()) - source, 2.0)
+        self.assertLess(abs(float(com_dev(held, w)[:, 0].mean()) - source), 0.05)
+        back = (positions(held, "pelvis", w) - positions(leaned, "pelvis", w))[:24] @ w.fwd
+        self.assertLess(float(back.mean()), -2.0)
+
+    def test_sway_zero_still_holds_the_pelvis_on_its_line(self):
+        w = walk()
+        side = positions(w.evaluate({"sway": 0.0, "width": 15.0}), "pelvis", w)[:, 0]
+        self.assertLess(float(np.ptp(side)), 0.05)
+
+    def test_balance_zero_keeps_the_stride_guess(self):
+        w, c = walk(), clip()
+        r = w.evaluate({"stride": 1.5, "balance": 0.0})
+        j = w.index["pelvis"]
+        line = lambda s: w.origin + np.outer(np.arange(24) / 24.0, w.travel * s)
+        new = (positions(r, "pelvis", w)[:24] - line(1.5)) @ w.fwd - w.pelvis_mean[0]
+        src = (c.worlds[j, :24, 3, :3] - line(1.0)) @ w.fwd - w.pelvis_mean[0]
+        self.assertTrue(np.allclose(new, 1.5 * src, atol=1e-9))
+        self.assertEqual(r.info["balance"]["carry"], 0.0)
+
+    def test_every_knob_sits_in_one_window_group(self):
+        sw = load("skeldar_walk")
+        grouped = [name for _, names in sw.GROUPS for name in names]
+        self.assertEqual(sorted(grouped), sorted(wm.DEFAULTS))
+        self.assertIn("balance", sw.LABELS)
+
+    def test_a_long_stride_balances_forward(self):
+        w = walk()
+        r = w.evaluate({"stride": 1.5})
+        self.assertGreater(r.info["balance"]["carry"], 0.1)
+        self.assertLess(r.info["balance"]["residual"], 0.05)
 
 class WindowTests(unittest.TestCase):
     """The window's wiring on a recording cmds (the window itself is the animator's to try)."""

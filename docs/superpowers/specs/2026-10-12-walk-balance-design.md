@@ -62,3 +62,21 @@ residual. A walk without the masses' bones (no spine to neck_01, no legs) skips 
   (Balance 0 lets it lean); Sway 0 keeps the pelvis on its line; the feet stay planted.
 - `verify_walk.py` on Walk_01 / Manny with the goblin and the sword poses: the same, on real data, and a sheet
   (`walk_balance.png`): the CoM path over the footprints, Balance 0 against 1.
+
+## Addendum (2026-10-12, the build)
+
+- Built as designed; the default Balance is 1 (the defaults give the source back, so it costs nothing until a
+  knob or a pose changes the support).
+- **The carry is cheap**: moving the pelvis moves the body over it rigidly, so a trial re-solves only the legs
+  (`_moved_com` on a base frame computed once; the leg's source half cached, `_leg_source`). An evaluate on
+  Walk_01 0.25-0.4 s (1-1.4 s solving whole frames). Nothing is carried when the target equals the walk's own.
+- **Only feet that are down hold the pelvis down** (found by the goblin's picture, CLAUDE.md trap 227): the
+  reach's drop and the shortfall now count a leg only while its foot is within GROUND_TOL of the ground; a foot
+  in the air that cannot reach passes nearer the body (`info["swing_in"]`). It changes Balance 0 too, a little:
+  stride 1.5 sinks 20.8 cm at the contacts (was 20.4), and 14.0 under Balance (the pelvis carried back).
+- Measured on Manny's keys (`verify_walk.py` 47/47): the CoM's change is the pendulum's on the keyed feet to
+  0.0013 cm (20 cm wider: the CoM sways 6.63 cm against 3.28), 0.0054 (tempo 45: 5.27 against 3.26), 0.0004
+  (tempo 22: 2.02 against 3.21); the goblin's CoM 14.3 cm ahead at Balance 0, over the feet at 1 to 0.002 cm,
+  the pelvis 16.7 cm back; the sword's mean following its feet to 0.002 cm. With every part the goblin's feet
+  are 68.6 cm wider than the walk's: under Balance it waddles (the CoM sways 21.5 cm) and dips 8.8 cm where its
+  far foot lands.

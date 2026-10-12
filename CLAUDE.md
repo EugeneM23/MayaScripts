@@ -9031,9 +9031,51 @@ the weapon bones on the pose's hold to 0.000000; the feet 32.1 cm apart (the wal
 toes turned -12.1 / -73.5 deg as the pose's; the pelvis 85.25 as the pose's. Picture `walkparam/walk_sword.png`
 (`WALK_SWORD_SHEET=<png>`). 6027 repo tests.
 
+**…and its balance: the centre of mass over the feet** (the same day: «тело постоянно сваливается в ту
+сторону где нету опоры ... мы делаем шаг и как бы ловим наше тело ... инструмент который будет учитывать
+поведения центра массы и корректно переносить вес»; asked: **physics on top of the style** - the defaults
+unchanged, Sway still the style - and **masses from a table by bone names**). Spec
+`docs/superpowers/specs/2026-10-12-walk-balance-design.md` (its addendum).
+- **Measured first**: Walk_01's CoM (de Leva's table on the UE bones) sways 3.3 cm; a linear inverted
+  pendulum `x'' = (g/h)(x - p)` on its own feet's pressure predicts that sway's shape at **correlation 0.98**
+  (x1.4 the size), forward only 0.89 (x2-3). So the model takes the pendulum's CHANGES, each axis x how
+  strongly the walk's own CoM follows its pendulum (fitted on the source, clamped 0.25..1.25: Walk_01 0.71
+  sideways, 0.42 forward). The pressure's contact is the foot point's HEIGHT (within 2.5 cm of its lowest),
+  not the step's planted window (13 of 30 frames, a frame with no foot down).
+- **`walkmodel`**: `mass` - de Leva as one weight a joint (trunk spread at the thirds of pelvis..neck_01, the
+  head on its joint, limbs at their centres, the hand half way to middle_01), so the CoM is one weighted sum
+  (`com`); `pressure` - per foot a heel point (0.4 of the foot behind the ankle) and a toe point (0.4 past
+  the ball), each loaded by its SOURCE contact at the phase; `pendulum` - per harmonic `w^2/(w^2 + w_k^2)`,
+  `w^2 = g/h` (cm; a crouch sways more), `w_k` from the cycle's seconds (slower sways more), the mean exact.
+- **Knob Balance** (0..1, default 1, the Weight group): the new CoM target = the walk's own + Balance x [the
+  pendulum's change (new pressure and tempo against the source's) about its mean, x the follow, forward x
+  Exaggeration, sideways x Sway x Exaggeration; plus the mean's change - the pressure's mean change minus the
+  CoM's own], so **a leaning pose takes the hips back over the feet**. The pelvis is CARRIED horizontally
+  per frame to put the CoM there (secant steps; a carry moves the body over the pelvis rigidly and only the
+  legs are re-solved - `_moved_com`, `_leg_source` / `_leg` split - 0.25-0.4 s an evaluate on Walk_01, was
+  1-1.4 s solving whole frames), then the reach's drop again, in turns until it holds. Forward, Balance
+  takes over the old guess: the pelvis's forward swing scales by `(1 - Balance) x Stride + Balance`.
+- **Only feet that are down hold the pelvis down** (`down`, the reach and the shortfall): a foot in the air
+  that cannot reach its path passes nearer the body (`swing_in`, said). Trap 227.
+- The status line: «balance: the pelvis carried up to x cm over the feet (the CoM sways y cm, the source's z)».
+Proof: 20 new unit tests, 73 in `test_walkmodel` (masses, the pendulum's gain and phase, the defaults
+unchanged, wider / slower / faster, the leaning pose, Sway 0, Balance 0 = the stride guess, the reach rule,
+the knob in a window group);
+`verify_walk.py` **47/47 standalone**, Balance on Manny's KEYS: the CoM's change = the pendulum's on the keyed
+feet to **0.0013 cm** (20 cm wider: sways 6.63 against 3.28), 0.0054 (tempo 45: 5.27 against 3.26), 0.0004
+(tempo 22: 2.02 against 3.21), the feet down unmoved; stride 1.3 on its target to 0.011 cm; **the goblin's CoM
+14.3 cm ahead of the walk's at Balance 0, over the feet again to 0.002 cm at 1 - the pelvis carried 16.7 cm
+back**; the sword's CoM mean moving with its wider, turned feet to 0.002 cm. Pictures `walkparam/walk_balance.png`
+(`WALK_BALANCE_SHEET`: the CoM from above over the footprints; the goblin side and the sword front at mid-stance,
+Balance 0 against 1), `walk_goblin.png` and `walk_sword.png` rendered again under Balance. Under Balance the
+goblin with every part (its feet 68.6 cm wider) waddles: the CoM sways 21.5 cm and the pelvis dips 8.8 cm
+where the far foot lands while the hips still sit over the other (the pose leans to its right). 6054 repo
+tests (`test_hubqt.CardMotion` flaked once under the suite's load, 3/3 alone).
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, removing
-the source's slide, a redo of an update (trap 224).
+the source's slide, a redo of an update (trap 224); for Balance: a held weapon's mass, the target's own masses
+(its mesh), vertical pendulum vaulting, a CoM trail drawn in the scene.
 
 224. **`cmds.setAttr(curve + ".ktv[0:n]", ...)` is refused from a script** («should be set with the
      keyframe or setKeyframe command») - only a .ma may write keyTimeValue. The fast road: create the
@@ -9051,3 +9093,10 @@ the source's slide, a redo of an update (trap 224).
      takes from 1 to 2 positional arguments but 3 were given» - on the status line, which the next
      slider then overwrote. Every gate was green: each verify loads the code once. `_state()` now starts
      the cache afresh when the model module is not the one that filled it (the target survives).
+227. **A reach rule over BOTH legs lets the swinging leg pull the pelvis down.** The walk's lowering asked
+     both feet to be reachable on every frame, the one in the air too. Harmless until Balance carried the
+     goblin's hips 20 cm over its standing foot with its feet 85 cm apart: the swinging foot's wide path in
+     the air went out of reach and the pelvis sank **27 cm** mid-cycle to reach it. The model's picture
+     showed it; every gate passed (the CoM was on target, the feet planted). Only a foot that is down (its
+     heel or toe within 2.5 cm of its own lowest) may hold the pelvis down; a foot in the air passes nearer
+     the body: 8.8 cm, at the far foot's landing only. Look at a pose's walk, not only its numbers.
