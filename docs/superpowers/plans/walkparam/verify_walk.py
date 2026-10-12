@@ -23,6 +23,7 @@ REPO = os.path.normpath(os.path.join(HERE, "..", "..", "..", ".."))
 ASSETS = os.path.join(REPO, "SkeldarAnim", "assets")
 WALK_FBX = os.environ.get("WALK_FBX", "C:/Users/MY PC/Desktop/Walk_01.fbx")
 MIXAMO_FBX = "C:/Users/MY PC/Downloads/Sweep Fall.fbx"
+POSE_FILE = os.path.join(HERE, "walks", "goblin.wpose.gz")   # the animator's pose, saved by Save pose
 
 
 def load(name, path):
@@ -109,9 +110,26 @@ def curve_snapshot(paths):
     return out
 
 
-def draw_sheet(path, panels, frames):
-    """Side views (forward right, up up) of each skeleton's walk, every third frame as an onion skin; the
-    left side blue, the right orange, the pelvis's path dashed."""
+BODY = ("pelvis", "spine", "neck", "head", "clavicle", "upperarm", "lowerarm", "hand", "thigh", "calf", "foot", "ball")
+
+
+def capture(root, frames):
+    """A skeleton's walk for a picture: its body bones (side 'l' / 'r' / 'c'), their own and their parents'
+    worlds on `frames`, the pelvis's worlds."""
+    bones = bones_of(root)
+    shown = [(leaf, b) for leaf, b in bones.items()
+             if (b.get("canonical") or "").split("_")[0] in BODY and b.get("parent") in bones
+             and bones[b["parent"]].get("canonical") != "root"]
+    sides = [((b.get("canonical") or "")[-1] if (b.get("canonical") or "").endswith(("_l", "_r")) else "c")
+             for leaf, b in shown]
+    paths = [b["path"] for leaf, b in shown] + [bones[b["parent"]]["path"] for leaf, b in shown]
+    return sides, worlds(paths, list(frames)), worlds([bones[leaf_of(bones, "pelvis")]["path"]], list(frames))[0]
+
+
+def draw_sheet(path, panels):
+    """Panels (label, capture, view) - 'side': forward right; 'front': the character's left right, facing the
+    viewer - every third frame as an onion skin; the left side blue, the right orange, the pelvis's path
+    dashed."""
     from PySide6 import QtCore, QtGui
     app = QtGui.QGuiApplication.instance() or QtGui.QGuiApplication([])
     width, height, cols = 760, 330, 2
@@ -121,42 +139,30 @@ def draw_sheet(path, panels, frames):
     painter = QtGui.QPainter(image)
     painter.setRenderHint(QtGui.QPainter.Antialiasing)
     colours = {"l": QtGui.QColor(70, 140, 230), "r": QtGui.QColor(235, 120, 50), "c": QtGui.QColor(60, 60, 60)}
-    body = ("pelvis", "spine", "neck", "head", "clavicle", "upperarm", "lowerarm", "hand", "thigh", "calf", "foot",
-            "ball")
-    for k, (label, root) in enumerate(panels):
+    for k, (label, (sides, w, pw), view) in enumerate(panels):
         ox, oy = (k % cols) * width, (k // cols) * height
-        bones = bones_of(root)
-        shown = [(leaf, b) for leaf, b in bones.items()
-                 if (b.get("canonical") or "").split("_")[0] in body and b.get("parent") in bones
-                 and bones[b["parent"]].get("canonical") != "root"]
-        paths = [b["path"] for leaf, b in shown] + [bones[b["parent"]]["path"] for leaf, b in shown]
-        w = worlds(paths, list(frames))
-        half = len(shown)
-        pelvis = bones[leaf_of(bones, "pelvis")]["path"]
-        pw = worlds([pelvis], list(frames))[0]
-        z0, ground = pw[0, 3, 2], oy + height - 25
-        scale = 1.45
+        axis, sign, x0 = (2, 1.0, 40) if view == "side" else (0, 1.0, width // 2)   # front: its left on the right
+        origin, ground, scale = pw[0, 3, axis], oy + height - 25, 1.45
+        across = lambda p: ox + x0 + sign * (p[axis] - origin) * scale
         painter.setPen(QtGui.QPen(QtGui.QColor(190, 190, 190), 1))
         painter.drawLine(ox + 10, ground, ox + width - 10, ground)
         painter.setPen(QtGui.QColor(30, 30, 30))
         painter.setFont(QtGui.QFont("Segoe UI", 11))
         painter.drawText(ox + 14, oy + 22, label)
         floor = min(float(w[:, :, 3, 1].min()), 0.0)
-        steps = list(range(0, len(frames), 3))
+        half = len(sides)
+        steps = list(range(0, w.shape[1], 3 if view == "side" else 5))
         for n, f in enumerate(steps):
             alpha = 80 + int(175 * n / max(1, len(steps) - 1))
-            for i, (leaf, b) in enumerate(shown):
-                canonical = b.get("canonical") or ""
-                side = canonical[-1] if canonical.endswith(("_l", "_r")) else "c"
+            for i, side in enumerate(sides):
                 colour = QtGui.QColor(colours[side])
                 colour.setAlpha(alpha)
                 painter.setPen(QtGui.QPen(colour, 1.6))
                 a, c = w[half + i, f, 3], w[i, f, 3]
-                painter.drawLine(QtCore.QPointF(ox + 40 + (a[2] - z0) * scale, ground - (a[1] - floor) * scale),
-                                 QtCore.QPointF(ox + 40 + (c[2] - z0) * scale, ground - (c[1] - floor) * scale))
+                painter.drawLine(QtCore.QPointF(across(a), ground - (a[1] - floor) * scale),
+                                 QtCore.QPointF(across(c), ground - (c[1] - floor) * scale))
         painter.setPen(QtGui.QPen(QtGui.QColor(200, 40, 90), 1.3, QtCore.Qt.DashLine))
-        painter.drawPolyline([QtCore.QPointF(ox + 40 + (p[3, 2] - z0) * scale, ground - (p[3, 1] - floor) * scale)
-                              for p in pw])
+        painter.drawPolyline([QtCore.QPointF(across(p[3]), ground - (p[3, 1] - floor) * scale) for p in pw])
     painter.end()
     image.save(path)
 
@@ -191,9 +197,9 @@ try:
                  for side in "lr" for c, p in (("calf_" + side, "thigh_" + side), ("foot_" + side, "calf_" + side)))
     print("        the walk's leg bones breathe %.4f cm against their rest lengths" % breath)
 
-    def check(root, label, given=None, expect_scale=None):
+    def check(root, label, given=None, expect_scale=None, pose=None):
         started = time.time()
-        result, info, text = sw.apply(root, name, given)
+        result, info, text = sw.apply(root, name, given, pose)
         took = time.time() - started
         print("        " + text)
         bones = bones_of(root)
@@ -254,6 +260,56 @@ try:
          "sinks %.4f where Manny's legs are that much shorter than the walk's)"
          % (len(names), rot_err, np.linalg.norm(offset), pos_err, legless, sink))
 
+    # 1b. the goblin pose under the walk, on Manny (the animator's pose, saved from their scene by Save pose)
+    if os.path.exists(POSE_FILE):
+        shutil.copy(POSE_FILE, sw.wf.pose_path_for(sw.WALKS, "goblin"))
+        prepared = sw.prepared_pose(name, "goblin")
+        pose_bones = sw.wf.load_pose(POSE_FILE)[1]
+        mb = bones_of(manny)
+        path = lambda c: mb[leaf_of(mb, c)]["path"]
+        cycle = range(start, start + P + 1)
+
+        def posed(amount):
+            result, info, got = check(manny, "Manny under the goblin pose x%.1f" % amount, {"pose": amount},
+                                      expect_scale=1.0, pose="goblin")
+            w = worlds([path(c) for c in ("pelvis", "neck_01", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r",
+                                          "foot_r", "root")], cycle)
+            return info, w
+
+        def height(w, info):
+            return float(np.mean(w[0, :P, 3, 1] - w[8, :P, 3, 1] + np.array(info["drop"][:P])))
+
+        def lean(chain):
+            return math.degrees(math.acos(float(np.clip(chain[1] / np.linalg.norm(chain), -1.0, 1.0))))
+
+        def knee(w, k, f):
+            hip, kn, ankle = (w[2 + 3 * k + i, f, 3, :3] for i in range(3))
+            e = (ankle - hip) / np.linalg.norm(ankle - hip)
+            b = (kn - hip) - np.dot(kn - hip, e) * e
+            return math.degrees(math.atan2(float(np.dot(b, walk.side)), float(np.dot(b, walk.fwd))))
+
+        i0, w0 = posed(0.0)
+        i1, w1 = posed(1.0)
+        i5, w5 = posed(0.5)
+        h0, h1, h5 = height(w0, i0), height(w1, i1), height(w5, i5)
+        gate(abs(h1 - prepared["height"]) < 0.05 and abs(h5 - 0.5 * (h0 + h1)) < 0.05,
+             "the pelvis at the pose's height: %.2f cm at Pose 1 (the pose %.2f), %.2f at 0, %.2f at 0.5"
+             % (h1, prepared["height"], h0, h5))
+        want = lean(np.array(pose_bones["neck_01"]["world"][12:15]) - np.array(pose_bones["pelvis"]["world"][12:15]))
+        got1 = float(np.mean([lean(w1[1, f, 3, :3] - w1[0, f, 3, :3]) for f in range(P)]))
+        got0 = float(np.mean([lean(w0[1, f, 3, :3] - w0[0, f, 3, :3]) for f in range(P)]))
+        gate(abs(got1 - want) < 5.0 and got0 < 10.0,
+             "the torso leans %.1f deg from up at Pose 1 (the pose %.1f), %.1f at 0" % (got1, want, got0))
+        turns = []
+        for k, side in enumerate("lr"):
+            f = int(round(walk.feet[side].mid)) % P
+            turns.append((knee(w1, k, f) - knee(w0, k, f), math.degrees(prepared["knee_turn"][side])))
+        gate(all(abs(a - b) < 4.0 for a, b in turns),
+             "the knees turned by the pose: left %.1f deg (the pose %.1f), right %.1f (%.1f)"
+             % (turns[0][0], turns[0][1], turns[1][0], turns[1][1]))
+    else:
+        print("        (no %s: the goblin gates skipped)" % POSE_FILE)
+
     # 2. the Creep, the UE4 Mannequin, Mixamo, a small Manny
     creep = ma_import(os.path.join(ASSETS, "Creep_Skeleton.ma"), "creep")
     check(creep, "Creep skeleton")
@@ -278,7 +334,7 @@ try:
     first_root = cmds.getAttr(creep + ".worldMatrix[0]", time=start)
     check(creep, "Creep, stride 1.3, from its stored place", {"stride": 1.3})
     again = cmds.getAttr(creep + ".worldMatrix[0]", time=start)
-    walked, knobs = sw.pick(creep)
+    walked, knobs, picked_pose = sw.pick(creep)
     gate(np.allclose(first_root, again, atol=1e-6) and walked == name and abs(knobs["stride"] - 1.3) < 1e-9,
          "re-tuned from the stored place (frame %d's root unmoved %.7f, the time at 17); Pick reads %s, stride %.2f"
          % (start, float(np.abs(np.array(first_root) - np.array(again)).max()), walked, knobs["stride"]))
@@ -302,13 +358,26 @@ try:
          "onto its own skeleton, the cycle itself to %.6f (thighs, calves) and %.6f (every other bone; the pelvis "
          "sinks up to %.4f) | %s" % (err, rest_err, max(info["drop"]), text))
     sheet = os.environ.get("WALK_SHEET")
+    cycle = range(start, start + P + 1)
     if sheet:
-        panels = [("Walk_01 (its own skeleton)", source), ("Manny skeleton", manny), ("Creep skeleton", creep),
-                  ("UE4 Mannequin", ue4), ("Manny at 0.6", small)]
+        sw.apply(manny, name)
+        targets = [("Walk_01 (its own skeleton)", source), ("Manny skeleton", manny), ("Creep skeleton", creep),
+                   ("UE4 Mannequin", ue4), ("Manny at 0.6", small)]
         if os.path.exists(MIXAMO_FBX):
-            panels.insert(4, ("Mixamo Sweep Fall", mixamo))
-        draw_sheet(sheet, panels, range(start, start + P + 1))
+            targets.insert(4, ("Mixamo Sweep Fall", mixamo))
+        draw_sheet(sheet, [(label, capture(root, cycle), "side") for label, root in targets])
         print("        picture: " + sheet)
+    pose_sheet = os.environ.get("WALK_POSE_SHEET")
+    if pose_sheet and os.path.exists(POSE_FILE):
+        sw.apply(manny, name, {"pose": 0.0}, "goblin")
+        plain = capture(manny, cycle)
+        sw.apply(manny, name, {"pose": 1.0}, "goblin")
+        goblin = capture(manny, cycle)
+        draw_sheet(pose_sheet, [("Walk_01 on Manny - side", plain, "side"),
+                                ("the goblin pose x1 - side", goblin, "side"),
+                                ("Walk_01 on Manny - front", plain, "front"),
+                                ("the goblin pose x1 - front", goblin, "front")])
+        print("        picture: " + pose_sheet)
     try:
         sw.skeleton_root_of(cmds.createNode("transform", name="empty"))
         gate(False, "an empty transform was taken for a skeleton")

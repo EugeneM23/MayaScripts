@@ -172,8 +172,9 @@ class KnobTests(unittest.TestCase):
 
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
-                         ["stride", "tempo", "lift", "width", "bob", "sway", "pelvis_rot", "spine", "arms",
+                         ["pose", "stride", "tempo", "lift", "width", "bob", "sway", "pelvis_rot", "spine", "arms",
                           "head", "overlap", "weight", "exaggeration"])
+        self.assertEqual(wm.DEFAULTS["pose"], 0.0)
 
 
 UP = np.array([0.0, 1.0, 0.0])
@@ -491,18 +492,26 @@ class BodyTests(unittest.TestCase):
         side = self.pelvis(w.evaluate({"sway": 0.0}), w)[:, 0]
         self.assertLess(float(np.ptp(side)), 1e-9)
 
-    def test_arms_scale_their_local_swing(self):
+    def test_arms_scale_their_swing_in_the_world(self):
+        """The upper arm hangs and swings in the world: Arms 0 holds it still there, Arms 2 doubles its
+        world swing; the forearm stays on it."""
         w, c = walk(), clip()
-        still = w.evaluate({"arms": 0.0})
-        firsts = [local_rot(still, "upperarm_l", w, f) for f in range(25)]
-        self.assertLess(max(angle(m @ firsts[0].T) for m in firsts), 1e-6)
-        double = w.evaluate({"arms": 2.0})
+        still = rotations(w.evaluate({"arms": 0.0}), "upperarm_l", w)
+        self.assertLess(max(angle(m @ still[0].T) for m in still), 1e-6)
+        double = rotations(w.evaluate({"arms": 2.0}), "upperarm_l", w)
         j = w.index["upperarm_l"]
-        mean = w.lmean[j]
+        mean = w.wmean[j]
         for f in (3, 9, 15):
-            src = c.worlds[j, f, :3, :3] @ c.worlds[w.parents[j], f, :3, :3].T
-            self.assertAlmostEqual(angle(local_rot(double, "upperarm_l", w, f) @ mean.T),
-                                   2.0 * angle(src @ mean.T), places=6)
+            self.assertAlmostEqual(angle(double[f] @ mean.T), 2.0 * angle(c.worlds[j, f, :3, :3] @ mean.T), places=6)
+
+    def test_upper_arms_do_not_turn_with_the_chest(self):
+        w, c = walk(), clip()
+        r = w.evaluate({"spine": 2.5})
+        for name in ("upperarm_l", "upperarm_r"):
+            j = w.index[name]
+            self.assertLess(float(np.abs(rotations(r, name, w) - c.worlds[j, :, :3, :3]).max()), 1e-9)
+        bent = local_rot(r, "spine_02", w, 6) @ local_rot(walk().evaluate(), "spine_02", w, 6).T
+        self.assertGreater(angle(bent), 0.5)
 
     def test_head_zero_holds_the_head_steady_in_the_world(self):
         w = walk()
@@ -534,6 +543,75 @@ class BodyTests(unittest.TestCase):
         left = w.feet["l"]
         foot = positions(r, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
         self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
+
+
+def a_pose(w):
+    """A hunch for the synthetic walker, as walkpose.prepare hands it to the model."""
+    j = w.index
+    return {"spine": {j["spine_01"]: rot_x(35) @ w.lmean[j["spine_01"]],
+                      j["spine_02"]: rot_x(20) @ rot_y(10) @ w.lmean[j["spine_02"]],
+                      j["neck_01"]: rot_x(-15) @ w.lmean[j["neck_01"]]},
+            "head": rot_x(-25) @ w.wmean[j["head"]],
+            "pelvis": rot_x(15) @ rot_z(5) @ w.wmean[j["pelvis"]],
+            "height": 70.0,
+            "knee_turn": {"l": math.radians(30.0), "r": math.radians(-20.0)}}
+
+
+def knee_heading(r, w, side, f):
+    hip, knee, ankle = (positions(r, b + "_" + side, w)[f] for b in ("thigh", "calf", "foot"))
+    e = (ankle - hip) / np.linalg.norm(ankle - hip)
+    b = (knee - hip) - np.dot(knee - hip, e) * e
+    return math.degrees(math.atan2(np.dot(b, w.side), np.dot(b, w.fwd)))
+
+
+class PoseTests(unittest.TestCase):
+
+    def test_pose_zero_is_the_walk(self):
+        w = walk()
+        self.assertLess(float(np.abs(w.evaluate({"pose": 0.0}, a_pose(w)).worlds - w.evaluate().worlds).max()), 1e-12)
+        self.assertLess(float(np.abs(w.evaluate({"pose": 1.0}).worlds - w.evaluate().worlds).max()), 1e-12)
+
+    def test_with_the_motion_off_the_body_stands_in_the_pose(self):
+        w = walk()
+        pose = a_pose(w)
+        r = w.evaluate({"pose": 1.0, "exaggeration": 0.0}, pose)
+        for j, want in pose["spine"].items():
+            name = w.names[j]
+            for f in (0, 7, 18):
+                self.assertLess(angle(local_rot(r, name, w, f) @ want.T), 1e-6, name)
+        for f in (0, 11):
+            self.assertLess(angle(rotations(r, "head", w)[f] @ pose["head"].T), 1e-6)
+            self.assertLess(angle(rotations(r, "pelvis", w)[f] @ pose["pelvis"].T), 1e-6)
+        height = positions(r, "pelvis", w)[:, 1] + np.array(r.info["drop"])
+        self.assertTrue(np.allclose(height, 70.0, atol=1e-6))
+
+    def test_half_a_pose_is_half_way(self):
+        w = walk()
+        pose = a_pose(w)
+        r = w.evaluate({"pose": 0.5, "exaggeration": 0.0}, pose)
+        j = w.index["spine_01"]
+        self.assertAlmostEqual(angle(local_rot(r, "spine_01", w, 4) @ w.lmean[j].T), 17.5, places=6)
+        height = positions(r, "pelvis", w)[:, 1] + np.array(r.info["drop"])
+        self.assertTrue(np.allclose(height, 0.5 * (70.0 + w.pelvis_mean[2] + w.origin[1]), atol=1e-6))
+
+    def test_the_knees_turn_by_the_pose(self):
+        w = walk()
+        pose = a_pose(w)
+        plain, posed = w.evaluate(), w.evaluate({"pose": 1.0}, pose)
+        for side, turn in (("l", 30.0), ("r", -20.0)):
+            f = int(round(w.feet[side].mid)) % 24
+            self.assertAlmostEqual(knee_heading(posed, w, side, f) - knee_heading(plain, w, side, f), turn, delta=1.0)
+            hip, knee = positions(posed, "thigh_" + side, w), positions(posed, "calf_" + side, w)
+            self.assertLess(float(np.abs(np.linalg.norm(knee - hip, axis=1) - L1).max()), 1e-9)
+
+    def test_the_feet_stay_planted_under_a_pose(self):
+        w = walk()
+        r = w.evaluate({"pose": 1.0}, a_pose(w))
+        left = w.feet["l"]
+        foot = positions(r, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
+        self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
+        moved = r.worlds[:, -1, 3, :3] - r.worlds[:, 0, 3, :3]
+        self.assertLess(float(np.abs(moved - [0.0, 0.0, 120.0]).max()), 1e-6)
 
 
 class WindowTests(unittest.TestCase):

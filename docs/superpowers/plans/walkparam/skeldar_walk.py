@@ -50,6 +50,7 @@ _plugin_on_path()
 wm = _load("walkmodel", "skeldar_walkmodel")
 wf = _load("walkfile", "skeldar_walkfile")
 wt = _load("walktarget", "skeldar_walktarget")
+wp = _load("walkpose", "skeldar_walkpose")
 
 
 class Refusal(Exception):
@@ -57,6 +58,7 @@ class Refusal(Exception):
 
 
 REFUSALS = (Refusal, wm.Refusal, wf.Refusal, wt.Refusal)
+NO_POSE = "(none)"
 MARKER = "skeldarWalk"
 VERSION = 2
 CHANNELS = ("translateX", "translateY", "translateZ", "rotateX", "rotateY", "rotateZ")
@@ -241,6 +243,42 @@ def walk_names():
     return wf.names_in(WALKS)
 
 
+# ---- poses ----
+
+def pose_names():
+    return wf.pose_names_in(WALKS)
+
+
+def save_pose(root, name=None):
+    """The skeleton under `root` as it stands at the current frame, saved to walks/<name>.wpose.gz (the
+    tool's rest rule). Returns (the pose's name, the status line)."""
+    bones, note = read_bones(root)
+    name = wf.safe_name(name or _short(root).split(":")[-1] + "_pose")
+    path = wf.pose_path_for(WALKS, name)
+    wf.save_pose(path, name, bones)
+    _state()["loaded"].pop(path, None)
+    line = "saved %s: %d bones of %s at frame %g" % (os.path.basename(path), len(bones), _short(root),
+                                                     _cmds().currentTime(query=True))
+    return name, line + (" | " + note if note else "")
+
+
+def prepared_pose(walk_name, pose_name):
+    """The pose `pose_name` carried onto the walk `walk_name`'s skeleton (walkpose.prepare), cached by the
+    two files' times."""
+    walk, statics, start = load_walk(walk_name)
+    path = wf.pose_path_for(WALKS, pose_name)
+    if not os.path.exists(path):
+        raise Refusal("no saved pose named %s" % pose_name)
+    key = (wf.path_for(WALKS, walk_name), path)
+    stamp = (os.path.getmtime(key[0]), os.path.getmtime(path))
+    cached = _state()["loaded"].get(key)
+    if cached is None or cached[0] != stamp:
+        bones = wf.load_pose(path)[1]
+        cached = (stamp, wp.prepare(walk, statics, bones, wm, wt))
+        _state()["loaded"][key] = cached
+    return cached[1]
+
+
 # ---- the marker on a walked skeleton ----
 
 def memo_of(root):
@@ -360,29 +398,34 @@ class _Chunk(object):
 
 # ---- apply, pick ----
 
-def apply(root, walk_name, given=None):
-    """The saved walk `walk_name` keyed onto the skeleton under `root` with the knobs `given`, from the
-    place it stood when a walk was first put on it (else where it stands). One undo step. Returns
-    (Result, info, the status line)."""
+def apply(root, walk_name, given=None, pose_name=None):
+    """The saved walk `walk_name` keyed onto the skeleton under `root` with the knobs `given` (and the pose
+    `pose_name` at the knob `pose`'s share), from the place it stood when a walk was first put on it (else
+    where it stands). One undo step. Returns (Result, info, the status line)."""
     started = time.time()
     root = _long(root)
     walk, statics, start = load_walk(walk_name)
     bones, note = read_bones(root)
     memo = memo_of(root)
     retarget = wt.Retarget(walk, statics, bones, memo.get("place"))
-    result = walk.evaluate(given)
+    pose = None
+    if pose_name and wm.knobs(**(given or {}))["pose"] > 0.0:
+        pose = prepared_pose(walk_name, pose_name)
+    result = walk.evaluate(given, pose)
     frames, info = retarget.frames(result)
     written, translated = retarget.written(), set(retarget.translated())
     values, static = channel_values(bones, frames, written, translated)
     with _Chunk("skeldarWalkApply"):
         write_curves(values, static, start)
-        _set_memo(root, {"walk": walk_name, "knobs": result.info["knobs"], "place": wt.pm.flat(retarget.place),
-                         "start": start, "version": VERSION})
+        _set_memo(root, {"walk": walk_name, "pose": pose_name or "", "knobs": result.info["knobs"],
+                         "place": wt.pm.flat(retarget.place), "start": start, "version": VERSION})
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
     target_stride = result.info["stride_cm"] * info["scale"]
     text = ("%s onto %s: %d bones paired, size x%.2f | %d frames (%d-%d), stride %.1f cm, %.2f m/s"
             % (walk_name, _short(root), len(written), info["scale"], result.frames, start, start + result.frames,
                target_stride, result.info["speed"] * info["scale"]))
+    if pose is not None:
+        text += " | pose %s x%.2f" % (pose_name, result.info["knobs"]["pose"])
     if max(info["drop"]) > 0.05:
         text += " | pelvis lowered up to %.1f cm where the legs fall short" % max(info["drop"])
     if result.info["lowered"] > 0.05:
@@ -395,13 +438,14 @@ def apply(root, walk_name, given=None):
 
 
 def pick(root):
-    """(walk name, knobs) a walked skeleton carries; the window's target becomes it."""
+    """(walk name, knobs, pose name) a walked skeleton carries; the window's target becomes it."""
     root = _long(root)
     memo = memo_of(root)
     if not memo.get("walk"):
         raise Refusal("%s carries no walk of this tool - Apply one first" % _short(root))
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
-    return memo["walk"], wm.knobs(**dict((k, v) for k, v in memo.get("knobs", {}).items() if k in wm.DEFAULTS))
+    knobs = wm.knobs(**dict((k, v) for k, v in memo.get("knobs", {}).items() if k in wm.DEFAULTS))
+    return memo["walk"], knobs, memo.get("pose") or None
 
 
 def target_root():
@@ -417,17 +461,22 @@ def target_root():
 WINDOW = "skeldarWalkWindow"
 STATUS = "skeldarWalkStatus"
 WALK_MENU = "skeldarWalkMenu"
+POSE_MENU = "skeldarWalkPoseMenu"
 TARGET = "skeldarWalkTarget"
-INTRO = ("Save walk: a bone of a walk cycle selected (a closed loop with root motion). Apply: any "
-         "skeleton selected - the walk is keyed onto it in its own proportions, from where it stands; "
-         "every released slider re-keys it. Pick: read a walked skeleton's walk and knobs back.")
+INTRO = ("Save walk: a bone of a walk cycle selected (a closed loop with root motion). Save pose: any "
+         "skeleton standing in a character pose. Apply: any skeleton selected - the walk is keyed onto it in "
+         "its own proportions, from where it stands; every released slider re-keys it. Pick: read a walked "
+         "skeleton's walk, pose and knobs back.")
 GROUPS = (
+    ("Pose", ("pose",)),
     ("Step", ("stride", "tempo", "lift", "width")),
     ("Pelvis", ("bob", "sway", "pelvis_rot")),
     ("Upper body", ("spine", "arms", "head", "overlap")),
     ("Weight", ("weight", "exaggeration")),
 )
 LABELS = {
+    "pose": ("Pose", "how far the pose picked above replaces the walk's own: the spine, the head, the pelvis "
+                     "(its height and tilt) and the knees; 0 is the walk, 1 the pose"),
     "stride": ("Stride", "x the step length; the travel follows (a long stride sinks the contacts)"),
     "tempo": ("Tempo (frames)", "frames a cycle of two steps; fewer is faster"),
     "lift": ("Foot lift", "x how high the swinging foot rises above its path"),
@@ -487,6 +536,22 @@ def chosen_walk():
     return cmds.optionMenu(WALK_MENU, query=True, value=True)
 
 
+def chosen_pose():
+    value = _cmds().optionMenu(POSE_MENU, query=True, value=True)
+    return None if not value or value == NO_POSE else value
+
+
+def _fill_poses(selected=None):
+    cmds = _cmds()
+    for item in cmds.optionMenu(POSE_MENU, query=True, itemListLong=True) or []:
+        cmds.deleteUI(item)
+    cmds.menuItem(label=NO_POSE, parent=POSE_MENU)
+    names = pose_names()
+    for name in names:
+        cmds.menuItem(label=name, parent=POSE_MENU)
+    cmds.optionMenu(POSE_MENU, edit=True, value=selected if selected in names else NO_POSE)
+
+
 def _fill_walks(selected=None):
     cmds = _cmds()
     for item in cmds.optionMenu(WALK_MENU, query=True, itemListLong=True) or []:
@@ -539,10 +604,26 @@ def press_save(*_):
     _run(act)
 
 
+def press_save_pose(*_):
+    def act():
+        cmds = _cmds()
+        root = selected_root()
+        default = _short(root).split(":")[-1] + "_pose"
+        answer = cmds.promptDialog(title="Save pose", message="Name:", text=default,
+                                   button=["Save", "Cancel"], defaultButton="Save", cancelButton="Cancel",
+                                   dismissString="Cancel")
+        if answer != "Save":
+            return "nothing saved"
+        name, line = save_pose(root, cmds.promptDialog(query=True, text=True) or default)
+        _fill_poses(name)
+        return line + " - select a walked skeleton, Pick, and raise Pose"
+    _run(act)
+
+
 def press_apply(*_):
     def act():
         root = selected_root()
-        line = apply(root, chosen_walk(), given_from_window())[2]
+        line = apply(root, chosen_walk(), given_from_window(), chosen_pose())[2]
         _show_target(root)
         return line
     _run(act)
@@ -551,9 +632,10 @@ def press_apply(*_):
 def press_pick(*_):
     def act():
         root = selected_root()
-        name, knobs = pick(root)
+        name, knobs, pose = pick(root)
         if name in walk_names():
             _fill_walks(name)
+        _fill_poses(pose)
         walk, statics, start = load_walk(name)
         _set_knobs(knobs, walk.P)
         _show_target(root)
@@ -562,14 +644,14 @@ def press_pick(*_):
 
 
 def slider_changed(*_):
-    _run(lambda: apply(target_root(), chosen_walk(), given_from_window())[2])
+    _run(lambda: apply(target_root(), chosen_walk(), given_from_window(), chosen_pose())[2])
 
 
 def press_reset(*_):
     def act():
         walk, statics, start = load_walk(chosen_walk())
         _set_knobs(dict(wm.DEFAULTS), walk.P)
-        return apply(target_root(), chosen_walk(), given_from_window())[2]
+        return apply(target_root(), chosen_walk(), given_from_window(), chosen_pose())[2]
     _run(act)
 
 
@@ -586,6 +668,10 @@ def show():
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach2=("both", "both"))
     cmds.optionMenu(WALK_MENU, label="Walk", changeCommand=walk_changed)
     cmds.button(label="Save walk...", height=26, command=press_save)
+    cmds.setParent("..")
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach2=("both", "both"))
+    cmds.optionMenu(POSE_MENU, label="Pose", changeCommand=slider_changed)
+    cmds.button(label="Save pose...", height=26, command=press_save_pose)
     cmds.setParent("..")
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach2=("both", "both"))
     cmds.button(label="Apply to selection", height=30, command=press_apply)
@@ -611,6 +697,7 @@ def show():
               height=96)
     cmds.showWindow(WINDOW)
     _fill_walks()
+    _fill_poses()
     if walk_names():
         walk_changed()
 

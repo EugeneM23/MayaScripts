@@ -182,5 +182,65 @@ class RetargetTests(unittest.TestCase):
             wt.Retarget(w, statics_of(c), target)
 
 
+wp = load("walkpose")
+
+
+class PoseTests(unittest.TestCase):
+
+    def pose_of(self, c, frame):
+        """The synthetic walker standing as it does at `frame`, as a saved pose's bones."""
+        bones = statics_of(c)
+        for j, name in enumerate(c.names):
+            bones[name]["world"] = [float(v) for v in c.worlds[j, frame].reshape(16)]
+        return bones
+
+    def test_pose_file_round_trip(self):
+        folder = tempfile.mkdtemp(prefix="walkpose_")
+        try:
+            c = clip()
+            path = wf.pose_path_for(folder, "goblin hunch")
+            wf.save_pose(path, "goblin hunch", self.pose_of(c, 5))
+            name, bones = wf.load_pose(path)
+            self.assertEqual(name, "goblin hunch")
+            self.assertEqual(bones["spine_01"]["world"], self.pose_of(c, 5)["spine_01"]["world"])
+            self.assertEqual(wf.pose_names_in(folder), ["goblin_hunch"])
+            self.assertEqual(wf.names_in(folder), [])
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
+
+    def test_a_frame_of_the_walk_comes_back_as_the_pose(self):
+        """The walker's own frame 5 as a pose onto its own skeleton (a twin): the spine's locals, the head
+        and the pelvis exactly frame 5's, the height its pelvis's, the knees turned to frame 5's heading."""
+        w, c = walk(), clip()
+        pose = wp.prepare(w, statics_of(c), self.pose_of(c, 5), wm, wt)
+        self.assertEqual(pose["scale"], 1.0)
+        for j, local in pose["spine"].items():
+            p = w.parents[j]
+            want = c.worlds[j, 5, :3, :3] @ c.worlds[p, 5, :3, :3].T
+            self.assertLess(float(np.abs(local - want).max()), 1e-9, w.names[j])
+        self.assertEqual(sorted(w.names[j] for j in pose["spine"]), ["neck_01", "spine_01", "spine_02"])
+        self.assertLess(float(np.abs(pose["head"] - c.worlds[w.index["head"], 5, :3, :3]).max()), 1e-9)
+        self.assertLess(float(np.abs(pose["pelvis"] - c.worlds[w.index["pelvis"], 5, :3, :3]).max()), 1e-9)
+        self.assertAlmostEqual(pose["height"], float(c.worlds[w.index["pelvis"], 5, 3, 1]), places=6)
+        means = wp.mean_knee_headings(w)
+        for side in "lr":
+            hip, knee, ankle = (c.worlds[w.index["%s_%s" % (b, side)], 5, 3, :3] for b in ("thigh", "calf", "foot"))
+            want = math.atan2(*reversed([float(np.dot(wp._bend(hip, knee, ankle), v)) for v in (w.fwd, w.side)]))
+            self.assertAlmostEqual(pose["knee_turn"][side], want - means[side], places=9)
+
+    def test_a_pose_on_a_bigger_body_keeps_its_angles_and_scales_its_height(self):
+        w, c = walk(), clip()
+        big = self.pose_of(c, 5)
+        for bone in big.values():
+            for key in ("rest", "world"):
+                bone[key][12:15] = [v * 1.25 for v in bone[key][12:15]]
+        pose = wp.prepare(w, statics_of(c), big, wm, wt)
+        self.assertAlmostEqual(pose["scale"], 0.8, places=9)
+        self.assertAlmostEqual(pose["height"], float(c.worlds[w.index["pelvis"], 5, 3, 1]), places=6)
+        j = w.index["spine_01"]
+        want = c.worlds[j, 5, :3, :3] @ c.worlds[w.parents[j], 5, :3, :3].T
+        self.assertLess(float(np.abs(pose["spine"][j] - want).max()), 1e-9)
+
+
 if __name__ == "__main__":
     unittest.main()

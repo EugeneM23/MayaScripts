@@ -13,6 +13,7 @@ VERSION = 1
 
 # name, default, low, high - tempo 0 means the source's own cycle length
 KNOBS = (
+    ("pose", 0.0, 0.0, 1.0),
     ("stride", 1.0, 0.4, 1.8),
     ("tempo", 0.0, 0.0, 2000.0),
     ("lift", 1.0, 0.0, 3.0),
@@ -122,6 +123,20 @@ def orthonormal(m):
     """The rotation nearest m's 3x3 part (scale and shear stripped)."""
     u, _, vt = np.linalg.svd(np.asarray(m, float)[:3, :3])
     return _proper(u, vt)
+
+
+def toward(mean, target, alpha):
+    """`mean` turned the share `alpha` of the way to `target` (row-vector rotations; 0 is `mean`, 1 is
+    `target`): exp(alpha . log(target . mean^-1)) . mean."""
+    if alpha <= 0.0:
+        return mean
+    return exp_rot(alpha * log_rot(target @ mean.T)) @ mean
+
+
+def turned_about(v, axis, angle):
+    """The vector `v` turned `angle` radians about the unit `axis` (right hand; Rodrigues)."""
+    c, s = math.cos(angle), math.sin(angle)
+    return v * c + np.cross(axis, v) * s + axis * float(np.dot(axis, v)) * (1.0 - c)
 
 
 def matrix(rot, pos):
@@ -289,6 +304,7 @@ class Walk(object):
         self.feet = dict((s, self._contact(s)) for s in SIDES)
         self.reach = dict((s, self._reach(s)) for s in SIDES)
         self.follows = self._helpers()
+        self.world_arms = set(self.index[n] for n in ("upperarm_l", "upperarm_r") if n in self.index)
         self.root_mean = (self.pdev[root] @ self.basis.T).mean(axis=0)
         self.pelvis_mean = (self.pdev[self.index["pelvis"]] @ self.basis.T).mean(axis=0)
         bob = self.pdev[self.index["pelvis"]] @ self.up - self.pelvis_mean[2]
@@ -437,15 +453,18 @@ class Walk(object):
         return follows
 
     # -- the new cycle --
-    def evaluate(self, given=None):
-        """The cycle rebuilt from knobs (the spec's model); the defaults give the source back."""
+    def evaluate(self, given=None, pose=None):
+        """The cycle rebuilt from knobs (the spec's model); the defaults give the source back. `pose` (from
+        walkpose.prepare: {"spine": {joint: local 3x3}, "head": 3x3, "pelvis": 3x3, "height": cm over the
+        travel line, "knee_turn": {side: radians}}) replaces the mean pose the knob `pose`'s share."""
         k = knobs(**(given or {}))
         P = self.P
         n = max(int(round(k["tempo"])), 4) if k["tempo"] >= 1.0 else P
         ctx = {"k": k, "ex": k["exaggeration"], "travel2": self.travel * k["stride"],
                "lag": max(0.0, k["overlap"] + WEIGHT_LAG * k["weight"]) * P / float(n),
                "beta": min(max(WEIGHT_WARP * k["weight"], -0.9), 0.9),
-               "phi0": self.low_phase + WEIGHT_WARP_AFTER - 0.25}
+               "phi0": self.low_phase + WEIGHT_WARP_AFTER - 0.25,
+               "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"]}
         times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
         drop = self._lowering(times, ctx)
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
@@ -492,9 +511,12 @@ class Walk(object):
             along = mean[0] + k["stride"] * ex * (dev[0] - mean[0])
             aside = mean[1] + k["sway"] * ex * (dev[1] - mean[1])
             if name == "pelvis":
+                pose, a = ctx["pose"], ctx["alpha"]
                 v = float(periodic_cr(self.pdev[j], warp(phi, ctx["beta"], ctx["phi0"]) * self.P) @ self.up) - mean[2]
-                height = mean[2] + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
-                rot = self.wrot(j, tau, k["pelvis_rot"] * ex)
+                base = mean[2] if pose is None else (1.0 - a) * mean[2] + a * pose["height"]
+                height = base + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
+                centre = self.wmean[j] if pose is None else toward(self.wmean[j], pose["pelvis"], a)
+                rot = exp_rot(k["pelvis_rot"] * ex * periodic_cr(self.wlog[j], tau)) @ centre
             else:
                 height, rot = dev[2], self.wrot(j, tau)
             out[name] = (rot, line2 + np.array([along, aside, height]) @ self.basis)
@@ -546,10 +568,17 @@ class Walk(object):
                 rots[j], poss[j] = m[:3, :3], m[3, :3]
             else:
                 t = tau - self.lag[j] * ctx["lag"]
+                pose, a = ctx["pose"], ctx["alpha"]
                 if kind == "head":
-                    rots[j] = self.wrot(j, t, k["head"] * ex)
+                    centre = self.wmean[j] if pose is None else toward(self.wmean[j], pose["head"], a)
+                    rots[j] = exp_rot(k["head"] * ex * periodic_cr(self.wlog[j], t)) @ centre
+                elif j in self.world_arms:      # the upper arm hangs and swings in the world
+                    rots[j] = exp_rot(k["arms"] * ex * periodic_cr(self.wlog[j], t)) @ self.wmean[j]
                 else:
-                    rots[j] = self.lrot_at(j, t, gains.get(kind, 1.0)) @ rots[p]
+                    centre = self.lmean[j]
+                    if pose is not None and j in pose["spine"]:
+                        centre = toward(centre, pose["spine"][j], a)
+                    rots[j] = exp_rot(gains.get(kind, 1.0) * periodic_cr(self.llog[j], t)) @ centre @ rots[p]
                 poss[j] = self.lt_at(j, t) @ rots[p] + poss[p]
         out = np.tile(np.eye(4), (len(self.names), 1, 1))
         for j in range(len(self.names)):
@@ -569,7 +598,10 @@ class Walk(object):
         e = _unit(a - h)
         bend = (kn - h) - np.dot(kn - h, e) * e
         bend = _unit(bend) if np.linalg.norm(bend) > 1e-6 else _unit(self.fwd - np.dot(self.fwd, e) * e)
-        knee, reached, short = two_bone(hip, ankle, l1, l2, bend, self.reach[side])
+        knee_bend = bend
+        if ctx["pose"] is not None:     # the pose's knee heading: the bend turned about the leg (-e: up it)
+            knee_bend = turned_about(bend, -e, ctx["alpha"] * ctx["pose"]["knee_turn"][side])
+        knee, reached, short = two_bone(hip, ankle, l1, l2, knee_bend, self.reach[side])
         e2 = _unit(reached - hip)
         bend2 = _unit((knee - hip) - np.dot(knee - hip, e2) * e2)
         n_src, n_new = _unit(np.cross(e, bend)), _unit(np.cross(e2, bend2))

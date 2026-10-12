@@ -114,3 +114,49 @@ def read_template(path):
         joints = json.load(handle)["joints"]
     return dict((j["name"], {"parent": j.get("parent"), "world_matrix": [float(v) for v in j["world_matrix"]]})
                 for j in joints)
+
+
+# ---- poses ----
+
+POSE_FORMAT = "skeldar.walkpose"
+POSE_SUFFIX = ".wpose.gz"
+
+
+def pose_path_for(folder, name):
+    return os.path.join(folder, safe_name(name) + POSE_SUFFIX)
+
+
+def pose_names_in(folder):
+    """The poses saved in `folder`, sorted (their names, no suffix)."""
+    if not os.path.isdir(folder):
+        return []
+    return sorted(f[:-len(POSE_SUFFIX)] for f in os.listdir(folder) if f.endswith(POSE_SUFFIX))
+
+
+def save_pose(path, name, bones):
+    """A pose: `bones` {leaf: {"parent", "canonical", "rest", "world"}} (16 floats each) under `name`."""
+    folder = os.path.dirname(path)
+    if folder and not os.path.isdir(folder):
+        os.makedirs(folder)
+    data = {"format": POSE_FORMAT, "version": VERSION, "name": name,
+            "bones": dict((leaf, {"parent": b.get("parent"), "canonical": b.get("canonical"),
+                                  "rest": [float(v) for v in b["rest"]], "world": [float(v) for v in b["world"]]})
+                          for leaf, b in bones.items())}
+    temporary = path + ".part"
+    with gzip.open(temporary, "wt", encoding="utf-8") as handle:
+        json.dump(data, handle)
+    if os.path.exists(path):
+        os.remove(path)
+    os.rename(temporary, path)
+
+
+def load_pose(path):
+    """(name, bones) of a saved pose."""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError) as error:
+        raise Refusal("%s is not a saved pose (%s)" % (os.path.basename(path), error))
+    if data.get("format") != POSE_FORMAT or int(data.get("version", 0)) > VERSION:
+        raise Refusal("%s is not a pose this tool reads" % os.path.basename(path))
+    return data["name"], data["bones"]
