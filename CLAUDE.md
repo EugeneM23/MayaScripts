@@ -8707,3 +8707,97 @@ Not built:
 220. **Maya's viewport drop imports a .py by its stem ONCE** (`importlib.import_module`, then
      `onMayaDroppedPythonFile(obj)`): dropping the file again after editing it runs the OLD code from
      `sys.modules`. A dropped tool reloads itself in its drop handler.
+
+## Tools: OverRig's Knots and Double knot, native (2026-10-12)
+
+The animator: «В скрипте over rig ... есть несколько фичей которые я бы хотел реализовать в нашем
+плагине. 1 то что находится во вкладке knots 2 что что во вкладке double knots. Давай заведем раздел
+тул и реализуем такие же инструменты». Asked: Knot Offset finishes with a **two-step button** (not
+OverRig's deselect scriptJob); knots come off through **Bake and Remove**; «делай все до конца».
+Spec `docs/superpowers/specs/2026-10-12-tools-knots-design.md` (its first section is what each
+OverRig proc builds, read through the obfuscated `BOVER_10_2_<md5>` helpers), plan beside it.
+
+**Native, not a wrapper**: nothing of OverRig's MEL runs (the highlight is read through
+`overrig.slider_selection`); ours are known by our attributes, so Bake / Remove never touch a knot
+the animator made with OverRig itself. Package `SkeldarAnim/maya_tools/` (payload row):
+`knotplan.py` (stdlib, pure: kinds, spans, attach keys, channel plans, sizes, bake order, the
+lines), `knots.py` (the scene), `panel.py` (the card). Hub section **Tools** (key `tools`, last in
+Animation, Tabler `tool`); hotkey rows `window.tools` and `tools.knot / knot_offset / knot_orient /
+double_local / double_world / bake / remove` (`maya_hotkeys._tools`: the presses need no panel and
+report in the viewport when the card is closed). New icons `tool`, `rotate`, `focus-2`, `stack-2`.
+
+**The card**: subtitle («3 knots in the scene, 1 pivot waiting»); **Knots** - Knot (primary),
+Knot Offset (reads **Finish offset** while a pivot waits), Knot Orient; **Double knot** - Local,
+World; **Rotate order** `[Object | XYZ | XZY]` (`skeldarKnotRotateOrder`, default Object: the
+knot takes its object's order); Bake, Remove (danger); the line. A SelectionChanged job per card
+(hub and popup copies) refreshes the subtitle and the offset button.
+
+**One set of rules for all five** (OverRig's double knots had no range or attach; ours do):
+- refusals first, for every selected object, by name: nothing selected; riding a knot already (a
+  knot itself CAN be knotted); a waiting pivot; no free channel; a free channel driven by anything
+  but a time curve (a constraint, an expression, a driven key, an **animation layer** - not
+  supported yet);
+- the span: a highlight `[a, b)` gives `[a-1, b]` and `attach` keyed 0/1/1/0 at a-1, a, b-1, b
+  (flat); else the whole take (playback ∪ the object's keys), attach 1 unkeyed - keyable either way;
+- the object's free unconnected t/r channels are keyed at their values (recorded in
+  `skeldarKnotKeyed`) so Maya's pairBlend keeps the object's own curves as input 1;
+- the knot baked on every frame of the span (`bakeResults -simulation`, rotates euler-filtered,
+  still channels plain), its temporary constraints deleted;
+- the object follows through ONE constraint `-mo` skipping its locked channels (marked
+  `skeldarKnotOf` = the knot's UUID); `attach` drives its weight and the pairBlend weight
+  (`blendParentN`), the pairBlend in quaternion mode (Maya wires the object's rotateOrder into it);
+- **Knot** `<leaf>_knot`; **Knot Offset**: a space `<leaf>_pivotSpace` rides the object, a red
+  `<leaf>_pivot` in it waits (it rides the object while placed - OverRig's stood still in world),
+  the span and order kept on it; **Finish** bakes `<leaf>_knotOffset` from the pivot's world track;
+  **Knot Orient** `<leaf>_knotOrient` rides the position (a kept pointConstraint, translate locked)
+  and drives the rotation only (`orientConstraint`); **Double Local** `<leaf>_dknotBase` carries
+  the whole track, `<leaf>_dknot` under it drives (a key on it = an offset in the animated object's
+  axes); **Double World** `<leaf>_dknotMove` has no rotation and carries the position,
+  `<leaf>_dknotRotate` the rotation (turning the outer bends the animation about the pivot in WORLD
+  axes);
+- knots live in a locked `Knots` group (`skeldarKnotGroup`) inside the object's character group,
+  else a world-level `SkeldarKnots`; Delete character takes them (our attribute prefix keeps them
+  out of `deletion.strangers`).
+
+**Measured before designing**: deleting a knot's constraint deletes Maya's pairBlend and
+`blendParent1` and reconnects the object's own curves - so **Remove** is that delete plus cutting
+our static keys (while still static, the value written back: trap 58) - every curve comes back
+exactly. `bakeResults -preserveOutsideKeys` on a pairBlended channel bakes INTO input 1's curve
+and leaves the constraint - so **Bake** is that bake over where `attach` > 0 (`knotplan.influence`;
+an unkeyed attach above 0 = the whole take), then the constraint's delete; a knot on a knot is
+baked first (`bake_order`).
+
+Proof: `docs/superpowers/plans/verify_knots.py` **82/82 mayapy standalone** (a keyed prop under an
+animated carrier, rotate pivot off its origin, zxy, a locked rz, free unkeyed channels; and a Manny
+rig control): nothing moves at creation (0.000000 cm, 0.000002 deg) for all five; the knot on the
+pivot; Knot +10 tx moves the prop 10 along world X; attach 0 the original; Remove restores every
+curve exactly; one undo per press; Bake keeps the edit with nothing left; a ranged knot moves only
+inside and its Bake leaves the outside **unbent at half frames** (0.000000); Orient +30 turns
+30.000 deg with the pivot path fixed; Offset's chosen point rides the knot through a 90 deg turn;
+Double Local's inner rx 30 turns the prop about its own X; Double World's outer ry 90 about world Y,
+tx +5 shifts 5 along world X; refusals change nothing; a knot on a knot bakes inward; on
+Manny_Rig's FKShoulder_R the game bone does not move, the knot in `|Manny_Rig_Character|Knots`,
+Delete character takes it. `tests/test_tools_knotplan.py`, `tests/test_tools_panel.py`; 5934 unit
+tests. **`verify_tools_card.py` (the card in a live Maya, buttons clicked through Qt on a sandbox
+cube) is written and NOT run** - the live checks are the animator's.
+
+Not built: knots on animation layers, OverRig's "smart object" tab (S_Knot), Knot Offset on
+several objects at once, keys only on the object's keys (a knot is baked on every frame, as
+OverRig's), default hotkeys.
+
+221. **`bakeResults -preserveOutsideKeys` keeps the keys outside a range, not the curve.** A bake of
+     [10, 29] on a curve keyed at 0, 20, 40 re-aimed key 0's auto tangent at the new key 10 and bent
+     [0, 10] by **0.9 cm**; a curve keyed only INSIDE the range (the static key a knot sets at the
+     current frame) lost its value outside entirely (**5.97 cm** - its new first key's value held
+     by pre-infinity). Before a ranged bake insert a key one frame outside each end of every curve
+     (`setKeyframe -insert` keeps the shape and pins its neighbours' tangents to fixed) and pin the
+     edge key and its outer neighbour if their tangents are neighbour-made (spline, clamped,
+     plateau, auto*). Gate it at HALF frames: integer frames hide a bent spline.
+222. **In mayapy standalone a `currentTime` is an undo step, and it ends the redo queue.** A verify
+     that walked the time slider between a press and its `cmds.undo()` undid the time change and
+     read "undo does not bring the knot back"; a `redo` after a walk raised «There are no more
+     commands to redo». Undo and redo straight after the press, measure after.
+223. **A locked channel holds the object off its knot**: a knot's constraint skips it (OverRig's
+     -st / -sr), so a turn that needs that channel cannot reach the object - on a zxy prop with rz
+     locked, a local X turn of a double knot landed 6.1 deg off while the turns that only change ry
+     were exact. A fixture proving a local turn needs every rotate channel free.
