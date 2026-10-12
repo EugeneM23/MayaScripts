@@ -552,9 +552,120 @@ def case_k():
     gate(not knots.knots() and not cmds.objExists(group), "Delete character takes it: " + line)
 
 
+def bare_cube(name="cube", parent=None):
+    cube = cmds.polyCube(name=name)[0]
+    if parent:
+        cube = cmds.parent(cube, parent)[0]
+    return cmds.ls(cube, long=True)[0]
+
+
+def case_l():
+    case("L the review's findings")
+    # 1. Bake must not rewrite the animator's rotate keys outside the knot.
+    cmds.file(new=True, force=True)
+    cmds.playbackOptions(min=0, max=40, animationStartTime=0, animationEndTime=40)
+    cube = bare_cube()
+    for t, rx in ((0, 0.0), (5, 10.0), (35, 20.0), (40, 300.0)):
+        cmds.setKeyframe(cube, attribute="rx", time=t, value=rx, inTangentType="linear",
+                         outTangentType="linear")
+    cmds.currentTime(12)
+    knots.create("knot", [cube], highlight=(10.0, 21.0))
+    knots.bake([cube])
+    keys = dict(zip(cmds.keyframe(cube + ".rx", query=True, timeChange=True),
+                    cmds.keyframe(cube + ".rx", query=True, valueChange=True)))
+    gate([round(keys.get(t, -1), 6) for t in (0.0, 5.0, 35.0, 40.0)] == [0.0, 10.0, 20.0, 300.0],
+         "a ranged Bake leaves the rotate keys outside it alone: %s"
+         % [round(keys.get(t, -1), 3) for t in (0.0, 5.0, 35.0, 40.0)])
+    # 2. A knot whose attach was keyed to 0 everywhere: Bake bakes nothing and changes nothing.
+    cmds.file(new=True, force=True)
+    cmds.playbackOptions(min=0, max=40, animationStartTime=0, animationEndTime=40)
+    cube = bare_cube()
+    for t, rx in ((0, 0.0), (5, 10.0), (35, 20.0), (40, 300.0)):
+        cmds.setKeyframe(cube, attribute="rx", time=t, value=rx, inTangentType="linear",
+                         outTangentType="linear")
+    before_curves = curves(cube)
+    knots.create("knot", [cube], highlight=None)
+    knot = knot_of(cube)
+    cmds.setKeyframe(knot, attribute=plan.ATTACH, time=0, value=0.0)
+    knots.bake([knot])
+    gate(curves(cube) == before_curves and not knots.knots(),
+         "attach 0 everywhere: Bake leaves every curve as it was")
+    # 3. A spinning object: the baked keys stay a spin (no 360 jumps between them).
+    cmds.file(new=True, force=True)
+    cmds.playbackOptions(min=0, max=40, animationStartTime=0, animationEndTime=40)
+    cube = bare_cube()
+    for t, ry in ((0, 0.0), (40, 720.0)):
+        cmds.setKeyframe(cube, attribute="ry", time=t, value=ry, inTangentType="linear",
+                         outTangentType="linear")
+    cmds.currentTime(12)
+    knots.create("knot", [cube], highlight=None)
+    knot = knot_of(cube)
+    nudge(knot, "rx", 10.0)
+    edited = track(cube)
+    knots.bake([knot])
+    values = cmds.keyframe(cube + ".ry", query=True, valueChange=True)
+    jump = max(abs(b - a) for a, b in zip(values, values[1:]))
+    ok, text = same(edited, track(cube))
+    gate(ok and jump < 90.0, "a spin baked stays a spin (largest step %.2f deg), the edit kept: %s"
+         % (jump, text))
+    # 4. A knot on a knot, the OBJECT selected: both bake, nothing orphaned.
+    prop = make_prop()
+    before = track(prop)
+    knots.create("knot", [prop], highlight=None)
+    a = knot_of(prop)
+    knots.create("knot", [a], highlight=None)
+    b = [k for k in knots.knots() if knots.source_of(k) == a][0]
+    nudge(b, "tx", 5.0)
+    shifted = dict((f, (before[f][0] + om.MVector(5, 0, 0), before[f][1])) for f in FRAMES)
+    knots.bake([prop])
+    ok, text = same(shifted, track(prop))
+    gate(ok and not knots.knots(), "the object selected bakes both knots, none orphaned: " + text)
+    # 5. Remove of the base knot takes the knot riding it too, curves restored.
+    prop = make_prop()
+    before_curves = curves(prop)
+    knots.create("knot", [prop], highlight=None)
+    a = knot_of(prop)
+    knots.create("knot", [a], highlight=None)
+    knots.remove([a])
+    gate(not knots.knots() and curves(prop) == before_curves,
+         "Remove of the base knot takes its rider, the curves restored")
+    # 6. A narrowed playback range: the knot still covers the animation range.
+    cmds.file(new=True, force=True)
+    cmds.playbackOptions(min=10, max=20, animationStartTime=0, animationEndTime=40)
+    carrier = cmds.createNode("transform", name="carrier")
+    for t, tx in ((0, 0.0), (40, 50.0)):
+        cmds.setKeyframe(carrier, attribute="tx", time=t, value=tx)
+    cube = bare_cube(parent=carrier)
+    cmds.currentTime(12)
+    before = track(cube)
+    knots.create("knot", [cube], highlight=None)
+    ok, text = same(before, track(cube))
+    gate(ok, "a narrowed playback: nothing moves over the whole animation range: " + text)
+    # 7. An unevenly scaled parent refuses.
+    cmds.file(new=True, force=True)
+    squashed = cmds.createNode("transform", name="squashed")
+    cmds.setAttr(squashed + ".scale", 1.0, 2.5, 0.7, type="double3")
+    cube = bare_cube(parent=squashed)
+    count = transforms_count()
+    line = knots.create("knot", [cube], highlight=None)
+    gate("scaled unevenly" in line and transforms_count() == count, line)
+    # 8. A node the animator parented under a knot survives Remove, in place.
+    prop = make_prop()
+    knots.create("knot", [prop], highlight=None)
+    knot = knot_of(prop)
+    mine = cmds.spaceLocator(name="animatorsOwn")[0]
+    mine = cmds.parent(mine, knot)[0]
+    uuid = cmds.ls(mine, uuid=True)[0]
+    where = origin(cmds.ls(uuid, long=True)[0])
+    knots.remove([knot])
+    kept = cmds.ls(uuid, long=True)
+    gate(bool(kept) and (origin(kept[0]) - where).length() < EPS_CM,
+         "the animator's node under a knot survives Remove in place: %s" % kept)
+
+
 def main():
     for run in (case_a, case_b, case_c, case_d, case_e, case_f, case_g, case_h, case_i,
-                case_j, case_k):
+                case_j, case_l, case_k):
         try:
             run()
         except Exception:

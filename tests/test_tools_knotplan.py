@@ -53,7 +53,7 @@ class Kinds(unittest.TestCase):
         (deletion.OUR_ATTR_PREFIXES) - the knots group in a character group must read as ours."""
         for name in (plan.KIND_MARKER, plan.SOURCE_MARKER, plan.SPAN_MARKER, plan.KEYED_MARKER,
                      plan.OF_MARKER, plan.PENDING_MARKER, plan.PENDING_SPACE_MARKER,
-                     plan.GROUP_MARKER, plan.ORDER_MARKER):
+                     plan.GROUP_MARKER, plan.ORDER_MARKER, plan.INNER_MARKER):
             self.assertTrue(name.startswith("skeldar"), name)
 
 
@@ -203,6 +203,66 @@ class Channels(unittest.TestCase):
         self.assertTrue(plan.still_static([3.0], 3.0))
         self.assertFalse(plan.still_static([3.0, 4.0], 3.0))
         self.assertFalse(plan.still_static([], 3.0))
+
+
+class Eulers(unittest.TestCase):
+
+    def test_whole_turns_come_off(self):
+        self.assertEqual(plan.closest_euler((10.0, 20.0, 30.0), (370.0, -340.0, 30.0), 0),
+                         (10.0, 20.0, 30.0))
+
+    def test_the_other_solution_is_taken_when_nearer(self):
+        """(a+180, 180-b, c+180) is the same rotation in xyz (middle y)."""
+        self.assertEqual(plan.closest_euler((10.0, 20.0, 30.0), (190.0, 160.0, 210.0), 0),
+                         (10.0, 20.0, 30.0))
+
+    def test_the_middle_axis_follows_the_rotate_order(self):
+        """zxy (2): the middle axis is x."""
+        self.assertEqual(plan.closest_euler((10.0, 20.0, 30.0), (170.0, 200.0, 210.0), 2),
+                         (10.0, 20.0, 30.0))
+
+    def test_a_spin_stays_a_spin(self):
+        rows = [(0.0, 170.0, 0.0), (0.0, -170.0, 0.0), (0.0, -150.0, 0.0)]
+        self.assertEqual(plan.continuous_eulers((0.0, 160.0, 0.0), rows, 0),
+                         [(0.0, 170.0, 0.0), (0.0, 190.0, 0.0), (0.0, 210.0, 0.0)])
+
+    def test_no_anchor_keeps_the_first_row(self):
+        rows = [(0.0, 300.0, 0.0), (0.0, -50.0, 0.0)]
+        self.assertEqual(plan.continuous_eulers(None, rows, 0),
+                         [(0.0, 300.0, 0.0), (0.0, 310.0, 0.0)])
+
+    def test_one_channel_by_whole_turns(self):
+        self.assertEqual(plan.continuous_channel(350.0, [-5.0, 10.0, 375.0]),
+                         [355.0, 370.0, 375.0])
+        self.assertEqual(plan.continuous_channel(None, [10.0, 380.0]), [10.0, 20.0])
+
+
+class Parent(unittest.TestCase):
+
+    IDENTITY = [1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 5.0, 6.0, 7.0, 1.0]
+
+    def test_an_even_parent_is_fine(self):
+        self.assertEqual(plan.uneven_parent("a", self.IDENTITY), "")
+        even = [2.0, 0, 0, 0, 0, 2.0, 0, 0, 0, 0, 2.0, 0, 0, 0, 0, 1.0]
+        self.assertEqual(plan.uneven_parent("a", even), "")
+
+    def test_uneven_sheared_or_mirrored_refuses(self):
+        uneven = [1.0, 0, 0, 0, 0, 2.5, 0, 0, 0, 0, 0.7, 0, 0, 0, 0, 1.0]
+        sheared = [1.0, 0, 0, 0, 0.5, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+        mirrored = [-1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+        for matrix in (uneven, sheared, mirrored):
+            self.assertIn("parent is scaled unevenly", plan.uneven_parent("cube", matrix))
+
+    def test_a_zero_scale_refuses(self):
+        zero = [0.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0]
+        self.assertIn("scaled to zero", plan.uneven_parent("cube", zero))
+
+
+class TakeRange(unittest.TestCase):
+
+    def test_playback_and_animation_together(self):
+        self.assertEqual(plan.take_range((10.0, 20.0), (0.0, 40.0)), (0.0, 40.0))
+        self.assertEqual(plan.take_range((-5.0, 50.0), (0.0, 40.0)), (-5.0, 50.0))
 
 
 class Size(unittest.TestCase):

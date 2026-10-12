@@ -208,3 +208,21 @@ riding a knot (all its knots). Nothing of ours selected: a refusal, never "every
 - A locked channel keeps the object off its knot by exactly what that channel would have carried
   (skipped, as OverRig skips it): stated, and the verify's local-turn case uses a prop with every
   rotate free.
+
+## Addendum 2 - the review's seven (2026-10-12)
+
+An independent review (mayapy experiments) found: Bake euler-filtered the object's whole rotate
+curves - a linear key at 300 far outside a ranged knot came back -60, and a knot whose attach was
+keyed to 0 still rewrote it; a knot riding a picked knot was orphaned by Bake / Remove; the
+whole-take span was playback ∪ the object's keys only (a narrowed playback froze the object 6.25 cm
+off outside it); an unevenly scaled / sheared parent drifted 0.4-0.8 cm at creation; the card's
+refresh walked every locator on each selection change; Bake skipped our static keys when the
+constraint was gone; deleting a knot deleted the animator's nodes parented under it. Fixed: the
+bake's own keys in [first, last] are made continuous from the key before them
+(`knotplan.continuous_eulers` - whole turns and the other euler solution, `(a+180, 180-b, c+180)`
+with b the rotate order's middle axis; one channel locked: whole turns only) and nothing else is
+touched; ridden knots are collected recursively and go first; the span is `take_range`(playback,
+animation) ∪ the keys of the object and its ancestors; `uneven_parent` refuses (uniform scale is
+fine); knots and pivots are read from our groups; the static keys are cut in every Bake; a
+knot's foreign children are parented to world before the knot goes. Gated: verify_knots.py case L,
+90/90.

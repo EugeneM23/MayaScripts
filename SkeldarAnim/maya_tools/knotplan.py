@@ -24,6 +24,7 @@ OF_MARKER = "skeldarKnotOf"                     # the object's constraint: the k
 PENDING_MARKER = "skeldarKnotPending"           # a waiting pivot: its object's UUID
 PENDING_SPACE_MARKER = "skeldarKnotPendingSpace"  # the space it rides in: the same
 ORDER_MARKER = "skeldarKnotOrder"               # a waiting pivot: the rotate order choice
+INNER_MARKER = "skeldarKnotInner"               # a double knot's inner node: its top's UUID
 GROUP_MARKER = "skeldarKnotGroup"               # the group knots live in
 ATTACH = "attach"                               # 0..1 on the top node: the object's own <-> the knot
 
@@ -136,7 +137,83 @@ def still_static(values, value, tolerance=TOLERANCE):
     return bool(values) and all(abs(v - value) <= tolerance for v in values)
 
 
+def uneven_parent(name, matrix):
+    """'' or a refusal: a parent matrix (16 floats, row-major) scaled unevenly, sheared or
+    mirrored cannot be followed by a constraint - the object would stand off its own animation
+    (0.4-0.8 cm measured under a (1, 2.5, 0.7) parent). Uniform scale is fine. Pure."""
+    rows = [matrix[0:3], matrix[4:7], matrix[8:11]]
+    lengths = [math.sqrt(sum(v * v for v in row)) for row in rows]
+    if min(lengths) < 1e-9:
+        return "%s's parent is scaled to zero - a knot cannot hold it" % name
+    spread = max(lengths) / min(lengths) - 1.0
+    skew = max(abs(sum(a * b for a, b in zip(rows[i], rows[j]))) / (lengths[i] * lengths[j])
+               for i, j in ((0, 1), (0, 2), (1, 2)))
+    det = (rows[0][0] * (rows[1][1] * rows[2][2] - rows[1][2] * rows[2][1])
+           - rows[0][1] * (rows[1][0] * rows[2][2] - rows[1][2] * rows[2][0])
+           + rows[0][2] * (rows[1][0] * rows[2][1] - rows[1][1] * rows[2][0]))
+    if spread > 1e-4 or skew > 1e-4 or det < 0:
+        return ("%s's parent is scaled unevenly, sheared or mirrored - a knot's constraint "
+                "cannot hold it in place" % name)
+    return ""
+
+
+# ------------------------------------------------------------------ eulers
+
+#  The middle axis of each rotate order (Maya's enum: xyz yzx zxy xzy yxz zyx), as a channel
+#  index: an euler's other solution turns the outer two by 180 and the middle to 180 - b.
+_MIDDLE = (1, 2, 0, 2, 0, 1)
+
+
+def unwrapped(previous, value):
+    """`value` moved by whole turns to stand nearest `previous`."""
+    return value - 360.0 * round((value - previous) / 360.0)
+
+
+def closest_euler(previous, angles, order):
+    """The equivalent of euler `angles` (rx, ry, rz in degrees, rotate order `order`) nearest
+    `previous`: whole turns per channel, and the other solution tried - an euler filter's step.
+    Pure."""
+    middle = _MIDDLE[int(order)]
+    other = tuple((180.0 - v) if i == middle else (v + 180.0) for i, v in enumerate(angles))
+    best = None
+    for candidate in (tuple(angles), other):
+        moved = tuple(unwrapped(p, v) for p, v in zip(previous, candidate))
+        cost = sum(abs(m - p) for m, p in zip(moved, previous))
+        if best is None or cost < best[0] - 1e-9:
+            best = (cost, moved)
+    return best[1]
+
+
+def continuous_eulers(anchor, rows, order):
+    """Rows of (rx, ry, rz) made continuous from `anchor` (None: the first row stays as it is).
+    What a bake's own keys get - never the rest of the animator's curve (filterCurve on the whole
+    curve rewrote a key at 300 to -60, far outside the bake). Pure."""
+    out, previous = [], anchor
+    for row in rows:
+        current = tuple(row) if previous is None else closest_euler(previous, row, order)
+        out.append(current)
+        previous = current
+    return out
+
+
+def continuous_channel(anchor, values):
+    """One rotate channel's values made continuous by whole turns (the other two locked: the
+    other euler solution needs all three). Pure."""
+    out, previous = [], anchor
+    for value in values:
+        current = value if previous is None else unwrapped(previous, value)
+        out.append(current)
+        previous = current
+    return out
+
+
 # -------------------------------------------------------------------- spans
+
+def take_range(playback, animation):
+    """The take a whole-take knot covers: the playback and animation ranges together (OverRig
+    baked over the animation range; a narrowed playback must not freeze the object outside it)."""
+    return (min(playback[0], animation[0]), max(playback[1], animation[1]))
+
 
 def span_for(playback, keys, highlight):
     """(start, end, ranged) a knot is baked over.

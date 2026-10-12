@@ -83,23 +83,28 @@ def _selection(selection):
     return _transforms(selection)
 
 
-def _marked_locators(attr):
-    out = []
-    for shape in cmds.ls(type="locator", long=True) or []:
-        node = _parent(shape)
-        if node and node not in out and _has(node, attr):
-            out.append(node)
-    return out
+def _groups():
+    """Our knots groups: at world level or one level down, in a character group."""
+    import maya_rigs
+    return maya_rigs.marked_near_top(plan.GROUP_MARKER, depth=2)
+
+
+def _children(node):
+    return cmds.listRelatives(node, children=True, type="transform", fullPath=True) or []
 
 
 def knots():
-    """Every knot of ours: their top nodes, long paths."""
-    return _marked_locators(plan.KIND_MARKER)
+    """Every knot of ours: their top nodes, long paths. Read from our groups - the card asks on
+    every selection change, and a walk over every locator in the scene grew with the rigs."""
+    return [child for group in _groups() for child in _children(group)
+            if _has(child, plan.KIND_MARKER)]
 
 
 def pivots():
     """Every waiting Knot Offset pivot."""
-    return _marked_locators(plan.PENDING_MARKER)
+    return [child for group in _groups() for space in _children(group)
+            if _has(space, plan.PENDING_SPACE_MARKER)
+            for child in _children(space) if _has(child, plan.PENDING_MARKER)]
 
 
 def waiting():
@@ -188,10 +193,18 @@ def _highlight(highlight):
 
 
 def _span(obj, highlight):
-    keys = cmds.keyframe(obj, query=True, timeChange=True) or []
-    playback = (cmds.playbackOptions(query=True, min=True),
-                cmds.playbackOptions(query=True, max=True))
-    return plan.span_for(playback, keys, highlight)
+    """The knot's span: the highlight, else the playback and animation ranges with the keys of
+    the object and of everything above it (a parent's motion moves the object too)."""
+    nodes, path = [], obj
+    while path:
+        nodes.append(path)
+        path = _parent(path)
+    keys = cmds.keyframe(nodes, query=True, timeChange=True) or []
+    take = plan.take_range((cmds.playbackOptions(query=True, min=True),
+                            cmds.playbackOptions(query=True, max=True)),
+                           (cmds.playbackOptions(query=True, animationStartTime=True),
+                            cmds.playbackOptions(query=True, animationEndTime=True)))
+    return plan.span_for(take, keys, highlight)
 
 
 def _channels(obj, channels):
@@ -220,6 +233,9 @@ def _plan_object(obj, kind):
         return None, "%s is a waiting pivot - Finish offset or Remove it" % name
     if kind == "offset" and _waiting_for(obj):
         return None, "%s already has a pivot waiting - Finish offset or Remove it" % name
+    refusal = plan.uneven_parent(name, cmds.getAttr(obj + ".parentMatrix[0]"))
+    if refusal:
+        return None, refusal
     channels = plan.ROTATE if kind == "orient" else plan.CHANNELS
     locked, drivers = _channels(obj, channels)
     free, skipped, refusal = plan.channel_plan(name, locked, drivers, channels)
@@ -234,9 +250,8 @@ def _group_for(obj):
     """The group the object's knots live in: `Knots` inside its character group, else the
     world-level `SkeldarKnots`; made on first use, its transform locked at identity."""
     from maya_scenesetup import chargroup
-    import maya_rigs
     character = chargroup.group_of(obj)
-    for group in maya_rigs.marked_near_top(plan.GROUP_MARKER, depth=2):
+    for group in _groups():
         if _parent(group) == character:
             return group
     if character:
@@ -253,8 +268,7 @@ def _group_for(obj):
 
 
 def _prune():
-    import maya_rigs
-    for group in maya_rigs.marked_near_top(plan.GROUP_MARKER, depth=2):
+    for group in _groups():
         if cmds.objExists(group) and not cmds.listRelatives(group, children=True):
             cmds.delete(group)
 
@@ -383,6 +397,7 @@ def _make(kind, obj, group, size, order):
         return top, top, [(top, plan.ROTATE)], temps, top
     outer = _locator(name + k.suffix, group, size * plan.OUTER_SCALE, k.colour, order)
     inner = _locator(name + k.inner_suffix, outer, size, k.inner_colour, order)
+    _set_string(inner, plan.INNER_MARKER, _uuid(outer))
     if kind == "double_local":
         temps = [_constrain(cmds.parentConstraint, obj, outer, maintainOffset=False)]
         return outer, inner, [(outer, plan.CHANNELS)], temps, inner
@@ -613,20 +628,94 @@ def _protect(obj, channels, first, last):
                 _pin(curve, max(outer) if edge < first else min(outer))
 
 
+def _set_key_values(curve, times, old, new):
+    for time, before, after in zip(times, old, new):
+        if abs(after - before) > 1e-9:
+            cmds.keyframe(curve, edit=True, time=(time, time), absolute=True,
+                          valueChange=after)
+
+
+def _continuous(obj, channels, first, last):
+    """The bake's own rotate keys in [first, last] made continuous from the key before them -
+    and nothing else of the animator's curves (filterCurve over the whole curve rewrote a key at
+    300 to -60 far outside the knot, the review's finding). With all three rotates baked the other
+    euler solution is tried too; with one locked, whole turns only."""
+    rotates = [ch for ch in plan.ROTATE if ch in channels]
+    curves = dict((ch, _own_curve(obj, ch)) for ch in rotates)
+    rotates = [ch for ch in rotates if curves[ch]]
+    if not rotates:
+        return
+    times = [t for t in cmds.keyframe(curves[rotates[0]], query=True, timeChange=True) or []
+             if first - 1e-6 <= t <= last + 1e-6]
+    if not times:
+        return
+    before = [t for t in cmds.keyframe(curves[rotates[0]], query=True, timeChange=True) or []
+              if t < first - 1e-6]
+    values = dict((ch, [cmds.keyframe(curves[ch], query=True, eval=True, time=(t, t))[0]
+                        for t in times]) for ch in rotates)
+    anchor = None
+    if before:
+        anchor = dict((ch, cmds.keyframe(curves[ch], query=True, eval=True,
+                                         time=(before[-1], before[-1]))[0]) for ch in rotates)
+    if rotates == list(plan.ROTATE):
+        rows = list(zip(values["rx"], values["ry"], values["rz"]))
+        made = plan.continuous_eulers(
+            tuple(anchor[ch] for ch in plan.ROTATE) if anchor else None, rows,
+            cmds.getAttr(obj + ".rotateOrder"))
+        for index, ch in enumerate(plan.ROTATE):
+            _set_key_values(curves[ch], times, values[ch], [row[index] for row in made])
+        return
+    for ch in rotates:
+        made = plan.continuous_channel(anchor[ch] if anchor else None, values[ch])
+        _set_key_values(curves[ch], times, values[ch], made)
+
+
 def _bake_one(top, obj, mine):
     """One knot's motion written into its object's curves, the constraint deleted."""
     region = _influence(top, obj)
     channels = _driven(obj)
-    if region is not None and channels:
+    baked = region is not None and bool(channels)
+    if baked:
         if region[2]:
             _protect(obj, channels, region[0], region[1])
         cmds.bakeResults(obj, attribute=channels, time=(region[0], region[1]),
                          simulation=True, sampleBy=1, preserveOutsideKeys=True,
                          disableImplicitControl=True)
     cmds.delete(mine)
-    _filter_euler(obj, channels)
+    if baked:
+        _continuous(obj, channels, region[0], region[1])
     for ch, value in plan.decode_keyed(_get(top, plan.KEYED_MARKER)).items():
         _unkey(obj, ch, value)
+
+
+def _with_riders(tops):
+    """`tops` and every knot riding one of them, however deep (a knot on a knot: deleting the
+    inner knot takes the outer one's constraint along and leaves it driving nothing)."""
+    out = list(tops)
+    grown = True
+    while grown:
+        grown = False
+        ids = set(_uuid(t) for t in out)
+        for found in knots():
+            if found not in out and _get(found, plan.SOURCE_MARKER) in ids:
+                out.append(found)
+                grown = True
+    return out
+
+
+def _release_children(top):
+    """The animator's own nodes parented under a knot, out to world level, so deleting the knot
+    keeps them."""
+    for node in [top] + [c for c in _children(top) if _has(c, plan.INNER_MARKER)]:
+        for child in _children(node):
+            if cmds.objectType(child, isAType="constraint") or _has(child, plan.INNER_MARKER):
+                continue
+            cmds.parent(child, world=True)
+
+
+def _delete_knot(top):
+    _release_children(top)
+    cmds.delete(top)
 
 
 def bake(selection=None):
@@ -636,7 +725,7 @@ def bake(selection=None):
         return plan.BAKE_NOTHING
     names, objs = [], []
     with _press("skeldarKnotBake"):
-        for uuid in _ordered(tops):
+        for uuid in _ordered(_with_riders(tops)):
             top = _by_uuid(uuid)
             if not top:
                 continue
@@ -647,7 +736,10 @@ def bake(selection=None):
                 _bake_one(top, obj, mine)
                 names.append(plan.leaf(obj))
                 objs.append(_uuid(obj))
-            cmds.delete(top)
+            elif obj:                                   # its constraint deleted by hand
+                for ch, value in plan.decode_keyed(_get(top, plan.KEYED_MARKER)).items():
+                    _unkey(obj, ch, value)
+            _delete_knot(top)
         _prune()
         live = [p for p in (_by_uuid(u) for u in objs) if p]
         if live:
@@ -677,7 +769,7 @@ def remove(selection=None):
         return plan.REMOVE_NOTHING
     names, objs = [], []
     with _press("skeldarKnotRemove"):
-        for uuid in _ordered(tops):
+        for uuid in _ordered(_with_riders(tops)):
             top = _by_uuid(uuid)
             if not top:
                 continue
@@ -690,7 +782,7 @@ def remove(selection=None):
                     _unkey(obj, ch, value)
                 names.append(plan.leaf(obj))
                 objs.append(_uuid(obj))
-            cmds.delete(top)
+            _delete_knot(top)
         for pivot in waiting_pivots:
             space = _parent(pivot)
             if space and cmds.objExists(space):
