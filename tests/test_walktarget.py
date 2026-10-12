@@ -228,6 +228,21 @@ class PoseTests(unittest.TestCase):
             want = math.atan2(*reversed([float(np.dot(wp._bend(hip, knee, ankle), v)) for v in (w.fwd, w.side)]))
             self.assertAlmostEqual(pose["knee_turn"][side], want - means[side], places=9)
 
+    def test_the_arms_and_the_feet_of_a_frame(self):
+        w, c = walk(), clip()
+        pose = wp.prepare(w, statics_of(c), self.pose_of(c, 5), wm, wt)
+        for name in ("clavicle_l", "upperarm_l", "lowerarm_r", "hand_r", "index_01_l"):
+            j = w.index[name]
+            want = c.worlds[j, 5, :3, :3] @ c.worlds[w.parents[j], 5, :3, :3].T
+            self.assertLess(float(np.abs(pose["arms"][j] - want).max()), 1e-9, name)
+        gap = float(np.dot(c.worlds[w.index["foot_l"], 5, 3, :3] - c.worlds[w.index["foot_r"], 5, 3, :3], w.side))
+        self.assertAlmostEqual(pose["width"], gap - (w.feet["l"].coords[1] - w.feet["r"].coords[1]), places=6)
+        self.assertAlmostEqual(pose["toe"]["l"], 0.0, places=9)     # the walker's feet never turn
+        self.assertEqual(pose["weapons"], {})
+        only = wp.filtered(pose, ("torso", "feet"))
+        self.assertEqual(sorted(only), ["head", "scale", "spine", "toe", "width"])
+        self.assertEqual(sorted(wp.filtered(pose, ())), ["scale"])
+
     def test_a_pose_on_a_bigger_body_keeps_its_angles_and_scales_its_height(self):
         w, c = walk(), clip()
         big = self.pose_of(c, 5)

@@ -614,6 +614,56 @@ class PoseTests(unittest.TestCase):
         self.assertLess(float(np.abs(moved - [0.0, 0.0, 120.0]).max()), 1e-6)
 
 
+def a_grip(w):
+    """Arms held: both upper arms forward and the forearms bent in, the walker's own fingers."""
+    j = w.index
+    arms = {}
+    for side, sign in (("l", 1.0), ("r", -1.0)):
+        arms[j["upperarm_" + side]] = rot_y(sign * 60.0) @ w.lmean[j["upperarm_" + side]]
+        arms[j["lowerarm_" + side]] = rot_z(sign * -70.0) @ w.lmean[j["lowerarm_" + side]]
+    return {"arms": arms}
+
+
+class PosePartsTests(unittest.TestCase):
+
+    def test_held_arms_keep_the_hands_together(self):
+        """Arms in the pose at 1: the arms ride the chest, no swing - the two hands keep one relation."""
+        w = walk()
+        r = w.evaluate({"pose": 1.0}, a_grip(w))
+        hands = [r.worlds[w.index["hand_l"], f] @ np.linalg.inv(r.worlds[w.index["hand_r"], f]) for f in range(25)]
+        self.assertLess(float(np.abs(np.array(hands) - hands[0]).max()), 1e-9)
+        j = w.index["lowerarm_l"]
+        self.assertLess(angle(local_rot(r, "lowerarm_l", w, 7) @ a_grip(w)["arms"][j].T), 1e-9)
+        plain = w.evaluate()
+        loose = [plain.worlds[w.index["hand_l"], f] @ np.linalg.inv(plain.worlds[w.index["hand_r"], f]) for f in range(25)]
+        self.assertGreater(float(np.abs(np.array(loose) - loose[0]).max()), 1.0)
+
+    def test_half_held_arms_swing_half(self):
+        w = walk()
+        r = w.evaluate({"pose": 0.5, "exaggeration": 1.0}, a_grip(w))
+        j = w.index["hand_l"]
+        mean = w.lmean[j]
+        swing = max(angle(local_rot(r, "hand_l", w, f) @ mean.T) for f in range(24))
+        source = max(angle(local_rot(w.evaluate(), "hand_l", w, f) @ mean.T) for f in range(24))
+        self.assertAlmostEqual(swing, 0.5 * source, places=6)
+
+    def test_the_feet_set_wider_and_turn_out(self):
+        w, c = walk(), clip()
+        pose = {"width": 12.0, "toe": {"l": math.radians(20.0), "r": math.radians(-30.0)}}
+        r = w.evaluate({"pose": 1.0}, pose)
+        ml, mr = int(round(w.feet["l"].mid)) % 24, int(round(w.feet["r"].mid)) % 24
+        gap = lambda m, a, b: float(np.dot(m[w.index["foot_l"], a, 3, :3] - m[w.index["foot_r"], b, 3, :3], w.side))
+        self.assertAlmostEqual(gap(r.worlds, ml, mr) - gap(c.worlds, ml, mr), 12.0, places=6)
+        for side, deg in (("l", 20.0), ("r", -30.0)):
+            j = w.index["foot_" + side]
+            for f in (3, 11, 19):
+                turn = c.worlds[j, f, :3, :3].T @ r.worlds[j, f, :3, :3]
+                self.assertTrue(np.allclose(turn, rot_y(deg), atol=1e-9), (side, f))
+        left = w.feet["l"]
+        foot = positions(r, "ball_l", w)[[left.on + i for i in range(left.length + 1)]]
+        self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
+
+
 class WindowTests(unittest.TestCase):
     """The window's wiring on a recording cmds (the window itself is the animator's to try)."""
 

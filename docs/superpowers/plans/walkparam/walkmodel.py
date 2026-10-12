@@ -133,6 +133,16 @@ def toward(mean, target, alpha):
     return exp_rot(alpha * log_rot(target @ mean.T)) @ mean
 
 
+def blend_matrix(a, b, alpha):
+    """Between two rigid 4x4s: the rotation `toward`, the translation lerped; 0 is `a`, 1 is `b`."""
+    if alpha <= 0.0:
+        return a
+    out = np.eye(4)
+    out[:3, :3] = toward(orthonormal(a[:3, :3]), orthonormal(b[:3, :3]), alpha)
+    out[3, :3] = (1.0 - alpha) * np.asarray(a)[3, :3] + alpha * np.asarray(b)[3, :3]
+    return out
+
+
 def turned_about(v, axis, angle):
     """The vector `v` turned `angle` radians about the unit `axis` (right hand; Rodrigues)."""
     c, s = math.cos(angle), math.sin(angle)
@@ -465,6 +475,7 @@ class Walk(object):
                "beta": min(max(WEIGHT_WARP * k["weight"], -0.9), 0.9),
                "phi0": self.low_phase + WEIGHT_WARP_AFTER - 0.25,
                "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"]}
+        ctx["width"] = k["width"] + (ctx["alpha"] * ctx["pose"]["width"] if ctx["pose"] and "width" in ctx["pose"] else 0.0)
         times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
         drop = self._lowering(times, ctx)
         worlds = np.tile(np.eye(4), (len(self.names), n + 1, 1, 1))
@@ -513,9 +524,9 @@ class Walk(object):
             if name == "pelvis":
                 pose, a = ctx["pose"], ctx["alpha"]
                 v = float(periodic_cr(self.pdev[j], warp(phi, ctx["beta"], ctx["phi0"]) * self.P) @ self.up) - mean[2]
-                base = mean[2] if pose is None else (1.0 - a) * mean[2] + a * pose["height"]
+                base = mean[2] if pose is None or "height" not in pose else (1.0 - a) * mean[2] + a * pose["height"]
                 height = base + k["bob"] * ex * shape_bob(v, k["weight"]) - drop
-                centre = self.wmean[j] if pose is None else toward(self.wmean[j], pose["pelvis"], a)
+                centre = self.wmean[j] if pose is None or "pelvis" not in pose else toward(self.wmean[j], pose["pelvis"], a)
                 rot = exp_rot(k["pelvis_rot"] * ex * periodic_cr(self.wlog[j], tau)) @ centre
             else:
                 height, rot = dev[2], self.wrot(j, tau)
@@ -533,7 +544,7 @@ class Walk(object):
             for side in SIDES:
                 th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
                 hip = self.lt_at(th, tau) @ pelvis_rot + pelvis_pos
-                ankle = self.foot_target(side, tau, k["stride"], k["width"], k["lift"] * ctx["ex"])[1]
+                ankle = self.foot_target(side, tau, k["stride"], ctx["width"], k["lift"] * ctx["ex"])[1]
                 limit = self.reach[side] * (np.linalg.norm(self.lt_at(ca, tau)) + np.linalg.norm(self.lt_at(fo, tau)))
                 q = ankle - hip
                 if np.linalg.norm(q) <= limit * (1.0 + 1e-9):
@@ -564,21 +575,31 @@ class Walk(object):
                 short = max(short, self._leg(name[-1], tau, rots, poss, ctx))
             elif kind == "helper" and j in self.follows:
                 b, rel = self.follows[j]
+                pose = ctx["pose"]
+                if pose is not None and j in pose.get("weapons", {}):     # the weapon where the pose holds it
+                    rel = blend_matrix(rel, pose["weapons"][j], ctx["alpha"])
                 m = rel @ matrix(rots[b], poss[b])
                 rots[j], poss[j] = m[:3, :3], m[3, :3]
             else:
                 t = tau - self.lag[j] * ctx["lag"]
                 pose, a = ctx["pose"], ctx["alpha"]
                 if kind == "head":
-                    centre = self.wmean[j] if pose is None else toward(self.wmean[j], pose["head"], a)
+                    centre = self.wmean[j] if pose is None or "head" not in pose else toward(self.wmean[j], pose["head"], a)
                     rots[j] = exp_rot(k["head"] * ex * periodic_cr(self.wlog[j], t)) @ centre
-                elif j in self.world_arms:      # the upper arm hangs and swings in the world
+                elif j in self.world_arms and (pose is None or "arms" not in pose):
+                    # the upper arm hangs and swings in the world
                     rots[j] = exp_rot(k["arms"] * ex * periodic_cr(self.wlog[j], t)) @ self.wmean[j]
                 else:
-                    centre = self.lmean[j]
-                    if pose is not None and j in pose["spine"]:
-                        centre = toward(centre, pose["spine"][j], a)
-                    rots[j] = exp_rot(gains.get(kind, 1.0) * periodic_cr(self.llog[j], t)) @ centre @ rots[p]
+                    centre, gain = self.lmean[j], gains.get(kind, 1.0)
+                    if pose is not None:
+                        if j in pose.get("spine", {}):
+                            centre = toward(centre, pose["spine"][j], a)
+                        if "arms" in pose and kind in ("arm", "finger"):
+                            # the pose's arms are HELD: they ride the chest, their swing fades with the pose
+                            if j in pose["arms"]:
+                                centre = toward(centre, pose["arms"][j], a)
+                            gain *= 1.0 - a
+                    rots[j] = exp_rot(gain * periodic_cr(self.llog[j], t)) @ centre @ rots[p]
                 poss[j] = self.lt_at(j, t) @ rots[p] + poss[p]
         out = np.tile(np.eye(4), (len(self.names), 1, 1))
         for j in range(len(self.names)):
@@ -592,14 +613,16 @@ class Walk(object):
         th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
         pelvis = self.parents[th]
         hip = self.lt_at(th, tau) @ rots[pelvis] + poss[pelvis]
-        foot_rot, ankle = self.foot_target(side, tau, k["stride"], k["width"], k["lift"] * ctx["ex"])
+        foot_rot, ankle = self.foot_target(side, tau, k["stride"], ctx["width"], k["lift"] * ctx["ex"])
+        if ctx["pose"] is not None and "toe" in ctx["pose"]:     # the pose's toe-out: the foot turned about up
+            foot_rot = foot_rot @ exp_rot(self.up * ctx["alpha"] * ctx["pose"]["toe"][side])
         l1, l2 = float(np.linalg.norm(self.lt_at(ca, tau))), float(np.linalg.norm(self.lt_at(fo, tau)))
         h, kn, a = self.wpos(th, tau), self.wpos(ca, tau), self.wpos(fo, tau)
         e = _unit(a - h)
         bend = (kn - h) - np.dot(kn - h, e) * e
         bend = _unit(bend) if np.linalg.norm(bend) > 1e-6 else _unit(self.fwd - np.dot(self.fwd, e) * e)
         knee_bend = bend
-        if ctx["pose"] is not None:     # the pose's knee heading: the bend turned about the leg (-e: up it)
+        if ctx["pose"] is not None and "knee_turn" in ctx["pose"]:   # the pose's knee heading: turned about the leg
             knee_bend = turned_about(bend, -e, ctx["alpha"] * ctx["pose"]["knee_turn"][side])
         knee, reached, short = two_bone(hip, ankle, l1, l2, knee_bend, self.reach[side])
         e2 = _unit(reached - hip)

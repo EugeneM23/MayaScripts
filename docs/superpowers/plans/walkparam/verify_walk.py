@@ -23,7 +23,8 @@ REPO = os.path.normpath(os.path.join(HERE, "..", "..", "..", ".."))
 ASSETS = os.path.join(REPO, "SkeldarAnim", "assets")
 WALK_FBX = os.environ.get("WALK_FBX", "C:/Users/MY PC/Desktop/Walk_01.fbx")
 MIXAMO_FBX = "C:/Users/MY PC/Downloads/Sweep Fall.fbx"
-POSE_FILE = os.path.join(HERE, "walks", "goblin.wpose.gz")   # the animator's pose, saved by Save pose
+POSE_FILE = os.path.join(HERE, "walks", "goblin.wpose.gz")   # the animator's poses, saved by Save pose
+SWORD_FILE = os.path.join(HERE, "walks", "two_handed_sword.wpose.gz")
 
 
 def load(name, path):
@@ -197,9 +198,9 @@ try:
                  for side in "lr" for c, p in (("calf_" + side, "thigh_" + side), ("foot_" + side, "calf_" + side)))
     print("        the walk's leg bones breathe %.4f cm against their rest lengths" % breath)
 
-    def check(root, label, given=None, expect_scale=None, pose=None):
+    def check(root, label, given=None, expect_scale=None, pose=None, parts=sw.ALL_PARTS):
         started = time.time()
-        result, info, text = sw.apply(root, name, given, pose)
+        result, info, text = sw.apply(root, name, given, pose, parts)
         took = time.time() - started
         print("        " + text)
         bones = bones_of(root)
@@ -271,7 +272,7 @@ try:
 
         def posed(amount):
             result, info, got = check(manny, "Manny under the goblin pose x%.1f" % amount, {"pose": amount},
-                                      expect_scale=1.0, pose="goblin")
+                                      expect_scale=1.0, pose="goblin", parts=("torso", "pelvis", "knees"))
             w = worlds([path(c) for c in ("pelvis", "neck_01", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r",
                                           "foot_r", "root")], cycle)
             return info, w
@@ -310,6 +311,50 @@ try:
     else:
         print("        (no %s: the goblin gates skipped)" % POSE_FILE)
 
+    # 1c. the two-handed sword pose, every part, on Manny: the grip held through the walk
+    if os.path.exists(SWORD_FILE):
+        shutil.copy(SWORD_FILE, sw.wf.pose_path_for(sw.WALKS, "two_handed_sword"))
+        held = sw.prepared_pose(name, "two_handed_sword")
+        sword = sw.wf.load_pose(SWORD_FILE)[1]
+        mb = bones_of(manny)
+        path = lambda c: mb[leaf_of(mb, c)]["path"]
+        cycle = range(start, start + P + 1)
+        check(manny, "Manny under the two-handed sword x1, every part", {"pose": 1.0}, expect_scale=1.0,
+              pose="two_handed_sword")
+        names_ = ("hand_l", "hand_r", "weapon_r", "weapon_l", "pelvis", "neck_01", "foot_l", "foot_r", "ball_l",
+                  "ball_r", "root")
+        w = dict(zip(names_, worlds([path(c) for c in names_], cycle)))
+        pm_ = lambda leaf: np.array(sword[leaf]["world"]).reshape(4, 4)
+        grip = np.array([w["hand_l"][f] @ np.linalg.inv(w["hand_r"][f]) for f in range(P + 1)])
+        want = pm_("hand_l") @ np.linalg.inv(pm_("hand_r"))
+        gate(float(np.abs(grip - grip[0]).max()) < 1e-4 and float(np.abs(grip[:, 3, :3] - want[3, :3]).max()) < 0.05
+             and float(np.abs(grip[:, :3, :3] - want[:3, :3]).max()) < 1e-3,
+             "the grip held: the left hand in the right's space still to %.6f over the cycle, the pose's to %.4f cm"
+             % (float(np.abs(grip - grip[0]).max()), float(np.abs(grip[:, 3, :3] - want[3, :3]).max())))
+        errs = []
+        for weapon, hand in (("weapon_r", "hand_r"), ("weapon_l", "hand_l")):
+            rel = np.array([w[weapon][f] @ np.linalg.inv(w[hand][f]) for f in range(P + 1)])
+            pose_rel = pm_(weapon) @ np.linalg.inv(pm_(hand))
+            errs.append(float(np.abs(rel - pose_rel).max()))
+        gate(max(errs) < 1e-3, "the weapon bones where the pose holds the sword: %.6f, %.6f" % tuple(errs))
+        ml, mr = int(round(walk.feet["l"].mid)) % P, int(round(walk.feet["r"].mid)) % P
+        gap = float(np.dot(w["foot_l"][ml, 3, :3] - w["foot_r"][mr, 3, :3], walk.side))
+        walk_gap = float(np.dot(src["foot_l"][ml, 3, :3] - src["foot_r"][mr, 3, :3], walk.side))
+        heading = lambda m, foot, ball, f: math.degrees(math.atan2(
+            float(np.dot(m[ball][f, 3, :3] - m[foot][f, 3, :3], walk.side)),
+            float(np.dot(m[ball][f, 3, :3] - m[foot][f, 3, :3], walk.fwd))))
+        turned = [heading(w, "foot_" + s, "ball_" + s, f) - heading(src, "foot_" + s, "ball_" + s, f)
+                  for s, f in (("l", ml), ("r", mr))]
+        toe = [math.degrees(held["toe"][s]) for s in "lr"]
+        gate(abs(gap - walk_gap - held["width"]) < 0.1 and all(abs(a - b) < 1.5 for a, b in zip(turned, toe)),
+             "the feet: %.1f cm apart (the walk %.1f, the pose's extra %.1f), toes turned %.1f / %.1f deg (the pose "
+             "%.1f / %.1f)" % (gap, walk_gap, held["width"], turned[0], turned[1], toe[0], toe[1]))
+        height = float(np.mean(w["pelvis"][:P, 3, 1] - w["root"][:P, 3, 1]))
+        gate(abs(height - held["height"]) < 0.5, "the pelvis at the pose's height: %.2f cm (the pose %.2f)"
+             % (height, held["height"]))
+    else:
+        print("        (no %s: the sword gates skipped)" % SWORD_FILE)
+
     # 2. the Creep, the UE4 Mannequin, Mixamo, a small Manny
     creep = ma_import(os.path.join(ASSETS, "Creep_Skeleton.ma"), "creep")
     check(creep, "Creep skeleton")
@@ -334,7 +379,7 @@ try:
     first_root = cmds.getAttr(creep + ".worldMatrix[0]", time=start)
     check(creep, "Creep, stride 1.3, from its stored place", {"stride": 1.3})
     again = cmds.getAttr(creep + ".worldMatrix[0]", time=start)
-    walked, knobs, picked_pose = sw.pick(creep)
+    walked, knobs, picked_pose, picked_parts = sw.pick(creep)
     gate(np.allclose(first_root, again, atol=1e-6) and walked == name and abs(knobs["stride"] - 1.3) < 1e-9,
          "re-tuned from the stored place (frame %d's root unmoved %.7f, the time at 17); Pick reads %s, stride %.2f"
          % (start, float(np.abs(np.array(first_root) - np.array(again)).max()), walked, knobs["stride"]))
@@ -367,6 +412,17 @@ try:
             targets.insert(4, ("Mixamo Sweep Fall", mixamo))
         draw_sheet(sheet, [(label, capture(root, cycle), "side") for label, root in targets])
         print("        picture: " + sheet)
+    sword_sheet = os.environ.get("WALK_SWORD_SHEET")
+    if sword_sheet and os.path.exists(SWORD_FILE):
+        sw.apply(manny, name, {"pose": 0.0}, "two_handed_sword")
+        plain = capture(manny, cycle)
+        sw.apply(manny, name, {"pose": 1.0}, "two_handed_sword")
+        held = capture(manny, cycle)
+        draw_sheet(sword_sheet, [("Walk_01 on Manny - side", plain, "side"),
+                                 ("the two-handed sword x1, every part - side", held, "side"),
+                                 ("Walk_01 on Manny - front", plain, "front"),
+                                 ("the two-handed sword x1, every part - front", held, "front")])
+        print("        picture: " + sword_sheet)
     pose_sheet = os.environ.get("WALK_POSE_SHEET")
     if pose_sheet and os.path.exists(POSE_FILE):
         sw.apply(manny, name, {"pose": 0.0}, "goblin")

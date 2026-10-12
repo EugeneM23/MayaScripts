@@ -146,8 +146,9 @@ class Retarget(object):
         return out
 
     def _helpers(self, played):
-        """{target helper: (target body bone, relation 4x4)}: a helper the walk's own helper of that name
-        plays keeps the walk's rigid relation to the bone it follows there (translation x the size)."""
+        """{target helper: (target body bone, the walk's helper index, its body's index)}: a helper the walk's
+        own helper of that name plays keeps, frame by frame, the relation the walk's result gives it to the bone
+        it follows there (translation x the size) - the walk's own, or the one a pose holds a weapon by."""
         out = {}
         for t, s in self.pairs.items():
             if not pm.is_helper(t) or s not in self.walk.index:
@@ -158,10 +159,7 @@ class Retarget(object):
             body = played.get(self.walk.names[follow[0]])
             if body is None:
                 continue
-            rel = np.array(follow[1], float)
-            rel[:3, :3] = _model().orthonormal(rel[:3, :3])
-            rel[3, :3] *= self.scale
-            out[t] = (body, rel)
+            out[t] = (body, self.walk.index[s], follow[0])
         return out
 
     def written(self):
@@ -212,8 +210,8 @@ class Retarget(object):
         drop = model.smooth_cover(need, model.LOWER_BLUR * len(need))
         drop = np.append(drop, drop[0])
         frames, short = [], 0.0
-        for out, goal, d in zip(outs, goals, drop):
-            final, frame_short = self._solve(out, goal, float(d))
+        for f, (out, goal, d) in enumerate(zip(outs, goals, drop)):
+            final, frame_short = self._solve(out, goal, float(d), self._relations(result.worlds[:, f]))
             frames.append(final)
             short = max(short, frame_short)
         info = {"drop": [float(d) for d in drop], "short": short, "scale": self.scale,
@@ -238,7 +236,17 @@ class Retarget(object):
                 need = max(need, -qu - disc ** 0.5)
         return need
 
-    def _solve(self, out, goal, drop):
+    def _relations(self, worlds):
+        """{target helper: relation 4x4}: each helper against its body in one frame of the walk's result."""
+        out = {}
+        for leaf, (body, h, b) in self.helpers.items():
+            rel = worlds[h] @ np.linalg.inv(worlds[b])
+            rel[:3, :3] = _model().orthonormal(rel[:3, :3])
+            rel[3, :3] *= self.scale
+            out[leaf] = rel
+        return out
+
+    def _solve(self, out, goal, drop, relations):
         """The frame's final worlds: the pelvis dropped, the legs solved, every other bone on its transferred
         local over its (moved) parent, the helpers on their bones."""
         final, moved, short = {}, set(), 0.0
@@ -263,8 +271,7 @@ class Retarget(object):
         for leaf in self.order:
             parent = self.target[leaf].get("parent")
             if leaf in self.helpers:
-                body, rel = self.helpers[leaf]
-                final[leaf] = _om(rel) * final[body]
+                final[leaf] = _om(relations[leaf]) * final[self.helpers[leaf][0]]
                 moved.add(leaf)
             elif pm.is_helper(leaf) and parent in moved:
                 final[leaf] = (out[leaf] * out[parent].inverse()) * final[parent]

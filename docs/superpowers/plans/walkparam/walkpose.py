@@ -89,5 +89,42 @@ def prepare(walk, statics, pose_bones, model, target_module):
         bend = _bend(hip, knee, ankle)
         turn[side] = 0.0 if bend is None else _wrapped(_heading(bend, walk) - means[side])
     height = float(np.dot(_np(out["pelvis"])[3, :3] - walk.origin, walk.up))
+    scale = 1.0 if same else legs_ratio
+    arms = {}
+    for j, name in enumerate(walk.names):
+        parent = walk.parents[j]
+        if walk.kind[j] in ("arm", "finger") and name in out and parent >= 0:
+            arms[j] = rot(name) @ rot(walk.names[parent]).T
+    weapons = {}
+    for h, (body, rel) in walk.follows.items():
+        name, body_name = walk.names[h], walk.names[body]
+        if name.startswith("weapon_") and name in pairs and body_name in pairs:
+            held = _np(pose_bones[pairs[name]]["world"]) @ np.linalg.inv(_np(pose_bones[pairs[body_name]]["world"]))
+            held[:3, :3] = model.orthonormal(held[:3, :3])
+            held[3, :3] *= scale
+            weapons[h] = held
+    ankle = dict((side, _np(out["foot_" + side])[3, :3]) for side in SIDES)
+    width = float(np.dot(ankle["l"] - ankle["r"], walk.side)) - (walk.feet["l"].coords[1] - walk.feet["r"].coords[1])
+    toe = {}
+    for side in SIDES:
+        ball = "ball_" + side
+        if ball not in out:
+            continue
+        mid = walk.feet[side].mid
+        walk_toe = walk.wpos(walk.index[ball], mid) - walk.wpos(walk.index["foot_" + side], mid)
+        pose_toe = _np(out[ball])[3, :3] - ankle[side]
+        toe[side] = _wrapped(_heading(pose_toe, walk) - _heading(walk_toe, walk))
     return {"spine": spine, "head": rot("head"), "pelvis": rot("pelvis"), "height": height, "knee_turn": turn,
-            "scale": 1.0 if same else legs_ratio}
+            "arms": arms, "weapons": weapons, "width": width, "toe": toe if len(toe) == 2 else {"l": 0.0, "r": 0.0},
+            "scale": scale}
+
+
+# what each of the window's checkboxes takes from a pose
+PARTS = (("torso", ("spine", "head")), ("pelvis", ("pelvis", "height")), ("knees", ("knee_turn",)),
+         ("arms", ("arms", "weapons")), ("feet", ("width", "toe")))
+
+
+def filtered(pose, parts):
+    """The prepared pose with only the parts named in `parts` (PARTS' names)."""
+    keep = set(key for part, keys in PARTS if part in parts for key in keys)
+    return dict((key, value) for key, value in pose.items() if key in keep or key == "scale")
