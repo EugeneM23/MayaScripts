@@ -56,3 +56,16 @@ rest, world}). **The window**: a Pose list ("(none)" + saved poses) beside **Sav
 - `verify_walk.py`: a hunched pose built on Manny (and the animator's goblin when saved in walks/) applied
   at Pose 1: the pelvis at the pose's height (over the drop), the torso leaning as the pose's, the knees'
   headings turned, the stance feet as still, lengths kept, the seam; Pose 0 = the walk.
+
+## Addendum (2026-10-12, the build)
+
+- Built as designed. `walkpose.prepare(walk, statics, pose_bones, model, target_module)` (it takes the two
+  modules so the model stays numpy-only); the knob `pose` is the first of the model's knobs.
+- The animator's pose was saved through the tool (`save_pose`) over the port, read only, as
+  `walks/goblin.wpose.gz` - 93 bones at frame 0.
+- Measured (`verify_walk.py` 20/20): Pose 1 puts the pelvis at the pose's 68.28 cm exactly (over the drop),
+  the torso at the pose's 60.2 deg lean, the knees turned by the pose (-43.5 / -38.5 deg against -41.2 /
+  -38.2 at mid-stance - the leg's line is not vertical there); Pose 0.5 is half way (81.71 cm); the stance
+  feet, the bone lengths and the seam are untouched by the pose.
+- The pose's asymmetry shows as the animator chose: the goblin walks leaned to its right with the left knee in
+  (`walk_goblin.png`, side and front).

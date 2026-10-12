@@ -8940,9 +8940,36 @@ Pick reads it back; one Ctrl+Z; the walk's cycle untouched by five applies; onto
 itself (but the breathing legs). Picture `walkparam/walk_targets.png` (`WALK_SHEET=<png>` renders it).
 **The window in the animator's Maya is theirs to try**; nothing was written there.
 
+**…and a character pose under it** (the same day, the goblin: «В открытой сцене стоит скелет в нужной позе
+попробуй теперь сделать адаптацию этой позы под нашу походку»; asked: the torso and head, the pelvis (height,
+tilt) and the knees - not the arms, not the feet; the asymmetry as it is; Save pose + a Pose knob). Spec
+`docs/superpowers/specs/2026-10-12-walk-pose-design.md`. The pose measured (read only): the pelvis at 68.3 cm
+(the walk's 95.1), the torso leaning 60.2 deg (32 cm forward, 25 to the right), the head 29.5 deg off, the
+feet 85 cm apart, **the left knee 31 deg INWARD, the right 46 outward** - a lunge more than a stance.
+- **Save pose...** writes `walks/<name>.wpose.gz` (`skeldar.walkpose` 1: the bones as the Pose Library
+  reads them at the current frame, the walk tool's rest rule). The animator's pose was saved through the tool
+  itself over the port (read only: the scene's time, selection and modified flag checked unchanged) as
+  `walks/goblin.wpose.gz`.
+- `walkpose.prepare` carries it onto the walk's skeleton (`posemath.Transfer`, the walk's skeleton at rest on
+  its first frame's root frame, the size the legs' ratio, 1 for a twin) and hands the model numpy data: the
+  spine/neck locals, the head's and the pelvis's world rotations, the pelvis height over the travel line,
+  each knee's turn (the pose's knee heading about up minus the walk's mean).
+- **The Pose knob** (0..1, `walkmodel` knob `pose`, first): the spine/neck local means and the head's and
+  pelvis's world means slerped toward the pose (`toward`), the pelvis height lerped, each leg's IK bend turned
+  about the hip-ankle line (`turned_about`); the walk's deviations ride on top. 0 is the walk exactly.
+- **The upper arms hang and swing in the WORLD** (every walk): `exp(g . w_world) . mean_world` - on a hunched
+  torso they still hang by gravity; at the defaults the source exactly; Arms 0 holds them still in the world.
+- The marker gains `pose`; Pick puts the pose back in the list.
+Proof: 61 unit tests (pose 0 = the walk, pose 1 with the motion off = the pose, half way, the knees, the feet
+planted under a pose, arms under a spine knob, prepare on a twin and on a 1.25x body); `verify_walk.py`
+**20/20** with the animator's goblin on Manny: the pelvis **68.28 cm at Pose 1 (the pose 68.28)**, 95.14 at 0,
+81.71 at 0.5; the torso **60.2 deg (the pose 60.2)**, 3.5 at 0; the knees turned left -43.5 (the pose -41.2,
+inward), right -38.5 (-38.2, outward); the stance feet, lengths and seam as at Pose 0. Picture
+`walkparam/walk_goblin.png` (`WALK_POSE_SHEET=<png>`). 6014 repo tests.
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
-targets, the goblin pose (the next step: replace the mean pose), several clips as a style knob, stance
-duration, removing the source's slide, a redo of an update (trap 224).
+targets, the pose's arms and feet, a symmetry knob, several clips as a style knob, stance duration, removing
+the source's slide, a redo of an update (trap 224).
 
 224. **`cmds.setAttr(curve + ".ktv[0:n]", ...)` is refused from a script** («should be set with the
      keyframe or setKeyframe command») - only a .ma may write keyTimeValue. The fast road: create the
