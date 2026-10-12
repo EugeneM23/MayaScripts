@@ -293,6 +293,9 @@ try:
     gate(os.path.exists(sw.wf.path_for(sw.WALKS, name)) and statics["thigh_l"]["rest"] == template["thigh_l"]["world_matrix"]
          and "has no skin" not in line, "saved, resting on Manny's bind: " + line)
     P = walk.P
+    OWN = walk.own_knobs()      # the walk's own pelvis (the defaults' Twist and Hip drop are people's)
+    print("        the walk's own pelvis: Twist %.2f (x%.3f at its step: +-%.2f deg), Hip drop %.2f deg"
+          % (OWN["pelvis_twist"], walk.twist_gain, OWN["pelvis_twist"] * walk.twist_gain, OWN["pelvis_list"]))
     src_paths = [source] + sorted(cmds.listRelatives(source, allDescendents=True, type="joint", fullPath=True) or [])
     src_leaf = dict((p.rsplit("|", 1)[-1], p) for p in src_paths)
     src = dict((leaf, w) for leaf, w in zip(src_leaf, worlds(list(src_leaf.values()), range(start, start + P + 1))))
@@ -354,7 +357,7 @@ try:
 
     # 1. Manny's skeleton (a twin): the walk itself, where Manny stands
     manny = ma_import(os.path.join(ASSETS, "Manny_Skeleton.ma"), "manny")
-    result, info, got = check(manny, "Manny skeleton", expect_scale=1.0)
+    result, info, got = check(manny, "Manny skeleton, the walk's own knobs", OWN, expect_scale=1.0)
     mb = bones_of(manny)
     paths = [mb[leaf]["path"] for leaf in sorted(mb) if leaf in src and not leaf.startswith(("ik_", "camera_", "weapon_", "interaction", "center_of_mass"))]
     names = [leaf for leaf in sorted(mb) if leaf in src and not leaf.startswith(("ik_", "camera_", "weapon_", "interaction", "center_of_mass"))]
@@ -384,7 +387,7 @@ try:
         cycle = range(start, start + P + 1)
 
         def posed(amount):
-            result, info, got = check(manny, "Manny under the goblin pose x%.1f" % amount, {"pose": amount},
+            result, info, got = check(manny, "Manny under the goblin pose x%.1f" % amount, dict(OWN, pose=amount),
                                       expect_scale=1.0, pose="goblin", parts=("torso", "pelvis", "knees"))
             w = worlds([path(c) for c in ("pelvis", "neck_01", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r",
                                           "foot_r", "root")], cycle)
@@ -415,12 +418,13 @@ try:
         gate(abs(got1 - want) < 5.0 and got0 < 10.0,
              "the torso leans %.1f deg from up at Pose 1 (the pose %.1f), %.1f at 0" % (got1, want, got0))
         turns = []
-        for k, side in enumerate("lr"):
+        for k, side in enumerate("lr"):     # no Feet part: the toes stay, the knee meets them half way
             f = int(round(walk.feet[side].mid)) % P
-            turns.append((knee(w1, k, f) - knee(w0, k, f), math.degrees(prepared["knee_turn"][side])))
-        gate(all(abs(a - b) < 4.0 for a, b in turns),
-             "the knees turned by the pose: left %.1f deg (the pose %.1f), right %.1f (%.1f)"
-             % (turns[0][0], turns[0][1], turns[1][0], turns[1][1]))
+            met = wm.meet(prepared["knee_turn"][side], 0.0, wm.DEFAULTS["knee_foot"])[0]
+            turns.append((knee(w1, k, f) - knee(w0, k, f), math.degrees(met), math.degrees(prepared["knee_turn"][side])))
+        gate(all(abs(a - b) < 4.0 for a, b, c in turns),
+             "the knees turned by the pose, met by their feet: left %.1f deg (%.1f; the pose %.1f), right %.1f "
+             "(%.1f; %.1f)" % (turns[0] + turns[1]))
     else:
         print("        (no %s: the goblin gates skipped)" % POSE_FILE)
 
@@ -458,7 +462,7 @@ try:
             float(np.dot(m[ball][f, 3, :3] - m[foot][f, 3, :3], walk.fwd))))
         turned = [heading(w, "foot_" + s, "ball_" + s, f) - heading(src, "foot_" + s, "ball_" + s, f)
                   for s, f in (("l", ml), ("r", mr))]
-        toe = [math.degrees(held["toe"][s]) for s in "lr"]
+        toe = [math.degrees(wm.meet(held["knee_turn"][s], held["toe"][s], wm.DEFAULTS["knee_foot"])[1]) for s in "lr"]
         gate(abs(gap - walk_gap - held["width"]) < 0.1 and all(abs(a - b) < 1.5 for a, b in zip(turned, toe)),
              "the feet: %.1f cm apart (the walk %.1f, the pose's extra %.1f), toes turned %.1f / %.1f deg (the pose "
              "%.1f / %.1f)" % (gap, walk_gap, held["width"], turned[0], turned[1], toe[0], toe[1]))
@@ -507,7 +511,7 @@ try:
 
     # 4. onto its own skeleton: the cycle itself
     cmds.currentTime(start)
-    result, info, text = sw.apply(source, name)
+    result, info, text = sw.apply(source, name, OWN)
     own = worlds(list(src_leaf.values()), range(start, start + P + 1))
     helpers = ("ik_", "camera_", "weapon_", "interaction", "center_of_mass")
     err = max(float(np.abs(own[i] - src[leaf]).max()) for i, leaf in enumerate(src_leaf)
@@ -553,10 +557,10 @@ try:
         return max(float(np.abs(on["feet"][nm][down[nm[-1]]] - off["feet"][nm][down[nm[-1]]]).max())
                    for nm in walk.ground)
 
-    walk0 = keyed_balance("Manny, the walk (Balance at the defaults)", None)
+    walk0 = keyed_balance("Manny, the walk (its own knobs, Balance 1)", OWN)
     gate(walk0["result"].info["balance"]["carry"] < 1e-6 and
          float(np.abs(demeaned(walk0["dev"][:, :2]) - demeaned(walk.s_dev[:, :2])).max()) < 0.01,
-         "at the defaults nothing is carried and Manny's CoM is the walk's: %.4f cm (sways %.2f cm)"
+         "at the walk's own knobs nothing is carried and Manny's CoM is the walk's: %.4f cm (sways %.2f cm)"
          % (float(np.abs(demeaned(walk0["dev"][:, :2]) - demeaned(walk.s_dev[:, :2])).max()),
             float(np.ptp(walk0["dev"][:, 1]))))
 
@@ -579,7 +583,9 @@ try:
                 on["result"].info["balance"]["carry"], same_feet(on, off)))
         return on, off, sways
 
-    wide = pendulum_gate("the feet 20 cm wider", {"width": 20.0})
+    spread = walk.feet["l"].coords[1] - walk.feet["r"].coords[1]
+    wide = pendulum_gate("the feet 20 cm wider (Stance x%.2f)" % ((spread + 20.0) / spread),
+                         {"stance": (spread + 20.0) / spread})
     gate(wide[2][0] > wide[2][1] + 2.0, "wider feet sway the CoM more: %.2f cm against %.2f" % wide[2][:2])
     slow = pendulum_gate("tempo 45 (slower)", {"tempo": 45})
     fast = pendulum_gate("tempo 22 (faster)", {"tempo": 22})
@@ -599,14 +605,15 @@ try:
         posed_off = keyed_balance("Manny, the goblin x1, Balance 0", {"pose": 1.0, "balance": 0.0}, "goblin",
                                   ("torso", "pelvis", "knees"))
         mean = lambda run: run["dev"][:, :2].mean(axis=0)
-        held, leaned, own = mean(posed_on), mean(posed_off), mean(walk0)
+        held, leaned = mean(posed_on), mean(posed_off)
+        own = mean(walk0) + (posed_on["cop"].mean(axis=0) - walk0["cop"].mean(axis=0))   # the knees turn the feet
         back = float((posed_on["pelvis"][:, 0] - posed_off["pelvis"][:, 0]).mean())
         gate(float(np.abs(held - own).max()) < 0.1 and leaned[0] - own[0] > 1.0 and back < -1.0
              and same_feet(posed_on, posed_off) < 1e-3,
-             "the goblin's lean: at Balance 0 the CoM stands %.2f cm ahead of the walk's (%.2f aside); Balance 1 "
-             "carries the pelvis %.2f cm back and the CoM over the feet again to %.3f cm; the feet unmoved %.6f"
-             % (leaned[0] - own[0], leaned[1] - own[1], -back, float(np.abs(held - own).max()),
-                same_feet(posed_on, posed_off)))
+             "the goblin's lean: at Balance 0 the CoM stands %.2f cm ahead of the walk's over these feet (%.2f "
+             "aside); Balance 1 carries the pelvis %.2f cm back and the CoM over the feet again to %.3f cm; the feet "
+             "unmoved %.6f" % (leaned[0] - own[0], leaned[1] - own[1], -back, float(np.abs(held - own).max()),
+                               same_feet(posed_on, posed_off)))
     if os.path.exists(SWORD_FILE):
         sword_on = keyed_balance("Manny, the two-handed sword x1, Balance 1", {"pose": 1.0, "balance": 1.0},
                                  "two_handed_sword")
@@ -620,6 +627,97 @@ try:
              "- %.2f / %.2f cm (forward / aside) from the walk's, at Balance 0 %.2f / %.2f"
              % (float(np.abs(got_ - want).max()), *(got_ - walk0["dev"][:, :2].mean(axis=0)),
                 *(off_ - walk0["dev"][:, :2].mean(axis=0))))
+    # 6. the legs and the pelvis on Manny's keys: Twist and Hip drop, the chest, Stance, Swing out, the shins
+    def keyed_model(root, n):
+        """Manny's keys as the model's joints (J, n+1, 4, 4) - a twin: the same names."""
+        bones = bones_of(root)
+        out = np.tile(np.eye(4), (len(walk.names), n + 1, 1, 1))
+        have = [(j, bones[leaf]["path"]) for j, leaf in enumerate(walk.names) if leaf in bones]
+        for (j, _), m in zip(have, worlds([p for _, p in have], range(start, start + n + 1))):
+            out[j] = m
+        return out
+
+    def shin_twist(m, side):
+        """The knee's hinge against the foot's sideways axis about the shin, a frame (degrees, folded into
+        -90..90: a hinge has no front or back)."""
+        i = walk.index
+        h, k, a = (m[i["%s_%s" % (b, side)], :-1, 3, :3] for b in ("thigh", "calf", "foot"))
+        foot = m[i["foot_" + side], :-1, :3, :3]
+        rest = walk.rot[i["foot_" + side], int(round(walk.feet[side].mid)) % P]   # the walk's own foot standing
+        ax = int(np.argmax(np.abs(rest @ walk.side)))
+        lat = foot[:, ax, :] * np.sign(rest[ax] @ walk.side)
+        s_ax = (a - k) / np.linalg.norm(a - k, axis=1)[:, None]
+        hinge = np.cross(k - h, a - k)
+        hp = hinge - np.sum(hinge * s_ax, axis=1)[:, None] * s_ax
+        lp = lat - np.sum(lat * s_ax, axis=1)[:, None] * s_ax
+        tw = np.degrees(np.arctan2(np.sum(np.cross(hp, lp) * s_ax, axis=1), np.sum(hp * lp, axis=1)))
+        return (tw + 90.0) % 180.0 - 90.0
+
+    def yaw(m, name):
+        rot = m[walk.index[name], :-1, :3, :3]
+        ax = int(np.argmax(np.abs(rot[0] @ walk.fwd)))
+        v = rot[:, ax, :] * np.sign(rot[0, ax] @ walk.fwd)
+        return np.degrees(np.arctan2(v @ walk.side, v @ walk.fwd))
+
+    runs = {}
+    for label, given in (("own", OWN), ("defaults", None), ("more", {"pelvis_twist": 9.0, "pelvis_list": 7.0})):
+        result, info, got = check(manny, "Manny, the pelvis - %s" % label, given, expect_scale=1.0)
+        runs[label] = keyed_model(manny, result.frames)
+    fit = dict((label, walk.pelvis_fit(m)) for label, m in runs.items())
+    g = walk.twist_gain
+    gate(abs(fit["own"][0] - OWN["pelvis_twist"] * g) < 0.05 and abs(fit["own"][1] - OWN["pelvis_list"]) < 0.05
+         and abs(fit["defaults"][0] - 5.0 * g) < 0.3 and abs(fit["defaults"][1] - 4.0) < 0.3
+         and abs(fit["more"][0] - 9.0 * g) < 0.3 and abs(fit["more"][1] - 7.0) < 0.3,
+         "the hip line on Manny's keys: twist +-%.2f / drop +-%.2f deg at the walk's own; +-%.2f / +-%.2f at the "
+         "defaults (asked %.2f / 4); +-%.2f / +-%.2f at Twist 9, Hip drop 7 (asked %.2f / 7)"
+         % (fit["own"] + fit["defaults"] + (5.0 * g,) + fit["more"] + (9.0 * g,)))
+    chest = walk.index["spine_05"]
+    held_chest = float(np.abs(runs["more"][chest, :, :3, :3] - runs["own"][chest, :, :3, :3]).max())
+    gate(held_chest < 1e-4, "the lower back takes the added twist and drop back: the chest turns as at the walk's own "
+         "to %.6f" % held_chest)
+    spread_l = walk.feet["l"].coords[1] - walk.feet["r"].coords[1]
+    if os.path.exists(POSE_FILE):
+        prepared = sw.prepared_pose(name, "goblin")
+        result, info, got = check(manny, "Manny, the goblin x1 every part, Stance 0.35",
+                                  {"pose": 1.0, "stance": 0.35}, expect_scale=1.0, pose="goblin")
+        gob = keyed_model(manny, result.frames)
+        ml, mr = (int(round(walk.feet[x].mid)) % P for x in "lr")
+        apart = float(np.dot(gob[walk.index["foot_l"], ml, 3, :3] - gob[walk.index["foot_r"], mr, 3, :3], walk.side))
+        want = 0.35 * (spread_l + prepared["width"])
+        twists = dict((side, (shin_twist(gob, side), shin_twist(runs["own"], side))) for side in "lr")
+        worst = max(float(np.abs(t[0]).max()) for t in twists.values())
+        walk_worst = max(float(np.abs(t[1]).max()) for t in twists.values())
+        corr = lambda m: float(np.corrcoef(yaw(m, "pelvis") - yaw(m, "pelvis").mean(),
+                                           yaw(m, "spine_05") - yaw(m, "spine_05").mean())[0, 1])
+        gate(abs(apart - want) < 0.1 and result.info["swing_in"] < 0.5 and info["short"] < 1e-3
+             and worst <= max(20.0, walk_worst + 3.0) and corr(gob) < -0.6,
+             "the goblin, every part, Stance 0.35: the feet %.1f cm apart (0.35 x (the walk's %.1f + the pose's %.1f)); "
+             "no foot out of reach (%.2f cm nearer the body); the shins twist up to %.1f deg (the walk's own %.1f); "
+             "the chest counter-turns against the pelvis, corr %.2f (the walk's %.2f)"
+             % (apart, spread_l, prepared["width"], result.info["swing_in"], worst, walk_worst, corr(gob),
+                corr(runs["own"])))
+    out_run = keyed_model(manny, check(manny, "Manny, Swing out 8", dict(OWN, swing_out=8.0), expect_scale=1.0)[0].frames)
+    bows = []
+    for side, sign in (("l", 1.0), ("r", -1.0)):
+        j = walk.index["foot_" + side]
+        across = sign * (out_run[j, :P, 3, :3] - runs["own"][j, :P, 3, :3]) @ walk.side
+        down = [f for f in range(P) if walk.down(side, f)]
+        bows.append((float(across.max()), float(np.abs(across[down]).max()) if down else 0.0))
+    gate(all(abs(b - 8.0) < 0.3 and d < 1e-3 for b, d in bows),
+         "Swing out 8: the swinging feet bow out %.2f / %.2f cm, the feet on the ground stay to %.6f / %.6f"
+         % (bows[0][0], bows[1][0], bows[0][1], bows[1][1]))
+    lag_run = keyed_model(manny, check(manny, "Manny, Foot lag 2", dict(OWN, foot_lag=2.0), expect_scale=1.0)[0].frames)
+    errs = []
+    for side in "lr":
+        fo, ca = walk.index["foot_" + side], walk.index["calf_" + side]
+        for f in range(P):
+            if walk.swing_at(side, float(f)) >= 1.0:
+                now = lag_run[fo, f, :3, :3] @ lag_run[ca, f, :3, :3].T
+                late = src["foot_" + side][(f - 2) % P, :3, :3] @ src["calf_" + side][(f - 2) % P, :3, :3].T
+                errs.append(math.degrees(float(np.linalg.norm(wm.log_rot(wm.orthonormal(now) @ wm.orthonormal(late).T)))))
+    gate(errs and max(errs) < 0.05, "Foot lag 2: mid-swing the foot hangs in its calf as the walk's 2 frames earlier, "
+         "to %.4f deg over %d frames" % (max(errs) if errs else -1.0, len(errs)))
+
     balance_sheet = os.environ.get("WALK_BALANCE_SHEET")
     if balance_sheet:
         draw_balance(balance_sheet, walk, [

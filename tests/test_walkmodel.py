@@ -172,10 +172,35 @@ class KnobTests(unittest.TestCase):
 
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
-                         ["pose", "stride", "tempo", "lift", "width", "bob", "sway", "pelvis_rot", "spine", "arms",
+                         ["pose", "stride", "tempo", "lift", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
+                          "foot_flex", "bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list", "spine", "arms",
                           "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
         self.assertEqual((wm.DEFAULTS["balance"], wm.RANGES["balance"]), (1.0, (0.0, 1.0)))
+        self.assertEqual((wm.DEFAULTS["stance"], wm.DEFAULTS["swing_out"], wm.DEFAULTS["knee_foot"]), (1.0, 0.0, 0.5))
+        self.assertEqual((wm.DEFAULTS["foot_lag"], wm.DEFAULTS["foot_flex"]), (0.0, 1.0))
+        self.assertEqual((wm.DEFAULTS["pelvis_twist"], wm.DEFAULTS["pelvis_list"]), (5.0, 4.0))
+
+    def test_the_meeting_of_a_knee_and_its_foot(self):
+        free = math.radians(wm.TWIST_FREE_DEG)
+        self.assertEqual(wm.meet(0.1, 0.05, 0.5), (0.1, 0.05))          # within the free twist: as given
+        knee, foot = wm.meet(math.radians(40.0), 0.0, 0.5)              # 25 deg past it, shared half and half
+        self.assertAlmostEqual(math.degrees(knee), 27.5, places=9)
+        self.assertAlmostEqual(math.degrees(foot), 12.5, places=9)
+        self.assertAlmostEqual(knee - foot, free, places=12)
+        self.assertAlmostEqual(math.degrees(wm.meet(math.radians(40.0), 0.0, 0.0)[0]), 15.0, places=9)   # knee to foot
+        self.assertAlmostEqual(math.degrees(wm.meet(math.radians(40.0), 0.0, 1.0)[1]), 25.0, places=9)   # foot to knee
+        knee, foot = wm.meet(0.0, math.radians(-30.0), 0.5)
+        self.assertAlmostEqual(math.degrees(knee - foot), 15.0, places=9)
+        self.assertAlmostEqual(math.degrees(knee), -7.5, places=9)
+
+    def test_the_swing_weight_is_zero_on_the_ground_and_one_mid_swing(self):
+        self.assertEqual(wm.swing_weight(0.0), 0.0)
+        self.assertEqual(wm.swing_weight(1.0), 0.0)
+        self.assertEqual(wm.swing_weight(0.5), 1.0)
+        self.assertAlmostEqual(wm.swing_weight(0.125), 0.5, places=12)
+        values = [wm.swing_weight(s / 100.0) for s in range(101)]
+        self.assertTrue(all(0.0 <= v <= 1.0 for v in values))
 
 
 UP = np.array([0.0, 1.0, 0.0])
@@ -391,15 +416,25 @@ def local_rot(result, name, w, f):
 
 class IdentityTests(unittest.TestCase):
 
-    def test_the_defaults_give_the_source_back(self):
+    def test_the_walks_own_knobs_give_the_source_back(self):
         w, c = walk(), clip()
-        r = w.evaluate()
+        r = w.evaluate(w.own_knobs())
         self.assertEqual(r.frames, 24)
         self.assertEqual(r.worlds.shape, c.worlds.shape)
         self.assertLess(float(np.abs(r.worlds - c.worlds).max()), 1e-6)
         self.assertEqual(r.info["lowered"], 0.0)
         self.assertEqual(r.info["short"], 0.0)
         self.assertIn("24 frames, stride 60.0 cm, 1.50 m/s", wm.describe(r))
+
+    def test_the_defaults_are_physiological_not_the_source(self):
+        """The pelvis's twist and hip drop come from their degree knobs; the walk's own read differently."""
+        w, c = walk(), clip()
+        own = w.own_knobs()
+        self.assertEqual(sorted(own), ["pelvis_list", "pelvis_twist"])
+        self.assertNotAlmostEqual(own["pelvis_list"], wm.DEFAULTS["pelvis_list"], places=1)
+        r = w.evaluate()
+        self.assertGreater(float(np.abs(r.worlds - c.worlds).max()), 1e-3)
+        self.assertIn("pelvis twists", wm.describe(r))
 
 
 class StepTests(unittest.TestCase):
@@ -446,13 +481,48 @@ class StepTests(unittest.TestCase):
         self.assertGreater(src - 8.0, 5.0)
         self.assertAlmostEqual(positions(r, "foot_l", w)[19, 1] - 8.0, 2.0 * (src - 8.0), places=6)
 
-    def test_width_moves_the_feet_apart(self):
+    def test_stance_scales_the_spread_about_the_middle_of_the_prints(self):
+        """The walker's prints stand at +10 / -10 across the line: Stance scales both about their middle."""
         w = walk()
-        r = w.evaluate({"width": 10.0})
-        src = clip().worlds
         mid_l, mid_r = int(round(w.feet["l"].mid)) % 24, int(round(w.feet["r"].mid)) % 24
-        self.assertAlmostEqual(positions(r, "foot_l", w)[mid_l, 0] - src[w.index["foot_l"], mid_l, 3, 0], 5.0)
-        self.assertAlmostEqual(positions(r, "foot_r", w)[mid_r, 0] - src[w.index["foot_r"], mid_r, 3, 0], -5.0)
+        for stance in (0.0, 0.5, 1.5):
+            r = w.evaluate({"stance": stance})
+            self.assertAlmostEqual(positions(r, "foot_l", w)[mid_l, 0], 10.0 * stance, places=9)
+            self.assertAlmostEqual(positions(r, "foot_r", w)[mid_r, 0], -10.0 * stance, places=9)
+            left = w.feet["l"]
+            prints = positions(r, "foot_l", w)[[left.on + i for i in range(left.length + 1)]]
+            self.assertLess(float(np.ptp(prints, axis=0).max()), 1e-9)
+
+    def test_swing_out_bows_the_swinging_foot_across(self):
+        """+ cm out along sin(pi s) of the foot's flight (s 0 where it leaves the ground, 1 where it lands); a foot
+        that is down never moves across."""
+        w = walk()
+        for out in (6.0, -4.0):
+            r = w.evaluate({"swing_out": out})
+            for f in range(24):
+                s = w.air_progress("l", float(f))
+                want = 0.0 if s is None else out * math.sin(math.pi * s)
+                self.assertAlmostEqual(positions(r, "foot_l", w)[f, 0] - 10.0, want, places=6)
+            self.assertTrue(any(w.air_progress("l", float(f)) is not None and 0.4 < w.air_progress("l", float(f)) < 0.6
+                                for f in range(24)))
+        r = w.evaluate({"swing_out": 6.0})
+        for f in range(24):                      # the right foot: out is -side for it
+            s = w.air_progress("r", float(f))
+            want = 0.0 if s is None else -6.0 * math.sin(math.pi * s)
+            self.assertAlmostEqual(positions(r, "foot_r", w)[f, 0] + 10.0, want, places=6)
+
+    def test_the_flight_never_touches_the_ground(self):
+        """A foot near the ground is never in its flight (its interpolated contact may flicker just after it
+        leaves: the flight is the longest stretch off the ground)."""
+        w = walk()
+        for side in "lr":
+            flying = 0
+            for i in range(24 * 8):
+                tau = i / 8.0
+                if w.down(side, tau):
+                    self.assertIsNone(w.air_progress(side, tau), (side, tau))
+                flying += w.air_progress(side, tau) is not None
+            self.assertGreater(flying, 24 * 8 * 0.15, side)
 
     def test_a_long_stride_on_a_flat_pelvis_lowers_it_to_reach(self):
         w = walk()
@@ -569,6 +639,86 @@ class BodyTests(unittest.TestCase):
         self.assertLess(float(np.ptp(foot, axis=0).max()), 1e-9)
 
 
+class PelvisTests(unittest.TestCase):
+    """Twist and Hip drop: degree knobs on the hip line, the lumbar spine taking them back."""
+
+    def test_the_hip_line_reads_the_knobs(self):
+        w = walk()
+        own = w.pelvis_fit(clip().worlds)
+        self.assertAlmostEqual(own[0], w.own_knobs()["pelvis_twist"] * w.twist_gain, places=9)
+        self.assertAlmostEqual(own[1], w.own_knobs()["pelvis_list"], places=9)
+        for given, stride in (({"pelvis_twist": 8.0, "pelvis_list": 6.0}, 1.0),
+                              ({"pelvis_twist": 2.0, "pelvis_list": 0.0}, 1.0),
+                              ({"pelvis_twist": 8.0, "pelvis_list": 6.0, "stride": 1.4}, 1.4)):
+            r = w.evaluate(dict(given, balance=0.0))
+            twist, drop = w.pelvis_fit(r.worlds)
+            self.assertAlmostEqual(twist, given["pelvis_twist"] * w.twist_gain * stride, delta=0.2, msg=given)
+            self.assertAlmostEqual(drop, given["pelvis_list"], delta=0.2, msg=given)
+
+    def test_the_twist_turns_the_forward_legs_hip_forward_and_the_standing_hip_up(self):
+        w = walk()
+        r = w.evaluate({"pelvis_twist": 12.0, "pelvis_list": 8.0, "balance": 0.0})
+        base = w.evaluate(dict(w.own_knobs(), balance=0.0))
+        d, d0 = (positions(x, "thigh_l", w) - positions(x, "thigh_r", w) for x in (r, base))
+        split = w.split_shape
+        f = int(np.argmax(split))                              # the left foot furthest ahead
+        self.assertGreater(float(np.dot(d[f] - d0[f], w.fwd)), 0.5)
+        f = int(round(w.feet["l"].on + wm.LIST_PEAK * 24)) % 24   # the left hip's highest
+        self.assertGreater(float(np.dot(d[f] - d0[f], w.up)), 0.5)
+
+    def test_the_chest_keeps_its_turn(self):
+        """The lumbar spine takes the extra back: the top of the spine turns in the world as at the walk's own."""
+        w = walk()
+        own = w.evaluate(dict(w.own_knobs(), balance=0.0))
+        more = w.evaluate({"pelvis_twist": 12.0, "pelvis_list": 9.0, "balance": 0.0})
+        chest = w.index["spine_02"]
+        self.assertLess(float(np.abs(more.worlds[chest, :, :3, :3] - own.worlds[chest, :, :3, :3]).max()), 1e-9)
+        pelvis = w.index["pelvis"]
+        self.assertGreater(float(np.abs(more.worlds[pelvis, :, :3, :3] - own.worlds[pelvis, :, :3, :3]).max()), 0.05)
+
+    def test_pelvis_motion_zero_holds_it_still(self):
+        w = walk()
+        pel = w.evaluate({"pelvis_rot": 0.0})
+        rot = pel.worlds[w.index["pelvis"], :, :3, :3]
+        self.assertLess(float(np.abs(rot - rot[0]).max()), 1e-9)
+
+    def test_the_status_says_the_degrees(self):
+        w = walk()
+        text = wm.describe(w.evaluate({"pelvis_twist": 6.0, "pelvis_list": 3.0}))
+        self.assertIn("pelvis twists +-%.1f deg, the hips +-3.0" % (6.0 * w.twist_gain), text)
+
+
+class FootOverlapTests(unittest.TestCase):
+    """Foot lag and Foot flex: the swinging foot in its calf, late and stronger; the ground untouched."""
+
+    def test_foot_lag_delays_the_swinging_foot_in_its_calf(self):
+        w, c = walk(), clip()
+        r = w.evaluate(dict(w.own_knobs(), foot_lag=2.0))
+        fo, ca = w.index["foot_l"], w.index["calf_l"]
+        local = r.worlds[fo, 19, :3, :3] @ r.worlds[ca, 19, :3, :3].T
+        late = c.worlds[fo, 17, :3, :3] @ c.worlds[ca, 17, :3, :3].T
+        self.assertLess(angle(local @ late.T), 1e-6)
+        left = w.feet["l"]
+        stance = [left.on + i for i in range(left.length + 1)]
+        self.assertLess(float(np.abs(r.worlds[fo, stance] - c.worlds[fo, stance]).max()), 1e-9)
+
+    def test_foot_flex_scales_its_turn_in_the_calf(self):
+        w, c = walk(), clip()
+        r = w.evaluate(dict(w.own_knobs(), foot_flex=2.0))
+        fo, ca = w.index["foot_l"], w.index["calf_l"]
+        mean = w.lmean[fo]
+        local = r.worlds[fo, 19, :3, :3] @ r.worlds[ca, 19, :3, :3].T
+        source = c.worlds[fo, 19, :3, :3] @ c.worlds[ca, 19, :3, :3].T
+        self.assertGreater(angle(source @ mean.T), 3.0)
+        self.assertAlmostEqual(angle(local @ mean.T), 2.0 * angle(source @ mean.T), places=6)
+
+    def test_the_defaults_leave_the_foot_on_its_walk(self):
+        w, c = walk(), clip()
+        r = w.evaluate(w.own_knobs())
+        fo = w.index["foot_l"]
+        self.assertLess(float(np.abs(r.worlds[fo] - c.worlds[fo]).max()), 1e-6)
+
+
 def a_pose(w):
     """A hunch for the synthetic walker, as walkpose.prepare hands it to the model."""
     j = w.index
@@ -619,15 +769,87 @@ class PoseTests(unittest.TestCase):
         self.assertTrue(np.allclose(height, 0.5 * (70.0 + w.pelvis_mean[2] + w.origin[1]), atol=1e-6))
 
     def test_the_knees_turn_by_the_pose(self):
-        """The turn alone (Balance 0: Balance carries the hunched pelvis back, tilting the legs' lines)."""
+        """The turn alone (Balance 0: Balance carries the hunched pelvis back, tilting the legs' lines); with
+        Knee <-> foot 1 the foot turns to the knee, so the knee keeps the pose's whole turn."""
         w = walk()
         pose = a_pose(w)
-        plain, posed = w.evaluate(), w.evaluate({"pose": 1.0, "balance": 0.0}, pose)
+        plain, posed = w.evaluate({"balance": 0.0}), w.evaluate({"pose": 1.0, "balance": 0.0, "knee_foot": 1.0}, pose)
         for side, turn in (("l", 30.0), ("r", -20.0)):
             f = int(round(w.feet[side].mid)) % 24
             self.assertAlmostEqual(knee_heading(posed, w, side, f) - knee_heading(plain, w, side, f), turn, delta=1.0)
             hip, knee = positions(posed, "thigh_" + side, w), positions(posed, "calf_" + side, w)
             self.assertLess(float(np.abs(np.linalg.norm(knee - hip, axis=1) - L1).max()), 1e-9)
+
+    def test_a_knee_and_its_foot_meet_half_way(self):
+        """A knee turned 30 deg in against an unturned foot: 15 deg of it stays in the shin, the rest is shared -
+        the knee 22.5, the foot 7.5 (the right: -20 -> -17.5 and -2.5)."""
+        w, c = walk(), clip()
+        plain, posed = w.evaluate({"balance": 0.0}), w.evaluate({"pose": 1.0, "balance": 0.0}, a_pose(w))
+        for side, knee_turn, foot_turn in (("l", 22.5, 7.5), ("r", -17.5, -2.5)):
+            f = int(round(w.feet[side].mid)) % 24
+            self.assertAlmostEqual(knee_heading(posed, w, side, f) - knee_heading(plain, w, side, f), knee_turn,
+                                   delta=1.0)
+            j = w.index["foot_" + side]
+            self.assertTrue(np.allclose(c.worlds[j, f, :3, :3].T @ posed.worlds[j, f, :3, :3], rot_y(foot_turn),
+                                        atol=1e-9), side)
+
+    def test_leg_turn_scales_the_poses_turns(self):
+        """Leg turn x the pose's knee and toe turns, before they meet: 0 is the walk's own knees and feet."""
+        w, c = walk(), clip()
+        pose = {"knee_turn": {"l": math.radians(10.0), "r": math.radians(-8.0)},
+                "toe": {"l": math.radians(6.0), "r": math.radians(-4.0)}}
+        plain = w.evaluate({"balance": 0.0})
+        for turn in (0.0, 0.5):
+            r = w.evaluate({"pose": 1.0, "balance": 0.0, "leg_turn": turn}, pose)
+            for side, knee_deg, toe_deg in (("l", 10.0, 6.0), ("r", -8.0, -4.0)):
+                f = int(round(w.feet[side].mid)) % 24
+                self.assertAlmostEqual(knee_heading(r, w, side, f) - knee_heading(plain, w, side, f), turn * knee_deg,
+                                       delta=0.5)
+                j = w.index["foot_" + side]
+                self.assertTrue(np.allclose(c.worlds[j, f, :3, :3].T @ r.worlds[j, f, :3, :3], rot_y(turn * toe_deg),
+                                            atol=1e-9))
+
+    def test_a_foot_on_the_ground_never_hangs_off_its_shin(self):
+        """Only a foot in the air follows its shin: on the ground (heel or toe down) it keeps its planted turn,
+        so Balance moving the hips never slides a planted toe."""
+        w = walk()
+        for side in "lr":
+            for f in range(24):
+                if w.down(side, float(f)):
+                    self.assertEqual(w.swing_at(side, float(f)), 0.0, (side, f))
+            self.assertTrue(any(w.swing_at(side, float(f)) == 1.0 for f in range(24)), side)
+        pose = a_pose(w)
+        on, off = w.evaluate({"pose": 1.0, "stance": 2.0}, pose), w.evaluate({"pose": 1.0, "stance": 2.0, "balance": 0.0}, pose)
+        self.assertGreater(on.info["balance"]["carry"], 1.0)
+        for side in "lr":
+            down = [f for f in range(24) if w.down(side, float(f))]
+            for name in ("foot_" + side, "ball_" + side):
+                self.assertLess(float(np.abs(positions(on, name, w)[down] - positions(off, name, w)[down]).max()), 1e-9)
+
+    def test_the_swinging_foot_follows_its_shin(self):
+        """Mid-swing the foot hangs in its calf as the walk's does, whatever turned the knee."""
+        w, c = walk(), clip()
+        pose = {"knee_turn": {"l": math.radians(30.0), "r": 0.0}}
+        r = w.evaluate({"pose": 1.0, "knee_foot": 1.0, "balance": 0.0}, pose)
+        fo, ca = w.index["foot_l"], w.index["calf_l"]
+        mid_swing = 19          # stance 0..14, the swing 14..24: half way in time
+        local = r.worlds[fo, mid_swing, :3, :3] @ r.worlds[ca, mid_swing, :3, :3].T
+        source = c.worlds[fo, mid_swing, :3, :3] @ c.worlds[ca, mid_swing, :3, :3].T
+        self.assertLess(angle(local @ source.T), 1e-6)
+        world = r.worlds[fo, mid_swing, :3, :3] @ c.worlds[fo, mid_swing, :3, :3].T
+        self.assertGreater(angle(world), 5.0)     # it turned with the shin
+
+    def test_a_bent_body_turns_about_the_walks_world_axes(self):
+        """The hunch tilts the pelvis and bends the spine; their walk turns stay about the walk's world axes, so
+        the chest keeps counter-turning against the pelvis about the vertical: from the first frame each turns
+        in the world exactly as the walk's does."""
+        w = walk()
+        base = dict(w.own_knobs(), balance=0.0)
+        plain, posed = w.evaluate(base), w.evaluate(dict(base, pose=1.0), a_pose(w))
+        for name in ("pelvis", "spine_01", "spine_02"):
+            a, b = rotations(posed, name, w), rotations(plain, name, w)
+            for f in (5, 11, 17):
+                self.assertLess(float(np.abs(a[0].T @ a[f] - b[0].T @ b[f]).max()), 1e-9, (name, f))
 
     def test_the_feet_stay_planted_under_a_pose(self):
         w = walk()
@@ -673,15 +895,19 @@ class PosePartsTests(unittest.TestCase):
         self.assertAlmostEqual(swing, 0.5 * source, places=6)
 
     def test_the_feet_set_wider_and_turn_out(self):
+        """Knee <-> foot 0: the knees turn to the feet, the feet keep the pose's turn on the ground."""
         w, c = walk(), clip()
         pose = {"width": 12.0, "toe": {"l": math.radians(20.0), "r": math.radians(-30.0)}}
-        r = w.evaluate({"pose": 1.0}, pose)
+        r = w.evaluate({"pose": 1.0, "knee_foot": 0.0}, pose)
         ml, mr = int(round(w.feet["l"].mid)) % 24, int(round(w.feet["r"].mid)) % 24
         gap = lambda m, a, b: float(np.dot(m[w.index["foot_l"], a, 3, :3] - m[w.index["foot_r"], b, 3, :3], w.side))
         self.assertAlmostEqual(gap(r.worlds, ml, mr) - gap(c.worlds, ml, mr), 12.0, places=6)
+        narrow = w.evaluate({"pose": 1.0, "stance": 0.5}, pose)
+        self.assertAlmostEqual(gap(narrow.worlds, ml, mr), 0.5 * (gap(c.worlds, ml, mr) + 12.0), places=6)
         for side, deg in (("l", 20.0), ("r", -30.0)):
             j = w.index["foot_" + side]
-            for f in (3, 11, 19):
+            foot = w.feet[side]
+            for f in [(foot.on + i) % 24 for i in range(0, foot.length + 1, 4)]:
                 turn = c.worlds[j, f, :3, :3].T @ r.worlds[j, f, :3, :3]
                 self.assertTrue(np.allclose(turn, rot_y(deg), atol=1e-9), (side, f))
         left = w.feet["l"]
@@ -728,7 +954,7 @@ class MassTests(unittest.TestCase):
         names = ["neckbone" if n == "neck_01" else n for n in c.names]
         w = wm.analyse(wm.Clip(names, c.parents, c.worlds, 30.0, (0, 1, 0), "no neck"))
         self.assertIn("neck_01", w.balance_note)
-        r, r0 = w.evaluate({"width": 15.0}), w.evaluate({"width": 15.0, "balance": 0.0})
+        r, r0 = w.evaluate({"stance": 1.75}), w.evaluate({"stance": 1.75, "balance": 0.0})
         self.assertLess(float(np.abs(r.worlds - r0.worlds).max()), 1e-12)
         self.assertIn("neck_01", wm.describe(r))
 
@@ -775,15 +1001,15 @@ class BalanceTests(unittest.TestCase):
         f = int(round(w.feet["l"].mid)) % 24     # mid-stance on the left foot: the pressure under it (+side)
         self.assertGreater(w.cop_dev[f, 1], 5.0)
 
-    def test_balance_changes_nothing_at_the_defaults(self):
+    def test_balance_changes_nothing_at_the_walks_own_knobs(self):
         w = walk()
-        r1, r0 = w.evaluate({"balance": 1.0}), w.evaluate({"balance": 0.0})
+        r1, r0 = w.evaluate(dict(w.own_knobs(), balance=1.0)), w.evaluate(dict(w.own_knobs(), balance=0.0))
         self.assertLess(float(np.abs(r1.worlds - r0.worlds).max()), 1e-6)
         self.assertLess(r1.info["balance"]["carry"], 1e-6)
 
     def test_wider_feet_sway_the_centre_more_toward_the_standing_foot(self):
         w = walk()
-        wide1, wide0 = w.evaluate({"width": 20.0}), w.evaluate({"width": 20.0, "balance": 0.0})
+        wide1, wide0 = w.evaluate({"stance": 2.0}), w.evaluate({"stance": 2.0, "balance": 0.0})
         d1, d0 = com_dev(wide1, w), com_dev(wide0, w)
         self.assertGreater(float(np.ptp(d1[:, 1])), float(np.ptp(d0[:, 1])) + 1.0)
         for side, sign in (("l", 1.0), ("r", -1.0)):
@@ -795,7 +1021,7 @@ class BalanceTests(unittest.TestCase):
 
     def test_the_feet_stay_planted_and_the_loop_closes_under_balance(self):
         w = walk()
-        r = w.evaluate({"width": 20.0, "stride": 1.3})
+        r = w.evaluate({"stance": 2.0, "stride": 1.3})
         for side in "lr":
             foot = w.feet[side]
             prints = positions(r, "foot_" + side, w)[[(foot.on + i) % 24 for i in range(foot.length + 1)
@@ -815,11 +1041,13 @@ class BalanceTests(unittest.TestCase):
             self.assertLess(r1.info["balance"]["residual"], 0.05)
 
     def test_a_leaning_pose_keeps_the_centre_over_the_feet(self):
+        """Over the walk's own CoM: the feet press where the walk's do (Knee <-> foot 0 - the knees turn to the
+        feet, so no foot turns and the pressure stays; a turned foot moves it, and the CoM with it)."""
         w = walk()
         pose = a_pose(w)
-        source = float(com_dev(w.evaluate({"balance": 0.0}), w)[:, 0].mean())
-        leaned = w.evaluate({"pose": 1.0, "balance": 0.0}, pose)
-        held = w.evaluate({"pose": 1.0}, pose)
+        source = float(com_dev(w.evaluate(dict(w.own_knobs(), balance=0.0)), w)[:, 0].mean())
+        leaned = w.evaluate({"pose": 1.0, "balance": 0.0, "knee_foot": 0.0}, pose)
+        held = w.evaluate({"pose": 1.0, "knee_foot": 0.0}, pose)
         self.assertGreater(float(com_dev(leaned, w)[:, 0].mean()) - source, 2.0)
         self.assertLess(abs(float(com_dev(held, w)[:, 0].mean()) - source), 0.05)
         back = (positions(held, "pelvis", w) - positions(leaned, "pelvis", w))[:24] @ w.fwd
@@ -827,7 +1055,7 @@ class BalanceTests(unittest.TestCase):
 
     def test_sway_zero_still_holds_the_pelvis_on_its_line(self):
         w = walk()
-        side = positions(w.evaluate({"sway": 0.0, "width": 15.0}), "pelvis", w)[:, 0]
+        side = positions(w.evaluate({"sway": 0.0, "stance": 1.75}), "pelvis", w)[:, 0]
         self.assertLess(float(np.ptp(side)), 0.05)
 
     def test_balance_zero_keeps_the_stride_guess(self):

@@ -9072,10 +9072,69 @@ goblin with every part (its feet 68.6 cm wider) waddles: the CoM sways 21.5 cm a
 where the far foot lands while the hips still sit over the other (the pose leans to its right). 6054 repo
 tests (`test_hubqt.CardMotion` flaked once under the suite's load, 3/3 alone).
 
+**…and its legs and pelvis** (the same day, the animator looking at the goblin keyed in their scene: «ноги стоят
+сильно широко … нужен параметр … сужение\расширение позиции ног … амплитуду выброса ноги в сторону … подворота
+колена в зависимости от подворота ступни … в 11 кадре правая нога сломана … таз … вращается в зависимости от
+разворота ног и … продавливает таз вверх … усилит анимацию захлеста стоп»; asked: a stance multiplier plus a
+swing-out in cm, knee and foot meeting half way, physiological pelvis amplitudes in degrees, the feet's overlap in
+the swing). Spec `docs/superpowers/specs/2026-10-12-walk-legs-design.md` (read its addendum).
+- **Measured first** (Walk_01 and the scene's goblin, rebuilt standalone; the scene only read):
+  - the walk's pelvis already twists ±6.1° with its feet's split (corr 0.99): the norm for its step (step/leg
+    1.01). Its hip drop is weak, ±1.1°, peaking late;
+  - in the goblin the twist did not read because its chest stopped counter-turning (corr −0.45 against −0.86):
+    the pose leans the spine 60°, and a joint's walk turn, kept in the joint's own frame, then turns about a
+    leaning axis;
+  - the feet stood 70 cm apart: the Feet part adds the pose's own 68.6 cm, which Width (−15 at least) could not
+    take back;
+  - the left shin twisted −40° (the pose turns the knee 38.6° in, the toe not), and a swinging foot kept the
+    walk's WORLD turn instead of following its shin.
+- **`walkmodel`**, the knobs (Width is gone; a saved `width` is filtered out by Pick):
+  - **Stance** ×: a planted foot's place across the line, the walk's half-spread about the middle of its two
+    prints plus half the pose's spread, all ×Stance.
+  - **Swing out** cm: `sign · sin(π s)` along side over the foot's FLIGHT (`air`, `air_progress`: the longest
+    stretch with heel and toe off the ground, found to 1/64 frame).
+  - **Leg turn** ×: the pose's knee and toe turns.
+  - **Knee ↔ foot**: past `TWIST_FREE_DEG` 15° of knee-against-toe turn the excess is shared (`meet`; 0 the
+    knee to the foot, 1 the foot to the knee).
+  - **Foot lag** frames and **Foot flex** ×: in the flight the foot hangs in its calf (`foot_in_calf`, blended
+    in by `swing_weight`, 0 on the ground), late by the lag and its turn ×flex; the ball at 1.5× the lag.
+  - **Twist** (deg, at a normal step of 0.8 leg, ×step: Walk_01 ×1.265, so 5 gives ±6.3°) and **Hip drop**
+    (deg, a cosine peaking 17 % of the cycle after the left heel strike):
+    - each brings the walk's fitted amplitude (`pelvis_fit`, `own_knobs()`) to the knob's, as a world turn
+      post-multiplied on the pelvis (`pelvis_extra`);
+    - spine_01..03 take it back (`COUNTER_SHARES`), so the chest keeps the walk's own turn;
+    - **Pelvis motion** (was Pelvis turn) scales all of it;
+    - the defaults are people's (5, 4), so **the defaults are no longer the source; `own_knobs()` are**.
+- **A posed pelvis and spine turn about the walk's world axes** (`_spine_map`, the pelvis likewise): the goblin's
+  chest counter-turns again, corr −0.80.
+- The window's groups: Pose / Step / **Legs** (stance, swing out, leg turn, knee ↔ foot, foot lag, foot flex) /
+  Pelvis (+ twist, hip drop) / Upper body / Weight. The status line says the pelvis's twist and hip drop in
+  degrees.
+- **Proof**:
+  - 18 new unit tests, 91 in `test_walkmodel`;
+  - `verify_walk.py` **58/58 standalone**. The twin checks run at `own_knobs()`. On Manny's keys:
+    - the hip line ±6.09 / ±1.02 at the walk's own; ±6.47 / ±3.99 at the defaults (asked 6.46 / 4); ±11.65 /
+      ±6.98 at 9 / 7;
+    - the chest unchanged by them to 0.000000;
+    - the goblin, every part, Stance 0.35: the feet 29.7 cm apart, no foot out of reach, the shins within 20.3°
+      (the walk's 17.6), the chest corr −0.80;
+    - Swing out 8 bows 7.94 / 8.00 cm with the feet on the ground unmoved;
+    - Foot lag 2 hangs the foot as the walk's 2 frames earlier to 0.04°.
+  - The scene's goblin against the new model, Stance 0.35:
+    - the left shin's worst twist −13° instead of −41°;
+    - the right knee off its reach, where the old one sat straight for six frames.
+  - Picture `walkparam/walk_legs.png` (the scene's result / Stance 0.35 / + Leg turn 0.5, Foot lag 2; the legs
+    at frames 11 and 6). The other walk pictures were rendered again. 6072 repo tests.
+- **The goblin's right knee at frame 11 is turned out, not twisted**:
+  - its knee is 35.5° out and its toe 44.8° out, on a leg folded to 50 cm hip to ankle under a 68 cm pelvis
+    (the walk's 80);
+  - it stands 32 cm outside the hip; Leg turn 0.5 brings it to 24.
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, removing
 the source's slide, a redo of an update (trap 224); for Balance: a held weapon's mass, the target's own masses
-(its mesh), vertical pendulum vaulting, a CoM trail drawn in the scene.
+(its mesh), vertical pendulum vaulting, a CoM trail drawn in the scene; for the legs: a per-frame knee-to-foot
+solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
 
 224. **`cmds.setAttr(curve + ".ktv[0:n]", ...)` is refused from a script** («should be set with the
      keyframe or setKeyframe command») - only a .ma may write keyTimeValue. The fast road: create the
@@ -9100,3 +9159,16 @@ the source's slide, a redo of an update (trap 224); for Balance: a held weapon's
      showed it; every gate passed (the CoM was on target, the feet planted). Only a foot that is down (its
      heel or toe within 2.5 cm of its own lowest) may hold the pelvis down; a foot in the air passes nearer
      the body: 8.8 cm, at the far foot's landing only. Look at a pose's walk, not only its numbers.
+228. **A step's planted window is not when the foot is off the ground.** The walk's contact window
+     (`Foot.on/length`, where the foot is slow) ends while the toe is still within 2.5 cm of the ground
+     (`down`). Keyed to the window, the new swing effects turned and slid toes still on the ground: Balance
+     moved a goblin toe 3.8 cm, Swing out 8 moved a foot 0.9 cm sideways. Every unit test passed; the verify's
+     "feet down unmoved" gates (written for Balance) caught it. Anything a foot does in the air keys off the
+     ground contact (`air_progress`), not the step's window. And the contact itself flickers: Catmull-Rom over
+     a heel at 0.86 → 0.08 → 0 rises back to 0.0015 just before the next frame, so "off the ground" is the
+     longest stretch, never every frame where it reads 0.
+229. **A pose's turns live in the pose's frames.** The walk keeps each joint's turn in its own local frame.
+     That is right while the frames are the walk's. A pose that leans the spine 60° turns the same twist about
+     a leaning axis, so the chest's counter-turn against the pelvis fell from corr −0.86 to −0.45. Nothing
+     failed; it just stopped reading. Re-express the turn so it acts about the world axis it had in the walk
+     (`turn @ W_walk @ W_pose^T`, both from chains of mean locals); without a pose the map is the identity.

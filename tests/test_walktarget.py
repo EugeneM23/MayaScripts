@@ -96,7 +96,7 @@ class RetargetTests(unittest.TestCase):
         statics = statics_of(c)
         target = target_of(c)
         rt = wt.Retarget(w, statics, target)
-        result = w.evaluate()
+        result = w.evaluate(w.own_knobs())      # the walk itself (the defaults turn the pelvis as people do)
         frames, info = rt.frames(result)
         self.assertEqual(len(frames), 25)
         self.assertEqual(info["scale"], 1.0)

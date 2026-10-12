@@ -478,8 +478,9 @@ INTRO = ("Save walk: a bone of a walk cycle selected (a closed loop with root mo
          "skeleton's walk, pose and knobs back.")
 GROUPS = (
     ("Pose", ("pose",)),
-    ("Step", ("stride", "tempo", "lift", "width")),
-    ("Pelvis", ("bob", "sway", "pelvis_rot")),
+    ("Step", ("stride", "tempo", "lift")),
+    ("Legs", ("stance", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex")),
+    ("Pelvis", ("bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list")),
     ("Upper body", ("spine", "arms", "head", "overlap")),
     ("Weight", ("weight", "balance", "exaggeration")),
 )
@@ -489,10 +490,25 @@ LABELS = {
     "stride": ("Stride", "x the step length; the travel follows (a long stride sinks the contacts)"),
     "tempo": ("Tempo (frames)", "frames a cycle of two steps; fewer is faster"),
     "lift": ("Foot lift", "x how high the swinging foot rises above its path"),
-    "width": ("Width (cm)", "the feet set this much wider apart (negative: narrower), in the walk's size"),
+    "stance": ("Stance", "x how far apart the feet stand on the ground (the pose's spread included); 0 puts them "
+                         "on one line, 1 is the walk with the pose"),
+    "swing_out": ("Swing out (cm)", "the swinging foot's path bowed this far out to its side between the steps "
+                                    "(negative: in, toward the other leg), in the walk's size"),
+    "leg_turn": ("Leg turn", "x how far the pose turns the knees and the toes out (or in); 0 walks on the "
+                             "walk's own knees and feet"),
+    "knee_foot": ("Knee <-> foot", "a knee turned against its foot past 15 deg (a shin twists that far) meets it: "
+                                   "0 turns the knee to the foot, 1 the foot to the knee, 0.5 half way"),
+    "foot_lag": ("Foot lag (fr)", "frames the swinging foot trails its shin: it flicks through after it leaves the "
+                                  "ground and catches up before it lands (the toes 1.5x)"),
+    "foot_flex": ("Foot flex", "x how far the swinging foot turns in its ankle (and the toes in theirs)"),
     "bob": ("Bob", "x the pelvis's up and down"),
     "sway": ("Sway", "x the pelvis's side to side"),
-    "pelvis_rot": ("Pelvis turn", "x the pelvis's turns and tilts"),
+    "pelvis_rot": ("Pelvis motion", "x all the pelvis's turns and tilts (Twist and Hip drop included)"),
+    "pelvis_twist": ("Twist (deg)", "the pelvis turns this far each way with the legs, the forward leg's hip "
+                                    "forward - at a normal step (0.8 of the leg); it grows with the step. People: "
+                                    "about 5; the lower back takes it back, so the chest keeps its own turn"),
+    "pelvis_list": ("Hip drop (deg)", "the standing leg's hip this far up, the swinging leg's down, highest just "
+                                      "after the foot lands. People: about 4; the lower back takes it back"),
     "spine": ("Spine", "x the spine's and the neck's motion"),
     "arms": ("Arms", "x the arms' swing"),
     "head": ("Head", "x the head's motion in the world (0 holds it steady)"),
