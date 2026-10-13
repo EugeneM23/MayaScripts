@@ -186,7 +186,7 @@ def phase_retune(camera, layer, base):
 
 def phase_impact(camera, base):
     hand = {f: shown(camera, f) for f in range(38, 63)}
-    given = {"direction": "Below", "strength": 5.0, "push": 2.0, "swing": 4.0, "bounce": 0.5, "rattle": 0.8,
+    given = {"direction": "Below", "strength": 5.0, "push": 2.0, "wave": 8.0, "decay": "Linear", "rattle": 0.8,
              "roll": 0.3, "seed": 2}
     layer, message = cs.apply("impact", given, selection=[camera], frames=(40, 60))
     print("   ", message)
@@ -210,6 +210,19 @@ def phase_impact(camera, base):
         seen = VIEW @ frame_of(camera, r) @ before.T
         tilt.append(math.degrees(math.asin(seen[1])))
     gate("a hit from below throws the view up", min(tilt) > 3.0, "%.2f, %.2f deg" % tuple(tilt))
+
+    own = {f: shown(camera, f) for f in range(102, 119)}
+    tilted, _ = cs.apply("impact", {"direction": "Left", "strength": 6.0, "rattle": 2.0, "decay": "Smooth",
+                                    "pan_on": False, "roll_on": False}, selection=[camera], frames=(102, 118))
+    sideways, turned = 0.0, 0.0
+    for f in range(102, 119):
+        r, _ = shown(camera, f)
+        turn = frame_of(camera, r) @ frame_of(camera, own[f][0]).T      # S, in the camera's own axes
+        sideways = max(sideways, abs(turn[0, 1]), abs(turn[0, 2]), abs(turn[1, 0]), abs(turn[2, 0]))
+        turned = max(turned, math.degrees(math.acos(min(1.0, turn[1, 1]))))
+    gate("Pan and Roll off: the camera turns about its own X only", sideways < 1e-9 and turned > 0.3,
+         "off the X axis %.1e, tilt up to %.2f deg" % (sideways, turned))
+    cs.delete(tilted)
     return layer
 
 

@@ -53,6 +53,20 @@ class SettingsTests(unittest.TestCase):
         s = cs.preset("impact", "Light", {"seed": 4, "length": 40.0, "direction": "Left"})
         self.assertEqual((s["strength"], s["seed"], s["length"], s["direction"]), (2.0, 4, 40.0, "Left"))
 
+    def test_axes_and_decay(self):
+        for mode in cs.MODES:
+            s = cs.settings(mode)
+            self.assertEqual((s["tilt_on"], s["pan_on"], s["roll_on"]), (True, True, True))
+            self.assertFalse(cs.settings(mode, {"pan_on": False})["pan_on"])
+            kept = cs.preset(mode, cs.DEFAULT_PRESET[mode], {"roll_on": False})
+            self.assertFalse(kept["roll_on"])
+        self.assertEqual(cs.settings("impact")["decay"], "Exponential")
+        self.assertEqual(cs.settings("impact", {"decay": "Smooth"})["decay"], "Smooth")
+        self.assertEqual(cs.settings("impact", {"decay": "Wobbly"})["decay"], "Exponential")
+        old = cs.settings("impact", {"swing": 4.0, "bounce": 0.5})        # a record from before
+        self.assertNotIn("swing", old)
+        self.assertEqual(old["wave"], 8.0)
+
     def test_an_impact_preset_may_set_the_direction(self):
         self.assertEqual(cs.preset("impact", "Explosion", {"direction": "Left"})["direction"], "Below")
         self.assertEqual(cs.preset("impact", "Recoil")["direction"], "Front")
@@ -185,6 +199,14 @@ class HandheldTests(unittest.TestCase):
         self.assertFalse(np.allclose(one, other))
         self.assertFalse(np.allclose(one, second))
 
+    def test_axes_switch_off_whole(self):
+        rot, off = self.run_it(b=300, sway=2.0, jitter=0.5, pan_on=False)
+        self.assertTrue(np.all(rot[:, 1] == 0.0))
+        self.assertGreater(np.abs(rot[:, 0]).max(), 0.1)
+        self.assertGreater(np.abs(off).max(), 0.1)
+        rot, _ = self.run_it(b=300, sway=2.0, jitter=0.5, tilt_on=False, roll_on=False)
+        self.assertTrue(np.all(rot[:, 0] == 0.0) and np.all(rot[:, 2] == 0.0))
+
     def test_eased_in_and_out(self):
         s = cs.settings("handheld", {"ease": 8.0})
         rot, off = cs.handheld(np.arange(20, 121), 20, 120, FPS, s)
@@ -200,29 +222,63 @@ class ImpactTests(unittest.TestCase):
         frames = np.arange(a, b + 1)
         return frames, cs.impact(frames, a, b, FPS, s)
 
-    def crest(self, swing, bounce):
-        tau = np.linspace(0, 3 * swing, 3001)
-        x = cs.kick(tau, swing, bounce)
-        return tau[int(np.argmax(x))], float(np.max(x))
+    def fine(self, wave=8.0, span=40.0, decay="Exponential", rate=1.0):
+        tau = np.linspace(0.0, span, 8001)
+        return tau, cs.waves(tau, wave, span, decay, rate)
 
-    def test_kick_is_zero_at_the_hit_and_one_at_its_crest(self):
-        self.assertEqual(float(cs.kick(0.0, 4.0, 0.5)), 0.0)
-        when, top = self.crest(4.0, 0.5)
-        self.assertAlmostEqual(top, 1.0, places=4)
-        self.assertLess(when, 4.0)
+    def test_waves_are_zero_at_the_hit_and_one_at_their_first_crest(self):
+        for decay in cs.DECAYS:
+            tau, x = self.fine(decay=decay)
+            self.assertEqual(x[0], 0.0)
+            self.assertAlmostEqual(float(x.max()), 1.0, places=5)   # samples 0.005 fr apart straddle the top
+            self.assertLess(tau[int(np.argmax(x))], 2.0 + 1e-9)     # by a quarter of the wave
+            self.assertEqual(x[-1], 0.0)                              # gone at the end of the range
 
-    def test_bounce_overshoots_more(self):
-        tau = np.linspace(0, 12, 4001)
-        dead = cs.kick(tau, 4.0, 0.0)
-        ring = cs.kick(tau, 4.0, 1.0)
-        self.assertLess(dead.min(), 0.0)          # still underdamped
-        self.assertLess(ring.min(), 3.0 * dead.min())
+    def test_wave_is_the_period_crest_to_crest(self):
+        for wave in (6.0, 12.0):
+            tau, x = self.fine(wave=wave, span=60.0, decay="Linear")
+            crossings = tau[1:][np.diff(np.sign(x)) != 0]
+            spacing = float(np.median(np.diff(crossings)))
+            self.assertAlmostEqual(spacing, wave / 2.0, delta=0.02)
+
+    def test_decay_types(self):
+        u = np.linspace(0.0, 1.0, 1001)
+        for decay in cs.DECAYS:
+            env = cs.envelope(u, decay)
+            self.assertAlmostEqual(float(env[0]), 1.0)
+            self.assertAlmostEqual(float(env[-1]), 0.0)
+            self.assertTrue(np.all(np.diff(env) <= 1e-12), decay)
+        at = lambda decay, x: float(cs.envelope(x, decay))
+        self.assertAlmostEqual(at("Linear", 0.5), 0.5)
+        self.assertGreater(at("Smooth", 0.2), 0.85)                  # holds the strength first
+        self.assertLess(at("Sharp", 0.5), 0.05)                      # gone within the first waves
+        self.assertGreater(at("Exponential", 0.8), 0.005)            # a long thin tail
+        self.assertLess(at("Exponential", 0.3), at("Linear", 0.3))   # falls fast at first
+        self.assertAlmostEqual(at("Unknown", 0.5), at("Exponential", 0.5))
+
+    def test_waves_never_alias(self):
+        tau, x = self.fine(wave=0.5, span=30.0, decay="Linear")
+        crossings = tau[1:][np.diff(np.sign(x)) != 0]
+        self.assertGreaterEqual(float(np.median(np.diff(crossings))), cs.MIN_WAVE / 2.0 - 0.01)
+
+    def test_the_wave_and_the_decay_change_the_ringing(self):
+        frames = np.arange(0, 61)
+        def pan(**given):
+            s = cs.settings("impact", dict({"rattle": 0.0, "direction": "Left", "roll": 0.0}, **given))
+            return cs.impact(frames, 0, 60, FPS, s)[0][:, 1]
+        short = pan(wave=6.0)
+        long = pan(wave=16.0)
+        swings = lambda v: np.count_nonzero(np.diff(np.sign(v[1:])) != 0)
+        self.assertGreater(swings(short), swings(long) + 3)
+        late = lambda v: np.abs(v[30:]).max()
+        self.assertGreater(late(pan(decay="Smooth")), 3.0 * late(pan(decay="Sharp")))
 
     def test_still_at_the_hit_and_at_the_end(self):
-        _, (rot, off) = self.run_it(rattle=2.0, direction="Left")
-        self.assertTrue(np.all(rot[0] == 0.0) and np.all(off[0] == 0.0))
-        self.assertTrue(np.all(rot[-1] == 0.0) and np.all(off[-1] == 0.0))
-        self.assertLess(np.abs(rot[-2]).max(), 0.05)
+        for decay in cs.DECAYS:
+            _, (rot, off) = self.run_it(rattle=2.0, direction="Left", decay=decay)
+            self.assertTrue(np.all(rot[0] == 0.0) and np.all(off[0] == 0.0))
+            self.assertTrue(np.all(rot[-1] == 0.0) and np.all(off[-1] == 0.0))
+            self.assertLess(np.abs(rot[-2]).max(), 0.5, decay)
 
     def test_from_below_turns_the_view_up_by_the_strength(self):
         _, (rot, off) = self.run_it(strength=5.0, direction="Below", roll=0.0, push=3.0)
@@ -247,6 +303,14 @@ class ImpactTests(unittest.TestCase):
         _, (rot, off) = self.run_it(strength=3.0, direction="Front", push=2.0)
         self.assertGreater(off[2, 2], 1.0)
         self.assertGreater(rot[2, 0], 2.0)
+
+    def test_axes_switch_off_whole(self):
+        _, (rot, off) = self.run_it(rattle=2.0, direction="Left", roll=0.5, pan_on=False, roll_on=False)
+        self.assertTrue(np.all(rot[:, 1] == 0.0) and np.all(rot[:, 2] == 0.0))
+        self.assertGreater(np.abs(rot[:, 0]).max(), 0.1)          # the wobble and the rattle still tilt
+        self.assertGreater(np.abs(off[:, 0]).max(), 1.0)          # the push is a move, not a turn
+        _, (rot, _) = self.run_it(rattle=2.0, direction="Below", tilt_on=False)
+        self.assertTrue(np.all(rot[:, 0] == 0.0))
 
     def test_random_is_seeded(self):
         a = cs.hit_vector("Random", 3)
@@ -476,6 +540,9 @@ class FakeCmds(object):
     def radioButtonGrp(self, *args, **kw):
         return self._control("radioButtonGrp", args, kw)
 
+    def checkBoxGrp(self, *args, **kw):
+        return self._control("checkBoxGrp", args, kw)
+
     def optionMenu(self, *args, **kw):
         name = self._name("optionMenu", args)
         if (kw.get("edit") or kw.get("e")) and "value" in kw:
@@ -547,7 +614,8 @@ class WindowTests(unittest.TestCase):
         for mode in cs.MODES:
             for name, _, default, _, _ in cs.CONTROLS[mode]:
                 self.assertIn(cs._slider(mode, name), self.fake.controls)
-        for name in ("target", "shake", "mode", "preset", "direction", "seed", "apply", "status"):
+        for name in ("target", "shake", "mode", "preset", "direction", "decay", "handheld_axes", "impact_axes",
+                     "seed", "apply", "status"):
             self.assertIn(cs._ctrl(name), self.fake.controls)
         self.assertTrue(any(job.get("event") == ["SelectionChanged", cs._refresh] for job in self.fake.jobs))
 
@@ -570,6 +638,15 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.calls[-1][0], "retune")
         self.assertEqual(self.calls[-1][2]["strength"], 9.0)
         self.assertEqual(self.calls[-1][2]["direction"], "Left")
+
+    def test_the_axes_and_the_decay_are_read(self):
+        self.fake.controls[cs._ctrl("impact_axes")]["value2"] = False
+        self.fake.controls[cs._ctrl("decay")]["value"] = "Smooth"
+        s = cs._read("impact")
+        self.assertEqual((s["tilt_on"], s["pan_on"], s["roll_on"], s["decay"]), (True, False, True, "Smooth"))
+        cs._show_settings("impact", cs.settings("impact", {"roll_on": False, "decay": "Sharp"}))
+        self.assertFalse(self.fake.controls[cs._ctrl("impact_axes")]["value3"])
+        self.assertEqual(self.fake.controls[cs._ctrl("decay")]["value"], "Sharp")
 
     def test_apply_applies_what_the_window_reads(self):
         self.slider("handheld", "sway")["value"] = 2.5

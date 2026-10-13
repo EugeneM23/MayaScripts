@@ -156,3 +156,24 @@ status (3 lines)
 
 Not built: an operator walking (step bob), a pivot behind the lens, translation in the rattle, a shake's range
 moved after Apply, sending the layer to Unreal as a CameraShake asset.
+
+## Addendum: the impact's waves and decay, the axes (2026-10-13, the same evening)
+
+The animator, after trying the punch: «при анимации панча кривая строится корректно только нужен параметр который
+будет отвечать за длину волн и тип затухания. Так же необходимо реализовать возможность отключения
+горизонтальных наклонов камеры». Asked, each the recommendation:
+- **Wave, fr** - the period crest to crest, in frames; the waves run through the whole range and the decay dies
+  them. It replaces Swing (half a wave); the frequency is the same however long the range is.
+- **Decay** - a type from a list, dying by the end of the range: **Exponential** (`(e^-4u - e^-4)/(1 - e^-4)`,
+  a fast fall and a long thin tail), **Linear** (`1 - u`), **Smooth** (`1 - (3u^2 - 2u^3)`: holds its strength,
+  then fades), **Sharp** (`(1 - u)^6`: gone within the first waves). Bounce is gone - the decay type took its
+  job; the spring is now `sin(2 pi tau / wave) x envelope(u)`, 1 at its first crest (a ternary search on the
+  first lobe), the wobble the same at 1.37x the rate, the rattle under the envelope squared. A wave under
+  `1/0.42` frames would alias and is held there.
+- **Axes** - Tilt / Pan / Roll checkboxes in both modes; one switched off removes that turn about the camera's
+  own axis whole (the waves, the wobble, the rattle, the jitter, the sway). Push and Drift are moves and stay.
+
+Presets now carry a wave and a decay: Light (6 fr, Exponential), Hit (8, Exponential), Heavy (10, Linear),
+Explosion (12, Smooth), Recoil (6, Sharp). An older layer's record (Swing / Bounce) re-tunes with Wave 8,
+Exponential. Proof: 62 unit tests; `verify_camshake.py` 29/29, gate 15 a hit from the left with Pan and Roll off
+turning the camera about its own X only (2.8e-16 off it).

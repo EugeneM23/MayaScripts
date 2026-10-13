@@ -9623,11 +9623,19 @@ reloads itself and opens its window (trap 220); it imports nothing of the plugin
   - **Handheld**: Sway (a 3-octave fractal from 0.25 Hz x Speed; tilt 0.75, pan 1, roll x Roll), Jitter (7 Hz x
     sqrt(Speed)), Drift (cm, a 2-octave fractal from 0.2 Hz; side 0.7, bob 1, push 0.4), Ease in and out.
     Presets Calm / Handheld / Nervous.
-  - **Impact** over `[a, b]`: a spring's impulse response (1 at its first crest, `w = pi/Swing`, `zeta = 0.08 +
-    0.72 (1 - Bounce)`) turning the view toward where the hit throws it (Below / Above / Left / Right / Front /
-    Random), Push along it, roll for a side hit, a perpendicular wobble at 1.37 w, a rattle under `(1-u)^2`;
-    still at `a` (the jolt is `a+1`) and tapered to still at `b`. No highlight: the current frame + Length.
-    Presets Light / Hit / Heavy / Explosion / Recoil.
+  - **Impact** over `[a, b]` (since the same evening, «нужен параметр который будет отвечать за длину волн и
+    тип затухания»): a sine from the hit, **Wave** frames crest to crest (never under 2.38, the alias limit),
+    under a **Decay** envelope across the range - Exponential (`e^-4u` brought to 0: a fast fall, a long thin
+    tail), Linear, Smooth (`1 - smoothstep`: holds, then fades), Sharp (`(1-u)^6`: gone in the first waves) -
+    1 at its first crest (found by a ternary search on the first lobe). It turns the view toward where the hit
+    throws it (Below / Above / Left / Right / Front / Random), Push along it, roll for a side hit, a
+    perpendicular wobble at 1.37x the rate, a rattle under the envelope squared; still at `a` (the jolt is
+    `a+1`) and at `b`. Swing and Bounce are gone (an older layer's record re-tunes with Wave 8, Exponential).
+    No highlight: the current frame + Length. Presets Light / Hit / Heavy / Explosion / Recoil, each with its
+    wave and decay.
+  - **Axes** (both modes): Tilt / Pan / Roll checkboxes; one switched off removes that turn about the camera's
+    own axis whole - the waves, the wobble, the rattle, the jitter (the push and drift are moves, not turns,
+    and stay).
 - **Onto the camera, exact**: a rotation `S` about the camera's own axes and an offset along them; the new euler
   is the one of `RA^-1 . S . RA . R(e)` nearest the base (both solutions, every 360; Maya's six orders by
   permuting the axes onto xyz), the offset `d . (RA . R . JO)`. The layer adds by component
@@ -9646,9 +9654,11 @@ reloads itself and opens its window (trap 220); it imports nothing of the plugin
   (`animLayerRefresh`); Undo / Redo show its settings again. Settings remembered per mode
   (`skeldarCamShake_<mode>`, JSON); the picked shake on `sys` (trap 111).
 
-Proof: `tests/test_camshake.py` **55** (the noise, the envelopes, both modes, the algebra against OpenMaya on
-every order with rotate axes and joint orients, the window on a fake cmds); `verify_camshake.py` **28/28 mayapy
-standalone**: the shake in the camera's own axes on every frame to **2.8e-16 deg**, the translation exact, the
+Proof: `tests/test_camshake.py` **62** (the noise, the envelopes, both modes, the waves' period and decay types,
+the axes, the algebra against OpenMaya on every order with rotate axes and joint orients, the window on a fake
+cmds); `verify_camshake.py` **29/29 mayapy standalone** (gate 15: a hit from the left with Pan and Roll off turns
+the camera about its own X only, 2.8e-16 off it): the shake in the camera's own axes on every frame to
+**2.8e-16 deg**, the translation exact, the
 camera's own keys untouched, nothing outside the range at quarter frames, a re-tune keeping the layer, its
 weight and lock (doubling the settings doubling the shake to 0.4 %), one undo each, an impact stacked on the
 handheld exactly (1.4e-16), a hit from below throwing the view up 4.2-4.3 deg, two cameras each their own shake,

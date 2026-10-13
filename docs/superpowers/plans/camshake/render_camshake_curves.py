@@ -87,10 +87,11 @@ def main():
     short = (HEIGHT - top - 16) / len(hit_rows)
     for row, (label, _) in enumerate(hit_rows):
         s = cs.preset("impact", label, {"direction": "Left"})
-        frames = np.arange(0, 41)
-        rot, _ = cs.impact(frames, 0, 40, FPS, s)
+        frames = np.arange(0, 61)
+        rot, _ = cs.impact(frames, 0, 60, FPS, s)
         rect = QtCore.QRect(int(32 + column), int(top + row * short), int(column), int(short - 10))
-        chart(painter, rect, frames, rot, "Impact: %s (from %s)" % (label, cs.SIDES[s["direction"]]), 10.0)
+        chart(painter, rect, frames, rot, "Impact: %s (from %s, waves of %g fr, %s)" % (
+            label, cs.SIDES[s["direction"]], s["wave"], s["decay"].lower()), 10.0)
     painter.end()
     out = os.path.join(HERE, "camshake_curves.png")
     image.save(out)

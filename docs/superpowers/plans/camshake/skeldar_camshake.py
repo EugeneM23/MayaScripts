@@ -42,13 +42,14 @@ CONTROLS = {
     "impact": (
         ("strength", "Strength, deg", 4.0, 0.0, 25.0),
         ("push", "Push, cm", 2.0, 0.0, 30.0),
-        ("swing", "Swing, fr", 4.0, 1.0, 20.0),
-        ("bounce", "Bounce", 0.5, 0.0, 1.0),
+        ("wave", "Wave, fr", 8.0, 2.5, 60.0),
         ("rattle", "Rattle, deg", 1.0, 0.0, 6.0),
         ("roll", "Roll", 0.4, 0.0, 1.0),
         ("length", "Length, fr", 24.0, 2.0, 240.0),
     ),
 }
+DECAYS = ("Exponential", "Linear", "Smooth", "Sharp")
+AXES = (("tilt_on", "Tilt"), ("pan_on", "Pan"), ("roll_on", "Roll"))   # rotation about X, Y, Z
 PRESETS = {
     "handheld": (
         ("Calm", {"sway": 0.4, "speed": 0.6, "jitter": 0.05, "roll": 0.3, "drift": 0.6}),
@@ -56,12 +57,14 @@ PRESETS = {
         ("Nervous", {"sway": 1.8, "speed": 1.8, "jitter": 0.3, "roll": 0.5, "drift": 3.0}),
     ),
     "impact": (
-        ("Light", {"strength": 2.0, "push": 1.0, "swing": 3.0, "bounce": 0.5, "rattle": 0.6, "roll": 0.4}),
-        ("Hit", {"strength": 4.0, "push": 2.0, "swing": 4.0, "bounce": 0.5, "rattle": 1.0, "roll": 0.4}),
-        ("Heavy", {"strength": 6.0, "push": 4.0, "swing": 4.0, "bounce": 0.55, "rattle": 1.6, "roll": 0.5}),
-        ("Explosion", {"strength": 9.0, "push": 8.0, "swing": 6.0, "bounce": 0.4, "rattle": 3.0,
+        ("Light", {"strength": 2.0, "push": 1.0, "wave": 6.0, "decay": "Exponential", "rattle": 0.6,
+                   "roll": 0.4}),
+        ("Hit", {"strength": 4.0, "push": 2.0, "wave": 8.0, "decay": "Exponential", "rattle": 1.0,
+                 "roll": 0.4}),
+        ("Heavy", {"strength": 6.0, "push": 4.0, "wave": 10.0, "decay": "Linear", "rattle": 1.6, "roll": 0.5}),
+        ("Explosion", {"strength": 9.0, "push": 8.0, "wave": 12.0, "decay": "Smooth", "rattle": 3.0,
                        "roll": 0.6, "direction": "Below"}),
-        ("Recoil", {"strength": 3.0, "push": 2.0, "swing": 3.0, "bounce": 0.3, "rattle": 0.4,
+        ("Recoil", {"strength": 3.0, "push": 2.0, "wave": 6.0, "decay": "Sharp", "rattle": 0.4,
                     "roll": 0.2, "direction": "Front"}),
     ),
 }
@@ -69,8 +72,8 @@ DEFAULT_PRESET = {"handheld": "Handheld", "impact": "Hit"}
 
 
 def settings(mode, given=None):
-    """The mode's controls, defaults filled in and each clamped to its range; plus the seed (an int, 0 or
-    more) and, for an impact, the direction."""
+    """The mode's controls, defaults filled in and each clamped to its range; the seed (an int, 0 or more);
+    the axes switched on; for an impact, the direction and the decay."""
     given = given or {}
     out = {}
     for name, _, default, low, high in CONTROLS[mode]:
@@ -84,15 +87,19 @@ def settings(mode, given=None):
         out["seed"] = max(0, int(given.get("seed", 1)))
     except (TypeError, ValueError):
         out["seed"] = 1
+    for key, _ in AXES:
+        out[key] = bool(given.get(key, True))
     if mode == "impact":
         direction = given.get("direction", "Random")
         out["direction"] = direction if direction in DIRECTIONS else "Random"
+        decay = given.get("decay", DECAYS[0])
+        out["decay"] = decay if decay in DECAYS else DECAYS[0]
     return out
 
 
 def preset(mode, name, current=None):
-    """`current` with the preset's values on top: the seed, Ease and Length are kept, and an impact's
-    direction too unless the preset names one."""
+    """`current` with the preset's values on top: the seed, Ease, Length and the axes are kept, and an
+    impact's direction too unless the preset names one."""
     values = dict(current or {})
     for label, table in PRESETS[mode]:
         if label == name:
@@ -215,7 +222,12 @@ def handheld(frames, a, b, fps, s, index=0):
         off[:, axis] = DRIFT_AXES[axis] * 0.5 * s["drift"] * fractal(sec, seed, k + axis + 7, drift_hz, 2,
                                                                        fps=fps)
     envelope = eased(f, a, b, s["ease"])[:, None]
-    return rot * envelope, off * envelope
+    return rot * envelope * axis_mask(s), off * envelope
+
+
+def axis_mask(s):
+    """1 for each rotation (tilt, pan, roll) switched on, 0 for each switched off."""
+    return np.array([1.0 if s.get(key, True) else 0.0 for key, _ in AXES])
 
 
 RATTLE_HZ = 11.0         # the rattle's top octave, below the frame rate's limit
@@ -241,28 +253,56 @@ def picture_direction(h):
     return r / length if length >= 0.2 else np.array([0.0, 1.0])
 
 
-def damping(bounce):
-    return 0.08 + 0.72 * (1.0 - float(bounce))
+EXPONENTIAL_RATE = 4.0   # Exponential: e^(-4u), brought to 0 at the end - a fast fall and a long thin tail
+SHARP_POWER = 6.0        # Sharp: (1-u)^6 - gone within the first waves
+MIN_WAVE = 1.0 / NYQUIST_SHARE   # frames: a shorter wave aliases into a slow wobble
 
 
-def kick(tau, swing, bounce, rate=1.0):
-    """An underdamped spring's impulse response over tau frames: 0 at 0, 1 at its first crest, the next
-    swing `swing` frames later (over `rate`)."""
+def envelope(u, decay):
+    """How the hit dies over its range (u from 0 at the hit to 1 at the end): 1 at the hit, 0 at the end,
+    never rising."""
+    u = np.clip(np.asarray(u, float), 0.0, 1.0)
+    if decay == "Linear":
+        return 1.0 - u
+    if decay == "Smooth":       # holds its strength, then fades softly
+        return 1.0 - u * u * (3.0 - 2.0 * u)
+    if decay == "Sharp":
+        return (1.0 - u) ** SHARP_POWER
+    tail = math.exp(-EXPONENTIAL_RATE)
+    return (np.exp(-EXPONENTIAL_RATE * u) - tail) / (1.0 - tail)
+
+
+def waves(tau, wave, span, decay, rate=1.0):
+    """The hit's waves over tau frames: a sine from the hit, `wave` frames crest to crest (over `rate`, never
+    shorter than MIN_WAVE), under the decay's envelope across `span` frames; 1 at its first crest."""
     t = np.asarray(tau, float)
-    w = math.pi / float(swing) * rate
-    zeta = damping(bounce)
-    sigma = zeta * w / math.sqrt(1.0 - zeta * zeta)
-    crest_at = math.atan2(w, sigma) / w
-    crest = math.exp(-sigma * crest_at) * math.sin(w * crest_at)
-    return np.where(t > 0.0, np.exp(-sigma * np.maximum(t, 0.0)) * np.sin(w * t) / crest, 0.0)
+    period = max(float(wave) / rate, MIN_WAVE)
+    span = max(float(span), 1e-6)
+
+    def raw(x):
+        return np.sin(2.0 * math.pi * x / period) * envelope(x / span, decay)
+
+    probe = np.linspace(0.0, period / 2.0, 401)
+    best = int(np.argmax(raw(probe)))
+    low, high = probe[max(best - 1, 0)], probe[min(best + 1, len(probe) - 1)]
+    for _ in range(80):                       # the first lobe is one hump: close in on its top
+        left, right = low + (high - low) / 3.0, high - (high - low) / 3.0
+        if raw(left) < raw(right):
+            low = left
+        else:
+            high = right
+    crest = float(raw(0.5 * (low + high)))
+    return np.where(t > 0.0, raw(np.maximum(t, 0.0)) / crest, 0.0)
 
 
 def impact(frames, a, b, fps, s, index=0):
-    """A hit at frame a, still again at b: a kick that springs back, a perpendicular wobble, a rattle that
-    fades as trauma squared. The same two arrays as `handheld`."""
+    """A hit at frame a, still again at b: a kick that swings back and forth `wave` frames a swing and dies
+    by the decay's shape, a perpendicular wobble, a rattle that dies faster (the envelope squared). The same
+    two arrays as `handheld`."""
     f = np.asarray(frames, float)
     tau = f - a
-    u = np.clip(tau / float(b - a), 0.0, 1.0)
+    span = float(b - a)
+    u = np.clip(tau / span, 0.0, 1.0)
     seed, k = s["seed"], _streams(index)
     h = hit_vector(s["direction"], seed, index)
     r = picture_direction(h)
@@ -271,19 +311,17 @@ def impact(frames, a, b, fps, s, index=0):
     roll_side = 1.0 if rng.uniform() < 0.5 else -1.0
     roll_dir = -h[0] if abs(h[0]) >= 0.2 else 0.5 * roll_side
     strength = s["strength"]
-    main = kick(tau, s["swing"], s["bounce"])
-    wobble = WOBBLE_SHARE * wobble_sign * kick(tau, s["swing"], s["bounce"], WOBBLE_RATE)
-    taper = 1.0 - smootherstep((u - 0.5) / 0.5)
+    main = waves(tau, s["wave"], span, s["decay"])
+    wobble = WOBBLE_SHARE * wobble_sign * waves(tau, s["wave"], span, s["decay"], WOBBLE_RATE)
     rot = np.zeros((len(f), 3))
     # The view (-Z) turned toward r across the picture: about (r_y, -r_x, 0); the wobble across that.
     rot[:, 0] = strength * (main * r[1] + wobble * r[0])
     rot[:, 1] = strength * (-main * r[0] + wobble * r[1])
     rot[:, 2] = strength * s["roll"] * roll_dir * main
-    rot *= taper[:, None]
-    off = (s["push"] * main * taper)[:, None] * h[None, :]
+    off = (s["push"] * main)[:, None] * h[None, :]
     sec = tau / float(fps)
     rattle_hz = capped(RATTLE_HZ, fps)
-    trauma = (1.0 - u) ** 2 * np.clip(tau, 0.0, 1.0)
+    trauma = envelope(u, s["decay"]) ** 2 * np.clip(tau, 0.0, 1.0)
     roll = (1.0, 1.0, s["roll"])
     for axis in range(3):
         rot[:, axis] += roll[axis] * 0.5 * s["rattle"] * trauma * fractal(
@@ -291,7 +329,7 @@ def impact(frames, a, b, fps, s, index=0):
     still = (tau <= 0.0) | (u >= 1.0)
     rot[still] = 0.0
     off[still] = 0.0
-    return rot, off
+    return rot * axis_mask(s), off
 
 
 def shake(mode, frames, a, b, fps, s, index=0):
@@ -796,8 +834,11 @@ def describe(mode, s, a, b, nodes, layer, where="", locked=()):
     if mode == "handheld":
         what = "Handheld: sway %.2f deg, jitter %.2f deg, drift %.1f cm" % (s["sway"], s["jitter"], s["drift"])
     else:
-        what = "Impact from %s: %.1f deg, push %.1f cm, rattle %.2f deg" % (
-            SIDES[s["direction"]], s["strength"], s["push"], s["rattle"])
+        what = "Impact from %s: %.1f deg, waves of %g fr, %s decay, push %.1f cm, rattle %.2f deg" % (
+            SIDES[s["direction"]], s["strength"], s["wave"], s["decay"].lower(), s["push"], s["rattle"])
+    off = [label.lower() for key, label in AXES if not s.get(key, True)]
+    if off:
+        what += " (no %s)" % ", ".join(off)
     text = "%s on %s, frames %d-%d%s | layer %s, its weight is the strength" % (
         what, names, a, b, " (%s)" % where if where else "", layer)
     skipped = sorted({attr for attrs in locked for attr in attrs})
@@ -933,8 +974,11 @@ def _read(mode):
     given = {name: cmds.floatSliderGrp(_slider(mode, name), query=True, value=True)
              for name, _, _, _, _ in CONTROLS[mode]}
     given["seed"] = cmds.intField(_ctrl("seed"), query=True, value=True)
+    for i, (key, _) in enumerate(AXES):
+        given[key] = bool(cmds.checkBoxGrp(_ctrl(mode + "_axes"), query=True, **{"value%d" % (i + 1): True}))
     if mode == "impact":
         given["direction"] = cmds.optionMenu(_ctrl("direction"), query=True, value=True)
+        given["decay"] = cmds.optionMenu(_ctrl("decay"), query=True, value=True)
     return settings(mode, given)
 
 
@@ -951,8 +995,11 @@ def _show_settings(mode, s):
         for name, _, _, _, _ in CONTROLS[mode]:
             cmds.floatSliderGrp(_slider(mode, name), edit=True, value=s[name])
         cmds.intField(_ctrl("seed"), edit=True, value=s["seed"])
+        cmds.checkBoxGrp(_ctrl(mode + "_axes"), edit=True,
+                         **{"value%d" % (i + 1): bool(s[key]) for i, (key, _) in enumerate(AXES)})
         if mode == "impact":
             cmds.optionMenu(_ctrl("direction"), edit=True, value=s["direction"])
+            cmds.optionMenu(_ctrl("decay"), edit=True, value=s["decay"])
     _quietly(work)
 
 
@@ -1149,10 +1196,19 @@ def show():
     cmds.menuItem(label=PRESET_PROMPT)
     for each in MODES:
         cmds.columnLayout(_ctrl(each + "_column"), adjustableColumn=True, rowSpacing=2, manage=each == mode)
+        cmds.checkBoxGrp(_ctrl(each + "_axes"), label="Axes", numberOfCheckBoxes=3,
+                         labelArray3=tuple(label for _, label in AXES), value1=True, value2=True, value3=True,
+                         columnWidth4=(100, 70, 70, 70),
+                         annotation="Tilt: up-down, Pan: left-right, Roll: the horizon. Off removes that turn whole",
+                         changeCommand=lambda *_, mode_=each: _changed(mode_))
         if each == "impact":
             cmds.optionMenu(_ctrl("direction"), label="Hit from", changeCommand=lambda *_: _changed("impact"))
             for direction in DIRECTIONS:
                 cmds.menuItem(label=direction)
+            cmds.optionMenu(_ctrl("decay"), label="Decay", changeCommand=lambda *_: _changed("impact"),
+                            annotation="How the waves die by the end of the range")
+            for decay in DECAYS:
+                cmds.menuItem(label=decay)
         for name, label, default, low, high in CONTROLS[each]:
             cmds.floatSliderGrp(_slider(each, name), label=label, field=True, minValue=low, maxValue=high,
                                 fieldMinValue=low, fieldMaxValue=high, value=default, precision=2,
