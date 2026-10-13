@@ -85,6 +85,7 @@ GRIP_DIST = 30.0          # cm (the walk's size): a pose's hands this near each 
 # (docs/superpowers/specs/2026-10-12-walk-foot-placement-design.md)
 CONTACT_TOL = 1.5         # cm: the heel (ankle) or the ball this near its own lowest is planted
 DOUBLE_SUPPORT = 0.08     # both feet down at least this share of the cycle at every step (a walk: ~8-10 %)
+RUN_FLIGHT = 0.05         # both feet up longer than this share of a stride at a handoff: a run - its flight is kept
 LOCK_STEPS = 16           # the contacts found and the lock integrated at 1/this of a frame
 HEEL_BACK = 0.25          # the heel's ground point: under the ankle, this share of the foot (to the ball) back
 EXTEND_MAX = 0.5          # the contacts take at most this share of a foot's swing
@@ -1080,12 +1081,19 @@ class Walk(object):
                 ds = wrap(to - self.contact[o][j][0])
                 self.handoff[s].append(j)
                 self.double_src[s].append(ds)
-                self.extend[s][i]["to"] = max(0.0, DOUBLE_SUPPORT * stride - ds)
+                # a run's flight (both feet up) is its gait, not a gap to close: its contacts are not grown
+                # (grown to a walk's double support, HavyRun's 6-frame stances took 8 frames more - its swings
+                # crushed into the rest, a swinging foot grazed the floor and the pelvis sank 64 cm, 2026-10-13)
+                self.extend[s][i]["to"] = 0.0 if self.is_flight(ds) else max(0.0, DOUBLE_SUPPORT * stride - ds)
         for side in SIDES:
             for i, ext in enumerate(self.extend[side]):
                 grow, room = ext["hs"] + ext["to"], EXTEND_MAX * self.swing_len[side][i]
                 if grow > room:
                     self.extend[side][i] = dict((end, v * room / grow) for end, v in ext.items())
+
+    def is_flight(self, ds):
+        """Whether a handoff's double support `ds` (source frames; negative: both feet up) is a run's flight."""
+        return ds < -RUN_FLIGHT * self.P / float(self.strides)
 
     def _contact_at(self, side, t):
         """The contact foot time t is in, or the swing after it: (its index, how far past its strike)."""
@@ -1190,7 +1198,7 @@ class Walk(object):
             for i, (hs, to) in enumerate(self.contact[side]):
                 ds = self.double_src[side][i]
                 room = EXTEND_MAX * self.swing_len[side][i]
-                least = min(room, v * max(0.0, ctx["frame"] - ds))
+                least = 0.0 if self.is_flight(ds) else min(room, v * max(0.0, ctx["frame"] - ds))
                 most = max(least, min(room, v * self.extend[side][i]["to"]))
                 window = SWING_EASE * self.swing_len[side][i]
 
@@ -1232,7 +1240,7 @@ class Walk(object):
                 elif ask < 0.0:
                     floor = -0.5 * (to - hs)
                     if v > 0.0:
-                        floor = max(floor, ctx["frame"] - ds)
+                        floor = floor if self.is_flight(ds) else max(floor, ctx["frame"] - ds)
                     e = max(floor, min(e, e + ask))
                 out.append({"hs": 0.0, "to": e})
                 asked.append((ground, 1.0 + (e - own) / length))     # asked, held (x the contact)

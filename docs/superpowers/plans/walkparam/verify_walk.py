@@ -30,6 +30,7 @@ MINE = os.environ.get("WALKS_HOME", "C:/Users/MY PC/Documents/maya/SkeldarWalks"
 POSE_FILE = os.path.join(MINE, "goblin.wpose.gz")
 SWORD_FILE = os.path.join(MINE, "two_handed_sword.wpose.gz")
 DW_FILE = os.path.join(MINE, "dw.walk.gz")       # a walk of two uneven steps of each foot a cycle
+RUN_FILE = os.path.join(MINE, "HavyRun.walk.gz")  # a run: both feet up between its steps
 
 
 def load(name, path):
@@ -995,6 +996,39 @@ try:
                 + legs_of(lowered_m, lowered_r.frames)))
     else:
         print("        (no %s or %s: the several-steps gates skipped)" % (DW_FILE, SWORD_FILE))
+
+    # 8. a run (the animator's HavyRun: both feet up 6-7 frames between its steps): Foot placement keeps the
+    # flight, plants the stances, sinks nothing
+    if os.path.exists(RUN_FILE):
+        shutil.copy(RUN_FILE, sw.wf.path_for(sw.WALKS, "HavyRun"))
+        run, _, run_start = sw.load_walk("HavyRun")
+        run_r, run_i, run_text = sw.apply(manny, "HavyRun")
+        print("        " + run_text)
+        bones = bones_of(manny)
+        n_run = run_r.frames
+        run_keys = np.tile(np.eye(4), (len(run.names), n_run + 1, 1, 1))
+        have = [(j, bones[leaf]["path"]) for j, leaf in enumerate(run.names) if leaf in bones]
+        for (j, _), m in zip(have, worlds([p for _, p in have], range(run_start, run_start + n_run + 1))):
+            run_keys[j] = m
+        flat = lambda v: v - np.outer(v @ run.up, run.up)
+        run_slide = {}
+        planted_run = run_r.info["placement"]["planted"]
+        for side in "lr":
+            foot = run_keys[run.index["foot_" + side]]
+            heel = foot[:, 3, :3] + np.einsum("i,fij->fj", run.heel_loc[side], foot[:, :3, :3])
+            ball = run_keys[run.index["ball_" + side], :, 3, :3]
+            speed = np.minimum(np.linalg.norm(np.diff(flat(heel), axis=0), axis=1),
+                               np.linalg.norm(np.diff(flat(ball), axis=0), axis=1))
+            p = np.array(planted_run[side])
+            run_slide[side] = float(speed[p & np.roll(p, -1)].max())
+        both_up = int(np.sum(~np.array(planted_run["l"]) & ~np.array(planted_run["r"])))
+        gate(all(run.is_flight(ds) for s in "lr" for ds in run.double_src[s]) and both_up > 0
+             and max(run_slide.values()) < 0.2 and run_r.info["lowered"] < 1.0 and run_i["short"] < 1e-3,
+             "HavyRun on Manny's keys: a run - both feet up %d of %d frames, kept; a planted foot slides %.3f / %.3f cm "
+             "a frame; the pelvis sinks %.2f cm (before: 64.5)" % (both_up, n_run, run_slide["l"], run_slide["r"],
+                                                                   run_r.info["lowered"]))
+    else:
+        print("        (no %s: the run gate skipped)" % RUN_FILE)
 
     balance_sheet = os.environ.get("WALK_BALANCE_SHEET")
     if balance_sheet:

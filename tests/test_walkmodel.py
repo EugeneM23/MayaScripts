@@ -1411,6 +1411,33 @@ class PelvisForwardTests(unittest.TestCase):
         self.assertTrue(np.array_equal(a.worlds, b.worlds))
 
 
+class RunTests(unittest.TestCase):
+    """A run (both feet up between the steps: HavyRun, 2026-10-13): Foot placement keeps its flight - it plants
+    the stances and grows nothing (grown to a walk's double support, the run's swings were crushed, a swinging
+    foot grazed the floor and the pelvis sank 64 cm)."""
+
+    RUN = dict(stance=0.2, travel=200.0, lift=20.0)
+
+    def test_a_run_s_handoffs_are_flights_and_are_not_grown(self):
+        w = walk(**self.RUN)
+        for side in "lr":
+            self.assertTrue(all(w.is_flight(ds) for ds in w.double_src[side]), side)
+            self.assertEqual([e["to"] for e in w.extend[side]], [0.0] * len(w.extend[side]))
+        walker = walk()                                  # a walk: its handoffs are double support
+        self.assertFalse(any(walker.is_flight(ds) for s in "lr" for ds in walker.double_src[s]))
+
+    def test_foot_placement_plants_a_run_s_stances_and_keeps_its_flight(self):
+        w = walk(**self.RUN)
+        own, placed = w.evaluate({"foot_placement": 0.0}), w.evaluate({})
+        p = placed.info["placement"]["planted"]
+        self.assertGreater(int(np.sum(~np.array(p["l"]) & ~np.array(p["r"]))), 0)       # both feet up, between
+        for side in "lr":
+            self.assertGreater(still_point_slide(own, w, side), 1.0, side)       # the run's own feet slide
+            self.assertLess(still_point_slide(placed, w, side), 0.05, side)
+        self.assertLess(placed.info["lowered"], 1.0)
+        self.assertLess(placed.info["placement"]["double"]["l"], 0.0)            # a flight, frames
+
+
 class SideKnobTests(unittest.TestCase):
     """A leg or arm knob set for one side alone ("lift_l"): that side walks with it, the other with the knob."""
 

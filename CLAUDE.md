@@ -9587,6 +9587,28 @@ asked: a two-handed grip HOLDS and the weapon sways as one, the overlap is PHYSI
       right hand (0.0 of 51.8 cm), the left 39.4 (39.4);
     - gate 70: Surge 0 / 1 / 2 → 0.00 / 2.76 / 5.51 cm.
 
+**…a run keeps its flight** (2026-10-13, the animator's HavyRun over the port: «попробовал новый цикл бега и в этом
+цикле фут плейсмент плохо справляется»).
+- **Read first**: a 26-frame run, 2.72 m/s, each foot down 6-7 frames (23-27 %) with **both feet up 5.75 and 7
+  frames** between the steps.
+- **What placement did**: it grew every contact to a walk's `DOUBLE_SUPPORT` (8 % of a stride) at each handoff,
+  i.e. by 7.8 and 9.1 frames.
+  - The run became a walk: the swings were crushed into what was left, a swinging foot grazed the floor at
+    28-42 cm a frame, and a "planted" right foot slid 10 cm a frame;
+  - the pelvis sank 64.5 cm, the foot fell 28 cm short.
+- **The fix**: a handoff whose source double support is below `-RUN_FLIGHT` (5 %) of a stride is a run's flight
+  (`Walk.is_flight`). Such a contact is not grown (`extend` 0); the growth's "a frame of both feet down" and
+  Ground time's floor do not apply. The stances are still locked.
+- **Walks are untouched**: asd, dw, Creep_Drunk, TestStrefe and sadda at the defaults equal the previous model to
+  0.0.
+- **HavyRun now**: both feet up 11 of 26 frames, a planted foot sliding 0.09 cm a frame at most, the pelvis sinking
+  0.0. Stride 0.8-1.3, tempo 20, Ground time 1.2, Weight 1, Pelvis height −10, Stance 0.5 / Swing out 6 all keep the
+  flight with no slide.
+- **Proof**:
+  - `RunTests` (2) on a synthetic run (stance 0.2, lift 20);
+  - `verify_walk.py` **79/79**, gate 74 HavyRun on Manny's keys;
+  - picture `walkparam/walk_run.png`.
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an
 update (trap 224); for Balance: a held weapon's mass, the target's own masses
