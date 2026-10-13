@@ -9061,6 +9061,49 @@ constrained FKShoulder_R baked with the game bones exact; an object under the an
 (only the base moved, their layer untouched); the Overlap through the shared writer.
 `verify_aim_overlap.py` 57/57. The live card is the animator's to try.
 
+**Snapshot: a free copy of an object's motion** (2026-10-13, «Давай реализуем создание снапшотов»;
+asked: **Object only** - OverRig's component and particle snapshots declined - and **a key on every
+frame**). Spec `docs/superpowers/specs/2026-10-13-tools-snapshot-design.md`. OverRig's
+`apply_LOH_Fast`: a `LOH_<name>` locator per object, parent-constrained to it, baked over the
+highlight `a..b-1` (else `ast..aet`), the constraint deleted. Ours is a knot that drives nothing -
+the `knotplan` kind `snapshot` (OverRig's colour 0.8 0.5 0.5, constraint None):
+- **The press**:
+  - `knots.snapshot(selection, order, highlight)` makes a `<leaf>_snapshot` locator in the object's
+    Knots group, sized and turned (the card's Rotate order) as a knot;
+  - a temporary `parentConstraint` with no offset carries the object's world track, baked on every
+    frame of the span and euler-filtered, then deleted;
+  - the snapshots are left selected; one undo chunk.
+- **The span** (`knotplan.snapshot_span`): the highlight's own frames `a..b-1`, no ramp; else the
+  whole take, as a knot's.
+- **The object is never touched**, so nothing is refused for what it is (a rig control, a bone, a
+  constrained object, a knot, a snapshot). A component in the selection is refused.
+- **Marked** `skeldarKnot = "snapshot"` + `skeldarSnapshotOf` (the object's UUID) + the span, and
+  NEVER `skeldarKnotSource`. So it rides nothing:
+  - `_with_riders` and `bake_order` pass it by;
+  - Remove of the object's knot leaves it, and a knot made ON a snapshot goes with it.
+- **The other presses**:
+  - Remove deletes it («1 snapshot deleted»);
+  - Bake skips it and says so;
+  - Attach finds no `attach` on it;
+  - Layer bakes the snapshot itself (`layerbake._object_of` stops at a snapshot);
+  - the subtitle counts snapshots apart («2 knots, 1 snapshot in the scene»);
+  - Delete character takes it with the Knots group.
+- A toolrow **Snapshot** in Knots after Aim (icon `camera`, «free copy of the motion»); hotkey row
+  `tools.snapshot`.
+Proof: `docs/superpowers/plans/verify_snapshot.py` **42/42 mayapy standalone**:
+- verify_knots' prop: the snapshot on its world pivot and orientation on every frame (3e-6 deg), 41
+  keys a channel, the prop untouched;
+- a highlight keyed on exactly 10..20, holding its ends outside;
+- the rotate order; one undo;
+- on a knotted prop; Remove of the knot keeping it; a rider removed with it;
+- Bake beside a knot; Layer on it;
+- the refusals;
+- on Manny a bone and a control snapshotted in place, in `|Manny_Rig_Character|Knots`, gone with
+  Delete character.
+
+verify_knots 90/90, verify_bake_layer 66/66 and verify_parent 42/42 again; 6330 unit tests;
+`render_tools_card.py` shows the row in the 360 px dock.
+
 235. **A channel on an animation layer is fed by the layer's `animBlendNode*`, not by its curve.**
      The base curve hangs on the blend's input A, untouched; a gate reading "the curve connected to
      the plug" after an Overlap read the blend node and called the base changed (verify gate 33's

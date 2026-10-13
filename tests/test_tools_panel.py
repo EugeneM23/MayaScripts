@@ -89,6 +89,7 @@ class _Knots(object):
         self.count = 2
         self.pivot_count = 0
         self.aim_count = 0
+        self.snapshot_count = 0
         self.fail = False
 
     def _say(self, *call):
@@ -123,6 +124,12 @@ class _Knots(object):
 
     def aims_waiting(self):
         return ["a"] * self.aim_count
+
+    def snapshots(self):
+        return ["s"] * self.snapshot_count
+
+    def snapshot(self, order=None):
+        return self._say("snapshot", order)
 
     def begin_aim(self, order=None):
         return self._say("begin_aim", order)
@@ -228,7 +235,7 @@ class Card(_Base):
             panel.SUBTITLE,
             panel.HEAD["knots"], panel.BODY["knots"], panel.KNOT_BTN, panel.OFFSET_BTN,
             panel.ORIENT_BTN, panel.LOCAL_BTN, panel.WORLD_BTN, panel.AIM_BTN,
-            panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
+            panel.SNAPSHOT_BTN, panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
             panel.ORDER_SEG["xzy"],
             panel.HEAD["parent"], panel.BODY["parent"], panel.INSIDE_BTN, panel.TOWORLD_BTN,
             panel.SWAP_BTN, panel.ACROSS_BTN, panel.PAIRS_CAPTION, panel.OBJECTS_BTN,
@@ -245,8 +252,8 @@ class Card(_Base):
         panel.build_panel()
         marks = dict((m.name, m) for m in hubstyle.take_marks())
         rows = (panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
-                panel.WORLD_BTN, panel.AIM_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN,
-                panel.SWAP_BTN, panel.ACROSS_BTN, panel.OVERLAP_BTN)
+                panel.WORLD_BTN, panel.AIM_BTN, panel.SNAPSHOT_BTN, panel.INSIDE_BTN,
+                panel.TOWORLD_BTN, panel.SWAP_BTN, panel.ACROSS_BTN, panel.OVERLAP_BTN)
         self.assertEqual(sorted(n for n, m in marks.items() if m.role == "toolrow"),
                          sorted(rows))
         for name in rows:
@@ -302,10 +309,10 @@ class Card(_Base):
         panel.build_panel()
         self.assertEqual([self.fake.labels[n] for n in (
             panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
-            panel.WORLD_BTN, panel.AIM_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN,
-            panel.SWAP_BTN, panel.ACROSS_BTN, panel.MULTI_BTN, panel.ATTACH0_BTN,
-            panel.ATTACH1_BTN, panel.BAKE_BTN, panel.LAYER_BTN)],
-            ["Knot", "Offset", "Orient", "Local ×2", "World ×2", "Aim", "Inside",
+            panel.WORLD_BTN, panel.AIM_BTN, panel.SNAPSHOT_BTN, panel.INSIDE_BTN,
+            panel.TOWORLD_BTN, panel.SWAP_BTN, panel.ACROSS_BTN, panel.MULTI_BTN,
+            panel.ATTACH0_BTN, panel.ATTACH1_BTN, panel.BAKE_BTN, panel.LAYER_BTN)],
+            ["Knot", "Offset", "Orient", "Local ×2", "World ×2", "Aim", "Snapshot", "Inside",
              "To world", "Swap", "Across", "Pairs", "0", "1", "Bake", "Layer"])
         self.assertEqual(self.fake.labels[panel.FOOTER_CAPTION], "Selected knots")
         self.assertEqual(self.fake.labels[panel.PAIRS_CAPTION], "Across, pair by pair")
@@ -579,6 +586,32 @@ class Layer(_Base):
 
     def test_with_the_card_closed_it_answers_its_line(self):
         self.assertEqual(panel.bake_layer(), "did bake_layer")
+
+
+class Snapshot(_Base):
+    """Snapshot (2026-10-13): a row of Knots after Aim; snapshots counted apart."""
+
+    def test_the_row_presses_the_snapshot_with_the_order(self):
+        panel.set_order("xyz")
+        panel.build_panel()
+        self.fake.commands[panel.SNAPSHOT_BTN]()
+        self.assertEqual(self.stub.calls[-1], ("snapshot", "xyz"))
+        self.assertEqual(self.fake.labels[panel.STATUS], "did snapshot")
+
+    def test_with_the_card_closed_it_answers_its_line(self):
+        self.assertEqual(panel.snapshot(), "did snapshot")
+
+    def test_the_subtitle_counts_snapshots_apart(self):
+        """knots.knots() lists snapshots too (they live in the Knots groups)."""
+        self.stub.count, self.stub.snapshot_count = 3, 1
+        panel.build_panel()
+        self.assertEqual(self.fake.labels[panel.SUBTITLE], "2 knots, 1 snapshot in the scene")
+
+    def test_its_icon_and_tip(self):
+        panel.build_panel()
+        marks = dict((m.name, m) for m in hubstyle.take_marks())
+        self.assertEqual(marks[panel.SNAPSHOT_BTN].icon, "camera")
+        self.assertIn("every frame", panel.TIPS["snapshot"])
 
 
 class Registration(unittest.TestCase):

@@ -19,10 +19,11 @@ class Kinds(unittest.TestCase):
 
     def test_the_kinds_in_the_cards_order(self):
         """+ across (2026-10-12, the parent tab): a knot inside the parent; + aim (2026-10-13,
-        the aim tab): the object's rotation aims at a target."""
+        the aim tab): the object's rotation aims at a target; + snapshot (2026-10-13): a locator
+        repeating the object's motion, driving nothing."""
         self.assertEqual([k.key for k in plan.KINDS],
                          ["knot", "offset", "orient", "double_local", "double_world", "across",
-                          "aim"])
+                          "aim", "snapshot"])
         self.assertEqual(plan.kind("across").constraint, "parent")
         self.assertEqual(plan.kind("across").suffix, "_across")
         self.assertEqual(plan.kind("aim").constraint, "aim")
@@ -37,7 +38,9 @@ class Kinds(unittest.TestCase):
 
     def test_only_knot_orient_follows_by_orientation(self):
         self.assertEqual([k.key for k in plan.KINDS if k.constraint == "orient"], ["orient"])
-        self.assertTrue(all(k.constraint in ("parent", "orient", "aim") for k in plan.KINDS))
+        self.assertTrue(all(k.constraint in ("parent", "orient", "aim")
+                            for k in plan.KINDS if k.key != "snapshot"))
+        self.assertIsNone(plan.kind("snapshot").constraint)
 
     def test_suffixes_are_distinct_and_name_safe(self):
         suffixes = [k.suffix for k in plan.KINDS] + [k.inner_suffix for k in plan.KINDS
@@ -64,8 +67,59 @@ class Kinds(unittest.TestCase):
         for name in (plan.KIND_MARKER, plan.SOURCE_MARKER, plan.SPAN_MARKER, plan.KEYED_MARKER,
                      plan.OF_MARKER, plan.PENDING_MARKER, plan.PENDING_SPACE_MARKER,
                      plan.GROUP_MARKER, plan.ORDER_MARKER, plan.INNER_MARKER,
-                     plan.REGISTRY_MARKER, plan.PENDING_KIND_MARKER):
+                     plan.REGISTRY_MARKER, plan.PENDING_KIND_MARKER,
+                     plan.SNAPSHOT_OF_MARKER):
             self.assertTrue(name.startswith("skeldar"), name)
+
+
+class Snapshot(unittest.TestCase):
+    """The snapshot (2026-10-13): OverRig's object snapshot - a locator repeating the object's
+    world motion on every frame, driving nothing."""
+
+    def test_the_kind(self):
+        k = plan.kind("snapshot")
+        self.assertEqual((k.label, k.suffix, k.inner_suffix), ("Snapshot", "_snapshot", ""))
+        self.assertEqual(k.colour, (0.8, 0.5, 0.5))                  # OverRig's own
+
+    def test_a_highlight_is_exactly_its_frames(self):
+        """[a, b) as timeControl answers it: a .. b-1, OverRig's - no ramp, nothing blends."""
+        self.assertEqual(plan.snapshot_span((0.0, 100.0), [0.0, 100.0], (10.0, 30.0)),
+                         (10.0, 29.0, True))
+
+    def test_no_highlight_is_the_whole_take_as_a_knots(self):
+        self.assertEqual(plan.snapshot_span((0.0, 100.0), [-5.0, 120.0], None),
+                         plan.span_for((0.0, 100.0), [-5.0, 120.0], None))
+        self.assertEqual(plan.snapshot_span((0.5, 49.2), [], (10.0, 11.0)), (0.0, 50.0, False))
+
+    def test_the_line(self):
+        self.assertEqual(plan.snapshot_message([("cube", "cube_snapshot")], (0.0, 40.0, False)),
+                         "Snapshot: cube -> cube_snapshot over 0-40")
+        line = plan.snapshot_message([("a", "a_snapshot"), ("b", "b_snapshot"),
+                                      ("c", "c_snapshot")], (10.0, 20.0, True))
+        self.assertEqual(line, "Snapshot: 3 objects over 10-20 (the highlight)")
+
+    def test_the_refusals(self):
+        self.assertIn("snapshot", plan.SNAPSHOT_NOTHING)
+        self.assertIn("select the object", plan.SNAPSHOT_COMPONENTS)
+
+    def test_the_subtitle_counts_snapshots_apart(self):
+        self.assertEqual(plan.subtitle(2, 0, 0, 1), "2 knots, 1 snapshot in the scene")
+        self.assertEqual(plan.subtitle(0, 0, 0, 3), "3 snapshots in the scene")
+        self.assertEqual(plan.subtitle(0, 1, 0, 1), "1 snapshot in the scene, 1 pivot waiting")
+        self.assertEqual(plan.subtitle(0, 0, 0, 0), "no knots in the scene")
+
+    def test_remove_counts_snapshots_apart(self):
+        self.assertEqual(plan.removed_message([], 0, 1), "1 snapshot deleted")
+        line = plan.removed_message(["a"], 0, 2)
+        self.assertIn("Removed 1 knot", line)
+        self.assertIn("2 snapshots deleted", line)
+        self.assertEqual(plan.removed_message(["a"], 1), plan.removed_message(["a"], 1, 0))
+
+    def test_bake_skips_a_snapshot_and_says_so(self):
+        self.assertEqual(plan.snapshot_skipped(["cube_snapshot"]),
+                         "cube_snapshot is a snapshot - it drives nothing (Remove deletes it)")
+        self.assertEqual(plan.snapshot_skipped(["a", "b"]),
+                         "2 snapshots skipped - they drive nothing (Remove deletes them)")
 
 
 class Leaf(unittest.TestCase):

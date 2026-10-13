@@ -15,6 +15,12 @@ The aim tab (2026-10-13) adds the `aim` kind: two presses as Knot Offset (a targ
 riding the object while placed, then Finish), a group holding the baked target and up, the
 object's rotation following an `aimConstraint` through the same pairBlend and attach. Spec:
 docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md
+
+The snapshot (2026-10-13, «Давай реализуем создание снапшотов»): OverRig's object snapshot - a
+locator per object repeating its world motion, keyed on every frame of the highlight (else the
+whole take), in the object's Knots group. A knot that drives nothing: the object is never touched,
+the snapshot rides nothing (it carries `skeldarSnapshotOf`, never `skeldarKnotSource`), Bake skips
+it, Remove deletes it. Spec: docs/superpowers/specs/2026-10-13-tools-snapshot-design.md
 """
 
 import contextlib
@@ -205,6 +211,21 @@ def _knots_driving(obj):
     return out
 
 
+def is_snapshot(top):
+    """True for a snapshot (2026-10-13): a knot of ours that drives nothing."""
+    return _get(top, plan.KIND_MARKER) == "snapshot"
+
+
+def snapshots():
+    """Every snapshot in the scene: their long paths."""
+    return [top for top in knots() if is_snapshot(top)]
+
+
+def snapshot_of(top):
+    """The object a snapshot was taken of (it may be gone), or None."""
+    return _by_uuid(_get(top, plan.SNAPSHOT_OF_MARKER))
+
+
 def _waiting_for(obj, kind="offset"):
     uuid = _uuid(obj)
     return [p for p in pivots(kind) if _get(p, plan.PENDING_MARKER) == uuid]
@@ -250,10 +271,11 @@ def _chain(node):
     return out
 
 
-def _span(obj, highlight, extra=()):
+def _span(obj, highlight, extra=(), rule=plan.span_for):
     """The knot's span: the highlight, else the playback and animation ranges with the keys of
     the object and of everything above it (a parent's motion moves the object too) - and of
-    `extra` nodes and their ancestors (an across knot's target)."""
+    `extra` nodes and their ancestors (an across knot's target). `rule` reads them
+    (`knotplan.span_for`; a snapshot's `snapshot_span`)."""
     nodes = _chain(obj)
     for node in extra:
         nodes += [n for n in _chain(node) if n not in nodes]
@@ -262,7 +284,7 @@ def _span(obj, highlight, extra=()):
                             cmds.playbackOptions(query=True, max=True)),
                            (cmds.playbackOptions(query=True, animationStartTime=True),
                             cmds.playbackOptions(query=True, animationEndTime=True)))
-    return plan.span_for(take, keys, highlight)
+    return rule(take, keys, highlight)
 
 
 def _channels(obj, channels):
@@ -516,6 +538,45 @@ def create(kind, selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
         cmds.select([m[2] for m in made], replace=True)
     pairs = [(plan.leaf(m[0]), m[1].split("|")[-1]) for m in made]
     return plan.created_message(plan.kind(kind).label, pairs, made[0][3])
+
+
+def _build_snapshot(obj, highlight, choice):
+    """One snapshot of `obj`: a locator in its Knots group carrying its world track on every
+    frame of the span, the temporary constraint gone. (snapshot, span)."""
+    k = plan.kind("snapshot")
+    span = _span(obj, highlight, rule=plan.snapshot_span)
+    top = _locator(plan.leaf(obj) + k.suffix, _group_for(obj), _size(obj), k.colour,
+                   _order(obj, choice))
+    temp = _constrain(cmds.parentConstraint, obj, top, maintainOffset=False)
+    _bake_node(top, plan.CHANNELS, span)
+    if cmds.objExists(temp):
+        cmds.delete(temp)
+    _set_string(top, plan.KIND_MARKER, "snapshot")
+    _set_string(top, plan.SNAPSHOT_OF_MARKER, _uuid(obj))
+    _set_string(top, plan.SPAN_MARKER, plan.encode_span(span))
+    return top, span
+
+
+def snapshot(selection=None, order=plan.ORDER_DEFAULT, highlight=SLIDER):
+    """Snapshot (2026-10-13): a locator per selected object repeating its world motion, keyed on
+    every frame of the highlight (else the whole take). The object is not touched, so a rig
+    control, a bone, a constrained object, a knot all may be snapshotted; a component is refused.
+    The line."""
+    if selection is None:
+        selection = cmds.ls(selection=True, long=True) or []
+    if any("." in str(item) for item in selection):
+        return plan.SNAPSHOT_COMPONENTS
+    objs = _transforms(selection)
+    if not objs:
+        return plan.SNAPSHOT_NOTHING
+    highlight = _highlight(highlight)
+    made = []
+    with _press("skeldarSnapshot"):
+        for obj in objs:
+            made.append((obj,) + _build_snapshot(obj, highlight, order))
+        cmds.select([m[1] for m in made], replace=True)
+    return plan.snapshot_message([(plan.leaf(m[0]), m[1].split("|")[-1]) for m in made],
+                                 made[0][2])
 
 
 def create_across(pairs, order=plan.ORDER_DEFAULT, highlight=SLIDER, rotate=True,
@@ -1006,10 +1067,15 @@ def _delete_knot(top):
 
 
 def bake(selection=None):
-    """The objects baked where their knots carry them; the knots gone. The line."""
+    """The objects baked where their knots carry them; the knots gone. A snapshot drives nothing:
+    skipped, and said. The line."""
     tops, _waiting = _picked(selection)
     if not tops:
         return plan.BAKE_NOTHING
+    skipped = [t.split("|")[-1] for t in tops if is_snapshot(t)]
+    tops = [t for t in tops if not is_snapshot(t)]
+    if not tops:
+        return plan.snapshot_skipped(skipped)
     names, objs = [], []
     with _press("skeldarKnotBake"):
         for uuid in _ordered(_with_riders(tops)):
@@ -1031,7 +1097,8 @@ def bake(selection=None):
         live = [p for p in (_by_uuid(u) for u in objs) if p]
         if live:
             cmds.select(live, replace=True)
-    return plan.baked_message(names)
+    line = plan.baked_message(names)
+    return "%s; %s" % (line, plan.snapshot_skipped(skipped)) if skipped else line
 
 
 def _unkey(obj, ch, value):
@@ -1050,16 +1117,18 @@ def _unkey(obj, ch, value):
 
 
 def remove(selection=None):
-    """The knots deleted and their objects' own animation back; waiting pivots dropped."""
+    """The knots deleted and their objects' own animation back; waiting pivots dropped; a
+    snapshot deleted (with any knot riding it)."""
     tops, waiting_pivots = _picked(selection)
     if not tops and not waiting_pivots:
         return plan.REMOVE_NOTHING
-    names, objs = [], []
+    names, objs, snaps = [], [], 0
     with _press("skeldarKnotRemove"):
         for uuid in _ordered(_with_riders(tops)):
             top = _by_uuid(uuid)
             if not top:
                 continue
+            snaps += int(is_snapshot(top))
             obj = source_of(top)
             if obj:
                 mine = [c for c in constraints_of(obj) if _get(c, plan.OF_MARKER) == uuid]
@@ -1078,4 +1147,4 @@ def remove(selection=None):
         live = [p for p in (_by_uuid(u) for u in objs) if p]
         if live:
             cmds.select(live, replace=True)
-    return plan.removed_message(names, len(waiting_pivots))
+    return plan.removed_message(names, len(waiting_pivots), snaps)

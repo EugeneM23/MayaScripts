@@ -130,11 +130,14 @@ def _sources(plug):
 def _object_of(node):
     """What a selected node names: a knot (or a node inside one) the object it drives - through a
     knot riding a knot - a constraint the object it constrains, else the node itself; None for a
-    waiting pivot."""
+    waiting pivot. A snapshot drives nothing: it names itself, a plain keyed locator."""
     seen = set()
     while True:
         top = knots.top_of(node)
         if not top or top in seen:
+            break
+        if knots.is_snapshot(top):
+            node = top
             break
         seen.add(top)
         source = knots.source_of(top)

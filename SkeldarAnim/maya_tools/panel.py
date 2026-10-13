@@ -24,10 +24,15 @@ To world, Swap, Across and the pairs), Overlap - each a head that opens and clos
 under them «Selected knots»: Attach 0 / 1, Bake, Layer, Remove. Nothing is orange but a row that
 reads Finish (a pivot or an aim waiting for you).
 
+Snapshot (2026-10-13, «Давай реализуем создание снапшотов») is a row of Knots after Aim: a
+locator per selected object repeating its world motion on every frame, driving nothing
+(`knots.snapshot`).
+
 Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md,
 docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md,
 docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md,
-docs/superpowers/specs/2026-10-13-tools-card-list-design.md
+docs/superpowers/specs/2026-10-13-tools-card-list-design.md,
+docs/superpowers/specs/2026-10-13-tools-snapshot-design.md
 """
 
 import sys
@@ -90,6 +95,7 @@ ROTATE_VAR = "skeldarAcrossRotate"
 TRANSLATE_VAR = "skeldarAcrossTranslate"
 #  The aim tab (2026-10-13).
 AIM_BTN = "skeldarToolsAim"
+SNAPSHOT_BTN = "skeldarToolsSnapshot"
 OVERLAP_NAMES = "skeldarToolsOverlapNames"
 OVERLAP_FIELDS = "skeldarToolsOverlapFields"
 SOFT_LABEL = "skeldarToolsSoftnessLabel"
@@ -164,6 +170,9 @@ TIPS = {
            "appear, riding it - move them where it should point and lean, then press this "
            "button again (it reads Finish): the object's rotation aims at the target from then "
            "on (attach, a range, Bake / Remove like any knot)",
+    "snapshot": "Snapshot - select objects: each gets a locator repeating its motion in world "
+                "space, keyed on every frame (of the highlighted range, else the whole take). "
+                "Nothing follows it - use it as a target or a reference; Remove deletes it",
     "softness": "Overlap: how far ahead each link looks, times its length - smaller gives more "
                 "overlap",
     "lag": "Overlap: the frames each link trails the one above (Total lag: the whole chain's)",
@@ -194,6 +203,7 @@ HINTS = {
     LOCAL_BTN: "double knot, own axes",
     WORLD_BTN: "double knot, world axes",
     AIM_BTN: "points at a target",
+    SNAPSHOT_BTN: "free copy of the motion",
     INSIDE_BTN: "under the last selected",
     TOWORLD_BTN: "out to world level",
     SWAP_BTN: "child takes parent's place",
@@ -230,11 +240,12 @@ def refresh(*_):
     if not cmds.text(SUBTITLE, exists=True):
         return
     try:
-        count, waiting = len(knots.knots()), len(knots.pivots())
+        snaps = len(knots.snapshots())
+        count, waiting = len(knots.knots()) - snaps, len(knots.pivots())
         aims = len(knots.aims_waiting())
     except Exception:                                        # noqa: BLE001
         return
-    cmds.text(SUBTITLE, edit=True, label=plan.subtitle(count, waiting, aims))
+    cmds.text(SUBTITLE, edit=True, label=plan.subtitle(count, waiting, aims, snaps))
     for name, word, waits in ((OFFSET_BTN, plan.offset_label(bool(waiting)), bool(waiting)),
                               (AIM_BTN, plan.aim_label(bool(aims)), bool(aims))):
         if cmds.button(name, exists=True):
@@ -444,6 +455,10 @@ def aim():
                   else knots.begin_aim(order=order()))
 
 
+def snapshot():
+    return _press(lambda: knots.snapshot(order=order()))
+
+
 def overlap_settings():
     """The Overlap's settings as the card (or the memory) holds them."""
     d = overlapplan.DEFAULTS
@@ -544,6 +559,7 @@ def _knots_body():
     _row(LOCAL_BTN, "Local ×2", "stack-2", TIPS["local"], double_local)
     _row(WORLD_BTN, "World ×2", "world", TIPS["world"], double_world)
     _row(AIM_BTN, plan.aim_label(False), "target", TIPS["aim"], aim)
+    _row(SNAPSHOT_BTN, "Snapshot", "camera", TIPS["snapshot"], snapshot)
     _named_row()
     cmds.text(ORDER_LABEL, label="Rotate order", align="left")
     segments = cmds.rowLayout(numberOfColumns=3, columnAttach=[(1, "both", 1),

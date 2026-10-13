@@ -485,7 +485,8 @@ class OurRows(unittest.TestCase):
         #  + window.walk, walk.apply (2026-10-13, Walk Builder)
         #  + tools.bake_layer (2026-10-13, Bake to a layer)
         #  + window.camshake, camshake.apply (2026-10-13, Camera Shake)
-        self.assertEqual(len(ours), 62)
+        #  + tools.snapshot (2026-10-13, Snapshot)
+        self.assertEqual(len(ours), 63)
 
     def test_the_tools_rows(self):
         """The Tools card (2026-10-12): every button a row, pressing the card's own press -
@@ -495,8 +496,8 @@ class OurRows(unittest.TestCase):
                           "tools.bake", "tools.bake_layer", "tools.double_local",
                           "tools.double_world",
                           "tools.inside", "tools.knot", "tools.knot_offset",
-                          "tools.knot_orient", "tools.overlap", "tools.remove", "tools.swap",
-                          "tools.world"])
+                          "tools.knot_orient", "tools.overlap", "tools.remove",
+                          "tools.snapshot", "tools.swap", "tools.world"])
         for key in self._keys("tools."):
             found = maya_hotkeys.row(key)
             self.assertEqual(found[1], "SkeldarAnim.Tools")

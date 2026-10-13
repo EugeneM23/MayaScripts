@@ -28,6 +28,7 @@ ORDER_MARKER = "skeldarKnotOrder"               # a waiting pivot: the rotate or
 INNER_MARKER = "skeldarKnotInner"               # a double knot's inner node: its top's UUID
 REGISTRY_MARKER = "skeldarKnotRegistry"         # the objectSet holding every across knot
 GROUP_MARKER = "skeldarKnotGroup"               # the group knots live in
+SNAPSHOT_OF_MARKER = "skeldarSnapshotOf"        # a snapshot: its object's UUID (it rides nothing)
 ATTACH = "attach"                               # 0..1 on the top node: the object's own <-> the knot
 
 GROUP_IN_CHARACTER = "Knots"
@@ -52,6 +53,9 @@ KINDS = (
     #  2026-10-13, the aim tab: a group holding a target and an up; the object's rotation aims
     #  at the target, leaning to the up (OverRig's aim).
     Kind("aim", "Aim", "_aim", "_aimUp", (1.0, 0.45, 0.65), (0.65, 0.9, 1.0), "aim"),
+    #  2026-10-13, the snapshot: a locator repeating the object's world motion on every frame,
+    #  driving nothing - nothing follows it (OverRig's object snapshot, in its colour).
+    Kind("snapshot", "Snapshot", "_snapshot", "", (0.8, 0.5, 0.5), None, None),
 )
 _KINDS = dict((k.key, k) for k in KINDS)
 
@@ -241,6 +245,15 @@ def span_for(playback, keys, highlight):
     return (float(math.floor(lo)), float(math.ceil(hi)), False)
 
 
+def snapshot_span(playback, keys, highlight):
+    """(start, end, ranged) a snapshot is baked over: a highlight of more than one frame `[a, b)`
+    gives exactly its frames `a .. b-1` (OverRig's: no ramp, nothing blends); otherwise the whole
+    take, as a knot's. Pure."""
+    if highlight and highlight[1] - highlight[0] > 1:
+        return (float(highlight[0]), float(highlight[1]) - 1.0, True)
+    return span_for(playback, keys, None)
+
+
 def widen(span, keys):
     """`span` grown to hold `keys` (a knot the animator keyed past its own span)."""
     if not keys:
@@ -339,6 +352,8 @@ def choose_pivot(named, waiting):
 # ------------------------------------------------------------------ lines
 
 NOTHING = "select the objects to knot"
+SNAPSHOT_NOTHING = "select the objects to snapshot"
+SNAPSHOT_COMPONENTS = "components are not snapshotted - select the object"
 OFFSET_ONE = "Knot Offset takes one object - select one"
 BAKE_NOTHING = "select a knot, or an object riding one, to bake it"
 REMOVE_NOTHING = "select a knot, a waiting pivot, or an object riding a knot"
@@ -381,17 +396,35 @@ def finish_message(name, knot, span):
     return "Knot Offset: %s rides %s at its pivot %s" % (name, knot, span_words(span))
 
 
+def snapshot_message(pairs, span):
+    """`pairs` [(object leaf, snapshot leaf)], `span` its snapshot_span."""
+    start, end, ranged = span
+    words = "over %s-%s%s" % (_num(start), _num(end), " (the highlight)" if ranged else "")
+    if len(pairs) == 1:
+        return "Snapshot: %s -> %s %s" % (pairs[0][0], pairs[0][1], words)
+    return "Snapshot: %d objects %s" % (len(pairs), words)
+
+
+def snapshot_skipped(names):
+    """Bake has nothing to write for a snapshot (it drives nothing)."""
+    if len(names) == 1:
+        return "%s is a snapshot - it drives nothing (Remove deletes it)" % names[0]
+    return "%d snapshots skipped - they drive nothing (Remove deletes them)" % len(names)
+
+
 def baked_message(names):
     return "Baked %s onto %s" % (_plural(len(names), "knot"), ", ".join(names))
 
 
-def removed_message(names, pivots):
+def removed_message(names, pivots, snapshots=0):
     parts = []
     if names:
         parts.append("Removed %s - %s play%s their own animation again" % (
             _plural(len(names), "knot"), ", ".join(names), "" if len(names) != 1 else "s"))
     if pivots:
         parts.append("%s dropped" % _plural(pivots, "pivot"))
+    if snapshots:
+        parts.append("%s deleted" % _plural(snapshots, "snapshot"))
     return "; ".join(parts)
 
 
@@ -400,10 +433,14 @@ def offset_label(waiting):
     return "Finish" if waiting else "Offset"
 
 
-def subtitle(knot_count, pivot_count, aim_count=0):
-    parts = []
+def subtitle(knot_count, pivot_count, aim_count=0, snapshot_count=0):
+    parts, standing = [], []
     if knot_count:
-        parts.append("%s in the scene" % _plural(knot_count, "knot"))
+        standing.append(_plural(knot_count, "knot"))
+    if snapshot_count:
+        standing.append(_plural(snapshot_count, "snapshot"))
+    if standing:
+        parts.append("%s in the scene" % ", ".join(standing))
     if pivot_count:
         parts.append("%s waiting" % _plural(pivot_count, "pivot"))
     if aim_count:
