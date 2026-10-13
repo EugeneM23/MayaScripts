@@ -433,3 +433,452 @@ def parse_record(text):
         return None
     data["settings"] = settings(data["mode"], data.get("settings") or {})
     return data
+
+
+# ---------------------------------------------------------------------------------------------------------
+# 3. The scene (cmds)
+# ---------------------------------------------------------------------------------------------------------
+
+LAYER_MARKER = "skeldarCamShake"        # on our layers: the shake's record (JSON)
+OUR_CAMERA = "mayaSceneSetupCamera"     # the plugin's Camera Setup marks its camera with this
+UNDO = "skeldarCamShake"
+STATE = "_skeldar_camshake"             # on sys: a re-dropped script still knows the picked shake
+ROTATE = ("rotateX", "rotateY", "rotateZ")
+TRANSLATE = ("translateX", "translateY", "translateZ")
+SIDES = {"Random": "a random side", "Below": "below", "Above": "above", "Left": "the left",
+         "Right": "the right", "Front": "the front"}
+
+
+class Refused(Exception):
+    """A press that changed nothing, and says why."""
+
+
+def frame_rate():
+    import maya.api.OpenMaya as om
+    return 1.0 / om.MTime(1.0, om.MTime.uiUnit()).asUnits(om.MTime.kSeconds)
+
+
+def cm_to_ui():
+    import maya.api.OpenMaya as om
+    return om.MDistance(1.0, om.MDistance.kCentimeters).asUnits(om.MDistance.uiUnit())
+
+
+def deg_to_ui():
+    return 1.0 if cmds.currentUnit(query=True, angle=True).startswith("deg") else math.pi / 180.0
+
+
+def leaf(path):
+    return path.split("|")[-1]
+
+
+def highlight():
+    """The time slider's highlighted frames (first, last), or None."""
+    try:
+        import maya.mel as mel
+        slider = mel.eval("$skeldarCamShakeSlider = $gPlayBackSlider")
+        if not cmds.timeControl(slider, query=True, rangeVisible=True):
+            return None
+        start, end = cmds.timeControl(slider, query=True, rangeArray=True)
+    except Exception:
+        return None
+    first, last = int(round(start)), int(round(end)) - 1
+    return (first, last) if last > first else None
+
+
+def frames_for(mode, s, given=None):
+    """(first, last, where they came from) for a new shake: given, the highlight, else the playback range
+    (handheld) or the current frame and Length (impact)."""
+    if given is not None:
+        a, b, where = int(given[0]), int(given[1]), ""
+    else:
+        found = highlight()
+        if found:
+            (a, b), where = found, "the highlight"
+        elif mode == "handheld":
+            a = int(math.floor(cmds.playbackOptions(query=True, minTime=True) + 1e-6))
+            b = int(math.ceil(cmds.playbackOptions(query=True, maxTime=True) - 1e-6))
+            where = "the playback range"
+        else:
+            a = int(round(cmds.currentTime(query=True)))
+            b = a + int(round(s["length"]))
+            where = "the current frame + Length"
+    if b <= a:
+        raise Refused("frames %d-%d: a shake needs at least 2 frames" % (a, b))
+    return a, b, where
+
+
+def our_cameras():
+    """Every camera the plugin's Camera Setup made, found by its marker."""
+    found = []
+    for shape in cmds.ls(type="camera", long=True) or []:
+        parents = cmds.listRelatives(shape, parent=True, fullPath=True) or []
+        if parents and parents[0] not in found and cmds.attributeQuery(OUR_CAMERA, node=parents[0],
+                                                                       exists=True):
+            found.append(parents[0])
+    return found
+
+
+def targets(selection=None):
+    """What a new shake shakes: the selected transforms (a shape counts as its transform); nothing
+    selected, our camera when there is exactly one."""
+    if selection is None:
+        names = cmds.ls(selection=True, long=True) or []
+    else:
+        names = (cmds.ls(selection, long=True) or []) if selection else []
+    found = []
+    for node in names:
+        if cmds.objectType(node, isAType="shape"):
+            node = (cmds.listRelatives(node, parent=True, fullPath=True) or [None])[0]
+        if node and cmds.objectType(node, isAType="transform") and node not in found:
+            found.append(node)
+    if found:
+        return found
+    ours = our_cameras()
+    if len(ours) == 1:
+        return ours
+    if ours:
+        raise Refused("%d cameras of ours (%s) - select the one to shake"
+                      % (len(ours), ", ".join(leaf(camera) for camera in ours)))
+    raise Refused("select a camera to shake")
+
+
+def _sources(node, owner=None):
+    """What feeds a node; a layer's rotation blend reads its channel's owner's rotateOrder, which is not
+    a driver, so the owner is left out."""
+    found = cmds.listConnections(node, source=True, destination=False, skipConversionNodes=True) or []
+    if owner is None:
+        return found
+    return [source for source in found if (cmds.ls(source, long=True) or [source])[0] != owner]
+
+
+def _channel_sources(node, attr):
+    found = []
+    for plug in ("%s.%s" % (node, attr), "%s.%s" % (node, attr[:-1])):   # rotateX, and rotate
+        found += cmds.listConnections(plug, source=True, destination=False, skipConversionNodes=True) or []
+    return found
+
+
+def foreign_driver(node, attr):
+    """What drives a channel besides time curves and animation layers, or None."""
+    todo, seen = _channel_sources(node, attr), set()
+    while todo:
+        source = todo.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        kind = cmds.nodeType(source)
+        if kind.startswith("animCurveT") or kind == "animLayer":
+            continue
+        if kind.startswith("animBlendNode"):
+            todo += _sources(source, node)
+            continue
+        return source
+    return None
+
+
+def _driver_message(node, attr, driver):
+    text = "%s.%s is driven by %s (%s)" % (leaf(node), attr, leaf(driver), cmds.nodeType(driver))
+    if cmds.objectType(driver, isAType="constraint"):
+        for source in _sources(driver):
+            path = (cmds.ls(source, long=True) or [source])[0]
+            if (path != node and cmds.objectType(path, isAType="transform")
+                    and cmds.listRelatives(path, shapes=True, type="camera")):
+                return text + " - select %s, which drives it" % leaf(path)
+    return text + " - a shake needs channels that are keyed or free"
+
+
+def _upstream_curves(node, attrs):
+    """Every curve feeding the channels, through the layers' blend nodes and the layers' weights."""
+    curves, todo, seen = [], [], set()
+    for attr in attrs:
+        todo += _channel_sources(node, attr)
+    while todo:
+        source = todo.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        kind = cmds.nodeType(source)
+        if kind.startswith("animCurve"):
+            curves.append(source)
+        elif kind.startswith("animBlendNode") or kind == "animLayer":
+            todo += _sources(source, node)
+    return curves
+
+
+def _find_curve(layer, plug):
+    try:
+        return (cmds.animLayer(layer, query=True, findCurveForPlug=plug) or [None])[0]
+    except RuntimeError:     # no layers at all
+        return None
+
+
+def _curve_values(curve, frames):
+    return np.array([cmds.keyframe(curve, query=True, eval=True, time=(float(f), float(f)))[0]
+                     for f in frames], float)
+
+
+def _layer_share(layer, node, attr, frames):
+    """This layer's own share of a channel on each frame: its curve times its weight, 0 when muted."""
+    zero = np.zeros(len(frames))
+    if not layer or not cmds.objExists(layer) or cmds.animLayer(layer, query=True, mute=True):
+        return zero
+    curve = _find_curve(layer, "%s.%s" % (node, attr))
+    if not curve:
+        return zero
+    weight = cmds.listConnections(layer + ".weight", source=True, destination=False, type="animCurve") or []
+    weights = (_curve_values(weight[0], frames) if weight
+               else np.full(len(frames), cmds.getAttr(layer + ".weight")))
+    return _curve_values(curve, frames) * weights
+
+
+def base_rotations(node, layer, frames):
+    """What the node's rotate shows on each frame without this layer (deg). Read through every layer, the
+    curves upstream dirtied first - a read at another time keeps a stale value per time otherwise - and
+    this layer's own share taken off."""
+    curves = _upstream_curves(node, ROTATE)
+    if curves:
+        cmds.dgdirty(curves)
+    shown = np.array([cmds.getAttr(node + ".rotate", time=float(f))[0] for f in frames], float)
+    for axis, attr in enumerate(ROTATE):
+        shown[:, axis] -= _layer_share(layer, node, attr, frames)
+    return shown / deg_to_ui()
+
+
+def _static(node):
+    """Its rotate order, rotate axis (deg) and a joint's orient (deg)."""
+    unit = deg_to_ui()
+    order = ORDERS[cmds.getAttr(node + ".rotateOrder")]
+    axis = np.array(cmds.getAttr(node + ".rotateAxis")[0], float) / unit
+    orient = (np.array(cmds.getAttr(node + ".jointOrient")[0], float) / unit
+              if cmds.nodeType(node) == "joint" else np.zeros(3))
+    return order, axis, orient
+
+
+def shakes():
+    """Every shake of ours in the scene: its layer."""
+    return [layer for layer in cmds.ls(type="animLayer") or []
+            if cmds.attributeQuery(LAYER_MARKER, node=layer, exists=True)]
+
+
+def record(layer):
+    """A shake's record, or None."""
+    if not layer or not cmds.objExists(layer) or not cmds.attributeQuery(LAYER_MARKER, node=layer,
+                                                                          exists=True):
+        return None
+    return parse_record(cmds.getAttr(layer + "." + LAYER_MARKER))
+
+
+def _uuid(node):
+    return cmds.ls(node, uuid=True)[0]
+
+
+def _node(uuid):
+    found = cmds.ls(uuid, long=True) or []
+    return found[0] if found else None
+
+
+def _channels(node, mode, s, layer):
+    """(the channels a shake keys on a node, the locked ones skipped): rotate, and translate when it moves
+    the camera or the layer holds it already. Refused, by name, when one is driven."""
+    attrs = list(ROTATE)
+    moves = (s["drift"] if mode == "handheld" else s["push"]) > 0.0
+    if moves or (layer and any(_find_curve(layer, "%s.%s" % (node, a)) for a in TRANSLATE)):
+        attrs += list(TRANSLATE)
+    keep, locked = [], []
+    for attr in attrs:
+        if cmds.getAttr("%s.%s" % (node, attr), lock=True):
+            locked.append(attr)
+            continue
+        driver = foreign_driver(node, attr)
+        if driver:
+            raise Refused(_driver_message(node, attr, driver))
+        keep.append(attr)
+    if not [attr for attr in keep if attr in ROTATE]:
+        raise Refused("%s's rotate is locked" % leaf(node))
+    return keep, locked
+
+
+def _values(node, index, mode, s, a, b, layer, attrs):
+    """(the frames, {channel: what the layer adds on each}) for one node."""
+    frames = np.arange(a, b + 1)
+    rot, off = shake(mode, frames, a, b, frame_rate(), s, index)
+    base = base_rotations(node, layer, frames)
+    order, axis, orient = _static(node)
+    dr, dt = deltas(rot, off * cm_to_ui(), base, order, axis, orient)
+    unit = deg_to_ui()
+    table = {}
+    for i, attr in enumerate(ROTATE):
+        table[attr] = dr[:, i] * unit
+    for i, attr in enumerate(TRANSLATE):
+        table[attr] = dt[:, i]
+    return frames, {attr: table[attr] for attr in attrs}
+
+
+def _layer_curve(layer, node, attr, first):
+    plug = "%s.%s" % (node, attr)
+    curve = _find_curve(layer, plug)
+    if not curve:
+        cmds.setKeyframe(node, attribute=attr, animLayer=layer, time=first, identity=True)
+        curve = _find_curve(layer, plug)
+    return curve
+
+
+def _key(curve, frames, values):
+    """Keys on every frame (spline), 0 a frame outside each end (flat), and nothing between: the first
+    key's in-tangent and the last's out-tangent are straight lines from and to 0."""
+    a, b = int(frames[0]), int(frames[-1])
+    for frame, value in zip(frames, values):
+        cmds.setKeyframe(curve, time=int(frame), value=float(value), inTangentType="spline",
+                         outTangentType="spline")
+    for frame in (a - 1, b + 1):
+        cmds.setKeyframe(curve, time=frame, value=0.0, inTangentType="flat", outTangentType="flat")
+    for frame, side in ((a, "inTangentType"), (b, "outTangentType")):
+        cmds.keyTangent(curve, time=(frame, frame), lock=False)
+        cmds.keyTangent(curve, time=(frame, frame), **{side: "linear"})
+
+
+def _new_layer(mode, a, b):
+    layer = cmds.animLayer(layer_name(mode, a, b))
+    cmds.setAttr(layer + ".rotationAccumulationMode", 0)      # by component: the eulers add up
+    cmds.addAttr(layer, longName=LAYER_MARKER, dataType="string")
+    return layer
+
+
+def _write(layer, mode, s, a, b, nodes, plans, lock):
+    """Every node's keys on the layer; unlocked while writing, then locked (`lock`) or as it was."""
+    was = cmds.animLayer(layer, query=True, lock=True)
+    if was:
+        cmds.animLayer(layer, edit=True, lock=False)
+    try:
+        for index, (node, attrs) in enumerate(zip(nodes, plans)):
+            missing = ["%s.%s" % (node, attr) for attr in attrs
+                       if not _find_curve(layer, "%s.%s" % (node, attr))]
+            if missing:
+                cmds.animLayer(layer, edit=True, attribute=missing)
+            frames, values = _values(node, index, mode, s, a, b, layer, attrs)
+            for attr in attrs:
+                _key(_layer_curve(layer, node, attr, a), frames, values[attr])
+    finally:
+        cmds.animLayer(layer, edit=True, lock=bool(was if lock is None else lock))
+
+
+def _chunk(work):
+    """One undo chunk; a failure inside takes back what it did."""
+    cmds.undoInfo(openChunk=True, chunkName=UNDO)
+    failed = False
+    try:
+        return work()
+    except Exception:
+        failed = True
+        raise
+    finally:
+        cmds.undoInfo(closeChunk=True)
+        if failed and cmds.undoInfo(query=True, state=True):
+            try:
+                cmds.undo()
+            except Exception:
+                pass
+
+
+def _existing(mode, a, b, uuids):
+    for layer in shakes():
+        found = record(layer)
+        if (found and found["mode"] == mode and found["frames"] == [a, b]
+                and sorted(found["targets"]) == sorted(uuids)):
+            return layer
+    return None
+
+
+def describe(mode, s, a, b, nodes, layer, where="", locked=()):
+    names = ", ".join(leaf(node) for node in nodes)
+    if mode == "handheld":
+        what = "Handheld: sway %.2f deg, jitter %.2f deg, drift %.1f cm" % (s["sway"], s["jitter"], s["drift"])
+    else:
+        what = "Impact from %s: %.1f deg, push %.1f cm, rattle %.2f deg" % (
+            SIDES[s["direction"]], s["strength"], s["push"], s["rattle"])
+    text = "%s on %s, frames %d-%d%s | layer %s, its weight is the strength" % (
+        what, names, a, b, " (%s)" % where if where else "", layer)
+    skipped = sorted({attr for attrs in locked for attr in attrs})
+    if skipped:
+        text += " | locked, not shaken: " + ", ".join(skipped)
+    return text
+
+
+def apply(mode, given=None, selection=None, frames=None):
+    """A new shake on the selection over the highlight (or the one with the same mode, frames and cameras
+    rewritten); picked. (layer, message)."""
+    s = settings(mode, given)
+    nodes = targets(selection)
+    a, b, where = frames_for(mode, s, frames)
+    uuids = [_uuid(node) for node in nodes]
+    layer = _existing(mode, a, b, uuids)
+    plans = [_channels(node, mode, s, layer) for node in nodes]
+
+    def work():
+        target = layer or _new_layer(mode, a, b)
+        _write(target, mode, s, a, b, nodes, [plan[0] for plan in plans],
+               lock=True if layer is None else None)
+        cmds.setAttr(target + "." + LAYER_MARKER, record_text(mode, s, a, b, uuids), type="string")
+        return target
+
+    made = _chunk(work)
+    pick(made)
+    return made, describe(mode, s, a, b, nodes, made, where, [plan[1] for plan in plans])
+
+
+def retune(layer, given):
+    """The shake re-keyed with new settings on its own cameras and frames; the layer, its weight and its
+    lock kept."""
+    found = record(layer)
+    if found is None:
+        raise Refused("%s is not a shake of ours" % layer)
+    mode = found["mode"]
+    s = settings(mode, given)
+    a, b = found["frames"]
+    nodes = [_node(uuid) for uuid in found["targets"]]
+    if None in nodes:
+        raise Refused("a camera of %s is gone - delete the shake" % layer)
+    plans = [_channels(node, mode, s, layer) for node in nodes]
+
+    def work():
+        _write(layer, mode, s, a, b, nodes, [plan[0] for plan in plans], lock=None)
+        cmds.setAttr(layer + "." + LAYER_MARKER, record_text(mode, s, a, b, found["targets"]),
+                     type="string")
+
+    _chunk(work)
+    return describe(mode, s, a, b, nodes, layer, "", [plan[1] for plan in plans])
+
+
+def delete(layer):
+    if record(layer) is None:
+        raise Refused("pick a shake to delete")
+    name = layer
+    if picked() == layer:
+        pick(None)
+    _chunk(lambda: cmds.delete(layer))
+    return "deleted %s" % name
+
+
+def _state():
+    state = getattr(sys, STATE, None)
+    if state is None:
+        state = {"picked": None}
+        setattr(sys, STATE, state)
+    return state
+
+
+def picked():
+    """The shake the window edits, or None."""
+    uuid = _state().get("picked")
+    layer = (cmds.ls(uuid) or [None])[0] if uuid else None
+    return layer if record(layer) else None
+
+
+def pick(layer):
+    _state()["picked"] = _uuid(layer) if layer else None
+
+
+def editor_pick():
+    """The shake of ours selected in the Anim Layer Editor, when exactly one is."""
+    chosen = [layer for layer in shakes() if cmds.animLayer(layer, query=True, selected=True)]
+    return chosen[0] if len(chosen) == 1 else None
