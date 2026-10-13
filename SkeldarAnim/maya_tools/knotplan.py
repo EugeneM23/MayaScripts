@@ -693,6 +693,30 @@ def anchored(deltas, minimum=LAYER_MIN):
     return kept, shifts
 
 
+def bridge_kind(out_types, weighted):
+    """How a base curve's keys move onto the layer exactly under a highlight - from the out
+    tangent types of its keys over it (one frame before it to its last key inside): "smooth" (no
+    step: a Hermite segment minus the bridge's is a Hermite segment), "stepped" (every one a step:
+    the bridge holds still, the keys move as they are), else None (weighted, or steps mixed in -
+    keyed at its keys instead). Pure."""
+    if weighted:
+        return None
+    if out_types and all(kind == "step" for kind in out_types):
+        return "stepped"
+    if any(kind in ("step", "stepnext") for kind in out_types):
+        return None
+    return "smooth"
+
+
+def bridge_keys(keys, bridge):
+    """The layer's keys over a highlight, exact: `keys` [(time, value, in slope, out slope)] of
+    the base curve from one frame before the highlight to one frame after, `bridge` [(value, in
+    slope, out slope)] of the bridged base at the same times; each layer key their difference.
+    Slopes are UI units a frame. Pure."""
+    return [(t, v - bv, si - bsi, so - bso)
+            for (t, v, si, so), (bv, bsi, bso) in zip(keys, bridge)]
+
+
 def bridged(times, first, last):
     """The base keys a highlight `first..last` takes away: those strictly between `first - 1`
     and `last + 1`, where the base then bridges on its own keys. Pure."""

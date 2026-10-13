@@ -16,9 +16,14 @@ them (riders first), the animator's constraints are deleted, and a constraint of
 another card of ours (a weapon link, a hand proxy, the scene camera, a weapon or armor space) or
 of the rig itself refuses the whole press by name. One time walk reads what every object shows,
 the drivers come off, the base's own curves go (or are bridged), a second walk reads what is left,
-and the difference - the shown rotation made continuous from what is left - is keyed on every
-frame of the span (the highlight, zero one frame outside it, else the take, anchored at its first
-frame). One undo chunk; a refusal changes nothing. Other animation layers stay as they are.
+and the difference - the shown rotation made continuous from what is left - is keyed (the
+highlight, zero one frame outside it, else the take, anchored at its first frame). By keys, not
+baked («переносилась по ключам и мы их не теряли»): over the whole take a channel only its own
+keys move is the base curve itself moved onto the layer, every key, tangent and infinity kept;
+under a highlight its keys inside it move with their values and slopes less the bridge's (a
+stepped curve's as they are) - exact between frames too. A driven channel has no keys of its own
+and is keyed on every frame. One undo chunk; a refusal changes nothing. Other animation layers
+stay as they are.
 
 `write_deltas` is the layer writer the Overlap uses too.
 
@@ -49,22 +54,37 @@ _BLEND_INPUT2 = {"tx": "inTranslateX2", "ty": "inTranslateY2", "tz": "inTranslat
 
 # ------------------------------------------------------------------- writer
 
-def write_deltas(name, marker, value, tracks, ranged=False, cycled=False):
-    """`tracks` {(node, channel): (times, values)} keyed on a new additive layer `name` (marked
-    `marker` = `value`, rotation by component); zero one frame outside when `ranged`; cycled
-    curves cycle. The layer's name."""
+def write_deltas(name, marker, value, tracks, ranged=False, cycled=False, moves=None):
+    """`tracks` {(node, channel): (times, values[, {time: (in, out)}])} keyed on a new additive
+    layer `name` (marked `marker` = `value`, rotation by component) - a tangent type None is
+    Maya's default; zero one frame outside when `ranged`; cycled curves cycle. `moves`
+    {(node, channel): (curve, value)}: the base curve itself moved onto the layer (`_move`), the
+    base left on `value`. The layer's name."""
+    moves = moves or {}
     layer = cmds.animLayer(name)
     knots._set_string(layer, marker, value)
     cmds.setAttr(layer + ".rotationAccumulationMode", 0)          # by component
-    plugs = ["%s.%s" % (node, plan.LONG[ch]) for node, ch in tracks]
+    plugs = ["%s.%s" % (node, plan.LONG[ch]) for node, ch in list(tracks) + list(moves)]
     cmds.animLayer(layer, edit=True, attribute=plugs)
-    for (node, ch), (times, values) in tracks.items():
+    for (node, ch), track in tracks.items():
+        times, values = track[0], track[1]
+        tangents = track[2] if len(track) > 2 else {}
         plug = "%s.%s" % (node, plan.LONG[ch])
         cmds.setKeyframe(node, attribute=plan.LONG[ch], animLayer=layer, time=times[0],
                          identity=True)
         curve = (cmds.animLayer(layer, query=True, findCurveForPlug=plug) or [None])[0]
         for time, number in zip(times, values):
+            kind = tangents.get(time, (None, None))
+            types = dict((flag, k) for flag, k in zip(
+                ("inTangentType", "outTangentType"), kind[:2]) if k)
+            #  the types through keyTangent: setKeyframe takes no "fixed", and on a key already
+            #  there (the identity key at the first time) it leaves the types as they were
             cmds.setKeyframe(curve, time=time, value=float(number))
+            if types:
+                cmds.keyTangent(curve, time=(time, time), lock=False, **types)
+            if len(kind) > 2:                  # an exact key: its slopes, as angles a frame
+                cmds.keyTangent(curve, time=(time, time), lock=False, inAngle=kind[2],
+                                outAngle=kind[3])
         if ranged:
             for edge in (times[0] - 1, times[-1] + 1):
                 cmds.setKeyframe(curve, time=edge, value=0.0, inTangentType="flat",
@@ -72,7 +92,26 @@ def write_deltas(name, marker, value, tracks, ranged=False, cycled=False):
         if cycled:
             cmds.setAttr(curve + ".preInfinity", _CYCLE)
             cmds.setAttr(curve + ".postInfinity", _CYCLE)
+    for (node, ch), (curve, held) in moves.items():
+        _move(node, ch, curve, held)
     return layer
+
+
+def _move(node, ch, curve, held):
+    """The base curve of `node.ch` moved onto the layer just added on top of it: off the base
+    (the plug it feeds under every layer's blend), onto that layer's blend input B, its values
+    shifted by `held`, which the base then holds - every key, tangent, weight and infinity
+    kept (measured: the layer finds it as its own curve)."""
+    plug = "%s.%s" % (node, plan.LONG[ch])
+    base_plug, _curve, _word, _layered = _base(plug, ch)
+    real = cmds.listConnections(base_plug, source=True, destination=False, plugs=True) or []
+    if real:
+        cmds.disconnectAttr(real[0], base_plug)
+    top, attr = _source_plug(plug).split(".", 1)
+    cmds.connectAttr(curve + ".output", "%s.inputB%s" % (top, attr[len("output"):]))
+    cmds.setAttr(base_plug, held)
+    if abs(held) > 1e-12:
+        cmds.keyframe(curve, edit=True, relative=True, valueChange=-held)
 
 
 def bake_layers():
@@ -267,10 +306,12 @@ def _plan(obj, rigs):
             foreign[con] = channels
             held.update(channels)
         driven.update(channels)
-    moving, words, layered = [], {}, False
+    moving, words, layered, curves = [], {}, False, {}
     for ch in free:
         _plug, curve, word, on_layer = _base(obj + "." + ch, ch)
         layered = layered or on_layer
+        if curve:
+            curves[ch] = curve
         if word:
             words[ch] = word
         elif curve and _moves(curve):
@@ -281,7 +322,7 @@ def _plan(obj, rigs):
     if not tops and not foreign and not moving:
         return None, plan.undriven_refusal(name, list(words.values()), layered)
     return dict(obj=obj, tops=tops, foreign=foreign, driven=driven, held=held, moving=moving,
-                words=words), ""
+                words=words, curves=curves), ""
 
 
 # --------------------------------------------------------------------- span
@@ -352,16 +393,60 @@ def _knots_off(tops):
     return count
 
 
+def _ev(curve, time):
+    return cmds.keyframe(curve, query=True, eval=True, time=(time, time))[0]
+
+
+def _slopes(curve, time):
+    """(in, out) slope of a key, UI units a frame (its tangent angle's tangent - measured)."""
+    angles = [cmds.keyTangent(curve, time=(time, time), query=True, **{flag: True})[0]
+              for flag in ("inAngle", "outAngle")]
+    return tuple(math.tan(math.radians(a)) for a in angles)
+
+
 def _bridge(curve, first, last):
     """A highlight `first..last` taken off a base curve: a key one frame outside each end
-    (inserted, the shape kept), the keys between them cut - the curve then bridges the
-    highlight on those two keys' own tangents."""
+    (inserted, the shape kept, its tangents and its outer neighbour's pinned so nothing outside
+    moves, trap 221), the keys between them cut - the curve then bridges the highlight on those
+    two keys' tangents. The layer's keys that give back exactly what it showed over the highlight
+    ([(time, value, (in type, out type[, in angle, out angle]))]: a smooth curve's keys with their
+    slopes minus the bridge's, a stepped curve's as they are with the bridge holding still), or
+    None (weighted, steps mixed in) - then it is keyed on every frame of the highlight."""
+    edges = (first - 1.0, last + 1.0)
     times = cmds.keyframe(curve, query=True, timeChange=True) or []
-    for edge in (first - 1.0, last + 1.0):
+    for edge in edges:
         if not any(abs(t - edge) < 1e-6 for t in times):
             cmds.setKeyframe(curve, time=edge, insert=True)
+        knots._pin(curve, edge)
+        outer = [t for t in times if (t < edge if edge < first else t > edge)]
+        if outer:
+            knots._pin(curve, max(outer) if edge < first else min(outer))
+    times = cmds.keyframe(curve, query=True, timeChange=True) or []
+    span = [t for t in times if edges[0] - 1e-6 <= t <= edges[1] + 1e-6]
+    outs = [cmds.keyTangent(curve, time=(t, t), query=True, outTangentType=True)[0]
+            for t in span[:-1]]
+    kind = plan.bridge_kind(outs, bool(cmds.keyTangent(curve, query=True,
+                                                       weightedTangents=True)[0]))
+    original = [(t, _ev(curve, t)) + _slopes(curve, t) for t in span]
     if plan.bridged(times, first, last):
-        cmds.cutKey(curve, time=(first - 1.0 + 1e-3, last + 1.0 - 1e-3), clear=True)
+        cmds.cutKey(curve, time=(edges[0] + 1e-3, edges[1] - 1e-3), clear=True)
+    if kind == "stepped":
+        cmds.keyTangent(curve, time=(edges[0], edges[0]), outTangentType="step")
+        still = _ev(curve, edges[0])
+        return [(t, (v - still) if edges[0] < t < edges[1] else 0.0, (None, "step"))
+                for t, v, _si, _so in original]
+    if kind != "smooth":
+        return None
+    h = 1e-3
+    bridge = []
+    for t in span:
+        if edges[0] < t < edges[1]:
+            slope = (_ev(curve, t + h) - _ev(curve, t - h)) / (2.0 * h)
+            bridge.append((_ev(curve, t), slope, slope))
+        else:
+            bridge.append((_ev(curve, t),) + _slopes(curve, t))
+    return [(t, v, ("fixed", "fixed", math.degrees(math.atan(si)), math.degrees(math.atan(so))))
+            for t, v, si, so in plan.bridge_keys(original, bridge)]
 
 
 def _shift(path, ch, amount):
@@ -376,29 +461,61 @@ def _shift(path, ch, amount):
     return True
 
 
-def _clear_base(info, path, span, shown, now):
+def _shared(curve):
+    """True when the curve feeds more than one plug (moving it would take it from the others)."""
+    return len(cmds.listConnections(curve + ".output", source=False, destination=True,
+                                    plugs=True) or []) > 1
+
+
+def _sorting(info, span):
+    """(moved, sampled): the channels whose base curve moves onto the layer whole - over the whole
+    take, a channel only its own keys move (not driven, its curve feeding nothing else) - and the
+    rest, read off the scene: a driven channel on every frame (it has no keys of its own: a knot
+    is keyed on every frame itself, and a constraint's turns between its targets' keys would be
+    lost), a plain one under a highlight by its own keys (`_bridge`) or, when that cannot be
+    exact, on every frame too."""
+    free = set(_free(info["obj"]))
+    wanted = (set(info["moving"]) | info["driven"]) & free
+    if span[2]:
+        return set(), wanted
+    moved = set(ch for ch in info["moving"] if ch not in info["driven"] and ch in free
+                and not _shared(info["curves"][ch]))
+    return moved, wanted - moved
+
+
+def _clear_base(info, path, span, shown, now, moved=(), exact=None):
     """The base's own animation off one object, inside the press: whole take - each curve that
     moves deleted, the channel (and each channel a driver held) left on its first-frame value;
-    a highlight - each such curve bridged, an unkeyed channel a foreign constraint drove kept at
-    the current frame's pose (trap 238; a knot's channels have their own value back). The
-    channels held that way."""
+    a highlight - each such curve bridged (the exact layer keys of a channel nothing drives kept in
+    `exact`), an unkeyed channel a foreign constraint drove kept at the current frame's pose (trap
+    238; a knot's channels have their own value back). The channels held that way."""
     first, last, ranged = span
     held = []
     for ch in sorted(set(info["moving"]) | (info["driven"] & set(_free(path)))):
+        if ch in moved:
+            continue                       # the curve itself goes onto the layer, after the walk
         base_plug, curve, word, _layered = _base(path + "." + ch, ch)
         if word:
             continue
         index = plan.CHANNELS.index(ch)
         if ranged:
             if curve and ch in info["moving"]:
-                _bridge(curve, first, last)
+                keys = _bridge(curve, first, last)
+                if keys is not None and exact is not None and ch not in info["driven"]:
+                    exact[ch] = keys
             elif not curve and ch in info["held"]:
                 cmds.setAttr(base_plug, shown[now][index])
                 held.append(ch)
             continue
         if curve and ch in info["moving"]:
             value = cmds.keyframe(curve, query=True, eval=True, time=(first, first))[0]
-            cmds.delete(curve)
+            if _shared(curve):              # it animates another plug too: only let go of this one
+                real = cmds.listConnections(base_plug, source=True, destination=False,
+                                            plugs=True) or []
+                if real:
+                    cmds.disconnectAttr(real[0], base_plug)
+            else:
+                cmds.delete(curve)
             cmds.setAttr(base_plug, value)
         elif not curve:
             cmds.setAttr(base_plug, shown[first][index])
@@ -420,13 +537,16 @@ def bake(selection=None, highlight=SLIDER):
             return refusal
         plans.append(info)
     window = knots._highlight(highlight)
-    spans = {}
+    spans, sorts = {}, {}
     for info in plans:
+        obj = info["obj"]
         targets = [t for con in info["foreign"] for t in _targets(con)]
-        spans[info["obj"]] = _span(info["obj"], info["tops"], targets, window)
+        spans[obj] = _span(obj, info["tops"], targets, window)
+        sorts[obj] = _sorting(info, spans[obj])
     now = cmds.currentTime(query=True)
-    frames = sorted(set(f for first, last, _r in spans.values() for f in range(first, last + 1))
-                    | {now})
+    frames = sorted(set(f for o in objs if sorts[o][1]
+                        for f in range(spans[o][0], spans[o][1] + 1))
+                    | set(spans[o][0] for o in objs) | {now})
     uuids = dict((info["obj"], knots._uuid(info["obj"])) for info in plans)
     notes = []
     with knots._press("skeldarBakeLayer"):
@@ -439,30 +559,46 @@ def bake(selection=None, highlight=SLIDER):
                     cmds.delete(con)
                     constraints_off += 1
         live = dict((obj, knots._by_uuid(uuids[obj])) for obj in objs)
-        statics = []
+        statics, exacts = [], {}
         for info in plans:
             path = live[info["obj"]]
-            held = _clear_base(info, path, spans[info["obj"]], shown[info["obj"]], now)
+            exact = exacts.setdefault(info["obj"], {})
+            held = _clear_base(info, path, spans[info["obj"]], shown[info["obj"]], now,
+                               sorts[info["obj"]][0], exact)
             statics += [plan.leaf(path) + "." + ch for ch in held]
         own = _read([live[o] for o in objs], frames)
-        tracks, first, last, ranged = {}, None, None, False
+        tracks, moves, first, last, ranged = {}, {}, None, None, False
         for info in plans:
             obj = info["obj"]
             path = live[obj]
             start, end, ranged = spans[obj]
-            times = list(range(start, end + 1))
-            minimum = plan.LAYER_MIN if ranged else -1.0
-            deltas = plan.layer_deltas([shown[obj][f] for f in times],
-                                       [own[path][f] for f in times],
-                                       cmds.getAttr(path + ".rotateOrder"), _free(path),
-                                       minimum=minimum)
-            if not ranged:
-                deltas, shifts = plan.anchored(deltas)
-                for ch, amount in shifts.items():
-                    if abs(amount) > 1e-9:
-                        _shift(path, ch, amount)
-            for ch, values in deltas.items():
-                tracks[(path, ch)] = (times, values)
+            moved, sampled = sorts[obj]
+            for ch in moved:
+                curve = info["curves"][ch]
+                moves[(path, ch)] = (curve, cmds.keyframe(curve, query=True, eval=True,
+                                                          time=(start, start))[0])
+            for ch, keys in exacts.get(obj, {}).items():
+                values = [v for _t, v, _k in keys]
+                slopes = [abs(k[2]) + abs(k[3]) for _t, _v, k in keys if len(k) > 2]
+                if max([abs(v) for v in values] + slopes) > plan.LAYER_MIN:
+                    tracks[(path, ch)] = ([t for t, _v, _k in keys], values,
+                                          dict((t, k) for t, _v, k in keys))
+            sampled = sampled - set(exacts.get(obj, {}))
+            if sampled:
+                times = list(range(start, end + 1))
+                minimum = plan.LAYER_MIN if ranged else -1.0
+                deltas = plan.layer_deltas([shown[obj][f] for f in times],
+                                           [own[path][f] for f in times],
+                                           cmds.getAttr(path + ".rotateOrder"),
+                                           [ch for ch in plan.CHANNELS if ch in sampled],
+                                           minimum=minimum)
+                if not ranged:
+                    deltas, shifts = plan.anchored(deltas)
+                    for ch, amount in shifts.items():
+                        if abs(amount) > 1e-9:
+                            _shift(path, ch, amount)
+                for ch, values in deltas.items():
+                    tracks[(path, ch)] = (times, values)
             first = start if first is None else min(first, start)
             last = end if last is None else max(last, end)
             if info["words"]:
@@ -475,10 +611,10 @@ def bake(selection=None, highlight=SLIDER):
         if pivots:
             notes.append("a waiting pivot is not baked - press Finish or Remove it")
         layer = ""
-        if tracks:
+        if tracks or moves:
             leaves = [plan.leaf(live[o]) for o in objs]
             layer = write_deltas(plan.layer_name(leaves), plan.LAYER_MARKER, " ".join(leaves),
-                                 tracks, ranged=ranged)
+                                 tracks, ranged=ranged, moves=moves)
         cmds.select([live[o] for o in objs if live[o]], replace=True)
     starts = set(spans[o][0] for o in objs)
     keyed = sum(1 for info in plans if info["moving"])

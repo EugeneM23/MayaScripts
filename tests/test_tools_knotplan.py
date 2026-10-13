@@ -603,6 +603,19 @@ class Layer(unittest.TestCase):
         self.assertEqual(kept, {"tx": [0.0, 1.0, 3.0]})
         self.assertEqual(shifts, {"tx": 2.0, "ry": 10.0, "tz": 0.0})
 
+    def test_how_a_curve_bridges_exactly(self):
+        self.assertEqual(plan.bridge_kind(["fixed", "spline", "auto"], False), "smooth")
+        self.assertEqual(plan.bridge_kind(["step", "step"], False), "stepped")
+        self.assertIsNone(plan.bridge_kind(["step", "spline"], False))
+        self.assertIsNone(plan.bridge_kind(["spline", "stepnext"], False))
+        self.assertIsNone(plan.bridge_kind(["spline"], True))
+
+    def test_the_bridge_keys_are_differences(self):
+        keys = [(9.0, 1.0, 0.5, 0.5), (12.0, 4.0, 1.0, -2.0), (21.0, 3.0, 0.2, 0.2)]
+        bridge = [(1.0, 0.5, 0.5), (2.5, 0.25, 0.25), (3.0, 0.2, 0.2)]
+        self.assertEqual(plan.bridge_keys(keys, bridge),
+                         [(9.0, 0.0, 0.0, 0.0), (12.0, 1.5, 0.75, -2.25), (21.0, 0.0, 0.0, 0.0)])
+
     def test_the_bridge(self):
         """A highlight 10-20: the base's keys strictly between 9 and 21 go."""
         self.assertEqual(plan.bridged([0.0, 9.0, 10.0, 15.5, 20.0, 21.0, 30.0], 10.0, 20.0),

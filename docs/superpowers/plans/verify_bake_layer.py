@@ -8,10 +8,12 @@ docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md). The prop is ve
 under an animated carrier, rotate pivot off its origin, zxy, keyed tx / rx / ry, static ty / rz,
 frames 0..40, the current frame 12).
 
-L0 a plainly keyed object (the animator's report, 2026-10-13): its keys move onto the layer, the
-   base holds frame 0's pose, the prop shows what it showed, muted it stands; a second press is
-   refused (its animation is on layers already); with a highlight the base bridges it and keeps
-   its keys outside.
+L0 a plainly keyed object (the animator's report, 2026-10-13): its keys move onto the layer AS
+   KEYS - the very curves, their key times, tangents and infinity - the base holds frame 0's pose,
+   the prop shows what it showed at every half frame, muted it stands; a second press is refused
+   (its animation is on layers already); with a highlight over smooth, broken, stepped and weighted
+   keys the base bridges it and keeps its keys outside, the keys inside move exactly (the weighted
+   curve on every frame).
 L1 a knot edited, Layer on the knot: the prop shows exactly what the knot showed, the base holds
    the pose of frame 0, the knot and Maya's pairBlend gone, the layer marked; muted the prop
    stands in that pose, its weight blends.
@@ -188,6 +190,23 @@ def snapshot(nodes):
             sorted(cmds.ls(type="animLayer") or []))
 
 
+HALVES = [f + 0.5 for f in range(40)]
+
+
+def curve_of(node, ch):
+    found = cmds.listConnections(node + "." + ch, source=True, destination=False,
+                                 type="animCurve") or []
+    return found[0] if found else None
+
+
+def keys_of(curve):
+    return dict(times=cmds.keyframe(curve, query=True, timeChange=True),
+                values=cmds.keyframe(curve, query=True, valueChange=True),
+                ins=cmds.keyTangent(curve, query=True, inTangentType=True),
+                outs=cmds.keyTangent(curve, query=True, outTangentType=True),
+                post=cmds.getAttr(curve + ".postInfinity"))
+
+
 def make_prop():
     cmds.file(new=True, force=True)
     cmds.playbackOptions(min=0, max=40, animationStartTime=0, animationEndTime=40)
@@ -246,7 +265,11 @@ def mover(name="mover"):
 def case_l0():
     case("L0 plain keys")
     prop = make_prop()
+    cmds.setAttr(curve_of(prop, "rx") + ".postInfinity", 3)                 # a cycle
+    cmds.keyTangent(curve_of(prop, "tx"), time=(20, 20), outTangentType="step")
     original, first = track(prop), channels(prop, [0])[0]
+    halves = track(prop, HALVES)
+    kept = dict((ch, (curve_of(prop, ch), keys_of(curve_of(prop, ch)))) for ch in ("tx", "rx", "ry"))
     line = layerbake.bake([prop], highlight=None)
     found = layers()
     gate(len(found) == 1 and "its keys moved onto it" in line
@@ -255,10 +278,18 @@ def case_l0():
     gate(ok, "the prop shows what it showed: " + text)
     ok, got = static_base(prop, first)
     gate(ok, "the base holds frame 0's pose, no curve left: %s" % (got,))
-    curve = layer_curve(found[0], prop, "tx")
-    values = cmds.keyframe(curve, query=True, valueChange=True)
-    gate(abs(values[0]) < 1e-9 and len(values) == 41, "the layer starts at 0, a key a frame: %d"
-         % len(values))
+    ok, text = same(halves, track(prop, HALVES))
+    gate(ok, "and at every half frame: " + text)
+    for ch, (name, was) in kept.items():
+        curve = layer_curve(found[0], prop, ch)
+        now = keys_of(curve) if curve else {}
+        shift = was["values"][0]
+        gate(curve and curve.split("|")[-1] == name and now["times"] == was["times"]
+             and now["ins"] == was["ins"] and now["outs"] == was["outs"]
+             and now["post"] == was["post"]
+             and all(abs(a - (b - shift)) < 1e-9 for a, b in zip(now["values"], was["values"])),
+             "%s: its own curve on the layer, keys %s, tangents %s, infinity %s"
+             % (ch, now.get("times"), now.get("outs"), now.get("post")))
     cmds.animLayer(found[0], edit=True, mute=True)
     gap = still_at(prop, first)
     gate(gap < 1e-6, "muted: the prop stands in frame 0's pose: %.2e" % gap)
@@ -268,15 +299,41 @@ def case_l0():
     gate("on layers already" in line and snapshot([prop]) == before, "a second press: " + line)
 
     prop = make_prop()
-    original = track(prop)
+    for t, v in ((12, 3.0), (15.5, 7.0)):
+        cmds.setKeyframe(prop, attribute="tx", time=t, value=v)
+    cmds.keyTangent(curve_of(prop, "tx"), time=(12, 12), lock=False, outAngle=30.0)   # broken
+    for t, v in ((0, 1.0), (11, 2.0), (14, 4.0), (18, 3.0), (25, 1.0)):
+        cmds.setKeyframe(prop, attribute="ty", time=t, value=v, outTangentType="step")
+    for t, v in ((0, 0.0), (13, 6.0), (30, -2.0)):
+        cmds.setKeyframe(prop, attribute="tz", time=t, value=v)
+    cmds.keyTangent(curve_of(prop, "tz"), edit=True, weightedTangents=True)
+    original, halves = track(prop), track(prop, HALVES)
+    before_ch = channels(prop, [h for h in HALVES if 9 < h < 21])
     line = layerbake.bake([prop], highlight=(10, 21))
-    after = track(prop)
-    ok, text = same(original, after)
+    ok, text = same(original, track(prop))
     gate(ok and "outside the highlight" in line, "a highlight 10-20: as shown everywhere: "
          + text + " - " + line)
+    ok, text = same(halves, track(prop, HALVES), [h for h in HALVES if not 9 < h < 21])
+    gate(ok, "outside it at half frames too: " + text)
+    inside = [h for h in HALVES if 9 < h < 21]
+    after = channels(prop, inside)
+    worst = max(abs(after[h][i] - before_ch[h][i]) for h in inside for i in (0, 1))
+    gate(worst < 1e-6, "inside it, tx (smooth, a broken tangent) and ty (stepped) exact at "
+         "half frames: %.2e" % worst)
     times = base(prop, ("tx",))["tx"][0]
     gate(9.0 in times and 21.0 in times and not plan.bridged(list(times), 10.0, 20.0),
          "the base bridges it on keys at 9 and 21: %s" % (times,))
+    layer = layers()[0]
+    tx = keys_of(layer_curve(layer, prop, "tx"))
+    ty = keys_of(layer_curve(layer, prop, "ty"))
+    tz = keys_of(layer_curve(layer, prop, "tz"))
+    gate(12.0 in tx["times"] and 15.5 in tx["times"] and 13.0 not in tx["times"],
+         "tx: the keys inside moved, 12 and 15.5 among them: %s" % tx["times"])
+    gate([t for t in ty["times"] if 9 < t < 21] == [11.0, 14.0, 18.0]
+         and all(o == "step" for t, o in zip(ty["times"], ty["outs"]) if 9 <= t < 21),
+         "ty: its stepped keys as they are: %s %s" % (ty["times"], ty["outs"]))
+    gate([t for t in tz["times"] if 9 < t < 21] == [float(f) for f in range(10, 21)],
+         "tz (weighted): on every frame of the highlight: %s" % tz["times"])
 
 
 def case_l1():

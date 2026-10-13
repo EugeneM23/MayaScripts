@@ -8955,8 +8955,9 @@ convention, the root delayed exactly, cycled, easing). The live card is the anim
 давай реализуем функционал запекания на адитивный слой»; asked: **any object**, whatever drives it,
 a **new layer per press**, a third button **Bake | Layer | Remove**; after using it, «я выделил
 объект на котором просто ключи нажал леер и он не запекся», asked: **everything onto the layer, the
-base a still pose**). Spec `docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md` (its two
-addenda). OverRig's `>layer` bakes onto an OVERRIDE layer `BakedAnim`; Maya's own `bakeResults
+base a still pose**; then «чтобы она переносилась по ключам и мы их не теряли»: **the object's own
+keys move as keys**). Spec `docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md` (its
+three addenda). OverRig's `>layer` bakes onto an OVERRIDE layer `BakedAnim`; Maya's own `bakeResults
 -destinationLayer` into an additive layer doubles the motion (measured). Ours: the object's keys, its
 knots and its constraints all go onto a new ADDITIVE layer `Baked_<leaf>` (marked `skeldarBakeLayer`
 = the leaves, rotation by component), the base keeps the pose of the span's first frame: mute it and
@@ -8985,22 +8986,38 @@ the object stands, weight it to blend, delete it to drop the motion. `maya_tools
 - **The span**: the highlight `[a, b)` as `a..b-1`, the layer zero at `a-1` and `b`; else per object
   the take with the keys of the object, its parents, its constraints' targets (and theirs) and its
   knots.
+- **The object's own keys move as keys** (`_sorting`):
+  - over the whole take, a channel only its own keys move: the base curve NODE itself is moved onto
+    the layer (`_move`: off the base, onto the layer's blend input B, shifted by its first-frame
+    value, which the base holds) - every key, tangent, weight and infinity kept, exact between
+    frames (measured: the layer finds it as its own curve);
+  - under a highlight, a plain channel's keys inside it move exactly (`_bridge`): the base gets a key
+    one frame outside each end (inserted, it and its outer neighbour pinned - trap 221), the keys
+    between are cut, and the layer takes the original's keys there with values and in / out slopes
+    less the bridge's (`knotplan.bridge_keys`), fixed tangents written as angles (tan = UI units a
+    frame, measured at film / ntsc / 60 fps); all-stepped keys move as they are over a still bridge;
+    weighted or mixed-step curves go on every frame (`bridge_kind`);
+  - a channel a knot or constraint drives has no keys of its own and is keyed on every frame (keying
+    a constraint only at its targets' keys lost a two-turn spin between two keys).
 - **The press**, one undo chunk: a time walk reads every object's t/r values (the current frame
   too); the drivers come off; the base's own animation comes off (`_clear_base`) - the whole take:
-  each moving base curve deleted, those channels and the driven ones set to a value; a highlight:
-  each moving curve bridged (`_bridge`: keys inserted one frame outside each end, the ones between
-  cut), an unkeyed channel a foreign constraint drove held at the current frame's pose (trap 238,
-  said); a second walk reads what is left (the base plus the animator's other layers, untouched);
-  per frame `shown - left`, the shown rotation made continuous from what is left and then from the
-  frame before (`knotplan.layer_deltas`: the other euler solution with all three rotates free, whole
-  turns otherwise; two turns of a spin keyed 18° a frame, no jump); over the whole take each
-  channel's first-frame difference is moved onto its base (`anchored`, `_shift`), so the base holds
-  the first frame's pose and the layer starts at 0; a channel under 1e-4 on every frame is left off;
-  keyed on every frame by `layerbake.write_deltas` - the writer the Overlap uses too.
-Proof: `docs/superpowers/plans/verify_bake_layer.py` **58/58 mayapy standalone** - the report's plainly
-keyed prop: its keys on the layer, the prop as it was (0.000000 cm / 0.000002°), the base frame 0's
-pose with no curve, muted standing still, a second press refused, a highlight bridged on keys at 9 and
-21; a knot edited and baked (as the knot showed it, the knot and the pairBlend gone, weight 0.5 every
+  each moving base curve (not the ones moved whole) deleted, those channels and the driven ones set
+  to a value; a highlight: each moving curve bridged, an unkeyed channel a foreign constraint drove
+  held at the current frame's pose (trap 238, said); a second walk reads what is left (the base plus
+  the animator's other layers, untouched); per frame `shown - left` for the channels read off the
+  scene, the shown rotation made continuous from what is left and then from the frame before
+  (`knotplan.layer_deltas`: the other euler solution with all three rotates free, whole turns
+  otherwise; two turns of a spin keyed 18° a frame, no jump); over the whole take each such
+  channel's first-frame difference is moved onto its base (`anchored`, `_shift`); a channel under
+  1e-4 on every frame is left off; written by `layerbake.write_deltas` (tracks, exact keys and moved
+  curves) - the writer the Overlap uses too. `setKeyframe` takes no `fixed` tangent and leaves the
+  types of a key already there: types go through `keyTangent`.
+Proof: `docs/superpowers/plans/verify_bake_layer.py` **66/66 mayapy standalone** - the report's plainly
+keyed prop: its three curves on the layer as themselves (the same nodes, key times, tangent types, a
+step, a cycle), the prop as it was at every frame and half frame, the base frame 0's pose with no
+curve, muted standing still, a second press refused; a highlight over a smooth curve with a broken
+tangent and a fractional key and a stepped curve - exact to 3.4e-9 at half frames, the stepped keys as
+they are, a weighted curve on every frame, the base bridged on keys at 9 and 21; a knot edited and baked (as the knot showed it, the knot and the pairBlend gone, weight 0.5 every
 channel half way); a ranged knot over the take, a whole-take knot under a highlight (zero at 9 and 21,
 the original outside); the animator's parentConstraint to a moving locator; an unkeyed constrained
 object; two turns of an orientConstraint; a double knot on a knot; refusals changing nothing; one undo

@@ -118,11 +118,11 @@ TIPS = {
              "world axes about the object's pivot",
     "bake": "Bake: the selected knots' objects (or the selected objects riding knots) take "
             "what the knots give them on every frame; the knots go",
-    "layer": "Layer - select objects (or their knots): everything that animates them - their "
-             "keys, our knots, your constraints - is baked onto a new additive layer, and the "
-             "base keeps the pose of the first frame (mute the layer and they stand, weight it "
-             "to blend). A highlighted range bakes only there: outside it the base keeps its "
-             "keys",
+    "layer": "Layer - select objects (or their knots): everything that animates them moves "
+             "onto a new additive layer - their own keys as keys (none lost), our knots and "
+             "your constraints baked - and the base keeps the pose of the first frame (mute the "
+             "layer and they stand, weight it to blend). A highlighted range moves only that "
+             "part: outside it the base keeps its keys",
     "remove": "Remove: the selected knots go and their objects play their own animation "
               "again exactly; a waiting pivot is dropped",
     "inside": "Inside - select the objects, then the parent LAST: they move under it in the "

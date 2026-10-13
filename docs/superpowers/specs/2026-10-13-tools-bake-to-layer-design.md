@@ -108,3 +108,34 @@ layer, the base a still pose** - for plain keys, knots and constraints alike.
   the base on frame 0's pose and the prop as it was to 0.000000 cm, muted standing still, a second
   press refused, a highlight bridged; the knot, constraint, double-knot, rig and refusal cases on
   the new rule; under the animator's own layer only the base moved.
+
+## Addendum 3: by keys, not baked
+
+The animator: «Давай сделаем так что бы анимация не просто перепекалась на слой а чтобы она
+переносилась по ключам и мы их не теряли».
+
+- **Over the whole take, a channel only its own keys move**: the base curve NODE itself moves onto
+  the layer - disconnected from the base, connected to the layer's blend input B, its values shifted
+  by its first-frame value, which the base then holds (`_move`). Measured first in mayapy: the layer
+  finds it as its curve (`findCurveForPlug`, `animCurves`), the motion is identical, a stepped
+  tangent and cycle infinity survive, muted the object stands. Every key, tangent, weight,
+  breakdown and infinity is kept, exact between frames too. A curve that also feeds another plug is
+  read off the scene instead.
+- **Under a highlight, a plain channel's keys inside it move as keys, exactly** (`_bridge`): the
+  original's values and in / out slopes at its keys from one frame before the highlight to one
+  after, less the bridged base's (a Hermite segment minus a Hermite segment is one), written as
+  fixed tangents (`keyTangent -inAngle/-outAngle`: the tangent of the angle is the slope in UI units
+  a frame - measured exact at film, ntsc and 60 fps). A curve whose keys are all stepped there: the
+  bridge holds still (its first key stepped) and the keys move as they are. Weighted, or steps mixed
+  with splines: every frame of the highlight. The edge keys and their outer neighbours are pinned
+  first (trap 221), so nothing outside moves.
+- **A channel a knot or a constraint drives stays keyed on every frame.** It has no keys of its own:
+  a knot is keyed on every frame by construction, and keying a constraint only at its targets' keys
+  was tried and refused - a two-turn spin between two target keys came back as no turn at all, and a
+  ranged knot went inexact outside its range.
+- `setKeyframe` takes no `fixed` and leaves the types of a key already there (the layer's identity
+  key): the writer sets types through `keyTangent`.
+- Proof: `verify_bake_layer.py` **66/66 standalone** - the plain prop's three curves on the layer as
+  themselves (the same nodes, key times, tangent types, a step, a cycle), the prop as it was at every
+  half frame; under a highlight a smooth curve with a broken tangent and fractional key and a stepped
+  curve exact to 3.4e-9 at half frames, the stepped keys as they are, a weighted curve on every frame.
