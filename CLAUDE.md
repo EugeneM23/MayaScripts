@@ -9422,6 +9422,35 @@ asked: a two-handed grip HOLDS and the weapon sways as one, the overlap is PHYSI
   - every saved walk through the package: own knobs reproduce its source to 0.0002 cm, both poses on each.
 - **Not seen live**: the card in the animator's Maya, after Check update.
 
+**…Pelvis forward and Ground time** (2026-10-13, «нужен парамметр который будем котролировать выдвижение таза
+вперед и назад … растяжку ног во время шага (как долго нога стоит на земле перед тем как пойти вперед)»):
+- **Pelvis forward** (`pelvis_forward`, cm, −30..30, group Pelvis after Pelvis height):
+  - in `_body`, the pelvis along the walk's line (the body over it with it, the legs by IK);
+  - Balance would carry the hips straight back over the feet (its mean term cancels the CoM's change), so
+    `_balance_target` adds back the CoM shift the knob makes (`_moved_com` with the pelvis moved back);
+  - exact with Balance 0; with Balance on Manny's keys +8 → 6.74 cm, −8 → −7.34 (the reach's drop and the arms'
+    inertia take the rest).
+- **Ground time** (`ground_time`, ×, 0.7..1.8, group Legs after Foot placement): each contact
+  `(g − 1) × its length` longer at its lift-off, past what Foot placement grows. It is applied after the
+  growth's reach cut-back, since it is asked for.
+  - A longer stance takes at most `GROUND_ROOM` (0.6) of its swing's time; a shorter one keeps half its contact
+    and, at Foot placement, a frame of both feet down.
+  - It retimes the feet with Foot placement 0 too (`foot_time` takes a growth there).
+  - Past 1 the legs may straighten toward `STRETCH_REACH` (0.995 of their length, all of it at 1.15,
+    `ctx["reach"]`), and the toes roll further (`ROLL_BALL × g`).
+  - `info["ground"]` is (asked, held) a contact; the status line says when the swing's room or both feet stopped
+    it.
+- **Measured, and the cost**: at a fixed stride a longer stance puts the trailing foot further behind (the hip
+  travels duty × the stride over it). `asd`'s trailing leg is already straight on its toes at lift-off, so even
+  ×1.05 sinks the pelvis 5 cm at the push-off, ×1.1 12 cm, ×1.3 42 cm. dw: ×1.1 11 cm. The tooltip says so.
+- **Proof**:
+  - `PelvisForwardTests` (3) and `GroundTimeTests` (5) on the synthetic walker;
+  - `verify_walk.py` **75/75** (gates 66-67 on Manny's keys: forward ±8 with Balance, the CoM on target to 0.001;
+    Ground time 1.1: each foot down 1 / 2 frames longer, a planted foot sliding 0.100 cm a frame at most, never
+    both feet up, the pelvis down 12.1 cm);
+  - 6175 unit tests;
+  - picture `walkparam/walk_forward_ground.png`.
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an
 update (trap 224); for Balance: a held weapon's mass, the target's own masses

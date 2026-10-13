@@ -811,6 +811,50 @@ try:
              "Foot placement under the goblin, every part: slides %.3f cm a frame at most, both feet down %s frames "
              "at the steps, never neither" % (held_gob, runs_gob))
 
+    # 6b. Pelvis forward and Ground time on Manny's keys (2026-10-13)
+    def keyed_slides(m, n, planted):
+        """Per foot, the slower of its heel point's and ball's slide along the ground a frame where the model
+        plants it on both frames (Manny's keys)."""
+        flat = lambda v: v - np.outer(v @ walk.up, walk.up)
+        out = {}
+        for side in "lr":
+            foot = m[walk.index["foot_" + side], :n + 1]
+            heel = foot[:, 3, :3] + np.einsum("i,fij->fj", walk.heel_loc[side], foot[:, :3, :3])
+            ball = m[walk.index["ball_" + side], :n + 1, 3, :3]
+            slide = np.minimum(np.linalg.norm(np.diff(flat(heel), axis=0), axis=1),
+                               np.linalg.norm(np.diff(flat(ball), axis=0), axis=1))
+            p = np.array(planted[side][:n], bool)
+            out[side] = float(slide[p & np.roll(p, -1)].max())
+        return out
+
+    def ahead_of_line(m, n, stride=1.0):
+        line = np.array([walk.origin + walk.travel * stride * f / float(n) for f in range(n)])
+        return float(((m[walk.index["pelvis"], :n, 3, :3] - line) @ walk.fwd).mean())
+
+    plain_r = sw.apply(manny, name)[0]
+    plain_keys = keyed_model(manny, plain_r.frames)
+    shifts = []
+    for cm in (8.0, -8.0):
+        fwd_r = sw.apply(manny, name, {"pelvis_forward": cm})[0]
+        fwd_keys = keyed_model(manny, fwd_r.frames)
+        slides = keyed_slides(fwd_keys, fwd_r.frames, fwd_r.info["placement"]["planted"])
+        shifts.append((cm, ahead_of_line(fwd_keys, fwd_r.frames) - ahead_of_line(plain_keys, plain_r.frames),
+                       max(slides.values()), fwd_r.info["balance"]["residual"]))
+    gate(all(abs(got - cm) < 1.5 and slide < 0.2 and residual < 0.05 for cm, got, slide, residual in shifts),
+         "Pelvis forward on Manny's keys, Balance on: %s (asked, the hips moved along the walk cm, a planted foot's "
+         "slide, the CoM off its target)" % ", ".join("%+g %.2f %.3f %.3f" % s for s in shifts))
+    ground_r = sw.apply(manny, name, {"ground_time": 1.1})[0]
+    ground_keys = keyed_model(manny, ground_r.frames)
+    planted_g, planted_0 = ground_r.info["placement"]["planted"], plain_r.info["placement"]["planted"]
+    longer = dict((s, int(np.sum(planted_g[s])) - int(np.sum(planted_0[s]))) for s in "lr")
+    slides_g = keyed_slides(ground_keys, ground_r.frames, planted_g)
+    neither_g = int(np.sum(~np.array(planted_g["l"]) & ~np.array(planted_g["r"])))
+    gate(all(v >= 1 for v in longer.values()) and max(slides_g.values()) < 0.2 and neither_g == 0,
+         "Ground time 1.1 on Manny's keys: each foot down %d / %d frames longer (held x%s), a planted foot slides "
+         "%.3f cm a frame at most, never both feet up; the pelvis sinks up to %.1f cm at the push-off (at 1: %.1f)"
+         % (longer["l"], longer["r"], ", ".join("%.2f" % g for v in ground_r.info["ground"].values() for _, g in v),
+            max(slides_g.values()), ground_r.info["lowered"], plain_r.info["lowered"]))
+
     # 7. a cycle of several steps (the animator's `dw`: two uneven steps of each foot, its stances floating 2-3 cm,
     # its root 17 cm under the feet) under the two-handed sword, on Manny: every stance held, the pelvis over the feet
     if os.path.exists(DW_FILE) and os.path.exists(SWORD_FILE):

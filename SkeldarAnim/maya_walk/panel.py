@@ -34,8 +34,10 @@ NOTHING = "Select a skeleton - Apply puts the walk on it"
 #  The knobs but Pose (its share stands under the pose's dropdown), one group shown at a time.
 GROUPS = (
     ("step", "Step", ("stride", "tempo", "lift")),
-    ("legs", "Legs", ("foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex")),
-    ("pelvis", "Pelvis", ("pelvis_height", "bob", "sway", "pelvis_rot", "pelvis_twist", "pelvis_list",
+    ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
+                      "foot_flex")),
+    ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "pelvis_rot", "pelvis_twist",
+                          "pelvis_list",
                           "root_sway")),
     ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "head")),
     ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
@@ -51,7 +53,11 @@ LABELS = {
     "foot_placement": ("Foot placement", "1: a planted foot never slides (it rolls heel to ball about a still "
                                          "point) and one foot is always on the ground - both are down a while "
                                          "at every step; 0 is the walk's own feet, slides and all"),
-    "stance": ("Stance", "x how far apart the feet stand on the ground (the pose's spread included); 0 puts "
+    "ground_time": ("Ground time", "x how long each foot stays on the ground at a step before it swings forward: "
+                                   "past 1 it leaves later - the leg stretches out behind, rises onto its toes and "
+                                   "swings through quicker; where even a straight leg on its toes falls short, the "
+                                   "pelvis sinks at the push-off. Under 1 it lifts sooner"),
+    "stance": ("Stance","x how far apart the feet stand on the ground (the pose's spread included); 0 puts "
                          "them on one line, 1 is the walk with the pose"),
     "swing_out": ("Swing out, cm", "The swinging foot's path bowed this far out to its side between the "
                                    "steps (negative: in, toward the other leg), in the walk's size"),
@@ -65,6 +71,8 @@ LABELS = {
     "pelvis_height": ("Pelvis height", "cm: raises (+) or lowers (-) the pelvis over the feet, the legs "
                                        "following - a walk or a pose that crouches stands up; the legs never "
                                        "straighten past the walk's straightest, so the feet stay down"),
+    "pelvis_forward": ("Pelvis forward", "cm: the hips this far ahead of (+) or behind (-) the feet, the body over "
+                                         "them going with them, the legs following; Balance keeps it"),
     "bob": ("Bob", "x the pelvis's up and down"),
     "sway": ("Sway", "x the pelvis's side to side"),
     "pelvis_rot": ("Pelvis motion", "x all the pelvis's turns and tilts (Twist and Hip drop included)"),

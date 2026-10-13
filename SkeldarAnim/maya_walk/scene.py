@@ -462,6 +462,10 @@ def apply(root, walk_name, given=None, pose_name=None, parts=ALL_PARTS):
         text += " | the walk sinks %.1f cm at the contacts" % result.info["lowered"]
     if info["short"] > 0.05:
         text += " | a foot falls %.1f cm short" % info["short"]
+    held = [got for steps in (result.info.get("ground") or {}).values() for asked, got in steps]
+    asked = result.info["knobs"]["ground_time"]
+    if held and max(abs(g - asked) for g in held) > 0.02:       # the swing's room or both feet up stopped it
+        text += " | feet down x%.2f-%.2f of x%.2f asked" % (min(held), max(held), asked)
     balance = result.info.get("balance") or {}
     if balance.get("note"):
         text += " | no balance: " + balance["note"]

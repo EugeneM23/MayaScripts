@@ -176,8 +176,8 @@ class KnobTests(unittest.TestCase):
 
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
-                         ["pose", "stride", "tempo", "lift", "foot_placement", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
-                          "foot_flex", "bob", "sway", "root_sway", "pelvis_height", "pelvis_rot", "pelvis_twist", "pelvis_list",
+                         ["pose", "stride", "tempo", "lift", "foot_placement", "ground_time", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
+                          "foot_flex", "bob", "sway", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
                           "spine", "chest_twist", "chest_sway", "arms", "elbow", "arm_drag", "arm_bounce",
                           "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
@@ -1371,6 +1371,101 @@ class PelvisHeightTests(unittest.TestCase):
             reach = np.linalg.norm(r.worlds[fo, :, 3, :3] - r.worlds[th, :, 3, :3], axis=1) / length
             self.assertLess(float(reach.max()), w.reach[side] + 1e-3, side)
         self.assertGreater(max(r.info["drop"]), 30.0)            # the reach's drop takes most of it back
+
+
+class PelvisForwardTests(unittest.TestCase):
+    """Pelvis forward: the hips this many cm ahead of (or behind) the feet, the body over them with them, the
+    legs following; Balance keeps the shift it makes."""
+
+    def ahead(self, w, r):
+        pelvis = w.index["pelvis"]
+        n = r.frames
+        line = np.array([w.origin + w.travel * r.info["knobs"]["stride"] * f / float(n) for f in range(n)])
+        return (r.worlds[pelvis, :n, 3, :3] - line) @ w.fwd
+
+    def test_it_moves_the_pelvis_along_the_walk_over_still_feet(self):
+        w = walk()
+        base = w.evaluate({"balance": 0.0, "foot_placement": 0.0})
+        for cm in (-8.0, 6.0):
+            r = w.evaluate({"balance": 0.0, "foot_placement": 0.0, "pelvis_forward": cm})
+            self.assertLess(float(np.abs(self.ahead(w, r) - self.ahead(w, base) - cm).max()), 1e-6, cm)
+            head = w.index["head"]                       # the body over the hips goes with them
+            moved = (r.worlds[head, :, 3, :3] - base.worlds[head, :, 3, :3]) @ w.fwd
+            self.assertLess(float(np.abs(moved - cm).max()), 1e-6)
+            for side in "lr":
+                foot = w.index["foot_" + side]
+                self.assertLess(float(np.abs(r.worlds[foot, :, 3, :3] - base.worlds[foot, :, 3, :3]).max()), 1e-6)
+
+    def test_balance_does_not_carry_it_back(self):
+        """Balance puts the centre of mass over the feet - but the shift Pelvis forward asks for stays."""
+        w = walk()
+        base, r = w.evaluate({}), w.evaluate({"pelvis_forward": 6.0})
+        shift = float((self.ahead(w, r) - self.ahead(w, base)).mean())
+        self.assertGreater(shift, 5.0)
+        self.assertLess(r.info["balance"]["residual"], 0.05)
+
+    def test_zero_is_the_walk(self):
+        w = walk()
+        own = w.own_knobs()
+        a, b = w.evaluate(own), w.evaluate(dict(own, pelvis_forward=0.0))
+        self.assertTrue(np.array_equal(a.worlds, b.worlds))
+
+
+class GroundTimeTests(unittest.TestCase):
+    """Ground time: each foot's contact this many times as long (its lift-off moved), the swing quicker; past
+    what a stretched leg on its toes reaches, the pelvis sinks at the push-off."""
+
+    def planted(self, r):
+        return dict((s, np.array(r.info["placement"]["planted"][s])) for s in "lr")
+
+    def test_a_longer_ground_time_holds_each_foot_down_longer_without_a_slide(self):
+        w = walk()
+        base = w.evaluate({})
+        held = w.evaluate({"ground_time": 1.3})
+        for side in "lr":
+            more = int(self.planted(held)[side].sum()) - int(self.planted(base)[side].sum())
+            hs, to = w.contact[side][0]
+            asked, got = held.info["ground"][side][0]
+            self.assertEqual(asked, 1.3)
+            # all of it, or as much as GROUND_ROOM of the swing leaves (this walker's swing is short)
+            room = 1.0 + (wm.GROUND_ROOM * w.swing_len[side][0]) / (to - hs + 1.0)
+            self.assertGreater(got, min(1.3, room) - 0.15, side)
+            self.assertLessEqual(got, 1.3 + 1e-9, side)
+            self.assertGreaterEqual(more, int((got - 1.0) * (to - hs + 1.0)) - 1, side)
+            self.assertLess(still_point_slide(held, w, side), 0.05, side)
+        p = self.planted(held)
+        self.assertFalse(np.any(~p["l"] & ~p["r"]))               # one foot always down
+        self.assertGreater(held.info["lowered"], base.info["lowered"])   # the stretched stance sinks the body
+
+    def test_the_trailing_leg_stretches_onto_its_toes_first(self):
+        """Up to a straight leg on its toes the stance lengthens with the pelvis where it was."""
+        w = walk()
+        base, held = w.evaluate({}), w.evaluate({"ground_time": 1.05})
+        for side in "lr":
+            th, ca, fo = (w.index["%s_%s" % (b, side)] for b in ("thigh", "calf", "foot"))
+            length = np.linalg.norm(w.lt[ca], axis=1).mean() + np.linalg.norm(w.lt[fo], axis=1).mean()
+            reach = np.linalg.norm(held.worlds[fo, :, 3, :3] - held.worlds[th, :, 3, :3], axis=1) / length
+            self.assertLess(float(reach.max()), wm.STRETCH_REACH + 1e-3, side)
+            self.assertGreater(float(reach.max()), w.reach[side] - 1e-3, side)
+
+    def test_a_shorter_ground_time_lifts_sooner_but_never_both_feet(self):
+        w = walk()
+        base, quick = w.evaluate({}), w.evaluate({"ground_time": 0.8})
+        p = self.planted(quick)
+        self.assertLess(int(p["l"].sum()), int(self.planted(base)["l"].sum()))
+        self.assertFalse(np.any(~p["l"] & ~p["r"]))
+
+    def test_it_works_on_every_step_of_a_cycle_of_several(self):
+        w = walk(**TWO)
+        held = w.evaluate({"ground_time": 1.2})
+        self.assertEqual([len(held.info["ground"][s]) for s in "lr"], [2, 2])
+        for side in "lr":
+            self.assertLess(still_point_slide(held, w, side), 0.05, side)
+
+    def test_one_is_the_walk(self):
+        w = walk()
+        a, b = w.evaluate({}), w.evaluate({"ground_time": 1.0})
+        self.assertTrue(np.array_equal(a.worlds, b.worlds))
 
 
 class RollTests(unittest.TestCase):

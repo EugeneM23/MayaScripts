@@ -80,3 +80,18 @@ status (three lines)
 - The model and target suites on the package.
 - `verify_walk.py` 73/73 standalone on the package.
 - The live card is the animator's to see after Check update.
+
+## Addendum: Pelvis forward and Ground time (the same day)
+
+The animator: «нужен параметр который будем контролировать выдвижение таза вперёд и назад (сейчас мы можем
+контролировать его по высоте). Нужен параметр который будет отвечать за растяжку ног во время шага (как долго
+нога стоит на земле перед тем как пойти вперёд и сделать шаг)».
+
+- **Pelvis forward** (cm, −30..30, Pelvis group). The hips move along the walk's line, the body over them goes
+  with them, and the legs follow by IK. Balance keeps the CoM shift the knob makes: otherwise its mean term would
+  carry the hips straight back over the feet.
+- **Ground time** (×, 0.7..1.8, Legs group). Each contact gets longer at its lift-off by (g − 1) × its length,
+  on top of Foot placement's growth. The swing gets quicker, at most 0.6 of its time is taken. Past 1 the trailing
+  leg may straighten to 0.995 of its length and stand higher on its toes. Where even that falls short, the pelvis
+  sinks at the push-off: at a fixed stride a longer stance puts the foot further behind. On `asd`, ×1.1 sinks it
+  12 cm.
