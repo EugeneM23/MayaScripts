@@ -28,6 +28,7 @@ class FakeCmds(object):
         self.killed = []
         self.selection = []
         self.current_menu = None
+        self.labels = {}
 
     def _made(self, kind, name, **kw):
         self.created.append((kind, name, kw))
@@ -100,6 +101,8 @@ class FakeCmds(object):
             return self.values[name]
         if value is not None:
             self.values[name] = value
+        if "label" in kw:
+            self.labels[name] = kw["label"]
         if not edit:
             self._made(kind, name, value=value, **kw)
         return name
@@ -131,7 +134,11 @@ class FakeCmds(object):
             self._made("iconTextRadioButton", name, select=select, **kw)
         return name
 
-    def optionVar(self, exists=None, query=None, q=None, floatValue=None, stringValue=None, intValue=None):
+    def optionVar(self, exists=None, query=None, q=None, floatValue=None, stringValue=None, intValue=None,
+                  remove=None):
+        if remove is not None:
+            self.vars.pop(remove, None)
+            return None
         if exists is not None:
             return exists in self.vars
         if query is not None or q is not None:
@@ -234,12 +241,13 @@ class CardTests(unittest.TestCase):
         chips = [c[1] for c in self.made("checkBox")]
         self.assertEqual(chips, [panel._part_control(p) for p, _ in panel.PART_LABELS])
         self.assertTrue(all(marks[c][0] == "chip" for c in chips))
-        tabs = [c[1] for c in self.made("iconTextRadioButton")]
-        self.assertEqual(tabs, [panel._group_tab(k) for k, _, _ in panel.GROUPS])
-        self.assertTrue(all(c[2]["collection"] == panel.GROUP_TABS for c in self.made("iconTextRadioButton")))
+        tabs = [(c[1], c[2]["collection"]) for c in self.made("iconTextRadioButton")]
+        self.assertEqual(tabs, [(panel._group_tab(k), panel.GROUP_TABS) for k, _, _ in panel.GROUPS]
+                         + [(panel._side_tab(m), panel.SIDE_TABS) for m, _ in panel.SIDE_MODES])
+        self.assertTrue(self.fake.values[panel._side_tab("both")])      # Both, the default
         sliders = [c[1] for c in self.made("floatSliderGrp") + self.made("intSliderGrp")]
         self.assertEqual(sorted(sliders), sorted(panel._control(k) for k in wm.DEFAULTS))
-        self.assertTrue(all(c[2]["changeCommand"] is panel.slider_changed
+        self.assertTrue(all(callable(c[2]["changeCommand"])
                             for c in self.made("floatSliderGrp") + self.made("intSliderGrp")))
         self.assertTrue(panel.is_open())
 
@@ -351,6 +359,79 @@ class CardTests(unittest.TestCase):
         panel.build_panel()
         self.assertEqual(self.fake.killed, [first])
         self.assertEqual(len(self.fake.jobs), 1)
+
+
+class SideTests(CardTests):
+    """[Both | Left | Right]: the leg and arm knobs set both sides, or one side alone."""
+
+    def changed(self, name, value):
+        self.fake.values[panel._control(name)] = value
+        for c in self.made("floatSliderGrp"):
+            if c[1] == panel._control(name):
+                return c[2]["changeCommand"]()
+
+    def test_left_sets_the_left_side_alone(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        panel.side_changed("l")()
+        self.assertEqual(self.fake.labels[panel._control("lift")], "Foot lift L")
+        self.assertEqual(self.fake.labels[panel._control("arms")], "Arms L")
+        self.changed("lift", 2.0)
+        given = self.applied[-1][2]
+        self.assertEqual((given["lift"], given["lift_l"]), (1.0, 2.0))
+        self.assertNotIn("lift_r", given)
+        panel.side_changed("r")()                       # the right shows its own: the knob's
+        self.assertEqual(self.fake.values[panel._control("lift")], 1.0)
+        panel.side_changed("l")()
+        self.assertEqual(self.fake.values[panel._control("lift")], 2.0)
+        panel.side_changed("both")()                    # Both marks a knob whose sides differ
+        self.assertEqual(self.fake.labels[panel._control("lift")], "Foot lift *")
+        self.assertEqual(self.fake.values[panel._control("lift")], 1.0)
+        self.assertEqual(self.fake.labels[panel._control("arms")], "Arms")
+
+    def test_both_links_a_knob_s_sides_again(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        panel.side_changed("l")()
+        self.changed("arms", 0.0)
+        panel.side_changed("both")()
+        self.changed("arms", 1.5)
+        given = self.applied[-1][2]
+        self.assertEqual(given["arms"], 1.5)
+        self.assertNotIn("arms_l", given)
+        self.assertEqual(self.fake.labels[panel._control("arms")], "Arms")
+
+    def test_a_knob_without_sides_is_the_same_in_every_mode(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        panel.side_changed("r")()
+        self.changed("bob", 2.0)
+        given = self.applied[-1][2]
+        self.assertEqual(given["bob"], 2.0)
+        self.assertNotIn("bob_r", given)
+
+    def test_reset_links_every_side(self):
+        panel.build_panel()
+        self.fake.selection = ["|root"]
+        panel.press_apply()
+        panel.side_changed("l")()
+        self.changed("foot_lag", 3.0)
+        panel.press_reset()
+        self.assertNotIn("foot_lag_l", self.applied[-1][2])
+
+    def test_a_walked_skeleton_brings_its_sides(self):
+        knobs = dict(wm.DEFAULTS, tempo=90.0, arm_drag_r=4.0)
+        self.memos["|walked"] = {"walk": "dw", "pose": "", "parts": list(scene.ALL_PARTS), "knobs": knobs}
+        panel.build_panel()
+        self.fake.selection = ["|walked"]
+        panel.refresh()
+        self.assertEqual(self.fake.labels[panel._control("arm_drag")], "Arm drag, fr *")
+        panel.side_changed("r")()
+        self.assertEqual(self.fake.values[panel._control("arm_drag")], 4.0)
+        self.assertEqual(panel.values()["arm_drag_r"], 4.0)
 
 
 class HubTests(unittest.TestCase):

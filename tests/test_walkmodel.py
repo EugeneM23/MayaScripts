@@ -177,7 +177,7 @@ class KnobTests(unittest.TestCase):
     def test_every_knob_named_in_the_spec(self):
         self.assertEqual([k[0] for k in wm.KNOBS],
                          ["pose", "stride", "tempo", "lift", "foot_placement", "ground_time", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
-                          "foot_flex", "bob", "sway", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
+                          "foot_flex", "bob", "sway", "surge", "root_sway", "pelvis_height", "pelvis_forward", "pelvis_rot", "pelvis_twist", "pelvis_list",
                           "spine", "chest_twist", "chest_sway", "arms", "elbow", "arm_drag", "arm_bounce",
                           "head", "overlap", "weight", "balance", "exaggeration"])
         self.assertEqual(wm.DEFAULTS["pose"], 0.0)
@@ -1408,6 +1408,63 @@ class PelvisForwardTests(unittest.TestCase):
         w = walk()
         own = w.own_knobs()
         a, b = w.evaluate(own), w.evaluate(dict(own, pelvis_forward=0.0))
+        self.assertTrue(np.array_equal(a.worlds, b.worlds))
+
+
+class SideKnobTests(unittest.TestCase):
+    """A leg or arm knob set for one side alone ("lift_l"): that side walks with it, the other with the knob."""
+
+    def test_knobs_take_a_side_s_own_value_and_refuse_unknown_ones(self):
+        k = wm.knobs(lift_l=2.5, arms_r=9.0)
+        self.assertEqual((k["lift"], k["lift_l"], k["arms_r"]), (1.0, 2.5, 3.0))     # clamped to the knob's range
+        ks = wm.sided(k)
+        self.assertEqual((ks["l"]["lift"], ks["r"]["lift"], ks["l"]["arms"], ks["r"]["arms"]), (2.5, 1.0, 1.0, 3.0))
+        self.assertNotIn("lift_l", ks["l"])
+        with self.assertRaises(ValueError):
+            wm.knobs(bob_l=2.0)                       # the pelvis has no sides
+
+    def test_a_side_s_own_lift_lifts_that_foot_alone(self):
+        w = walk()
+        both, left = w.evaluate({}), w.evaluate({"lift_l": 2.0})
+        height = lambda r, side: float(r.worlds[w.index["foot_" + side], :, 3, 1].max())
+        self.assertGreater(height(left, "l"), height(both, "l") + 1.0)
+        self.assertAlmostEqual(height(left, "r"), height(both, "r"), places=4)
+
+    def test_a_side_s_own_arms_still_that_arm_alone(self):
+        w = walk()
+        still = w.evaluate({"arms_l": 0.0, "arm_drag": 0.0, "balance": 0.0})
+        swing = lambda r, side: float(np.ptp(r.worlds[w.index["hand_" + side], :, 3, :3] @ w.fwd
+                                             - r.worlds[w.index["upperarm_" + side], :, 3, :3] @ w.fwd))
+        both = w.evaluate({"arm_drag": 0.0, "balance": 0.0})
+        self.assertLess(swing(still, "l"), 0.5 * swing(both, "l"))
+        self.assertAlmostEqual(swing(still, "r"), swing(both, "r"), places=4)
+
+    def test_both_sides_set_alike_are_the_knob(self):
+        w = walk()
+        a = w.evaluate({"lift": 1.4, "foot_lag": 2.0})
+        b = w.evaluate({"lift_l": 1.4, "lift_r": 1.4, "foot_lag_l": 2.0, "foot_lag_r": 2.0})
+        self.assertLess(float(np.abs(a.worlds - b.worlds).max()), 1e-9)
+
+
+class SurgeTests(unittest.TestCase):
+    """Surge: x the pelvis's forward and back as it walks (Bob's partner along the walk)."""
+
+    def along(self, w, r):
+        pelvis, n = w.index["pelvis"], r.frames
+        line = np.array([w.origin + w.travel * f / float(n) for f in range(n)])
+        return (r.worlds[pelvis, :n, 3, :3] - line) @ w.fwd
+
+    def test_it_scales_the_pelvis_s_forward_and_back(self):
+        w = walk()
+        plain = self.along(w, w.evaluate({"balance": 0.0, "foot_placement": 0.0}))
+        for g in (0.0, 2.0):
+            got = self.along(w, w.evaluate({"balance": 0.0, "foot_placement": 0.0, "surge": g}))
+            want = plain.mean() + g * (plain - plain.mean())
+            self.assertLess(float(np.abs(got - want).max()), 0.05 + 1e-6, g)
+
+    def test_one_is_the_walk(self):
+        w = walk()
+        a, b = w.evaluate({}), w.evaluate({"surge": 1.0})
         self.assertTrue(np.array_equal(a.worlds, b.worlds))
 
 

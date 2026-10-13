@@ -513,7 +513,8 @@ def pick(root):
     if not memo.get("walk"):
         raise Refusal("%s carries no walk of this tool - Apply one first" % _short(root))
     _state()["target"] = _cmds().ls(root, uuid=True)[0]
-    knobs = wm.knobs(**dict((k, v) for k, v in memo.get("knobs", {}).items() if k in wm.DEFAULTS))
+    knobs = wm.knobs(**dict((k, v) for k, v in memo.get("knobs", {}).items()
+                            if k in wm.DEFAULTS or k in wm.SIDE_KNOBS))      # a side's own values too
     return memo["walk"], knobs, memo.get("pose") or None, tuple(memo.get("parts", ALL_PARTS))
 
 

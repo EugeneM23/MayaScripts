@@ -27,6 +27,7 @@ KNOBS = (
     ("foot_flex", 1.0, 0.0, 3.0),
     ("bob", 1.0, 0.0, 3.0),
     ("sway", 1.0, 0.0, 3.0),
+    ("surge", 1.0, 0.0, 3.0),
     ("root_sway", 0.0, 0.0, 1.0),
     ("pelvis_height", 0.0, -40.0, 40.0),
     ("pelvis_forward", 0.0, -30.0, 30.0),
@@ -48,6 +49,11 @@ KNOBS = (
 )
 DEFAULTS = dict((k[0], k[1]) for k in KNOBS)
 RANGES = dict((k[0], (k[2], k[3])) for k in KNOBS)
+#  The knobs of a body part that has two sides (2026-10-13: «режим в котором левая и правая сторона станут
+#  раздельными»): "<name>_l" / "<name>_r" set that side alone; without them both sides take "<name>".
+SIDED = ("stance", "lift", "swing_out", "leg_turn", "knee_foot", "foot_lag", "foot_flex", "ground_time",
+         "arms", "elbow", "arm_drag", "arm_bounce")
+SIDE_KNOBS = dict(("%s_%s" % (name, side), name) for name in SIDED for side in ("l", "r"))
 
 WEIGHT_BOB_DOWN = 0.5     # the bob's low half x (1 + this . weight)
 WEIGHT_BOB_UP = 0.15      # its high half x max(0, 1 - this . weight)
@@ -83,8 +89,9 @@ LOCK_STEPS = 16           # the contacts found and the lock integrated at 1/this
 HEEL_BACK = 0.25          # the heel's ground point: under the ankle, this share of the foot (to the ball) back
 EXTEND_MAX = 0.5          # the contacts take at most this share of a foot's swing
 GROUND_ROOM = 0.6         # Ground time: a longer stance takes at most this share of its swing's time
-STRETCH_REACH = 0.995     # Ground time past 1: the legs may straighten this far (of their length)...
+STRETCH_REACH = 0.96      # Ground time past 1: the legs straighten at most this far (of their length)...
 GROUND_STRETCH = 0.15     # ...all of it at Ground time 1 + this
+ROLL_RELEASE = 0.1        # the heel's roll eases down over this share of a stride after its peak
 ROLL_BALL = 30.0          # degrees: a foot on its ball alone may roll this much further (heel up) for its leg's reach
 ROLL_HEEL = 15.0          # degrees: a foot on its heel alone may roll this much further (toes up)
 ROLL_COST = 25.0          # cm^2: a radian of roll weighs as much as 5 cm of the leg falling short (_roll_cost)
@@ -119,17 +126,26 @@ class Refusal(Exception):
 
 
 def knobs(**given):
-    """The defaults with `given` on top, each clamped to its range; an unknown name raises ValueError."""
-    unknown = sorted(set(given) - set(DEFAULTS))
+    """The defaults with `given` on top, each clamped to its range; an unknown name raises ValueError. A side's
+    own value of a SIDED knob ("lift_l") is kept when given (clamped to the knob's range)."""
+    unknown = sorted(set(given) - set(DEFAULTS) - set(SIDE_KNOBS))
     if unknown:
         raise ValueError("unknown knob(s): " + ", ".join(unknown))
     out = dict(DEFAULTS)
     for name, value in given.items():
         if value is None:
             continue
-        low, high = RANGES[name]
+        low, high = RANGES[SIDE_KNOBS.get(name, name)]
         out[name] = min(max(float(value), low), high)
     return out
+
+
+def sided(k):
+    """{side: the knobs that side walks with}: each SIDED knob the side's own value where one is set, else
+    the knob's."""
+    return dict((side, dict((name, k.get("%s_%s" % (name, side), value) if name in SIDED else value)
+                            for name, value in k.items() if name in DEFAULTS))
+                for side in ("l", "r"))
 
 
 def _unit(v):
@@ -297,6 +313,21 @@ def smooth_cover(need, sigma):
     blur = np.real(np.fft.ifft(np.fft.fft(wide) * np.fft.fft(kernel / kernel.sum())))
     wanted = need > 1e-9
     return np.maximum(blur * float((need[wanted] / np.maximum(blur[wanted], 1e-12)).max()), 0.0)
+
+
+def released(roll, frames):
+    """A periodic roll curve (one value a frame; + heel up) whose heel-up part lets go gradually: each frame
+    the most of the heel-up rolls of the `frames` frames before it, each eased down by a smoothstep over that
+    distance - never above zero earlier than the roll itself, the toes-up part (-) untouched."""
+    roll = np.asarray(roll, float)
+    up = np.maximum(roll, 0.0)
+    if not up.any() or frames < 1.0:
+        return roll
+    out = up.copy()
+    for k in range(1, int(math.ceil(frames)) + 1):
+        u = min(k / float(frames), 1.0)
+        out = np.maximum(out, np.roll(up, k) * (1.0 - u * u * (3.0 - 2.0 * u)))
+    return np.where(roll < 0.0, roll, out)
 
 
 def shape_bob(v, weight):
@@ -1149,13 +1180,13 @@ class Walk(object):
         off the ground holds the pelvis down that much); never so short that both feet are off the ground (at
         least a frame of the new cycle with both down), at most EXTEND_MAX of its swing."""
         P, v = float(self.P), ctx["placement"]
-        ground = ctx["k"]["ground_time"]
         plain = dict(ctx, balance=0.0)        # the knobs' own hip: Balance never retimes the feet
         grown = {}
         ctx["ground"] = {}
         for side in SIDES:
             th, ca, fo = (self.index["%s_%s" % (b, side)] for b in LEG)
             out, asked = [], []
+            ground = (ctx["ks"][side] if "ks" in ctx else ctx["k"])["ground_time"]
             for i, (hs, to) in enumerate(self.contact[side]):
                 ds = self.double_src[side][i]
                 room = EXTEND_MAX * self.swing_len[side][i]
@@ -1282,7 +1313,7 @@ class Walk(object):
 
     def _foot_free(self, side, t, ctx):
         """The new foot at foot time t before the lock: foot_target and the pose's toe-out."""
-        k = ctx["k"]
+        k = ctx["ks"][side] if "ks" in ctx else ctx["k"]
         rot, ankle = self.foot_target(side, t, k["stride"], k["stance"], ctx["spread"], k["lift"] * ctx["ex"],
                                       k["swing_out"])
         toe = ctx["turns"][side][1]
@@ -1343,7 +1374,8 @@ class Walk(object):
             return 0.0
         pivot, axis = geometry
         # Ground time past 1 stretches the trailing leg: its foot may stand that much higher on its toes
-        stretch = max(1.0, (ctx.get("k") or DEFAULTS)["ground_time"]) if sense > 0.0 else 1.0
+        knob = ((ctx.get("ks") or {}).get(side) or ctx.get("k") or DEFAULTS)["ground_time"]
+        stretch = max(1.0, knob) if sense > 0.0 else 1.0
         cap = math.radians(ROLL_BALL * stretch if sense > 0.0 else ROLL_HEEL) * ctx["placement"]
         most = min(2.0 * cap, self._sole_room(side, rot, axis, sense))     # searched past the cap, eased into it
         if most <= 0.0 or cap <= 0.0:
@@ -1389,11 +1421,18 @@ class Walk(object):
             lam, held = self._pivot_weight(side, i, r), 1.0
         else:                                         # just off the ground: its lift-off's or the next strike's
             after = r - A
-            lam = (self.pivot[side][i][1] if after < self.swing_len[side][i] - after
-                   else self.pivot[side][(i + 1) % len(self.contact[side])][0])
-            ground = max(float(periodic_cr(self.ground["foot_" + side], t)),
-                         float(periodic_cr(self.ground["ball_" + side], t)))
-            held = min(max(ground / (1.0 - CONTACT_TOL / GROUND_TOL), 0.0), 1.0)
+            leaving = after < self.swing_len[side][i] - after
+            lam = (self.pivot[side][i][1] if leaving else self.pivot[side][(i + 1) % len(self.contact[side])][0])
+            if leaving:
+                # a foot leaving the ground keeps its roll and lets it go over the first SWING_EASE of its
+                # swing: faded by the foot's height (2.5 cm, half a frame at toe-off) it turned back about its
+                # ball at once - the ankle dropped behind, the leg snapped straight, the knee clicked (a
+                # Ground time's long stance rolls the foot 28 deg, 2026-10-13)
+                held = 1.0 - min(after / (SWING_EASE * self.swing_len[side][i]), 1.0)
+            else:
+                ground = max(float(periodic_cr(self.ground["foot_" + side], t)),
+                             float(periodic_cr(self.ground["ball_" + side], t)))
+                held = min(max(ground / (1.0 - CONTACT_TOL / GROUND_TOL), 0.0), 1.0)
             held = held * held * (3.0 - 2.0 * held)
             if held <= 0.0:
                 return 0.0
@@ -1603,7 +1642,7 @@ class Walk(object):
         cop_dev = ((cop - line) @ self.basis.T)[:, :2]
         l_new = pendulum(cop_dev, n / self.fps, m_dev[:, 2].mean())
         l_src = np.array([periodic_cr(self.l_dev, tau) for tau in taus])
-        gain = self.follow * np.array([ctx["ex"], k["sway"] * ctx["ex"]])
+        gain = self.follow * np.array([k["surge"] * ctx["ex"], k["sway"] * ctx["ex"]])
         swing = gain * ((l_new - l_new.mean(axis=0)) - (l_src - l_src.mean(axis=0)))
         mean = ((cop_dev.mean(axis=0) - self.cop_dev.mean(axis=0))
                 - (m_dev[:, :2].mean(axis=0) - self.s_dev[:, :2].mean(axis=0)))
@@ -1696,24 +1735,30 @@ class Walk(object):
                "pose": pose if (pose and k["pose"] > 0.0) else None, "alpha": k["pose"],
                "balance": 0.0 if self.balance_note else k["balance"], "carry": None}
         ctx["spread"] = ctx["alpha"] * ctx["pose"]["width"] if ctx["pose"] and "width" in ctx["pose"] else 0.0
-        ctx["foot_lag"] = k["foot_lag"] * P / float(n)
+        ctx["ks"] = ks = sided(k)
+        ctx["foot_lag"] = dict((side, ks[side]["foot_lag"] * P / float(n)) for side in SIDES)
         ctx["spine_map"] = self._spine_map(ctx["pose"], ctx["alpha"])
         ctx["turns"] = {}
         for side in SIDES:             # the pose's knee heading and toe-out, met (Knee <-> foot)
             pose, knee_turn, toe = ctx["pose"], 0.0, 0.0
             if pose is not None:
-                knee_turn = ctx["alpha"] * k["leg_turn"] * pose["knee_turn"][side] if "knee_turn" in pose else 0.0
-                toe = ctx["alpha"] * k["leg_turn"] * pose["toe"][side] if "toe" in pose else 0.0
-                knee_turn, toe = meet(knee_turn, toe, k["knee_foot"])
+                turn = ctx["alpha"] * ks[side]["leg_turn"]
+                knee_turn = turn * pose["knee_turn"][side] if "knee_turn" in pose else 0.0
+                toe = turn * pose["toe"][side] if "toe" in pose else 0.0
+                knee_turn, toe = meet(knee_turn, toe, ks[side]["knee_foot"])
             ctx["turns"][side] = (knee_turn, toe)
         ctx["placement"] = 0.0 if self.placement_note else k["foot_placement"]
-        # Ground time past 1 lets the legs stretch: straighter than the walk's straightest, toward STRETCH_REACH
-        stretch = min(1.0, max(0.0, k["ground_time"] - 1.0) / GROUND_STRETCH)
-        ctx["reach"] = dict((s, max(r, r + (STRETCH_REACH - r) * stretch)) for s, r in self.reach.items())
+        # Ground time past 1 holds the trailing leg longer: it ends its stance straight on its toes, and a
+        # knee near straight turns tens of degrees for millimetres of reach - so it is kept STRETCH_REACH of
+        # its length at most and the pelvis sinks the rest (at 0.993, the walk's own straightest, it clicked:
+        # 2026-10-13)
+        stretch = dict((s, min(1.0, max(0.0, ks[s]["ground_time"] - 1.0) / GROUND_STRETCH)) for s in SIDES)
+        ctx["reach"] = dict((s, r + (min(r, STRETCH_REACH) - r) * stretch[s]) for s, r in self.reach.items())
         ctx["frame"], ctx["grown"] = P / float(n), None
         ctx["locks"], held = self._locks(ctx) if ctx["placement"] > 0.0 else ({}, 0.0)
         ctx["ground"] = {}
-        if not self.placement_note and (ctx["placement"] > 0.0 or k["ground_time"] != 1.0):
+        timed = any(ks[s]["ground_time"] != 1.0 for s in SIDES)
+        if not self.placement_note and (ctx["placement"] > 0.0 or timed):
             ctx["grown"] = self._growth(ctx)        # Ground time retimes the feet with or without Foot placement
         times = [(f / float(n), f * P / float(n)) for f in range(n + 1)]
         ctx["chest_own"] = self._chest_own(times, ctx)
@@ -1722,7 +1767,7 @@ class Walk(object):
         if ctx["balance"] > 0.0:
             only = self._com_joints()
             bases = [self._frame(phi, tau, ctx, drop[f], None, only)[0] for f, (phi, tau) in enumerate(times[:-1])]
-            swinging = k["arm_drag"] > 0.0 and bool(self._arm_chains())
+            swinging = any(ks[s]["arm_drag"] > 0.0 for s in SIDES) and bool(self._arm_chains())
             still = list(bases)
 
             def armed(carry):
@@ -1833,7 +1878,9 @@ class Walk(object):
             j = self.index[name]
             dev = periodic_cr(self.pdev[j], tau) @ self.basis.T
             scale = k["stride"] if name == "root" else (1.0 - ctx["balance"]) * k["stride"] + ctx["balance"]
-            along = mean[0] + scale * ex * (dev[0] - mean[0])
+            # Surge: x the pelvis's forward and back - Bob's partner along the walk (the root keeps its own)
+            surge = k["surge"] if name == "pelvis" else 1.0
+            along = mean[0] + surge * scale * ex * (dev[0] - mean[0])
             if name == "pelvis":         # Pelvis forward: the hips ahead of (+) or behind (-) the feet
                 along += k["pelvis_forward"]
             # the root runs straight down the travel line at Root sway 0 (a root weaving with the hips weaves
@@ -1887,6 +1934,18 @@ class Walk(object):
                 limit = ctx.get("reach", self.reach)[side] * (np.linalg.norm(self.lt_at(ca, t)) + np.linalg.norm(self.lt_at(fo, t)))
                 needs[side][f] = self._roll_need(side, t, rot, ankle, hip, limit, ctx)
                 legs[f][side] = (t, rot, ankle, hip, limit)
+        # the heel's roll lets go gradually: never earlier than a frame needs it, and after its peak it eases
+        # down over ROLL_RELEASE of a stride. Taken frame by frame it fell 20 deg in two frames as a Ground
+        # time's long stance ended - the heel dropped, the ankle jumped back and the knee clicked (2026-10-13)
+        # Under Ground time past 1 the stance ends with a large roll that rises as fast (2 -> 20 deg in two
+        # frames): there the whole curve is a smooth cover over the frames' needs, heel up and toes up apart
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
+        for side in SIDES:
+            if ks[side]["ground_time"] > 1.0:
+                up, back = np.maximum(needs[side], 0.0), np.maximum(-needs[side], 0.0)
+                sigma = LOWER_BLUR * n / self.strides
+                needs[side] = smooth_cover(up, sigma) - smooth_cover(back, sigma)
+            needs[side] = released(needs[side], ROLL_RELEASE * n / self.strides)
         ctx["rolls"] = (dict((side, np.append(needs[side], needs[side][0])) for side in SIDES)
                         if ctx["placement"] > 0.0 else None)
         held, aloft = dict((side, np.zeros(n)) for side in SIDES), dict((side, np.zeros(n)) for side in SIDES)
@@ -1904,8 +1963,11 @@ class Walk(object):
                 disc = qu * qu - (float(np.dot(q, q)) - limit * limit)
                 if disc >= 0.0:
                     (held if down else aloft)[side][f] = -qu - math.sqrt(disc)
-        for side in SIDES:     # a foot just off the ground holds the pelvis no lower than its stance did
-            need = np.maximum(need, np.maximum(held[side], np.minimum(aloft[side], held[side].max())))
+        for side in SIDES:     # a foot just off the ground holds the pelvis no lower than its stance did...
+            cap = held[side].max()
+            if (ctx.get("ks") or {}).get(side, ctx["k"])["ground_time"] > 1.0:
+                cap = np.inf   # ...unless Ground time held it longer: its swing leaves from further behind
+            need = np.maximum(need, np.maximum(held[side], np.minimum(aloft[side], cap)))
         drop = smooth_cover(need, LOWER_BLUR * len(need) / self.strides)     # LOWER_BLUR of a stride
         return np.append(drop, drop[0])
 
@@ -1917,7 +1979,8 @@ class Walk(object):
         rots, poss = [None] * len(self.names), [None] * len(self.names)
         body = self._body(phi, tau, ctx, drop, carry)
         chest = self.chest_extra(tau, k, ex, ctx.get("chest_own"))
-        gains = {"spine": k["spine"] * ex, "arm": k["arms"] * ex}
+        ks = ctx.get("ks") or {"l": k, "r": k}
+        gains = {"spine": k["spine"] * ex}
         feet = dict((side, self._clock(side, tau, ctx)) for side in SIDES)
         rolls = {}
         short = 0.0
@@ -1951,9 +2014,11 @@ class Walk(object):
                     rots[j] = exp_rot(k["head"] * ex * periodic_cr(self.wlog[j], t)) @ centre
                 elif j in self.world_arms and (pose is None or "arms" not in pose):
                     # the upper arm hangs and swings in the world
-                    rots[j] = exp_rot(k["arms"] * ex * periodic_cr(self.wlog[j], t)) @ self.wmean[j]
+                    arms = ks[self._side(j)]["arms"]
+                    rots[j] = exp_rot(arms * ex * periodic_cr(self.wlog[j], t)) @ self.wmean[j]
                 else:
-                    centre, gain = self.lmean[j], gains.get(kind, 1.0)
+                    centre = self.lmean[j]
+                    gain = ks[self._side(j)]["arms"] * ex if kind == "arm" else gains.get(kind, 1.0)
                     if pose is not None:
                         if j in pose.get("spine", {}):
                             centre = toward(centre, pose["spine"][j], a)
@@ -1965,15 +2030,17 @@ class Walk(object):
                             if pose.get("grip"):
                                 gain *= 1.0 - a
                     if j in self.forearms:
-                        gain *= k["elbow"]
+                        gain *= ks[self._side(j)]["elbow"]
                     turn = periodic_cr(self.llog[j], t)
                     if j in ctx["spine_map"]:      # about the world axis it turns about in the walk
                         turn = turn @ ctx["spine_map"][j]
                     local = exp_rot(gain * turn) @ centre
                     if j in self.balls:        # the toes trail the swinging shin with the foot
                         hang = self.swing_at(self.balls[j], clock)
-                        if hang > 0.0 and (ctx["foot_lag"] > 0.0 or k["foot_flex"] != 1.0):
-                            late = exp_rot(k["foot_flex"] * periodic_cr(self.llog[j], clock - BALL_LAG * ctx["foot_lag"]))
+                        toe_side = self.balls[j]
+                        lag, flex = ctx["foot_lag"][toe_side], ks[toe_side]["foot_flex"]
+                        if hang > 0.0 and (lag > 0.0 or flex != 1.0):
+                            late = exp_rot(flex * periodic_cr(self.llog[j], clock - BALL_LAG * lag))
                             local = toward(local, late @ centre, hang)
                     rots[j] = local @ rots[p]
                     if j in self.balls and self.balls[j] in rolls:       # the toes stay down as the foot rolls
@@ -1990,6 +2057,11 @@ class Walk(object):
         return out, short
 
     # -- the arms: the body's inertia on top of their motion --
+
+    def _side(self, j):
+        """"l" or "r": the side a joint's name says (UE names end in _l / _r), else "l" (a middle joint)."""
+        name = self.names[j]
+        return "r" if name.endswith("_r") else "l"
 
     def _arm_chains(self):
         """{side: [upperarm, lowerarm, hand] indices} and each chain's parent (the clavicle, else what holds the
@@ -2010,25 +2082,34 @@ class Walk(object):
         together (a pose's grip) keep holding it: the thing sways and trails as one body and the arms reach it
         by IK. Integrated ARM_SUBSTEPS a frame, cycle after cycle until a cycle starts where the last did, the
         seam closed. Returns what it did (info["arms"])."""
-        k = ctx["k"]
-        drag, bounce = k["arm_drag"], k["arm_bounce"]
+        ks = ctx.get("ks") or {"l": ctx["k"], "r": ctx["k"]}
         chains = self._arm_chains()
         pose = ctx["pose"]
         grip = bool(pose and pose.get("grip") and ctx["alpha"] > 0.0 and len(chains) == 2)
-        out = {"drag": drag, "bounce": bounce, "grip": grip, "cycles": 0}
+        # each arm its own side's drag and bounce; hands holding one thing move as one: the two sides' mean
+        own = dict((side, (ks[side]["arm_drag"], ks[side]["arm_bounce"])) for side in chains)
+        if grip:
+            own = dict((side, (sum(d for d, _ in own.values()) / 2.0, sum(b for _, b in own.values()) / 2.0))
+                       for side in own)
+        drag = max([d for d, _ in own.values()] or [0.0])
+        out = {"drag": drag, "bounce": max([b for _, b in own.values()] or [0.0]), "grip": grip, "cycles": 0}
         if drag <= 0.0 or not chains:
             out["drag"] = 0.0
             return out
-        zeta = 1.0 - 0.75 * bounce
-        w0 = 2.0 * zeta / drag                    # per frame: a damped spring lags 2 zeta / w0 behind its target
-        steps = max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0)))     # w0 dt <= 1/4: the integration stays true
+
+        def spring(d, b):
+            zeta = 1.0 - 0.75 * b
+            w0 = 2.0 * zeta / d                   # per frame: a damped spring lags 2 zeta / w0 behind its target
+            return w0, zeta, max(ARM_SUBSTEPS, int(math.ceil(4.0 * w0)))   # w0 dt <= 1/4: the integration stays true
         kin = worlds.copy()
         if grip:
-            new, cycles = self._grip_motion(kin, n, chains, w0, zeta, steps)
+            new, cycles = self._grip_motion(kin, n, chains, *spring(*own["r"]))
         else:
             new, cycles = {}, 0
             for side, chain in chains.items():
-                got, used = self._limb_motion(kin, n, chain, w0, zeta, steps)
+                if own[side][0] <= 0.0:           # this arm as the frames put it
+                    continue
+                got, used = self._limb_motion(kin, n, chain, *spring(*own[side]))
                 new.update(got)
                 cycles = max(cycles, used)
         out["cycles"] = cycles
@@ -2244,7 +2325,8 @@ class Walk(object):
         return {"joints": (th, ca, fo), "t": t, "hip": self.lt_at(th, tau), "foot_rot": foot_rot, "ankle": ankle,
                 "lengths": (l1, l2), "dirs": (_unit(kn - h), _unit(a - kn)), "normal": _unit(np.cross(e, bend)),
                 "bend": knee_bend, "wrot": (self.wrot(th, t), self.wrot(ca, t)), "hang": hang,
-                "in_calf": self.foot_in_calf(side, t - ctx["foot_lag"], k["foot_flex"]) if hang > 0.0 else None}
+                "in_calf": (self.foot_in_calf(side, t - ctx["foot_lag"][side], ctx["ks"][side]["foot_flex"])
+                            if hang > 0.0 else None)}
 
     def _leg(self, side, tau, rots, poss, ctx, cache=None, rolls=None):
         """Thigh, calf and foot by IK from the new hip to the new foot; each bone turned by the rotation

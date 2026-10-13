@@ -27,6 +27,11 @@ RESET_BTN = "skeldarWalkReset"
 SAVE_WALK_BTN = "skeldarWalkSaveWalk"
 SAVE_POSE_BTN = "skeldarWalkSavePose"
 GROUP_TABS = "skeldarWalkGroups"
+SIDE_TABS = "skeldarWalkSides"
+#  [Both | Left | Right] (2026-10-13, «режим в котором левая и правая сторона станут раздельными, по
+#  умолчанию коррекция двух сторон»): which side the leg and arm knobs (model.SIDED) show and set
+SIDE_MODES = (("both", "Both"), ("l", "Left"), ("r", "Right"))
+SIDE_MARK = {"l": " L", "r": " R"}
 OPTION = "skeldarWalk_"
 NO_POSE = scene.NO_POSE
 NOTHING = "Select a skeleton - Apply puts the walk on it"
@@ -36,8 +41,8 @@ GROUPS = (
     ("step", "Step", ("stride", "tempo", "lift")),
     ("legs", "Legs", ("foot_placement", "ground_time", "stance", "swing_out", "leg_turn", "knee_foot", "foot_lag",
                       "foot_flex")),
-    ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "pelvis_rot", "pelvis_twist",
-                          "pelvis_list",
+    ("pelvis", "Pelvis", ("pelvis_height", "pelvis_forward", "bob", "sway", "surge", "pelvis_rot",
+                          "pelvis_twist", "pelvis_list",
                           "root_sway")),
     ("chest", "Chest", ("spine", "chest_twist", "chest_sway", "head")),
     ("arms", "Arms", ("arms", "elbow", "arm_drag", "arm_bounce", "overlap")),
@@ -75,6 +80,8 @@ LABELS = {
                                          "them going with them, the legs following; Balance keeps it"),
     "bob": ("Bob", "x the pelvis's up and down"),
     "sway": ("Sway", "x the pelvis's side to side"),
+    "surge": ("Surge", "x the pelvis's forward and back as it walks - Bob's partner along the walk (Pelvis "
+                       "forward moves it all ahead or behind)"),
     "pelvis_rot": ("Pelvis motion", "x all the pelvis's turns and tilts (Twist and Hip drop included)"),
     "pelvis_twist": ("Twist, deg", "The pelvis turns this far each way with the legs, the forward leg's hip "
                                    "forward - at a normal step (0.8 of the leg); it grows with the step. "
@@ -143,6 +150,21 @@ def _group_tab(key):
     return "skeldarWalkGroupTab_" + key
 
 
+def _side_tab(mode):
+    return "skeldarWalkSide_" + mode
+
+
+def _override(name, side):
+    """The memory of a side's own value of a SIDED knob."""
+    return "knob_%s_%s" % (name, side)
+
+
+def side_mode():
+    """"both" (the default: a knob sets both sides), "l" or "r"."""
+    mode = _stored("side", "both")
+    return mode if mode in dict(SIDE_MODES) else "both"
+
+
 # ---- the memory ----
 
 def _stored(name, default=None):
@@ -159,21 +181,49 @@ def _remember(name, value):
         cmds.optionVar(floatValue=(OPTION + name, float(value)))
 
 
-def values():
-    """The knobs: the card's where it stands (and remembered), else what was remembered."""
+def _shown(name):
+    """The value a knob's slider shows, or None without one."""
     cmds = _cmds()
+    control = _control(name)
+    if name == "tempo":
+        return float(cmds.intSliderGrp(control, query=True, value=True)) \
+            if cmds.intSliderGrp(control, exists=True) else None
+    return float(cmds.floatSliderGrp(control, query=True, value=True)) \
+        if cmds.floatSliderGrp(control, exists=True) else None
+
+
+def values():
+    """The knobs: the card's where it stands (and remembered), else what was remembered; a side's own value
+    of a leg or arm knob as "<name>_l" / "<name>_r" where it has one (shown on the slider in Left / Right)."""
+    mode = side_mode()
     out = {}
     for name, default in scene.wm.DEFAULTS.items():
-        control = _control(name)
-        if name == "tempo" and cmds.intSliderGrp(control, exists=True):
-            out[name] = float(cmds.intSliderGrp(control, query=True, value=True))
-        elif name != "tempo" and cmds.floatSliderGrp(control, exists=True):
-            out[name] = float(cmds.floatSliderGrp(control, query=True, value=True))
+        shown = _shown(name)
+        if shown is not None and not (name in scene.wm.SIDED and mode != "both"):
+            out[name] = shown
+            _remember("knob_" + name, shown)
         else:
             out[name] = float(_stored("knob_" + name, default))
-            continue
-        _remember("knob_" + name, out[name])
+    for name in scene.wm.SIDED:
+        if mode != "both":                 # the slider shows this side: its value is this side's own
+            shown = _shown(name)
+            if shown is not None and (abs(shown - out[name]) > 1e-9 or _stored(_override(name, mode)) is not None):
+                _remember(_override(name, mode), shown)
+        for side in ("l", "r"):
+            own = _stored(_override(name, side))
+            if own is not None:
+                out["%s_%s" % (name, side)] = float(own)
     return out
+
+
+def _forget_sides(name=None):
+    """A knob's sides linked again (every SIDED knob without `name`)."""
+    cmds = _cmds()
+    for each in ([name] if name else scene.wm.SIDED):
+        for side in ("l", "r"):
+            key = OPTION + _override(each, side)
+            if cmds.optionVar(exists=key):
+                cmds.optionVar(remove=key)
 
 
 def chosen_walk():
@@ -232,8 +282,15 @@ def _fill_menus(walk=None, pose=None):
 
 
 def _set_knobs(knobs, frames):
-    """The knobs into the card (and the memory); the tempo's range follows the walk's own `frames`."""
+    """The knobs into the card (and the memory); the tempo's range follows the walk's own `frames`. A side's
+    own value ("lift_l") is remembered; given every knob (a walked skeleton read back), a side without one is
+    linked again."""
     cmds = _cmds()
+    if all(name in knobs for name in scene.wm.DEFAULTS):
+        _forget_sides()
+    for key, value in knobs.items():
+        if key in scene.wm.SIDE_KNOBS:
+            _remember("knob_" + key, value)
     for name, value in knobs.items():
         if name not in scene.wm.DEFAULTS:
             continue
@@ -248,6 +305,7 @@ def _set_knobs(knobs, frames):
             if cmds.floatSliderGrp(control, exists=True):
                 cmds.floatSliderGrp(control, edit=True, value=value)
             _remember("knob_" + name, value)
+    show_side(side_mode())
 
 
 def _set_parts(parts):
@@ -256,6 +314,59 @@ def _set_parts(parts):
         if cmds.checkBox(_part_control(part), exists=True):
             cmds.checkBox(_part_control(part), edit=True, value=part in parts)
     _remember("parts", json.dumps(list(parts)))
+
+
+def show_side(mode):
+    """The leg and arm knobs' sliders on side `mode` ("both", "l", "r"): each shows that side's own value
+    (Both: the knob's, its label marked * where the sides differ), its segment lit, remembered."""
+    cmds = _cmds()
+    mode = mode if mode in dict(SIDE_MODES) else "both"
+    _remember("side", mode)
+    if cmds.iconTextRadioButton(_side_tab(mode), exists=True):
+        cmds.iconTextRadioButton(_side_tab(mode), edit=True, select=True)
+    quiet, _QUIET[0] = _QUIET[0], True
+    try:
+        for name in scene.wm.SIDED:
+            control = _control(name)
+            if not cmds.floatSliderGrp(control, exists=True):
+                continue
+            base = float(_stored("knob_" + name, scene.wm.DEFAULTS[name]))
+            own = dict((side, _stored(_override(name, side))) for side in ("l", "r"))
+            if mode == "both":
+                split = any(v is not None and abs(float(v) - base) > 1e-9 for v in own.values())
+                value, mark = base, " *" if split else ""
+            else:
+                value = float(own[mode]) if own[mode] is not None else base
+                mark = SIDE_MARK[mode]
+            cmds.floatSliderGrp(control, edit=True, value=value, label=LABELS[name][0] + mark)
+    finally:
+        _QUIET[0] = quiet
+
+
+def side_changed(mode):
+    def go(*_):
+        show_side(mode)
+    return go
+
+
+def knob_changed(name):
+    """A released slider: in Left / Right a leg or arm knob sets that side alone; in Both it sets the knob
+    and links its sides again. Then the target is keyed again."""
+    def changed(*_):
+        if _QUIET[0]:
+            return None
+        mode = side_mode()
+        shown = _shown(name)
+        if shown is not None:
+            if name in scene.wm.SIDED and mode != "both":
+                _remember(_override(name, mode), shown)
+            else:
+                _remember("knob_" + name, shown)
+                if name in scene.wm.SIDED:
+                    _forget_sides(name)
+                    show_side(mode)
+        return slider_changed()
+    return changed
 
 
 def show_group(key):
@@ -394,7 +505,7 @@ def press_reset(*_):
         walk = scene.load_walk(chosen_walk())[0]
         knobs = dict(scene.wm.DEFAULTS)
         knobs["tempo"] = walk.P
-        _set_knobs(knobs, walk.P)
+        _set_knobs(knobs, walk.P)          # every knob given: the sides linked again
         try:
             root = scene.target_root()
         except scene.Refusal:
@@ -489,7 +600,7 @@ def _slider(name):
     default = scene.wm.DEFAULTS[name]
     common = dict(label=label, field=True, columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)),
                   adjustableColumn=3, height=hubstyle.height("small", 22), annotation=tip,
-                  changeCommand=slider_changed)
+                  changeCommand=knob_changed(name))
     if name == "tempo":
         stored = int(round(float(_stored("knob_tempo", 0.0) or 0.0)))
         cmds.intSliderGrp(_control(name), minValue=4, maxValue=120, fieldMinValue=4, fieldMaxValue=400,
@@ -542,6 +653,20 @@ def build_panel():
             annotation="The knobs of %s: %s" % (label.lower(), ", ".join(LABELS[n][0] for n in names)),
             onCommand=group_changed(key)), "segment")
     cmds.setParent("..")
+    side = side_mode()
+    sides = cmds.rowLayout(numberOfColumns=len(SIDE_MODES),
+                           columnAttach=[(i + 1, "both", 1) for i in range(len(SIDE_MODES))])
+    hubstyle.mark(sides, "segments", layout=True)
+    cmds.iconTextRadioCollection(SIDE_TABS)
+    for mode, label in SIDE_MODES:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            _side_tab(mode), style="textOnly", label=label, height=hubstyle.height("segment", 24),
+            select=mode == side, collection=SIDE_TABS,
+            annotation=("The leg and arm knobs set both sides" if mode == "both" else
+                        "The leg and arm knobs (marked %s) set the %s side alone; Both links a knob's sides "
+                        "again when it is moved" % (SIDE_MARK[mode].strip(), "left" if mode == "l" else "right")),
+            onCommand=side_changed(mode)), "segment")
+    cmds.setParent("..")
     for key, label, names in GROUPS:
         cmds.columnLayout(_group_column(key), adjustableColumn=True, rowSpacing=hubstyle.row_spacing(2),
                           manage=key == shown)
@@ -558,6 +683,7 @@ def build_panel():
     except Exception:                                        # noqa: BLE001 - no walk saved yet
         pass
     show_group(shown)
+    show_side(side)
     start()
     refresh()
     return column

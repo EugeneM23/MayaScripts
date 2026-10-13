@@ -9531,6 +9531,45 @@ asked: a two-handed grip HOLDS and the weapon sways as one, the overlap is PHYSI
   - 6175 unit tests;
   - picture `walkparam/walk_forward_ground.png`.
 
+**…the knee click, one side at a time, Surge** (2026-10-13, over the port in the animator's scene: «у левой ноги с
+26 по 31 кадры в колене идут щелчки … режим в котором левая и правая сторона станут раздельными, по умолчанию
+коррекция двух сторон … коррекция таза вверх вниз, а нужна ещё вперёд и назад»).
+- **The click.** Read only over 7001: `|Manny_Skeleton_Character|root` walked with asd under the goblin, Ground
+  time 1.16, Pelvis height +9.68, Pelvis forward 4.95. The left knee by frame read 44, 32, 27, 28, 14, 14, then 44
+  at the next cycle's frame 1. Reproduced in mayapy at those knobs (0.1 deg of jerk at Ground time 1, 3.9 at 1.16).
+  Three causes, each measured:
+  - the long stance ended with the leg at the walk's own straightest (0.993 of its length, the knee 13.7°), where
+    a knee turns tens of degrees for millimetres of reach. Ground time past 1 now LOWERS the legs' reach toward
+    `STRETCH_REACH` 0.96 (all of it at 1.15), and the pelvis sinks the rest;
+  - the heel's roll was each frame's own need, falling 20° in two frames as the stance ended (the ankle jumped
+    back). It is now `released` after its peak (`ROLL_RELEASE` 0.1 of a stride), and under Ground time past 1
+    the whole roll is a `smooth_cover` (heel up and toes up apart);
+  - a leaving foot's roll faded by its height (2.5 cm, half a frame at toe-off). It now fades over the first
+    `SWING_EASE` of the swing, and a Ground-timed foot just off the ground holds the pelvis without the
+    stance's cap.
+  - Now the left knee reads 58, 55, 48, 41, 33 down to the lift-off, then 43, 63, 81: the turn into the shortened
+    swing is quick, the wobble gone. Picture `walkparam/walk_knee_fix.png`.
+- **One side at a time**: `model.SIDED` (stance, lift, swing out, leg turn, knee <-> foot, foot lag, foot flex,
+  Ground time, arms, elbow, arm drag, arm bounce) take "<name>_l" / "<name>_r" (`knobs()` accepts them,
+  `sided(k)` gives each side its knobs).
+  - Read per side in the model: the foot, the turns, the foot lag (a dict now), the reach, the growth, the arms
+    by the joint's name (`_side`), each arm's own spring (a grip: the two sides' mean).
+  - The card's `[Both | Left | Right]` row under the group tabs (`skeldarWalk_side`, Both by default). In
+    Left / Right a leg or arm slider shows and sets that side alone (its label marked L / R). In Both a knob
+    whose sides differ is marked *, and moving it links its sides again. Each slider has its own
+    `knob_changed(name)`; Reset links every side.
+  - The marker keeps a side's own values and `pick` reads them back.
+- **Surge** (×, Pelvis group after Sway): the pelvis's forward and back as it walks, Bob's partner along the walk
+  (the balance pendulum's forward gain with it). Pelvis forward was already the static shift.
+- **Proof**:
+  - `SideKnobTests` (4), `SurgeTests` (2), the card's `SideTests` (5): 181 walk tests;
+  - `verify_walk.py` **78/78 standalone**:
+    - gate 68: the animator's knobs under the goblin, both knees down to their least bend without turning back,
+      least 32.3 / 35.0°;
+    - gate 69: Foot lift L 2 lifts the left foot to 40.3 cm (28.4), the right 24.4 (24.4); Arms R 0 stills the
+      right hand (0.0 of 51.8 cm), the left 39.4 (39.4);
+    - gate 70: Surge 0 / 1 / 2 → 0.00 / 2.76 / 5.51 cm.
+
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an
 update (trap 224); for Balance: a held weapon's mass, the target's own masses
@@ -9614,6 +9653,13 @@ solve, the pelvis's tilt in degrees, the swing path kept clear of the other leg.
      other 7 cm a frame, and the sword pose crouched the body 17 cm because the root stood under the feet.
      Every gate passed: they all ran on `asd`. Test a model on a second source before calling it general, and
      measure heights against the thing that stands on the ground.
+239. **A knee near straight and a quantity solved frame by frame both click, and finer sampling of a WALK
+     changes the walk.** The animator's knee clicks came from a leg held at 0.993 of its length (13.7°: a
+     millimetre of reach is degrees of knee) and from a heel roll taken as each frame's own need (20° gone in
+     two frames). Keep a stretched leg off straight, and give a per-frame need a time profile: a smooth cover,
+     a gradual release. Measuring between the keys by evaluating at 8x the tempo misled: the tempo is a knob
+     (Balance's pendulum, the arms' drag in frames, Foot placement's frame all change with it), so 8x was
+     another walk. Judge the keys the scene gets.
 
 ## Camera Shake: handheld filming and an impact, on a layer of their own (2026-10-13)
 

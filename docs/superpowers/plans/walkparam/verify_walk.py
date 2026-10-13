@@ -855,6 +855,60 @@ try:
          % (longer["l"], longer["r"], ", ".join("%.2f" % g for v in ground_r.info["ground"].values() for _, g in v),
             max(slides_g.values()), ground_r.info["lowered"], plain_r.info["lowered"]))
 
+    # 6c. the animator's knee click (2026-10-13: asd under the goblin at their knobs, Ground time 1.16 - the left
+    # knee wobbled 32, 27, 28, 14 at frames 27-30 and snapped to 44 next): every knee on Manny's keys goes down
+    # to its least bend without turning back and stays off straight; one side's own knobs; Surge
+    def knee_bends(m, side, n):
+        i = walk.index
+        a = m[i["calf_" + side], :n + 1, 3, :3] - m[i["thigh_" + side], :n + 1, 3, :3]
+        b = m[i["foot_" + side], :n + 1, 3, :3] - m[i["calf_" + side], :n + 1, 3, :3]
+        c = np.sum(a * b, axis=1) / (np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1))
+        return np.degrees(np.arccos(np.clip(c, -1.0, 1.0)))
+
+    if os.path.exists(POSE_FILE):
+        scene_knobs = {"chest_twist": 7.32, "ground_time": 1.16, "knee_foot": 0.61, "leg_turn": 0.47,
+                       "pelvis_forward": 4.95, "pelvis_height": 9.68, "pelvis_list": 5.42, "pelvis_twist": 18.53,
+                       "pose": 1.0, "stance": 0.18, "swing_out": 6.11}
+        knee_r = sw.apply(manny, name, scene_knobs, "goblin")[0]
+        knee_keys = keyed_model(manny, knee_r.frames)
+        turns, least = [], []
+        for side in "lr":
+            bend = knee_bends(knee_keys, side, knee_r.frames)[:-1]
+            low = int(np.argmin(bend))
+            before = [bend[(low - k) % len(bend)] for k in range(6, -1, -1)]   # the six frames down to it
+            turns.append(sum(1 for a, b in zip(before, before[1:]) if b > a + 0.5))
+            least.append(float(bend.min()))
+        gate(not any(turns) and min(least) > 25.0,
+             "the animator's knobs under the goblin (Ground time 1.16) on Manny's keys: each knee goes down to its "
+             "least bend without turning back (%s turns), least bend %.1f / %.1f deg (it clicked at 13.7)"
+             % (turns, least[0], least[1]))
+    side_r = sw.apply(manny, name, {"lift_l": 2.0, "arms_r": 0.0, "arm_drag": 0.0})[0]
+    side_keys = keyed_model(manny, side_r.frames)
+    both_r = sw.apply(manny, name, {"arm_drag": 0.0})[0]
+    both_keys = keyed_model(manny, both_r.frames)
+    lift = dict((s, (float(side_keys[walk.index["foot_" + s], :, 3, 1].max()),
+                     float(both_keys[walk.index["foot_" + s], :, 3, 1].max()))) for s in "lr")
+
+    def arm_swing(m, s):
+        i = walk.index
+        return float(np.ptp((m[i["hand_" + s], :, 3, :3] - m[i["upperarm_" + s], :, 3, :3]) @ walk.fwd))
+    gate(lift["l"][0] > lift["l"][1] + 2.0 and abs(lift["r"][0] - lift["r"][1]) < 0.05
+         and arm_swing(side_keys, "r") < 0.5 * arm_swing(both_keys, "r")
+         and abs(arm_swing(side_keys, "l") - arm_swing(both_keys, "l")) < 0.05,
+         "one side's own knobs on Manny's keys: Foot lift L 2 lifts the left foot to %.1f cm (both sides: %.1f), "
+         "the right %.1f (%.1f); Arms R 0 swings the right hand %.1f cm (%.1f), the left %.1f (%.1f)"
+         % (lift["l"][0], lift["l"][1], lift["r"][0], lift["r"][1], arm_swing(side_keys, "r"),
+            arm_swing(both_keys, "r"), arm_swing(side_keys, "l"), arm_swing(both_keys, "l")))
+    surge = []
+    for g in (1.0, 0.0, 2.0):
+        sr = sw.apply(manny, name, {"surge": g, "balance": 0.0, "foot_placement": 0.0})[0]
+        sk = keyed_model(manny, sr.frames)
+        line = np.array([walk.origin + walk.travel * f / float(sr.frames) for f in range(sr.frames)])
+        surge.append(float(np.ptp((sk[walk.index["pelvis"], :sr.frames, 3, :3] - line) @ walk.fwd)))
+    gate(surge[1] < 0.1 and abs(surge[2] - 2.0 * surge[0]) < 0.1,
+         "Surge on Manny's keys: the pelvis's forward and back %.2f cm at 1, %.2f at 0, %.2f at 2"
+         % tuple(surge))
+
     # 7. a cycle of several steps (the animator's `dw`: two uneven steps of each foot, its stances floating 2-3 cm,
     # its root 17 cm under the feet) under the two-handed sword, on Manny: every stance held, the pelvis over the feet
     if os.path.exists(DW_FILE) and os.path.exists(SWORD_FILE):
