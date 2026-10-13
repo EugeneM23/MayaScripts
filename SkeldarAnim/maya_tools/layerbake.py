@@ -1,23 +1,28 @@
-"""The Tools card's Layer (2026-10-13): what drives an object baked onto a new additive layer.
+"""The Tools card's Layer (2026-10-13): everything that animates an object, baked onto a new
+additive layer.
 
 The animator: «Теперь давай реализуем функционал запекания на адитивный слой»; asked: any object,
 whatever drives it (our knot or anybody's constraint), a new layer per press, a third button in the
-bottom row (Bake | Layer | Remove). OverRig's `>layer` baked onto an OVERRIDE layer `BakedAnim`;
-ours keeps the object's own keys in the base and puts only what the drivers changed on an
-ADDITIVE layer `Baked_<leaf>` (marked `skeldarBakeLayer`), so muting it gives the original back,
-its weight blends, deleting it drops the change.
+bottom row (Bake | Layer | Remove). Then, with a plainly keyed object that the first build refused
+(«я выделил объект на котором просто ключи нажал леер и он не запекся»), asked: everything goes
+onto the layer and the base holds a still pose. OverRig's `>layer` baked onto an OVERRIDE layer
+`BakedAnim`; ours bakes onto an ADDITIVE layer `Baked_<leaf>` (marked `skeldarBakeLayer`): the
+object's own keys, its knots and its constraints all move there, the base keeps the pose of the
+first frame (over the whole take) - mute the layer and the object stands; with a highlight the
+base keeps its keys outside it and bridges the highlight on its own keys.
 
 The press: the drivers classified before anything changes - our knots come off as Remove takes
 them (riders first), the animator's constraints are deleted, and a constraint of the Retarget, of
 another card of ours (a weapon link, a hand proxy, the scene camera, a weapon or armor space) or
 of the rig itself refuses the whole press by name. One time walk reads what every object shows,
-the drivers come off, a second walk reads its own animation, and the difference - the shown
-rotation made continuous from the own one - is keyed on every frame of the span (the highlight,
-zero one frame outside it, else the take). One undo chunk; a refusal changes nothing.
+the drivers come off, the base's own curves go (or are bridged), a second walk reads what is left,
+and the difference - the shown rotation made continuous from what is left - is keyed on every
+frame of the span (the highlight, zero one frame outside it, else the take, anchored at its first
+frame). One undo chunk; a refusal changes nothing. Other animation layers stay as they are.
 
 `write_deltas` is the layer writer the Overlap uses too.
 
-Spec: docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md
+Spec: docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md (read its addenda)
 """
 
 import math
@@ -119,28 +124,60 @@ def _objects(selection):
 
 
 def _drivers(obj):
-    """({constraint: [channels]}, {channel: word}) for the object's translate and rotate: the
-    constraints driving them, directly or through Maya's pairBlend, and what else drives the
-    others (an expression, a driven key, a layer...)."""
-    constraints, other = {}, {}
+    """{constraint: [channels]}: the constraints driving the object's translate and rotate,
+    directly or through Maya's pairBlend."""
+    constraints = {}
     for ch in plan.CHANNELS:
         found = _sources(obj + "." + ch)
         if not found:
             continue
         node = found[0]
-        kind = cmds.nodeType(node)
-        if kind == "pairBlend":
+        if cmds.nodeType(node) == "pairBlend":
             upstream = _sources(node + "." + _BLEND_INPUT2[ch])
             if upstream and cmds.objectType(upstream[0], isAType="constraint"):
                 constraints.setdefault(_long(upstream[0]), []).append(ch)
             continue
         if cmds.objectType(node, isAType="constraint"):
             constraints.setdefault(_long(node), []).append(ch)
+    return constraints
+
+
+def _source_plug(plug):
+    found = cmds.listConnections(plug, source=True, destination=False, plugs=True,
+                                 skipConversionNodes=True) or []
+    return found[0] if found else None
+
+
+def _base(plug, ch):
+    """(base plug, base curve or None, word, layered) for one channel: the plug the BASE value
+    lives on - through Maya's pairBlend (input 1, the object's own) and any animation layer's
+    blend node (input A, trap 235) - the time curve feeding it, what else drives it in words
+    ('' for nothing or a constraint), and whether a layer stands on it."""
+    target, layered = plug, False
+    for _ in range(32):
+        src = _source_plug(target)
+        if not src:
+            return target, None, "", layered
+        node, attr = src.split(".", 1)
+        kind = cmds.nodeType(node)
+        if kind.startswith("animBlendNode"):
+            layered = True
+            target = "%s.inputA%s" % (node, attr[len("output"):])
             continue
-        word = plan.driver_word(kind, False)
-        if word:
-            other[ch] = word
-    return constraints, other
+        if kind == "pairBlend":
+            target = "%s.%s" % (node, knots._BLEND_INPUT[ch])
+            continue
+        if kind in plan.TIME_CURVES:
+            return target, node, "", layered
+        if cmds.objectType(node, isAType="constraint"):
+            return target, None, "", layered
+        return target, None, plan.driver_word(kind, False), layered
+    return target, None, "", layered
+
+
+def _moves(curve):
+    values = cmds.keyframe(curve, query=True, valueChange=True) or []
+    return not plan.is_constant(values)
 
 
 def _long(node):
@@ -203,12 +240,15 @@ def _rigs_own(constraint, obj, targets, rigs):
     return False
 
 
-def _classify(obj, rigs):
-    """(knot tops, foreign {constraint: channels}, other words, refusal) for one object."""
+def _plan(obj, rigs):
+    """(plan, refusal) for one object. The plan: the knots and the foreign constraints on it,
+    the channels they drive (`held`: those a foreign constraint drives - an unkeyed one keeps
+    nothing of its old value, trap 238; a knot gives its back), the free channels whose own (base)
+    curve moves, what else drives a channel, in words."""
     name = obj.split("|")[-1]
-    constraints, other = _drivers(obj)
-    tops, foreign = [], {}
-    for con, channels in constraints.items():
+    free = _free(obj)
+    tops, foreign, driven, held = [], {}, set(), set()
+    for con, channels in _drivers(obj).items():
         if knots._has(con, plan.OF_MARKER):
             #  our knot's - or, its knot deleted by hand, an orphan of ours: deleted
             top = knots._by_uuid(knots._get(con, plan.OF_MARKER))
@@ -219,15 +259,29 @@ def _classify(obj, rigs):
                                     _rigs_own(con, obj, targets, rigs))
         refusal = plan.driver_refusal(kind, name, con.split("|")[-1])
         if refusal:
-            return None, None, None, refusal
+            return None, refusal
         if kind == "knot":
             if top not in tops:
                 tops.append(top)
         else:
             foreign[con] = channels
-    if not tops and not foreign:
-        return None, None, None, plan.undriven_refusal(name, list(other.values()))
-    return tops, foreign, other, ""
+            held.update(channels)
+        driven.update(channels)
+    moving, words, layered = [], {}, False
+    for ch in free:
+        _plug, curve, word, on_layer = _base(obj + "." + ch, ch)
+        layered = layered or on_layer
+        if word:
+            words[ch] = word
+        elif curve and _moves(curve):
+            if cmds.referenceQuery(curve, isNodeReferenced=True):
+                return None, ("%s: its %s keys come from a reference (%s) - Layer cannot move "
+                              "them" % (name, ch, curve))
+            moving.append(ch)
+    if not tops and not foreign and not moving:
+        return None, plan.undriven_refusal(name, list(words.values()), layered)
+    return dict(obj=obj, tops=tops, foreign=foreign, driven=driven, held=held, moving=moving,
+                words=words), ""
 
 
 # --------------------------------------------------------------------- span
@@ -298,6 +352,60 @@ def _knots_off(tops):
     return count
 
 
+def _bridge(curve, first, last):
+    """A highlight `first..last` taken off a base curve: a key one frame outside each end
+    (inserted, the shape kept), the keys between them cut - the curve then bridges the
+    highlight on those two keys' own tangents."""
+    times = cmds.keyframe(curve, query=True, timeChange=True) or []
+    for edge in (first - 1.0, last + 1.0):
+        if not any(abs(t - edge) < 1e-6 for t in times):
+            cmds.setKeyframe(curve, time=edge, insert=True)
+    if plan.bridged(times, first, last):
+        cmds.cutKey(curve, time=(first - 1.0 + 1e-3, last + 1.0 - 1e-3), clear=True)
+
+
+def _shift(path, ch, amount):
+    """The base of one channel moved by `amount` (its curve's keys, else its static value)."""
+    base_plug, curve, word, _layered = _base(path + "." + ch, ch)
+    if word:
+        return False
+    if curve:
+        cmds.keyframe(curve, edit=True, relative=True, valueChange=amount)
+    else:
+        cmds.setAttr(base_plug, cmds.getAttr(base_plug) + amount)
+    return True
+
+
+def _clear_base(info, path, span, shown, now):
+    """The base's own animation off one object, inside the press: whole take - each curve that
+    moves deleted, the channel (and each channel a driver held) left on its first-frame value;
+    a highlight - each such curve bridged, an unkeyed channel a foreign constraint drove kept at
+    the current frame's pose (trap 238; a knot's channels have their own value back). The
+    channels held that way."""
+    first, last, ranged = span
+    held = []
+    for ch in sorted(set(info["moving"]) | (info["driven"] & set(_free(path)))):
+        base_plug, curve, word, _layered = _base(path + "." + ch, ch)
+        if word:
+            continue
+        index = plan.CHANNELS.index(ch)
+        if ranged:
+            if curve and ch in info["moving"]:
+                _bridge(curve, first, last)
+            elif not curve and ch in info["held"]:
+                cmds.setAttr(base_plug, shown[now][index])
+                held.append(ch)
+            continue
+        if curve and ch in info["moving"]:
+            value = cmds.keyframe(curve, query=True, eval=True, time=(first, first))[0]
+            cmds.delete(curve)
+            cmds.setAttr(base_plug, value)
+        elif not curve:
+            cmds.setAttr(base_plug, shown[first][index])
+    cmds.dgdirty(path)
+    return held
+
+
 def bake(selection=None, highlight=SLIDER):
     """The Layer press. The line."""
     import maya_rigs
@@ -307,56 +415,60 @@ def bake(selection=None, highlight=SLIDER):
     rigs = maya_rigs.rigs()
     plans = []
     for obj in objs:
-        tops, foreign, other, refusal = _classify(obj, rigs)
+        info, refusal = _plan(obj, rigs)
         if refusal:
             return refusal
-        plans.append((obj, tops, foreign, other))
+        plans.append(info)
     window = knots._highlight(highlight)
     spans = {}
-    for obj, tops, foreign, _other in plans:
-        targets = [t for con in foreign for t in _targets(con)]
-        spans[obj] = _span(obj, tops, targets, window)
+    for info in plans:
+        targets = [t for con in info["foreign"] for t in _targets(con)]
+        spans[info["obj"]] = _span(info["obj"], info["tops"], targets, window)
     now = cmds.currentTime(query=True)
     frames = sorted(set(f for first, last, _r in spans.values() for f in range(first, last + 1))
                     | {now})
-    uuids = dict((obj, knots._uuid(obj)) for obj in objs)
+    uuids = dict((info["obj"], knots._uuid(info["obj"])) for info in plans)
     notes = []
     with knots._press("skeldarBakeLayer"):
         shown = _read(objs, frames)
-        knots_off = _knots_off([t for p in plans for t in p[1]])
-        constraints_off, statics = 0, []
-        for obj, _tops, foreign, _other in plans:
-            for con in foreign:
+        knots_off = _knots_off([t for info in plans for t in info["tops"]])
+        constraints_off = 0
+        for info in plans:
+            for con in info["foreign"]:
                 if cmds.objExists(con):
                     cmds.delete(con)
                     constraints_off += 1
         live = dict((obj, knots._by_uuid(uuids[obj])) for obj in objs)
-        for obj, _tops, foreign, _other in plans:
-            path = live[obj]
-            for ch in sorted(set(c for chans in foreign.values() for c in chans)):
-                plug = path + "." + ch
-                if _sources(plug) or cmds.getAttr(plug, lock=True):
-                    continue
-                cmds.setAttr(plug, shown[obj][now][plan.CHANNELS.index(ch)])
-                statics.append(plan.leaf(path) + "." + ch)
-            cmds.dgdirty(path)
+        statics = []
+        for info in plans:
+            path = live[info["obj"]]
+            held = _clear_base(info, path, spans[info["obj"]], shown[info["obj"]], now)
+            statics += [plan.leaf(path) + "." + ch for ch in held]
         own = _read([live[o] for o in objs], frames)
         tracks, first, last, ranged = {}, None, None, False
-        for obj, _tops, _foreign, other in plans:
+        for info in plans:
+            obj = info["obj"]
             path = live[obj]
             start, end, ranged = spans[obj]
             times = list(range(start, end + 1))
+            minimum = plan.LAYER_MIN if ranged else -1.0
             deltas = plan.layer_deltas([shown[obj][f] for f in times],
                                        [own[path][f] for f in times],
-                                       cmds.getAttr(path + ".rotateOrder"), _free(path))
+                                       cmds.getAttr(path + ".rotateOrder"), _free(path),
+                                       minimum=minimum)
+            if not ranged:
+                deltas, shifts = plan.anchored(deltas)
+                for ch, amount in shifts.items():
+                    if abs(amount) > 1e-9:
+                        _shift(path, ch, amount)
             for ch, values in deltas.items():
                 tracks[(path, ch)] = (times, values)
             first = start if first is None else min(first, start)
             last = end if last is None else max(last, end)
-            if other:
+            if info["words"]:
                 notes.append("%s: %s left as %s" % (
-                    plan.leaf(path), ", ".join(sorted(other)),
-                    " / ".join(sorted(set(other.values())))))
+                    plan.leaf(path), ", ".join(sorted(info["words"])),
+                    " / ".join(sorted(set(info["words"].values())))))
         if statics:
             notes.append("%s had no keys of %s own - held at frame %s under the layer" % (
                 ", ".join(statics), "its" if len(statics) == 1 else "their", "%g" % now))
@@ -368,5 +480,8 @@ def bake(selection=None, highlight=SLIDER):
             layer = write_deltas(plan.layer_name(leaves), plan.LAYER_MARKER, " ".join(leaves),
                                  tracks, ranged=ranged)
         cmds.select([live[o] for o in objs if live[o]], replace=True)
-    return plan.layer_message([plan.leaf(live[o]) for o in objs], knots_off, constraints_off,
-                              first, last, ranged, layer, notes)
+    starts = set(spans[o][0] for o in objs)
+    keyed = sum(1 for info in plans if info["moving"])
+    return plan.layer_message([plan.leaf(live[o]) for o in objs], keyed, knots_off,
+                              constraints_off, first, last, ranged, layer, notes,
+                              pose_frame=starts.pop() if len(starts) == 1 else None)

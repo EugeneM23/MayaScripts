@@ -894,7 +894,7 @@ _OURS = (
      "The selected knots' objects take what the knots give them; the knots go",
      partial(_tools, "bake")),
     ("tools.bake_layer", "Tools", "Bake to a layer",
-     "What drives the selected objects (knots, constraints) baked onto a new additive layer",
+     "The selected objects' keys, knots and constraints baked onto a new additive layer",
      partial(_tools, "bake_layer")),
     ("tools.remove", "Tools", "Remove knots",
      "The selected knots go; their objects play their own animation again",

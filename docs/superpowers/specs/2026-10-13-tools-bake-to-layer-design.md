@@ -78,3 +78,33 @@ weapon link, a rig's own bone, the Retarget holder) changing nothing; one undo.
   creation and give the value back on Remove, so a knot's object never meets this.
 - Proof: `verify_bake_layer.py` 48/48 standalone; `verify_aim_overlap.py` 57/57 through the moved
   writer; 6243 unit tests.
+
+## Addendum 2 (after using it): everything goes onto the layer
+
+The animator, the same evening: «Я выделил объект на котором просто ключи нажал леер и он не
+запекся а должен был». The first build put only what the DRIVERS changed on the layer, so a plainly
+keyed object had nothing to put there and was refused. Asked, they chose **everything onto the
+layer, the base a still pose** - for plain keys, knots and constraints alike.
+
+- **Measured first, Maya's own** `bakeResults -destinationLayer` into an additive layer: it bakes
+  the ABSOLUTE values, so the motion comes out doubled (tx 20 where the keys say 10), and with
+  `-removeBakedAnimFromLayer` the base is left on a stale value (0.28 everywhere). Not a model.
+- **The whole take**: after the drivers come off, each base curve that moves is deleted (and each
+  channel a driver held) and set to a value; the second walk reads what is left (the base plus
+  any other animation layers, untouched); the difference is taken, and each channel's first-frame
+  difference is moved onto its base (`knotplan.anchored`): the base holds the pose of the span's
+  first frame, the layer starts at 0. Mute it and the object stands in that pose.
+- **A highlight**: the base keeps its keys outside it; inside, a key one frame outside each end is
+  inserted (shape kept) and the keys between are cut (`knotplan.bridged`), so the base bridges the
+  highlight on those two keys' tangents; the layer holds what the object showed minus that bridge,
+  zero one frame outside. An unkeyed channel only a FOREIGN constraint drove is held at the current
+  frame's pose (trap 238); a knot's channels have their own value back from Remove's rule.
+- **A base under the animator's own layers**: the base is reached through each layer's blend node
+  (input A); only the base's motion moves, their layers stay as they were.
+- **Refused**: an object with no keys of its own, no knot and no constraint («nothing animates
+  X»); one whose motion is all on layers already (a second press: «its animation is on layers
+  already»); base keys that come from a reference.
+- Proof: `verify_bake_layer.py` **58/58 standalone** - a plain keyed prop (the report) baked with
+  the base on frame 0's pose and the prop as it was to 0.000000 cm, muted standing still, a second
+  press refused, a highlight bridged; the knot, constraint, double-knot, rig and refusal cases on
+  the new rule; under the animator's own layer only the base moved.

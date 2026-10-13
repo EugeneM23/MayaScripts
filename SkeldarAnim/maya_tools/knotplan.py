@@ -627,29 +627,32 @@ def driver_refusal(kind, name, constraint):
     return ""
 
 
-def undriven_refusal(name, words):
-    """Why an object with nothing Layer takes is refused; `words` what else drives its channels."""
+def undriven_refusal(name, words, layered=False):
+    """Why an object with nothing Layer takes is refused: no keys of its own, no knot, no
+    constraint. `words` what else drives its channels; `layered` its motion is on layers."""
     seen = []
     for word in words or []:
         if word not in seen:
             seen.append(word)
     if seen:
-        return "%s is driven by %s - Layer bakes knots and constraints" % (name,
-                                                                          " and ".join(seen))
-    return "nothing drives %s - its animation is its own" % name
+        return "%s is driven by %s - Layer bakes keys, knots and constraints" % (
+            name, " and ".join(seen))
+    if layered:
+        return "%s: its animation is on layers already - nothing left on its base to bake" % name
+    return "nothing animates %s - no keys of its own, no knot, no constraint" % name
 
 
 def layer_name(leaves):
     return LAYER_PREFIX + leaf(leaves[0])
 
 
-def layer_deltas(shown, own, order, free):
+def layer_deltas(shown, own, order, free, minimum=LAYER_MIN):
     """{channel: [difference per frame]}: what an additive layer (by component) adds to `own` for
     the object to show `shown` - rows of (tx, ty, tz, rx, ry, rz) per frame. The shown rotation is
     made continuous from the own one first and then from the frame before it (all three rotates
     free: the other euler solution too; else whole turns), so the layer holds the real turn and
-    never a 360 step. Only `free` channels; one whose difference stays under LAYER_MIN is left
-    out. Pure."""
+    never a 360 step. Only `free` channels; one whose difference stays under `minimum` is left
+    out (a negative one keeps every channel). Pure."""
     out = {}
     if not shown:
         return out
@@ -671,22 +674,52 @@ def layer_deltas(shown, own, order, free):
         if ch not in free:
             continue
         values = [row[c] - o[c] for row, o in zip(rows, own)]
-        if max(abs(v) for v in values) > LAYER_MIN:
+        if max(abs(v) for v in values) > minimum:
             out[ch] = values
     return out
 
 
-def layer_message(names, knots_off, constraints_off, first, last, ranged, layer, notes=()):
+def anchored(deltas, minimum=LAYER_MIN):
+    """(kept, shifts): the whole take's differences with each channel's first-frame value moved
+    onto the base - the base then holds the pose of the first frame and the layer starts at 0.
+    A channel left under `minimum` on every frame is dropped from `kept`. Pure."""
+    kept, shifts = {}, {}
+    for ch, values in deltas.items():
+        shift = values[0]
+        shifts[ch] = shift
+        moved = [v - shift for v in values]
+        if max(abs(v) for v in moved) > minimum:
+            kept[ch] = moved
+    return kept, shifts
+
+
+def bridged(times, first, last):
+    """The base keys a highlight `first..last` takes away: those strictly between `first - 1`
+    and `last + 1`, where the base then bridges on its own keys. Pure."""
+    return [t for t in times if first - 1.0 + 1e-6 < t < last + 1.0 - 1e-6]
+
+
+def layer_message(names, keyed, knots_off, constraints_off, first, last, ranged, layer,
+                  notes=(), pose_frame=None):
+    """The Layer press's line. `keyed`: how many objects had their own keys moved; `pose_frame`:
+    the frame whose pose every base holds (None: each its own first frame)."""
     who = names[0] if len(names) == 1 else "%d objects" % len(names)
-    off = [_plural(count, word) for count, word in ((knots_off, "knot"),
-                                                    (constraints_off, "constraint")) if count]
-    taken = " and ".join(off) or "nothing"
+    moved = []
+    if keyed:
+        moved.append("its keys" if len(names) == 1 else "their keys")
+    moved += [_plural(count, word) for count, word in ((knots_off, "knot"),
+                                                       (constraints_off, "constraint")) if count]
+    what = moved[0] if len(moved) == 1 else ", ".join(moved[:-1]) + " and " + moved[-1]         if moved else "nothing"
     if layer:
-        line = "Layer: %s baked onto %s over %s-%s" % (who, layer, _num(first), _num(last))
+        line = "Layer: %s baked onto %s over %s-%s; %s moved onto it" % (
+            who, layer, _num(first), _num(last), what)
         if ranged:
-            line += " (the highlight - outside it the object plays its own animation)"
-        line += "; %s taken off" % taken
+            line += " - outside the highlight the base keeps its keys"
+        elif pose_frame is not None:
+            line += ", the base holds the pose of frame %s" % _num(pose_frame)
+        else:
+            line += ", each base holds the pose of its first frame"
     else:
-        line = ("Layer: %s - %s taken off; they changed nothing over %s-%s, so no layer was made"
-                % (who, taken, _num(first), _num(last)))
+        line = ("Layer: %s - %s taken off; nothing changed over %s-%s, so no layer was made"
+                % (who, what, _num(first), _num(last)))
     return " | ".join([line] + list(notes))

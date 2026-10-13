@@ -8,21 +8,26 @@ docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md). The prop is ve
 under an animated carrier, rotate pivot off its origin, zxy, keyed tx / rx / ry, static ty / rz,
 frames 0..40, the current frame 12).
 
-L1 a knot edited, Layer on the knot: the prop shows exactly what the knot showed, its own curves
-   and values are the base again, the knot and Maya's pairBlend gone, the layer marked; muted it
-   gives the original, its weight blends.
-L2 a ranged knot (attach 0/1/1/0), Layer over the whole take: only inside it; a whole-take knot
-   with a highlight: only inside the highlight, zero one frame outside.
-L3 the animator's parentConstraint to a moving target: baked and deleted, the own curves the base;
-   an unkeyed object held at the current frame's pose under the layer (said); an orientConstraint
-   spinning two turns keyed without a jump.
+L0 a plainly keyed object (the animator's report, 2026-10-13): its keys move onto the layer, the
+   base holds frame 0's pose, the prop shows what it showed, muted it stands; a second press is
+   refused (its animation is on layers already); with a highlight the base bridges it and keeps
+   its keys outside.
+L1 a knot edited, Layer on the knot: the prop shows exactly what the knot showed, the base holds
+   the pose of frame 0, the knot and Maya's pairBlend gone, the layer marked; muted the prop
+   stands in that pose, its weight blends.
+L2 a ranged knot (attach 0/1/1/0), Layer over the whole take: as shown, the original outside its
+   span; a whole-take knot with a highlight: only inside the highlight, zero one frame outside,
+   the base bridged.
+L3 the animator's parentConstraint to a moving target: baked and deleted, the base frame 0's pose;
+   an unkeyed object the same; an orientConstraint spinning two turns keyed without a jump.
 L4 a double knot riding a knot: both off, the motion kept.
-L5 refusals change nothing: nothing selected, nothing driving, an expression, a weapon link, a
+L5 refusals change nothing: nothing selected, nothing animating, an expression, a weapon link, a
    Connections link, a weapon space, the Retarget's holder, a refused object beside a good one.
-L6 one undo puts the knot back and takes the layer away.
+L6 one undo puts the knot and the base keys back and takes the layer away.
 L7 a Manny rig: a game bone refused (the rig's own); a knot on a control and the animator's
    constraint on another baked onto a layer, the game bones showing what they showed.
 L8 the Overlap still writes its layer through the shared writer.
+L9 an object under the animator's own layer: only the base's motion moves, their layer untouched.
 """
 import math
 import os
@@ -148,6 +153,31 @@ def layers():
     return layerbake.bake_layers()
 
 
+def channels(node, frames=FRAMES):
+    """{frame: (tx, ty, tz, rx, ry, rz)} - the node's local values after a real time change."""
+    out = {}
+    now = cmds.currentTime(query=True)
+    for f in frames:
+        cmds.currentTime(f, update=True)
+        out[f] = tuple(cmds.getAttr(node + ".translate")[0]) + tuple(
+            cmds.getAttr(node + ".rotate")[0])
+    cmds.currentTime(now, update=True)
+    return out
+
+
+def still_at(node, pose, frames=FRAMES):
+    """The worst gap between the node's channels on `frames` and the one `pose`."""
+    got = channels(node, frames)
+    return max(abs(got[f][i] - pose[i]) for f in frames for i in range(6))
+
+
+def static_base(node, pose):
+    """True when every channel's base is a plain value equal to `pose`'s."""
+    got = base(node)
+    return all(not isinstance(got[ch], tuple) and abs(got[ch] - pose[i]) < 1e-3
+               for i, ch in enumerate(plan.CHANNELS)), got
+
+
 def layer_curve(layer, node, ch):
     found = cmds.animLayer(layer, query=True, findCurveForPlug="%s.%s" % (node, plan.LONG[ch]))
     return found[0] if found else None
@@ -213,15 +243,51 @@ def mover(name="mover"):
 
 # --------------------------------------------------------------------- cases
 
+def case_l0():
+    case("L0 plain keys")
+    prop = make_prop()
+    original, first = track(prop), channels(prop, [0])[0]
+    line = layerbake.bake([prop], highlight=None)
+    found = layers()
+    gate(len(found) == 1 and "its keys moved onto it" in line
+         and "the base holds the pose of frame 0" in line, line)
+    ok, text = same(original, track(prop))
+    gate(ok, "the prop shows what it showed: " + text)
+    ok, got = static_base(prop, first)
+    gate(ok, "the base holds frame 0's pose, no curve left: %s" % (got,))
+    curve = layer_curve(found[0], prop, "tx")
+    values = cmds.keyframe(curve, query=True, valueChange=True)
+    gate(abs(values[0]) < 1e-9 and len(values) == 41, "the layer starts at 0, a key a frame: %d"
+         % len(values))
+    cmds.animLayer(found[0], edit=True, mute=True)
+    gap = still_at(prop, first)
+    gate(gap < 1e-6, "muted: the prop stands in frame 0's pose: %.2e" % gap)
+    cmds.animLayer(found[0], edit=True, mute=False)
+    before = snapshot([prop])
+    line = layerbake.bake([prop], highlight=None)
+    gate("on layers already" in line and snapshot([prop]) == before, "a second press: " + line)
+
+    prop = make_prop()
+    original = track(prop)
+    line = layerbake.bake([prop], highlight=(10, 21))
+    after = track(prop)
+    ok, text = same(original, after)
+    gate(ok and "outside the highlight" in line, "a highlight 10-20: as shown everywhere: "
+         + text + " - " + line)
+    times = base(prop, ("tx",))["tx"][0]
+    gate(9.0 in times and 21.0 in times and not plan.bridged(list(times), 10.0, 20.0),
+         "the base bridges it on keys at 9 and 21: %s" % (times,))
+
+
 def case_l1():
     case("L1 knot")
     prop = make_prop()
-    original, own = track(prop), base(prop)
+    original = track(prop)
     knots.create("knot", [prop], highlight=None)
     top = knot_of(prop)
     nudge(top, "tx", 6.0)
     nudge(top, "ry", 25.0)
-    shown = track(prop)
+    shown, first = track(prop), channels(prop, [0])[0]
     gate(diff(original, shown)[0] > 1.0, "the knot edit moves the prop: %.3f cm"
          % diff(original, shown)[0])
     line = layerbake.bake([top], highlight=None)
@@ -230,21 +296,23 @@ def case_l1():
          % (found, line))
     ok, text = same(shown, track(prop))
     gate(ok, "the prop shows what the knot showed: " + text)
-    gate(base(prop) == own, "its own curves and values are the base again")
+    ok, got = static_base(prop, first)
+    gate(ok, "the base holds frame 0's pose: %s" % (got,))
     ok, text = clean()
     gate(ok, "the knot and Maya's pairBlend gone " + text)
-    gate("1 knot" in line and "Baked_prop" in line and "over 0-40" in line, line)
+    gate("its keys and 1 knot moved onto it" in line and "Baked_prop" in line
+         and "over 0-40" in line, line)
     layer = found[0]
     gate(cmds.getAttr(layer + "." + plan.LAYER_MARKER) == "prop", "marked with the prop")
     gate(cmds.getAttr(layer + ".rotationAccumulationMode") == 0, "rotation by component")
+    full = channels(prop)
     cmds.animLayer(layer, edit=True, mute=True)
-    ok, text = same(original, track(prop))
-    gate(ok, "muted: the original: " + text)
+    gap = still_at(prop, first)
+    gate(gap < 1e-6, "muted: the prop stands in frame 0's pose: %.2e" % gap)
     cmds.animLayer(layer, edit=True, mute=False, weight=0.5)
-    half = track(prop)
-    mid = [(original[f][0] + shown[f][0]) * 0.5 for f in FRAMES]
-    gap = max((half[f][0] - mid[i]).length() for i, f in enumerate(FRAMES))
-    gate(gap < 0.05, "weight 0.5: the pivot half way: %.4f cm" % gap)
+    half = channels(prop)
+    gap = max(abs(half[f][i] - (first[i] + full[f][i]) * 0.5) for f in FRAMES for i in range(6))
+    gate(gap < 1e-4, "weight 0.5: every channel half way: %.2e" % gap)
     gate(cmds.ls(selection=True, long=True) == [prop], "the prop is selected")
 
 
@@ -283,28 +351,23 @@ def case_l2():
     gate(times[0] == 9.0 and times[-1] == 21.0 and abs(values[0]) < 1e-9
          and abs(values[-1]) < 1e-9, "the layer zero at 9 and 21: %s..%s" % (times[0], times[-1]))
     gate("highlight" in line, line)
+    keyed = base(prop, ("tx",))["tx"][0]
+    gate(not plan.bridged(list(keyed), 10.0, 20.0), "the base bridged: %s" % (keyed,))
 
 
 def case_l3():
     case("L3 constraints")
     prop = make_prop()
-    original, own = track(prop), base(prop)
+    original = track(prop)
     loc = mover()
     cmds.parentConstraint(loc, prop, maintainOffset=True)
-    shown = track(prop)
+    shown, first = track(prop), channels(prop, [0])[0]
     gate(diff(original, shown)[0] > 1.0, "the constraint moves the prop")
-    at12 = (cmds.getAttr(prop + ".translate")[0] + cmds.getAttr(prop + ".rotate")[0])
     line = layerbake.bake([prop], highlight=None)
     ok, text = same(shown, track(prop))
     gate(ok, "baked onto the layer: " + text)
-    keyed = ("tx", "rx", "ry")
-    gate(base(prop, keyed) == dict((ch, own[ch]) for ch in keyed),
-         "its own curves are the base")
-    #  An unkeyed channel under a constraint keeps nothing of its old value in Maya (the
-    #  pairBlend's input 1 reads 0): it is held at the current frame's pose, and the line says so.
-    statics = base(prop, ("ty", "tz", "rz"))
-    gate(all(abs(statics[ch] - at12[plan.CHANNELS.index(ch)]) < 1e-4 for ch in statics),
-         "its unkeyed channels held at frame 12's pose: %s" % (statics,))
+    ok, got = static_base(prop, first)
+    gate(ok, "the base holds frame 0's pose, its keys moved too: %s" % (got,))
     ok, text = clean()
     gate(ok, "the constraint and its pairBlend deleted " + text)
     gate("1 constraint" in line, line)
@@ -315,14 +378,13 @@ def case_l3():
     bare = cmds.ls(cmds.polyCube(name="bare")[0], long=True)[0]
     cmds.pointConstraint(loc, bare)
     cmds.currentTime(12)
-    shown, at12 = track(bare), cmds.getAttr(bare + ".translate")[0]
+    shown, first = track(bare), channels(bare, [0])[0]
     line = layerbake.bake([bare], highlight=None)
     ok, text = same(shown, track(bare))
     gate(ok, "an unkeyed object baked: " + text)
-    held = base(bare, plan.TRANSLATE)
-    gate(all(abs(held[ch] - at12[i]) < 1e-4 for i, ch in enumerate(plan.TRANSLATE)),
-         "its base held at frame 12's pose: %s" % (held,))
-    gate("held at frame 12" in line, line)
+    ok, got = static_base(bare, first)
+    gate(ok and "the base holds the pose of frame 0" in line,
+         "its base frame 0's pose: %s - %s" % (got, line))
 
     cmds.file(new=True, force=True)
     cmds.playbackOptions(min=0, max=40, animationStartTime=0, animationEndTime=40)
@@ -357,12 +419,13 @@ def case_l4():
                                            fullPath=True) or []
              if knots._has(c, plan.INNER_MARKER)][0]
     nudge(inner, "rx", 30.0)
-    shown = track(prop)
+    shown, first = track(prop), channels(prop, [0])[0]
     line = layerbake.bake([prop], highlight=None)
     ok, text = same(shown, track(prop))
     gate(ok, "both knots baked onto the layer: " + text)
     ok, text = clean()
-    gate(ok and base(prop) == own, "both knots gone, the own curves the base " + text)
+    still, got = static_base(prop, first)
+    gate(ok and still, "both knots gone, the base frame 0's pose " + text)
     gate("2 knots" in line, line)
 
 
@@ -371,9 +434,10 @@ def case_l5():
     prop = make_prop()
     cmds.select(clear=True)
     gate(layerbake.bake(highlight=None) == plan.LAYER_NOTHING, "nothing selected")
-    before = snapshot([prop])
-    line = layerbake.bake([prop], highlight=None)
-    gate("nothing drives prop" in line and snapshot([prop]) == before, line)
+    still = cmds.ls(cmds.polyCube(name="still")[0], long=True)[0]
+    before = snapshot([still])
+    line = layerbake.bake([still], highlight=None)
+    gate("nothing animates still" in line and snapshot([still]) == before, line)
 
     expr = cmds.ls(cmds.polyCube(name="expr")[0], long=True)[0]
     cmds.expression(string="expr.tx = frame * 0.5;", object=expr)
@@ -439,10 +503,11 @@ def case_l6():
     knots.create("knot", [prop], highlight=None)
     top = knot_of(prop)
     nudge(top, "tx", 4.0)
-    shown = track(prop)
+    shown, own = track(prop), base(prop)
     layerbake.bake([top], highlight=None)
     cmds.undo()
-    gate(knot_of(prop) is not None and not layers(), "one undo: the knot back, no layer")
+    gate(knot_of(prop) is not None and not layers() and base(prop) == own,
+         "one undo: the knot and the base keys back, no layer")
     ok, text = same(shown, track(prop))
     gate(ok, "and the prop as the knot shows it: " + text)
 
@@ -482,7 +547,7 @@ def case_l7():
     gate(ok, "the head bone as the knot showed it: " + text)
     ok, text = same(shown_arm, track(forearm))
     gate(ok, "the forearm as the constraint showed it: " + text)
-    gate("2 objects" in line and "1 knot and 1 constraint" in line, line)
+    gate("2 objects" in line and "their keys, 1 knot and 1 constraint" in line, line)
 
 
 def case_l8():
@@ -504,8 +569,31 @@ def case_l8():
          "the base untouched, not a Layer layer")
 
 
+def case_l9():
+    case("L9 under another layer")
+    prop = make_prop()
+    other = cmds.animLayer("Mine")
+    cmds.animLayer(other, edit=True, attribute=[prop + ".translateX", prop + ".rotateY"])
+    for t, v in ((0, 0.0), (20, 4.0), (40, 0.0)):
+        cmds.setKeyframe(prop, attribute="translateX", animLayer=other, time=t, value=v)
+    mine = layer_curve(other, prop, "tx")
+    keys = (cmds.keyframe(mine, query=True, timeChange=True),
+            cmds.keyframe(mine, query=True, valueChange=True))
+    shown, first = track(prop), channels(prop, [0])[0]
+    line = layerbake.bake([prop], highlight=None)
+    ok, text = same(shown, track(prop))
+    gate(ok and "its keys moved onto it" in line, "baked over the animator's layer: " + text)
+    gate((cmds.keyframe(mine, query=True, timeChange=True),
+          cmds.keyframe(mine, query=True, valueChange=True)) == keys,
+         "the animator's layer untouched")
+    cmds.animLayer(layers()[0], edit=True, mute=True)
+    cmds.animLayer(other, edit=True, mute=True)
+    gap = still_at(prop, first)
+    gate(gap < 1e-6, "both muted: the base holds frame 0's pose: %.2e" % gap)
+
+
 def main():
-    for run in (case_l1, case_l2, case_l3, case_l4, case_l5, case_l6, case_l7, case_l8):
+    for run in (case_l0, case_l9, case_l1, case_l2, case_l3, case_l4, case_l5, case_l6, case_l7, case_l8):
         try:
             run()
         except Exception:

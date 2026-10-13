@@ -13,7 +13,8 @@ The parent tab (2026-10-12) added Parent, Multiple across and Attach; the aim ta
 «Теперь давай реализуем функционал AIM») adds Aim (two presses: it reads Finish while an aim
 waits) and Overlap (Softness, Lag, Easing, four chips, the press; the scene half `overlap`, the
 pure half `overlapplan`). Layer (2026-10-13, «запекания на адитивный слой») stands between Bake and
-Remove: what drives the selected objects baked onto a new additive layer (`layerbake`).
+Remove: everything that animates the selected objects baked onto a new additive layer, the base
+left on the first frame's pose (`layerbake`).
 
 Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md,
 docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md,
@@ -117,10 +118,11 @@ TIPS = {
              "world axes about the object's pivot",
     "bake": "Bake: the selected knots' objects (or the selected objects riding knots) take "
             "what the knots give them on every frame; the knots go",
-    "layer": "Layer - select objects (or their knots): what drives them - our knots, your "
-             "constraints - is baked onto a new additive layer; their own keys stay under it "
-             "(mute the layer for the original, weight it to blend). A highlighted range bakes "
-             "only there",
+    "layer": "Layer - select objects (or their knots): everything that animates them - their "
+             "keys, our knots, your constraints - is baked onto a new additive layer, and the "
+             "base keeps the pose of the first frame (mute the layer and they stand, weight it "
+             "to blend). A highlighted range bakes only there: outside it the base keeps its "
+             "keys",
     "remove": "Remove: the selected knots go and their objects play their own animation "
               "again exactly; a waiting pivot is dropped",
     "inside": "Inside - select the objects, then the parent LAST: they move under it in the "

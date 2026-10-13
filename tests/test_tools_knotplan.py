@@ -519,10 +519,11 @@ class Layer(unittest.TestCase):
             self.assertIn("FKWrist_R_parentConstraint1", line)
             self.assertIn(word, line)
 
-    def test_an_undriven_object(self):
-        self.assertIn("nothing drives prop", plan.undriven_refusal("prop", []))
+    def test_a_still_object(self):
+        self.assertIn("nothing animates prop", plan.undriven_refusal("prop", []))
         line = plan.undriven_refusal("prop", ["an expression", "a driven key", "an expression"])
         self.assertIn("an expression and a driven key", line)
+        self.assertIn("on layers already", plan.undriven_refusal("prop", [], layered=True))
 
     def test_the_layer_name(self):
         self.assertEqual(plan.layer_name(["prop"]), "Baked_prop")
@@ -571,16 +572,42 @@ class Layer(unittest.TestCase):
         self.assertEqual([round(v, 6) for v in out["ry"]], [-10.0, -5.0])
 
     def test_the_line(self):
-        line = plan.layer_message(["prop"], 1, 1, 0.0, 48.0, False, "Baked_prop")
+        line = plan.layer_message(["prop"], 1, 1, 1, 0.0, 48.0, False, "Baked_prop",
+                                  pose_frame=0.0)
         self.assertIn("prop baked onto Baked_prop over 0-48", line)
-        self.assertIn("1 knot and 1 constraint taken off", line)
-        line = plan.layer_message(["a", "b"], 0, 2, 10.0, 20.0, True, "Baked_a", ["note"])
+        self.assertIn("its keys, 1 knot and 1 constraint moved onto it", line)
+        self.assertIn("the base holds the pose of frame 0", line)
+        line = plan.layer_message(["prop"], 1, 0, 0, 0.0, 48.0, False, "Baked_prop")
+        self.assertIn("its keys moved onto it", line)
+        self.assertIn("each base holds the pose of its first frame", line)
+        line = plan.layer_message(["a", "b"], 2, 0, 2, 10.0, 20.0, True, "Baked_a", ["note"])
         self.assertIn("2 objects", line)
-        self.assertIn("highlight", line)
+        self.assertIn("their keys and 2 constraints", line)
+        self.assertIn("outside the highlight", line)
         self.assertTrue(line.endswith("note"))
-        line = plan.layer_message(["prop"], 1, 0, 0.0, 48.0, False, "")
-        self.assertIn("changed nothing", line)
+        line = plan.layer_message(["prop"], 0, 1, 0, 0.0, 48.0, False, "")
+        self.assertIn("1 knot taken off; nothing changed", line)
         self.assertIn("no layer", line)
+
+    def test_every_difference_on_request(self):
+        own = [(0.0,) * 6] * 2
+        shown = [(0.00005, 0.0, 0.0, 0.0, 0.0, 0.0)] * 2
+        out = plan.layer_deltas(shown, own, 0, plan.CHANNELS, minimum=-1.0)
+        self.assertEqual(sorted(out), sorted(plan.CHANNELS))
+
+    def test_anchored_at_the_first_frame(self):
+        """The whole take: the base takes the first frame's difference, so the layer starts at 0
+        and a channel left with nothing is dropped."""
+        kept, shifts = plan.anchored({"tx": [2.0, 3.0, 5.0], "ry": [10.0, 10.0, 10.0],
+                                      "tz": [0.0, 0.0, 0.0]})
+        self.assertEqual(kept, {"tx": [0.0, 1.0, 3.0]})
+        self.assertEqual(shifts, {"tx": 2.0, "ry": 10.0, "tz": 0.0})
+
+    def test_the_bridge(self):
+        """A highlight 10-20: the base's keys strictly between 9 and 21 go."""
+        self.assertEqual(plan.bridged([0.0, 9.0, 10.0, 15.5, 20.0, 21.0, 30.0], 10.0, 20.0),
+                         [10.0, 15.5, 20.0])
+        self.assertEqual(plan.bridged([0.0, 40.0], 10.0, 20.0), [])
 
 
 class Purity(unittest.TestCase):
