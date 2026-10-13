@@ -2098,6 +2098,8 @@ def _spread(row, scale=1.0, kind="segments"):
     """
     q = qt()
     w = q.QtWidgets
+    if kind == "columns":
+        return _spread_columns(row, scale)
     buttons = [child for child in row.children()
                if isinstance(child, w.QAbstractButton)]
     if not buttons:
@@ -2127,6 +2129,178 @@ def _spread(row, scale=1.0, kind="segments"):
     cover.setGeometry(row.rect())
     cover.show()
     return len(buttons)
+
+
+def _spread_columns(row, scale=1.0):
+    """The widgets of a Maya rowLayout - any, not only buttons - share its
+    width equally (2026-10-13, the role "columns": the Tools card's Overlap
+    names over its fields). `_spread`'s mechanism: they move into a row of
+    ours laid over the track, equal stretches, a button's gap; they keep
+    their own heights, and the row is as tall as the tallest and never
+    narrower than what they need."""
+    q = qt()
+    w = q.QtWidgets
+    widgets = [child for child in row.children()
+               if isinstance(child, w.QWidget) and not child.isWindow()]
+    if not widgets:
+        return 0
+    cover = _named(w.QWidget(row), row.objectName() + "_skinColumns")
+    box = w.QHBoxLayout(cover)
+    box.setObjectName(row.objectName() + "_skinColumnsLayout")
+    gap = hubstyle.px(4, scale)
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(gap)
+    for widget in widgets:
+        widget.setSizePolicy(w.QSizePolicy.Expanding, w.QSizePolicy.Preferred)
+        widget.setMinimumWidth(0)
+        box.addWidget(widget, 1)
+    need = max(max(widget.sizeHint().height(), widget.minimumHeight())
+               for widget in widgets)
+    row.setFixedHeight(max(1, need))
+    row.setMinimumWidth(sum(widget.minimumSizeHint().width() for widget in widgets)
+                        + gap * (len(widgets) - 1))
+    row.installEventFilter(_fill_class()(cover, cover))
+    cover.setGeometry(row.rect())
+    cover.show()
+    return len(widgets)
+
+
+# ----------------------------------------------------- tool rows and heads
+
+#  The chevron a subsection head shows in each state (2026-10-13).
+_HEAD_ICON = {"closed": "chevron-right"}
+
+
+def _hint_class():
+    """An event filter keeping a tool row's (or a head's) hint label laid out
+    over its button (2026-10-13, the Tools card as a list): a row's after the
+    name column (`hubstyle.ROW_NAME`, or past the name itself when it is
+    longer), a head's right-aligned after its name; elided at the button's
+    width, the whole text kept as `skHint`."""
+    if "hint" not in _CLASSES:
+        q = qt()
+        QtCore = q.QtCore
+        events = (QtCore.QEvent.Resize, QtCore.QEvent.Show,
+                  QtCore.QEvent.StyleChange, QtCore.QEvent.FontChange)
+
+        class Hint(QtCore.QObject):
+
+            def __init__(self, label, scale, right, parent=None):
+                super(Hint, self).__init__(parent)
+                self.label = label
+                self.scale = float(scale or 1.0)
+                self.right = right
+
+            def place(self, button):
+                label, scale = self.label, self.scale
+                pad = hubstyle.px(6, scale)
+                gap = hubstyle.px(8, scale)
+                size = button.property("iconSize")
+                shown_icon = size is not None and not button.property("icon").isNull()
+                icon_w = size.width() if shown_icon else 0
+                start = pad + (icon_w + hubstyle.px(4, scale) if icon_w else 0)
+                #  a PROPERTY: Maya's button reaches us as the cached QWidget
+                #  wrapper (trap 96), which has no text()
+                text = button.property("text") or ""
+                name_w = button.fontMetrics().horizontalAdvance(text)
+                if self.right:
+                    x = start + name_w + gap
+                else:
+                    x = start + max(hubstyle.px(hubstyle.ROW_NAME, scale),
+                                    name_w + gap)
+                width = max(0, button.width() - x - pad)
+                label.setGeometry(x, 0, width, button.height())
+                label.ensurePolished()
+                full = label.property("skHint") or ""
+                shown = label.fontMetrics().elidedText(
+                    full, QtCore.Qt.ElideRight, width)
+                if label.text() != shown:
+                    label.setText(shown)
+
+            def eventFilter(self, obj, event):             # noqa: N802
+                if event.type() in events:
+                    try:
+                        self.place(obj)
+                    except Exception:                        # noqa: BLE001
+                        pass
+                return False
+
+        _CLASSES["hint"] = Hint
+    return _CLASSES["hint"]
+
+
+def _dress_row(widget, mark, scale):
+    """A `toolrow` or a `subhead`: its icon remembered and painted for its
+    state, its hint a label of ours over it, kept laid out."""
+    q = qt()
+    widget.setProperty("skIconName", mark.icon or "")
+    widget.setProperty("skScale", float(scale or 1.0))
+    head = mark.role == "subhead"
+    if mark.hint:
+        label = _named(q.QtWidgets.QLabel(widget),
+                       widget.objectName() + "_hint")
+        label.setProperty("skRole", "headhint" if head else "rowhint")
+        label.setProperty("skHint", mark.hint)
+        label.setAttribute(q.QtCore.Qt.WA_TransparentForMouseEvents, True)
+        label.setAlignment(q.QtCore.Qt.AlignVCenter
+                           | (q.QtCore.Qt.AlignRight if head
+                              else q.QtCore.Qt.AlignLeft))
+        widget.installEventFilter(_hint_class()(label, scale, head, widget))
+        label.show()
+    _paint_state(widget)
+
+
+def _paint_state(widget):
+    """A tool row's icon in its state's colour (a waiting row's in the dark
+    text on the accent), a head's chevron; the button and its hint
+    repolished so the stylesheet's [skState] rules reach them."""
+    q = qt()
+    role = widget.property("skRole")
+    state = widget.property("skState") or ""
+    scale = float(widget.property("skScale") or 1.0)
+    if role == "subhead":
+        name = _HEAD_ICON.get(state, "chevron-down")
+        colour = hubstyle.TOKENS["muted"]
+        size = hubstyle.px(13, scale)
+    else:
+        name = widget.property("skIconName") or ""
+        colour = hubstyle.TOKENS["on_accent" if state == "wait"
+                                 else "tool_icon"]
+        size = hubstyle.px(15, scale)
+    if name:
+        widget.setProperty("icon", icon(name, colour, size))
+        widget.setProperty("iconSize", q.QtCore.QSize(size, size))
+    widget.setProperty("skIconShown", name)
+    widget.setProperty("skIconColour", colour)
+    repolish(widget)
+    for label in widget.findChildren(q.QtWidgets.QLabel):
+        repolish(label)
+    for hint in widget.findChildren(_hint_class()):
+        try:
+            hint.place(widget)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def set_state(name, state):
+    """Control `name`'s state (2026-10-13): its `skState` property, which
+    the stylesheet selects on - a tool row "wait" (it reads Finish: filled
+    with the accent, the only orange of the Tools card), a subsection head
+    "closed" / "open" (its chevron). Set even before the skin dresses the
+    control (a builder lights a row while it builds; `_apply_mark` paints
+    the state it finds). False with no Qt or no such control."""
+    if qt() is None:
+        return False
+    try:
+        widget = find(name)
+    except Exception:                                        # noqa: BLE001
+        return False
+    if widget is None:
+        return False
+    widget.setProperty("skState", state or "")
+    if widget.property("skRole") in ("toolrow", "subhead"):
+        _paint_state(widget)
+    return True
 
 
 # --------------------------------------------------------------- the lists
@@ -2387,7 +2561,7 @@ def apply_marks(marks, card, scale):
     #  The segment tracks last: their buttons have their own marks applied
     #  by now, and move into the skin's row with them (_spread).
     for mark in marks:
-        if mark.role not in ("segments", "fill"):
+        if mark.role not in ("segments", "fill", "columns"):
             continue
         try:
             row = find(mark.name, True)
@@ -2469,9 +2643,12 @@ def _apply_mark(mark, card, scale, size):
         widget.installEventFilter(fit)
         fit.fit(widget)
         return True
-    if mark.role in ("segments", "fill"):
+    if mark.role in ("segments", "fill", "columns"):
         #  after the segment / button marks (they come later in the list):
         #  see apply_marks
+        return True
+    if mark.role in ("toolrow", "subhead"):
+        _dress_row(widget, mark, scale)
         return True
     if mark.role == "segment":
         widget.setSizePolicy(q.QtWidgets.QSizePolicy.Expanding,

@@ -1108,6 +1108,130 @@ class ApplyMarks(SeamsMixin, unittest.TestCase):
         self.assertFalse(label.isHidden())
 
 
+class ToolRows(SeamsMixin, unittest.TestCase):
+    """2026-10-13, the Tools card as a list (variant C): a tool row's explanation after its name,
+    a waiting row lit, a subsection head's chevron, a row of columns, a caption that stays."""
+
+    def setUp(self):
+        SeamsMixin.setUp(self)
+        self.card = self.skin.add_card("tools", "Tools", "tool", "#7fa9e6", "#23324a")
+
+    def _resize(self, widget, w, h):
+        old = widget.size()
+        widget.resize(w, h)
+        QtWidgets.QApplication.sendEvent(widget, QtGui.QResizeEvent(QtCore.QSize(w, h), old))
+
+    def _row(self, name="knotRow", text="Knot", hint="object follows a locator", role="toolrow",
+             icon="link", scale=1.0):
+        button = self.control(QtWidgets.QPushButton, name, self.card.body)
+        button.setText(text)
+        hubqt.apply_marks([style.Mark(name, role, icon, False, None, hint=hint)],
+                          self.card, scale)
+        self._resize(button, 320, 24)
+        return button
+
+    def _hint(self, button):
+        return button.findChild(QtWidgets.QLabel, button.objectName() + "_hint")
+
+    def test_a_tool_row_s_hint_stands_after_the_name_column(self):
+        button = self._row()
+        #  offscreen Qt has no font family and its fallback is wide: room enough to fit
+        self._resize(button, 900, 24)
+        self.assertEqual(button.property("skRole"), "toolrow")
+        label = self._hint(button)
+        self.assertIsNotNone(label)
+        self.assertEqual(label.property("skRole"), "rowhint")
+        self.assertTrue(label.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents))
+        self.assertEqual(label.text(), "object follows a locator")
+        self.assertGreaterEqual(label.geometry().left(), style.px(style.ROW_NAME, 1.0))
+        self.assertLessEqual(label.geometry().right(), button.width())
+        self.assertEqual(label.geometry().height(), button.height())
+
+    def test_a_long_name_pushes_the_hint_past_itself(self):
+        button = self._row(text="A rather long tool name here")
+        label = self._hint(button)
+        name_w = button.fontMetrics().horizontalAdvance(button.text())
+        self.assertGreater(label.geometry().left(), name_w)
+
+    def test_a_narrow_row_elides_its_hint(self):
+        button = self._row()
+        self._resize(button, 150, 24)
+        label = self._hint(button)
+        self.assertNotEqual(label.text(), "object follows a locator")
+        self.assertTrue(label.text().endswith("…") or label.text() == "")
+        self.assertEqual(label.property("skHint"), "object follows a locator")
+
+    def test_the_icon_is_the_tool_blue(self):
+        button = self._row()
+        self.assertFalse(button.icon().isNull())
+        self.assertEqual(button.property("skIconColour"), style.TOKENS["tool_icon"])
+
+    def test_a_waiting_row_is_lit_and_back(self):
+        button = self._row()
+        self.assertTrue(hubqt.set_state("knotRow", "wait"))
+        self.assertEqual(button.property("skState"), "wait")
+        self.assertEqual(button.property("skIconColour"), style.TOKENS["on_accent"])
+        self.assertTrue(hubqt.set_state("knotRow", ""))
+        self.assertEqual(button.property("skState"), "")
+        self.assertEqual(button.property("skIconColour"), style.TOKENS["tool_icon"])
+
+    def test_a_state_set_before_the_skin_is_painted_by_it(self):
+        """The card's builder lights a waiting row while it builds - before the marks are
+        applied: the skin paints whatever state the control already carries."""
+        button = self.control(QtWidgets.QPushButton, "aimRow", self.card.body)
+        button.setText("Finish")
+        self.assertTrue(hubqt.set_state("aimRow", "wait"))
+        hubqt.apply_marks([style.Mark("aimRow", "toolrow", "target", False, None,
+                                      hint="points at a target")], self.card, 1.0)
+        self.assertEqual(button.property("skIconColour"), style.TOKENS["on_accent"])
+
+    def test_a_head_s_chevron_follows_its_state(self):
+        head = self._row(name="knotsHead", text="Knots", hint="drive with a locator",
+                         role="subhead", icon=None)
+        self.assertEqual(head.property("skRole"), "subhead")
+        self.assertEqual(head.property("skIconShown"), "chevron-down")
+        hubqt.set_state("knotsHead", "closed")
+        self.assertEqual(head.property("skIconShown"), "chevron-right")
+        hubqt.set_state("knotsHead", "open")
+        self.assertEqual(head.property("skIconShown"), "chevron-down")
+        label = self._hint(head)
+        self.assertEqual(label.property("skRole"), "headhint")
+        self.assertTrue(label.alignment() & QtCore.Qt.AlignRight)
+        self.assertLessEqual(label.geometry().right(), head.width())
+
+    def test_a_missing_control_answers_false(self):
+        self.assertFalse(hubqt.set_state("noSuchRow", "wait"))
+
+    def test_a_caption_stays_visible(self):
+        label = self.control(QtWidgets.QLabel, "pairsCaption", self.card.body)
+        label.setText("Across, pair by pair")
+        hubqt.apply_marks([style.Mark("pairsCaption", "caption", None, False, None)],
+                          self.card, 1.0)
+        self.assertEqual(label.property("skRole"), "caption")
+        self.assertFalse(label.isHidden())
+
+    def test_columns_spread_any_widgets_over_the_row(self):
+        for scale in (1.0, 1.5):
+            name = "overlapNames%d" % int(scale * 10)
+            row = self.control(QtWidgets.QWidget, name, self.card.body)
+            box = QtWidgets.QHBoxLayout(row)
+            widgets = [self.control(QtWidgets.QLabel, name + "Soft", row),
+                       self.control(QtWidgets.QLineEdit, name + "Lag", row),
+                       self.control(QtWidgets.QLabel, name + "Ease", row)]
+            for widget in widgets:
+                box.addWidget(widget)
+            hubqt.apply_marks([style.Mark(name, "columns", None, True, None)], self.card, scale)
+            cover = widgets[0].parentWidget()
+            self.assertIs(cover.parentWidget(), row)
+            self.assertEqual(cover.objectName(), name + "_skinColumns")
+            layout = cover.layout()
+            self.assertEqual([layout.stretch(i) for i in range(layout.count())], [1, 1, 1])
+            self.assertEqual(layout.spacing(), style.px(4, scale))
+            self.assertGreater(row.minimumHeight(), 0)
+            self._resize(row, 300, row.minimumHeight())
+            self.assertEqual(cover.geometry().width(), 300)
+
+
 class ListGrip(SeamsMixin, unittest.TestCase):
     """2026-10-08: a list shows 10 rows and its grip changes that."""
 

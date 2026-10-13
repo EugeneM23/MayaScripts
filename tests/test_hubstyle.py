@@ -99,7 +99,8 @@ class Marks(unittest.TestCase):
         styled = [r for r in style.ROLES if '[skRole="%s"]' % r in sheet]
         #  moved or recoloured by the Qt layer rather than styled
         handled = {"subtitle", "swatchonly", "swatch", "flow",
-                   "fill"}          # 2026-10-12: its buttons spread over it (_spread)
+                   "fill",          # 2026-10-12: its buttons spread over it (_spread)
+                   "columns"}       # 2026-10-13: its widgets spread over it (_spread)
         for role in style.ROLES:
             self.assertTrue(role in styled or role in handled, role)
 
@@ -339,3 +340,74 @@ class Compact(unittest.TestCase):
         sheet = style.stylesheet(1.0)
         self.assertIn('QLabel[skRole="dot"]', sheet)
         self.assertIn('QWidget[skRole="grip"]', sheet)
+
+
+class ToolRows(unittest.TestCase):
+    """2026-10-13, the Tools card as a list (variant C, «сделать все более понятно ... кнопки не
+    должны быть такими оранжевыми»): flat rows with an explanation, subsection heads, captions that
+    stay visible, a row of columns."""
+
+    def setUp(self):
+        style.take_marks()
+
+    def tearDown(self):
+        style.take_marks()
+
+    def _rule(self, selector):
+        sheet = style.stylesheet(1.0)
+        found = re.search(re.escape(selector) + r" \{([^}]*)\}", sheet)
+        self.assertIsNotNone(found, selector)
+        return found.group(1)
+
+    def test_a_mark_carries_its_hint(self):
+        self.assertEqual(style.mark("knotRow", "toolrow", "link", hint="follows a locator"),
+                         "knotRow")
+        mark = style.take_marks()[0]
+        self.assertEqual((mark.role, mark.icon, mark.hint),
+                         ("toolrow", "link", "follows a locator"))
+
+    def test_an_ordinary_mark_has_no_hint(self):
+        style.mark("b", "primary", "plus")
+        self.assertIsNone(style.take_marks()[0].hint)
+        self.assertIsNone(style.Mark("c", "primary", None, False, None).hint)
+
+    def test_the_new_roles(self):
+        for role in ("toolrow", "subhead", "caption", "columns"):
+            self.assertIn(role, style.ROLES)
+
+    def test_a_tool_row_is_flat_and_left_aligned(self):
+        rule = self._rule('QPushButton[skRole="toolrow"]')
+        self.assertIn("border: none", rule)
+        self.assertIn("text-align: left", rule)
+        self.assertIn("background: transparent", rule)
+        self.assertIn(style.TOKENS["hover"],
+                      self._rule('QPushButton[skRole="toolrow"]:hover'))
+
+    def test_only_a_waiting_row_is_orange(self):
+        rule = self._rule('QPushButton[skRole="toolrow"][skState="wait"]')
+        self.assertIn(style.TOKENS["accent"], rule)
+        self.assertIn(style.TOKENS["on_accent"], rule)
+        self.assertNotIn(style.TOKENS["accent"],
+                         self._rule('QPushButton[skRole="toolrow"]'))
+
+    def test_the_hints_are_muted_and_small(self):
+        for role in ("rowhint", "headhint", "caption"):
+            rule = self._rule('QLabel[skRole="%s"]' % role)
+            self.assertIn(style.TOKENS["faint"], rule)
+            self.assertIn("font-size", rule)
+            self.assertNotIn("background", rule)
+        waiting = self._rule('QPushButton[skState="wait"] QLabel[skRole="rowhint"]')
+        self.assertIn(style.TOKENS["on_accent"], waiting)
+
+    def test_a_head_is_bold_over_a_hairline(self):
+        rule = self._rule('QPushButton[skRole="subhead"]')
+        self.assertIn("font-weight: bold", rule)
+        self.assertIn("border-top", rule)
+        self.assertIn("text-align: left", rule)
+        self.assertIn("border-radius: 0px", rule)
+
+    def test_the_tool_icon_is_the_animation_group_s_blue(self):
+        self.assertEqual(style.TOKENS["tool_icon"], style.group("animation").colour)
+
+    def test_the_name_column(self):
+        self.assertGreater(style.ROW_NAME, 40)

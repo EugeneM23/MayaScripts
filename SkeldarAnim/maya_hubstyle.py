@@ -69,6 +69,9 @@ TOKENS = {
     #  animations): a step darker than the card, a hairline round it
     "inset": "#232529",
     "inset_line": "#3a3c42",
+    #  a tool row's icon (2026-10-13, the Tools card as a list): the card's
+    #  own group colour, Animation's blue
+    "tool_icon": "#7fa9e6",
 }
 
 #  The objectNames the stylesheet scopes by (hubqt names its widgets so).
@@ -127,20 +130,28 @@ ROLES = (
     "dot",          # a one-glyph state mark (● / ○) before a dropdown (2026-10-08)
     "flow",         # a flowLayout whose wrapped lines the skin keeps in its
                     # height (layout=True; live 2026-10-08: Maya kept one line's)
+    #  2026-10-13, the Tools card as a list (variant C: «сделать все более
+    #  понятно ... кнопки не должны быть такими оранжевыми»):
+    "toolrow",      # a button drawn as a flat list row, its `hint` after the name
+    "subhead",      # a subsection's head: a chevron, the name, its `hint` right
+    "caption",      # a small muted label that stays visible (a `note` does not)
+    "columns",      # a row layout whose widgets - any, not only buttons - share
+                    # its width equally (layout=True)
 )
 
-Mark = collections.namedtuple("Mark", "name role icon layout colour target",
-                              defaults=(None,))
+Mark = collections.namedtuple("Mark", "name role icon layout colour target hint",
+                              defaults=(None, None))
 
 _MARKS = []
 
 
-def mark(name, role, icon=None, layout=False):
+def mark(name, role, icon=None, layout=False, hint=None):
     """Record that control `name` plays `role`; return `name`, so a creation
-    call can be wrapped in place."""
+    call can be wrapped in place. `hint`: the explanation a `toolrow` or a
+    `subhead` shows beside its name in the skin."""
     if role not in ROLES:
         raise ValueError("unknown hub role '{0}'".format(role))
-    _MARKS.append(Mark(name, role, icon, bool(layout), None))
+    _MARKS.append(Mark(name, role, icon, bool(layout), None, None, hint))
     return name
 
 
@@ -201,6 +212,10 @@ def tool_width(classic):
 #  brainstorm): the builders' control heights, logical px. The classic hub
 #  keeps the numbers each builder passes as `classic`.
 H = {"button": 24, "small": 22, "segment": 22, "field": 20}
+
+#  A tool row's name column, logical px (2026-10-13): its hint starts this far
+#  past the name's start - or past the name itself when the name is longer.
+ROW_NAME = 72
 
 
 def height(kind, classic):
@@ -439,6 +454,22 @@ QLabel[skRole="subtitle"] {{ color: {muted}; font-size: {small}px; }}
 QLabel[skRole="heading"] {{ color: {text}; font-weight: bold;
     padding: {p6}px 0px {p3}px 0px; border-bottom: {b1}px solid {line}; }}
 QLabel[skRole="dot"] {{ color: {faint}; }}
+QPushButton[skRole="toolrow"] {{ background: transparent; border: none;
+    border-radius: {r5}px; padding: {p2}px {p6}px; text-align: left;
+    color: {text}; }}
+QPushButton[skRole="toolrow"]:hover {{ background: {hover}; }}
+QPushButton[skRole="toolrow"]:pressed {{ background: {field}; }}
+QPushButton[skRole="toolrow"][skState="wait"] {{ background: {accent};
+    color: {on_accent}; font-weight: bold; }}
+QPushButton[skRole="toolrow"][skState="wait"]:hover {{ background: {accent_hover}; }}
+QLabel[skRole="rowhint"] {{ color: {faint}; font-size: {small}px; }}
+QPushButton[skState="wait"] QLabel[skRole="rowhint"] {{ color: {on_accent}; }}
+QPushButton[skRole="subhead"] {{ background: transparent; border: none;
+    border-top: {b1}px solid {line}; border-radius: 0px; padding: {p4}px {p2}px;
+    text-align: left; color: {text}; font-weight: bold; }}
+QPushButton[skRole="subhead"]:hover {{ color: {accent_text}; }}
+QLabel[skRole="headhint"] {{ color: {faint}; font-size: {small}px; }}
+QLabel[skRole="caption"] {{ color: {faint}; font-size: {small}px; }}
 QWidget[skRole="grip"] {{ background: transparent; border-radius: {r3}px; }}
 QWidget[skRole="grip"]:hover {{ background: {hover}; }}
 QLabel[skRole="messageicon"] {{ background: transparent; }}
