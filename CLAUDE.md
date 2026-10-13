@@ -9623,9 +9623,14 @@ The animator: «Нужно реализовать отдельный от наш
 микро тряска. 2 - режим удара … Камеру тряхнуло, она вздрогнула и успокаивается». Asked, all four the
 recommendation: **the selected camera** (nothing selected: our `SceneSetup_camera` when there is exactly one),
 **one additive layer per press**, **an impact is a kick plus a rattle**, **live tuning**. Spec
-`docs/superpowers/specs/2026-10-13-camera-shake-design.md`, plan beside it. **Outside the plugin**, like the
-physical stop was: `docs/superpowers/plans/camshake/skeldar_camshake.py`, one file, dropped into a viewport it
-reloads itself and opens its window (trap 220); it imports nothing of the plugin.
+`docs/superpowers/specs/2026-10-13-camera-shake-design.md`, plan beside it. Built **outside the plugin** first
+(`docs/superpowers/plans/camshake/skeldar_camshake.py`, dropped into a viewport); **in the plugin the same day**
+(«Давай встроим скрипт камеры в наш плагин»): `git mv` to **`SkeldarAnim/maya_camshake.py`** (a payload row),
+its window replaced by the hub card **Camera Shake** (Animation, after Walk Builder, Tabler `video`); hotkey rows
+`window.camshake` and `camshake.apply` (`maya_hotkeys._camshake`: with the card closed it presses with the
+remembered settings and says its line in the viewport). The optionVars kept the script's names, so what was
+set there comes back. The verify and the picture's renderer stay in `docs/superpowers/plans/camshake/` and load
+the plugin module.
 
 - **The model** (numpy): a smooth noise - Gaussian knots through a uniform cubic B-spline, unit RMS by the
   spline's own mean variance, knots in seeded blocks of 64 so a longer range keeps its start; **5.57 knots a
@@ -9665,15 +9670,23 @@ reloads itself and opens its window (trap 220); it imports nothing of the plugin
   out tangent linear: nothing leaks, not between frames. Translate only when Drift / Push > 0. Refused, by name,
   before any change: nothing to shake, a channel driven by anything but time curves and layers (a constraint
   on a camera's target says which camera to select), a 1-frame range. One undo chunk a press.
-- **The window** (cmds): Shake (+ New and every shake of ours), Delete, Mode, Preset, the sliders, Seed / New
-  seed, Apply, a status line. A released slider, a preset, the direction or a new seed **re-keys the picked
-  shake** on its own cameras and frames; a shake newly selected in the Anim Layer Editor is picked
-  (`animLayerRefresh`); Undo / Redo show its settings again. Settings remembered per mode
-  (`skeldarCamShake_<mode>`, JSON); the picked shake on `sys` (trap 111).
+- **The card** (cmds + the hub's marks), top down: the subtitle (the shake edited, else «New impact shake on
+  SceneSetup_camera, frames 45-70 (the highlight)»); Shake (+ New shake and every shake of ours) with a Delete
+  tool button; `[Handheld | Impact]` segments; Preset; Tilt / Pan / Roll chips (checkBoxes in a flow); the
+  mode's column (Impact: Hit from, Decay, then the sliders); Seed + New seed; Apply (primary); the status line
+  (also the hub's message line). A released slider, a preset, a chip, the direction, the decay or a new seed
+  **re-keys the picked shake** on its own cameras and frames, else «Set for the next Apply.»; a shake newly
+  selected in the Anim Layer Editor is picked (`animLayerRefresh`, remembered per card); Undo / Redo show its
+  settings again. Four jobs per card (SelectionChanged, animLayerRefresh, Undo, Redo), parented to the status
+  line and keyed by the card (`JOB[scope tag]`), so a popup copy's die with it. **Every named control is a
+  command `maya_hubcopy` can scope** - no `checkBoxGrp` / `radioButtonGrp`, which a copy would not rename
+  (a test pins it). Settings remembered per mode (`skeldarCamShake_<mode>`, JSON) and the mode
+  (`skeldarCamShake_mode`); the picked shake on `sys` (trap 111).
 
 Proof: `tests/test_camshake.py` **68** (the noise, the tremor's rate in frames, the envelopes, both modes, the
 waves' period and decay types, the axes, the algebra against OpenMaya on every order with rotate axes and joint
-orients, the window on a fake cmds); `verify_camshake.py` **29/29 mayapy standalone** (gate 15: a hit from the left with Pan and Roll off turns
+orients, the card on a fake cmds - 73 since the card); `verify_camshake.py` **29/29 mayapy standalone**, on the
+plugin module too (gate 15: a hit from the left with Pan and Roll off turns
 the camera about its own X only, 2.8e-16 off it): the shake in the camera's own axes on every frame to
 **2.8e-16 deg**, the translation exact, the
 camera's own keys untouched, nothing outside the range at quarter frames, a re-tune keeping the layer, its
@@ -9683,10 +9696,11 @@ a joint (orient, yxz) exact, refusals changing nothing, a 300-frame shake applie
 0.08 s, and on the plugin's Manny with Camera Setup, nothing selected: the SceneSetup camera shaken and
 `camera_root` following it to 8e-16 - the shake reaches the export. Picture
 `docs/superpowers/plans/camshake/camshake_curves.png` (`render_camshake_curves.py`, offscreen Qt with Windows'
-Segoe UI loaded - offscreen Qt draws boxes otherwise). **The window in Maya is the animator's to try.**
+Segoe UI loaded - offscreen Qt draws boxes otherwise). **The card in Maya is the animator's to try** (no GUI
+Maya of ours): not seen live yet, nor a popup copy of it.
 
 Not built: an operator walking (step bob), a pivot behind the lens, translation in the rattle, moving a shake's
-range after Apply, the hub card.
+range after Apply.
 
 236. **A DG context read keeps a stale value per time.** `getAttr(plug, time=t)` after a key at `t` was edited
      answered the OLD value (measured in mayapy: 0.0 where the curve now said 20, then 30 after a second edit

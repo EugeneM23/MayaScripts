@@ -11,7 +11,8 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-spec = importlib.util.spec_from_file_location("skeldar_camshake_render", os.path.join(HERE, "skeldar_camshake.py"))
+spec = importlib.util.spec_from_file_location(
+    "skeldar_camshake_render", os.path.join(HERE, "..", "..", "..", "..", "SkeldarAnim", "maya_camshake.py"))
 cs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cs)
 

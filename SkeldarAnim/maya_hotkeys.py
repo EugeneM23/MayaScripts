@@ -229,6 +229,19 @@ def _walk(func):
     return message if module.is_open() else _report(message)
 
 
+def _camshake_module():
+    import maya_camshake
+    return maya_camshake
+
+
+def _camshake(func):
+    """Press a Camera Shake button (2026-10-13). Its presses read the remembered settings when the card is
+    closed, and then say their line in the viewport."""
+    module = _camshake_module()
+    message = getattr(module, func)()
+    return message if module.is_open() else _report(message)
+
+
 def _retarget_module():
     """Lazy: the Retarget shelf button's module."""
     import maya_rig_retarget
@@ -936,6 +949,12 @@ _OURS = (
     ("walk.apply", "Walk Builder", "Apply walk",
      "The card's walk, pose and knobs onto the selected skeleton",
      partial(_walk, "press_apply")),
+    ("window.camshake", "Windows", "Camera Shake",
+     "Open the Camera Shake section: handheld filming or an impact, on a layer of its own",
+     partial(_show, "maya_camshake", "show_window")),
+    ("camshake.apply", "Camera Shake", "Apply camera shake",
+     "A shake in the card's mode on the selected camera over the highlighted frames",
+     partial(_camshake, "press_apply")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",

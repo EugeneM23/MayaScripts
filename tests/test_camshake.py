@@ -1,25 +1,18 @@
-"""Camera Shake: the model, the rotation algebra and the window, without a scene."""
+"""Camera Shake (maya_camshake): the model, the rotation algebra and the hub card, without a scene."""
 
-import importlib.util
 import math
 import os
+import sys
 import unittest
 
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FOLDER = os.path.join(os.path.dirname(HERE), "docs", "superpowers", "plans", "camshake")
-SCRIPT = os.path.join(FOLDER, "skeldar_camshake.py")
+PLUGIN = os.path.join(os.path.dirname(HERE), "SkeldarAnim")
+if PLUGIN not in sys.path:
+    sys.path.insert(0, PLUGIN)
 
-
-def load():
-    spec = importlib.util.spec_from_file_location("skeldar_camshake_under_test", SCRIPT)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-cs = load()
+import maya_camshake as cs  # noqa: E402
 
 FPS = 30.0
 
@@ -505,14 +498,14 @@ class RecordTests(unittest.TestCase):
 
 
 class FakeCmds(object):
-    """Just enough of maya.cmds' UI for the window: controls remember what they were made and edited with,
-    queries answer it, menus hold their items."""
+    """Just enough of maya.cmds for the card: controls remember what they were made and edited with,
+    queries answer it, menus hold their items, a radio button lights alone in its collection."""
 
     def __init__(self):
         self.controls = {}
         self.options = {}
-        self.jobs = []
-        self.menu = None
+        self.jobs = {}
+        self.killed = []
         self.count = 0
 
     def _name(self, kind, args):
@@ -521,7 +514,7 @@ class FakeCmds(object):
         self.count += 1
         return "%s%d" % (kind, self.count)
 
-    def _control(self, kind, args, kw, value_key="value"):
+    def _control(self, kind, args, kw):
         name = self._name(kind, args)
         if kw.get("exists"):
             return name in self.controls
@@ -534,56 +527,29 @@ class FakeCmds(object):
                     return props.get(key)
             return None
         if kw.get("edit") or kw.get("e"):
-            props = self.controls[name]
-            props.update({k: v for k, v in kw.items() if k not in ("edit", "e")})
+            self.controls[name].update({k: v for k, v in kw.items() if k not in ("edit", "e")})
             return name
         self.controls[name] = dict(kw, kind=kind, items=[])
-        if kind == "optionMenu":
-            self.menu = name
         return name
 
-    def window(self, *args, **kw):
-        return self._control("window", args, kw)
-
-    def windowPref(self, *args, **kw):
-        return False
-
-    def deleteUI(self, *names, **kw):
-        for name in names:
-            for props in self.controls.values():
-                if name in props.get("items", []):
-                    props["items"].remove(name)
-            self.controls.pop(name, None)
-
-    def showWindow(self, *args, **kw):
-        return None
+    def __getattr__(self, kind):
+        if kind in ("rowLayout", "flowLayout", "columnLayout", "text", "button", "intField", "floatSliderGrp",
+                    "checkBox", "iconTextRadioCollection"):
+            return lambda *args, **kw: self._control(kind, args, kw)
+        raise AttributeError(kind)
 
     def setParent(self, *args, **kw):
         return None
 
-    def columnLayout(self, *args, **kw):
-        return self._control("columnLayout", args, kw)
-
-    def rowLayout(self, *args, **kw):
-        return self._control("rowLayout", args, kw)
-
-    def text(self, *args, **kw):
-        return self._control("text", args, kw)
-
-    def button(self, *args, **kw):
-        return self._control("button", args, kw)
-
-    def intField(self, *args, **kw):
-        return self._control("intField", args, kw)
-
-    def floatSliderGrp(self, *args, **kw):
-        return self._control("floatSliderGrp", args, kw)
-
-    def radioButtonGrp(self, *args, **kw):
-        return self._control("radioButtonGrp", args, kw)
-
-    def checkBoxGrp(self, *args, **kw):
-        return self._control("checkBoxGrp", args, kw)
+    def iconTextRadioButton(self, *args, **kw):
+        name = self._control("iconTextRadioButton", args, kw)
+        if (kw.get("edit") or kw.get("select")) and kw.get("select") and isinstance(name, str):
+            group = self.controls[name].get("collection")
+            for other, props in self.controls.items():
+                if other != name and props.get("kind") == "iconTextRadioButton" and \
+                        props.get("collection") == group:
+                    props["select"] = False
+        return name
 
     def optionMenu(self, *args, **kw):
         name = self._name("optionMenu", args)
@@ -598,14 +564,28 @@ class FakeCmds(object):
         return self._control("optionMenu", args, kw)
 
     def menuItem(self, *args, **kw):
-        parent = kw.pop("parent", None) or self.menu
+        parent = kw.pop("parent")
         name = self._control("menuItem", args, kw)
         self.controls[parent]["items"].append(name)
         return name
 
+    def deleteUI(self, *names, **kw):
+        for name in names:
+            for props in self.controls.values():
+                if name in props.get("items", []):
+                    props["items"].remove(name)
+            self.controls.pop(name, None)
+
     def scriptJob(self, *args, **kw):
-        self.jobs.append(kw)
-        return len(self.jobs)
+        if "exists" in kw:
+            return kw["exists"] in self.jobs
+        if "kill" in kw:
+            self.killed.append(kw["kill"])
+            self.jobs.pop(kw["kill"], None)
+            return None
+        number = len(self.jobs) + len(self.killed) + 1
+        self.jobs[number] = kw
+        return number
 
     def optionVar(self, *args, **kw):
         if "exists" in kw:
@@ -618,115 +598,171 @@ class FakeCmds(object):
         return None
 
 
-class WindowTests(unittest.TestCase):
+LAYER = "CamShake_Impact_40_60"
+
+
+class CardTests(unittest.TestCase):
 
     def setUp(self):
         self.fake = FakeCmds()
         self.saved = {name: getattr(cs, name) for name in
                       ("cmds", "apply", "retune", "delete", "picked", "pick", "record", "shakes", "targets",
-                       "frames_for", "editor_pick")}
+                       "frames_for", "editor_pick", "_node_names")}
         cs.cmds = self.fake
         self.calls = []
         self.current = None
         cs.picked = lambda: self.current
         cs.pick = lambda layer: setattr(self, "current", layer)
         cs.record = lambda layer: {"mode": "impact", "frames": [40, 60], "targets": ["U"],
-                                   "settings": cs.settings("impact", {"strength": 7.0, "direction": "Left"})} \
+                                   "settings": cs.settings("impact", {"strength": 7.0, "direction": "Left",
+                                                                      "decay": "Smooth", "pan_on": False})} \
             if layer else None
-        cs.shakes = lambda: ["CamShake_Impact_40_60"]
+        cs.shakes = lambda: [LAYER]
         cs.targets = lambda selection=None: ["|cam"]
         cs.frames_for = lambda mode, s, given=None: (0, 50, "the playback range")
         cs.editor_pick = lambda: None
         cs.apply = lambda mode, given=None, selection=None, frames=None: (
-            self.calls.append(("apply", mode, given)) or ("CamShake_Impact_40_60", "applied"))
+            self.calls.append(("apply", mode, given)) or (LAYER, "applied"))
         cs.retune = lambda layer, given: self.calls.append(("retune", layer, given)) or "re-tuned"
         cs.delete = lambda layer: self.calls.append(("delete", layer)) or "deleted"
         cs._node_names = lambda found: "cam"
-        cs.show()
+        cs.build_panel()
 
     def tearDown(self):
         for name, value in self.saved.items():
             setattr(cs, name, value)
         cs._QUIET[0] = False
+        cs.JOB.clear()
+        cs._state().pop("editor", None)
+
+    def control(self, name):
+        return self.fake.controls[name]
 
     def slider(self, mode, name):
-        return self.fake.controls[cs._slider(mode, name)]
+        return self.control(cs._slider(mode, name))
 
     def test_builds_every_control(self):
         for mode in cs.MODES:
-            for name, _, default, _, _ in cs.CONTROLS[mode]:
+            self.assertIn(cs._mode_tab(mode), self.fake.controls)
+            self.assertIn(cs._mode_column(mode), self.fake.controls)
+            for name, _, _, _, _ in cs.CONTROLS[mode]:
                 self.assertIn(cs._slider(mode, name), self.fake.controls)
-        for name in ("target", "shake", "mode", "preset", "direction", "decay", "handheld_axes", "impact_axes",
-                     "seed", "apply", "status"):
-            self.assertIn(cs._ctrl(name), self.fake.controls)
-        self.assertTrue(any(job.get("event") == ["SelectionChanged", cs._refresh] for job in self.fake.jobs))
+        for key, _ in cs.AXES:
+            self.assertEqual(self.control(cs._axis_chip(key))["kind"], "checkBox")
+        for name in (cs.SUBTITLE, cs.SHAKE_MENU, cs.DELETE_BTN, cs.PRESET_MENU, cs.DIRECTION_MENU,
+                     cs.DECAY_MENU, cs.SEED_FIELD, cs.SEED_BTN, cs.APPLY_BTN, cs.STATUS):
+            self.assertIn(name, self.fake.controls)
+        events = sorted(job["event"][0] for job in self.fake.jobs.values())
+        self.assertEqual(events, ["Redo", "SelectionChanged", "Undo", "animLayerRefresh"])
+        self.assertTrue(all(job["parent"] == cs.STATUS for job in self.fake.jobs.values()))
+
+    def test_every_control_a_popup_copy_can_scope(self):
+        """A popup copy renames only the commands maya_hubcopy knows (checkBoxGrp / radioButtonGrp are not
+        among them): the card makes nothing else under a name."""
+        import maya_hubcopy
+        named = {props["kind"] for name, props in self.fake.controls.items()
+                 if not name.startswith(props["kind"])}
+        self.assertTrue(named <= maya_hubcopy.CREATORS, named - maya_hubcopy.CREATORS)
+
+    def test_the_mode_shown_is_the_one_remembered(self):
+        self.assertEqual(cs.current_mode(), "handheld")
+        self.assertTrue(self.control(cs._mode_column("handheld"))["manage"])
+        self.assertFalse(self.control(cs._mode_column("impact"))["manage"])
 
     def test_a_preset_fills_the_sliders_and_sets_up_the_next_apply(self):
-        self.fake.controls[cs._ctrl("preset")]["value"] = "Nervous"
-        cs._on_preset()
+        self.control(cs.PRESET_MENU)["value"] = "Nervous"
+        cs.preset_changed()
         self.assertEqual(self.slider("handheld", "sway")["value"], 1.8)
-        self.assertEqual(self.fake.controls[cs._ctrl("preset")]["value"], cs.PRESET_PROMPT)
+        self.assertEqual(self.slider("handheld", "jitter_hz")["value"], 9.5)
+        self.assertEqual(self.control(cs.PRESET_MENU)["value"], cs.PRESET_PROMPT)
         self.assertEqual(self.calls, [])
-        self.assertIn("next Apply", self.fake.controls[cs._ctrl("status")]["label"])
+        self.assertEqual(self.control(cs.STATUS)["label"], "Set for the next Apply.")
 
-    def test_a_slider_re_keys_the_picked_shake(self):
-        self.fake.controls[cs._ctrl("shake")]["value"] = cs._label("CamShake_Impact_40_60")
-        cs._on_shake()
-        self.assertEqual(self.current, "CamShake_Impact_40_60")
-        self.assertEqual(self.fake.controls[cs._ctrl("mode")]["select"], 2)
+    def test_picking_a_shake_loads_it_and_a_slider_re_keys_it(self):
+        self.control(cs.SHAKE_MENU)["value"] = "%s - cam" % LAYER
+        cs.shake_changed()
+        self.assertEqual(self.current, LAYER)
+        self.assertEqual(cs.current_mode(), "impact")
+        self.assertTrue(self.control(cs._mode_column("impact"))["manage"])
         self.assertEqual(self.slider("impact", "strength")["value"], 7.0)
+        self.assertFalse(self.control(cs._axis_chip("pan_on"))["value"])
+        self.assertEqual(self.control(cs.DECAY_MENU)["value"], "Smooth")
         self.slider("impact", "strength")["value"] = 9.0
-        cs._changed("impact")
-        self.assertEqual(self.calls[-1][0], "retune")
-        self.assertEqual(self.calls[-1][2]["strength"], 9.0)
-        self.assertEqual(self.calls[-1][2]["direction"], "Left")
+        cs.slider_changed("impact")()
+        verb, layer, given = self.calls[-1]
+        self.assertEqual((verb, layer), ("retune", LAYER))
+        self.assertEqual((given["strength"], given["direction"], given["decay"], given["pan_on"]),
+                         (9.0, "Left", "Smooth", False))
+        self.assertEqual(self.control(cs.STATUS)["label"], "re-tuned")
+        self.assertIn("Editing %s" % LAYER, self.control(cs.SUBTITLE)["label"])
 
-    def test_the_axes_and_the_decay_are_read(self):
-        self.fake.controls[cs._ctrl("impact_axes")]["value2"] = False
-        self.fake.controls[cs._ctrl("decay")]["value"] = "Smooth"
-        s = cs._read("impact")
-        self.assertEqual((s["tilt_on"], s["pan_on"], s["roll_on"], s["decay"]), (True, False, True, "Smooth"))
-        cs._show_settings("impact", cs.settings("impact", {"roll_on": False, "decay": "Sharp"}))
-        self.assertFalse(self.fake.controls[cs._ctrl("impact_axes")]["value3"])
-        self.assertEqual(self.fake.controls[cs._ctrl("decay")]["value"], "Sharp")
-
-    def test_apply_applies_what_the_window_reads(self):
+    def test_apply_applies_what_the_card_reads(self):
         self.slider("handheld", "sway")["value"] = 2.5
-        cs._on_apply()
-        self.assertEqual(self.calls[-1][0], "apply")
-        self.assertEqual(self.calls[-1][1], "handheld")
-        self.assertEqual(self.calls[-1][2]["sway"], 2.5)
-        self.assertEqual(self.fake.controls[cs._ctrl("status")]["label"], "applied")
+        self.control(cs._axis_chip("roll_on"))["value"] = False
+        cs.press_apply()
+        verb, mode, given = self.calls[-1]
+        self.assertEqual((verb, mode, given["sway"], given["roll_on"]), ("apply", "handheld", 2.5, False))
+        self.assertEqual(self.control(cs.STATUS)["label"], "applied")
 
     def test_switching_mode_unpicks(self):
-        self.current = "CamShake_Impact_40_60"
-        self.fake.controls[cs._ctrl("mode")]["select"] = 2
-        cs._on_mode()
+        self.current = LAYER
+        cs.mode_changed("impact")()
         self.assertIsNone(self.current)
-        self.assertTrue(self.fake.controls[cs._ctrl("impact_column")]["manage"])
-        self.assertFalse(self.fake.controls[cs._ctrl("handheld_column")]["manage"])
+        self.assertEqual(cs.current_mode(), "impact")
+        self.assertTrue(self.control(cs._mode_column("impact"))["manage"])
+        self.assertFalse(self.control(cs._mode_column("handheld"))["manage"])
+        labels = [self.fake.controls[item]["label"] for item in self.control(cs.PRESET_MENU)["items"]]
+        self.assertEqual(labels, [cs.PRESET_PROMPT] + [label for label, _ in cs.PRESETS["impact"]])
 
     def test_settings_are_remembered_per_mode(self):
         self.slider("handheld", "jitter")["value"] = 0.9
-        cs._changed("handheld")
+        cs.slider_changed("handheld")()
         self.assertEqual(cs.remembered("handheld")["jitter"], 0.9)
-        self.assertEqual(cs.remembered("impact")["jitter"] if "jitter" in cs.remembered("impact") else None, None)
-
-    def test_a_layer_selected_in_the_editor_is_picked_once(self):
-        cs.editor_pick = lambda: "CamShake_Impact_40_60"
-        cs._from_editor()
-        self.assertEqual(self.current, "CamShake_Impact_40_60")
-        self.assertEqual(self.slider("impact", "strength")["value"], 7.0)
-        self.current = None                    # the animator picks + New in the window
-        cs._from_editor()                      # the same layer still selected in the editor
-        self.assertIsNone(self.current)
+        self.assertNotIn("jitter", cs.remembered("impact"))
 
     def test_delete_needs_a_picked_shake(self):
-        cs._on_delete()
+        cs.press_delete()
         self.assertEqual(self.calls, [])
-        self.current = "CamShake_Impact_40_60"
-        cs._on_delete()
-        self.assertEqual(self.calls[-1], ("delete", "CamShake_Impact_40_60"))
+        self.current = LAYER
+        cs.press_delete()
+        self.assertEqual(self.calls[-1], ("delete", LAYER))
+
+    def test_a_layer_selected_in_the_editor_is_picked_once(self):
+        cs.editor_pick = lambda: LAYER
+        cs.from_editor()
+        self.assertEqual(self.current, LAYER)
+        self.assertEqual(self.slider("impact", "strength")["value"], 7.0)
+        self.current = None                    # the animator picks + New in the card
+        cs.from_editor()                       # the same layer still selected in the editor
+        self.assertIsNone(self.current)
+
+    def test_a_new_seed_re_keys_the_picked_shake(self):
+        self.current = LAYER
+        cs._load(LAYER)
+        before = self.control(cs.SEED_FIELD)["value"]
+        cs.press_new_seed()
+        self.assertEqual(self.calls[-1][0], "retune")
+        self.assertNotEqual(self.calls[-1][2]["seed"], before)
+
+    def test_with_the_card_closed_a_press_uses_the_remembered_settings(self):
+        self.slider("handheld", "drift")["value"] = 4.0
+        cs.slider_changed("handheld")()
+        self.fake.controls.clear()
+        self.assertFalse(cs.is_open())
+        message = cs.press_apply()
+        self.assertEqual(message, "applied")
+        self.assertEqual(self.calls[-1][2]["drift"], 4.0)
+
+    def test_a_refusal_is_the_status(self):
+        def refuse(*args, **kwargs):
+            raise cs.Refused("select a camera to shake")
+        cs.apply = refuse
+        self.assertEqual(cs.press_apply(), "select a camera to shake")
+
+    def test_the_hub_opens_on_the_card(self):
+        import maya_hub
+        self.assertEqual(maya_hub.section(cs.HUB_SECTION).module, "maya_camshake")
+        self.assertEqual(maya_hub.section(cs.HUB_SECTION).group, "animation")
 
 
 if __name__ == "__main__":

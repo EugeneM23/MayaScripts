@@ -153,6 +153,10 @@ SECTIONS = (
     Section("walk", "Walk Builder", "maya_walk.panel",
             "build_panel", "skeldarHubFrameWalk",
             "animation", "walk"),
+    #  2026-10-13: handheld filming and an impact on a layer each, out of its standalone script.
+    Section("camshake", "Camera Shake", "maya_camshake",
+            "build_panel", "skeldarHubFrameCamShake",
+            "animation", "video"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

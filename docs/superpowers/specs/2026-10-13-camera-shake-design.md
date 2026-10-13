@@ -192,3 +192,24 @@ are now a **tremor** - a sine at the rate whose amplitude swells and fades (`1 +
 wanders (`0.6 rad x noise`), both at rate/7, unit RMS - which shows its own rate in frames to 10 % up to 12 Hz at
 30 fps. A hand's tremor is narrow-band anyway. Proof: 68 unit tests (the tremor's rate on 30 fps frames, Speed
 leaving the jitter alone, the cap), `verify_camshake.py` 29/29.
+
+## Addendum: in the plugin, a hub card (2026-10-13, the evening)
+
+The animator: «Давай встроим скрипт камеры в наш плагин». As Tail Builder and Walk Builder went:
+- `git mv` to `SkeldarAnim/maya_camshake.py` (a payload row); sections 1-3 unchanged; the window replaced by
+  the card (`build_panel`), no drop handler.
+- Hub section **Camera Shake** (key `camshake`), Animation, after Walk Builder, Tabler icon `video`.
+- Hotkey rows `window.camshake` (open the card) and `camshake.apply` (Apply in the card's mode; with the card
+  closed, the remembered mode and settings, the line in the viewport).
+- The card: the subtitle, Shake + Delete, `[Handheld | Impact]` segments, Preset, Tilt / Pan / Roll chips, the
+  mode's column (Hit from and Decay first in Impact), Seed + New seed, Apply, the status. Segments and chips
+  rather than the window's radio group and checkbox group: a hub popup copy renames only the commands
+  `maya_hubcopy` scopes (no `radioButtonGrp` / `checkBoxGrp`), and a test pins that every named control is one.
+- Per card: four jobs (SelectionChanged, animLayerRefresh, Undo, Redo) parented to its status line; the Anim
+  Layer Editor's pick remembered per card.
+- The memory keeps the script's names (`skeldarCamShake_<mode>`, `skeldarCamShake_mode`).
+
+Proof: 73 unit tests (the card on a fake cmds: every control, the remembered mode, a preset, picking and
+re-keying a shake, Apply, the mode switch, Delete, the editor's pick, a new seed, a press with the card closed,
+a refusal as the status), the hub's and the hotkeys' tables, `verify_camshake.py` 29/29 on the plugin module.
+The card in a live Maya is the animator's.

@@ -1,13 +1,15 @@
-"""Camera Shake - handheld filming and an impact, keyed on an animation layer of their own.
+"""maya_camshake - the Camera Shake card: handheld filming and an impact, keyed on a layer of their own.
 
 Select a camera (nothing selected: our SceneSetup_camera when there is exactly one), highlight a stretch of
 the time slider, set the controls and press Apply:
 - Handheld: an operator holding the camera - a slow sway, the hands' tremor, a little drift.
-- Impact: a jolt from a chosen side, a spring back with an overshoot and a fine rattle, still by the end.
+- Impact: a jolt from a chosen side whose waves die by the end of the range, a fine rattle on top.
 Every press is an additive layer of its own (its weight is a strength dial, Mute turns it off); after Apply
 a released slider re-keys that shake. docs/superpowers/specs/2026-10-13-camera-shake-design.md.
 
-Drop this file into a Maya viewport to open the window, or exec it in the Script Editor.
+Built as a standalone script (docs/superpowers/plans/camshake/, 2026-10-13) and moved into the plugin the
+same day («Давай встроим скрипт камеры в наш плагин»): its window is the hub's Camera Shake card now.
+Sections 1-2 are numpy only; 3 the scene (cmds); 4 the card (cmds + the hub's marks).
 """
 
 import json
@@ -951,22 +953,70 @@ def editor_pick():
 
 
 # ---------------------------------------------------------------------------------------------------------
-# 4. The window (cmds)
+# 4. The hub card (cmds) - Camera Shake
 # ---------------------------------------------------------------------------------------------------------
 
-WINDOW = "skeldarCamShakeWindow"
+HUB_SECTION = "camshake"
+SUBTITLE = "skeldarCamShakeSubtitle"
+STATUS = "skeldarCamShakeStatus"
+SHAKE_MENU = "skeldarCamShakeShake"
+DELETE_BTN = "skeldarCamShakeDelete"
+MODE_TABS = "skeldarCamShakeModes"
+PRESET_MENU = "skeldarCamShakePreset"
+DIRECTION_MENU = "skeldarCamShakeDirection"
+DECAY_MENU = "skeldarCamShakeDecay"
+SEED_FIELD = "skeldarCamShakeSeed"
+SEED_BTN = "skeldarCamShakeNewSeed"
+APPLY_BTN = "skeldarCamShakeApply"
 NEW = "+ New shake"
 PRESET_PROMPT = "Presets..."
+#  The memory keeps the standalone script's names (2026-10-13): what the animator set there comes back.
 OPTION = "skeldarCamShake_"          # + mode: that mode's settings (JSON); + "mode": the last mode
+TIPS = {
+    "sway": "The body's slow drift and the hands' corrections, degrees at the extremes",
+    "speed": "Calm to nervous: how fast the sway and the drift wander",
+    "jitter": "The hands' tremor, degrees",
+    "jitter_hz": "The tremor's rate, up to 0.42 of the frame rate (12.6 Hz at 30 fps)",
+    "roll": "How much of the turning rolls the horizon",
+    "drift": "The camera's own travel, cm",
+    "ease": "Frames to fade the shake in and out at the range's ends (0: a cut)",
+    "strength": "How far the first swing turns the view, degrees",
+    "push": "How far the hit knocks the camera, cm",
+    "wave": "Frames from crest to crest of the hit's swings",
+    "rattle": "A fast fine vibration on top, degrees - it dies before the swings do",
+    "rattle_hz": "The rattle's rate, up to 0.42 of the frame rate",
+    "length": "Frames the hit takes to settle when no range is highlighted",
+    "shake": "+ New shake: Apply makes one. A shake of ours: the controls re-key it as they change",
+    "delete": "Delete the picked shake's layer (one undo)",
+    "preset": "Fill the controls with a preset (the seed, ease, length and axes are kept)",
+    "direction": "Where the hit comes from: the camera is knocked the other way",
+    "decay": "How the swings die by the end of the range",
+    "axes": "Tilt: up-down, Pan: left-right, Roll: the horizon. Off removes that turn whole",
+    "seed": "Another shake of the same kind",
+    "apply": "A new shake on the selected camera over the highlighted frames, on a layer of its own",
+}
+STEPS = {"jitter_hz": 0.5, "rattle_hz": 0.5, "ease": 1.0, "length": 1.0, "wave": 0.5}
+NOTHING = "Select a camera - Apply shakes it over the highlighted frames"
+#  The refresh jobs of each card standing: '' the hub's, a popup copy's tag its own (the 2026-10-09 rule:
+#  closing a popup kills only its own jobs).
+JOB = {}
 _QUIET = [False]                     # filling controls from code must not run their commands
 
 
-def _ctrl(name):
-    return "skeldarCamShake_" + name
+def _mode_tab(mode):
+    return "skeldarCamShakeMode_" + mode
+
+
+def _mode_column(mode):
+    return "skeldarCamShakeColumn_" + mode
 
 
 def _slider(mode, name):
-    return _ctrl("%s_%s" % (mode, name))
+    return "%s%s_%s" % (OPTION, mode, name)
+
+
+def _axis_chip(key):
+    return "skeldarCamShakeAxis_" + key
 
 
 def remembered(mode):
@@ -988,21 +1038,36 @@ def _remembered_mode():
 
 
 def current_mode():
-    chosen = cmds.radioButtonGrp(_ctrl("mode"), query=True, select=True) or 1
-    return MODES[int(chosen) - 1]
+    """The mode the card shows, else the one remembered."""
+    for mode in MODES:
+        if cmds.iconTextRadioButton(_mode_tab(mode), exists=True) and \
+                cmds.iconTextRadioButton(_mode_tab(mode), query=True, select=True):
+            return mode
+    return _remembered_mode()
 
 
 def _read(mode):
-    """The mode's settings as the window shows them."""
+    """The mode's settings as the card shows them; with the card closed, as remembered."""
+    if not cmds.floatSliderGrp(_slider(mode, CONTROLS[mode][0][0]), exists=True):
+        return remembered(mode)
     given = {name: cmds.floatSliderGrp(_slider(mode, name), query=True, value=True)
              for name, _, _, _, _ in CONTROLS[mode]}
-    given["seed"] = cmds.intField(_ctrl("seed"), query=True, value=True)
-    for i, (key, _) in enumerate(AXES):
-        given[key] = bool(cmds.checkBoxGrp(_ctrl(mode + "_axes"), query=True, **{"value%d" % (i + 1): True}))
+    given["seed"] = cmds.intField(SEED_FIELD, query=True, value=True)
+    for key, _ in AXES:
+        given[key] = bool(cmds.checkBox(_axis_chip(key), query=True, value=True))
     if mode == "impact":
-        given["direction"] = cmds.optionMenu(_ctrl("direction"), query=True, value=True)
-        given["decay"] = cmds.optionMenu(_ctrl("decay"), query=True, value=True)
+        given["direction"] = cmds.optionMenu(DIRECTION_MENU, query=True, value=True)
+        given["decay"] = cmds.optionMenu(DECAY_MENU, query=True, value=True)
     return settings(mode, given)
+
+
+def values(mode=None):
+    """The settings a press uses: the card's (remembered) where it stands, else the remembered ones - so a
+    hotkey row presses with the card closed."""
+    mode = mode or current_mode()
+    s = _read(mode)
+    remember(mode, s)
+    return s
 
 
 def _quietly(work):
@@ -1017,48 +1082,57 @@ def _show_settings(mode, s):
     def work():
         for name, _, _, _, _ in CONTROLS[mode]:
             cmds.floatSliderGrp(_slider(mode, name), edit=True, value=s[name])
-        cmds.intField(_ctrl("seed"), edit=True, value=s["seed"])
-        cmds.checkBoxGrp(_ctrl(mode + "_axes"), edit=True,
-                         **{"value%d" % (i + 1): bool(s[key]) for i, (key, _) in enumerate(AXES)})
+        cmds.intField(SEED_FIELD, edit=True, value=s["seed"])
+        for key, _ in AXES:
+            cmds.checkBox(_axis_chip(key), edit=True, value=bool(s[key]))
         if mode == "impact":
-            cmds.optionMenu(_ctrl("direction"), edit=True, value=s["direction"])
-            cmds.optionMenu(_ctrl("decay"), edit=True, value=s["decay"])
-    _quietly(work)
+            cmds.optionMenu(DIRECTION_MENU, edit=True, value=s["direction"])
+            cmds.optionMenu(DECAY_MENU, edit=True, value=s["decay"])
+    if cmds.intField(SEED_FIELD, exists=True):
+        _quietly(work)
 
 
-def _fill_menu(menu, labels):
+def _fill_menu(menu, labels, selected):
     for item in cmds.optionMenu(menu, query=True, itemListLong=True) or []:
         cmds.deleteUI(item, menuItem=True)
     for label in labels:
         cmds.menuItem(label=label, parent=menu)
+    cmds.optionMenu(menu, edit=True, value=selected)
 
 
 def _show_mode(mode):
+    """The card on a mode: its tab lit, its column shown, its presets in the list."""
     def work():
-        cmds.radioButtonGrp(_ctrl("mode"), edit=True, select=MODES.index(mode) + 1)
+        cmds.iconTextRadioButton(_mode_tab(mode), edit=True, select=True)
         for each in MODES:
-            cmds.columnLayout(_ctrl(each + "_column"), edit=True, manage=each == mode)
-        _fill_menu(_ctrl("preset"), [PRESET_PROMPT] + [label for label, _ in PRESETS[mode]])
-        cmds.optionMenu(_ctrl("preset"), edit=True, value=PRESET_PROMPT)
-    _quietly(work)
+            cmds.columnLayout(_mode_column(each), edit=True, manage=each == mode)
+        _fill_menu(PRESET_MENU, [PRESET_PROMPT] + [label for label, _ in PRESETS[mode]], PRESET_PROMPT)
+    if cmds.iconTextRadioButton(_mode_tab(mode), exists=True):
+        _quietly(work)
     cmds.optionVar(stringValue=(OPTION + "mode", mode))
 
 
-def _status(text):
-    if cmds.text(_ctrl("status"), exists=True):
-        cmds.text(_ctrl("status"), edit=True, label=text)
+def status(text):
+    """The card's line - and the hub's one message line. Answers the text, so a hotkey row can show it when
+    the card is closed."""
+    import maya_hubstyle as hubstyle
+    if cmds.text(STATUS, exists=True):
+        cmds.text(STATUS, edit=True, label=text)
+        hubstyle.tell(STATUS, text)
+    return text
 
 
-def _run(work):
+def _press(action):
     try:
-        message = work()
-    except Refused as error:
-        message = str(error)
-    except Exception as error:   # the window stays usable; the Script Editor has the trace
+        message = action()
+    except Refused as refusal:
+        message = str(refusal)
+    except Exception as error:                               # noqa: BLE001 - the card stays usable
         import traceback
-        traceback.print_exc()
-        message = "failed: %s" % error
-    _status(message)
+        print(traceback.format_exc())
+        message = "Camera Shake failed: %s" % error
+    refresh()
+    return status(message)
 
 
 def _node_names(found):
@@ -1070,204 +1144,281 @@ def _label(layer):
     return "%s - %s" % (layer, _node_names(found)) if found else layer
 
 
-def _refresh_line():
+def selection_line():
+    """The card's subtitle: the shake it edits, else what Apply would take."""
     layer = picked()
     if layer:
         found = record(layer)
-        text = "Editing %s: %s, frames %d-%d" % (layer, _node_names(found), found["frames"][0],
+        return "Editing %s: %s, frames %d-%d" % (layer, _node_names(found), found["frames"][0],
                                                  found["frames"][1])
-    else:
-        mode = current_mode()
-        try:
-            nodes = targets()
-            a, b, where = frames_for(mode, _read(mode))
-            text = "New %s shake on %s, frames %d-%d (%s)" % (mode, ", ".join(leaf(n) for n in nodes), a, b,
-                                                              where)
-        except Refused as error:
-            text = "New %s shake: %s" % (mode, error)
-    cmds.text(_ctrl("target"), edit=True, label=text)
+    mode = current_mode()
+    try:
+        nodes = targets()
+        a, b, where = frames_for(mode, _read(mode))
+    except Refused as refusal:
+        return NOTHING if "select a camera" in str(refusal) else str(refusal)
+    return "New %s shake on %s, frames %d-%d (%s)" % (mode, ", ".join(leaf(n) for n in nodes), a, b, where)
 
 
-def _refresh(*_):
-    if not cmds.window(WINDOW, exists=True):
+def refresh(*_):
+    """The subtitle and the list of shakes."""
+    if not cmds.text(SUBTITLE, exists=True):
         return
-    layer = picked()
-
-    def work():
-        _fill_menu(_ctrl("shake"), [NEW] + [_label(each) for each in shakes()])
-        cmds.optionMenu(_ctrl("shake"), edit=True, value=_label(layer) if layer else NEW)
-    _quietly(work)
-    _refresh_line()
+    try:
+        layer = picked()
+        labels = [_label(each) for each in shakes()]
+        _quietly(lambda: _fill_menu(SHAKE_MENU, [NEW] + labels, _label(layer) if layer else NEW))
+        cmds.text(SUBTITLE, edit=True, label=selection_line())
+    except Exception:                                        # noqa: BLE001 - a refresh never raises
+        return
 
 
 def _load(layer):
-    """The window shows a shake: its mode and settings."""
+    """The card shows a shake: its mode and settings."""
     found = record(layer)
     if found:
         _show_mode(found["mode"])
         _show_settings(found["mode"], found["settings"])
+        remember(found["mode"], found["settings"])
 
 
 def _changed(mode):
-    if _QUIET[0]:
-        return
-    s = _read(mode)
-    remember(mode, s)
-    layer = picked()
-    if layer and record(layer)["mode"] == mode:
-        _run(lambda: retune(layer, s))
-    else:
-        _status("set for the next Apply")
+    """A control moved: the picked shake re-keyed with it, else the next Apply set up."""
+    def run():
+        s = values(mode)
+        layer = picked()
+        if layer and record(layer)["mode"] == mode:
+            return retune(layer, s)
+        return "Set for the next Apply."
+    return _press(run)
 
 
-def _on_preset(*_):
+def slider_changed(mode):
+    def go(*_):
+        if not _QUIET[0]:
+            _changed(mode)
+    return go
+
+
+def preset_changed(*_):
     if _QUIET[0]:
         return
-    name = cmds.optionMenu(_ctrl("preset"), query=True, value=True)
+    name = cmds.optionMenu(PRESET_MENU, query=True, value=True)
     if name == PRESET_PROMPT:
         return
     mode = current_mode()
     _show_settings(mode, preset(mode, name, _read(mode)))
-    _quietly(lambda: cmds.optionMenu(_ctrl("preset"), edit=True, value=PRESET_PROMPT))
+    _quietly(lambda: cmds.optionMenu(PRESET_MENU, edit=True, value=PRESET_PROMPT))
     _changed(mode)
 
 
-def _on_mode(*_):
-    if _QUIET[0]:
-        return
-    mode = current_mode()
-    pick(None)
-    _show_mode(mode)
-    _show_settings(mode, remembered(mode))
-    _refresh()
+def mode_changed(mode):
+    def go(*_):
+        if _QUIET[0]:
+            return
+        pick(None)
+        _show_mode(mode)
+        _show_settings(mode, remembered(mode))
+        refresh()
+    return go
 
 
-def _on_shake(*_):
+def shake_changed(*_):
     if _QUIET[0]:
         return
-    label = cmds.optionMenu(_ctrl("shake"), query=True, value=True)
+    label = cmds.optionMenu(SHAKE_MENU, query=True, value=True)
     layer = next((each for each in shakes() if _label(each) == label), None)
     pick(layer)
     if layer:
         _load(layer)
-    _refresh()
+    refresh()
 
 
-def _on_delete(*_):
+def press_delete(*_):
     layer = picked()
     if not layer:
-        _status("pick a shake to delete")
-        return
-    _run(lambda: delete(layer))
-    _refresh()
+        return status("Pick a shake to delete.")
+    return _press(lambda: delete(layer))
 
 
-def _on_new_seed(*_):
-    cmds.intField(_ctrl("seed"), edit=True, value=int(np.random.default_rng().integers(1, 100000)))
-    _changed(current_mode())
-
-
-def _on_apply(*_):
+def press_new_seed(*_):
     mode = current_mode()
     s = _read(mode)
+    s["seed"] = int(np.random.default_rng().integers(1, 100000))
+    _show_settings(mode, s)
     remember(mode, s)
-    _run(lambda: apply(mode, s)[1])
-    _refresh()
+    return _changed(mode)
 
 
-def _from_editor(*_):
-    """A shake of ours newly selected in the Anim Layer Editor is the one the window edits; the same one
-    still selected there does not take the window back from + New."""
+def press_apply(*_):
+    """Apply: a new shake on the selection over the highlighted frames, in the card's mode."""
+    mode = current_mode()
+    return _press(lambda: apply(mode, values(mode))[1])
+
+
+def _editor_memo():
+    return _state().setdefault("editor", {})
+
+
+def from_editor(*_):
+    """A shake of ours newly selected in the Anim Layer Editor is the one this card edits; the same one
+    still selected there does not take the card back from + New shake."""
     layer = editor_pick()
-    if layer == _state().get("editor"):
+    memo = _editor_memo()
+    if memo.get(_card_key()) == layer:
         return
-    _state()["editor"] = layer
+    memo[_card_key()] = layer
     if layer and layer != picked():
         pick(layer)
         _load(layer)
-        _refresh()
+        refresh()
 
 
-def _after_undo(*_):
-    """An undo or a redo can change the picked shake's settings under the window: show them again."""
+def after_undo(*_):
+    """An undo or a redo can change the picked shake's settings under the card: show them again."""
     layer = picked()
     if layer:
         _load(layer)
-    _refresh()
+    refresh()
 
 
-def show():
-    """The Camera Shake window."""
-    if cmds.window(WINDOW, exists=True):
-        cmds.deleteUI(WINDOW)
-    if cmds.windowPref(WINDOW, exists=True):
-        cmds.windowPref(WINDOW, remove=True)
-    mode = _remembered_mode()
-    cmds.window(WINDOW, title="Camera Shake", sizeable=True, widthHeight=(460, 540))
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=5, columnOffset=("both", 8))
-    cmds.text(_ctrl("target"), label="", align="left", wordWrap=True, height=36)
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1)
-    cmds.optionMenu(_ctrl("shake"), label="Shake", changeCommand=_on_shake)
-    cmds.menuItem(label=NEW)
-    cmds.button(label="Delete", width=70, command=_on_delete,
-                annotation="Delete the picked shake's layer (one undo)")
+def _menu_row(menu, label, command, tip, button=None):
+    """A word, a dropdown, and an optional tool button (the Walk Builder's row)."""
+    import maya_hubstyle as hubstyle
+    cmds.rowLayout(numberOfColumns=3 if button else 2, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3)] + ([(3, "left", 3)] if button else []))
+    cmds.text(label=label, width=hubstyle.pick(52, 56), align="left")
+    cmds.optionMenu(menu, changeCommand=command, annotation=tip)
+    if button:
+        name, text, icon, tool_tip, press = button
+        hubstyle.mark(cmds.button(name, label=hubstyle.tool_label(text), width=hubstyle.tool_width(56),
+                                  height=hubstyle.height("field", 24), annotation=tool_tip,
+                                  command=lambda *_: press()), "tool", icon)
     cmds.setParent("..")
-    cmds.radioButtonGrp(_ctrl("mode"), label="Mode", labelArray2=("Handheld", "Impact"),
-                        numberOfRadioButtons=2, select=MODES.index(mode) + 1, columnWidth3=(100, 100, 100),
-                        onCommand=_on_mode)
-    cmds.optionMenu(_ctrl("preset"), label="Preset", changeCommand=_on_preset)
-    cmds.menuItem(label=PRESET_PROMPT)
-    for each in MODES:
-        cmds.columnLayout(_ctrl(each + "_column"), adjustableColumn=True, rowSpacing=2, manage=each == mode)
-        cmds.checkBoxGrp(_ctrl(each + "_axes"), label="Axes", numberOfCheckBoxes=3,
-                         labelArray3=tuple(label for _, label in AXES), value1=True, value2=True, value3=True,
-                         columnWidth4=(100, 70, 70, 70),
-                         annotation="Tilt: up-down, Pan: left-right, Roll: the horizon. Off removes that turn whole",
-                         changeCommand=lambda *_, mode_=each: _changed(mode_))
-        if each == "impact":
-            cmds.optionMenu(_ctrl("direction"), label="Hit from", changeCommand=lambda *_: _changed("impact"))
+
+
+def _sliders(mode, s):
+    import maya_hubstyle as hubstyle
+    for name, label, _, low, high in CONTROLS[mode]:
+        cmds.floatSliderGrp(_slider(mode, name), label=label, field=True, minValue=low, maxValue=high,
+                            fieldMinValue=low, fieldMaxValue=high, step=STEPS.get(name, 0.05), precision=2,
+                            value=s[name], columnWidth3=hubstyle.pick((92, 44, 100), (100, 50, 150)),
+                            adjustableColumn=3, height=hubstyle.height("small", 22), annotation=TIPS[name],
+                            changeCommand=slider_changed(mode))
+
+
+def build_panel():
+    """The card into the current layout: what Apply would take (or the shake edited); the shake list and
+    Delete; Handheld | Impact; the presets; the axes; the mode's controls; the seed; Apply; the status."""
+    import maya_hubstyle as hubstyle
+    shown = _remembered_mode()
+    column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
+                               columnOffset=("both", hubstyle.pick(0, 8)))
+    hubstyle.mark(cmds.text(SUBTITLE, label=NOTHING, align="left"), "subtitle")
+    _menu_row(SHAKE_MENU, "Shake", shake_changed, TIPS["shake"],
+              (DELETE_BTN, "Delete", "trash", TIPS["delete"], press_delete))
+    cmds.menuItem(label=NEW, parent=SHAKE_MENU)
+    segments = cmds.rowLayout(numberOfColumns=len(MODES), columnAttach=[(i + 1, "both", 1)
+                                                                        for i in range(len(MODES))])
+    hubstyle.mark(segments, "segments", layout=True)
+    cmds.iconTextRadioCollection(MODE_TABS)
+    for mode in MODES:
+        hubstyle.mark(cmds.iconTextRadioButton(
+            _mode_tab(mode), style="textOnly", label=mode.capitalize(), height=hubstyle.height("segment", 24),
+            select=mode == shown, collection=MODE_TABS,
+            annotation="Handheld: an operator holding the camera. Impact: a hit that dies by the range's end",
+            onCommand=mode_changed(mode)), "segment")
+    cmds.setParent("..")
+    _menu_row(PRESET_MENU, "Preset", preset_changed, TIPS["preset"])
+    cmds.menuItem(label=PRESET_PROMPT, parent=PRESET_MENU)
+    stored = remembered(shown)
+
+    def chip(key, label):
+        hubstyle.mark(cmds.checkBox(_axis_chip(key), label=label, value=bool(stored[key]),
+                                    annotation=TIPS["axes"], changeCommand=lambda *_: _chip_changed()), "chip")
+    if hubstyle.skinning():
+        hubstyle.mark(cmds.flowLayout(wrap=True, columnSpacing=3), "flow", layout=True)
+    else:
+        cmds.rowLayout(numberOfColumns=len(AXES))
+    for key, label in AXES:
+        chip(key, label)
+    cmds.setParent("..")
+    for mode in MODES:
+        cmds.columnLayout(_mode_column(mode), adjustableColumn=True, rowSpacing=hubstyle.row_spacing(2),
+                          manage=mode == shown)
+        s = remembered(mode)
+        if mode == "impact":
+            _menu_row(DIRECTION_MENU, "Hit from", slider_changed("impact"), TIPS["direction"])
             for direction in DIRECTIONS:
-                cmds.menuItem(label=direction)
-            cmds.optionMenu(_ctrl("decay"), label="Decay", changeCommand=lambda *_: _changed("impact"),
-                            annotation="How the waves die by the end of the range")
+                cmds.menuItem(label=direction, parent=DIRECTION_MENU)
+            _menu_row(DECAY_MENU, "Decay", slider_changed("impact"), TIPS["decay"])
             for decay in DECAYS:
-                cmds.menuItem(label=decay)
-        for name, label, default, low, high in CONTROLS[each]:
-            cmds.floatSliderGrp(_slider(each, name), label=label, field=True, minValue=low, maxValue=high,
-                                fieldMinValue=low, fieldMaxValue=high, value=default, precision=2,
-                                columnWidth3=(100, 60, 240), adjustableColumn=3,
-                                changeCommand=lambda *_, mode_=each: _changed(mode_))
+                cmds.menuItem(label=decay, parent=DECAY_MENU)
+        _sliders(mode, s)
         cmds.setParent("..")
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=3)
-    cmds.text(label="Seed", width=100, align="right")
-    cmds.intField(_ctrl("seed"), value=1, minValue=0, width=70,
-                  changeCommand=lambda *_: _changed(current_mode()))
-    cmds.button(label="New seed", command=_on_new_seed, annotation="Another shake of the same kind")
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=2,
+                   columnAttach=[(1, "left", 0), (2, "both", 3), (3, "left", 3)])
+    cmds.text(label="Seed", width=hubstyle.pick(52, 56), align="left")
+    cmds.intField(SEED_FIELD, value=stored["seed"], minValue=0, height=hubstyle.height("field", 24),
+                  annotation=TIPS["seed"], changeCommand=lambda *_: _chip_changed())
+    hubstyle.mark(cmds.button(SEED_BTN, label=hubstyle.tool_label("New seed"), width=hubstyle.tool_width(70),
+                              height=hubstyle.height("field", 24), annotation=TIPS["seed"],
+                              command=lambda *_: press_new_seed()), "tool", "refresh")
     cmds.setParent("..")
-    cmds.button(_ctrl("apply"), label="Apply", height=34, command=_on_apply,
-                annotation="A new shake on the selected camera over the highlighted frames, on a layer of its own")
-    cmds.text(_ctrl("status"), label="", align="left", wordWrap=True, height=54)
-    cmds.showWindow(WINDOW)
-    for each in MODES:
-        if each != mode:
-            _show_settings(each, remembered(each))
-    _show_mode(mode)
-    _show_settings(mode, remembered(mode))
-    cmds.scriptJob(event=["SelectionChanged", _refresh], parent=WINDOW)
-    for event, work in (("animLayerRefresh", _from_editor), ("Undo", _after_undo), ("Redo", _after_undo)):
+    hubstyle.mark(cmds.rowLayout(numberOfColumns=1, adjustableColumn=1, columnAttach=[(1, "both", 0)]),
+                  "fill", layout=True)
+    hubstyle.mark(cmds.button(APPLY_BTN, label="Apply", height=hubstyle.height("button", 28),
+                              annotation=TIPS["apply"], command=lambda *_: press_apply()), "primary", "video")
+    cmds.setParent("..")
+    hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True, height=54), "status")
+    cmds.setParent("..")
+    _show_mode(shown)
+    _show_settings(shown, stored)
+    start()
+    _editor_memo()[_card_key()] = editor_pick()
+    refresh()
+    return column
+
+
+def _chip_changed():
+    if not _QUIET[0]:
+        _changed(current_mode())
+
+
+def _card_key():
+    import maya_hubcopy as hubcopy
+    scope = hubcopy.current()
+    return "" if scope is None else scope.tag
+
+
+def start():
+    """This card's own jobs: the selection, the Anim Layer Editor, undo and redo (per card: a popup copy's
+    jobs die with the copy and leave the hub's)."""
+    import maya_hubcopy as hubcopy
+    standing = set(scope.tag for scope in hubcopy.live())
+    for key in [k for k in JOB if k and k not in standing]:
+        del JOB[key]
+    for old in JOB.pop(_card_key(), []):
         try:
-            cmds.scriptJob(event=[event, work], parent=WINDOW)
-        except Exception:
+            if cmds.scriptJob(exists=old):
+                cmds.scriptJob(kill=old, force=True)
+        except Exception:                                    # noqa: BLE001
             pass
-    _state()["editor"] = editor_pick()
-    _refresh()
+    jobs = []
+    for event, work in (("SelectionChanged", refresh), ("animLayerRefresh", from_editor),
+                        ("Undo", after_undo), ("Redo", after_undo)):
+        try:
+            jobs.append(cmds.scriptJob(event=[event, work], parent=STATUS))
+        except Exception:                                    # noqa: BLE001 - an event this Maya lacks
+            pass
+    JOB[_card_key()] = jobs
 
 
-def onMayaDroppedPythonFile(*args):
-    """Maya's viewport drop imports this file once and keeps it: reload it, so a changed file runs."""
-    import importlib
-    importlib.reload(sys.modules[__name__]).show()
+def is_open():
+    return bool(cmds.text(STATUS, exists=True))
 
 
-if __name__ == "__main__":
-    show()
+def show_window():
+    """The hub, on the Camera Shake section."""
+    import maya_hub
+    return maya_hub.show(HUB_SECTION)

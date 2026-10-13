@@ -20,7 +20,7 @@ import maya.cmds as cmds  # noqa: E402
 import numpy as np  # noqa: E402
 
 REPO = r"C:\!!!Work\MayaScripts"
-SCRIPT = os.path.join(REPO, "docs", "superpowers", "plans", "camshake", "skeldar_camshake.py")
+SCRIPT = os.path.join(REPO, "SkeldarAnim", "maya_camshake.py")   # in the plugin since 2026-10-13
 PLUGIN = os.path.join(REPO, "SkeldarAnim")
 
 

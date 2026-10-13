@@ -484,7 +484,8 @@ class OurRows(unittest.TestCase):
         #  + tools.aim / overlap (2026-10-13, the aim tab)
         #  + window.walk, walk.apply (2026-10-13, Walk Builder)
         #  + tools.bake_layer (2026-10-13, Bake to a layer)
-        self.assertEqual(len(ours), 60)
+        #  + window.camshake, camshake.apply (2026-10-13, Camera Shake)
+        self.assertEqual(len(ours), 62)
 
     def test_the_tools_rows(self):
         """The Tools card (2026-10-12): every button a row, pressing the card's own press -
@@ -501,6 +502,15 @@ class OurRows(unittest.TestCase):
             self.assertEqual(found[1], "SkeldarAnim.Tools")
             self.assertIs(found[4].func, maya_hotkeys._tools)
         self.assertEqual(maya_hotkeys.row("tools.knot_offset")[4].args, ("knot_offset",))
+
+    def test_the_camera_shake_rows(self):
+        """Camera Shake (2026-10-13): an opener and Apply, which presses the card's own press."""
+        self.assertEqual(maya_hotkeys.row("window.camshake")[4].args, ("maya_camshake", "show_window"))
+        found = maya_hotkeys.row("camshake.apply")
+        self.assertEqual(found[1], "SkeldarAnim.Camera Shake")
+        self.assertIs(found[4].func, maya_hotkeys._camshake)
+        with open(os.path.join(PLUGIN, "maya_camshake.py"), encoding="utf-8") as handle:
+            self.assertIn("def press_apply(", handle.read())
 
     def test_the_pose_library_row(self):
         """The Pose Library's window (2026-10-02): an opener like the hub's sections."""
@@ -525,7 +535,7 @@ class OurRows(unittest.TestCase):
 
     def test_the_six_openers_and_the_toggle(self):
         self.assertEqual(sorted(self._keys("window.")),
-                         ["window.armor", "window.com", "window.connections",
+                         ["window.armor", "window.camshake", "window.com", "window.connections",
                           "window.hotkeys", "window.hub", "window.inventory",
                           "window.overshoot", "window.picker",
                           "window.poses", "window.scenesetup", "window.shared",
@@ -663,7 +673,7 @@ class OurRowsNameRealMethods(unittest.TestCase):
         import importlib.util
         names = [row[4].args[0] for row in maya_hotkeys.COMMANDS
                  if getattr(row[4], "func", None) is maya_hotkeys._show]
-        self.assertEqual(len(names), 17)                 # + maya_walk.panel (2026-10-13)
+        self.assertEqual(len(names), 18)                 # + maya_walk.panel, maya_camshake (2026-10-13)
         self.assertIn("maya_hub", names)
         self.assertIn("maya_tools.panel", names)
         self.assertIn("maya_stash", names)

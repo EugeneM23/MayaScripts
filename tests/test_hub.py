@@ -91,12 +91,14 @@ class TheTable(unittest.TestCase):
         The Pose Library joined Animation on 2026-10-02, after the Center of Mass,
         and Tools (OverRig's knots, native) on 2026-10-12, after the Pose Library;
         Tail Builder (the physical stop) the same day, after Tools; Walk Builder
-        (the parametric walk) on 2026-10-13, after Tail Builder."""
+        (the parametric walk) on 2026-10-13, after Tail Builder; Camera Shake the
+        same day, after Walk Builder."""
         self.assertEqual([s.label for s in hub.SECTIONS],
                          ["Animation Setup", "Inventory", "Connections", "Shared",
                           "Stash", "Retarget", "Graph Overlay",
                           "Center of Mass", "Pose Library", "Tools", "Tail Builder",
-                          "Walk Builder", "Studio", "Colour", "Hotkeys", "Update"])
+                          "Walk Builder", "Camera Shake", "Studio", "Colour", "Hotkeys",
+                          "Update"])
 
     def test_the_pose_library_card(self):
         """2026-10-02: the window is too big for an accordion, so the card is one line and Open
@@ -135,6 +137,7 @@ class TheTable(unittest.TestCase):
             ("graphoverlay", "animation"), ("com", "animation"),
             ("poses", "animation"), ("tools", "animation"),
             ("tailbuilder", "animation"), ("walk", "animation"),
+            ("camshake", "animation"),
             ("studio", "look"),
             ("colour", "look"), ("hotkeys", "settings"),
             ("update", "settings")])
@@ -155,7 +158,8 @@ class TheTable(unittest.TestCase):
         self.assertEqual([s.key for s in hub.card_sections()],
                          ["characters", "weapons", "connections", "shared",
                           "stash", "retarget", "graphoverlay", "com", "poses",
-                          "tools", "tailbuilder", "walk", "studio", "colour", "update"])
+                          "tools", "tailbuilder", "walk", "camshake", "studio", "colour",
+                          "update"])
 
     def test_every_section_names_a_real_module_and_builder(self):
         wanted = {
@@ -171,6 +175,7 @@ class TheTable(unittest.TestCase):
             "tools": ("maya_tools.panel", "build_panel"),
             "tailbuilder": ("maya_tailbuilder", "build_panel"),
             "walk": ("maya_walk.panel", "build_panel"),
+            "camshake": ("maya_camshake", "build_panel"),
             "hotkeys": ("maya_hotkeys", "build_panel"),
             "studio": ("maya_vpstudio", "build_panel"),
             "colour": ("maya_colour", "build_panel"),
@@ -699,7 +704,7 @@ class Skinned(FakeToolsMixin, unittest.TestCase):
             ("card", "connections"), ("card", "shared"), ("card", "stash"),
             ("card", "retarget"), ("card", "graphoverlay"), ("card", "com"),
             ("card", "poses"), ("card", "tools"), ("card", "tailbuilder"),
-            ("card", "walk"), ("card", "studio"),
+            ("card", "walk"), ("card", "camshake"), ("card", "studio"),
             ("card", "colour"), ("card", "update")])
         self.assertEqual(self.fake.frames, {})
         self.assertEqual(hub._SKIN.jumps, [s.key for s in hub.card_sections()])
