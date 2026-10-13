@@ -1,4 +1,4 @@
-"""walktarget.py - a walk (walkmodel's result) carried onto any skeleton.
+"""maya_walk.target - a walk (the model's result) carried onto any skeleton.
 
 Per frame: the Pose Library's transfer (`maya_poselib.posemath.Transfer`: bones paired by name or canonical
 name, rotations carried through the two rests, the target's own lengths, the pelvis and the travel scaled
@@ -10,19 +10,12 @@ the walk. Bones as data (`maya_poselib.scene.skeleton`'s dicts); the target is r
 numpy and maya.api.OpenMaya (through posemath) - no maya.cmds.
 The design: docs/superpowers/specs/2026-10-12-walk-onto-any-skeleton-design.md.
 """
-import importlib.util
-import os
-import sys
-
 import numpy as np
 import maya.api.OpenMaya as om
 
 from maya_poselib import posemath as pm
 
-try:
-    HERE = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    HERE = globals().get("WALK_HERE", os.getcwd())
+from . import model as _walkmodel
 
 SIDES = ("l", "r")
 UP = np.array([0.0, 1.0, 0.0])
@@ -30,14 +23,8 @@ LEG_TWIN = 0.01        # legs within 1 % of the walk's, on a twin: carried at th
 
 
 def _model():
-    """walkmodel, loaded once by path (the window loads it under the same name)."""
-    module = sys.modules.get("skeldar_walkmodel")
-    if module is None:
-        spec = importlib.util.spec_from_file_location("skeldar_walkmodel", os.path.join(HERE, "walkmodel.py"))
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["skeldar_walkmodel"] = module
-        spec.loader.exec_module(module)
-    return module
+    """The walk's model (maya_walk.model)."""
+    return _walkmodel
 
 
 class Refusal(Exception):

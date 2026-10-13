@@ -1,4 +1,4 @@
-"""walkmodel.py - the parametric walk's model: a walk cycle read once, rebuilt from knobs.
+"""maya_walk.model - the parametric walk's model: a walk cycle read once, rebuilt from knobs.
 
 numpy only, no Maya (tests/test_walkmodel.py runs it on a synthetic walker). Maya's row vectors
 throughout: a world matrix is local . parent, a position its row 3, a rotation turns a row vector v as
@@ -599,7 +599,7 @@ class Walk(object):
             np.linalg.norm(flat) / (self.P / self.fps) / 100.0, stance)
         if self.strides > 1:
             text += " | %d steps of each foot a cycle" % self.strides
-        if self.turned:
+        if abs(self.turned) >= 0.05:
             text += " | turned %.1f deg onto its root's facing" % self.turned
         return text
 

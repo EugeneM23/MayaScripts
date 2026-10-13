@@ -149,6 +149,10 @@ SECTIONS = (
     Section("tailbuilder", "Tail Builder", "maya_tailbuilder",
             "build_panel", "skeldarHubFrameTailBuilder",
             "animation", "wave-sine"),
+    #  2026-10-13: the parametric walk, out of its standalone script.
+    Section("walk", "Walk Builder", "maya_walk.panel",
+            "build_panel", "skeldarHubFrameWalk",
+            "animation", "walk"),
     Section("studio", "Studio", "maya_vpstudio",
             "build_panel", "skeldarHubFrameStudio",
             "look", "bulb"),

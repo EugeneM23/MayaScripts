@@ -1,4 +1,4 @@
-"""walkfile.py - a saved walk: the cycle as the model reads it (every joint's world on every frame) and each
+"""maya_walk.files - a saved walk: the cycle as the model reads it (every joint's world on every frame) and each
 bone's parent, canonical name and rest, in one gzip JSON file (format `skeldar.walk` 1). stdlib + numpy.
 
 The design: docs/superpowers/specs/2026-10-12-walk-onto-any-skeleton-design.md.

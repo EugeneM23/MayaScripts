@@ -1,4 +1,4 @@
-"""walkpose.py - a character pose (any skeleton's) carried onto a walk's skeleton and read the way the model
+"""maya_walk.pose - a character pose (any skeleton's) carried onto a walk's skeleton and read the way the model
 takes it: the spine's and neck's local rotations, the head's and the pelvis's world rotations, the pelvis's
 height over its feet (put over the walk's floor, as a height over the walk's travel line), the knees' turn from
 the walk's mean heading.

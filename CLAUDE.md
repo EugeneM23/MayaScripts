@@ -8952,6 +8952,10 @@ pose apart from the motion around it); the result is **a copy beside the source*
 the physical stop it is **outside the plugin** first: `docs/superpowers/plans/walkparam/` -
 `walkmodel.py` (numpy only, a test pins it), `skeldar_walk.py` (Maya + the window; drop it into a
 viewport), `verify_walk.py` (mayapy standalone on a temp copy of the Desktop FBX, never committed).
+**In the plugin since 2026-10-13: the hub card Walk Builder, package `SkeldarAnim/maya_walk/`** (see "…the
+Walk Builder card" at the end of this section). `walkmodel.py` is `maya_walk/model.py` now, `walkfile.py`
+`files.py`, `walktarget.py` `target.py`, `walkpose.py` `pose.py`, `skeldar_walk.py` `scene.py` without its
+window. `verify_walk.py` and the pictures stay in `walkparam/`.
 
 **The clip, measured** (read only over 7001): 93 joints under `|Armature|root`, ntsc, keys on every frame
 0..31, frame 31 = frame 0 moved by the travel (2e-4): a closed loop of two steps; root motion +Z 176.95 cm
@@ -9380,6 +9384,43 @@ asked: a two-handed grip HOLDS and the weapon sways as one, the overlap is PHYSI
       68.2 cm, 0.53-0.80, the crouch);
     - Pelvis height +8 → 92.47, −10 → 75.15.
   - Picture `walkparam/walk_dw.png` (both feet's slide, the pelvis over the floor, side on, before against now).
+
+**…the Walk Builder card** (2026-10-13, «Давай встроим этот скрипт в наш плагин. Интерфейс рисуй
+компактным»). Spec `docs/superpowers/specs/2026-10-13-walk-builder-card-design.md`.
+- **The package** `SkeldarAnim/maya_walk/` (a payload row):
+  - `model`, `files`, `target` and `pose` moved there with `git mv`, importing each other relatively;
+  - `scene` is the old tool without its window;
+  - `panel` is the card;
+  - `__init__` imports none of them (a test pins it).
+- **The walks** live in `<userAppDir>/SkeldarWalks` (`scene.folder()`), outside the plugin folder an install
+  replaces. The optionVar `skeldarWalkFolder` overrides it; `scene.WALKS` (a verify's temp) overrides both.
+  The animator's walks and poses were copied there: asd, dw, Creep_Drunk, goblin, two_handed_sword. They do
+  not ship.
+- **The hub**: section `walk` «Walk Builder», Animation, after Tail Builder, Tabler `walk` (`device-floppy`
+  new too). Hotkey rows `window.walk` and `walk.apply`.
+- **The card, top down**:
+  - the subtitle: the selection, else the target;
+  - Walk and Pose, each a dropdown with a floppy icon (Save, with a name prompt); right click: show the
+    walks folder, read the lists again;
+  - the Pose share;
+  - the parts as chips;
+  - Apply (primary, `walk`) and Reset;
+  - `[Step | Legs | Pelvis | Chest | Arms | Weight]` segments, **one knob group shown at a time**
+    (remembered);
+  - a three-line status.
+- **No Pick button**: selecting a skeleton that carries a walk (`scene.selected_top`, cheap) reads its walk,
+  pose, parts and knobs into the card. It becomes the target, read once: the card is the truth while tuned.
+- A released knob, pose or part re-keys the target. Filling the card from the scene is quiet (`_QUIET`): an
+  optionMenu set by code fires its changeCommand.
+- Everything is remembered (`skeldarWalk_*`), so a hotkey row presses with the card closed.
+- The marker `skeldarWalk` v2 is unchanged: skeletons walked with the window are read by the card.
+- The apply line is shorter for the three lines.
+- **Proof**:
+  - `tests/test_walk_panel.py`, 16 tests on a fake cmds;
+  - the model and target suites import the package;
+  - `verify_walk.py` **73/73 standalone** on the package;
+  - every saved walk through the package: own knobs reproduce its source to 0.0002 cm, both poses on each.
+- **Not seen live**: the card in the animator's Maya, after Check update.
 
 Not built: an in-place clip, a curved walk, a non-UE-named walk SOURCE (targets are any convention), rigs as
 targets, a symmetry knob, the pose's split stance, several clips as a style knob, stance duration, a redo of an

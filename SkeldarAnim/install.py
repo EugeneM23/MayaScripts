@@ -126,6 +126,7 @@ _PAYLOAD = (
     "poses",                    # its shipped library; local cards survive an install
     "maya_tools",               # the Tools card: OverRig's knots, native (2026-10-12)
     "maya_tailbuilder.py",      # the Tail Builder card: a physical stop through three poses (2026-10-12)
+    "maya_walk",                # the Walk Builder card: a walk cycle rebuilt from knobs (2026-10-13)
     "maya_update.py",
     "maya_sharerecords.py",     # Shared (2026-09-30): the record, pure
     "maya_sharenet.py",         # its network: litterbox + ntfy.sh

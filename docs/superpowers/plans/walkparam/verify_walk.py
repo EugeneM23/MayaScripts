@@ -25,9 +25,11 @@ REPO = os.path.normpath(os.path.join(HERE, "..", "..", "..", ".."))
 ASSETS = os.path.join(REPO, "SkeldarAnim", "assets")
 WALK_FBX = os.environ.get("WALK_FBX", "C:/Users/MY PC/Desktop/Walk_01.fbx")
 MIXAMO_FBX = "C:/Users/MY PC/Downloads/Sweep Fall.fbx"
-POSE_FILE = os.path.join(HERE, "walks", "goblin.wpose.gz")   # the animator's poses, saved by Save pose
-SWORD_FILE = os.path.join(HERE, "walks", "two_handed_sword.wpose.gz")
-DW_FILE = os.path.join(HERE, "walks", "dw.walk.gz")       # a walk of two uneven steps of each foot a cycle
+#  The animator's walks and poses, saved by the card's Save (its folder: <userAppDir>/SkeldarWalks)
+MINE = os.environ.get("WALKS_HOME", "C:/Users/MY PC/Documents/maya/SkeldarWalks")
+POSE_FILE = os.path.join(MINE, "goblin.wpose.gz")
+SWORD_FILE = os.path.join(MINE, "two_handed_sword.wpose.gz")
+DW_FILE = os.path.join(MINE, "dw.walk.gz")       # a walk of two uneven steps of each foot a cycle
 
 
 def load(name, path):
@@ -43,8 +45,8 @@ import maya.cmds as cmds
 import maya.mel as mel
 import maya.api.OpenMaya as om
 
-sys.path.insert(0, os.path.join(REPO, "SkeldarAnim"))
-sw = load("skeldar_walk_under_verify", os.path.join(HERE, "skeldar_walk.py"))
+sys.path.insert(0, os.path.join(REPO, "SkeldarAnim"))     # the repository's plugin, never the installed copy
+from maya_walk import scene as sw                        # noqa: E402
 wm, wt = sw.wm, sw.wt
 FAILED = []
 COUNT = [0]

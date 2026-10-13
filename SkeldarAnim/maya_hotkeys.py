@@ -216,6 +216,19 @@ def _tailbuilder(func):
     return message if module.is_open() else _report(message)
 
 
+def _walk_module():
+    from maya_walk import panel
+    return panel
+
+
+def _walk(func):
+    """Press a Walk Builder button (2026-10-13). Its presses read the remembered knobs when the card is
+    closed, and then say their line in the viewport."""
+    module = _walk_module()
+    message = getattr(module, func)()
+    return message if module.is_open() else _report(message)
+
+
 def _retarget_module():
     """Lazy: the Retarget shelf button's module."""
     import maya_rig_retarget
@@ -914,6 +927,12 @@ _OURS = (
     ("tailbuilder.restore", "Tail Builder", "Restore keys",
      "The selected objects back on the three keys their tail was built from",
      partial(_tailbuilder, "press_restore")),
+    ("window.walk", "Windows", "Walk Builder",
+     "Open the Walk Builder section: a walk cycle put on any skeleton and tuned by knobs",
+     partial(_show, "maya_walk.panel", "show_window")),
+    ("walk.apply", "Walk Builder", "Apply walk",
+     "The card's walk, pose and knobs onto the selected skeleton",
+     partial(_walk, "press_apply")),
     ("connections.connect", "Connections", "Connect hands to weapon",
      "The chosen IK hands onto the weapon (OverRig lifts the weapon to "
      "world), the arms in IK",

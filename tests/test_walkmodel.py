@@ -1,6 +1,6 @@
 """The parametric walk's model (walkmodel.py) on a synthetic walker: numpy only, no Maya."""
 
-import importlib.util
+import importlib
 import math
 import os
 import subprocess
@@ -10,14 +10,18 @@ import unittest
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FOLDER = os.path.join(os.path.dirname(HERE), "docs", "superpowers", "plans", "walkparam")
+PLUGIN = os.path.join(os.path.dirname(HERE), "SkeldarAnim")
+FOLDER = os.path.join(os.path.dirname(HERE), "docs", "superpowers", "plans", "walkparam")   # its dev tools
+#  The tool's old module names (2026-10-12) -> the plugin package's (2026-10-13, maya_walk)
+MODULES = {"walkmodel": "model", "walkfile": "files", "walktarget": "target", "walkpose": "pose",
+           "skeldar_walk": "scene", "panel": "panel"}
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location(name + "_under_test", os.path.join(FOLDER, name + ".py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """A module of the plugin's maya_walk package, by the tool's old name."""
+    if PLUGIN not in sys.path:
+        sys.path.insert(0, PLUGIN)
+    return importlib.import_module("maya_walk." + MODULES.get(name, name))
 
 
 wm = load("walkmodel")
@@ -48,7 +52,7 @@ class PurityTests(unittest.TestCase):
         code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('m', %r); "
                 "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); "
                 "print(sorted(k for k in sys.modules if k.startswith('maya')))"
-                % os.path.join(FOLDER, "walkmodel.py"))
+                % os.path.join(PLUGIN, "maya_walk", "model.py"))
         out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
         self.assertEqual(out.stdout.strip(), "[]", out.stderr)
 
@@ -1201,10 +1205,11 @@ class BalanceTests(unittest.TestCase):
         self.assertEqual(r.info["balance"]["carry"], 0.0)
 
     def test_every_knob_sits_in_one_window_group(self):
-        sw = load("skeldar_walk")
-        grouped = [name for _, names in sw.GROUPS for name in names]
+        panel = load("panel")      # the card: Pose under the pose's dropdown, the rest in its groups
+        grouped = ["pose"] + [name for _, _, names in panel.GROUPS for name in names]
         self.assertEqual(sorted(grouped), sorted(wm.DEFAULTS))
-        self.assertIn("balance", sw.LABELS)
+        self.assertEqual(len(grouped), len(set(grouped)))
+        self.assertEqual(sorted(panel.LABELS), sorted(wm.DEFAULTS))
 
     def test_a_long_stride_balances_forward(self):
         w = walk()
@@ -1561,81 +1566,66 @@ class ArmTests(unittest.TestCase):
         self.assertGreater(shaken, 2.0 * calm, (shaken, calm))
 
 
-class WindowTests(unittest.TestCase):
-    """The window's wiring on a recording cmds (the window itself is the animator's to try)."""
+class SceneTests(unittest.TestCase):
+    """The Maya half (maya_walk.scene) on fakes: the session cache, the layers' base input."""
 
     def setUp(self):
-        sys.path.insert(0, HERE)
-        from uifakes import FakeUiCmds
-        self.fake = FakeUiCmds()
         self.sw = load("skeldar_walk")
-        self.sw._cmds = lambda: self.fake
+        self.saved = self.sw._cmds
 
     def tearDown(self):
-        sys.path.remove(HERE)
+        self.sw._cmds = self.saved
 
-    def created(self, command):
-        return [c for c in self.fake.calls if c[0] == command and not (c[2].get("edit") or c[2].get("query"))]
+    def test_a_reloaded_package_forgets_what_its_old_model_read(self):
+        """The session's cache lives on sys (an install purges and reloads the package and the target must
+        survive); the walks in it were analysed by the model loaded then, and an old Walk's evaluate() does
+        not take the new one's arguments (measured: 'evaluate() takes from 1 to 2 positional arguments but 3
+        were given' in the animator's Maya) - a cache filled by another model starts afresh, the target kept."""
+        state = self.sw._state()
+        saved = dict(state)
+        try:
+            state["loaded"]["a walk"] = "read by the old model"
+            state["target"] = "the target's uuid"
+            state["model"] = object()            # another load of the model filled it
+            self.assertNotIn("a walk", self.sw._state()["loaded"])
+            self.assertEqual(self.sw._state()["target"], "the target's uuid")
+            self.sw._state()["loaded"]["b walk"] = "read by this model"
+            self.assertIn("b walk", self.sw._state()["loaded"])
+        finally:
+            state.clear()
+            state.update(saved)
 
-    def test_a_slider_for_every_knob_with_its_range(self):
-        self.sw.show()
-        floats = dict((c[1][0], c[2]) for c in self.created("floatSliderGrp"))
-        ints = dict((c[1][0], c[2]) for c in self.created("intSliderGrp"))
-        for name, default, low, high in wm.KNOBS:
-            control = self.sw._control(name)
-            if name == "tempo":
-                self.assertIn(control, ints)
-                continue
-            self.assertEqual((floats[control]["minValue"], floats[control]["maxValue"], floats[control]["value"]),
-                             (low, high, default))
-            self.assertIs(floats[control]["changeCommand"], self.sw.slider_changed)
-        labels = [c[2].get("label") for c in self.created("button")]
-        for label in ("Save walk...", "Apply to selection", "Pick selection", "Reset"):
-            self.assertIn(label, labels)
+    def test_the_walks_live_outside_the_plugin_folder(self):
+        """An install replaces the plugin folder: the walks go to <userAppDir>/SkeldarWalks, an optionVar
+        overrides it, and the module's WALKS (a verify's temporary folder) overrides both."""
+        class Fake(object):
+            vars = {}
 
-    def test_the_knobs_scroll_between_a_fixed_top_and_bottom(self):
-        """Every knob in a scroll (the window outgrows a screen), each group a collapsible frame remembered;
-        Apply / Pick above it, Reset and the status below it - always in view."""
-        from uifakes import made, inside
-        self.fake.optionvars["skeldarWalk_collapsed_Arms"] = 1
-        self.sw.show()
-        (start, scroll), = made(self.fake, "scrollLayout")
-        within = [c for c in inside(self.fake, start)]
-        sliders = [c[1][0] for c in within if c[0] in ("floatSliderGrp", "intSliderGrp")]
-        self.assertEqual(sorted(sliders), sorted(self.sw._control(k) for k in wm.DEFAULTS))
-        frames = dict((c[1][0], c[2]) for c in within if c[0] == "frameLayout")
-        self.assertEqual(sorted(frames), sorted(self.sw._group_control(h) for h, _ in self.sw.GROUPS))
-        self.assertTrue(all(kw["collapsable"] for kw in frames.values()))
-        self.assertTrue(frames[self.sw._group_control("Arms")]["collapse"])
-        self.assertFalse(frames[self.sw._group_control("Step")]["collapse"])
-        frames[self.sw._group_control("Step")]["collapseCommand"]()
-        self.assertEqual(self.fake.optionvars["skeldarWalk_collapsed_Step"], 1)
-        outside = [c for c in self.fake.calls if c not in within]
-        self.assertTrue(any(c[0] == "text" and c[1] and c[1][0] == self.sw.STATUS for c in outside))
-        self.assertTrue(any(c[0] == "button" and c[2].get("label") == "Reset" for c in outside))
-        self.assertTrue(any(c[0] == "button" and c[2].get("label") == "Apply to selection" for c in outside))
-        edits = [c for c in self.fake.calls if c[0] == "formLayout" and c[2].get("edit")]
-        self.assertTrue(edits and any(a[0] == scroll[1][0] for a in edits[0][2]["attachControl"]))
+            def optionVar(self, exists=None, query=None):
+                return exists in self.vars if exists is not None else self.vars[query]
 
-    def test_the_window_reads_back_every_knob(self):
-        self.sw.show()
-        given = self.sw.given_from_window()
-        self.assertEqual(sorted(given), sorted(wm.DEFAULTS))
-        wm.knobs(**given)
+            def internalVar(self, userAppDir=False):
+                return "C:/Users/someone/Documents/maya/"
+        fake = Fake()
+        self.sw._cmds = lambda: fake
+        saved = self.sw.WALKS
+        try:
+            self.sw.WALKS = None
+            self.assertEqual(os.path.normpath(self.sw.folder()),
+                             os.path.normpath("C:/Users/someone/Documents/maya/SkeldarWalks"))
+            fake.vars[self.sw.FOLDER_OPTIONVAR] = "D:/walks"
+            self.assertEqual(self.sw.folder(), "D:/walks")
+            self.sw.WALKS = "T:/tmp"
+            self.assertEqual(self.sw.folder(), "T:/tmp")
+        finally:
+            self.sw.WALKS = saved
+        self.assertFalse(self.sw.folder.__module__.startswith("docs"))
+        self.assertTrue(os.path.exists(self.sw.TEMPLATE), self.sw.TEMPLATE)
 
-    def test_a_reloaded_tool_forgets_what_its_old_model_read(self):
-        """The session's cache lives on sys (a reload must find the target); the walks in it were analysed by
-        the model the tool loaded then. A dropped-again tool loads a new model, and an old Walk's evaluate()
-        does not take the new one's arguments (measured: 'evaluate() takes from 1 to 2 positional arguments
-        but 3 were given' in the animator's Maya) - the reloaded tool starts the cache afresh, keeps the target."""
-        first = self.sw
-        first._state()["loaded"]["a walk"] = "read by the old model"
-        first._state()["target"] = "the target's uuid"
-        second = load("skeldar_walk")
-        self.assertNotIn("a walk", second._state()["loaded"])
-        self.assertEqual(second._state()["target"], "the target's uuid")
-        second._state()["loaded"]["b walk"] = "read by the new model"
-        self.assertIn("b walk", second._state()["loaded"])
+    def test_the_standalone_tool_is_gone(self):
+        # the plugin is its home now: one copy of the model
+        for name in ("skeldar_walk.py", "walkmodel.py", "walkfile.py", "walkpose.py", "walktarget.py"):
+            self.assertFalse(os.path.exists(os.path.join(FOLDER, name)), name)
 
     def test_the_walk_rekeys_the_base_layer_under_animation_layers(self):
         """A channel under animation layers (an animator's correction keyed on a layer) is re-keyed at the bottom
@@ -1663,13 +1653,6 @@ class WindowTests(unittest.TestCase):
         with self.assertRaises(self.sw.Refusal) as said:
             self.sw.base_input("j.translateX")
         self.assertIn("parentConstraint", str(said.exception))
-
-    def test_a_slider_with_nothing_analysed_says_so(self):
-        self.sw._state()["source"] = None
-        lines = []
-        self.sw._say = lines.append
-        self.sw.slider_changed()
-        self.assertIn("Apply", lines[-1])
 
 
 if __name__ == "__main__":
