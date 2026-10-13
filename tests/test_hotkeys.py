@@ -483,14 +483,16 @@ class OurRows(unittest.TestCase):
         #  + tools.inside / world / swap / across / attach_0 / attach_1 (2026-10-12)
         #  + tools.aim / overlap (2026-10-13, the aim tab)
         #  + window.walk, walk.apply (2026-10-13, Walk Builder)
-        self.assertEqual(len(ours), 59)
+        #  + tools.bake_layer (2026-10-13, Bake to a layer)
+        self.assertEqual(len(ours), 60)
 
     def test_the_tools_rows(self):
         """The Tools card (2026-10-12): every button a row, pressing the card's own press -
         which runs with the card closed and then reports in the viewport."""
         self.assertEqual(sorted(self._keys("tools.")),
                          ["tools.across", "tools.aim", "tools.attach_0", "tools.attach_1",
-                          "tools.bake", "tools.double_local", "tools.double_world",
+                          "tools.bake", "tools.bake_layer", "tools.double_local",
+                          "tools.double_world",
                           "tools.inside", "tools.knot", "tools.knot_offset",
                           "tools.knot_orient", "tools.overlap", "tools.remove", "tools.swap",
                           "tools.world"])

@@ -152,16 +152,27 @@ class _Overlapper(object):
         return self.stub._say("overlap", settings)
 
 
+class _LayerBake(object):
+
+    def __init__(self, knots_stub):
+        self.stub = knots_stub
+
+    def bake(self):
+        return self.stub._say("bake_layer")
+
+
 class _Base(unittest.TestCase):
 
     def setUp(self):
         self.fake = _Cmds()
         self.stub = _Knots()
-        self.saved = (panel.cmds, panel.knots, panel.reparent, panel.overlapper)
+        self.saved = (panel.cmds, panel.knots, panel.reparent, panel.overlapper,
+                      panel.layerbake)
         panel.cmds = self.fake
         panel.knots = self.stub
         panel.reparent = _Reparent(self.stub)
         panel.overlapper = _Overlapper(self.stub)
+        panel.layerbake = _LayerBake(self.stub)
         panel.JOB.clear()
         import sys
         self.lists = getattr(sys, "_skeldar_tools_lists", None)
@@ -171,7 +182,8 @@ class _Base(unittest.TestCase):
         hubstyle.take_marks()
 
     def tearDown(self):
-        panel.cmds, panel.knots, panel.reparent, panel.overlapper = self.saved
+        (panel.cmds, panel.knots, panel.reparent, panel.overlapper,
+         panel.layerbake) = self.saved
         panel.JOB.clear()
         import sys
         if self.lists is None:
@@ -198,7 +210,7 @@ class Card(_Base):
             panel.EDGES_CHIP, panel.OVERLAP_BTN,
             panel.GAP, panel.ORDER_LABEL, panel.ORDER_SEG["object"], panel.ORDER_SEG["xyz"],
             panel.ORDER_SEG["xzy"], panel.ATTACH_LABEL, panel.ATTACH0_BTN, panel.ATTACH1_BTN,
-            panel.BAKE_BTN, panel.REMOVE_BTN, panel.STATUS])
+            panel.BAKE_BTN, panel.LAYER_BTN, panel.REMOVE_BTN, panel.STATUS])
 
     def test_two_subsections_their_buttons_stretched(self):
         """2026-10-12, «два под раздела Knots и Double knots ... кнопочки ... растягивать
@@ -229,7 +241,8 @@ class Card(_Base):
             (panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.MULTI_BTN),
             (panel.AIM_BTN,), (panel.HIER_CHIP, panel.CYCLE_CHIP),
             (panel.TOTAL_CHIP, panel.EDGES_CHIP), (panel.OVERLAP_BTN,),
-            (panel.ATTACH0_BTN, panel.ATTACH1_BTN), (panel.BAKE_BTN, panel.REMOVE_BTN))]
+            (panel.ATTACH0_BTN, panel.ATTACH1_BTN),
+            (panel.BAKE_BTN, panel.LAYER_BTN, panel.REMOVE_BTN))]
         ends = rows[1:] + [len(made)]
         for row, end, group in zip(rows, ends, buttons):
             self.assertTrue(all(row < b < end for b in group), "the buttons are in their row")
@@ -247,8 +260,8 @@ class Card(_Base):
         panel.build_panel()
         self.assertEqual([self.fake.labels[n] for n in (
             panel.KNOT_BTN, panel.OFFSET_BTN, panel.ORIENT_BTN, panel.LOCAL_BTN,
-            panel.WORLD_BTN, panel.BAKE_BTN, panel.REMOVE_BTN)],
-            ["Knot", "Offset", "Orient", "Local", "World", "Bake", "Remove"])
+            panel.WORLD_BTN, panel.BAKE_BTN, panel.LAYER_BTN, panel.REMOVE_BTN)],
+            ["Knot", "Offset", "Orient", "Local", "World", "Bake", "Layer", "Remove"])
         self.assertEqual([self.fake.radio[panel.ORDER_SEG[c]]["label"] for c in plan.ORDERS],
                          ["Object", "XYZ", "XZY"])
 
@@ -261,7 +274,7 @@ class Card(_Base):
                    panel.WORLD_BTN, panel.INSIDE_BTN, panel.TOWORLD_BTN, panel.SWAP_BTN,
                    panel.ACROSS_BTN, panel.OBJECTS_BTN, panel.TARGETS_BTN, panel.LISTSWAP_BTN,
                    panel.MULTI_BTN, panel.ATTACH0_BTN, panel.ATTACH1_BTN, panel.BAKE_BTN,
-                   panel.REMOVE_BTN, panel.AIM_BTN, panel.OVERLAP_BTN)
+                   panel.REMOVE_BTN, panel.AIM_BTN, panel.OVERLAP_BTN, panel.LAYER_BTN)
         self.assertEqual(sorted(n for n, r in roles.items() if r == "primary"), sorted(buttons))
         self.assertEqual(sorted(n for n, r in roles.items() if r == "chip"),
                          sorted((panel.ROTATE_CHIP, panel.TRANSLATE_CHIP, panel.HIER_CHIP,
@@ -462,6 +475,19 @@ class AimOverlap(_Base):
         self.assertEqual([self.fake.labels[n] for n in (
             panel.SOFT_LABEL, panel.LAG_LABEL, panel.EASE_LABEL, panel.OVERLAP_BTN)],
             ["Softness", "Lag, fr", "Easing", "Overlap"])
+
+
+class Layer(_Base):
+    """Bake to a layer (2026-10-13): the third button of the bottom row."""
+
+    def test_the_button_presses_layerbake(self):
+        panel.build_panel()
+        self.fake.commands[panel.LAYER_BTN]()
+        self.assertEqual(self.stub.calls[-1], ("bake_layer",))
+        self.assertEqual(self.fake.labels[panel.STATUS], "did bake_layer")
+
+    def test_with_the_card_closed_it_answers_its_line(self):
+        self.assertEqual(panel.bake_layer(), "did bake_layer")
 
 
 class Registration(unittest.TestCase):

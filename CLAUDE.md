@@ -8951,10 +8951,63 @@ following, a knotted member refused, Manny's FKIndexFinger1_R chain (through its
 the game finger 48°. 6145 unit tests (`test_tools_overlapplan.py`: the model, OpenMaya's euler
 convention, the root delayed exactly, cycled, easing). The live card is the animator's to try.
 
+**Layer: what drives an object, baked onto an additive layer** (2026-10-13: «Теперь давай
+реализуем функционал запекания на адитивный слой»; asked: **any object**, whatever drives it, a
+**new layer per press**, a third button **Bake | Layer | Remove**). Spec
+`docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md`. OverRig's `>layer` bakes onto an
+OVERRIDE layer `BakedAnim`; ours keeps the object's own keys in the base and puts only what the
+drivers changed on a new ADDITIVE layer `Baked_<leaf>` (marked `skeldarBakeLayer` = the leaves,
+rotation by component): mute it for the original, weight it to blend, delete it to drop the change.
+`maya_tools/layerbake.py` (`bake(selection, highlight)`; the pure half in `knotplan`:
+`driver_kind`, `driver_refusal`, `undriven_refusal`, `layer_deltas`, `layer_message`); hotkey row
+`tools.bake_layer`.
+- **What the selection names**: an object, a knot (climbing a knot on a knot to the object), or a
+  constraint (its object); a waiting pivot is skipped and said.
+- **Its drivers, classified before anything changes** - the constraints feeding its t/r directly
+  or through Maya's pairBlend (input 2):
+  - our knot (`skeldarKnotOf`): off as Remove takes it, riders first;
+  - the Retarget's (its `nodeState` on a `disableConstraints`): refused;
+  - another card's: the constraint marked with our prefixes (Connections' link, the stretch
+    follow), the object a weapon / armor space, or a JOINT following a `mayaWeapon` /
+    `mayaSceneSetupCamera` target - refused («undo it in its own card»). A prop the animator
+    constrained to the sword is the animator's;
+  - the rig's own (the constraint in a rig's namespace; a root-namespace rig: the object and every
+    target under its group or skeleton): refused;
+  - anything else: baked and deleted.
+  An object with none is refused by name (or by what does drive it: an expression, a driven key); a
+  refusal of any object refuses the whole press, nothing changed.
+- **The span**: the highlight `[a, b)` as `a..b-1`, the layer zero at `a-1` and `b`; else per object
+  the take with the keys of the object, its parents, its constraints' targets (and theirs) and its
+  knots.
+- **The press**, one undo chunk: a time walk reads every object's t/r values (the current frame
+  too); the drivers come off; an unkeyed channel a constraint drove is set to the pose the walk read
+  at the current frame (trap 238, said on the line); a second walk reads the own values; per frame
+  `shown - own`, the shown rotation first made continuous from the own one and then from the frame
+  before (`knotplan.layer_deltas`: the other euler solution with all three rotates free, whole turns
+  otherwise; two turns of a spin keyed 18° a frame, no jump); a channel under 1e-4 on every frame is
+  left off; keyed on every frame by `layerbake.write_deltas` - the writer the Overlap uses now too.
+Proof: `docs/superpowers/plans/verify_bake_layer.py` **48/48 mayapy standalone** - a knot edited and
+baked (the prop exactly as the knot showed it, 0.000000 cm / 0.000002°; its own curves and values the
+base again; the knot and the pairBlend gone; muted the original; weight 0.5 half way); a ranged knot
+over the take and a whole-take knot under a highlight (only inside, zero at 9 and 21); the animator's
+parentConstraint to a moving locator; an unkeyed object held at frame 12; two turns of an
+orientConstraint; a double knot on a knot; refusals changing nothing (nothing selected, nothing
+driving, an expression, a weapon link, a Connections link, a weapon space, the Retarget's holder, a
+refused object beside a good one; a cup on the sword baked); one undo; a Manny game bone refused, a
+knot on FKHead_M and an orientConstraint on FKShoulder_R baked with the game bones exact; the Overlap
+through the moved writer. `verify_aim_overlap.py` 57/57 again; 6243 unit tests. The live card is the
+animator's to try.
+
 235. **A channel on an animation layer is fed by the layer's `animBlendNode*`, not by its curve.**
      The base curve hangs on the blend's input A, untouched; a gate reading "the curve connected to
      the plug" after an Overlap read the blend node and called the base changed (verify gate 33's
      first run). Read the base curve by name, or through the blend's inputs.
+238. **A constraint over an unkeyed channel keeps nothing of its old value.** Maya routes every t/r
+     channel through the constraint's pairBlend, but an unkeyed one's input 1 reads 0, not the value
+     it had (measured: ty 1.0, rz 5.0 before a parentConstraint, inTranslateY1 / inRotateZ1 0.0); a
+     channel driven directly keeps nothing either. Deleting the constraint leaves whatever the DG last
+     evaluated (trap 58's family). A tool that takes a constraint off sets those channels itself to a
+     pose it read, and says which.
 
 ## Parametric walk: a walk cycle read once, rebuilt from knobs (2026-10-12)
 

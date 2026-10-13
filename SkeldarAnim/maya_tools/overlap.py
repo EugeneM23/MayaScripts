@@ -19,12 +19,12 @@ import numpy as np
 
 from maya_tools import knotplan as kplan
 from maya_tools import knots
+from maya_tools import layerbake
 from maya_tools import overlapplan as plan
 
 SLIDER = knots.SLIDER
 LAYER_NAME = "Overlap"
 LAYER_MARKER = "skeldarOverlap"
-_CYCLE = 3                     # an animCurve's pre / post infinity: cycle
 
 
 # ------------------------------------------------------------------- chains
@@ -151,28 +151,13 @@ def _take_off(members):
 
 
 def _write(deltas, times, ranged, cycled, roots):
-    """The deltas {(node, channel): values over `times`} keyed on a new additive layer; zero one
-    frame outside a highlight; cycled curves cycle. The layer's name."""
-    layer = cmds.animLayer(LAYER_NAME)
-    knots._set_string(layer, LAYER_MARKER, " ".join(kplan.leaf(root) for root in roots))
-    cmds.setAttr(layer + ".rotationAccumulationMode", 0)          # by component
-    plugs = ["%s.%s" % (node, kplan.LONG[ch]) for node, ch in deltas]
-    cmds.animLayer(layer, edit=True, attribute=plugs)
-    for (node, ch), values in deltas.items():
-        plug = "%s.%s" % (node, kplan.LONG[ch])
-        cmds.setKeyframe(node, attribute=kplan.LONG[ch], animLayer=layer, time=times[0],
-                         identity=True)
-        curve = (cmds.animLayer(layer, query=True, findCurveForPlug=plug) or [None])[0]
-        for time, value in zip(times, values):
-            cmds.setKeyframe(curve, time=time, value=float(value))
-        if ranged:
-            for edge in (times[0] - 1, times[-1] + 1):
-                cmds.setKeyframe(curve, time=edge, value=0.0, inTangentType="flat",
-                                 outTangentType="flat")
-        if cycled:
-            cmds.setAttr(curve + ".preInfinity", _CYCLE)
-            cmds.setAttr(curve + ".postInfinity", _CYCLE)
-    return layer
+    """The deltas {(node, channel): values over `times`} keyed on a new additive layer
+    `Overlap` (`layerbake.write_deltas`); zero one frame outside a highlight; cycled curves
+    cycle. The layer's name."""
+    tracks = dict((key, (times, values)) for key, values in deltas.items())
+    return layerbake.write_deltas(LAYER_NAME, LAYER_MARKER,
+                                  " ".join(kplan.leaf(root) for root in roots), tracks,
+                                  ranged=ranged, cycled=cycled)
 
 
 # ------------------------------------------------------------------ reading

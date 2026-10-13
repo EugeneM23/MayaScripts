@@ -588,3 +588,105 @@ def attach_message(value, count, times):
     when = ("at %s" % _num(times[0]) if len(times) == 1
             else "over %s-%s" % (_num(times[0]), _num(times[-1])))
     return "attach %s keyed on %s %s" % (_num(value), _plural(count, "knot"), when)
+
+
+# ------------------------------------------------- Bake to a layer (2026-10-13)
+
+LAYER_PREFIX = "Baked_"
+LAYER_MARKER = "skeldarBakeLayer"           # our layers: the baked objects' leaves
+LAYER_MIN = 1e-4                           # a difference under this on every frame: not written
+LAYER_NOTHING = ("select an object a knot or a constraint drives (or its knot) to bake it onto "
+                 "a layer")
+
+
+def driver_kind(knot, held, ours, rig_own):
+    """What one constraint on an object is to Layer: "knot" (ours, taken off as Remove does),
+    "retarget" (the Retarget holds it), "ours" (another card's - a weapon link, a hand proxy, the
+    scene camera), "rig" (the rig's own), else "foreign" (baked and deleted). Pure."""
+    if knot:
+        return "knot"
+    if held:
+        return "retarget"
+    if ours:
+        return "ours"
+    if rig_own:
+        return "rig"
+    return "foreign"
+
+
+def driver_refusal(kind, name, constraint):
+    """'' or why a constraint keeps the whole press from running."""
+    if kind == "retarget":
+        return ("%s is held by the Retarget (%s) - press Retarget to finish it first"
+                % (name, constraint))
+    if kind == "ours":
+        return ("%s is driven by the plugin (%s) - undo it in its own card (Weapons, "
+                "Connections, Camera Setup)" % (name, constraint))
+    if kind == "rig":
+        return "%s is driven by its rig (%s) - baking it would break the rig" % (name, constraint)
+    return ""
+
+
+def undriven_refusal(name, words):
+    """Why an object with nothing Layer takes is refused; `words` what else drives its channels."""
+    seen = []
+    for word in words or []:
+        if word not in seen:
+            seen.append(word)
+    if seen:
+        return "%s is driven by %s - Layer bakes knots and constraints" % (name,
+                                                                          " and ".join(seen))
+    return "nothing drives %s - its animation is its own" % name
+
+
+def layer_name(leaves):
+    return LAYER_PREFIX + leaf(leaves[0])
+
+
+def layer_deltas(shown, own, order, free):
+    """{channel: [difference per frame]}: what an additive layer (by component) adds to `own` for
+    the object to show `shown` - rows of (tx, ty, tz, rx, ry, rz) per frame. The shown rotation is
+    made continuous from the own one first and then from the frame before it (all three rotates
+    free: the other euler solution too; else whole turns), so the layer holds the real turn and
+    never a 360 step. Only `free` channels; one whose difference stays under LAYER_MIN is left
+    out. Pure."""
+    out = {}
+    if not shown:
+        return out
+    rows = [list(s) for s in shown]
+    rotates = [ch for ch in ROTATE if ch in free]
+    if rotates == list(ROTATE):
+        previous = tuple(own[0][3:6])
+        for row in rows:
+            row[3:6] = list(closest_euler(previous, row[3:6], order))
+            previous = tuple(row[3:6])
+    else:
+        for ch in rotates:
+            c = 3 + ROTATE.index(ch)
+            previous = own[0][c]
+            for row in rows:
+                row[c] = unwrapped(previous, row[c])
+                previous = row[c]
+    for c, ch in enumerate(CHANNELS):
+        if ch not in free:
+            continue
+        values = [row[c] - o[c] for row, o in zip(rows, own)]
+        if max(abs(v) for v in values) > LAYER_MIN:
+            out[ch] = values
+    return out
+
+
+def layer_message(names, knots_off, constraints_off, first, last, ranged, layer, notes=()):
+    who = names[0] if len(names) == 1 else "%d objects" % len(names)
+    off = [_plural(count, word) for count, word in ((knots_off, "knot"),
+                                                    (constraints_off, "constraint")) if count]
+    taken = " and ".join(off) or "nothing"
+    if layer:
+        line = "Layer: %s baked onto %s over %s-%s" % (who, layer, _num(first), _num(last))
+        if ranged:
+            line += " (the highlight - outside it the object plays its own animation)"
+        line += "; %s taken off" % taken
+    else:
+        line = ("Layer: %s - %s taken off; they changed nothing over %s-%s, so no layer was made"
+                % (who, taken, _num(first), _num(last)))
+    return " | ".join([line] + list(notes))

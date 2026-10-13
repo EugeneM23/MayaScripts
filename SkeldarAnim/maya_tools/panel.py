@@ -12,10 +12,12 @@ card closed. The scene half is `knots`, the pure half `knotplan`.
 The parent tab (2026-10-12) added Parent, Multiple across and Attach; the aim tab (2026-10-13,
 «Теперь давай реализуем функционал AIM») adds Aim (two presses: it reads Finish while an aim
 waits) and Overlap (Softness, Lag, Easing, four chips, the press; the scene half `overlap`, the
-pure half `overlapplan`).
+pure half `overlapplan`). Layer (2026-10-13, «запекания на адитивный слой») stands between Bake and
+Remove: what drives the selected objects baked onto a new additive layer (`layerbake`).
 
 Spec: docs/superpowers/specs/2026-10-12-tools-knots-design.md,
-docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md
+docs/superpowers/specs/2026-10-13-tools-aim-overlap-design.md,
+docs/superpowers/specs/2026-10-13-tools-bake-to-layer-design.md
 """
 
 import sys
@@ -27,6 +29,7 @@ import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_tools import knotplan as plan
 from maya_tools import knots
+from maya_tools import layerbake
 from maya_tools import overlap as overlapper
 from maya_tools import overlapplan
 from maya_tools import reparent
@@ -43,6 +46,7 @@ ORIENT_BTN = "skeldarToolsKnotOrient"
 LOCAL_BTN = "skeldarToolsDoubleLocal"
 WORLD_BTN = "skeldarToolsDoubleWorld"
 BAKE_BTN = "skeldarToolsBake"
+LAYER_BTN = "skeldarToolsBakeLayer"
 REMOVE_BTN = "skeldarToolsRemove"
 ORDER = "skeldarToolsOrder"
 ORDER_SEG = dict((choice, "skeldarToolsOrder_" + choice) for choice in plan.ORDERS)
@@ -113,6 +117,10 @@ TIPS = {
              "world axes about the object's pivot",
     "bake": "Bake: the selected knots' objects (or the selected objects riding knots) take "
             "what the knots give them on every frame; the knots go",
+    "layer": "Layer - select objects (or their knots): what drives them - our knots, your "
+             "constraints - is baked onto a new additive layer; their own keys stay under it "
+             "(mute the layer for the original, weight it to blend). A highlighted range bakes "
+             "only there",
     "remove": "Remove: the selected knots go and their objects play their own animation "
               "again exactly; a waiting pivot is dropped",
     "inside": "Inside - select the objects, then the parent LAST: they move under it in the "
@@ -326,6 +334,10 @@ def bake():
     return _press(knots.bake)
 
 
+def bake_layer():
+    return _press(layerbake.bake)
+
+
 def inside():
     return _press(reparent.inside)
 
@@ -432,7 +444,8 @@ def build_panel():
     """The card into the current layout: the subsections Knots, Double knot, Parent, Multiple
     across, Aim and Overlap, their buttons stretched over the card (2026-10-12, «два под раздела
     ... растягивать вместе с интерфейсом», then «весь функционал из вкладки parent»; 2026-10-13
-    the aim tab); under them the knots' rotate order, Attach 0 / 1, Bake and Remove; the line."""
+    the aim tab); under them the knots' rotate order, Attach 0 / 1, Bake, Layer and Remove; the
+    line."""
     column = cmds.columnLayout(adjustableColumn=True, rowSpacing=hubstyle.row_spacing(6),
                                columnOffset=("both", hubstyle.pick(0, 8)))
     hubstyle.mark(cmds.text(SUBTITLE, label="", align="left"), "subtitle")
@@ -520,8 +533,9 @@ def build_panel():
     cmds.setParent("..")
     cmds.setParent("..")
 
-    _fill_row(2)
+    _fill_row(3)
     _button(BAKE_BTN, "Bake", "check", TIPS["bake"], bake)
+    _button(LAYER_BTN, "Layer", "stack-2", TIPS["layer"], bake_layer)
     _button(REMOVE_BTN, "Remove", "trash", TIPS["remove"], remove)
     cmds.setParent("..")
 

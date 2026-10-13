@@ -499,6 +499,90 @@ class Aim(unittest.TestCase):
         self.assertEqual(plan.subtitle(0, 0), "no knots in the scene")
 
 
+class Layer(unittest.TestCase):
+    """Bake to an additive layer (2026-10-13): what each constraint is, and the differences."""
+
+    def test_what_a_constraint_is(self):
+        self.assertEqual(plan.driver_kind(True, False, False, False), "knot")
+        self.assertEqual(plan.driver_kind(False, True, True, True), "retarget")
+        self.assertEqual(plan.driver_kind(False, False, True, True), "ours")
+        self.assertEqual(plan.driver_kind(False, False, False, True), "rig")
+        self.assertEqual(plan.driver_kind(False, False, False, False), "foreign")
+
+    def test_the_refusals_name_the_object_and_the_constraint(self):
+        self.assertEqual(plan.driver_refusal("knot", "prop", "c"), "")
+        self.assertEqual(plan.driver_refusal("foreign", "prop", "c"), "")
+        for kind, word in (("retarget", "Retarget"), ("ours", "its own card"),
+                           ("rig", "break the rig")):
+            line = plan.driver_refusal(kind, "FKWrist_R", "FKWrist_R_parentConstraint1")
+            self.assertIn("FKWrist_R", line)
+            self.assertIn("FKWrist_R_parentConstraint1", line)
+            self.assertIn(word, line)
+
+    def test_an_undriven_object(self):
+        self.assertIn("nothing drives prop", plan.undriven_refusal("prop", []))
+        line = plan.undriven_refusal("prop", ["an expression", "a driven key", "an expression"])
+        self.assertIn("an expression and a driven key", line)
+
+    def test_the_layer_name(self):
+        self.assertEqual(plan.layer_name(["prop"]), "Baked_prop")
+        self.assertEqual(plan.layer_name(["Manny_Rig:FKWrist_R", "b"]), "Baked_FKWrist_R")
+
+    def test_translate_differences(self):
+        own = [(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0, 0.0, 0.0)]
+        shown = [(0.0, 2.0, 0.0, 0.0, 0.0, 0.0), (1.5, 2.0, 0.0, 0.0, 0.0, 0.0)]
+        out = plan.layer_deltas(shown, own, 0, plan.CHANNELS)
+        self.assertEqual(sorted(out), ["tx", "ty"])
+        self.assertEqual(out["tx"], [0.0, 0.5])
+        self.assertEqual(out["ty"], [2.0, 2.0])
+
+    def test_a_difference_under_the_minimum_is_left_out(self):
+        own = [(0.0,) * 6] * 3
+        shown = [(0.00005, 0.0, 0.0, 0.0, 0.0, 0.00009)] * 3
+        self.assertEqual(plan.layer_deltas(shown, own, 0, plan.CHANNELS), {})
+
+    def test_only_free_channels(self):
+        own = [(0.0,) * 6]
+        shown = [(1.0, 1.0, 1.0, 0.0, 0.0, 0.0)]
+        self.assertEqual(sorted(plan.layer_deltas(shown, own, 0, ("tx", "tz"))), ["tx", "tz"])
+
+    def test_a_turn_through_180_stays_continuous(self):
+        """The shown euler follows the frame before it, never the own one alone: a constraint
+        spinning the object 0 -> 360 about Y reads as one turn on the layer, not a jump at 180."""
+        own = [(0.0,) * 6] * 5
+        shown = [(0.0, 0.0, 0.0, 0.0, y, 0.0) for y in (0.0, 90.0, 179.0, -91.0, -1.0)]
+        out = plan.layer_deltas(shown, own, 0, plan.CHANNELS)
+        self.assertEqual(sorted(out), ["ry"])
+        self.assertEqual([round(v, 6) for v in out["ry"]], [0.0, 90.0, 179.0, 269.0, 359.0])
+
+    def test_the_layer_lands_the_shown_rotation(self):
+        """own + difference = the shown rotation, whichever euler the walk read it as."""
+        own = [(0.0, 0.0, 0.0, 10.0, 20.0, 30.0)]
+        shown = [(0.0, 0.0, 0.0, 10.0 + 180.0, 180.0 - 25.0, 30.0 + 180.0)]
+        out = plan.layer_deltas(shown, own, 0, plan.CHANNELS)
+        self.assertEqual(round(out["ry"][0], 6), 5.0)
+        self.assertNotIn("rx", out)
+        self.assertNotIn("rz", out)
+
+    def test_with_a_locked_rotate_whole_turns_only(self):
+        own = [(0.0,) * 6] * 2
+        shown = [(0.0, 0.0, 0.0, 0.0, 350.0, 0.0), (0.0, 0.0, 0.0, 0.0, -5.0, 0.0)]
+        out = plan.layer_deltas(shown, own, 0, ("ry", "rz"))
+        self.assertEqual([round(v, 6) for v in out["ry"]], [-10.0, -5.0])
+
+    def test_the_line(self):
+        line = plan.layer_message(["prop"], 1, 1, 0.0, 48.0, False, "Baked_prop")
+        self.assertIn("prop baked onto Baked_prop over 0-48", line)
+        self.assertIn("1 knot and 1 constraint taken off", line)
+        line = plan.layer_message(["a", "b"], 0, 2, 10.0, 20.0, True, "Baked_a", ["note"])
+        self.assertIn("2 objects", line)
+        self.assertIn("highlight", line)
+        self.assertTrue(line.endswith("note"))
+        line = plan.layer_message(["prop"], 1, 0, 0.0, 48.0, False, "")
+        self.assertIn("changed nothing", line)
+        self.assertIn("no layer", line)
+
+
 class Purity(unittest.TestCase):
 
     def test_stdlib_only(self):

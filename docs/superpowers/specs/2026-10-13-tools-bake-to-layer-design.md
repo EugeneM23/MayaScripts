@@ -63,3 +63,18 @@ layer - the object shows exactly what the knot showed, its own curves untouched,
 gives the original; a ranged knot - only inside; an animator's parentConstraint to a moving target
 - baked and deleted; a double knot riding a knot; refusals (nothing selected, nothing driving, a
 weapon link, a rig's own bone, the Retarget holder) changing nothing; one undo.
+
+## Addendum (the build)
+
+- **"Another card's" is narrower than "a target carries our prefix"**: a cup the animator
+  constrained to the sword would have been refused. The rule built: the constraint itself carries
+  one of our prefixes (Connections' link, the Retarget's stretch follow - its `<target>W0` weight
+  attributes aside), the object is a weapon or armor space, or the object is a JOINT following a
+  `mayaWeapon` / `mayaSceneSetupCamera` target (a bone driven by a weapon or the scene camera).
+- **An unkeyed channel a constraint drove has no own value left**: Maya routes it through the
+  pairBlend with input 1 reading 0 (measured), or drives it directly. After the drivers come off it
+  is set to the pose the first walk read at the current frame, and the line names it («prop.ty ...
+  had no keys of their own - held at frame 12 under the layer»). Our knots key every free channel at
+  creation and give the value back on Remove, so a knot's object never meets this.
+- Proof: `verify_bake_layer.py` 48/48 standalone; `verify_aim_overlap.py` 57/57 through the moved
+  writer; 6243 unit tests.
