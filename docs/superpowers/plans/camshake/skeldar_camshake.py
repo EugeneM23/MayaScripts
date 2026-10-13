@@ -473,9 +473,11 @@ def leaf(path):
 
 def highlight():
     """The time slider's highlighted frames (first, last), or None."""
+    if cmds.about(batch=True):
+        return None
     try:
         import maya.mel as mel
-        slider = mel.eval("$skeldarCamShakeSlider = $gPlayBackSlider")
+        slider = mel.eval("$gPlayBackSlider=$gPlayBackSlider")    # the plugin's own way (overrig.py)
         if not cmds.timeControl(slider, query=True, rangeVisible=True):
             return None
         start, end = cmds.timeControl(slider, query=True, rangeArray=True)
@@ -882,3 +884,311 @@ def editor_pick():
     """The shake of ours selected in the Anim Layer Editor, when exactly one is."""
     chosen = [layer for layer in shakes() if cmds.animLayer(layer, query=True, selected=True)]
     return chosen[0] if len(chosen) == 1 else None
+
+
+# ---------------------------------------------------------------------------------------------------------
+# 4. The window (cmds)
+# ---------------------------------------------------------------------------------------------------------
+
+WINDOW = "skeldarCamShakeWindow"
+NEW = "+ New shake"
+PRESET_PROMPT = "Presets..."
+OPTION = "skeldarCamShake_"          # + mode: that mode's settings (JSON); + "mode": the last mode
+_QUIET = [False]                     # filling controls from code must not run their commands
+
+
+def _ctrl(name):
+    return "skeldarCamShake_" + name
+
+
+def _slider(mode, name):
+    return _ctrl("%s_%s" % (mode, name))
+
+
+def remembered(mode):
+    key = OPTION + mode
+    try:
+        return settings(mode, json.loads(cmds.optionVar(query=key)) if cmds.optionVar(exists=key) else None)
+    except (TypeError, ValueError):
+        return settings(mode)
+
+
+def remember(mode, s):
+    cmds.optionVar(stringValue=(OPTION + mode, json.dumps(s, sort_keys=True)))
+
+
+def _remembered_mode():
+    key = OPTION + "mode"
+    mode = cmds.optionVar(query=key) if cmds.optionVar(exists=key) else None
+    return mode if mode in MODES else MODES[0]
+
+
+def current_mode():
+    chosen = cmds.radioButtonGrp(_ctrl("mode"), query=True, select=True) or 1
+    return MODES[int(chosen) - 1]
+
+
+def _read(mode):
+    """The mode's settings as the window shows them."""
+    given = {name: cmds.floatSliderGrp(_slider(mode, name), query=True, value=True)
+             for name, _, _, _, _ in CONTROLS[mode]}
+    given["seed"] = cmds.intField(_ctrl("seed"), query=True, value=True)
+    if mode == "impact":
+        given["direction"] = cmds.optionMenu(_ctrl("direction"), query=True, value=True)
+    return settings(mode, given)
+
+
+def _quietly(work):
+    _QUIET[0] = True
+    try:
+        work()
+    finally:
+        _QUIET[0] = False
+
+
+def _show_settings(mode, s):
+    def work():
+        for name, _, _, _, _ in CONTROLS[mode]:
+            cmds.floatSliderGrp(_slider(mode, name), edit=True, value=s[name])
+        cmds.intField(_ctrl("seed"), edit=True, value=s["seed"])
+        if mode == "impact":
+            cmds.optionMenu(_ctrl("direction"), edit=True, value=s["direction"])
+    _quietly(work)
+
+
+def _fill_menu(menu, labels):
+    for item in cmds.optionMenu(menu, query=True, itemListLong=True) or []:
+        cmds.deleteUI(item, menuItem=True)
+    for label in labels:
+        cmds.menuItem(label=label, parent=menu)
+
+
+def _show_mode(mode):
+    def work():
+        cmds.radioButtonGrp(_ctrl("mode"), edit=True, select=MODES.index(mode) + 1)
+        for each in MODES:
+            cmds.columnLayout(_ctrl(each + "_column"), edit=True, manage=each == mode)
+        _fill_menu(_ctrl("preset"), [PRESET_PROMPT] + [label for label, _ in PRESETS[mode]])
+        cmds.optionMenu(_ctrl("preset"), edit=True, value=PRESET_PROMPT)
+    _quietly(work)
+    cmds.optionVar(stringValue=(OPTION + "mode", mode))
+
+
+def _status(text):
+    if cmds.text(_ctrl("status"), exists=True):
+        cmds.text(_ctrl("status"), edit=True, label=text)
+
+
+def _run(work):
+    try:
+        message = work()
+    except Refused as error:
+        message = str(error)
+    except Exception as error:   # the window stays usable; the Script Editor has the trace
+        import traceback
+        traceback.print_exc()
+        message = "failed: %s" % error
+    _status(message)
+
+
+def _node_names(found):
+    return ", ".join(leaf(_node(uuid) or "?") for uuid in found["targets"])
+
+
+def _label(layer):
+    found = record(layer)
+    return "%s - %s" % (layer, _node_names(found)) if found else layer
+
+
+def _refresh_line():
+    layer = picked()
+    if layer:
+        found = record(layer)
+        text = "Editing %s: %s, frames %d-%d" % (layer, _node_names(found), found["frames"][0],
+                                                 found["frames"][1])
+    else:
+        mode = current_mode()
+        try:
+            nodes = targets()
+            a, b, where = frames_for(mode, _read(mode))
+            text = "New %s shake on %s, frames %d-%d (%s)" % (mode, ", ".join(leaf(n) for n in nodes), a, b,
+                                                              where)
+        except Refused as error:
+            text = "New %s shake: %s" % (mode, error)
+    cmds.text(_ctrl("target"), edit=True, label=text)
+
+
+def _refresh(*_):
+    if not cmds.window(WINDOW, exists=True):
+        return
+    layer = picked()
+
+    def work():
+        _fill_menu(_ctrl("shake"), [NEW] + [_label(each) for each in shakes()])
+        cmds.optionMenu(_ctrl("shake"), edit=True, value=_label(layer) if layer else NEW)
+    _quietly(work)
+    _refresh_line()
+
+
+def _load(layer):
+    """The window shows a shake: its mode and settings."""
+    found = record(layer)
+    if found:
+        _show_mode(found["mode"])
+        _show_settings(found["mode"], found["settings"])
+
+
+def _changed(mode):
+    if _QUIET[0]:
+        return
+    s = _read(mode)
+    remember(mode, s)
+    layer = picked()
+    if layer and record(layer)["mode"] == mode:
+        _run(lambda: retune(layer, s))
+    else:
+        _status("set for the next Apply")
+
+
+def _on_preset(*_):
+    if _QUIET[0]:
+        return
+    name = cmds.optionMenu(_ctrl("preset"), query=True, value=True)
+    if name == PRESET_PROMPT:
+        return
+    mode = current_mode()
+    _show_settings(mode, preset(mode, name, _read(mode)))
+    _quietly(lambda: cmds.optionMenu(_ctrl("preset"), edit=True, value=PRESET_PROMPT))
+    _changed(mode)
+
+
+def _on_mode(*_):
+    if _QUIET[0]:
+        return
+    mode = current_mode()
+    pick(None)
+    _show_mode(mode)
+    _show_settings(mode, remembered(mode))
+    _refresh()
+
+
+def _on_shake(*_):
+    if _QUIET[0]:
+        return
+    label = cmds.optionMenu(_ctrl("shake"), query=True, value=True)
+    layer = next((each for each in shakes() if _label(each) == label), None)
+    pick(layer)
+    if layer:
+        _load(layer)
+    _refresh()
+
+
+def _on_delete(*_):
+    layer = picked()
+    if not layer:
+        _status("pick a shake to delete")
+        return
+    _run(lambda: delete(layer))
+    _refresh()
+
+
+def _on_new_seed(*_):
+    cmds.intField(_ctrl("seed"), edit=True, value=int(np.random.default_rng().integers(1, 100000)))
+    _changed(current_mode())
+
+
+def _on_apply(*_):
+    mode = current_mode()
+    s = _read(mode)
+    remember(mode, s)
+    _run(lambda: apply(mode, s)[1])
+    _refresh()
+
+
+def _from_editor(*_):
+    """A shake of ours newly selected in the Anim Layer Editor is the one the window edits; the same one
+    still selected there does not take the window back from + New."""
+    layer = editor_pick()
+    if layer == _state().get("editor"):
+        return
+    _state()["editor"] = layer
+    if layer and layer != picked():
+        pick(layer)
+        _load(layer)
+        _refresh()
+
+
+def _after_undo(*_):
+    """An undo or a redo can change the picked shake's settings under the window: show them again."""
+    layer = picked()
+    if layer:
+        _load(layer)
+    _refresh()
+
+
+def show():
+    """The Camera Shake window."""
+    if cmds.window(WINDOW, exists=True):
+        cmds.deleteUI(WINDOW)
+    if cmds.windowPref(WINDOW, exists=True):
+        cmds.windowPref(WINDOW, remove=True)
+    mode = _remembered_mode()
+    cmds.window(WINDOW, title="Camera Shake", sizeable=True, widthHeight=(460, 540))
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=5, columnOffset=("both", 8))
+    cmds.text(_ctrl("target"), label="", align="left", wordWrap=True, height=36)
+    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1)
+    cmds.optionMenu(_ctrl("shake"), label="Shake", changeCommand=_on_shake)
+    cmds.menuItem(label=NEW)
+    cmds.button(label="Delete", width=70, command=_on_delete,
+                annotation="Delete the picked shake's layer (one undo)")
+    cmds.setParent("..")
+    cmds.radioButtonGrp(_ctrl("mode"), label="Mode", labelArray2=("Handheld", "Impact"),
+                        numberOfRadioButtons=2, select=MODES.index(mode) + 1, columnWidth3=(100, 100, 100),
+                        onCommand=_on_mode)
+    cmds.optionMenu(_ctrl("preset"), label="Preset", changeCommand=_on_preset)
+    cmds.menuItem(label=PRESET_PROMPT)
+    for each in MODES:
+        cmds.columnLayout(_ctrl(each + "_column"), adjustableColumn=True, rowSpacing=2, manage=each == mode)
+        if each == "impact":
+            cmds.optionMenu(_ctrl("direction"), label="Hit from", changeCommand=lambda *_: _changed("impact"))
+            for direction in DIRECTIONS:
+                cmds.menuItem(label=direction)
+        for name, label, default, low, high in CONTROLS[each]:
+            cmds.floatSliderGrp(_slider(each, name), label=label, field=True, minValue=low, maxValue=high,
+                                fieldMinValue=low, fieldMaxValue=high, value=default, precision=2,
+                                columnWidth3=(100, 60, 240), adjustableColumn=3,
+                                changeCommand=lambda *_, mode_=each: _changed(mode_))
+        cmds.setParent("..")
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=3)
+    cmds.text(label="Seed", width=100, align="right")
+    cmds.intField(_ctrl("seed"), value=1, minValue=0, width=70,
+                  changeCommand=lambda *_: _changed(current_mode()))
+    cmds.button(label="New seed", command=_on_new_seed, annotation="Another shake of the same kind")
+    cmds.setParent("..")
+    cmds.button(_ctrl("apply"), label="Apply", height=34, command=_on_apply,
+                annotation="A new shake on the selected camera over the highlighted frames, on a layer of its own")
+    cmds.text(_ctrl("status"), label="", align="left", wordWrap=True, height=54)
+    cmds.showWindow(WINDOW)
+    for each in MODES:
+        if each != mode:
+            _show_settings(each, remembered(each))
+    _show_mode(mode)
+    _show_settings(mode, remembered(mode))
+    cmds.scriptJob(event=["SelectionChanged", _refresh], parent=WINDOW)
+    for event, work in (("animLayerRefresh", _from_editor), ("Undo", _after_undo), ("Redo", _after_undo)):
+        try:
+            cmds.scriptJob(event=[event, work], parent=WINDOW)
+        except Exception:
+            pass
+    _state()["editor"] = editor_pick()
+    _refresh()
+
+
+def onMayaDroppedPythonFile(*args):
+    """Maya's viewport drop imports this file once and keeps it: reload it, so a changed file runs."""
+    import importlib
+    importlib.reload(sys.modules[__name__]).show()
+
+
+if __name__ == "__main__":
+    show()

@@ -281,6 +281,27 @@ def phase_cameras():
         gate("a shake selected in the layer editor is the one picked", False, str(error))
 
 
+def phase_ranges_and_speed():
+    cmds.file(new=True, force=True)
+    cmds.currentUnit(time="ntsc")
+    cmds.playbackOptions(minTime=0, maxTime=300, animationStartTime=0, animationEndTime=300)
+    cmds.currentTime(30)
+    hand = cs.frames_for("handheld", cs.settings("handheld"))
+    hit = cs.frames_for("impact", cs.settings("impact", {"length": 24}))
+    gate("no highlight: handheld takes the playback range, an impact the current frame + Length",
+         hand[:2] == (0, 300) and hit[:2] == (30, 54), "%s / %s" % (hand, hit))
+    camera = keyed_camera("camSpeed")
+    import time
+    start = time.time()
+    layer, _ = cs.apply("handheld", {"drift": 2.0}, selection=[camera], frames=(0, 300))
+    applied = time.time() - start
+    start = time.time()
+    cs.retune(layer, {"sway": 1.5, "drift": 2.0})
+    retuned = time.time() - start
+    gate("a 300-frame shake applies and re-tunes fast enough to follow a slider",
+         applied < 3.0 and retuned < 3.0, "apply %.2f s, re-tune %.2f s (mayapy)" % (applied, retuned))
+
+
 def phase_refusals():
     cmds.file(new=True, force=True)
     plain = cmds.ls(cmds.rename(cmds.camera()[0], "plainCam"), long=True)[0]
@@ -356,6 +377,7 @@ def main():
         impact_layer = phase_impact(camera, base)
         phase_undo_delete(camera, impact_layer)
         phase_cameras()
+        phase_ranges_and_speed()
         phase_refusals()
         phase_manny()
     except Exception:
