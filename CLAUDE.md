@@ -8912,13 +8912,15 @@ button orange, every row `fill`.
   move reads the old curves in the new space) and baked, the locator goes, only the baked rotate
   keys made continuous. Always the whole take (playback ∪ animation range ∪ the keys of the moving
   nodes and of their old and new parents' chains) - OverRig baked only a highlight and left the
-  curves outside it in the old space. Scale is left alone (OverRig cut the scale keys and hid scale
-  and visibility; not copied). Swap is OverRig's rule: all to world, the others under the last
-  selected, the last under the former parent of the one before it (`knotplan.swap_plan`; select the
-  parent first, then its child). Refused before any change: a bone, a control of an AS rig (its
+  curves outside it in the old space. The world scale crosses the move as well (below; OverRig cut
+  the scale keys and hid scale and visibility, not copied). Swap is OverRig's rule: all to world,
+  the others under the last selected, the last under the former parent of the one before it
+  (`knotplan.swap_plan`; select the parent first, then its child). Refused before any change: a
+  bone, a control of an AS rig (its
   namespace, or under its group in the root namespace), the plugin's own nodes (deletion's
   `OUR_ATTR_PREFIXES`, pinned equal), a knot rider, locked or driven translate / rotate, an uneven
-  new parent, keyed scale under a differently scaled new parent, a cycle, already there.
+  new parent, a scale channel locked or driven by anything but a time curve while the parents'
+  scales differ, a cycle, already there.
 - **Across**: a knot kind `across` (`<leaf>_across`, teal) created as a DAG child of the target,
   baked from the object's world track (its keys in the target's space) - the rest is a knot's:
   pairBlend, `attach` and a range, Bake / Remove. It lives outside the Knots groups, so every across
@@ -8940,6 +8942,30 @@ rides only inside; Multiple across with Rotate off keeps the prop's own rotation
 its target's move; Attach at a frame, a highlight, selected keys; a cup riding Manny's FKWrist_R
 goes with Delete character's knot, the cup kept. `verify_knots.py` 90/90 again; 6032 unit tests.
 `verify_tools_card.py` gained an Across press (still not run - the live checks are the animator's).
+
+**…and the scale of a keyed object** (2026-10-13: «В панеле tools во вкладке Parent скрипты не
+работают если на объектах уже есть ключи»). The line read «has scale keys and its new parent is
+scaled differently»: the **S key keys scale too**, so every keyed object under (or out of) a scaled
+parent was refused. Reproduced headless before anything else - plainly keyed objects, stepped and
+weighted keys, the parallel EM all worked; only scale keys plus a scaled parent, and a channel on
+an animation layer, refuse. The fix carries the world scale instead of refusing
+(`reparent._scale_plans` / `_carry_scale`, the pure half `knotplan.scale_plan`, `carried_scale`,
+`scale_refusal`):
+- each node's old parent's world scale over its new parent's (the mean axis length), read BEFORE
+  the move. One value when nothing in the parents' chains animates scale (a constant curve, what S
+  leaves, counts as still), else one per frame of the span (one `timewalk.Walk`, unrecorded);
+- **one factor**: the scale curves `scaleKey`ed by it (they stay keys, exact between frames too); an
+  unkeyed channel is what Maya's `parent` already compensated;
+- **a changing factor** (a parent's scale animated): every frame of the span keyed with the old local
+  value times that frame's factor (a still result a plain value);
+- done right after the DAG move, before the t/r bake: a Swap child's space reads its moved parent's
+  scale;
+- refused, by name: a scale channel locked or driven by anything but a time curve when the factor is
+  not 1.
+Proof: `verify_parent.py` **49/49** - new case S (prop and carrier keyed with S, the carrier at 2):
+Inside keeps the whole world matrix on every frame (7e-15), the prop's three scale keys stay three,
+halved, the scale exact at half frames (4e-16); one undo; World out of it back to 1; a carrier scale
+animated 2 → 3 keyed on every frame, the matrix kept; a locked scaleY refused. 6335 unit tests.
 
 **The aim tab** (2026-10-13: «Теперь давай реализуем функционал AIM»; asked, all the
 recommendation: both tools, Aim in two presses, Overlap on an additive layer). Spec

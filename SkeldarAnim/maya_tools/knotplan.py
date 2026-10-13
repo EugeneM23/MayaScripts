@@ -597,9 +597,50 @@ def locked_line(name):
     return ("%s has locked translate or rotate channels - a re-parent rewrites them all" % name)
 
 
-def scale_line(name):
-    return ("%s has scale keys and its new parent is scaled differently - scale cannot move "
-            "across a re-parent" % name)
+SCALE = ("sx", "sy", "sz")
+SCALE_LONG = {"sx": "scaleX", "sy": "scaleY", "sz": "scaleZ"}
+
+
+def scale_plan(ratios, tolerance=TOLERANCE):
+    """How a re-parent carries an object's world scale (2026-10-13: an object keyed with S was
+    refused under a scaled parent). `ratios` the old parent's world scale over the new one's, per
+    frame of the take - one value when nothing in either chain animates scale.
+
+    ('keep', 1.0): the same scale either side, nothing to do. ('rescale', k): one factor on every
+    frame - the scale keys multiplied by k (they stay keys), an unkeyed channel compensated by
+    Maya's own parent command. ('bake', None): the factor changes over the take - the scale keyed
+    on every frame, as translate and rotate are. Pure."""
+    if not ratios:
+        return ("keep", 1.0)
+    low, high = min(ratios), max(ratios)
+    if high - low > tolerance * max(1.0, abs(high)):
+        return ("bake", None)
+    factor = float(ratios[0])
+    if abs(factor - 1.0) <= tolerance:
+        return ("keep", 1.0)
+    return ("rescale", factor)
+
+
+def carried_scale(values, ratios):
+    """The local scale on each frame after the move: the old local value times that frame's
+    ratio. Pure."""
+    return [float(v) * float(r) for v, r in zip(values, ratios)]
+
+
+def scale_refusal(name, kind, locked, drivers):
+    """'' or why the object's scale cannot follow a move where the parents' scales differ (`kind`
+    not 'keep'): a scale channel locked, or driven by anything but a time curve (`drivers` as
+    `channel_plan` reads them). Pure."""
+    if kind == "keep":
+        return ""
+    for ch in SCALE:
+        if locked.get(ch):
+            return ("%s.%s is locked and its new parent is scaled differently - unlock it, or "
+                    "the object would change size" % (name, SCALE_LONG[ch]))
+        if drivers.get(ch):
+            return ("%s.%s is driven by %s and its new parent is scaled differently - the scale "
+                    "cannot follow the move" % (name, SCALE_LONG[ch], drivers[ch]))
+    return ""
 
 
 def uneven_target(name, target, matrix):

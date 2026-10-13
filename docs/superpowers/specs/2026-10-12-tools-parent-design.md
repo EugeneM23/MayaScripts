@@ -119,3 +119,33 @@ frame. One undo; refused with nothing of ours selected.
   target, a knot edit moves it in the target's space, Bake / Remove, a range; Multiple across with
   Rotate off keeps the object's own rotation; Attach 0 / 1 at a frame, a highlight, selected keys;
   an across knot under a Manny control goes with Delete character.
+
+## Addendum, 2026-10-13: the scale of a keyed object crosses the move
+
+The animator: «В панеле tools во вкладке Parent скрипты не работают если на объектах уже есть
+ключи». The status line read «has scale keys and its new parent is scaled differently» - the rule
+above ("a keyed scale is refused when the parents' scales differ") met the S key, which keys scale
+too, so every keyed object going into, or out of, a scaled parent was refused. Reproduced headless
+first: plainly keyed objects, stepped and weighted keys, keys at fractions and the parallel EM all
+worked; only that rule (and a channel on an animation layer, "driven by an animation layer") refused.
+
+The scale now crosses the move instead of being refused:
+
+1. Before anything changes, per moving node, the ratio r = the old parent's world scale over the
+   new parent's (the mean axis length; world level is 1), read on the current frame when nothing in
+   either parent's chain animates scale (no input, or a time curve holding one value - what S
+   leaves), else on every frame of the span in one unrecorded time walk.
+2. `knotplan.scale_plan(ratios)`: **keep** (r = 1 everywhere: nothing, the old behaviour), **rescale**
+   (one r on every frame: the node's scale curves `scaleKey`ed by r about 0 - the keys stay keys and
+   the scale is exact between frames; an unkeyed channel is what `cmds.parent` compensated), **bake**
+   (r changes: every frame of the span keyed with the old local value times that frame's r, a still
+   result left a plain value).
+3. Refused by name instead (`scale_refusal`): a scale channel locked, or driven by anything but a time
+   curve, while r is not 1.
+4. Applied right after the DAG move and before the translate / rotate bake: under Swap a child's
+   parent may be a moved node, and its space reads that node's scale.
+
+Proof: `verify_parent.py` case S, 49/49 in all - the prop and its carrier keyed with S, the carrier
+at 2: the whole world matrix kept on every frame (7e-15), the three scale keys still three and
+halved, exact at half frames (4e-16); one undo; World back out to scale 1; a carrier scale animated
+2 → 3 keyed on every frame with the matrix kept; a locked scaleY refused.

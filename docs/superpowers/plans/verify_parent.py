@@ -362,8 +362,105 @@ def case_k():
          "Delete character takes the knot, the cup stays: " + line)
 
 
+def matrices(node, frames):
+    out = {}
+    now = cmds.currentTime(query=True)
+    for f in frames:
+        cmds.currentTime(f, update=True)
+        out[f] = cmds.getAttr(node + ".worldMatrix[0]")
+    cmds.currentTime(now, update=True)
+    return out
+
+
+def axis_lengths(m):
+    return [math.sqrt(sum(v * v for v in m[i * 4:i * 4 + 3])) for i in range(3)]
+
+
+def matrix_off(a, b, frames):
+    return max(max(abs(x - y) for x, y in zip(a[f], b[f])) for f in frames)
+
+
+def scale_off(a, b, frames):
+    return max(max(abs(x - y) for x, y in zip(axis_lengths(a[f]), axis_lengths(b[f])))
+               for f in frames)
+
+
+def scaled_scene():
+    """The report (2026-10-13): the prop and carrierB keyed with S - every channel, scale too -
+    carrierB at scale 2; before the fix Inside refused («has scale keys and its new parent is
+    scaled differently»)."""
+    prop, a, b = scene()
+    cmds.parent(prop, world=True)
+    prop = cmds.ls("|prop", long=True)[0]
+    for t in (0, 20, 40):
+        cmds.currentTime(t)
+        for node in (prop, b):
+            cmds.setKeyframe(node)
+    for t in (0, 20, 40):
+        cmds.setKeyframe(b, attribute="scale", time=t, value=2.0)
+    cmds.currentTime(12)
+    return prop, b
+
+
+def case_s():
+    case("S scale keys under a scaled parent")
+    halves = [f * 0.5 for f in range(0, 81)]
+    prop, b = scaled_scene()
+    before = matrices(prop, halves)
+    uuid = cmds.ls(prop, uuid=True)[0]
+    keys_before = cmds.keyframe(prop + ".sx", query=True, timeChange=True)
+    line = reparent.inside([prop, b])
+    prop = by_uuid(uuid)
+    after = matrices(prop, halves)
+    gate("Inside: prop moved under carrierB" in line and parent_of(prop) == b, line)
+    gate(matrix_off(before, after, FRAMES) < 1e-9,
+         "the whole world matrix, scale included, on every frame: %.2e"
+         % matrix_off(before, after, FRAMES))
+    gate(scale_off(before, after, halves) < 1e-9
+         and cmds.keyframe(prop + ".sx", query=True, timeChange=True) == keys_before
+         and abs(cmds.getAttr(prop + ".sx") - 0.5) < 1e-9,
+         "the scale keys stay keys (%s), scaled by 1/2, exact between frames too: %.2e"
+         % (keys_before, scale_off(before, after, halves)))
+
+    prop, b = scaled_scene()
+    uuid = cmds.ls(prop, uuid=True)[0]
+    reparent.inside([prop, b])
+    cmds.undo()                     # straight away: a time walk is an undo step (trap 222)
+    prop = by_uuid(uuid)
+    gate(parent_of(prop) is None
+         and cmds.keyframe(prop + ".sx", query=True, valueChange=True) == [1.0, 1.0, 1.0],
+         "one undo: at world level again, its scale keys 1")
+
+    prop, b = scaled_scene()
+    reparent.inside([prop, b])
+    prop = cmds.ls("|carrierB|prop", long=True)[0]
+    before = matrices(prop, FRAMES)
+    line = reparent.to_world([prop])
+    prop = cmds.ls("|prop", long=True)[0]
+    gate("World" in line and matrix_off(before, matrices(prop, FRAMES), FRAMES) < 1e-9
+         and abs(cmds.getAttr(prop + ".sx") - 1.0) < 1e-9,
+         "World out of the scale-2 parent: the matrix kept, the scale back to 1: %s" % line)
+
+    prop, b = scaled_scene()
+    cmds.setKeyframe(b, attribute="scale", time=40, value=3.0)       # the parent's scale moves
+    before = matrices(prop, FRAMES)
+    line = reparent.inside([prop, b])
+    prop = cmds.ls("|carrierB|prop", long=True)[0]
+    off = matrix_off(before, matrices(prop, FRAMES), FRAMES)
+    gate("Inside" in line and off < 1e-9
+         and cmds.keyframe(prop + ".sx", query=True, keyframeCount=True) == len(FRAMES),
+         "an animated parent scale: the scale keyed on every frame, the matrix kept: %.2e" % off)
+
+    prop, b = scaled_scene()
+    cmds.setAttr(prop + ".sy", lock=True)
+    count = transforms_count()
+    line = reparent.inside([prop, b])
+    gate("scaleY is locked" in line and transforms_count() == count
+         and parent_of(prop) is None, "a locked scale refuses by name: " + line)
+
+
 def main():
-    for run in (case_p, case_r, case_a, case_m, case_t, case_k):
+    for run in (case_p, case_r, case_a, case_m, case_t, case_k, case_s):
         try:
             run()
         except Exception:

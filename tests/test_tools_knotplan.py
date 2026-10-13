@@ -473,6 +473,44 @@ class ParentTab(unittest.TestCase):
         self.assertEqual(plan.list_label("Objects", 3), "Objects 3")
         self.assertEqual(plan.list_label("Targets", 0), "Targets")
 
+    def test_scale_plan_keeps_what_needs_nothing(self):
+        """The same world scale either side: the scale is left alone, keys or not (2026-10-13:
+        an object keyed with S under an unscaled parent)."""
+        self.assertEqual(plan.scale_plan([1.0]), ("keep", 1.0))
+        self.assertEqual(plan.scale_plan([1.0] * 5), ("keep", 1.0))
+        self.assertEqual(plan.scale_plan([]), ("keep", 1.0))
+
+    def test_scale_plan_one_factor_rescales(self):
+        """The animator's report: S keys on the object, its new parent scaled 2 - one factor on
+        every frame, the keys scaled by it (they stay keys)."""
+        self.assertEqual(plan.scale_plan([0.5]), ("rescale", 0.5))
+        kind, factor = plan.scale_plan([2.0, 2.0, 2.0 + 1e-9])
+        self.assertEqual(kind, "rescale")
+        self.assertAlmostEqual(factor, 2.0)
+
+    def test_scale_plan_a_changing_factor_bakes(self):
+        """A parent whose scale is animated: the factor changes over the take."""
+        self.assertEqual(plan.scale_plan([1.0, 1.2, 1.5]), ("bake", None))
+        self.assertEqual(plan.scale_plan([0.5, 0.5, 0.6]), ("bake", None))
+
+    def test_carried_scale(self):
+        self.assertEqual(plan.carried_scale([1.0, 2.0, 3.0], [0.5, 0.25, 2.0]),
+                         [0.5, 0.5, 6.0])
+
+    def test_scale_refusals(self):
+        free = {"sx": False, "sy": False, "sz": False}
+        keyed = {"sx": "", "sy": "", "sz": None}
+        self.assertEqual(plan.scale_refusal("prop", "rescale", free, keyed), "")
+        self.assertEqual(plan.scale_refusal("prop", "bake", free, keyed), "")
+        locked = dict(free, sy=True)
+        self.assertEqual(plan.scale_refusal("prop", "keep", locked, {"sx": "an expression"}), "")
+        line = plan.scale_refusal("prop", "rescale", locked, keyed)
+        self.assertIn("prop.scaleY", line)
+        self.assertIn("locked", line)
+        line = plan.scale_refusal("prop", "bake", free, dict(keyed, sz="an expression"))
+        self.assertIn("prop.scaleZ", line)
+        self.assertIn("an expression", line)
+
     def test_multiple_refusals(self):
         self.assertIn("remember", plan.multiple_refusal(0, 2, True, True))
         self.assertIn("must match", plan.multiple_refusal(2, 3, True, True))
@@ -482,7 +520,6 @@ class ParentTab(unittest.TestCase):
     def test_lines_name_the_way_out(self):
         self.assertIn("Across", plan.rig_part_line("FKShoulder_R", "a control of Manny_Rig"))
         self.assertIn("locked", plan.locked_line("prop"))
-        self.assertIn("scale", plan.scale_line("prop"))
         self.assertIn("carrier", plan.uneven_target("prop", "carrier",
                                                     [1.0, 0, 0, 0, 0, 3.0, 0, 0, 0, 0, 1.0, 0,
                                                      0, 0, 0, 1.0]))

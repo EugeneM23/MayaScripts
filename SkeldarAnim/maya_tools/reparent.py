@@ -4,12 +4,19 @@ The animator: «Теперь давай реализуем весь функци
 the DAG keeps its world motion on every frame: a temporary locator takes its world track, the DAG
 moves, the node is constrained to its locator with no offset (an offset captured after the move
 would read the old curves in the new space) and baked, the locator goes. Always the whole take,
-never a highlight - a re-parent changes the node's space on every frame. Scale is left alone
-(OverRig cut the scale keys and hid scale and visibility; not copied).
+never a highlight - a re-parent changes the node's space on every frame.
+
+The world scale crosses the move too (2026-10-13, the animator: «скрипты не работают если на
+объектах уже есть ключи» - the S key keys scale, and a keyed scale under a differently scaled new
+parent was refused): the old parent's world scale over the new one's, read before the move - one
+factor, and the scale keys are multiplied by it (they stay keys; an unkeyed channel Maya's parent
+command compensates), or a factor changing over the take (a parent's scale animated), and the
+scale is keyed on every frame. OverRig cut the scale keys and hid scale and visibility; not copied.
 
 Refused before anything changes (asked: «Отказывать для них»): a skeleton bone, a control of an
 AdvancedSkeleton rig, the plugin's own nodes, an object riding a knot, locked or driven translate /
-rotate channels, an uneven new parent, keyed scale under a differently scaled new parent.
+rotate channels, an uneven new parent, a scale channel locked or driven by anything but a time
+curve while the parents' scales differ.
 
 Spec: docs/superpowers/specs/2026-10-12-tools-parent-design.md
 """
@@ -22,7 +29,6 @@ from maya_tools import knots
 #  maya_scenesetup.deletion.OUR_ATTR_PREFIXES (a test pins them equal): a node carrying one of
 #  these is the plugin's own - a knot, a pivot, a weapon, armor, a space, a CoM, a label.
 OUR_PREFIXES = ("skeldar", "mayaWeapon", "mayaArmor", "mayaSceneSetup", "rigPicker")
-SCALE = ("sx", "sy", "sz")
 
 
 def _parent_of(path):
@@ -72,11 +78,96 @@ def _refusal(node, new_parent, rigs):
         refusal = plan.uneven_parent(name, cmds.getAttr(new_parent + ".worldMatrix[0]"))
         if refusal:
             return refusal
-    keyed = any(cmds.listConnections(node + "." + ch, source=True, destination=False,
-                                     type="animCurve") for ch in SCALE)
-    if keyed and abs(_world_scale(_parent_of(node)) - _world_scale(new_parent)) > 1e-6:
-        return plan.scale_line(name)
     return ""
+
+
+def _animates_scale(node):
+    """True when something may change `node`'s world scale over the take: a scale channel fed by
+    anything but a time curve holding one value, or an offset parent matrix fed at all."""
+    for plug in ("scale",) + plan.SCALE:
+        for source in cmds.listConnections(node + "." + plug, source=True, destination=False,
+                                           skipConversionNodes=True) or []:
+            if cmds.nodeType(source) not in plan.TIME_CURVES:
+                return True
+            if not plan.is_constant(cmds.keyframe(source, query=True, valueChange=True) or []):
+                return True
+    return bool(cmds.listConnections(node + ".offsetParentMatrix", source=True,
+                                     destination=False))
+
+
+def _scale_ratios(moves, span):
+    """{node: [its old parent's world scale over its new parent's]} for `moves` [(node, new
+    parent or None)], read before anything moves: one value when nothing in the parents' chains
+    animates scale (the S key keys scale too - a constant curve), else one per frame of the span,
+    read in one time walk (unrecorded)."""
+    pairs = [(node, _parent_of(node), new) for node, new in moves]
+    parents = []
+    for _node, old, new in pairs:
+        for parent in (old, new):
+            if parent and parent not in parents:
+                parents.append(parent)
+    chain = set(n for parent in parents for n in knots._chain(parent))
+    if not any(_animates_scale(n) for n in chain):
+        readings = dict((parent, [_world_scale(parent)]) for parent in parents)
+        frames = 1
+    else:
+        from maya_poselib import timewalk
+        readings = dict((parent, []) for parent in parents)
+        frames = int(span[1]) - int(span[0]) + 1
+        with timewalk.Walk(fresh=False) as walk:
+            for frame in range(int(span[0]), int(span[1]) + 1):
+                walk.go(frame)
+                for parent in parents:
+                    readings[parent].append(_world_scale(parent))
+    ones = [1.0] * frames
+    return dict((node, [o / n for o, n in zip(readings.get(old, ones), readings.get(new, ones))])
+                for node, old, new in pairs)
+
+
+def _scale_plans(moves, span):
+    """({node UUID: (kind, factor, ratios, the scale values now)}, '') - how each moving node's
+    world scale crosses the move (`knotplan.scale_plan`) - or (None, refusal) before anything
+    changes."""
+    ratios = _scale_ratios(moves, span)
+    plans = {}
+    for node, _new in moves:
+        kind, factor = plan.scale_plan(ratios[node])
+        locked, drivers = knots._channels(node, plan.SCALE)
+        refusal = plan.scale_refusal(plan.leaf(node), kind, locked, drivers)
+        if refusal:
+            return None, refusal
+        values = dict((ch, cmds.getAttr(node + "." + ch)) for ch in plan.SCALE)
+        plans[knots._uuid(node)] = (kind, factor, ratios[node], values)
+    return plans, ""
+
+
+def _carry_scale(node, scale_plan, span):
+    """After the DAG move, `node`'s world scale as it was: keys multiplied by one factor (an
+    unkeyed channel Maya's parent command has compensated already), or every frame of the span
+    keyed when the factor changes."""
+    kind, factor, ratios, values = scale_plan
+    if kind == "keep":
+        return
+    for ch in plan.SCALE:
+        plug = node + "." + ch
+        curve = (cmds.listConnections(plug, source=True, destination=False,
+                                      skipConversionNodes=True) or [None])[0]
+        if kind == "rescale":
+            if curve:
+                cmds.scaleKey(curve, valueScale=factor, valuePivot=0.0)
+            continue
+        frames = range(int(span[0]), int(span[1]) + 1)
+        before = ([cmds.keyframe(curve, query=True, eval=True, time=(f, f))[0] for f in frames]
+                  if curve else [values[ch]] * len(ratios))
+        after = plan.carried_scale(before, ratios)
+        if curve:
+            cmds.cutKey(plug, time=(span[0], span[1]), clear=True)
+        if plan.is_constant(after) and not cmds.listConnections(plug, source=True,
+                                                                destination=False):
+            cmds.setAttr(plug, after[0])
+            continue
+        for frame, value in zip(frames, after):
+            cmds.setKeyframe(node, attribute=ch, time=frame, value=value)
 
 
 def _take(nodes, parents):
@@ -95,8 +186,9 @@ def _take(nodes, parents):
     return plan.span_for(take, keys, None)
 
 
-def _rebake(nodes, span, operate):
-    """Keep `nodes`' world motion across `operate(uuids)` (the DAG move); the nodes after."""
+def _rebake(nodes, span, operate, scales):
+    """Keep `nodes`' world motion across `operate(uuids)` (the DAG move) - their world scale
+    too (`scales`, `_scale_plans`); the nodes after."""
     uuids = [knots._uuid(n) for n in nodes]
     locators, temps = [], []
     for node in nodes:
@@ -110,6 +202,8 @@ def _rebake(nodes, span, operate):
     cmds.delete([t for t in temps if cmds.objExists(t)])
     operate(uuids)
     nodes = [knots._by_uuid(u) for u in uuids]
+    for uuid, node in zip(uuids, nodes):          # before the bake: a child's space reads it
+        _carry_scale(node, scales[uuid], span)
     cons = [knots._constrain(cmds.parentConstraint, loc, node, maintainOffset=False)
             for loc, node in zip(locators, nodes)]
     cmds.bakeResults(nodes, attribute=list(plan.CHANNELS), time=(span[0], span[1]),
@@ -144,6 +238,9 @@ def inside(selection=None):
         if refusal:
             return refusal
     span = _take(children, [parent])
+    scales, refusal = _scale_plans([(child, parent) for child in children], span)
+    if refusal:
+        return refusal
     parent_uuid = knots._uuid(parent)
 
     def operate(uuids):
@@ -151,7 +248,7 @@ def inside(selection=None):
             cmds.parent(knots._by_uuid(uuid), knots._by_uuid(parent_uuid))
 
     with knots._press("skeldarInside"):
-        moved = _rebake(children, span, operate)
+        moved = _rebake(children, span, operate, scales)
         cmds.select(moved, replace=True)
     return plan.reparent_message("Inside", [plan.leaf(c) for c in children], plan.leaf(parent),
                                  span)
@@ -172,13 +269,16 @@ def to_world(selection=None):
         if refusal:
             return refusal
     span = _take(nodes, [])
+    scales, refusal = _scale_plans([(node, None) for node in nodes], span)
+    if refusal:
+        return refusal
 
     def operate(uuids):
         for uuid in uuids:
             _to_world(knots._by_uuid(uuid))
 
     with knots._press("skeldarWorld"):
-        moved = _rebake(nodes, span, operate)
+        moved = _rebake(nodes, span, operate, scales)
         cmds.select(moved, replace=True)
     return plan.reparent_message("World", [plan.leaf(n) for n in nodes], None, span)
 
@@ -197,6 +297,9 @@ def swap(selection=None):
         if refusal:
             return refusal
     span = _take(nodes, [p for _n, p in moves])
+    scales, refusal = _scale_plans(moves, span)
+    if refusal:
+        return refusal
     ids = dict((n, knots._uuid(n)) for n in nodes)
     plan_ids = [(ids[n], knots._uuid(p) if p else None) for n, p in moves]
 
@@ -208,7 +311,7 @@ def swap(selection=None):
                 cmds.parent(knots._by_uuid(node_id), knots._by_uuid(parent_id))
 
     with knots._press("skeldarSwap"):
-        moved = _rebake(nodes, span, operate)
+        moved = _rebake(nodes, span, operate, scales)
         cmds.select(moved, replace=True)
     return plan.reparent_message("Swap", [plan.leaf(n) for n in nodes], plan.leaf(nodes[-1]),
                                  span)
