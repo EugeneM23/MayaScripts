@@ -35,6 +35,7 @@ CONTROLS = {
         ("sway", "Sway, deg", 1.0, 0.0, 6.0),
         ("speed", "Speed", 1.0, 0.25, 4.0),
         ("jitter", "Jitter, deg", 0.12, 0.0, 1.5),
+        ("jitter_hz", "Jitter, Hz", 7.0, 1.0, 15.0),
         ("roll", "Roll", 0.4, 0.0, 1.0),
         ("drift", "Drift, cm", 1.5, 0.0, 15.0),
         ("ease", "Ease, fr", 6.0, 0.0, 60.0),
@@ -44,6 +45,7 @@ CONTROLS = {
         ("push", "Push, cm", 2.0, 0.0, 30.0),
         ("wave", "Wave, fr", 8.0, 2.5, 60.0),
         ("rattle", "Rattle, deg", 1.0, 0.0, 6.0),
+        ("rattle_hz", "Rattle, Hz", 11.0, 2.0, 15.0),
         ("roll", "Roll", 0.4, 0.0, 1.0),
         ("length", "Length, fr", 24.0, 2.0, 240.0),
     ),
@@ -52,20 +54,21 @@ DECAYS = ("Exponential", "Linear", "Smooth", "Sharp")
 AXES = (("tilt_on", "Tilt"), ("pan_on", "Pan"), ("roll_on", "Roll"))   # rotation about X, Y, Z
 PRESETS = {
     "handheld": (
-        ("Calm", {"sway": 0.4, "speed": 0.6, "jitter": 0.05, "roll": 0.3, "drift": 0.6}),
-        ("Handheld", {"sway": 1.0, "speed": 1.0, "jitter": 0.12, "roll": 0.4, "drift": 1.5}),
-        ("Nervous", {"sway": 1.8, "speed": 1.8, "jitter": 0.3, "roll": 0.5, "drift": 3.0}),
+        ("Calm", {"sway": 0.4, "speed": 0.6, "jitter": 0.05, "jitter_hz": 5.5, "roll": 0.3, "drift": 0.6}),
+        ("Handheld", {"sway": 1.0, "speed": 1.0, "jitter": 0.12, "jitter_hz": 7.0, "roll": 0.4, "drift": 1.5}),
+        ("Nervous", {"sway": 1.8, "speed": 1.8, "jitter": 0.3, "jitter_hz": 9.5, "roll": 0.5, "drift": 3.0}),
     ),
     "impact": (
         ("Light", {"strength": 2.0, "push": 1.0, "wave": 6.0, "decay": "Exponential", "rattle": 0.6,
-                   "roll": 0.4}),
+                   "rattle_hz": 12.0, "roll": 0.4}),
         ("Hit", {"strength": 4.0, "push": 2.0, "wave": 8.0, "decay": "Exponential", "rattle": 1.0,
-                 "roll": 0.4}),
-        ("Heavy", {"strength": 6.0, "push": 4.0, "wave": 10.0, "decay": "Linear", "rattle": 1.6, "roll": 0.5}),
+                 "rattle_hz": 11.0, "roll": 0.4}),
+        ("Heavy", {"strength": 6.0, "push": 4.0, "wave": 10.0, "decay": "Linear", "rattle": 1.6,
+                   "rattle_hz": 10.0, "roll": 0.5}),
         ("Explosion", {"strength": 9.0, "push": 8.0, "wave": 12.0, "decay": "Smooth", "rattle": 3.0,
-                       "roll": 0.6, "direction": "Below"}),
+                       "rattle_hz": 8.0, "roll": 0.6, "direction": "Below"}),
         ("Recoil", {"strength": 3.0, "push": 2.0, "wave": 6.0, "decay": "Sharp", "rattle": 0.4,
-                    "roll": 0.2, "direction": "Front"}),
+                    "rattle_hz": 12.0, "roll": 0.2, "direction": "Front"}),
     ),
 }
 DEFAULT_PRESET = {"handheld": "Handheld", "impact": "Hit"}
@@ -175,6 +178,27 @@ def fractal(seconds, seed, stream, hz, octaves, gain=0.5, fps=None):
     return total / math.sqrt(norm) if norm else total
 
 
+TREMOR_SWELL = 0.45      # how far a tremor's amplitude swells and fades about 1 (RMS)
+TREMOR_WANDER = 0.6      # radians its phase wanders (RMS)
+
+
+def tremor(seconds, seed, stream, hz):
+    """A narrow-band shake of unit RMS: a sine at `hz` whose amplitude swells and fades and whose phase
+    wanders, both slowly - a hand's tremor is a rhythm, not a hiss. Measured, a broad-band noise sampled once
+    a frame cannot swing more than a quarter of the frame rate (white noise: 7.5 Hz at 30 fps); a sine shows
+    its own rate up to the frame rate's limit."""
+    s = np.atleast_1d(np.asarray(seconds, float))
+    if hz <= 0.0 or s.size == 0:
+        return np.zeros_like(s)
+    slow = max(hz / 7.0, 0.1)
+    base = 100000 + 4 * int(stream)
+    swell = 1.0 + TREMOR_SWELL * noise(s, seed, base + 1, slow)
+    wander = TREMOR_WANDER * noise(s, seed, base + 2, 0.5 * slow)
+    start = np.random.default_rng([int(seed), base + 3]).uniform(0.0, 2.0 * math.pi)
+    return swell * np.sin(2.0 * math.pi * hz * s + wander + start) / math.sqrt(
+        (1.0 + TREMOR_SWELL ** 2) / 2.0)
+
+
 def smootherstep(x):
     """0 below 0, 1 above 1, C2 between."""
     x = np.clip(np.asarray(x, float), 0.0, 1.0)
@@ -196,7 +220,6 @@ def _streams(index):
 
 
 SWAY_HZ = 0.25           # the body's drift and the hands' corrections, x Speed
-JITTER_HZ = 7.0          # the hands' tremor, x sqrt(Speed)
 DRIFT_HZ = 0.2           # the camera's own travel, x Speed
 SWAY_AXES = (0.75, 1.0, 1.0)     # tilt, pan, roll (roll x Roll): an operator aims better up-down
 DRIFT_AXES = (0.7, 1.0, 0.4)     # side, bob, push
@@ -210,14 +233,14 @@ def handheld(frames, a, b, fps, s, index=0):
     seed, k = s["seed"], _streams(index)
     speed = s["speed"]
     sway_hz = capped(SWAY_HZ * speed, fps)
-    jitter_hz = capped(JITTER_HZ * math.sqrt(speed), fps)
+    jitter_hz = capped(s["jitter_hz"], fps)       # its own rate: Speed is the body's, not the hands'
     drift_hz = capped(DRIFT_HZ * speed, fps)
     roll = (1.0, 1.0, s["roll"])
     rot = np.zeros((len(f), 3))
     off = np.zeros((len(f), 3))
     for axis in range(3):
         sway = SWAY_AXES[axis] * 0.5 * s["sway"] * fractal(sec, seed, k + axis + 1, sway_hz, 3, fps=fps)
-        jitter = 0.5 * s["jitter"] * noise(sec, seed, k + axis + 4, jitter_hz)
+        jitter = 0.5 * s["jitter"] * tremor(sec, seed, k + axis + 4, jitter_hz)
         rot[:, axis] = roll[axis] * (sway + jitter)
         off[:, axis] = DRIFT_AXES[axis] * 0.5 * s["drift"] * fractal(sec, seed, k + axis + 7, drift_hz, 2,
                                                                        fps=fps)
@@ -230,7 +253,6 @@ def axis_mask(s):
     return np.array([1.0 if s.get(key, True) else 0.0 for key, _ in AXES])
 
 
-RATTLE_HZ = 11.0         # the rattle's top octave, below the frame rate's limit
 WOBBLE_RATE = 1.37       # the perpendicular wobble against the kick
 WOBBLE_SHARE = 0.25
 HITS = {"Below": (0.0, 1.0, 0.0), "Above": (0.0, -1.0, 0.0), "Left": (1.0, 0.0, 0.0),
@@ -320,12 +342,11 @@ def impact(frames, a, b, fps, s, index=0):
     rot[:, 2] = strength * s["roll"] * roll_dir * main
     off = (s["push"] * main)[:, None] * h[None, :]
     sec = tau / float(fps)
-    rattle_hz = capped(RATTLE_HZ, fps)
+    rattle_hz = capped(s["rattle_hz"], fps)
     trauma = envelope(u, s["decay"]) ** 2 * np.clip(tau, 0.0, 1.0)
     roll = (1.0, 1.0, s["roll"])
     for axis in range(3):
-        rot[:, axis] += roll[axis] * 0.5 * s["rattle"] * trauma * fractal(
-            sec, seed, k + axis + 11, rattle_hz / 2.0, 2, fps=fps)
+        rot[:, axis] += roll[axis] * 0.5 * s["rattle"] * trauma * tremor(sec, seed, k + axis + 11, rattle_hz)
     still = (tau <= 0.0) | (u >= 1.0)
     rot[still] = 0.0
     off[still] = 0.0
@@ -832,10 +853,12 @@ def _existing(mode, a, b, uuids):
 def describe(mode, s, a, b, nodes, layer, where="", locked=()):
     names = ", ".join(leaf(node) for node in nodes)
     if mode == "handheld":
-        what = "Handheld: sway %.2f deg, jitter %.2f deg, drift %.1f cm" % (s["sway"], s["jitter"], s["drift"])
+        what = "Handheld: sway %.2f deg, jitter %.2f deg at %g Hz, drift %.1f cm" % (
+            s["sway"], s["jitter"], s["jitter_hz"], s["drift"])
     else:
-        what = "Impact from %s: %.1f deg, waves of %g fr, %s decay, push %.1f cm, rattle %.2f deg" % (
-            SIDES[s["direction"]], s["strength"], s["wave"], s["decay"].lower(), s["push"], s["rattle"])
+        what = "Impact from %s: %.1f deg, waves of %g fr, %s decay, push %.1f cm, rattle %.2f deg at %g Hz" % (
+            SIDES[s["direction"]], s["strength"], s["wave"], s["decay"].lower(), s["push"], s["rattle"],
+            s["rattle_hz"])
     off = [label.lower() for key, label in AXES if not s.get(key, True)]
     if off:
         what += " (no %s)" % ", ".join(off)

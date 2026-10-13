@@ -177,3 +177,18 @@ Presets now carry a wave and a decay: Light (6 fr, Exponential), Hit (8, Exponen
 Explosion (12, Smooth), Recoil (6, Sharp). An older layer's record (Swing / Bounce) re-tunes with Wave 8,
 Exponential. Proof: 62 unit tests; `verify_camshake.py` 29/29, gate 15 a hit from the left with Pan and Roll off
 turning the camera about its own X only (2.8e-16 off it).
+
+## Addendum: the jitter's and the rattle's own rate (2026-10-13, later)
+
+The animator: «Есть параметр джиттеринга то есть тряски, а как изменить его частоту?» - it was 7 Hz x
+sqrt(Speed), so only Speed moved it, and Speed moves the sway and the drift too. Now:
+- **Jitter, Hz** (handheld, 1..15, default 7; Calm 5.5, Handheld 7, Nervous 9.5) - Speed no longer touches it;
+- **Rattle, Hz** (impact, 2..15, default 11; Light 12, Hit 11, Heavy 10, Explosion 8, Recoil 12);
+- both capped at 0.42 x fps as every rate.
+
+Measured on the way: the smooth noise sampled at 30 fps cannot swing faster than white noise does, 7.5 a second
+(10 Hz showed 7.15, 7 Hz 6.12), so the slider would have done almost nothing above 5 Hz. The jitter and the rattle
+are now a **tremor** - a sine at the rate whose amplitude swells and fades (`1 + 0.45 noise`) and whose phase
+wanders (`0.6 rad x noise`), both at rate/7, unit RMS - which shows its own rate in frames to 10 % up to 12 Hz at
+30 fps. A hand's tremor is narrow-band anyway. Proof: 68 unit tests (the tremor's rate on 30 fps frames, Speed
+leaving the jitter alone, the cap), `verify_camshake.py` 29/29.

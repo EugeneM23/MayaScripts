@@ -9631,16 +9631,22 @@ reloads itself and opens its window (trap 220); it imports nothing of the plugin
   spline's own mean variance, knots in seeded blocks of 64 so a longer range keeps its start; **5.57 knots a
   cycle** (measured: such a spline crosses zero 0.359 times a knot), so "Hz" means swings a second as a sine's.
   Every frequency below 0.42 x fps; an amplitude is two RMS.
-  - **Handheld**: Sway (a 3-octave fractal from 0.25 Hz x Speed; tilt 0.75, pan 1, roll x Roll), Jitter (7 Hz x
-    sqrt(Speed)), Drift (cm, a 2-octave fractal from 0.2 Hz; side 0.7, bob 1, push 0.4), Ease in and out.
-    Presets Calm / Handheld / Nervous.
+  - **Handheld**: Sway (a 3-octave fractal from 0.25 Hz x Speed; tilt 0.75, pan 1, roll x Roll), Jitter (deg)
+    at **Jitter, Hz** (its own rate since the same evening, «как изменить его частоту?»; Speed is the body's),
+    Drift (cm, a 2-octave fractal from 0.2 Hz; side 0.7, bob 1, push 0.4), Ease in and out. Presets Calm /
+    Handheld / Nervous (5.5 / 7 / 9.5 Hz).
+  - **The jitter and the rattle are a narrow-band `tremor`**: a sine at their Hz whose amplitude swells and
+    fades (0.45 RMS) and whose phase wanders (0.6 rad), both at Hz/7 - a hand's tremor is a rhythm. Trap 238
+    is why it is not the smooth noise: it shows 10 Hz as 10 swings a second at 30 fps (gated to 10 % up to
+    12 Hz) where the noise showed 7.15.
   - **Impact** over `[a, b]` (since the same evening, «нужен параметр который будет отвечать за длину волн и
     тип затухания»): a sine from the hit, **Wave** frames crest to crest (never under 2.38, the alias limit),
     under a **Decay** envelope across the range - Exponential (`e^-4u` brought to 0: a fast fall, a long thin
     tail), Linear, Smooth (`1 - smoothstep`: holds, then fades), Sharp (`(1-u)^6`: gone in the first waves) -
     1 at its first crest (found by a ternary search on the first lobe). It turns the view toward where the hit
     throws it (Below / Above / Left / Right / Front / Random), Push along it, roll for a side hit, a
-    perpendicular wobble at 1.37x the rate, a rattle under the envelope squared; still at `a` (the jolt is
+    perpendicular wobble at 1.37x the rate, a rattle (a tremor at **Rattle, Hz**) under the envelope squared;
+    still at `a` (the jolt is
     `a+1`) and at `b`. Swing and Bounce are gone (an older layer's record re-tunes with Wave 8, Exponential).
     No highlight: the current frame + Length. Presets Light / Hit / Heavy / Explosion / Recoil, each with its
     wave and decay.
@@ -9665,9 +9671,9 @@ reloads itself and opens its window (trap 220); it imports nothing of the plugin
   (`animLayerRefresh`); Undo / Redo show its settings again. Settings remembered per mode
   (`skeldarCamShake_<mode>`, JSON); the picked shake on `sys` (trap 111).
 
-Proof: `tests/test_camshake.py` **62** (the noise, the envelopes, both modes, the waves' period and decay types,
-the axes, the algebra against OpenMaya on every order with rotate axes and joint orients, the window on a fake
-cmds); `verify_camshake.py` **29/29 mayapy standalone** (gate 15: a hit from the left with Pan and Roll off turns
+Proof: `tests/test_camshake.py` **68** (the noise, the tremor's rate in frames, the envelopes, both modes, the
+waves' period and decay types, the axes, the algebra against OpenMaya on every order with rotate axes and joint
+orients, the window on a fake cmds); `verify_camshake.py` **29/29 mayapy standalone** (gate 15: a hit from the left with Pan and Roll off turns
 the camera about its own X only, 2.8e-16 off it): the shake in the camera's own axes on every frame to
 **2.8e-16 deg**, the translation exact, the
 camera's own keys untouched, nothing outside the range at quarter frames, a re-tune keeping the layer, its
@@ -9690,3 +9696,8 @@ range after Apply, the hub card.
 237. **A layer's rotation blend node reads its channel's owner.** `animBlendNodeAdditiveRotation.rotateOrder`
      is connected from the camera's own `rotateOrder`, so a walk upstream of `rotate` meets the camera itself
      and calls it a driver - the first re-tune of every shake was refused. Leave the owner out of the walk.
+238. **A broad-band noise sampled once a frame cannot swing faster than a quarter of the frame rate.** White
+     noise changes sign on half the frames: 7.5 swings a second at 30 fps, 6 at 24. The camera shake's smooth
+     noise asked for 10 Hz showed 7.15, for 7 Hz 6.12 (measured), so a "Jitter, Hz" slider over it did almost
+     nothing above 5. A rhythm (a sine whose amplitude and phase drift slowly) shows its own rate up to the
+     frame rate's limit. Measure a rate on the keyed frames, not on the function.

@@ -121,6 +121,21 @@ class NoiseTests(unittest.TestCase):
         values = cs.fractal(self.seconds(), 2, 1, 0.5, 3, fps=FPS)
         self.assertAlmostEqual(float(np.sqrt(np.mean(values ** 2))), 1.0, delta=0.12)
 
+    def test_tremor_is_unit_rms_and_deterministic(self):
+        values = cs.tremor(self.seconds(), 4, 2, 7.0)
+        self.assertAlmostEqual(float(np.sqrt(np.mean(values ** 2))), 1.0, delta=0.1)
+        self.assertTrue(np.array_equal(values, cs.tremor(self.seconds(), 4, 2, 7.0)))
+        self.assertFalse(np.allclose(values, cs.tremor(self.seconds(), 5, 2, 7.0)))
+
+    def test_tremor_shows_its_rate_in_frames_up_to_the_limit(self):
+        """A broad-band noise sampled at 30 fps tops out at 7.5 swings a second; the tremor does not."""
+        for hz in (3.0, 7.0, 10.0, 12.0):
+            values = cs.tremor(self.seconds(18000), 2, 1, hz)
+            swings = np.count_nonzero(np.diff(np.sign(values)) != 0) / (2.0 * 18000 / FPS)
+            self.assertAlmostEqual(swings, hz, delta=0.1 * hz)
+        broad = cs.noise(self.seconds(18000), 2, 1, 10.0)
+        self.assertLess(np.count_nonzero(np.diff(np.sign(broad)) != 0) / (2.0 * 18000 / FPS), 8.0)
+
     def test_capped_below_nyquist(self):
         self.assertEqual(cs.capped(7.0, 30.0), 7.0)
         self.assertAlmostEqual(cs.capped(20.0, 24.0), 0.42 * 24.0)
@@ -170,7 +185,25 @@ class HandheldTests(unittest.TestCase):
         rot, _ = self.run_it(sway=0.0, jitter=0.4)
         self.assertAlmostEqual(rms2(rot[:, 1]), 0.4, delta=0.06)
         crossings = np.count_nonzero(np.diff(np.sign(rot[:, 1])) != 0) / (4000 / FPS)
-        self.assertGreater(crossings, 1.6 * cs.JITTER_HZ)
+        self.assertGreater(crossings, 1.6 * cs.settings("handheld")["jitter_hz"])
+
+    def rate(self, rot):
+        """Swings a second of the pan: half its zero crossings."""
+        return np.count_nonzero(np.diff(np.sign(rot[:, 1])) != 0) / (2.0 * len(rot) / FPS)
+
+    def test_jitter_hz_sets_the_tremors_rate(self):
+        for hz in (3.0, 9.0):
+            rot, _ = self.run_it(sway=0.0, jitter=0.4, jitter_hz=hz)
+            self.assertAlmostEqual(self.rate(rot), hz, delta=0.2 * hz)
+
+    def test_speed_leaves_the_jitter_alone(self):
+        slow, _ = self.run_it(sway=0.0, jitter=0.4, speed=0.5)
+        fast, _ = self.run_it(sway=0.0, jitter=0.4, speed=3.0)
+        self.assertTrue(np.allclose(slow, fast))
+
+    def test_the_jitter_never_aliases(self):
+        rot, _ = self.run_it(sway=0.0, jitter=0.4, jitter_hz=15.0)
+        self.assertLess(self.rate(rot), 1.2 * cs.NYQUIST_SHARE * FPS)
 
     def test_drift_moves_the_camera_mostly_up_and_down(self):
         _, off = self.run_it(drift=4.0)
@@ -303,6 +336,15 @@ class ImpactTests(unittest.TestCase):
         _, (rot, off) = self.run_it(strength=3.0, direction="Front", push=2.0)
         self.assertGreater(off[2, 2], 1.0)
         self.assertGreater(rot[2, 0], 2.0)
+
+    def test_rattle_hz_sets_the_rattles_rate(self):
+        frames = np.arange(0, 3001)
+        def rate(hz):
+            s = cs.settings("impact", {"strength": 0.0, "push": 0.0, "rattle": 3.0, "rattle_hz": hz,
+                                       "decay": "Linear"})
+            rot = cs.impact(frames, 0, 3000, FPS, s)[0][1:300, 1]
+            return np.count_nonzero(np.diff(np.sign(rot)) != 0) / (2.0 * len(rot) / FPS)
+        self.assertGreater(rate(10.0), 2.0 * rate(3.0))
 
     def test_axes_switch_off_whole(self):
         _, (rot, off) = self.run_it(rattle=2.0, direction="Left", roll=0.5, pan_on=False, roll_on=False)
