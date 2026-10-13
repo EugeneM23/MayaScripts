@@ -46,6 +46,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 from maya_uebridge import animimport
 from maya_uebridge import records
@@ -689,7 +690,9 @@ def import_target():
     chosen = (cmds.iconTextRadioCollection(_MODE, query=True, select=True)
               or "").split("|")[-1]
     for target in TARGETS:
-        if chosen == target_button(target):
+        #  in a popup copy the segment was made prefixed (2026-10-13: the
+        #  plain name never matched, and New in a copy imported Onto)
+        if chosen == hubcopy.resolve(target_button(target)).split("|")[-1]:
             return target
     return TARGETS[0]
 

@@ -6355,6 +6355,22 @@ none of it since 2026-09-07 (`vendor_bake`).
 Not built then: legs (built 2026-10-10 with the spine, below), scale, an IK stretched to a longer FK arm,
 hotkey rows (`maya_hotkeys.py` held another session's uncommitted work, and nobody asked).
 
+**The card follows the selection, and works in its popup copy** (2026-10-13, the animator: «у окошка
+conection в режиме виджета не работает переключение рук на оружие и обратно ... статусы не обновляются
+при выделении персонажа а только после применения скрипта»). Two causes:
+- **In a popup copy every row read its first choice**: `menus()` compared the collection's answer (the
+  copy's segment, made prefixed by `maya_hubcopy`) with the plain segment name, so nothing matched — a pick
+  snapped back to Free / World and a row's Apply asked for nothing. It compares with
+  `hubcopy.resolve(name)`'s leaf now (`_made_leaf`). The same in `maya_uebridge.window.import_target`
+  (Import New in a copy of Animation Setup read Onto).
+- **No card listened to the scene**: each card (the hub's and every copy) now has its own SelectionChanged
+  / Undo / Redo jobs (`start`, `JOB` keyed by the copy's tag, parented to its status line), and a press
+  re-reads every standing card (`_refresh_cards`). `_set_menus` is quiet (trap 116), so a refresh never
+  writes «press Apply for» over the status.
+
+A refresh costs ~21 ms with one rig (mayapy, half of it `maya_rigs.rigs()`). Unit tests `PopupCopy` (the
+fake put through `maya_hubcopy`'s wrapper) and `test_a_popup_copy_reads_its_own_lit_segment`. Not seen live.
+
 **…keys where the arm has keys, not on every frame** (2026-10-08, the animator: «если на ФК руке 3 ключа то
 и на ИК тоже должно быть 3 ключа и наоборот. Нужно избавится от запекания лишних ключей»; asked, both the
 recommendation: the arm's keys **and the keys of what it hangs on**, the tangents **as the source keys'**).

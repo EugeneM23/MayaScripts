@@ -226,6 +226,26 @@ class NoPerforce(unittest.TestCase):
         finally:
             window.cmds = real
 
+    def test_a_popup_copy_reads_its_own_lit_segment(self):
+        """2026-10-13: a copy's segments are made prefixed (maya_hubcopy), and
+        the plain name never matched - New in a copy imported Onto."""
+        import maya_hubcopy as hubcopy
+        scope = hubcopy.new_scope(section="characters")
+        for target in window.TARGETS:
+            button = window.target_button(target)
+            scope.names[button] = "pop|row|" + scope.prefix + button
+        real = window.cmds
+        window.cmds = types.SimpleNamespace(
+            iconTextRadioCollection=lambda name, exists=False, query=False,
+            select=False: True if exists else
+            scope.prefix + window.target_button("new"))
+        try:
+            with hubcopy.entered(scope):
+                self.assertEqual(window.import_target(), "new")
+        finally:
+            window.cmds = real
+            hubcopy.close(scope, cmds=types.SimpleNamespace(scriptJob=None))
+
     def test_the_kind_is_the_characters_card_s(self):
         from maya_scenesetup import window as scene_window
         saved = scene_window.current_choice

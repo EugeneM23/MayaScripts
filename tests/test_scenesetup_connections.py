@@ -14,6 +14,7 @@ import os
 import unittest
 
 import maya_hub
+import maya_hubcopy as hubcopy
 import maya_hubstyle as style
 import maya_rig_retarget
 from maya_scenesetup import connections as cx
@@ -576,6 +577,138 @@ class Panel(unittest.TestCase):
             style.unlisten(listener)
             cx.cmds = saved
         self.assertEqual(heard, [])
+
+
+class _ScopedCmds(object):
+    """The fake with every command put through maya_hubcopy's wrapper, as
+    `maya_hubcopy.install` does to maya.cmds (the fake's own `install` would
+    miss the commands its __getattr__ answers)."""
+
+    def __init__(self, fake):
+        self._fake = fake
+
+    def __getattr__(self, name):
+        real = getattr(self._fake, name)
+        if not callable(real):
+            return real
+        return hubcopy._command_wrapper(name, real)
+
+
+class PopupCopy(unittest.TestCase):
+    """The card's popup copy (2026-10-09) builds under prefixed names. 2026-10-13
+    (the animator: «в режиме виджета не работает переключение рук на оружие и
+    обратно ... статусы не обновляются при выделении персонажа»): a copy's rows
+    read their first choice whatever was picked, and no card followed the
+    selection."""
+
+    def setUp(self):
+        self.real = (cx.cmds, cx.refresh, dict(cx.JOB))
+        self.fake = FakeMenuCmds()
+        cx.cmds = _ScopedCmds(self.fake)
+        self.refreshed = []
+        cx.refresh = lambda *a: self.refreshed.append(hubcopy.current()) or ""
+        cx.JOB.clear()
+        cx.build_panel()                                    # the hub's card
+        self.scope = hubcopy.new_scope(section=cx.HUB_SECTION)
+        with hubcopy.entered(self.scope):
+            cx.build_panel()                                # the copy
+        self.refreshed[:] = []
+
+    def tearDown(self):
+        hubcopy.close(self.scope, cmds=self.fake)
+        cx.cmds, cx.refresh = self.real[0], self.real[1]
+        cx.JOB.clear()
+        cx.JOB.update(self.real[2])
+
+    def _pick(self, row, choice, scope=None):
+        """The animator presses a segment of the card `scope` (None: the hub's)."""
+        name = cx.segment_name(row, choice)
+        collection = cx.MENU[row]
+        if scope is not None:
+            name, collection = scope.resolve(name), scope.resolve(collection)
+        self.fake.selected[collection] = name
+        self.fake.on[name]()
+
+    def _menus(self, scope=None):
+        with hubcopy.entered(scope):
+            return cx.menus()
+
+    def test_the_copy_makes_its_own_segments(self):
+        made = self.scope.resolve(cx.segment_name("R", "Weapon"))
+        self.assertNotEqual(made, cx.segment_name("R", "Weapon"))
+        self.assertIn(made, self.fake.owner)
+
+    def test_a_copys_rows_read_what_was_picked_in_it(self):
+        self._pick("R", "Weapon", self.scope)
+        self._pick("W", "Hand_L", self.scope)
+        self.assertEqual(self._menus(self.scope),
+                         {"R": "Weapon", "L": "Free", "W": "Hand_L"})
+        #  the hub's rows are its own
+        self.assertEqual(self._menus(), {"R": "Free", "L": "Free", "W": "World"})
+
+    def test_a_copys_row_apply_asks_for_the_picked_parent(self):
+        import maya_rigs
+        rig = maya_rigs.Rig("Manny_Rig", "cs", "|G|Main", "|G", "|root")
+        asked = []
+        saved = (cx.maya_rigs.current_rig, cx.read_scheme, cx.apply)
+        cx.maya_rigs.current_rig = lambda selection=None: (rig, "")
+        cx.read_scheme = lambda rig, bones=None, weapon=None: scheme(right=H)
+        cx.apply = lambda wanted, rig=None: asked.append(wanted) or "done"
+        try:
+            self._pick("L", "Weapon", self.scope)
+            with hubcopy.entered(self.scope):
+                cx._press_row("L")()
+        finally:
+            cx.maya_rigs.current_rig, cx.read_scheme, cx.apply = saved
+        self.assertEqual(asked, [scheme(F, H)])
+
+    def test_a_pick_does_not_snap_back_in_the_copy(self):
+        self._pick("R", "Weapon", self.scope)
+        self.assertEqual(self._menus(self.scope)["R"], "Weapon")
+        status = [c for c in self.fake.calls if c[0] == "text"
+                  and c[1] == (self.scope.resolve(cx.STATUS),) and c[2].get("edit")]
+        self.assertIn("right hand follows", status[-1][2]["label"])
+
+    def test_each_card_follows_the_selection(self):
+        jobs = [c for c in self.fake.calls if c[0] == "scriptJob"
+                and "SelectionChanged" in (c[2].get("event") or ())]
+        self.assertEqual([c[2]["parent"] for c in jobs],
+                         [cx.STATUS, self.scope.resolve(cx.STATUS)])
+        for job, scope in zip(jobs, (None, self.scope)):
+            self.refreshed[:] = []
+            job[2]["event"][1]()
+            self.assertEqual(self.refreshed, [scope])
+
+    def test_a_press_in_the_copy_refreshes_the_hubs_card_too(self):
+        saved = cx.apply
+        cx.apply = lambda wanted, rig=None: "done"
+        try:
+            with hubcopy.entered(self.scope):
+                cx._press_apply_all()
+        finally:
+            cx.apply = saved
+        self.assertEqual(sorted(self.refreshed, key=lambda s: s is not None),
+                         [None, self.scope])
+
+    def test_a_refresh_selecting_a_segment_presses_nothing(self):
+        """Even if Maya ran a segment's onCommand on an edit (trap 116): a refresh on
+        every selection change must not write «press Apply for» over the status."""
+        plain = FakeMenuCmds.iconTextRadioButton
+
+        def edit_fires(fake, name=None, **kwargs):
+            out = plain(fake, name, **kwargs)
+            if kwargs.get("edit") and kwargs.get("select"):
+                fake.on[name]()
+            return out
+        self.fake.iconTextRadioButton = lambda name=None, **kw: edit_fires(
+            self.fake, name, **kw)
+        before = len([c for c in self.fake.calls if c[0] == "text"
+                      and c[1] == (cx.STATUS,) and c[2].get("edit")])
+        cx._set_menus({"R": "Weapon", "W": "Hand_L"})
+        after = len([c for c in self.fake.calls if c[0] == "text"
+                     and c[1] == (cx.STATUS,) and c[2].get("edit")])
+        self.assertEqual(after, before)
+        self.assertEqual(self._menus(), {"R": "Weapon", "L": "Free", "W": "Hand_L"})
 
 
 class PanelCompact(unittest.TestCase):

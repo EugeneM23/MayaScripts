@@ -102,6 +102,7 @@ import traceback
 
 import maya.cmds as cmds
 
+import maya_hubcopy as hubcopy
 import maya_hubstyle as hubstyle
 import maya_rigs
 from maya_overrig import overrig
@@ -126,6 +127,9 @@ CHOOSER = "skeldarConnectionsWeapon"
 # the compact hub - with one weapon the chooser had nothing to choose)
 CHOOSER_ROW = "skeldarConnectionsChooserRow"
 _PICKED = {"uuid": None, "selection": None}
+#  The jobs of each card standing (2026-10-13, `start`): '' the hub's, a popup
+#  copy's tag its own (the 2026-10-09 rule: closing a popup kills only its own).
+JOB = {}
 NO_SLOT = "-"
 FREE, WORLD, WEAPON = "Free", "World", "Weapon"
 HAND_CHOICES = (FREE, WEAPON)
@@ -1073,7 +1077,22 @@ def _run(action):
         _status(traceback.format_exc().strip().splitlines()[-1])
         raise
     finally:
-        refresh()
+        _refresh_cards()
+
+
+def _refresh_cards():
+    """Every standing card re-read - the hub's and each popup copy's
+    (2026-10-13): a press in one changes what the others show, and a press
+    changes no selection, so their selection jobs would not tell them. Only
+    the pressed card's own failure is raised."""
+    own = hubcopy.current()
+    for scope in [None] + hubcopy.instances(HUB_SECTION):
+        try:
+            with hubcopy.entered(scope):
+                refresh()
+        except Exception:                                    # noqa: BLE001
+            if scope is own:
+                raise
 
 
 def header_text(rig, weapon, scheme, others="", arms=""):
@@ -1177,16 +1196,35 @@ def menus():
         chosen = cmds.iconTextRadioCollection(MENU[row], query=True,
                                               select=True) or ""
         chosen = chosen.split("|")[-1]
-        out[row] = next((c for c in choices if segment_name(row, c) == chosen),
+        out[row] = next((c for c in choices
+                         if _made_leaf(segment_name(row, c)) == chosen),
                         choices[0])
     return out
 
 
+def _made_leaf(name):
+    """The leaf a segment answers to in a collection's query: in a popup copy
+    the name it was made as, prefixed (2026-10-13: compared with the plain
+    name, every row of a copy read its first choice - a pick snapped back to
+    Free / World and Apply asked for nothing)."""
+    return hubcopy.resolve(name).split("|")[-1]
+
+
+_MENU_QUIET = {"on": False}
+
+
 def _set_menus(values):
-    for row, value in values.items():
-        name = segment_name(row, value)
-        if cmds.iconTextRadioButton(name, exists=True):
-            cmds.iconTextRadioButton(name, edit=True, select=True)
+    """Select each row's segment. Quiet: a segment's onCommand must not fire
+    from here (trap 116) - it would write «press Apply for» over the status on
+    every refresh, and call this again from inside itself."""
+    _MENU_QUIET["on"] = True
+    try:
+        for row, value in values.items():
+            name = segment_name(row, value)
+            if cmds.iconTextRadioButton(name, exists=True):
+                cmds.iconTextRadioButton(name, edit=True, select=True)
+    finally:
+        _MENU_QUIET["on"] = False
 
 
 def refresh(*_args):
@@ -1279,6 +1317,42 @@ def is_open():
     return bool(cmds.control(STATUS, exists=True))
 
 
+#  what a standing card follows (2026-10-13, the animator: «статусы не
+#  обновляются при выделении персонажа а только после применения скрипта»)
+EVENTS = ("SelectionChanged", "Undo", "Redo")
+
+
+def _card_key():
+    scope = hubcopy.current()
+    return "" if scope is None else scope.tag
+
+
+def _follow(*_args):
+    """A selection change, an undo or a redo: the card re-read. A failure goes
+    on the status line, not into the Script Editor on every click."""
+    try:
+        refresh()
+    except Exception:                                        # noqa: BLE001
+        _status(traceback.format_exc().strip().splitlines()[-1])
+
+
+def start():
+    """This card's own jobs, parented to its status line (they die with the
+    card). Per card: a popup copy's jobs die with the copy and leave the
+    hub's (the 2026-10-09 rule)."""
+    standing = set(scope.tag for scope in hubcopy.live())
+    for key in [k for k in JOB if k and k not in standing]:
+        del JOB[key]
+    for old in JOB.pop(_card_key(), None) or ():
+        try:
+            if cmds.scriptJob(exists=old):
+                cmds.scriptJob(kill=old, force=True)
+        except Exception:                                    # noqa: BLE001
+            pass
+    JOB[_card_key()] = [cmds.scriptJob(event=[event, _follow], parent=STATUS)
+                        for event in EVENTS]
+
+
 def show_window():
     """Open the SkeldarAnim hub on the Connections section."""
     import maya_hub
@@ -1288,6 +1362,8 @@ def show_window():
 def _menu_changed(row):
     """A pick fixes a cycle in the other menus and asks for Apply."""
     def go(*_args):
+        if _MENU_QUIET["on"]:
+            return None
         fixed, note = resolve_menus(menus(), row)
         _set_menus(fixed)
         text = "press Apply for: " + describe(scheme_from_menus(fixed))
@@ -1509,6 +1585,7 @@ def build_panel():
     hubstyle.mark(cmds.text(STATUS, label="", align="left", wordWrap=True,
                             height=54), "status")
     cmds.setParent("..")
+    start()
     try:
         refresh()
     except Exception:                                        # noqa: BLE001
